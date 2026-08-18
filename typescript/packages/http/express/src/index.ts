@@ -294,23 +294,21 @@ export function paymentMiddlewareFromHTTPServer(
         try {
           await Promise.resolve(next());
         } catch (error) {
-          await cancellationDispatcher.cancel({
+          const cancelSettlement = await cancellationDispatcher.cancel({
             reason: "handler_threw",
             error,
           });
-          // Echo before-handler receipt so the payer still gets the tx hash
-          if (beforeHandlerSettlement) {
-            const existingCacheControl =
-              res.getHeader("Cache-Control") != null
-                ? String(res.getHeader("Cache-Control"))
-                : null;
-            Object.entries(
-              httpServer.createCompletedSettlementHeaders(
-                beforeHandlerSettlement,
-                existingCacheControl,
-              ),
-            ).forEach(([key, value]) => {
-              res.setHeader(key, value);
+          const existingCacheControl =
+            res.getHeader("Cache-Control") != null ? String(res.getHeader("Cache-Control")) : null;
+          const failureHeaders = httpServer.createFailurePathSettlementHeaders(
+            cancelSettlement,
+            beforeHandlerSettlement,
+            paymentPayload,
+            existingCacheControl,
+          );
+          if (failureHeaders) {
+            Object.entries(failureHeaders).forEach(([key, value]) => {
+              res.setHeader(key, String(value));
             });
           }
           bufferedCalls = [];
@@ -323,24 +321,22 @@ export function paymentMiddlewareFromHTTPServer(
 
         // If the response from the protected route is >= 400, do not settle payment
         if (res.statusCode >= 400) {
-          await cancellationDispatcher.cancel({
+          const cancelSettlement = await cancellationDispatcher.cancel({
             reason: "handler_failed",
             responseStatus: res.statusCode,
           });
           res.removeHeader(SETTLEMENT_OVERRIDES_HEADER);
-          // Echo before-handler receipt (e.g. upfront) so the payer still gets the tx hash
-          if (beforeHandlerSettlement) {
-            const existingCacheControl =
-              res.getHeader("Cache-Control") != null
-                ? String(res.getHeader("Cache-Control"))
-                : null;
-            Object.entries(
-              httpServer.createCompletedSettlementHeaders(
-                beforeHandlerSettlement,
-                existingCacheControl,
-              ),
-            ).forEach(([key, value]) => {
-              res.setHeader(key, value);
+          const existingCacheControl =
+            res.getHeader("Cache-Control") != null ? String(res.getHeader("Cache-Control")) : null;
+          const failureHeaders = httpServer.createFailurePathSettlementHeaders(
+            cancelSettlement,
+            beforeHandlerSettlement,
+            paymentPayload,
+            existingCacheControl,
+          );
+          if (failureHeaders) {
+            Object.entries(failureHeaders).forEach(([key, value]) => {
+              res.setHeader(key, String(value));
             });
           }
           restoreResponseMethods();

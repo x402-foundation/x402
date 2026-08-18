@@ -46,7 +46,12 @@ class TestHandlePaymentRequired:
     @pytest.mark.asyncio
     async def test_returns_none_without_hooks(self):
         http_client = x402HTTPClient(x402Client())
-        assert await http_client.handle_payment_required(make_payment_required()) is None
+        assert (
+            await http_client.handle_payment_required(
+                make_payment_required(), "https://api.example.com/"
+            )
+            is None
+        )
 
     @pytest.mark.asyncio
     async def test_returns_headers_from_hook(self):
@@ -54,7 +59,9 @@ class TestHandlePaymentRequired:
         http_client.on_payment_required(
             lambda ctx: PaymentRequiredHeadersResult(headers={"Authorization": "Bearer t"})
         )
-        result = await http_client.handle_payment_required(make_payment_required())
+        result = await http_client.handle_payment_required(
+            make_payment_required(), "https://api.example.com/"
+        )
         assert result == {"Authorization": "Bearer t"}
 
     @pytest.mark.asyncio
@@ -71,7 +78,9 @@ class TestHandlePaymentRequired:
             )
         )
 
-        result = await http_client.handle_payment_required(make_payment_required())
+        result = await http_client.handle_payment_required(
+            make_payment_required(), "https://api.example.com/"
+        )
 
         assert result == {"X-Hook": "first"}
         assert order == [1]
@@ -88,7 +97,9 @@ class TestHandlePaymentRequired:
             )
         )
 
-        result = await http_client.handle_payment_required(make_payment_required())
+        result = await http_client.handle_payment_required(
+            make_payment_required(), "https://api.example.com/"
+        )
 
         assert result == {"X-Hook": "second"}
         assert order == [1, 2]
@@ -101,10 +112,11 @@ class TestHandlePaymentRequired:
 
         http_client.on_payment_required(lambda ctx: received.append(ctx))
 
-        await http_client.handle_payment_required(payment_required)
+        await http_client.handle_payment_required(payment_required, "https://test.com/resource")
 
         assert len(received) == 1
         assert received[0].payment_required == payment_required
+        assert received[0].request_url == "https://test.com/resource"
 
     def test_sync_first_headers_win(self):
         http_client = x402HTTPClientSync(x402ClientSync())
@@ -114,5 +126,7 @@ class TestHandlePaymentRequired:
         http_client.on_payment_required(
             lambda ctx: PaymentRequiredHeadersResult(headers={"X-Hook": "second"})
         )
-        result = http_client.handle_payment_required(make_payment_required())
+        result = http_client.handle_payment_required(
+            make_payment_required(), "https://api.example.com/"
+        )
         assert result == {"X-Hook": "first"}

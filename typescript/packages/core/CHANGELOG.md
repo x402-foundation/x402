@@ -1,5 +1,17 @@
 # @x402/core Changelog
 
+## 2.22.0
+
+### Minor Changes
+
+- [db5da2e](https://github.com/x402-foundation/x402/commit/db5da2e): Validate unsupported `paymentFlow` / `assetTransferMethod` at HTTP server construction and MCP `createPaymentWrapper` when the scheme is registered, and return a generic internal error from HTTP adapters and MCP wrappers for unexpected failures instead of leaking internal error details to clients. ([#3053](https://github.com/x402-foundation/x402/pull/3053)) - Thanks [@phdargen](https://github.com/phdargen)!
+- [db5da2e](https://github.com/x402-foundation/x402/commit/db5da2e): Require ATM-keyed `paymentFlows` (and `defaultAssetTransferMethod`) on every `SchemeNetworkServer`. Core resolves ATM/flow from the table, rejects unsupported combinations, and always signals non-`authorization` `paymentFlow` on the 402 wire. All schemes currently declare `authorization` only. ([#3053](https://github.com/x402-foundation/x402/pull/3053)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+### Patch Changes
+
+- [37412e7](https://github.com/x402-foundation/x402/commit/37412e7): Fixed a paywall bypass where a backslash in a `:param`/`[param]` segment let an unauthenticated request reach a protected handler. `normalizePath` rewrote `\` to `/` after decoding, so the middleware saw more segments than the framework router did, missed the route, and fell through to the handler with nothing settled. Percent-escapes are now decoded one segment at a time and any separator they yield is re-escaped, matching the Go and Python SDKs. Reachable on Express via a raw `\` and on Hono via `%5C`. ([#3116](https://github.com/x402-foundation/x402/pull/3116)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe) and [@claude](https://github.com/claude)!
+- [1601942](https://github.com/x402-foundation/x402/commit/1601942): Fixed trailing wildcard route matching when `normalizePath` strips a trailing slash, so bare prefix paths like `/api/premium` and `/api/premium/` still require payment under a `/*` route pattern. ([#3073](https://github.com/x402-foundation/x402/pull/3073)) - Thanks [@phdargen](https://github.com/phdargen)!
+
 ## 2.21.0
 
 ### Minor Changes

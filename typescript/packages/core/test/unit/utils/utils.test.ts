@@ -8,6 +8,8 @@ import {
   safeBase64Decode,
   numberToDecimalString,
   convertToTokenAmount,
+  parseMoney,
+  parseMoneyString,
 } from "../../../src/utils";
 import { Network } from "../../../src/types";
 
@@ -441,20 +443,25 @@ describe("Utils", () => {
       });
     });
 
-    describe("too-small errors", () => {
-      it("should throw when a non-zero amount rounds down to 0", () => {
-        // 0.0000001 with 6 decimals: truncates to 0 atomic units
-        expect(() => convertToTokenAmount("0.0000001", 6)).toThrow("too small");
-        // 0.00000001 with 7 decimals: truncates to 0
-        expect(() => convertToTokenAmount("0.00000001", 7)).toThrow("too small");
-        // 0.0000000001 with 6 decimals: also too small
-        expect(() => convertToTokenAmount("0.0000000001", 6)).toThrow("too small");
+    describe("amounts smaller than one atomic unit", () => {
+      it("truncates a non-zero amount to 0 when it is smaller than one atomic unit", () => {
+        expect(convertToTokenAmount("0.0000001", 6)).toBe("0");
+        expect(convertToTokenAmount("0.00000001", 7)).toBe("0");
+        expect(convertToTokenAmount("0.0000000001", 6)).toBe("0");
       });
 
-      it("should not throw for zero itself", () => {
+      it("keeps explicit zero as 0", () => {
         expect(convertToTokenAmount("0", 6)).toBe("0");
         expect(convertToTokenAmount("0.0", 6)).toBe("0");
         expect(convertToTokenAmount("0.000000", 6)).toBe("0");
+      });
+
+      it("pads and truncates toward zero without rounding", () => {
+        expect(convertToTokenAmount("1.0000005", 6)).toBe("1000000");
+        expect(convertToTokenAmount("0.0000005", 6)).toBe("0");
+        expect(convertToTokenAmount("0.0000009", 6)).toBe("0");
+        expect(convertToTokenAmount("8975.978289462729", 18)).toBe("8975978289462729000000");
+        expect(convertToTokenAmount("8975.978289462729", 6)).toBe("8975978289");
       });
     });
 
@@ -536,6 +543,44 @@ describe("Utils", () => {
         expect(safeBase64Decode("YWI=")).toBe("ab");
         expect(safeBase64Decode("YWJj")).toBe("abc");
       });
+    });
+  });
+
+  describe("parseMoney", () => {
+    it("parses dollar and plain amounts without a symbol", () => {
+      expect(parseMoney("$1.50")).toEqual({ amount: "1.50" });
+      expect(parseMoney("1.50")).toEqual({ amount: "1.50" });
+      expect(parseMoney(1.5)).toEqual({ amount: "1.5" });
+    });
+
+    it("parses a ticker suffix and upper-cases it", () => {
+      expect(parseMoney("1.50 USDT")).toEqual({ amount: "1.50", symbol: "USDT" });
+      expect(parseMoney("1.50 usdt")).toEqual({ amount: "1.50", symbol: "USDT" });
+    });
+
+    it("treats USD as the network default (no symbol)", () => {
+      expect(parseMoney("1.50 USD")).toEqual({ amount: "1.50" });
+    });
+
+    it("rejects a ticker glued to the amount without a space", () => {
+      expect(() => parseMoney("1.50USDT")).toThrow(/Invalid money format/);
+    });
+
+    it("rejects negative amounts", () => {
+      expect(() => parseMoney(-5)).toThrow("Invalid money format: -5");
+      expect(() => parseMoney("-1.50")).toThrow(/Invalid money format/);
+      expect(() => parseMoney("-$1.50")).toThrow(/Invalid money format/);
+      expect(() => parseMoneyString("-1.50")).toThrow(/Invalid money format/);
+    });
+
+    it("keeps parseMoneyString rejecting suffixes", () => {
+      expect(() => parseMoneyString("1.50 USDT")).toThrow(/Invalid money format/);
+    });
+
+    it("returns the extracted decimal substring without Number conversion", () => {
+      expect(parseMoneyString("$1.50")).toBe("1.50");
+      expect(parseMoneyString("1.00")).toBe("1.00");
+      expect(parseMoneyString("0.00")).toBe("0.00");
     });
   });
 });

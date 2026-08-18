@@ -531,6 +531,103 @@ describe("createPaymentWrapper", () => {
       expect(dispatcher.cancel).toHaveBeenCalledWith({ reason: "handler_failed" });
     });
 
+    it("prefers cancel refund receipt over deposit echo when tool returns error", async () => {
+      mockResourceServer.getPaymentFlow.mockReturnValue("escrow");
+      mockResourceServer.settlePayment.mockResolvedValue({
+        ...mockSettleResponse,
+        amount: "100000",
+        transaction: "0xdeposit",
+      });
+      const cancelReceipt: SettleResponse = {
+        success: true,
+        amount: "0",
+        transaction: "0xrefund",
+        network: "eip155:84532",
+      };
+      mockResourceServer.createPaymentCancellationDispatcher.mockReturnValue({
+        cancel: vi.fn().mockResolvedValue(cancelReceipt),
+      });
+
+      const paid = createPaymentWrapper(
+        mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+        {
+          accepts: [mockPaymentRequirements],
+        },
+      );
+
+      const handler = vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: "error" }],
+        isError: true,
+        _meta: { traceId: "trace_refund" },
+      });
+
+      const wrappedHandler = paid(handler);
+      const result = await wrappedHandler(
+        { test: "arg" },
+        { _meta: { "x402/payment": mockPaymentPayload } },
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result._meta?.traceId).toBe("trace_refund");
+      expect(result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toEqual(cancelReceipt);
+      expect(mockResourceServer.settlePayment).toHaveBeenCalledTimes(1);
+    });
+
+    it("surfaces failed cancel with deposit recovery extra when tool returns error", async () => {
+      mockResourceServer.getPaymentFlow.mockReturnValue("escrow");
+      mockResourceServer.settlePayment.mockResolvedValue({
+        ...mockSettleResponse,
+        amount: "100000",
+        transaction: "0xdeposit",
+      });
+      mockResourceServer.createPaymentCancellationDispatcher.mockReturnValue({
+        cancel: vi.fn().mockResolvedValue({
+          success: false,
+          errorReason: "refund_failed",
+          transaction: "should-not-appear",
+          network: "eip155:84532",
+        }),
+      });
+      const paymentPayload: PaymentPayload = {
+        ...mockPaymentPayload,
+        payload: { channelId: "channel-123" },
+      };
+
+      const paid = createPaymentWrapper(
+        mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+        {
+          accepts: [mockPaymentRequirements],
+        },
+      );
+
+      const handler = vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: "error" }],
+        isError: true,
+      });
+
+      const wrappedHandler = paid(handler);
+      const result = await wrappedHandler(
+        { test: "arg" },
+        { _meta: { "x402/payment": paymentPayload } },
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toEqual({
+        success: false,
+        errorReason: "refund_failed",
+        errorMessage: undefined,
+        payer: undefined,
+        transaction: "",
+        network: "eip155:84532",
+        extensions: undefined,
+        extra: {
+          depositTransaction: "0xdeposit",
+          depositAmount: "100000",
+          channelId: "channel-123",
+        },
+      });
+    });
+
     it("should cancel verified payment if tool handler throws", async () => {
       const paid = createPaymentWrapper(
         mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
@@ -584,6 +681,72 @@ describe("createPaymentWrapper", () => {
         reason: "handler_threw",
         error,
       });
+    });
+
+    it("prefers cancel refund receipt over deposit echo when tool handler throws", async () => {
+      mockResourceServer.getPaymentFlow.mockReturnValue("escrow");
+      mockResourceServer.settlePayment.mockResolvedValue({
+        ...mockSettleResponse,
+        amount: "100000",
+        transaction: "0xdeposit",
+      });
+      const cancelReceipt: SettleResponse = {
+        success: true,
+        amount: "0",
+        transaction: "0xrefund",
+        network: "eip155:84532",
+      };
+      mockResourceServer.createPaymentCancellationDispatcher.mockReturnValue({
+        cancel: vi.fn().mockResolvedValue(cancelReceipt),
+      });
+
+      const paid = createPaymentWrapper(
+        mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+        {
+          accepts: [mockPaymentRequirements],
+        },
+      );
+      const handler = vi.fn().mockRejectedValue(new Error("handler failed"));
+      const wrappedHandler = paid(handler);
+
+      const result = await wrappedHandler(
+        { test: "arg" },
+        { _meta: { "x402/payment": mockPaymentPayload } },
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content).toEqual([{ type: "text", text: "Internal Server Error" }]);
+      expect(result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toEqual(cancelReceipt);
+    });
+
+    it("returns internal error with cancel receipt when handler throws without before-handler settle", async () => {
+      const cancelReceipt: SettleResponse = {
+        success: true,
+        amount: "0",
+        transaction: "0xrefund",
+        network: "eip155:84532",
+      };
+      mockResourceServer.createPaymentCancellationDispatcher.mockReturnValue({
+        cancel: vi.fn().mockResolvedValue(cancelReceipt),
+      });
+
+      const paid = createPaymentWrapper(
+        mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+        {
+          accepts: [mockPaymentRequirements],
+        },
+      );
+      const handler = vi.fn().mockRejectedValue(new Error("handler failed"));
+      const wrappedHandler = paid(handler);
+
+      const result = await wrappedHandler(
+        { test: "arg" },
+        { _meta: { "x402/payment": mockPaymentPayload } },
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content).toEqual([{ type: "text", text: "Internal Server Error" }]);
+      expect(result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toEqual(cancelReceipt);
     });
 
     it("should settle skipHandler responses without executing the tool", async () => {

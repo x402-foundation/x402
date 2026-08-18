@@ -26,6 +26,7 @@ import {
   signPermit2,
 } from "../nonce";
 import type { AuthCaptureExtra, Eip3009Payload, PaymentInfoStruct, Permit2Payload } from "../types";
+import { findDefaultAsset } from "../../defaultAssets";
 import { parseChainId } from "../utils";
 
 /**
@@ -36,6 +37,7 @@ import { parseChainId } from "../utils";
  */
 export class AuthCaptureEvmScheme implements SchemeNetworkClient {
   readonly scheme = AUTH_CAPTURE_SCHEME;
+  findDefaultAsset = findDefaultAsset;
 
   /**
    * Construct a client-side auth-capture scheme bound to a specific signer.

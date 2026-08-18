@@ -262,6 +262,48 @@ async def test_wrap_mcp_client_with_payment_async():
 
 
 @pytest.mark.asyncio
+async def test_create_x402_mcp_client_from_config_forwards_spend_controls():
+    """MCP from_config must apply spend_controls via x402Client.from_config."""
+    from x402.mcp import create_x402_mcp_client_from_config
+
+    class MockSchemeClient:
+        scheme = "mock"
+
+    mock_mcp = MockAsyncMCPClient()
+
+    client = create_x402_mcp_client_from_config(
+        mock_mcp,
+        {
+            "schemes": [{"network": "eip155:84532", "client": MockSchemeClient()}],
+            "spend_controls": False,
+        },
+    )
+
+    assert client.payment_client._spend_controls is False
+
+
+@pytest.mark.asyncio
+async def test_wrap_mcp_client_with_payment_from_config_forwards_spend_controls():
+    """wrap_mcp_client_with_payment_from_config must apply spend_controls."""
+    from x402.mcp import wrap_mcp_client_with_payment_from_config
+
+    class MockSchemeClient:
+        scheme = "mock"
+
+    mock_mcp = MockAsyncMCPClient()
+
+    client = wrap_mcp_client_with_payment_from_config(
+        mock_mcp,
+        {
+            "schemes": [{"network": "eip155:84532", "client": MockSchemeClient()}],
+            "spend_controls": {"max_amount_per_payment": "$5"},
+        },
+    )
+
+    assert client.payment_client._spend_controls == {"max_amount_per_payment": "$5"}
+
+
+@pytest.mark.asyncio
 async def test_x402_mcp_client_async_payment_client():
     """Test accessing payment client property."""
     mock_mcp = MockAsyncMCPClient()

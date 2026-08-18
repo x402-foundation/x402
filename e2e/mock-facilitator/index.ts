@@ -9,7 +9,8 @@ import {
  * Mock facilitator that claims to support all schemes/networks but errors
  * if verify or settle are actually called. Used as a fallback facilitator
  * during e2e testing so that servers with routes unsupported by the real
- * facilitator (e.g. "upto" on Go/Python facilitators) can still start.
+ * facilitator (e.g. "upto" on Go/Python facilitators, SVM "upto" on Go/Python)
+ * can still start.
  *
  * The real facilitator is always first in the client array and handles
  * all actual operations. This mock only fills validation gaps at startup.
@@ -28,8 +29,12 @@ const DUMMY_SIGNERS: Record<string, string[]> = {
 
 function buildSupportedResponse() {
   const networkIds = catalogNetworkIds();
-  const evmSchemes = ["exact", "upto"];
-  const otherSchemes = ["exact"];
+  const schemesForNetwork = (networkId: string): string[] => {
+    if (networkId === "evm" || networkId === "svm") {
+      return ["exact", "upto"];
+    }
+    return ["exact"];
+  };
   const versions = [1, 2];
 
   const kinds: Array<{
@@ -41,7 +46,7 @@ function buildSupportedResponse() {
   for (const version of versions) {
     for (const networkId of networkIds) {
       const caip2 = resolveNetworkCaip2(networkId);
-      const schemes = networkId === "evm" ? evmSchemes : otherSchemes;
+      const schemes = schemesForNetwork(networkId);
       for (const scheme of schemes) {
         kinds.push({ x402Version: version, scheme, network: caip2 });
       }

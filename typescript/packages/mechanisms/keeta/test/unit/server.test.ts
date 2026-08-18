@@ -1,17 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ExactKeetaScheme } from "../../src/exact/server/scheme";
 import { KEETA_TESTNET_CAIP2 } from "../../src/constants";
+import { USDC_TESTNET_ADDRESS } from "../../src/defaultAssets";
 import type { Network, PaymentRequirements } from "@x402/core/types";
-import { getNewKeetaAccount, USDC_TESTNET_ADDRESS } from "./utils";
-
-vi.mock("../../src/utils", async importOriginal => {
-  const actual = await importOriginal<typeof import("../../src/utils")>();
-  const { mockGetUsdcAddress } = await import("./utils");
-  return {
-    ...actual,
-    getUsdcAddress: vi.fn(mockGetUsdcAddress),
-  };
-});
+import { getNewKeetaAccount } from "./utils";
 
 const KEETA_ACCOUNT = getNewKeetaAccount().publicKeyString.toString();
 const usdcTestnetAddress = USDC_TESTNET_ADDRESS;
@@ -73,7 +65,7 @@ describe("ExactKeetaServer", () => {
 
     it("throws for unsupported network", async () => {
       await expect(server.parsePrice("1.00", "keeta:99999")).rejects.toThrow(
-        "No USDC address configured for network",
+        "No default asset configured for network",
       );
     });
   });
@@ -128,7 +120,7 @@ describe("ExactKeetaServer", () => {
       server.registerMoneyParser(customParser);
 
       const result = await server.parsePrice("5.00", KEETA_TESTNET_CAIP2);
-      expect(customParser).toHaveBeenCalledWith(5, KEETA_TESTNET_CAIP2);
+      expect(customParser).toHaveBeenCalledWith("5.00", KEETA_TESTNET_CAIP2);
       expect(result).toEqual(customResult);
     });
 
@@ -186,6 +178,16 @@ describe("ExactKeetaServer", () => {
 
       const result = await server.enhancePaymentRequirements(requirements, supportedKind, []);
       expect(result).toEqual(requirements);
+    });
+  });
+
+  describe("getAssetDecimals", () => {
+    it("returns 6 for documented USDC", () => {
+      expect(server.getAssetDecimals(usdcTestnetAddress, KEETA_TESTNET_CAIP2)).toBe(6);
+    });
+
+    it("returns undefined for an unknown token", () => {
+      expect(server.getAssetDecimals(KEETA_ACCOUNT, KEETA_TESTNET_CAIP2)).toBeUndefined();
     });
   });
 });

@@ -24,14 +24,10 @@ export function endpointAssetTransferMethod(endpoint: TestEndpoint): AssetTransf
 }
 
 /**
- * Resolved payment scheme for an EVM endpoint.
- * Defaults to `exact` when omitted (non-batch endpoints).
+ * Resolved payment scheme for an endpoint.
+ * Defaults to `exact` when omitted.
  */
-export function endpointPaymentScheme(endpoint: TestEndpoint): PaymentScheme | undefined {
-  const family = endpoint.protocolFamily ?? 'evm';
-  if (family !== 'evm') {
-    return undefined;
-  }
+export function endpointPaymentScheme(endpoint: TestEndpoint): PaymentScheme {
   return endpoint.scheme ?? 'exact';
 }
 

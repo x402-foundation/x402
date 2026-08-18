@@ -23,20 +23,21 @@ import {
 } from "../../constants";
 import {
   ErrAssetNotDeployedContract,
+  ErrErc20ApprovalTxFailed,
   ErrPermit2AmountMismatch,
   ErrUptoSettlementExceedsAmount,
   ErrUptoFacilitatorMismatch,
   ErrUptoInvalidScheme,
   ErrUptoNetworkMismatch,
+  ErrUptoTransactionFailed,
 } from "./errors";
 import { FacilitatorEvmSigner } from "../../signer";
 import { UptoPermit2Payload } from "../../types";
-import { getEvmChainId } from "../../utils";
+import { finalHashFromTwoRequestSend, getEvmChainId, isValidTxHash } from "../../utils";
 import { validateErc20ApprovalForPayment } from "../../shared/erc20approval";
 import { verifyTypedDataSignature } from "../../shared/verifySignature";
 import {
   buildUptoPermit2SettleArgs,
-  waitAndReturnSettleResponse,
   mapSettleError,
   splitEip2612Signature,
   simulatePermit2Settle,
@@ -47,6 +48,7 @@ import {
   validateEip2612PermitForPayment,
   type Permit2ProxyConfig,
 } from "../../shared/permit2";
+import { waitAndReturnSettleResponse } from "../../shared/settleReceipt";
 import type { Eip2612GasSponsoringInfo } from "../../exact/extensions";
 
 const uptoProxyConfig: Permit2ProxyConfig = {
@@ -501,8 +503,10 @@ async function settleUptoWithEIP2612(
       dataSuffix,
     });
 
-    const response = await waitAndReturnSettleResponse(signer, tx, payload, payer);
-    return { ...response, amount: settlementAmount.toString() };
+    return await waitAndReturnSettleResponse(signer, tx, payload.accepted.network, payer, {
+      failedStatusReason: ErrUptoTransactionFailed,
+      amount: settlementAmount.toString(),
+    });
   } catch (error) {
     return mapSettleError(error, payload, payer);
   }
@@ -550,14 +554,23 @@ async function settleUptoWithERC20Approval(
       { to: uptoProxyConfig.proxyAddress, data: settleData, gas: BigInt(300_000) },
     ]);
 
-    const settleTxHash = txHashes[txHashes.length - 1];
-    const response = await waitAndReturnSettleResponse(
+    const settleTxHash = finalHashFromTwoRequestSend(txHashes);
+    if (!settleTxHash || !isValidTxHash(settleTxHash)) {
+      throw new Error(
+        `${ErrErc20ApprovalTxFailed}: extension signer returned no valid settlement transaction hash`,
+      );
+    }
+
+    return await waitAndReturnSettleResponse(
       extensionSigner,
       settleTxHash,
-      payload,
+      payload.accepted.network,
       payer,
+      {
+        failedStatusReason: ErrUptoTransactionFailed,
+        amount: settlementAmount.toString(),
+      },
     );
-    return { ...response, amount: settlementAmount.toString() };
   } catch (error) {
     return mapSettleError(error, payload, payer);
   }
@@ -592,8 +605,10 @@ async function settleUptoDirect(
       dataSuffix,
     });
 
-    const response = await waitAndReturnSettleResponse(signer, tx, payload, payer);
-    return { ...response, amount: settlementAmount.toString() };
+    return await waitAndReturnSettleResponse(signer, tx, payload.accepted.network, payer, {
+      failedStatusReason: ErrUptoTransactionFailed,
+      amount: settlementAmount.toString(),
+    });
   } catch (error) {
     return mapSettleError(error, payload, payer);
   }

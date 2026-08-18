@@ -308,6 +308,23 @@ describe("handleSettlement", () => {
         "PAYMENT-RESPONSE": "before-handler-receipt",
         "Cache-Control": existingCacheControl ? `${existingCacheControl}, private` : "private",
       })),
+      createFailurePathSettlementHeaders: vi.fn((cancelSettlement, settlement) => {
+        if (cancelSettlement) {
+          return {
+            "PAYMENT-RESPONSE": cancelSettlement.success
+              ? "cancel-receipt"
+              : "cancel-failure-receipt",
+            "Cache-Control": "private",
+          };
+        }
+        if (settlement) {
+          return {
+            "PAYMENT-RESPONSE": "before-handler-receipt",
+            "Cache-Control": "private",
+          };
+        }
+        return undefined;
+      }),
     } as unknown as x402HTTPResourceServer;
   });
 
@@ -326,7 +343,12 @@ describe("handleSettlement", () => {
 
     expect(result.status).toBe(500);
     expect(mockHttpServer.processSettlement).not.toHaveBeenCalled();
-    expect(mockHttpServer.createCompletedSettlementHeaders).not.toHaveBeenCalled();
+    expect(mockHttpServer.createFailurePathSettlementHeaders).toHaveBeenCalledWith(
+      undefined,
+      undefined,
+      mockPaymentPayload,
+      null,
+    );
     expect(mockPaymentCancellationDispatcher.cancel).toHaveBeenCalledWith(
       expect.objectContaining({
         reason: "handler_failed",
@@ -378,8 +400,10 @@ describe("handleSettlement", () => {
 
     expect(result.status).toBe(500);
     expect(mockHttpServer.processSettlement).not.toHaveBeenCalled();
-    expect(mockHttpServer.createCompletedSettlementHeaders).toHaveBeenCalledWith(
+    expect(mockHttpServer.createFailurePathSettlementHeaders).toHaveBeenCalledWith(
+      undefined,
       beforeHandlerSettlement,
+      mockPaymentPayload,
       null,
     );
     expect(result.headers.get("PAYMENT-RESPONSE")).toBe("before-handler-receipt");

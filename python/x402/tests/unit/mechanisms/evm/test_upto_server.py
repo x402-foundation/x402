@@ -1,10 +1,13 @@
 """Tests for UptoEvmScheme server."""
 
+from decimal import Decimal
+
 import pytest
 
 from x402.mechanisms.evm import get_network_config
 from x402.mechanisms.evm.upto import UptoEvmServerScheme
 from x402.schemas import AssetAmount, PaymentRequirements, SupportedKind
+from x402.schemas.helpers import convert_to_token_amount
 
 FACILITATOR = "0x1111111111111111111111111111111111111111"
 
@@ -183,10 +186,10 @@ class TestRegisterMoneyParser:
         server = UptoEvmServerScheme()
         network = "eip155:8453"
 
-        def custom_parser(amount: float, network: str) -> AssetAmount | None:
-            if amount > 100:
+        def custom_parser(amount: str | int | float, network: str) -> AssetAmount | None:
+            if Decimal(str(amount)) > 100:
                 return AssetAmount(
-                    amount=str(int(amount * 1e9)),
+                    amount=convert_to_token_amount(str(amount), 9),
                     asset="0xCustomToken123456789012345678901234567890",
                     extra={"token": "CUSTOM"},
                 )

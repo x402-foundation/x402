@@ -22,6 +22,7 @@ import {
   ADDITIVE_ARRAY_INFO_FIELDS,
   ADDITIVE_ARRAY_MAX_LENGTHS,
   deepEqual,
+  convertToTokenAmount,
   findByNetworkAndScheme,
   toComparableArray,
 } from "../utils";
@@ -173,7 +174,7 @@ export interface CompletedSettlement {
  * `beforeHandlerSettlement` into settlement separately when echoing PAYMENT-RESPONSE.
  */
 export interface PaymentCancellationDispatcher {
-  cancel(options: VerifiedPaymentCancelOptions): Promise<void>;
+  cancel(options: VerifiedPaymentCancelOptions): Promise<SettleResponse | void>;
 }
 
 export type BeforeVerifyHook = (
@@ -254,13 +255,13 @@ export interface SettlementOverrides {
  *
  * @param rawAmount - The override amount string (e.g., `"1000"`, `"50%"`, `"$0.05"`)
  * @param requirements - The payment requirements containing the base amount
- * @param decimals - Decimal precision to use for dollar-format conversion (default 6)
+ * @param decimals - Decimal precision for dollar-format conversion. Required for `$…` amounts.
  * @returns The resolved amount as an atomic-unit string
  */
 export function resolveSettlementOverrideAmount(
   rawAmount: string,
   requirements: PaymentRequirements,
-  decimals: number = 6,
+  decimals?: number,
 ): string {
   // Percent format: "50%" or "33.33%"
   const percentMatch = rawAmount.match(/^(\d+(?:\.\d{0,2})?)%$/);
@@ -274,8 +275,13 @@ export function resolveSettlementOverrideAmount(
   // Dollar price format: "$0.05"
   const dollarMatch = rawAmount.match(/^\$(\d+(?:\.\d+)?)$/);
   if (dollarMatch) {
-    const dollars = parseFloat(dollarMatch[1]);
-    return Math.round(dollars * 10 ** decimals).toString();
+    if (decimals === undefined) {
+      throw new Error(
+        `Cannot convert dollar settlement override "${rawAmount}" to atomic units: ` +
+          `asset decimals are unknown. Pass an atomic amount or register the asset.`,
+      );
+    }
+    return convertToTokenAmount(dollarMatch[1], decimals);
   }
 
   // Raw atomic units (existing behavior)
@@ -412,10 +418,10 @@ export class x402ResourceServer {
   }
 
   /**
-   * Returns the decimal precision for the asset specified in the given payment requirements.
-   * Looks up the registered scheme for the network and delegates to its getAssetDecimals
-   * method if available. Falls back to 6 (standard for USDC stablecoins) when the scheme
-   * does not implement getAssetDecimals or is not registered.
+   * Returns the decimal precision for display of the asset in the given payment
+   * requirements. Looks up the registered scheme and delegates to getAssetDecimals
+   * when available. Falls back to 6 for display-only callers. Settlement `$…`
+   * overrides must not use this fallback — they throw when decimals are unknown.
    *
    * @param requirements - The payment requirements containing scheme, network, and asset
    * @returns The number of decimal places for the asset
@@ -1145,7 +1151,7 @@ export class x402ResourceServer {
   ): PaymentCancellationDispatcher {
     const resolvedDeclaredExtensions = declaredExtensions ?? {};
     const resolvedSettledPhases = settledPhases;
-    let cancelPromise: Promise<void> | undefined;
+    let cancelPromise: Promise<SettleResponse | void> | undefined;
 
     return {
       cancel: (options: VerifiedPaymentCancelOptions) => {
@@ -1189,13 +1195,20 @@ export class x402ResourceServer {
     // Apply settlement overrides (e.g., partial settlement for upto scheme)
     let effectiveRequirements = requirements;
     if (settlementOverrides?.amount !== undefined) {
-      const scheme = findByNetworkAndScheme(
-        this.registeredServerSchemes,
-        requirements.scheme,
-        requirements.network as Network,
-      );
-      const decimals =
-        scheme?.getAssetDecimals?.(requirements.asset ?? "", requirements.network as Network) ?? 6;
+      // Only `$…` overrides need asset decimals. Atomic and percent formats must
+      // not force a decimals lookup (unknown custom mints would otherwise fail).
+      let decimals: number | undefined;
+      if (/^\$\d+(?:\.\d+)?$/.test(settlementOverrides.amount)) {
+        const scheme = findByNetworkAndScheme(
+          this.registeredServerSchemes,
+          requirements.scheme,
+          requirements.network as Network,
+        );
+        decimals = scheme?.getAssetDecimals?.(
+          requirements.asset ?? "",
+          requirements.network as Network,
+        );
+      }
       effectiveRequirements = {
         ...requirements,
         amount: resolveSettlementOverrideAmount(settlementOverrides.amount, requirements, decimals),
@@ -1449,12 +1462,30 @@ export class x402ResourceServer {
   ): PaymentRequirements | undefined {
     switch (paymentPayload.x402Version) {
       case 2:
+        if (!paymentPayload.accepted) {
+          return undefined;
+        }
+
         // For v2, all server-declared requirements must match.
         // The client may include additive scheme-specific metadata under `accepted.extra`.
-        return availableRequirements.find(paymentRequirements =>
-          paymentRequirementsMatchAccepted(paymentRequirements, paymentPayload.accepted),
-        );
+        // Scheme-declared dynamicExtraFields are omitted from the extra comparison
+        return availableRequirements.find(paymentRequirements => {
+          const scheme = findByNetworkAndScheme(
+            this.registeredServerSchemes,
+            paymentRequirements.scheme,
+            paymentRequirements.network,
+          );
+          return paymentRequirementsMatchAccepted(
+            paymentRequirements,
+            paymentPayload.accepted,
+            scheme?.dynamicExtraFields,
+          );
+        });
       case 1:
+        if (!paymentPayload.accepted) {
+          return undefined;
+        }
+
         // For v1, match by scheme and network
         return availableRequirements.find(
           req =>
@@ -1643,6 +1674,9 @@ export class x402ResourceServer {
 
   /**
    * Notify hooks that verified work ended before settlement.
+   * After cleanup hooks, asks the matched scheme for {@link SchemeNetworkServer.settleOnCancel}
+   * requirements and settles once when provided. Settlement errors are warned, not thrown,
+   * so transports can preserve the original application failure.
    *
    * @param paymentPayload - Signed payment payload from the client
    * @param requirements - Requirements matched to the payload
@@ -1650,6 +1684,7 @@ export class x402ResourceServer {
    * @param options - Cancellation reason and optional diagnostics
    * @param fallbackTransportContext - Optional transport-specific context
    * @param settledPhases - Settle phases that already completed for this payment
+   * @returns Cancel settle response when the scheme provides settleOnCancel requirements, otherwise undefined
    */
   private async dispatchVerifiedPaymentCanceled(
     paymentPayload: DeepReadonly<PaymentPayload>,
@@ -1658,7 +1693,7 @@ export class x402ResourceServer {
     options: VerifiedPaymentCancelOptions,
     fallbackTransportContext?: unknown,
     settledPhases: readonly SettlePhase[] = [],
-  ): Promise<void> {
+  ): Promise<SettleResponse | void> {
     const extensionKeysInUse = Object.keys(declaredExtensions);
     const matchedScheme = {
       network: requirements.network as Network,
@@ -1686,6 +1721,42 @@ export class x402ResourceServer {
       } catch (error) {
         this.warnResourceServerHookFailure("onVerifiedPaymentCanceled", label, error);
       }
+    }
+
+    const scheme = findByNetworkAndScheme(
+      this.registeredServerSchemes,
+      matchedScheme.scheme,
+      matchedScheme.network,
+    );
+    if (!scheme?.settleOnCancel || !settledPhases.includes("before-handler")) {
+      return;
+    }
+
+    const label = `scheme "${matchedScheme.scheme}" settleOnCancel`;
+    try {
+      const cancelRequirements = await scheme.settleOnCancel(context);
+      if (!cancelRequirements) {
+        return;
+      }
+      return await this.settlePayment(
+        paymentPayload as PaymentPayload,
+        cancelRequirements,
+        declaredExtensions as Record<string, unknown>,
+        fallbackTransportContext,
+        undefined,
+        "cancel",
+      );
+    } catch (error) {
+      this.warnResourceServerHookFailure("settleOnCancel", label, error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        success: false,
+        errorReason:
+          error instanceof SettleError ? (error.errorReason ?? errorMessage) : errorMessage,
+        errorMessage: error instanceof SettleError ? error.errorMessage : undefined,
+        transaction: "",
+        network: requirements.network as Network,
+      };
     }
   }
 
@@ -1784,9 +1855,9 @@ function getExtensionInfo(value: unknown): unknown {
 }
 
 /**
- * Returns a copy of an extension info object without the named dynamic fields.
+ * Returns a copy of an object without the named dynamic fields.
  *
- * @param value - Extension info payload to filter.
+ * @param value - Object to filter (extension info or payment-requirements extra).
  * @param fields - Field names regenerated per response that must not be compared.
  * @returns The value unchanged when no fields apply; otherwise a copy without them.
  */
@@ -1830,14 +1901,17 @@ function extensionInfoMatchesAdvertised(
  *
  * Core payment terms and all server-declared `extra` fields must match exactly,
  * but clients may include additive scheme-specific metadata under `accepted.extra`.
+ * Fields listed in `dynamicExtraFields` are excluded from the extra comparison.
  *
  * @param required - Server-advertised payment requirement.
  * @param accepted - Client-selected payment requirement from the payment payload.
+ * @param dynamicExtraFields - Scheme-declared `extra` keys regenerated per PaymentRequired.
  * @returns True when `accepted` preserves every server-declared requirement.
  */
 function paymentRequirementsMatchAccepted(
   required: PaymentRequirements,
   accepted: PaymentRequirements,
+  dynamicExtraFields?: string[],
 ): boolean {
   const { extra: requiredExtra, ...requiredCore } = required;
   const { extra: acceptedExtra, ...acceptedCore } = accepted;
@@ -1850,7 +1924,10 @@ function paymentRequirementsMatchAccepted(
     return true;
   }
 
-  return objectContainsSubset(requiredExtra, acceptedExtra);
+  return objectContainsSubset(
+    omitFields(requiredExtra, dynamicExtraFields),
+    omitFields(acceptedExtra, dynamicExtraFields),
+  );
 }
 
 /**

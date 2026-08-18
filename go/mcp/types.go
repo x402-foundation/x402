@@ -54,7 +54,7 @@ type AfterPaymentContext struct {
 	SettleResponse *x402.SettleResponse
 }
 
-// Options configures x402MCPClient behavior
+// Options configures x402MCPClient behavior.
 type Options struct {
 	// AutoPayment enables automatic payment handling when a tool requires payment.
 	// Defaults to true. When nil, defaults to true. Set to BoolPtr(false) to disable.

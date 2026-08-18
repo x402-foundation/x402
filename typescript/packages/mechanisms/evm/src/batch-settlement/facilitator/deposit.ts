@@ -7,13 +7,19 @@ import {
 } from "@x402/core/types";
 import { getAddress, parseErc6492Signature, isAddressEqual } from "viem";
 import { FacilitatorEvmSigner } from "../../signer";
-import type { TransactionRequest } from "../../exact/extensions";
+import type { Erc20ApprovalGasSponsoringSigner } from "../../exact/extensions";
 import { BatchSettlementAssetTransferMethod, BatchSettlementDepositPayload } from "../types";
 import { batchSettlementABI, erc20BalanceOfABI } from "../abi";
-import { BATCH_SETTLEMENT_ADDRESS } from "../constants";
-import { getEvmChainId } from "../../utils";
+import {
+  BATCH_SETTLEMENT_ADDRESS,
+  CHANNEL_STATE_POLL_MS,
+  CHANNEL_STATE_POLL_INTERVAL_MS,
+} from "../constants";
+import { finalHashFromTwoRequestSend, getEvmChainId, truncateErrorMessage } from "../../utils";
 import { multicall } from "../../multicall";
 import * as Errors from "../errors";
+import { ErrSettlementPending } from "../../exact/facilitator/errors";
+import { waitAndReturnSettleResponse } from "../../shared/settleReceipt";
 import {
   readChannelState,
   toContractChannelConfig,
@@ -391,87 +397,129 @@ export async function settleDeposit(
 
     const depositTx = buildDepositTransaction(payload, execution.collectorData, dataSuffix);
 
-    const tx =
-      execution.kind === "erc20Approval"
-        ? (
-            await execution.extensionSigner.sendTransactions([
-              execution.signedTransaction,
-              depositTx,
-            ])
-          )[1]
-        : await signer.writeContract({
-            address: getAddress(BATCH_SETTLEMENT_ADDRESS),
-            abi: batchSettlementABI,
-            functionName: "deposit",
-            args: [
-              toContractChannelConfig(config),
-              BigInt(deposit.amount),
-              execution.collector,
-              execution.collectorData,
-            ],
-            dataSuffix,
-          });
-
-    const receipt = await signer.waitForTransactionReceipt({ hash: tx });
-
-    if (receipt.status !== "success") {
-      return {
-        success: false,
-        errorReason: Errors.ErrDepositTransactionFailed,
-        errorMessage: `transaction reverted (receipt status ${receipt.status})`,
-        transaction: tx,
-        network: requirements.network,
-        payer,
-      };
+    let tx: `0x${string}`;
+    let receiptSigner: FacilitatorEvmSigner;
+    // A single hash from the two-request (approve + deposit) send means the signer bundled
+    // them atomically, but a non-conforming signer could return one hash after broadcasting
+    // only the approve. Its receipt then proves some transaction didn't revert, not that the
+    // deposit ran, so success requires the balance check below.
+    let unconfirmedBundleHash = false;
+    if (execution.kind === "erc20Approval") {
+      const txHashes = await execution.extensionSigner.sendTransactions([
+        execution.signedTransaction,
+        depositTx,
+      ]);
+      const finalHash = finalHashFromTwoRequestSend(txHashes);
+      if (finalHash === undefined) {
+        throw new Error(
+          `expected 1 (atomic bundle) or 2 (sequential) tx hashes from extension signer, got ${txHashes.length}`,
+        );
+      }
+      tx = finalHash;
+      receiptSigner = execution.extensionSigner;
+      unconfirmedBundleHash = txHashes.length === 1;
+    } else {
+      tx = await signer.writeContract({
+        address: getAddress(BATCH_SETTLEMENT_ADDRESS),
+        abi: batchSettlementABI,
+        functionName: "deposit",
+        args: [
+          toContractChannelConfig(config),
+          BigInt(deposit.amount),
+          execution.collector,
+          execution.collectorData,
+        ],
+        dataSuffix,
+      });
+      receiptSigner = signer;
     }
 
-    const optimisticExtra = {
-      channelState: {
-        channelId: voucher.channelId,
-        balance: (
-          BigInt(String(verified.extra?.balance ?? "0")) + BigInt(deposit.amount)
-        ).toString(),
-        totalClaimed: String(verified.extra?.totalClaimed ?? "0"),
-        withdrawRequestedAt: Number(verified.extra?.withdrawRequestedAt ?? 0),
-        refundNonce: String(verified.extra?.refundNonce ?? "0"),
-      },
-    };
+    return await waitAndReturnSettleResponse(receiptSigner, tx, requirements.network, payer, {
+      failedStatusReason: Errors.ErrDepositTransactionFailed,
+      onSuccess: async () => {
+        const optimisticExtra = {
+          channelState: {
+            channelId: voucher.channelId,
+            balance: (
+              BigInt(String(verified.extra?.balance ?? "0")) + BigInt(deposit.amount)
+            ).toString(),
+            totalClaimed: String(verified.extra?.totalClaimed ?? "0"),
+            withdrawRequestedAt: Number(verified.extra?.withdrawRequestedAt ?? 0),
+            refundNonce: String(verified.extra?.refundNonce ?? "0"),
+          },
+        };
 
-    // Poll the RPC until it reflects the just-confirmed deposit, so subsequent verify reads are guaranteed to see this balance
-    const expectedMinBalance = BigInt(optimisticExtra.channelState.balance);
-    const rpcDeadline = Date.now() + 2_000;
-    let postState = await readChannelState(signer, voucher.channelId);
-    while (postState.balance < expectedMinBalance && Date.now() < rpcDeadline) {
-      await new Promise(resolve => setTimeout(resolve, 150));
-      postState = await readChannelState(signer, voucher.channelId);
-    }
+        // Poll until RPC reflects the confirmed deposit so later verify reads see this balance.
+        const expectedMinBalance = BigInt(optimisticExtra.channelState.balance);
+        const rpcDeadline = Date.now() + CHANNEL_STATE_POLL_MS;
+        let balanceConfirmed = false;
+        // Set only when a read succeeds and shows the deposit missing, as opposed to a read
+        // that failed outright and leaves the balance unknown.
+        let balanceReadWithoutConfirmation = false;
+        try {
+          let postState = await readChannelState(signer, voucher.channelId);
+          while (postState.balance < expectedMinBalance && Date.now() < rpcDeadline) {
+            await new Promise(resolve => setTimeout(resolve, CHANNEL_STATE_POLL_INTERVAL_MS));
+            postState = await readChannelState(signer, voucher.channelId);
+          }
 
-    const rpcCaughtUp = postState.balance >= expectedMinBalance;
-
-    return {
-      success: true,
-      transaction: tx,
-      network: requirements.network,
-      payer,
-      amount: deposit.amount,
-      extra: rpcCaughtUp
-        ? {
-            ...optimisticExtra,
-            channelState: {
+          if (postState.balance >= expectedMinBalance) {
+            balanceConfirmed = true;
+            optimisticExtra.channelState = {
               channelId: voucher.channelId,
               balance: postState.balance.toString(),
               totalClaimed: postState.totalClaimed.toString(),
               withdrawRequestedAt: postState.withdrawRequestedAt,
               refundNonce: postState.refundNonce.toString(),
-            },
+            };
+          } else {
+            balanceReadWithoutConfirmation = true;
           }
-        : optimisticExtra,
-    };
+        } catch {
+          // Keep optimistic channel state when post-deposit reads fail.
+        }
+
+        if (unconfirmedBundleHash && !balanceConfirmed) {
+          // A read showing the deposit missing is terminal; a failed read leaves it
+          // unconfirmed, so report settlement_pending for the caller to reconcile.
+          return balanceReadWithoutConfirmation
+            ? {
+                success: false,
+                errorReason: Errors.ErrDepositTransactionFailed,
+                errorMessage:
+                  "extension signer returned a single transaction hash for the erc20 approval + " +
+                  "deposit bundle, but the resulting channel balance does not reflect the deposit",
+                transaction: tx,
+                network: requirements.network,
+                payer,
+              }
+            : {
+                success: false,
+                errorReason: ErrSettlementPending,
+                errorMessage:
+                  "extension signer returned a single transaction hash for the erc20 approval + " +
+                  "deposit bundle and the post-deposit balance read failed, so the deposit could not be confirmed",
+                transaction: tx,
+                network: requirements.network,
+                payer,
+              };
+        }
+
+        return {
+          success: true,
+          transaction: tx,
+          network: requirements.network,
+          payer,
+          amount: deposit.amount,
+          extra: optimisticExtra,
+        };
+      },
+    });
   } catch (e) {
     return {
       success: false,
       errorReason: Errors.ErrDepositTransactionFailed,
-      errorMessage: e instanceof Error ? e.message : String(e),
+      errorMessage: truncateErrorMessage(e instanceof Error ? e.message : String(e)),
       transaction: "",
       network: requirements.network,
       payer,
@@ -491,9 +539,7 @@ type DepositExecution =
       collector: `0x${string}`;
       collectorData: `0x${string}`;
       signedTransaction: `0x${string}`;
-      extensionSigner: {
-        sendTransactions(transactions: TransactionRequest[]): Promise<`0x${string}`[]>;
-      };
+      extensionSigner: Erc20ApprovalGasSponsoringSigner;
       skipDirectSimulation: true;
     };
 

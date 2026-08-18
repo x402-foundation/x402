@@ -17,7 +17,7 @@ import (
 )
 
 func TestNewx402HTTPClient(t *testing.T) {
-	x402Client := x402.Newx402Client()
+	x402Client := x402.Newx402Client().DisableSpendControls()
 	client := Newx402HTTPClient(x402Client)
 	if client == nil {
 		t.Fatal("Expected client to be created")
@@ -52,8 +52,8 @@ func TestPaymentRoundTripper_OnPaymentRequiredHeaderRetry(t *testing.T) {
 		}
 		return stringResponse(http.StatusOK, nil, "ok")
 	})
-	client := Newx402HTTPClient(x402.Newx402Client()).
-		OnPaymentRequired(func(_ context.Context, paymentRequired types.PaymentRequired) (*PaymentRequiredHookResult, error) {
+	client := Newx402HTTPClient(x402.Newx402Client().DisableSpendControls()).
+		OnPaymentRequired(func(_ context.Context, paymentRequired types.PaymentRequired, _ string) (*PaymentRequiredHookResult, error) {
 			if paymentRequired.Extensions["sign-in-with-x"] == nil {
 				t.Fatal("paymentRequired missing SIWX extension")
 			}
@@ -97,8 +97,8 @@ func TestPaymentRoundTripper_OnPaymentRequiredHookSkippedWithoutHeaders(t *testi
 	}
 
 	calls := 0
-	client := Newx402HTTPClient(x402.Newx402Client()).
-		OnPaymentRequired(func(context.Context, types.PaymentRequired) (*PaymentRequiredHookResult, error) {
+	client := Newx402HTTPClient(x402.Newx402Client().DisableSpendControls()).
+		OnPaymentRequired(func(context.Context, types.PaymentRequired, string) (*PaymentRequiredHookResult, error) {
 			calls++
 			return nil, nil
 		})
@@ -128,6 +128,55 @@ func TestPaymentRoundTripper_OnPaymentRequiredHookSkippedWithoutHeaders(t *testi
 	}
 }
 
+func TestPaymentRoundTripper_OnPaymentRequiredPassesRequestURL(t *testing.T) {
+	required := types.PaymentRequired{
+		X402Version: 2,
+		Accepts: []types.PaymentRequirements{
+			{Scheme: "unsupported", Network: "eip155:1"},
+		},
+	}
+	encodedRequired, err := encodePaymentRequiredHeader(required)
+	if err != nil {
+		t.Fatalf("encodePaymentRequiredHeader() error = %v", err)
+	}
+
+	var receivedURL string
+	client := Newx402HTTPClient(x402.Newx402Client().DisableSpendControls()).
+		OnPaymentRequired(func(_ context.Context, _ types.PaymentRequired, requestURL string) (*PaymentRequiredHookResult, error) {
+			receivedURL = requestURL
+			return nil, nil
+		})
+	rt := &PaymentRoundTripper{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			resp, err := stringResponse(http.StatusPaymentRequired, map[string]string{
+				"PAYMENT-REQUIRED": encodedRequired,
+			}, "")
+			if err != nil {
+				return nil, err
+			}
+			resp.Request = req
+			return resp, nil
+		}),
+		x402Client: client,
+		retryCount: &sync.Map{},
+	}
+
+	req, err := http.NewRequest(http.MethodGet, "https://test.com/resource", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	resp, err := rt.RoundTrip(req)
+	if resp != nil && resp.Body != nil {
+		resp.Body.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "cannot fulfill V2 payment requirements") {
+		t.Fatalf("RoundTrip() error = %v, want payment fallback error", err)
+	}
+	if receivedURL != "https://test.com/resource" {
+		t.Fatalf("requestURL = %q, want %q", receivedURL, "https://test.com/resource")
+	}
+}
+
 func TestPaymentRoundTripper_RegisteredExtensionHookRetry(t *testing.T) {
 	required := types.PaymentRequired{
 		X402Version: 2,
@@ -153,10 +202,10 @@ func TestPaymentRoundTripper_RegisteredExtensionHookRetry(t *testing.T) {
 		}
 		return stringResponse(http.StatusOK, nil, "ok")
 	})
-	x402Client := x402.Newx402Client().
+	x402Client := x402.Newx402Client().DisableSpendControls().
 		RegisterExtension(testHTTPClientExtension{
 			key: "test-extension",
-			hook: func(_ context.Context, paymentRequired types.PaymentRequired) (*PaymentRequiredHookResult, error) {
+			hook: func(_ context.Context, paymentRequired types.PaymentRequired, _ string) (*PaymentRequiredHookResult, error) {
 				if paymentRequired.Extensions["test-extension"] == nil {
 					t.Fatal("paymentRequired missing test extension")
 				}
@@ -204,10 +253,10 @@ func TestPaymentRoundTripper_RegisteredExtensionHookSkippedWithoutDeclaration(t 
 	}
 
 	calls := 0
-	x402Client := x402.Newx402Client().
+	x402Client := x402.Newx402Client().DisableSpendControls().
 		RegisterExtension(testHTTPClientExtension{
 			key: "test-extension",
-			hook: func(context.Context, types.PaymentRequired) (*PaymentRequiredHookResult, error) {
+			hook: func(context.Context, types.PaymentRequired, string) (*PaymentRequiredHookResult, error) {
 				calls++
 				return &PaymentRequiredHookResult{Headers: map[string]string{"X-EXTENSION-AUTH": "signed"}}, nil
 			},
@@ -239,7 +288,7 @@ func TestPaymentRoundTripper_RegisteredExtensionHookSkippedWithoutDeclaration(t 
 }
 
 func TestEncodePaymentSignatureHeader(t *testing.T) {
-	client := Newx402HTTPClient(x402.Newx402Client())
+	client := Newx402HTTPClient(x402.Newx402Client().DisableSpendControls())
 
 	tests := []struct {
 		name     string
@@ -396,7 +445,7 @@ func stringResponse(status int, headers map[string]string, body string) (*http.R
 }
 
 func TestGetPaymentRequiredResponse(t *testing.T) {
-	client := Newx402HTTPClient(x402.Newx402Client())
+	client := Newx402HTTPClient(x402.Newx402Client().DisableSpendControls())
 
 	// Test v2 header format
 	requirements := x402.PaymentRequired{
@@ -466,7 +515,7 @@ func TestGetPaymentRequiredResponse(t *testing.T) {
 }
 
 func TestGetPaymentSettleResponse(t *testing.T) {
-	client := Newx402HTTPClient(x402.Newx402Client())
+	client := Newx402HTTPClient(x402.Newx402Client().DisableSpendControls())
 
 	settleResponse := x402.SettleResponse{
 		Success:     true,
@@ -610,7 +659,7 @@ func TestPaymentRoundTripper(t *testing.T) {
 	}
 
 	// Create x402 client
-	x402Client := x402.Newx402Client()
+	x402Client := x402.Newx402Client().DisableSpendControls()
 	x402Client.Register("test:1", mockClient)
 
 	// Create HTTP client wrapper
@@ -682,11 +731,11 @@ func TestPaymentRoundTripper_ReplaysOneShotBody(t *testing.T) {
 			}))
 			defer server.Close()
 
-			x402Client := x402.Newx402Client()
+			x402Client := x402.Newx402Client().DisableSpendControls()
 			x402Client.Register("test:1", &mockSchemeClient{scheme: "mock"})
 			client := Newx402HTTPClient(x402Client)
 			if tt.authRetry {
-				client.OnPaymentRequired(func(context.Context, types.PaymentRequired) (*PaymentRequiredHookResult, error) {
+				client.OnPaymentRequired(func(context.Context, types.PaymentRequired, string) (*PaymentRequiredHookResult, error) {
 					return &PaymentRequiredHookResult{Headers: map[string]string{"SIGN-IN-WITH-X": "signed"}}, nil
 				})
 			}
@@ -872,7 +921,7 @@ func TestPaymentRoundTripperNoRetryOn200(t *testing.T) {
 	}))
 	defer server.Close()
 
-	x402Client := Newx402HTTPClient(x402.Newx402Client())
+	x402Client := Newx402HTTPClient(x402.Newx402Client().DisableSpendControls())
 	httpClient := WrapHTTPClientWithPayment(http.DefaultClient, x402Client)
 
 	ctx := context.Background()
@@ -895,7 +944,7 @@ func TestDoWithPayment(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := Newx402HTTPClient(x402.Newx402Client())
+	client := Newx402HTTPClient(x402.Newx402Client().DisableSpendControls())
 	ctx := context.Background()
 	req, _ := http.NewRequestWithContext(ctx, "GET", server.URL, nil)
 
@@ -919,7 +968,7 @@ func TestGetWithPayment(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := Newx402HTTPClient(x402.Newx402Client())
+	client := Newx402HTTPClient(x402.Newx402Client().DisableSpendControls())
 	ctx := context.Background()
 
 	resp, err := client.GetWithPayment(ctx, server.URL)
@@ -942,7 +991,7 @@ func TestPostWithPayment(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := Newx402HTTPClient(x402.Newx402Client())
+	client := Newx402HTTPClient(x402.Newx402Client().DisableSpendControls())
 	ctx := context.Background()
 
 	resp, err := client.PostWithPayment(ctx, server.URL, strings.NewReader("test body"))
@@ -1028,7 +1077,7 @@ func paymentResponseHeader(t *testing.T, settle x402.SettleResponse) string {
 // code should not need to call ProcessSettleResponse manually.
 func TestPaymentRoundTripper_DispatchesOnPaymentResponseOnSuccess(t *testing.T) {
 	scheme := &hookSchemeClient{scheme: "test-scheme"}
-	x402Client := x402.Newx402Client()
+	x402Client := x402.Newx402Client().DisableSpendControls()
 	x402Client.Register("eip155:1", scheme)
 
 	accepts := []types.PaymentRequirements{{
@@ -1097,7 +1146,7 @@ func TestPaymentRoundTripper_PropagatesPaymentResponseHookErrors(t *testing.T) {
 				signalRecover: tt.corrective,
 				settleErr:     hookErr,
 			}
-			x402Client := x402.Newx402Client()
+			x402Client := x402.Newx402Client().DisableSpendControls()
 			x402Client.Register("eip155:1", scheme)
 
 			responseBody := &oneShotBody{reader: strings.NewReader("response")}
@@ -1158,7 +1207,7 @@ func TestPaymentRoundTripper_PropagatesPaymentResponseHookErrors(t *testing.T) {
 // transport rebuilds the payload and retries one more time.
 func TestPaymentRoundTripper_RetriesOnceWhenHookSignalsRecovered(t *testing.T) {
 	scheme := &hookSchemeClient{scheme: "test-scheme", signalRecover: true}
-	x402Client := x402.Newx402Client()
+	x402Client := x402.Newx402Client().DisableSpendControls()
 	x402Client.Register("eip155:1", scheme)
 
 	accepts := []types.PaymentRequirements{{
@@ -1239,7 +1288,7 @@ func TestPaymentRoundTripper_RetriesOnceWhenHookSignalsRecovered(t *testing.T) {
 // without recovery propagates as-is — no extra retries, no infinite loops.
 func TestPaymentRoundTripper_NoRecoveryWhenHookDeclines(t *testing.T) {
 	scheme := &hookSchemeClient{scheme: "test-scheme", signalRecover: false}
-	x402Client := x402.Newx402Client()
+	x402Client := x402.Newx402Client().DisableSpendControls()
 	x402Client.Register("eip155:1", scheme)
 
 	accepts := []types.PaymentRequirements{{
@@ -1288,7 +1337,7 @@ func TestWrapHTTPClientWithPayment_DoesNotMutateInput(t *testing.T) {
 	originalDefault := http.DefaultClient.Transport
 	defer func() { http.DefaultClient.Transport = originalDefault }()
 
-	x402Client := Newx402HTTPClient(x402.Newx402Client())
+	x402Client := Newx402HTTPClient(x402.Newx402Client().DisableSpendControls())
 
 	wrapped := WrapHTTPClientWithPayment(http.DefaultClient, x402Client)
 

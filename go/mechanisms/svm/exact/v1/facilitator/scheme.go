@@ -319,11 +319,13 @@ func (f *ExactSvmSchemeV1) Settle(
 	// Send transaction to network
 	signature, err := f.signer.SendTransaction(ctx, tx, string(requirements.Network))
 	if err != nil {
+		f.settlementCache.Delete(txKey)
 		return nil, x402.NewSettleError(ErrTransactionFailed, verifyResp.Payer, network, "", err.Error())
 	}
 
 	// Wait for confirmation
 	if err := f.signer.ConfirmTransaction(ctx, signature, string(requirements.Network)); err != nil {
+		f.settlementCache.Delete(txKey)
 		return nil, x402.NewSettleError(ErrTransactionConfirmationFailed, verifyResp.Payer, network, signature.String(), err.Error())
 	}
 

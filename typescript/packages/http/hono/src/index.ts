@@ -228,24 +228,25 @@ export function paymentMiddlewareFromHTTPServer(
         try {
           await next();
         } catch (error) {
-          await cancellationDispatcher.cancel({
+          const cancelSettlement = await cancellationDispatcher.cancel({
             reason: "handler_threw",
             error,
           });
-          // Echo before-handler receipt so the payer still gets the tx hash.
-          // Only reachable for non-Error throws; compose diverts Error/HTTPException to >= 400.
-          if (!beforeHandlerSettlement) {
+          if (!beforeHandlerSettlement && !cancelSettlement) {
             throw error;
           }
           const res = internalErrorResponse(c, error);
-          Object.entries(
-            httpServer.createCompletedSettlementHeaders(
-              beforeHandlerSettlement,
-              res.headers.get("Cache-Control"),
-            ),
-          ).forEach(([key, value]) => {
-            res.headers.set(key, value);
-          });
+          const failureHeaders = httpServer.createFailurePathSettlementHeaders(
+            cancelSettlement,
+            beforeHandlerSettlement,
+            paymentPayload,
+            res.headers.get("Cache-Control"),
+          );
+          if (failureHeaders) {
+            Object.entries(failureHeaders).forEach(([key, value]) => {
+              res.headers.set(key, value);
+            });
+          }
           c.res = res;
           return;
         }
@@ -255,19 +256,19 @@ export function paymentMiddlewareFromHTTPServer(
 
         // If the response from the protected route is >= 400, do not settle payment
         if (res.status >= 400) {
-          await cancellationDispatcher.cancel({
+          const cancelSettlement = await cancellationDispatcher.cancel({
             reason: "handler_failed",
             responseStatus: res.status,
           });
           res.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
-          // Echo before-handler receipt (e.g. upfront) so the payer still gets the tx hash
-          if (beforeHandlerSettlement) {
-            Object.entries(
-              httpServer.createCompletedSettlementHeaders(
-                beforeHandlerSettlement,
-                res.headers.get("Cache-Control"),
-              ),
-            ).forEach(([key, value]) => {
+          const failureHeaders = httpServer.createFailurePathSettlementHeaders(
+            cancelSettlement,
+            beforeHandlerSettlement,
+            paymentPayload,
+            res.headers.get("Cache-Control"),
+          );
+          if (failureHeaders) {
+            Object.entries(failureHeaders).forEach(([key, value]) => {
               res.headers.set(key, value);
             });
           }

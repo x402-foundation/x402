@@ -1,7 +1,7 @@
 import { createPublicClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { base, baseSepolia } from "viem/chains";
-import { ExactEvmScheme, type ExactEvmSchemeOptions } from "@x402/evm/exact/client";
+import { ExactEvmScheme } from "@x402/evm/exact/client";
 import {
   UptoEvmScheme as UptoEvmClientScheme,
   type UptoEvmSchemeOptions,
@@ -10,6 +10,7 @@ import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/client";
 import { ExactEvmSchemeV1 } from "@x402/evm/v1";
 import { toClientEvmSigner } from "@x402/evm";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
+import { UptoSvmScheme } from "@x402/svm/upto/client";
 import { ExactSvmSchemeV1 } from "@x402/svm/v1";
 import { ExactAptosScheme } from "@x402/aptos/exact/client";
 import { Account, Ed25519PrivateKey, PrivateKey, PrivateKeyVariants } from "@aptos-labs/ts-sdk";
@@ -102,7 +103,7 @@ export async function createE2EClient(): Promise<E2EClientContext> {
 
   const evmSigner = toClientEvmSigner(evmAccount, publicClient);
 
-  const evmSchemeOptions: ExactEvmSchemeOptions | undefined = process.env.EVM_RPC_URL
+  const evmSchemeOptions = process.env.EVM_RPC_URL
     ? { rpcUrl: process.env.EVM_RPC_URL }
     : undefined;
 
@@ -203,6 +204,10 @@ export async function createE2EClient(): Promise<E2EClientContext> {
       client: new ExactSvmScheme(svmSigner, svmSchemeOptions),
     },
     {
+      network: networkCaip2Pattern("svm"),
+      client: new UptoSvmScheme(svmSigner, svmSchemeOptions),
+    },
+    {
       network: "solana-devnet",
       client: new ExactSvmSchemeV1(svmSigner, svmSchemeOptions),
       x402Version: 1,
@@ -280,7 +285,12 @@ export async function createE2EClient(): Promise<E2EClientContext> {
     });
   }
 
-  const client = x402Client.fromConfig({ schemes });
+  // E2e exercises custom assets and amounts above the default $1 USD cap.
+  const client = x402Client.fromConfig({
+    schemes,
+    spendControls: false,
+  });
+
   const batchSettlementPhase = process.env.EVM_BATCH_SETTLEMENT_PHASE as BatchSettlementPhase | undefined;
 
   return { url, client, schemes, batchSettlementScheme, batchSettlementPhase };

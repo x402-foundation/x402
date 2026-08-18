@@ -1,16 +1,13 @@
 import { TestScenario, endpointPaymentScheme } from '../types';
 
-/** x402 payment scheme for filtering (non-EVM counts as exact). */
+/** x402 payment scheme for filtering. */
 export type PaymentSchemeKind = 'exact' | 'upto' | 'batch-settlement';
 
 /**
- * Classify a scenario's payment scheme for filtering (`endpoint.scheme`, default `exact` on EVM).
+ * Classify a scenario's payment scheme for filtering (`endpoint.scheme`, default `exact`).
  */
 export function getScenarioPaymentScheme(scenario: TestScenario): PaymentSchemeKind {
-  if (scenario.protocolFamily !== 'evm') {
-    return 'exact';
-  }
-  return endpointPaymentScheme(scenario.endpoint) ?? 'exact';
+  return endpointPaymentScheme(scenario.endpoint);
 }
 
 export function getUniquePaymentSchemes(scenarios: TestScenario[]): PaymentSchemeKind[] {

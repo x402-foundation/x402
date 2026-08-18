@@ -8,7 +8,7 @@ This directory contains TypeScript client examples demonstrating how to make HTT
 | --- | --- |
 | [`fetch/`](./fetch/) | Using `@x402/fetch` with the native Fetch API |
 | [`axios/`](./axios/) | Using `@x402/axios` with Axios |
-| [`advanced/`](./advanced/) | Advanced patterns: lifecycle hooks, network preferences |
+| [`advanced/`](./advanced/) | Advanced patterns: lifecycle hooks, network preferences, spend controls |
 | [`custom/`](./custom/) | Manual implementation without `@x402/fetch` or `@x402/axios` |
 | [`auth-capture/`](./auth-capture/) | Pays an auth-capture endpoint by signing an ERC-3009 `ReceiveWithAuthorization` |
 | [`batch-settlement/`](./batch-settlement/) | Pays a sequence of requests over one payment channel using cumulative vouchers |
@@ -37,6 +37,7 @@ The **advanced** directory demonstrates advanced features supported by our clien
 
 - **Lifecycle Hooks** — Run custom logic before/after payment creation
 - **Network Preferences** — Configure preferred payment networks with fallbacks
+- **Spend Controls** — Default `$1` USD cap, `allowedAssets`, and per-asset atomic caps
 
 These patterns are useful for production applications that need observability, custom validation, or user preference handling.
 

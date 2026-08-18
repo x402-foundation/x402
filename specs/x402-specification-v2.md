@@ -246,7 +246,7 @@ The `SettleResponse` schema contains the following fields:
 | `success`     | `boolean` | Required | Indicates whether the payment settlement was successful               |
 | `errorReason` | `string`  | Optional | Error reason if settlement failed (omitted if successful)             |
 | `payer`       | `string`  | Optional | Address of the payer's wallet                                         |
-| `transaction` | `string`  | Required | Blockchain transaction hash (empty string if settlement failed)       |
+| `transaction` | `string`  | Required | Blockchain transaction hash (empty string if no transaction was broadcast; MUST be non-empty when `errorReason` is `settlement_pending` — see [§9 Error Handling](#9-error-handling)) |
 | `network`     | `string`  | Required | Blockchain network identifier in CAIP-2 format                        |
 | `amount`      | `string`  | Optional | The actual amount settled in atomic units (omitted if not applicable) |
 | `extensions`  | `object`  | Optional | Protocol extensions data                                              |
@@ -593,6 +593,7 @@ The x402 protocol defines standard error codes that may be returned by facilitat
 - **`invalid_transaction_state`**: Blockchain transaction failed or was rejected
 - **`unexpected_verify_error`**: Unexpected error occurred during payment verification
 - **`unexpected_settle_error`**: Unexpected error occurred during payment settlement
+- **`settlement_pending`**: The settlement transaction was broadcast but its confirmation could not be established (e.g. a node/RPC error or timeout while waiting for the receipt). Facilitators MAY return this **non-terminal** code — the transaction may still confirm on chain. A `SettleResponse` with this `errorReason` MUST carry a non-empty `transaction` (the broadcast hash) and `network` so the caller can reconcile on chain before deciding whether to retry.
 
 **10. Security Considerations**
 

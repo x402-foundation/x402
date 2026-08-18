@@ -56,6 +56,10 @@ func GetNetworkConfig(network string) (*NetworkConfig, error) {
 
 // GetAssetInfo returns information about an asset on a network
 func GetAssetInfo(network string, assetSymbolOrAddress string) (*AssetInfo, error) {
+	if found := FindDefaultAsset(assetSymbolOrAddress, network); found != nil {
+		return defaultAssetToAssetInfo(found), nil
+	}
+
 	config, err := GetNetworkConfig(network)
 	if err != nil {
 		return nil, err
@@ -63,11 +67,6 @@ func GetAssetInfo(network string, assetSymbolOrAddress string) (*AssetInfo, erro
 
 	// Check if it's a valid Solana address (mint address)
 	if ValidateSolanaAddress(assetSymbolOrAddress) {
-		// Check if it matches the default asset
-		if assetSymbolOrAddress == config.DefaultAsset.Address {
-			return &config.DefaultAsset, nil
-		}
-
 		// Unknown token - return basic info with default decimals
 		return &AssetInfo{
 			Address:  assetSymbolOrAddress,
@@ -78,6 +77,99 @@ func GetAssetInfo(network string, assetSymbolOrAddress string) (*AssetInfo, erro
 
 	// Default to the network's default asset
 	return &config.DefaultAsset, nil
+}
+
+// stablecoinNetworkKey maps a network identifier to its mint lookup key.
+func stablecoinNetworkKey(network string) (string, error) {
+	caip2Network, err := NormalizeNetwork(network)
+	if err != nil {
+		return "", err
+	}
+
+	switch caip2Network {
+	case SolanaMainnetCAIP2:
+		return networkKeyMainnet, nil
+	case SolanaDevnetCAIP2:
+		return networkKeyDevnet, nil
+	case SolanaTestnetCAIP2:
+		return networkKeyTestnet, nil
+	default:
+		return "", fmt.Errorf("unsupported network: %s", network)
+	}
+}
+
+// GetStablecoinAddress returns the mint for a supported stablecoin on a network.
+// Stablecoins without a devnet/testnet mint fall back to their mainnet mint.
+func GetStablecoinAddress(symbol string, network string) (string, error) {
+	key, err := stablecoinNetworkKey(network)
+	if err != nil {
+		return "", err
+	}
+
+	mints, ok := StablecoinMints[strings.ToUpper(symbol)]
+	if !ok {
+		return "", fmt.Errorf("unsupported stablecoin: %s", symbol)
+	}
+	if address, ok := mints[key]; ok {
+		return address, nil
+	}
+	if address, ok := mints[networkKeyMainnet]; ok {
+		return address, nil
+	}
+	return "", fmt.Errorf("no %s address configured for network: %s", symbol, network)
+}
+
+// ResolveStablecoinMint resolves a stablecoin symbol to a mint address. SOL
+// returns false, and unrecognized values are returned unchanged.
+func ResolveStablecoinMint(currency string, network string) (string, bool) {
+	normalized := strings.ToUpper(currency)
+	if normalized == "SOL" {
+		return "", false
+	}
+	if _, ok := StablecoinMints[normalized]; ok {
+		address, err := GetStablecoinAddress(normalized, network)
+		if err != nil {
+			return currency, true
+		}
+		return address, true
+	}
+	return currency, true
+}
+
+// GetStablecoinSymbol returns the supported stablecoin symbol for a symbol or a
+// known mint address.
+func GetStablecoinSymbol(currency string) (string, bool) {
+	normalized := strings.ToUpper(currency)
+	if _, ok := StablecoinMints[normalized]; ok {
+		return normalized, true
+	}
+
+	for symbol, mints := range StablecoinMints {
+		for _, mint := range mints {
+			if mint == currency {
+				return symbol, true
+			}
+		}
+	}
+	return "", false
+}
+
+// GetStablecoinTokenProgram returns the token program owning a supported
+// stablecoin's mint. Unrecognized values default to SPL Token, whose mints
+// cannot be told apart from unknown ones without an RPC round-trip.
+func GetStablecoinTokenProgram(currency string, network string) string {
+	resolved, ok := ResolveStablecoinMint(currency, network)
+	if !ok {
+		resolved = currency
+	}
+	symbol, ok := GetStablecoinSymbol(resolved)
+	if !ok {
+		return TokenProgramAddress
+	}
+	if program, ok := StablecoinTokenPrograms[symbol]; ok {
+		return program
+	}
+	return TokenProgramAddress
 }
 
 // ValidateSolanaAddress checks if a string is a valid Solana address

@@ -316,8 +316,10 @@ func SettleUptoPermit2(
 			})
 			if sendErr != nil {
 				err = sendErr
-			} else if len(txHashes) > 0 {
-				txHash = txHashes[len(txHashes)-1]
+			} else if finalHash, hashOk := evm.FinalHashFromTwoRequestSend(txHashes); !hashOk || !evm.IsValidTxHash(finalHash) {
+				err = fmt.Errorf("%s: extension signer returned no valid settlement transaction hash", ErrErc20ApprovalTxFailed)
+			} else {
+				txHash = finalHash
 			}
 		} else {
 			txHash, err = signer.WriteContract(
@@ -362,13 +364,9 @@ func SettleUptoPermit2(
 			}
 		}
 	}
-	receipt, err := receiptWaitSigner.WaitForTransactionReceipt(ctx, txHash)
-	if err != nil {
-		return nil, x402.NewSettleError(ErrUptoFailedToGetReceipt, payer, network, txHash, err.Error())
-	}
-
-	if receipt.Status != evm.TxStatusSuccess {
-		return nil, x402.NewSettleError(ErrUptoTransactionFailed, payer, network, txHash, "")
+	if _, err := evm.WaitForSettleReceipt(ctx, receiptWaitSigner, txHash, payer, network,
+		ErrUptoTransactionFailed, ErrUptoTransactionFailed); err != nil {
+		return nil, err
 	}
 
 	return &x402.SettleResponse{

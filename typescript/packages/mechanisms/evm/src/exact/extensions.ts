@@ -37,6 +37,9 @@ export type TransactionRequest =
   | { to: `0x${string}`; data: `0x${string}`; gas?: bigint };
 
 export type Erc20ApprovalGasSponsoringSigner = FacilitatorEvmSigner & {
+  /**
+   * Returns one hash per request for sequential execution, or one hash for an atomic bundle.
+   */
   sendTransactions(transactions: TransactionRequest[]): Promise<`0x${string}`[]>;
   simulateTransactions?(transactions: TransactionRequest[]): Promise<boolean>;
 };

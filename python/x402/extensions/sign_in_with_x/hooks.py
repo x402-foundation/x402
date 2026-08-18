@@ -10,7 +10,11 @@ from urllib.parse import urlparse
 
 from x402.http.types import HTTPRequestContext, PaymentOption, RouteConfig
 from x402.schemas.extensions import ClientExtension
-from x402.schemas.hooks import GrantAccessResult, PaymentRequiredHeadersResult
+from x402.schemas.hooks import (
+    GrantAccessResult,
+    PaymentRequiredContext,
+    PaymentRequiredHeadersResult,
+)
 
 from .client import create_siwx_payload
 from .encode import encode_siwx_header
@@ -199,7 +203,7 @@ def create_siwx_client_hook(signer: Any):
     signer_is_solana = is_solana_signer(signer)
     expected_signature_type: SignatureType = "ed25519" if signer_is_solana else "eip191"
 
-    async def hook(context: Any) -> PaymentRequiredHeadersResult | None:
+    async def hook(context: PaymentRequiredContext) -> PaymentRequiredHeadersResult | None:
         extensions = context.payment_required.extensions or {}
         siwx_extension = extensions.get(SIGN_IN_WITH_X)
         if not siwx_extension:
@@ -229,7 +233,7 @@ def create_siwx_client_hook(signer: Any):
             chain_id = matching["chainId"] if isinstance(matching, dict) else matching.chain_id
             sig_type = matching["type"] if isinstance(matching, dict) else matching.type
             complete_info = {**info, "chainId": chain_id, "type": sig_type}
-            payload = await create_siwx_payload(complete_info, signer)
+            payload = await create_siwx_payload(complete_info, signer, context.request_url)
             header = encode_siwx_header(payload)
             return PaymentRequiredHeadersResult(headers={SIGN_IN_WITH_X: header})
         except Exception:

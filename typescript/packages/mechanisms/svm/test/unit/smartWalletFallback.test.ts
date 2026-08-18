@@ -16,8 +16,8 @@ import {
   LIGHTHOUSE_PROGRAM_ADDRESS,
   MEMO_PROGRAM_ADDRESS,
   SOLANA_DEVNET_CAIP2,
-  USDC_DEVNET_ADDRESS,
 } from "../../src/constants";
+import { USDC_DEVNET_ADDRESS } from "../../src/defaultAssets";
 
 const COMPUTE_BUDGET_PROGRAM = "ComputeBudget111111111111111111111111111111" as Address;
 const SWIG_PROGRAM = "swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB" as Address;
@@ -128,10 +128,11 @@ async function buildStaticTransferPayload(args: {
   destination: Address;
   authority: Address;
   amount: bigint;
+  discriminator?: number;
   trailing?: IInstruction[];
 }) {
   const data = new Uint8Array(10);
-  data[0] = 12; // TransferChecked discriminator
+  data[0] = args.discriminator ?? 12;
   new DataView(data.buffer).setBigUint64(1, args.amount, true);
   data[9] = 6; // decimals
 
@@ -205,6 +206,7 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
 
     const mockSigner = {
       getAddresses: vi.fn().mockReturnValue([feePayer.address]),
+      getSigner: vi.fn().mockReturnValue(feePayer),
       signTransaction: vi.fn().mockResolvedValue(txBase64),
       simulateTransaction: vi.fn().mockResolvedValue(undefined),
       sendTransaction: vi.fn(),
@@ -280,6 +282,7 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
 
     const mockSigner = {
       getAddresses: vi.fn().mockReturnValue([feePayer.address]),
+      getSigner: vi.fn().mockReturnValue(feePayer),
       signTransaction: vi.fn().mockResolvedValue(txBase64),
       simulateTransaction: vi.fn().mockResolvedValue(undefined),
       sendTransaction: vi.fn(),
@@ -359,6 +362,7 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
 
     const mockSigner = {
       getAddresses: vi.fn().mockReturnValue([feePayer.address]),
+      getSigner: vi.fn().mockReturnValue(feePayer),
       signTransaction: vi.fn().mockResolvedValue(txBase64),
       simulateTransaction: vi.fn().mockResolvedValue(undefined),
       sendTransaction: vi.fn(),
@@ -447,6 +451,7 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
 
     const mockSigner = {
       getAddresses: vi.fn().mockReturnValue([feePayer.address]),
+      getSigner: vi.fn().mockReturnValue(feePayer),
       signTransaction: vi.fn().mockResolvedValue(txBase64),
       simulateTransaction: vi.fn().mockResolvedValue(undefined),
       sendTransaction: vi.fn(),
@@ -525,6 +530,7 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
 
     const mockSigner = {
       getAddresses: vi.fn().mockReturnValue([feePayer.address]),
+      getSigner: vi.fn().mockReturnValue(feePayer),
       signTransaction: vi.fn().mockResolvedValue(txBase64),
       simulateTransaction: vi.fn().mockResolvedValue(undefined),
       sendTransaction: vi.fn(),
@@ -591,6 +597,7 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
 
     const mockSigner = {
       getAddresses: vi.fn().mockReturnValue([feePayer.address]),
+      getSigner: vi.fn().mockReturnValue(feePayer),
       signTransaction: vi.fn().mockResolvedValue(txBase64),
       simulateTransaction: vi.fn().mockResolvedValue(undefined),
       sendTransaction: vi.fn(),
@@ -669,6 +676,7 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
 
     const mockSigner = {
       getAddresses: vi.fn().mockReturnValue([feePayer.address]),
+      getSigner: vi.fn().mockReturnValue(feePayer),
       signTransaction: vi.fn().mockResolvedValue(txBase64),
       simulateTransaction: vi.fn().mockResolvedValue(undefined),
       sendTransaction: vi.fn(),
@@ -747,6 +755,7 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
 
     const mockSigner = {
       getAddresses: vi.fn().mockReturnValue([feePayer.address]),
+      getSigner: vi.fn().mockReturnValue(feePayer),
       signTransaction: vi.fn().mockResolvedValue(txBase64),
       simulateTransaction: vi.fn().mockResolvedValue(undefined),
       sendTransaction: vi.fn(),
@@ -825,6 +834,7 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
 
     const mockSigner = {
       getAddresses: vi.fn().mockReturnValue([feePayer.address]),
+      getSigner: vi.fn().mockReturnValue(feePayer),
       signTransaction: vi.fn().mockResolvedValue(txBase64),
       simulateTransaction: vi.fn().mockResolvedValue(undefined),
       sendTransaction: vi.fn(),
@@ -883,6 +893,67 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
     expect(result.invalidReason).toBe("invalid_exact_svm_payload_memo_count");
   });
 
+  it("verify rejects ApproveChecked (discriminator 13) as a TransferChecked lookalike", async () => {
+    const { ExactSvmScheme } = await import("../../src/exact/facilitator/scheme");
+
+    const feePayer = await generateKeyPairSigner();
+    const payTo = await generateKeyPairSigner();
+    const payer = await generateKeyPairSigner();
+    const source = await generateKeyPairSigner();
+
+    const expectedAta = payTo.address;
+    mockAtaMap[payTo.address] = expectedAta;
+
+    const txBase64 = await buildStaticTransferPayload({
+      feePayer: feePayer.address,
+      source: source.address,
+      mint: USDC_DEVNET_ADDRESS as Address,
+      destination: expectedAta,
+      authority: payer.address,
+      amount: 100000n,
+      discriminator: 13, // ApproveChecked
+    });
+
+    const mockSigner = {
+      getAddresses: vi.fn().mockReturnValue([feePayer.address]),
+      signTransaction: vi.fn().mockResolvedValue(txBase64),
+      simulateTransaction: vi.fn().mockResolvedValue(undefined),
+      sendTransaction: vi.fn(),
+      confirmTransaction: vi.fn(),
+      getConfirmedTransactionInnerInstructions: vi.fn().mockResolvedValue(null),
+      getTokenAccountBalance: vi.fn().mockResolvedValue(null),
+      fetchAddressLookupTables: vi.fn().mockResolvedValue({}),
+      simulateTransactionWithInnerInstructions: vi
+        .fn()
+        .mockResolvedValue({ innerInstructions: [] }),
+    };
+
+    const scheme = new ExactSvmScheme(mockSigner as never);
+
+    const accepted = {
+      scheme: "exact",
+      network: SOLANA_DEVNET_CAIP2,
+      asset: USDC_DEVNET_ADDRESS,
+      amount: "100000",
+      payTo: payTo.address,
+      maxTimeoutSeconds: 3600,
+      extra: { feePayer: feePayer.address },
+    };
+
+    const result = await scheme.verify(
+      {
+        x402Version: 2,
+        resource: { url: "http://test.com", description: "test", mimeType: "application/json" },
+        accepted,
+        payload: { transaction: txBase64 },
+      } as never,
+      accepted as never,
+    );
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe("invalid_exact_svm_payload_no_transfer_instruction");
+  });
+
   it("verify does NOT fall through to Path 2 on a semantic (amount mismatch) failure", async () => {
     const { ExactSvmScheme } = await import("../../src/exact/facilitator/scheme");
 
@@ -907,6 +978,7 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
 
     const mockSigner = {
       getAddresses: vi.fn().mockReturnValue([feePayer.address]),
+      getSigner: vi.fn().mockReturnValue(feePayer),
       signTransaction: vi.fn().mockResolvedValue(txBase64),
       simulateTransaction: vi.fn().mockResolvedValue(undefined),
       sendTransaction: vi.fn(),
@@ -971,6 +1043,7 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
 
     const mockSigner = {
       getAddresses: vi.fn().mockReturnValue([feePayer.address]),
+      getSigner: vi.fn().mockReturnValue(feePayer),
       signTransaction: vi.fn().mockResolvedValue(txBase64),
       simulateTransaction: vi.fn().mockResolvedValue(undefined),
       sendTransaction: vi.fn(),
@@ -1055,6 +1128,7 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
 
     const mockSigner = {
       getAddresses: vi.fn().mockReturnValue([feePayer.address]),
+      getSigner: vi.fn().mockReturnValue(feePayer),
       signTransaction: vi.fn().mockResolvedValue(txBase64),
       simulateTransaction: vi.fn().mockResolvedValue(undefined),
       sendTransaction: vi.fn(),

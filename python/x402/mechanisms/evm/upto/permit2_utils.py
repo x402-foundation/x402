@@ -26,6 +26,7 @@ from ..constants import (  # noqa: E402
     BALANCE_OF_ABI,
     ERR_ASSET_NOT_DEPLOYED_CONTRACT,
     ERR_ERC20_APPROVAL_BROADCAST_FAILED,
+    ERR_ERC20_APPROVAL_TX_FAILED,
     ERR_PERMIT2_AMOUNT_MISMATCH,
     ERR_PERMIT2_DEADLINE_EXPIRED,
     ERR_PERMIT2_INSUFFICIENT_BALANCE,
@@ -46,7 +47,6 @@ from ..constants import (  # noqa: E402
     ERR_UPTO_UNAUTHORIZED_FACILITATOR,
     PERMIT2_ADDRESS,
     SCHEME_UPTO,
-    TX_STATUS_SUCCESS,
     UPTO_PERMIT2_WITNESS_TYPES,
     X402_UPTO_PERMIT2_PROXY_ABI,
     X402_UPTO_PERMIT2_PROXY_ADDRESS,
@@ -59,15 +59,19 @@ from ..erc6492 import parse_erc6492_signature  # noqa: E402
 from ..exact.permit2_utils import (  # noqa: E402
     _verify_permit2_allowance,
 )
+from ..settle_receipt import wait_for_receipt_and_build_response  # noqa: E402
 from ..signer import FacilitatorEvmSigner  # noqa: E402
 from ..types import (  # noqa: E402
     TypedDataField,
     UptoPermit2Payload,
 )
 from ..utils import (  # noqa: E402
+    final_hash_from_two_request_send,
     get_evm_chain_id,
     hex_to_bytes,
+    is_valid_tx_hash,
     normalize_address,
+    truncate_error_message,
 )
 from ..verify import verify_typed_data_strict  # noqa: E402
 
@@ -641,21 +645,12 @@ def _settle_upto_direct(
             data_suffix=data_suffix,
         )
 
-        receipt = signer.wait_for_transaction_receipt(tx_hash)
-        if receipt.status != TX_STATUS_SUCCESS:
-            return SettleResponse(
-                success=False,
-                error_reason=ERR_UPTO_TRANSACTION_FAILED,
-                transaction=tx_hash,
-                network=network,
-                payer=payer,
-            )
-
-        return SettleResponse(
-            success=True,
-            transaction=tx_hash,
-            network=network,
-            payer=payer,
+        return wait_for_receipt_and_build_response(
+            signer,
+            tx_hash,
+            network,
+            payer,
+            failed_reason=ERR_UPTO_TRANSACTION_FAILED,
             amount=str(settlement_amount),
         )
 
@@ -711,21 +706,12 @@ def _settle_upto_with_eip2612(
             data_suffix=data_suffix,
         )
 
-        receipt = signer.wait_for_transaction_receipt(tx_hash)
-        if receipt.status != TX_STATUS_SUCCESS:
-            return SettleResponse(
-                success=False,
-                error_reason=ERR_UPTO_TRANSACTION_FAILED,
-                transaction=tx_hash,
-                network=network,
-                payer=payer,
-            )
-
-        return SettleResponse(
-            success=True,
-            transaction=tx_hash,
-            network=network,
-            payer=payer,
+        return wait_for_receipt_and_build_response(
+            signer,
+            tx_hash,
+            network,
+            payer,
+            failed_reason=ERR_UPTO_TRANSACTION_FAILED,
             amount=str(settlement_amount),
         )
 
@@ -765,22 +751,18 @@ def _settle_upto_with_erc20_approval(
             ]
         )
 
-        settle_tx_hash = tx_hashes[-1] if tx_hashes else ""
-        receipt = extension_signer.wait_for_transaction_receipt(settle_tx_hash)
-        if receipt.status != TX_STATUS_SUCCESS:
-            return SettleResponse(
-                success=False,
-                error_reason=ERR_UPTO_TRANSACTION_FAILED,
-                transaction=settle_tx_hash,
-                network=network,
-                payer=payer,
+        settle_tx_hash = final_hash_from_two_request_send(tx_hashes)
+        if settle_tx_hash is None or not is_valid_tx_hash(settle_tx_hash):
+            raise RuntimeError(
+                f"{ERR_ERC20_APPROVAL_TX_FAILED}: extension signer returned no valid settlement transaction hash"
             )
 
-        return SettleResponse(
-            success=True,
-            transaction=settle_tx_hash,
-            network=network,
-            payer=payer,
+        return wait_for_receipt_and_build_response(
+            extension_signer,
+            settle_tx_hash,
+            network,
+            payer,
+            failed_reason=ERR_UPTO_TRANSACTION_FAILED,
             amount=str(settlement_amount),
         )
 
@@ -867,7 +849,7 @@ def _map_upto_settle_error(error: Exception, network: str, payer: str) -> Settle
         error_reason = ERR_PERMIT2_INVALID_SIGNATURE
     elif "InvalidNonce" in error_msg:
         error_reason = "permit2_invalid_nonce"
-    elif "erc20_approval_tx_failed" in error_msg:
+    elif ERR_ERC20_APPROVAL_TX_FAILED in error_msg:
         error_reason = ERR_ERC20_APPROVAL_BROADCAST_FAILED
     else:
         error_reason = ERR_UPTO_TRANSACTION_FAILED
@@ -875,7 +857,7 @@ def _map_upto_settle_error(error: Exception, network: str, payer: str) -> Settle
     return SettleResponse(
         success=False,
         error_reason=error_reason,
-        error_message=error_msg[:500],
+        error_message=truncate_error_message(error_msg),
         network=network,
         payer=payer,
         transaction="",

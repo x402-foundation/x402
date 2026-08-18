@@ -63,6 +63,7 @@ export const ErrErc20ApprovalTxSignerMismatch = "erc20_approval_tx_signer_mismat
 export const ErrErc20ApprovalTxInvalidSignature = "erc20_approval_tx_invalid_signature";
 export const ErrErc20ApprovalTxParseFailed = "erc20_approval_tx_parse_failed";
 export const ErrErc20ApprovalTxFailed = "erc20_approval_tx_failed";
+export const ErrErc20ApprovalBroadcastFailed = "erc20_approval_broadcast_failed";
 
 // EIP-2612 gas sponsoring verify errors
 export const ErrInvalidEip2612ExtensionFormat = "invalid_eip2612_extension_format";
@@ -76,3 +77,5 @@ export const ErrUnsupportedPayloadType = "unsupported_payload_type";
 export const ErrInvalidTransactionState = "invalid_transaction_state";
 export const ErrFactoryNotAllowed = "eip6492_factory_not_allowed";
 export const ErrSmartWalletDeploymentFailed = "smart_wallet_deployment_failed";
+/** Broadcast succeeded; receipt wait failed (RPC/timeout). Non-terminal — return with tx hash. */
+export const ErrSettlementPending = "settlement_pending";

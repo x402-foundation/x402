@@ -1,0 +1,3 @@
+Normalize each mechanism's default assets into `DEFAULT_ASSETS` + `get_default_asset` / `find_default_asset`, and add client `spend_controls`: by default only recognized pegged assets are allowed with a `$1` USD cap; opt into other tokens via `allowed_assets` (list with optional integer atomic `max_amount_per_payment`, or `True` to allow any); pass `spend_controls=False` to disable all spend controls. A non-integer per-asset cap is a config error; a non-integer 402 amount on that path is dropped.
+
+`$` settlement overrides throw when `get_asset_decimals` is unknown instead of guessing 6 decimals. MCP `from_config` forwards `spend_controls`.

@@ -22,6 +22,7 @@ from .constants import (
     ERR_PERMIT2_INVALID_DESTINATION,
     ERR_PERMIT2_INVALID_OWNER,
     ERR_RECIPIENT_MISMATCH,
+    ERR_SETTLEMENT_PENDING,
     ERR_SMART_WALLET_DEPLOYMENT_FAILED,
     ERR_TRANSACTION_FAILED,
     ERR_UNDEPLOYED_SMART_WALLET,
@@ -49,6 +50,9 @@ from .constants import (
     AssetInfo,
     NetworkConfig,
 )
+
+# Default assets
+from .default_assets import DEFAULT_ASSETS, find_default_asset, get_default_asset
 
 # EIP-712
 from .eip712 import (
@@ -102,9 +106,9 @@ from .utils import (
     hex_to_bytes,
     is_valid_address,
     is_valid_network,
+    is_valid_tx_hash,
     normalize_address,
     parse_amount,
-    parse_money_to_decimal,
 )
 
 # V1 legacy constants (re-exported for backward compatibility)
@@ -146,6 +150,7 @@ __all__ = [
     "ERR_NETWORK_MISMATCH",
     "ERR_UNSUPPORTED_SCHEME",
     "ERR_TRANSACTION_FAILED",
+    "ERR_SETTLEMENT_PENDING",
     "ERR_FAILED_TO_GET_NETWORK_CONFIG",
     "ERR_FAILED_TO_GET_ASSET_INFO",
     "ERR_FAILED_TO_VERIFY_SIGNATURE",
@@ -201,11 +206,15 @@ __all__ = [
     "create_nonce",
     "normalize_address",
     "is_valid_address",
+    "is_valid_tx_hash",
     "parse_amount",
     "format_amount",
     "hex_to_bytes",
     "bytes_to_hex",
-    "parse_money_to_decimal",
+    # Default assets
+    "DEFAULT_ASSETS",
+    "find_default_asset",
+    "get_default_asset",
     # EIP-712
     "hash_typed_data",
     "hash_eip3009_authorization",

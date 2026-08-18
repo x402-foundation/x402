@@ -8,7 +8,94 @@ import (
 	"math/big"
 	"strings"
 	"time"
+
+	x402 "github.com/x402-foundation/x402/go/v2"
 )
+
+// IsValidTxHash reports whether a signer-supplied hash is usable for a receipt wait: 0x
+// followed by 64 hex digits, and non-zero. The all-zero hash reconciles to nothing, so a
+// signer reporting success with a placeholder fails terminally instead of as pending.
+func IsValidTxHash(hash string) bool {
+	if len(hash) != 66 || !strings.HasPrefix(hash, "0x") {
+		return false
+	}
+	bytes, err := hex.DecodeString(hash[2:])
+	if err != nil {
+		return false
+	}
+	for _, b := range bytes {
+		if b != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// FinalHashFromTwoRequestSend returns the last hash from a two-request
+// extension-signer broadcast (e.g. approve + settle/deposit). Conforming
+// signers return one hash (atomic bundle) or two (sequential); any other
+// count means a partial execution.
+func FinalHashFromTwoRequestSend(txHashes []string) (string, bool) {
+	if len(txHashes) != 1 && len(txHashes) != 2 {
+		return "", false
+	}
+	return txHashes[len(txHashes)-1], true
+}
+
+// MaxErrorMessageLength matches the truncation length used by the Python and TypeScript SDKs.
+const MaxErrorMessageLength = 500
+
+// TruncateErrorMessage bounds raw error text (e.g. from an RPC client) before it is placed
+// in a settle/verify ErrorMessage. RPC/transport errors can carry node URLs, request bodies,
+// or other verbose data that should not be echoed to callers unbounded. Truncation counts
+// runes so a multi-byte UTF-8 rune is never cut in half.
+func TruncateErrorMessage(msg string) string {
+	runes := []rune(msg)
+	if len(runes) <= MaxErrorMessageLength {
+		return msg
+	}
+	return string(runes[:MaxErrorMessageLength])
+}
+
+// InvalidBroadcastHashError builds a terminal SettleError for a signer that reports success
+// without a usable transaction hash. settlement_pending is only meaningful with a broadcast
+// hash to reconcile against, so this case is always terminal, never ErrSettlementPending.
+func InvalidBroadcastHashError(reason string, payer string, network x402.Network, txHash string) error {
+	return x402.NewSettleError(reason, payer, network, "",
+		fmt.Sprintf("signer returned an invalid transaction hash: %q", txHash))
+}
+
+// receiptWaiter is the signer capability required to confirm a broadcast transaction.
+type receiptWaiter interface {
+	WaitForTransactionReceipt(ctx context.Context, txHash string) (*TransactionReceipt, error)
+}
+
+// WaitForSettleReceipt waits for a broadcast settlement receipt.
+// Invalid hashes and reverted receipts are terminal; receipt-wait failures return
+// ErrSettlementPending with the broadcast hash preserved.
+func WaitForSettleReceipt(
+	ctx context.Context,
+	signer receiptWaiter,
+	txHash string,
+	payer string,
+	network x402.Network,
+	invalidHashReason string,
+	revertedReason string,
+) (*TransactionReceipt, error) {
+	if !IsValidTxHash(txHash) {
+		return nil, InvalidBroadcastHashError(invalidHashReason, payer, network, txHash)
+	}
+
+	receipt, err := signer.WaitForTransactionReceipt(ctx, txHash)
+	if err != nil {
+		return nil, x402.NewSettleError(ErrSettlementPending, payer, network, txHash,
+			TruncateErrorMessage(err.Error()))
+	}
+	if receipt.Status != TxStatusSuccess {
+		return nil, x402.NewSettleError(revertedReason, payer, network, txHash, "")
+	}
+	return receipt, nil
+}
 
 // GetEvmChainId returns the chain ID for a given CAIP-2 network identifier (eip155:CHAIN_ID).
 func GetEvmChainId(network string) (*big.Int, error) {
@@ -175,17 +262,13 @@ func GetNetworkConfig(network string) (*NetworkConfig, error) {
 //   - AssetInfo for the requested asset
 //   - Error if default asset is requested but not configured for this network
 func GetAssetInfo(network string, assetSymbolOrAddress string) (*AssetInfo, error) {
+	if found := FindDefaultAsset(assetSymbolOrAddress, network); found != nil {
+		return defaultAssetToAssetInfo(found), nil
+	}
+
 	// Check if it's an explicit address - works for ANY network
 	if IsValidAddress(assetSymbolOrAddress) {
 		normalizedAddr := NormalizeAddress(assetSymbolOrAddress)
-
-		// Check if this matches a known default asset for richer metadata
-		config, err := GetNetworkConfig(network)
-		if err == nil && config.DefaultAsset.Address != "" {
-			if normalizedAddr == NormalizeAddress(config.DefaultAsset.Address) {
-				return &config.DefaultAsset, nil
-			}
-		}
 
 		// Unknown token - return basic info (works for any EVM network)
 		return &AssetInfo{
@@ -197,17 +280,11 @@ func GetAssetInfo(network string, assetSymbolOrAddress string) (*AssetInfo, erro
 	}
 
 	// Not an explicit address - need the network's default asset
-	config, err := GetNetworkConfig(network)
+	info, err := GetDefaultAsset(network, "")
 	if err != nil {
-		return nil, err
-	}
-
-	// Check if default asset is configured
-	if config.DefaultAsset.Address == "" {
 		return nil, fmt.Errorf("no default asset configured for network %s; specify an explicit asset address or register a money parser", network)
 	}
-
-	return &config.DefaultAsset, nil
+	return defaultAssetToAssetInfo(info), nil
 }
 
 // CreateValidityWindow creates valid after/before timestamps

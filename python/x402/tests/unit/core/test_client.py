@@ -3,12 +3,20 @@
 import pytest
 
 from x402 import (
+    SchemeRegistration,
     prefer_network,
     x402Client,
+    x402ClientConfig,
     x402ClientSync,
 )
-from x402.schemas import PaymentPayload, PaymentRequired, PaymentRequirements, SettleResponse
+from x402.schemas import (
+    PaymentPayload,
+    PaymentRequired,
+    PaymentRequirements,
+    SettleResponse,
+)
 from x402.schemas.hooks import PaymentResponseContext, RecoveredResponseResult
+from x402.schemas.v1 import PaymentRequiredV1, PaymentRequirementsV1
 
 # =============================================================================
 # Mock Scheme Clients
@@ -23,10 +31,28 @@ class MockSchemeClient:
     def __init__(self, scheme: str = "mock"):
         self.scheme = scheme
         self.create_calls: list = []
+        # Treat any asset as a recognized default so non-spend-control tests pass
+        # the default allowlist (USD cap still applies unless overridden).
+        self.find_default_asset = lambda asset, _network=None: {
+            "asset": asset,
+            "decimals": 6,
+            "symbol": "MOCK",
+        }
 
     def create_payment_payload(self, requirements):
         self.create_calls.append(requirements)
         return {"mock": "payload", "network": requirements.network}
+
+    def set_find_default_asset(self, lookup):
+        """Set ``find_default_asset`` for spend-control tests."""
+        if callable(lookup):
+            self.find_default_asset = lookup
+        else:
+            self.find_default_asset = lambda asset, _network=None, entry=lookup: entry
+
+    def clear_find_default_asset(self):
+        """Clear ``find_default_asset`` (scheme does not participate in spend controls)."""
+        self.find_default_asset = None
 
 
 class MockSchemeClientV1:
@@ -36,9 +62,23 @@ class MockSchemeClientV1:
 
     def __init__(self, scheme: str = "mock-v1"):
         self.scheme = scheme
+        self.find_default_asset = lambda asset, _network=None: {
+            "asset": asset,
+            "decimals": 6,
+            "symbol": "MOCK",
+        }
 
     def create_payment_payload(self, requirements):
         return {"mock": "v1-payload", "network": requirements.network}
+
+    def set_find_default_asset(self, lookup):
+        if callable(lookup):
+            self.find_default_asset = lookup
+        else:
+            self.find_default_asset = lambda asset, _network=None, entry=lookup: entry
+
+    def clear_find_default_asset(self):
+        self.find_default_asset = None
 
 
 # =============================================================================
@@ -639,3 +679,456 @@ class TestGetRegisteredSchemes:
         assert len(registered[1]) == 1
         assert registered[2][0]["network"] == "eip155:8453"
         assert registered[1][0]["network"] == "base-sepolia"
+
+
+# =============================================================================
+# Spend Controls
+# =============================================================================
+
+
+class TestSpendControls:
+    network = "eip155:8453"
+    usdc = {
+        "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        "decimals": 6,
+        "symbol": "USDC",
+    }
+    usdt = {
+        "asset": "0xUsdTSecondaryAsset0000000000000000000001",
+        "decimals": 6,
+        "symbol": "USDT",
+    }
+    m_usd = {
+        "asset": "0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503",
+        "decimals": 18,
+        "symbol": "mUSD",
+    }
+
+    def _req(self, *, asset: str, amount: str, network: str | None = None, scheme: str = "exact"):
+        return PaymentRequirements(
+            scheme=scheme,
+            network=network or self.network,
+            asset=asset,
+            amount=amount,
+            pay_to="0xpay",
+            max_timeout_seconds=60,
+        )
+
+    def _required(self, *accepts):
+        return PaymentRequired(x402_version=2, accepts=list(accepts))
+
+    def _client_with_default_asset(self, entry=None, controls=None):
+        entry = entry or self.usdc
+        mock_client = MockSchemeClient("exact")
+        mock_client.set_find_default_asset(
+            lambda asset, _network, e=entry: e if asset.lower() == e["asset"].lower() else None
+        )
+        client = x402Client()
+        client.register(self.network, mock_client)
+        if controls is not None:
+            client.set_spend_controls(controls)
+        return client, mock_client
+
+    @pytest.mark.asyncio
+    async def test_allows_payment_at_or_below_default_usd_cap(self):
+        client, mock_client = self._client_with_default_asset()
+        await client.create_payment_payload(
+            self._required(self._req(asset=self.usdc["asset"], amount="1000000"))
+        )
+        assert len(mock_client.create_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_rejects_payment_above_default_usd_cap(self):
+        client, _ = self._client_with_default_asset()
+        with pytest.raises(Exception, match="max_amount_per_payment"):
+            await client.create_payment_payload(
+                self._required(self._req(asset=self.usdc["asset"], amount="1000001"))
+            )
+
+    @pytest.mark.asyncio
+    async def test_picks_affordable_accept_when_mixed_offer(self):
+        client, mock_client = self._client_with_default_asset()
+        await client.create_payment_payload(
+            self._required(
+                self._req(asset=self.usdc["asset"], amount="50000000"),
+                self._req(asset=self.usdc["asset"], amount="500000"),
+            )
+        )
+        assert mock_client.create_calls[0].amount == "500000"
+
+    @pytest.mark.asyncio
+    async def test_caps_second_usd_asset_on_same_network(self):
+        mock_client = MockSchemeClient("exact")
+        usdc, usdt = self.usdc, self.usdt
+
+        def lookup(asset, _network):
+            lower = asset.lower()
+            if lower == usdc["asset"].lower():
+                return usdc
+            if lower == usdt["asset"].lower():
+                return usdt
+            return None
+
+        mock_client.set_find_default_asset(lookup)
+        client = x402Client()
+        client.register(self.network, mock_client)
+
+        with pytest.raises(Exception, match="max_amount_per_payment"):
+            await client.create_payment_payload(
+                self._required(self._req(asset=usdt["asset"], amount="2000000"))
+            )
+
+    @pytest.mark.asyncio
+    async def test_rejects_unrecognized_assets_and_schemes_without_find_default_asset(self):
+        client, _ = self._client_with_default_asset()
+        with pytest.raises(Exception, match=r"spend_controls\.allowed_assets"):
+            await client.create_payment_payload(
+                self._required(self._req(asset="0xCustomUnknownToken", amount="1"))
+            )
+
+        bare = MockSchemeClient("exact")
+        bare.clear_find_default_asset()
+        bare_client = x402Client()
+        bare_client.register(self.network, bare)
+        with pytest.raises(Exception, match=r"spend_controls\.allowed_assets"):
+            await bare_client.create_payment_payload(
+                self._required(self._req(asset=self.usdc["asset"], amount="1"))
+            )
+
+    @pytest.mark.asyncio
+    async def test_spend_controls_false_disables_allowlist_and_usd_cap(self):
+        custom = "0xCustomUnknownToken"
+        client, mock_client = self._client_with_default_asset(self.usdc, False)
+
+        await client.create_payment_payload(
+            self._required(self._req(asset=custom, amount="999999999999"))
+        )
+        await client.create_payment_payload(
+            self._required(self._req(asset=self.usdc["asset"], amount="5000000"))
+        )
+        assert len(mock_client.create_calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_allowed_assets_true_allows_any_asset_usd_cap_still_applies(self):
+        custom = "0xCustomUnknownToken"
+        client, mock_client = self._client_with_default_asset(self.usdc, {"allowed_assets": True})
+
+        await client.create_payment_payload(
+            self._required(self._req(asset=custom, amount="999999999999"))
+        )
+        assert len(mock_client.create_calls) == 1
+
+        with pytest.raises(Exception, match="max_amount_per_payment"):
+            await client.create_payment_payload(
+                self._required(self._req(asset=self.usdc["asset"], amount="1000001"))
+            )
+
+    @pytest.mark.asyncio
+    async def test_scales_usd_cap_for_18_decimal_default_asset(self):
+        mock_client = MockSchemeClient("exact")
+        mock_client.set_find_default_asset(self.m_usd)
+        mezo = "eip155:31611"
+        client18 = x402Client().register(mezo, mock_client)
+
+        with pytest.raises(Exception, match="max_amount_per_payment"):
+            await client18.create_payment_payload(
+                self._required(
+                    self._req(
+                        asset=self.m_usd["asset"],
+                        amount="1000000000000000001",
+                        network=mezo,
+                    )
+                )
+            )
+
+        await client18.create_payment_payload(
+            self._required(
+                self._req(
+                    asset=self.m_usd["asset"],
+                    amount="1000000000000000000",
+                    network=mezo,
+                )
+            )
+        )
+        assert len(mock_client.create_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_honours_max_amount_false_custom_money_and_set_spend_controls(self):
+        client, mock_client = self._client_with_default_asset(
+            self.usdc, {"max_amount_per_payment": False}
+        )
+        await client.create_payment_payload(
+            self._required(self._req(asset=self.usdc["asset"], amount="5000000"))
+        )
+        assert len(mock_client.create_calls) == 1
+
+        mock5 = MockSchemeClient("exact")
+        mock5.set_find_default_asset(self.usdc)
+        client5 = x402Client.from_config(
+            x402ClientConfig(
+                schemes=[SchemeRegistration(network=self.network, client=mock5)],
+                spend_controls={"max_amount_per_payment": "$5"},
+            )
+        )
+        await client5.create_payment_payload(
+            self._required(self._req(asset=self.usdc["asset"], amount="5000000"))
+        )
+        assert len(mock5.create_calls) == 1
+
+        mock_num = MockSchemeClient("exact")
+        mock_num.set_find_default_asset(self.usdc)
+        client_num = (
+            x402Client()
+            .register(self.network, mock_num)
+            .set_spend_controls({"max_amount_per_payment": 5})
+        )
+        await client_num.create_payment_payload(
+            self._required(self._req(asset=self.usdc["asset"], amount="5000000"))
+        )
+        assert len(mock_num.create_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_allows_opt_in_assets_uncapped_or_with_atomic_cap(self):
+        custom_asset = "0xCustomToken"
+        capped_client, _ = self._client_with_default_asset(
+            self.usdc,
+            {
+                "allowed_assets": [
+                    {
+                        "asset": custom_asset,
+                        "network": self.network,
+                        "max_amount_per_payment": "10000",
+                    }
+                ]
+            },
+        )
+
+        with pytest.raises(Exception, match="allowed_assets max_amount_per_payment"):
+            await capped_client.create_payment_payload(
+                self._required(self._req(asset=custom_asset, amount="10001"))
+            )
+
+        uncapped_client, mock_client = self._client_with_default_asset(
+            self.usdc,
+            {"allowed_assets": [{"asset": custom_asset.lower(), "network": "eip155:*"}]},
+        )
+        await uncapped_client.create_payment_payload(
+            self._required(self._req(asset=custom_asset, amount="999999999999"))
+        )
+        assert len(mock_client.create_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_drops_non_integer_amount_on_per_asset_atomic_cap_path(self):
+        custom_asset = "0xCustomToken"
+        client, _ = self._client_with_default_asset(
+            self.usdc,
+            {
+                "allowed_assets": [
+                    {
+                        "asset": custom_asset,
+                        "network": self.network,
+                        "max_amount_per_payment": "10000",
+                    }
+                ]
+            },
+        )
+
+        with pytest.raises(Exception, match="allowed_assets max_amount_per_payment"):
+            await client.create_payment_payload(
+                self._required(self._req(asset=custom_asset, amount="1.5"))
+            )
+
+    @pytest.mark.asyncio
+    async def test_keeps_sibling_when_mixed_offer_has_non_integer_per_asset_amount(self):
+        custom_asset = "0xCustomToken"
+        client, mock_client = self._client_with_default_asset(
+            self.usdc,
+            {
+                "allowed_assets": [
+                    {
+                        "asset": custom_asset,
+                        "network": self.network,
+                        "max_amount_per_payment": "10000",
+                    }
+                ]
+            },
+        )
+
+        await client.create_payment_payload(
+            self._required(
+                self._req(asset=custom_asset, amount="1.5"),
+                self._req(asset=custom_asset, amount="100"),
+            )
+        )
+        assert mock_client.create_calls[0].amount == "100"
+
+    @pytest.mark.asyncio
+    async def test_errors_when_per_asset_cap_is_not_integer_atomic(self):
+        custom_asset = "0xCustomToken"
+        for cap in ("$1", "1.5"):
+            client, _ = self._client_with_default_asset(
+                self.usdc,
+                {
+                    "allowed_assets": [
+                        {
+                            "asset": custom_asset,
+                            "network": self.network,
+                            "max_amount_per_payment": cap,
+                        }
+                    ]
+                },
+            )
+            with pytest.raises(
+                Exception, match="max_amount_per_payment must be an integer atomic amount"
+            ):
+                await client.create_payment_payload(
+                    self._required(self._req(asset=custom_asset, amount="100"))
+                )
+
+    @pytest.mark.asyncio
+    async def test_overrides_usd_cap_for_default_assets_by_id_or_symbol(self):
+        by_id, mock_by_id = self._client_with_default_asset(
+            self.usdc,
+            {
+                "allowed_assets": [
+                    {
+                        "asset": self.usdc["asset"],
+                        "network": self.network,
+                        "max_amount_per_payment": "500000",
+                    }
+                ]
+            },
+        )
+
+        with pytest.raises(Exception, match="allowed_assets max_amount_per_payment"):
+            await by_id.create_payment_payload(
+                self._required(self._req(asset=self.usdc["asset"], amount="600000"))
+            )
+
+        await by_id.create_payment_payload(
+            self._required(self._req(asset=self.usdc["asset"], amount="400000"))
+        )
+        assert len(mock_by_id.create_calls) == 1
+
+        pyusd = {
+            "asset": "0xPayPalUsdAsset000000000000000000000001",
+            "decimals": 6,
+            "symbol": "PYUSD",
+        }
+        mock_pyusd = MockSchemeClient("exact")
+        mock_pyusd.set_find_default_asset(
+            lambda asset, _network, e=pyusd: e if asset.lower() == e["asset"].lower() else None
+        )
+        client_by_symbol = (
+            x402Client()
+            .register(self.network, mock_pyusd)
+            .set_spend_controls(
+                {
+                    "allowed_assets": [
+                        {
+                            "asset": "pyusd",
+                            "network": self.network,
+                            "max_amount_per_payment": "500000",
+                        }
+                    ]
+                }
+            )
+        )
+
+        with pytest.raises(Exception, match="allowed_assets max_amount_per_payment"):
+            await client_by_symbol.create_payment_payload(
+                self._required(self._req(asset=pyusd["asset"], amount="600000"))
+            )
+
+        await client_by_symbol.create_payment_payload(
+            self._required(self._req(asset=pyusd["asset"], amount="400000"))
+        )
+        assert len(mock_pyusd.create_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_keeps_usd_cap_when_default_listed_without_per_entry_cap(self):
+        client, _ = self._client_with_default_asset(
+            self.usdc,
+            {"allowed_assets": [{"asset": self.usdc["symbol"], "network": self.network}]},
+        )
+
+        with pytest.raises(Exception, match="max_amount_per_payment"):
+            await client.create_payment_payload(
+                self._required(self._req(asset=self.usdc["asset"], amount="1000001"))
+            )
+
+    @pytest.mark.asyncio
+    async def test_allows_defaults_plus_listed_custom_assets(self):
+        custom = "0xCustomToken"
+        client, mock_client = self._client_with_default_asset(
+            self.usdc,
+            {
+                "max_amount_per_payment": False,
+                "allowed_assets": [{"asset": custom, "network": self.network}],
+            },
+        )
+
+        await client.create_payment_payload(
+            self._required(self._req(asset=self.usdc["asset"], amount="1"))
+        )
+        await client.create_payment_payload(self._required(self._req(asset=custom, amount="1")))
+        assert len(mock_client.create_calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_caps_v1_accepts_via_max_amount_required(self):
+        mock_client = MockSchemeClient("exact")
+        mock_client.set_find_default_asset(self.usdc)
+        client = x402Client()
+        client.register_v1("base", mock_client)
+
+        v1_req = PaymentRequirementsV1(
+            scheme="exact",
+            network="base",
+            asset=self.usdc["asset"],
+            max_amount_required="2000000",
+            pay_to="0xpay",
+            max_timeout_seconds=60,
+            description="",
+            mime_type="",
+            resource="https://example.com",
+        )
+        with pytest.raises(Exception, match="max_amount_per_payment"):
+            await client.create_payment_payload(PaymentRequiredV1(x402_version=1, accepts=[v1_req]))
+
+    @pytest.mark.asyncio
+    async def test_only_exposes_requirements_that_passed_spend_controls_to_policies(self):
+        seen: list[str] = []
+        client, mock_client = self._client_with_default_asset(self.usdc)
+        client.register_policy(lambda _version, reqs: seen.extend(r.amount for r in reqs) or reqs)
+
+        await client.create_payment_payload(
+            self._required(
+                self._req(asset=self.usdc["asset"], amount="50000000"),
+                self._req(asset=self.usdc["asset"], amount="250000"),
+            )
+        )
+
+        assert seen == ["250000"]
+        assert mock_client.create_calls[0].amount == "250000"
+
+    @pytest.mark.asyncio
+    async def test_compares_non_integer_decimal_amounts_to_usd_cap_directly(self):
+        rlusd = {
+            "asset": "524C555344000000000000000000000000000000",
+            "decimals": 15,
+            "symbol": "RLUSD",
+        }
+        mock_client = MockSchemeClient("exact")
+        mock_client.set_find_default_asset(rlusd)
+        xrpl = "xrpl:1"
+        client = x402Client().register(xrpl, mock_client)
+
+        await client.create_payment_payload(
+            self._required(self._req(asset=rlusd["asset"], amount="1.0", network=xrpl))
+        )
+        assert len(mock_client.create_calls) == 1
+
+        with pytest.raises(Exception, match="max_amount_per_payment"):
+            await client.create_payment_payload(
+                self._required(self._req(asset=rlusd["asset"], amount="1.01", network=xrpl))
+            )

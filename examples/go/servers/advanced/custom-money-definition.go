@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"math"
 	"net/http"
 	"os"
 	"time"
@@ -52,32 +51,24 @@ func main() {
 	 * Create EVM Scheme with Custom Money Parser
 	 *
 	 * This demonstrates registering a custom money parser that handles
-	 * specific network or amount conditions differently.
+	 * a specific network differently.
 	 *
 	 * For example, on Gnosis Chain (xDai) network, we could use Wrapped XDAI
 	 * instead of USDC (this is for demonstration - WXDAI isn't EIP-3009 compliant).
 	 */
-	evmScheme := evm.NewExactEvmScheme().RegisterMoneyParser(func(amount float64, network x402.Network) (*x402.AssetAmount, error) {
+	evmScheme := evm.NewExactEvmScheme().RegisterMoneyParser(func(amount string, network x402.Network) (*x402.AssetAmount, error) {
 		// Custom logic for Gnosis Chain (eip155:100)
 		if string(network) == "eip155:100" {
+			tokenAmount, err := x402.ConvertToTokenAmount(amount, 18)
+			if err != nil {
+				return nil, err
+			}
 			return &x402.AssetAmount{
-				Amount: fmt.Sprintf("%.0f", amount*1e18),             // Wrapped XDAI has 18 decimals
+				Amount: tokenAmount,                                  // Wrapped XDAI has 18 decimals
 				Asset:  "0xe91d153e0b41518a2ce8dd3d7944fa863463a97d", // WXDAI address on Gnosis
 				Extra: map[string]interface{}{
 					"token":   "Wrapped XDAI",
 					"network": "gnosis",
-				},
-			}, nil
-		}
-
-		// For large amounts on any network, use DAI instead of USDC
-		if amount > 100 {
-			return &x402.AssetAmount{
-				Amount: fmt.Sprintf("%.0f", math.Round(amount*1e18)), // DAI has 18 decimals
-				Asset:  "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb", // DAI on Base Sepolia
-				Extra: map[string]interface{}{
-					"token": "DAI",
-					"tier":  "large",
 				},
 			}, nil
 		}
@@ -121,7 +112,7 @@ func main() {
 	})
 
 	fmt.Printf("🚀 Custom Money Definition example running on http://localhost:%s\n", DefaultPort)
-	fmt.Printf("   Using custom money parsers for different networks and amounts\n")
+	fmt.Printf("   Using custom money parsers for different networks\n")
 
 	if err := r.Run(":" + DefaultPort); err != nil {
 		fmt.Printf("Error starting server: %v\n", err)

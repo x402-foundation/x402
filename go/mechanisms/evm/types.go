@@ -260,7 +260,17 @@ type FacilitatorEvmSigner interface {
 	// Used for smart wallet deployment where calldata is pre-encoded
 	SendTransaction(ctx context.Context, to string, data []byte) (string, error)
 
-	// WaitForTransactionReceipt waits for a transaction to be mined
+	// WaitForTransactionReceipt waits for a transaction to be mined.
+	//
+	// Unlike the TypeScript (viem, confirmationTimeoutMs) and Python (web3.py,
+	// confirmation_timeout_seconds) SDKs, this SDK ships no concrete
+	// FacilitatorEvmSigner — implementations are supplied entirely by the
+	// facilitator. Implementers are responsible for bounding this call
+	// themselves (e.g. an internal deadline, or honoring ctx's deadline) so a
+	// stuck RPC node cannot block a settlement indefinitely. A receipt-wait
+	// failure surfaces to callers as ErrSettlementPending with the broadcast
+	// hash preserved, so timing out is always safe. ~120-180s matches the
+	// other SDKs' defaults.
 	WaitForTransactionReceipt(ctx context.Context, txHash string) (*TransactionReceipt, error)
 
 	// GetBalance gets the balance of an address for a specific token

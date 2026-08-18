@@ -19,6 +19,7 @@ from x402.mechanisms.evm.constants import (
     ERR_INSUFFICIENT_BALANCE,
     ERR_INVALID_SIGNATURE,
     ERR_NONCE_ALREADY_USED,
+    ERR_SETTLEMENT_PENDING,
     ERR_TOKEN_NAME_MISMATCH,
     ERR_TOKEN_VERSION_MISMATCH,
     ERR_TRANSACTION_SIMULATION_FAILED,
@@ -600,6 +601,50 @@ class TestSettle:
         assert result.success is True
         assert signer.transfer_simulation_calls == 1
         assert signer.write_calls == 1
+
+    def test_receipt_wait_failure_returns_settlement_pending(self):
+        class _ReceiptTimeoutSigner(MockFacilitatorSigner):
+            def wait_for_transaction_receipt(self, tx_hash: str) -> TransactionReceipt:
+                raise TimeoutError("rpc: timeout waiting for receipt")
+
+        # Payer has code so verify_typed_data_strict takes the EIP-1271 path, which
+        # honours typed_data_valid=True via the isValidSignature mock.
+        signer = _ReceiptTimeoutSigner(code_by_address={PAYER.lower(): b"\x01"})
+        facilitator = ExactEvmFacilitatorScheme(signer)
+
+        result = facilitator.settle(make_payment_payload(), make_requirements())
+
+        assert result.success is False
+        assert result.error_reason == ERR_SETTLEMENT_PENDING
+        assert result.transaction == "0x" + "34" * 32  # broadcast tx hash from write_contract
+
+    def test_receipt_wait_attribute_error_returns_settlement_pending(self):
+        class _BrokenSigner(MockFacilitatorSigner):
+            def wait_for_transaction_receipt(self, tx_hash: str) -> TransactionReceipt:
+                raise AttributeError("'NoneType' object has no attribute 'status'")
+
+        signer = _BrokenSigner(code_by_address={PAYER.lower(): b"\x01"})
+        facilitator = ExactEvmFacilitatorScheme(signer)
+
+        result = facilitator.settle(make_payment_payload(), make_requirements())
+
+        assert result.success is False
+        assert result.error_reason == ERR_SETTLEMENT_PENDING
+        assert result.transaction == "0x" + "34" * 32
+
+    def test_receipt_wait_value_error_returns_settlement_pending(self):
+        class _BrokenSigner(MockFacilitatorSigner):
+            def wait_for_transaction_receipt(self, tx_hash: str) -> TransactionReceipt:
+                raise ValueError("invalid receipt")
+
+        signer = _BrokenSigner(code_by_address={PAYER.lower(): b"\x01"})
+        facilitator = ExactEvmFacilitatorScheme(signer)
+
+        result = facilitator.settle(make_payment_payload(), make_requirements())
+
+        assert result.success is False
+        assert result.error_reason == ERR_SETTLEMENT_PENDING
+        assert result.transaction == "0x" + "34" * 32
 
 
 class TestSettleFactoryAllowlist:

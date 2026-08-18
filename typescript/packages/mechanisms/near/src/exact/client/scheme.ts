@@ -1,5 +1,6 @@
 import type { PaymentPayload, PaymentRequirements, SchemeNetworkClient } from "@x402/core/types";
 import { isNearNetwork } from "../../constants";
+import { findDefaultAsset } from "../../defaultAssets";
 import type { ClientNearSigner } from "../../signer";
 import type { ExactNearPayload } from "../../types";
 
@@ -8,6 +9,7 @@ import type { ExactNearPayload } from "../../types";
  */
 export class ExactNearScheme implements SchemeNetworkClient {
   readonly scheme = "exact";
+  findDefaultAsset = findDefaultAsset;
 
   /**
    * Creates an ExactNearScheme.

@@ -1,5 +1,5 @@
 import type { PaymentFlowName, PaymentFlowPhases, SchemeNetworkServer } from "../types/mechanisms";
-import type { PaymentRequirements } from "../types/payments";
+import type { PaymentPayload, PaymentRequirements, SettleResponse } from "../types";
 import type { DeepReadonly } from "../types/readonly";
 
 /**
@@ -123,4 +123,70 @@ export function resolvePaymentFlowPhases(flow: PaymentFlowName): PaymentFlowPhas
     );
   }
   return phases;
+}
+
+/**
+ * Resolve the settlement receipt to surface when a resource handler fails
+ * after payment was already verified (and possibly settled before the handler).
+ *
+ * Prefers cancel/refund settle when present; on failed cancel, attaches deposit
+ * recovery facts in `extra`. Otherwise echoes the before-handler deposit receipt.
+ *
+ * @param cancelSettlement - Result from {@link PaymentCancellationDispatcher.cancel}, if any
+ * @param beforeHandlerSettlement - Completed before-handler settle, when present
+ * @param beforeHandlerSettlement.result - Settle response from the before-handler deposit
+ * @param paymentPayload - Client payment payload (for escrow deposit recovery fields)
+ * @returns Settle response for PAYMENT-RESPONSE / MCP payment-response meta, or undefined
+ */
+export function resolveFailurePathSettlement(
+  cancelSettlement: SettleResponse | void | undefined,
+  beforeHandlerSettlement?: { result: SettleResponse },
+  paymentPayload?: PaymentPayload,
+): SettleResponse | undefined {
+  if (cancelSettlement) {
+    return cancelSettlement.success
+      ? cancelSettlement
+      : buildFailedCancelReceipt(cancelSettlement, beforeHandlerSettlement, paymentPayload);
+  }
+  if (beforeHandlerSettlement) {
+    return beforeHandlerSettlement.result;
+  }
+  return undefined;
+}
+
+/**
+ * Build a failed cancel receipt with deposit recovery facts in `extra`.
+ *
+ * @param cancelSettlement - Failed cancel settle from the facilitator
+ * @param beforeHandlerSettlement - Completed before-handler deposit, when present
+ * @param beforeHandlerSettlement.result - Settle response from the before-handler deposit
+ * @param paymentPayload - Client payment payload
+ * @returns Normalized settle response for transport encoding
+ */
+function buildFailedCancelReceipt(
+  cancelSettlement: SettleResponse,
+  beforeHandlerSettlement?: { result: SettleResponse },
+  paymentPayload?: PaymentPayload,
+): SettleResponse {
+  const payload = paymentPayload?.payload as Record<string, unknown> | undefined;
+  const channelId = payload?.channelId;
+  return {
+    success: false,
+    errorReason: cancelSettlement.errorReason,
+    errorMessage: cancelSettlement.errorMessage,
+    payer: cancelSettlement.payer,
+    transaction: "",
+    network: cancelSettlement.network,
+    extensions: cancelSettlement.extensions,
+    extra: {
+      ...cancelSettlement.extra,
+      ...(beforeHandlerSettlement
+        ? {
+            depositTransaction: beforeHandlerSettlement.result.transaction,
+            depositAmount: beforeHandlerSettlement.result.amount,
+          }
+        : {}),
+      ...(typeof channelId === "string" && channelId ? { channelId } : {}),
+    },
+  };
 }

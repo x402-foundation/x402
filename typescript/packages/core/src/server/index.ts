@@ -32,6 +32,7 @@ export {
   resolvePaymentFlow,
   applyPaymentFlowWireExtra,
   resolvePaymentFlowPhases,
+  resolveFailurePathSettlement,
 } from "./paymentFlow";
 export type {
   SchemeEnrichPaymentRequiredResponseHook,

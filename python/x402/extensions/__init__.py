@@ -110,6 +110,7 @@ from .sign_in_with_x import (  # noqa: E402
     SIWxVerifyOptions,
     SIWxVerifyResult,
     SupportedChain,
+    assert_siwx_challenge_bound_to_origin,
     build_siwx_schema,
     create_siwx_client_extension,
     create_siwx_client_hook,
@@ -269,6 +270,7 @@ __all__ = [
     "verify_siwx_signature",
     "build_siwx_schema",
     # Sign-In-With-X client
+    "assert_siwx_challenge_bound_to_origin",
     "create_siwx_message",
     "create_siwx_payload",
     "encode_siwx_header",

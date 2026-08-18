@@ -13,6 +13,7 @@ import (
 	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
 	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/client"
 	exactsvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
+	uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/client"
 	evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
 	svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
 )
@@ -51,7 +52,8 @@ func runAllNetworksExample(ctx context.Context, evmPrivateKey, svmPrivateKey, ur
 			return fmt.Errorf("failed to create SVM signer: %w", err)
 		}
 		client.Register("solana:*", exactsvm.NewExactSvmScheme(svmSigner))
-		fmt.Printf("✅ Registered SVM networks (solana:*)\n")
+		client.Register("solana:*", uptosvm.NewUptoSvmScheme(svmSigner, nil))
+		fmt.Printf("✅ Registered SVM networks (solana:*) — exact + upto\n")
 	}
 
 	// Wrap HTTP client with payment handling

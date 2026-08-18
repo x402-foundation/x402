@@ -84,6 +84,8 @@ The `payload` field must contain:
 
 Settlement is performed via the facilitator calling the `transferWithAuthorization` function on the `EIP-3009` compliant contract with the `payload.signature` and `payload.authorization` parameters from the `PAYMENT-SIGNATURE` header.
 
+If the transaction broadcasts successfully but its confirmation cannot be established (e.g. a node/RPC error or timeout while waiting for the receipt), the facilitator MAY return `settlement_pending` (see [§9 Error Handling](../../x402-specification-v2.md#9-error-handling)) with the broadcast transaction hash in `transaction`, so the caller can reconcile on chain before retrying.
+
 ---
 
 ## 2. AssetTransferMethod: `Permit2`
@@ -210,6 +212,8 @@ Settlement is performed by calling the `x402ExactPermit2Proxy`.
 
 3.  **With EIP-2612 Permit (Extension):**
     If `eip2612GasSponsoring` is used, call `x402ExactPermit2Proxy.settleWithPermit`.
+
+If the settlement transaction broadcasts successfully but its confirmation cannot be established (e.g. a node/RPC error or timeout while waiting for the receipt), the facilitator MAY return `settlement_pending` (see [§9 Error Handling](../../x402-specification-v2.md#9-error-handling)) with the broadcast transaction hash in `transaction`, so the caller can reconcile on chain before retrying.
 
 ---
 

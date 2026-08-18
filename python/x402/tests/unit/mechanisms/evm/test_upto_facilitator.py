@@ -8,6 +8,7 @@ from typing import Any
 from x402.mechanisms.evm import get_network_config
 from x402.mechanisms.evm.constants import (
     ERR_ASSET_NOT_DEPLOYED_CONTRACT,
+    ERR_ERC20_APPROVAL_BROADCAST_FAILED,
     ERR_PERMIT2_AMOUNT_MISMATCH,
     ERR_PERMIT2_DEADLINE_EXPIRED,
     ERR_PERMIT2_INSUFFICIENT_BALANCE,
@@ -15,6 +16,7 @@ from x402.mechanisms.evm.constants import (
     ERR_PERMIT2_NOT_YET_VALID,
     ERR_PERMIT2_RECIPIENT_MISMATCH,
     ERR_PERMIT2_TOKEN_MISMATCH,
+    ERR_SETTLEMENT_PENDING,
     ERR_UPTO_FACILITATOR_MISMATCH,
     ERR_UPTO_INVALID_SCHEME,
     ERR_UPTO_NETWORK_MISMATCH,
@@ -490,6 +492,195 @@ class TestSettle:
             result = facilitator.settle(make_payment_payload(), make_requirements())
 
         assert result.success is False
+
+    def test_receipt_wait_failure_returns_settlement_pending(self):
+        from unittest.mock import patch
+
+        class _ReceiptTimeoutSigner(MockFacilitatorSigner):
+            def wait_for_transaction_receipt(self, tx_hash: str) -> TransactionReceipt:
+                raise TimeoutError("rpc: timeout waiting for receipt")
+
+        signer = _ReceiptTimeoutSigner()
+        facilitator = UptoEvmFacilitatorScheme(signer)
+
+        with patch(
+            "x402.mechanisms.evm.upto.permit2_utils._verify_upto_permit2_signature",
+            return_value=True,
+        ):
+            result = facilitator.settle(make_payment_payload(), make_requirements())
+
+        assert result.success is False
+        assert result.error_reason == ERR_SETTLEMENT_PENDING
+        assert result.transaction == "0x" + "ab" * 32  # broadcast tx hash from write_contract
+        # Nothing is known to have settled yet, so no amount is reported.
+        assert result.amount is None
+
+    def test_receipt_wait_type_error_returns_settlement_pending(self):
+        from unittest.mock import patch
+
+        class _BrokenSigner(MockFacilitatorSigner):
+            def wait_for_transaction_receipt(self, tx_hash: str) -> TransactionReceipt:
+                raise TypeError("wait_for_transaction_receipt() missing 1 required argument")
+
+        signer = _BrokenSigner()
+        facilitator = UptoEvmFacilitatorScheme(signer)
+
+        with patch(
+            "x402.mechanisms.evm.upto.permit2_utils._verify_upto_permit2_signature",
+            return_value=True,
+        ):
+            result = facilitator.settle(make_payment_payload(), make_requirements())
+
+        assert result.success is False
+        assert result.error_reason == ERR_SETTLEMENT_PENDING
+        assert result.transaction == "0x" + "ab" * 32
+
+    def test_settle_invalid_broadcast_hash_is_terminal(self):
+        # settlement_pending needs the broadcast hash to be actionable, so a signer that
+        # reports success without a usable hash must fail terminally.
+        from unittest.mock import patch
+
+        class _InvalidHashSigner(MockFacilitatorSigner):
+            def write_contract(self, *args: Any, **kwargs: Any) -> str:
+                return "0xnothash"
+
+            def wait_for_transaction_receipt(self, tx_hash: str) -> TransactionReceipt:
+                raise AssertionError("must not wait on an invalid transaction hash")
+
+        facilitator = UptoEvmFacilitatorScheme(_InvalidHashSigner())
+
+        with patch(
+            "x402.mechanisms.evm.upto.permit2_utils._verify_upto_permit2_signature",
+            return_value=True,
+        ):
+            result = facilitator.settle(make_payment_payload(), make_requirements())
+
+        assert result.success is False
+        assert result.error_reason == ERR_UPTO_TRANSACTION_FAILED
+        assert result.transaction == ""
+
+    def test_settle_erc20_approval_invalid_settlement_hash_returned_without_error(self):
+        # Malformed final hash without error must not proceed to receipt wait.
+        from x402.extensions.erc20_approval_gas_sponsoring import (
+            Erc20ApprovalGasSponsoringInfo,
+        )
+        from x402.mechanisms.evm.upto.permit2_utils import (
+            _settle_upto_with_erc20_approval,
+        )
+
+        class _InvalidHashExtensionSigner:
+            def send_transactions(self, transactions: list[Any]) -> list[str]:
+                return ["0xapproval"]
+
+        permit2_payload = UptoPermit2Payload(
+            permit2_authorization=make_upto_permit2_authorization(),
+            signature="0x" + "aa" * 65,
+        )
+        erc20_info = Erc20ApprovalGasSponsoringInfo(
+            from_address=PAYER,
+            asset=TOKEN_ADDRESS,
+            spender=X402_UPTO_PERMIT2_PROXY_ADDRESS,
+            amount=str(2**256 - 1),
+            signed_transaction="0x" + "ff" * 100,
+            version="1",
+        )
+
+        result = _settle_upto_with_erc20_approval(
+            _InvalidHashExtensionSigner(),
+            make_payment_payload(),
+            permit2_payload,
+            erc20_info,
+            settlement_amount=int(AMOUNT),
+        )
+
+        assert result.success is False
+        assert result.error_reason == ERR_ERC20_APPROVAL_BROADCAST_FAILED
+        assert result.transaction == ""
+
+    def test_settle_erc20_approval_atomic_bundle_single_hash_succeeds(self):
+        from x402.extensions.erc20_approval_gas_sponsoring import (
+            Erc20ApprovalGasSponsoringInfo,
+        )
+        from x402.mechanisms.evm.upto.permit2_utils import (
+            _settle_upto_with_erc20_approval,
+        )
+
+        bundle_hash = "0x" + "ef" * 32
+
+        class _AtomicBundleExtensionSigner:
+            def send_transactions(self, transactions: list[Any]) -> list[str]:
+                return [bundle_hash]
+
+            def wait_for_transaction_receipt(self, tx_hash: str) -> TransactionReceipt:
+                return TransactionReceipt(status=1, block_number=1, tx_hash=tx_hash)
+
+        permit2_payload = UptoPermit2Payload(
+            permit2_authorization=make_upto_permit2_authorization(),
+            signature="0x" + "aa" * 65,
+        )
+        erc20_info = Erc20ApprovalGasSponsoringInfo(
+            from_address=PAYER,
+            asset=TOKEN_ADDRESS,
+            spender=X402_UPTO_PERMIT2_PROXY_ADDRESS,
+            amount=str(2**256 - 1),
+            signed_transaction="0x" + "ff" * 100,
+            version="1",
+        )
+
+        result = _settle_upto_with_erc20_approval(
+            _AtomicBundleExtensionSigner(),
+            make_payment_payload(),
+            permit2_payload,
+            erc20_info,
+            settlement_amount=int(AMOUNT),
+        )
+
+        assert result.success is True
+        assert result.transaction == bundle_hash
+
+    def test_settle_erc20_approval_extension_receipt_wait_failure_returns_settlement_pending(
+        self,
+    ):
+        from x402.extensions.erc20_approval_gas_sponsoring import (
+            Erc20ApprovalGasSponsoringInfo,
+        )
+        from x402.mechanisms.evm.upto.permit2_utils import (
+            _settle_upto_with_erc20_approval,
+        )
+
+        settle_hash = "0x" + "ef" * 32
+
+        class _ReceiptTimeoutExtensionSigner:
+            def send_transactions(self, transactions: list[Any]) -> list[str]:
+                return ["0x" + "11" * 32, settle_hash]
+
+            def wait_for_transaction_receipt(self, tx_hash: str) -> TransactionReceipt:
+                raise TimeoutError("rpc: timeout waiting for receipt")
+
+        permit2_payload = UptoPermit2Payload(
+            permit2_authorization=make_upto_permit2_authorization(),
+            signature="0x" + "aa" * 65,
+        )
+        erc20_info = Erc20ApprovalGasSponsoringInfo(
+            from_address=PAYER,
+            asset=TOKEN_ADDRESS,
+            spender=X402_UPTO_PERMIT2_PROXY_ADDRESS,
+            amount=str(2**256 - 1),
+            signed_transaction="0x" + "ff" * 100,
+            version="1",
+        )
+
+        result = _settle_upto_with_erc20_approval(
+            _ReceiptTimeoutExtensionSigner(),
+            make_payment_payload(),
+            permit2_payload,
+            erc20_info,
+            settlement_amount=int(AMOUNT),
+        )
+
+        assert result.success is False
+        assert result.error_reason == ERR_SETTLEMENT_PENDING
+        assert result.transaction == settle_hash
 
     def test_partial_settlement_below_max(self):
         """Settle for 500 when max authorized is 1000."""

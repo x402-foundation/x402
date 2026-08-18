@@ -98,6 +98,8 @@ Creates an x402 MCP client from an MCP session (MCPCaller) and payment client.
 ```go
 paymentClient := x402.Newx402Client()
 paymentClient.Register("eip155:84532", evmClientScheme)
+// paymentClient.SetSpendControls(x402.SpendControls{MaxAmountPerPayment: "$5"})
+// paymentClient.DisableSpendControls()
 
 x402Mcp := mcp.NewX402MCPClient(session, paymentClient, mcp.Options{})
 ```
@@ -110,8 +112,10 @@ Pass `*mcp.ClientSession` from the official MCP SDK.
 ```go
 x402Mcp := mcp.NewX402MCPClientFromConfig(session, []mcp.SchemeRegistration{
     {Network: "eip155:84532", Client: evmClientScheme},
-}, mcp.Options{}) // AutoPayment defaults to true
+}, mcp.Options{})
 ```
+
+FromConfig uses the payment client's default `$1` USD cap and default-asset allowlist. For custom spend controls, configure `*x402.X402Client` then wrap with `NewX402MCPClient`.
 
 ### Server
 

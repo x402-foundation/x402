@@ -12,7 +12,7 @@ Use `upto` for one-request usage metering, such as LLM token generation, bandwid
 Set the route `price` to the maximum authorized amount. In the handler, use settlement overrides to charge the actual amount.
 
 <Tabs>
-  <Tab title="TypeScript">
+  <Tab title="TypeScript (EVM)">
     ```typescript
     import { paymentMiddleware, setSettlementOverrides, x402ResourceServer } from "@x402/express";
     import { UptoEvmScheme } from "@x402/evm/upto/server";
@@ -39,7 +39,47 @@ Set the route `price` to the maximum authorized amount. In the handler, use sett
     });
     ```
   </Tab>
-  <Tab title="Go">
+  <Tab title="TypeScript (SVM)">
+    ```typescript
+    import { base58 } from "@scure/base";
+    import { createKeyPairSignerFromBytes } from "@solana/kit";
+    import { paymentMiddleware, setSettlementOverrides, x402ResourceServer } from "@x402/express";
+    import { UptoSvmScheme } from "@x402/svm/upto/server";
+    import { HTTPFacilitatorClient } from "@x402/core/server";
+
+    const receiverAuthorizerSigner = await createKeyPairSignerFromBytes(
+      base58.decode(process.env.SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY),
+    );
+
+    const resourceServer = new x402ResourceServer(facilitatorClient)
+      .register(
+        "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+        new UptoSvmScheme({
+          receiverAuthorizerSigner,
+          rpcUrl: process.env.SVM_RPC_URL, // optional: embeds recentBlockhash in 402
+        }),
+      );
+
+    app.use(paymentMiddleware({
+      "GET /api/generate": {
+        accepts: {
+          scheme: "upto",
+          price: "$0.10",
+          network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+          payTo: "YourSolanaAddress",
+        },
+        description: "AI text generation billed by usage",
+      },
+    }, resourceServer));
+
+    app.get("/api/generate", (req, res) => {
+      const actualUsage = computeActualCost();
+      setSettlementOverrides(res, { amount: String(actualUsage) });
+      res.json({ result: "..." });
+    });
+    ```
+  </Tab>
+  <Tab title="Go (EVM)">
     ```go
     routes := x402http.RoutesConfig{
         "GET /api/generate": {
@@ -61,6 +101,58 @@ Set the route `price` to the maximum authorized amount. In the handler, use sett
             Amount: fmt.Sprintf("%d", actualUsage),
         })
         _ = json.NewEncoder(w).Encode(map[string]string{"result": "..."})
+    })
+    ```
+  </Tab>
+  <Tab title="Go (SVM)">
+    ```go
+    import (
+        x402 "github.com/x402-foundation/x402/go/v2"
+        x402http "github.com/x402-foundation/x402/go/v2/http"
+        ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
+        uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/server"
+        svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
+    )
+
+    authorizer, err := svmsigners.NewReceiverAuthorizerSignerFromPrivateKey(
+        os.Getenv("SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    r.Use(ginmw.X402Payment(ginmw.Config{
+        Routes: x402http.RoutesConfig{
+            "GET /api/generate": {
+                Accepts: x402http.PaymentOptions{
+                    {
+                        Scheme:  "upto",
+                        Price:   "$0.10",
+                        Network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+                        PayTo:   "YourSolanaAddress",
+                    },
+                },
+                Description: "AI text generation billed by usage",
+            },
+        },
+        Facilitator: facilitatorClient,
+        Schemes: []ginmw.SchemeConfig{
+            {
+                Network: x402.Network("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"),
+                Server: uptosvm.NewUptoSvmScheme(&uptosvm.Config{
+                    ReceiverAuthorizerSigner: authorizer,
+                    RPCURL:                   os.Getenv("SVM_RPC_URL"),
+                }),
+            },
+        },
+    }))
+
+    r.GET("/api/generate", func(c *gin.Context) {
+        actualUsage := computeActualCost()
+        ginmw.SetSettlementOverrides(c, &x402.SettlementOverrides{
+            Amount: fmt.Sprintf("%d", actualUsage),
+        })
+        c.JSON(http.StatusOK, gin.H{"result": "..."})
     })
     ```
   </Tab>
@@ -107,10 +199,10 @@ Set the route `price` to the maximum authorized amount. In the handler, use sett
 
 ### Client Setup
 
-Register `UptoEvmScheme` alongside `ExactEvmScheme` if your client may call both fixed-price and usage-based EVM resources.
+Register the `upto` scheme alongside `exact` if your client may call both fixed-price and usage-based resources.
 
 <Tabs>
-  <Tab title="TypeScript">
+  <Tab title="TypeScript (EVM)">
     ```typescript
     import { x402Client } from "@x402/core/client";
     import { ExactEvmScheme } from "@x402/evm/exact/client";
@@ -124,7 +216,24 @@ Register `UptoEvmScheme` alongside `ExactEvmScheme` if your client may call both
     client.register("eip155:*", new UptoEvmScheme(signer));
     ```
   </Tab>
-  <Tab title="Go">
+  <Tab title="TypeScript (SVM)">
+    ```typescript
+    import { x402Client } from "@x402/core/client";
+    import { ExactSvmScheme } from "@x402/svm/exact/client";
+    import { UptoSvmScheme } from "@x402/svm/upto/client";
+    import { createKeyPairSignerFromBytes } from "@solana/kit";
+    import { base58 } from "@scure/base";
+
+    const signer = await createKeyPairSignerFromBytes(
+      base58.decode(process.env.SVM_PRIVATE_KEY),
+    );
+
+    const client = new x402Client();
+    client.register("solana:*", new ExactSvmScheme(signer)); // fixed-price services
+    client.register("solana:*", new UptoSvmScheme(signer));  // usage-based services
+    ```
+  </Tab>
+  <Tab title="Go (EVM)">
     ```go
     import (
         x402 "github.com/x402-foundation/x402/go/v2"
@@ -141,6 +250,25 @@ Register `UptoEvmScheme` alongside `ExactEvmScheme` if your client may call both
     x402Client := x402.Newx402Client().
         Register("eip155:*", exactevm.NewExactEvmScheme(evmSigner, nil)).
         Register("eip155:*", uptoevm.NewUptoEvmScheme(evmSigner, nil))
+    ```
+  </Tab>
+  <Tab title="Go (SVM)">
+    ```go
+    import (
+        x402 "github.com/x402-foundation/x402/go/v2"
+        exactsvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
+        uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/client"
+        svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
+    )
+
+    svmSigner, err := svmsigners.NewClientSignerFromPrivateKey(os.Getenv("SVM_PRIVATE_KEY"))
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    x402Client := x402.Newx402Client().
+        Register("solana:*", exactsvm.NewExactSvmScheme(svmSigner)).      // fixed-price services
+        Register("solana:*", uptosvm.NewUptoSvmScheme(svmSigner, nil))    // usage-based services
     ```
   </Tab>
   <Tab title="Python">
@@ -169,26 +297,82 @@ Register `UptoEvmScheme` alongside `ExactEvmScheme` if your client may call both
 `amount` can be expressed as:
 
 | Format | Example | Meaning |
-|--------|---------|---------|
+|--------|---------|---------| 
 | Raw atomic units | `"50000"` | Settle exactly 50,000 token base units |
 | Percentage | `"50%"` | Settle 50% of the route maximum |
 | Dollar price | `"$0.05"` | Convert a dollar-denominated route price to base units |
 
-Setting the amount to `"0"` means no charge for that request.
+Setting the amount to `"0"` means no charge for that request. On SVM, a zero-amount close still lands a transaction to release the escrowed deposit and channel rent.
 
 ### EVM Implementation
 
-`upto` uses Permit2 because the settled amount is not known when the buyer signs. The facilitator advertises a `facilitatorAddress` in the payment requirements, and the client binds the authorization to that facilitator.
+`upto` on EVM uses Permit2 because the settled amount is not known when the buyer signs. The facilitator advertises a `facilitatorAddress` in the payment requirements, and the client binds the authorization to that facilitator.
+
+### SVM Implementation
+
+`upto` on Solana uses the [payment-channels program](https://github.com/solana-foundation/payment-channels). The client escrows the ceiling amount in an onchain channel (`open`), and the server settles the actual amount with a signed voucher (`settle_and_seal` + `distribute`). The facilitator sponsors transaction fees and channel rent as a zero-share channel payee, and can always close abandoned channels to recover rent.
+
+The server must supply a `receiverAuthorizerSigner` — a hot key that signs settlement vouchers after metering. This key does not need to hold SOL or tokens.
+
+For custom facilitator implementations, use `UptoSvmScheme` from the facilitator package. The scheme's rent cleanup manager asynchronously seals and reclaims rent from abandoned channels:
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { toFacilitatorSvmSigner } from "@x402/svm";
+    import { UptoSvmScheme } from "@x402/svm/upto/facilitator";
+
+    const svmSigner = toFacilitatorSvmSigner(keypair);
+    const svmUptoScheme = new UptoSvmScheme(svmSigner, {
+      rpcUrl: process.env.SVM_RPC_URL,
+      maxChannelLifetimeSecs: 3600,
+    });
+
+    facilitator.register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", svmUptoScheme);
+
+    // Reclaim PDA rent from sealed/distributed channels
+    const rentCleanup = svmUptoScheme.createRentCleanupManager(
+      "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+    );
+    rentCleanup.start({ intervalSecs: 60, discoveryIntervalSecs: 86_400 });
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/facilitator"
+    )
+
+    maxChannelLifetimeSecs := 3600
+    scheme := uptosvm.NewUptoSvmScheme(svmSigner, &uptosvm.Config{
+        RPCURL:                 os.Getenv("SVM_RPC_URL"),
+        MaxChannelLifetimeSecs: &maxChannelLifetimeSecs,
+    })
+    facilitator.Register([]x402.Network{network}, scheme)
+
+    // Reclaim PDA rent from abandoned, sealed, and distributed channels
+    cleanup := scheme.NewRentCleanupManager(string(network))
+    cleanup.Start(ctx, uptosvm.StartConfig{
+        Interval:          5 * time.Minute,
+        DiscoveryInterval: 24 * time.Hour,
+    })
+    defer cleanup.Stop()
+    ```
+  </Tab>
+</Tabs>
 
 ### Examples
 
-* [TypeScript server example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/upto)
-* [Go server example](https://github.com/x402-foundation/x402/tree/main/examples/go/servers/upto)
+* [TypeScript server example (EVM + SVM)](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/upto)
+* [TypeScript facilitator example (EVM + SVM)](https://github.com/x402-foundation/x402/tree/main/examples/typescript/facilitator/upto)
+* [Go server example (SVM)](https://github.com/x402-foundation/x402/tree/main/examples/go/servers/upto)
+* [Go facilitator example (SVM)](https://github.com/x402-foundation/x402/tree/main/examples/go/facilitator/upto)
 
 ### Specs
 
 * [`upto` spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/upto/scheme_upto.md)
 * [`upto` EVM spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/upto/scheme_upto_evm.md)
+* [`upto` SVM spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/upto/scheme_upto_svm.md)
 
 ### See Also
 

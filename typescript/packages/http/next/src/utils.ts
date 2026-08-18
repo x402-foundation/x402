@@ -192,19 +192,19 @@ export async function handleSettlement(
 ): Promise<NextResponse> {
   // If the response from the protected route is >= 400, do not settle payment
   if (response.status >= 400) {
-    await cancellationDispatcher.cancel({
+    const cancelSettlement = await cancellationDispatcher.cancel({
       reason: "handler_failed",
       responseStatus: response.status,
     });
     response.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
-    // Echo before-handler receipt (e.g. upfront) so the payer still gets the tx hash
-    if (beforeHandlerSettlement) {
-      Object.entries(
-        httpServer.createCompletedSettlementHeaders(
-          beforeHandlerSettlement,
-          response.headers.get("Cache-Control"),
-        ),
-      ).forEach(([key, value]) => {
+    const failureHeaders = httpServer.createFailurePathSettlementHeaders(
+      cancelSettlement,
+      beforeHandlerSettlement,
+      paymentPayload,
+      response.headers.get("Cache-Control"),
+    );
+    if (failureHeaders) {
+      Object.entries(failureHeaders).forEach(([key, value]) => {
         response.headers.set(key, value);
       });
     }

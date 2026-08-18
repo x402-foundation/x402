@@ -19,6 +19,7 @@ from ..schemas import (
     ResourceInfo,
     SettleResponse,
     SkipHandlerDirective,
+    convert_to_token_amount,
 )
 from ..schemas.errors import SettleError
 from ..schemas.hooks import AbortProtectedRequestResult, GrantAccessResult
@@ -642,7 +643,7 @@ class x402HTTPServerBase:
     def resolve_settlement_override_amount(
         raw_amount: str,
         requirements: PaymentRequirements,
-        decimals: int = 6,
+        decimals: int | None = None,
     ) -> str:
         """Resolve a settlement override amount to atomic units."""
         percent_match = re.match(r"^(\d+(?:\.\d{0,2})?)%$", raw_amount)
@@ -656,8 +657,12 @@ class x402HTTPServerBase:
 
         dollar_match = re.match(r"^\$(\d+(?:\.\d+)?)$", raw_amount)
         if dollar_match:
-            dollars = float(dollar_match.group(1))
-            return str(round(dollars * (10**decimals)))
+            if decimals is None:
+                raise ValueError(
+                    f'Cannot convert dollar settlement override "{raw_amount}" to atomic units: '
+                    "asset decimals are unknown. Pass an atomic amount or register the asset."
+                )
+            return convert_to_token_amount(dollar_match.group(1), decimals)
 
         return raw_amount
 
@@ -670,15 +675,19 @@ class x402HTTPServerBase:
         if overrides is None or "amount" not in overrides:
             return requirements
 
-        scheme = self._server._find_registered_scheme(requirements.scheme, requirements.network)
-        decimals = 6
-        if scheme is not None:
-            get_decimals = getattr(scheme, "get_asset_decimals", None)
-            if callable(get_decimals):
-                decimals = get_decimals(requirements.asset or "", requirements.network)
+        raw_amount = str(overrides["amount"])
+        # Only `$…` overrides need asset decimals. Atomic and percent formats must
+        # not force a decimals lookup (unknown custom mints would otherwise fail).
+        decimals = None
+        if re.match(r"^\$(\d+(?:\.\d+)?)$", raw_amount):
+            scheme = self._server._find_registered_scheme(requirements.scheme, requirements.network)
+            if scheme is not None:
+                get_decimals = getattr(scheme, "get_asset_decimals", None)
+                if callable(get_decimals):
+                    decimals = get_decimals(requirements.asset or "", requirements.network)
 
         resolved = self.resolve_settlement_override_amount(
-            str(overrides["amount"]),
+            raw_amount,
             requirements,
             decimals,
         )

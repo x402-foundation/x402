@@ -43,7 +43,7 @@ async function main(): Promise<void> {
 
   const facilitatorClients = createFacilitatorClients(facilitatorUrl);
   const resourceServer = new x402ResourceServer(facilitatorClients);
-  configureResourceServer(resourceServer, cfg);
+  await configureResourceServer(resourceServer, cfg);
   // Unlike x402HTTPResourceServer (used by paymentMiddleware), the raw
   // x402ResourceServer used by createPaymentWrapper doesn't lazily initialize
   // on first call, so this must run before any buildPaymentRequirements call.

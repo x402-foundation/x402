@@ -226,6 +226,26 @@ def test_wrap_mcp_client_with_payment_from_config():
     assert client.client == mock_mcp
 
 
+def test_wrap_mcp_client_with_payment_from_config_forwards_spend_controls():
+    """wrap_mcp_client_with_payment_from_config_sync must apply spend_controls."""
+    from x402.mcp import wrap_mcp_client_with_payment_from_config_sync
+
+    class MockSchemeClient:
+        scheme = "mock"
+
+    mock_mcp = MockMCPClient()
+
+    client = wrap_mcp_client_with_payment_from_config_sync(
+        mock_mcp,
+        config={
+            "schemes": [{"network": "eip155:84532", "client": MockSchemeClient()}],
+            "spend_controls": {"max_amount_per_payment": "$5"},
+        },
+    )
+
+    assert client.payment_client._spend_controls == {"max_amount_per_payment": "$5"}
+
+
 def test_x402_mcp_client_payment_client():
     """Test accessing payment client property."""
     mock_mcp = MockMCPClient()

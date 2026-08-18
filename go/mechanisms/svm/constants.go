@@ -10,6 +10,9 @@ const (
 	// SchemeExact is the scheme identifier for exact payments
 	SchemeExact = "exact"
 
+	// SchemeUpto is the scheme identifier for usage-based payments
+	SchemeUpto = "upto"
+
 	// DefaultDecimals is the default token decimals for USDC
 	DefaultDecimals = 6
 
@@ -65,6 +68,72 @@ const (
 	USDCMainnetAddress = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 	USDCDevnetAddress  = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
 	USDCTestnetAddress = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU" // Same as devnet
+
+	// Supported stablecoin mint addresses beyond USDC.
+	USDTMainnetAddress = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+
+	USDGMainnetAddress = "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH"
+	USDGDevnetAddress  = "4F6PM96JJxngmHnZLBh9n58RH4aTVNWvDs2nuwrT5BP7"
+	USDGTestnetAddress = "4F6PM96JJxngmHnZLBh9n58RH4aTVNWvDs2nuwrT5BP7" // Same as devnet
+
+	PYUSDMainnetAddress = "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo"
+	PYUSDDevnetAddress  = "CXk2AMBfi3TwaEL2468s6zP8xq9NxTXjp9gjMgzeUynM"
+	PYUSDTestnetAddress = "CXk2AMBfi3TwaEL2468s6zP8xq9NxTXjp9gjMgzeUynM" // Same as devnet
+
+	CASHMainnetAddress = "CASHx9KJUStyftLFWGvEVf59SGeG9sh5FfcnZMVPCASH"
+
+	// TokenProgramAddress and Token2022ProgramAddress are the SPL token programs,
+	// identical on every Solana network.
+	TokenProgramAddress     = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+	Token2022ProgramAddress = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+
+	// StablecoinDecimals is the decimal precision of every mint in StablecoinMints.
+	StablecoinDecimals = 6
+)
+
+var (
+	// StablecoinMints maps a supported stablecoin symbol to its mint per network.
+	// Symbols without a devnet/testnet mint fall back to their mainnet mint.
+	StablecoinMints = map[string]map[string]string{
+		"USDC": {
+			networkKeyMainnet: USDCMainnetAddress,
+			networkKeyDevnet:  USDCDevnetAddress,
+			networkKeyTestnet: USDCTestnetAddress,
+		},
+		"USDT": {
+			networkKeyMainnet: USDTMainnetAddress,
+		},
+		"USDG": {
+			networkKeyMainnet: USDGMainnetAddress,
+			networkKeyDevnet:  USDGDevnetAddress,
+			networkKeyTestnet: USDGTestnetAddress,
+		},
+		"PYUSD": {
+			networkKeyMainnet: PYUSDMainnetAddress,
+			networkKeyDevnet:  PYUSDDevnetAddress,
+			networkKeyTestnet: PYUSDTestnetAddress,
+		},
+		"CASH": {
+			networkKeyMainnet: CASHMainnetAddress,
+		},
+	}
+
+	// StablecoinTokenPrograms maps a supported stablecoin symbol to the token
+	// program that owns its mint. Anything unrecognized defaults to SPL Token.
+	StablecoinTokenPrograms = map[string]string{
+		"USDC":  TokenProgramAddress,
+		"USDT":  TokenProgramAddress,
+		"USDG":  Token2022ProgramAddress,
+		"PYUSD": Token2022ProgramAddress,
+		"CASH":  Token2022ProgramAddress,
+	}
+)
+
+// Network keys for the per-network stablecoin mint lookup.
+const (
+	networkKeyMainnet = "mainnet"
+	networkKeyDevnet  = "devnet"
+	networkKeyTestnet = "testnet"
 )
 
 var (

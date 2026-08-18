@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { server } from "@/server";
+import { getServer } from "@/server";
 import { createWithX402GetHandler, isKnownCatalogPath } from "@/lib/setup";
 
 export const runtime = "nodejs";
@@ -15,6 +15,7 @@ export async function GET(
     if (!isKnownCatalogPath(catalogPath)) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
+    const server = await getServer();
     return createWithX402GetHandler(catalogPath, server)(req);
   }
 

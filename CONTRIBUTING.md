@@ -186,7 +186,7 @@ This generates template files in:
 - `python/x402/http/paywall/svm_paywall_template.py`
 - `python/x402/http/paywall/avm_paywall_template.py`
 
-**EVM `decimals.ts`:** The paywall assumes **6** decimals for EVM chains (the usual USDC-style default). The generated map only lists chains where `DEFAULT_STABLECOINS` uses a different `decimals` value. If you add or change one of those entries, run `build:paywall` and commit the updated `decimals.ts` with the template files above. For a plain 6-decimal default, nothing new is added to the map.
+**EVM `decimals.ts`:** The paywall assumes **6** decimals for EVM chains (the usual USDC-style default). The generated map only lists chains where `DEFAULT_ASSETS` uses a different `decimals` value on the first entry for that network. If you add or change one of those entries, run `build:paywall` and commit the updated `decimals.ts` with the template files above. For a plain 6-decimal default, nothing new is added to the map.
 
 Commit the generated files with your PR.
 

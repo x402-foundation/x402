@@ -1,5 +1,15 @@
 # @x402/paywall Changelog
 
+## 2.22.0
+
+### Minor Changes
+
+- Updated dependencies [37412e7](https://github.com/x402-foundation/x402/commit/37412e7)
+- Updated dependencies [db5da2e](https://github.com/x402-foundation/x402/commit/db5da2e)
+- Updated dependencies [db5da2e](https://github.com/x402-foundation/x402/commit/db5da2e)
+- Updated dependencies [1601942](https://github.com/x402-foundation/x402/commit/1601942)
+  - @x402/core@2.22.0
+
 ## 2.21.0
 
 ### Minor Changes
@@ -104,7 +114,7 @@
   - Resolves the token's decimal precision via a new `getDefaultTokenDecimals` helper that looks up the network in `@x402/evm`'s `DEFAULT_STABLECOINS` registry — the same source the scheme `getAssetDecimals` methods read from and the inline scheme dispatch in `@x402/core`'s `x402ResourceServer` uses. Falls back to 6 (USDC default) when the network is unknown.
   - Replaces the lossy `parseFloat(amount) / 10**decimals` math with `Number(formatUnits(BigInt(amount), decimals))`, preserving precision through the atomic-to-display conversion.
 
-  `@x402/evm` now publicly re-exports `DEFAULT_STABLECOINS` from `./shared/defaultAssets` so consumers can read the canonical default-asset registry directly.
+  `@x402/evm` now publicly re-exports `DEFAULT_STABLECOINS` from `./defaultAssets` so consumers can read the canonical default-asset registry directly.
 
 ### Patch Changes
 

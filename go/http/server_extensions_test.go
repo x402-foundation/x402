@@ -41,6 +41,20 @@ func (m *extTestHTTPAdapter) GetUserAgent() string    { return m.agent }
 type extTestSchemeServer struct{ scheme string }
 
 func (m *extTestSchemeServer) Scheme() string { return m.scheme }
+func (m *extTestSchemeServer) DefaultAssetTransferMethod() string {
+	return x402.SDKDefaultAssetTransferMethod
+}
+func (m *extTestSchemeServer) PaymentFlows() map[string]x402.PaymentFlowConfig {
+	auth := x402.PaymentFlowConfig{
+		Supported: []x402.PaymentFlowName{x402.PaymentFlowAuthorization},
+		Default:   x402.PaymentFlowAuthorization,
+	}
+	return map[string]x402.PaymentFlowConfig{
+		x402.SDKDefaultAssetTransferMethod: auth,
+		"eip3009":                          auth,
+		"permit2":                          auth,
+	}
+}
 func (m *extTestSchemeServer) ParsePrice(_ x402.Price, _ x402.Network) (x402.AssetAmount, error) {
 	return x402.AssetAmount{Asset: "USDC", Amount: "1000000"}, nil
 }

@@ -2,6 +2,14 @@
 
 <!-- towncrier release notes start -->
 
+## [2.19.0] - 2026-08-11
+
+### Fixed
+
+- Fixed payment-gate route matching on the escaped request path so percent-encoded separators and trailing-slash wildcard prefixes cannot bypass verification. Middleware now passes the raw WSGI/ASGI path for route matching, `_normalize_path` decodes one segment at a time while re-escaping decoded separators, and trailing `/*` patterns also match their bare prefix. ([#3073](https://github.com/x402-foundation/x402/pull/3073)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Fixed wildcard (`*`) route matching in the HTTP server when the wildcard tail contains a decoded line feed. Wildcard route regexes now compile with `re.DOTALL`, preventing protected routes from being missed before payment verification and settlement. ([#3055](https://github.com/x402-foundation/x402/pull/3055)) - Thanks [@saneGuy](https://github.com/saneGuy)!
+
+
 ## [2.18.0] - 2026-08-04
 
 ### Fixed

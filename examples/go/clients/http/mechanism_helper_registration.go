@@ -5,6 +5,7 @@ import (
 	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
 	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/client"
 	exactsvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
+	uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/client"
 	evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
 	svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
 )
@@ -50,6 +51,7 @@ func createMechanismHelperRegistrationClient(evmPrivateKey, svmPrivateKey, evmRp
 		// This registers:
 		// - solana:* (all Solana networks in v2)
 		client.Register("solana:*", exactsvm.NewExactSvmScheme(svmSigner))
+		client.Register("solana:*", uptosvm.NewUptoSvmScheme(svmSigner, nil))
 	}
 
 	// The fluent API allows chaining for clean code:

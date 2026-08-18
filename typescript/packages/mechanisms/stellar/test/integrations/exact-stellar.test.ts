@@ -16,6 +16,7 @@ import {
   SettleResponse,
   SupportedResponse,
 } from "@x402/core/types";
+import { convertToTokenAmount } from "@x402/core/utils";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createEd25519Signer, Ed25519Signer, STELLAR_TESTNET_CAIP2 } from "../../src";
 import { ExactStellarScheme as ExactStellarClient } from "../../src/exact/client";
@@ -30,10 +31,13 @@ const FACILITATOR_ADDRESS = process.env.FACILITATOR_ADDRESS as string;
 const RESOURCE_SERVER_ADDRESS = process.env.RESOURCE_SERVER_ADDRESS as string;
 const XLM_TESTNET_ASSET = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
 
-async function xlmFallbackParser(amount: number, network: string): Promise<AssetAmount | null> {
+async function xlmFallbackParser(
+  amount: string | number,
+  network: string,
+): Promise<AssetAmount | null> {
   if (network === STELLAR_TESTNET_CAIP2) {
     return {
-      amount: Math.round(amount * 1e7).toString(),
+      amount: convertToTokenAmount(String(amount), 7),
       asset: XLM_TESTNET_ASSET,
       extra: {},
     };
@@ -446,9 +450,9 @@ describe.skipIf(missingEnvVars)("Stellar Integration Tests", () => {
     it("should use registerMoneyParser for custom conversion", async () => {
       stellarServer
         .registerMoneyParser(async (amount, _network) => {
-          if (amount > 100) {
+          if (Number(amount) > 100) {
             return {
-              amount: (amount * 1e7).toString(),
+              amount: convertToTokenAmount(String(amount), 7),
               asset: "CUSTOMLARGETOKENMINT111111111111111111111",
               extra: { token: "CUSTOM", tier: "large" },
             };
@@ -485,9 +489,9 @@ describe.skipIf(missingEnvVars)("Stellar Integration Tests", () => {
     it("should support multiple MoneyParser in chain", async () => {
       stellarServer
         .registerMoneyParser(async amount => {
-          if (amount > 1000) {
+          if (Number(amount) > 1000) {
             return {
-              amount: (amount * 1e7).toString(),
+              amount: convertToTokenAmount(String(amount), 7),
               asset: "VIPTOKENMINT111111111111111111111111111111",
               extra: { tier: "vip" },
             };
@@ -495,9 +499,9 @@ describe.skipIf(missingEnvVars)("Stellar Integration Tests", () => {
           return null;
         })
         .registerMoneyParser(async amount => {
-          if (amount > 100) {
+          if (Number(amount) > 100) {
             return {
-              amount: (amount * 1e7).toString(),
+              amount: convertToTokenAmount(String(amount), 7),
               asset: "PREMIUMTOKENMINT1111111111111111111111111",
               extra: { tier: "premium" },
             };
@@ -543,7 +547,7 @@ describe.skipIf(missingEnvVars)("Stellar Integration Tests", () => {
       stellarServer.registerMoneyParser(async (amount, _network) => {
         await new Promise(resolve => setTimeout(resolve, 10));
 
-        const convertedAmount = amount * mockExchangeRate;
+        const convertedAmount = Number(amount) * mockExchangeRate;
         return {
           amount: Math.floor(convertedAmount * 1e7).toString(),
           asset: XLM_TESTNET_ASSET,
@@ -564,7 +568,7 @@ describe.skipIf(missingEnvVars)("Stellar Integration Tests", () => {
       // 100 * 0.98 = 98 (XLM, 7 decimals)
       expect(requirements[0].amount).toBe("980000000");
       expect(requirements[0].extra?.exchangeRate).toBe(0.98);
-      expect(requirements[0].extra?.originalUSD).toBe(100);
+      expect(requirements[0].extra?.originalUSD).toBe("100");
     });
 
     it("should avoid floating-point rounding error", async () => {

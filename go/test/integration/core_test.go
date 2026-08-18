@@ -16,6 +16,7 @@ func TestCoreIntegration(t *testing.T) {
 
 		// Setup client with cash scheme
 		client := x402.Newx402Client()
+		client.DisableSpendControls()
 		client.Register("x402:cash", cash.NewSchemeNetworkClient("John"))
 
 		// Setup facilitator with cash scheme

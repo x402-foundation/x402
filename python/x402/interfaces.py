@@ -253,8 +253,7 @@ class SchemeNetworkServer(Protocol):
     Implementations handle price parsing and requirement enhancement for specific schemes.
     Does NOT verify/settle - that's delegated to FacilitatorClient.
 
-    Note: parse_price handles USD→atomic conversion for the scheme.
-    This logic lives in the scheme implementation (e.g., EVM), not standalone.
+    Note: parse_price orchestrates shared helpers plus scheme asset/extra.
 
     Example:
         ```python
@@ -284,7 +283,7 @@ class SchemeNetworkServer(Protocol):
     def parse_price(self, price: Price, network: Network) -> AssetAmount:
         """Convert Money or AssetAmount to normalized AssetAmount.
 
-        USD→atomic conversion logic lives here, not as a standalone utility.
+        parse_price orchestrates shared helpers plus scheme asset/extra.
 
         Args:
             price: Price as Money ("$1.50", 1.50) or AssetAmount.

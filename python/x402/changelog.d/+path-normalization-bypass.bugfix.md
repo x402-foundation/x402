@@ -1,1 +1,0 @@
-Fixed payment-gate route matching on the escaped request path so percent-encoded separators and trailing-slash wildcard prefixes cannot bypass verification. Middleware now passes the raw WSGI/ASGI path for route matching, `_normalize_path` decodes one segment at a time while re-escaping decoded separators, and trailing `/*` patterns also match their bare prefix.

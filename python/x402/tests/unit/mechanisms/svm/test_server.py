@@ -1,5 +1,6 @@
 """Tests for ExactSvmScheme server."""
 
+from decimal import Decimal
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,6 +15,7 @@ from x402.mechanisms.svm import (
 )
 from x402.mechanisms.svm.exact import ExactSvmServerScheme
 from x402.schemas import AssetAmount, PaymentRequirements, SupportedKind
+from x402.schemas.helpers import convert_to_token_amount
 
 
 class TestParsePrice:
@@ -282,11 +284,11 @@ class TestRegisterMoneyParser:
             """Should use custom parser for Money values."""
             server = ExactSvmServerScheme()
 
-            def custom_parser(amount: float, network: str) -> AssetAmount | None:
+            def custom_parser(amount: str | int | float, network: str) -> AssetAmount | None:
                 # Custom logic: different conversion for large amounts
-                if amount > 100:
+                if Decimal(str(amount)) > 100:
                     return AssetAmount(
-                        amount=str(int(amount * 1e9)),  # Custom decimals
+                        amount=convert_to_token_amount(str(amount), 9),  # Custom decimals
                         asset="CustomTokenMint1111111111111111111111",
                         extra={"token": "CUSTOM", "tier": "large"},
                     )
@@ -305,13 +307,13 @@ class TestRegisterMoneyParser:
             assert result2.asset == USDC_MAINNET_ADDRESS  # Mainnet USDC
             assert result2.amount == "50000000"  # 50 * 1e6
 
-        def test_should_receive_decimal_number_not_raw_string(self):
-            """Should receive decimal number, not raw string."""
+        def test_should_receive_decimal_string_not_raw_input(self):
+            """Should receive a decimal string, not the raw money input."""
             server = ExactSvmServerScheme()
-            received_amounts: list[float] = []
+            received_amounts: list[str | int | float] = []
             received_networks: list[str] = []
 
-            def capture_parser(amount: float, network: str) -> AssetAmount | None:
+            def capture_parser(amount: str | int | float, network: str) -> AssetAmount | None:
                 received_amounts.append(amount)
                 received_networks.append(network)
                 return None  # Use default
@@ -319,21 +321,21 @@ class TestRegisterMoneyParser:
             server.register_money_parser(capture_parser)
 
             server.parse_price("$1.50", SOLANA_MAINNET_CAIP2)
-            assert received_amounts[-1] == 1.5
+            assert received_amounts[-1] == "1.50"
             assert received_networks[-1] == SOLANA_MAINNET_CAIP2
 
             server.parse_price("5.25", SOLANA_MAINNET_CAIP2)
-            assert received_amounts[-1] == 5.25
+            assert received_amounts[-1] == "5.25"
 
             server.parse_price(10.99, SOLANA_MAINNET_CAIP2)
-            assert received_amounts[-1] == 10.99
+            assert received_amounts[-1] == "10.99"
 
         def test_should_not_call_parser_for_asset_amount_passthrough(self):
             """Should not call parser for AssetAmount (pass-through)."""
             server = ExactSvmServerScheme()
             parser_called = False
 
-            def tracking_parser(amount: float, network: str) -> AssetAmount | None:
+            def tracking_parser(amount: str | int | float, network: str) -> AssetAmount | None:
                 nonlocal parser_called
                 parser_called = True
                 return None
@@ -356,7 +358,7 @@ class TestRegisterMoneyParser:
             """Should fall back to default if parser returns None."""
             server = ExactSvmServerScheme()
 
-            def null_parser(amount: float, network: str) -> AssetAmount | None:
+            def null_parser(amount: str | int | float, network: str) -> AssetAmount | None:
                 return None  # Always delegate
 
             server.register_money_parser(null_parser)
@@ -375,19 +377,19 @@ class TestRegisterMoneyParser:
             server = ExactSvmServerScheme()
             execution_order: list[int] = []
 
-            def parser1(amount: float, network: str) -> AssetAmount | None:
+            def parser1(amount: str | int | float, network: str) -> AssetAmount | None:
                 execution_order.append(1)
-                if amount > 1000:
+                if Decimal(str(amount)) > 1000:
                     return AssetAmount(amount="1", asset="Parser1Token", extra={})
                 return None
 
-            def parser2(amount: float, network: str) -> AssetAmount | None:
+            def parser2(amount: str | int | float, network: str) -> AssetAmount | None:
                 execution_order.append(2)
-                if amount > 100:
+                if Decimal(str(amount)) > 100:
                     return AssetAmount(amount="2", asset="Parser2Token", extra={})
                 return None
 
-            def parser3(amount: float, network: str) -> AssetAmount | None:
+            def parser3(amount: str | int | float, network: str) -> AssetAmount | None:
                 execution_order.append(3)
                 return AssetAmount(amount="3", asset="Parser3Token", extra={})
 
@@ -404,15 +406,15 @@ class TestRegisterMoneyParser:
             server = ExactSvmServerScheme()
             execution_order: list[int] = []
 
-            def parser1(amount: float, network: str) -> AssetAmount | None:
+            def parser1(amount: str | int | float, network: str) -> AssetAmount | None:
                 execution_order.append(1)
                 return None
 
-            def parser2(amount: float, network: str) -> AssetAmount | None:
+            def parser2(amount: str | int | float, network: str) -> AssetAmount | None:
                 execution_order.append(2)
                 return AssetAmount(amount="winner", asset="WinnerToken", extra={})
 
-            def parser3(amount: float, network: str) -> AssetAmount | None:
+            def parser3(amount: str | int | float, network: str) -> AssetAmount | None:
                 execution_order.append(3)  # Should not execute
                 return AssetAmount(amount="3", asset="Parser3Token", extra={})
 
@@ -446,7 +448,7 @@ class TestRegisterMoneyParser:
             """Should propagate errors from parser."""
             server = ExactSvmServerScheme()
 
-            def error_parser(amount: float, network: str) -> AssetAmount | None:
+            def error_parser(amount: str | int | float, network: str) -> AssetAmount | None:
                 raise RuntimeError("Parser error: amount exceeds limit")
 
             server.register_money_parser(error_parser)
@@ -461,10 +463,10 @@ class TestRegisterMoneyParser:
             """Should return self for chaining."""
             server = ExactSvmServerScheme()
 
-            def parser1(amount: float, network: str) -> AssetAmount | None:
+            def parser1(amount: str | int | float, network: str) -> AssetAmount | None:
                 return None
 
-            def parser2(amount: float, network: str) -> AssetAmount | None:
+            def parser2(amount: str | int | float, network: str) -> AssetAmount | None:
                 return None
 
             result = server.register_money_parser(parser1).register_money_parser(parser2)
@@ -477,9 +479,9 @@ class TestRegisterMoneyParser:
         def test_should_handle_zero_amounts(self):
             """Should handle zero amounts."""
             server = ExactSvmServerScheme()
-            received_amount: float | None = None
+            received_amount: str | int | float | None = None
 
-            def capture_parser(amount: float, network: str) -> AssetAmount | None:
+            def capture_parser(amount: str | int | float, network: str) -> AssetAmount | None:
                 nonlocal received_amount
                 received_amount = amount
                 return None
@@ -487,14 +489,14 @@ class TestRegisterMoneyParser:
             server.register_money_parser(capture_parser)
 
             server.parse_price(0, SOLANA_MAINNET_CAIP2)
-            assert received_amount == 0
+            assert received_amount == "0"
 
         def test_should_handle_very_small_decimal_amounts(self):
             """Should handle very small decimal amounts."""
             server = ExactSvmServerScheme()
-            received_amount: float | None = None
+            received_amount: str | int | float | None = None
 
-            def capture_parser(amount: float, network: str) -> AssetAmount | None:
+            def capture_parser(amount: str | int | float, network: str) -> AssetAmount | None:
                 nonlocal received_amount
                 received_amount = amount
                 return None
@@ -502,14 +504,14 @@ class TestRegisterMoneyParser:
             server.register_money_parser(capture_parser)
 
             server.parse_price(0.000001, SOLANA_MAINNET_CAIP2)
-            assert received_amount == 0.000001
+            assert received_amount == "0.000001"
 
         def test_should_handle_very_large_amounts(self):
             """Should handle very large amounts."""
             server = ExactSvmServerScheme()
-            received_amount: float | None = None
+            received_amount: str | int | float | None = None
 
-            def capture_parser(amount: float, network: str) -> AssetAmount | None:
+            def capture_parser(amount: str | int | float, network: str) -> AssetAmount | None:
                 nonlocal received_amount
                 received_amount = amount
                 return None
@@ -517,21 +519,23 @@ class TestRegisterMoneyParser:
             server.register_money_parser(capture_parser)
 
             server.parse_price(999999999.99, SOLANA_MAINNET_CAIP2)
-            assert received_amount == 999999999.99
+            assert received_amount == "999999999.99"
 
-        def test_should_handle_negative_amounts_parser_can_validate(self):
-            """Should handle negative amounts (parser can validate)."""
+        def test_should_reject_negative_amounts_before_custom_parsers_run(self):
+            """Should reject negative amounts before custom parsers run."""
             server = ExactSvmServerScheme()
+            parser_called = False
 
-            def validate_parser(amount: float, network: str) -> AssetAmount | None:
-                if amount < 0:
-                    raise ValueError("Negative amounts not supported")
+            def validate_parser(amount: str | int | float, network: str) -> AssetAmount | None:
+                nonlocal parser_called
+                parser_called = True
                 return None
 
             server.register_money_parser(validate_parser)
 
-            with pytest.raises(ValueError, match="Negative amounts not supported"):
+            with pytest.raises(ValueError, match="Invalid money format: -10"):
                 server.parse_price(-10, SOLANA_MAINNET_CAIP2)
+            assert parser_called is False
 
     class TestRealWorldUseCases:
         """Test real-world use cases."""
@@ -540,11 +544,11 @@ class TestRegisterMoneyParser:
             """Should support network-specific tokens."""
             server = ExactSvmServerScheme()
 
-            def network_parser(amount: float, network: str) -> AssetAmount | None:
+            def network_parser(amount: str | int | float, network: str) -> AssetAmount | None:
                 # Mainnet uses USDC, devnet uses custom test token
                 if "EtWTRA" in network:  # Devnet
                     return AssetAmount(
-                        amount=str(int(amount * 1e6)),
+                        amount=convert_to_token_amount(str(amount), 6),
                         asset="TestTokenMint1111111111111111111111",
                         extra={"network": "devnet", "token": "TEST"},
                     )
@@ -563,19 +567,19 @@ class TestRegisterMoneyParser:
             """Should support tiered pricing."""
             server = ExactSvmServerScheme()
 
-            def premium_parser(amount: float, network: str) -> AssetAmount | None:
-                if amount > 1000:
+            def premium_parser(amount: str | int | float, network: str) -> AssetAmount | None:
+                if Decimal(str(amount)) > 1000:
                     return AssetAmount(
-                        amount=str(int(amount * 1e9)),  # Different decimals
+                        amount=convert_to_token_amount(str(amount), 9),  # Different decimals
                         asset="PremiumTokenMint11111111111111111",
                         extra={"tier": "premium"},
                     )
                 return None
 
-            def standard_parser(amount: float, network: str) -> AssetAmount | None:
-                if amount > 100:
+            def standard_parser(amount: str | int | float, network: str) -> AssetAmount | None:
+                if Decimal(str(amount)) > 100:
                     return AssetAmount(
-                        amount=str(int(amount * 1e6)),
+                        amount=convert_to_token_amount(str(amount), 6),
                         asset="StandardTokenMint1111111111111111",
                         extra={"tier": "standard"},
                     )
@@ -602,7 +606,7 @@ class TestRegisterMoneyParser:
             server = ExactSvmServerScheme()
             call_log: list[dict] = []
 
-            def logging_parser(amount: float, network: str) -> AssetAmount | None:
+            def logging_parser(amount: str | int | float, network: str) -> AssetAmount | None:
                 call_log.append({"amount": amount})
                 return None  # Use default
 
@@ -613,6 +617,6 @@ class TestRegisterMoneyParser:
             server.parse_price(42.25, SOLANA_MAINNET_CAIP2)
 
             assert len(call_log) == 3
-            assert call_log[0]["amount"] == 10.5
-            assert call_log[1]["amount"] == 25.75
-            assert call_log[2]["amount"] == 42.25
+            assert call_log[0]["amount"] == "10.50"
+            assert call_log[1]["amount"] == "25.75"
+            assert call_log[2]["amount"] == "42.25"

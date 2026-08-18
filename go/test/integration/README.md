@@ -13,6 +13,7 @@ These integration tests verify the complete x402 payment flows with real mechani
 - 🔐 **TestEVMIntegrationV1** - Full EVM V1 payment flow (Base Sepolia)
 - 🔐 **TestSVMIntegrationV2** - Full SVM V2 payment flow (Solana Devnet)
 - 🔐 **TestSVMIntegrationV1** - Full SVM V1 payment flow (Solana Devnet)
+- 🔐 **TestSVMIntegrationV2Upto** - SVM `upto` payment-channel escrow flow (Solana Devnet)
 
 ### Batch-Settlement (Batched) Integration Tests (Require Configuration)
 EVM batched mechanism tests in `evm_batch_settlement_test.go`. All tests
@@ -86,6 +87,10 @@ SVM_CLIENT_PRIVATE_KEY=<base58_private_key>
 SVM_FACILITATOR_PRIVATE_KEY=<base58_private_key>
 SVM_FACILITATOR_ADDRESS=<base58_solana_address>
 SVM_RESOURCE_SERVER_ADDRESS=<base58_solana_address>
+
+# SVM `upto` reuses the SVM_* keys above and adds the voucher-signing hot key
+SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY=<base58_private_key>
+SVM_RPC_URL=https://api.devnet.solana.com          # optional, point `upto` at a dedicated RPC if the public one rate-limits
 ```
 
 ### Required Setup
@@ -148,6 +153,16 @@ spl-token create-account 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU --url devn
 9. ✅ **Facilitator submits transaction to Solana Devnet**
 10. ✅ Waits for transaction confirmation (with retries)
 11. ✅ Verifies transaction succeeded
+
+### SVM `upto` Integration Test
+1. ✅ Server advertises a payment-channel challenge (feePayer, receiverAuthorizer, withdrawDelay)
+2. ✅ Client derives the channel PDA and partially signs the `open` transaction
+3. ✅ Facilitator runs the static acceptance policy and simulates open + settle + distribute
+4. ✅ **Facilitator co-signs and broadcasts the `open`, escrowing the authorized max**
+5. ✅ Server signs a voucher for the metered amount with the receiver authorizer
+6. ✅ **Facilitator submits `settle_and_seal` + `distribute` for the metered amount**
+7. ✅ Asserts full, partial, and zero settlements, refunding the unused remainder
+8. ✅ Runs a rent cleanup pass against live devnet state
 
 ## Test Output Examples
 

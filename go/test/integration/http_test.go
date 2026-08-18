@@ -92,6 +92,7 @@ func TestHTTPIntegration(t *testing.T) {
 
 		// Setup x402 client with cash scheme
 		x402Client := x402.Newx402Client()
+		x402Client.DisableSpendControls()
 		x402Client.Register("x402:cash", cash.NewSchemeNetworkClient("John"))
 
 		// Setup HTTP client wrapper
@@ -164,12 +165,13 @@ func TestHTTPIntegration(t *testing.T) {
 		var acceptsV2 []types.PaymentRequirements
 		for _, acc := range paymentRequired.Accepts {
 			acceptsV2 = append(acceptsV2, types.PaymentRequirements{
-				Scheme:  acc.Scheme,
-				Network: string(acc.Network),
-				Asset:   acc.Asset,
-				Amount:  acc.Amount,
-				PayTo:   acc.PayTo,
-				Extra:   acc.Extra,
+				Scheme:            acc.Scheme,
+				Network:           string(acc.Network),
+				Asset:             acc.Asset,
+				Amount:            acc.Amount,
+				PayTo:             acc.PayTo,
+				MaxTimeoutSeconds: acc.MaxTimeoutSeconds,
+				Extra:             acc.Extra,
 			})
 		}
 
@@ -221,6 +223,8 @@ func TestHTTPIntegration(t *testing.T) {
 			nil,
 			nil,
 			nil,
+			nil,
+			"",
 		)
 		if !settlementResult.Success {
 			t.Fatalf("Failed to process settlement: %v", settlementResult.ErrorReason)
@@ -341,6 +345,7 @@ func TestHTTPIntegration_FacilitatorReturnsIsValidFalse(t *testing.T) {
 			// Build a structurally valid payment payload using the cash client so
 			// the server accepts the header encoding and reaches the facilitator call.
 			x402Client := x402.Newx402Client()
+			x402Client.DisableSpendControls()
 			x402Client.Register("x402:cash", cash.NewSchemeNetworkClient("Alice"))
 			httpClient := x402http.Newx402HTTPClient(x402Client)
 

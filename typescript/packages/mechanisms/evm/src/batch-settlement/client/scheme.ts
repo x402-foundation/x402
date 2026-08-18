@@ -42,6 +42,7 @@ import {
 import { createBatchSettlementClientHooks } from "./hooks";
 import { processCorrectivePaymentRequired } from "./recovery";
 import type { ClientChannelStorage } from "./storage";
+import { findDefaultAsset } from "../../defaultAssets";
 import { signVoucher } from "./voucher";
 
 export type { BatchSettlementClientContext } from "./storage";
@@ -65,6 +66,7 @@ export type { RefundOptions } from "./refund";
  */
 export class BatchSettlementEvmScheme implements SchemeNetworkClient {
   readonly scheme = BATCH_SETTLEMENT_SCHEME;
+  findDefaultAsset = findDefaultAsset;
 
   readonly schemeHooks: SchemeClientHooks;
 

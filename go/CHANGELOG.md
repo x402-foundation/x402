@@ -1,3 +1,8 @@
+## v2.22.0 - 2026-08-11
+### Fixed
+- 'Match payment-gated routes on the escaped request path so percent-encoded separators cannot bypass the payment gate: the Echo, Gin, and net/http middlewares now pass URL.EscapedPath() instead of the decoded URL.Path, normalizePath decodes one segment at a time (re-escaping any decoded / or \) instead of decoding the whole path twice, and a trailing /* route pattern now also matches its bare prefix' ([#3044](https://github.com/x402-foundation/x402/pull/3044)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe)!
+- 'Compile route patterns with the (?s) flag so wildcard-derived `.*?` matches a line feed: normalizePath decodes %0A to a raw LF inside a segment, and without (?s) a wildcard route missed such a path while routers still dispatched it to the protected handler, skipping payment verification (Go counterpart of the TypeScript #3036 and Python #3055 dotAll fixes)' ([#3100](https://github.com/x402-foundation/x402/pull/3100)) - Thanks [@hung-yueh](https://github.com/hung-yueh)!
+
 ## v2.21.0 - 2026-08-04
 ### Added
 - Add Celo mainnet (chain ID 42220) and Celo Sepolia (chain ID 11142220) support with USDC as the default stablecoin ([#3025](https://github.com/x402-foundation/x402/pull/3025)) - Thanks [@GigaHierz](https://github.com/GigaHierz) and [@claude](https://github.com/claude)!

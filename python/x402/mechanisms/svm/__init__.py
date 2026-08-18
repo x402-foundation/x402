@@ -55,6 +55,9 @@ from .constants import (
     NetworkConfig,
 )
 
+# Default assets
+from .default_assets import DEFAULT_ASSETS, find_default_asset, get_default_asset
+
 # Settlement cache (shared across V1/V2 facilitator instances)
 from .settlement_cache import SettlementCache
 
@@ -85,7 +88,6 @@ from .utils import (
     get_usdc_address,
     normalize_network,
     parse_amount,
-    parse_money_to_decimal,
     validate_svm_address,
 )
 
@@ -165,9 +167,12 @@ __all__ = [
     "convert_to_token_amount",
     "parse_amount",
     "format_amount",
-    "parse_money_to_decimal",
     "decode_transaction_from_payload",
     "get_token_payer_from_transaction",
     "extract_transaction_info",
     "derive_ata",
+    # Default assets
+    "DEFAULT_ASSETS",
+    "find_default_asset",
+    "get_default_asset",
 ]

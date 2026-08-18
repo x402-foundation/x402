@@ -3,6 +3,9 @@ import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { UptoEvmScheme } from "@x402/evm/upto/server";
 import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
+import { UptoSvmScheme } from "@x402/svm/upto/server";
+import { base58 } from "@scure/base";
+import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { ExactAptosScheme } from "@x402/aptos/exact/server";
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
 import { ExactKeetaScheme } from "@x402/keeta/exact/server";
@@ -51,11 +54,11 @@ export function createFacilitatorClients(facilitatorUrl: string): HTTPFacilitato
 }
 
 /** Register schemes for one configured family. */
-function registerFamilySchemes(
+async function registerFamilySchemes(
   server: x402ResourceServer,
   family: ProtocolFamily,
   cfg: ServerEnvConfig,
-): void {
+): Promise<void> {
   const pattern = networkCaip2Pattern(family);
 
   switch (family) {
@@ -83,9 +86,24 @@ function registerFamilySchemes(
       );
       return;
     }
-    case "svm":
+    case "svm": {
       server.register(pattern, new ExactSvmScheme());
+      const receiverAuthorizerPrivateKey = process.env.SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY;
+      if (receiverAuthorizerPrivateKey) {
+        const receiverAuthorizerSigner = await createKeyPairSignerFromBytes(
+          base58.decode(receiverAuthorizerPrivateKey),
+        );
+        console.info(`SVM receiver authorizer: ${receiverAuthorizerSigner.address}`);
+        server.register(
+          pattern,
+          new UptoSvmScheme({
+            receiverAuthorizerSigner,
+            rpcUrl: process.env.SVM_RPC_URL,
+          }),
+        );
+      }
       return;
+    }
     case "aptos":
       server.register(pattern, new ExactAptosScheme());
       return;
@@ -114,10 +132,10 @@ function registerFamilySchemes(
  * Registers e2e schemes + bazaar extension for every family with a payee address
  * configured (catalog-driven via {@link isFamilyConfigured}).
  */
-export function configureResourceServer(server: x402ResourceServer, cfg: ServerEnvConfig): void {
+export async function configureResourceServer(server: x402ResourceServer, cfg: ServerEnvConfig): Promise<void> {
   for (const family of PROTOCOL_FAMILIES) {
     if (isFamilyConfigured(cfg, family)) {
-      registerFamilySchemes(server, family, cfg);
+      await registerFamilySchemes(server, family, cfg);
     }
   }
 

@@ -10,6 +10,7 @@ import { x402Client } from "@x402/core/client";
 import type {
   PaymentPolicy,
   SelectPaymentRequirements,
+  SpendControls,
   x402ClientConfig,
 } from "@x402/core/client";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -909,6 +910,9 @@ export interface x402MCPClientConfig {
    */
   policies?: PaymentPolicy[];
 
+  /** Forwarded to x402Client (default assets only + `$1` USD cap; `false` disables all). */
+  spendControls?: SpendControls | false;
+
   /**
    * Custom selector for which accept entry to pay.
    * Default (via x402Client) is server-ordered accepts[0] — prefer an explicit selector in production.
@@ -1063,10 +1067,11 @@ export function createx402MCPClient(config: x402MCPClientConfig): x402MCPClient 
     config.mcpClientOptions,
   );
 
-  // Apply schemes (and optional policies/selector) via fromConfig.
+  // Apply schemes (and optional policies/spendControls) via fromConfig.
   const paymentClient = x402Client.fromConfig({
     schemes: config.schemes,
     policies: config.policies,
+    spendControls: config.spendControls,
     paymentRequirementsSelector: config.paymentRequirementsSelector,
   });
 

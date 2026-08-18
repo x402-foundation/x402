@@ -1,0 +1,309 @@
+import type {
+  DefaultAsset,
+  DefaultAssetTable,
+  FindDefaultAsset,
+  GetDefaultAsset,
+  Network,
+} from "@x402/core/types";
+import { EVM_NETWORK_CHAIN_ID_MAP } from "./constants";
+
+/**
+ * Base stablecoin asset configuration shared across all EVM payment schemes.
+ * Contains the core fields needed to identify and convert tokens.
+ */
+export type DefaultAssetInfo = DefaultAsset & {
+  /** EIP-712 domain name (must match the token's domain separator) */
+  name: string;
+  /** EIP-712 domain version (must match the token's domain separator) */
+  version: string;
+};
+
+/**
+ * Extended asset configuration for the exact scheme.
+ * Includes transfer method hints that control client-side behaviour.
+ */
+export type ExactDefaultAssetInfo = DefaultAssetInfo & {
+  /**
+   * Transfer method override: `"permit2"` for tokens that don't support EIP-3009.
+   * Omit for EIP-3009 tokens (default behaviour).
+   */
+  assetTransferMethod?: string;
+  /**
+   * Set to `true` for permit2 tokens that implement EIP-2612 `permit()`.
+   * Controls whether name/version are included in `extra` so the client can
+   * sign a gasless EIP-2612 permit for Permit2 approval.
+   */
+  supportsEip2612?: boolean;
+};
+
+/** Default USD-pegged assets by CAIP-2 network; index 0 is the `"$0.10"` default. */
+export const DEFAULT_ASSETS: DefaultAssetTable<ExactDefaultAssetInfo> = {
+  "eip155:8453": [
+    {
+      asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      name: "USD Coin",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  ], // Base mainnet USDC
+  "eip155:84532": [
+    {
+      asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      name: "USDC",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  ], // Base Sepolia USDC
+  "eip155:4326": [
+    {
+      asset: "0xFAfDdbb3FC7688494971a79cc65DCa3EF82079E7",
+      name: "MegaUSD",
+      version: "1",
+      decimals: 18,
+      symbol: "MegaUSD",
+      assetTransferMethod: "permit2",
+      supportsEip2612: true,
+    },
+  ], // MegaETH mainnet MegaUSD (no EIP-3009, supports EIP-2612)
+  "eip155:143": [
+    {
+      asset: "0x754704Bc059F8C67012fEd69BC8A327a5aafb603",
+      name: "USDC",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  ], // Monad mainnet USDC
+  "eip155:988": [
+    {
+      asset: "0x779Ded0c9e1022225f8E0630b35a9b54bE713736",
+      name: "USDT0",
+      version: "1",
+      decimals: 6,
+      symbol: "USDT0",
+    },
+  ], // Stable mainnet USDT0
+  "eip155:2201": [
+    {
+      asset: "0x78Cf24370174180738C5B8E352B6D14c83a6c9A9",
+      name: "USDT0",
+      version: "1",
+      decimals: 6,
+      symbol: "USDT0",
+    },
+  ], // Stable testnet USDT0
+  "eip155:137": [
+    {
+      asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+      name: "USD Coin",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  ], // Polygon mainnet USDC
+  "eip155:42161": [
+    {
+      asset: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+      name: "USD Coin",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  ], // Arbitrum One USDC
+  "eip155:421614": [
+    {
+      asset: "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
+      name: "USD Coin",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  ], // Arbitrum Sepolia USDC
+  "eip155:31612": [
+    {
+      asset: "0xdD468A1DDc392dcdbEf6db6e34E89AA338F9F186",
+      name: "Mezo USD",
+      version: "1",
+      decimals: 18,
+      symbol: "mUSD",
+      assetTransferMethod: "permit2",
+      supportsEip2612: true,
+    },
+  ], // Mezo mainnet mUSD (no EIP-3009, supports EIP-2612)
+  "eip155:31611": [
+    {
+      asset: "0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503",
+      name: "Mezo USD",
+      version: "1",
+      decimals: 18,
+      symbol: "mUSD",
+      assetTransferMethod: "permit2",
+      supportsEip2612: true,
+    },
+  ], // Mezo Testnet mUSD (no EIP-3009, supports EIP-2612)
+  "eip155:723487": [
+    {
+      asset: "0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb",
+      name: "Stable Coin",
+      version: "1",
+      decimals: 6,
+      symbol: "SBC",
+      assetTransferMethod: "permit2",
+      supportsEip2612: true,
+    },
+  ], // Radius Network SBC (no EIP-3009, supports EIP-2612)
+  "eip155:72344": [
+    {
+      asset: "0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb",
+      name: "Stable Coin",
+      version: "1",
+      decimals: 6,
+      symbol: "SBC",
+      assetTransferMethod: "permit2",
+      supportsEip2612: true,
+    },
+  ], // Radius Testnet SBC (no EIP-3009, supports EIP-2612)
+  "eip155:36900": [
+    {
+      asset: "0x9cb8142aEBBcdc60AF7c97Af897A67A8f3CA71C2",
+      name: "USDC.e",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC.e",
+    },
+  ], // ADI Chain USDC.e (EIP-3009 supported)
+  "eip155:190415": [
+    {
+      asset: "0x401eCb1D350407f13ba348573E5630B83638E30D",
+      name: "Bridged USDC",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC.e",
+    },
+  ], // HPP mainnet USDC.e
+  "eip155:181228": [
+    {
+      asset: "0x401eCb1D350407f13ba348573E5630B83638E30D",
+      name: "Bridged USDC",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC.e",
+    },
+  ], // HPP Sepolia USDC.e
+  "eip155:50": [
+    {
+      asset: "0xfA2958CB79b0491CC627c1557F441eF849Ca8eb1",
+      name: "USDC",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  ], // XDC Network mainnet USDC (Bridged USDC Standard, EIP-3009 supported)
+  "eip155:51": [
+    {
+      asset: "0xb5AB69F7bBada22B28e79C8FFAECe55eF1c771D4",
+      name: "USDC",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  ], // XDC Apothem testnet USDC (Bridged USDC Standard, EIP-3009 supported)
+  "eip155:38833": [
+    {
+      asset: "0xA5b8BF902b2844dA17d4506cc827F7F1681735E7",
+      name: "USDC",
+      version: "1",
+      decimals: 6,
+      symbol: "USDC",
+      assetTransferMethod: "permit2",
+    },
+  ], // Igra mainnet USDC (no EIP-3009, no EIP-2612)
+  "eip155:14": [
+    {
+      asset: "0xe7cd86e13AC4309349F30B3435a9d337750fC82D",
+      name: "USD\u20AE0",
+      version: "1",
+      decimals: 6,
+      symbol: "USDT0",
+    },
+  ], // Flare mainnet USD₮0 (EIP-3009 supported)
+  "eip155:42220": [
+    {
+      asset: "0xcebA9300f2b948710d2653dD7B07f33A8B32118C",
+      name: "USDC",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  ], // Celo mainnet USDC (EIP-3009 supported)
+  "eip155:11142220": [
+    {
+      asset: "0x01C5C0122039549AD1493B8220cABEdD739BC44E",
+      name: "USDC",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  ], // Celo Sepolia testnet USDC (EIP-3009 supported)
+};
+
+/**
+ * Map CAIP-2 or v1 legacy name to a {@link DEFAULT_ASSETS} key.
+ *
+ * @param network - CAIP-2 or legacy EVM network id
+ * @returns Normalized CAIP-2 network key
+ */
+function resolveNetworkKey(network: Network): string {
+  if (network in DEFAULT_ASSETS) {
+    return network;
+  }
+  const chainId = EVM_NETWORK_CHAIN_ID_MAP[network as keyof typeof EVM_NETWORK_CHAIN_ID_MAP];
+  if (chainId !== undefined) {
+    return `eip155:${chainId}`;
+  }
+  return network;
+}
+
+/**
+ * Look up a default asset by network and optional ticker.
+ *
+ * @param network - CAIP-2 or v1 network
+ * @param symbol - Ticker; omit for the network default
+ * @returns Matching entry
+ * @throws If network or ticker is unknown
+ */
+export const getDefaultAsset: GetDefaultAsset<ExactDefaultAssetInfo> = (network, symbol?) => {
+  const key = resolveNetworkKey(network);
+  const assets = DEFAULT_ASSETS[key];
+  if (!assets || assets.length === 0) {
+    throw new Error(`No default asset configured for network ${network}`);
+  }
+  if (!symbol) {
+    return assets[0];
+  }
+  const normalized = symbol.toUpperCase();
+  const match = assets.find(entry => entry.symbol.toUpperCase() === normalized);
+  if (!match) {
+    throw new Error(`No ${symbol} default asset configured for network ${network}`);
+  }
+  return match;
+};
+
+/**
+ * Reverse lookup by asset id (case-insensitive) and network.
+ *
+ * @param asset - Asset address from payment requirements
+ * @param network - CAIP-2 or v1 network
+ * @returns Matching entry, or undefined
+ */
+export const findDefaultAsset: FindDefaultAsset<ExactDefaultAssetInfo> = (asset, network) => {
+  const key = resolveNetworkKey(network);
+  const assets = DEFAULT_ASSETS[key];
+  if (!assets) {
+    return undefined;
+  }
+  const normalized = asset.toLowerCase();
+  return assets.find(entry => entry.asset.toLowerCase() === normalized);
+};

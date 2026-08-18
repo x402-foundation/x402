@@ -3871,7 +3871,7 @@ wheels = [
 
 [[package]]
 name = "x402"
-version = "2.18.0"
+version = "2.19.0"
 source = { editable = "." }
 dependencies = [
     { name = "nest-asyncio" },

@@ -31,6 +31,7 @@ const x402Mcp = createx402MCPClient({
   name: "x402-mcp-e2e-client",
   version: "1.0.0",
   schemes,
+  spendControls: false,
   autoPayment: true,
   onPaymentRequested: async () => true,
 });

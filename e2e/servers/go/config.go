@@ -12,6 +12,8 @@ import (
 	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
 	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/server"
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
+	uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/server"
+	svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
 )
 
 // Config holds shared env for Go e2e resource servers (gin/nethttp/echo).
@@ -104,6 +106,7 @@ func SchemeBindings(cfg Config) []SchemeBinding {
 		uptoEVM  *uptoevm.UptoEvmScheme
 		batched  *batchedserver.BatchSettlementEvmScheme
 		exactSVM *svm.ExactSvmScheme
+		uptoSVM  *uptosvm.UptoSvmScheme
 	)
 
 	schemeFor := func(networkID, scheme string) x402.SchemeNetworkServer {
@@ -139,11 +142,33 @@ func SchemeBindings(cfg Config) []SchemeBinding {
 				return batched
 			}
 		case "svm":
-			if scheme == "exact" {
+			switch scheme {
+			case "exact":
 				if exactSVM == nil {
 					exactSVM = svm.NewExactSvmScheme()
 				}
 				return exactSVM
+			case "upto":
+				if uptoSVM == nil {
+					// The authorizer signs settlement vouchers; without it the
+					// server cannot authorize any channel settlement.
+					authorizerKey := os.Getenv("SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY")
+					if authorizerKey == "" {
+						fmt.Println("❌ SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY is required for upto on svm")
+						os.Exit(1)
+					}
+					authorizer, err := svmsigners.NewReceiverAuthorizerSignerFromPrivateKey(authorizerKey)
+					if err != nil {
+						fmt.Printf("Failed to parse SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY: %v\n", err)
+						os.Exit(1)
+					}
+					fmt.Printf("SVM receiver authorizer: %s\n", authorizer.Address())
+					uptoSVM = uptosvm.NewUptoSvmScheme(&uptosvm.Config{
+						ReceiverAuthorizerSigner: authorizer,
+						RPCURL:                   os.Getenv("SVM_RPC_URL"),
+					})
+				}
+				return uptoSVM
 			}
 		}
 		return nil

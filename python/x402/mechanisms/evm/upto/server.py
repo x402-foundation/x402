@@ -3,15 +3,15 @@
 from collections.abc import Callable
 
 from ....schemas import AssetAmount, Network, PaymentRequirements, Price, SupportedKind
+from ....schemas.helpers import convert_to_token_amount, parse_money
 from ..constants import SCHEME_UPTO
+from ..default_assets import find_default_asset, get_default_asset
 from ..utils import (
     get_asset_info,
-    get_network_config,
     parse_amount,
-    parse_money_to_decimal,
 )
 
-MoneyParser = Callable[[float, str], AssetAmount | None]
+MoneyParser = Callable[[str | int | float, str], AssetAmount | None]
 
 
 class UptoEvmScheme:
@@ -32,13 +32,9 @@ class UptoEvmScheme:
         self._money_parsers.append(parser)
         return self
 
-    def get_asset_decimals(self, _asset: str, network: Network) -> int:
-        try:
-            asset_info = get_asset_info(str(network), _asset)
-            return asset_info["decimals"]
-        except ValueError:
-            pass
-        return 6
+    def get_asset_decimals(self, asset: str, network: Network) -> int | None:
+        found = find_default_asset(asset, str(network))
+        return found["decimals"] if found is not None else None
 
     def parse_price(self, price: Price, network: Network) -> AssetAmount:
         if isinstance(price, dict) and "amount" in price:
@@ -55,14 +51,16 @@ class UptoEvmScheme:
                 raise ValueError(f"Asset address required for AssetAmount on {network}")
             return price
 
-        decimal_amount = parse_money_to_decimal(price)
+        parsed = parse_money(price)
+        decimal_amount = parsed["amount"]
+        symbol = parsed.get("symbol")
 
         for parser in self._money_parsers:
             result = parser(decimal_amount, str(network))
             if result is not None:
                 return result
 
-        return self._default_money_conversion(decimal_amount, str(network))
+        return self._default_money_conversion(decimal_amount, str(network), symbol)
 
     def enhance_payment_requirements(
         self,
@@ -71,16 +69,8 @@ class UptoEvmScheme:
         extension_keys: list[str],
     ) -> PaymentRequirements:
         """Add upto-specific enhancements: always permit2 + facilitatorAddress."""
-        config = get_network_config(str(requirements.network))
-
         if not requirements.asset:
-            default = config.get("default_asset")
-            if not default or not default.get("address"):
-                raise ValueError(
-                    f"No default stablecoin configured for network {requirements.network}; "
-                    "use register_money_parser or specify an explicit asset address"
-                )
-            requirements.asset = default["address"]
+            requirements.asset = get_default_asset(str(requirements.network))["asset"]
 
         try:
             asset_info = get_asset_info(str(requirements.network), requirements.asset)
@@ -122,17 +112,11 @@ class UptoEvmScheme:
 
         return requirements
 
-    def _default_money_conversion(self, amount: float, network: str) -> AssetAmount:
-        config = get_network_config(network)
-        asset = config.get("default_asset")
-
-        if not asset or not asset.get("address"):
-            raise ValueError(
-                f"No default stablecoin configured for network {network}; "
-                "use register_money_parser or specify an explicit AssetAmount"
-            )
-
-        token_amount = int(amount * (10 ** asset["decimals"]))
+    def _default_money_conversion(
+        self, amount: str, network: str, symbol: str | None = None
+    ) -> AssetAmount:
+        asset = get_default_asset(network, symbol)
+        token_amount = convert_to_token_amount(amount, asset["decimals"])
 
         extra: dict = {
             "assetTransferMethod": "permit2",
@@ -144,6 +128,6 @@ class UptoEvmScheme:
 
         return AssetAmount(
             amount=str(token_amount),
-            asset=asset["address"],
+            asset=asset["asset"],
             extra=extra,
         )

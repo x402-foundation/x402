@@ -20,6 +20,7 @@ import {
   simulateEip3009TransferResult,
   verifyEip3009TransferEvent,
 } from "./eip3009-utils";
+import { waitAndReturnSettleResponse } from "../../shared/settleReceipt";
 
 export interface VerifyEIP3009Options {
   /** Run onchain simulation. Defaults to true. */
@@ -369,52 +370,34 @@ export async function settleEIP3009(
         ? { ...eip3009Payload, signature: erc6492InnerSig }
         : eip3009Payload;
 
-    const tx = await executeTransferWithAuthorization(
-      signer,
-      getAddress(requirements.asset),
-      settlePayload,
-      dataSuffix,
-    );
-
-    // Wait for transaction confirmation
-    const receipt = await signer.waitForTransactionReceipt({ hash: tx });
-
-    if (receipt.status !== "success") {
-      return {
-        success: false,
-        errorReason: Errors.ErrTransactionFailed,
-        transaction: tx,
-        network: payload.accepted.network,
-        payer,
-      };
-    }
+    const asset = getAddress(requirements.asset);
+    const tx = await executeTransferWithAuthorization(signer, asset, settlePayload, dataSuffix);
 
     // Receipt status only proves the tx did not revert.
     // When logs are present, require the expected ERC-20 Transfer event.
     const auth = eip3009Payload.authorization;
-    if (
-      receipt.logs != null &&
-      !verifyEip3009TransferEvent(receipt.logs, getAddress(requirements.asset), {
-        from: getAddress(auth.from),
-        to: getAddress(auth.to),
-        value: BigInt(auth.value),
-      })
-    ) {
-      return {
-        success: false,
-        errorReason: Errors.ErrTransferEventMismatch,
-        transaction: tx,
-        network: payload.accepted.network,
-        payer,
-      };
-    }
-
-    return {
-      success: true,
-      transaction: tx,
-      network: payload.accepted.network,
-      payer,
-    };
+    return await waitAndReturnSettleResponse(signer, tx, payload.accepted.network, payer, {
+      failedStatusReason: Errors.ErrTransactionFailed,
+      validateReceipt: receipt => {
+        if (
+          receipt.logs != null &&
+          !verifyEip3009TransferEvent(receipt.logs, asset, {
+            from: getAddress(auth.from),
+            to: getAddress(auth.to),
+            value: BigInt(auth.value),
+          })
+        ) {
+          return {
+            success: false,
+            errorReason: Errors.ErrTransferEventMismatch,
+            transaction: tx,
+            network: payload.accepted.network,
+            payer,
+          };
+        }
+        return undefined;
+      },
+    });
   } catch (error) {
     // Preserve the raw revert text alongside the mapped code. The mapper collapses many
     // distinct on-chain reverts into a single reason (e.g. ErrInvalidSignature), so without

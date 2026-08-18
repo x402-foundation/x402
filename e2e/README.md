@@ -70,7 +70,7 @@ These keep local `endpoints` overlays and/or special orchestration — not just 
 | Swig smart wallet | Overlay [`clients/typescript/http/svm-smart-wallet/test.config.json`](clients/typescript/http/svm-smart-wallet/test.config.json) + [`scripts/swig-setup.ts`](scripts/swig-setup.ts) |
 | Legacy (v1) | `legacy/` trees only — separate configs; do not extend the mechanisms catalog for v1 |
 
-If an SDK implements a route end-to-end (client + server + facilitator), list it in that route’s `sdks`. Omit only when the mechanism package is missing (e.g. Go has no TVM; Python/Go have no AVM/NEAR/XRPL).
+If an SDK implements a route end-to-end (client + server + facilitator), list it in that route’s `sdks`. Omit only when the mechanism package is missing (e.g. Go has no TVM; Python/Go have no AVM/NEAR/XRPL; Python has no SVM upto).
 
 ## Legacy
 
@@ -258,6 +258,7 @@ Optional environment variables (batch-settlement scheme):
 
 ```bash
 SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY=0x...              # optional: self-managed receiver authorizer (omit to delegate to facilitator /supported)
+SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY=...                # server hot key that signs upto settlement vouchers (no SOL required)
 CLIENT_EVM_BATCH_SETTLEMENT_VOUCHER_SIGNER_PRIVATE_KEY=0x...  # EOA the client uses to sign vouchers
 EVM_BATCH_SETTLEMENT_RECOVERY=true                            # test client state-loss recovery scenario (default: true)
 ```

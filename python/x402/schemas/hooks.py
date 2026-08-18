@@ -432,6 +432,7 @@ class PaymentRequiredContext:
     """Context for HTTP on_payment_required hooks."""
 
     payment_required: "PaymentRequired | PaymentRequiredV1"
+    request_url: str
 
 
 @dataclass

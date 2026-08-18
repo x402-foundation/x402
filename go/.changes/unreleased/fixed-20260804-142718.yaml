@@ -1,3 +1,0 @@
-kind: fixed
-body: 'Match payment-gated routes on the escaped request path so percent-encoded separators cannot bypass the payment gate: the Echo, Gin, and net/http middlewares now pass URL.EscapedPath() instead of the decoded URL.Path, normalizePath decodes one segment at a time (re-escaping any decoded / or \) instead of decoding the whole path twice, and a trailing /* route pattern now also matches its bare prefix'
-time: 2026-08-04T14:27:18.169799-04:00

@@ -25,7 +25,7 @@ import {
 import * as Errors from "./errors";
 import { FacilitatorEvmSigner } from "../../signer";
 import { ExactPermit2Payload } from "../../types";
-import { getEvmChainId } from "../../utils";
+import { finalHashFromTwoRequestSend, getEvmChainId, isValidTxHash } from "../../utils";
 import { validateErc20ApprovalForPayment } from "./erc20approval";
 import { verifyTypedDataSignature } from "../../shared/verifySignature";
 import {
@@ -37,10 +37,10 @@ import {
   validateEip2612PermitForPayment,
   buildExactPermit2SettleArgs,
   splitEip2612Signature,
-  waitAndReturnSettleResponse,
   mapSettleError,
   type Permit2ProxyConfig,
 } from "../../shared/permit2";
+import { waitAndReturnSettleResponse } from "../../shared/settleReceipt";
 
 const exactProxyConfig: Permit2ProxyConfig = {
   proxyAddress: x402ExactPermit2ProxyAddress,
@@ -438,7 +438,9 @@ async function settlePermit2WithEIP2612(
       dataSuffix,
     });
 
-    return waitAndReturnSettleResponse(signer, tx, payload, payer);
+    return await waitAndReturnSettleResponse(signer, tx, payload.accepted.network, payer, {
+      failedStatusReason: Errors.ErrTransactionFailed,
+    });
   } catch (error) {
     return mapSettleError(error, payload, payer);
   }
@@ -481,8 +483,20 @@ async function settlePermit2WithERC20Approval(
       { to: config.proxyAddress, data: settleData, gas: BigInt(300_000) },
     ]);
 
-    const settleTxHash = txHashes[txHashes.length - 1];
-    return waitAndReturnSettleResponse(extensionSigner, settleTxHash, payload, payer);
+    const settleTxHash = finalHashFromTwoRequestSend(txHashes);
+    if (!settleTxHash || !isValidTxHash(settleTxHash)) {
+      throw new Error(
+        `${Errors.ErrErc20ApprovalTxFailed}: extension signer returned no valid settlement transaction hash`,
+      );
+    }
+
+    return await waitAndReturnSettleResponse(
+      extensionSigner,
+      settleTxHash,
+      payload.accepted.network,
+      payer,
+      { failedStatusReason: Errors.ErrTransactionFailed },
+    );
   } catch (error) {
     return mapSettleError(error, payload, payer);
   }
@@ -515,7 +529,9 @@ async function settlePermit2Direct(
       dataSuffix,
     });
 
-    return waitAndReturnSettleResponse(signer, tx, payload, payer);
+    return await waitAndReturnSettleResponse(signer, tx, payload.accepted.network, payer, {
+      failedStatusReason: Errors.ErrTransactionFailed,
+    });
   } catch (error) {
     return mapSettleError(error, payload, payer);
   }

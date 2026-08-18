@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
@@ -120,5 +121,67 @@ func TestEnhancePaymentRequirementsRecentBlockhash(t *testing.T) {
 		assert.Equal(t, supportedKind.Extra["feePayer"], requirements.Extra["feePayer"])
 		assert.NotContains(t, requirements.Extra, "recentBlockhash")
 		assert.NotContains(t, requirements.Extra, "lastValidBlockHeight")
+	})
+}
+
+func TestFindMatchingRequirements_StaleBlockhash(t *testing.T) {
+	network := "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
+	scheme := NewExactSvmScheme()
+	server := x402.Newx402ResourceServer(x402.WithSchemeServer(x402.Network(network), scheme))
+
+	req := types.PaymentRequirements{
+		Scheme:            svm.SchemeExact,
+		Network:           network,
+		Amount:            "100000",
+		Asset:             "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+		PayTo:             "GsbwXfJraMomNxBcjK7xK2xQx5MQgQUF2k3wEX2Q9z3w",
+		MaxTimeoutSeconds: 300,
+		Extra: map[string]interface{}{
+			"feePayer":             "FeePay3r1111111111111111111111111111111111",
+			"recentBlockhash":      "freshBlockhash",
+			"lastValidBlockHeight": "200",
+		},
+	}
+
+	t.Run("matches when only dynamic blockhash fields differ", func(t *testing.T) {
+		payload := types.PaymentPayload{
+			X402Version: 2,
+			Accepted: types.PaymentRequirements{
+				Scheme:            req.Scheme,
+				Network:           req.Network,
+				Amount:            req.Amount,
+				Asset:             req.Asset,
+				PayTo:             req.PayTo,
+				MaxTimeoutSeconds: req.MaxTimeoutSeconds,
+				Extra: map[string]interface{}{
+					"feePayer":             "FeePay3r1111111111111111111111111111111111",
+					"recentBlockhash":      "staleBlockhash",
+					"lastValidBlockHeight": "100",
+				},
+			},
+		}
+		matched := server.FindMatchingRequirements([]types.PaymentRequirements{req}, payload)
+		require.NotNil(t, matched, "expected match when only dynamic extras differ")
+	})
+
+	t.Run("does not match when a static extra field differs", func(t *testing.T) {
+		payload := types.PaymentPayload{
+			X402Version: 2,
+			Accepted: types.PaymentRequirements{
+				Scheme:            req.Scheme,
+				Network:           req.Network,
+				Amount:            req.Amount,
+				Asset:             req.Asset,
+				PayTo:             req.PayTo,
+				MaxTimeoutSeconds: req.MaxTimeoutSeconds,
+				Extra: map[string]interface{}{
+					"feePayer":             "OtherPay3r111111111111111111111111111111111",
+					"recentBlockhash":      "staleBlockhash",
+					"lastValidBlockHeight": "100",
+				},
+			},
+		}
+		matched := server.FindMatchingRequirements([]types.PaymentRequirements{req}, payload)
+		assert.Nil(t, matched, "expected no match when static extra differs")
 	})
 }

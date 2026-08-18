@@ -4,6 +4,7 @@ import { GenericServerProxy } from './servers/generic-server';
 import { GenericClientProxy } from './clients/generic-client';
 import { GenericFacilitatorProxy } from './facilitators/generic-facilitator';
 import { discoverComponentLocations, loadComponentConfig } from './component';
+import { schemesForSdkNetwork } from './mechanisms';
 import { verboseLog, errorLog } from './logger';
 import {
   TestConfig,
@@ -231,16 +232,20 @@ export class TestDiscovery {
             continue;
           }
 
-          // For EVM endpoints, check the client supports the endpoint's
-          // payment scheme and asset transfer method. Both `schemes` and
-          // `evm.assetTransferMethods` must be declared explicitly on the
-          // client config — there is no implicit default.
+          // Scheme support is per network: Python may implement EVM upto but not SVM upto.
+          const clientLanguage = client.config.language;
+          if (!clientLanguage) {
+            verboseLog(`  ⚠️  Skipping ${client.name}: No language specified`);
+            continue;
+          }
+          const clientSchemesForFamily = schemesForSdkNetwork(clientLanguage, endpointProtocolFamily);
+          if (!clientSchemesForFamily.includes(endpointScheme)) {
+            verboseLog(`  ⚠️  Skipping ${client.name} ↔ ${server.name} ${endpoint.path}: Payment scheme mismatch (client supports [${clientSchemesForFamily.join(', ')}] on ${endpointProtocolFamily}, endpoint requires ${endpointScheme})`);
+            continue;
+          }
+
+          // For EVM endpoints, also check asset transfer method.
           if (endpointProtocolFamily === 'evm') {
-            const clientSchemes = client.config.schemes ?? [];
-            if (endpointScheme && !clientSchemes.includes(endpointScheme)) {
-              verboseLog(`  ⚠️  Skipping ${client.name} ↔ ${server.name} ${endpoint.path}: Payment scheme mismatch (client supports [${clientSchemes.join(', ')}], endpoint requires ${endpointScheme})`);
-              continue;
-            }
             const endpointAtm = endpointAssetTransferMethod(endpoint)!;
             const clientAssetMethods = client.config.evm?.assetTransferMethods ?? [];
             if (!clientAssetMethods.includes(endpointAtm)) {
@@ -250,19 +255,19 @@ export class TestDiscovery {
           }
 
           // Find facilitators that support this protocol family, version,
-          // payment scheme, and asset transfer method. Facilitators must
-          // declare `schemes` and `evm.assetTransferMethods` explicitly.
+          // payment scheme, and (for EVM) asset transfer method. Facilitators
+          // must declare `schemes` and `evm.assetTransferMethods` explicitly.
           const matchingFacilitators = facilitators.filter(f => {
             const supportsProtocol = f.config.protocolFamilies?.includes(endpointProtocolFamily);
             const supportsVersion = f.config.x402Versions?.includes(serverVersion);
+            const facilLanguage = f.config.language;
+            if (!facilLanguage) return false;
+            const facilSchemesForFamily = schemesForSdkNetwork(facilLanguage, endpointProtocolFamily);
+            if (!facilSchemesForFamily.includes(endpointScheme)) return false;
             if (endpointProtocolFamily === 'evm') {
               const endpointAtm = endpointAssetTransferMethod(endpoint)!;
               const facilAssetMethods = f.config.evm?.assetTransferMethods ?? [];
               if (!facilAssetMethods.includes(endpointAtm)) return false;
-              if (endpointScheme) {
-                const facilSchemes = f.config.schemes ?? [];
-                if (!facilSchemes.includes(endpointScheme)) return false;
-              }
             }
             return supportsProtocol && supportsVersion;
           });

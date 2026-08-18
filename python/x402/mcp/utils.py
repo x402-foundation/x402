@@ -367,6 +367,54 @@ def convert_mcp_result(mcp_result: Any) -> "MCPToolResult":
     )
 
 
+def build_x402_client_config(
+    config_or_schemes: Any,
+) -> Any:
+    """Build ``x402ClientConfig`` from a config dict, scheme list, or existing config.
+
+    Accepts:
+    - ``x402ClientConfig`` (returned as-is)
+    - ``dict`` with ``schemes`` plus optional ``policies``, ``spend_controls``,
+      ``payment_requirements_selector``
+    - ``list`` of scheme registration dicts (``network``, ``client``, optional ``x402_version``)
+    """
+    from ..client_base import SchemeRegistration, x402ClientConfig
+
+    if isinstance(config_or_schemes, x402ClientConfig):
+        return config_or_schemes
+
+    if isinstance(config_or_schemes, list):
+        schemes_raw = config_or_schemes
+        policies = None
+        spend_controls = None
+        payment_requirements_selector = None
+    elif isinstance(config_or_schemes, dict):
+        schemes_raw = config_or_schemes.get("schemes", [])
+        policies = config_or_schemes.get("policies")
+        spend_controls = config_or_schemes.get("spend_controls")
+        payment_requirements_selector = config_or_schemes.get("payment_requirements_selector")
+    else:
+        raise TypeError(
+            "Expected x402ClientConfig, dict with 'schemes', or list of scheme registrations"
+        )
+
+    schemes = [
+        SchemeRegistration(
+            network=scheme["network"],
+            client=scheme["client"],
+            x402_version=scheme.get("x402_version", 2),
+        )
+        for scheme in schemes_raw
+    ]
+
+    return x402ClientConfig(
+        schemes=schemes,
+        policies=policies,
+        spend_controls=spend_controls,
+        payment_requirements_selector=payment_requirements_selector,
+    )
+
+
 def register_schemes(payment_client: Any, schemes: list[dict[str, Any]]) -> None:
     """Register payment schemes on a payment client.
 

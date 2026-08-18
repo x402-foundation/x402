@@ -43,6 +43,7 @@ import (
 	svmmech "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
 	svmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/v1/facilitator"
+	uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/facilitator"
 	x402types "github.com/x402-foundation/x402/go/v2/types"
 )
 
@@ -611,6 +612,22 @@ func isBatchSettlementRequirements(req x402.PaymentRequirementsView) bool {
 	return req.GetScheme() == batchsettlement.SchemeBatched
 }
 
+// skipsVerifyBeforeSettle reports whether the verified-payment cache check has
+// to be bypassed for these requirements. Escrow and upfront flows settle without
+// a prior /verify, and batch-settlement rewrites the payload between verify and
+// settle, so in both cases the cache lookup would never hit. Mirrors the TS e2e
+// facilitator (e2e/facilitators/typescript/index.ts).
+func skipsVerifyBeforeSettle(req x402.PaymentRequirementsView) bool {
+	if isBatchSettlementRequirements(req) {
+		return true
+	}
+	if req == nil {
+		return false
+	}
+	flow, _ := req.GetExtra()["paymentFlow"].(string)
+	return flow == string(x402.PaymentFlowEscrow) || flow == string(x402.PaymentFlowUpfront)
+}
+
 // Real SVM facilitator signer
 type realFacilitatorSvmSigner struct {
 	privateKey solana.PrivateKey
@@ -972,6 +989,10 @@ func main() {
 		log.Printf("SVM Facilitator account: %s", svmAddresses[0].String())
 
 		facilitator.Register([]x402.Network{x402.Network(svmNetwork)}, svm.NewExactSvmScheme(svmSigner))
+		facilitator.Register(
+			[]x402.Network{x402.Network(svmNetwork)},
+			uptosvm.NewUptoSvmScheme(svmSigner, &uptosvm.Config{RPCURL: svmRpcUrl}),
+		)
 		facilitator.RegisterV1(
 			[]x402.Network{x402.Network(getV1SvmNetwork(svmNetwork))},
 			svmv1.NewExactSvmSchemeV1(svmSigner),
@@ -1073,10 +1094,9 @@ func main() {
 			// Batch-settlement is exempt: the resource server's `BeforeSettleHook`
 			// rewrites refund payloads (adds claims/amount/refundNonce) and rewrites
 			// voucher commits before /settle, so the payload bytes seen at settle
-			// time differ from the verify-time bytes. Mirrors the TS e2e fac
-			// (e2e/facilitators/typescript/index.ts ~548) which skips the cache
-			// check for `requirements.scheme === "batch-settlement"`.
-			if isBatchSettlementRequirements(ctx.Requirements) {
+			// time differ from the verify-time bytes. Escrow and upfront flows are
+			// exempt because they settle without a prior /verify.
+			if skipsVerifyBeforeSettle(ctx.Requirements) {
 				return nil, nil
 			}
 
@@ -1109,11 +1129,10 @@ func main() {
 		}).
 		OnAfterSettle(func(ctx x402.FacilitatorSettleResultContext) error {
 			// Hook 4: Clean up verified payment tracking after successful settlement.
-			// Skip cleanup for batch-settlement: the verify-time entry was keyed by
-			// a different payload (see OnBeforeSettle comment) so there's nothing
-			// to delete here, and the cache entry naturally ages out via the 5-min
-			// TTL check above. Mirrors TS e2e fac.
-			if !isBatchSettlementRequirements(ctx.Requirements) {
+			// Skip cleanup for the flows exempted above: the verify-time entry was
+			// keyed by a different payload, or never written at all, so there is
+			// nothing to delete here and any stale entry ages out via the 5-min TTL.
+			if !skipsVerifyBeforeSettle(ctx.Requirements) {
 				paymentHash := hashBytes(ctx.PayloadBytes)
 				verificationMutex.Lock()
 				delete(verifiedPayments, paymentHash)
@@ -1127,8 +1146,8 @@ func main() {
 		}).
 		OnSettleFailure(func(ctx x402.FacilitatorSettleFailureContext) (*x402.FacilitatorSettleFailureHookResult, error) {
 			// Hook 5: Clean up verified payment tracking on failure too. Same
-			// batch-settlement exemption as OnAfterSettle.
-			if !isBatchSettlementRequirements(ctx.Requirements) {
+			// exemptions as OnAfterSettle.
+			if !skipsVerifyBeforeSettle(ctx.Requirements) {
 				paymentHash := hashBytes(ctx.PayloadBytes)
 				verificationMutex.Lock()
 				delete(verifiedPayments, paymentHash)

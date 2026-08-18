@@ -46,12 +46,16 @@ from .extensions import ResourceServerExtension
 
 # Helper utilities
 from .helpers import (
+    convert_to_token_amount,
     derive_network_pattern,
     detect_version,
     find_schemes_by_network,
     get_scheme_and_network,
     match_payload_to_requirements,
     matches_network_pattern,
+    number_to_decimal_string,
+    parse_money,
+    parse_money_string,
     parse_payment_payload,
     parse_payment_required,
     parse_payment_requirements,
@@ -164,6 +168,10 @@ __all__ = [
     "parse_payment_payload",
     "parse_payment_requirements",
     "matches_network_pattern",
+    "parse_money",
+    "parse_money_string",
+    "convert_to_token_amount",
+    "number_to_decimal_string",
     "derive_network_pattern",
     "find_schemes_by_network",
     # Hooks

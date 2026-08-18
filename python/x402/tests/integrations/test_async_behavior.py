@@ -304,6 +304,7 @@ class TestAsyncClientHooks:
         client = (
             x402Client()
             .register("x402:cash", CashSchemeNetworkClient("HookTest"))
+            .set_spend_controls(False)
             .on_after_payment_creation(async_after_hook)
         )
 
@@ -327,6 +328,7 @@ class TestAsyncClientHooks:
         client = (
             x402Client()
             .register("x402:cash", CashSchemeNetworkClient("SyncHook"))
+            .set_spend_controls(False)
             .on_after_payment_creation(sync_hook)
         )
 
@@ -348,9 +350,13 @@ class TestAsyncPaymentFlow:
 
     def setup_method(self) -> None:
         """Set up async test fixtures."""
-        self.client = x402Client().register(
-            "x402:cash",
-            CashSchemeNetworkClient("John"),
+        self.client = (
+            x402Client()
+            .register(
+                "x402:cash",
+                CashSchemeNetworkClient("John"),
+            )
+            .set_spend_controls(False)
         )
 
         self.facilitator = x402Facilitator().register(
@@ -403,9 +409,13 @@ class TestAsyncPaymentFlow:
     @pytest.mark.asyncio
     async def test_async_http_client_flow(self) -> None:
         """Test async HTTP client creates payment correctly."""
-        payment_client = x402Client().register(
-            "x402:cash",
-            CashSchemeNetworkClient("HTTPUser"),
+        payment_client = (
+            x402Client()
+            .register(
+                "x402:cash",
+                CashSchemeNetworkClient("HTTPUser"),
+            )
+            .set_spend_controls(False)
         )
         http_client = x402HTTPClient(payment_client)
 

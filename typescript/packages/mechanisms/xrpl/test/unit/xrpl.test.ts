@@ -8,6 +8,7 @@ import {
   DEFAULT_MAX_FEE_DROPS,
   SETTLEMENT_TTL_MS,
   SettlementCache,
+  XRPL_DEVNET,
   XRPL_TESTNET,
   compareDecimalStrings,
   createTickets,
@@ -16,6 +17,7 @@ import {
   resolveAssetTransferMethod,
   simulateSignedTransaction,
 } from "../../src";
+import { RLUSD_CURRENCY, RLUSD_TESTNET_ISSUER } from "../../src/defaultAssets";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import type { Client, Payment, Transaction } from "xrpl";
 
@@ -452,12 +454,28 @@ describe("ExactXrplScheme server", () => {
     ).rejects.toThrow("assetTransferMethod");
   });
 
-  it("rejects plain Money pricing without a custom parser", async () => {
+  it("rejects plain Money pricing on networks without a default asset", async () => {
     const server = new ExactXrplServerScheme();
 
-    await expect(server.parsePrice("$0.01", XRPL_TESTNET)).rejects.toThrow(
-      "require explicit AssetAmount",
+    await expect(server.parsePrice("$0.01", XRPL_DEVNET)).rejects.toThrow(
+      "No default asset configured for network",
     );
+  });
+
+  it("parses '$0.10' to RLUSD with the testnet issuer", async () => {
+    const server = new ExactXrplServerScheme();
+
+    await expect(server.parsePrice("$0.10", XRPL_TESTNET)).resolves.toEqual({
+      amount: "0.10",
+      asset: RLUSD_CURRENCY,
+      extra: { issuer: RLUSD_TESTNET_ISSUER },
+    });
+  });
+
+  it("does not treat RLUSD as 6-decimal atomic for settlement overrides", () => {
+    const server = new ExactXrplServerScheme();
+    expect(server.getAssetDecimals(RLUSD_CURRENCY, XRPL_TESTNET)).toBeUndefined();
+    expect(server.getAssetDecimals("XRP", XRPL_TESTNET)).toBeUndefined();
   });
 
   it("rejects malformed Money pricing before custom parser dispatch", async () => {
@@ -469,7 +487,7 @@ describe("ExactXrplScheme server", () => {
   });
 
   it("parses Money before custom parser dispatch", async () => {
-    const parser = vi.fn(async (amount: number) => ({
+    const parser = vi.fn(async (amount: string | number) => ({
       amount: String(amount),
       asset: "USD",
       extra: { issuer },
@@ -481,7 +499,7 @@ describe("ExactXrplScheme server", () => {
       asset: "USD",
       extra: { issuer },
     });
-    expect(parser).toHaveBeenCalledWith(0.01, XRPL_TESTNET);
+    expect(parser).toHaveBeenCalledWith("0.01", XRPL_TESTNET);
   });
 
   it("adds fee metadata while preserving caller extras", async () => {
@@ -630,6 +648,44 @@ describe("ExactXrplScheme client", () => {
     expect(decoded.Sequence).toBe(1);
     expect(decoded.Fee).toBe(DEFAULT_MAX_FEE_DROPS);
     expect(decoded.LastLedgerSequence).toBe(994);
+  });
+
+  it("creates a signed RLUSD payment when extra.issuer matches the network default", async () => {
+    const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
+      getCurrentLedgerIndex: async () => 980,
+      preparePaymentTransaction: preparePaymentForTest,
+    });
+
+    const result = await client.createPaymentPayload(2, {
+      ...baseIouRequirements,
+      asset: RLUSD_CURRENCY,
+      amount: "0.1",
+      extra: {
+        ...baseIouRequirements.extra,
+        issuer: RLUSD_TESTNET_ISSUER,
+      },
+    });
+    const decoded = decode(String(result.payload.signedTxBlob)) as Payment;
+
+    expect(decoded.Amount).toEqual({
+      currency: RLUSD_CURRENCY,
+      issuer: RLUSD_TESTNET_ISSUER,
+      value: "0.1",
+    });
+  });
+
+  it("rejects RLUSD-hex payments when extra.issuer does not match the network default", async () => {
+    const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
+      preparePaymentTransaction: preparePaymentForTest,
+    });
+
+    await expect(
+      client.createPaymentPayload(2, {
+        ...baseIouRequirements,
+        asset: RLUSD_CURRENCY,
+        extra: { ...baseIouRequirements.extra, issuer },
+      }),
+    ).rejects.toThrow(`extra.issuer to be ${RLUSD_TESTNET_ISSUER}`);
   });
 
   it("creates a ticketSequence payment when the requirements pin the method", async () => {

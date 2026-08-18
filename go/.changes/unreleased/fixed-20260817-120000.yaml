@@ -1,0 +1,3 @@
+kind: Fixed
+body: 'Harden the SVM upto facilitator and rent cleanup: clamp MaxReclaimsPerTx to a batch size proven to serialize under Solana''s packet limit, reject a non-string `extra.tokenProgram` hint instead of silently falling back to the registry, and reuse `solana.ComputeBudget` instead of a duplicated program ID constant'
+time: 2026-08-17T12:00:00.000000+00:00

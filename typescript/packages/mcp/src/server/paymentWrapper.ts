@@ -8,6 +8,7 @@
 import type { Network, PaymentPayload, PaymentRequirements, ResourceInfo } from "@x402/core/types";
 import {
   CompletedSettlement,
+  resolveFailurePathSettlement,
   resolvePaymentFlow,
   resolvePaymentFlowPhases,
   x402ResourceServer,
@@ -431,18 +432,22 @@ async function processPaidToolCall<TArgs extends Record<string, unknown>>(
     result = await handler(args, context);
   } catch (error) {
     markHandlerThrew();
-    await cancellationDispatcher.cancel({
+    const cancelSettlement = await cancellationDispatcher.cancel({
       reason: "handler_threw",
       error: error instanceof Error ? error : new Error(String(error)),
     });
-    // Echo before-handler receipt so the payer still gets the tx hash
-    if (!beforeHandlerSettlement) {
+    const failureReceipt = resolveFailurePathSettlement(
+      cancelSettlement,
+      beforeHandlerSettlement,
+      paymentPayload,
+    );
+    if (!failureReceipt) {
       throw error;
     }
     return {
       content: [{ type: "text", text: "Internal Server Error" }],
       isError: true,
-      _meta: { [MCP_PAYMENT_RESPONSE_META_KEY]: beforeHandlerSettlement.result },
+      _meta: { [MCP_PAYMENT_RESPONSE_META_KEY]: failureReceipt },
     };
   }
   transportContext.result = result;
@@ -460,16 +465,20 @@ async function processPaidToolCall<TArgs extends Record<string, unknown>>(
 
   // If the tool handler returned an error, don't proceed to settlement
   if (result.isError) {
-    await cancellationDispatcher.cancel({ reason: "handler_failed" });
-    // Echo before-handler receipt (e.g. upfront) so the payer still gets the tx hash
-    if (!beforeHandlerSettlement) {
+    const cancelSettlement = await cancellationDispatcher.cancel({ reason: "handler_failed" });
+    const failureReceipt = resolveFailurePathSettlement(
+      cancelSettlement,
+      beforeHandlerSettlement,
+      paymentPayload,
+    );
+    if (!failureReceipt) {
       return result;
     }
     return {
       ...result,
       _meta: {
         ...(result._meta as Record<string, unknown> | undefined),
-        [MCP_PAYMENT_RESPONSE_META_KEY]: beforeHandlerSettlement.result,
+        [MCP_PAYMENT_RESPONSE_META_KEY]: failureReceipt,
       },
     };
   }

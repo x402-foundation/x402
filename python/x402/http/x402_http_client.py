@@ -63,9 +63,15 @@ class x402HTTPClient(x402HTTPClientBase):
     async def handle_payment_required(
         self,
         payment_required: PaymentRequired | PaymentRequiredV1,
+        request_url: str,
     ) -> dict[str, str] | None:
-        """Run hooks; return headers for a pre-payment retry, or None to pay."""
-        ctx = PaymentRequiredContext(payment_required=payment_required)
+        """Run hooks; return headers for a pre-payment retry, or None to pay.
+
+        Args:
+            payment_required: The payment required response from the server.
+            request_url: The URL of the request that received the payment required response.
+        """
+        ctx = PaymentRequiredContext(payment_required=payment_required, request_url=request_url)
         for hook in self._collect_payment_required_hooks(payment_required):
             result = await self._execute_hook(hook, ctx)
             if isinstance(result, PaymentRequiredHeadersResult):
@@ -124,6 +130,7 @@ class x402HTTPClient(x402HTTPClientBase):
         self,
         headers: dict[str, str],
         body: bytes | None,
+        request_url: str,
     ) -> tuple[dict[str, str], PaymentPayload | PaymentPayloadV1]:
         """Handle a 402 response and create payment headers.
 
@@ -136,6 +143,7 @@ class x402HTTPClient(x402HTTPClientBase):
         Args:
             headers: Response headers.
             body: Response body bytes.
+            request_url: The URL of the request that received the 402 response.
 
         Returns:
             Tuple of (headers_to_add, payment_payload).
@@ -143,7 +151,7 @@ class x402HTTPClient(x402HTTPClientBase):
         # Get payment required
         get_header, body_data = self._handle_402_common(headers, body)
         payment_required = self.get_payment_required_response(get_header, body_data)
-        hook_headers = await self.handle_payment_required(payment_required)
+        hook_headers = await self.handle_payment_required(payment_required, request_url)
         if hook_headers:
             return hook_headers, None
         # Create payment
@@ -198,9 +206,15 @@ class x402HTTPClientSync(x402HTTPClientBase):
     def handle_payment_required(
         self,
         payment_required: PaymentRequired | PaymentRequiredV1,
+        request_url: str,
     ) -> dict[str, str] | None:
-        """Run hooks; return headers for a pre-payment retry, or None to pay."""
-        ctx = PaymentRequiredContext(payment_required=payment_required)
+        """Run hooks; return headers for a pre-payment retry, or None to pay.
+
+        Args:
+            payment_required: The payment required response from the server.
+            request_url: The URL of the request that received the payment required response.
+        """
+        ctx = PaymentRequiredContext(payment_required=payment_required, request_url=request_url)
         for hook in self._collect_payment_required_hooks(payment_required):
             result = hook(ctx)
             if asyncio.iscoroutine(result):
@@ -251,6 +265,7 @@ class x402HTTPClientSync(x402HTTPClientBase):
         self,
         headers: dict[str, str],
         body: bytes | None,
+        request_url: str,
     ) -> tuple[dict[str, str], PaymentPayload | PaymentPayloadV1]:
         """Handle a 402 response and create payment headers.
 
@@ -263,6 +278,7 @@ class x402HTTPClientSync(x402HTTPClientBase):
         Args:
             headers: Response headers.
             body: Response body bytes.
+            request_url: The URL of the request that received the 402 response.
 
         Returns:
             Tuple of (headers_to_add, payment_payload).
@@ -270,7 +286,7 @@ class x402HTTPClientSync(x402HTTPClientBase):
         # Get payment required
         get_header, body_data = self._handle_402_common(headers, body)
         payment_required = self.get_payment_required_response(get_header, body_data)
-        hook_headers = self.handle_payment_required(payment_required)
+        hook_headers = self.handle_payment_required(payment_required, request_url)
         if hook_headers:
             return hook_headers, None
         # Create payment
@@ -313,6 +329,7 @@ class PaymentRoundTripper:
         headers: dict[str, str],
         body: bytes | None,
         retry_func: Callable[[dict[str, str]], Any],
+        request_url: str,
     ) -> Any:
         """Handle HTTP response, automatically paying on 402.
 
@@ -322,6 +339,7 @@ class PaymentRoundTripper:
             headers: Response headers.
             body: Response body.
             retry_func: Function to retry request with additional headers.
+            request_url: The URL of the request that received the response.
 
         Returns:
             Original response if not 402, or retried response with payment.
@@ -342,7 +360,7 @@ class PaymentRoundTripper:
         get_header, body_data = self._x402_client._handle_402_common(headers, body)
         payment_required = self._x402_client.get_payment_required_response(get_header, body_data)
 
-        hook_headers = self._x402_client.handle_payment_required(payment_required)
+        hook_headers = self._x402_client.handle_payment_required(payment_required, request_url)
         if hook_headers:
             hook_result = retry_func(hook_headers)
             if getattr(hook_result, "status_code", 402) != 402:

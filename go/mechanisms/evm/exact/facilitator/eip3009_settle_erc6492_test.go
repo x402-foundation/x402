@@ -26,11 +26,22 @@ type settleMockSigner struct {
 	// writeErr, when set, is returned from WriteContract so settle classifies the reverted
 	// transfer via parseEIP3009TransferError instead of submitting it successfully.
 	writeErr error
+	// receiptErr, when set, is returned from WaitForTransactionReceipt to model a broadcast
+	// transaction whose confirmation could not be established (RPC error, timeout).
+	receiptErr error
+	// writeTxHash, when set, overrides the hash returned from WriteContract so tests can
+	// model a signer that reports success without a usable transaction hash.
+	writeTxHash string
 }
 
 func (m *settleMockSigner) GetAddresses() []string { return []string{"0xFac11"} }
 
 func (m *settleMockSigner) ReadContract(ctx context.Context, address string, abi []byte, functionName string, args ...interface{}) (interface{}, error) {
+	// isValidSignature (EIP-1271) expects a bytes4 return; report a non-matching value so
+	// deployed-smart-wallet signature checks resolve to "invalid" rather than erroring.
+	if functionName == "isValidSignature" {
+		return []byte{0x00, 0x00, 0x00, 0x00}, nil
+	}
 	return nil, nil
 }
 
@@ -42,6 +53,9 @@ func (m *settleMockSigner) WriteContract(ctx context.Context, address string, ab
 	if m.writeErr != nil {
 		return "", m.writeErr
 	}
+	if m.writeTxHash != "" {
+		return m.writeTxHash, nil
+	}
 	return "0x" + strings.Repeat("ab", 32), nil
 }
 
@@ -50,6 +64,9 @@ func (m *settleMockSigner) SendTransaction(ctx context.Context, to string, data 
 }
 
 func (m *settleMockSigner) WaitForTransactionReceipt(ctx context.Context, txHash string) (*evm.TransactionReceipt, error) {
+	if m.receiptErr != nil {
+		return nil, m.receiptErr
+	}
 	if m.receipt != nil {
 		return m.receipt, nil
 	}

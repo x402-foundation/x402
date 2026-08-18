@@ -27,15 +27,19 @@ func GetNetworkConfig(network string) (*evm.NetworkConfig, error) {
 // If assetSymbolOrAddress is a valid address, returns info for that specific token.
 // If assetSymbolOrAddress is empty or a symbol, attempts to use the network's default asset.
 func GetAssetInfo(network string, assetSymbolOrAddress string) (*evm.AssetInfo, error) {
+	if found := evm.FindDefaultAsset(assetSymbolOrAddress, network); found != nil {
+		return &evm.AssetInfo{
+			Address:             found.Asset,
+			Name:                found.Name,
+			Version:             found.Version,
+			Decimals:            found.Decimals,
+			AssetTransferMethod: found.AssetTransferMethod,
+			SupportsEip2612:     found.SupportsEip2612,
+		}, nil
+	}
+
 	if evm.IsValidAddress(assetSymbolOrAddress) {
 		normalizedAddr := evm.NormalizeAddress(assetSymbolOrAddress)
-
-		config, err := GetNetworkConfig(network)
-		if err == nil && config.DefaultAsset.Address != "" {
-			if normalizedAddr == evm.NormalizeAddress(config.DefaultAsset.Address) {
-				return &config.DefaultAsset, nil
-			}
-		}
 
 		return &evm.AssetInfo{
 			Address:  normalizedAddr,
@@ -45,14 +49,16 @@ func GetAssetInfo(network string, assetSymbolOrAddress string) (*evm.AssetInfo, 
 		}, nil
 	}
 
-	config, err := GetNetworkConfig(network)
+	info, err := evm.GetDefaultAsset(network, "")
 	if err != nil {
-		return nil, err
-	}
-
-	if config.DefaultAsset.Address == "" {
 		return nil, fmt.Errorf("no default asset configured for v1 network %s; specify an explicit asset address", network)
 	}
-
-	return &config.DefaultAsset, nil
+	return &evm.AssetInfo{
+		Address:             info.Asset,
+		Name:                info.Name,
+		Version:             info.Version,
+		Decimals:            info.Decimals,
+		AssetTransferMethod: info.AssetTransferMethod,
+		SupportsEip2612:     info.SupportsEip2612,
+	}, nil
 }

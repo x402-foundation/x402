@@ -31,6 +31,21 @@ const mockFunctions = {
       "Cache-Control": existingCacheControl ? `${existingCacheControl}, private` : "private",
     }),
   ),
+  createFailurePathSettlementHeaders: vi.fn((cancelSettlement, beforeHandlerSettlement) => {
+    if (cancelSettlement) {
+      return {
+        "PAYMENT-RESPONSE": cancelSettlement.success ? "cancel-receipt" : "cancel-failure-receipt",
+        "Cache-Control": "private",
+      };
+    }
+    if (beforeHandlerSettlement) {
+      return {
+        "PAYMENT-RESPONSE": "before-handler-receipt",
+        "Cache-Control": "private",
+      };
+    }
+    return undefined;
+  }),
   requiresPayment: vi.fn().mockReturnValue(true),
 };
 
@@ -74,6 +89,8 @@ vi.mock("@x402/core/server", async importOriginal => {
       processSettlement: (...args: unknown[]) => mockFunctions.processSettlement(...args),
       createCompletedSettlementHeaders: (...args: unknown[]) =>
         mockFunctions.createCompletedSettlementHeaders(...args),
+      createFailurePathSettlementHeaders: (...args: unknown[]) =>
+        mockFunctions.createFailurePathSettlementHeaders(...args),
       requiresPayment: (...args: unknown[]) => mockFunctions.requiresPayment(...args),
       routes: routes || {},
       server: server || {
@@ -165,6 +182,23 @@ function createMockHttpServer(
       "PAYMENT-RESPONSE": "before-handler-receipt",
       "Cache-Control": existingCacheControl ? `${existingCacheControl}, private` : "private",
     })),
+    createFailurePathSettlementHeaders: vi.fn((cancelSettlement, beforeHandlerSettlement) => {
+      if (cancelSettlement) {
+        return {
+          "PAYMENT-RESPONSE": cancelSettlement.success
+            ? "cancel-receipt"
+            : "cancel-failure-receipt",
+          "Cache-Control": "private",
+        };
+      }
+      if (beforeHandlerSettlement) {
+        return {
+          "PAYMENT-RESPONSE": "before-handler-receipt",
+          "Cache-Control": "private",
+        };
+      }
+      return undefined;
+    }),
     registerPaywallProvider: vi.fn(),
     initialize: vi.fn().mockResolvedValue(undefined),
     requiresPayment: vi.fn().mockReturnValue(true),
@@ -212,6 +246,8 @@ function setupMockCreateHttpServer(mockServer: x402HTTPResourceServer): void {
   mockFunctions.processSettlement = mockServer.processSettlement as ReturnType<typeof vi.fn>;
   mockFunctions.createCompletedSettlementHeaders =
     mockServer.createCompletedSettlementHeaders as ReturnType<typeof vi.fn>;
+  mockFunctions.createFailurePathSettlementHeaders =
+    mockServer.createFailurePathSettlementHeaders as ReturnType<typeof vi.fn>;
   mockFunctions.requiresPayment = mockServer.requiresPayment as ReturnType<typeof vi.fn>;
 
   // Also set up createHttpServer mock for backward compatibility
@@ -232,6 +268,25 @@ describe("paymentProxy", () => {
         "PAYMENT-RESPONSE": "before-handler-receipt",
         "Cache-Control": existingCacheControl ? `${existingCacheControl}, private` : "private",
       }),
+    );
+    mockFunctions.createFailurePathSettlementHeaders = vi.fn(
+      (cancelSettlement, beforeHandlerSettlement) => {
+        if (cancelSettlement) {
+          return {
+            "PAYMENT-RESPONSE": cancelSettlement.success
+              ? "cancel-receipt"
+              : "cancel-failure-receipt",
+            "Cache-Control": "private",
+          };
+        }
+        if (beforeHandlerSettlement) {
+          return {
+            "PAYMENT-RESPONSE": "before-handler-receipt",
+            "Cache-Control": "private",
+          };
+        }
+        return undefined;
+      },
     );
     mockFunctions.requiresPayment = vi.fn().mockReturnValue(true);
   });

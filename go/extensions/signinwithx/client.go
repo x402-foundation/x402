@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
@@ -61,13 +62,50 @@ func (e *ClientExtension) PaymentRequiredHook() x402http.PaymentRequiredHook {
 
 var _ x402.ClientExtension = (*ClientExtension)(nil)
 
+// AssertChallengeBoundToOrigin verifies that a SIWX challenge is bound to the origin of the
+// resource that issued the 402.
+//
+// Checks domain and uri only. EIP-4361 resources may be cross-origin URIs and are not
+// validated here (matching server-side ValidateMessage).
+func AssertChallengeBoundToOrigin(info Info, responseURL string) error {
+	origin, err := url.Parse(responseURL)
+	if err != nil || origin.Scheme == "" || origin.Host == "" {
+		return fmt.Errorf("SIWX challenge response URL %q is not a valid URL", responseURL)
+	}
+
+	if info.Domain != origin.Host {
+		return fmt.Errorf(
+			"SIWX challenge domain %q does not match response origin host %q",
+			info.Domain,
+			origin.Host,
+		)
+	}
+
+	uri, err := url.Parse(info.URI)
+	if err != nil || uri.Scheme == "" || uri.Host == "" {
+		return fmt.Errorf("SIWX challenge uri %q is not a valid URL", info.URI)
+	}
+
+	if urlOrigin(uri) != urlOrigin(origin) {
+		return fmt.Errorf(
+			"SIWX challenge uri origin %q does not match response origin %q",
+			urlOrigin(uri),
+			urlOrigin(origin),
+		)
+	}
+	return nil
+}
+
 // CreatePayload creates and signs a SIWX payload from a server declaration.
-func CreatePayload(ctx context.Context, declaration interface{}, signer EVMSigner) (Payload, error) {
-	return CreatePayloadWithSigners(ctx, declaration, NewEVMSIWXSigner(signer))
+// requestURL is the final URL of the 402 response (after redirects).
+func CreatePayload(ctx context.Context, declaration interface{}, signer EVMSigner, requestURL string) (Payload, error) {
+	return CreatePayloadWithSigners(ctx, declaration, requestURL, NewEVMSIWXSigner(signer))
 }
 
 // CreatePayloadWithSigners creates and signs a SIWX payload using the first compatible signer.
-func CreatePayloadWithSigners(ctx context.Context, declaration interface{}, signers ...Signer) (Payload, error) {
+// requestURL is the final URL of the 402 response (after redirects). Signing is refused when
+// challenge domain or uri origin does not match that URL's origin.
+func CreatePayloadWithSigners(ctx context.Context, declaration interface{}, requestURL string, signers ...Signer) (Payload, error) {
 	signers = compactSigners(signers)
 	if len(signers) == 0 {
 		return Payload{}, fmt.Errorf("SIWX signer is required")
@@ -75,6 +113,9 @@ func CreatePayloadWithSigners(ctx context.Context, declaration interface{}, sign
 
 	ext, err := extensionFromInterface(declaration)
 	if err != nil {
+		return Payload{}, err
+	}
+	if err := AssertChallengeBoundToOrigin(ext.Info, requestURL); err != nil {
 		return Payload{}, err
 	}
 
@@ -107,8 +148,9 @@ func CreatePayloadWithSigners(ctx context.Context, declaration interface{}, sign
 }
 
 // CreateHeader creates a SIGN-IN-WITH-X header value from a server declaration.
-func CreateHeader(ctx context.Context, declaration interface{}, signer EVMSigner) (string, error) {
-	payload, err := CreatePayload(ctx, declaration, signer)
+// requestURL is the final URL of the 402 response (after redirects).
+func CreateHeader(ctx context.Context, declaration interface{}, signer EVMSigner, requestURL string) (string, error) {
+	payload, err := CreatePayload(ctx, declaration, signer, requestURL)
 	if err != nil {
 		return "", err
 	}
@@ -116,8 +158,9 @@ func CreateHeader(ctx context.Context, declaration interface{}, signer EVMSigner
 }
 
 // CreateHeaderWithSigners creates a SIGN-IN-WITH-X header value with ordered signers.
-func CreateHeaderWithSigners(ctx context.Context, declaration interface{}, signers ...Signer) (string, error) {
-	payload, err := CreatePayloadWithSigners(ctx, declaration, signers...)
+// requestURL is the final URL of the 402 response (after redirects).
+func CreateHeaderWithSigners(ctx context.Context, declaration interface{}, requestURL string, signers ...Signer) (string, error) {
+	payload, err := CreatePayloadWithSigners(ctx, declaration, requestURL, signers...)
 	if err != nil {
 		return "", err
 	}
@@ -132,7 +175,7 @@ func CreateClientHook(signer EVMSigner) x402http.PaymentRequiredHook {
 // CreateClientHookWithSigners creates an HTTP on-payment-required hook using ordered SIWX signers.
 func CreateClientHookWithSigners(signers ...Signer) x402http.PaymentRequiredHook {
 	signers = compactSigners(signers)
-	return func(ctx context.Context, paymentRequired types.PaymentRequired) (*x402http.PaymentRequiredHookResult, error) {
+	return func(ctx context.Context, paymentRequired types.PaymentRequired, requestURL string) (*x402http.PaymentRequiredHookResult, error) {
 		if paymentRequired.Extensions == nil {
 			return nil, nil
 		}
@@ -140,7 +183,7 @@ func CreateClientHookWithSigners(signers ...Signer) x402http.PaymentRequiredHook
 		if !ok {
 			return nil, nil
 		}
-		header, createErr := CreateHeaderWithSigners(ctx, declaration, signers...)
+		header, createErr := CreateHeaderWithSigners(ctx, declaration, requestURL, signers...)
 		if createErr != nil {
 			return noPaymentRequiredHookResult()
 		}

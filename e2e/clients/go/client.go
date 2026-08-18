@@ -19,6 +19,7 @@ import (
 	svmconfig "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
 	svmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/v1/client"
+	uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/client"
 	evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
 	svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
 )
@@ -74,7 +75,7 @@ func BuildPaymentClient() *PaymentClientContext {
 		log.Fatal("At least one of CLIENT_EVM_PRIVATE_KEY or CLIENT_SVM_PRIVATE_KEY is required")
 	}
 
-	x402Client := x402.Newx402Client()
+	x402Client := x402.Newx402Client().DisableSpendControls()
 	var batchedScheme *batchedclient.BatchSettlementEvmScheme
 
 	if evmPrivateKey != "" {
@@ -141,6 +142,7 @@ func BuildPaymentClient() *PaymentClientContext {
 		svmPattern := x402.Network(networkCaip2Pattern("svm"))
 		x402Client.
 			Register(svmPattern, svm.NewExactSvmScheme(svmSigner, svmCfg)).
+			Register(svmPattern, uptosvm.NewUptoSvmScheme(svmSigner, svmCfg)).
 			RegisterV1("solana-devnet", svmv1.NewExactSvmSchemeV1(svmSigner, svmCfg)).
 			RegisterV1("solana", svmv1.NewExactSvmSchemeV1(svmSigner, svmCfg))
 	}

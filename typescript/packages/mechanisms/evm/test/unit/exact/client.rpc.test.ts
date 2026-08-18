@@ -32,8 +32,8 @@ vi.mock("viem", () => ({
 import {
   resolveRpcUrl,
   resolveExtensionRpcCapabilities,
-  type ExactEvmSchemeOptions,
-} from "../../../src/exact/client/rpc";
+  type EvmSchemeOptions,
+} from "../../../src/shared/rpc";
 
 describe("Exact EVM RPC resolver", () => {
   beforeEach(() => {
@@ -41,12 +41,12 @@ describe("Exact EVM RPC resolver", () => {
   });
 
   it("resolves rpc url from single config", () => {
-    const options: ExactEvmSchemeOptions = { rpcUrl: "https://base.example" };
+    const options: EvmSchemeOptions = { rpcUrl: "https://base.example" };
     expect(resolveRpcUrl("eip155:8453", options)).toBe("https://base.example");
   });
 
   it("resolves rpc url from chain map", () => {
-    const options: ExactEvmSchemeOptions = {
+    const options: EvmSchemeOptions = {
       137: { rpcUrl: "https://polygon.example" },
       8453: { rpcUrl: "https://base.example" },
     };

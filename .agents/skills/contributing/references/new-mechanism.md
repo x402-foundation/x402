@@ -19,7 +19,8 @@ Checklist for adding a new payment mechanism / scheme. Follow the [general contr
 ## Code patterns
 
 - Wire schemes with the builder pattern, not `register*` helpers. A new v2-only mechanism registers its scheme under the family wildcard: `client.register("<family>:*", new Exact<Chain>Scheme(...))` (and the same on `x402ResourceServer`). Do NOT implement a `registerExact<Chain>Scheme` helper. Those exist only in the EVM/SVM mechanisms to also register the legacy v1 schemes for backward compat.
-- Reuse core utilities instead of reimplementing them. For example, import `convertToTokenAmount`, `numberToDecimalString`, and `parseMoneyString` from `@x402/core/utils` for TS or similar for Go/python SDKs.
+- Reuse core utilities instead of reimplementing them. For example, import `convertToTokenAmount`, `numberToDecimalString`, and `parseMoney` from `@x402/core/utils` for TS or similar for Go/python SDKs.
+- If the mechanism supports `$` string pricing, add `src/defaultAssets.ts` with `DEFAULT_ASSETS`, `getDefaultAsset`, and `findDefaultAsset` (see [DEFAULT_ASSETS.md](../../../../DEFAULT_ASSETS.md)). Expose `findDefaultAsset` on the client scheme so `@x402/core` spend controls recognize USD-pegged defaults. Chains without a canonical USD stablecoin may omit the file and require explicit `AssetAmount` pricing instead.
 - Do NOT modify other packages (core, http, ...). If this is deemed necessary, discuss with maintainers first.
 
 ## Tests

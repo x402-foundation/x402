@@ -19,9 +19,9 @@ import {
   createFacilitatorClients,
 } from "../../../config";
 
-export function createResourceServer(cfg: ServerEnvConfig): x402ResourceServer {
+export async function createResourceServer(cfg: ServerEnvConfig): Promise<x402ResourceServer> {
   const server = new x402ResourceServer(createFacilitatorClients(cfg.facilitatorUrl));
-  configureResourceServer(server, cfg);
+  await configureResourceServer(server, cfg);
   return server;
 }
 

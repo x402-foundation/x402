@@ -32,6 +32,22 @@ func (m *mockSchemeServer) Scheme() string {
 	return m.scheme
 }
 
+func (m *mockSchemeServer) DefaultAssetTransferMethod() string {
+	return x402.SDKDefaultAssetTransferMethod
+}
+
+func (m *mockSchemeServer) PaymentFlows() map[string]x402.PaymentFlowConfig {
+	auth := x402.PaymentFlowConfig{
+		Supported: []x402.PaymentFlowName{x402.PaymentFlowAuthorization},
+		Default:   x402.PaymentFlowAuthorization,
+	}
+	return map[string]x402.PaymentFlowConfig{
+		x402.SDKDefaultAssetTransferMethod: auth,
+		"eip3009":                          auth,
+		"permit2":                          auth,
+	}
+}
+
 func (m *mockSchemeServer) ParsePrice(price x402.Price, network x402.Network) (x402.AssetAmount, error) {
 	return x402.AssetAmount{
 		Asset:  "USDC",

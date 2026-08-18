@@ -1,6 +1,5 @@
 import type {
   AssetAmount,
-  Money,
   MoneyParser,
   Network,
   PaymentFlowConfig,
@@ -9,7 +8,8 @@ import type {
   SchemeNetworkServer,
   SupportedKind,
 } from "@x402/core/types";
-import { parseMoneyString } from "@x402/core/utils";
+import { parseMoney } from "@x402/core/utils";
+import { getDefaultAsset } from "../../defaultAssets";
 import type { XrplAssetTransferMethod } from "../../types";
 import {
   isDecimalString,
@@ -43,6 +43,18 @@ export class ExactXrplScheme implements SchemeNetworkServer {
   }
 
   /**
+   * XRPL IOU amounts are decimal ledger values, not atomic units.
+   * `$…` settlement overrides must pass an explicit decimal amount string.
+   *
+   * @param _asset - Currency code or hex from payment requirements
+   * @param _network - Target network
+   * @returns Always undefined; IOU encoding is not atomic
+   */
+  getAssetDecimals(_asset: string, _network: Network): number | undefined {
+    return undefined;
+  }
+
+  /**
    * Parses a price into an XRPL asset amount.
    *
    * @param price - Price to parse
@@ -63,7 +75,7 @@ export class ExactXrplScheme implements SchemeNetworkServer {
       return result;
     }
 
-    const amount = this.parseMoneyToDecimal(price);
+    const { amount, symbol } = parseMoney(price);
     for (const parser of this.moneyParsers) {
       const result = await parser(amount, network);
       if (result !== null) {
@@ -72,7 +84,9 @@ export class ExactXrplScheme implements SchemeNetworkServer {
       }
     }
 
-    throw new Error("XRPL exact payments require explicit AssetAmount pricing");
+    const converted = this.defaultMoneyConversion(amount, network, symbol);
+    this.validateAssetAmount(converted);
+    return converted;
   }
 
   /**
@@ -120,20 +134,20 @@ export class ExactXrplScheme implements SchemeNetworkServer {
   }
 
   /**
-   * Parses a Money value for custom parser dispatch.
+   * Converts a numeric dollar amount to RLUSD issued-currency units.
    *
-   * @param money - Money value to parse
-   * @returns Decimal number
+   * @param amount - The decimal amount as a string
+   * @param network - The target network
+   * @param symbol - Optional ticker from a suffixed price
+   * @returns Asset amount with decimal ledger value and issuer extra
    */
-  private parseMoneyToDecimal(money: Money): number {
-    if (typeof money === "number") {
-      if (!Number.isFinite(money) || money < 0) {
-        throw new Error(`Invalid money format: ${money}`);
-      }
-      return money;
-    }
-
-    return parseMoneyString(money);
+  private defaultMoneyConversion(amount: string, network: Network, symbol?: string): AssetAmount {
+    const assetInfo = getDefaultAsset(network, symbol);
+    return {
+      amount,
+      asset: assetInfo.asset,
+      extra: { issuer: assetInfo.issuer },
+    };
   }
 
   /**

@@ -1,5 +1,17 @@
 # @x402/mcp Changelog
 
+## 2.22.0
+
+### Minor Changes
+
+- [db5da2e](https://github.com/x402-foundation/x402/commit/db5da2e): Validate unsupported `paymentFlow` / `assetTransferMethod` at HTTP server construction and MCP `createPaymentWrapper` when the scheme is registered, and return a generic internal error from HTTP adapters and MCP wrappers for unexpected failures instead of leaking internal error details to clients. ([#3053](https://github.com/x402-foundation/x402/pull/3053)) - Thanks [@phdargen](https://github.com/phdargen)!
+- [db5da2e](https://github.com/x402-foundation/x402/commit/db5da2e): Require ATM-keyed `paymentFlows` (and `defaultAssetTransferMethod`) on every `SchemeNetworkServer`. Core resolves ATM/flow from the table, rejects unsupported combinations, and always signals non-`authorization` `paymentFlow` on the 402 wire. All schemes currently declare `authorization` only. ([#3053](https://github.com/x402-foundation/x402/pull/3053)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Updated dependencies [37412e7](https://github.com/x402-foundation/x402/commit/37412e7)
+- Updated dependencies [db5da2e](https://github.com/x402-foundation/x402/commit/db5da2e)
+- Updated dependencies [db5da2e](https://github.com/x402-foundation/x402/commit/db5da2e)
+- Updated dependencies [1601942](https://github.com/x402-foundation/x402/commit/1601942)
+  - @x402/core@2.22.0
+
 ## 2.21.0
 
 ### Minor Changes
@@ -10,6 +22,7 @@
 - Updated dependencies [ee1b148](https://github.com/x402-foundation/x402/commit/ee1b148)
 - Updated dependencies [e805616](https://github.com/x402-foundation/x402/commit/e805616)
 - Updated dependencies [5192e50](https://github.com/x402-foundation/x402/commit/5192e50)
+
   - @x402/core@2.21.0
 
 - [08e84ab](https://github.com/x402-foundation/x402/commit/08e84ab): Plumb policies and paymentRequirementsSelector through createx402MCPClient so the documented factory can bound agent spend. ([#3034](https://github.com/x402-foundation/x402/pull/3034)) - Thanks [@SashaMIT](https://github.com/SashaMIT)!

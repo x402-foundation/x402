@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   x402ResourceServer,
   resolveSettlementOverrideAmount,
+  type SettlePhase,
 } from "../../../src/server/x402ResourceServer";
 import {
   MockFacilitatorClient,
@@ -1305,6 +1306,149 @@ describe("x402ResourceServer", () => {
           "extension:handler_failed",
         ]);
       });
+
+      it("settles once when settleOnCancel returns requirements", async () => {
+        const settleClient = new MockFacilitatorClient(
+          buildSupportedResponse({
+            kinds: [{ x402Version: 2, scheme: "upto", network: "eip155:8453" as Network }],
+          }),
+          undefined,
+          buildSettleResponse({ success: true, amount: "0", transaction: "0xrefund" }),
+        );
+        const server = new x402ResourceServer(settleClient);
+        const scheme = new MockSchemeNetworkServer("upto");
+        scheme.settleOnCancel = async context => ({ ...context.requirements, amount: "0" });
+        server.register("eip155:*" as Network, scheme);
+
+        const requirements = buildPaymentRequirements({
+          scheme: "upto",
+          network: "eip155:8453" as Network,
+          amount: "1000000",
+        });
+        const cancellation = server.createPaymentCancellationDispatcher(
+          buildPaymentPayload({ accepted: requirements }),
+          requirements,
+          undefined,
+          undefined,
+          ["before-handler"],
+        );
+
+        let cancelPhase: SettlePhase | undefined;
+        server.onBeforeSettle(async ctx => {
+          cancelPhase = ctx.phase;
+        });
+
+        const cancelResult = await cancellation.cancel({
+          reason: "handler_failed",
+          responseStatus: 500,
+        });
+        await cancellation.cancel({ reason: "handler_threw" });
+
+        expect(cancelPhase).toBe("cancel");
+        expect(cancelResult).toEqual(
+          expect.objectContaining({
+            success: true,
+            amount: "0",
+            transaction: "0xrefund",
+          }),
+        );
+        expect(settleClient.settleCalls).toHaveLength(1);
+        expect(settleClient.settleCalls[0].requirements.amount).toBe("0");
+      });
+
+      it("skips settle when settleOnCancel returns void", async () => {
+        const settleClient = new MockFacilitatorClient(
+          buildSupportedResponse({
+            kinds: [{ x402Version: 2, scheme: "upto", network: "eip155:8453" as Network }],
+          }),
+          undefined,
+          buildSettleResponse({ success: true }),
+        );
+        const server = new x402ResourceServer(settleClient);
+        const scheme = new MockSchemeNetworkServer("upto");
+        scheme.settleOnCancel = async () => undefined;
+        server.register("eip155:*" as Network, scheme);
+
+        const cancellation = server.createPaymentCancellationDispatcher(
+          buildPaymentPayload({
+            accepted: buildPaymentRequirements({
+              scheme: "upto",
+              network: "eip155:8453" as Network,
+            }),
+          }),
+          buildPaymentRequirements({ scheme: "upto", network: "eip155:8453" as Network }),
+          undefined,
+          undefined,
+          ["before-handler"],
+        );
+
+        await cancellation.cancel({ reason: "handler_failed", responseStatus: 500 });
+        expect(settleClient.settleCalls).toHaveLength(0);
+      });
+
+      it("skips settleOnCancel when before-handler deposit did not complete", async () => {
+        const settleClient = new MockFacilitatorClient(
+          buildSupportedResponse({
+            kinds: [{ x402Version: 2, scheme: "upto", network: "eip155:8453" as Network }],
+          }),
+          undefined,
+          buildSettleResponse({ success: true, amount: "0" }),
+        );
+        const server = new x402ResourceServer(settleClient);
+        const scheme = new MockSchemeNetworkServer("upto");
+        scheme.settleOnCancel = async context => ({ ...context.requirements, amount: "0" });
+        server.register("eip155:*" as Network, scheme);
+
+        const cancellation = server.createPaymentCancellationDispatcher(
+          buildPaymentPayload({
+            accepted: buildPaymentRequirements({
+              scheme: "upto",
+              network: "eip155:8453" as Network,
+            }),
+          }),
+          buildPaymentRequirements({ scheme: "upto", network: "eip155:8453" as Network }),
+        );
+
+        await cancellation.cancel({ reason: "handler_failed", responseStatus: 500 });
+        expect(settleClient.settleCalls).toHaveLength(0);
+      });
+
+      it("warns and preserves cancel when settleOnCancel settlement fails", async () => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const settleClient = new MockFacilitatorClient(
+          buildSupportedResponse({
+            kinds: [{ x402Version: 2, scheme: "upto", network: "eip155:8453" as Network }],
+          }),
+          undefined,
+          new Error("facilitator unavailable"),
+        );
+        const server = new x402ResourceServer(settleClient);
+        const scheme = new MockSchemeNetworkServer("upto");
+        scheme.settleOnCancel = async context => ({ ...context.requirements, amount: "0" });
+        server.register("eip155:*" as Network, scheme);
+
+        const cancellation = server.createPaymentCancellationDispatcher(
+          buildPaymentPayload({
+            accepted: buildPaymentRequirements({
+              scheme: "upto",
+              network: "eip155:8453" as Network,
+            }),
+          }),
+          buildPaymentRequirements({ scheme: "upto", network: "eip155:8453" as Network }),
+          undefined,
+          undefined,
+          ["before-handler"],
+        );
+
+        await expect(cancellation.cancel({ reason: "after_verify_aborted" })).resolves.toEqual(
+          expect.objectContaining({
+            success: false,
+            transaction: "",
+          }),
+        );
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("settleOnCancel"));
+        warnSpy.mockRestore();
+      });
     });
   });
 
@@ -1515,7 +1659,7 @@ describe("x402ResourceServer", () => {
       expect(mockClient.settleCalls[0].requirements.amount).toBe("1000");
     });
 
-    it("should resolve dollar override through settlePayment with default decimals", async () => {
+    it("should throw on dollar override when asset decimals are unknown", async () => {
       const mockClient = new MockFacilitatorClient(
         buildSupportedResponse({
           kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
@@ -1532,9 +1676,35 @@ describe("x402ResourceServer", () => {
         amount: "1000000",
       });
 
-      await server.settlePayment(payload, requirements, undefined, undefined, { amount: "$0.001" });
+      await expect(
+        server.settlePayment(payload, requirements, undefined, undefined, { amount: "$0.001" }),
+      ).rejects.toThrow(/asset decimals are unknown/);
+    });
 
-      expect(mockClient.settleCalls[0].requirements.amount).toBe("1000");
+    it("should throw on dollar override when getAssetDecimals returns undefined", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+      const mockScheme = new MockSchemeNetworkServer("exact");
+      mockScheme.setAssetDecimalsResult(undefined);
+      server.register("eip155:8453" as Network, mockScheme);
+
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      await expect(
+        server.settlePayment(payload, requirements, undefined, undefined, { amount: "$0.05" }),
+      ).rejects.toThrow(/asset decimals are unknown/);
     });
 
     it("should resolve dollar override using scheme getAssetDecimals", async () => {
@@ -1573,6 +1743,9 @@ describe("x402ResourceServer", () => {
       );
 
       const server = new x402ResourceServer(mockClient);
+      const mockScheme = new MockSchemeNetworkServer("exact");
+      server.register("eip155:8453" as Network, mockScheme);
+
       const payload = buildPaymentPayload();
       const requirements = buildPaymentRequirements({
         scheme: "exact",
@@ -2367,6 +2540,105 @@ describe("x402ResourceServer", () => {
 
       expect(result).toBeDefined();
     });
+
+    it("matches when only declared dynamic extra fields differ", () => {
+      const server = new x402ResourceServer();
+      server.register(
+        "solana:mainnet" as Network,
+        Object.assign(new MockSchemeNetworkServer("exact"), {
+          dynamicExtraFields: ["recentBlockhash", "lastValidBlockHeight"],
+        }),
+      );
+
+      const req = buildPaymentRequirements({
+        scheme: "exact",
+        network: "solana:mainnet" as Network,
+        amount: "1000000",
+        asset: "USDC",
+        extra: {
+          feePayer: "FeePayer111111111111111111111111111111111",
+          recentBlockhash: "freshBlockhash",
+          lastValidBlockHeight: "200",
+        },
+      });
+
+      const payload = buildPaymentPayload({
+        x402Version: 2,
+        accepted: {
+          ...req,
+          extra: {
+            feePayer: "FeePayer111111111111111111111111111111111",
+            recentBlockhash: "staleBlockhash",
+            lastValidBlockHeight: "100",
+          },
+        },
+      });
+
+      expect(server.findMatchingRequirements([req], payload)).toEqual(req);
+    });
+
+    it("does not match when a static extra field differs despite declared dynamic fields", () => {
+      const server = new x402ResourceServer();
+      server.register(
+        "solana:mainnet" as Network,
+        Object.assign(new MockSchemeNetworkServer("exact"), {
+          dynamicExtraFields: ["recentBlockhash", "lastValidBlockHeight"],
+        }),
+      );
+
+      const req = buildPaymentRequirements({
+        scheme: "exact",
+        network: "solana:mainnet" as Network,
+        amount: "1000000",
+        asset: "USDC",
+        extra: {
+          feePayer: "FeePayer111111111111111111111111111111111",
+          recentBlockhash: "freshBlockhash",
+        },
+      });
+
+      const payload = buildPaymentPayload({
+        x402Version: 2,
+        accepted: {
+          ...req,
+          extra: {
+            feePayer: "OtherPayer1111111111111111111111111111111",
+            recentBlockhash: "staleBlockhash",
+          },
+        },
+      });
+
+      expect(server.findMatchingRequirements([req], payload)).toBeUndefined();
+    });
+
+    it("keeps strict extra comparison when no dynamicExtraFields are declared", () => {
+      const server = new x402ResourceServer();
+      server.register("solana:mainnet" as Network, new MockSchemeNetworkServer("exact"));
+
+      const req = buildPaymentRequirements({
+        scheme: "exact",
+        network: "solana:mainnet" as Network,
+        amount: "1000000",
+        asset: "USDC",
+        extra: {
+          feePayer: "FeePayer111111111111111111111111111111111",
+          recentBlockhash: "freshBlockhash",
+        },
+      });
+
+      const payload = buildPaymentPayload({
+        x402Version: 2,
+        accepted: {
+          ...req,
+          extra: {
+            feePayer: "FeePayer111111111111111111111111111111111",
+            recentBlockhash: "staleBlockhash",
+          },
+        },
+      });
+
+      expect(server.findMatchingRequirements([req], payload)).toBeUndefined();
+    });
   });
 
   describe("createPaymentRequiredResponse", () => {
@@ -3005,24 +3277,36 @@ describe("resolveSettlementOverrideAmount", () => {
   });
 
   describe("dollar price format", () => {
-    it("converts '$1.00' using default 6 decimals", () => {
-      expect(resolveSettlementOverrideAmount("$1.00", baseRequirements)).toBe("1000000");
+    it("converts '$1.00' using provided 6 decimals", () => {
+      expect(resolveSettlementOverrideAmount("$1.00", baseRequirements, 6)).toBe("1000000");
     });
 
-    it("converts '$0.05' using default 6 decimals", () => {
-      expect(resolveSettlementOverrideAmount("$0.05", baseRequirements)).toBe("50000");
+    it("converts '$0.05' using provided 6 decimals", () => {
+      expect(resolveSettlementOverrideAmount("$0.05", baseRequirements, 6)).toBe("50000");
     });
 
     it("converts '$0.05' using 8 decimals when provided", () => {
       expect(resolveSettlementOverrideAmount("$0.05", baseRequirements, 8)).toBe("5000000");
     });
 
-    it("converts '$0.001' using default 6 decimals", () => {
-      expect(resolveSettlementOverrideAmount("$0.001", baseRequirements)).toBe("1000");
+    it("converts '$0.001' using provided 6 decimals", () => {
+      expect(resolveSettlementOverrideAmount("$0.001", baseRequirements, 6)).toBe("1000");
     });
 
     it("converts '$0' to '0'", () => {
-      expect(resolveSettlementOverrideAmount("$0", baseRequirements)).toBe("0");
+      expect(resolveSettlementOverrideAmount("$0", baseRequirements, 6)).toBe("0");
+    });
+
+    it("pads and truncates toward zero without rounding", () => {
+      expect(resolveSettlementOverrideAmount("$1.0000005", baseRequirements, 6)).toBe("1000000");
+      expect(resolveSettlementOverrideAmount("$0.0000005", baseRequirements, 6)).toBe("0");
+      expect(resolveSettlementOverrideAmount("$0.0000009", baseRequirements, 6)).toBe("0");
+    });
+
+    it("throws when decimals are unknown", () => {
+      expect(() => resolveSettlementOverrideAmount("$1.00", baseRequirements)).toThrow(
+        /asset decimals are unknown/,
+      );
     });
   });
 });

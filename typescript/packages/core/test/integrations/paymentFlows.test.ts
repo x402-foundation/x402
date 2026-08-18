@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { x402Client, x402HTTPClient } from "../../src/client";
+import { x402HTTPClient } from "../../src/client";
 import { x402Facilitator } from "../../src/facilitator";
 import {
   FacilitatorClient,
@@ -10,7 +10,7 @@ import {
 } from "../../src/server";
 import {
   CashFacilitatorClient,
-  CashSchemeNetworkClient,
+  createCashX402Client,
   CashSchemeNetworkFacilitator,
   MockAuthorizeSchemeNetworkServer,
   MockEscrowSchemeNetworkServer,
@@ -97,10 +97,7 @@ describe("Payment flow integration (MockAuthorize / MockUpfront / MockEscrow)", 
     );
     facilitatorClient = new CountingFacilitatorClient(new CashFacilitatorClient(facilitator));
 
-    const paymentClient = new x402Client().register(
-      "x402:cash",
-      new CashSchemeNetworkClient("John"),
-    );
+    const paymentClient = createCashX402Client("John");
     client = new x402HTTPClient(paymentClient);
 
     resourceServer = new x402ResourceServer(facilitatorClient);

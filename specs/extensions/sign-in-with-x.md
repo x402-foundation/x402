@@ -312,7 +312,7 @@ If signature is valid, the Server checks whether the recovered `address` has pre
 
 ## Security Considerations
 
-- **Domain Binding**: The `domain` field prevents signature reuse across different services. The Server MUST validate `domain` and the `uri` origin against its configured public origin, not against request-derived values such as the `Host` header — otherwise a signature made for another site could be replayed against the Server. Behind a TLS-terminating reverse proxy, the configured origin should be the browser-visible URL, not the upstream listener address.
+- **Domain Binding**: The `domain` field prevents signature reuse across different services. The Server MUST validate `domain` and the `uri` origin against its configured public origin, not against request-derived values such as the `Host` header — otherwise a signature made for another site could be replayed against the Server. Behind a TLS-terminating reverse proxy, the configured origin should be the browser-visible URL, not the upstream listener address. The Client MUST refuse to sign a SIWX challenge unless the challenge `domain` and `uri` origin match the origin of the resource URL that returned the 402 response (the final URL after redirects). EIP-4361 `resources` are associated URIs that MAY be cross-origin and are not required to match that origin.
 - **Nonce Uniqueness**: Each challenge MUST have a unique nonce to prevent replay attacks.
 - **Temporal Bounds**: The `issuedAt`, `expirationTime`, and `notBefore` fields constrain signature validity windows.
 - **Chain-Specific Verification**: Signatures are verified using chain-appropriate algorithms, preventing cross-chain signature reuse.

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  isAddress,
   getBase58Encoder,
   getBase64Encoder,
   getTransactionDecoder,
@@ -25,49 +26,28 @@ import {
   DEVNET_RPC_URL,
   TESTNET_RPC_URL,
   MAINNET_RPC_URL,
-  USDC_MAINNET_ADDRESS,
-  USDC_DEVNET_ADDRESS,
-  USDC_TESTNET_ADDRESS,
   SOLANA_MAINNET_CAIP2,
   SOLANA_DEVNET_CAIP2,
   SOLANA_TESTNET_CAIP2,
-  V1_TO_V2_NETWORK_MAP,
+  normalizeNetwork,
 } from "./constants";
+import { DEFAULT_ASSETS, findDefaultAsset, getDefaultAsset } from "./defaultAssets";
 import type { ExactSvmPayloadV1 } from "./types";
 
-/**
- * Normalize network identifier to CAIP-2 format
- * Handles both V1 names (solana, solana-devnet) and V2 CAIP-2 format
- *
- * @param network - Network identifier (V1 or V2 format)
- * @returns CAIP-2 network identifier
- */
-export function normalizeNetwork(network: Network): string {
-  // If it's already CAIP-2 format (contains ":"), validate it's supported
-  if (network.includes(":")) {
-    const supported = [SOLANA_MAINNET_CAIP2, SOLANA_DEVNET_CAIP2, SOLANA_TESTNET_CAIP2];
-    if (!supported.includes(network)) {
-      throw new Error(`Unsupported SVM network: ${network}`);
-    }
-    return network;
-  }
-
-  // Otherwise, it's a V1 network name, convert to CAIP-2
-  const caip2Network = V1_TO_V2_NETWORK_MAP[network];
-  if (!caip2Network) {
-    throw new Error(`Unsupported SVM network: ${network}`);
-  }
-  return caip2Network;
-}
+export { normalizeNetwork } from "./constants";
 
 /**
  * Validate Solana address format
+ *
+ * The regex gates the charset and length; `isAddress` additionally requires the
+ * base58 to decode to 32 bytes, which the regex alone allows through. Anything
+ * looser accepts strings no Solana runtime (or the Go SDK's decoder) would.
  *
  * @param address - Base58 encoded address string
  * @returns true if address is valid, false otherwise
  */
 export function validateSvmAddress(address: string): boolean {
-  return SVM_ADDRESS_REGEX.test(address);
+  return SVM_ADDRESS_REGEX.test(address) && isAddress(address);
 }
 
 /**
@@ -213,23 +193,122 @@ export async function resolveBlockhash(
 }
 
 /**
+ * Resolve the channel open-slot anchor (`open_slot` PDA seed) for a payment.
+ *
+ * Prefers a server-provided slot carried in the 402 challenge
+ * (`extra.recentSlot`) so the client needn't make its own RPC round-trip. Falls
+ * back to `rpc.getSlot()` when the challenge omits it or contains a malformed
+ * value. Default RPC commitment (`finalized`) keeps `openSlot <= clock.slot`
+ * true when the open lands.
+ *
+ * @param rpc - RPC client used for the fallback fetch
+ * @param requirements - The payment requirements (challenge) being paid
+ * @returns The open slot as a u64 bigint
+ */
+export async function resolveOpenSlot(
+  rpc: ReturnType<typeof createRpcClient>,
+  requirements: PaymentRequirements,
+): Promise<bigint> {
+  const provided = requirements.extra?.recentSlot;
+  if (provided !== undefined && provided !== null) {
+    try {
+      let parsed: bigint;
+      if (typeof provided === "bigint") {
+        parsed = provided;
+      } else if (typeof provided === "number") {
+        if (!Number.isSafeInteger(provided) || provided < 0) {
+          throw new Error("extra.recentSlot must be a non-negative safe integer");
+        }
+        parsed = BigInt(provided);
+      } else if (typeof provided === "string" && /^\d+$/.test(provided)) {
+        parsed = BigInt(provided);
+      } else {
+        throw new Error("extra.recentSlot must be an unsigned integer");
+      }
+      if (parsed > (1n << 64n) - 1n) {
+        throw new Error("extra.recentSlot must fit in u64");
+      }
+      return parsed;
+    } catch {
+      // Invalid optional hints are ignored; fetch a usable slot below.
+    }
+  }
+
+  return await rpc.getSlot().send();
+}
+
+/**
  * Get the default USDC mint address for a network
  *
  * @param network - Network identifier (CAIP-2 or V1 format)
  * @returns USDC mint address for the network
  */
 export function getUsdcAddress(network: Network): string {
-  const caip2Network = normalizeNetwork(network);
+  return getDefaultAsset(network).asset;
+}
 
-  switch (caip2Network) {
-    case SOLANA_MAINNET_CAIP2:
-      return USDC_MAINNET_ADDRESS;
-    case SOLANA_DEVNET_CAIP2:
-      return USDC_DEVNET_ADDRESS;
-    case SOLANA_TESTNET_CAIP2:
-      return USDC_TESTNET_ADDRESS;
-    default:
-      throw new Error(`No USDC address configured for network: ${network}`);
+/**
+ * Get the mint address for a supported stablecoin on a network.
+ *
+ * @param symbol - Stablecoin symbol
+ * @param network - Network identifier (CAIP-2 or V1 format)
+ * @returns Mint address for the symbol and network
+ */
+export function getStablecoinAddress(symbol: string, network: Network): string {
+  return getDefaultAsset(network, symbol).asset;
+}
+
+/**
+ * Resolve a stablecoin symbol to a mint address. Unknown values are returned as-is.
+ *
+ * @param currency - Stablecoin symbol or raw mint address
+ * @param network - Network identifier (CAIP-2 or V1 format)
+ * @returns Mint address, undefined for SOL, or the original currency for unknown mints
+ */
+export function resolveStablecoinMint(currency: string, network: Network): string | undefined {
+  const normalized = currency.toUpperCase();
+  if (normalized === "SOL") return undefined;
+  try {
+    return getDefaultAsset(network, currency).asset;
+  } catch {
+    return currency;
+  }
+}
+
+/**
+ * Return the supported stablecoin symbol for a symbol or known mint address.
+ *
+ * @param currency - Stablecoin symbol or raw mint address
+ * @returns Supported stablecoin symbol if recognized
+ */
+export function getStablecoinSymbol(currency: string): string | undefined {
+  const normalized = currency.toUpperCase();
+  for (const assets of Object.values(DEFAULT_ASSETS)) {
+    if (!assets) continue;
+    const match = assets.find(
+      entry => entry.symbol.toUpperCase() === normalized || entry.asset === currency,
+    );
+    if (match) return match.symbol;
+  }
+}
+
+/**
+ * Return the known token program for a supported stablecoin symbol or mint.
+ * Unknown values default to SPL Token.
+ *
+ * @param currency - Stablecoin symbol or raw mint address
+ * @param network - Network identifier (CAIP-2 or V1 format)
+ * @returns SPL Token or Token-2022 program address
+ */
+export function getStablecoinTokenProgram(currency: string, network: Network): string {
+  const resolvedMint = resolveStablecoinMint(currency, network);
+  if (!resolvedMint) return TOKEN_PROGRAM_ADDRESS.toString();
+  const byMint = findDefaultAsset(resolvedMint, network);
+  if (byMint) return byMint.tokenProgram;
+  try {
+    return getDefaultAsset(network, currency).tokenProgram;
+  } catch {
+    return TOKEN_PROGRAM_ADDRESS.toString();
   }
 }
 

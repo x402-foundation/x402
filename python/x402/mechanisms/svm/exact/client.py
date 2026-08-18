@@ -27,6 +27,7 @@ from ..constants import (
     NETWORK_CONFIGS,
     SCHEME_EXACT,
 )
+from ..default_assets import find_default_asset
 from ..mint_cache import MintMetadataCache, get_cached_mint_metadata
 from ..signer import ClientSvmSigner
 from ..types import ExactSvmPayload
@@ -44,6 +45,7 @@ class ExactSvmScheme:
     """
 
     scheme = SCHEME_EXACT
+    find_default_asset = staticmethod(find_default_asset)
 
     def __init__(self, signer: ClientSvmSigner, rpc_url: str | None = None):
         """Create ExactSvmScheme.

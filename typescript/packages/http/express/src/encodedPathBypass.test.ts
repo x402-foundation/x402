@@ -81,6 +81,12 @@ describe("express end-to-end: encoded path separator", () => {
     expect(await statusFor(port, "/api/report/a%5Cb")).toBe(402);
   });
 
+  // path-to-regexp still dispatches /api/report/a\b to the :id handler, so
+  // folding that "\" into a "/" in the middleware would fail open.
+  it("returns 402 even when the :id segment contains a raw backslash", async () => {
+    expect(await statusFor(port, "/api/report/a\\b")).toBe(402);
+  });
+
   it("returns 200 (middleware skipped) for an unrelated path", async () => {
     expect(await statusFor(port, "/health")).toBe(200);
   });

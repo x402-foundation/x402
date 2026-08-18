@@ -136,7 +136,9 @@ class x402HTTPAdapter(HTTPAdapter):
 
             payment_required = self._http_client.get_payment_required_response(get_header, body)
 
-            hook_headers = self._http_client.handle_payment_required(payment_required)
+            hook_headers = self._http_client.handle_payment_required(
+                payment_required, response.url or request.url
+            )
             if hook_headers:
                 hook_request = request.copy()
                 hook_request.headers.update(hook_headers)

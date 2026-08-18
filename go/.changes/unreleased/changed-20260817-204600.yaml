@@ -1,0 +1,3 @@
+kind: Changed
+body: ParseMoney and MoneyParser now use decimal strings instead of float64; amounts too small for the asset decimals truncate to "0" instead of erroring.
+time: 2026-08-17T20:46:00.000000+02:00

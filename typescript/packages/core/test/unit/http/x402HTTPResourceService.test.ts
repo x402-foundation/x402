@@ -718,6 +718,39 @@ describe("x402HTTPResourceServer", () => {
         },
       );
 
+      // Express hands over the escaped path, Hono an already-decoded one, so a
+      // backslash can arrive raw or as %5C. Neither may be folded into a "/".
+      it.each([
+        ["raw backslash", "/api/report/a\\b"],
+        ["raw backslash, multiple", "/api/report/a\\b\\c"],
+        ["raw backslash after a decoded escape", "/api/report/a%41\\b"],
+      ])("should require payment when a :param segment contains a %s", async (_, path) => {
+        const routes = {
+          "/api/report/:id": {
+            accepts: {
+              scheme: "exact",
+              payTo: "0xabc",
+              price: "$1.00" as Price,
+              network: "eip155:8453" as Network,
+            },
+          },
+        };
+
+        const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+
+        const adapter = new MockHTTPAdapter();
+        const context: HTTPRequestContext = {
+          adapter,
+          path,
+          method: "GET",
+        };
+
+        expect(httpServer.requiresPayment(context)).toBe(true);
+
+        const result = await httpServer.processHTTPRequest(context);
+        expect(result.type).toBe("payment-error");
+      });
+
       it("should still decode non-separator percent-escapes for non-ASCII route patterns", async () => {
         const routes = {
           "/api/categoría/:id": {

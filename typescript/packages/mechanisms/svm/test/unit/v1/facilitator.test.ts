@@ -4,7 +4,8 @@ import { ExactSvmSchemeV1 } from "../../../src/exact/v1/facilitator/scheme";
 import type { FacilitatorSvmSigner } from "../../../src/signer";
 import type { PaymentRequirementsV1 } from "@x402/core/types/v1";
 import type { PaymentPayloadV1 } from "@x402/core/types/v1";
-import { USDC_DEVNET_ADDRESS, MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS } from "../../../src/constants";
+import { MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS } from "../../../src/constants";
+import { USDC_DEVNET_ADDRESS } from "../../../src/defaultAssets";
 import * as svmUtils from "../../../src/utils";
 
 // Encodes a SetComputeUnitPrice instruction: discriminator(3) + microLamports as u64 LE
@@ -28,6 +29,7 @@ describe("ExactSvmSchemeV1", () => {
           "FeePayer1111111111111111111111111111",
           "FacilitatorAddress1111111111111111111",
         ]) as never,
+      getSigner: vi.fn() as never,
       signTransactions: vi.fn() as never,
       signMessages: vi.fn().mockResolvedValue([
         {

@@ -123,6 +123,14 @@ func (c *BatchSettlementEvmScheme) Scheme() string {
 	return batchsettlement.SchemeBatched
 }
 
+func (c *BatchSettlementEvmScheme) FindDefaultAsset(asset string, network x402.Network) *x402.DefaultAsset {
+	info := evm.FindDefaultAsset(asset, string(network))
+	if info == nil {
+		return nil
+	}
+	return &x402.DefaultAsset{Asset: info.Asset, Decimals: info.Decimals, Symbol: info.Symbol}
+}
+
 // CreatePaymentPayload creates a batched payment payload.
 //
 // The client loads local session state, falls back to onchain recovery when

@@ -321,15 +321,26 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 		func() {
 			defer func() {
 				if rec := recover(); rec != nil {
+					var cancelSettlement *x402.SettleResponse
 					if result.CancellationDispatcher != nil {
 						err, ok := rec.(error)
 						if !ok {
 							err = fmt.Errorf("%v", rec)
 						}
-						result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+						cancelSettlement = result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
 							Reason: x402.CancellationReasonHandlerThrew,
 							Err:    err,
 						})
+					}
+					if headers := server.CreateFailurePathSettlementHeaders(
+						cancelSettlement,
+						result.BeforeHandlerSettlement,
+						result.PaymentPayload,
+						w.Header().Get("Cache-Control"),
+					); headers != nil {
+						for key, value := range headers {
+							w.Header().Set(key, value)
+						}
 					}
 					panic(rec)
 				}
@@ -340,11 +351,22 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 
 	// Don't settle if response failed
 	if capture.statusCode >= 400 {
+		var cancelSettlement *x402.SettleResponse
 		if result.CancellationDispatcher != nil {
-			result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+			cancelSettlement = result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
 				Reason:         x402.CancellationReasonHandlerFailed,
 				ResponseStatus: capture.statusCode,
 			})
+		}
+		if headers := server.CreateFailurePathSettlementHeaders(
+			cancelSettlement,
+			result.BeforeHandlerSettlement,
+			result.PaymentPayload,
+			capture.Header().Get("Cache-Control"),
+		); headers != nil {
+			for key, value := range headers {
+				w.Header().Set(key, value)
+			}
 		}
 		w.WriteHeader(capture.statusCode)
 		_, _ = w.Write(capture.body.Bytes())
@@ -362,6 +384,8 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 			ResponseHeaders: capture.Header(),
 		},
 		result.DeclaredExtensions,
+		result.BeforeHandlerSettlement,
+		"",
 	)
 
 	if !settleResult.Success {

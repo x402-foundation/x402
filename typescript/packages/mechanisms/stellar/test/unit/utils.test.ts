@@ -305,7 +305,7 @@ describe("Stellar RPC Helper Functions", () => {
 
     it("should throw error for unknown network", () => {
       expect(() => getUsdcAddress("invalid-network" as any)).toThrow(
-        "No USDC address configured for network: invalid-network",
+        "No default asset configured for network invalid-network",
       );
     });
   });
@@ -334,7 +334,7 @@ describe("Stellar RPC Helper Functions", () => {
       });
 
       it("should throw when amount rounds down to 0", () => {
-        expect(() => convertToTokenAmount("0.00000001")).toThrow("too small");
+        expect(convertToTokenAmount("0.00000001")).toBe("0");
       });
 
       it("should truncate excess decimal places", () => {

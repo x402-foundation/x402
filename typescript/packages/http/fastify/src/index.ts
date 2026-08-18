@@ -442,23 +442,21 @@ export function paymentMiddlewareFromHTTPServer(
     }
 
     if (reply.statusCode >= 400) {
-      await x402Context.cancellationDispatcher.cancel({
+      const cancelSettlement = await x402Context.cancellationDispatcher.cancel({
         reason: "handler_failed",
         responseStatus: reply.statusCode,
       });
       reply.removeHeader(SETTLEMENT_OVERRIDES_HEADER);
-      // Echo before-handler receipt (e.g. upfront) so the payer still gets the tx hash
-      if (x402Context.beforeHandlerSettlement) {
-        const existingCacheControl =
-          reply.getHeader("Cache-Control") != null
-            ? String(reply.getHeader("Cache-Control"))
-            : null;
-        for (const [key, value] of Object.entries(
-          httpServer.createCompletedSettlementHeaders(
-            x402Context.beforeHandlerSettlement,
-            existingCacheControl,
-          ),
-        )) {
+      const existingCacheControl =
+        reply.getHeader("Cache-Control") != null ? String(reply.getHeader("Cache-Control")) : null;
+      const failureHeaders = httpServer.createFailurePathSettlementHeaders(
+        cancelSettlement,
+        x402Context.beforeHandlerSettlement,
+        x402Context.paymentPayload,
+        existingCacheControl,
+      );
+      if (failureHeaders) {
+        for (const [key, value] of Object.entries(failureHeaders)) {
           reply.header(key, value);
         }
       }

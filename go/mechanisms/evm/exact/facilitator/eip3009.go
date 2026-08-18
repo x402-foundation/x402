@@ -229,13 +229,10 @@ func (f *ExactEvmScheme) settleEIP3009(
 		return nil, x402.NewSettleError(parseEIP3009TransferError(err), verifyResp.Payer, network, "", err.Error())
 	}
 
-	receipt, err := f.signer.WaitForTransactionReceipt(ctx, txHash)
+	receipt, err := evm.WaitForSettleReceipt(ctx, f.signer, txHash, verifyResp.Payer, network,
+		ErrTransactionFailed, ErrTransactionFailed)
 	if err != nil {
-		return nil, x402.NewSettleError(ErrFailedToGetReceipt, verifyResp.Payer, network, txHash, err.Error())
-	}
-
-	if receipt.Status != evm.TxStatusSuccess {
-		return nil, x402.NewSettleError(ErrTransactionFailed, verifyResp.Payer, network, txHash, "")
+		return nil, err
 	}
 
 	if receipt.Logs != nil {
@@ -245,7 +242,10 @@ func (f *ExactEvmScheme) settleEIP3009(
 			Value: parsedAuthorization.Value,
 		})
 		if err != nil {
-			return nil, x402.NewSettleError(ErrTransferEventMismatch, verifyResp.Payer, network, txHash, err.Error())
+			// The receipt succeeded but its logs could not be parsed, so the transfer's effect
+			// is unknown. A parsed-but-absent event below is terminal; this is not.
+			return nil, x402.NewSettleError(ErrSettlementPending, verifyResp.Payer, network, txHash,
+				evm.TruncateErrorMessage(err.Error()))
 		}
 		if !transferMatched {
 			return nil, x402.NewSettleError(ErrTransferEventMismatch, verifyResp.Payer, network, txHash, "")

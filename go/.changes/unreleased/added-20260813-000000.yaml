@@ -1,0 +1,3 @@
+kind: Added
+body: Add an SVM stablecoin registry (USDC, USDT, USDG, PYUSD, CASH) with mint, token-program, and precision lookups. The SVM `upto` server resolves a trailing price symbol (for example "1.50 PYUSD") to that stablecoin's mint and advertises the token program its mint requires, and the facilitator infers the same token program when a challenge omits `extra.tokenProgram`, so Token-2022 stablecoins work without extra configuration
+time: 2026-08-13T00:00:00.000000-07:00

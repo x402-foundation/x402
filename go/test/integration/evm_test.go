@@ -626,14 +626,19 @@ func TestEVMIntegrationV2Permit2(t *testing.T) {
 
 		// Setup resource server with EVM v2
 		evmServer := exactevmserver.NewExactEvmScheme()
-		evmServer.RegisterMoneyParser(func(amount float64, network x402.Network) (*x402.AssetAmount, error) {
+		evmServer.RegisterMoneyParser(func(amount string, network x402.Network) (*x402.AssetAmount, error) {
 			if string(network) != "eip155:84532" {
 				return nil, nil
 			}
 
+			tokenAmount, err := x402.ConvertToTokenAmount(amount, 6)
+			if err != nil {
+				return nil, err
+			}
+
 			return &x402.AssetAmount{
 				Asset:  "0x036CbD53842c5426634e7929541eC2318f3dCF7e", // USDC on Base Sepolia
-				Amount: fmt.Sprintf("%.0f", amount*1e6),
+				Amount: tokenAmount,
 				Extra: map[string]interface{}{
 					"assetTransferMethod": "permit2",
 					"name":                "USDC",

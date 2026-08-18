@@ -56,6 +56,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | exact | xrpl | `sequence` | ✅ | ❌ | ❌ |
 | exact | xrpl | `ticketSequence` | ✅ | ❌ | ❌ |
 | upto | evm | `permit2` | ✅ | ✅ | ✅ |
+| upto | svm | - | ✅ | ✅ | ❌ |
 | batch-settlement | evm | `eip3009` | ✅ | ✅ | ✅ |
 | batch-settlement | evm | `permit2` | ✅ | ✅ | ✅ |
 
@@ -81,7 +82,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | onAfterPaymentCreation | ✅ | ✅ | ✅ |
 | onPaymentCreationFailure | ✅ | ✅ | ✅ |
 | onPaymentResponse | ✅ | ✅ | ✅ |
-| onPaymentRequired (HTTP) | ✅ | ❌ | ✅ |
+| onPaymentRequired (HTTP) | ✅ | ✅ | ✅ |
 
 ## Server Hooks
 
@@ -123,7 +124,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | Extension-level server lifecycle hook adapters | ✅ | ✅ | ✅ |
 | Extension-level server HTTP transport hook adapters | ✅ | ❌ | ✅ |
 | Extension-level client lifecycle hook adapters | ✅ | ❌ | ✅ |
-| Extension-level client HTTP transport hook adapters | ✅ | ❌ | ✅ |
+| Extension-level client HTTP transport hook adapters | ✅ | ✅ | ✅ |
 
 ## MCP (Model Context Protocol)
 
@@ -156,3 +157,9 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | dynamicPayTo | ✅ | ✅ | ✅ |
 | dynamicPrice | ✅ | ✅ | ✅ |
 | paywall (browser UI) | ✅ | ✅ | ✅ |
+
+## Client Safety Features
+
+| Feature | TypeScript | Go | Python |
+|---------|------------|-----|--------|
+| spendControls (asset allowlist + USD cap) | ✅ | ✅ | ✅ |

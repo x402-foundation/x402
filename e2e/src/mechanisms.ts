@@ -278,6 +278,17 @@ export function schemesForSdk(sdk: string): PaymentScheme[] {
   return Array.from(schemes);
 }
 
+/** Schemes an SDK implements for one catalog network (from route `sdks`). */
+export function schemesForSdkNetwork(sdk: string, network: CatalogNetworkId): PaymentScheme[] {
+  const schemes = new Set<PaymentScheme>();
+  for (const route of sdkRoutesFor(sdk)) {
+    if (route.network === network) {
+      schemes.add(route.scheme);
+    }
+  }
+  return Array.from(schemes);
+}
+
 /** EVM asset transfer methods declared on an SDK's routes. */
 export function evmAssetTransferMethodsForSdk(sdk: string): AssetTransferMethod[] | undefined {
   const methods = new Set<AssetTransferMethod>();

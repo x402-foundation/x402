@@ -1,10 +1,6 @@
 import type { Network, SupportedKind } from "@x402/core/types";
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_ASSET_BY_NETWORK,
-  NEAR_MAINNET_CAIP2,
-  NEAR_TESTNET_CAIP2,
-} from "../../src/constants";
+import { getDefaultAsset, NEAR_MAINNET_CAIP2, NEAR_TESTNET_CAIP2 } from "../../src";
 import { ExactNearScheme } from "../../src/exact/server/scheme";
 
 describe("near server scheme", () => {
@@ -12,14 +8,14 @@ describe("near server scheme", () => {
     const scheme = new ExactNearScheme();
     const parsed = await scheme.parsePrice("$1.00", NEAR_TESTNET_CAIP2);
     expect(parsed.amount).toBe("1000000");
-    expect(parsed.asset).toBe(DEFAULT_ASSET_BY_NETWORK[NEAR_TESTNET_CAIP2]);
+    expect(parsed.asset).toBe(getDefaultAsset(NEAR_TESTNET_CAIP2).asset);
   });
 
   it("uses the official Circle mainnet USDC asset by default", async () => {
     const scheme = new ExactNearScheme();
     const parsed = await scheme.parsePrice("0.50", NEAR_MAINNET_CAIP2);
     expect(parsed.amount).toBe("500000");
-    expect(parsed.asset).toBe(DEFAULT_ASSET_BY_NETWORK[NEAR_MAINNET_CAIP2]);
+    expect(parsed.asset).toBe(getDefaultAsset(NEAR_MAINNET_CAIP2).asset);
   });
 
   it("passes through explicit amount/asset", async () => {

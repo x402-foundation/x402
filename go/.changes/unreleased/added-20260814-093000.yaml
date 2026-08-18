@@ -1,0 +1,3 @@
+kind: Added
+body: Add client spend controls (default-asset allowlist and $1 USD cap) and EVM/SVM default-asset tables so USD-pegged tokens are recognized for caps and money strings.
+time: 2026-08-14T09:30:00.000000-07:00

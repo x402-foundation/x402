@@ -78,9 +78,8 @@ export {
   claimBatchTypes,
 } from "./batch-settlement/constants";
 
-// Default stablecoins (USD string pricing → token address per chain)
-export { getDefaultAsset } from "./shared/defaultAssets";
-export type { DefaultAssetInfo, ExactDefaultAssetInfo } from "./shared/defaultAssets";
+export { getDefaultAsset, findDefaultAsset } from "./defaultAssets";
+export type { DefaultAssetInfo, ExactDefaultAssetInfo } from "./defaultAssets";
 
 // Extension helpers (client + facilitator)
 export { BUILDER_CODE_KEY, resolveDataSuffix, appendDataSuffix } from "./shared/extensions";
@@ -117,8 +116,7 @@ export {
   x402UptoPermit2ProxyABI,
 } from "./constants";
 
-// Default-asset registry (network → token metadata)
-export { DEFAULT_STABLECOINS } from "./shared/defaultAssets";
+export { DEFAULT_ASSETS } from "./defaultAssets";
 
 // AuthCapture scheme
 export { AuthCaptureEvmScheme } from "./auth-capture";

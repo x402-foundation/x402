@@ -7,6 +7,7 @@ from typing import Any
 
 from ....schemas import PaymentRequirements
 from ..constants import ERC20_ALLOWANCE_ABI, PERMIT2_ADDRESS, SCHEME_EXACT
+from ..default_assets import find_default_asset
 from ..eip712 import build_typed_data_for_signing
 from ..signer import (
     ClientEvmSigner,
@@ -52,6 +53,7 @@ class ExactEvmScheme:
     """
 
     scheme = SCHEME_EXACT
+    find_default_asset = staticmethod(find_default_asset)
 
     def __init__(self, signer: ClientEvmSigner):
         """Create ExactEvmScheme.

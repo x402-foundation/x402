@@ -2,28 +2,22 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
-from decimal import Decimal
 
 from ....schemas import AssetAmount, Network, PaymentRequirements, Price, SupportedKind
+from ....schemas.helpers import convert_to_token_amount, parse_money
 from ..codecs.common import (
     encode_base64_boc,
     make_zero_bit_cell,
     normalize_address,
     parse_amount,
-    parse_money_to_decimal,
 )
 from ..constants import (
-    DEFAULT_DECIMALS,
     SCHEME_EXACT,
-    TVM_MAINNET,
-    TVM_TESTNET,
-    USDT_MAINNET_MINTER,
-    USDT_TESTNET_MINTER,
 )
+from ..default_assets import find_default_asset, get_default_asset
 
-MoneyParser = Callable[[float, str], AssetAmount | None]
+MoneyParser = Callable[[str | int | float, str], AssetAmount | None]
 
 
 class ExactTvmScheme:
@@ -59,23 +53,15 @@ class ExactTvmScheme:
                 extra=price.extra,
             )
 
-        if isinstance(price, int):
-            exact_decimal_amount = Decimal(price)
-        elif isinstance(price, float):
-            exact_decimal_amount = Decimal(str(price))
-        else:
-            clean = price.strip()
-            clean = clean.lstrip("$")
-            clean = re.sub(r"\s*(USD|USDT|usd|usdt)\s*$", "", clean)
-            exact_decimal_amount = Decimal(clean.strip())
-
-        decimal_amount = parse_money_to_decimal(price)
+        parsed = parse_money(price)
+        decimal_amount = parsed["amount"]
+        symbol = parsed.get("symbol")
         for parser in self._money_parsers:
             result = parser(decimal_amount, str(network))
             if result is not None:
                 return result
 
-        return self._default_money_conversion(exact_decimal_amount, str(network))
+        return self._default_money_conversion(decimal_amount, str(network), symbol)
 
     def enhance_payment_requirements(
         self,
@@ -87,14 +73,17 @@ class ExactTvmScheme:
         _ = extension_keys
 
         if not requirements.asset:
-            requirements.asset = self._get_default_asset(str(requirements.network))
+            requirements.asset = get_default_asset(str(requirements.network))["asset"]
         requirements.asset = normalize_address(requirements.asset)
         requirements.pay_to = normalize_address(requirements.pay_to)
 
         if "." in requirements.amount:
-            requirements.amount = str(
-                parse_amount(requirements.amount, self._get_asset_decimals(requirements))
-            )
+            extra = requirements.extra or {}
+            if "decimals" in extra:
+                decimals = int(extra["decimals"])
+            else:
+                decimals = self.get_asset_decimals(requirements.asset, requirements.network)
+            requirements.amount = str(parse_amount(requirements.amount, decimals))
 
         if requirements.extra is None:
             requirements.extra = {}
@@ -113,10 +102,13 @@ class ExactTvmScheme:
 
         return requirements
 
-    def _default_money_conversion(self, amount: Decimal, network: str) -> AssetAmount:
+    def _default_money_conversion(
+        self, amount: str, network: str, symbol: str | None = None
+    ) -> AssetAmount:
+        asset = get_default_asset(network, symbol)
         return AssetAmount(
-            amount=str(parse_amount(format(amount, "f"), DEFAULT_DECIMALS)),
-            asset=self._get_default_asset(network),
+            amount=convert_to_token_amount(amount, asset["decimals"]),
+            asset=asset["asset"],
             extra={
                 "areFeesSponsored": True,
                 "forwardPayload": encode_base64_boc(make_zero_bit_cell()),
@@ -124,25 +116,11 @@ class ExactTvmScheme:
             },
         )
 
-    def _get_default_asset(self, network: str) -> str:
-        if network == TVM_MAINNET:
-            return USDT_MAINNET_MINTER
-        if network == TVM_TESTNET:
-            return USDT_TESTNET_MINTER
-        raise ValueError(
-            f"No default stablecoin configured for network {network}; specify an explicit asset"
-        )
-
-    def _get_asset_decimals(self, requirements: PaymentRequirements) -> int:
-        extra = requirements.extra or {}
-        if "decimals" in extra:
-            return int(extra["decimals"])
-        if normalize_address(requirements.asset) in {
-            USDT_MAINNET_MINTER,
-            USDT_TESTNET_MINTER,
-        }:
-            return DEFAULT_DECIMALS
-        raise ValueError(
-            f"Token {requirements.asset} is not a registered asset for network "
-            f"{requirements.network}; provide amount in atomic units or extra.decimals"
-        )
+    def get_asset_decimals(self, asset: str, network: Network) -> int:
+        found = find_default_asset(asset, str(network))
+        if found is None:
+            raise ValueError(
+                f"Token {asset} is not a registered asset; provide amount in atomic units "
+                "or extra.decimals"
+            )
+        return found["decimals"]

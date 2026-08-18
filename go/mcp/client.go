@@ -27,7 +27,9 @@ type X402MCPClient struct {
 	onAfterPay    AfterPaymentHook
 }
 
-// NewX402MCPClient creates an x402-aware MCP client.
+// NewX402MCPClient creates an x402-aware MCP client wrapping an existing payment client.
+// Configure spend controls on paymentClient (SetSpendControls / DisableSpendControls)
+// before wrapping; this constructor does not change them.
 func NewX402MCPClient(caller MCPCaller, paymentClient *x402.X402Client, options Options) *X402MCPClient {
 	return &X402MCPClient{
 		caller:        caller,
@@ -37,6 +39,8 @@ func NewX402MCPClient(caller MCPCaller, paymentClient *x402.X402Client, options 
 }
 
 // NewX402MCPClientFromConfig creates an x402-aware MCP client from scheme registrations.
+// The constructed payment client uses the default $1 cap and default-asset allowlist.
+// For custom spend controls, configure an *x402.X402Client and pass it to NewX402MCPClient.
 func NewX402MCPClientFromConfig(caller MCPCaller, schemes []SchemeRegistration, options Options) *X402MCPClient {
 	paymentClient := x402.Newx402Client()
 	for _, reg := range schemes {
@@ -274,7 +278,12 @@ func (c *X402MCPClient) callToolWithV1Payment(
 		}
 	}
 
-	payload, err := c.paymentClient.CreatePaymentPayloadV1(ctx, paymentRequired.Accepts[0])
+	selected, err := c.paymentClient.SelectPaymentRequirementsV1(paymentRequired.Accepts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select v1 payment requirements: %w", err)
+	}
+
+	payload, err := c.paymentClient.CreatePaymentPayloadV1(ctx, selected)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create v1 payment: %w", err)
 	}
@@ -462,7 +471,11 @@ func CallPaidTool(
 			return buildResult(result, false), nil
 		}
 
-		payloadV1, err := x402Client.CreatePaymentPayloadV1(ctx, prV1.Accepts[0])
+		selected, err := x402Client.SelectPaymentRequirementsV1(prV1.Accepts)
+		if err != nil {
+			return nil, fmt.Errorf("failed to select v1 payment requirements: %w", err)
+		}
+		payloadV1, err := x402Client.CreatePaymentPayloadV1(ctx, selected)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create v1 payment: %w", err)
 		}

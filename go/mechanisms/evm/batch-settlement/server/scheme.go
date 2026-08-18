@@ -394,13 +394,30 @@ func (s *BatchSettlementEvmScheme) Scheme() string {
 	return batchsettlement.SchemeBatched
 }
 
-// GetAssetDecimals implements AssetDecimalsProvider.
-func (s *BatchSettlementEvmScheme) GetAssetDecimals(asset string, network x402.Network) int {
-	info, err := evm.GetAssetInfo(string(network), asset)
-	if err != nil || info == nil {
-		return 6
+// DefaultAssetTransferMethod returns the ATM used when extra.assetTransferMethod is absent.
+func (s *BatchSettlementEvmScheme) DefaultAssetTransferMethod() string {
+	return string(evm.AssetTransferMethodEIP3009)
+}
+
+// PaymentFlows returns ATM-keyed payment flow support for batch-settlement EVM.
+func (s *BatchSettlementEvmScheme) PaymentFlows() map[string]x402.PaymentFlowConfig {
+	auth := x402.PaymentFlowConfig{
+		Supported: []x402.PaymentFlowName{x402.PaymentFlowAuthorization},
+		Default:   x402.PaymentFlowAuthorization,
 	}
-	return info.Decimals
+	return map[string]x402.PaymentFlowConfig{
+		string(evm.AssetTransferMethodEIP3009): auth,
+		string(evm.AssetTransferMethodPermit2): auth,
+	}
+}
+
+// GetAssetDecimals implements AssetDecimalsProvider.
+func (s *BatchSettlementEvmScheme) GetAssetDecimals(asset string, network x402.Network) (int, bool) {
+	found := evm.FindDefaultAsset(asset, string(network))
+	if found == nil {
+		return 0, false
+	}
+	return found.Decimals, true
 }
 
 // RegisterMoneyParser registers a custom money parser.
@@ -489,7 +506,7 @@ func (s *BatchSettlementEvmScheme) ParsePrice(price x402.Price, network x402.Net
 		}
 	}
 
-	decimalAmount, err := parseMoneyToDecimal(price)
+	decimalAmount, symbol, err := x402.ParseMoney(price)
 	if err != nil {
 		return x402.AssetAmount{}, err
 	}
@@ -504,7 +521,7 @@ func (s *BatchSettlementEvmScheme) ParsePrice(price x402.Price, network x402.Net
 		}
 	}
 
-	return defaultMoneyConversion(decimalAmount, network)
+	return defaultMoneyConversion(decimalAmount, network, symbol)
 }
 
 // EnhancePaymentRequirements adds batched-specific fields to payment requirements.
@@ -730,70 +747,23 @@ func (s *BatchSettlementEvmScheme) DeleteSession(channelId string) error {
 
 // Helper functions
 
-func parseMoneyToDecimal(price x402.Price) (float64, error) {
-	switch v := price.(type) {
-	case string:
-		cleanPrice := strings.TrimSpace(v)
-		cleanPrice = strings.TrimPrefix(cleanPrice, "$")
-		cleanPrice = strings.TrimSpace(cleanPrice)
-		amount, err := strconv.ParseFloat(cleanPrice, 64)
-		if err != nil {
-			return 0, fmt.Errorf(ErrFailedToParsePrice+": '%s': %w", v, err)
-		}
-		return amount, nil
-	case float64:
-		return v, nil
-	case int:
-		return float64(v), nil
-	case int64:
-		return float64(v), nil
-	default:
-		return 0, fmt.Errorf(ErrUnsupportedPriceType+": %T", price)
-	}
-}
-
-func defaultMoneyConversion(amount float64, network x402.Network) (x402.AssetAmount, error) {
-	networkStr := string(network)
-	config, err := evm.GetNetworkConfig(networkStr)
+func defaultMoneyConversion(amount string, network x402.Network, symbol string) (x402.AssetAmount, error) {
+	assetInfo, tokenAmount, err := evm.ConvertDefaultMoney(amount, string(network), symbol)
 	if err != nil {
 		return x402.AssetAmount{}, err
 	}
-	if config.DefaultAsset.Address == "" {
-		return x402.AssetAmount{}, fmt.Errorf("no default stablecoin for network %s", networkStr)
-	}
 
 	extra := map[string]interface{}{
-		// Token EIP-712 domain — see comment in GetExtra above for why both
-		// ERC-3009 and Permit2(+EIP-2612) paths need name/version.
-		"name":    config.DefaultAsset.Name,
-		"version": config.DefaultAsset.Version,
+		"name":    assetInfo.Name,
+		"version": assetInfo.Version,
 	}
-	if config.DefaultAsset.AssetTransferMethod != "" {
-		extra["assetTransferMethod"] = string(config.DefaultAsset.AssetTransferMethod)
-	}
-
-	oneUnit := float64(1)
-	for i := 0; i < config.DefaultAsset.Decimals; i++ {
-		oneUnit *= 10
-	}
-
-	if amount >= oneUnit && amount == float64(int64(amount)) {
-		return x402.AssetAmount{
-			Asset:  config.DefaultAsset.Address,
-			Amount: fmt.Sprintf("%.0f", amount),
-			Extra:  extra,
-		}, nil
-	}
-
-	amountStr := fmt.Sprintf("%.6f", amount)
-	parsedAmount, err := evm.ParseAmount(amountStr, config.DefaultAsset.Decimals)
-	if err != nil {
-		return x402.AssetAmount{}, fmt.Errorf(ErrFailedToConvertAmt+": %w", err)
+	if assetInfo.AssetTransferMethod != "" {
+		extra["assetTransferMethod"] = string(assetInfo.AssetTransferMethod)
 	}
 
 	return x402.AssetAmount{
-		Asset:  config.DefaultAsset.Address,
-		Amount: parsedAmount.String(),
+		Asset:  assetInfo.Asset,
+		Amount: tokenAmount,
 		Extra:  extra,
 	}, nil
 }

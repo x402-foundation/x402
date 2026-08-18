@@ -18,6 +18,7 @@ from ....evm.signer import (
     ClientEvmSignerWithReadContract,
     ClientEvmSignerWithSignTransaction,
 )
+from ...default_assets import find_default_asset
 from ...utils import get_evm_chain_id, normalize_address
 from ..constants import SCHEME_BATCH_SETTLEMENT
 from ..types import ChannelConfig, VoucherPayload
@@ -97,6 +98,7 @@ class BatchSettlementEvmScheme:
     """
 
     scheme = SCHEME_BATCH_SETTLEMENT
+    find_default_asset = staticmethod(find_default_asset)
 
     def __init__(
         self,

@@ -53,7 +53,10 @@ Quick Start (Sync):
 
 # Core components - Async (default)
 from .client import (
+    DEFAULT_MAX_AMOUNT_PER_PAYMENT,
     SchemeRegistration,
+    SpendControlAsset,
+    SpendControls,
     default_payment_selector,
     max_amount,
     prefer_network,
@@ -146,7 +149,7 @@ from .server import (
     x402ResourceServerSync,
 )
 
-__version__ = "2.18.0"
+__version__ = "2.19.0"
 
 __all__ = [
     # Version
@@ -162,6 +165,9 @@ __all__ = [
     # Config types
     "SchemeRegistration",
     "x402ClientConfig",
+    "SpendControlAsset",
+    "SpendControls",
+    "DEFAULT_MAX_AMOUNT_PER_PAYMENT",
     # Protocols
     "FacilitatorClient",
     "FacilitatorClientSync",

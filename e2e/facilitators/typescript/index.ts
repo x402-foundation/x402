@@ -55,6 +55,7 @@ import {
 import { ExactHederaScheme } from "@x402/hedera/exact/facilitator";
 import { toFacilitatorSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/facilitator";
+import { UptoSvmScheme } from "@x402/svm/upto/facilitator";
 import { ExactSvmSchemeV1 } from "@x402/svm/exact/v1/facilitator";
 import { NETWORKS as SVM_V1_NETWORKS } from "@x402/svm/v1";
 import {
@@ -402,6 +403,19 @@ function isBatchSettlementScheme(requirements: PaymentRequirements): boolean {
   return requirements.scheme === "batch-settlement";
 }
 
+/** Flows that skip facilitator /verify; validity is established at settle instead. */
+function skipsVerifyBeforeSettle(requirements: PaymentRequirements): boolean {
+  if (isBatchSettlementScheme(requirements)) {
+    return true;
+  }
+  const paymentFlow = requirements.extra?.paymentFlow;
+  return paymentFlow === "escrow" || paymentFlow === "upfront";
+}
+
+function cleanupVerifiedPaymentTracking(paymentHash: string): void {
+  verifiedPayments.delete(paymentHash);
+}
+
 // For batch-settlement payloads the action lives at payload.payload.type
 // (deposit / voucher) or payload.payload.settleAction (claimWithSignature /
 // settle / refundWithSignature). Used by onAfterSettle to detect deposits.
@@ -542,6 +556,10 @@ if (svmSigner) {
       new ExactSvmScheme(svmSigner, undefined, {
         enableSmartWalletVerification: true,
       }),
+    )
+    .register(
+      SVM_NETWORK as Network,
+      new UptoSvmScheme(svmSigner, { rpcUrl: SVM_RPC_URL }),
     )
     .registerV1(SVM_V1_NETWORKS as Network[], new ExactSvmSchemeV1(svmSigner));
 }
@@ -706,8 +724,9 @@ facilitator
     }
   })
   .onBeforeSettle(async (context) => {
-    // Hook 3: Validate payment was previously verified
-    if (isBatchSettlementScheme(context.requirements)) {
+    // Hook 3: Validate payment was previously verified (authorization flow only).
+    // Escrow/upfront/batch-settlement skip /verify — see x402ResourceServer.verifyPayment.
+    if (skipsVerifyBeforeSettle(context.requirements)) {
       return;
     }
 
@@ -733,9 +752,8 @@ facilitator
   })
   .onAfterSettle(async (context) => {
     // Hook 4: Clean up verified payment tracking after settlement
-    if (!isBatchSettlementScheme(context.requirements)) {
-      const paymentHash = createPaymentHash(context.paymentPayload);
-      verifiedPayments.delete(paymentHash);
+    if (!skipsVerifyBeforeSettle(context.requirements)) {
+      cleanupVerifiedPaymentTracking(createPaymentHash(context.paymentPayload));
     }
 
     if (context.result.success) {
@@ -753,9 +771,8 @@ facilitator
   })
   .onSettleFailure(async (context) => {
     // Hook 5: Clean up on settlement failure too
-    if (!isBatchSettlementScheme(context.requirements)) {
-      const paymentHash = createPaymentHash(context.paymentPayload);
-      verifiedPayments.delete(paymentHash);
+    if (!skipsVerifyBeforeSettle(context.requirements)) {
+      cleanupVerifiedPaymentTracking(createPaymentHash(context.paymentPayload));
     }
 
     console.error(`❌ Settlement failed: ${context.error.message}`);

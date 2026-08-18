@@ -63,6 +63,26 @@ Multiple facilitators are live in production, supporting various networks includ
 11. `Facilitator server` returns a `Payment Execution Response` to the resource server.
 12. `Resource server` returns a response to the `Client` with a `PAYMENT-RESPONSE` header containing the `Settlement Response` as Base64-encoded JSON. On success, this is a `200 OK` with the requested resource. On failure, this is a `402 Payment Required` with error details.
 
+### Settlement Pending (EVM)
+
+When an EVM settlement transaction is broadcast but its confirmation cannot be established — for example, due to an RPC error or a timeout while waiting for the receipt — the facilitator returns `settlement_pending` instead of a terminal failure. This is a **non-terminal** error: the transaction may still confirm on chain. The `SettlementResponse` carries the broadcast transaction hash in `transaction` and the network in `network`, so callers can reconcile on chain before deciding whether to retry.
+
+This applies to the `exact`, `upto`, and `batch-settlement` EVM schemes (v2 only).
+
+**Facilitators deployed behind a platform request deadline** (serverless functions, gateway timeouts) should bound the receipt wait below that deadline. If the process is killed mid-wait, the caller receives a 5xx with no transaction hash instead of `settlement_pending` with a hash to reconcile against.
+
+In TypeScript, pass `confirmationTimeoutMs` to `toFacilitatorEvmSigner` to set this bound:
+
+```typescript
+import { toFacilitatorEvmSigner } from "@x402/evm";
+
+const evmSigner = toFacilitatorEvmSigner(walletClient, {
+  confirmationTimeoutMs: 25_000, // set a few seconds below your platform deadline
+});
+```
+
+The default is `180_000` ms (3 minutes), matching viem's own default. In Python, pass `confirmation_timeout_seconds` to `FacilitatorWeb3Signer` (default `120`).
+
 ### Duplicate Settlement (Solana)
 
 On Solana, a race condition can occur when the same payment transaction is submitted to a facilitator's `/settle` endpoint multiple times before the first submission is confirmed onchain. Because Solana's RPC returns "success" for duplicate submissions (the network deduplicates at the consensus level), the facilitator may return a successful settlement response for each call. A malicious client could exploit this to access multiple resources while only paying once.

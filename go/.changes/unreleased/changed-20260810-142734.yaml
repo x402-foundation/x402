@@ -1,0 +1,3 @@
+kind: Changed
+body: Require ATM-keyed paymentFlows (and DefaultAssetTransferMethod) on every SchemeNetworkServer. Core resolves ATM/flow from the table, rejects unsupported combinations, and always signals non-authorization paymentFlow on the 402 wire. All schemes currently declare authorization only
+time: 2026-08-10T14:27:34.000000-07:00

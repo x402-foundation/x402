@@ -2,13 +2,16 @@
 package unit_test
 
 import (
+	"strings"
 	"testing"
 
 	solana "github.com/gagliardetto/solana-go"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+	svmclient "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
 	svmserver "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // TestSolanaServerPriceParsing tests V2 server price parsing
@@ -325,6 +328,56 @@ func TestSolanaGetAssetInfo(t *testing.T) {
 		// Should return default asset
 		if info.Address != svm.USDCDevnetAddress {
 			t.Errorf("Expected default asset address %s, got %s", svm.USDCDevnetAddress, info.Address)
+		}
+	})
+}
+
+func TestSVMSpendControls(t *testing.T) {
+	network := x402.Network(svm.SolanaMainnetCAIP2)
+	client := x402.Newx402Client()
+	client.Register(network, svmclient.NewExactSvmScheme(nil))
+
+	req := func(asset, amount string) types.PaymentRequirements {
+		return types.PaymentRequirements{
+			Scheme:  svm.SchemeExact,
+			Network: string(network),
+			Asset:   asset,
+			Amount:  amount,
+			PayTo:   "PayTo1111111111111111111111111111111111111",
+		}
+	}
+
+	t.Run("documented USDC mint at or below $1 is allowed", func(t *testing.T) {
+		selected, err := client.SelectPaymentRequirements([]types.PaymentRequirements{req(svm.USDCMainnetAddress, "1000000")})
+		if err != nil {
+			t.Fatalf("expected allow: %v", err)
+		}
+		if selected.Amount != "1000000" {
+			t.Fatalf("amount = %s", selected.Amount)
+		}
+	})
+
+	t.Run("above $1 is rejected", func(t *testing.T) {
+		_, err := client.SelectPaymentRequirements([]types.PaymentRequirements{req(svm.USDCMainnetAddress, "1000001")})
+		if err == nil || !strings.Contains(err.Error(), "maxAmountPerPayment") {
+			t.Fatalf("expected cap error, got %v", err)
+		}
+	})
+
+	t.Run("unknown mint is rejected unless allowedAssets", func(t *testing.T) {
+		custom := "CustomMint1111111111111111111111111111111"
+		_, err := client.SelectPaymentRequirements([]types.PaymentRequirements{req(custom, "1")})
+		if err == nil || !strings.Contains(err.Error(), "spendControls.allowedAssets") {
+			t.Fatalf("expected allowlist error, got %v", err)
+		}
+
+		optIn := x402.Newx402Client()
+		optIn.Register(network, svmclient.NewExactSvmScheme(nil))
+		optIn.SetSpendControls(x402.SpendControls{
+			AllowedAssets: []x402.SpendControlAsset{{Network: network, Asset: custom}},
+		})
+		if _, err := optIn.SelectPaymentRequirements([]types.PaymentRequirements{req(custom, "1")}); err != nil {
+			t.Fatalf("opt-in custom mint: %v", err)
 		}
 	})
 }

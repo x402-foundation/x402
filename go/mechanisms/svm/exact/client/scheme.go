@@ -13,6 +13,7 @@ import (
 	"github.com/gagliardetto/solana-go/programs/token"
 	"github.com/gagliardetto/solana-go/rpc"
 
+	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
@@ -41,6 +42,14 @@ func NewExactSvmScheme(signer svm.ClientSvmSigner, config ...*svm.ClientConfig) 
 // Scheme returns the scheme identifier
 func (c *ExactSvmScheme) Scheme() string {
 	return svm.SchemeExact
+}
+
+func (c *ExactSvmScheme) FindDefaultAsset(asset string, network x402.Network) *x402.DefaultAsset {
+	info := svm.FindDefaultAsset(asset, string(network))
+	if info == nil {
+		return nil
+	}
+	return &x402.DefaultAsset{Asset: info.Asset, Decimals: info.Decimals, Symbol: info.Symbol}
 }
 
 // CreatePaymentPayload creates a V2 payment payload for the Exact scheme
@@ -132,7 +141,6 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 		return types.PaymentPayload{}, err
 	}
 
-	// Build compute budget instructions
 	cuLimit, err := computebudget.NewSetComputeUnitLimitInstructionBuilder().
 		SetUnits(svm.DefaultComputeUnitLimit).
 		ValidateAndBuild()

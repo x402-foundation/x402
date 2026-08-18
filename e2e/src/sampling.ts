@@ -69,11 +69,12 @@ export class CoverageTracker {
     version: number,
     scenario: TestScenario,
   ): string {
+    const scheme = endpointPaymentScheme(scenario.endpoint);
     const method =
       protocolFamily === 'evm'
-        ? `${endpointPaymentScheme(scenario.endpoint) ?? 'exact'}-${endpointAssetTransferMethod(scenario.endpoint) ?? 'eip3009'}`
-        : '';
-    return `${serverName}-${endpointPath}-${protocolFamily}${method ? `-${method}` : ''}-v${version}`;
+        ? `${scheme}-${endpointAssetTransferMethod(scenario.endpoint) ?? 'eip3009'}`
+        : scheme;
+    return `${serverName}-${endpointPath}-${protocolFamily}-${method}-v${version}`;
   }
 
   /**

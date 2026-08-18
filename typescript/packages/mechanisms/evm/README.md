@@ -29,7 +29,7 @@ This package provides three main components for handling x402 payments on EVM-co
 
 **Facilitator:**
 - `ExactEvmFacilitator` - V2 facilitator for payment verification and settlement
-- `toFacilitatorEvmSigner(wallet)` - Converts viem wallets to facilitator signers
+- `toFacilitatorEvmSigner(wallet, options?)` - Converts viem wallets to facilitator signers. Pass `{ confirmationTimeoutMs }` to bound receipt waits below a platform request deadline.
 - `FacilitatorEvmSigner` - TypeScript type for facilitator signers
 
 **Service:**

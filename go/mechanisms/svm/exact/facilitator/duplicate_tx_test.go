@@ -78,6 +78,39 @@ func TestDuplicateSettlementCache(t *testing.T) {
 		assert.True(t, freshExists, "fresh entry should survive pruning")
 	})
 
+	t.Run("failed settle can retry after cache delete", func(t *testing.T) {
+		cache := svm.NewSettlementCache()
+		txKey := "failedSettleTxKey"
+
+		assert.False(t, cache.IsDuplicate(txKey), "first settle attempt should record the key")
+		assert.True(t, cache.IsDuplicate(txKey), "second attempt before delete should be duplicate")
+		cache.Delete(txKey)
+		assert.False(t, cache.IsDuplicate(txKey), "retry after failed settle should not be duplicate")
+	})
+
+	t.Run("delete on missing key is a no-op", func(t *testing.T) {
+		cache := svm.NewSettlementCache()
+		assert.NotPanics(t, func() { cache.Delete("missing") })
+	})
+
+	t.Run("delete does not affect other keys", func(t *testing.T) {
+		cache := svm.NewSettlementCache()
+		cache.Mu().Lock()
+		cache.Entries()["a"] = time.Now()
+		cache.Entries()["b"] = time.Now()
+		cache.Mu().Unlock()
+
+		cache.Delete("a")
+
+		cache.Mu().Lock()
+		_, aExists := cache.Entries()["a"]
+		_, bExists := cache.Entries()["b"]
+		cache.Mu().Unlock()
+
+		assert.False(t, aExists)
+		assert.True(t, bExists)
+	})
+
 	t.Run("duplicate settlement error constant is correct", func(t *testing.T) {
 		assert.Equal(t, "duplicate_settlement", ErrDuplicateSettlement)
 	})

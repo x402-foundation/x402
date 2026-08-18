@@ -121,6 +121,17 @@ export type FacilitatorSvmSigner = {
   getAddresses(): readonly Address[];
 
   /**
+   * Resolve the kit-native signer for a fee-payer address.
+   * Required by schemes that build transactions from instructions (e.g. upto);
+   * wire-level schemes such as exact omit this.
+   *
+   * @param feePayer - Fee payer address
+   * @returns Kit TransactionSigner & MessagePartialSigner for that address
+   * @throws Error if no signer exists for feePayer
+   */
+  getSigner?(feePayer: Address): FacilitatorSigningCapabilities;
+
+  /**
    * Sign a partially-signed transaction with the signer matching feePayer
    * Transaction is decoded, signed, and re-encoded internally
    *
@@ -310,13 +321,20 @@ export function createRpcCapabilitiesFromRpc(
 
       while (!confirmed && attempts < maxAttempts) {
         const status = await rpc.getSignatureStatuses([signature as never]).send();
+        const entry = status.value[0];
 
         if (
-          status.value[0]?.confirmationStatus === "confirmed" ||
-          status.value[0]?.confirmationStatus === "finalized"
+          entry?.confirmationStatus === "confirmed" ||
+          entry?.confirmationStatus === "finalized"
         ) {
+          if (entry.err) {
+            const errorStr = JSON.stringify(entry.err, (_, v) =>
+              typeof v === "bigint" ? v.toString() : v,
+            );
+            throw new Error(`Transaction failed onchain: ${errorStr}`);
+          }
           confirmed = true;
-          return status.value[0];
+          return entry;
         }
 
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -412,6 +430,13 @@ export function toFacilitatorSvmSigner(
   return {
     getAddresses: () => {
       return [signer.address];
+    },
+
+    getSigner: (feePayer: Address) => {
+      if (feePayer !== signer.address) {
+        throw new Error(`No signer for feePayer ${feePayer}. Available: ${signer.address}`);
+      }
+      return signer;
     },
 
     signTransaction: async (transaction: string, feePayer: Address, _: string) => {

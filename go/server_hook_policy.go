@@ -20,6 +20,10 @@ import (
 // Violations panic-via-error rather than silently corrupting downstream
 // state — catching policy bugs at the point of misuse.
 
+// reservedPaymentFlowExtraKeys are protocol-reserved extra keys; enrichment
+// must not add or change them.
+var reservedPaymentFlowExtraKeys = []string{"paymentFlow", "assetTransferMethod"}
+
 // IsVacantStringField reports whether a string field is treated as unset
 // and may be filled by `enrichPaymentRequiredResponse`.
 func IsVacantStringField(value string) bool {
@@ -84,6 +88,14 @@ func AssertAcceptsAllowlistedAfterExtensionEnrich(
 					extensionKey, key, i)
 			}
 		}
+		for _, key := range reservedPaymentFlowExtraKeys {
+			_, inBaseline := b.Extra[key]
+			_, inCurrent := c.Extra[key]
+			if inBaseline != inCurrent {
+				return fmt.Errorf(`[x402] extension %q violated accepts mutation policy: extra[%q] is protocol-reserved and immutable during enrichment (index %d)`,
+					extensionKey, key, i)
+			}
+		}
 	}
 	return nil
 }
@@ -92,7 +104,8 @@ func AssertAcceptsAllowlistedAfterExtensionEnrich(
 // `enrichPaymentRequiredResponse` policy: schemes may only ADD new `extra`
 // keys to the matching accept entry; payment terms (payTo / amount / asset /
 // maxTimeoutSeconds) and scheme/network are immutable; non-matching accepts
-// must be untouched.
+// must be untouched. extra.paymentFlow and extra.assetTransferMethod are
+// protocol-reserved on every accept.
 func AssertAcceptsAdditiveExtraAfterSchemeEnrich(
 	baseline, current []types.PaymentRequirements,
 	scheme, network string,
@@ -122,6 +135,14 @@ func AssertAcceptsAdditiveExtraAfterSchemeEnrich(
 		}
 		if !isMatchingAccept && len(c.Extra) != len(b.Extra) {
 			return fmt.Errorf(`[x402] scheme %q violated accepts mutation policy: only matching accepts may receive new extra fields (index %d)`, scheme, i)
+		}
+		for _, key := range reservedPaymentFlowExtraKeys {
+			_, inBaseline := b.Extra[key]
+			_, inCurrent := c.Extra[key]
+			if inBaseline != inCurrent {
+				return fmt.Errorf(`[x402] scheme %q violated accepts mutation policy: extra[%q] is protocol-reserved and immutable during enrichment (index %d)`,
+					scheme, key, i)
+			}
 		}
 	}
 	return nil

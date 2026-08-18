@@ -54,6 +54,8 @@ const DEFAULT_SMART_WALLET_ALLOWED_PROGRAMS = [
   LIGHTHOUSE_PROGRAM_ADDRESS, // Phantom's wallet-protection assertions (see #2097)
 ];
 
+const IX_TOKEN_TRANSFER_CHECKED = 12;
+
 /**
  * Which verification path produced a successful result.
  * Returned by the internal _verify so settle() knows whether post-settlement
@@ -134,7 +136,55 @@ export type ExactSvmSchemeOptions = {
    * Default: Squads Multisig v4, Squads Smart Account, Swig, SPL Governance, Metaplex Core
    */
   smartWalletAllowedPrograms?: string[];
+
+  /**
+   * Maximum compute unit price in microlamports accepted on the static path.
+   * The facilitator is the fee payer, so the payer chooses a priority fee the
+   * facilitator pays. Operators serving low-value payments will want this far
+   * below the default.
+   *
+   * Default: MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS (5,000,000)
+   */
+  maxPriorityFeeMicroLamports?: number;
+
+  /**
+   * Maximum compute unit limit accepted on the static path. An SPL transfer
+   * with a memo uses ~20k CU, so a low ceiling still leaves ample headroom for
+   * wallet-injected instructions.
+   *
+   * Default: unset (no limit, preserving existing behavior)
+   */
+  maxComputeUnits?: number;
+
+  /**
+   * Maximum number of required signatures. Every signature adds 5,000 lamports
+   * of base fee, paid by the facilitator. A typical x402 payment needs two
+   * (payer + fee payer).
+   *
+   * Default: unset (no limit, preserving existing behavior)
+   */
+  maxRequiredSignatures?: number;
 };
+
+/**
+ * Rejects a limit that cannot function as a limit. `NaN` and `Infinity` are the
+ * dangerous cases: they arrive easily from `parseInt(process.env.X)` on an unset
+ * variable, and each option degrades differently and silently — a `NaN` compute
+ * unit or signature ceiling makes every comparison false (no limit at all),
+ * while a `NaN` priority fee makes `BigInt()` throw and rejects every payment
+ * under a misleading reason code. Failing at construction turns all of those
+ * into one loud error.
+ *
+ * @param name - Option name, used in the error message
+ * @param value - Configured value, or undefined when the option is unset
+ * @param min - Smallest meaningful value for this option
+ */
+function assertLimit(name: string, value: number | undefined, min: number): void {
+  if (value === undefined) return;
+  if (!Number.isSafeInteger(value) || value < min) {
+    throw new Error(`${name} must be a safe integer >= ${min}, received ${value}`);
+  }
+}
 
 /**
  * SVM facilitator implementation for the Exact payment scheme.
@@ -168,6 +218,14 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     private readonly options?: ExactSvmSchemeOptions,
   ) {
     this.settlementCache = settlementCache ?? new SettlementCache();
+
+    // A limit that cannot be compared against is worse than no limit, so reject
+    // it here rather than at verify time.
+    assertLimit("maxPriorityFeeMicroLamports", this.options?.maxPriorityFeeMicroLamports, 0);
+    assertLimit("maxComputeUnits", this.options?.maxComputeUnits, 1);
+    // A ceiling below 1 would reject every transaction: the fee payer alone
+    // always requires one signature.
+    assertLimit("maxRequiredSignatures", this.options?.maxRequiredSignatures, 1);
 
     if (this.options?.enableSmartWalletVerification) {
       // fetchAddressLookupTables is required too: assertFeePayerIsolated can't
@@ -367,6 +425,8 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
         payer: valid.payer,
       };
     } catch (error) {
+      // Allow retry before TTL; blockhash may still be valid.
+      this.settlementCache.delete(txKey);
       console.error("Failed to settle transaction:", error);
       return {
         success: false,
@@ -447,6 +507,28 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
         },
         verificationPath: null,
       };
+    }
+
+    // Signature count is a transaction-level property, so it is checked before
+    // path dispatch: it bounds the base fee the facilitator pays regardless of
+    // which verification strategy accepts the transaction, and it must not be
+    // recoverable via the Path 2 fallthrough.
+    const maxRequiredSignatures = this.options?.maxRequiredSignatures;
+    if (maxRequiredSignatures !== undefined) {
+      const compiledForSignerCheck = getCompiledTransactionMessageDecoder().decode(
+        transaction.messageBytes,
+      );
+      const numRequiredSignatures = compiledForSignerCheck.header.numSignerAccounts;
+      if (numRequiredSignatures > maxRequiredSignatures) {
+        return {
+          response: {
+            isValid: false,
+            invalidReason: "invalid_exact_svm_payload_excessive_signers",
+            payer: "",
+          },
+          verificationPath: null,
+        };
+      }
     }
 
     // ─── Path 1: Static validation (standard wallets) ───────────────────
@@ -600,6 +682,16 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
       programAddress !== TOKEN_PROGRAM_ADDRESS.toString() &&
       programAddress !== TOKEN_2022_PROGRAM_ADDRESS.toString()
     ) {
+      return {
+        isValid: false,
+        invalidReason: "invalid_exact_svm_payload_no_transfer_instruction",
+        payer,
+      };
+    }
+
+    // parseTransferCheckedInstruction does not assert discriminator 12.
+    const ixData = transferIx.data;
+    if (!ixData || ixData.length < 10 || ixData[0] !== IX_TOKEN_TRANSFER_CHECKED) {
       return {
         isValid: false,
         invalidReason: "invalid_exact_svm_payload_no_transfer_instruction",
@@ -785,8 +877,18 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     }
 
     try {
-      parseSetComputeUnitLimitInstruction(instruction as never);
-    } catch {
+      const parsedInstruction = parseSetComputeUnitLimitInstruction(instruction as never);
+
+      const maxComputeUnits = this.options?.maxComputeUnits;
+      if (maxComputeUnits !== undefined && parsedInstruction.data.units > maxComputeUnits) {
+        throw new Error(
+          "invalid_exact_svm_payload_transaction_instructions_compute_limit_instruction_too_high",
+        );
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("too_high")) {
+        throw error;
+      }
       throw new Error(
         "invalid_exact_svm_payload_transaction_instructions_compute_limit_instruction",
       );
@@ -819,8 +921,10 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     try {
       const parsedInstruction = parseSetComputeUnitPriceInstruction(instruction as never);
 
-      // Check if price exceeds maximum (5 lamports per compute unit)
-      if (parsedInstruction.data.microLamports > BigInt(MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS)) {
+      // Check if price exceeds the operator-configured maximum (default 5 lamports per compute unit)
+      const maxPriorityFee =
+        this.options?.maxPriorityFeeMicroLamports ?? MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS;
+      if (parsedInstruction.data.microLamports > BigInt(maxPriorityFee)) {
         throw new Error(
           "invalid_exact_svm_payload_transaction_instructions_compute_price_instruction_too_high",
         );

@@ -11,6 +11,7 @@ from x402.http.middleware.fastapi import PaymentMiddlewareASGI
 from x402.http.types import RouteConfig
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.schemas import AssetAmount, Network
+from x402.schemas.helpers import convert_to_token_amount
 from x402.server import x402ResourceServer
 
 load_dotenv()
@@ -24,14 +25,14 @@ if not EVM_ADDRESS:
     raise ValueError("Missing required EVM_ADDRESS environment variable")
 
 
-def custom_money_parser(amount: float, network: str) -> AssetAmount | None:
+def custom_money_parser(amount: str | int | float, network: str) -> AssetAmount | None:
     """Custom money parser for Gnosis Chain using Wrapped XDAI.
 
     NOTE: Wrapped XDAI is not EIP-3009 compliant. This is for demonstration.
     """
     if network == "eip155:100":  # Gnosis Chain
         return AssetAmount(
-            amount=str(int(amount * 1e18)),
+            amount=convert_to_token_amount(str(amount), 18),
             asset="0xe91d153e0b41518a2ce8dd3d7944fa863463a97d",  # WXDAI
             extra={"token": "Wrapped XDAI"},
         )

@@ -39,6 +39,8 @@ import {
   transactionMessageHash,
 } from "../../../utils";
 
+const IX_TOKEN_TRANSFER_CHECKED = 12;
+
 /**
  * SVM facilitator implementation for the Exact payment scheme (V1).
  */
@@ -201,6 +203,16 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
       programAddress !== TOKEN_PROGRAM_ADDRESS.toString() &&
       programAddress !== TOKEN_2022_PROGRAM_ADDRESS.toString()
     ) {
+      return {
+        isValid: false,
+        invalidReason: "invalid_exact_svm_payload_no_transfer_instruction",
+        payer,
+      };
+    }
+
+    // parseTransferCheckedInstruction does not assert discriminator 12.
+    const ixData = transferIx.data;
+    if (!ixData || ixData.length < 10 || ixData[0] !== IX_TOKEN_TRANSFER_CHECKED) {
       return {
         isValid: false,
         invalidReason: "invalid_exact_svm_payload_no_transfer_instruction",
@@ -433,6 +445,8 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
         payer: valid.payer,
       };
     } catch (error) {
+      // Allow retry before TTL; blockhash may still be valid.
+      this.settlementCache.delete(txKey);
       console.error("Failed to settle transaction:", error);
       return {
         success: false,

@@ -66,9 +66,14 @@ import (
 // Create signer
 signer, err := evmsigners.NewClientSignerFromPrivateKey(os.Getenv("EVM_PRIVATE_KEY"))
 
-// Configure client with builder pattern
+// Configure client with builder pattern.
+// Newx402Client() enables default spend controls: recognized pegged assets only, capped at $1 USD.
 client := x402.Newx402Client().
     Register("eip155:*", evm.NewExactEvmScheme(signer))
+
+// Optional: raise the cap or opt into non-default tokens
+// client.SetSpendControls(x402.SpendControls{MaxAmountPerPayment: "$5"})
+// client.DisableSpendControls() // disable all spend controls (any asset, no caps)
 
 // Wrap HTTP client with payment handling
 httpClient := x402http.WrapHTTPClientWithPayment(

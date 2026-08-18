@@ -1,5 +1,15 @@
 # @x402/fetch Changelog
 
+## 2.22.0
+
+### Minor Changes
+
+- Updated dependencies [37412e7](https://github.com/x402-foundation/x402/commit/37412e7)
+- Updated dependencies [db5da2e](https://github.com/x402-foundation/x402/commit/db5da2e)
+- Updated dependencies [db5da2e](https://github.com/x402-foundation/x402/commit/db5da2e)
+- Updated dependencies [1601942](https://github.com/x402-foundation/x402/commit/1601942)
+  - @x402/core@2.22.0
+
 ## 2.21.0
 
 ### Minor Changes
