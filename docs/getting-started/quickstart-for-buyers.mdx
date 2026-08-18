@@ -684,29 +684,55 @@ You can register multiple payment schemes to handle different networks:
 
 By default, the x402 client only pays recognized USD-pegged assets (e.g. USDC) and caps each payment at **$1**. You can adjust these limits when creating the client:
 
-```typescript
-import { x402Client } from "@x402/core/client";
-import { ExactEvmScheme } from "@x402/evm/exact/client";
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { x402Client } from "@x402/core/client";
+    import { ExactEvmScheme } from "@x402/evm/exact/client";
 
-const client = x402Client.fromConfig({
-  schemes: [
-    { network: "eip155:*", client: new ExactEvmScheme(signer) },
-  ],
-  spendControls: {
-    maxAmountPerPayment: "$5",          // raise the USD cap (default: "$1")
-    allowedAssets: [
-      // opt into a non-default token with an atomic cap
-      { network: "eip155:8453", asset: "0xCustomToken", maxAmountPerPayment: "2000000" },
-    ],
-  },
-});
-```
+    const client = x402Client.fromConfig({
+      schemes: [
+        { network: "eip155:*", client: new ExactEvmScheme(signer) },
+      ],
+      spendControls: {
+        maxAmountPerPayment: "$5",          // raise the USD cap (default: "$1")
+        allowedAssets: [
+          // opt into a non-default token with an atomic cap
+          { network: "eip155:8453", asset: "0xCustomToken", maxAmountPerPayment: "2000000" },
+        ],
+      },
+    });
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from x402 import x402Client, x402ClientConfig, SchemeRegistration
+    from x402.mechanisms.evm.exact import ExactEvmScheme
+    from x402.mechanisms.evm.upto import UptoEvmScheme
 
-| Option | Description |
-|--------|-------------|
-| `spendControls: false` | Disable all spend controls — any asset, no caps. |
-| `maxAmountPerPayment` | USD ceiling on recognized USD-pegged assets. Default is `"$1"`. Set to `false` to remove the cap. |
-| `allowedAssets` | Opt into non-default tokens. Omit for default assets only; `true` to allow any asset; or a list of `{ network, asset }` entries with an optional atomic `maxAmountPerPayment` per entry. |
+    client = x402Client.from_config(
+        x402ClientConfig(
+            schemes=[
+                SchemeRegistration(network="eip155:*", client=ExactEvmScheme(signer)),
+            ],
+            spend_controls={
+                "max_amount_per_payment": "$5",  # raise the USD cap (default: "$1")
+                "allowed_assets": [
+                    # opt into a non-default token with an atomic cap
+                    {"network": "eip155:8453", "asset": "0xCustomToken", "max_amount_per_payment": "2000000"},
+                ],
+            },
+        )
+    )
+    ```
+  </Tab>
+</Tabs>
+
+| Option | TypeScript | Python | Description |
+|--------|------------|--------|-------------|
+| Disable all controls | `spendControls: false` | `spend_controls=False` | Any asset, no caps. |
+| `maxAmountPerPayment` / `max_amount_per_payment` | `"$1"` default | `"$1"` default | USD ceiling on recognized USD-pegged assets. Set to `false`/`False` to remove the cap. |
+| `allowedAssets` / `allowed_assets` | list or `true` | list or `True` | Opt into non-default tokens. Omit for default assets only; `true`/`True` to allow any asset; or a list of `{ network, asset }` entries with an optional atomic per-payment cap. |
 
 Spend controls run before any custom policies and before the payment payload is signed. For interactive approval flows (e.g. prompting the user), use [`onBeforePaymentCreation`](/advanced-concepts/lifecycle-hooks) hooks instead.
 
