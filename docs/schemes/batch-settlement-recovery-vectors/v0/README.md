@@ -13,6 +13,7 @@ Each JSON file describes a single recovery scenario as a sequence of `(client re
 | `loop-guard.json` | Retry returns corrective 402 with an advanced cumulative | Client emits hard error (`PERSISTENT_STALE`) |
 | `loop-guard-unchanged.json` | Retry returns corrective 402 with an unchanged cumulative | Client emits the same hard error (`PERSISTENT_STALE`) |
 | `cas-conflict.json` | Concurrent same-channel requests, one wins | Loser recovers via single retry; CAS is an optional suspected cause |
+| `transient-state-unavailable.json` | Onchain read needed to verify the snapshot is unavailable | Client emits non-terminal `TRANSIENT_STATE_UNAVAILABLE`; no mutation, signature, or retry, and no loop-guard attempt consumed |
 
 ## Vector schema
 
@@ -30,6 +31,7 @@ Each file has this shape:
     "onchainTotalClaimed": "<wei>",
     "serverChargedCumulative": "<wei>",
     "clientLocalCumulative": "<wei>",
+    "onchainReadAvailable": <bool>,   /* optional, defaults to true; false pins that the trust-but-verify read cannot complete */
     "comment": "<optional human note about the precondition>"
   },
   "steps": [
