@@ -82,7 +82,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | onAfterPaymentCreation | ✅ | ✅ | ✅ |
 | onPaymentCreationFailure | ✅ | ✅ | ✅ |
 | onPaymentResponse | ✅ | ✅ | ✅ |
-| onPaymentRequired (HTTP) | ✅ | ❌ | ✅ |
+| onPaymentRequired (HTTP) | ✅ | ✅ | ✅ |
 
 ## Server Hooks
 
