@@ -81,6 +81,21 @@ contract DeployX402Proxies is Script {
         console2.log("");
     }
 
+    /// @notice Deploys only x402UptoPermit2Proxy.
+    function runUpto() public {
+        address permit2 = vm.envOr("PERMIT2_ADDRESS", CANONICAL_PERMIT2);
+
+        if (block.chainid != 31_337 && block.chainid != 1337) {
+            require(permit2.code.length > 0, "Permit2 not found on this network");
+            console2.log("Permit2 verified");
+
+            require(CREATE2_DEPLOYER.code.length > 0, "CREATE2 deployer not found on this network");
+            console2.log("CREATE2 deployer verified");
+        }
+
+        _deployUpto(permit2);
+    }
+
     function _deployExact(
         address permit2
     ) internal {

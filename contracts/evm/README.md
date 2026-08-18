@@ -115,15 +115,29 @@ and `keccak256(initCode)`—not on who sends the transaction.
 
 4. **Deploy**
    ```bash
-   export PRIVATE_KEY="your_private_key"
+   cast wallet import x402-deployer --interactive
 
    forge script script/Deploy.s.sol \
      --rpc-url <RPC_URL> \
+     --account x402-deployer \
+     --sender <DEPLOYER_ADDRESS> \
      --broadcast \
      --verify
    ```
 
-   The script automatically:
+   To deploy only the Upto proxy, select its deployment entry point:
+
+   ```bash
+   forge script script/Deploy.s.sol \
+     --sig "runUpto()" \
+     --rpc-url <RPC_URL> \
+     --account x402-deployer \
+     --sender <DEPLOYER_ADDRESS> \
+     --broadcast \
+     --verify
+   ```
+
+   The default `run()` entry point automatically:
    - Loads the pre-built initCode for Exact and compiler-derived initCode for Upto
    - Skips any contract already deployed at the expected address
    - Verifies `PERMIT2()` returns the correct address after deployment
