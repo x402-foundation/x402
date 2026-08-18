@@ -312,6 +312,20 @@ var BatchSettlementRefundNonceABI = []byte(`[
 	}
 ]`)
 
+// BatchSettlementRefundedEventABI for decoding Refunded(channelId, sender, amount).
+var BatchSettlementRefundedEventABI = []byte(`[
+	{
+		"type": "event",
+		"name": "Refunded",
+		"inputs": [
+			{"name": "channelId", "type": "bytes32", "indexed": true},
+			{"name": "sender", "type": "address", "indexed": true},
+			{"name": "amount", "type": "uint128", "indexed": false}
+		],
+		"anonymous": false
+	}
+]`)
+
 // BatchSettlementGetChannelIdABI for calling getChannelId(config).
 var BatchSettlementGetChannelIdABI = []byte(`[
 	{

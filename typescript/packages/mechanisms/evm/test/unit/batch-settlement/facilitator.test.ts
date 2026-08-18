@@ -162,6 +162,34 @@ function buildSettledLog(
   } as Log;
 }
 
+function buildRefundedLog(
+  overrides: {
+    channelId?: `0x${string}`;
+    sender?: `0x${string}`;
+    amount?: string;
+    address?: `0x${string}`;
+  } = {},
+): Log {
+  const channelId = overrides.channelId ?? (("0x" + "11".repeat(32)) as `0x${string}`);
+  const sender = overrides.sender ?? FACILITATOR_ADDRESS;
+
+  return {
+    address: overrides.address ?? BATCH_SETTLEMENT_ADDRESS,
+    topics: encodeEventTopics({
+      abi: batchSettlementABI,
+      eventName: "Refunded",
+      args: { channelId, sender },
+    }),
+    data: encodeAbiParameters([{ type: "uint128" }], [BigInt(overrides.amount ?? "9000")]),
+    blockHash: null,
+    blockNumber: null,
+    logIndex: null,
+    transactionHash: null,
+    transactionIndex: null,
+    removed: false,
+  } as Log;
+}
+
 function envelopeVoucher(payload: BatchSettlementVoucherPayload): PaymentPayload {
   return {
     x402Version: 2,
@@ -1382,15 +1410,20 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
   });
 
   it("dispatches enriched refund payloads via executeRefundWithSignature", async () => {
-    const signer = buildSigner();
+    const config = buildChannelConfig({ receiverAuthorizer: authorizer.address });
+    const channelId = computeChannelId(config);
+    const signer = buildSigner({
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({
+        status: "success",
+        logs: [buildRefundedLog({ channelId, amount: "9000" })],
+      }),
+    });
     mockedMulticall.mockResolvedValue([
       { status: "success", result: [10000n, 0n] },
       { status: "success", result: [0n, 0n] },
       { status: "success", result: 0n },
     ]);
     const scheme = new BatchSettlementEvmScheme(signer, authorizer);
-    const config = buildChannelConfig({ receiverAuthorizer: authorizer.address });
-    const channelId = computeChannelId(config);
     const rp: BatchSettlementEnrichedRefundPayload = {
       type: "refund",
       channelConfig: config,
@@ -1422,6 +1455,38 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
     expect(signer.writeContract).toHaveBeenCalledWith(
       expect.objectContaining({ functionName: "refundWithSignature" }),
     );
+  });
+
+  it("fails closed when refund receipt has no Refunded event", async () => {
+    const signer = buildSigner({
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: "success", logs: [] }),
+    });
+    mockedMulticall.mockResolvedValue([
+      { status: "success", result: [10000n, 0n] },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const config = buildChannelConfig({ receiverAuthorizer: authorizer.address });
+    const channelId = computeChannelId(config);
+    const rp: BatchSettlementEnrichedRefundPayload = {
+      type: "refund",
+      channelConfig: config,
+      voucher: {
+        channelId,
+        maxClaimableAmount: "0",
+        signature: "0xdead",
+      },
+      amount: "9000",
+      refundNonce: "0",
+      claims: [],
+    };
+    const result = await scheme.settle(
+      envelopeSettle(rp as unknown as Record<string, unknown>),
+      makeRequirements(),
+    );
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrRefundedEventMismatch);
   });
 
   it("returns settlement_pending when the refund receipt wait fails", async () => {
@@ -1491,7 +1556,14 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
   });
 
   it("polls post-refund state when a withdrawal is pending", async () => {
-    const signer = buildSigner();
+    const config = buildChannelConfig({ receiverAuthorizer: authorizer.address });
+    const channelId = computeChannelId(config);
+    const signer = buildSigner({
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({
+        status: "success",
+        logs: [buildRefundedLog({ channelId, amount: "2000" })],
+      }),
+    });
     mockedMulticall
       .mockResolvedValueOnce([
         { status: "success", result: [10000n, 0n] },
@@ -1504,8 +1576,6 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
         { status: "success", result: 8n },
       ]);
     const scheme = new BatchSettlementEvmScheme(signer, authorizer);
-    const config = buildChannelConfig({ receiverAuthorizer: authorizer.address });
-    const channelId = computeChannelId(config);
     const rp: BatchSettlementEnrichedRefundPayload = {
       type: "refund",
       channelConfig: config,
@@ -1660,15 +1730,20 @@ describe("BatchSettlementEvmScheme (Facilitator) — no authorizer configured", 
   });
 
   it("submits a refund that carries a server-supplied authorizer signature", async () => {
-    const signer = buildSigner();
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const signer = buildSigner({
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({
+        status: "success",
+        logs: [buildRefundedLog({ channelId, amount: "9000" })],
+      }),
+    });
     mockedMulticall.mockResolvedValue([
       { status: "success", result: [10000n, 0n] },
       { status: "success", result: [0n, 0n] },
       { status: "success", result: 0n },
     ]);
     const scheme = new BatchSettlementEvmScheme(signer);
-    const config = buildChannelConfig();
-    const channelId = computeChannelId(config);
     const rp: BatchSettlementEnrichedRefundPayload = {
       type: "refund",
       channelConfig: config,
