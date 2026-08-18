@@ -20,6 +20,7 @@ from ..errors import (
     ERR_RPC_READ_FAILED,
     ERR_SETTLE_SIMULATION_FAILED,
     ERR_SETTLE_TRANSACTION_FAILED,
+    ERR_SETTLED_EVENT_MISMATCH,
 )
 from ..types import SettlePayload
 
@@ -97,12 +98,39 @@ def execute_settle(
         network,
         None,
         failed_reason=ERR_SETTLE_TRANSACTION_FAILED,
-        on_success=lambda receipt: SettleResponse(
-            success=True,
+        on_success=lambda receipt: _settle_response_from_receipt(
+            signer, receipt, tx, network, contract_addr, receiver, token
+        ),
+    )
+
+
+def _settle_response_from_receipt(
+    signer: FacilitatorEvmSigner,
+    receipt,
+    tx: str,
+    network: str,
+    contract_addr: str,
+    receiver: str,
+    token: str,
+) -> SettleResponse:
+    """Fail closed when the receipt has no positive Settled amount."""
+    amount = _parse_settled_amount(signer, receipt, contract_addr, receiver, token)
+    if not amount or amount == "0":
+        return SettleResponse(
+            success=False,
+            error_reason=ERR_SETTLED_EVENT_MISMATCH,
+            error_message=(
+                "settle receipt missing Settled event with positive amount "
+                "(possible no-op early return)"
+            ),
             transaction=tx,
             network=network,
-            amount=_parse_settled_amount(signer, receipt, contract_addr, receiver, token),
-        ),
+        )
+    return SettleResponse(
+        success=True,
+        transaction=tx,
+        network=network,
+        amount=amount,
     )
 
 
@@ -119,18 +147,22 @@ def _parse_settled_amount(
     receiver: str,
     token: str,
 ) -> str:
-    """Best-effort Settled event extraction.
+    """Extract Settled amount from receipt logs.
 
-    Falls back to "" when logs cannot be decoded — the on-chain transaction
-    has already succeeded by the time we get here, so a missing amount is
-    informational only.
+    Empty or "0" means the caller must fail closed. Looks up web3 on the signer
+    as `web3`, `w3`, or `_w3` so FacilitatorWeb3Signer and protocol-compatible
+    custom signers all decode.
     """
     logs = getattr(receipt, "logs", None)
     if not logs:
         return ""
 
     try:
-        web3 = getattr(signer, "web3", None) or getattr(signer, "w3", None)
+        web3 = (
+            getattr(signer, "web3", None)
+            or getattr(signer, "w3", None)
+            or getattr(signer, "_w3", None)
+        )
         if web3 is None:
             return ""
         contract = web3.eth.contract(address=contract_addr, abi=BATCH_SETTLEMENT_ABI)

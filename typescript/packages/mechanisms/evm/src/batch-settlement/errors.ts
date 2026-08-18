@@ -46,6 +46,7 @@ export const ErrSmartWalletDeploymentFailed =
 export const ErrClaimSimulationFailed = "invalid_batch_settlement_evm_claim_simulation_failed";
 export const ErrSettleSimulationFailed = "invalid_batch_settlement_evm_settle_simulation_failed";
 export const ErrNothingToSettle = "invalid_batch_settlement_evm_nothing_to_settle";
+export const ErrSettledEventMismatch = "invalid_batch_settlement_evm_settled_event_mismatch";
 export const ErrRefundPayload = "invalid_batch_settlement_evm_refund_payload";
 export const ErrRefundSimulationFailed = "invalid_batch_settlement_evm_refund_simulation_failed";
 export const ErrRpcReadFailed = "invalid_batch_settlement_evm_rpc_read_failed";
