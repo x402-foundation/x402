@@ -5,7 +5,7 @@ import {
   SettleResponse,
   VerifyResponse,
 } from "@x402/core/types";
-import { getAddress, Hex, isAddressEqual, parseErc6492Signature } from "viem";
+import { getAddress, Hex, isAddressEqual, parseErc6492Signature, size } from "viem";
 import { authorizationTypes } from "../../constants";
 import { FacilitatorEvmSigner } from "../../signer";
 import { getEvmChainId } from "../../utils";
@@ -21,6 +21,29 @@ import {
   verifyEip3009TransferEvent,
 } from "./eip3009-utils";
 import { waitAndReturnSettleResponse } from "../../shared/settleReceipt";
+
+// secp256k1 group order N halved (SEC1 §4.1.4 / EIP-2 low-s upper bound). Mirrors the
+// Go `secp256k1HalfN` used by `evm.IsCanonicalECDSASignature` (#2454, #2386).
+const SECP256K1_N_HALF = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0n;
+
+/**
+ * Returns true if `signature` is a canonical (low-s, `s <= n/2` per EIP-2) 65-byte ECDSA
+ * signature. Non-65-byte signatures (ERC-1271 / ERC-6492 wrappers) are not plain ECDSA and
+ * return false, so callers must gate on length before treating `false` as "reject". Mirrors
+ * Go `evm.IsCanonicalECDSASignature`.
+ *
+ * @param signature - The signature to inspect, as a hex string.
+ * @returns True if a canonical low-s 65-byte ECDSA signature; false otherwise (including any non-65-byte signature).
+ */
+export function isCanonicalEcdsaSignature(signature: Hex): boolean {
+  if (size(signature) !== 65) return false;
+  // s is bytes [32, 64) of the r || s || v layout. Read it directly (mirrors Go
+  // `new(big.Int).SetBytes(signature[32:64])`) rather than viem `parseSignature`, which
+  // also validates the v byte and would throw on a malformed v — that belongs to the
+  // later signature check, not this canonicalization gate.
+  const s = BigInt(`0x${signature.slice(2 + 64, 2 + 128)}`);
+  return s <= SECP256K1_N_HALF;
+}
 
 export interface VerifyEIP3009Options {
   /** Run onchain simulation. Defaults to true. */
@@ -154,6 +177,21 @@ export async function verifyEIP3009(
   }
 
   if (!isCounterfactual) {
+    // EIP-2 / SEC1 §4.1.4 hardening: reject non-canonical (high-s) plain ECDSA
+    // signatures before the typed-data check, so malleability is caught pre-broadcast
+    // rather than relying on the token's on-chain InvalidSignatureS revert. Not all
+    // ERC-3009 tokens enforce low-s, and the alternate (r, n-s, v^1) can read as a
+    // distinct authorization at the facilitator's retry/cache layer. Plain ECDSA
+    // signatures are 65 bytes; ERC-1271 / ERC-6492 wrappers have other lengths and are
+    // skipped. Mirrors the Go fix in #2454 (#2386).
+    if (size(innerSignature) === 65 && !isCanonicalEcdsaSignature(innerSignature)) {
+      return {
+        isValid: false,
+        invalidReason: Errors.ErrInvalidSignatureS,
+        payer,
+      };
+    }
+
     // For deployed addresses (plain EOA, smart contract, 7702 EOA): verify the
     // signature using a strict primitive that mirrors on-chain SignatureChecker
     // semantics — ecrecover when no code, strict EIP-1271 when code is present.
