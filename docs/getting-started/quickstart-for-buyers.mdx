@@ -704,6 +704,30 @@ By default, the x402 client only pays recognized USD-pegged assets (e.g. USDC) a
     });
     ```
   </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        x402 "github.com/x402-foundation/x402/go/v2"
+        evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+        evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
+    )
+
+    evmSigner, _ := evmsigners.NewClientSignerFromPrivateKey(os.Getenv("EVM_PRIVATE_KEY"))
+
+    client := x402.Newx402Client().
+        SetSpendControls(x402.SpendControls{
+            MaxAmountPerPayment: "$5", // raise the USD cap (default: "$1")
+            AllowedAssets: []x402.SpendControlAsset{
+                // opt into a non-default token with an atomic cap
+                {Network: "eip155:8453", Asset: "0xCustomToken", MaxAmountPerPayment: "2000000"},
+            },
+        }).
+        Register("eip155:*", evm.NewExactEvmScheme(evmSigner, nil))
+
+    // Or disable all spend controls:
+    // client.DisableSpendControls()
+    ```
+  </Tab>
   <Tab title="Python">
     ```python
     from x402 import x402Client, x402ClientConfig, SchemeRegistration
@@ -728,11 +752,11 @@ By default, the x402 client only pays recognized USD-pegged assets (e.g. USDC) a
   </Tab>
 </Tabs>
 
-| Option | TypeScript | Python | Description |
-|--------|------------|--------|-------------|
-| Disable all controls | `spendControls: false` | `spend_controls=False` | Any asset, no caps. |
-| `maxAmountPerPayment` / `max_amount_per_payment` | `"$1"` default | `"$1"` default | USD ceiling on recognized USD-pegged assets. Set to `false`/`False` to remove the cap. |
-| `allowedAssets` / `allowed_assets` | list or `true` | list or `True` | Opt into non-default tokens. Omit for default assets only; `true`/`True` to allow any asset; or a list of `{ network, asset }` entries with an optional atomic per-payment cap. |
+| Option | TypeScript | Go | Python | Description |
+|--------|------------|----|--------|-------------|
+| Disable all controls | `spendControls: false` | `client.DisableSpendControls()` | `spend_controls=False` | Any asset, no caps. |
+| `maxAmountPerPayment` / `MaxAmountPerPayment` / `max_amount_per_payment` | `"$1"` default | `"$1"` default | `"$1"` default | USD ceiling on recognized USD-pegged assets. Set to `false`/`DisableMaxAmountPerPayment: true`/`False` to remove the cap. |
+| `allowedAssets` / `AllowedAssets` / `allowed_assets` | list or `true` | list or `AllowAnyAsset: true` | list or `True` | Opt into non-default tokens. Omit for default assets only; or a list of `{ network, asset }` entries with an optional atomic per-payment cap. |
 
 Spend controls run before any custom policies and before the payment payload is signed. For interactive approval flows (e.g. prompting the user), use [`onBeforePaymentCreation`](/advanced-concepts/lifecycle-hooks) hooks instead.
 
