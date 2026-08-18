@@ -115,12 +115,12 @@ and `keccak256(initCode)`—not on who sends the transaction.
 
 4. **Deploy**
    ```bash
-   cast wallet import x402-deployer --interactive
+   cast wallet import x402-deployment-signer --interactive
 
    forge script script/Deploy.s.sol \
      --rpc-url <RPC_URL> \
-     --account x402-deployer \
-     --sender <DEPLOYER_ADDRESS> \
+     --account x402-deployment-signer \
+     --sender <DEPLOYMENT_SIGNER_ADDRESS> \
      --broadcast \
      --verify
    ```
@@ -131,8 +131,8 @@ and `keccak256(initCode)`—not on who sends the transaction.
    forge script script/Deploy.s.sol \
      --sig "runUpto()" \
      --rpc-url <RPC_URL> \
-     --account x402-deployer \
-     --sender <DEPLOYER_ADDRESS> \
+     --account x402-deployment-signer \
+     --sender <DEPLOYMENT_SIGNER_ADDRESS> \
      --broadcast \
      --verify
    ```
