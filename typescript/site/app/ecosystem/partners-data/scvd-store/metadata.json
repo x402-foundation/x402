@@ -1,0 +1,7 @@
+{
+  "name": "SCVD General Store",
+  "description": "An x402 store on Base where AI agents buy signed goods with USDC and get a cryptographic receipt anyone can verify against the chain for free, with no account. SCVD also runs a free conformance desk that checks any issuer's x402 signed offers and receipts, and publishes the open-source verifier and signer behind it: the x402-verify and x402-sign npm packages.",
+  "logoUrl": "/logos/scvd.png",
+  "websiteUrl": "https://scvd.store",
+  "category": "Services/Endpoints"
+}
