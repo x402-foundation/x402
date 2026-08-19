@@ -132,6 +132,19 @@ claim as covering any fact the record does not itself commit to.** A record whos
 content is a settlement digest carries, at most, independent evidence *of that settlement* —
 nothing its attestation did not cover, however independent the attestor.
 
+The independence test compares **party identity**, so it is only as strong as the identity
+comparison beneath it. Identifiers MUST be normalized before comparison, and the normalization
+MUST fold toward *same party*: an attestor whose identifier differs from a party's only by
+surrounding whitespace, letter case, an EIP-55 checksum variant, or trailing punctuation (`/`,
+`.`, `#`) is that party. An identifier that does not parse after normalization is not
+evaluable, and **evaluators MUST NOT treat an attestation carrying an unparseable identifier as
+outside the transaction's parties** — the claim fails closed. Without this, a party relabels
+itself as "outside the transaction" by appending a space or an invisible format character to its
+own address, and the disqualification above is satisfiable by editing one byte. The rule does not
+define any scheme's equivalence semantics beyond these folds (percent-encoding, for example, is
+deliberately not decoded — an open-ended normalizer is its own attack surface); where two
+identifiers *might* denote one party, the evaluator MUST treat them as one.
+
 Who supplies non-party attestation is a service-layer question, intentionally out of scope
 for this spec.
 
