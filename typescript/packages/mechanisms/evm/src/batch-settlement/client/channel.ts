@@ -17,14 +17,26 @@ type ResponseChannelState = NonNullable<BatchSettlementPaymentResponseExtra["cha
 /**
  * Reads the nested channel state from a settlement response extra object.
  *
+ * Validates `channelId` is present as a non-empty string, since it's read
+ * unconditionally by every caller (`processSettleResponse`,
+ * `updateChannelAfterRefund`) immediately after this returns — a response
+ * whose `extra.channelState` is an object but omits or malforms `channelId`
+ * would otherwise throw deep in a caller instead of being treated as "no
+ * channel state present," which is how every other malformed-response shape
+ * here is already handled.
+ *
  * @param extra - Settlement response extra fields.
- * @returns Channel state fields, or undefined when absent.
+ * @returns Channel state fields, or undefined when absent or malformed.
  */
 function readResponseChannelState(
   extra: Record<string, unknown>,
 ): ResponseChannelState | undefined {
   const channelState = extra.channelState;
   if (typeof channelState !== "object" || channelState === null) {
+    return undefined;
+  }
+  const { channelId } = channelState as Record<string, unknown>;
+  if (typeof channelId !== "string" || channelId.length === 0) {
     return undefined;
   }
   return channelState as ResponseChannelState;
