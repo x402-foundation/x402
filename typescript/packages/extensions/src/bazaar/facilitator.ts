@@ -31,6 +31,52 @@ import { buildV1CatalogExtensions, extractDiscoveryInfoV1 } from "./v1/facilitat
 const ROUTE_TEMPLATE_REGEX = /^\/[a-zA-Z0-9_/:.\-~%]+$/;
 
 /**
+ * Maximum number of successive `decodeURIComponent` passes applied while
+ * canonicalizing a routeTemplate before giving up and rejecting it.
+ *
+ * A legitimate single-encoded value reaches a fixed point (further decoding
+ * changes nothing) after one pass. This allows a few extra passes so
+ * multiply-encoded traversal/injection payloads (not just doubly-encoded
+ * ones) are still caught, while bounding the work done on adversarial input.
+ */
+const MAX_ROUTE_TEMPLATE_DECODE_PASSES = 5;
+
+/**
+ * Repeatedly percent-decodes `value` until a fixed point is reached (further
+ * decoding produces no change) or {@link MAX_ROUTE_TEMPLATE_DECODE_PASSES} is
+ * exhausted, returning the fully-canonicalized string.
+ *
+ * A single decode pass only catches a payload encoded exactly once (e.g.
+ * `%2e%2e`); a double- or triple-encoded payload (`%252e%252e`,
+ * `%25252e%25252e`, ...) would still contain literal `%` sequences after one
+ * pass and slip past a traversal/injection substring check performed on that
+ * partially-decoded result. Decoding to a fixed point closes that gap for any
+ * encoding depth, not just the double-encoded case.
+ *
+ * @param value - The string to canonicalize.
+ * @returns The fully-decoded string, or `undefined` if any pass fails to
+ *   parse (malformed percent-encoding) or the pass budget is exhausted
+ *   without reaching a fixed point.
+ */
+function fullyDecodeRouteTemplate(value: string): string | undefined {
+  let decoded = value;
+  for (let i = 0; i < MAX_ROUTE_TEMPLATE_DECODE_PASSES; i++) {
+    let next: string;
+    try {
+      next = decodeURIComponent(decoded);
+    } catch {
+      return undefined;
+    }
+    if (next === decoded) return decoded;
+    decoded = next;
+  }
+  // Still changing after the pass budget: either pathologically deep
+  // encoding or a `%` that never resolves to a fixed point. Either way,
+  // there's no safe canonical form to validate against — reject.
+  return undefined;
+}
+
+/**
  * Checks whether a routeTemplate value is structurally valid.
  *
  * Expected format: "/:param" segments using colon-prefixed identifiers
@@ -42,8 +88,8 @@ const ROUTE_TEMPLATE_REGEX = /^\/[a-zA-Z0-9_/:.\-~%]+$/;
  * This function enforces minimal structural requirements:
  * - Must be a non-empty string starting with "/"
  * - Must match the safe URL path character set (alphanumeric, _, :, /, ., -, ~, %)
- * - Must not contain ".." (path traversal)
- * - Must not contain "://" (URL injection)
+ * - Must not contain ".." (path traversal), at any percent-encoding depth
+ * - Must not contain "://" (URL injection), at any percent-encoding depth
  *
  * @param value - The raw routeTemplate string from the client payload
  * @returns true if the value is a valid routeTemplate, false otherwise
@@ -53,13 +99,11 @@ const ROUTE_TEMPLATE_REGEX = /^\/[a-zA-Z0-9_/:.\-~%]+$/;
 export function isValidRouteTemplate(value: string | undefined): value is string {
   if (!value) return false;
   if (!ROUTE_TEMPLATE_REGEX.test(value)) return false;
-  // Decode percent-encoding before traversal checks so that %2e%2e is caught.
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(value);
-  } catch {
-    return false;
-  }
+  // Decode to a fixed point before traversal checks, so that %2e%2e,
+  // %252e%252e, and deeper encodings are all caught rather than just the
+  // single-encoded case.
+  const decoded = fullyDecodeRouteTemplate(value);
+  if (decoded === undefined) return false;
   if (decoded.includes("..")) return false;
   if (decoded.includes("://")) return false;
   return true;
