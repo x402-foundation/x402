@@ -314,6 +314,33 @@ description: "This guide helps you migrate from x402 V1 to V2. The V2 protocol i
 
 In V2, hand-rolling `extensions.bazaar.schema` on a route config passes through `@x402/core` unchanged but fails silently during discovery-crawler verification, because the required envelope fields (`type`, `method`, `bodyType`, `body` for input; `type`, `example` for output) are only populated by the `declareDiscoveryExtension()` helper from `@x402/extensions/bazaar`. V1 declared these as `config.inputSchema` / `config.outputSchema` and relied on middleware forwarding; V2 requires the helper and spreads its return value into `extensions.bazaar`. See the [Bazaar Discovery Extension](/extensions/bazaar) documentation for full helper usage.
 
+### PaymentRequired Envelope
+
+V1 carried the resource inline on every `accepts` entry: `resource` as a URL string, alongside `description`, `mimeType` and `outputSchema`, with the amount under `maxAmountRequired`. V2 moves the resource up one level. `PaymentRequired` now carries a **required** top-level `resource`, which is a `ResourceInfo` object of `{ url, description, mimeType, serviceName, tags, iconUrl }` with `url` required, and each `accepts` entry is a `PaymentRequirements` of exactly seven fields: `scheme`, `network`, `amount`, `asset`, `payTo`, `maxTimeoutSeconds`, `extra`. Three fields move up and out of the entry, `maxAmountRequired` becomes `amount`, and one required field appears that has no V1 equivalent.
+
+```json
+// V1
+{ "x402Version": 1, "error": "...", "accepts": [
+  { "scheme": "exact", "network": "base-sepolia", "maxAmountRequired": "10000",
+    "resource": "https://api.example.com/data", "description": "Market data",
+    "mimeType": "application/json", "outputSchema": null, "payTo": "0x...",
+    "maxTimeoutSeconds": 60, "asset": "0x...", "extra": { } } ] }
+
+// V2
+{ "x402Version": 2, "error": "...",
+  "resource": { "url": "https://api.example.com/data", "description": "Market data",
+                "mimeType": "application/json" },
+  "accepts": [
+  { "scheme": "exact", "network": "eip155:84532", "amount": "10000",
+    "asset": "0x...", "payTo": "0x...", "maxTimeoutSeconds": 60, "extra": { } } ] }
+```
+
+A V1-shaped envelope is not merely lossy in V2. `resource` is required, so a strict client rejects the response before it reads `accepts`, and the request fails with no payment option ever considered.
+
+The canonical location changed too. In V2 the `PaymentRequired` object travels in the base64 `PAYMENT-REQUIRED` response header, and response bodies are a server implementation concern, so a client is entitled to read only the header. Mirroring the object into the body is fine; emitting a body that carries fields the header omits is not.
+
+If you build the envelope through the resource server rather than by hand, this shape is handled for you: `createPaymentRequiredResponse()` in TypeScript, `CreatePaymentRequiredResponse` in Go, and `create_payment_required_response` in Python all take a `ResourceInfo` and an optional `error`, and they also run each scheme's `enrichPaymentRequiredResponse` hook, which is what populates scheme-specific `extra`. Hand-building the object skips both the shape and the enrichment.
+
 ## Network Identifier Mapping
 
 | V1 Name | V2 CAIP-2 ID | Chain ID | Description |
