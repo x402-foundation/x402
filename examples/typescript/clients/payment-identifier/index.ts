@@ -7,6 +7,7 @@ import {
   appendPaymentIdentifierToExtensions,
   generatePaymentId,
 } from "@x402/extensions/payment-identifier";
+import { configureExactHeaderReplay } from "./header-replay.js";
 
 config();
 
@@ -25,8 +26,12 @@ const url = `${baseURL}${endpointPath}`;
  *
  * This example:
  * 1. Makes a request with a unique payment ID
- * 2. Makes a second request with the SAME payment ID
- * 3. The second request returns from cache without payment processing
+ * 2. Captures the first exact encoded payment header
+ * 3. Replays that header on a later 402 only for the configured exact
+ *    request URL and selected accepted terms. The helper is sequential
+ *    single-URL scope. It does not infer capture from a shared pending URL,
+ *    and it does not replay cross-origin, cross-path, across query drift,
+ *    or against different accepted terms.
  *
  * Required environment variables:
  * - PRIVATE_KEY: The private key of the EVM signer
@@ -53,19 +58,7 @@ async function main(): Promise<void> {
   });
 
   const httpClient = new x402HTTPClient(client);
-
-  // After the first request is signed, capture the exact encoded payment header.
-  let capturedPaymentHeaders: Record<string, string> | undefined;
-  client.onAfterPaymentCreation(async ({ paymentPayload }) => {
-    capturedPaymentHeaders = httpClient.encodePaymentSignatureHeader(paymentPayload);
-  });
-
-  // On any subsequent 402, replay the captured headers instead of creating a new signature.
-  httpClient.onPaymentRequired(async () => {
-    if (capturedPaymentHeaders) {
-      return { headers: capturedPaymentHeaders };
-    }
-  });
+  configureExactHeaderReplay(client, httpClient, url);
 
   const fetchWithPayment = wrapFetchWithPayment(fetch, httpClient);
 
@@ -94,7 +87,7 @@ async function main(): Promise<void> {
   console.log(`📤 Second Request (SAME payment ID: ${paymentId})`);
   console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
   console.log(`Making request to: ${url}\n`);
-  console.log(`💡 Expected: Server returns cached response without payment processing\n`);
+  console.log(`💡 Expected: replay exact payment header; cached response, no new signature\n`);
 
   const startTime2 = Date.now();
   const response2 = await fetchWithPayment(url, { method: "GET" });

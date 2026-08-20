@@ -11,5 +11,5 @@
     "baseUrl": ".",
     "types": ["node"]
   },
-  "include": ["index.ts", "request-binding.ts", "request-binding.test.ts"]
+  "include": ["index.ts", "request-binding.ts", "request-binding.test.ts", "lifecycle.test.ts"]
 }
