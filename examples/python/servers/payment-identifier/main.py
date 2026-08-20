@@ -5,14 +5,19 @@ extension for idempotent payment processing.
 
 This server:
 1. Advertises payment-identifier extension support in PaymentRequired responses
-2. Caches responses keyed by payment ID after settlement
-3. Returns cached responses for duplicate payment IDs without re-processing
+2. Caches responses keyed by payment ID plus an HTTP request fingerprint
+3. Returns cached responses only when the fingerprint matches
+4. Returns HTTP 409 without granting access when the same payment ID is reused
+   with a different method, path, query, body, or accepted terms
+5. Holds an expiring in-flight reservation so concurrent requests cannot
+   overwrite the first fingerprint or start a second settlement
 
 Required environment variables:
 - EVM_ADDRESS: The EVM address to receive payments
 """
 
 import base64
+import binascii
 import json
 import os
 import time
@@ -21,8 +26,17 @@ from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response
-from pydantic import BaseModel
-
+from pydantic import BaseModel, ValidationError
+from request_binding import (
+    CONFLICT_MESSAGE,
+    IN_FLIGHT_MESSAGE,
+    RESERVATION_TTL_SECONDS,
+    Reservation,
+    bind_payment_id,
+    cleanup_expired_reservations,
+    consume_reservation,
+    request_fingerprint,
+)
 from x402.extensions.payment_identifier import (
     PAYMENT_IDENTIFIER,
     declare_payment_identifier_extension,
@@ -62,15 +76,17 @@ class WeatherResponse(BaseModel):
 @dataclass
 class CachedResponse:
     timestamp: float
+    fingerprint: str
     response: dict[str, Any]
 
 
 idempotency_cache: dict[str, CachedResponse] = {}
+pending_reservations: dict[str, Reservation] = {}
 CACHE_TTL_SECONDS = 60 * 60  # 1 hour
 
 
 def cleanup_expired_entries() -> None:
-    """Clean up expired entries from the cache."""
+    """Clean up expired cache and in-flight reservation entries."""
     now = time.time()
     expired_keys = [
         key
@@ -79,6 +95,11 @@ def cleanup_expired_entries() -> None:
     ]
     for key in expired_keys:
         del idempotency_cache[key]
+    cleanup_expired_reservations(
+        pending_reservations,
+        now=now,
+        ttl_seconds=RESERVATION_TTL_SECONDS,
+    )
 
 
 # App
@@ -90,22 +111,32 @@ server = x402ResourceServer(facilitator)
 server.register(EVM_NETWORK, ExactEvmServerScheme())
 
 
-# Hook after settlement to cache the response
+# Hook after settlement to cache the response with the request fingerprint
 async def after_settle(ctx: SettleContext) -> None:
     """Cache the response after successful payment settlement."""
     payment_id = extract_payment_identifier(ctx.payment_payload)
-    if payment_id:
-        print(f"[Idempotency] Caching response for payment ID: {payment_id}")
-        idempotency_cache[payment_id] = CachedResponse(
-            timestamp=time.time(),
-            response={
-                "report": {
-                    "weather": "sunny",
-                    "temperature": 70,
-                    "cached": False,
-                }
-            },
-        )
+    if not payment_id:
+        return
+    fingerprint = consume_reservation(
+        pending_reservations,
+        payment_id=payment_id,
+        now=time.time(),
+        ttl_seconds=RESERVATION_TTL_SECONDS,
+    )
+    if not fingerprint:
+        return
+    print(f"[Idempotency] Caching response for payment ID: {payment_id}")
+    idempotency_cache[payment_id] = CachedResponse(
+        timestamp=time.time(),
+        fingerprint=fingerprint,
+        response={
+            "report": {
+                "weather": "sunny",
+                "temperature": 70,
+                "cached": False,
+            }
+        },
+    )
 
 
 server.on_after_settle(after_settle)
@@ -132,58 +163,98 @@ routes = {
 }
 
 
-# Custom middleware to check idempotency cache before payment processing
+# Payment middleware is inner. The later HTTP middleware is outermost so it can
+# 409 or serve a cache hit before payment verification.
+app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
+
+
 @app.middleware("http")
 async def idempotency_middleware(request: Request, call_next: Any) -> Response:
-    """Check idempotency cache before payment processing."""
-    # Clean up expired entries periodically
+    """Bind payment IDs to the HTTP request before payment processing."""
     cleanup_expired_entries()
 
-    # Only check for payment header on protected routes
-    payment_header = request.headers.get("X-Payment")
-    if payment_header and request.url.path == "/weather":
+    payment_header = request.headers.get("PAYMENT-SIGNATURE") or request.headers.get(
+        "X-Payment"
+    )
+    if payment_header:
         try:
-            # Decode payment header to extract payment ID
             payment_data = json.loads(base64.b64decode(payment_header).decode("utf-8"))
             payment_payload = PaymentPayload.model_validate(payment_data)
             payment_id = extract_payment_identifier(payment_payload)
 
             if payment_id:
                 print(f"[Idempotency] Checking payment ID: {payment_id}")
-                cached = idempotency_cache.get(payment_id)
+                fingerprint = request_fingerprint(
+                    method=request.method,
+                    url=str(request.url),
+                    body=await request.body(),
+                    payload=payment_data,
+                )
+                decision = bind_payment_id(
+                    idempotency_cache,
+                    pending_reservations,
+                    payment_id=payment_id,
+                    fingerprint=fingerprint,
+                    now=time.time(),
+                    cache_ttl_seconds=CACHE_TTL_SECONDS,
+                    reservation_ttl_seconds=RESERVATION_TTL_SECONDS,
+                )
 
-                if cached:
-                    age = time.time() - cached.timestamp
-                    if age < CACHE_TTL_SECONDS:
-                        print(
-                            f"[Idempotency] Cache HIT - returning cached response (age: {int(age)}s)"
-                        )
-                        # Return cached response with cached flag set to true
-                        cached_response = {
-                            "report": {
-                                **cached.response["report"],
-                                "cached": True,
+                if decision.kind == "conflict":
+                    print("[Idempotency] CONFLICT - same ID, different request")
+                    return Response(
+                        content=json.dumps(
+                            {
+                                "error": CONFLICT_MESSAGE,
+                                "paymentId": payment_id,
                             }
+                        ),
+                        media_type="application/json",
+                        status_code=409,
+                    )
+
+                if decision.kind == "in_flight":
+                    print("[Idempotency] IN FLIGHT - same ID, request already reserved")
+                    return Response(
+                        content=json.dumps(
+                            {
+                                "error": IN_FLIGHT_MESSAGE,
+                                "paymentId": payment_id,
+                            }
+                        ),
+                        media_type="application/json",
+                        status_code=409,
+                    )
+
+                if decision.kind == "hit":
+                    cached = idempotency_cache[payment_id]
+                    age = time.time() - cached.timestamp
+                    print(
+                        f"[Idempotency] Cache HIT - returning cached response (age: {int(age)}s)"
+                    )
+                    cached_response = {
+                        "report": {
+                            **cached.response["report"],
+                            "cached": True,
                         }
-                        return Response(
-                            content=json.dumps(cached_response),
-                            media_type="application/json",
-                            status_code=200,
-                        )
-                    else:
-                        print("[Idempotency] Cache EXPIRED - proceeding with payment")
-                        del idempotency_cache[payment_id]
-                else:
-                    print("[Idempotency] Cache MISS - proceeding with payment")
-        except Exception:
-            # Invalid payment header format, continue to normal flow
-            pass
+                    }
+                    return Response(
+                        content=json.dumps(cached_response),
+                        media_type="application/json",
+                        status_code=200,
+                    )
+
+                print("[Idempotency] Cache MISS - reserved, proceeding with payment")
+        except (
+            binascii.Error,
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+            ValidationError,
+        ):
+            # Invalid payment header format continues through normal payment handling.
+            return await call_next(request)
 
     return await call_next(request)
-
-
-# Add payment middleware after idempotency middleware
-app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
 
 
 # Routes
@@ -211,11 +282,14 @@ if __name__ == "__main__":
     print("   Listening at http://localhost:4022")
     print("\nIdempotency Configuration:")
     print("   - Cache TTL: 1 hour")
+    print("   - In-flight reservation TTL: 30 seconds")
     print("   - Payment ID: optional (required: false)")
     print("\nHow it works:")
     print("   1. Client sends payment with a unique payment ID")
-    print("   2. Server caches the response keyed by payment ID")
-    print("   3. If same payment ID is seen within 1 hour, cached response is returned")
-    print("   4. No duplicate payment processing occurs\n")
+    print("   2. Server caches the response bound to that ID and the HTTP request")
+    print("   3. Same ID and same request fingerprint returns the cached response")
+    print("   4. Same ID with a different method, path, query, or body returns 409")
+    print("   5. A live in-flight reservation is never overwritten")
+    print("   6. No duplicate payment processing occurs on a cache hit\n")
 
     uvicorn.run(app, host="0.0.0.0", port=4022)

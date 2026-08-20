@@ -16,8 +16,8 @@ The payment-identifier extension provides an idempotency mechanism for x402 paym
 
 1. Server advertises `payment-identifier` extension support in the `PaymentRequired` response
 2. Client generates a unique payment ID and includes it in the `PaymentPayload`
-3. Server caches responses keyed by payment ID (with configurable TTL)
-4. Retry requests with the same payment ID return cached responses without re-processing payment
+3. Server looks up the settled cache first, then holds an expiring in-flight reservation (fingerprint + timestamp) before payment middleware
+4. Retry requests with the same payment ID and the same request fingerprint return cached responses without re-processing payment. A different method, path, query, or body with that ID returns `409 Conflict` and must not grant access. A live reservation is never overwritten; the same in-flight fingerprint returns a controlled in-flight `409`, not a second settlement.
 
 ## Quickstart for Buyers (Clients)
 
@@ -191,7 +191,6 @@ response2, err := client.MakeRequest(url)
 </Tab>
 </Tabs>
 
-
 ### Best Practices
 
 1. **Generate payment IDs at the logical request level**, not per retry
@@ -240,61 +239,130 @@ const routes = {
 
 ```typescript
 // Payment ID is optional (clients can omit it)
-declarePaymentIdentifierExtension(false)
+declarePaymentIdentifierExtension(false);
 
 // Payment ID is required (clients must provide it or receive 400 Bad Request)
-declarePaymentIdentifierExtension(true)
+declarePaymentIdentifierExtension(true);
 ```
 
 ### Step 2: Cache Responses After Settlement
 
-Store responses after successful payment settlement:
+Store the HTTP request fingerprint with the payment ID. Hashing the payment payload (or the raw payment header) is not request binding: the same signed payload can be replayed against a different method, path, or body.
 
 ```typescript
+import { createHash } from "crypto";
 import { extractPaymentIdentifier } from "@x402/extensions/payment-identifier";
 
-// In-memory cache (use Redis in production)
-const idempotencyCache = new Map<string, { timestamp: number; response: unknown }>();
-const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const idempotencyCache = new Map<
+  string,
+  { timestamp: number; fingerprint: string; response: unknown }
+>();
+const pendingReservations = new Map<
+  string,
+  { fingerprint: string; timestamp: number }
+>();
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour settled cache
+const RESERVATION_TTL_MS = 30 * 1000; // in-flight only; failed verify must expire
+
+function requestFingerprint(
+  req: { method: string; originalUrl: string },
+  body: Buffer,
+  payload: { accepted?: Record<string, string> },
+): string {
+  const url = new URL(req.originalUrl, "http://localhost");
+  url.searchParams.sort();
+  const accepted = payload.accepted ?? {};
+  const material = {
+    method: req.method.toUpperCase(),
+    url: url.pathname + url.search,
+    bodySha256: createHash("sha256").update(body).digest("hex"),
+    scheme: accepted.scheme ?? "",
+    network: accepted.network ?? "",
+    asset: accepted.asset ?? "",
+    amount: accepted.amount ?? "",
+    payTo: accepted.payTo ?? "",
+  };
+  return createHash("sha256").update(JSON.stringify(material)).digest("hex");
+}
 
 const resourceServer = new x402ResourceServer(facilitatorClient)
   .register("eip155:84532", new ExactEvmScheme())
   .onAfterSettle(async ({ paymentPayload }) => {
     const paymentId = extractPaymentIdentifier(paymentPayload);
-    if (paymentId) {
-      idempotencyCache.set(paymentId, {
-        timestamp: Date.now(),
-        response: { /* your response data */ },
-      });
+    const reserved = paymentId ? pendingReservations.get(paymentId) : undefined;
+    if (!paymentId || !reserved) {
+      return; // missing reservation: do not cache
     }
+    pendingReservations.delete(paymentId);
+    if (Date.now() - reserved.timestamp >= RESERVATION_TTL_MS) {
+      return; // expired reservation: do not cache
+    }
+    idempotencyCache.set(paymentId, {
+      timestamp: Date.now(),
+      fingerprint: reserved.fingerprint, // exact reserved fingerprint
+      response: {
+        /* your response data */
+      },
+    });
   });
 ```
 
 ### Step 3: Check Cache Before Payment
 
-Use the `onProtectedRequest` hook to return cached responses and skip payment processing:
+`onProtectedRequest` can only return `{ grantAccess: true }` (runs the resource handler) or `{ abort: true }` (HTTP 403). It cannot return 409. Check the fingerprint in application middleware **before** payment middleware, and never call `grantAccess` on drift. The official Express example is GET-only and does not install body-parsing middleware, so it hashes an empty body rather than capturing POST bodies:
 
 ```typescript
-const httpServer = new x402HTTPResourceServer(resourceServer, routes)
-  .onProtectedRequest(async (context) => {
-    if (!context.paymentHeader) return;
+app.use((req, res, next) => {
+  if (!req.headers["x-payment"] && !req.headers["payment-signature"])
+    return next();
+  try {
+    const header = String(
+      req.headers["payment-signature"] || req.headers["x-payment"],
+    );
+    const paymentPayload = JSON.parse(
+      Buffer.from(header, "base64").toString("utf-8"),
+    );
+    const paymentId = extractPaymentIdentifier(paymentPayload);
+    if (!paymentId) return next();
 
-    try {
-      const paymentPayload = JSON.parse(
-        Buffer.from(context.paymentHeader, "base64").toString("utf-8"),
-      );
-      const paymentId = extractPaymentIdentifier(paymentPayload);
-
-      if (paymentId) {
-        const cached = idempotencyCache.get(paymentId);
-        if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-          return { grantAccess: true }; // Skip payment, serve from cache
-        }
+    // GET-only example: no body-parsing middleware, so the hashed body is empty.
+    const fingerprint = requestFingerprint(
+      req,
+      Buffer.alloc(0),
+      paymentPayload,
+    );
+    const cached = idempotencyCache.get(paymentId);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      if (cached.fingerprint !== fingerprint) {
+        return res.status(409).json({
+          error: "payment identifier already used with different request",
+          paymentId,
+        });
       }
-    } catch {
-      // Invalid payment header, continue to normal payment flow
+      return res.json(cached.response); // same request: skip payment, do not grantAccess
     }
-  });
+    const reserved = pendingReservations.get(paymentId);
+    if (reserved && Date.now() - reserved.timestamp < RESERVATION_TTL_MS) {
+      if (reserved.fingerprint === fingerprint) {
+        return res.status(409).json({
+          error:
+            "payment identifier is already being processed for this request",
+          paymentId,
+        });
+      }
+      return res.status(409).json({
+        error: "payment identifier already used with different request",
+        paymentId,
+      });
+    }
+    pendingReservations.set(paymentId, { fingerprint, timestamp: Date.now() });
+  } catch {
+    // Invalid payment header, continue to normal payment flow
+  }
+  next();
+});
+
+app.use(paymentMiddlewareFromHTTPServer(httpServer));
 ```
 
 </Tab>
@@ -344,24 +412,30 @@ declare_payment_identifier_extension(required=True)
 
 ### Step 2: Cache Responses After Settlement
 
-Store responses after successful payment settlement:
+Store the HTTP request fingerprint with the payment ID. Do not key the cache on payment ID alone.
 
 ```python
 import time
 from x402.schemas import SettleContext
 from x402.extensions.payment_identifier import extract_payment_identifier
 
-# In-memory cache (use Redis in production)
 idempotency_cache: dict = {}
-CACHE_TTL_SECONDS = 60 * 60  # 1 hour
+pending_reservations: dict[str, dict] = {}
+CACHE_TTL_SECONDS = 60 * 60  # 1 hour settled cache
+RESERVATION_TTL_SECONDS = 30  # in-flight only; failed verify must expire
 
 async def after_settle(ctx: SettleContext) -> None:
     payment_id = extract_payment_identifier(ctx.payment_payload)
-    if payment_id:
-        idempotency_cache[payment_id] = {
-            "timestamp": time.time(),
-            "response": {},  # your response data
-        }
+    reserved = pending_reservations.pop(payment_id, None) if payment_id else None
+    if not payment_id or not reserved:
+        return  # missing reservation: do not cache
+    if time.time() - reserved["timestamp"] >= RESERVATION_TTL_SECONDS:
+        return  # expired reservation: do not cache
+    idempotency_cache[payment_id] = {
+        "timestamp": time.time(),
+        "fingerprint": reserved["fingerprint"],  # exact reserved fingerprint
+        "response": {},  # your response data
+    }
 
 server = x402ResourceServer(facilitator)
 server.register("eip155:84532", ExactEvmServerScheme())
@@ -370,7 +444,7 @@ server.on_after_settle(after_settle)
 
 ### Step 3: Check Cache Before Payment
 
-Use FastAPI middleware to check the cache before the payment middleware processes the request:
+Register payment middleware first, then the idempotency middleware, so the cache check is outermost. On fingerprint mismatch return `409` and do not call the resource handler:
 
 ```python
 import base64
@@ -378,9 +452,11 @@ import json
 from fastapi import Request, Response
 from x402.schemas import PaymentPayload
 
+app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
+
 @app.middleware("http")
 async def idempotency_middleware(request: Request, call_next):
-    payment_header = request.headers.get("X-Payment")
+    payment_header = request.headers.get("PAYMENT-SIGNATURE") or request.headers.get("X-Payment")
     if payment_header:
         try:
             payment_data = json.loads(base64.b64decode(payment_header))
@@ -388,19 +464,47 @@ async def idempotency_middleware(request: Request, call_next):
             payment_id = extract_payment_identifier(payment_payload)
 
             if payment_id:
+                fingerprint = request_fingerprint(
+                    method=request.method,
+                    url=str(request.url),
+                    body=await request.body(),
+                    payload=payment_payload,
+                )
                 cached = idempotency_cache.get(payment_id)
                 if cached and time.time() - cached["timestamp"] < CACHE_TTL_SECONDS:
+                    if cached["fingerprint"] != fingerprint:
+                        return Response(
+                            content=json.dumps({
+                                "error": "payment identifier already used with different request",
+                                "paymentId": payment_id,
+                            }),
+                            media_type="application/json",
+                            status_code=409,
+                        )
                     return Response(
                         content=json.dumps(cached["response"]),
                         media_type="application/json",
                     )
+                reserved = pending_reservations.get(payment_id)
+                if reserved and time.time() - reserved["timestamp"] < RESERVATION_TTL_SECONDS:
+                    error = (
+                        "payment identifier is already being processed for this request"
+                        if reserved["fingerprint"] == fingerprint
+                        else "payment identifier already used with different request"
+                    )
+                    return Response(
+                        content=json.dumps({"error": error, "paymentId": payment_id}),
+                        media_type="application/json",
+                        status_code=409,
+                    )
+                pending_reservations[payment_id] = {
+                    "fingerprint": fingerprint,
+                    "timestamp": time.time(),
+                }
         except Exception:
             pass  # Invalid payment header, continue to normal flow
 
     return await call_next(request)
-
-# Add payment middleware AFTER idempotency middleware
-app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
 ```
 
 </Tab>
@@ -477,44 +581,55 @@ processedPayments[paymentID] = responseData
 </Tab>
 </Tabs>
 
-
 ### Request Binding
 
-Servers should bind each payment ID to a normalized fingerprint of the request before returning a cached result. The fingerprint should cover the parts of the request that make the paid operation unique:
+Servers should bind each payment ID to a normalized fingerprint of the HTTP request before returning a cached result. Hashing the payment payload or `PAYMENT-SIGNATURE` / `X-Payment` header is not sufficient: those values do not change when the same signed payload is sent as a different method, path, query, or body.
+
+The fingerprint should cover the parts of the request that make the paid operation unique:
 
 - `scheme`, `network`, `asset`, `amount`, `payTo`
-- Resource path and HTTP method
+- HTTP method and canonical resource path (query keys sorted, duplicate-key order preserved, no fragment)
+- Raw request body SHA-256 (the Express example is GET-only and hashes empty bytes; it does not parse POST bodies)
 - Application-level operation or order identifier (when available)
 
-Store the first observed fingerprint with the payment ID. Later requests with the same ID and the same fingerprint can return the cached response. Later requests with the same ID but a different fingerprint should return `409 Conflict` — not a cached response or a second execution.
+Store the first observed fingerprint with the payment ID. Later requests with the same ID and the same fingerprint can return the cached response. Later requests with the same ID but a different fingerprint should return `409 Conflict`, not a cached response, a second execution, or `grantAccess: true`.
+
+Before payment middleware, keep an expiring in-flight reservation (fingerprint + timestamp) distinct from the settled cache. A live reservation must never grant access, never start a second settlement, and never be overwritten. Same fingerprint while reserved is an in-flight `409`; a different fingerprint is the request-conflict `409`. If verification fails, drop the reservation after a short TTL (30 seconds in the official examples, not the one-hour cache TTL). `onAfterSettle` must consume only that live reservation and cache its exact fingerprint; if the reservation is missing or expired, do not cache.
 
 When the same backend handles multiple paid resources, scope the storage key by tenant, merchant, route, or facilitator account to avoid cross-resource collisions.
 
 ### Idempotency Behavior
 
-| Scenario | Server Response |
-|----------|-----------------|
-| New payment ID | Process payment normally, cache response |
-| Same payment ID, same request fingerprint (within TTL) | Return cached response, skip payment |
-| Same payment ID, different request fingerprint | Return 409 Conflict |
-| Same payment ID (after TTL) | Process payment normally, update cache |
-| No payment ID | Process payment normally (no caching) |
-| `required: true`, no payment ID provided | Return 400 Bad Request |
+| Scenario                                                     | Server Response                             |
+| ------------------------------------------------------------ | ------------------------------------------- |
+| New payment ID                                               | Reserve, process payment, cache on settle   |
+| Same payment ID, same request fingerprint (within cache TTL) | Return cached response, skip payment        |
+| Same payment ID, same fingerprint, live reservation          | 409 in-flight conflict, do not settle again |
+| Same payment ID, different request fingerprint               | Return 409 Conflict; do not overwrite       |
+| Same payment ID (after cache TTL)                            | Process payment normally, update cache      |
+| Reservation expired (failed verification)                    | Drop reservation; ID can proceed again      |
+| Settle with missing/expired reservation                      | Do not cache                                |
+| No payment ID                                                | Process payment normally (no caching)       |
+| `required: true`, no payment ID provided                     | Return 400 Bad Request                      |
 
 ### Configuration Options
 
 #### Cache TTL
 
 Adjust `CACHE_TTL_MS` (TypeScript/Go) or `CACHE_TTL_SECONDS` (Python) based on your use case:
+
 - Short TTL (5-15 min): For time-sensitive resources
 - Long TTL (1-24 hours): For static or infrequently changing resources
+
+Keep a separate in-flight reservation TTL (`RESERVATION_TTL_MS` / `RESERVATION_TTL_SECONDS`). The official examples use 30 seconds, not the one-hour settled cache TTL, so a failed verification cannot leak memory or block the payment ID.
 
 ### Production Considerations
 
 1. **Use Redis or similar** instead of in-memory cache for distributed systems
 2. **Handle cache failures gracefully** - if cache is unavailable, process payment normally
-3. **Bind payment IDs to request fingerprints** - store the fingerprint (scheme, network, asset, amount, payTo, route, and application operation ID) alongside the payment ID and return `409 Conflict` if the same ID is replayed with a different fingerprint
-4. **Monitor cache hit rates** to tune TTL and detect abuse
+3. **Bind payment IDs to request fingerprints** - store the fingerprint (scheme, network, asset, amount, payTo, HTTP method, canonical path, raw body SHA-256, and application operation ID) alongside the payment ID and return `409 Conflict` if the same ID is replayed with a different fingerprint. Do not fingerprint only the payment payload. The official Express example is GET-only and hashes an empty body; do not assume it captures POST bodies.
+4. **Reserve in-flight IDs** so two concurrent misses cannot bind the first settlement to the second request. Expire reservations on a short TTL.
+5. **Monitor cache hit rates** to tune TTL and detect abuse
 
 ## API Reference
 
@@ -545,7 +660,10 @@ Adds a payment identifier to the extensions object. Only modifies extensions if 
 import { appendPaymentIdentifierToExtensions } from "@x402/extensions/payment-identifier";
 
 const extensions = paymentRequired.extensions ?? {};
-appendPaymentIdentifierToExtensions(extensions, "pay_custom_id_1234567890abcdef");
+appendPaymentIdentifierToExtensions(
+  extensions,
+  "pay_custom_id_1234567890abcdef",
+);
 // extensions now contains the payment-identifier extension (only if server declared it)
 ```
 
@@ -607,10 +725,10 @@ if (!result.valid) {
 
 ```typescript
 import {
-  PAYMENT_IDENTIFIER,      // "payment-identifier"
-  PAYMENT_ID_MIN_LENGTH,   // 16
-  PAYMENT_ID_MAX_LENGTH,   // 128
-  PAYMENT_ID_PATTERN,      // /^[a-zA-Z0-9_-]+$/
+  PAYMENT_IDENTIFIER, // "payment-identifier"
+  PAYMENT_ID_MIN_LENGTH, // 16
+  PAYMENT_ID_MAX_LENGTH, // 128
+  PAYMENT_ID_PATTERN, // /^[a-zA-Z0-9_-]+$/
 } from "@x402/extensions/payment-identifier";
 ```
 
@@ -822,14 +940,17 @@ var PAYMENT_ID_PATTERN = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 Full working examples are available in the x402 repository:
 
 **TypeScript:**
+
 - [TypeScript Client Example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/payment-identifier)
 - [TypeScript Server Example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/payment-identifier)
 
 **Python:**
+
 - [Python Client Example](https://github.com/x402-foundation/x402/tree/main/examples/python/clients/payment-identifier)
 - [Python Server Example](https://github.com/x402-foundation/x402/tree/main/examples/python/servers/payment-identifier)
 
 **Go:**
+
 - [Go Client Example](https://github.com/x402-foundation/x402/tree/main/examples/go/clients/payment-identifier)
 - [Go Server Example](https://github.com/x402-foundation/x402/tree/main/examples/go/servers/payment-identifier)
 

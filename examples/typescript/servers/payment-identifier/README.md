@@ -6,56 +6,22 @@ Express.js server demonstrating how to use the `payment-identifier` extension fo
 
 1. Server advertises `payment-identifier` extension support in the `PaymentRequired` response
 2. Client includes a unique payment ID in their `PaymentPayload`
-3. Server caches responses keyed by payment ID (1-hour TTL)
-4. If the same payment ID is seen again, the cached response is returned without re-processing payment
+3. Server looks up the settled cache (1-hour TTL), then holds an expiring in-flight reservation (fingerprint + timestamp, 30s TTL)
+4. After settlement, `onAfterSettle` consumes only that live reservation and caches its exact fingerprint
+5. Same payment ID and same fingerprint return the cached response without re-processing payment
+6. Same payment ID with a different method, path, query, or body returns HTTP 409 and does not grant access
+7. A second in-flight request never overwrites a live reservation
 
 ```typescript
-import {
-  paymentMiddlewareFromHTTPServer,
-  x402ResourceServer,
-  x402HTTPResourceServer,
-} from "@x402/express";
-import {
-  declarePaymentIdentifierExtension,
-  extractPaymentIdentifier,
-  PAYMENT_IDENTIFIER,
-} from "@x402/extensions/payment-identifier";
+import { paymentMiddlewareFromHTTPServer } from "@x402/express";
 
-// In-memory cache (use Redis in production)
-const idempotencyCache = new Map<string, { timestamp: number; response: unknown }>();
-const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+// Bind each payment ID to an HTTP request fingerprint (see request-binding.ts).
+// Check the settled cache first, then an in-flight reservation, before payment middleware.
+// Same fingerprint after settle: return the cached body. Different fingerprint: HTTP 409.
+// Same fingerprint while in flight: in-flight 409. Do not overwrite a live reservation.
+// This example is GET-only and hashes an empty body; it does not capture POST bodies.
 
-const routes = {
-  "GET /weather": {
-    accepts: { scheme: "exact", price: "$0.001", network: "eip155:84532", payTo: address },
-    extensions: {
-      [PAYMENT_IDENTIFIER]: declarePaymentIdentifierExtension(false), // optional
-    },
-  },
-};
-
-const resourceServer = new x402ResourceServer(facilitatorClient)
-  .register("eip155:84532", new ExactEvmScheme())
-  .onAfterSettle(async ({ paymentPayload }) => {
-    const paymentId = extractPaymentIdentifier(paymentPayload);
-    if (paymentId) {
-      idempotencyCache.set(paymentId, { timestamp: Date.now(), response: { ... } });
-    }
-  });
-
-const httpServer = new x402HTTPResourceServer(resourceServer, routes)
-  .onProtectedRequest(async (context) => {
-    // Check if payment ID is in cache
-    const paymentPayload = JSON.parse(Buffer.from(context.paymentHeader, "base64").toString());
-    const paymentId = extractPaymentIdentifier(paymentPayload);
-    if (paymentId) {
-      const cached = idempotencyCache.get(paymentId);
-      if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-        return { grantAccess: true }; // Skip payment, grant access
-      }
-    }
-  });
-
+app.use(idempotencyMiddleware); // 200 cache hit or 409 conflict, no grantAccess
 app.use(paymentMiddlewareFromHTTPServer(httpServer));
 ```
 
@@ -102,6 +68,7 @@ pnpm dev
 ```
 
 The client will:
+
 1. Make a request with a unique payment ID
 2. Make a second request with the **same** payment ID
 3. The second request returns instantly from cache without payment processing
@@ -109,10 +76,14 @@ The client will:
 ## Idempotency Behavior
 
 | Scenario | Server Response |
-|----------|-----------------|
-| New payment ID | Process payment normally, cache response |
-| Same payment ID (within TTL) | Return cached response, skip payment |
-| Same payment ID (after TTL) | Process payment normally, update cache |
+| --- | --- |
+| New payment ID | Reserve, process payment, cache on settle |
+| Same payment ID, same request fingerprint (within cache TTL) | Return cached response, skip payment |
+| Same payment ID, same fingerprint, live reservation | 409 in-flight conflict, do not settle again |
+| Same payment ID, different request fingerprint | Return 409 Conflict, do not grant access, do not overwrite |
+| Same payment ID (after cache TTL) | Process payment normally, update cache |
+| Reservation expired (failed verification) | Drop reservation; ID can proceed again |
+| Settle with missing/expired reservation | Do not cache |
 | No payment ID | Process payment normally (no caching) |
 
 ## Configuration Options
@@ -121,21 +92,31 @@ The client will:
 
 ```typescript
 // Payment ID is optional (clients can omit it)
-declarePaymentIdentifierExtension(false)
+declarePaymentIdentifierExtension(false);
 
 // Payment ID is required (clients must provide it)
-declarePaymentIdentifierExtension(true)
+declarePaymentIdentifierExtension(true);
 ```
 
 ### Cache TTL
 
 Adjust `CACHE_TTL_MS` based on your use case:
+
 - Short TTL (5-15 min): For time-sensitive resources
 - Long TTL (1-24 hours): For static or infrequently changing resources
+
+`RESERVATION_TTL_MS` is 30 seconds, distinct from the 1-hour settled cache. It only covers in-flight verify/settle. Failed verification must expire so the reservation map cannot grow without bound.
+
+Request-binding unit tests (no wallet, chain, facilitator, or payment):
+
+```bash
+pnpm test
+```
 
 ## Production Considerations
 
 1. **Use Redis or similar** instead of in-memory cache for distributed systems
 2. **Handle cache failures gracefully** - if cache is unavailable, process payment normally
-3. **Consider payload hashing** - for additional safety, hash the full payload and reject if same ID but different payload (409 Conflict)
-4. **Monitor cache hit rates** to tune TTL and detect abuse
+3. **Bind payment IDs to the HTTP request** - fingerprint method, canonical path+query, raw body, and accepted terms. Do not hash only the payment payload. Return 409 on drift without grantAccess. This GET-only Express example does not install body-parsing middleware and hashes an empty body.
+4. **Reserve in-flight payment IDs** with a short TTL so concurrent requests cannot overwrite the first fingerprint
+5. **Monitor cache hit rates** to tune TTL and detect abuse
