@@ -173,9 +173,9 @@ Rules:
 - "Registrable domain" SHOULD be judged against the public-suffix boundary,
   not by counting labels. The same census makes the failure concrete from the
   other side: 394 of the 1,521 hosts sit directly under shared-platform
-  suffixes (`vercel.app` 202, `workers.dev` 72, `railway.app` 66,
+  suffixes (`vercel.app` 202, `workers.dev` 72, `up.railway.app` 66,
   `onrender.com` 27, and the rest across `fly.dev`, `replit.app`,
-  `netlify.app`, `run.app`, `sslip.io`, `nip.io`), where each name is a
+  `netlify.app`, `a.run.app`, `sslip.io`, `nip.io`), where each name is a
   DIFFERENT operator deploying on a common platform. A last-two-labels rule
   collapses those 394 operators into ten buckets and hands the most
   operator-diverse quarter of the network one operator's crawl budget —
