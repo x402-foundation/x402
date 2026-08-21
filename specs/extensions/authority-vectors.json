@@ -55,11 +55,11 @@
         "api.vendor.example"
       ],
       "accountant": "M16cS6EkFTGx6nsxHb5QM0yn-dzWlxHsrbFsEhJ7il8",
-      "purpose": "conformance vectors \u2014 model A",
+      "purpose": "conformance vectors — model A",
       "notAfter": "2027-01-01T00:00:00Z",
       "nonce": "authority-vec-a-001"
     },
-    "jcs": "{\"accountant\":\"M16cS6EkFTGx6nsxHb5QM0yn-dzWlxHsrbFsEhJ7il8\",\"asset\":\"FCUSD\",\"cap\":\"1000000\",\"issuer\":\"ZpxwxbuTQMjJCKTuNk6E-qHD4wGTc7QJ8yYPUdUvSm8\",\"nonce\":\"authority-vec-a-001\",\"notAfter\":\"2027-01-01T00:00:00Z\",\"perPayment\":\"250000\",\"purpose\":\"conformance vectors \u2014 model A\",\"recipients\":[\"merchant.example\",\"api.vendor.example\"],\"subject\":\"HMcvJ5nY6DANhYEDgfaEHjR5Ur7xbfmqwbOn2kG5qE8\",\"v\":\"x402-mandate/1\"}",
+    "jcs": "{\"accountant\":\"M16cS6EkFTGx6nsxHb5QM0yn-dzWlxHsrbFsEhJ7il8\",\"asset\":\"FCUSD\",\"cap\":\"1000000\",\"issuer\":\"ZpxwxbuTQMjJCKTuNk6E-qHD4wGTc7QJ8yYPUdUvSm8\",\"nonce\":\"authority-vec-a-001\",\"notAfter\":\"2027-01-01T00:00:00Z\",\"perPayment\":\"250000\",\"purpose\":\"conformance vectors — model A\",\"recipients\":[\"merchant.example\",\"api.vendor.example\"],\"subject\":\"HMcvJ5nY6DANhYEDgfaEHjR5Ur7xbfmqwbOn2kG5qE8\",\"v\":\"x402-mandate/1\"}",
     "digest": "sha256:445fed871d7c43d2b775e68124103c77646fc0f096fb42c9ea3d9f00c960ca05",
     "alg": "Ed25519",
     "sig": "Kvggg4hh76z8PngCRDjcwHELBw7RJ4hECAGqqmDOpVSbIzce40T7quwC_vjm8Aab3SPRUB5ZPywfoDFwvra_AQ",
@@ -185,7 +185,7 @@
         "pG5h932Q_01BwZLtWhM3T-i2kU3eH-A9cI2UrJHJPd4"
       ],
       "accountant": "payees",
-      "purpose": "conformance vectors \u2014 model B",
+      "purpose": "conformance vectors — model B",
       "notAfter": "2027-01-01T00:00:00Z",
       "nonce": "authority-vec-b-001"
     },
@@ -263,7 +263,7 @@
         "merchant.example"
       ],
       "accountant": "M16cS6EkFTGx6nsxHb5QM0yn-dzWlxHsrbFsEhJ7il8",
-      "purpose": "conformance vectors \u2014 delegated",
+      "purpose": "conformance vectors — delegated",
       "notAfter": "2026-12-01T00:00:00Z",
       "nonce": "authority-vec-c-001",
       "parent": "sha256:445fed871d7c43d2b775e68124103c77646fc0f096fb42c9ea3d9f00c960ca05"
@@ -286,22 +286,37 @@
     }
   },
   "shapeRefusals": {
-    "feb30NotAfter": "refusing to issue a malformed mandate: mandate.notAfter must be strict RFC 3339 UTC (\u2026Z)",
-    "emptyRecipients": "refusing to issue a malformed mandate: mandate.recipients is empty \u2014 use [ANY_RECIPIENT] for an explicit unconstrained opt-in",
+    "feb30NotAfter": "refusing to issue a malformed mandate: mandate.notAfter must be strict RFC 3339 UTC (…Z)",
+    "emptyRecipients": "refusing to issue a malformed mandate: mandate.recipients is empty — use [ANY_RECIPIENT] for an explicit unconstrained opt-in",
     "starMixedWithNamed": "refusing to issue a malformed mandate: '*' must be the SOLE element to opt into an unconstrained recipient set",
     "floatCap": "refusing to issue a malformed mandate: mandate.cap must be an integer minor-unit string",
-    "perPaymentAboveCap": "refusing to issue a malformed mandate: mandate.perPayment exceeds cap \u2014 a per-payment bound above the cumulative cap is incoherent"
+    "perPaymentAboveCap": "refusing to issue a malformed mandate: mandate.perPayment exceeds cap — a per-payment bound above the cumulative cap is incoherent"
   },
   "securityFixes": {
     "settledPaymentMatchesOk": true,
-    "settledUnderReportRefused": false,
+    "settledUnderReport": {
+      "note": "The binding slot commits to (mandate, paymentId) only and says nothing about amount. The cap binds ONLY when the verifier re-runs the §6 authority check on values decoded from the settled artifact. Derive both verdicts from this scenario rather than reading them.",
+      "paymentId": "pay-underreport-001",
+      "settled": {
+        "scheme": "eip3009",
+        "slot": "0x4ed0a3d0919ba157a51b83e0db42b45e3df72cfb2075568fd7abc4dd8769517b",
+        "payer": "HMcvJ5nY6DANhYEDgfaEHjR5Ur7xbfmqwbOn2kG5qE8",
+        "recipient": "merchant.example",
+        "asset": "FCUSD",
+        "amount": "1000000"
+      },
+      "presentedAmount": "1",
+      "presentedTupleVerdictOk": true,
+      "settledVerdictOk": false,
+      "refusalReason": "payment 1000000 exceeds per-payment bound 250000"
+    },
     "strangerVetoResisted": true,
     "surrogatePurposeRefusedNotThrown": {
       "threw": false,
       "ok": false
     },
     "badAlgRefused": false,
-    "unknownMemberMandateRefused": "refusing to issue a malformed mandate: mandate carries an unknown member 'extra' \u2014 the object is closed (fail closed on unknown fields)",
-    "unknownMemberCommitmentRefused": "commitment carries an unknown member 'extra' \u2014 the object is closed"
+    "unknownMemberMandateRefused": "refusing to issue a malformed mandate: mandate carries an unknown member 'extra' — the object is closed (fail closed on unknown fields)",
+    "unknownMemberCommitmentRefused": "commitment carries an unknown member 'extra' — the object is closed"
   }
 }

@@ -553,7 +553,11 @@ They are fully deterministic — an independent implementation reproduces every
 cryptographic and wire value from the spec text and the seeds alone. A
 `securityFixes` block pins the load-bearing invariants (settled-artifact amount
 binding, Model B stranger-veto resistance, verifier totality, non-Ed25519 alg
-refusal, unknown-member rejection).
+refusal, unknown-member rejection). The settled-artifact amount binding ships as
+a complete scenario rather than a recorded verdict: `settledUnderReport` carries
+the settled transfer, the under-reported amount presented alongside it, and both
+resulting verdicts, so an implementation **derives** the refusal from the inputs
+instead of reading a boolean it cannot reproduce.
 
 ## 17. Security considerations
 
