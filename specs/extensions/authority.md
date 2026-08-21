@@ -555,9 +555,15 @@ cryptographic and wire value from the spec text and the seeds alone. A
 binding, Model B stranger-veto resistance, verifier totality, non-Ed25519 alg
 refusal, unknown-member rejection). The settled-artifact amount binding ships as
 a complete scenario rather than a recorded verdict: `settledUnderReport` carries
-the settled transfer, the under-reported amount presented alongside it, and both
-resulting verdicts, so an implementation **derives** the refusal from the inputs
-instead of reading a boolean it cannot reproduce.
+the settled transfer, the amount the agent committed instead, and the verdicts
+of **two distinct rules**, so an implementation derives them from the inputs
+rather than reading a boolean it cannot reproduce. The two are worth keeping
+apart: the *commitment mismatch* is the under-report itself, caught by checking
+the committed entry against the settled artifact (§13 MUST-rule 2); the
+*decoded-amount* refusal shows only that the binding slot commits to
+`(mandate, paymentId)` and not to amount — it fires on the per-payment bound and
+would fire on an honest settlement of the same size, so it is cap enforcement
+rather than under-report detection.
 
 ## 17. Security considerations
 

@@ -295,20 +295,22 @@
   "securityFixes": {
     "settledPaymentMatchesOk": true,
     "settledUnderReport": {
-      "note": "The binding slot commits to (mandate, paymentId) only and says nothing about amount. The cap binds ONLY when the verifier re-runs the §6 authority check on values decoded from the settled artifact. Derive both verdicts from this scenario rather than reading them.",
-      "paymentId": "pay-underreport-001",
+      "note": "Agent logged 1; the rail moved 1000000. (a) commitmentMismatch is the under-report itself, caught by comparing the committed entry to the settled artifact (MUST-rule 2). (b) decodedAmount shows the slot binds (mandate, paymentId) but not amount — it refuses on the per-payment bound, which would also fire on an honest 1000000, so it is NOT under-report detection.",
+      "paymentId": "pay-001",
       "settled": {
         "scheme": "eip3009",
-        "slot": "0x4ed0a3d0919ba157a51b83e0db42b45e3df72cfb2075568fd7abc4dd8769517b",
+        "slot": "0x5aa71c23c84e6763bdb31a473f1981fd37ccf93945205b77eb84e0c271c1e74b",
         "payer": "HMcvJ5nY6DANhYEDgfaEHjR5Ur7xbfmqwbOn2kG5qE8",
         "recipient": "merchant.example",
         "asset": "FCUSD",
         "amount": "1000000"
       },
-      "presentedAmount": "1",
+      "committedEntryAmount": "1",
+      "commitmentMismatchVerdictOk": false,
+      "commitmentMismatchReason": "committed entry amount 1 != settled amount 1000000 — under-reported spend",
       "presentedTupleVerdictOk": true,
-      "settledVerdictOk": false,
-      "refusalReason": "payment 1000000 exceeds per-payment bound 250000"
+      "decodedAmountVerdictOk": false,
+      "decodedAmountReason": "payment 1000000 exceeds per-payment bound 250000"
     },
     "strangerVetoResisted": true,
     "surrogatePurposeRefusedNotThrown": {
