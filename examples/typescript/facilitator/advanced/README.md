@@ -8,6 +8,7 @@ Express.js facilitator service demonstrating advanced x402 patterns including al
 - pnpm v10 (install via [pnpm.io/installation](https://pnpm.io/installation))
 - EVM private key with Base Sepolia ETH for transaction fees
 - SVM private key with Solana Devnet SOL for transaction fees
+- Starknet account address + private key with Sepolia STRK for transaction fees (optional; the facilitator account pays the gas of every Starknet settlement, so it must stay funded)
 - Stellar private key with testnet XLM for transaction fees (fund via [Stellar Laboratory](https://lab.stellar.org/account/create) ➡️ Generate keypair ➡️ Fund account with Friendbot)
 - Hedera account id + private key for Hedera testnet fees (optional)
 - Keeta mnemonic (seed phrase) and wallet with Testnet KTA for transaction fees (create wallet on [Keeta Testnet Wallet](https://wallet.test.keeta.com/) and fund via [Keeta Testnet Faucet](https://faucet.test.keeta.com/))
@@ -30,6 +31,10 @@ and fill required environment variables:
 - `CCD_NETWORK` - Concordium network CAIP-2 (optional; defaults to `ccd:4221332d34e1694168c2a0c0b3fd0f27`)
 - `EVM_PRIVATE_KEY` - Ethereum private key
 - `SVM_PRIVATE_KEY` - Solana private key
+- `STARKNET_ADDRESS` - Starknet account contract address for fee payer (optional; `all-networks`)
+- `STARKNET_PRIVATE_KEY` - Starknet private key for fee payer (optional; `all-networks`)
+- `STARKNET_NETWORK` - Starknet network CAIP-2 (optional, defaults to `starknet:SN_SEPOLIA` Starknet Sepolia)
+- `STARKNET_RPC_URL` - Custom Starknet JSON-RPC endpoint (optional, defaults to the public endpoint for `STARKNET_NETWORK`)
 - `STELLAR_PRIVATE_KEY` - Stellar secret key (starts with `S`)
 - `HEDERA_ACCOUNT_ID` - Hedera account id for fee payer (optional)
 - `HEDERA_PRIVATE_KEY` - Hedera **ECDSA** private key (0x-prefixed or DER-encoded) for fee payer (optional)
@@ -60,6 +65,12 @@ For testing on Aptos testnet, you can obtain test tokens from these faucets:
 
 - **Test APT**: https://aptos.dev/network/faucet or through an account on [geomi.dev](https://geomi.dev/manage/faucet)
 - **Test USDC**: https://faucet.circle.com/
+
+#### Starknet Sepolia
+
+1. Deploy the facilitator account contract (Argent X, Braavos, or `sncast account create` then `sncast account deploy`) and copy its address into `STARKNET_ADDRESS` and its private key into `STARKNET_PRIVATE_KEY`.
+2. Fund it with Sepolia STRK from the [Starknet Sepolia faucet](https://faucet.starknet.io/). It pays gas for every settlement, so it must stay funded.
+3. The facilitator advertises its account as `extra.feePayer` on `/supported`, and resource servers copy that value into their payment requirements. Payers hold only USDC (from the [Circle Faucet](https://faucet.circle.com/), select Starknet Sepolia) and need no ETH or STRK.
 
 ## Available Examples
 
@@ -101,6 +112,14 @@ Returns payment schemes and networks this facilitator supports.
     {
       "x402Version": 2,
       "scheme": "exact",
+      "network": "starknet:SN_SEPOLIA",
+      "extra": {
+        "feePayer": "0x..."
+      }
+    },
+    {
+      "x402Version": 2,
+      "scheme": "exact",
       "network": "stellar:testnet",
       "extra": {
         "areFeesSponsored": true
@@ -120,6 +139,7 @@ Returns payment schemes and networks this facilitator supports.
     "eip155": ["0x..."],
     "keeta": ["keeta_..."],
     "solana": ["..."],
+    "starknet": ["0x..."],
     "stellar": ["G..."]
   }
 }
@@ -278,6 +298,8 @@ Networks use [CAIP-2](https://github.com/ChainAgnostic/CAIPs/blob/main/CAIPs/cai
 - `eip155:8453` — Base Mainnet
 - `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` — Solana Devnet
 - `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` — Solana Mainnet
+- `starknet:SN_SEPOLIA` - Starknet Sepolia
+- `starknet:SN_MAIN` - Starknet Mainnet
 - `stellar:testnet` — Stellar Testnet
 - `stellar:pubnet` — Stellar Mainnet
 - `hedera:testnet` — Hedera Testnet

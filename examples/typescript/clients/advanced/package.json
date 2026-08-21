@@ -26,6 +26,7 @@
     "@x402/keeta": "workspace:*",
     "@x402/near": "workspace:*",
     "@x402/svm": "workspace:*",
+    "@x402/starknet": "workspace:*",
     "@x402/stellar": "workspace:*",
     "@x402/hedera": "workspace:*",
     "@x402/tvm": "workspace:*",
@@ -36,6 +37,7 @@
     "dotenv": "^16.4.7",
     "viem": "^2.48.11",
     "@solana/kit": "^6.1.0",
+    "starknet": "^8.9.2",
     "xrpl": "^4.6.0"
   },
   "devDependencies": {

@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
+ * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "starknet" before "stellar" before "tvm" before "xrpl").
  */
 
 import {
@@ -64,6 +64,13 @@ import { toFacilitatorSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/facilitator";
 import { base58 } from "@scure/base";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
+import {
+  createStarknetProvider,
+  STARKNET_SEPOLIA_CAIP2,
+  toFacilitatorStarknetSigner,
+} from "@x402/starknet";
+import { ExactStarknetScheme } from "@x402/starknet/exact/facilitator";
+import { Account as StarknetAccount } from "starknet";
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/facilitator";
 import {
@@ -107,6 +114,12 @@ const nearRelayerPrivateKey = process.env.NEAR_RELAYER_PRIVATE_KEY as
 const nearNetwork = process.env.NEAR_NETWORK || NEAR_TESTNET_CAIP2;
 const nearRpcUrl = process.env.NEAR_RPC_URL as string | undefined;
 const svmPrivateKey = process.env.SVM_PRIVATE_KEY as string | undefined;
+const starknetAddress = process.env.STARKNET_ADDRESS as string | undefined;
+const starknetPrivateKey = process.env.STARKNET_PRIVATE_KEY as
+  | string
+  | undefined;
+const starknetNetwork = process.env.STARKNET_NETWORK || STARKNET_SEPOLIA_CAIP2;
+const starknetRpcUrl = process.env.STARKNET_RPC_URL as string | undefined;
 const stellarPrivateKey = process.env.STELLAR_PRIVATE_KEY as string | undefined;
 const tvmPrivateKey = process.env.TVM_PRIVATE_KEY as string | undefined;
 const hederaAccountId = process.env.HEDERA_ACCOUNT_ID;
@@ -125,12 +138,13 @@ if (
   !keetaMnemonic &&
   !(nearRelayerAccountId && nearRelayerPrivateKey) &&
   !svmPrivateKey &&
+  !(starknetAddress && starknetPrivateKey) &&
   !stellarPrivateKey &&
   !tvmPrivateKey &&
   !(hederaAccountId && hederaPrivateKey)
 ) {
   console.error(
-    "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CCD_FACILITATOR_PRIVATE_KEY + CCD_FACILITATOR_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_RELAYER_ACCOUNT_ID + NEAR_RELAYER_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, TVM_PRIVATE_KEY, or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY is required",
+    "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CCD_FACILITATOR_PRIVATE_KEY + CCD_FACILITATOR_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_RELAYER_ACCOUNT_ID + NEAR_RELAYER_PRIVATE_KEY, SVM_PRIVATE_KEY, STARKNET_ADDRESS + STARKNET_PRIVATE_KEY, STELLAR_PRIVATE_KEY, TVM_PRIVATE_KEY, or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY is required",
   );
   process.exit(1);
 }
@@ -144,6 +158,7 @@ const HEDERA_NETWORK = "hedera:testnet"; // Hedera Testnet
 const KEETA_NETWORK = KEETA_TESTNET_CAIP2; // Keeta Testnet
 const NEAR_NETWORK = nearNetwork as Network; // NEAR Testnet
 const SVM_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"; // Solana Devnet
+const STARKNET_NETWORK = starknetNetwork as Network; // Starknet Sepolia
 const STELLAR_NETWORK = "stellar:testnet"; // Stellar Testnet
 const TVM_NETWORK = (process.env.TVM_NETWORK || "tvm:-3") as Network; // TON Testnet
 const XRPL_NETWORK = xrplNetwork as Network; // XRPL Testnet
@@ -337,6 +352,34 @@ if (svmPrivateKey) {
   const svmSigner = toFacilitatorSvmSigner(svmAccount);
 
   facilitator.register(SVM_NETWORK, new ExactSvmScheme(svmSigner));
+}
+
+// Register Starknet scheme if account address and private key are provided.
+// The facilitator account pays the settlement gas, so payments are fully
+// sponsored: the payer only needs the token balance.
+if (starknetAddress && starknetPrivateKey) {
+  const starknetProvider = createStarknetProvider(
+    STARKNET_NETWORK,
+    starknetRpcUrl,
+  );
+  const starknetSigner = toFacilitatorStarknetSigner(
+    new StarknetAccount({
+      provider: starknetProvider,
+      address: starknetAddress,
+      signer: starknetPrivateKey,
+    }),
+  );
+  console.info(
+    `Starknet Facilitator account: ${starknetAddress} on ${STARKNET_NETWORK}`,
+  );
+
+  facilitator.register(
+    STARKNET_NETWORK,
+    new ExactStarknetScheme(
+      starknetSigner,
+      starknetRpcUrl ? { rpcUrl: starknetRpcUrl } : undefined,
+    ),
+  );
 }
 
 // Register Stellar scheme if private key is provided

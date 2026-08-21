@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
+ * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "starknet" before "stellar" before "tvm" before "xrpl").
  */
 
 import {
@@ -33,6 +33,13 @@ import {
   type ClientNearSignerConfig,
 } from "@x402/near";
 import { ExactNearScheme } from "@x402/near/exact/client";
+import {
+  createStarknetProvider,
+  STARKNET_SEPOLIA_CAIP2,
+  toClientStarknetSigner,
+} from "@x402/starknet";
+import { ExactStarknetScheme } from "@x402/starknet/exact/client";
+import { Account as StarknetAccount } from "starknet";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import { ExactTvmScheme } from "@x402/tvm/exact/client";
 import { createEd25519Signer } from "@x402/stellar";
@@ -65,6 +72,10 @@ const nearPrivateKey = process.env.NEAR_PRIVATE_KEY as
 const nearNetwork = (process.env.NEAR_NETWORK || NEAR_TESTNET_CAIP2) as Network;
 const nearRpcUrl = process.env.NEAR_RPC_URL as string | undefined;
 const svmPrivateKey = process.env.SVM_PRIVATE_KEY as string | undefined;
+const starknetAddress = process.env.STARKNET_ADDRESS as string | undefined;
+const starknetPrivateKey = process.env.STARKNET_PRIVATE_KEY as string | undefined;
+const starknetNetwork = process.env.STARKNET_NETWORK || STARKNET_SEPOLIA_CAIP2;
+const starknetRpcUrl = process.env.STARKNET_RPC_URL as string | undefined;
 const stellarPrivateKey = process.env.STELLAR_PRIVATE_KEY as string | undefined;
 const hederaAccountId = process.env.HEDERA_ACCOUNT_ID;
 // Hedera private key should be an ECDSA key string (0x-prefixed or DER-encoded).
@@ -114,13 +125,14 @@ async function main(): Promise<void> {
     !keetaMnemonic &&
     !(nearAccountId && nearPrivateKey) &&
     !svmPrivateKey &&
+    !(starknetAddress && starknetPrivateKey) &&
     !stellarPrivateKey &&
     !(hederaAccountId && hederaPrivateKey) &&
     !tvmPrivateKey &&
     !xrplSeed
   ) {
     console.error(
-      "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CCD_PRIVATE_KEY + CCD_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_ACCOUNT_ID + NEAR_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY, TVM_PRIVATE_KEY, or XRPL_SEED is required",
+      "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CCD_PRIVATE_KEY + CCD_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_ACCOUNT_ID + NEAR_PRIVATE_KEY, SVM_PRIVATE_KEY, STARKNET_ADDRESS + STARKNET_PRIVATE_KEY, STELLAR_PRIVATE_KEY, HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY, TVM_PRIVATE_KEY, or XRPL_SEED is required",
     );
     process.exit(1);
   }
@@ -206,6 +218,20 @@ async function main(): Promise<void> {
     client.register("solana:*", new ExactSvmScheme(svmSigner));
     client.register("solana:*", new UptoSvmScheme(svmSigner));
     console.log(`Initialized SVM account: ${svmSigner.address}`);
+  }
+
+  // Register Starknet scheme if address and private key are provided
+  if (starknetAddress && starknetPrivateKey) {
+    const starknetProvider = createStarknetProvider(starknetNetwork, starknetRpcUrl);
+    const starknetSigner = toClientStarknetSigner(
+      new StarknetAccount({
+        provider: starknetProvider,
+        address: starknetAddress,
+        signer: starknetPrivateKey,
+      }),
+    );
+    client.register("starknet:*", new ExactStarknetScheme(starknetSigner));
+    console.log(`Initialized Starknet account: ${starknetSigner.address} on ${starknetNetwork}`);
   }
 
   // Register Stellar scheme if private key is provided

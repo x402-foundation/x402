@@ -73,6 +73,8 @@ and fill required environment variables:
 - `CCD_ADDRESS` - Concordium account address to receive payments (optional for `all-networks`)
 - `EVM_ADDRESS` - Ethereum address to receive payments
 - `SVM_ADDRESS` - Solana address to receive payments (optional for `all-networks`)
+- `STARKNET_ADDRESS` - Starknet account contract address to receive payments (optional for `all-networks`)
+- `STARKNET_NETWORK` - Starknet network CAIP-2 (optional, defaults to `starknet:SN_SEPOLIA` Starknet Sepolia)
 - `STELLAR_ADDRESS` - Stellar public address (starts with `G`) to receive payments
 - `HEDERA_ACCOUNT_ID` - Hedera account id to receive payments (optional for `all-networks`; format: `0.0.XXXXX`)
 - `KEETA_ADDRESS` - Keeta address (starts with `keeta_`) to receive payments
@@ -130,6 +132,13 @@ For testing on Aptos testnet, you can obtain test tokens from these faucets:
 
 - **Test APT**: https://aptos.dev/network/faucet or through an account on [geomi.dev](https://geomi.dev/manage/faucet)
 - **Test USDC**: https://faucet.circle.com/
+
+#### Starknet Sepolia
+
+The receiving account is any Starknet address, and the price is quoted in Circle USDC (6 decimals):
+
+1. Put any Starknet address in `STARKNET_ADDRESS`. The merchant only receives the transfer: it never signs and never pays a fee, so it does not need a private key and the account contract does not have to be deployed to be paid.
+2. The facilitator must advertise a `feePayer` for Starknet, because payments are fully sponsored: the payer needs no ETH or STRK, only USDC. Payers can get testnet USDC from the [Circle Faucet](https://faucet.circle.com/) (select Starknet Sepolia).
 
 #### XRPL Testnet
 

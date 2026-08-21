@@ -43,6 +43,10 @@ and fill required environment variables:
 - `CCD_ADDRESS` - Concordium account address for Concordium payments (optional; `all-networks`)
 - `EVM_PRIVATE_KEY` - Ethereum private key for EVM payments
 - `SVM_PRIVATE_KEY` - Solana private key for SVM payments
+- `STARKNET_ADDRESS` - Starknet account contract address for Starknet payments (optional; `all-networks`)
+- `STARKNET_PRIVATE_KEY` - Starknet private key for signing Starknet payments (optional; `all-networks`)
+- `STARKNET_NETWORK` - Starknet network CAIP-2 (optional, defaults to `starknet:SN_SEPOLIA` Starknet Sepolia)
+- `STARKNET_RPC_URL` - Custom Starknet JSON-RPC endpoint (optional, defaults to the public endpoint for `STARKNET_NETWORK`)
 - `STELLAR_PRIVATE_KEY` - Stellar secret key (starts with `S`) for signing Stellar payments
 - `HEDERA_ACCOUNT_ID` - Hedera account id for Hedera payments (optional)
 - `HEDERA_PRIVATE_KEY` - Hedera **ECDSA** private key (0x-prefixed or DER-encoded) for Hedera payments (optional)
@@ -105,6 +109,14 @@ To get test PLT, there is no universal public faucet for arbitrary PLT symbols. 
 
 1. Use a token issuer's own test distribution for the symbol you want to use, or
 2. Request your own PLT issuance on testnet, then mint/distribute balances from the nominated governance account. Official guide: [Request PLT](https://docs.concordium.com/en/mainnet/tutorials/plt/request-plt.html).
+
+#### Starknet Sepolia
+
+To create and fund a Starknet Sepolia payer account:
+
+1. Deploy an account contract (Argent X, Braavos, or `sncast account create` then `sncast account deploy`) and copy its address into `STARKNET_ADDRESS` and its private key into `STARKNET_PRIVATE_KEY`. Deployment needs a one-time STRK balance from the [Starknet Sepolia faucet](https://faucet.starknet.io/).
+2. Get testnet USDC from the [Circle Faucet](https://faucet.circle.com/) (select Starknet Sepolia).
+3. Payments are fully sponsored: the facilitator pays the settlement gas, so after deployment the payer needs no ETH or STRK, only the USDC balance.
 
 #### XRPL Testnet
 

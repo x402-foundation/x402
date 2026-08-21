@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
+ * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "starknet" before "stellar" before "tvm" before "xrpl").
  */
 
 import { config } from "dotenv";
@@ -23,6 +23,8 @@ import { KEETA_TESTNET_CAIP2 } from "@x402/keeta";
 import { ExactKeetaScheme } from "@x402/keeta/exact/server";
 import { NEAR_TESTNET_CAIP2 } from "@x402/near";
 import { ExactNearScheme } from "@x402/near/exact/server";
+import { STARKNET_SEPOLIA_CAIP2 } from "@x402/starknet";
+import { ExactStarknetScheme } from "@x402/starknet/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { ExactTvmScheme } from "@x402/tvm/exact/server";
 import { XRPL_TESTNET } from "@x402/xrpl";
@@ -41,6 +43,7 @@ const hederaAddress = process.env.HEDERA_ACCOUNT_ID as string | undefined;
 const keetaAddress = process.env.KEETA_ADDRESS as string | undefined;
 const nearAddress = process.env.NEAR_ADDRESS as string | undefined;
 const svmAddress = process.env.SVM_ADDRESS as string | undefined;
+const starknetAddress = process.env.STARKNET_ADDRESS as string | undefined;
 const stellarAddress = process.env.STELLAR_ADDRESS as string | undefined;
 const tvmAddress = process.env.TVM_ADDRESS as string | undefined;
 const xrplAddress = process.env.XRPL_ADDRESS as string | undefined;
@@ -54,13 +57,14 @@ if (
   !svmAddress &&
   !keetaAddress &&
   !nearAddress &&
+  !starknetAddress &&
   !stellarAddress &&
   !hederaAddress &&
   !tvmAddress &&
   !xrplAddress
 ) {
   console.error(
-    "❌ At least one of AVM_ADDRESS, APTOS_ADDRESS, CCD_ADDRESS, EVM_ADDRESS, KEETA_ADDRESS, NEAR_ADDRESS, SVM_ADDRESS, STELLAR_ADDRESS, HEDERA_ACCOUNT_ID, TVM_ADDRESS, or XRPL_ADDRESS is required",
+    "❌ At least one of AVM_ADDRESS, APTOS_ADDRESS, CCD_ADDRESS, EVM_ADDRESS, KEETA_ADDRESS, NEAR_ADDRESS, SVM_ADDRESS, STARKNET_ADDRESS, STELLAR_ADDRESS, HEDERA_ACCOUNT_ID, TVM_ADDRESS, or XRPL_ADDRESS is required",
   );
   process.exit(1);
 }
@@ -80,6 +84,7 @@ const HEDERA_NETWORK = "hedera:testnet" as const; // Hedera Testnet
 const KEETA_NETWORK = KEETA_TESTNET_CAIP2; // Keeta Testnet
 const NEAR_NETWORK = (process.env.NEAR_NETWORK || NEAR_TESTNET_CAIP2) as Network; // NEAR Testnet
 const SVM_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" as const; // Solana Devnet
+const STARKNET_NETWORK = (process.env.STARKNET_NETWORK || STARKNET_SEPOLIA_CAIP2) as Network; // Starknet Sepolia
 const STELLAR_NETWORK = "stellar:testnet" as const; // Stellar Testnet
 const HEDERA_HBAR_ASSET = "0.0.0" as const; // Native HBAR asset id
 const HEDERA_WEATHER_PRICE_TINYBARS = "100000" as const; // 0.001 HBAR
@@ -164,6 +169,14 @@ if (svmAddress) {
     payTo: svmAddress,
   });
 }
+if (starknetAddress) {
+  accepts.push({
+    scheme: "exact",
+    price: "$0.001",
+    network: STARKNET_NETWORK,
+    payTo: starknetAddress,
+  });
+}
 if (stellarAddress) {
   accepts.push({
     scheme: "exact",
@@ -220,6 +233,9 @@ if (nearAddress) {
 }
 if (svmAddress) {
   server.register(SVM_NETWORK, new ExactSvmScheme());
+}
+if (starknetAddress) {
+  server.register(STARKNET_NETWORK, new ExactStarknetScheme());
 }
 if (stellarAddress) {
   server.register(STELLAR_NETWORK, new ExactStellarScheme());
@@ -290,6 +306,9 @@ app.listen(port, () => {
   }
   if (svmAddress) {
     console.log(`   SVM: ${svmAddress} on ${SVM_NETWORK}`);
+  }
+  if (starknetAddress) {
+    console.log(`   Starknet: ${starknetAddress} on ${STARKNET_NETWORK}`);
   }
   if (stellarAddress) {
     console.log(`   Stellar: ${stellarAddress} on ${STELLAR_NETWORK}`);
