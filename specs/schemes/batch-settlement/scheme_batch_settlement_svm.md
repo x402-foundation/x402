@@ -171,10 +171,11 @@ and `SettlementResponse` types are defined in
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `paymentFlow` | string | yes | MUST be `"escrow"`, because the deposit settles before the resource handler and later vouchers authorize asynchronous claims. |
+| `paymentFlow` | string | no | When present, MUST be `"authorization"`. The scheme resolves to the protocol-default `authorization` flow: read-only verification runs before the resource handler, and `/settle` commits the voucher — and broadcasts any `deposit` transaction — after it. |
 | `feePayer` | string | yes | Base58 sponsor key set as channel `rent_payer` and zero-share `payee`. Co-signs setup/top-up transactions as transaction fee payer and signs channel lifecycle transactions. |
 | `receiverAuthorizer` | string | no | Base58 server-controlled Ed25519 key that authenticates an optional immediate cooperative close to the facilitator. It is not a payment-channel account field. |
-| `withdrawDelay` | number | yes | Forced-close grace period in seconds. MUST be an integer from `900` through `2592000` (15 minutes through 30 days), MUST be `>= maxTimeoutSeconds`, and MUST be encoded exactly as the program `grace_period`. |
+| `withdrawDelay` | number | yes | Forced-close grace period in seconds. MUST be an integer from `900` through `2592000` (15 minutes through 30 days), MUST be `>= maxTimeoutSeconds`, and MUST be encoded exactly as the program `grace_period`. The payment-channels program accepts any positive `grace_period`; this range is an x402 conformance bound, so verifying facilitators MUST enforce it and reject out-of-range requirements. |
+| `settlementBufferSeconds` | number | no | Positive-integer voucher-expiry margin in seconds used in the Phase 3 expiry bound (section 5). Defaults to `60` when omitted. A server or facilitator requiring a larger margin MUST advertise it here so the client can compute an acceptable `expiresAt` from the 402 alone. |
 | `tokenProgram` | string | yes | SPL Token (`Tokenkeg...`) or Token-2022 (`TokenzQ...`) program that owns `asset`. The client and facilitator MUST verify it against the onchain mint owner. |
 | `memo` | string | no | Seller-defined UTF-8 payment reference for the setup transaction's Memo instruction. Maximum 256 bytes. |
 | `recentBlockhash` | string | no | Pre-fetched blockhash the client MAY use to build an `open` or `top_up` transaction without an RPC round trip. The client MUST refresh it if it is no longer valid. |
@@ -216,7 +217,6 @@ Example:
   "payTo": "<server-receiver>",
   "maxTimeoutSeconds": 300,
   "extra": {
-    "paymentFlow": "escrow",
     "feePayer": "<facilitator-fee-payer>",
     "receiverAuthorizer": "<server-close-authorizer>",
     "withdrawDelay": 3600,
@@ -390,7 +390,6 @@ current request:
     "payTo": "<server-receiver>",
     "maxTimeoutSeconds": 300,
     "extra": {
-      "paymentFlow": "escrow",
       "feePayer": "<facilitator-fee-payer>",
       "receiverAuthorizer": "<server-close-authorizer>",
       "withdrawDelay": 3600,
@@ -445,7 +444,6 @@ transaction:
     "payTo": "<server-receiver>",
     "maxTimeoutSeconds": 300,
     "extra": {
-      "paymentFlow": "escrow",
       "feePayer": "<facilitator-fee-payer>",
       "receiverAuthorizer": "<server-close-authorizer>",
       "withdrawDelay": 3600,
@@ -503,7 +501,6 @@ unless an authenticated server confirms it is the latest accepted voucher.
     "payTo": "<server-receiver>",
     "maxTimeoutSeconds": 300,
     "extra": {
-      "paymentFlow": "escrow",
       "feePayer": "<facilitator-fee-payer>",
       "withdrawDelay": 3600,
       "tokenProgram": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
@@ -903,10 +900,12 @@ server marks the channel closed after confirmation.
 
 #### `GET /supported`
 
-The facilitator advertises the `escrow` payment flow and its SVM transaction
-fee payer. The server MUST copy these values into
-`PaymentRequirements.extra.paymentFlow` and `extra.feePayer`, then set
-`extra.tokenProgram` from the selected asset's verified mint owner. The server
+The facilitator advertises its SVM transaction fee payer. The server MUST copy
+that value into `PaymentRequirements.extra.feePayer`, then set
+`extra.tokenProgram` from the selected asset's verified mint owner. The scheme
+resolves to the protocol-default `authorization` payment flow, so
+`extra.paymentFlow` is normally omitted; when either party emits it, the value
+MUST be `"authorization"`. The server
 MAY also set `extra.receiverAuthorizer` to a key covered by a trusted
 facilitator registration when it wants signed immediate cooperative closes.
 The receiver authorizer is server-owned and is therefore not advertised by the
@@ -920,7 +919,6 @@ facilitator:
       "scheme": "batch-settlement",
       "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
       "extra": {
-        "paymentFlow": "escrow",
         "feePayer": "<facilitator-fee-payer>"
       }
     }
@@ -951,7 +949,6 @@ signed recovery proof:
       "payTo": "<server-receiver>",
       "maxTimeoutSeconds": 300,
       "extra": {
-        "paymentFlow": "escrow",
         "feePayer": "<facilitator-fee-payer>",
         "receiverAuthorizer": "<server-close-authorizer>",
         "withdrawDelay": 3600,
@@ -975,6 +972,18 @@ signed recovery proof:
   ]
 }
 ```
+
+Before adopting the corrective state, the client MUST verify
+`voucherState.signature` against its own `payerAuthorizer` key as an Ed25519
+signature over the 50-byte voucher message of section 4.2, reconstructed from
+the derived `channelId`, `maxClaimableAmount = voucherState.signedMaxClaimable`,
+and `expiresAt = voucherState.expiresAt`. The client MUST reject the snapshot
+when the signature does not verify or when
+`channelState.chargedCumulativeAmount` exceeds `voucherState.signedMaxClaimable`.
+Only after these checks does the client adopt `chargedCumulativeAmount` as its
+new cumulative base and retry. When the server has no accepted voucher for the
+channel, it omits `voucherState` and the client resynchronizes from onchain
+state instead.
 
 ## 5. Phases
 
@@ -1135,8 +1144,10 @@ MUST re-read the channel and verify its status, deposit, mint, payer, payee,
 authorized signer, rent payer, grace period, open slot, and distribution against
 the payload and requirements before reporting settlement success.
 
-After a confirmed `open` or `top_up`, the server records the channel in its
-`ChannelStore` and accepts the request voucher under Phase 3.
+Under the `authorization` flow, the `open` or `top_up` transaction is broadcast
+by the post-handler `/settle`, after the statically validated `deposit` request
+passes Phase 3 and the resource handler succeeds. After the transaction
+confirms, the server records the channel in its `ChannelStore`.
 
 ##### Canonical refund `request_close`
 
@@ -1208,8 +1219,12 @@ the server MUST:
 4. **Expiry, accounting for async settlement.** `expiresAt` is re-checked
    onchain when `settle` or `settle_and_seal` executes. Because redemption is
    delayed, the server MUST require either `expiresAt == 0` or
-   `expiresAt >= now + withdrawDelay + a settlement buffer`. A voucher that
-   could expire before redemption MUST be rejected.
+   `expiresAt >= now + withdrawDelay + settlementBufferSeconds`, where
+   `settlementBufferSeconds` is `extra.settlementBufferSeconds` when advertised
+   and `60` otherwise. The server and the verifying facilitator MUST NOT
+   require a larger margin than that advertised bound, so the client can always
+   compute a passing `expiresAt` from the 402 alone. A voucher that could
+   expire before redemption MUST be rejected.
 5. Enforce the deposit cap: `maxClaimableAmount <= channel.deposit`.
 6. Enforce replay protection and the per-request ceiling:
    - A previously accepted `("access", channelId, maxClaimableAmount)` is an
@@ -1225,6 +1240,16 @@ the server MUST:
    cached response, and return `PAYMENT-RESPONSE` with `transaction == ""`,
    `extra.commitmentId`, `extra.chargedAmount`, and `extra.channelState`. If the
    handler fails, state MUST remain unchanged so the client can retry.
+
+For a `deposit` payload, the `open` or `top_up` transaction is broadcast by the
+post-handler `/settle`, so the checks above run against the statically
+validated transaction: for `open`, the step-3 bindings and the step-5 cap are
+evaluated against the transaction's instruction fields with
+`deposit = payload.deposit.amount`; for `top_up`, against the existing onchain
+channel with its deposit increased by `payload.deposit.amount`. The server
+accepts the risk that a validated deposit transaction later fails to confirm;
+because earlier vouchers were capped by the confirmed deposit, that exposure is
+bounded by the single request's `amount`.
 
 On any failure, the server returns `402` without serving the resource. If the
 server has local channel state and the client submits the wrong cumulative
@@ -1399,8 +1424,8 @@ Standard x402 codes apply. The facilitator reports verification failures in
 
 - `invalid_batch_settlement_svm_payload_type` - payload `type` is not valid for
   the current verify or settle operation.
-- `invalid_batch_settlement_svm_payment_flow` - `extra.paymentFlow` is absent or
-  is not `"escrow"`.
+- `invalid_batch_settlement_svm_payment_flow` - `extra.paymentFlow` is present
+  and is not `"authorization"`.
 - `invalid_batch_settlement_svm_token_program` - `extra.tokenProgram` is not a
   supported SPL token program or does not own the selected mint.
 - `invalid_batch_settlement_svm_voucher_signature` - signature invalid or
