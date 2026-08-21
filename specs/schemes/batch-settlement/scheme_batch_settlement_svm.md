@@ -1457,6 +1457,8 @@ Standard x402 codes apply. The facilitator reports verification failures in
   escrowed deposit.
 - `invalid_batch_settlement_svm_expiry_window_too_short` - voucher may expire
   before redemption.
+- `invalid_batch_settlement_svm_settlement_buffer` - `extra.settlementBufferSeconds`
+  is present and is not a positive integer.
 - `invalid_batch_settlement_svm_setup_transaction` - setup transaction fails the
   sponsor safety checks.
 - `invalid_batch_settlement_svm_settlement_simulation` - setup or
