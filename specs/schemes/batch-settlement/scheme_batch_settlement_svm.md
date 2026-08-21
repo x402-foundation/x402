@@ -175,7 +175,6 @@ and `SettlementResponse` types are defined in
 | `feePayer` | string | yes | Base58 sponsor key set as channel `rent_payer` and zero-share `payee`. Co-signs setup/top-up transactions as transaction fee payer and signs channel lifecycle transactions. |
 | `receiverAuthorizer` | string | no | Base58 server-controlled Ed25519 key that authenticates an optional immediate cooperative close to the facilitator. It is not a payment-channel account field. |
 | `withdrawDelay` | number | yes | Forced-close grace period in seconds. MUST be an integer from `900` through `2592000` (15 minutes through 30 days), MUST be `>= maxTimeoutSeconds`, and MUST be encoded exactly as the program `grace_period`. The payment-channels program accepts any positive `grace_period`; this range is an x402 conformance bound, so verifying facilitators MUST enforce it and reject out-of-range requirements. |
-| `settlementBufferSeconds` | number | no | Positive-integer voucher-expiry margin in seconds used in the Phase 3 expiry bound (section 5). Defaults to `60` when omitted. A server or facilitator requiring a larger margin MUST advertise it here so the client can compute an acceptable `expiresAt` from the 402 alone. |
 | `tokenProgram` | string | yes | SPL Token (`Tokenkeg...`) or Token-2022 (`TokenzQ...`) program that owns `asset`. The client and facilitator MUST verify it against the onchain mint owner. |
 | `memo` | string | no | Seller-defined UTF-8 payment reference for the setup transaction's Memo instruction. Maximum 256 bytes. |
 | `recentBlockhash` | string | no | Pre-fetched blockhash the client MAY use to build an `open` or `top_up` transaction without an RPC round trip. The client MUST refresh it if it is no longer valid. |
@@ -252,7 +251,7 @@ may expose those program fields with language-specific casing.
 | `channelConfig.openSlot` | `Channel.open_slot` |
 | `voucher.channelId` | `VoucherArgs.channel_id` |
 | `voucher.maxClaimableAmount` | `VoucherArgs.cumulative_amount` |
-| `voucher.expiresAt` | `VoucherArgs.expires_at`; `0` disables voucher expiry |
+| `voucher.expiresAt` | `VoucherArgs.expires_at`; MUST be `0` in this scheme |
 | `channelState.balance` | `Channel.deposit` |
 | `channelState.totalClaimed` | `Channel.settled` |
 | `channelState.withdrawRequestedAt` | `Channel.closure_started_at` |
@@ -311,7 +310,7 @@ For a new channel, the `open` instruction MUST encode:
 |---|---|---|
 | `channelId` | string | Channel PDA (base58). |
 | `maxClaimableAmount` | string | Cumulative authorized total in atomic units; maps to program `cumulative_amount`. |
-| `expiresAt` | number | Unix seconds. `0` means no voucher expiry; otherwise the program enforces `now < expiresAt` at `settle` / `settle_and_seal`. |
+| `expiresAt` | number | MUST be `0` (no voucher expiry). The field stays in the signed message for program compatibility; the forced-close grace period alone bounds the redemption window. |
 | `signature` | string | Base58 Ed25519 signature by `channelConfig.payerAuthorizer`. |
 
 The signed message is exactly:
@@ -644,7 +643,7 @@ server-authored or server-enriched variants are:
 | Claim | `claims[].voucher.channelConfig` | `ChannelConfig` | Full channel configuration. |
 | Claim | `claims[].voucher.channelId` | string | Channel PDA. |
 | Claim | `claims[].voucher.maxClaimableAmount` | string | Cumulative amount for program `settle`. |
-| Claim | `claims[].voucher.expiresAt` | number | Voucher expiry. |
+| Claim | `claims[].voucher.expiresAt` | number | MUST be `0`. |
 | Claim | `claims[].signature` | string | Base58 Ed25519 voucher signature. |
 | Settle | `type` | string | `"settle"` |
 | Settle | `channels` | array | One or more channels to distribute. |
@@ -1199,7 +1198,7 @@ needs onchain state plus a voucher when it later settles.
 The server MUST serialize all paid-request and close processing per
 channel.
 The server stores `chargedCumulativeAmount`, `signedMaxClaimable`, the latest
-voucher signature and expiry, and a cached paid-response entry keyed by
+voucher signature, and a cached paid-response entry keyed by
 `("access", channelId, maxClaimableAmount)`. For every paid-request voucher,
 the server MUST:
 
@@ -1216,15 +1215,12 @@ the server MUST:
    matching section 4.1. When `channelConfig.receiverAuthorizer` is supplied,
    confirm it equals `extra.receiverAuthorizer`; otherwise both fields MUST be
    absent. Reject if `payer` or `payerAuthorizer` equals `feePayer`.
-4. **Expiry, accounting for async settlement.** `expiresAt` is re-checked
-   onchain when `settle` or `settle_and_seal` executes. Because redemption is
-   delayed, the server MUST require either `expiresAt == 0` or
-   `expiresAt >= now + withdrawDelay + settlementBufferSeconds`, where
-   `settlementBufferSeconds` is `extra.settlementBufferSeconds` when advertised
-   and `60` otherwise. The server and the verifying facilitator MUST NOT
-   require a larger margin than that advertised bound, so the client can always
-   compute a passing `expiresAt` from the 402 alone. A voucher that could
-   expire before redemption MUST be rejected.
+4. **No voucher expiry.** The client MUST sign `expiresAt = 0`, and the
+   server and facilitator MUST reject any voucher with nonzero `expiresAt`.
+   The forced-close grace period already bounds the redemption window after a
+   payer `request_close`; a per-voucher expiry would add a second clock the
+   server has to beat and could make an accepted voucher unredeemable while
+   the channel is still open, after the resource has been served.
 5. Enforce the deposit cap: `maxClaimableAmount <= channel.deposit`.
 6. Enforce replay protection and the per-request ceiling:
    - A previously accepted `("access", channelId, maxClaimableAmount)` is an
@@ -1455,10 +1451,8 @@ Standard x402 codes apply. The facilitator reports verification failures in
   client's cumulative voucher does not match server state.
 - `invalid_batch_settlement_svm_cumulative_exceeds_deposit` - voucher exceeds
   escrowed deposit.
-- `invalid_batch_settlement_svm_expiry_window_too_short` - voucher may expire
-  before redemption.
-- `invalid_batch_settlement_svm_settlement_buffer` - `extra.settlementBufferSeconds`
-  is present and is not a positive integer.
+- `invalid_batch_settlement_svm_voucher_expiry` - voucher `expiresAt` is
+  nonzero; this scheme requires non-expiring vouchers.
 - `invalid_batch_settlement_svm_setup_transaction` - setup transaction fails the
   sponsor safety checks.
 - `invalid_batch_settlement_svm_settlement_simulation` - setup or
@@ -1519,12 +1513,13 @@ Standard x402 codes apply. The facilitator reports verification failures in
   does not settle, the payer can start forced close and recover unspent escrow
   after the grace period. The protocol bounds that delay to 15 minutes through
   30 days and never shorter than the HTTP completion window.
-- **Time-bounded commitments.** Nonzero voucher `expiresAt` is checked both at
-  server acceptance and onchain redemption. `expiresAt == 0` means no voucher
-  expiry; in that case the channel's forced-close path bounds the commitment.
+- **Single settlement clock.** Vouchers never expire (`expiresAt` is fixed at
+  `0`); the channel's forced-close path alone bounds the commitment. The server
+  beats one clock — the grace period after a payer `request_close` — and an
+  accepted voucher can never become unredeemable while the channel is open.
 - **Fixed pricing.** Each fresh voucher increases the cumulative authorization
   by exactly `PaymentRequirements.amount`. The server trusts itself to redeem
-  before voucher expiry or forced-close expiry.
+  before forced-close expiry.
 
 ## 9. Out of Scope
 
