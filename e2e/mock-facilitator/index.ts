@@ -24,8 +24,13 @@ const DUMMY_SIGNERS: Record<string, string[]> = {
   aptos: ["0x0000000000000000000000000000000000000000000000000000000000000001"],
   stellar: ["GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"],
   near: ["relayer.testnet"],
+  starknet: ["0x1"],
   xrpl: [],
 };
+
+// The Starknet feePayer is the account that sponsors settlement gas. Resource
+// servers copy it verbatim out of /supported into PaymentRequirements.extra.
+const STARKNET_FEE_PAYER = process.env.FACILITATOR_STARKNET_ADDRESS || DUMMY_SIGNERS.starknet[0];
 
 function buildSupportedResponse() {
   const networkIds = catalogNetworkIds();
@@ -41,6 +46,7 @@ function buildSupportedResponse() {
     x402Version: number;
     scheme: string;
     network: string;
+    extra?: Record<string, unknown>;
   }> = [];
 
   for (const version of versions) {
@@ -48,6 +54,19 @@ function buildSupportedResponse() {
       const caip2 = resolveNetworkCaip2(networkId);
       const schemes = schemesForNetwork(networkId);
       for (const scheme of schemes) {
+        // Starknet is v2 only, and every kind MUST carry extra.feePayer: a
+        // resource server cannot build a signable 402 from a kind that omits it.
+        if (networkId === "starknet") {
+          if (version === 2) {
+            kinds.push({
+              x402Version: 2,
+              scheme,
+              network: caip2,
+              extra: { feePayer: STARKNET_FEE_PAYER },
+            });
+          }
+          continue;
+        }
         kinds.push({ x402Version: version, scheme, network: caip2 });
       }
     }

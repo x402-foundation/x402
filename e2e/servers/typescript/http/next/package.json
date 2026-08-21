@@ -19,6 +19,7 @@
     "@x402/near": "workspace:*",
     "@x402/extensions": "workspace:*",
     "@x402/next": "workspace:*",
+    "@x402/starknet": "workspace:*",
     "@x402/stellar": "workspace:*",
     "@x402/svm": "workspace:*",
     "@x402/tvm": "workspace:*",
@@ -26,6 +27,7 @@
     "next": "^16.2.6",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
+    "starknet": "^8.9.2",
     "viem": "^2.48.11"
   },
   "devDependencies": {

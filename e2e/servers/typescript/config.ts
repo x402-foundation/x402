@@ -2,6 +2,7 @@ import { ExactAvmScheme } from "@x402/avm/exact/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { UptoEvmScheme } from "@x402/evm/upto/server";
 import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/server";
+import { ExactStarknetScheme } from "@x402/starknet/exact/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { UptoSvmScheme } from "@x402/svm/upto/server";
 import { base58 } from "@scure/base";
@@ -106,6 +107,9 @@ async function registerFamilySchemes(
     }
     case "aptos":
       server.register(pattern, new ExactAptosScheme());
+      return;
+    case "starknet":
+      server.register(pattern, new ExactStarknetScheme());
       return;
     case "hedera":
       server.register(pattern, new ExactHederaScheme());
