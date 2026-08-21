@@ -43,7 +43,7 @@ While implementation details vary by network, facilitators MUST enforce security
 
 ### Starknet
 
-- Facilitator safety: the submitting executor MUST come from facilitator configuration, never client input, and MUST NOT be the payer or the recipient.
+- Facilitator safety: the submitting executor MUST come from facilitator configuration, never client input, and MUST NOT be the payer (it MAY equal `payTo` for merchant-sponsored settlement).
 - Transfer correctness: the signed SNIP-9 OutsideExecution MUST contain exactly one call — `transfer` on `requirements.asset` with calldata `[payTo, amount_low, amount_high]` — and the u256 amount MUST equal `requirements.amount` exactly.
 - Signature validity: the SNIP-12 hash MUST be computed from the facilitator's own canonical reconstruction of the typed data and validate via SNIP-6 `is_valid_signature`.
 - Caller binding and expiry: `Caller` MUST equal `extra.feePayer` — the required sponsor address the facilitator announces via `/supported` and the resource server puts in the requirements; `Execute Before` MUST cover the advertised `maxTimeoutSeconds` window (within a skew margin) at verification, with a minimum remaining window at settlement.
