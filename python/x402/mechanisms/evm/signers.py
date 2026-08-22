@@ -275,6 +275,7 @@ class FacilitatorWeb3Signer:
         private_key: str,
         rpc_url: str,
         confirmation_timeout_seconds: float = _DEFAULT_CONFIRMATION_TIMEOUT_SECONDS,
+        gas_limit: int = _DEFAULT_TX_GAS_LIMIT,
     ) -> None:
         """Initialize signer with private key and RPC connection.
 
@@ -284,6 +285,7 @@ class FacilitatorWeb3Signer:
             confirmation_timeout_seconds: Seconds to wait for a settlement receipt before
                 raising. Set below your platform's request deadline so settle returns
                 `settlement_pending` instead of the process being killed mid-wait.
+            gas_limit: Gas limit for transactions sent by the facilitator.
 
         """
         # Normalize private key format
@@ -293,6 +295,7 @@ class FacilitatorWeb3Signer:
         self._account = Account.from_key(private_key)
         self._w3 = Web3(Web3.HTTPProvider(rpc_url))
         self._confirmation_timeout_seconds = confirmation_timeout_seconds
+        self._gas_limit = gas_limit
 
         # Add PoA middleware for testnets (Base, Polygon, etc.)
         self._w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
@@ -510,7 +513,7 @@ class FacilitatorWeb3Signer:
             {
                 "from": self._account.address,
                 "nonce": self._reserve_nonce(),
-                "gas": _DEFAULT_TX_GAS_LIMIT,
+                "gas": self._gas_limit,
                 "gasPrice": self._w3.eth.gas_price,
             }
         )
@@ -542,7 +545,7 @@ class FacilitatorWeb3Signer:
             "to": Web3.to_checksum_address(to),
             "data": data,
             "nonce": self._reserve_nonce(),
-            "gas": _DEFAULT_TX_GAS_LIMIT,
+            "gas": self._gas_limit,
             "gasPrice": self._w3.eth.gas_price,
         }
 
