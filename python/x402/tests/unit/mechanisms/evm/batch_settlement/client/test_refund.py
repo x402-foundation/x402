@@ -30,7 +30,7 @@ try:
     from x402.mechanisms.evm.batch_settlement.types import ChannelConfig
     from x402.mechanisms.evm.batch_settlement.utils import compute_channel_id
     from x402.mechanisms.evm.signers import EthAccountSigner
-    from x402.schemas import PaymentRequired, PaymentRequirements, SettleResponse
+    from x402.schemas import PaymentRequired, PaymentRequirements, ResourceInfo, SettleResponse
 except ImportError:
     pytest.skip("batch_settlement requires evm extras", allow_module_level=True)
 
@@ -67,7 +67,11 @@ def _requirements() -> PaymentRequirements:
 
 
 def _payment_required() -> PaymentRequired:
-    return PaymentRequired(x402_version=2, accepts=[_requirements()])
+    return PaymentRequired(
+        resource=ResourceInfo(url="https://example.com/resource"),
+        x402_version=2,
+        accepts=[_requirements()],
+    )
 
 
 def _channel_id_for_signer(signer: EthAccountSigner) -> str:
@@ -177,6 +181,7 @@ class TestRefundChannel:
     def test_probe_without_batch_settlement_raises(self):
         deps = _deps()
         pr = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[
                 PaymentRequirements(
@@ -210,7 +215,9 @@ class TestRefundChannel:
             max_timeout_seconds=60,
             extra={},
         )
-        pr = PaymentRequired(x402_version=2, accepts=[req])
+        pr = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"), x402_version=2, accepts=[req]
+        )
         fetch = _FakeFetch(
             _RefundResponse(
                 status=402,

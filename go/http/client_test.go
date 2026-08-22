@@ -30,6 +30,7 @@ func TestNewx402HTTPClient(t *testing.T) {
 func TestPaymentRoundTripper_OnPaymentRequiredHeaderRetry(t *testing.T) {
 	required := types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Extensions: map[string]interface{}{
 			"sign-in-with-x": map[string]interface{}{"info": map[string]interface{}{"nonce": "abc"}},
 		},
@@ -225,6 +226,7 @@ func TestPaymentRoundTripper_RejectsOversizedAuthRetry402(t *testing.T) {
 func TestPaymentRoundTripper_OnPaymentRequiredHookSkippedWithoutHeaders(t *testing.T) {
 	required := types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Accepts: []types.PaymentRequirements{
 			{Scheme: "unsupported", Network: "eip155:1"},
 		},
@@ -269,6 +271,7 @@ func TestPaymentRoundTripper_OnPaymentRequiredHookSkippedWithoutHeaders(t *testi
 func TestPaymentRoundTripper_OnPaymentRequiredPassesRequestURL(t *testing.T) {
 	required := types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Accepts: []types.PaymentRequirements{
 			{Scheme: "unsupported", Network: "eip155:1"},
 		},
@@ -318,6 +321,7 @@ func TestPaymentRoundTripper_OnPaymentRequiredPassesRequestURL(t *testing.T) {
 func TestPaymentRoundTripper_RegisteredExtensionHookRetry(t *testing.T) {
 	required := types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Extensions: map[string]interface{}{
 			"test-extension": map[string]interface{}{"info": map[string]interface{}{"nonce": "abc"}},
 		},
@@ -378,6 +382,7 @@ func TestPaymentRoundTripper_RegisteredExtensionHookRetry(t *testing.T) {
 func TestPaymentRoundTripper_RegisteredExtensionHookSkippedWithoutDeclaration(t *testing.T) {
 	required := types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Extensions: map[string]interface{}{
 			"other-extension": map[string]interface{}{},
 		},
@@ -595,6 +600,7 @@ func TestGetPaymentRequiredResponse(t *testing.T) {
 	// Test v2 header format
 	requirements := x402.PaymentRequired{
 		X402Version: 2,
+		Resource:    &x402.ResourceInfo{URL: "https://example.com/resource"},
 		Error:       "Payment required",
 		Accepts: []x402.PaymentRequirements{
 			{
@@ -789,6 +795,7 @@ func TestPaymentRoundTripper(t *testing.T) {
 			// First call - return 402
 			requirements := x402.PaymentRequired{
 				X402Version: 2,
+				Resource:    &x402.ResourceInfo{URL: "https://example.com/resource"},
 				Error:       "Payment required",
 				Accepts: []x402.PaymentRequirements{
 					{
@@ -869,6 +876,7 @@ func TestPaymentRoundTripper_ReplaysOneShotBody(t *testing.T) {
 			var bodies []string
 			required := types.PaymentRequired{
 				X402Version: 2,
+				Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 				Extensions: map[string]interface{}{
 					"sign-in-with-x": map[string]interface{}{"info": map[string]interface{}{"nonce": "abc"}},
 				},
@@ -1220,7 +1228,7 @@ func (m *hookSchemeClient) OnPaymentResponse(ctx context.Context, prCtx x402.Pay
 
 func paymentRequiredHeader(t *testing.T, accepts []types.PaymentRequirements) string {
 	t.Helper()
-	pr := types.PaymentRequired{X402Version: 2, Accepts: accepts}
+	pr := types.PaymentRequired{X402Version: 2, Resource: &types.ResourceInfo{URL: "https://example.com/resource"}, Accepts: accepts}
 	encoded, err := encodePaymentRequiredHeader(pr)
 	if err != nil {
 		t.Fatalf("encodePaymentRequired: %v", err)
