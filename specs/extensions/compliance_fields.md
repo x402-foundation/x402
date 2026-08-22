@@ -85,6 +85,8 @@ Sequential numbering is a **completeness** control, not an ordering convenience 
 
 > A sequence that is assigned, held, and attested by the issuer of the records it numbers evidences ordering only. **Verifiers MUST NOT treat an issuer-attested sequence as evidence that no record was omitted.**
 
+Publishing records or sequence heads into a public log does not change this. Inclusion of a record in a log evidences that the record existed when it was included; cosignatures over that log's checkpoint, by however many independent parties, evidence that the log's own history is consistent. Neither speaks to the records the issuer never included. **Verifiers MUST NOT treat inclusion proofs or checkpoint cosignatures as a completeness attestation.** Completeness requires a non-party attestation over the sequence itself, made when the records were issued; a party that cosigns a log the issuer writes to is not attesting the issuer's sequence.
+
 Who supplies non-issuer observation of a sequence is a service-layer question, intentionally out of scope for this spec.
 
 ### Existence and precedence (normative)
@@ -111,7 +113,8 @@ Anchoring composes with sequential numbering, and the composition is where compl
 survives: anchoring an individual `recordDigest` evidences the existence of *that record only* —
 a party can anchor the records it keeps and omit the ones it doesn't, so **per-record anchors
 MUST NOT be treated as evidence that no record was omitted.** Anchoring a commitment over an
-issuer's full sequence (a head covering `seq` 1..N) yields existence *and* completeness in one
+issuer's full sequence (a head covering `seq` 1..N) yields existence *and* — where that head is
+attested by a non-party, per the sequential-numbering rule above — completeness in one
 proof: every record with `seq ≤ N` is committed under the head, precedence is inherited, and a
 gap is visible against `seq`.
 
