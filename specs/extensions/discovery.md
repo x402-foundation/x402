@@ -301,12 +301,72 @@ publish the manifest alone — resolution step 2 below still finds them.
 
 ## Resolution algorithm
 
-Given a domain `D`, a client resolves x402 capability as:
+### Determining `D` from a resource URL
+
+A consumer usually holds a **resource URL**, not a domain. This section says how
+to get from one to the other; the algorithm below then takes `D` as given.
+
+Querying only `_x402.<exact-host>` is not sufficient, and the failure is not
+theoretical: a survey of 1,609 catalogued hosts on 2026-08-22 recorded **this
+extension's own author as publishing nothing**, because the record sits at the
+apex while its `wk` target is a service subdomain. One DNS zone in front of
+several service hosts is the natural arrangement, and the narrow reading makes
+those publishers invisible. On a later 1,617-host walk, **three of the seven
+live `_x402` records on the network sat at names that were not themselves
+catalogued hosts** — reachable only by climbing.
+
+Consumers **MUST** query the resource host first, and **MAY** then query
+ancestor names, nearest first, stopping at the first name that yields a usable
+record. Implementations **SHOULD** bound this at two ancestors and **MUST NOT**
+query a name of fewer than two labels. Measured against the same 1,617 hosts,
+that bound leaves only 7 (0.4%) unable to reach their own apex.
+
+**An ancestor's record only speaks for a host it names.** Under a shared hosting
+suffix the ancestor is controlled by the platform rather than the tenant, so one
+record would otherwise make every name beneath it discoverable — including
+tenants that published nothing, and names that do not resolve at all. That is
+not hypothetical either: in the same survey an invented subdomain inherited the
+author's apex record.
+
+Accordingly, a manifest obtained from an ancestor name `A` applies to a host `H`
+(where `H` is `A` or a subdomain of `A`) **only if the manifest itself
+references `H`**, in `facilitator.baseUrl` or in an entry of `resources`. A
+referenced URL counts only when its own host is `A` or a subdomain of `A`. If
+the manifest does not reference `H`, the consumer **MUST** treat discovery as
+having failed for `H` rather than attributing the ancestor's capability to it. A
+manifest retrieved from `H` itself always applies to `H`.
+
+This rule deliberately avoids depending on a public suffix list: such a list is
+a mutable external dependency, it disagrees with operational reality for
+privately delegated suffixes, and an error in it converts silently into a false
+claim that a host is discoverable. Requiring the zone operator to name the host
+is a positive statement by a party in a position to make it.
+
+> **Note for implementers.** That justification describes a *zone* operator, and
+> under a shared suffix the zone operator is not the host's operator. In a walk
+> over 1,617 catalogued hosts, 384 (23.7%) reach a name that is itself a public
+> suffix — `workers.dev`, `vercel.app`, `up.railway.app`, `onrender.com`,
+> `a.run.app`. No such suffix carries an `_x402` record today, so the naming rule
+> above is what keeps this safe rather than an assumption about who controls the
+> ancestor.
+
+**Normative source.** These rules are maintained in
+`draft-hawkins-x402-dns-discovery` §5 and restated here so that an implementer
+reading this document has the complete algorithm. If the two ever disagree, the
+draft is the source and this text is the defect.
+
+### Resolving a domain to a capability
+
+Given a domain `D` — the host itself, or an ancestor admitted by the rule above
+— a client resolves x402 capability as:
 
 1. Query TXT for `_x402.D`. If a record with `v=x402-1` exists, fetch the
    manifest from its `wk` URL (rejecting non-HTTPS or out-of-domain URLs).
    A record that fails to parse under the grammar above is treated as
-   absent, not as an error.
+   absent, not as an error. Consumers **MUST** ask whether a TXT record was
+   returned that parses, not whether the query returned an answer: under a
+   wildcard-CNAME zone `_x402.<name>` answers NOERROR with a CNAME and no TXT at
+   all, which a naive reader scores as a record.
    Consumers **MUST** re-apply the in-domain constraint to **every redirect
    hop**, and report the final URL as the manifest source. Checking only the
    URL that was requested validates a location the bytes need not have come
