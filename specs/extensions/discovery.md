@@ -311,21 +311,25 @@ failure this extension exists to prevent:
 | observed | records | why it is not a record |
 |---|---|---|
 | `https://host/.well-known/x402` (bare URL) | 2 | no `v=`, no pointer token |
-| `v=x4021;descriptor=…;url=https://…` | 1 | same version defect; `descriptor=` is a token from a different draft |
-| `v=x4021;url=https://…` | 1 | version token is `x4021`, not `x402-1`; pointer is `url=` |
+| `v=x4021;descriptor=…;url=https://…` | 1 | conforms to **draft-jeftovic-x402-dns-discovery** §4, a different published draft |
+| `v=x4021;url=https://…` | 1 | conforms to **draft-jeftovic-x402-dns-discovery** §4, a different published draft |
 | `x402-manifest=https://…` | 1 | no `v=`; unrecognised pointer token |
 | `v=x402-1; wk=https://…` | 2 | **conforming** — one operator publishing at both apex and host |
 
-**2 of the 5 independently spell the version token `x4021`.** That is the
-finding most worth acting on: a misspelling 2 of 6 operators arrive at
-separately is the one a seventh is most likely to arrive at too, which is why it
-is named here rather than left for each consumer to decide about.
+⚠️ **2 of these 5 are not malformed — they conform to a different draft.**
+`draft-jeftovic-x402-dns-discovery` §4 defines `version = "x4021"` as a literal and
+`url=` as its pointer, and one of the two records is that draft's own example with
+the domain substituted. So a consumer refusing them is not rejecting a malformed
+record — it is
+**declining to honour another specification's conforming publishers**, which is a
+spec-conflict decision and belongs to the working group rather than to this table.
+Recorded here so that nobody reads the row above as a spelling mistake.
 
 <!-- END GENERATED -->
 
-Consumers **MUST NOT** accept any of the first three. Each fails the version
-check before the pointer is ever considered, and each is treated as absent under
-step 1 rather than as an error — a publisher has no in-band way to learn their
+Consumers **MUST NOT** accept any of them under *this* grammar: each fails the
+version check before the pointer is ever considered, and each is treated as
+absent under step 1 rather than as an error — a publisher has no in-band way to learn their
 record is malformed, so an absent verdict is the one that lets them keep serving
 while the manifest path still works.
 
@@ -337,9 +341,18 @@ fragments, verification strings and wildcard answers at names nobody expected.
 spelling no operator would then be required to fix.
 
 For the same reason this extension does **not** alias `url=` to `wk=`. Every
-non-conforming record above fails on `v=` as well, so an alias would convert no
-existing publisher while leaving two spellings in the grammar permanently. The
-cheaper correction is the publisher's, and it is two tokens.
+record above fails on `v=` as well, so an alias would convert no existing
+publisher while leaving two spellings in the grammar permanently.
+
+**The two `v=x4021` records are a different matter and this document does not
+settle it.** They are conforming publishers of `draft-jeftovic-x402-dns-discovery`,
+which reached the same primitive independently and earlier — a `_x402` TXT record
+pointing at an HTTPS manifest — with an incompatible spelling. Two drafts sharing
+a registered label and disagreeing on its grammar is a question for the working
+group and the IANA registrant, not something to resolve by whichever consumer
+ships first. Until it is settled, a consumer following this document treats those
+records as absent and falls through to the well-known path, which is the outcome
+that harms neither publisher.
 
 ## Resolution algorithm
 
