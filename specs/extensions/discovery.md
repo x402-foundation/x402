@@ -56,7 +56,7 @@ https://<host>/.well-known/x402
 
 ```json
 {
-  "x402Version": 1,
+  "x402Version": 2,
   "kind": "facilitator",
   "name": "Example Facilitator",
   "description": "One-line human description.",
@@ -122,6 +122,18 @@ A `resources` entry MUST be either a **bare pointer** — `url`, and optionally 
 to construct a payment without a round trip. A partially populated entry MUST NOT be
 published, and consumers MUST treat one as a bare pointer: dereference the `url`, take the
 402 as authoritative, and ignore the partial fields entirely.
+
+An entry MAY also be a bare **string**, which MUST be treated as exactly equivalent to
+`{"url": <string>}` and therefore as a bare pointer. This is not a courtesy to sloppy
+publishers: it is the modal deployed shape. In a survey of 1,619 catalogued hosts, 380 of
+the 442 that publish a version-like key outside this specification's vocabulary carry
+`resources` as an array of strings, and an independent 171-host census reports 52 of 76.
+Leaving the type undefined would leave a strict consumer type-erroring on the most common
+manifest on the network while a lenient one invented this same coercion privately — which
+is the mechanism this extension exists to stop, reproduced one layer down.
+
+Consumers MUST NOT infer any other field from a string entry. A string says where, and
+nothing about price, network or scheme; those come from the 402.
 
 The reason is that payment data rots and the 402 challenge does not. A complete entry is a
 standing promise to keep `asset` and `payTo` correct forever; a bare pointer delegates that
