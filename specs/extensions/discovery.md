@@ -103,7 +103,7 @@ https://<host>/.well-known/x402
 | `x402Version` | MUST | Highest x402 protocol version the host speaks. MUST be a JSON number (integer), not a string, and MUST NOT be spelled `version` — the field carries the same name and type as the `x402Version` in the host's own 402 challenge. See Migration. |
 | `kind` | MUST | `"facilitator"`, `"resource-server"`, or `"both"`. |
 | `name`, `description` | SHOULD | Human-readable identification. |
-| `facilitator` | MUST if `kind` includes facilitator; MAY if `kind` is `resource-server` | **When `kind` includes facilitator: an object** — the capability block described by the rows below — and a consumer **MUST** reject a non-object value. **When `kind` is `resource-server`: a string** is permitted, and names the HTTPS base URL of the facilitator this host routes its payments through. A string `facilitator` is a *pointer*, not a capability block: consumers **MUST NOT** dereference it directly — it is a third party, so the same-origin rule on `facilitator.baseUrl` cannot protect that fetch — and **MAY** instead discover the named facilitator by running this same procedure against its host, whose own manifest is same-origin for it. This is the shape already deployed: of 14 publishers carrying the field in an independent 171-host census on 2026-08-23, 12 publish a string with this meaning and 0 publish a conforming object (Circadian-agent, x402#2979). The extension gives that incumbent a defined meaning rather than leaving a lenient consumer to invent one. |
+| `facilitator` | MUST if `kind` includes facilitator; MAY if `kind` is `resource-server` | **When `kind` includes facilitator: an object** — the capability block described by the rows below — and a consumer **MUST** reject a non-object value. **When `kind` is `resource-server`: a string** is permitted, and names the HTTPS base URL of the facilitator this host routes its payments through. A string `facilitator` is a *pointer*, not a capability block: consumers **MUST NOT** dereference it directly — it is a third party, so the same-origin rule on `facilitator.baseUrl` cannot protect that fetch — and **MAY** instead discover the named facilitator by running this same procedure against its host, whose own manifest is same-origin for it. This is the shape already deployed: of 14 publishers carrying the field in Circadian-agent's 171-host census on 2026-08-23 — a corpus that partially overlaps ours, not an independent sample — 12 publish a string with this meaning and 0 publish a conforming object (x402#2979). The extension gives that incumbent a defined meaning rather than leaving a lenient consumer to invent one. |
 | `facilitator.baseUrl` | MUST | HTTPS base URL of the facilitator API. It **MUST** be on the same domain as, or a subdomain of, the host serving the manifest, and consumers **MUST** reject manifests that violate this. Without it a host can name someone else's facilitator as its own — the very thing the `wk` same-origin rule exists to prevent — and turn every conforming crawler into a request amplifier aimed at a third party. |
 | `facilitator.endpoints` | MUST | Relative paths for `supported`/`verify`/`settle` (hosts differ; don't guess). |
 | `facilitator.kinds` | MUST | **Live mirror of `GET {baseUrl}{endpoints.supported}`.** Divergence between the manifest and the live endpoint is a misconfiguration; consumers MUST prefer the live endpoint. |
@@ -434,15 +434,18 @@ is a positive statement by a party in a position to make it.
 > frame and not comparable across draws without the digest.
 
 **Normative source.** These rules are maintained in
-`draft-hawkins-x402-dns-discovery-03`, Section 5, and restated here so that an
-implementer reading this document has the complete algorithm. If the two ever
-disagree, the draft is the source and this text is the defect. The pin names a
-revision on purpose: an unpinned pointer made a disagreement undiagnosable —
-a reader could not tell whether this text was stale or they were. Revision -02
-predates two corrections that were made here first (the CNAME/NOERROR rule in
-step 1 below, and "a party" above); -03 carries both back. A reader comparing
-this text against -02 will find exactly those two differences, and they are
--02's.
+`draft-hawkins-x402-dns-discovery-03` — Section 5 for the derivation of `D` and
+the ancestor walk, Section 6 for the resolution algorithm — and restated here so
+that an implementer reading this document has the complete algorithm. If the two
+ever disagree, the draft is the source and this text is the defect. The pin
+names a revision on purpose: an unpinned pointer made a disagreement
+undiagnosable — a reader could not tell whether this text was stale or they
+were. This text and -03 agree on every rule. A reader comparing this text
+against **-02** will find differences, and they are -02's: it predates the
+`SHOULD` on the ancestor walk and the "a party" wording (both Section 5), and
+the host-comparison rule and the CNAME/NOERROR rule in step 1 (both Section 6).
+Each was corrected here first and carried into -03. They are listed by name
+rather than counted, so that a stale list is visibly stale.
 
 ### Resolving a domain to a capability
 
