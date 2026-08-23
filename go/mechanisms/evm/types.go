@@ -541,3 +541,206 @@ type ERC6492SignatureData struct {
 	FactoryCalldata []byte   // Calldata to deploy the wallet (empty if not ERC-6492)
 	InnerSignature  []byte   // The actual signature (EIP-1271 or EOA)
 }
+
+// AuthCapturePaymentInfo represents the on-chain PaymentInfo struct for the authCapture scheme.
+type AuthCapturePaymentInfo struct {
+	Operator            string `json:"operator"`            // Capture authorizer address
+	Payer               string `json:"payer"`               // Payer address (== authorization.from, set by client)
+	Receiver            string `json:"receiver"`            // Receiver address (== requirements.payTo)
+	Token               string `json:"token"`               // Token address (== requirements.asset)
+	MaxAmount           string `json:"maxAmount"`           // uint120 as decimal string
+	PreApprovalExpiry   uint64 `json:"preApprovalExpiry"`   // Unix timestamp
+	AuthorizationExpiry uint64 `json:"authorizationExpiry"` // Unix timestamp
+	RefundExpiry        uint64 `json:"refundExpiry"`        // Unix timestamp
+	MinFeeBps           uint16 `json:"minFeeBps"`           // Minimum fee in basis points
+	MaxFeeBps           uint16 `json:"maxFeeBps"`           // Maximum fee in basis points
+	FeeReceiver         string `json:"feeReceiver"`         // Fee receiver address (address(0) = flexible)
+	Salt                string `json:"salt"`                // uint256 as hex string
+}
+
+// AuthCaptureEip3009Payload is the wire payload for the authCapture scheme using ERC-3009.
+// Only the ERC-3009 authorization, signature, and a fresh client-generated salt are sent on
+// the wire. The facilitator reconstructs the full PaymentInfo from requirements + extra + salt.
+type AuthCaptureEip3009Payload struct {
+	Authorization ExactEIP3009Authorization `json:"authorization"`
+	Signature     string                    `json:"signature"`
+	Salt          string                    `json:"salt"` // bytes32 hex string, fresh per request
+}
+
+// ToMap converts an AuthCaptureEip3009Payload to a map for JSON marshaling.
+func (p *AuthCaptureEip3009Payload) ToMap() map[string]interface{} {
+	return map[string]interface{}{
+		"authorization": map[string]interface{}{
+			"from":        p.Authorization.From,
+			"to":          p.Authorization.To,
+			"value":       p.Authorization.Value,
+			"validAfter":  p.Authorization.ValidAfter,
+			"validBefore": p.Authorization.ValidBefore,
+			"nonce":       p.Authorization.Nonce,
+		},
+		"signature": p.Signature,
+		"salt":      p.Salt,
+	}
+}
+
+// AuthCaptureEip3009PayloadFromMap creates an AuthCaptureEip3009Payload from a map.
+func AuthCaptureEip3009PayloadFromMap(data map[string]interface{}) (*AuthCaptureEip3009Payload, error) {
+	payload := &AuthCaptureEip3009Payload{}
+
+	sig, ok := data["signature"].(string)
+	if !ok || sig == "" {
+		return nil, fmt.Errorf("missing or invalid signature field")
+	}
+	payload.Signature = sig
+
+	salt, ok := data["salt"].(string)
+	if !ok || salt == "" {
+		return nil, fmt.Errorf("missing or invalid salt field")
+	}
+	payload.Salt = salt
+
+	auth, ok := data["authorization"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("missing or invalid authorization field")
+	}
+	if v, ok := auth["from"].(string); ok {
+		payload.Authorization.From = v
+	}
+	if v, ok := auth["to"].(string); ok {
+		payload.Authorization.To = v
+	}
+	if v, ok := auth["value"].(string); ok {
+		payload.Authorization.Value = v
+	}
+	if v, ok := auth["validAfter"].(string); ok {
+		payload.Authorization.ValidAfter = v
+	}
+	if v, ok := auth["validBefore"].(string); ok {
+		payload.Authorization.ValidBefore = v
+	}
+	if v, ok := auth["nonce"].(string); ok {
+		payload.Authorization.Nonce = v
+	}
+
+	return payload, nil
+}
+
+// IsAuthCaptureEip3009Payload checks if a payload map is an authCapture EIP-3009 payload.
+// Must have "authorization", "signature", and "salt" keys (no "paymentInfo").
+func IsAuthCaptureEip3009Payload(data map[string]interface{}) bool {
+	_, hasAuth := data["authorization"]
+	_, hasSig := data["signature"]
+	_, hasSalt := data["salt"]
+	_, hasPaymentInfo := data["paymentInfo"]
+	return hasAuth && hasSig && hasSalt && !hasPaymentInfo
+}
+
+// AuthCapturePermit2Authorization holds the Permit2 authorization fields for authCapture.
+// Differs from the exact/upto Permit2 authorization in that it has no witness struct —
+// the merchant binding is enforced through the deterministic nonce instead.
+type AuthCapturePermit2Authorization struct {
+	From      string                  `json:"from"`      // Signer/owner address (hex)
+	Permitted Permit2TokenPermissions `json:"permitted"` // Token and amount
+	Spender   string                  `json:"spender"`   // Must be PERMIT2_TOKEN_COLLECTOR_ADDRESS
+	Nonce     string                  `json:"nonce"`     // uint256 as decimal string (payer-agnostic PaymentInfo hash)
+	Deadline  string                  `json:"deadline"`  // Unix timestamp as decimal string (= preApprovalExpiry)
+}
+
+// AuthCapturePermit2Payload is the wire payload for the authCapture scheme using Permit2.
+type AuthCapturePermit2Payload struct {
+	Permit2Authorization AuthCapturePermit2Authorization `json:"permit2Authorization"`
+	Signature            string                          `json:"signature"`
+	Salt                 string                          `json:"salt"` // bytes32 hex string, fresh per request
+}
+
+// ToMap converts an AuthCapturePermit2Payload to a map for JSON marshaling.
+func (p *AuthCapturePermit2Payload) ToMap() map[string]interface{} {
+	return map[string]interface{}{
+		"permit2Authorization": map[string]interface{}{
+			"from": p.Permit2Authorization.From,
+			"permitted": map[string]interface{}{
+				"token":  p.Permit2Authorization.Permitted.Token,
+				"amount": p.Permit2Authorization.Permitted.Amount,
+			},
+			"spender":  p.Permit2Authorization.Spender,
+			"nonce":    p.Permit2Authorization.Nonce,
+			"deadline": p.Permit2Authorization.Deadline,
+		},
+		"signature": p.Signature,
+		"salt":      p.Salt,
+	}
+}
+
+// AuthCapturePermit2PayloadFromMap creates an AuthCapturePermit2Payload from a map.
+func AuthCapturePermit2PayloadFromMap(data map[string]interface{}) (*AuthCapturePermit2Payload, error) {
+	payload := &AuthCapturePermit2Payload{}
+
+	sig, ok := data["signature"].(string)
+	if !ok || sig == "" {
+		return nil, fmt.Errorf("missing or invalid signature field")
+	}
+	payload.Signature = sig
+
+	salt, ok := data["salt"].(string)
+	if !ok || salt == "" {
+		return nil, fmt.Errorf("missing or invalid salt field")
+	}
+	payload.Salt = salt
+
+	auth, ok := data["permit2Authorization"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("missing or invalid permit2Authorization field")
+	}
+
+	if v, ok := auth["from"].(string); ok {
+		payload.Permit2Authorization.From = v
+	} else {
+		return nil, fmt.Errorf("missing or invalid permit2Authorization.from field")
+	}
+
+	if v, ok := auth["spender"].(string); ok {
+		payload.Permit2Authorization.Spender = v
+	} else {
+		return nil, fmt.Errorf("missing or invalid permit2Authorization.spender field")
+	}
+
+	if v, ok := auth["nonce"].(string); ok {
+		payload.Permit2Authorization.Nonce = v
+	} else {
+		return nil, fmt.Errorf("missing or invalid permit2Authorization.nonce field")
+	}
+
+	if v, ok := auth["deadline"].(string); ok {
+		payload.Permit2Authorization.Deadline = v
+	} else {
+		return nil, fmt.Errorf("missing or invalid permit2Authorization.deadline field")
+	}
+
+	permitted, ok := auth["permitted"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("missing or invalid permit2Authorization.permitted field")
+	}
+
+	if v, ok := permitted["token"].(string); ok {
+		payload.Permit2Authorization.Permitted.Token = v
+	} else {
+		return nil, fmt.Errorf("missing or invalid permit2Authorization.permitted.token field")
+	}
+
+	if v, ok := permitted["amount"].(string); ok {
+		payload.Permit2Authorization.Permitted.Amount = v
+	} else {
+		return nil, fmt.Errorf("missing or invalid permit2Authorization.permitted.amount field")
+	}
+
+	return payload, nil
+}
+
+// IsAuthCapturePermit2Payload checks if a payload map is an authCapture Permit2 payload.
+// Must have "permit2Authorization", "signature", and "salt" keys.
+func IsAuthCapturePermit2Payload(data map[string]interface{}) bool {
+	_, hasP2Auth := data["permit2Authorization"]
+	_, hasSig := data["signature"]
+	_, hasSalt := data["salt"]
+	return hasP2Auth && hasSig && hasSalt
+}

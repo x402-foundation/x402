@@ -552,6 +552,38 @@ func TestPermit2Constants(t *testing.T) {
 	})
 }
 
+func TestAuthCaptureConstants(t *testing.T) {
+	tests := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{
+			name: "AuthCaptureEscrowAddress",
+			got:  evm.AuthCaptureEscrowAddress,
+			want: "0xBdEA0D1bcC5966192B070Fdf62aB4EF5b4420cff",
+		},
+		{
+			name: "EIP3009TokenCollectorAddress",
+			got:  evm.EIP3009TokenCollectorAddress,
+			want: "0x0E3dF9510de65469C4518D7843919c0b8C7A7757",
+		},
+		{
+			name: "PERMIT2TokenCollectorAddress",
+			got:  evm.PERMIT2TokenCollectorAddress,
+			want: "0x992476B9Ee81d52a5BdA0622C333938D0Af0aB26",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.got != tt.want {
+				t.Fatalf("%s mismatch: expected %s, got %s", tt.name, tt.want, tt.got)
+			}
+		})
+	}
+}
+
 // TestSchemeExact tests the scheme constant
 func TestSchemeExact(t *testing.T) {
 	if evm.SchemeExact != "exact" {

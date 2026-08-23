@@ -258,6 +258,91 @@ func BuildPermit2WitnessMap(to string, validAfter *big.Int) map[string]interface
 	}
 }
 
+// HashReceiveWithAuthorization hashes a ReceiveWithAuthorization message for EIP-3009.
+//
+// Same structure as TransferWithAuthorization but uses "ReceiveWithAuthorization" as primary type.
+// Used by the authCapture scheme where the ERC-3009 token collector calls receiveWithAuthorization.
+//
+// Args:
+//
+//	authorization: The EIP-3009 authorization data
+//	chainID: The chain ID for the EIP-712 domain
+//	verifyingContract: The token contract address
+//	tokenName: The token name (e.g., "USD Coin")
+//	tokenVersion: The token version (e.g., "2")
+//
+// Returns:
+//
+//	32-byte hash suitable for signing or verification
+//	error if hashing fails
+func HashReceiveWithAuthorization(
+	authorization ExactEIP3009Authorization,
+	chainID *big.Int,
+	verifyingContract string,
+	tokenName string,
+	tokenVersion string,
+) ([]byte, error) {
+	// Create EIP-712 domain
+	domain := TypedDataDomain{
+		Name:              tokenName,
+		Version:           tokenVersion,
+		ChainID:           chainID,
+		VerifyingContract: verifyingContract,
+	}
+
+	// Define EIP-712 types
+	types := map[string][]TypedDataField{
+		"EIP712Domain": {
+			{Name: "name", Type: "string"},
+			{Name: "version", Type: "string"},
+			{Name: "chainId", Type: "uint256"},
+			{Name: "verifyingContract", Type: "address"},
+		},
+		"ReceiveWithAuthorization": {
+			{Name: "from", Type: "address"},
+			{Name: "to", Type: "address"},
+			{Name: "value", Type: "uint256"},
+			{Name: "validAfter", Type: "uint256"},
+			{Name: "validBefore", Type: "uint256"},
+			{Name: "nonce", Type: "bytes32"},
+		},
+	}
+
+	// Parse values for message
+	value, ok := new(big.Int).SetString(authorization.Value, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid authorization value: %s", authorization.Value)
+	}
+	validAfter, ok := new(big.Int).SetString(authorization.ValidAfter, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid validAfter: %s", authorization.ValidAfter)
+	}
+	validBefore, ok := new(big.Int).SetString(authorization.ValidBefore, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid validBefore: %s", authorization.ValidBefore)
+	}
+	nonceBytes, err := HexToBytes(authorization.Nonce)
+	if err != nil {
+		return nil, fmt.Errorf("invalid nonce: %w", err)
+	}
+
+	// Ensure addresses are checksummed
+	from := common.HexToAddress(authorization.From).Hex()
+	to := common.HexToAddress(authorization.To).Hex()
+
+	// Create message
+	message := map[string]interface{}{
+		"from":        from,
+		"to":          to,
+		"value":       value,
+		"validAfter":  validAfter,
+		"validBefore": validBefore,
+		"nonce":       nonceBytes,
+	}
+
+	return HashTypedData(domain, types, "ReceiveWithAuthorization", message)
+}
+
 // HashPermit2Authorization hashes a PermitWitnessTransferFrom message for Permit2.
 //
 // This function creates the EIP-712 hash for Permit2's PermitWitnessTransferFrom

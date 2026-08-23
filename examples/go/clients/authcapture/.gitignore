@@ -1,0 +1,6 @@
+# Environment variables
+.env
+
+# Built client binary (go build)
+authcapture
+authcapture.exe
