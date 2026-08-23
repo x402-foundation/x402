@@ -299,6 +299,38 @@ extension useful even where DNSSEC is absent.
 Hosts without DNS control (e.g. platform subdomains like `*.run.app`) simply
 publish the manifest alone — resolution step 2 below still finds them.
 
+### Spellings observed in the wild, none of them conforming
+
+A walk over 1,617 catalogued hosts on 2026-08-23 found seven `_x402` records
+across six operators. **One operator conforms.** The rest are recorded here so
+that a lenient consumer does not privately invent a coercion for them, which is
+the failure this extension exists to prevent:
+
+| observed | operators | why it is not a record |
+|---|---|---|
+| `https://host/.well-known/x402` (bare URL) | 2 | no `v=`, no pointer token |
+| `x402-manifest=https://…` | 1 | no `v=`; unrecognised pointer token |
+| `v=x4021;url=https://…` | 1 | version token is `x4021`, not `x402-1`; pointer is `url=` |
+| `v=x402-1; wk=https://…` | 1 | **conforming** |
+
+Consumers **MUST NOT** accept any of the first three. Each fails the version
+check before the pointer is ever considered, and each is treated as absent under
+step 1 rather than as an error — a publisher has no in-band way to learn their
+record is malformed, so an absent verdict is the one that lets them keep serving
+while the manifest path still works.
+
+**The version token is the load-bearing half, not the pointer.** `_x402` is a
+dedicated label, but a dedicated label is not a guarantee: zones put SPF
+fragments, verification strings and wildcard answers at names nobody expected.
+`v=x402-1` is what lets a consumer say *this TXT is an x402 record* rather than
+*this name returned something*. Accepting a bare URL would surrender that for a
+spelling no operator would then be required to fix.
+
+For the same reason this extension does **not** alias `url=` to `wk=`. Every
+non-conforming record above fails on `v=` as well, so an alias would convert no
+existing publisher while leaving two spellings in the grammar permanently. The
+cheaper correction is the publisher's, and it is two tokens.
+
 ## Resolution algorithm
 
 ### Determining `D` from a resource URL
