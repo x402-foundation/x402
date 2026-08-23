@@ -103,7 +103,7 @@ https://<host>/.well-known/x402
 | `x402Version` | MUST | Highest x402 protocol version the host speaks. MUST be a JSON number (integer), not a string, and MUST NOT be spelled `version` — the field carries the same name and type as the `x402Version` in the host's own 402 challenge. See Migration. |
 | `kind` | MUST | `"facilitator"`, `"resource-server"`, or `"both"`. |
 | `name`, `description` | SHOULD | Human-readable identification. |
-| `facilitator` | MUST if kind includes facilitator | Capability block. |
+| `facilitator` | MUST if `kind` includes facilitator; MAY if `kind` is `resource-server` | **When `kind` includes facilitator: an object** — the capability block described by the rows below — and a consumer **MUST** reject a non-object value. **When `kind` is `resource-server`: a string** is permitted, and names the HTTPS base URL of the facilitator this host routes its payments through. A string `facilitator` is a *pointer*, not a capability block: consumers **MUST NOT** dereference it directly — it is a third party, so the same-origin rule on `facilitator.baseUrl` cannot protect that fetch — and **MAY** instead discover the named facilitator by running this same procedure against its host, whose own manifest is same-origin for it. This is the shape already deployed: of 14 publishers carrying the field in an independent 171-host census on 2026-08-23, 12 publish a string with this meaning and 0 publish a conforming object (Circadian-agent, x402#2979). The extension gives that incumbent a defined meaning rather than leaving a lenient consumer to invent one. |
 | `facilitator.baseUrl` | MUST | HTTPS base URL of the facilitator API. It **MUST** be on the same domain as, or a subdomain of, the host serving the manifest, and consumers **MUST** reject manifests that violate this. Without it a host can name someone else's facilitator as its own — the very thing the `wk` same-origin rule exists to prevent — and turn every conforming crawler into a request amplifier aimed at a third party. |
 | `facilitator.endpoints` | MUST | Relative paths for `supported`/`verify`/`settle` (hosts differ; don't guess). |
 | `facilitator.kinds` | MUST | **Live mirror of `GET {baseUrl}{endpoints.supported}`.** Divergence between the manifest and the live endpoint is a misconfiguration; consumers MUST prefer the live endpoint. |
@@ -362,6 +362,19 @@ that harms neither publisher.
 
 ## Resolution algorithm
 
+### Comparing host names
+
+Every comparison of two host names in this document — a `wk` URL's host against
+`D`, a referenced URL's host against an ancestor `A`, a host `H` against `A`,
+`facilitator.baseUrl` against the manifest's host — is a comparison of **DNS
+names**, not of octet strings. Consumers **MUST** compare case-insensitively,
+on A-labels (an internationalised name is converted with IDNA before comparing,
+so a U-label and its A-label are the same name), and ignoring a trailing dot
+(`api.example.com.` and `api.example.com` are the same name). A comparison that
+treats any of those pairs as different fails *closed*: it scores a conforming
+publisher's `wk` as out-of-domain and drops them from discovery with nothing
+logged, which is the failure direction nobody reports.
+
 ### Determining `D` from a resource URL
 
 A consumer usually holds a **resource URL**, not a domain. This section says how
@@ -376,10 +389,14 @@ those publishers invisible. On a later 1,617-host walk, **three of the seven
 live `_x402` records on the network sat at names that were not themselves
 catalogued hosts** — reachable only by climbing.
 
-Consumers **MUST** query the resource host first, and **MAY** then query
+Consumers **MUST** query the resource host first, and **SHOULD** then query
 ancestor names, nearest first, stopping at the first name that yields a usable
 record. Implementations **SHOULD** bound this at two ancestors and **MUST NOT**
-query a name of fewer than two labels. Measured against the same 1,617 hosts,
+query a name of fewer than two labels. The walk is **SHOULD** rather than MAY
+because two conforming consumers holding the same resource URL must not reach
+different answers about the same publisher — which is the failure this section
+opens by describing; a consumer that skips it is expected to have a reason (for
+example, it only ever holds apex names), not merely permission. Measured against the same 1,617 hosts,
 that bound leaves only 7 (0.4%) unable to reach their own apex.
 
 **An ancestor's record only speaks for a host it names.** Under a shared hosting
@@ -405,16 +422,27 @@ is a positive statement by a party in a position to make it.
 
 > **Note for implementers.** That justification describes a *zone* operator, and
 > under a shared suffix the zone operator is not the host's operator. In a walk
-> over 1,617 catalogued hosts, 384 (23.7%) reach a name that is itself a public
-> suffix — `workers.dev`, `vercel.app`, `up.railway.app`, `onrender.com`,
-> `a.run.app`. No such suffix carries an `_x402` record today, so the naming rule
-> above is what keeps this safe rather than an assumption about who controls the
-> ancestor.
+> over 1,611 catalogued hosts on 2026-08-23, 381 (23.6%) reach a name that is
+> itself a public suffix — `workers.dev`, `vercel.app`, `up.railway.app`, `onrender.com`, `fly.dev`, and 23 more.
+> None of the 28 suffixes so reached carries an `_x402` record, so the naming
+> rule above is what keeps this safe rather than an assumption about who controls
+> the ancestor. The walk, its frame digest (`25e61f5433b1…`), the
+> full host list and the pinned public-suffix list it was computed against are
+> published at
+> <https://github.com/whawk46/x402-discovery-checks/blob/main/conformance/ancestor-walk.json>
+> so these numbers can be recomputed rather than taken; they are exact for that
+> frame and not comparable across draws without the digest.
 
 **Normative source.** These rules are maintained in
-`draft-hawkins-x402-dns-discovery` §5 and restated here so that an implementer
-reading this document has the complete algorithm. If the two ever disagree, the
-draft is the source and this text is the defect.
+`draft-hawkins-x402-dns-discovery-03`, Section 5, and restated here so that an
+implementer reading this document has the complete algorithm. If the two ever
+disagree, the draft is the source and this text is the defect. The pin names a
+revision on purpose: an unpinned pointer made a disagreement undiagnosable —
+a reader could not tell whether this text was stale or they were. Revision -02
+predates two corrections that were made here first (the CNAME/NOERROR rule in
+step 1 below, and "a party" above); -03 carries both back. A reader comparing
+this text against -02 will find exactly those two differences, and they are
+-02's.
 
 ### Resolving a domain to a capability
 
