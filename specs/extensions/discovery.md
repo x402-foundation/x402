@@ -127,7 +127,7 @@ An entry MAY also be a bare **string**, which MUST be treated as exactly equival
 `{"url": <string>}` and therefore as a bare pointer. This is not a courtesy to sloppy
 publishers: it is the modal deployed shape. In a survey of 1,619 catalogued hosts, 380 of
 the 442 that publish a version-like key outside this specification's vocabulary carry
-`resources` as an array of strings, and an independent 171-host census reports 52 of 76.
+`resources` as an array of strings, and a partially overlapping 171-host census reports 52 of 76.
 Leaving the type undefined would leave a strict consumer type-erroring on the most common
 manifest on the network while a lenient one invented this same coercion privately — which
 is the mechanism this extension exists to stop, reproduced one layer down.
