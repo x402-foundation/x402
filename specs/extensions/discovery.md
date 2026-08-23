@@ -301,17 +301,24 @@ publish the manifest alone — resolution step 2 below still finds them.
 
 ### Spellings observed in the wild, none of them conforming
 
-A walk over 1,617 catalogued hosts on 2026-08-23 found seven `_x402` records
-across six operators. **One operator conforms.** The rest are recorded here so
-that a lenient consumer does not privately invent a coercion for them, which is
-the failure this extension exists to prevent:
+A walk over 1,617 catalogued hosts on 2026-08-23 resolved 2,241 names and found
+**seven records across six operators: five non-conforming, and two names
+belonging to the one operator that conforms.** They are recorded here so that a
+lenient consumer does not privately invent a coercion for them, which is the
+failure this extension exists to prevent:
 
-| observed | operators | why it is not a record |
+| observed | records | why it is not a record |
 |---|---|---|
 | `https://host/.well-known/x402` (bare URL) | 2 | no `v=`, no pointer token |
 | `x402-manifest=https://…` | 1 | no `v=`; unrecognised pointer token |
 | `v=x4021;url=https://…` | 1 | version token is `x4021`, not `x402-1`; pointer is `url=` |
-| `v=x402-1; wk=https://…` | 1 | **conforming** |
+| `v=x4021;descriptor=…;url=https://…` | 1 | same version defect; `descriptor=` is a token from a different draft |
+| `v=x402-1; wk=https://…` | 2 | **conforming** — one operator publishing at both apex and host |
+
+**Two of the five independently spell the version token `x4021`.** That is the
+finding most worth acting on: a misspelling two of six operators arrive at
+separately is the one a seventh is most likely to arrive at too, which is why it
+is named here rather than left for each consumer to decide about.
 
 Consumers **MUST NOT** accept any of the first three. Each fails the version
 check before the pointer is ever considered, and each is treated as absent under
