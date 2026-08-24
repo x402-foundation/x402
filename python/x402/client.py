@@ -235,9 +235,14 @@ class x402Client(x402ClientBase):
         try:
             command = gen.send(result)
             while True:
-                _, hook, ctx = command
+                phase, hook, ctx = command
                 try:
-                    result = await self._execute_hook(hook, ctx)
+                    if phase == "scheme_create":
+                        result = hook
+                        if asyncio.iscoroutine(result) or asyncio.isfuture(result):
+                            result = await result
+                    else:
+                        result = await self._execute_hook(hook, ctx)
                 except Exception as hook_error:
                     result = None
                     command = gen.throw(hook_error)
@@ -420,9 +425,18 @@ class x402ClientSync(x402ClientBase):
         try:
             command = gen.send(result)
             while True:
-                _, hook, ctx = command
+                phase, hook, ctx = command
                 try:
-                    result = self._execute_hook_sync(hook, ctx)
+                    if phase == "scheme_create":
+                        result = hook
+                        if asyncio.iscoroutine(result) or asyncio.isfuture(result):
+                            result.close()
+                            raise TypeError(
+                                "Async scheme methods are not supported in x402ClientSync. "
+                                "Use x402Client for async scheme support."
+                            )
+                    else:
+                        result = self._execute_hook_sync(hook, ctx)
                 except Exception as hook_error:
                     result = None
                     command = gen.throw(hook_error)

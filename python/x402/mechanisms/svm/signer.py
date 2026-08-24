@@ -53,6 +53,9 @@ class FacilitatorSvmSigner(Protocol):
 
     Implement this protocol to integrate with your Solana infrastructure.
     The facilitator pays transaction fees and submits transactions.
+
+    Note: RPC methods (simulate, send, confirm) are async because solana>=0.40
+    only ships AsyncClient. sign_transaction stays sync (pure CPU, no I/O).
     """
 
     def get_addresses(self) -> list[str]:
@@ -88,7 +91,7 @@ class FacilitatorSvmSigner(Protocol):
         """
         ...
 
-    def simulate_transaction(self, tx_base64: str, network: str) -> None:
+    async def simulate_transaction(self, tx_base64: str, network: str) -> None:
         """Simulate a signed transaction to verify it would succeed.
 
         Args:
@@ -100,7 +103,7 @@ class FacilitatorSvmSigner(Protocol):
         """
         ...
 
-    def send_transaction(self, tx_base64: str, network: str) -> str:
+    async def send_transaction(self, tx_base64: str, network: str) -> str:
         """Send a signed transaction to the network.
 
         Args:
@@ -115,7 +118,7 @@ class FacilitatorSvmSigner(Protocol):
         """
         ...
 
-    def confirm_transaction(self, signature: str, network: str) -> None:
+    async def confirm_transaction(self, signature: str, network: str) -> None:
         """Wait for transaction confirmation.
 
         Args:

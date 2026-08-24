@@ -256,7 +256,7 @@ OnPaymentResponseHook = Callable[
 SyncOnPaymentResponseHook = Callable[[PaymentResponseContext], RecoveredResponseResult | None]
 
 # Hook command type for generator-based implementation
-HookPhase = Literal["before", "after", "failure"]
+HookPhase = Literal["before", "after", "failure", "scheme_create"]
 HookCommand = tuple[HookPhase, Any, Any]  # (phase, hook, context)
 
 
@@ -756,11 +756,16 @@ class x402ClientBase:
             server_extensions = payment_required.extensions
             sig = inspect.signature(client.create_payment_payload)
             if "extensions" in sig.parameters:
-                inner_payload = client.create_payment_payload(
+                scheme_result = client.create_payment_payload(
                     selected, extensions=server_extensions
                 )
             else:
-                inner_payload = client.create_payment_payload(selected)
+                scheme_result = client.create_payment_payload(selected)
+
+            # Let the async/sync driver execute the scheme uniformly. Async
+            # schemes (such as SVM on solana>=0.40) must be awaited by the
+            # async client, while the sync client can reject them clearly.
+            inner_payload = yield ("scheme_create", scheme_result, None)
 
             # 5b. Extract scheme-generated extensions (e.g. gas sponsoring) and
             # deep-merge them onto the server's declared extensions. This keeps
@@ -858,8 +863,9 @@ class x402ClientBase:
 
             client = schemes[selected.scheme]
 
-            # 5. Create inner payload
-            inner_payload = client.create_payment_payload(selected)
+            # 5. Create inner payload through the client driver so async
+            # schemes work for V1 as well as V2.
+            inner_payload = yield ("scheme_create", client.create_payment_payload(selected), None)
 
             # 6. Wrap into full PaymentPayloadV1
             payload = PaymentPayloadV1(

@@ -1,7 +1,7 @@
 """Memo-based uniqueness tests for SVM payments."""
 
 import base64
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from solders.hash import Hash
@@ -45,13 +45,13 @@ class TestFixedBlockhashProducesDistinctTransactions:
 
         mock_blockhash_resp = MagicMock()
         mock_blockhash_resp.value.blockhash = Hash.from_string(FIXED_BLOCKHASH)
-        mock_client.get_latest_blockhash.return_value = mock_blockhash_resp
+        mock_client.get_latest_blockhash = AsyncMock(return_value=mock_blockhash_resp)
 
         mock_account_info = MagicMock()
         mock_account_info.value = MagicMock()
         mock_account_info.value.owner = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
         mock_account_info.value.data = bytes(44) + bytes([6]) + bytes(37)
-        mock_client.get_account_info.return_value = mock_account_info
+        mock_client.get_account_info = AsyncMock(return_value=mock_account_info)
 
         return mock_client
 
@@ -75,15 +75,15 @@ class TestFixedBlockhashProducesDistinctTransactions:
             extra={"feePayer": str(fee_payer.pubkey())},
         )
 
-    def test_distinct_transactions_with_fixed_blockhash(
+    async def test_distinct_transactions_with_fixed_blockhash(
         self, mock_rpc_client, test_keypair, test_requirements
     ):
         signer = KeypairSigner(test_keypair)
         client = ExactSvmClientScheme(signer)
 
         with patch.object(client, "_get_client", return_value=mock_rpc_client):
-            payload1 = client.create_payment_payload(test_requirements)
-            payload2 = client.create_payment_payload(test_requirements)
+            payload1 = await client.create_payment_payload(test_requirements)
+            payload2 = await client.create_payment_payload(test_requirements)
 
         tx1_base64 = payload1["transaction"]
         tx2_base64 = payload2["transaction"]
@@ -100,12 +100,12 @@ class TestFixedBlockhashProducesDistinctTransactions:
         print(f"Transaction 2 (first 80 chars): {tx2_base64[:80]}...")
         print(f"Transactions are DISTINCT: {tx1_base64 != tx2_base64}")
 
-    def test_memo_instruction_present(self, mock_rpc_client, test_keypair, test_requirements):
+    async def test_memo_instruction_present(self, mock_rpc_client, test_keypair, test_requirements):
         signer = KeypairSigner(test_keypair)
         client = ExactSvmClientScheme(signer)
 
         with patch.object(client, "_get_client", return_value=mock_rpc_client):
-            payload = client.create_payment_payload(test_requirements)
+            payload = await client.create_payment_payload(test_requirements)
 
         tx = decode_transaction_from_payload(ExactSvmPayload(transaction=payload["transaction"]))
         programs = [
@@ -114,7 +114,7 @@ class TestFixedBlockhashProducesDistinctTransactions:
 
         assert MEMO_PROGRAM_ADDRESS in programs
 
-    def test_different_blockhash_produces_different_transactions(
+    async def test_different_blockhash_produces_different_transactions(
         self, test_keypair, test_requirements
     ):
         signer = KeypairSigner(test_keypair)
@@ -125,7 +125,7 @@ class TestFixedBlockhashProducesDistinctTransactions:
         def get_mock_client(network):
             mock_client = MagicMock()
 
-            def get_blockhash():
+            async def get_blockhash():
                 call_count[0] += 1
                 blockhash = FIXED_BLOCKHASH if call_count[0] == 1 else FIXED_BLOCKHASH_ALT
                 mock_resp = MagicMock()
@@ -138,13 +138,13 @@ class TestFixedBlockhashProducesDistinctTransactions:
             mock_account_info.value = MagicMock()
             mock_account_info.value.owner = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
             mock_account_info.value.data = bytes(44) + bytes([6]) + bytes(37)
-            mock_client.get_account_info.return_value = mock_account_info
+            mock_client.get_account_info = AsyncMock(return_value=mock_account_info)
 
             return mock_client
 
         with patch.object(client, "_get_client", side_effect=get_mock_client):
-            payload1 = client.create_payment_payload(test_requirements)
-            payload2 = client.create_payment_payload(test_requirements)
+            payload1 = await client.create_payment_payload(test_requirements)
+            payload2 = await client.create_payment_payload(test_requirements)
 
         tx1_base64 = payload1["transaction"]
         tx2_base64 = payload2["transaction"]
@@ -212,13 +212,13 @@ class TestMemoDataIsValidUTF8:
 
         mock_blockhash_resp = MagicMock()
         mock_blockhash_resp.value.blockhash = Hash.from_string(FIXED_BLOCKHASH)
-        mock_client.get_latest_blockhash.return_value = mock_blockhash_resp
+        mock_client.get_latest_blockhash = AsyncMock(return_value=mock_blockhash_resp)
 
         mock_account_info = MagicMock()
         mock_account_info.value = MagicMock()
         mock_account_info.value.owner = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
         mock_account_info.value.data = bytes(44) + bytes([6]) + bytes(37)
-        mock_client.get_account_info.return_value = mock_account_info
+        mock_client.get_account_info = AsyncMock(return_value=mock_account_info)
 
         return mock_client
 
@@ -242,13 +242,13 @@ class TestMemoDataIsValidUTF8:
             extra={"feePayer": str(fee_payer.pubkey())},
         )
 
-    def test_memo_data_is_valid_utf8(self, mock_rpc_client, test_keypair, test_requirements):
+    async def test_memo_data_is_valid_utf8(self, mock_rpc_client, test_keypair, test_requirements):
         """Verify memo data is valid UTF-8 (SPL Memo requirement)."""
         signer = KeypairSigner(test_keypair)
         client = ExactSvmClientScheme(signer)
 
         with patch.object(client, "_get_client", return_value=mock_rpc_client):
-            payload = client.create_payment_payload(test_requirements)
+            payload = await client.create_payment_payload(test_requirements)
 
         tx = decode_transaction_from_payload(ExactSvmPayload(transaction=payload["transaction"]))
 
@@ -291,13 +291,13 @@ class TestMemoInstructionHasNoSigners:
         mock_client = MagicMock()
         mock_blockhash_resp = MagicMock()
         mock_blockhash_resp.value.blockhash = Hash.from_string(FIXED_BLOCKHASH)
-        mock_client.get_latest_blockhash.return_value = mock_blockhash_resp
+        mock_client.get_latest_blockhash = AsyncMock(return_value=mock_blockhash_resp)
 
         mock_account_info = MagicMock()
         mock_account_info.value = MagicMock()
         mock_account_info.value.owner = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
         mock_account_info.value.data = bytes(44) + bytes([6]) + bytes(37)
-        mock_client.get_account_info.return_value = mock_account_info
+        mock_client.get_account_info = AsyncMock(return_value=mock_account_info)
         return mock_client
 
     @pytest.fixture
@@ -316,12 +316,12 @@ class TestMemoInstructionHasNoSigners:
             extra={"feePayer": str(Keypair.from_seed(bytes([2] * 32)).pubkey())},
         )
 
-    def test_memo_has_empty_accounts(self, mock_rpc_client, test_keypair, test_requirements):
+    async def test_memo_has_empty_accounts(self, mock_rpc_client, test_keypair, test_requirements):
         """Empty accounts is critical - signers break facilitator verification."""
         client = ExactSvmClientScheme(KeypairSigner(test_keypair))
 
         with patch.object(client, "_get_client", return_value=mock_rpc_client):
-            payload = client.create_payment_payload(test_requirements)
+            payload = await client.create_payment_payload(test_requirements)
 
         tx = decode_transaction_from_payload(ExactSvmPayload(transaction=payload["transaction"]))
         assert len(tx.message.instructions) >= 4
@@ -339,20 +339,20 @@ class TestSellerMemo:
         mock_client = MagicMock()
         mock_blockhash_resp = MagicMock()
         mock_blockhash_resp.value.blockhash = Hash.from_string(FIXED_BLOCKHASH)
-        mock_client.get_latest_blockhash.return_value = mock_blockhash_resp
+        mock_client.get_latest_blockhash = AsyncMock(return_value=mock_blockhash_resp)
 
         mock_account_info = MagicMock()
         mock_account_info.value = MagicMock()
         mock_account_info.value.owner = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
         mock_account_info.value.data = bytes(44) + bytes([6]) + bytes(37)
-        mock_client.get_account_info.return_value = mock_account_info
+        mock_client.get_account_info = AsyncMock(return_value=mock_account_info)
         return mock_client
 
     @pytest.fixture
     def test_keypair(self):
         return Keypair.from_seed(bytes([1] * 32))
 
-    def test_uses_extra_memo_as_memo_data(self, mock_rpc_client, test_keypair):
+    async def test_uses_extra_memo_as_memo_data(self, mock_rpc_client, test_keypair):
         """When extra.memo is provided, client uses it as memo instruction data."""
         seller_memo = "pi_3abc123def456"
         fee_payer = Keypair.from_seed(bytes([2] * 32))
@@ -370,7 +370,7 @@ class TestSellerMemo:
 
         client = ExactSvmClientScheme(KeypairSigner(test_keypair))
         with patch.object(client, "_get_client", return_value=mock_rpc_client):
-            payload = client.create_payment_payload(requirements)
+            payload = await client.create_payment_payload(requirements)
 
         tx = decode_transaction_from_payload(ExactSvmPayload(transaction=payload["transaction"]))
         assert len(tx.message.instructions) >= 4
@@ -381,7 +381,7 @@ class TestSellerMemo:
         memo_data = bytes(memo_ix.data).decode("utf-8")
         assert memo_data == seller_memo
 
-    def test_produces_identical_memo_with_extra_memo(self, mock_rpc_client, test_keypair):
+    async def test_produces_identical_memo_with_extra_memo(self, mock_rpc_client, test_keypair):
         """With extra.memo, memo data is deterministic across calls."""
         seller_memo = "order_12345"
         fee_payer = Keypair.from_seed(bytes([2] * 32))
@@ -399,8 +399,8 @@ class TestSellerMemo:
 
         client = ExactSvmClientScheme(KeypairSigner(test_keypair))
         with patch.object(client, "_get_client", return_value=mock_rpc_client):
-            payload1 = client.create_payment_payload(requirements)
-            payload2 = client.create_payment_payload(requirements)
+            payload1 = await client.create_payment_payload(requirements)
+            payload2 = await client.create_payment_payload(requirements)
 
         tx1 = decode_transaction_from_payload(ExactSvmPayload(transaction=payload1["transaction"]))
         tx2 = decode_transaction_from_payload(ExactSvmPayload(transaction=payload2["transaction"]))
@@ -412,7 +412,7 @@ class TestSellerMemo:
         assert memo2 == seller_memo
         assert memo1 == memo2
 
-    def test_falls_back_to_random_nonce_without_memo(self, mock_rpc_client, test_keypair):
+    async def test_falls_back_to_random_nonce_without_memo(self, mock_rpc_client, test_keypair):
         """Without extra.memo, falls back to random hex nonce."""
         fee_payer = Keypair.from_seed(bytes([2] * 32))
         pay_to = Keypair.from_seed(bytes([3] * 32))
@@ -429,8 +429,8 @@ class TestSellerMemo:
 
         client = ExactSvmClientScheme(KeypairSigner(test_keypair))
         with patch.object(client, "_get_client", return_value=mock_rpc_client):
-            payload1 = client.create_payment_payload(requirements)
-            payload2 = client.create_payment_payload(requirements)
+            payload1 = await client.create_payment_payload(requirements)
+            payload2 = await client.create_payment_payload(requirements)
 
         tx1 = decode_transaction_from_payload(ExactSvmPayload(transaction=payload1["transaction"]))
         tx2 = decode_transaction_from_payload(ExactSvmPayload(transaction=payload2["transaction"]))
@@ -444,7 +444,7 @@ class TestSellerMemo:
         assert re.match(r"^[0-9a-f]{32}$", memo1), "Nonce should be 32 hex chars"
         assert re.match(r"^[0-9a-f]{32}$", memo2), "Nonce should be 32 hex chars"
 
-    def test_rejects_memo_exceeding_256_bytes(self, mock_rpc_client, test_keypair):
+    async def test_rejects_memo_exceeding_256_bytes(self, mock_rpc_client, test_keypair):
         """Client should reject extra.memo exceeding 256 bytes."""
         fee_payer = Keypair.from_seed(bytes([2] * 32))
         pay_to = Keypair.from_seed(bytes([3] * 32))
@@ -462,7 +462,7 @@ class TestSellerMemo:
         client = ExactSvmClientScheme(KeypairSigner(test_keypair))
         with patch.object(client, "_get_client", return_value=mock_rpc_client):
             with pytest.raises(ValueError, match="extra.memo exceeds maximum 256 bytes"):
-                client.create_payment_payload(requirements)
+                await client.create_payment_payload(requirements)
 
 
 class TestMessageHashMalleabilityResistance:
@@ -476,13 +476,13 @@ class TestMessageHashMalleabilityResistance:
         mock_client = MagicMock()
         mock_blockhash_resp = MagicMock()
         mock_blockhash_resp.value.blockhash = Hash.from_string(FIXED_BLOCKHASH)
-        mock_client.get_latest_blockhash.return_value = mock_blockhash_resp
+        mock_client.get_latest_blockhash = AsyncMock(return_value=mock_blockhash_resp)
 
         mock_account_info = MagicMock()
         mock_account_info.value = MagicMock()
         mock_account_info.value.owner = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
         mock_account_info.value.data = bytes(44) + bytes([6]) + bytes(37)
-        mock_client.get_account_info.return_value = mock_account_info
+        mock_client.get_account_info = AsyncMock(return_value=mock_account_info)
         return mock_client
 
     @pytest.fixture
@@ -501,14 +501,14 @@ class TestMessageHashMalleabilityResistance:
             extra={"feePayer": str(Keypair.from_seed(bytes([2] * 32)).pubkey())},
         )
 
-    def test_cache_key_unchanged_when_fee_payer_sig_bytes_are_mutated(
+    async def test_cache_key_unchanged_when_fee_payer_sig_bytes_are_mutated(
         self, mock_rpc_client, test_keypair, test_requirements
     ):
         """Flipping bytes in signature slot 0 must not change the message hash cache key."""
         client = ExactSvmClientScheme(KeypairSigner(test_keypair))
 
         with patch.object(client, "_get_client", return_value=mock_rpc_client):
-            payload = client.create_payment_payload(test_requirements)
+            payload = await client.create_payment_payload(test_requirements)
 
         tx = decode_transaction_from_payload(ExactSvmPayload(transaction=payload["transaction"]))
         hash_before = transaction_message_hash(tx)
@@ -526,7 +526,7 @@ class TestMessageHashMalleabilityResistance:
             "message hash must be identical regardless of bytes in the fee-payer signature slot"
         )
 
-    def test_different_messages_produce_different_hashes(
+    async def test_different_messages_produce_different_hashes(
         self, mock_rpc_client, test_keypair, test_requirements
     ):
         """Distinct transaction messages must produce distinct cache keys."""
@@ -538,19 +538,19 @@ class TestMessageHashMalleabilityResistance:
             mock_resp = MagicMock()
             mock_resp.value.blockhash = Hash.from_string(blockhash_values[call_count[0] % 2])
             call_count[0] += 1
-            mock.get_latest_blockhash.return_value = mock_resp
+            mock.get_latest_blockhash = AsyncMock(return_value=mock_resp)
 
             mock_account_info = MagicMock()
             mock_account_info.value = MagicMock()
             mock_account_info.value.owner = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
             mock_account_info.value.data = bytes(44) + bytes([6]) + bytes(37)
-            mock.get_account_info.return_value = mock_account_info
+            mock.get_account_info = AsyncMock(return_value=mock_account_info)
             return mock
 
         client = ExactSvmClientScheme(KeypairSigner(test_keypair))
         with patch.object(client, "_get_client", side_effect=get_mock_client):
-            payload1 = client.create_payment_payload(test_requirements)
-            payload2 = client.create_payment_payload(test_requirements)
+            payload1 = await client.create_payment_payload(test_requirements)
+            payload2 = await client.create_payment_payload(test_requirements)
 
         tx1 = decode_transaction_from_payload(ExactSvmPayload(transaction=payload1["transaction"]))
         tx2 = decode_transaction_from_payload(ExactSvmPayload(transaction=payload2["transaction"]))
@@ -559,12 +559,14 @@ class TestMessageHashMalleabilityResistance:
             "distinct messages (different blockhashes) must produce distinct hashes"
         )
 
-    def test_hash_is_valid_base64_sha256(self, mock_rpc_client, test_keypair, test_requirements):
+    async def test_hash_is_valid_base64_sha256(
+        self, mock_rpc_client, test_keypair, test_requirements
+    ):
         """Output must be a base64-encoded 32-byte SHA-256 digest."""
         client = ExactSvmClientScheme(KeypairSigner(test_keypair))
 
         with patch.object(client, "_get_client", return_value=mock_rpc_client):
-            payload = client.create_payment_payload(test_requirements)
+            payload = await client.create_payment_payload(test_requirements)
 
         tx = decode_transaction_from_payload(ExactSvmPayload(transaction=payload["transaction"]))
         h = transaction_message_hash(tx)

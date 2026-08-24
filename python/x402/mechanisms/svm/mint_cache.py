@@ -19,7 +19,7 @@ class MintMetadata:
 MintMetadataCache = dict[tuple[str, str], MintMetadata]
 
 
-def get_cached_mint_metadata(
+async def get_cached_mint_metadata(
     client: Any,
     network: str,
     mint: Pubkey,
@@ -31,7 +31,7 @@ def get_cached_mint_metadata(
     if cached:
         return cached
 
-    mint_info = client.get_account_info(mint)
+    mint_info = await client.get_account_info(mint)
     if not mint_info.value:
         raise ValueError(f"Token mint not found: {mint}")
 

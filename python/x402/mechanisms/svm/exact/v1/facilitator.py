@@ -111,7 +111,7 @@ class ExactSvmSchemeV1:
         _ = network  # Unused
         return list(self._signer.get_addresses())
 
-    def verify(
+    async def verify(
         self,
         payload: PaymentPayloadV1,
         requirements: PaymentRequirementsV1,
@@ -326,7 +326,7 @@ class ExactSvmSchemeV1:
             fully_signed_tx = self._signer.sign_transaction(
                 svm_payload.transaction, fee_payer_str, network
             )
-            self._signer.simulate_transaction(fully_signed_tx, network)
+            await self._signer.simulate_transaction(fully_signed_tx, network)
         except Exception as e:
             error_msg = str(e)
             return VerifyResponse(
@@ -338,7 +338,7 @@ class ExactSvmSchemeV1:
 
         return VerifyResponse(is_valid=True, payer=payer)
 
-    def settle(
+    async def settle(
         self,
         payload: PaymentPayloadV1,
         requirements: PaymentRequirementsV1,
@@ -359,7 +359,7 @@ class ExactSvmSchemeV1:
         network = payload.network
 
         # First verify
-        verify_result = self.verify(payload, requirements, context)
+        verify_result = await self.verify(payload, requirements, context)
         if not verify_result.is_valid:
             return SettleResponse(
                 success=False,
@@ -393,10 +393,10 @@ class ExactSvmSchemeV1:
             )
 
             # Send transaction to network
-            signature = self._signer.send_transaction(fully_signed_tx, network)
+            signature = await self._signer.send_transaction(fully_signed_tx, network)
 
             # Wait for confirmation
-            self._signer.confirm_transaction(signature, network)
+            await self._signer.confirm_transaction(signature, network)
 
             return SettleResponse(
                 success=True,

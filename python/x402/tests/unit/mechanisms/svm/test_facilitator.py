@@ -27,13 +27,13 @@ class MockFacilitatorSigner:
             raise ValueError(f"No signer for feePayer {fee_payer}")
         return tx_base64
 
-    def simulate_transaction(self, tx_base64: str, network: str) -> None:
+    async def simulate_transaction(self, tx_base64: str, network: str) -> None:
         pass
 
-    def send_transaction(self, tx_base64: str, network: str) -> str:
+    async def send_transaction(self, tx_base64: str, network: str) -> str:
         return "mockSignature123"
 
-    def confirm_transaction(self, signature: str, network: str) -> None:
+    async def confirm_transaction(self, signature: str, network: str) -> None:
         pass
 
 
@@ -51,7 +51,7 @@ class TestExactSvmSchemeConstructor:
 class TestVerify:
     """Test verify method."""
 
-    def test_should_reject_if_scheme_does_not_match(self):
+    async def test_should_reject_if_scheme_does_not_match(self):
         """Should reject if scheme does not match."""
         signer = MockFacilitatorSigner()
         facilitator = ExactSvmFacilitatorScheme(signer)
@@ -85,12 +85,12 @@ class TestVerify:
             extra={"feePayer": "FeePayer1111111111111111111111111111"},
         )
 
-        result = facilitator.verify(payload, requirements)
+        result = await facilitator.verify(payload, requirements)
 
         assert result.is_valid is False
         assert result.invalid_reason == "unsupported_scheme"
 
-    def test_should_reject_if_network_does_not_match(self):
+    async def test_should_reject_if_network_does_not_match(self):
         """Should reject if network does not match."""
         signer = MockFacilitatorSigner()
         facilitator = ExactSvmFacilitatorScheme(signer)
@@ -124,13 +124,13 @@ class TestVerify:
             extra={"feePayer": "FeePayer1111111111111111111111111111"},
         )
 
-        result = facilitator.verify(payload, requirements)
+        result = await facilitator.verify(payload, requirements)
 
         # Network check happens early
         assert result.is_valid is False
         assert result.invalid_reason == "network_mismatch"
 
-    def test_should_reject_if_fee_payer_is_missing(self):
+    async def test_should_reject_if_fee_payer_is_missing(self):
         """Should reject if feePayer is missing."""
         signer = MockFacilitatorSigner()
         facilitator = ExactSvmFacilitatorScheme(signer)
@@ -164,12 +164,12 @@ class TestVerify:
             extra={},  # Missing feePayer
         )
 
-        result = facilitator.verify(payload, requirements)
+        result = await facilitator.verify(payload, requirements)
 
         assert result.is_valid is False
         assert result.invalid_reason == "invalid_exact_svm_payload_missing_fee_payer"
 
-    def test_should_reject_if_transaction_cannot_be_decoded(self):
+    async def test_should_reject_if_transaction_cannot_be_decoded(self):
         """Should reject if transaction cannot be decoded."""
         signer = MockFacilitatorSigner()
         facilitator = ExactSvmFacilitatorScheme(signer)
@@ -203,7 +203,7 @@ class TestVerify:
             extra={"feePayer": "FeePayer1111111111111111111111111111"},
         )
 
-        result = facilitator.verify(payload, requirements)
+        result = await facilitator.verify(payload, requirements)
 
         assert result.is_valid is False
         # Transaction decoding or instruction validation fails
@@ -213,7 +213,7 @@ class TestVerify:
 class TestSettle:
     """Test settle method."""
 
-    def test_should_fail_settlement_if_verification_fails(self):
+    async def test_should_fail_settlement_if_verification_fails(self):
         """Should fail settlement if verification fails."""
         signer = MockFacilitatorSigner()
         facilitator = ExactSvmFacilitatorScheme(signer)
@@ -247,7 +247,7 @@ class TestSettle:
             extra={"feePayer": "FeePayer1111111111111111111111111111"},
         )
 
-        result = facilitator.settle(payload, requirements)
+        result = await facilitator.settle(payload, requirements)
 
         assert result.success is False
         assert result.error_reason == "unsupported_scheme"
@@ -368,43 +368,41 @@ class TestDuplicateSettlementCache:
             extra={"feePayer": "FeePayer1111111111111111111111111111"},
         )
 
-    def test_should_reject_duplicate_settlement(self):
+    async def test_should_reject_duplicate_settlement(self):
         """Second settle call with the same transaction should be rejected."""
         signer = MockFacilitatorSigner()
         facilitator = ExactSvmFacilitatorScheme(signer)
         requirements = self._make_requirements()
         payload = self._make_payload("sameTransactionBase64==")
 
-        with patch.object(
-            facilitator,
-            "verify",
-            return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
-        ):
-            result1 = facilitator.settle(payload, requirements)
+        async def mock_verify(*args, **kwargs):
+            return VerifyResponse(is_valid=True, payer="PayerAddress")
+
+        with patch.object(facilitator, "verify", side_effect=mock_verify):
+            result1 = await facilitator.settle(payload, requirements)
             assert result1.success is True
 
-            result2 = facilitator.settle(payload, requirements)
+            result2 = await facilitator.settle(payload, requirements)
             assert result2.success is False
             assert result2.error_reason == "duplicate_settlement"
 
-    def test_should_allow_distinct_transactions(self):
+    async def test_should_allow_distinct_transactions(self):
         """Two different transactions should both settle successfully."""
         signer = MockFacilitatorSigner()
         facilitator = ExactSvmFacilitatorScheme(signer)
         requirements = self._make_requirements()
 
-        with patch.object(
-            facilitator,
-            "verify",
-            return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
-        ):
-            result1 = facilitator.settle(self._make_payload("transactionA=="), requirements)
+        async def mock_verify(*args, **kwargs):
+            return VerifyResponse(is_valid=True, payer="PayerAddress")
+
+        with patch.object(facilitator, "verify", side_effect=mock_verify):
+            result1 = await facilitator.settle(self._make_payload("transactionA=="), requirements)
             assert result1.success is True
 
-            result2 = facilitator.settle(self._make_payload("transactionB=="), requirements)
+            result2 = await facilitator.settle(self._make_payload("transactionB=="), requirements)
             assert result2.success is True
 
-    def test_should_evict_cache_entries_after_ttl(self):
+    async def test_should_evict_cache_entries_after_ttl(self):
         """Cache entries should be pruned after TTL so they no longer block locally.
 
         NOTE: In production the Solana RPC would still reject a re-submitted
@@ -416,22 +414,21 @@ class TestDuplicateSettlementCache:
         requirements = self._make_requirements()
         payload = self._make_payload("expiringTransaction==")
 
-        with patch.object(
-            facilitator,
-            "verify",
-            return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
-        ):
-            result1 = facilitator.settle(payload, requirements)
+        async def mock_verify(*args, **kwargs):
+            return VerifyResponse(is_valid=True, payer="PayerAddress")
+
+        with patch.object(facilitator, "verify", side_effect=mock_verify):
+            result1 = await facilitator.settle(payload, requirements)
             assert result1.success is True
 
             # Simulate TTL expiration by backdating the cache entry
             for key in facilitator._settlement_cache.entries:
                 facilitator._settlement_cache.entries[key] -= 121.0
 
-            result2 = facilitator.settle(payload, requirements)
+            result2 = await facilitator.settle(payload, requirements)
             assert result2.success is True
 
-    def test_shared_cache_blocks_cross_version_duplicates(self):
+    async def test_shared_cache_blocks_cross_version_duplicates(self):
         """V1 and V2 sharing a cache should catch cross-version duplicates."""
         from x402.mechanisms.svm.exact.v1.facilitator import (
             ExactSvmSchemeV1 as ExactSvmFacilitatorSchemeV1,
@@ -445,12 +442,11 @@ class TestDuplicateSettlementCache:
         v1 = ExactSvmFacilitatorSchemeV1(signer, shared_cache)
 
         # Settle via V2 first
-        with patch.object(
-            v2,
-            "verify",
-            return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
-        ):
-            result1 = v2.settle(
+        async def mock_verify_v2(*args, **kwargs):
+            return VerifyResponse(is_valid=True, payer="PayerAddress")
+
+        with patch.object(v2, "verify", side_effect=mock_verify_v2):
+            result1 = await v2.settle(
                 self._make_payload("crossVersionTx=="),
                 self._make_requirements(),
             )
@@ -472,12 +468,12 @@ class TestDuplicateSettlementCache:
             resource="https://example.com",
             extra={"feePayer": "FeePayer1111111111111111111111111111"},
         )
-        with patch.object(
-            v1,
-            "verify",
-            return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
-        ):
-            result2 = v1.settle(v1_payload, v1_requirements)
+
+        async def mock_verify_v1(*args, **kwargs):
+            return VerifyResponse(is_valid=True, payer="PayerAddress")
+
+        with patch.object(v1, "verify", side_effect=mock_verify_v1):
+            result2 = await v1.settle(v1_payload, v1_requirements)
             assert result2.success is False
             assert result2.error_reason == "duplicate_settlement"
 
@@ -485,7 +481,7 @@ class TestDuplicateSettlementCache:
 class TestVerifyFeePayer:
     """Test fee payer verification in verify method."""
 
-    def test_should_reject_if_fee_payer_not_managed(self):
+    async def test_should_reject_if_fee_payer_not_managed(self):
         """Should reject if feePayer is not managed by facilitator."""
         signer = MockFacilitatorSigner(["ManagedPayer111111111111111111111111"])
         facilitator = ExactSvmFacilitatorScheme(signer)
@@ -519,7 +515,7 @@ class TestVerifyFeePayer:
             extra={"feePayer": "UnmanagedPayer1111111111111111111"},  # Not managed
         )
 
-        result = facilitator.verify(payload, requirements)
+        result = await facilitator.verify(payload, requirements)
 
         assert result.is_valid is False
         assert result.invalid_reason == "fee_payer_not_managed_by_facilitator"

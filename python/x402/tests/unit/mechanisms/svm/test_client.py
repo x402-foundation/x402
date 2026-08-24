@@ -1,7 +1,7 @@
 """Tests for ExactSvmScheme client."""
 
 import base64
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from solders.hash import Hash
@@ -64,13 +64,13 @@ class TestCreatePaymentPayload:
         mock_client = MagicMock()
         mock_blockhash_response = MagicMock()
         mock_blockhash_response.value.blockhash = Hash.from_string(FIXED_BLOCKHASH_ALT)
-        mock_client.get_latest_blockhash.return_value = mock_blockhash_response
+        mock_client.get_latest_blockhash = AsyncMock(return_value=mock_blockhash_response)
 
         mock_account_info = MagicMock()
         mock_account_info.value = MagicMock()
         mock_account_info.value.owner = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
         mock_account_info.value.data = bytes(44) + bytes([6]) + bytes(37)
-        mock_client.get_account_info.return_value = mock_account_info
+        mock_client.get_account_info = AsyncMock(return_value=mock_account_info)
         return mock_client
 
     @staticmethod
@@ -133,24 +133,26 @@ class TestCreatePaymentPayload:
         assert requirements.extra is not None
         assert requirements.extra.get("feePayer") is None
 
-    def test_uses_valid_supplied_blockhash_without_blockhash_rpc(self):
+    async def test_uses_valid_supplied_blockhash_without_blockhash_rpc(self):
         """A valid challenge blockhash should be used without fetching another."""
         client = ExactSvmClientScheme(KeypairSigner(Keypair.from_seed(bytes([1] * 32))))
         rpc_client = self._mock_rpc_client()
         requirements = self._requirements({"recentBlockhash": FIXED_BLOCKHASH})
 
         with patch.object(client, "_get_client", return_value=rpc_client):
-            payload = client.create_payment_payload(requirements)
+            payload = await client.create_payment_payload(requirements)
 
         assert self._payload_blockhash(payload) == FIXED_BLOCKHASH
-        rpc_client.get_latest_blockhash.assert_not_called()
+        rpc_client.get_latest_blockhash.assert_not_awaited()
 
     @pytest.mark.parametrize(
         "recent_blockhash",
         [None, "", "not-a-blockhash", 123],
         ids=["absent", "empty", "malformed", "wrong-type"],
     )
-    def test_falls_back_to_rpc_for_unusable_supplied_blockhash(self, recent_blockhash: object):
+    async def test_falls_back_to_rpc_for_unusable_supplied_blockhash(
+        self, recent_blockhash: object
+    ):
         """Missing or invalid challenge hints should fall back to RPC."""
         client = ExactSvmClientScheme(KeypairSigner(Keypair.from_seed(bytes([1] * 32))))
         rpc_client = self._mock_rpc_client()
@@ -158,10 +160,10 @@ class TestCreatePaymentPayload:
         requirements = self._requirements(extra)
 
         with patch.object(client, "_get_client", return_value=rpc_client):
-            payload = client.create_payment_payload(requirements)
+            payload = await client.create_payment_payload(requirements)
 
         assert self._payload_blockhash(payload) == FIXED_BLOCKHASH_ALT
-        rpc_client.get_latest_blockhash.assert_called_once_with()
+        rpc_client.get_latest_blockhash.assert_awaited_once_with()
 
 
 class TestMintMetadataCache:
@@ -175,22 +177,22 @@ class TestMintMetadataCache:
             Hash.from_string(FIXED_BLOCKHASH_ALT),
         ]
 
-        def get_latest_blockhash():
+        async def get_latest_blockhash():
             mock_resp = MagicMock()
             mock_resp.value.blockhash = blockhashes.pop(0)
             return mock_resp
 
-        mock_client.get_latest_blockhash.side_effect = get_latest_blockhash
+        mock_client.get_latest_blockhash = AsyncMock(side_effect=get_latest_blockhash)
 
         mock_account_info = MagicMock()
         mock_account_info.value = MagicMock()
         mock_account_info.value.owner = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
         mock_account_info.value.data = bytes(44) + bytes([6]) + bytes(37)
-        mock_client.get_account_info.return_value = mock_account_info
+        mock_client.get_account_info = AsyncMock(return_value=mock_account_info)
 
         return mock_client
 
-    def test_v2_reuses_cached_mint_metadata(self):
+    async def test_v2_reuses_cached_mint_metadata(self):
         """V2 should fetch mint metadata once for repeated same-network same-mint payments."""
         signer = KeypairSigner(Keypair.from_seed(bytes([1] * 32)))
         fee_payer = Keypair.from_seed(bytes([2] * 32))
@@ -210,13 +212,13 @@ class TestMintMetadataCache:
         )
 
         with patch.object(client, "_get_client", return_value=rpc_client):
-            client.create_payment_payload(requirements)
-            client.create_payment_payload(requirements)
+            await client.create_payment_payload(requirements)
+            await client.create_payment_payload(requirements)
 
         assert rpc_client.get_account_info.call_count == 1
         assert rpc_client.get_latest_blockhash.call_count == 2
 
-    def test_v1_reuses_cached_mint_metadata(self):
+    async def test_v1_reuses_cached_mint_metadata(self):
         """V1 should fetch mint metadata once for repeated same-network same-mint payments."""
         signer = KeypairSigner(Keypair.from_seed(bytes([1] * 32)))
         fee_payer = Keypair.from_seed(bytes([2] * 32))
@@ -237,8 +239,8 @@ class TestMintMetadataCache:
         )
 
         with patch.object(client, "_get_client", return_value=rpc_client):
-            client.create_payment_payload(requirements)
-            client.create_payment_payload(requirements)
+            await client.create_payment_payload(requirements)
+            await client.create_payment_payload(requirements)
 
         assert rpc_client.get_account_info.call_count == 1
         assert rpc_client.get_latest_blockhash.call_count == 2

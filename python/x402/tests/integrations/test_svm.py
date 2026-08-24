@@ -1,6 +1,6 @@
-"""SVM integration tests for x402ClientSync, x402ResourceServerSync, and x402FacilitatorSync.
+"""SVM integration tests for x402ClientSync, x402ResourceServer, and x402Facilitator.
 
-These tests perform REAL blockchain transactions on Solana Devnet using sync classes.
+These tests perform REAL blockchain transactions on Solana Devnet.
 
 Required environment variables:
 - SVM_CLIENT_PRIVATE_KEY: Base58 encoded private key for the client (payer)
@@ -15,7 +15,7 @@ from decimal import Decimal
 import pytest
 from solders.keypair import Keypair
 
-from x402 import x402ClientSync, x402FacilitatorSync, x402ResourceServerSync
+from x402 import x402ClientSync, x402Facilitator, x402ResourceServer
 from x402.mechanisms.svm import (
     SCHEME_EXACT,
     SOLANA_DEVNET_CAIP2,
@@ -61,36 +61,36 @@ pytestmark = pytest.mark.skipif(
 # =============================================================================
 
 
-class SvmFacilitatorClientSync:
-    """Facilitator client wrapper for the x402ResourceServerSync."""
+class SvmFacilitatorClient:
+    """Facilitator client wrapper for the x402ResourceServer."""
 
     scheme = SCHEME_EXACT
     network = SOLANA_DEVNET_CAIP2
     x402_version = 2
 
-    def __init__(self, facilitator: x402FacilitatorSync):
+    def __init__(self, facilitator: x402Facilitator):
         """Create wrapper.
 
         Args:
-            facilitator: The x402FacilitatorSync to wrap.
+            facilitator: The x402Facilitator to wrap.
         """
         self._facilitator = facilitator
 
-    def verify(
+    async def verify(
         self,
         payload: PaymentPayload,
         requirements: PaymentRequirements,
     ) -> VerifyResponse:
         """Verify payment."""
-        return self._facilitator.verify(payload, requirements)
+        return await self._facilitator.verify(payload, requirements)
 
-    def settle(
+    async def settle(
         self,
         payload: PaymentPayload,
         requirements: PaymentRequirements,
     ) -> SettleResponse:
         """Settle payment."""
-        return self._facilitator.settle(payload, requirements)
+        return await self._facilitator.settle(payload, requirements)
 
     def get_supported(self) -> SupportedResponse:
         """Get supported kinds."""
@@ -168,21 +168,21 @@ class TestSvmIntegrationV2:
             .set_spend_controls(False)
         )
 
-        # Create facilitator with SVM scheme
-        self.facilitator = x402FacilitatorSync().register(
+        # Create facilitator with SVM scheme (async since solana>=0.40 is async-only)
+        self.facilitator = x402Facilitator().register(
             [SOLANA_DEVNET_CAIP2],
             ExactSvmFacilitatorScheme(self.facilitator_signer),
         )
 
         # Create facilitator client wrapper
-        facilitator_client = SvmFacilitatorClientSync(self.facilitator)
+        facilitator_client = SvmFacilitatorClient(self.facilitator)
 
         # Create resource server with SVM scheme
-        self.server = x402ResourceServerSync(facilitator_client)
+        self.server = x402ResourceServer(facilitator_client)
         self.server.register(SOLANA_DEVNET_CAIP2, ExactSvmServerScheme())
         self.server.initialize()
 
-    def test_server_should_successfully_verify_and_settle_svm_payment_from_client(
+    async def test_server_should_successfully_verify_and_settle_svm_payment_from_client(
         self,
     ) -> None:
         """Test the complete SVM V2 payment flow with REAL blockchain transactions.
@@ -230,7 +230,7 @@ class TestSvmIntegrationV2:
         assert accepted is not None
 
         # Server - verifies payment (real transaction verification)
-        verify_response = self.server.verify_payment(payment_payload, accepted)
+        verify_response = await self.server.verify_payment(payment_payload, accepted)
 
         if not verify_response.is_valid:
             print(f"❌ Verification failed: {verify_response.invalid_reason}")
@@ -243,7 +243,7 @@ class TestSvmIntegrationV2:
         # Server does work here...
 
         # Server - settles payment (REAL on-chain transaction!)
-        settle_response = self.server.settle_payment(payment_payload, accepted)
+        settle_response = await self.server.settle_payment(payment_payload, accepted)
 
         if not settle_response.success:
             print(f"❌ Settlement failed: {settle_response.error_reason}")
@@ -364,7 +364,7 @@ class TestSvmIntegrationV2:
         assert svm_support.extra is not None
         assert "feePayer" in svm_support.extra
 
-    def test_fee_payer_not_managed_fails_verification(self) -> None:
+    async def test_fee_payer_not_managed_fails_verification(self) -> None:
         """Test that using an unmanaged fee payer fails verification."""
         recipient = self.facilitator_address
         unknown_fee_payer = "UnknownFeePayer111111111111111111111111111"
@@ -393,7 +393,7 @@ class TestSvmIntegrationV2:
         payload = self.client.create_payment_payload(payment_required)
 
         # Now verify with unknown fee payer
-        verify_response = self.server.verify_payment(payload, requirements)
+        verify_response = await self.server.verify_payment(payload, requirements)
         assert verify_response.is_valid is False
         assert "fee_payer" in verify_response.invalid_reason.lower()
 
@@ -411,13 +411,13 @@ class TestSvmPriceParsing:
         )
         self.facilitator_address = self.facilitator_signer.get_addresses()[0]
 
-        self.facilitator = x402FacilitatorSync().register(
+        self.facilitator = x402Facilitator().register(
             [SOLANA_DEVNET_CAIP2],
             ExactSvmFacilitatorScheme(self.facilitator_signer),
         )
 
-        facilitator_client = SvmFacilitatorClientSync(self.facilitator)
-        self.server = x402ResourceServerSync(facilitator_client)
+        facilitator_client = SvmFacilitatorClient(self.facilitator)
+        self.server = x402ResourceServer(facilitator_client)
         self.svm_server = ExactSvmServerScheme()
         self.server.register(SOLANA_DEVNET_CAIP2, self.svm_server)
         self.server.initialize()
@@ -519,7 +519,7 @@ class TestSvmNetworkNormalization:
         self.facilitator_address = self.facilitator_signer.get_addresses()[0]
 
         # Register for devnet with CAIP-2 identifier
-        self.facilitator = x402FacilitatorSync().register(
+        self.facilitator = x402Facilitator().register(
             [SOLANA_DEVNET_CAIP2],
             ExactSvmFacilitatorScheme(self.facilitator_signer),
         )
