@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Added support for MCP protocol version 2026-07-28
+
 ### Added
 - Added MCP transport integration for x402 payment protocol
 
