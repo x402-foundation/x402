@@ -247,6 +247,24 @@ export const DEFAULT_ASSETS: DefaultAssetTable<ExactDefaultAssetInfo> = {
       symbol: "USDC",
     },
   ], // Celo Sepolia testnet USDC (EIP-3009 supported)
+  "eip155:1329": [
+    {
+      asset: "0xe15fC38F6D8c56aF07bbCBe3BAf5708A2Bf42392",
+      name: "USDC",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  ], // Sei mainnet USDC (EIP-3009 supported)
+  "eip155:1328": [
+    {
+      asset: "0x4fCF1784B31630811181f670Aea7A7bEF803eaED",
+      name: "USDC",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  ], // Sei testnet USDC (EIP-3009 supported)
 };
 
 /**

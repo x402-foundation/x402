@@ -92,6 +92,8 @@ var (
 	ChainIDFlare         = big.NewInt(14)
 	ChainIDCelo          = big.NewInt(42220)
 	ChainIDCeloSepolia   = big.NewInt(11142220)
+	ChainIDSei           = big.NewInt(1329)
+	ChainIDSeiTestnet    = big.NewInt(1328)
 
 	// Network configurations
 	// See DEFAULT_ASSETS.md for guidelines on adding new chains
@@ -331,6 +333,26 @@ var (
 			ChainID: ChainIDCeloSepolia,
 			DefaultAsset: AssetInfo{
 				Address:  "0x01C5C0122039549AD1493B8220cABEdD739BC44E", // USDC on Celo Sepolia
+				Name:     "USDC",
+				Version:  "2",
+				Decimals: DefaultDecimals,
+			},
+		},
+		// Sei Mainnet
+		"eip155:1329": {
+			ChainID: ChainIDSei,
+			DefaultAsset: AssetInfo{
+				Address:  "0xe15fC38F6D8c56aF07bbCBe3BAf5708A2Bf42392", // USDC on Sei
+				Name:     "USDC",
+				Version:  "2",
+				Decimals: DefaultDecimals,
+			},
+		},
+		// Sei Testnet
+		"eip155:1328": {
+			ChainID: ChainIDSeiTestnet,
+			DefaultAsset: AssetInfo{
+				Address:  "0x4fCF1784B31630811181f670Aea7A7bEF803eaED", // USDC on Sei Testnet
 				Name:     "USDC",
 				Version:  "2",
 				Decimals: DefaultDecimals,

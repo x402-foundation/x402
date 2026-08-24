@@ -28,6 +28,18 @@ V1_DEFAULT_ASSETS: dict[str, AssetInfo] = {
         "version": "2",
         "decimals": 6,
     },
+    "sei": {
+        "address": "0xe15fC38F6D8c56aF07bbCBe3BAf5708A2Bf42392",
+        "name": "USDC",
+        "version": "2",
+        "decimals": 6,
+    },
+    "sei-testnet": {
+        "address": "0x4fCF1784B31630811181f670Aea7A7bEF803eaED",
+        "name": "USDC",
+        "version": "2",
+        "decimals": 6,
+    },
     "polygon": {
         "address": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
         "name": "USD Coin",
@@ -104,7 +116,7 @@ V1_NETWORK_CHAIN_IDS: dict[str, int] = {
     "abstract-testnet": 11124,
     "iotex": 4689,
     "sei": 1329,
-    "sei-testnet": 713715,
+    "sei-testnet": 1328,
     "peaq": 3338,
     "story": 1513,
     "educhain": 656476,

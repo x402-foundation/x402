@@ -640,6 +640,26 @@ NETWORK_CONFIGS: dict[str, NetworkConfig] = {
             "decimals": 6,
         },
     },
+    # Sei Mainnet
+    "eip155:1329": {
+        "chain_id": 1329,
+        "default_asset": {
+            "address": "0xe15fC38F6D8c56aF07bbCBe3BAf5708A2Bf42392",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
+    # Sei Testnet
+    "eip155:1328": {
+        "chain_id": 1328,
+        "default_asset": {
+            "address": "0x4fCF1784B31630811181f670Aea7A7bEF803eaED",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
 }
 
 # V1 legacy constants are in x402.mechanisms.evm.v1.constants

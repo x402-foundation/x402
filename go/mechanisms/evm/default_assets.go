@@ -86,6 +86,12 @@ var DefaultAssets = map[string][]DefaultAssetInfo{
 	"eip155:11142220": {
 		{Asset: "0x01C5C0122039549AD1493B8220cABEdD739BC44E", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
 	},
+	"eip155:1329": {
+		{Asset: "0xe15fC38F6D8c56aF07bbCBe3BAf5708A2Bf42392", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
+	},
+	"eip155:1328": {
+		{Asset: "0x4fCF1784B31630811181f670Aea7A7bEF803eaED", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
+	},
 }
 
 // legacyNetworkChainIDs maps v1 network names to chain IDs (mirrors v1.NetworkChainIDs).
