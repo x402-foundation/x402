@@ -146,9 +146,9 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 
 | Hook | TypeScript | Go | Python |
 |------|------------|-----|--------|
-| onBeforeExecution | ✅ | ❌ | ❌ |
-| onAfterExecution | ✅ | ❌ | ❌ |
-| onAfterSettlement | ✅ | ❌ | ❌ |
+| onBeforeExecution | ✅ | ❌ | ✅ |
+| onAfterExecution | ✅ | ❌ | ✅ |
+| onAfterSettlement | ✅ | ❌ | ✅ |
 
 ## HTTP Server Features
 
