@@ -45,6 +45,21 @@ The `escrow` payment flow settles twice — once before the handler and once aft
     });
     ```
   </Tab>
+  <Tab title="Python">
+    ```python
+    async def send_receipt_on_final_charge(context):
+        # Only send receipt on the final charge, not the escrow deposit
+        if context.phase != "after-handler":
+            return
+
+        await send_receipt(
+            transaction=context.result.transaction,
+            payer=context.result.payer,
+        )
+
+    server.on_after_settle(send_receipt_on_final_charge)
+    ```
+  </Tab>
   <Tab title="Go">
     ```go
     server.OnAfterSettle(func(ctx x402.SettleResultContext) error {
