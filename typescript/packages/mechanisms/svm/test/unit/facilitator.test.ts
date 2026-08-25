@@ -419,6 +419,51 @@ describe("ExactSvmScheme", () => {
       expect(result.errorReason).toBe("unsupported_scheme");
       expect(result.network).toBe(SOLANA_DEVNET_CAIP2);
     });
+
+    it("should surface the verification message in errorMessage", async () => {
+      const facilitator = new ExactSvmScheme(mockSigner);
+      vi.spyOn(
+        facilitator as unknown as { _verify: () => Promise<unknown> },
+        "_verify",
+      ).mockResolvedValue({
+        response: {
+          isValid: false,
+          invalidReason: "transaction_simulation_failed",
+          invalidMessage: 'Simulation failed: {"InstructionError":[2,{"Custom":1}]}',
+          payer: "PayerAddress111111111111111111111111",
+        },
+        verificationPath: null,
+      });
+
+      const result = await facilitator.settle(
+        {
+          x402Version: 2,
+          accepted: {
+            scheme: "exact",
+            network: SOLANA_DEVNET_CAIP2,
+            asset: USDC_DEVNET_ADDRESS,
+            amount: "100000",
+            payTo: "PayToAddress11111111111111111111111111",
+            maxTimeoutSeconds: 3600,
+            extra: { feePayer: "FeePayer1111111111111111111111111111" },
+          },
+          payload: { transaction: "base64transaction==" },
+        } as unknown as PaymentPayload,
+        {
+          scheme: "exact",
+          network: SOLANA_DEVNET_CAIP2,
+          asset: USDC_DEVNET_ADDRESS,
+          amount: "100000",
+          payTo: "PayToAddress11111111111111111111111111",
+          maxTimeoutSeconds: 3600,
+          extra: { feePayer: "FeePayer1111111111111111111111111111" },
+        } as PaymentRequirements,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe("transaction_simulation_failed");
+      expect(result.errorMessage).toBe('Simulation failed: {"InstructionError":[2,{"Custom":1}]}');
+    });
   });
 
   describe("duplicate settlement cache", () => {

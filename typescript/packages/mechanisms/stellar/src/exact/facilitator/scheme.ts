@@ -213,6 +213,7 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
           network: payload.accepted.network,
           transaction: "",
           errorReason: verifyResult.invalidReason ?? "verification_failed",
+          errorMessage: verifyResult.invalidMessage,
           payer: verifyResult.payer,
         };
       }

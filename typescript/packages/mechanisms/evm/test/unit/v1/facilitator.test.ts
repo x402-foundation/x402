@@ -389,5 +389,50 @@ describe("ExactEvmSchemeV1", () => {
       expect(result.success).toBe(false);
       expect(result.errorReason).toBe(Errors.ErrInvalidSignature);
     });
+
+    it("should surface the verification message in errorMessage", async () => {
+      const facilitator = new ExactEvmSchemeV1(mockSigner);
+      vi.spyOn(
+        facilitator as unknown as { _verify: () => Promise<unknown> },
+        "_verify",
+      ).mockResolvedValue({
+        isValid: false,
+        invalidReason: Errors.ErrInvalidSignature,
+        invalidMessage: "signature does not match authorization.from",
+        payer: "0x1234567890123456789012345678901234567890",
+      });
+
+      const result = await facilitator.settle(
+        {
+          x402Version: 1,
+          scheme: "exact",
+          network: "base-sepolia",
+          payload: {
+            signature: "0xinvalid",
+            authorization: {
+              from: "0x1234567890123456789012345678901234567890",
+              to: "0x9876543210987654321098765432109876543210",
+              value: "100000",
+              validAfter: "0",
+              validBefore: "99999999999",
+              nonce: "0x0000000000000000000000000000000000000000000000000000000000000000",
+            },
+          },
+        } as never,
+        {
+          scheme: "exact",
+          network: "base-sepolia",
+          asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+          maxAmountRequired: "100000",
+          payTo: "0x9876543210987654321098765432109876543210",
+          maxTimeoutSeconds: 3600,
+          extra: { name: "USDC", version: "2" },
+        } as never,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe(Errors.ErrInvalidSignature);
+      expect(result.errorMessage).toBe("signature does not match authorization.from");
+    });
   });
 });

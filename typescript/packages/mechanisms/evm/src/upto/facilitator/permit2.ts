@@ -423,6 +423,7 @@ export async function settleUptoPermit2(
       network: payload.accepted.network,
       transaction: "",
       errorReason: valid.invalidReason ?? "invalid_scheme",
+      errorMessage: valid.invalidMessage,
       payer,
     };
   }
