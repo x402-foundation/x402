@@ -60,7 +60,7 @@ Every scheme declares which payment flows it supports per asset transfer method.
 
 The server resolves the flow from the scheme's `paymentFlows` table using the `assetTransferMethod` in the payment requirements. When the resolved flow is not `authorization`, the server signals it to clients via `extra.paymentFlow` in the 402 response.
 
-All current scheme implementations declare `authorization` only.
+The `exact` scheme supports both `authorization` (default) and `upfront` flows on all networks. Servers opt in per route by setting `extra.paymentFlow: "upfront"` in the route's `accepts` config. The `upto` and `batch-settlement` schemes support `authorization` only.
 
 ### Specs
 
