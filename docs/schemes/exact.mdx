@@ -129,6 +129,100 @@ Use `exact` when the final charge is known before the response is generated, suc
   </Tab>
 </Tabs>
 
+### Upfront payment flow
+
+By default, `exact` uses the `authorization` flow: the payment is verified before the resource handler runs and settled after. When your resource needs on-chain finality before execution — for example, a long-running handler on Solana where the signed transaction's blockhash may expire before the handler finishes — you can opt in to the `upfront` flow instead.
+
+With `upfront`, settlement happens **before** the handler runs. The facilitator's `/settle` endpoint both validates and commits the payment; `/verify` is not called. The client signs the same payload as in `authorization`; only the server-side ordering changes.
+
+To opt in, set `paymentFlow: "upfront"` in the route's `extra` config:
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    app.use(
+      paymentMiddleware(
+        {
+          "GET /weather": {
+            accepts: [
+              {
+                scheme: "exact",
+                price: "$0.001",
+                network: "eip155:84532",
+                payTo: evmAddress,
+                extra: { paymentFlow: "upfront" },
+              },
+              {
+                scheme: "exact",
+                price: "$0.001",
+                network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+                payTo: svmAddress,
+                extra: { paymentFlow: "upfront" },
+              },
+            ],
+          },
+        },
+        resourceServer,
+      ),
+    );
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    routes := x402http.RoutesConfig{
+        "GET /weather": {
+            Accepts: x402http.PaymentOptions{
+                {
+                    Scheme:  "exact",
+                    Price:   "$0.001",
+                    Network: x402.Network("eip155:84532"),
+                    PayTo:   evmAddress,
+                    Extra: map[string]interface{}{
+                        "paymentFlow": "upfront",
+                    },
+                },
+                {
+                    Scheme:  "exact",
+                    Price:   "$0.001",
+                    Network: x402.Network("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"),
+                    PayTo:   svmAddress,
+                    Extra: map[string]interface{}{
+                        "paymentFlow": "upfront",
+                    },
+                },
+            },
+        },
+    }
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    routes = {
+        "GET /weather": RouteConfig(
+            accepts=[
+                PaymentOption(
+                    scheme="exact",
+                    price="$0.001",
+                    network="eip155:84532",
+                    pay_to=evm_address,
+                    extra={"paymentFlow": "upfront"},
+                ),
+                PaymentOption(
+                    scheme="exact",
+                    price="$0.001",
+                    network="solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+                    pay_to=svm_address,
+                    extra={"paymentFlow": "upfront"},
+                ),
+            ],
+        ),
+    }
+    ```
+  </Tab>
+</Tabs>
+
+The `authorization` flow remains the default. Clients prefer `authorization` when both flows are offered; the server signals the resolved flow to clients via `extra.paymentFlow` in the 402 response. See [Payment flows](/schemes/overview#payment-flows) for a comparison of all flows.
+
 ### Client Setup
 
 <Tabs>
