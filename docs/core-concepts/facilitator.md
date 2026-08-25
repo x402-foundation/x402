@@ -63,11 +63,17 @@ Multiple facilitators are live in production, supporting various networks includ
 11. `Facilitator server` returns a `Payment Execution Response` to the resource server.
 12. `Resource server` returns a response to the `Client` with a `PAYMENT-RESPONSE` header containing the `Settlement Response` as Base64-encoded JSON. On success, this is a `200 OK` with the requested resource. On failure, this is a `402 Payment Required` with error details.
 
-### Settlement Pending (EVM)
+### Settlement pending and auto-recovery
 
-When an EVM settlement transaction is broadcast but its confirmation cannot be established — for example, due to an RPC error or a timeout while waiting for the receipt — the facilitator returns `settlement_pending` instead of a terminal failure. This is a **non-terminal** error: the transaction may still confirm on chain. The `SettlementResponse` carries the broadcast transaction hash in `transaction` and the network in `network`, so callers can reconcile on chain before deciding whether to retry.
+When a settlement transaction is broadcast but its confirmation cannot be established — for example, due to an RPC error or a timeout while waiting for the receipt — the facilitator returns `settlement_pending` instead of a terminal failure. This is a **non-terminal** error: the transaction may still confirm on chain. The `SettlementResponse` carries the broadcast transaction hash in `transaction` and the network in `network`, so callers can reconcile on chain before deciding whether to retry.
 
-This applies to the `exact`, `upto`, and `batch-settlement` EVM schemes (v2 only).
+This applies to the `exact`, `upto`, and `batch-settlement` schemes on both EVM and SVM (v2 only).
+
+#### Automatic retry and reconciliation
+
+The resource server automatically retries settlement exactly once when it receives a `settlement_pending` response. On the retry, the facilitator mechanism checks a `PendingSettlementStore` for the broadcast transaction hash keyed to the payment payload. When a match is found, the mechanism reconciles against the already-broadcast transaction instead of verifying and broadcasting a second one. This prevents double-spend and avoids redundant on-chain submissions.
+
+The `PendingSettlementStore` is an interface, not a concrete type, so multi-instance facilitators (running several replicas with no session affinity) can supply a shared, network-backed implementation such as Redis instead of the default in-memory store. The in-memory default only works when the retry lands on the same process.
 
 **Facilitators deployed behind a platform request deadline** (serverless functions, gateway timeouts) should bound the receipt wait below that deadline. If the process is killed mid-wait, the caller receives a 5xx with no transaction hash instead of `settlement_pending` with a hash to reconcile against.
 
