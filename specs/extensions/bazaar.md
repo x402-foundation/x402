@@ -429,9 +429,15 @@ and a budget filter keyed on it silently excludes metered services whose settled
 cost lands under budget.
 
 Resource servers MAY therefore publish an optional `pricing` object on the
-`bazaar` extension, as a sibling of `info` and `schema`. Like the service
-metadata above, it is purely additive: servers that omit it produce byte-identical
-402 bodies, and clients that don't recognize it ignore it. `accepts[].amount`
+`bazaar` extension, as a sibling of `info` and `schema`. It is purely additive in
+the same sense as the service metadata above: servers that omit it produce
+byte-identical 402 bodies, and clients that don't recognize it ignore it.
+
+The placement differs from that section, deliberately. `serviceName`, `tags` and
+`iconUrl` sit on the top-level `resource` object because they describe the service
+itself, which the payment path already carries. `pricing` sits on the extension
+object because it is consumed only by catalogs and never by the payment path, and
+keeping it inside the extension keeps that boundary legible. `accepts[].amount`
 remains unambiguously the authorization ceiling; `pricing` never participates in
 payment authorization or settlement.
 
@@ -454,6 +460,27 @@ payment authorization or settlement.
 }
 ```
 
+A `per-call` listing that omits both `unit` and `typical` is the fallback case,
+and the one a catalog implementer meets first:
+
+```json
+{
+  "extensions": {
+    "bazaar": {
+      "pricing": {
+        "model": "per-call",
+        "note": "Flat rate; the ceiling in accepts[].amount is the price."
+      }
+    }
+  }
+}
+```
+
+Here the catalog has nothing better than the ceiling, and per the fallback rule
+below it should say so rather than presenting the ceiling as a price. Everything
+except `model` is optional precisely so this case is expressible, instead of
+forcing a server to invent a unit it does not meter by.
+
 ### Fields
 
 | Field     | Type   | Required | Description                                                                                                                                          |
@@ -471,9 +498,15 @@ rather than presenting the ceiling as a price.
 ### Validation Rules
 
 `pricing` crosses the same trust boundary as the service metadata above: clients
-echo it from `PaymentRequired` into `PaymentPayload`, so facilitators MUST apply
-soft-drop rules during extraction. A field that fails its rule is discarded; the
-listing survives.
+echo it from `PaymentRequired` into `PaymentPayload`. Facilitators SHOULD apply the
+soft-drop rules below during extraction — a field that fails its rule is discarded
+and the listing survives.
+
+These are stated as SHOULD rather than MUST because the reference implementations
+do not carry them yet. The `resource` metadata rules above are MUST, and they
+arrived together with their TypeScript, Go and Python extraction paths in the same
+change; raising `pricing` to MUST belongs with the follow-up PR that implements it
+in all three, not with this one.
 
 | Field     | Rule                                                                                                                                     | On violation             |
 |-----------|------------------------------------------------------------------------------------------------------------------------------------------|--------------------------|
