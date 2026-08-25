@@ -88,8 +88,12 @@ def create_payment_wrapper(
     Returns:
         A decorator to apply to a FastMCP tool handler function.
     """
-    # Lazy import mcp types so the module can be imported without mcp installed
-    from mcp.server.fastmcp import Context
+    # Lazy import mcp types so the module can be imported without mcp installed.
+    # mcp 2.x moved FastMCP to mcp.server.mcpserver and re-exports Context from there.
+    try:
+        from mcp.server.fastmcp import Context  # mcp 1.x
+    except ImportError:
+        from mcp.server.mcpserver import Context  # mcp >= 2.0
 
     from mcp.types import CallToolResult, TextContent
 
