@@ -479,11 +479,9 @@ export async function verifyOpenTransaction(
     );
   }
 
-  // Every check below reads the compiled `instructions` list, which a
-  // version 1 message does not carry (its instructions compile to a
-  // header/payload split and its compute budget lives in `message.config`),
-  // so those checks would pass vacuously. The spec limits open transactions
-  // to legacy or version 0; reject anything newer explicitly.
+  // Every check below reads the compiled `instructions` list, which a version 1
+  // message does not carry. The spec limits open transactions to legacy or
+  // version 0; reject anything newer explicitly.
   if (message.version !== "legacy" && message.version !== 0) {
     throw new Error(
       `verifyOpenTransaction: unsupported transaction version ${String(message.version)}; open transactions must be legacy or version 0`,

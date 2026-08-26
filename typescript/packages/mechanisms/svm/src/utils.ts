@@ -139,6 +139,7 @@ export function isSupportedTransactionVersion(version: number | string): boolean
 export type V1ConfigViolation =
   | "compute_unit_limit_missing"
   | "compute_unit_limit_too_high"
+  | "loaded_accounts_data_size_limit_missing"
   | "priority_fee_too_high";
 
 /**
@@ -147,14 +148,15 @@ export type V1ConfigViolation =
  * and version 0 transactions.
  *
  * A version 1 transaction that leaves `computeUnitLimit` unset is budgeted
- * zero compute units and cannot execute, so the limit is required. The
- * priority fee is a total in lamports (not micro-lamports per compute unit),
- * so the per-CU operator cap is normalized against the declared compute unit
- * limit: the fee passes when
+ * zero compute units, and one that leaves `loadedAccountsDataSizeLimit` unset
+ * is budgeted zero bytes of account data; either way it cannot execute, so
+ * both fields are required. The priority fee is a total in lamports (not
+ * micro-lamports per compute unit), so the per-CU operator cap is normalized
+ * against the declared compute unit limit: the fee passes when
  * `priorityFeeLamports * 1e6 <= maxPriorityFeeMicroLamports * computeUnitLimit`,
  * which bounds the facilitator's SOL exposure to exactly what the equivalent
- * version 0 transaction could charge. `heapSize` and
- * `loadedAccountsDataSizeLimit` are not checked: unlike their version 0
+ * version 0 transaction could charge. `heapSize` and the magnitude of
+ * `loadedAccountsDataSizeLimit` are not capped: unlike their version 0
  * instruction forms, they add no execution surface, and their compute cost is
  * already bounded by the capped `computeUnitLimit`.
  *
@@ -165,7 +167,13 @@ export type V1ConfigViolation =
  * @returns The first violation found, or null when the config is acceptable
  */
 export function checkV1TransactionConfig(
-  config: { computeUnitLimit?: number; priorityFeeLamports?: bigint } | undefined,
+  config:
+    | {
+        computeUnitLimit?: number;
+        loadedAccountsDataSizeLimit?: number;
+        priorityFeeLamports?: bigint;
+      }
+    | undefined,
   limits: { maxComputeUnits?: number; maxPriorityFeeMicroLamports: number },
 ): V1ConfigViolation | null {
   const computeUnitLimit = config?.computeUnitLimit;
@@ -174,6 +182,9 @@ export function checkV1TransactionConfig(
   }
   if (limits.maxComputeUnits !== undefined && computeUnitLimit > limits.maxComputeUnits) {
     return "compute_unit_limit_too_high";
+  }
+  if (!config?.loadedAccountsDataSizeLimit) {
+    return "loaded_accounts_data_size_limit_missing";
   }
   const priorityFeeLamports = config?.priorityFeeLamports ?? 0n;
   if (

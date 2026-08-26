@@ -134,26 +134,55 @@ describe("checkV1TransactionConfig", () => {
     ).toBe("compute_unit_limit_too_high");
     expect(
       checkV1TransactionConfig(
-        { computeUnitLimit: 20_000 },
+        { computeUnitLimit: 20_000, loadedAccountsDataSizeLimit: 65_536 },
         { maxComputeUnits: 20_000, maxPriorityFeeMicroLamports: 5_000_000 },
       ),
     ).toBeNull();
+  });
+
+  it("requires a loaded accounts data size limit", () => {
+    expect(
+      checkV1TransactionConfig({ computeUnitLimit: 20_000 }, { maxPriorityFeeMicroLamports: 0 }),
+    ).toBe("loaded_accounts_data_size_limit_missing");
+    expect(
+      checkV1TransactionConfig(
+        { computeUnitLimit: 20_000, loadedAccountsDataSizeLimit: 0 },
+        { maxPriorityFeeMicroLamports: 0 },
+      ),
+    ).toBe("loaded_accounts_data_size_limit_missing");
   });
 
   it("normalizes the total-lamport priority fee against the per-CU cap", () => {
     // 5,000,000 micro-lamports/CU over 20,000 CUs = 100,000 lamports allowed.
     const limits = { maxPriorityFeeMicroLamports: 5_000_000 };
     expect(
-      checkV1TransactionConfig({ computeUnitLimit: 20_000, priorityFeeLamports: 100_000n }, limits),
+      checkV1TransactionConfig(
+        {
+          computeUnitLimit: 20_000,
+          loadedAccountsDataSizeLimit: 65_536,
+          priorityFeeLamports: 100_000n,
+        },
+        limits,
+      ),
     ).toBeNull();
     expect(
-      checkV1TransactionConfig({ computeUnitLimit: 20_000, priorityFeeLamports: 100_001n }, limits),
+      checkV1TransactionConfig(
+        {
+          computeUnitLimit: 20_000,
+          loadedAccountsDataSizeLimit: 65_536,
+          priorityFeeLamports: 100_001n,
+        },
+        limits,
+      ),
     ).toBe("priority_fee_too_high");
   });
 
   it("accepts a config with no priority fee", () => {
     expect(
-      checkV1TransactionConfig({ computeUnitLimit: 20_000 }, { maxPriorityFeeMicroLamports: 0 }),
+      checkV1TransactionConfig(
+        { computeUnitLimit: 20_000, loadedAccountsDataSizeLimit: 65_536 },
+        { maxPriorityFeeMicroLamports: 0 },
+      ),
     ).toBeNull();
   });
 });
@@ -253,7 +282,11 @@ describe("ExactSvmScheme static path with version 1 transactions", () => {
   it("accepts a valid version 1 transfer and reads limits from message.config", async () => {
     const { scheme, requirements, buildPayload, authority } = await setup();
     const result = await scheme.verify(
-      await buildPayload({ computeUnitLimit: 20_000, priorityFeeLamports: 100_000n }),
+      await buildPayload({
+        computeUnitLimit: 20_000,
+        loadedAccountsDataSizeLimit: 65_536,
+        priorityFeeLamports: 100_000n,
+      }),
       requirements,
     );
     expect(result.invalidReason).toBeUndefined();
@@ -268,7 +301,9 @@ describe("ExactSvmScheme static path with version 1 transactions", () => {
       data: new TextEncoder().encode("unique-nonce"),
     } as Instruction;
     const result = await scheme.verify(
-      await buildPayload({ computeUnitLimit: 20_000 }, [memoIx]),
+      await buildPayload({ computeUnitLimit: 20_000, loadedAccountsDataSizeLimit: 65_536 }, [
+        memoIx,
+      ]),
       requirements,
     );
     expect(result.isValid).toBe(true);
@@ -280,6 +315,18 @@ describe("ExactSvmScheme static path with version 1 transactions", () => {
     expect(result.isValid).toBe(false);
     expect(result.invalidReason).toBe(
       "invalid_exact_svm_payload_transaction_config_compute_limit_missing",
+    );
+  });
+
+  it("rejects a version 1 transaction with no loaded accounts data size limit", async () => {
+    const { scheme, requirements, buildPayload } = await setup();
+    const result = await scheme.verify(
+      await buildPayload({ computeUnitLimit: 20_000 }),
+      requirements,
+    );
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe(
+      "invalid_exact_svm_payload_transaction_config_loaded_accounts_data_size_limit_missing",
     );
   });
 
@@ -300,7 +347,11 @@ describe("ExactSvmScheme static path with version 1 transactions", () => {
     // at most 100,000 lamports of total priority fee.
     const { scheme, requirements, buildPayload } = await setup();
     const result = await scheme.verify(
-      await buildPayload({ computeUnitLimit: 20_000, priorityFeeLamports: 100_001n }),
+      await buildPayload({
+        computeUnitLimit: 20_000,
+        loadedAccountsDataSizeLimit: 65_536,
+        priorityFeeLamports: 100_001n,
+      }),
       requirements,
     );
     expect(result.isValid).toBe(false);
@@ -316,7 +367,9 @@ describe("ExactSvmScheme static path with version 1 transactions", () => {
       data: new Uint8Array([2, 160, 134, 1, 0]),
     } as Instruction;
     const result = await scheme.verify(
-      await buildPayload({ computeUnitLimit: 20_000 }, [computeBudgetIx]),
+      await buildPayload({ computeUnitLimit: 20_000, loadedAccountsDataSizeLimit: 65_536 }, [
+        computeBudgetIx,
+      ]),
       requirements,
     );
     expect(result.isValid).toBe(false);
@@ -341,7 +394,14 @@ describe("validateComputeBudgetLimits with version 1 transactions", () => {
   } as Instruction;
 
   it("accepts a config within the caps", async () => {
-    const tx = await buildV1({ computeUnitLimit: 400_000, priorityFeeLamports: 20_000n }, [noopIx]);
+    const tx = await buildV1(
+      {
+        computeUnitLimit: 400_000,
+        loadedAccountsDataSizeLimit: 65_536,
+        priorityFeeLamports: 20_000n,
+      },
+      [noopIx],
+    );
     expect(() => validateComputeBudgetLimits(tx)).not.toThrow();
   });
 
@@ -352,6 +412,13 @@ describe("validateComputeBudgetLimits with version 1 transactions", () => {
     );
   });
 
+  it("rejects a missing loaded accounts data size limit", async () => {
+    const tx = await buildV1({ computeUnitLimit: 400_000 }, [noopIx]);
+    expect(() => validateComputeBudgetLimits(tx)).toThrow(
+      /smart_wallet_loaded_accounts_data_size_limit_missing/,
+    );
+  });
+
   it("rejects a compute unit limit above the cap", async () => {
     const tx = await buildV1({ computeUnitLimit: 500_000 }, [noopIx]);
     expect(() => validateComputeBudgetLimits(tx)).toThrow(/smart_wallet_compute_units_too_high/);
@@ -359,7 +426,14 @@ describe("validateComputeBudgetLimits with version 1 transactions", () => {
 
   it("rejects a priority fee above the normalized cap", async () => {
     // Default caps: 50,000 micro-lamports/CU over 400,000 CUs = 20,000 lamports.
-    const tx = await buildV1({ computeUnitLimit: 400_000, priorityFeeLamports: 20_001n }, [noopIx]);
+    const tx = await buildV1(
+      {
+        computeUnitLimit: 400_000,
+        loadedAccountsDataSizeLimit: 65_536,
+        priorityFeeLamports: 20_001n,
+      },
+      [noopIx],
+    );
     expect(() => validateComputeBudgetLimits(tx)).toThrow(/smart_wallet_priority_fee_too_high/);
   });
 

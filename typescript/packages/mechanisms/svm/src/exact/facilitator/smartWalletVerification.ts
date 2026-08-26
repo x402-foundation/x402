@@ -280,8 +280,7 @@ export function assertFeePayerIsolatedFromInstructions(
  * Caps compute units and priority fees to bound the facilitator's fee exposure.
  * Legacy and version 0 transactions are checked by scanning their
  * ComputeBudget instructions; version 1 transactions are checked against
- * `message.config`, with the total-lamport priority fee normalized against
- * the per-compute-unit cap.
+ * `message.config`.
  *
  * @param transaction - Decoded transaction to inspect
  * @param limits - Optional operator-provided overrides for compute budget caps
@@ -299,6 +298,12 @@ export function validateComputeBudgetLimits(
     limits?.maxPriorityFeeMicroLamports ?? DEFAULT_SMART_WALLET_MAX_PRIORITY_FEE_MICROLAMPORTS;
 
   const compiled = getCompiledTransactionMessageDecoder().decode(transaction.messageBytes);
+
+  // Fail closed on any version these checks predate.
+  if (!isSupportedTransactionVersion(compiled.version)) {
+    throw new Error(`${Errors.ErrSmartWalletUnsupportedTransactionVersion}: ${compiled.version}`);
+  }
+
   const decompiled = decompileTransactionMessage(compiled);
   validateComputeBudgetLimitsFromMessage(decompiled, {
     maxComputeUnits: maxCU,
@@ -334,11 +339,8 @@ export function validateComputeBudgetLimitsFromMessage(
   }
 
   // Version 1 transactions carry compute budget and priority fee in
-  // `message.config` rather than ComputeBudget instructions, so the caps are
-  // enforced on the config. Any ComputeBudget instruction in a version 1
-  // transaction is rejected outright: the config is authoritative there, so
-  // such an instruction can only be an attempt to satisfy an
-  // instruction-scanning check while the config carries different values.
+  // `message.config`, which is authoritative: any ComputeBudget instruction
+  // present anyway is rejected outright rather than trusted.
   if (decompiled.version === 1) {
     for (const ix of instructions) {
       if (ix.programAddress.toString() === COMPUTE_BUDGET_PROGRAM_ADDRESS.toString()) {
@@ -359,6 +361,11 @@ export function validateComputeBudgetLimitsFromMessage(
     if (violation === "compute_unit_limit_too_high") {
       throw new Error(
         `${Errors.ErrSmartWalletComputeUnitsTooHigh}: ${decompiled.config?.computeUnitLimit} exceeds max ${maxCU}`,
+      );
+    }
+    if (violation === "loaded_accounts_data_size_limit_missing") {
+      throw new Error(
+        `${Errors.ErrSmartWalletLoadedAccountsDataSizeLimitMissing}: version 1 transactions must set config.loadedAccountsDataSizeLimit`,
       );
     }
     if (violation === "priority_fee_too_high") {

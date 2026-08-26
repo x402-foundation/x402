@@ -80,16 +80,15 @@ const DEFAULT_SMART_WALLET_ALLOWED_PROGRAMS = [
 const IX_TOKEN_TRANSFER_CHECKED = 12;
 
 /**
- * Static-path error codes for version 1 `message.config` violations. Version 1
- * transactions carry compute budget and priority fee in a fixed config field
- * instead of ComputeBudget instructions, so these replace the
- * `..._compute_limit_instruction` / `..._compute_price_instruction` codes on
- * the version 1 arm. None are layout-recoverable: a config violation applies
+ * Static-path error codes for version 1 `message.config` violations, replacing
+ * the `..._compute_limit_instruction` / `..._compute_price_instruction` codes
+ * on the version 1 arm. None are layout-recoverable: a config violation applies
  * identically under Path 2's caps, so falling through would only mask it.
  */
 const V1_CONFIG_INVALID_REASONS: Record<V1ConfigViolation, string> = {
   compute_unit_limit_missing: Errors.ErrV1ConfigComputeLimitMissing,
   compute_unit_limit_too_high: Errors.ErrV1ConfigComputeLimitTooHigh,
+  loaded_accounts_data_size_limit_missing: Errors.ErrV1ConfigLoadedAccountsDataSizeLimitMissing,
   priority_fee_too_high: Errors.ErrV1ConfigPriorityFeeTooHigh,
 };
 
@@ -795,6 +794,23 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
         response: {
           isValid: false,
           invalidReason: Errors.ErrUnsupportedTransactionVersion,
+          payer: "",
+        },
+        verificationPath: null,
+      };
+    }
+
+    // Version allowlist, checked before path dispatch: every check below reads
+    // its sponsorship policy from version-specific structure, so it must run
+    // before those checks can be trusted.
+    const compiledForTransactionChecks = getCompiledTransactionMessageDecoder().decode(
+      transaction.messageBytes,
+    );
+    if (!isSupportedTransactionVersion(compiledForTransactionChecks.version)) {
+      return {
+        response: {
+          isValid: false,
+          invalidReason: "unsupported_transaction_version",
           payer: "",
         },
         verificationPath: null,

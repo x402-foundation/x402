@@ -35,6 +35,8 @@ export const ErrV1ConfigComputeLimitMissing =
   "invalid_exact_svm_payload_transaction_config_compute_limit_missing";
 export const ErrV1ConfigComputeLimitTooHigh =
   "invalid_exact_svm_payload_transaction_config_compute_limit_too_high";
+export const ErrV1ConfigLoadedAccountsDataSizeLimitMissing =
+  "invalid_exact_svm_payload_transaction_config_loaded_accounts_data_size_limit_missing";
 export const ErrV1ConfigPriorityFeeTooHigh =
   "invalid_exact_svm_payload_transaction_config_priority_fee_too_high";
 export const ErrComputeLimitInstruction =
@@ -83,6 +85,8 @@ export const ErrSmartWalletUnsupportedTransactionVersion =
   "invalid_exact_svm_smart_wallet_unsupported_transaction_version";
 export const ErrSmartWalletComputeUnitLimitMissing =
   "invalid_exact_svm_smart_wallet_compute_unit_limit_missing";
+export const ErrSmartWalletLoadedAccountsDataSizeLimitMissing =
+  "invalid_exact_svm_smart_wallet_loaded_accounts_data_size_limit_missing";
 export const ErrSmartWalletAltResolutionUnavailable =
   "invalid_exact_svm_smart_wallet_alt_resolution_not_available";
 export const ErrSmartWalletAltResolutionFailed =
