@@ -322,9 +322,12 @@ For custom facilitator implementations, use `UptoSvmScheme` from the facilitator
     import { toFacilitatorSvmSigner } from "@x402/svm";
     import { UptoSvmScheme } from "@x402/svm/upto/facilitator";
 
-    const svmSigner = toFacilitatorSvmSigner(keypair);
+    // Pass the RPC URL to the signer, not to UptoSvmScheme
+    const svmSigner = toFacilitatorSvmSigner(
+      keypair,
+      process.env.SVM_RPC_URL ? { defaultRpcUrl: process.env.SVM_RPC_URL } : undefined,
+    );
     const svmUptoScheme = new UptoSvmScheme(svmSigner, {
-      rpcUrl: process.env.SVM_RPC_URL,
       maxChannelLifetimeSecs: 3600,
     });
 
