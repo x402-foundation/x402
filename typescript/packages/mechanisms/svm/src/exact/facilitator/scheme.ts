@@ -38,11 +38,14 @@ import { SettlementCache } from "../../settlement-cache";
 import type { FacilitatorSvmSigner } from "../../signer";
 import type { ExactSvmPayloadV2 } from "../../types";
 import {
+  checkV1TransactionConfig,
   decodeTransactionFromPayload,
   getTokenPayerFromTransaction,
+  isSupportedTransactionVersion,
   recordPendingOrTerminal,
   transactionMessageHash,
   TransactionOnchainFailureError,
+  type V1ConfigViolation,
 } from "../../utils";
 import {
   assertSmartWalletLimits,
@@ -75,6 +78,20 @@ const DEFAULT_SMART_WALLET_ALLOWED_PROGRAMS = [
 ];
 
 const IX_TOKEN_TRANSFER_CHECKED = 12;
+
+/**
+ * Static-path error codes for version 1 `message.config` violations. Version 1
+ * transactions carry compute budget and priority fee in a fixed config field
+ * instead of ComputeBudget instructions, so these replace the
+ * `..._compute_limit_instruction` / `..._compute_price_instruction` codes on
+ * the version 1 arm. None are layout-recoverable: a config violation applies
+ * identically under Path 2's caps, so falling through would only mask it.
+ */
+const V1_CONFIG_INVALID_REASONS: Record<V1ConfigViolation, string> = {
+  compute_unit_limit_missing: Errors.ErrV1ConfigComputeLimitMissing,
+  compute_unit_limit_too_high: Errors.ErrV1ConfigComputeLimitTooHigh,
+  priority_fee_too_high: Errors.ErrV1ConfigPriorityFeeTooHigh,
+};
 
 /**
  * Which verification path produced a successful result.
@@ -656,8 +673,9 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
 
   /**
    * Cheap, local structural check for whether a decoded transaction matches
-   * Path 1's static positional layout (compute budget instructions followed
-   * by a TransferChecked at index 2). Used to re-derive which verification
+   * Path 1's static positional layout (a TransferChecked at index 2 after the
+   * ComputeBudget prefix, or at index 0 for a version 1 transaction, whose
+   * budget lives in `message.config`). Used to re-derive which verification
    * path a pending settlement originally used, without re-simulating.
    *
    * @param transaction - Decoded transaction to inspect
@@ -665,11 +683,14 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
    */
   private hasStaticTransferLayout(transaction: Transaction): boolean {
     const compiled = compiledMessageDecoder.decode(transaction.messageBytes);
-    const instructions = decompileTransactionMessage(compiled).instructions ?? [];
-    if (instructions.length < 3 || instructions.length > 7) {
+    const decompiled = decompileTransactionMessage(compiled);
+    const instructions = decompiled.instructions ?? [];
+    const isVersion1 = decompiled.version === 1;
+    const [minInstructions, maxInstructions] = isVersion1 ? [1, 5] : [3, 7];
+    if (instructions.length < minInstructions || instructions.length > maxInstructions) {
       return false;
     }
-    const transferIx = instructions[2];
+    const transferIx = instructions[isVersion1 ? 0 : 2];
     const programAddress = transferIx.programAddress.toString();
     if (
       programAddress !== TOKEN_PROGRAM_ADDRESS.toString() &&
@@ -760,6 +781,20 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
         response: {
           isValid: false,
           invalidReason: Errors.ErrTransactionCouldNotBeDecoded,
+          payer: "",
+        },
+        verificationPath: null,
+      };
+    }
+
+    // Version allowlist, checked before path dispatch: both paths derive their
+    // sponsorship policy from version-specific structure, so neither may run
+    // against a version this code does not model.
+    if (!isSupportedTransactionVersion(compiled.version)) {
+      return {
+        response: {
+          isValid: false,
+          invalidReason: Errors.ErrUnsupportedTransactionVersion,
           payer: "",
         },
         verificationPath: null,
@@ -971,8 +1006,9 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     signerAddresses: string[],
   ): Promise<VerifyResponse> {
     const instructions = decompiled.instructions ?? [];
+    const isVersion1 = decompiled.version === 1;
 
-    // Allow 3-7 instructions:
+    // Version 0 / legacy: allow 3-7 instructions:
     // - 3 instructions: ComputeLimit + ComputePrice + TransferChecked
     // - 4 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse or Memo
     // - 5 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse + Lighthouse or Memo
@@ -980,7 +1016,12 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     // - 7 instructions: + a third wallet-injected Lighthouse (Phantom, see #2097)
     // See: https://github.com/x402-foundation/x402/issues/828
     //  and: https://github.com/x402-foundation/x402/issues/2097
-    if (instructions.length < 3 || instructions.length > 7) {
+    //
+    // Version 1: compute budget and priority fee live in `message.config`, so
+    // the ComputeBudget prefix disappears and the same layout is 1-5
+    // instructions with the TransferChecked first.
+    const [minInstructions, maxInstructions] = isVersion1 ? [1, 5] : [3, 7];
+    if (instructions.length < minInstructions || instructions.length > maxInstructions) {
       return {
         isValid: false,
         invalidReason: Errors.ErrTransactionInstructionsLength,
@@ -988,17 +1029,34 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
       };
     }
 
-    // Step 3: Verify Compute Budget Instructions
-    try {
-      this.verifyComputeLimitInstruction(instructions[0] as never);
-      this.verifyComputePriceInstruction(instructions[1] as never);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      return {
-        isValid: false,
-        invalidReason: errorMessage,
-        payer: "",
-      };
+    // Step 3: Verify compute budget. Version 1 reads limits from
+    // `message.config`; earlier versions require the two-instruction
+    // ComputeBudget prefix.
+    if (isVersion1) {
+      const violation = checkV1TransactionConfig(decompiled.config, {
+        maxComputeUnits: this.options?.maxComputeUnits,
+        maxPriorityFeeMicroLamports:
+          this.options?.maxPriorityFeeMicroLamports ?? MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
+      });
+      if (violation) {
+        return {
+          isValid: false,
+          invalidReason: V1_CONFIG_INVALID_REASONS[violation],
+          payer: "",
+        };
+      }
+    } else {
+      try {
+        this.verifyComputeLimitInstruction(instructions[0] as never);
+        this.verifyComputePriceInstruction(instructions[1] as never);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+          isValid: false,
+          invalidReason: errorMessage,
+          payer: "",
+        };
+      }
     }
 
     const payer = getTokenPayerFromTransaction(transaction);
@@ -1011,7 +1069,8 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     }
 
     // Step 4: Verify Transfer Instruction
-    const transferIx = instructions[2];
+    const transferIndex = isVersion1 ? 0 : 2;
+    const transferIx = instructions[transferIndex];
     const programAddress = transferIx.programAddress.toString();
 
     if (
@@ -1110,14 +1169,21 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     }
 
     // Step 5: Verify optional instructions (if present)
-    // Allowed optional programs: Lighthouse (wallet protection) and Memo (uniqueness)
-    const optionalInstructions = instructions.slice(3);
-    const invalidReasonByIndex = [
-      Errors.ErrUnknownFourthInstruction,
-      Errors.ErrUnknownFifthInstruction,
-      Errors.ErrUnknownSixthInstruction,
-      Errors.ErrUnknownSeventhInstruction,
-    ];
+    // Allowed optional programs: Lighthouse (wallet protection) and Memo (uniqueness).
+    // On version 1 this also rejects ComputeBudget instructions, which have no
+    // place in a transaction whose budget lives in `message.config`.
+    const optionalInstructions = instructions.slice(transferIndex + 1);
+    // Positional reason codes describe absolute instruction indices, so they
+    // only apply to the version 0 / legacy layout where options start at
+    // index 3; the version 1 layout uses the generic code.
+    const invalidReasonByIndex = isVersion1
+      ? []
+      : [
+          Errors.ErrUnknownFourthInstruction,
+          Errors.ErrUnknownFifthInstruction,
+          Errors.ErrUnknownSixthInstruction,
+          Errors.ErrUnknownSeventhInstruction,
+        ];
 
     for (let i = 0; i < optionalInstructions.length; i += 1) {
       const programAddress = optionalInstructions[i].programAddress.toString();

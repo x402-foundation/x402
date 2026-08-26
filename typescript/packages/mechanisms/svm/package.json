@@ -47,12 +47,12 @@
   },
   "dependencies": {
     "@x402/core": "workspace:~",
-    "@solana-program/compute-budget": "^0.11.0",
-    "@solana-program/token": "^0.9.0",
-    "@solana-program/token-2022": "^0.6.1"
+    "@solana-program/compute-budget": "^0.18.0",
+    "@solana-program/token": "^0.16.0",
+    "@solana-program/token-2022": "^0.16.0"
   },
   "peerDependencies": {
-    "@solana/kit": ">=5.1.0"
+    "@solana/kit": ">=8.0.0"
   },
   "exports": {
     ".": {

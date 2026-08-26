@@ -6,6 +6,7 @@ import {
   getBase64Encoder,
   getTransactionDecoder,
   getCompiledTransactionMessageDecoder,
+  getInstructionsFromCompiledTransactionMessage,
   type Blockhash,
   type Transaction,
   createSolanaRpc,
@@ -93,29 +94,95 @@ export function decodeTransactionFromPayload(svmPayload: ExactSvmPayloadV1): Tra
  */
 export function getTokenPayerFromTransaction(transaction: Transaction): string {
   const compiled = getCompiledTransactionMessageDecoder().decode(transaction.messageBytes);
-  const staticAccounts = compiled.staticAccounts ?? [];
-  const instructions = compiled.instructions ?? [];
+  const instructions = getInstructionsFromCompiledTransactionMessage(compiled);
 
   for (const ix of instructions) {
-    const programIndex = ix.programAddressIndex;
-    const programAddress = staticAccounts[programIndex].toString();
+    const programAddress = ix.programAddress.toString();
 
     // Check if this is a token program instruction
     if (
       programAddress === TOKEN_PROGRAM_ADDRESS.toString() ||
       programAddress === TOKEN_2022_PROGRAM_ADDRESS.toString()
     ) {
-      const accountIndices: number[] = ix.accountIndices ?? [];
+      const accounts = ix.accounts ?? [];
       // TransferChecked account order: [source, mint, destination, owner, ...]
-      if (accountIndices.length >= 4) {
-        const ownerIndex = accountIndices[3];
-        const ownerAddress = staticAccounts[ownerIndex].toString();
+      if (accounts.length >= 4) {
+        const ownerAddress = accounts[3].address.toString();
         if (ownerAddress) return ownerAddress;
       }
     }
   }
 
   return "";
+}
+
+/**
+ * Whether a decoded transaction message's version is one the SVM schemes know
+ * how to police. Every verification path here derives its sponsorship policy
+ * from version-specific structure (ComputeBudget instructions on legacy and
+ * version 0, `message.config` on version 1), so a version this code predates
+ * must be rejected explicitly: once the resolved `@solana/kit` learns to
+ * decode it, version-blind checks would otherwise pass vacuously.
+ *
+ * @param version - The `version` field of a compiled or decompiled transaction message
+ * @returns Whether the version is legacy, 0, or 1
+ */
+export function isSupportedTransactionVersion(version: number | string): boolean {
+  return version === "legacy" || version === 0 || version === 1;
+}
+
+/**
+ * A way a version 1 transaction's `message.config` violates the facilitator's
+ * sponsorship policy, as reported by {@link checkV1TransactionConfig}. Call
+ * sites map each violation to their scheme-specific error code.
+ */
+export type V1ConfigViolation =
+  | "compute_unit_limit_missing"
+  | "compute_unit_limit_too_high"
+  | "priority_fee_too_high";
+
+/**
+ * Validate a version 1 transaction's `message.config` against the same
+ * fee-exposure policy the ComputeBudget instruction checks enforce on legacy
+ * and version 0 transactions.
+ *
+ * A version 1 transaction that leaves `computeUnitLimit` unset is budgeted
+ * zero compute units and cannot execute, so the limit is required. The
+ * priority fee is a total in lamports (not micro-lamports per compute unit),
+ * so the per-CU operator cap is normalized against the declared compute unit
+ * limit: the fee passes when
+ * `priorityFeeLamports * 1e6 <= maxPriorityFeeMicroLamports * computeUnitLimit`,
+ * which bounds the facilitator's SOL exposure to exactly what the equivalent
+ * version 0 transaction could charge. `heapSize` and
+ * `loadedAccountsDataSizeLimit` are not checked: unlike their version 0
+ * instruction forms, they add no execution surface, and their compute cost is
+ * already bounded by the capped `computeUnitLimit`.
+ *
+ * @param config - The transaction's `message.config` (may be undefined when the transaction sets no fields)
+ * @param limits - Operator caps to enforce
+ * @param limits.maxComputeUnits - Maximum allowed `computeUnitLimit`, or undefined for no cap
+ * @param limits.maxPriorityFeeMicroLamports - Per-compute-unit price cap the total fee is normalized against
+ * @returns The first violation found, or null when the config is acceptable
+ */
+export function checkV1TransactionConfig(
+  config: { computeUnitLimit?: number; priorityFeeLamports?: bigint } | undefined,
+  limits: { maxComputeUnits?: number; maxPriorityFeeMicroLamports: number },
+): V1ConfigViolation | null {
+  const computeUnitLimit = config?.computeUnitLimit;
+  if (!computeUnitLimit) {
+    return "compute_unit_limit_missing";
+  }
+  if (limits.maxComputeUnits !== undefined && computeUnitLimit > limits.maxComputeUnits) {
+    return "compute_unit_limit_too_high";
+  }
+  const priorityFeeLamports = config?.priorityFeeLamports ?? 0n;
+  if (
+    priorityFeeLamports * 1_000_000n >
+    BigInt(limits.maxPriorityFeeMicroLamports) * BigInt(computeUnitLimit)
+  ) {
+    return "priority_fee_too_high";
+  }
+  return null;
 }
 
 /**

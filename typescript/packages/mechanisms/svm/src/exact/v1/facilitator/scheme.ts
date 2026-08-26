@@ -169,6 +169,18 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
       };
     }
 
+    // The legacy x402 v1 wire format predates transaction version 1: its
+    // compute budget checks assume ComputeBudget instructions, which version 1
+    // moves into `message.config`. Transaction v1 support lives in the current
+    // protocol's ExactSvmScheme.
+    if (compiled.version !== "legacy" && compiled.version !== 0) {
+      return {
+        isValid: false,
+        invalidReason: "unsupported_transaction_version",
+        payer: "",
+      };
+    }
+
     const signatureCheck = await verifyRequiredSignatures(
       transaction,
       compiled,
