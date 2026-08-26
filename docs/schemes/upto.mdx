@@ -346,9 +346,9 @@ For custom facilitator implementations, use `UptoSvmScheme` from the facilitator
         uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/facilitator"
     )
 
+    // Pass the RPC URL to the signer, not to uptosvm.Config
     maxChannelLifetimeSecs := 3600
     scheme := uptosvm.NewUptoSvmScheme(svmSigner, &uptosvm.Config{
-        RPCURL:                 os.Getenv("SVM_RPC_URL"),
         MaxChannelLifetimeSecs: &maxChannelLifetimeSecs,
     })
     facilitator.Register([]x402.Network{network}, scheme)
