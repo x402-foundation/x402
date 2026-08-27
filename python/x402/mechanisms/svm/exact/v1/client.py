@@ -6,7 +6,6 @@ import os
 from typing import Any
 
 try:
-    from solana.rpc.api import Client as SolanaClient
     from solders.instruction import AccountMeta, Instruction
     from solders.message import MessageV0
     from solders.pubkey import Pubkey
@@ -28,6 +27,7 @@ from ...constants import (
 )
 from ...default_assets import find_default_asset
 from ...mint_cache import MintMetadataCache, get_cached_mint_metadata
+from ...rpc import SvmRpcClient
 from ...signer import ClientSvmSigner
 from ...types import ExactSvmPayload
 from ...utils import derive_ata, get_network_config, normalize_network
@@ -59,10 +59,10 @@ class ExactSvmSchemeV1:
         """
         self._signer = signer
         self._custom_rpc_url = rpc_url
-        self._clients: dict[str, SolanaClient] = {}
+        self._clients: dict[str, SvmRpcClient] = {}
         self._mint_cache: MintMetadataCache = {}
 
-    def _get_client(self, network: str) -> SolanaClient:
+    def _get_client(self, network: str) -> SvmRpcClient:
         """Get or create RPC client for network.
 
         Args:
@@ -81,7 +81,7 @@ class ExactSvmSchemeV1:
         else:
             rpc_url = get_network_config(network)["rpc_url"]
 
-        client = SolanaClient(rpc_url)
+        client = SvmRpcClient(rpc_url)
         self._clients[caip2_network] = client
         return client
 

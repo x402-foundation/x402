@@ -42,9 +42,13 @@ evm = [
     "eth-account>=0.13.0",
     "web3>=7.0.0",
 ]
+# solders 0.29 is the first release that decodes transaction version 1
+# (SIMD-0385) and exposes its message.config compute budget. RPC goes over httpx
+# directly rather than through solana-py, whose synchronous client cannot be
+# used with solders 0.29 (see mechanisms/svm/rpc.py).
 svm = [
-    "solders>=0.27.0",
-    "solana>=0.36.0",
+    "solders>=0.29.0",
+    "httpx>=0.28.1",
 ]
 tvm = [
     "httpx>=0.28.1",
@@ -91,8 +95,7 @@ dev = [
     "eth-account>=0.13.0",
     "web3>=7.0.0",
     # SVM dependencies
-    "solders>=0.27.0",
-    "solana>=0.36.0",
+    "solders>=0.29.0",
     # TVM dependencies
     "pytoniq>=0.1.39",
     "pytoniq-core>=0.1.36",

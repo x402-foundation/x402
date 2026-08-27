@@ -4,10 +4,8 @@ import base64
 import time
 
 try:
-    from solana.rpc.api import Client as SolanaClient
-    from solana.rpc.commitment import Confirmed
-    from solana.rpc.types import TxOpts
     from solders.keypair import Keypair
+    from solders.message import to_bytes_versioned
     from solders.signature import Signature
     from solders.transaction import VersionedTransaction
 except ImportError as e:
@@ -15,6 +13,7 @@ except ImportError as e:
         "SVM mechanism requires solana packages. Install with: pip install x402[svm]"
     ) from e
 
+from .rpc import CONFIRMED, SvmRpcClient
 from .utils import get_network_config, normalize_network
 
 
@@ -125,9 +124,9 @@ class FacilitatorKeypairSigner:
             keypairs = [keypairs]
         self._keypairs = {str(kp.pubkey()): kp for kp in keypairs}
         self._custom_rpc_url = rpc_url
-        self._clients: dict[str, SolanaClient] = {}
+        self._clients: dict[str, SvmRpcClient] = {}
 
-    def _get_client(self, network: str) -> SolanaClient:
+    def _get_client(self, network: str) -> SvmRpcClient:
         """Get or create RPC client for network.
 
         Args:
@@ -146,7 +145,7 @@ class FacilitatorKeypairSigner:
         else:
             rpc_url = get_network_config(network)["rpc_url"]
 
-        client = SolanaClient(rpc_url)
+        client = SvmRpcClient(rpc_url)
         self._clients[caip2_network] = client
         return client
 
@@ -165,10 +164,6 @@ class FacilitatorKeypairSigner:
         network: str,
     ) -> str:
         """Sign a partially-signed transaction.
-
-        Supports both legacy and versioned (v0) transactions:
-        - Legacy transactions: Sign message bytes directly
-        - Versioned (v0) transactions: Sign with 0x80 version prefix
 
         Args:
             tx_base64: Base64 encoded partially-signed transaction.
@@ -191,19 +186,12 @@ class FacilitatorKeypairSigner:
         tx_bytes = base64.b64decode(tx_base64)
         tx = VersionedTransaction.from_bytes(tx_bytes)
 
-        # Determine if this is a versioned (v0) or legacy transaction
-        # Versioned transactions have a version byte prefix >= 128 (0x80)
-        # Legacy transactions have their first byte (numRequiredSignatures) < 128
-        is_versioned = self._is_versioned_transaction(tx_bytes)
-
+        # What every signer commits to is the message behind its version prefix:
+        # absent for legacy, 0x80 for version 0, 0x81 for version 1. Serializing
+        # through to_bytes_versioned applies the right one for the message at
+        # hand, so the signature verifies whatever version the payer built.
         message = tx.message
-        if is_versioned:
-            # Versioned transaction (MessageV0): prepend 0x80 version byte before signing
-            msg_bytes_with_version = bytes([0x80]) + bytes(message)
-            facilitator_signature = keypair.sign_message(msg_bytes_with_version)
-        else:
-            # Legacy transaction: sign message bytes directly (no version prefix)
-            facilitator_signature = keypair.sign_message(bytes(message))
+        facilitator_signature = keypair.sign_message(to_bytes_versioned(message))
 
         # Fee payer is always at index 0, client signature at index 1
         signatures = list(tx.signatures)
@@ -212,51 +200,6 @@ class FacilitatorKeypairSigner:
 
         # Re-encode
         return base64.b64encode(bytes(signed_tx)).decode("utf-8")
-
-    def _is_versioned_transaction(self, tx_bytes: bytes) -> bool:
-        """Determine if transaction bytes represent a versioned or legacy transaction.
-
-        Versioned transactions (v0) have a version byte prefix where the first byte
-        of the message portion is >= 128 (0x80). Legacy transactions have their
-        first message byte (numRequiredSignatures header) < 128.
-
-        Args:
-            tx_bytes: Raw transaction bytes.
-
-        Returns:
-            True if versioned (v0), False if legacy.
-        """
-        # Transaction structure:
-        # - CompactU16 length prefix for signatures count
-        # - Signatures (64 bytes each)
-        # - Message bytes
-        #
-        # To find where the message starts, we need to skip the signatures.
-        # CompactU16: if first byte < 128, it's the value; otherwise it's multi-byte
-
-        offset = 0
-
-        # Read compact u16 for signature count
-        first_byte = tx_bytes[offset]
-        if first_byte < 0x80:
-            # Single byte encoding
-            num_signatures = first_byte
-            offset += 1
-        else:
-            # Multi-byte encoding (shouldn't happen for reasonable signature counts)
-            num_signatures = (first_byte & 0x7F) | ((tx_bytes[offset + 1] & 0x7F) << 7)
-            offset += 2
-
-        # Skip signatures (64 bytes each)
-        offset += num_signatures * 64
-
-        # First byte of message determines version
-        # >= 128 (0x80) means versioned (v0), < 128 means legacy
-        if offset < len(tx_bytes):
-            message_first_byte = tx_bytes[offset]
-            return message_first_byte >= 0x80
-
-        return False
 
     def simulate_transaction(self, tx_base64: str, network: str) -> None:
         """Simulate a transaction.
@@ -275,7 +218,7 @@ class FacilitatorKeypairSigner:
         tx = VersionedTransaction.from_bytes(tx_bytes)
 
         # Simulate with explicit signature verification
-        result = client.simulate_transaction(tx, sig_verify=True, commitment=Confirmed)
+        result = client.simulate_transaction(tx, sig_verify=True, commitment=CONFIRMED)
 
         if result.value.err:
             raise RuntimeError(f"Simulation failed: {result.value.err}")
@@ -298,10 +241,10 @@ class FacilitatorKeypairSigner:
         # Decode transaction from base64
         tx_bytes = base64.b64decode(tx_base64)
 
-        # Use send_raw_transaction with skip_preflight option
-        # This bypasses preflight checks since transaction was already simulated during verify()
-        tx_opts = TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
-        result = client.send_raw_transaction(tx_bytes, opts=tx_opts)
+        # Preflight is skipped because verify() already simulated this transaction.
+        result = client.send_raw_transaction(
+            tx_bytes, skip_preflight=True, preflight_commitment=CONFIRMED
+        )
 
         return str(result.value)
 

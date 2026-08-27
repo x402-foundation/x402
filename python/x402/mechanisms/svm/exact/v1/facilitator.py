@@ -37,6 +37,7 @@ from ...constants import (
     ERR_UNKNOWN_FOURTH_INSTRUCTION,
     ERR_UNKNOWN_SIXTH_INSTRUCTION,
     ERR_UNSUPPORTED_SCHEME,
+    ERR_UNSUPPORTED_TRANSACTION_VERSION,
     LIGHTHOUSE_PROGRAM_ADDRESS,
     MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
     MEMO_PROGRAM_ADDRESS,
@@ -51,6 +52,7 @@ from ...utils import (
     decode_transaction_from_payload,
     derive_ata,
     get_token_payer_from_transaction,
+    get_transaction_version,
     transaction_message_hash,
 )
 
@@ -162,6 +164,17 @@ class ExactSvmSchemeV1:
             )
 
         message = tx.message
+
+        # The legacy x402 v1 wire format predates transaction version 1: its
+        # compute budget checks read a ComputeBudget instruction pair that a
+        # version 1 transaction does not carry. Support for transaction v1 lives
+        # in the current protocol's ExactSvmScheme.
+        version = get_transaction_version(message)
+        if version != "legacy" and version != 0:
+            return VerifyResponse(
+                is_valid=False, invalid_reason=ERR_UNSUPPORTED_TRANSACTION_VERSION, payer=""
+            )
+
         instructions = message.instructions
         static_accounts = list(message.account_keys)
 

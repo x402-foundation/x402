@@ -77,6 +77,24 @@ ERR_INVALID_COMPUTE_PRICE = (
 ERR_COMPUTE_PRICE_TOO_HIGH = (
     "invalid_exact_svm_payload_transaction_instructions_compute_price_instruction_too_high"
 )
+ERR_UNKNOWN_OPTIONAL_INSTRUCTION = "invalid_exact_svm_payload_unknown_optional_instruction"
+
+# Version 1 transactions carry their compute budget and priority fee in
+# message.config instead of ComputeBudget instructions, so these replace the
+# compute_limit_instruction / compute_price_instruction codes on that layout.
+ERR_V1_CONFIG_COMPUTE_LIMIT_MISSING = (
+    "invalid_exact_svm_payload_transaction_config_compute_limit_missing"
+)
+ERR_V1_CONFIG_COMPUTE_LIMIT_TOO_HIGH = (
+    "invalid_exact_svm_payload_transaction_config_compute_limit_too_high"
+)
+ERR_V1_CONFIG_LOADED_ACCOUNTS_DATA_SIZE_LIMIT_MISSING = (
+    "invalid_exact_svm_payload_transaction_config_loaded_accounts_data_size_limit_missing"
+)
+ERR_V1_CONFIG_PRIORITY_FEE_TOO_HIGH = (
+    "invalid_exact_svm_payload_transaction_config_priority_fee_too_high"
+)
+
 ERR_NO_TRANSFER_INSTRUCTION = "invalid_exact_svm_payload_no_transfer_instruction"
 ERR_MINT_MISMATCH = "invalid_exact_svm_payload_mint_mismatch"
 ERR_RECIPIENT_MISMATCH = "invalid_exact_svm_payload_recipient_mismatch"
@@ -89,6 +107,7 @@ ERR_TRANSACTION_FAILED = "transaction_failed"
 ERR_DUPLICATE_SETTLEMENT = "duplicate_settlement"
 ERR_MEMO_MISMATCH = "invalid_exact_svm_payload_memo_mismatch"
 ERR_MEMO_COUNT = "invalid_exact_svm_payload_memo_count"
+ERR_UNSUPPORTED_TRANSACTION_VERSION = "unsupported_transaction_version"
 
 # Non-terminal settle error reason meaning a transaction was broadcast but
 # ConfirmTransaction could not observe its confirmation in time — mirrors
