@@ -191,7 +191,11 @@ describe.skipIf(missingEnvVars)("Stellar Integration Tests", () => {
 
     beforeEach(async () => {
       const stellarClient = new ExactStellarClient(clientSigner);
-      client = new x402Client().register(STELLAR_TESTNET_CAIP2, stellarClient);
+      // Default spend controls reject the XLM test asset before the payment reaches the
+      // Stellar scheme; this test covers the scheme and facilitator, not spend controls.
+      client = new x402Client()
+        .setSpendControls(false)
+        .register(STELLAR_TESTNET_CAIP2, stellarClient);
 
       const stellarFacilitator = new ExactStellarFacilitator([facilitatorSigner]);
       const facilitator = new x402Facilitator().register(STELLAR_TESTNET_CAIP2, stellarFacilitator);
@@ -290,7 +294,10 @@ describe.skipIf(missingEnvVars)("Stellar Integration Tests", () => {
       const facilitatorClient = new StellarFacilitatorClient(facilitator);
 
       const stellarClient = new ExactStellarClient(clientSigner);
-      const paymentClient = new x402Client().register(STELLAR_TESTNET_CAIP2, stellarClient);
+      // Default spend controls reject the XLM test asset; see the exact-payment suite above.
+      const paymentClient = new x402Client()
+        .setSpendControls(false)
+        .register(STELLAR_TESTNET_CAIP2, stellarClient);
       client = new x402HTTPClient(paymentClient) as x402HTTPClient;
 
       // Create resource server and register schemes (composition pattern)
