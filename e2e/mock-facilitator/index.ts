@@ -30,7 +30,10 @@ const DUMMY_SIGNERS: Record<string, string[]> = {
 function buildSupportedResponse() {
   const networkIds = catalogNetworkIds();
   const schemesForNetwork = (networkId: string): string[] => {
-    if (networkId === "evm" || networkId === "svm") {
+    if (networkId === "evm") {
+      return ["exact", "upto", "auth-capture"];
+    }
+    if (networkId === "svm") {
       return ["exact", "upto"];
     }
     return ["exact"];

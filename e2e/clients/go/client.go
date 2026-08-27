@@ -13,6 +13,7 @@ import (
 	x402 "github.com/x402-foundation/x402/go/v2"
 	x402http "github.com/x402-foundation/x402/go/v2/http"
 	batchedclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/client"
+	authcaptureclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/auth-capture/client"
 	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
 	exactevmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/v1/client"
 	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/client"
@@ -123,6 +124,7 @@ func BuildPaymentClient() *PaymentClientContext {
 			Register(evmPattern, exactevm.NewExactEvmScheme(evmSigner, evmConfig)).
 			Register(evmPattern, uptoevm.NewUptoEvmScheme(evmSigner, uptoConfig)).
 			Register(evmPattern, batchedScheme).
+			Register(evmPattern, authcaptureclient.NewAuthCaptureEvmScheme(evmSigner)).
 			RegisterV1("base-sepolia", exactevmv1.NewExactEvmSchemeV1(evmSigner)).
 			RegisterV1("base", exactevmv1.NewExactEvmSchemeV1(evmSigner))
 	}

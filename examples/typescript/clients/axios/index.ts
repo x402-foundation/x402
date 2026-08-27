@@ -1,5 +1,6 @@
 import { config } from "dotenv";
 import { x402Client, wrapAxiosWithPayment, x402HTTPClient } from "@x402/axios";
+import { AuthCaptureEvmScheme } from "@x402/evm/auth-capture/client";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { UptoEvmScheme } from "@x402/evm/upto/client";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
@@ -36,6 +37,7 @@ async function main(): Promise<void> {
   const client = new x402Client()
     .register("eip155:*", new ExactEvmScheme(evmSigner, rpcOptions))
     .register("eip155:*", new UptoEvmScheme(evmSigner, rpcOptions))
+    .register("eip155:*", new AuthCaptureEvmScheme(evmSigner))
     .register("solana:*", new ExactSvmScheme(svmSigner))
     .register("solana:*", new UptoSvmScheme(svmSigner))
     .setSpendControls({

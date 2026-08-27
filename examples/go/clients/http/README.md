@@ -5,7 +5,7 @@ Example client demonstrating how to use the x402 Go HTTP client to make requests
 ## Prerequisites
 
 - Go 1.24 or higher
-- A running x402 server (see [gin server example](../../servers/gin))
+- A running x402 server (see [gin server example](../../servers/gin) or [auth-capture server example](../../typescript/servers/auth-capture))
 - Valid EVM and/or SVM private keys for making payments
 
 ## Setup
@@ -68,8 +68,10 @@ signer, err := evmsigners.NewClientSignerFromPrivateKey(os.Getenv("EVM_PRIVATE_K
 
 // Configure client with builder pattern.
 // Newx402Client() enables default spend controls: recognized pegged assets only, capped at $1 USD.
+// Registers exact, upto, and auth-capture EVM schemes (plus SVM when configured).
 client := x402.Newx402Client().
-    Register("eip155:*", evm.NewExactEvmScheme(signer))
+    Register("eip155:*", evm.NewExactEvmScheme(signer)).
+    Register("eip155:*", authcaptureclient.NewAuthCaptureEvmScheme(signer))
 
 // Optional: raise the cap or opt into non-default tokens
 // client.SetSpendControls(x402.SpendControls{MaxAmountPerPayment: "$5"})

@@ -24,7 +24,7 @@ export type ConfigRole = 'server' | 'client' | 'facilitator';
 /** Network id, e.g. "evm" — one per `mechanisms_<id>.json` file. No fixed union: adding a network is a catalog-only edit. */
 export type CatalogNetworkId = string;
 
-type PaymentScheme = 'exact' | 'upto' | 'batch-settlement';
+type PaymentScheme = 'exact' | 'upto' | 'batch-settlement' | 'auth-capture';
 type AssetTransferMethod = 'eip3009' | 'permit2' | 'sequence' | 'ticketSequence';
 /** Payment ordering on the accept; mirrors core {@link PaymentFlowName}. */
 export type PaymentFlow = PaymentFlowName;
@@ -119,6 +119,8 @@ export type RouteDefinition = {
    * route `extra.paymentFlow`, matching core wire rules.
    */
   paymentFlow?: PaymentFlow;
+  /** Scheme-specific `accepts.extra` fields (e.g. auth-capture deadlines and flow). */
+  schemeExtra?: Record<string, string | number | boolean>;
 };
 
 /** Fixed success body for every paid route (`timestamp` is added by the server). */
@@ -792,7 +794,7 @@ export type ResolvedRoute = {
   payTo: string;
   price: ResolvedPrice;
   /** PaymentOption-level `extra`, used when `price` is a USD string. */
-  extra?: Record<string, string>;
+  extra?: Record<string, string | number | boolean>;
   extensions: string[];
   settlementOverride?: { amount: string };
 };
@@ -889,7 +891,13 @@ export function resolvePaymentRoutes(
 
     const caip2 = env(derivedNetworkKey(route.network)) ?? def.networks.testnet.caip2;
     const { price, extra: priceExtra } = resolvePrice(route, caip2, env);
-    const extra = mergeRouteExtra(priceExtra, route.paymentFlow);
+    let extra: Record<string, string | number | boolean> | undefined = mergeRouteExtra(
+      priceExtra,
+      route.paymentFlow,
+    );
+    if (route.schemeExtra) {
+      extra = { ...(extra ?? {}), ...route.schemeExtra };
+    }
 
     resolved.push({
       path: route.path,

@@ -6,11 +6,10 @@ This directory contains TypeScript client examples demonstrating how to make HTT
 
 | Directory | Description |
 | --- | --- |
-| [`fetch/`](./fetch/) | Using `@x402/fetch` with the native Fetch API |
-| [`axios/`](./axios/) | Using `@x402/axios` with Axios |
+| [`fetch/`](./fetch/) | Using `@x402/fetch` with the native Fetch API (exact, upto, auth-capture, and SVM schemes) |
+| [`axios/`](./axios/) | Using `@x402/axios` with Axios (exact, upto, auth-capture, and SVM schemes) |
 | [`advanced/`](./advanced/) | Advanced patterns: lifecycle hooks, network preferences, spend controls |
 | [`custom/`](./custom/) | Manual implementation without `@x402/fetch` or `@x402/axios` |
-| [`auth-capture/`](./auth-capture/) | Pays an auth-capture endpoint by signing an ERC-3009 `ReceiveWithAuthorization` |
 | [`batch-settlement/`](./batch-settlement/) | Pays a sequence of requests over one payment channel using cumulative vouchers |
 | [`builder-code/`](./builder-code/) | Verifies ERC-8021 builder-code attribution on the settlement transaction |
 | [`erc7702/`](./erc7702/) | Paying from an ERC-7702 delegated EOA |

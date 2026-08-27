@@ -2,7 +2,7 @@ import type { NetworkSet, ProtocolFamily } from './networks/networks';
 
 export type { ProtocolFamily } from './networks/networks';
 export type Transport = 'http' | 'mcp';
-export type PaymentScheme = 'exact' | 'upto' | 'batch-settlement';
+export type PaymentScheme = 'exact' | 'upto' | 'batch-settlement' | 'auth-capture';
 export type AssetTransferMethod = 'eip3009' | 'permit2' | 'sequence' | 'ticketSequence';
 /** Payment ordering on the accept. Omitted on an endpoint means `authorization`. */
 export type PaymentFlow = 'authorization' | 'upfront' | 'escrow';

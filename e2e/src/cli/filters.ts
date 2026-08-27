@@ -8,7 +8,7 @@ import {
 } from '../types';
 
 /** x402 payment scheme for filtering. */
-export type PaymentSchemeKind = 'exact' | 'upto' | 'batch-settlement';
+export type PaymentSchemeKind = 'exact' | 'upto' | 'batch-settlement' | 'auth-capture';
 
 /** CLI aliases for catalog SDK ids (`typescript` / `python` / `go`). */
 const SDK_ALIASES: Record<string, string> = {

@@ -2,6 +2,7 @@ import { ExactAvmScheme } from "@x402/avm/exact/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { UptoEvmScheme } from "@x402/evm/upto/server";
 import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/server";
+import { AuthCaptureEvmScheme } from "@x402/evm/auth-capture/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { UptoSvmScheme } from "@x402/svm/upto/server";
 import { base58 } from "@scure/base";
@@ -35,6 +36,7 @@ import {
   networkCaip2Pattern,
   routeDiscoveryOutput,
   mcpToolName,
+  schemesForSdkNetwork,
   type RouteTransport,
 } from "../../src/mechanisms";
 
@@ -84,6 +86,23 @@ async function registerFamilySchemes(
           ...(receiverAuthorizerSigner ? { receiverAuthorizerSigner } : {}),
         }),
       );
+      if (schemesForSdkNetwork("typescript", "evm").includes("auth-capture")) {
+        if (!receiverAuthorizerPrivateKey) {
+          console.error(
+            "❌ SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY is required for auth-capture on evm",
+          );
+          process.exit(1);
+        }
+        console.info(
+          `Auth-capture receiver authorizer: ${privateKeyToAccount(receiverAuthorizerPrivateKey).address}`,
+        );
+        server.register(
+          pattern,
+          new AuthCaptureEvmScheme({
+            receiverAuthorizerSigner: privateKeyToAccount(receiverAuthorizerPrivateKey),
+          }),
+        );
+      }
       return;
     }
     case "svm": {

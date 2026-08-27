@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { ErrSettlementPending } from "../../src/exact/facilitator/errors";
+import { ErrSettlementPending as ExactErrSettlementPending } from "../../src/exact/facilitator/errors";
+import { ErrSettlementPending as AuthCaptureErrSettlementPending } from "../../src/auth-capture/errors";
 
 // The transport layer (@x402/core http, and the Go/Python servers) hardcodes the wire
 // literal "settlement_pending" for its failure-transaction sanitizer, mirrored to avoid a
@@ -8,6 +9,7 @@ import { ErrSettlementPending } from "../../src/exact/facilitator/errors";
 // hash off a genuinely pending settlement (or leak it for a terminal failure).
 describe("ErrSettlementPending wire contract", () => {
   it("equals the settlement_pending wire literal the transport layers mirror", () => {
-    expect(ErrSettlementPending).toBe("settlement_pending");
+    expect(ExactErrSettlementPending).toBe("settlement_pending");
+    expect(AuthCaptureErrSettlementPending).toBe("settlement_pending");
   });
 });

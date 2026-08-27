@@ -14,7 +14,7 @@ You do **not** need to edit `generic-server` / `generic-client` / `generic-facil
 
 - **`env`** — map of env key → `{ required: boolean, roles: ["server"|"client"|"facilitator", ...] }`. Every key a role reads (including unprefixed ones like `TVM_PROVIDER` or `EVM_PERMIT2_ASSET`) is declared here; [`src/mechanisms.ts`](src/mechanisms.ts) has no hardcoded role override table. Prefix (`SERVER_` / `CLIENT_` / `FACILITATOR_`) is only a fallback for undeclared keys.
 - **`testnet` / `mainnet`** — `name`, `caip2`, optional `rpcUrlDefault`, optional `permit2Asset`/`permit2AssetName`. RPC env is pure convention, not declared: an operator sets `${ID}_TESTNET_RPC_URL` / `${ID}_MAINNET_RPC_URL` (e.g. `EVM_TESTNET_RPC_URL`), and the harness injects it into every spawned component as `${ID}_RPC_URL`. Set `rpcUrlRequired: true` on a mode with no `rpcUrlDefault` and no free public endpoint at all (a network whose SDK has no built-in node default, unlike e.g. Hedera/Keeta) so the harness fails fast at startup — with the missing input key named in the same preflight list as other required env — instead of deep inside a scenario run. Network identity defaults (`${ID}_NETWORK`) fall back to catalog `testnet.caip2` via `resolveNetworkCaip2`.
-- **`routes`** — one canonical definition per paid HTTP path: `scheme`, `sdks`, `assetTransferMethod`, `schemeOptions`, declared `extensions`, required `price`, and optional `settlementOverride`. Handlers always return `{ message: "Protected endpoint accessed successfully", timestamp }`. The loader injects `network` (the file id) — routes never declare it themselves.
+- **`routes`** — one canonical definition per paid HTTP path: `scheme`, `sdks`, `assetTransferMethod`, `schemeOptions`, `schemeExtra`, declared `extensions`, required `price`, and optional `settlementOverride`. Handlers always return `{ message: "Protected endpoint accessed successfully", timestamp }`. The loader injects `network` (the file id) — routes never declare it themselves.
 
 CI family selection ([`scripts/ci-select-families.sh`](scripts/ci-select-families.sh) → [`scripts/ci-select-families.ts`](scripts/ci-select-families.ts)) prints families whose catalog `required: true` keys are all set — no per-family hardcoding in the shell script.
 
@@ -34,7 +34,7 @@ Route support is **listed** on each route via `sdks`, never inferred from a cart
 
 Adding a paid route to every SDK that should serve it is a catalog edit:
 
-1. **Define the route** — add an entry under `routes` in the relevant `config/mechanisms_<id>.json`, keyed by its path, with `scheme`, `sdks` (e.g. `["typescript", "go", "python"]`), and `price`. Add `extensions`, `schemeOptions`, or `settlementOverride` only where the route needs them.
+1. **Define the route** — add an entry under `routes` in the relevant `config/mechanisms_<id>.json`, keyed by its path, with `scheme`, `sdks` (e.g. `["typescript", "go", "python"]`), and `price`. Add `extensions`, `schemeOptions`, `schemeExtra` (auth-capture deadlines/flow), or `settlementOverride` only where the route needs them.
 2. **Register the scheme once per language**, if it is new: server module (`servers/<lang>/`), client module (`clients/<lang>/`), and the facilitator main.
 
 Servers pick up the route, its `402` payment requirements, and its handler with no per-framework edit. A surface that serves less than its SDK’s list can declare the narrowing in a local `test.config.json` (`excludeSchemes` / `excludeNetworks`); the harness applies it to the derived endpoints and forwards it to the server process (`E2E_EXCLUDE_SCHEMES` / `E2E_EXCLUDE_NETWORKS`), so declared and mounted routes cannot diverge.
@@ -127,7 +127,7 @@ Launches an interactive CLI where you can select:
 - **Clients** - Payment-capable HTTP clients (axios, fetch, httpx, requests, etc.)
 - **Extensions** - Additional features like Bazaar discovery
 - **Protocols** - EVM, SVM, AVM, Aptos, Concordium, Hedera, NEAR, Stellar, and/or TVM networks
-- **Payment schemes** (when multiple apply) - `exact`, `upto`, or `batch-settlement`
+- **Payment schemes** (when multiple apply) - `exact`, `upto`, `batch-settlement`, or `auth-capture`
 - **Payment flows** (when multiple apply) - `authorization`, `upfront`, or `escrow`
 - **Asset transfer methods** (when multiple apply) - `eip3009`, `permit2`, `sequence`, or `ticketSequence`
 
@@ -264,10 +264,10 @@ pnpm test --testnet --min --families=evm --sdk=ts --paymentflow=upfront --assetT
 
 `--sdk` keeps scenarios whose client, server, and facilitator are that language (`ts` / `typescript`, `py` / `python`, `go`). `--paymentflow` and `--assetTransferMethod` match the catalog route fields (omitted `paymentFlow` is `authorization`).
 
-Optional environment variables (batch-settlement scheme):
+Optional environment variables:
 
 ```bash
-SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY=0x...              # optional: self-managed receiver authorizer (omit to delegate to facilitator /supported)
+SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY=0x...              # required for auth-capture delegated sync; optional for self-managed batch-settlement receiver authorizer
 SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY=...                # server hot key that signs upto settlement vouchers (no SOL required)
 CLIENT_EVM_BATCH_SETTLEMENT_VOUCHER_SIGNER_PRIVATE_KEY=0x...  # EOA the client uses to sign vouchers
 EVM_BATCH_SETTLEMENT_RECOVERY=true                            # test client state-loss recovery scenario (default: true)

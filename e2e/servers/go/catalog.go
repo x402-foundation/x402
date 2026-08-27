@@ -90,14 +90,15 @@ func flattenEnvMap(env map[string]catalogEnvDecl) catalogEnvList {
 }
 
 type catalogRouteDefinition struct {
-	Scheme              string            `json:"scheme"`
-	Network             string            `json:"network"`
-	AssetTransferMethod string            `json:"assetTransferMethod"`
-	Sdks                []string          `json:"sdks"`
-	Price               catalogPrice      `json:"price"`
-	Extensions          []string          `json:"extensions"`
-	SettlementOverride  *SettlementAmount `json:"settlementOverride"`
-	PaymentFlow         string            `json:"paymentFlow"`
+	Scheme              string                 `json:"scheme"`
+	Network             string                 `json:"network"`
+	AssetTransferMethod string                 `json:"assetTransferMethod"`
+	Sdks                []string               `json:"sdks"`
+	Price               catalogPrice           `json:"price"`
+	Extensions          []string               `json:"extensions"`
+	SettlementOverride  *SettlementAmount      `json:"settlementOverride"`
+	PaymentFlow         string                 `json:"paymentFlow"`
+	SchemeExtra         map[string]interface{} `json:"schemeExtra"`
 }
 
 // SettlementAmount is the partial amount an upto route settles.
@@ -124,6 +125,7 @@ type CatalogRoute struct {
 	Extensions          []string
 	SettlementOverride  *SettlementAmount
 	PaymentFlow         string
+	SchemeExtra         map[string]interface{}
 }
 
 // ResolvedRoute is a catalog route with env-dependent requirements resolved.
@@ -365,6 +367,7 @@ func CatalogRoutes() []CatalogRoute {
 			Extensions:          definition.Extensions,
 			SettlementOverride:  definition.SettlementOverride,
 			PaymentFlow:         definition.PaymentFlow,
+			SchemeExtra:         definition.SchemeExtra,
 		})
 	}
 	return routes
@@ -538,6 +541,14 @@ func ResolvedRoutes() []ResolvedRoute {
 			os.Exit(1)
 		}
 		extra := mergeRouteExtra(priceExtra, route.PaymentFlow)
+		if len(route.SchemeExtra) > 0 {
+			if extra == nil {
+				extra = map[string]interface{}{}
+			}
+			for key, value := range route.SchemeExtra {
+				extra[key] = value
+			}
+		}
 
 		resolved = append(resolved, ResolvedRoute{
 			Path:                route.Path,

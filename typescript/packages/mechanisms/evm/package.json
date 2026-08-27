@@ -220,6 +220,26 @@
         "types": "./dist/cjs/auth-capture/client/index.d.ts",
         "default": "./dist/cjs/auth-capture/client/index.js"
       }
+    },
+    "./auth-capture/server": {
+      "import": {
+        "types": "./dist/esm/auth-capture/server/index.d.mts",
+        "default": "./dist/esm/auth-capture/server/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/auth-capture/server/index.d.ts",
+        "default": "./dist/cjs/auth-capture/server/index.js"
+      }
+    },
+    "./auth-capture/facilitator": {
+      "import": {
+        "types": "./dist/esm/auth-capture/facilitator/index.d.mts",
+        "default": "./dist/esm/auth-capture/facilitator/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/auth-capture/facilitator/index.d.ts",
+        "default": "./dist/cjs/auth-capture/facilitator/index.js"
+      }
     }
   },
   "files": [

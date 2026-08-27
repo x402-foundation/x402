@@ -7,6 +7,7 @@ import {
   type UptoEvmSchemeOptions,
 } from "@x402/evm/upto/client";
 import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/client";
+import { AuthCaptureEvmScheme } from "@x402/evm/auth-capture/client";
 import { ExactEvmSchemeV1 } from "@x402/evm/v1";
 import { toClientEvmSigner } from "@x402/evm";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
@@ -196,6 +197,7 @@ export async function createE2EClient(): Promise<E2EClientContext> {
       network: networkCaip2Pattern("evm"),
       client: new UptoEvmClientScheme(evmSigner, uptoSchemeOptions),
     },
+    { network: networkCaip2Pattern("evm"), client: new AuthCaptureEvmScheme(evmSigner) },
     { network: networkCaip2Pattern("evm"), client: batchSettlementScheme },
     { network: "base-sepolia", client: new ExactEvmSchemeV1(evmSigner), x402Version: 1 },
     { network: "base", client: new ExactEvmSchemeV1(evmSigner), x402Version: 1 },

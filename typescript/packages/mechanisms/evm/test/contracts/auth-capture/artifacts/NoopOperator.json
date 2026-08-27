@@ -1,0 +1,195 @@
+{
+  "abi": [
+    {
+      "type": "function",
+      "name": "authorize",
+      "inputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "internalType": "struct NoopOperator.PaymentInfo",
+          "components": [
+            {
+              "name": "operator",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "payer",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "receiver",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "token",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "maxAmount",
+              "type": "uint120",
+              "internalType": "uint120"
+            },
+            {
+              "name": "preApprovalExpiry",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "authorizationExpiry",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "refundExpiry",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "minFeeBps",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "maxFeeBps",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "feeReceiver",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "salt",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "charge",
+      "inputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "internalType": "struct NoopOperator.PaymentInfo",
+          "components": [
+            {
+              "name": "operator",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "payer",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "receiver",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "token",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "maxAmount",
+              "type": "uint120",
+              "internalType": "uint120"
+            },
+            {
+              "name": "preApprovalExpiry",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "authorizationExpiry",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "refundExpiry",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "minFeeBps",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "maxFeeBps",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "feeReceiver",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "salt",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "",
+          "type": "bytes",
+          "internalType": "bytes"
+        },
+        {
+          "name": "",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    }
+  ],
+  "bytecode": "0x6080604052348015600e575f5ffd5b506101e48061001c5f395ff3fe608060405234801561000f575f5ffd5b5060043610610034575f3560e01c806341d66202146100385780639e65819f1461004f575b5f5ffd5b61004d6100463660046100dd565b5050505050565b005b61004d61005d36600461014c565b50505050505050565b5f6101808284031215610077575f5ffd5b50919050565b80356001600160a01b0381168114610093575f5ffd5b919050565b5f5f83601f8401126100a8575f5ffd5b50813567ffffffffffffffff8111156100bf575f5ffd5b6020830191508360208285010111156100d6575f5ffd5b9250929050565b5f5f5f5f5f6101e086880312156100f2575f5ffd5b6100fc8787610066565b945061018086013593506101136101a0870161007d565b92506101c086013567ffffffffffffffff81111561012f575f5ffd5b61013b88828901610098565b969995985093965092949392505050565b5f5f5f5f5f5f5f610220888a031215610163575f5ffd5b61016d8989610066565b965061018088013595506101846101a0890161007d565b94506101c088013567ffffffffffffffff8111156101a0575f5ffd5b6101ac8a828b01610098565b9095509350506101e088013561ffff811681146101c7575f5ffd5b91506101d6610200890161007d565b90509295989194975092955056"
+}

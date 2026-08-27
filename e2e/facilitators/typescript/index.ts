@@ -33,6 +33,7 @@ import {
 } from "@x402/core/types";
 import { type AuthorizerSigner, toFacilitatorEvmSigner } from "@x402/evm";
 import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/facilitator";
+import { AuthCaptureEvmScheme } from "@x402/evm/auth-capture/facilitator";
 import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
 import { UptoEvmScheme } from "@x402/evm/upto/facilitator";
 import { ExactEvmSchemeV1 } from "@x402/evm/exact/v1/facilitator";
@@ -550,6 +551,13 @@ if (evmSigner && authorizerSigner) {
     .register(
       EVM_NETWORK as Network,
       new BatchSettlementEvmScheme(evmSigner, authorizerSigner),
+    )
+    .register(
+      EVM_NETWORK as Network,
+      new AuthCaptureEvmScheme(evmSigner, {
+        customOperatorAuthorizeGasLimit: 1_000_000n,
+        refundFunding: false,
+      }),
     )
     .registerV1(EVM_V1_NETWORKS as Network[], new ExactEvmSchemeV1(evmSigner));
 }

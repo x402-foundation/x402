@@ -1,0 +1,2 @@
+kind: added
+body: Add Go auth-capture client with ERC-3009 and Permit2 collect payload signing

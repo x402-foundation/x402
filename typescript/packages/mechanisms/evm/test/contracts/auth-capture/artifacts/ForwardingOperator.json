@@ -1,0 +1,219 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [
+        {
+          "name": "escrow_",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "authorize",
+      "inputs": [
+        {
+          "name": "paymentInfo",
+          "type": "tuple",
+          "internalType": "struct IAuthCaptureEscrow.PaymentInfo",
+          "components": [
+            {
+              "name": "operator",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "payer",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "receiver",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "token",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "maxAmount",
+              "type": "uint120",
+              "internalType": "uint120"
+            },
+            {
+              "name": "preApprovalExpiry",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "authorizationExpiry",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "refundExpiry",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "minFeeBps",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "maxFeeBps",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "feeReceiver",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "salt",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "tokenCollector",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "collectorData",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "charge",
+      "inputs": [
+        {
+          "name": "paymentInfo",
+          "type": "tuple",
+          "internalType": "struct IAuthCaptureEscrow.PaymentInfo",
+          "components": [
+            {
+              "name": "operator",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "payer",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "receiver",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "token",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "maxAmount",
+              "type": "uint120",
+              "internalType": "uint120"
+            },
+            {
+              "name": "preApprovalExpiry",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "authorizationExpiry",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "refundExpiry",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "minFeeBps",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "maxFeeBps",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "feeReceiver",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "salt",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "tokenCollector",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "collectorData",
+          "type": "bytes",
+          "internalType": "bytes"
+        },
+        {
+          "name": "feeBps",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "feeReceiver",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "escrow",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IAuthCaptureEscrow"
+        }
+      ],
+      "stateMutability": "view"
+    }
+  ],
+  "bytecode": "0x60a0604052348015600e575f5ffd5b506040516105f33803806105f3833981016040819052602b91603b565b6001600160a01b03166080526066565b5f60208284031215604a575f5ffd5b81516001600160a01b0381168114605f575f5ffd5b9392505050565b60805161056961008a5f395f818160700152818160c5015261014d01526105695ff3fe608060405234801561000f575f5ffd5b506004361061003f575f3560e01c806341d66202146100435780639e65819f14610058578063e2fdcc171461006b575b5f5ffd5b61005661005136600461023b565b6100ae565b005b6100566100663660046102bb565b610136565b6100927f000000000000000000000000000000000000000000000000000000000000000081565b6040516001600160a01b03909116815260200160405180910390f35b6040516320eb310160e11b81526001600160a01b037f000000000000000000000000000000000000000000000000000000000000000016906341d662029061010290889088908890889088906004016104c2565b5f604051808303815f87803b158015610119575f5ffd5b505af115801561012b573d5f5f3e3d5ffd5b505050505050505050565b604051639e65819f60e01b81526001600160a01b037f00000000000000000000000000000000000000000000000000000000000000001690639e65819f9061018e908a908a908a908a908a908a908a90600401610506565b5f604051808303815f87803b1580156101a5575f5ffd5b505af11580156101b7573d5f5f3e3d5ffd5b5050505050505050505050565b5f61018082840312156101d5575f5ffd5b50919050565b80356001600160a01b03811681146101f1575f5ffd5b919050565b5f5f83601f840112610206575f5ffd5b50813567ffffffffffffffff81111561021d575f5ffd5b602083019150836020828501011115610234575f5ffd5b9250929050565b5f5f5f5f5f6101e08688031215610250575f5ffd5b61025a87876101c4565b945061018086013593506102716101a087016101db565b92506101c086013567ffffffffffffffff81111561028d575f5ffd5b610299888289016101f6565b969995985093965092949392505050565b803561ffff811681146101f1575f5ffd5b5f5f5f5f5f5f5f610220888a0312156102d2575f5ffd5b6102dc89896101c4565b965061018088013595506102f36101a089016101db565b94506101c088013567ffffffffffffffff81111561030f575f5ffd5b61031b8a828b016101f6565b909550935061032f90506101e089016102aa565b915061033e61020089016101db565b905092959891949750929550565b80356001600160781b03811681146101f1575f5ffd5b803565ffffffffffff811681146101f1575f5ffd5b61039182610384836101db565b6001600160a01b03169052565b61039d602082016101db565b6001600160a01b031660208301526103b7604082016101db565b6001600160a01b031660408301526103d1606082016101db565b6001600160a01b031660608301526103eb6080820161034c565b6001600160781b0316608083015261040560a08201610362565b65ffffffffffff1660a083015261041e60c08201610362565b65ffffffffffff1660c083015261043760e08201610362565b65ffffffffffff1660e083015261045161010082016102aa565b61ffff1661010083015261046861012082016102aa565b61ffff1661012083015261047f61014082016101db565b6001600160a01b031661014083015261016090810135910152565b81835281816020850137505f828201602090810191909152601f909101601f19169091010190565b6104cc8187610377565b8461018082015260018060a01b0384166101a08201526101e06101c08201525f6104fb6101e08301848661049a565b979650505050505050565b6105108189610377565b8661018082015260018060a01b0386166101a08201526102206101c08201525f61053f6102208301868861049a565b61ffff949094166101e0830152506001600160a01b0391909116610200909101529594505050505056"
+}

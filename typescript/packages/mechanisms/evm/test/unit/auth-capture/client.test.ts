@@ -163,13 +163,29 @@ describe("AuthCaptureEvmScheme", () => {
       const b = (await scheme.createPaymentPayload(2, mockRequirements))
         .payload as unknown as Eip3009Payload;
       expect(a.salt).not.toBe(b.salt);
+      expect(a.saltNonce).toBeUndefined();
+    });
+
+    it("should emit saltNonce and a bound salt when receiverAuthorizer is set", async () => {
+      const scheme = new AuthCaptureEvmScheme(mockSigner);
+      const result = await scheme.createPaymentPayload(2, {
+        ...mockRequirements,
+        extra: {
+          ...mockRequirements.extra,
+          receiverAuthorizer: "0x1111111111111111111111111111111111111111" as `0x${string}`,
+        },
+      });
+      const payload = result.payload as unknown as Eip3009Payload;
+      expect(payload.saltNonce).toMatch(/^0x[a-fA-F0-9]{64}$/);
+      expect(payload.salt).toMatch(/^0x[a-fA-F0-9]{64}$/);
+      expect(payload.salt).not.toBe(payload.saltNonce);
     });
 
     it("should throw for invalid network format", async () => {
       const scheme = new AuthCaptureEvmScheme(mockSigner);
       const badNetworkRequirements = { ...mockRequirements, network: "solana:mainnet" };
       await expect(scheme.createPaymentPayload(2, badNetworkRequirements)).rejects.toThrow(
-        "Invalid network format",
+        "Unsupported network format: solana:mainnet (expected eip155:CHAIN_ID)",
       );
     });
 
