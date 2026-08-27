@@ -70,12 +70,13 @@ func VerifyOpenTransaction(transactionBase64 string, expected VerifyOpenExpected
 	}
 	message := &tx.Message
 
-	// Every check below is indexed over a legacy/v0 compiled message, so an
-	// unrecognized version is rejected before any of them run.
-	if !svm.IsSupportedTransactionVersion(message.GetVersion()) {
+	// Narrower than svm.IsSupportedTransactionVersion, whose rationale applies:
+	// every check below is indexed over a legacy/v0 compiled message and reads
+	// the compute budget out of ComputeBudget instructions.
+	if version := message.GetVersion(); version != solana.MessageVersionLegacy && version != solana.MessageVersionV0 {
 		return nil, fmt.Errorf(
 			"verifyOpenTransaction: unsupported_transaction_version: MessageVersion %d; an open transaction must be legacy or v0",
-			message.GetVersion(),
+			version,
 		)
 	}
 

@@ -33,6 +33,16 @@ const (
 	ErrTransactionSigningFailed       = "invalid_exact_solana_transaction_signing_failed"
 	ErrTransactionSimulationFailed    = "invalid_exact_solana_transaction_simulation_failed"
 
+	// Transaction v1 errors. These carry the invalid_exact_svm_ prefix the
+	// TypeScript and Python facilitators use, so a client sees one reason code
+	// per violation across every implementation.
+
+	// Config violations, keyed by svm.V1ConfigViolation in v1ConfigInvalidReasons.
+	ErrV1ConfigComputeLimitMissing                = "invalid_exact_svm_payload_transaction_config_compute_limit_missing"
+	ErrV1ConfigComputeLimitTooHigh                = "invalid_exact_svm_payload_transaction_config_compute_limit_too_high"
+	ErrV1ConfigLoadedAccountsDataSizeLimitMissing = "invalid_exact_svm_payload_transaction_config_loaded_accounts_data_size_limit_missing"
+	ErrV1ConfigPriorityFeeTooHigh                 = "invalid_exact_svm_payload_transaction_config_priority_fee_too_high"
+
 	// Memo verification errors
 	ErrMemoMismatch = "invalid_exact_solana_payload_memo_mismatch"
 	ErrMemoCount    = "invalid_exact_solana_payload_memo_count"
@@ -44,23 +54,28 @@ const (
 	ErrDuplicateSettlement                = "duplicate_settlement"
 	ErrPostSettlementTransferNotConfirmed = "post_settlement_transfer_not_confirmed"
 
-	ErrSmartWalletFeePayerNotIsolated       = "invalid_exact_solana_smart_wallet_fee_payer_not_isolated"
-	ErrSmartWalletMalformedComputeBudget    = "invalid_exact_solana_smart_wallet_malformed_compute_budget"
-	ErrSmartWalletMalformedComputeLimit     = "invalid_exact_solana_smart_wallet_malformed_compute_limit"
-	ErrSmartWalletMalformedComputePrice     = "invalid_exact_solana_smart_wallet_malformed_compute_price"
-	ErrSmartWalletComputeUnitsTooHigh       = "invalid_exact_solana_smart_wallet_compute_units_too_high"
-	ErrSmartWalletPriorityFeeTooHigh        = "invalid_exact_solana_smart_wallet_priority_fee_too_high"
-	ErrSmartWalletUnsupportedComputeBudget  = "invalid_exact_solana_smart_wallet_unsupported_compute_budget_instruction"
-	ErrSmartWalletAltResolutionUnavailable  = "invalid_exact_solana_smart_wallet_alt_resolution_not_available"
-	ErrSmartWalletAltResolutionFailed       = "invalid_exact_solana_smart_wallet_alt_resolution_failed"
-	ErrSmartWalletVerificationUnavailable   = "invalid_exact_solana_smart_wallet_verification_not_available"
-	ErrSmartWalletComputeBudgetViolation    = "invalid_exact_solana_smart_wallet_compute_budget_violation"
-	ErrSmartWalletSimulationFailed          = "invalid_exact_solana_smart_wallet_simulation_failed"
-	ErrSmartWalletCannotDeriveATA           = "invalid_exact_solana_smart_wallet_cannot_derive_destination_ata"
-	ErrSmartWalletNoTransferInSimulation    = "invalid_exact_solana_smart_wallet_no_transfer_in_simulation"
-	ErrSmartWalletTransferMismatch          = "invalid_exact_solana_smart_wallet_transfer_mismatch"
-	ErrSmartWalletMultipleMatchingTransfers = "invalid_exact_solana_smart_wallet_multiple_matching_transfers"
-	ErrSmartWalletProgramNotAllowed         = "invalid_exact_solana_smart_wallet_program_not_allowed"
+	ErrSmartWalletFeePayerNotIsolated      = "invalid_exact_solana_smart_wallet_fee_payer_not_isolated"
+	ErrSmartWalletMalformedComputeBudget   = "invalid_exact_solana_smart_wallet_malformed_compute_budget"
+	ErrSmartWalletMalformedComputeLimit    = "invalid_exact_solana_smart_wallet_malformed_compute_limit"
+	ErrSmartWalletMalformedComputePrice    = "invalid_exact_solana_smart_wallet_malformed_compute_price"
+	ErrSmartWalletComputeUnitsTooHigh      = "invalid_exact_solana_smart_wallet_compute_units_too_high"
+	ErrSmartWalletPriorityFeeTooHigh       = "invalid_exact_solana_smart_wallet_priority_fee_too_high"
+	ErrSmartWalletUnsupportedComputeBudget = "invalid_exact_solana_smart_wallet_unsupported_compute_budget_instruction"
+	// Transaction v1 (SIMD-0385) smart wallet errors. The compute budget lives in
+	// the message config, so these replace the malformed-instruction codes above.
+	ErrSmartWalletUnsupportedTransactionVersion      = "invalid_exact_solana_smart_wallet_unsupported_transaction_version"
+	ErrSmartWalletComputeUnitLimitMissing            = "invalid_exact_solana_smart_wallet_compute_unit_limit_missing"
+	ErrSmartWalletLoadedAccountsDataSizeLimitMissing = "invalid_exact_solana_smart_wallet_loaded_accounts_data_size_limit_missing"
+	ErrSmartWalletAltResolutionUnavailable           = "invalid_exact_solana_smart_wallet_alt_resolution_not_available"
+	ErrSmartWalletAltResolutionFailed                = "invalid_exact_solana_smart_wallet_alt_resolution_failed"
+	ErrSmartWalletVerificationUnavailable            = "invalid_exact_solana_smart_wallet_verification_not_available"
+	ErrSmartWalletComputeBudgetViolation             = "invalid_exact_solana_smart_wallet_compute_budget_violation"
+	ErrSmartWalletSimulationFailed                   = "invalid_exact_solana_smart_wallet_simulation_failed"
+	ErrSmartWalletCannotDeriveATA                    = "invalid_exact_solana_smart_wallet_cannot_derive_destination_ata"
+	ErrSmartWalletNoTransferInSimulation             = "invalid_exact_solana_smart_wallet_no_transfer_in_simulation"
+	ErrSmartWalletTransferMismatch                   = "invalid_exact_solana_smart_wallet_transfer_mismatch"
+	ErrSmartWalletMultipleMatchingTransfers          = "invalid_exact_solana_smart_wallet_multiple_matching_transfers"
+	ErrSmartWalletProgramNotAllowed                  = "invalid_exact_solana_smart_wallet_program_not_allowed"
 )
 
 // ErrSettlementPending is the non-terminal settle error reason used when a

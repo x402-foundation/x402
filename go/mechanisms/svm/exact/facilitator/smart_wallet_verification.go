@@ -96,6 +96,38 @@ func assertFeePayerIsolated(tx *solana.Transaction, feePayer solana.PublicKey) e
 }
 
 func validateComputeBudgetLimits(tx *solana.Transaction, maxCU uint32, maxPriorityFee uint64) error {
+	if !svm.IsSupportedTransactionVersion(tx.Message.GetVersion()) {
+		return fmt.Errorf("%s: MessageVersion %d", ErrSmartWalletUnsupportedTransactionVersion, tx.Message.GetVersion())
+	}
+
+	// Transaction v1 declares its compute budget in the message config, which is
+	// authoritative there. A ComputeBudget instruction alongside it can only be
+	// an attempt to satisfy this instruction scan while the config carries
+	// different values, so it is rejected rather than read.
+	if tx.Message.GetVersion() == solana.MessageVersionV1 {
+		for _, ix := range tx.Message.Instructions {
+			programID, err := tx.Message.Program(ix.ProgramIDIndex)
+			if err == nil && programID.Equals(solana.ComputeBudget) {
+				return fmt.Errorf("%s: version 1 transactions must use the message config",
+					ErrSmartWalletUnsupportedComputeBudget)
+			}
+		}
+		switch svm.CheckV1TransactionConfig(tx.Message.TransactionConfig, &maxCU, maxPriorityFee) {
+		case svm.V1ConfigComputeUnitLimitMissing:
+			return errors.New(ErrSmartWalletComputeUnitLimitMissing)
+		case svm.V1ConfigComputeUnitLimitTooHigh:
+			return fmt.Errorf("%s: %d exceeds max %d",
+				ErrSmartWalletComputeUnitsTooHigh, *tx.Message.TransactionConfig.ComputeUnitLimit, maxCU)
+		case svm.V1ConfigLoadedAccountsDataSizeLimitMissing:
+			return errors.New(ErrSmartWalletLoadedAccountsDataSizeLimitMissing)
+		case svm.V1ConfigPriorityFeeTooHigh:
+			return fmt.Errorf("%s: %d lamports exceeds max %d micro-lamports per CU over %d CUs",
+				ErrSmartWalletPriorityFeeTooHigh, *tx.Message.TransactionConfig.PriorityFee,
+				maxPriorityFee, *tx.Message.TransactionConfig.ComputeUnitLimit)
+		}
+		return nil
+	}
+
 	for _, ix := range tx.Message.Instructions {
 		programID, err := tx.Message.Program(ix.ProgramIDIndex)
 		if err != nil || !programID.Equals(solana.ComputeBudget) {

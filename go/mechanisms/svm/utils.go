@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"math"
+	"math/bits"
 	"regexp"
 	"strconv"
 	"strings"
@@ -275,13 +276,14 @@ func DecodeTransaction(base64Tx string) (*solana.Transaction, error) {
 }
 
 // IsSupportedTransactionVersion reports whether a decoded transaction message's
-// version is one the SVM schemes know how to police. Every verification path
-// derives its sponsorship policy from version-specific structure — compute
-// budget arrives as ComputeBudget instructions on legacy and v0, and as the
-// inline message config of transaction v1 (SIMD-0385) — so a version whose
-// budget this code cannot read must be rejected explicitly instead of being
-// handed to instruction-scanning checks that would find nothing to scan and
-// pass vacuously.
+// version is one the SVM schemes model. Every verification path derives its
+// sponsorship policy from version-specific structure — compute budget arrives
+// as a ComputeBudget instruction pair on legacy and v0, and as the inline
+// message config of transaction v1 (SIMD-0385), which carries no ComputeBudget
+// instructions at all — so a version whose budget this code cannot read must be
+// rejected explicitly instead of being handed to instruction-scanning checks
+// that would find nothing to scan and pass vacuously, leaving the priority fee
+// the facilitator pays unbounded.
 //
 // solana-go's MessageVersion is offset by one from the wire version: legacy is
 // 0, Solana v0 is 1 and v1 is 2. A v1 message deserializes completely, config
@@ -289,8 +291,79 @@ func DecodeTransaction(base64Tx string) (*solana.Transaction, error) {
 // This is therefore an allowlist of the versions those checks understand, not a
 // comparison against a maximum: a version the SDK learns to decode later would
 // arrive just as intact.
+//
+// Verifiers that police only the ComputeBudget instruction pair — the legacy
+// x402 v1 wire scheme and the payment-channels open — narrow this to legacy and
+// v0 themselves.
 func IsSupportedTransactionVersion(version solana.MessageVersion) bool {
-	return version == solana.MessageVersionLegacy || version == solana.MessageVersionV0
+	return version == solana.MessageVersionLegacy ||
+		version == solana.MessageVersionV0 ||
+		version == solana.MessageVersionV1
+}
+
+// V1ConfigViolation names a way a transaction v1 message config breaks the
+// facilitator's sponsorship policy, as reported by CheckV1TransactionConfig.
+// Call sites map each violation to their own scheme's error code.
+type V1ConfigViolation string
+
+// Violations reported by CheckV1TransactionConfig.
+const (
+	V1ConfigComputeUnitLimitMissing            V1ConfigViolation = "compute_unit_limit_missing"
+	V1ConfigComputeUnitLimitTooHigh            V1ConfigViolation = "compute_unit_limit_too_high"
+	V1ConfigLoadedAccountsDataSizeLimitMissing V1ConfigViolation = "loaded_accounts_data_size_limit_missing"
+	V1ConfigPriorityFeeTooHigh                 V1ConfigViolation = "priority_fee_too_high"
+)
+
+// CheckV1TransactionConfig enforces on a transaction v1 message config what the
+// ComputeBudget instruction checks enforce on legacy and v0 transactions,
+// returning the first violation found or an empty violation when the config is
+// acceptable.
+//
+// A v1 transaction that leaves ComputeUnitLimit unset is budgeted zero compute
+// units, and one that leaves LoadedAccountsDataSizeLimit unset is budgeted zero
+// bytes of account data; either way it cannot execute, so both are required.
+// The priority fee is a total in lamports rather than micro-lamports per
+// compute unit, so the per-CU cap is normalized against the declared compute
+// unit limit: the fee passes when
+//
+//	priorityFee * 1_000_000 <= maxPriorityFeeMicroLamports * computeUnitLimit
+//
+// which bounds the facilitator's SOL exposure to exactly what the equivalent v0
+// transaction could charge under the per-CU cap. HeapSize and the magnitude of
+// LoadedAccountsDataSizeLimit are left uncapped: unlike their v0 instruction
+// forms they add no execution surface, and their compute cost is already
+// bounded by the capped compute unit limit.
+//
+// maxComputeUnits is optional; nil leaves the compute unit limit uncapped.
+func CheckV1TransactionConfig(
+	config solana.TransactionConfig,
+	maxComputeUnits *uint32,
+	maxPriorityFeeMicroLamports uint64,
+) V1ConfigViolation {
+	if config.ComputeUnitLimit == nil || *config.ComputeUnitLimit == 0 {
+		return V1ConfigComputeUnitLimitMissing
+	}
+	computeUnitLimit := *config.ComputeUnitLimit
+	if maxComputeUnits != nil && computeUnitLimit > *maxComputeUnits {
+		return V1ConfigComputeUnitLimitTooHigh
+	}
+	if config.LoadedAccountsDataSizeLimit == nil || *config.LoadedAccountsDataSizeLimit == 0 {
+		return V1ConfigLoadedAccountsDataSizeLimitMissing
+	}
+
+	var priorityFee uint64
+	if config.PriorityFee != nil {
+		priorityFee = *config.PriorityFee
+	}
+	// Both products can exceed 64 bits, so they are compared as full 128-bit
+	// values rather than being allowed to wrap into an accidental pass.
+	feeHi, feeLo := bits.Mul64(priorityFee, 1_000_000)
+	capHi, capLo := bits.Mul64(maxPriorityFeeMicroLamports, uint64(computeUnitLimit))
+	if feeHi > capHi || (feeHi == capHi && feeLo > capLo) {
+		return V1ConfigPriorityFeeTooHigh
+	}
+
+	return ""
 }
 
 // GetTokenPayerFromTransaction extracts the token payer (owner) address from a transaction
