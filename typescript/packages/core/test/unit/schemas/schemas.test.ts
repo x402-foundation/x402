@@ -653,10 +653,27 @@ describe("x402 Schemas", () => {
       it("should accept minimum valid CAIP-2 for V2", () => {
         const v2Minimal = {
           ...validPaymentRequirementsV2,
-          network: "a:b",
+          network: "abc:d",
         };
         const result = PaymentRequirementsV2Schema.safeParse(v2Minimal);
         expect(result.success).toBe(true);
+      });
+
+      it.each([
+        "a:b",
+        "EIP155:84532",
+        "123456789:1",
+        "eip155:",
+        `eip155:${"a".repeat(33)}`,
+        "eip155:base.mainnet",
+        ":84532",
+        "eip155:84532:extra",
+      ])("should reject malformed CAIP-2 network %s for V2", network => {
+        const result = PaymentRequirementsV2Schema.safeParse({
+          ...validPaymentRequirementsV2,
+          network,
+        });
+        expect(result.success).toBe(false);
       });
     });
   });
