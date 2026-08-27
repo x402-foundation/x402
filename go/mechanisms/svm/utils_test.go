@@ -1,8 +1,10 @@
 package svm
 
 import (
+	"encoding/base64"
 	"testing"
 
+	solana "github.com/gagliardetto/solana-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -112,4 +114,78 @@ func TestStablecoinRegistryIsInternallyConsistent(t *testing.T) {
 			"%s must use a supported token program", symbol,
 		)
 	}
+}
+
+func memoInstruction(data string) solana.Instruction {
+	return solana.NewInstruction(
+		solana.MustPublicKeyFromBase58(MemoProgramAddress),
+		solana.AccountMetaSlice{},
+		[]byte(data),
+	)
+}
+
+func TestIsSupportedTransactionVersion(t *testing.T) {
+	assert.True(t, IsSupportedTransactionVersion(solana.MessageVersionLegacy))
+	assert.True(t, IsSupportedTransactionVersion(solana.MessageVersionV0))
+	assert.False(t, IsSupportedTransactionVersion(solana.MessageVersionV1))
+	assert.False(t, IsSupportedTransactionVersion(solana.MessageVersionV1+1))
+	assert.False(t, IsSupportedTransactionVersion(solana.MessageVersion(127)))
+}
+
+// A transaction v1 message deserializes completely — inline compute budget
+// config included — so it reaches the schemes as an ordinary decoded
+// transaction that simply carries no ComputeBudget instruction. Nothing below
+// the schemes rejects it, which is what makes the version allowlist
+// load-bearing rather than defensive.
+func TestDecodeTransactionAcceptsATransactionV1Message(t *testing.T) {
+	tx, err := solana.NewTransaction(
+		[]solana.Instruction{memoInstruction("v1")},
+		solana.Hash{},
+		solana.TransactionPayer(solana.NewWallet().PrivateKey.PublicKey()),
+		solana.TransactionV1Config(solana.TransactionConfig{}.
+			WithComputeUnitLimit(200_000).
+			WithPriorityFee(1_000_000_000)),
+	)
+	require.NoError(t, err)
+	wire, err := tx.MarshalBinary()
+	require.NoError(t, err)
+
+	decoded, err := DecodeTransaction(base64.StdEncoding.EncodeToString(wire))
+
+	require.NoError(t, err)
+	assert.Equal(t, solana.MessageVersionV1, decoded.Message.GetVersion())
+	assert.False(t, IsSupportedTransactionVersion(decoded.Message.GetVersion()))
+	assert.Empty(t, decoded.Message.TransactionConfig.LoadedAccountsDataSizeLimit)
+	for _, instruction := range decoded.Message.Instructions {
+		program, err := decoded.Message.Program(instruction.ProgramIDIndex)
+		require.NoError(t, err)
+		assert.False(t, program.Equals(solana.ComputeBudget),
+			"a v1 transaction keeps its compute budget in the message config, out of reach of an instruction scan")
+	}
+}
+
+// A version beyond the ones solana-go implements fails to deserialize at all,
+// so it is rejected before the allowlist is consulted. Both layers fail closed;
+// neither is relied upon alone.
+func TestDecodeTransactionRejectsAVersionBeyondV1(t *testing.T) {
+	tx, err := solana.NewTransaction(
+		[]solana.Instruction{memoInstruction("future")},
+		solana.Hash{},
+		solana.TransactionPayer(solana.NewWallet().PrivateKey.PublicKey()),
+	)
+	require.NoError(t, err)
+	_, err = tx.Message.SetVersion(solana.MessageVersionV0)
+	require.NoError(t, err)
+
+	message, err := tx.Message.MarshalBinary()
+	require.NoError(t, err)
+	wire, err := tx.MarshalBinary()
+	require.NoError(t, err)
+	prefix := len(wire) - len(message)
+	require.Equal(t, byte(0x80), wire[prefix], "expected a versioned message prefix byte at offset %d", prefix)
+	wire[prefix] = 0x85
+
+	_, err = DecodeTransaction(base64.StdEncoding.EncodeToString(wire))
+
+	require.ErrorContains(t, err, "unsupported message version: 5")
 }

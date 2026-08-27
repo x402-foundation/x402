@@ -13,6 +13,7 @@ const (
 	ErrTransactionCouldNotBeDecoded   = "invalid_exact_solana_payload_transaction_could_not_be_decoded"
 	ErrSignatureInvalid               = "invalid_exact_solana_payload_signature_invalid"
 	ErrExcessiveSigners               = "invalid_exact_solana_payload_excessive_signers"
+	ErrUnsupportedTransactionVersion  = "unsupported_transaction_version"
 	ErrTransactionInstructionsLength  = "invalid_exact_solana_payload_transaction_instructions_length"
 	ErrComputeLimitInstructionTooHigh = "invalid_exact_solana_payload_transaction_instructions_compute_limit_instruction_too_high"
 	ErrUnknownFourthInstruction       = "invalid_exact_solana_payload_unknown_fourth_instruction"

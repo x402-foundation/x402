@@ -145,7 +145,8 @@ func (f *openFixture) buildSignedOpen(t *testing.T, prefix, suffix []solana.Inst
 
 	tx, err := builder.Build()
 	require.NoError(t, err)
-	tx.Message.SetVersion(solana.MessageVersionV0)
+	_, err = tx.Message.SetVersion(solana.MessageVersionV0)
+	require.NoError(t, err)
 	tx.Signatures = make([]solana.Signature, tx.Message.Header.NumRequiredSignatures)
 	signTransaction(t, tx, f.payerKey)
 	return encodeTransaction(t, tx)
@@ -162,7 +163,8 @@ func (f *openFixture) buildSignedOpenWith(t *testing.T, open solana.Instruction)
 		AddInstruction(open).
 		Build()
 	require.NoError(t, err)
-	tx.Message.SetVersion(solana.MessageVersionV0)
+	_, err = tx.Message.SetVersion(solana.MessageVersionV0)
+	require.NoError(t, err)
 	tx.Signatures = make([]solana.Signature, tx.Message.Header.NumRequiredSignatures)
 	signTransaction(t, tx, f.payerKey)
 	return encodeTransaction(t, tx)
@@ -190,4 +192,29 @@ func lighthouseInstruction() solana.Instruction {
 
 func memoInstruction(data string) solana.Instruction {
 	return solana.NewInstruction(memoProgramID, solana.AccountMetaSlice{}, []byte(data))
+}
+
+// buildTransactionV1Open assembles an open as a transaction v1 (SIMD-0385)
+// payment: the compute budget lives in the message's inline config instead of
+// in ComputeBudget instructions, and its priority fee is far above any operator
+// cap. The open's compute budget checks have no instruction to find here, so
+// only the version itself stands between this transaction and the sponsor
+// paying that fee.
+func (f *openFixture) buildTransactionV1Open(t *testing.T) string {
+	t.Helper()
+
+	tx, err := solana.NewTransaction(
+		[]solana.Instruction{f.openInstruction(t)},
+		solana.Hash(testKeypair(t).PublicKey()),
+		solana.TransactionPayer(f.feePayer),
+		solana.TransactionV1Config(solana.TransactionConfig{}.
+			WithComputeUnitLimit(OpenMaxComputeUnitLimit).
+			WithLoadedAccountsDataSizeLimit(64*1024).
+			WithPriorityFee(1_000_000_000)),
+	)
+	require.NoError(t, err)
+	tx.Signatures = make([]solana.Signature, tx.Message.Header.NumRequiredSignatures)
+	signTransaction(t, tx, f.payerKey)
+
+	return encodeTransaction(t, tx)
 }

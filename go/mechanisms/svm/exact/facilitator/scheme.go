@@ -215,6 +215,14 @@ func (f *ExactSvmScheme) verify(
 		return nil, x402.NewVerifyError(ErrTransactionCouldNotBeDecoded, "", err.Error())
 	}
 
+	// Version allowlist, checked before path dispatch: both paths read the
+	// sponsorship policy out of version-specific structure, so neither may run
+	// against a version they don't model.
+	if !svm.IsSupportedTransactionVersion(tx.Message.GetVersion()) {
+		return nil, x402.NewVerifyError(ErrUnsupportedTransactionVersion, "",
+			fmt.Sprintf("unsupported transaction version: MessageVersion %d (only legacy and v0 are supported)", tx.Message.GetVersion()))
+	}
+
 	if f.config.MaxRequiredSignatures != nil && tx.Message.Header.NumRequiredSignatures > *f.config.MaxRequiredSignatures {
 		return nil, x402.NewVerifyError(ErrExcessiveSigners, "", ErrExcessiveSigners)
 	}
@@ -483,6 +491,13 @@ func (f *ExactSvmScheme) Settle(
 	tx, err := svm.DecodeTransaction(solanaPayload.Transaction)
 	if err != nil {
 		return nil, x402.NewSettleError(ErrInvalidPayloadTransaction, "", network, "", err.Error())
+	}
+	// Checked here as well as in Verify so an unsupported version is reported
+	// as such rather than as whichever of the steps below trips over a message
+	// this SDK cannot re-serialize.
+	if !svm.IsSupportedTransactionVersion(tx.Message.GetVersion()) {
+		return nil, x402.NewSettleError(ErrUnsupportedTransactionVersion, "", network, "",
+			fmt.Sprintf("unsupported transaction version: MessageVersion %d (only legacy and v0 are supported)", tx.Message.GetVersion()))
 	}
 	// Keyed on message hash (immune to mutable fee-payer sig at slot 0); shared
 	// by the duplicate-settlement check and the PendingSettlementStore below.

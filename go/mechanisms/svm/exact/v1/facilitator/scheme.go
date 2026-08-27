@@ -142,6 +142,14 @@ func (f *ExactSvmSchemeV1) Verify(
 		return nil, x402.NewVerifyError(ErrTransactionCouldNotBeDecoded, "", err.Error())
 	}
 
+	// Version allowlist, checked before any instruction is inspected: the checks
+	// below read the sponsorship policy out of version-specific structure, so
+	// they must not run against a version they don't model.
+	if !svm.IsSupportedTransactionVersion(tx.Message.GetVersion()) {
+		return nil, x402.NewVerifyError(ErrUnsupportedTransactionVersion, "",
+			fmt.Sprintf("unsupported transaction version: MessageVersion %d (only legacy and v0 are supported)", tx.Message.GetVersion()))
+	}
+
 	if err := exactv2.VerifyRequiredSignatures(tx, feePayerStr); err != nil {
 		return nil, x402.NewVerifyError(err.Error(), "", err.Error())
 	}

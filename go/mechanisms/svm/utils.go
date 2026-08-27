@@ -274,6 +274,25 @@ func DecodeTransaction(base64Tx string) (*solana.Transaction, error) {
 	return tx, nil
 }
 
+// IsSupportedTransactionVersion reports whether a decoded transaction message's
+// version is one the SVM schemes know how to police. Every verification path
+// derives its sponsorship policy from version-specific structure — compute
+// budget arrives as ComputeBudget instructions on legacy and v0, and as the
+// inline message config of transaction v1 (SIMD-0385) — so a version whose
+// budget this code cannot read must be rejected explicitly instead of being
+// handed to instruction-scanning checks that would find nothing to scan and
+// pass vacuously.
+//
+// solana-go's MessageVersion is offset by one from the wire version: legacy is
+// 0, Solana v0 is 1 and v1 is 2. A v1 message deserializes completely, config
+// included, so nothing beneath the schemes stands between it and their checks.
+// This is therefore an allowlist of the versions those checks understand, not a
+// comparison against a maximum: a version the SDK learns to decode later would
+// arrive just as intact.
+func IsSupportedTransactionVersion(version solana.MessageVersion) bool {
+	return version == solana.MessageVersionLegacy || version == solana.MessageVersionV0
+}
+
 // GetTokenPayerFromTransaction extracts the token payer (owner) address from a transaction
 // This looks for the TransferChecked instruction and returns the owner/authority address
 func GetTokenPayerFromTransaction(tx *solana.Transaction) (string, error) {

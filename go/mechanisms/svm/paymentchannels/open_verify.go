@@ -70,6 +70,15 @@ func VerifyOpenTransaction(transactionBase64 string, expected VerifyOpenExpected
 	}
 	message := &tx.Message
 
+	// Every check below is indexed over a legacy/v0 compiled message, so an
+	// unrecognized version is rejected before any of them run.
+	if !svm.IsSupportedTransactionVersion(message.GetVersion()) {
+		return nil, fmt.Errorf(
+			"verifyOpenTransaction: unsupported_transaction_version: MessageVersion %d; an open transaction must be legacy or v0",
+			message.GetVersion(),
+		)
+	}
+
 	// Address Lookup Tables hide instruction programs and accounts from the
 	// static key list, so every program must be visible before signing.
 	if len(message.AddressTableLookups) > 0 {
