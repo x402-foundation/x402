@@ -33,15 +33,11 @@ import {
   validateDepositPolicy,
 } from "./config";
 import { refundChannel, type RefundOptions } from "./refund";
-import {
-  type BatchSettlementClientDeps,
-  buildChannelConfig,
-  processSettleResponse,
-  recoverChannel,
-} from "./channel";
+import { type BatchSettlementClientDeps, buildChannelConfig, recoverChannel } from "./channel";
 import { createBatchSettlementClientHooks } from "./hooks";
 import { processCorrectivePaymentRequired } from "./recovery";
 import type { ClientChannelStorage } from "./storage";
+import { findDefaultAsset } from "../../defaultAssets";
 import { signVoucher } from "./voucher";
 
 export type { BatchSettlementClientContext } from "./storage";
@@ -57,14 +53,14 @@ export type { RefundOptions } from "./refund";
 /**
  * Client-side implementation of the `batch-settlement` scheme for EVM networks.
  *
- * Builds payment payloads (deposit + voucher or voucher-only), processes server
- * responses to update local session state via {@link processSettleResponse},
- * handles corrective 402 resynchronisation via
- * {@link processCorrectivePaymentRequired}, and supports on-demand cooperative
- * refund requests via {@link refundChannel}.
+ * Builds payment payloads (deposit + voucher or voucher-only), updates local
+ * channel state from payment-response hooks, handles corrective 402
+ * resynchronisation via {@link processCorrectivePaymentRequired}, and supports
+ * on-demand cooperative refund requests via {@link refundChannel}.
  */
 export class BatchSettlementEvmScheme implements SchemeNetworkClient {
   readonly scheme = BATCH_SETTLEMENT_SCHEME;
+  findDefaultAsset = findDefaultAsset;
 
   readonly schemeHooks: SchemeClientHooks;
 
@@ -250,16 +246,6 @@ export class BatchSettlementEvmScheme implements SchemeNetworkClient {
    */
   async refund(url: string, options?: RefundOptions): Promise<SettleResponse> {
     return refundChannel(this.deps(), url, options);
-  }
-
-  /**
-   * Updates local channel state from a settle response.
-   *
-   * @param settle - The parsed settle response from the server.
-   * @returns Resolves when local channel state has been updated.
-   */
-  async processSettleResponse(settle: SettleResponse): Promise<void> {
-    return processSettleResponse(this.storage, settle);
   }
 
   /**

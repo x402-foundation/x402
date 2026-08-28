@@ -1,12 +1,29 @@
 import { spawn, ChildProcess } from 'child_process';
-import { existsSync } from 'fs';
-import { join } from 'path';
-import { log, verboseLog, errorLog } from './logger';
+import { resolveRunCommand } from './component';
+import { verboseLog, errorLog } from './logger';
 
 export interface RunConfig {
   port?: number;
   env?: Record<string, string>;
+  /**
+   * Env var names to remove from the spawned process's env even though they're
+   * inherited from the parent process (e.g. loaded from e2e/.env). Needed
+   * because `env` below is merged on top of `process.env`, not used in isolation.
+   */
+  unsetEnv?: string[];
   [key: string]: any;
+}
+
+/** Merge the parent env with overrides, then strip any explicitly excluded keys. */
+function buildChildEnv(config: RunConfig) {
+  const env = {
+    ...process.env,
+    ...config.env,
+  };
+  for (const key of config.unsetEnv ?? []) {
+    delete env[key];
+  }
+  return env;
 }
 
 export interface ProcessResult {
@@ -20,31 +37,20 @@ export abstract class BaseProxy {
   protected process: ChildProcess | null = null;
   protected directory: string;
   protected readyLog: string;
-  protected resultLog?: string;
 
-  constructor(directory: string, readyLog: string, resultLog?: string) {
+  constructor(directory: string, readyLog: string) {
     this.directory = directory;
     this.readyLog = readyLog;
-    this.resultLog = resultLog;
   }
 
   protected getRunCommand(): string[] {
-    const runShPath = join(this.directory, 'run.sh');
-
-    if (!existsSync(runShPath)) {
-      throw new Error(`run.sh not found in ${this.directory}`);
-    }
-
-    return ['bash', 'run.sh'];
+    return resolveRunCommand(this.directory);
   }
 
   protected async startProcess(config: RunConfig): Promise<void> {
     return new Promise((resolve, reject) => {
       const command = this.getRunCommand();
-      const env = {
-        ...process.env,
-        ...config.env
-      };
+      const env = buildChildEnv(config);
 
       this.process = spawn(command[0], command.slice(1), {
         env,
@@ -134,10 +140,7 @@ export abstract class BaseProxy {
   protected async runOneShotProcess(config: RunConfig): Promise<ProcessResult> {
     return new Promise((resolve) => {
       const command = this.getRunCommand();
-      const processEnv = {
-        ...process.env,
-        ...config.env
-      };
+      const processEnv = buildChildEnv(config);
 
       const childProcess = spawn(command[0], command.slice(1), {
         env: processEnv,

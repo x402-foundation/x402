@@ -65,22 +65,6 @@ export const USDC_TESTNET_ASA_ID = "10458941";
  */
 export const USDC_DECIMALS = 6;
 
-/**
- * USDC configuration per network
- */
-export const USDC_CONFIG: Record<string, { asaId: string; name: string; decimals: number }> = {
-  [ALGORAND_MAINNET_CAIP2]: {
-    asaId: USDC_MAINNET_ASA_ID,
-    name: "USDC",
-    decimals: USDC_DECIMALS,
-  },
-  [ALGORAND_TESTNET_CAIP2]: {
-    asaId: USDC_TESTNET_ASA_ID,
-    name: "USDC",
-    decimals: USDC_DECIMALS,
-  },
-};
-
 // ============================================================================
 // Transaction Limits
 // ============================================================================

@@ -2,6 +2,7 @@ package buildercode
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -15,6 +16,27 @@ func TestNewBuilderCodeClientExtensionRejectsInvalidCode(t *testing.T) {
 		}
 	}()
 	NewBuilderCodeClientExtension("Bad-Code")
+}
+
+func TestNewBuilderCodeClientExtensionRejectsTooManyCodes(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic for too many service codes")
+		}
+	}()
+	codes := make([]string, MAX_CLIENT_SERVICE_CODES+1)
+	for i := range codes {
+		codes[i] = fmt.Sprintf("bc_%d", i)
+	}
+	NewBuilderCodeClientExtension(codes...)
+}
+
+func TestNewBuilderCodeClientExtensionAcceptsMaxCodes(t *testing.T) {
+	codes := make([]string, MAX_CLIENT_SERVICE_CODES)
+	for i := range codes {
+		codes[i] = fmt.Sprintf("bc_%d", i)
+	}
+	NewBuilderCodeClientExtension(codes...)
 }
 
 func TestClientExtensionKey(t *testing.T) {
@@ -92,4 +114,47 @@ func TestDeclareBuilderCodeExtensionShape(t *testing.T) {
 	if _, ok := ext["schema"]; !ok {
 		t.Fatal("expected schema in declaration")
 	}
+	if _, hasS := info["s"]; hasS {
+		t.Fatalf("expected no s field when no service codes given, got %+v", info)
+	}
+}
+
+func TestDeclareBuilderCodeExtensionWithServiceCodes(t *testing.T) {
+	declared := DeclareBuilderCodeExtension(appCode, "bc_server_sdk", "bc_other")
+	ext := declared[BUILDER_CODE].(map[string]interface{})
+	info := ext["info"].(map[string]interface{})
+	want := []string{"bc_server_sdk", "bc_other"}
+	if !reflect.DeepEqual(info["s"], want) {
+		t.Fatalf("expected s=%v, got %v", want, info["s"])
+	}
+}
+
+func TestDeclareBuilderCodeExtensionRejectsInvalidServiceCode(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic for invalid service code")
+		}
+	}()
+	DeclareBuilderCodeExtension(appCode, "Bad-Code")
+}
+
+func TestDeclareBuilderCodeExtensionRejectsTooManyServiceCodes(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic for too many service codes")
+		}
+	}()
+	codes := make([]string, MAX_SERVER_SERVICE_CODES+1)
+	for i := range codes {
+		codes[i] = fmt.Sprintf("bc_%d", i)
+	}
+	DeclareBuilderCodeExtension(appCode, codes...)
+}
+
+func TestDeclareBuilderCodeExtensionAcceptsMaxServiceCodes(t *testing.T) {
+	codes := make([]string, MAX_SERVER_SERVICE_CODES)
+	for i := range codes {
+		codes[i] = fmt.Sprintf("bc_%d", i)
+	}
+	DeclareBuilderCodeExtension(appCode, codes...)
 }

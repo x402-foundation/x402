@@ -14,20 +14,31 @@ except ImportError as e:
     ) from e
 
 from .....interfaces import FacilitatorContext
+from .....pending_settlement_store import PendingSettlementStore
 from .....schemas import (
     PaymentPayload,
     PaymentRequirements,
     SettleResponse,
     VerifyResponse,
 )
-from ...constants import TX_STATUS_SUCCESS
+from ...constants import ERR_SETTLEMENT_PENDING, TX_STATUS_SUCCESS
 from ...erc6492 import has_deployment_info, parse_erc6492_signature
 from ...multicall import MulticallCall, multicall
+from ...settle_receipt import ReceiptWaiter, wait_for_receipt_and_build_response
 from ...signer import FacilitatorEvmSigner
-from ...types import ERC6492SignatureData
-from ...utils import bytes_to_hex, get_evm_chain_id
+from ...types import ERC6492SignatureData, TransactionReceipt
+from ...utils import (
+    bytes_to_hex,
+    final_hash_from_two_request_send,
+    get_evm_chain_id,
+    truncate_error_message,
+)
 from ..abi import BATCH_SETTLEMENT_ABI, ERC20_BALANCE_OF_ABI
-from ..constants import BATCH_SETTLEMENT_ADDRESS
+from ..constants import (
+    BATCH_SETTLEMENT_ADDRESS,
+    CHANNEL_STATE_POLL_INTERVAL_S,
+    CHANNEL_STATE_POLL_S,
+)
 from ..errors import (
     ERR_CUMULATIVE_AMOUNT_BELOW_CLAIMED,
     ERR_CUMULATIVE_EXCEEDS_BALANCE,
@@ -157,7 +168,7 @@ def verify_deposit(
             return VerifyResponse(
                 is_valid=False,
                 invalid_reason=ERR_DEPOSIT_SIMULATION_FAILED,
-                invalid_message=str(e)[:500],
+                invalid_message=truncate_error_message(str(e)),
                 payer=payer,
             )
 
@@ -174,6 +185,122 @@ def verify_deposit(
     )
 
 
+def _deposit_settlement_cache_key(
+    payload: DepositPayload, requirements: PaymentRequirements
+) -> str:
+    """Return the unique-per-payload key used to key the PendingSettlementStore.
+
+    Uses the authorization signature for the transfer method resolved from `requirements`
+    (matching Go/TS), not just whichever authorization field happens to be present, so a
+    payload carrying both shapes keys on the one requirements actually selected. Returns ""
+    when that authorization is absent (malformed payload), disabling the pending-settlement
+    fast path — the normal broadcast path still runs and surfaces the validation error.
+    """
+    assert payload.deposit is not None
+    auth = payload.deposit.authorization
+    if _resolve_deposit_transfer_method(payload, requirements) == "permit2":
+        return auth.permit2_authorization.signature if auth.permit2_authorization else ""
+    return auth.erc3009_authorization.signature if auth.erc3009_authorization else ""
+
+
+def _resolve_deposit_receipt_wait_signer(
+    signer: FacilitatorEvmSigner,
+    payment: PaymentPayload,
+    payload: DepositPayload,
+    requirements: PaymentRequirements,
+    context: FacilitatorContext | None,
+) -> ReceiptWaiter:
+    """Return the signer that should await the deposit's settlement receipt.
+
+    The ERC-20-approval-gas-sponsoring extension's signer when that extension would
+    provide the transaction (it may broadcast via a different account), otherwise the
+    facilitator's own signer. Only called on a pending-settlement store hit, since the
+    normal (cache-miss) path already resolves this via `_resolve_deposit_execution`.
+    """
+    if _resolve_deposit_transfer_method(payload, requirements) != "permit2":
+        return signer
+    branch = resolve_permit2_deposit_branch(signer, payment, payload, requirements, context)
+    if isinstance(branch, VerifyResponse) or branch.kind != "erc20Approval":
+        return signer
+    return branch.extension_signer if branch.extension_signer is not None else signer
+
+
+def _reconcile_pending_deposit(
+    receipt_waiter: ReceiptWaiter,
+    signer: FacilitatorEvmSigner,
+    payload: DepositPayload,
+    network: str,
+    tx_hash: str,
+    pending_store: PendingSettlementStore,
+    cache_key: str,
+) -> SettleResponse:
+    """Handle a PendingSettlementStore cache hit for settle_deposit.
+
+    A prior call already broadcast tx_hash (its nonce/signature is now consumed onchain,
+    so re-broadcasting is not an option) but couldn't confirm it before returning
+    settlement_pending. Unlike the normal path, there is no reliable pre-broadcast
+    channel-state snapshot available here (it lived in the earlier, now-returned call), so
+    this skips the optimistic balance-add fallback entirely: on confirmation it reports
+    whatever the RPC currently reads (a short poll only guards against read-after-write
+    lag), and on failure to confirm it re-records the pending entry and returns another
+    settlement_pending for the caller to retry again later.
+
+    Known limitation: the cache-miss path's unconfirmed-bundle-hash check (guarding against
+    a non-conforming ERC-20-approval extension signer that bundles a single hash covering
+    only approve(), never running deposit()) has no equivalent here, since it needs the
+    pre-broadcast channel state this path doesn't have — a receipt success here is trusted
+    at face value. Only affects a non-conforming extension signer combined with a
+    confirm-timeout on the original request.
+    """
+    assert payload.channel_config is not None and payload.voucher is not None
+    assert payload.deposit is not None
+    config = payload.channel_config
+    payer = config.payer
+    voucher = payload.voucher
+    deposit = payload.deposit
+
+    def _build_reconciled_success(_receipt: TransactionReceipt) -> SettleResponse:
+        extra: dict[str, Any] | None = None
+        deadline = time.time() + CHANNEL_STATE_POLL_S
+        while True:
+            try:
+                state = read_channel_state(signer, voucher.channel_id)
+                extra = {
+                    "channelState": {
+                        "channelId": voucher.channel_id,
+                        "balance": str(state.balance),
+                        "totalClaimed": str(state.total_claimed),
+                        "withdrawRequestedAt": state.withdraw_requested_at,
+                        "refundNonce": str(state.refund_nonce),
+                    }
+                }
+                break
+            except Exception:
+                if time.time() >= deadline:
+                    break
+                time.sleep(CHANNEL_STATE_POLL_INTERVAL_S)
+
+        return SettleResponse(
+            success=True,
+            transaction=tx_hash,
+            network=network,
+            payer=payer,
+            amount=deposit.amount,
+            extra=extra,
+        )
+
+    return wait_for_receipt_and_build_response(
+        receipt_waiter,
+        tx_hash,
+        network,
+        payer,
+        failed_reason=ERR_DEPOSIT_TRANSACTION_FAILED,
+        on_success=_build_reconciled_success,
+        pending_store=pending_store,
+        pending_key=cache_key,
+    )
+
+
 def settle_deposit(
     signer: FacilitatorEvmSigner,
     payment: PaymentPayload,
@@ -182,8 +309,14 @@ def settle_deposit(
     context: FacilitatorContext | None = None,
     allowed_factories: list[str] | None = None,
     data_suffix: str | None = None,
+    pending_store: PendingSettlementStore | None = None,
 ) -> SettleResponse:
-    """Verify then execute a deposit onchain via the appropriate collector."""
+    """Verify then execute a deposit onchain via the appropriate collector.
+
+    pending_store: Optional store letting a retried settle for the same deposit
+        authorization reconcile against an already-broadcast transaction instead of
+        re-verifying and re-broadcasting (see settlement_pending).
+    """
     assert payload.channel_config is not None and payload.voucher is not None
     assert payload.deposit is not None
     network = str(requirements.network)
@@ -191,6 +324,35 @@ def settle_deposit(
     payer = config.payer
     deposit = payload.deposit
     voucher = payload.voucher
+
+    # Fast path: a prior settle for this exact authorization broadcast a transaction but
+    # couldn't confirm it in time. Reconcile against that transaction instead of
+    # re-broadcasting (which would revert on replay — the authorization's nonce/signature
+    # has already been consumed onchain).
+    cache_key = ""
+    if pending_store is not None:
+        cache_key = _deposit_settlement_cache_key(payload, requirements)
+        if cache_key:
+            cached_tx_hash = pending_store.get(cache_key)
+            if cached_tx_hash is not None:
+                # Remove before reconciling (rather than after) so a
+                # concurrent retry of the same payload misses here instead of
+                # also reconciling: it falls through to the normal broadcast
+                # path, which independently rejects it as an on-chain replay
+                # (nonce already consumed).
+                pending_store.delete(cache_key)
+                receipt_waiter = _resolve_deposit_receipt_wait_signer(
+                    signer, payment, payload, requirements, context
+                )
+                return _reconcile_pending_deposit(
+                    receipt_waiter,
+                    signer,
+                    payload,
+                    network,
+                    cached_tx_hash,
+                    pending_store,
+                    cache_key,
+                )
 
     verified = verify_deposit(signer, payment, payload, requirements, context, allowed_factories)
     if not verified.is_valid:
@@ -204,6 +366,7 @@ def settle_deposit(
             payer=verified.payer,
         )
 
+    receipt_waiter = signer
     try:
         execution = _resolve_deposit_execution(signer, payment, payload, requirements, context)
         if isinstance(execution, VerifyResponse):
@@ -228,6 +391,12 @@ def settle_deposit(
             if deploy_err is not None:
                 return deploy_err
 
+        # A single hash from the two-request (approve + deposit) send means the signer
+        # bundled them atomically, but a non-conforming signer could return one hash
+        # after broadcasting only the approve. Its receipt then proves some transaction
+        # didn't revert, not that the deposit ran, so success requires the balance check
+        # in _build_deposit_success.
+        unconfirmed_bundle_hash = False
         if execution.kind == "erc20Approval":
             assert execution.extension_signer is not None
             assert execution.signed_transaction is not None
@@ -235,7 +404,14 @@ def settle_deposit(
             results = execution.extension_signer.send_transactions(
                 [execution.signed_transaction, deposit_call]
             )
-            tx = results[1]
+            tx = final_hash_from_two_request_send(results)
+            if tx is None:
+                raise RuntimeError(
+                    "expected 1 (atomic bundle) or 2 (sequential) tx hashes from "
+                    f"extension signer, got {len(results)}"
+                )
+            unconfirmed_bundle_hash = len(results) == 1
+            receipt_waiter = execution.extension_signer
         else:
             tx = signer.write_contract(
                 to_checksum_address(BATCH_SETTLEMENT_ADDRESS),
@@ -248,61 +424,124 @@ def settle_deposit(
                 data_suffix=data_suffix,
             )
 
-        receipt = signer.wait_for_transaction_receipt(tx)
-        if receipt.status != TX_STATUS_SUCCESS:
+        def _build_deposit_success(_receipt: TransactionReceipt) -> SettleResponse:
+            verified_extra = verified.extra or {}
+            optimistic = {
+                "channelState": {
+                    "channelId": voucher.channel_id,
+                    "balance": str(
+                        int(str(verified_extra.get("balance", "0"))) + int(deposit.amount)
+                    ),
+                    "totalClaimed": str(verified_extra.get("totalClaimed", "0")),
+                    "withdrawRequestedAt": int(verified_extra.get("withdrawRequestedAt", 0)),
+                    "refundNonce": str(verified_extra.get("refundNonce", "0")),
+                }
+            }
+
+            expected_min_balance = int(optimistic["channelState"]["balance"])
+            deadline = time.time() + CHANNEL_STATE_POLL_S
+            balance_confirmed = False
+            # Set only when a read succeeds and shows the deposit missing, as opposed
+            # to a read that failed outright and leaves the balance unknown.
+            balance_read_without_confirmation = False
+            try:
+                post_state = read_channel_state(signer, voucher.channel_id)
+                while post_state.balance < expected_min_balance and time.time() < deadline:
+                    time.sleep(CHANNEL_STATE_POLL_INTERVAL_S)
+                    post_state = read_channel_state(signer, voucher.channel_id)
+
+                if post_state.balance >= expected_min_balance:
+                    balance_confirmed = True
+                    extra = {
+                        "channelState": {
+                            "channelId": voucher.channel_id,
+                            "balance": str(post_state.balance),
+                            "totalClaimed": str(post_state.total_claimed),
+                            "withdrawRequestedAt": post_state.withdraw_requested_at,
+                            "refundNonce": str(post_state.refund_nonce),
+                        }
+                    }
+                else:
+                    balance_read_without_confirmation = True
+                    extra = optimistic
+            except Exception:
+                extra = optimistic
+
+            if unconfirmed_bundle_hash and not balance_confirmed:
+                # A read showing the deposit missing is terminal; a failed read leaves it
+                # unconfirmed, so report settlement_pending for the caller to reconcile.
+                if balance_read_without_confirmation:
+                    return SettleResponse(
+                        success=False,
+                        error_reason=ERR_DEPOSIT_TRANSACTION_FAILED,
+                        error_message=(
+                            "extension signer returned a single transaction hash for the "
+                            "erc20 approval + deposit bundle, but the resulting channel "
+                            "balance does not reflect the deposit"
+                        ),
+                        transaction=tx,
+                        network=network,
+                        payer=payer,
+                    )
+                # The receipt itself succeeded (wait_for_receipt_and_build_response already
+                # cleared any pending entry before calling this on_success callback), but
+                # the deposit's effect on the channel balance couldn't be confirmed — re-mark
+                # pending so a retry reconciles against this same transaction.
+                if pending_store is not None and cache_key:
+                    try:
+                        pending_store.set(cache_key, tx)
+                    except Exception as e:
+                        # Can't guarantee a later retry will find this to reconcile
+                        # against — a blind retry could re-verify/re-broadcast and
+                        # double-send. Downgrade to terminal, preserving the
+                        # transaction hash for manual reconciliation.
+                        return SettleResponse(
+                            success=False,
+                            error_reason=ERR_DEPOSIT_TRANSACTION_FAILED,
+                            error_message=(
+                                f"settlement_pending, but failed to persist for retry: {e}"
+                            ),
+                            transaction=tx,
+                            network=network,
+                            payer=payer,
+                        )
+                return SettleResponse(
+                    success=False,
+                    error_reason=ERR_SETTLEMENT_PENDING,
+                    error_message=(
+                        "extension signer returned a single transaction hash for the "
+                        "erc20 approval + deposit bundle and the post-deposit balance read "
+                        "failed, so the deposit could not be confirmed"
+                    ),
+                    transaction=tx,
+                    network=network,
+                    payer=payer,
+                )
+
             return SettleResponse(
-                success=False,
-                error_reason=ERR_DEPOSIT_TRANSACTION_FAILED,
-                error_message=f"transaction reverted (receipt status {receipt.status})",
+                success=True,
                 transaction=tx,
                 network=network,
                 payer=payer,
+                amount=deposit.amount,
+                extra=extra,
             )
 
-        verified_extra = verified.extra or {}
-        optimistic = {
-            "channelState": {
-                "channelId": voucher.channel_id,
-                "balance": str(int(str(verified_extra.get("balance", "0"))) + int(deposit.amount)),
-                "totalClaimed": str(verified_extra.get("totalClaimed", "0")),
-                "withdrawRequestedAt": int(verified_extra.get("withdrawRequestedAt", 0)),
-                "refundNonce": str(verified_extra.get("refundNonce", "0")),
-            }
-        }
-
-        expected_min_balance = int(optimistic["channelState"]["balance"])
-        deadline = time.time() + 2.0
-        post_state = read_channel_state(signer, voucher.channel_id)
-        while post_state.balance < expected_min_balance and time.time() < deadline:
-            time.sleep(0.15)
-            post_state = read_channel_state(signer, voucher.channel_id)
-
-        if post_state.balance >= expected_min_balance:
-            extra = {
-                "channelState": {
-                    "channelId": voucher.channel_id,
-                    "balance": str(post_state.balance),
-                    "totalClaimed": str(post_state.total_claimed),
-                    "withdrawRequestedAt": post_state.withdraw_requested_at,
-                    "refundNonce": str(post_state.refund_nonce),
-                }
-            }
-        else:
-            extra = optimistic
-
-        return SettleResponse(
-            success=True,
-            transaction=tx,
-            network=network,
-            payer=payer,
-            amount=deposit.amount,
-            extra=extra,
+        return wait_for_receipt_and_build_response(
+            receipt_waiter,
+            tx,
+            network,
+            payer,
+            failed_reason=ERR_DEPOSIT_TRANSACTION_FAILED,
+            on_success=_build_deposit_success,
+            pending_store=pending_store,
+            pending_key=cache_key,
         )
     except Exception as e:
         return SettleResponse(
             success=False,
             error_reason=ERR_DEPOSIT_TRANSACTION_FAILED,
-            error_message=str(e)[:500],
+            error_message=truncate_error_message(str(e)),
             transaction="",
             network=network,
             payer=payer,
@@ -399,7 +638,7 @@ def _deploy_erc3009_counterfactual_if_needed(
         return SettleResponse(
             success=False,
             error_reason=ERR_SMART_WALLET_DEPLOYMENT_FAILED,
-            error_message=str(e)[:500],
+            error_message=truncate_error_message(str(e)),
             transaction="",
             network=network,
             payer=payer,

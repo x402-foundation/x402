@@ -1,10 +1,70 @@
 # @x402/svm Changelog
 
+## 2.24.0
+
+### Minor Changes
+
+- [bb46ffc](https://github.com/x402-foundation/x402/commit/bb46ffc): Declare `upfront` payment flow support on SVM `exact` server schemes. `authorization` remains the default; servers opt in per route via `accepts.extra.paymentFlow`. ([#3240](https://github.com/x402-foundation/x402/pull/3240)) - Thanks [@phdargen](https://github.com/phdargen)!
+- [01b0a68](https://github.com/x402-foundation/x402/commit/01b0a68): Verify SVM exact payments without a fee-payer signing round trip: required signatures are checked locally, `simulateTransaction` always runs with `sigVerify` off, and `sendTransaction` skips preflight. Settle checks the duplicate cache before verification, decodes the transaction once (including address lookup tables), and smart-wallet settle fetches a single pre-balance. Confirmation polling starts at 250ms. ([#3263](https://github.com/x402-foundation/x402/pull/3263)) - Thanks [@phdargen](https://github.com/phdargen)!
+- [acaa904](https://github.com/x402-foundation/x402/commit/acaa904): Route SVM `upto` facilitator RPC through `toFacilitatorSvmSigner` instead of scheme config: claim settlement simulates before `skipPreflight` send, deposit composite sim uses `replaceRecentBlockhash` without an extra blockhash fetch, and claim overlaps channel read with blockhash prefetch. `UptoSvmFacilitatorConfig.rpc` / `rpcUrl` are removed — pass a paced RPC client or `{ defaultRpcUrl }` to the signer factory (#3183). ([#3274](https://github.com/x402-foundation/x402/pull/3274)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+### Patch Changes
+
+- [ec0f71e](https://github.com/x402-foundation/x402/commit/ec0f71e): Reject invalid smart-wallet compute-unit and priority-fee limits when smart-wallet verification is enabled or its exported verification helpers are called, preventing non-finite or fractional configuration values from silently disabling fee protections or causing misleading payment failures. Export `assertSmartWalletLimits` and `SmartWalletLimits` for pre-validation. Dormant limits remain ignored while smart-wallet verification is disabled. ([#3122](https://github.com/x402-foundation/x402/pull/3122)) - Thanks [@notorious-d-e-v](https://github.com/notorious-d-e-v)!
+  - @x402/core@2.24.0
+
+## 2.23.0
+
+### Minor Changes
+
+- [4f58723](https://github.com/x402-foundation/x402/commit/4f58723): Normalize default assets into `DEFAULT_ASSETS` + `getDefaultAsset` / `findDefaultAsset`, and add client `spendControls`: by default only recognized pegged assets are allowed with a `$1` USD cap; opt into other tokens via `allowedAssets` (list with optional integer atomic `maxAmountPerPayment`, or `true` to allow any); pass `spendControls: false` to disable all spend controls. A non-integer per-asset cap is a config error; a non-integer 402 amount on that path is dropped. `$` settlement overrides throw when `getAssetDecimals` is unknown instead of guessing 6 decimals. Register helpers scope v1 networks to `config.networks`. ([#3124](https://github.com/x402-foundation/x402/pull/3124)) - Thanks [@phdargen](https://github.com/phdargen)!
+- [167a828](https://github.com/x402-foundation/x402/commit/167a828): Add ComputeBudget instructions to SVM `upto` transactions. The channel open prefixes `SetComputeUnitLimit` (default 90,000 CU, spec ceiling 400,000) and `SetComputeUnitPrice` (default 1 microlamport/CU); the open builder treats an explicit `0` as "omit the instruction and let a wallet inject its own". Facilitator-submitted settlement transactions use static limits: claim / zero-charge cancel / rent-cleanup close and distribute default to 100,000 CU (operator-overridable via `settleComputeUnitLimit` on `UptoSvmFacilitatorConfig` / `UptoSvmRentCleanupManagerConfig`), and reclaim batches are sized per channel (25,000 + 5,000 x batch size). A configurable `SetComputeUnitPrice` is attached to facilitator transactions (`computeUnitPriceMicroLamports`, default 1). Defaults assume standard SPL Token settlement; compute-heavy Token-2022 extension mints (e.g. transfer hooks) require explicit overrides. Previously `upto` transactions carried no ComputeBudget instructions, so the runtime reserved 400,000-403,000 CU per transaction (SIMD-0170 defaults) while consuming ~2-50k, inflating block/account cost accounting and making priority fees ~10x more expensive per unit of actual priority. ([#3155](https://github.com/x402-foundation/x402/pull/3155)) - Thanks [@notorious-d-e-v](https://github.com/notorious-d-e-v)!
+- [2a706b2](https://github.com/x402-foundation/x402/commit/2a706b2): Split the SVM `upto` rent cleanup manager into two runners and make shutdown wait. Onchain discovery is no longer a branch inside a cleanup pass: `enableDiscovery` is replaced by a public `discover()` and a `discoveryIntervalSecs` on `start()`, so the `getProgramAccounts` sweep can run daily while cleanup keeps its short interval. Discovered Distributed channels are written into channel storage (never overwriting a tracked record) for a later cleanup pass to reclaim. `stop()` now returns a promise: it aborts the run and waits for the in-flight pass rather than leaving a broadcast settle orphaned, and `RentCleanupOptions` accepts a caller `signal`. `maxTxsPerRun` now only bounds the storage scan; the per-rent-payer reclaim budget moved to a separate `maxTxsPerSigner` (both default to 20), so a large reclaim backlog no longer starves the scan. The scan sorts by channel id before applying its resume cursor, making the cursor stable across storage implementations that do not preserve insertion order. `ClientSvmConfig` no longer takes `computeUnitLimit` / `computeUnitPriceMicroLamports`; both schemes' clients use their documented defaults. An empty `extra.memo` is now treated as unset rather than as a required empty memo. ([#3141](https://github.com/x402-foundation/x402/pull/3141)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe) and [@cursoragent](https://github.com/cursoragent), [@claude](https://github.com/claude)!
+- [79b6259](https://github.com/x402-foundation/x402/commit/79b6259): Added a usage-based `upto` payment scheme for SVM, backed by an onchain payment-channels program. Resource servers can authorize up to a ceiling and settle the actual metered usage, with client/server/facilitator support, offchain voucher signing, and channel open/distribute/settle helpers. Deposit settle rejects an already-existing channel (`invalid_upto_svm_channel_already_open`) so each authorization opens exactly once. ([#3094](https://github.com/x402-foundation/x402/pull/3094)) - Thanks [@phdargen](https://github.com/phdargen) and [@lgalabru](https://github.com/lgalabru)!
+- [656437e](https://github.com/x402-foundation/x402/commit/656437e): Keep public `Money` as `string | number`, but parse and convert internally as decimal strings only. `parseMoney` / `parseMoneyString` return the extracted decimal substring; `MoneyParser` amount is `string | number` (`parsePrice` always passes a string). `convertToTokenAmount` pads/truncates toward zero including to `"0"` instead of throwing on dust. ([#3154](https://github.com/x402-foundation/x402/pull/3154)) - Thanks [@phdargen](https://github.com/phdargen)!
+- [8c308ce](https://github.com/x402-foundation/x402/commit/8c308ce): Allow injecting a pre-built RPC client into the SVM `upto` facilitator (`UptoSvmFacilitatorConfig.rpc`, and the rent cleanup manager's config). When provided it is preferred over constructing a client from `rpcUrl`, letting facilitators route channel claim/cleanup sends through their own paced or instrumented transport (e.g. to respect a provider's sendTransaction rate limit). ([#3183](https://github.com/x402-foundation/x402/pull/3183)) - Thanks [@notorious-d-e-v](https://github.com/notorious-d-e-v)!
+- Updated dependencies [79b6259](https://github.com/x402-foundation/x402/commit/79b6259)
+- Updated dependencies [4f58723](https://github.com/x402-foundation/x402/commit/4f58723)
+- Updated dependencies [ab1a31a](https://github.com/x402-foundation/x402/commit/ab1a31a)
+- Updated dependencies [c2612d3](https://github.com/x402-foundation/x402/commit/c2612d3)
+- Updated dependencies [656437e](https://github.com/x402-foundation/x402/commit/656437e)
+  - @x402/core@2.23.0
+
+### Patch Changes
+
+- [16a23d0](https://github.com/x402-foundation/x402/commit/16a23d0): Added validation guard for TransferChecked ([#3132](https://github.com/x402-foundation/x402/pull/3132)) - Thanks [@phdargen](https://github.com/phdargen)!
+- [2a706b2](https://github.com/x402-foundation/x402/commit/2a706b2): Harden the SVM `upto` facilitator and rent cleanup manager: - Clamp `maxReclaimsPerTx` (and fall back non-positive values to the default) so a misconfigured operator setting cannot build a reclaim batch that fails to serialize or loops forever. - Guard `BigInt(requirements.amount)` in claim verification so a malformed requirement is reported as a structured failure instead of an uncaught exception. - Distinguish a settlement confirmation timeout (`settlement_confirmation_timeout`) from an onchain rejection (`transaction_failed`) in claim settlement, and keep the dedup cache entry on timeout so a retry cannot race a second `settle_and_seal` against a transaction that may still land. - Remove the unused `simulateZeroChargeSettle` helper. - Reuse `BASIS_POINTS_DENOMINATOR` instead of a duplicated literal in the rent cleanup manager's abandon-close split. ([#3141](https://github.com/x402-foundation/x402/pull/3141)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe) and [@cursoragent](https://github.com/cursoragent), [@claude](https://github.com/claude)!
+
+## 2.22.0
+
+### Minor Changes
+
+- [db5da2e](https://github.com/x402-foundation/x402/commit/db5da2e): Require ATM-keyed `paymentFlows` (and `defaultAssetTransferMethod`) on every `SchemeNetworkServer`. Core resolves ATM/flow from the table, rejects unsupported combinations, and always signals non-`authorization` `paymentFlow` on the 402 wire. All schemes currently declare `authorization` only. ([#3053](https://github.com/x402-foundation/x402/pull/3053)) - Thanks [@phdargen](https://github.com/phdargen)!
+- [927fea8](https://github.com/x402-foundation/x402/commit/927fea8): Add operator-configurable transaction limits to `ExactSvmSchemeOptions` for the static verification path: `maxPriorityFeeMicroLamports` (was hardcoded to `MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS`), `maxComputeUnits` (previously unbounded), and `maxRequiredSignatures` (previously unchecked). The facilitator pays the transaction fee, so these bound the fee a payer can make it pay. All three default to existing behavior. ([#3120](https://github.com/x402-foundation/x402/pull/3120)) - Thanks [@notorious-d-e-v](https://github.com/notorious-d-e-v)!
+- Updated dependencies [37412e7](https://github.com/x402-foundation/x402/commit/37412e7)
+- Updated dependencies [db5da2e](https://github.com/x402-foundation/x402/commit/db5da2e)
+- Updated dependencies [db5da2e](https://github.com/x402-foundation/x402/commit/db5da2e)
+- Updated dependencies [1601942](https://github.com/x402-foundation/x402/commit/1601942)
+  - @x402/core@2.22.0
+
+## 2.21.0
+
+### Minor Changes
+
+- Updated dependencies [e805616](https://github.com/x402-foundation/x402/commit/e805616)
+- Updated dependencies [e335d4f](https://github.com/x402-foundation/x402/commit/e335d4f)
+- Updated dependencies [183b270](https://github.com/x402-foundation/x402/commit/183b270)
+- Updated dependencies [ee1b148](https://github.com/x402-foundation/x402/commit/ee1b148)
+- Updated dependencies [e805616](https://github.com/x402-foundation/x402/commit/e805616)
+- Updated dependencies [5192e50](https://github.com/x402-foundation/x402/commit/5192e50)
+  - @x402/core@2.21.0
+
 ## 2.20.0
 
 ### Minor Changes
 
 - Updated dependencies [4453a92](https://github.com/x402-foundation/x402/commit/4453a92)
+
   - @x402/core@2.20.0
 
 - [04c94b6](https://github.com/x402-foundation/x402/commit/04c94b6): Added support for resource servers to include recent blockhash hints in SVM exact payment requirements. Clients use valid hints without a blockhash RPC call and fetch their own blockhash when a hint is absent or malformed. ([#2937](https://github.com/x402-foundation/x402/pull/2937)) - Thanks [@phdargen](https://github.com/phdargen)!

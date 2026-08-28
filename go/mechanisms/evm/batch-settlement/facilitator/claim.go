@@ -94,15 +94,9 @@ func ExecuteClaimWithSignature(
 		return nil, x402.NewSettleError(ErrClaimTransactionFailed, "", network, "",
 			fmt.Sprintf("claimWithSignature transaction failed: %s", err))
 	}
-
-	receipt, err := signer.WaitForTransactionReceipt(ctx, txHash)
-	if err != nil {
-		return nil, x402.NewSettleError(ErrWaitForReceipt, txHash, network, "",
-			fmt.Sprintf("failed waiting for claimWithSignature receipt: %s", err))
-	}
-	if receipt.Status != evm.TxStatusSuccess {
-		return nil, x402.NewSettleError(ErrTransactionReverted, txHash, network, "",
-			"claimWithSignature transaction reverted")
+	if _, err := evm.WaitForSettleReceipt(ctx, signer, txHash, "", network,
+		ErrClaimTransactionFailed, ErrTransactionReverted); err != nil {
+		return nil, err
 	}
 
 	return &x402.SettleResponse{

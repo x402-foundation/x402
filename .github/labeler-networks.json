@@ -1,0 +1,21 @@
+{
+  "_comment": "Edit networks below, then run: python3 scripts/generate-labeler-networks.py",
+  "networks": [
+    "aptos",
+    "avm",
+    "canton",
+    "cardano",
+    "casper",
+    "concordium",
+    "evm",
+    "hedera",
+    "keeta",
+    "near",
+    "starknet",
+    "stellar",
+    "sui",
+    "svm",
+    "tvm",
+    "xrpl"
+  ]
+}

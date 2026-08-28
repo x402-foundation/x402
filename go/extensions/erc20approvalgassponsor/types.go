@@ -77,6 +77,8 @@ type TransactionRequest struct {
 // Flashbots, multicall, or smart account batching).
 type Erc20ApprovalGasSponsoringSigner interface {
 	evm.FacilitatorEvmSigner
+	// SendTransactions returns one hash per transaction for sequential execution, or a
+	// single hash when the signer executes the requests atomically as a bundle.
 	SendTransactions(ctx context.Context, transactions []TransactionRequest) ([]string, error)
 }
 

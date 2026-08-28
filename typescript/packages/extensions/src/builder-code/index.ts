@@ -7,7 +7,8 @@
  * Three parties attach their builder code:
  * - Server: Declares `a` (app) in 402 response via declareBuilderCodeExtension()
  * - Client: Echoes `a` and adds `s` (service) via BuilderCodeClientExtension
- * - Facilitator: Optionally adds `w` (wallet) at settlement via BuilderCodeFacilitatorExtension
+ * - Facilitator: Optionally adds `w` (wallet) and its own `s` entry at settlement via
+ *   BuilderCodeFacilitatorExtension
  *
  * ## Usage
  *
@@ -51,6 +52,9 @@ export {
   BUILDER_CODE,
   BUILDER_CODE_PATTERN,
   ERC_8021_MARKER,
+  MAX_CLIENT_SERVICE_CODES,
+  MAX_FACILITATOR_SERVICE_CODES,
+  MAX_SERVER_SERVICE_CODES,
   MAX_SERVICE_CODES,
   SCHEMA_2_ID,
 } from "./types";

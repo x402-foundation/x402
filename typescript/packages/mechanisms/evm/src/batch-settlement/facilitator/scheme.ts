@@ -6,6 +6,7 @@ import {
   SettleResponse,
   VerifyResponse,
 } from "@x402/core/types";
+import { InMemoryPendingSettlementStore, PendingSettlementStore } from "@x402/core/facilitator";
 import { FacilitatorEvmSigner } from "../../signer";
 import { BATCH_SETTLEMENT_SCHEME } from "../constants";
 import {
@@ -35,6 +36,18 @@ export interface BatchSettlementEvmSchemeConfig {
    * @default []
    */
   eip6492AllowedFactories?: string[];
+  /**
+   * Lets a retried deposit settle for the same authorization reconcile
+   * against an already-broadcast transaction instead of re-broadcasting
+   * (see {@link PendingSettlementStore}). Only the deposit settle path
+   * consults this store; claim/settle/refund are single-signature onchain
+   * calls with no equivalent broadcast-then-reconcile flow. Defaults to a
+   * fresh in-memory store shared across all deposit settle calls on this
+   * scheme instance. Inject a shared, network-backed implementation (e.g.
+   * Redis) for a multi-instance facilitator so a settle retry landing on a
+   * different replica still reconciles correctly.
+   */
+  pendingSettlementStore?: PendingSettlementStore;
 }
 
 /**
@@ -46,7 +59,8 @@ export interface BatchSettlementEvmSchemeConfig {
 export class BatchSettlementEvmScheme implements SchemeNetworkFacilitator {
   readonly scheme = BATCH_SETTLEMENT_SCHEME;
   readonly caipFamily = "eip155:*";
-  private readonly config: Required<BatchSettlementEvmSchemeConfig>;
+  private readonly config: Required<Omit<BatchSettlementEvmSchemeConfig, "pendingSettlementStore">>;
+  private readonly pendingStore: PendingSettlementStore;
 
   /**
    * Creates a facilitator scheme for verifying and settling batch-settlement payments.
@@ -69,6 +83,7 @@ export class BatchSettlementEvmScheme implements SchemeNetworkFacilitator {
     this.config = {
       eip6492AllowedFactories: config?.eip6492AllowedFactories ?? [],
     };
+    this.pendingStore = config?.pendingSettlementStore ?? new InMemoryPendingSettlementStore();
   }
 
   /**
@@ -183,6 +198,7 @@ export class BatchSettlementEvmScheme implements SchemeNetworkFacilitator {
         context,
         dataSuffix,
         this.config.eip6492AllowedFactories,
+        this.pendingStore,
       );
     }
 

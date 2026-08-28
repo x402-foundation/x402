@@ -1,5 +1,52 @@
 # @x402/extensions Changelog
 
+## 2.24.0
+
+### Minor Changes
+
+- Updated dependencies
+  - @x402/core@2.24.0
+
+## 2.23.0
+
+### Minor Changes
+
+- [c2612d3](https://github.com/x402-foundation/x402/commit/c2612d3): Require SIWX client origin binding before signing. `x402HTTPClient.handlePaymentRequired` now accepts the response URL and passes it to hooks via `PaymentRequiredContext.requestUrl`. **`createSIWxPayload(serverExtension, signer, requestUrl)`** — new required third argument: the final URL of the 402 response (after redirects). Callers that previously invoked `createSIWxPayload(info, signer)` must pass the response URL; signing is refused when challenge `domain` or `uri` origin does not match that URL's origin. ([#3133](https://github.com/x402-foundation/x402/pull/3133)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Updated dependencies [79b6259](https://github.com/x402-foundation/x402/commit/79b6259)
+- Updated dependencies [4f58723](https://github.com/x402-foundation/x402/commit/4f58723)
+- Updated dependencies [ab1a31a](https://github.com/x402-foundation/x402/commit/ab1a31a)
+- Updated dependencies [c2612d3](https://github.com/x402-foundation/x402/commit/c2612d3)
+- Updated dependencies [656437e](https://github.com/x402-foundation/x402/commit/656437e)
+  - @x402/core@2.23.0
+
+## 2.22.0
+
+### Minor Changes
+
+- Updated dependencies [37412e7](https://github.com/x402-foundation/x402/commit/37412e7)
+- Updated dependencies [db5da2e](https://github.com/x402-foundation/x402/commit/db5da2e)
+- Updated dependencies [db5da2e](https://github.com/x402-foundation/x402/commit/db5da2e)
+- Updated dependencies [1601942](https://github.com/x402-foundation/x402/commit/1601942)
+  - @x402/core@2.22.0
+
+## 2.21.0
+
+### Minor Changes
+
+- [e805616](https://github.com/x402-foundation/x402/commit/e805616): `builder-code` `s` entries now use dedicated, non-overlapping reservations per party instead of one shared cap: `MAX_CLIENT_SERVICE_CODES` (5) for `BuilderCodeClientExtension`, `MAX_SERVER_SERVICE_CODES` (5) for `declareBuilderCodeExtension`, and a new `MAX_FACILITATOR_SERVICE_CODES` (1) reservation for `BuilderCodeFacilitatorExtension`'s new `serviceCode` config option. `MAX_SERVICE_CODES` is now the sum of the three (11) and is enforced by the facilitator as a defensive backstop, so a compliant client and server can no longer have their entries silently dropped by each other. The resource server's extension echo validation also now rejects a client echo whose `s` exceeds the combined client+server budget outright, instead of accepting it and leaving truncation to the facilitator. ([#3027](https://github.com/x402-foundation/x402/pull/3027)) - Thanks [@ethanoroshiba](https://github.com/ethanoroshiba)!
+- Updated dependencies [e805616](https://github.com/x402-foundation/x402/commit/e805616)
+- Updated dependencies [e335d4f](https://github.com/x402-foundation/x402/commit/e335d4f)
+- Updated dependencies [183b270](https://github.com/x402-foundation/x402/commit/183b270)
+- Updated dependencies [ee1b148](https://github.com/x402-foundation/x402/commit/ee1b148)
+- Updated dependencies [e805616](https://github.com/x402-foundation/x402/commit/e805616)
+- Updated dependencies [5192e50](https://github.com/x402-foundation/x402/commit/5192e50)
+  - @x402/core@2.21.0
+
+### Patch Changes
+
+- [e805616](https://github.com/x402-foundation/x402/commit/e805616): `declareBuilderCodeExtension` accepts an optional service code(s) argument so a resource server can attribute its own dependencies (e.g. a server-side SDK) via builder-code `s`. `BuilderCodeClientExtension` and `declareBuilderCodeExtension` now both reject more than `MAX_SERVICE_CODES` codes. ([#3027](https://github.com/x402-foundation/x402/pull/3027)) - Thanks [@ethanoroshiba](https://github.com/ethanoroshiba)!
+- [6b04d5e](https://github.com/x402-foundation/x402/commit/6b04d5e): Reject bazaar discovery extension schemas containing external "$ref"/"$id" values (anything other than a same-document "#" fragment) before validation, preventing an attacker-controlled schema from triggering an outbound HTTP request or local file read (SSRF/LFI, CWE-918) ([#3039](https://github.com/x402-foundation/x402/pull/3039)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe)!
+
 ## 2.20.0
 
 ### Minor Changes

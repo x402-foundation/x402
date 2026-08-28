@@ -298,7 +298,7 @@ async function requireTestnet(client: Client): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const wsUrl = process.env.XRPL_TESTNET_WS_URL ?? DEFAULT_TESTNET_WS_URL;
+  const wsUrl = process.env.XRPL_TESTNET_RPC_URL ?? DEFAULT_TESTNET_WS_URL;
   const currency = process.env.SERVER_XRPL_ASSET?.trim() || DEFAULT_CURRENCY;
   if (currency === "XRP") {
     throw new Error("SERVER_XRPL_ASSET must be an issued currency, not XRP");
@@ -367,7 +367,7 @@ async function main(): Promise<void> {
     XRPL_IOU_ISSUER_SEED: requireSeed(wallets.issuer, "issuer"),
     XRPL_IOU_PAYER_BALANCE: targetBalance.toString(),
     XRPL_IOU_TRUST_LIMIT: trustLimit.toString(),
-    XRPL_TESTNET_WS_URL: wsUrl,
+    XRPL_TESTNET_RPC_URL: wsUrl,
   });
 
   console.log(`💾 Saved XRPL IOU fixture settings to ${envPath}`);

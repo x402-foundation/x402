@@ -3,18 +3,24 @@ import type {
   Money,
   MoneyParser,
   Network,
+  PaymentFlowConfig,
   PaymentRequirements,
   Price,
   SchemeNetworkServer,
 } from "@x402/core/types";
-import { parseMoneyString } from "@x402/core/utils";
-import { APTOS_ADDRESS_REGEX, USDC_MAINNET_FA, USDC_TESTNET_FA } from "../../constants";
+import { convertToTokenAmount, parseMoney } from "@x402/core/utils";
+import { APTOS_ADDRESS_REGEX } from "../../constants";
+import { findDefaultAsset, getDefaultAsset } from "../../defaultAssets";
 
 /**
  * Aptos server implementation for the Exact payment scheme.
  */
 export class ExactAptosScheme implements SchemeNetworkServer {
   readonly scheme = "exact";
+  readonly defaultAssetTransferMethod = "default";
+  readonly paymentFlows = {
+    default: { supported: ["authorization", "upfront"], default: "authorization" },
+  } as const satisfies Record<string, PaymentFlowConfig>;
   private moneyParsers: MoneyParser[] = [];
 
   /**
@@ -26,6 +32,17 @@ export class ExactAptosScheme implements SchemeNetworkServer {
   registerMoneyParser(parser: MoneyParser): ExactAptosScheme {
     this.moneyParsers.push(parser);
     return this;
+  }
+
+  /**
+   * Decimals for a known default asset, or undefined.
+   *
+   * @param asset - Asset address or symbol
+   * @param network - Target network
+   * @returns Decimals when the asset is a known default; otherwise undefined
+   */
+  getAssetDecimals(asset: string, network: Network): number | undefined {
+    return findDefaultAsset(asset, network)?.decimals;
   }
 
   /**
@@ -46,7 +63,7 @@ export class ExactAptosScheme implements SchemeNetworkServer {
       return { amount: price.amount, asset: price.asset, extra: price.extra || {} };
     }
 
-    const amount = this.parseMoneyToDecimal(price as Money);
+    const { amount, symbol } = parseMoney(price as Money);
 
     for (const parser of this.moneyParsers) {
       const result = await parser(amount, network);
@@ -55,7 +72,7 @@ export class ExactAptosScheme implements SchemeNetworkServer {
       }
     }
 
-    return this.defaultMoneyConversion(amount, network);
+    return this.defaultMoneyConversion(amount, network, symbol);
   }
 
   /**
@@ -91,44 +108,16 @@ export class ExactAptosScheme implements SchemeNetworkServer {
   }
 
   /**
-   * Parse Money to a decimal number.
-   *
-   * @param money - The money value to parse
-   * @returns Decimal number
-   */
-  private parseMoneyToDecimal(money: string | number): number {
-    if (typeof money === "number") {
-      return money;
-    }
-
-    return parseMoneyString(money);
-  }
-
-  /**
    * Default money conversion to USDC.
    *
    * @param amount - The decimal amount
    * @param network - The network to use
+   * @param symbol - Optional ticker from a suffixed price
    * @returns The parsed asset amount in USDC
    */
-  private defaultMoneyConversion(amount: number, network: Network): AssetAmount {
-    const decimals = 6;
-    const tokenAmount = this.convertToTokenAmount(amount.toString(), decimals);
-    const asset = network === "aptos:2" ? USDC_TESTNET_FA : USDC_MAINNET_FA;
-    return { amount: tokenAmount, asset, extra: {} };
-  }
-
-  /**
-   * Convert a decimal amount string to a token amount string.
-   *
-   * @param amount - The decimal amount
-   * @param decimals - Number of decimals for the token
-   * @returns The amount in atomic units as a string
-   */
-  private convertToTokenAmount(amount: string, decimals: number): string {
-    const parts = amount.split(".");
-    const wholePart = parts[0] || "0";
-    const fractionalPart = (parts[1] || "").padEnd(decimals, "0").slice(0, decimals);
-    return BigInt(wholePart + fractionalPart).toString();
+  private defaultMoneyConversion(amount: string, network: Network, symbol?: string): AssetAmount {
+    const assetInfo = getDefaultAsset(network, symbol);
+    const tokenAmount = convertToTokenAmount(amount, assetInfo.decimals);
+    return { amount: tokenAmount, asset: assetInfo.asset, extra: {} };
   }
 }

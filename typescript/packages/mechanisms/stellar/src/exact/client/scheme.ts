@@ -1,4 +1,5 @@
 import { nativeToScVal, contract } from "@stellar/stellar-sdk";
+import { findDefaultAsset } from "../../defaultAssets";
 import { handleSimulationResult } from "../../shared";
 import {
   getEstimatedLedgerCloseTimeSeconds,
@@ -18,6 +19,7 @@ import type { PaymentPayload, PaymentRequirements, SchemeNetworkClient } from "@
  */
 export class ExactStellarScheme implements SchemeNetworkClient {
   readonly scheme = "exact";
+  findDefaultAsset = findDefaultAsset;
 
   /**
    * Creates a new ExactStellarScheme instance.

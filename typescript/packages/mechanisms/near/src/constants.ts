@@ -83,17 +83,6 @@ export const DEFAULT_TOKEN_DECIMALS = 6;
 export const DEFAULT_SETTLEMENT_TTL_MS = 120_000;
 
 /**
- * Circle USDC NEP-141 contract accounts used as the default token fallback for
- * simple money inputs.
- *
- * @see https://developers.circle.com/stablecoins/usdc-contract-addresses
- */
-export const DEFAULT_ASSET_BY_NETWORK: Record<(typeof NEAR_NETWORKS)[number], string> = {
-  [NEAR_MAINNET_CAIP2]: "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
-  [NEAR_TESTNET_CAIP2]: "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af",
-};
-
-/**
  * Checks whether a network belongs to the NEAR CAIP family.
  *
  * @param network - The network identifier

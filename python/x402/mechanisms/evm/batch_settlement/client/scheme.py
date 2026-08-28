@@ -18,6 +18,7 @@ from ....evm.signer import (
     ClientEvmSignerWithReadContract,
     ClientEvmSignerWithSignTransaction,
 )
+from ...default_assets import find_default_asset
 from ...utils import get_evm_chain_id, normalize_address
 from ..constants import SCHEME_BATCH_SETTLEMENT
 from ..types import ChannelConfig, VoucherPayload
@@ -25,7 +26,6 @@ from ..utils import compute_channel_id
 from .channel import (
     BatchSettlementClientDeps,
     build_channel_config,
-    process_settle_response,
     recover_channel,
 )
 from .config import (
@@ -38,6 +38,7 @@ from .config import (
     validate_deposit_policy,
 )
 from .eip3009 import create_batch_settlement_eip3009_deposit_payload
+from .hooks import create_batch_settlement_client_hooks
 from .permit2 import create_batch_settlement_permit2_deposit_payload
 from .recovery import process_corrective_payment_required
 from .refund import RefundOptions, refund_channel
@@ -59,44 +60,17 @@ def _wrap_if_local_account(signer: Any) -> ClientEvmSigner:
     return signer
 
 
-class _BatchSettlementSchemeHooks:
-    """Scheme-level hooks for BatchSettlementEvmScheme.
-
-    Wired up as `scheme.scheme_hooks` so the x402 client infrastructure
-    calls `on_payment_response` after every paid HTTP request.
-    """
-
-    def __init__(self, scheme: BatchSettlementEvmScheme) -> None:
-        self._scheme = scheme
-
-    def on_payment_response(self, ctx: Any) -> Any:
-        """Update local channel storage after a paid request or corrective 402."""
-        from .....schemas import RecoveredResponseResult
-
-        if ctx.settle_response is not None:
-            process_settle_response(self._scheme._storage, ctx.settle_response)
-            return None
-
-        if ctx.payment_required is not None:
-            deps = self._scheme._deps()
-            recovered = process_corrective_payment_required(deps, ctx.payment_required)
-            if recovered:
-                return RecoveredResponseResult()
-
-        return None
-
-
 class BatchSettlementEvmScheme:
     """Client-side implementation of the `batch-settlement` scheme for EVM.
 
-    Builds payment payloads (deposit + voucher or voucher-only), processes
-    server responses to update local session state via `process_settle_response`,
-    handles corrective 402 resynchronisation via
-    `process_corrective_payment_required`, and supports on-demand cooperative
-    refund requests via `refund`.
+    Builds payment payloads (deposit + voucher or voucher-only), updates local
+    channel state from payment-response hooks, handles corrective 402
+    resynchronisation via `process_corrective_payment_required`, and supports
+    on-demand cooperative refund requests via `refund`.
     """
 
     scheme = SCHEME_BATCH_SETTLEMENT
+    find_default_asset = staticmethod(find_default_asset)
 
     def __init__(
         self,
@@ -122,7 +96,7 @@ class BatchSettlementEvmScheme:
             raise ValueError("payer_authorizer address must match voucher_signer.address")
 
         validate_deposit_policy(self._deposit_policy)
-        self.scheme_hooks = _BatchSettlementSchemeHooks(self)
+        self.scheme_hooks = create_batch_settlement_client_hooks(self._deps())
         self._url_channel_map: dict[str, str] = {}
 
     # ------------------------------------------------------------------ API
@@ -218,10 +192,6 @@ class BatchSettlementEvmScheme:
     def refund(self, url: str, options: RefundOptions | None = None) -> SettleResponse:
         """Send a cooperative refund request for the channel backing `url`."""
         return refund_channel(self._deps(), url, options, _url_cache=self._url_channel_map)
-
-    def process_settle_response(self, settle: SettleResponse) -> None:
-        """Update local channel state from a server settle response."""
-        process_settle_response(self._storage, settle)
 
     def process_corrective_payment_required(self, payment_required: PaymentRequired) -> bool:
         """Resync local channel state from a corrective 402 response."""

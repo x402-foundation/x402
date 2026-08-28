@@ -122,6 +122,37 @@ export class FacilitatorResponseError extends Error {
 }
 
 /**
+ * Error thrown when a facilitator HTTP request exceeds the client's configured timeout.
+ *
+ * Extends FacilitatorResponseError so HTTP middlewares surface it as a facilitator
+ * boundary failure (502) rather than an unhandled runtime error.
+ *
+ * Note: for settle(), a client-side timeout is an indeterminate outcome — the
+ * facilitator may have received and completed the settlement after the client
+ * stopped waiting. Callers must not treat this error as proof that settlement
+ * did not occur.
+ */
+export class FacilitatorTimeoutError extends FacilitatorResponseError {
+  /** The facilitator operation that timed out ("verify", "settle", or "supported") */
+  readonly operation: string;
+  /** The timeout that elapsed, in milliseconds */
+  readonly timeoutMs: number;
+
+  /**
+   * Creates a FacilitatorTimeoutError.
+   *
+   * @param operation - The facilitator operation that timed out
+   * @param timeoutMs - The configured timeout in milliseconds
+   */
+  constructor(operation: string, timeoutMs: number) {
+    super(`Facilitator ${operation} request timed out after ${timeoutMs}ms`);
+    this.name = "FacilitatorTimeoutError";
+    this.operation = operation;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/**
  * Walks an error cause chain to find the first facilitator response error.
  *
  * @param error - The thrown value to inspect

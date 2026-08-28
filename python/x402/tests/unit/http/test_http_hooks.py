@@ -192,8 +192,16 @@ class MockFacilitatorClient:
 class TestSkipHandlerSettlement:
     @pytest.mark.asyncio
     async def test_settles_and_returns_skip_handler_response(self):
+        class ExactScheme:
+            scheme = "exact"
+            default_asset_transfer_method = "default"
+            payment_flows = {
+                "default": {"supported": ("authorization",), "default": "authorization"},
+            }
+
         client = MockFacilitatorClient()
         server = x402ResourceServer(client)
+        server.register("eip155:8453", ExactScheme())
         server.initialize()
         server.on_after_verify(
             lambda _ctx: SkipHandlerResult(

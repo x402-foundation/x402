@@ -81,6 +81,65 @@ describe("express end-to-end: encoded path separator", () => {
     expect(await statusFor(port, "/api/report/a%5Cb")).toBe(402);
   });
 
+  // path-to-regexp still dispatches /api/report/a\b to the :id handler, so
+  // folding that "\" into a "/" in the middleware would fail open.
+  it("returns 402 even when the :id segment contains a raw backslash", async () => {
+    expect(await statusFor(port, "/api/report/a\\b")).toBe(402);
+  });
+
+  it("returns 200 (middleware skipped) for an unrelated path", async () => {
+    expect(await statusFor(port, "/health")).toBe(200);
+  });
+});
+
+describe("express end-to-end: trailing wildcard route prefix", () => {
+  let server: Server;
+  let port: number;
+
+  beforeAll(async () => {
+    const app = express();
+    const resourceServer = new x402ResourceServer();
+    app.use(
+      paymentMiddleware(
+        {
+          "/api/premium/*": {
+            accepts: {
+              scheme: "exact",
+              payTo: "0xabc",
+              price: "$1.00",
+              network: "eip155:84532",
+            },
+          },
+        },
+        resourceServer,
+        undefined,
+        undefined,
+        false,
+      ),
+    );
+    app.use((_req, res) => res.status(200).send("ok"));
+
+    server = app.listen(0);
+    await new Promise<void>(resolve => server.once("listening", () => resolve()));
+    port = (server.address() as AddressInfo).port;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  });
+
+  it("returns 402 for a baseline wildcard sub-path", async () => {
+    expect(await statusFor(port, "/api/premium/report")).toBe(402);
+  });
+
+  it("returns 402 for the bare wildcard prefix with a trailing slash", async () => {
+    expect(await statusFor(port, "/api/premium/")).toBe(402);
+  });
+
+  it("returns 402 for the bare wildcard prefix without a trailing slash", async () => {
+    expect(await statusFor(port, "/api/premium")).toBe(402);
+  });
+
   it("returns 200 (middleware skipped) for an unrelated path", async () => {
     expect(await statusFor(port, "/health")).toBe(200);
   });

@@ -28,9 +28,33 @@ export const SCHEMA_2_ID = 0x02;
 export const BUILDER_CODE_PATTERN = /^[a-z0-9_]{1,32}$/;
 
 /**
- * Maximum number of service codes (`s`) encoded onchain at settlement.
+ * Maximum client-provided service codes reserved in the `s` array. Enforced by
+ * {@link BuilderCodeClientExtension} independently of the server's reservation
+ * so one side can never crowd out the other.
  */
-export const MAX_SERVICE_CODES = 5;
+export const MAX_CLIENT_SERVICE_CODES = 5;
+
+/**
+ * Maximum server-declared service codes reserved in the `s` array. Enforced by
+ * `declareBuilderCodeExtension` independently of the client's reservation so
+ * one side can never crowd out the other.
+ */
+export const MAX_SERVER_SERVICE_CODES = 5;
+
+/**
+ * Maximum facilitator-appended service codes reserved in the `s` array.
+ * Enforced by {@link BuilderCodeFacilitatorExtension} for its own
+ * `BuilderCodeFacilitatorConfig.serviceCode`.
+ */
+export const MAX_FACILITATOR_SERVICE_CODES = 1;
+
+/**
+ * Maximum number of service codes (`s`) encoded onchain at settlement — the
+ * sum of each side's dedicated reservation ({@link MAX_CLIENT_SERVICE_CODES},
+ * {@link MAX_SERVER_SERVICE_CODES}, {@link MAX_FACILITATOR_SERVICE_CODES}).
+ */
+export const MAX_SERVICE_CODES =
+  MAX_CLIENT_SERVICE_CODES + MAX_SERVER_SERVICE_CODES + MAX_FACILITATOR_SERVICE_CODES;
 
 /**
  * Builder code extension data as it appears in PaymentRequired/PaymentPayload extensions.
@@ -71,6 +95,13 @@ export interface BuilderCodeFacilitatorConfig {
    * The facilitator's own builder code, set as the "w" field at settlement when provided.
    */
   builderCode?: string;
+
+  /**
+   * The facilitator's own service code, appended to the "s" field at settlement when
+   * provided. Reserved independently of the client/server "s" entries (see
+   * {@link MAX_FACILITATOR_SERVICE_CODES}).
+   */
+  serviceCode?: string;
 }
 
 export interface DataSuffixContext {

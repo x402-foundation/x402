@@ -1,0 +1,21 @@
+{
+  "name": "axios",
+  "type": "client",
+  "language": "typescript",
+  "protocolFamilies": [
+    "evm",
+    "svm"
+  ],
+  "x402Versions": [
+    1
+  ],
+  "environment": {
+    "required": [
+      "CLIENT_EVM_PRIVATE_KEY",
+      "CLIENT_SVM_PRIVATE_KEY",
+      "RESOURCE_SERVER_URL",
+      "ENDPOINT_PATH"
+    ],
+    "optional": []
+  }
+}

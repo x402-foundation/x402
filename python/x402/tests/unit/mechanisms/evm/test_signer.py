@@ -1,5 +1,7 @@
 """Tests for EVM signer implementations."""
 
+from types import SimpleNamespace
+
 import pytest
 
 try:
@@ -8,6 +10,17 @@ except ImportError:
     pytest.skip("EVM signers require eth_account", allow_module_level=True)
 
 from x402.mechanisms.evm.signers import EthAccountSigner, FacilitatorWeb3Signer
+
+
+class _RecordingEth:
+    """Stands in for web3's `eth` namespace, capturing the receipt-wait timeout."""
+
+    def __init__(self) -> None:
+        self.timeout: float | None = None
+
+    def wait_for_transaction_receipt(self, tx_hash, timeout):
+        self.timeout = timeout
+        return {"status": 1, "blockNumber": 1, "logs": []}
 
 
 class TestEthAccountSigner:
@@ -184,3 +197,30 @@ class TestSignerProtocols:
         assert hasattr(signer, "get_balance")
         assert hasattr(signer, "get_chain_id")
         assert hasattr(signer, "get_code")
+
+    def test_receipt_wait_defaults_to_120_seconds(self):
+        """Receipt wait should keep its historical 120s bound when unconfigured."""
+        account = Account.create()
+        signer = FacilitatorWeb3Signer(
+            private_key=account.key.hex(),
+            rpc_url="https://sepolia.base.org",
+        )
+        signer._w3 = SimpleNamespace(eth=_RecordingEth())
+
+        signer.wait_for_transaction_receipt("0x" + "ab" * 32)
+
+        assert signer._w3.eth.timeout == 120
+
+    def test_receipt_wait_honors_configured_timeout(self):
+        """A configured timeout should bound the receipt wait."""
+        account = Account.create()
+        signer = FacilitatorWeb3Signer(
+            private_key=account.key.hex(),
+            rpc_url="https://sepolia.base.org",
+            confirmation_timeout_seconds=25,
+        )
+        signer._w3 = SimpleNamespace(eth=_RecordingEth())
+
+        signer.wait_for_transaction_receipt("0x" + "ab" * 32)
+
+        assert signer._w3.eth.timeout == 25

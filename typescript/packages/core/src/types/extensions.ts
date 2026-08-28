@@ -89,7 +89,8 @@ export interface ResourceServerExtension {
    * Return value merges into `extensions[key]`. In-place edits to `accepts` are allowlisted only
    * (see server `assertAcceptsAllowlistedAfterExtensionEnrich`): vacant `payTo` / `amount` / `asset`
    * may be filled; locked values and `scheme` / `network` / `maxTimeoutSeconds` / baseline `extra`
-   * entries are immutable.
+   * entries are immutable. `extra.paymentFlow` and `extra.assetTransferMethod` are
+   * protocol-reserved and must not be added or changed during enrichment.
    */
   enrichPaymentRequiredResponse?: (
     declaration: unknown,

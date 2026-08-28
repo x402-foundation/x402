@@ -3,6 +3,8 @@ import {
   x402HTTPResourceServer,
   HTTPRequestContext,
   HTTPAdapter,
+  PAYMENT_REQUIRED_CACHE_CONTROL,
+  withPrivateCacheControl,
 } from "../../../src/http/x402HTTPResourceServer";
 import { x402ResourceServer } from "../../../src/server/x402ResourceServer";
 import {
@@ -716,6 +718,39 @@ describe("x402HTTPResourceServer", () => {
         },
       );
 
+      // Express hands over the escaped path, Hono an already-decoded one, so a
+      // backslash can arrive raw or as %5C. Neither may be folded into a "/".
+      it.each([
+        ["raw backslash", "/api/report/a\\b"],
+        ["raw backslash, multiple", "/api/report/a\\b\\c"],
+        ["raw backslash after a decoded escape", "/api/report/a%41\\b"],
+      ])("should require payment when a :param segment contains a %s", async (_, path) => {
+        const routes = {
+          "/api/report/:id": {
+            accepts: {
+              scheme: "exact",
+              payTo: "0xabc",
+              price: "$1.00" as Price,
+              network: "eip155:8453" as Network,
+            },
+          },
+        };
+
+        const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+
+        const adapter = new MockHTTPAdapter();
+        const context: HTTPRequestContext = {
+          adapter,
+          path,
+          method: "GET",
+        };
+
+        expect(httpServer.requiresPayment(context)).toBe(true);
+
+        const result = await httpServer.processHTTPRequest(context);
+        expect(result.type).toBe("payment-error");
+      });
+
       it("should still decode non-separator percent-escapes for non-ASCII route patterns", async () => {
         const routes = {
           "/api/categoría/:id": {
@@ -741,6 +776,100 @@ describe("x402HTTPResourceServer", () => {
 
         expect(result.type).toBe("payment-error");
       });
+    });
+
+    describe("trailing wildcard prefix", () => {
+      const routes = {
+        "GET /api/premium/*": {
+          accepts: {
+            scheme: "exact",
+            payTo: "0xabc",
+            price: "$1.00" as Price,
+            network: "eip155:8453" as Network,
+          },
+        },
+      };
+
+      it.each([
+        ["/api/premium/abc", true],
+        ["/api/premium/", true],
+        ["/api/premium", true],
+        ["/api/premium/a/b/c", true],
+        ["/api/premiumx", false],
+        ["/api/other", false],
+      ])("requiresPayment(%s) === %s", (path, expected) => {
+        const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+        const adapter = new MockHTTPAdapter();
+        const context: HTTPRequestContext = {
+          adapter,
+          path,
+          method: "GET",
+        };
+
+        expect(httpServer.requiresPayment(context)).toBe(expected);
+      });
+
+      it("should require payment when :id contains double-encoded %252F", async () => {
+        const paramRoutes = {
+          "/api/report/:id": {
+            accepts: {
+              scheme: "exact",
+              payTo: "0xabc",
+              price: "$1.00" as Price,
+              network: "eip155:8453" as Network,
+            },
+          },
+        };
+
+        const httpServer = new x402HTTPResourceServer(ResourceServer, paramRoutes);
+
+        const adapter = new MockHTTPAdapter();
+        const context: HTTPRequestContext = {
+          adapter,
+          path: "/api/report/a%252Fb",
+          method: "GET",
+        };
+
+        expect(httpServer.requiresPayment(context)).toBe(true);
+      });
+    });
+
+    describe("percent-encoded line terminators (CAT f2e83cec)", () => {
+      // Without dotAll, "." (from a "*" wildcard) can't match a decoded LineTerminator.
+      it.each([
+        ["U+2028 LINE SEPARATOR", "/api/premium/report%E2%80%A8"],
+        ["U+2029 PARAGRAPH SEPARATOR", "/api/premium/report%E2%80%A9"],
+        ["LF", "/api/premium/report%0A"],
+        ["CR", "/api/premium/report%0D"],
+      ])(
+        "should require payment when the wildcard tail contains an encoded %s",
+        async (_, path) => {
+          const routes = {
+            "/api/premium/*": {
+              accepts: {
+                scheme: "exact",
+                payTo: "0xabc",
+                price: "$1.00" as Price,
+                network: "eip155:8453" as Network,
+              },
+            },
+          };
+
+          const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+
+          const adapter = new MockHTTPAdapter();
+          const context: HTTPRequestContext = {
+            adapter,
+            path,
+            method: "GET",
+          };
+
+          expect(httpServer.requiresPayment(context)).toBe(true);
+
+          const result = await httpServer.processHTTPRequest(context);
+          expect(result.type).toBe("payment-error");
+        },
+      );
     });
   });
 
@@ -772,6 +901,7 @@ describe("x402HTTPResourceServer", () => {
       if (result.type === "payment-error") {
         expect(result.response.status).toBe(402);
         expect(result.response.headers["PAYMENT-REQUIRED"]).toBeDefined();
+        expect(result.response.headers["Cache-Control"]).toBe("no-store");
       }
     });
 
@@ -872,6 +1002,7 @@ describe("x402HTTPResourceServer", () => {
         // Should return 412 for permit2_allowance_required
         expect(result.response.status).toBe(412);
         expect(result.response.headers["PAYMENT-REQUIRED"]).toBeDefined();
+        expect(result.response.headers["Cache-Control"]).toBe("no-store");
       }
     });
 
@@ -996,6 +1127,7 @@ describe("x402HTTPResourceServer", () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.headers["PAYMENT-RESPONSE"]).toBeDefined();
+        expect(result.headers["Cache-Control"]).toBeUndefined();
       }
       expect(mockFacilitator.settleCalls.length).toBe(1);
     });
@@ -1035,6 +1167,7 @@ describe("x402HTTPResourceServer", () => {
         expect(result.errorReason).toBe("Insufficient funds");
         expect(result.headers).toBeDefined();
         expect(result.headers["PAYMENT-RESPONSE"]).toBeDefined();
+        expect(result.response.headers["Cache-Control"]).toBe("no-store");
       }
     });
 
@@ -1371,6 +1504,7 @@ describe("x402HTTPResourceServer", () => {
       if (result.type === "payment-error") {
         expect(result.response.status).toBe(200);
         expect(result.response.headers["PAYMENT-RESPONSE"]).toBeDefined();
+        expect(result.response.headers["Cache-Control"]).toBe("private");
         expect(result.response.body).toEqual({ message: "Refund acknowledged" });
       }
     });
@@ -1405,6 +1539,30 @@ describe("x402HTTPResourceServer", () => {
       if (result.type === "payment-error") {
         expect(result.response.isHtml).toBeFalsy();
       }
+    });
+  });
+
+  describe("withPrivateCacheControl", () => {
+    it("exports no-store for payment-required responses", () => {
+      expect(PAYMENT_REQUIRED_CACHE_CONTROL).toBe("no-store");
+    });
+
+    it("returns private when no existing header is set", () => {
+      expect(withPrivateCacheControl(null)).toBe("private");
+      expect(withPrivateCacheControl("")).toBe("private");
+    });
+
+    it("appends private to existing directives", () => {
+      expect(withPrivateCacheControl("max-age=60")).toBe("max-age=60, private");
+    });
+
+    it("is idempotent when private is already present", () => {
+      expect(withPrivateCacheControl("max-age=60, private")).toBe("max-age=60, private");
+      expect(withPrivateCacheControl("private")).toBe("private");
+    });
+
+    it("detects private case-insensitively", () => {
+      expect(withPrivateCacheControl("max-age=60, Private")).toBe("max-age=60, Private");
     });
   });
 });

@@ -38,6 +38,7 @@ uv run python main.py
 ## Features Demonstrated
 
 - **Automatic 402 handling** - Payment handling is transparent to your code
+- **Spend controls** - Default `$1` USD cap on recognized pegged assets (see [advanced examples](./advanced/))
 - **EVM payments** - Uses `EthAccountSigner` with `register_exact_evm_client`
 - **Payment response extraction** - Shows how to decode settlement confirmations
 - **Environment validation** - Checks for required configuration

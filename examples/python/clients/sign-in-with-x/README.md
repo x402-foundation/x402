@@ -75,7 +75,7 @@ and provide at least one private key:
 2. Install dependencies:
 
 ```bash
-uv sync
+uv sync --reinstall-package x402
 ```
 
 3. Start the SIWX server:

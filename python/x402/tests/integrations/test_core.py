@@ -154,9 +154,13 @@ def _create_sync_components() -> ComponentsFixture:
     )
     facilitator_client = CashFacilitatorClientSync(facilitator)
 
-    client = x402ClientSync().register(
-        "x402:cash",
-        CashSchemeNetworkClient("John"),
+    client = (
+        x402ClientSync()
+        .register(
+            "x402:cash",
+            CashSchemeNetworkClient("John"),
+        )
+        .set_spend_controls(False)
     )
 
     server = x402ResourceServerSync(facilitator_client)
@@ -179,9 +183,13 @@ def _create_async_components() -> ComponentsFixture:
     )
     facilitator_client = CashFacilitatorClient(facilitator)
 
-    client = x402Client().register(
-        "x402:cash",
-        CashSchemeNetworkClient("John"),
+    client = (
+        x402Client()
+        .register(
+            "x402:cash",
+            CashSchemeNetworkClient("John"),
+        )
+        .set_spend_controls(False)
     )
 
     server = x402ResourceServer(facilitator_client)
@@ -385,7 +393,11 @@ class TestServerInitialization:
             payment_required = uninitialized_server.create_payment_required_response([requirements])
 
         # Create a valid client to make payload
-        client = x402ClientSync().register("x402:cash", CashSchemeNetworkClient("Test"))
+        client = (
+            x402ClientSync()
+            .register("x402:cash", CashSchemeNetworkClient("Test"))
+            .set_spend_controls(False)
+        )
         payload = client.create_payment_payload(payment_required)
 
         with pytest.raises(RuntimeError, match="not initialized"):
@@ -406,6 +418,7 @@ class TestClientPolicies:
                 x402Client()
                 .register("x402:cash", CashSchemeNetworkClient("John"))
                 .register("x402:other", CashSchemeNetworkClient("John"))
+                .set_spend_controls(False)
                 .register_policy(prefer_network("x402:other"))
             )
         else:
@@ -413,6 +426,7 @@ class TestClientPolicies:
                 x402ClientSync()
                 .register("x402:cash", CashSchemeNetworkClient("John"))
                 .register("x402:other", CashSchemeNetworkClient("John"))
+                .set_spend_controls(False)
                 .register_policy(prefer_network("x402:other"))
             )
 
@@ -449,12 +463,14 @@ class TestSyncHooks:
             client = (
                 x402Client()
                 .register("x402:cash", CashSchemeNetworkClient("John"))
+                .set_spend_controls(False)
                 .on_after_payment_creation(after_hook)
             )
         else:
             client = (
                 x402ClientSync()
                 .register("x402:cash", CashSchemeNetworkClient("John"))
+                .set_spend_controls(False)
                 .on_after_payment_creation(after_hook)
             )
 

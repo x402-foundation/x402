@@ -27,7 +27,7 @@ describe("ExactHedera server money parsing", () => {
       },
     });
     scheme.registerMoneyParser(async amount => {
-      if (amount > 100) {
+      if (Number(amount) > 100) {
         return { amount: "1", asset: "0.0.9999", extra: { tier: "large" } };
       }
       return null;

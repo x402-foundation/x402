@@ -24,13 +24,13 @@ from ..constants import (
     DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
     MAX_MEMO_BYTES,
     MEMO_PROGRAM_ADDRESS,
-    NETWORK_CONFIGS,
     SCHEME_EXACT,
 )
+from ..default_assets import find_default_asset
 from ..mint_cache import MintMetadataCache, get_cached_mint_metadata
 from ..signer import ClientSvmSigner
 from ..types import ExactSvmPayload
-from ..utils import derive_ata, normalize_network, resolve_blockhash
+from ..utils import derive_ata, get_network_config, normalize_network, resolve_blockhash
 
 
 class ExactSvmScheme:
@@ -44,6 +44,7 @@ class ExactSvmScheme:
     """
 
     scheme = SCHEME_EXACT
+    find_default_asset = staticmethod(find_default_asset)
 
     def __init__(self, signer: ClientSvmSigner, rpc_url: str | None = None):
         """Create ExactSvmScheme.
@@ -74,10 +75,7 @@ class ExactSvmScheme:
         if self._custom_rpc_url:
             rpc_url = self._custom_rpc_url
         else:
-            config = NETWORK_CONFIGS.get(caip2_network)
-            if not config:
-                raise ValueError(f"Unsupported network: {network}")
-            rpc_url = config["rpc_url"]
+            rpc_url = get_network_config(network)["rpc_url"]
 
         client = SolanaClient(rpc_url)
         self._clients[caip2_network] = client

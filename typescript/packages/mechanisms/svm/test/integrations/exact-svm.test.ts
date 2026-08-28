@@ -22,6 +22,7 @@ import { ExactSvmScheme as ExactSvmFacilitator } from "../../src/exact/facilitat
 import type { ExactSvmPayloadV2 } from "../../src/types";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { base58 } from "@scure/base";
+import { convertToTokenAmount } from "@x402/core/utils";
 
 // Load private keys and addresses from environment
 const CLIENT_PRIVATE_KEY = process.env.CLIENT_PRIVATE_KEY;
@@ -389,9 +390,9 @@ describe("SVM Integration Tests", () => {
     it("should use registerMoneyParser for custom conversion", async () => {
       // Register custom parser: large amounts use custom token
       svmServer.registerMoneyParser(async (amount, _network) => {
-        if (amount > 100) {
+        if (Number(amount) > 100) {
           return {
-            amount: (amount * 1e9).toString(), // Custom token with 9 decimals
+            amount: convertToTokenAmount(String(amount), 9), // Custom token with 9 decimals
             asset: "CustomLargeTokenMint111111111111111",
             extra: { token: "CUSTOM", tier: "large" },
           };
@@ -427,9 +428,9 @@ describe("SVM Integration Tests", () => {
     it("should support multiple MoneyParser in chain", async () => {
       svmServer
         .registerMoneyParser(async amount => {
-          if (amount > 1000) {
+          if (Number(amount) > 1000) {
             return {
-              amount: (amount * 1e9).toString(),
+              amount: convertToTokenAmount(String(amount), 9),
               asset: "VIPTokenMint111111111111111111111111",
               extra: { tier: "vip" },
             };
@@ -437,9 +438,9 @@ describe("SVM Integration Tests", () => {
           return null;
         })
         .registerMoneyParser(async amount => {
-          if (amount > 100) {
+          if (Number(amount) > 100) {
             return {
-              amount: (amount * 1e6).toString(),
+              amount: convertToTokenAmount(String(amount), 6),
               asset: "PremiumTokenMint1111111111111111111",
               extra: { tier: "premium" },
             };
@@ -485,7 +486,7 @@ describe("SVM Integration Tests", () => {
         // Simulate async API call
         await new Promise(resolve => setTimeout(resolve, 10));
 
-        const usdcAmount = amount * mockExchangeRate;
+        const usdcAmount = Number(amount) * mockExchangeRate;
         return {
           amount: Math.floor(usdcAmount * 1e6).toString(),
           asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
@@ -506,7 +507,7 @@ describe("SVM Integration Tests", () => {
       // 100 USD * 0.98 = 98 USDC
       expect(requirements[0].amount).toBe("98000000");
       expect(requirements[0].extra?.exchangeRate).toBe(0.98);
-      expect(requirements[0].extra?.originalUSD).toBe(100);
+      expect(requirements[0].extra?.originalUSD).toBe("100");
     });
 
     it("should avoid floating-point rounding error", async () => {

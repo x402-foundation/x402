@@ -1,11 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { COMPUTE_BUDGET_PROGRAM_ADDRESS } from "@solana-program/compute-budget";
+import {
+  generateKeyPairSigner,
+  getCompiledTransactionMessageEncoder,
+  type Address,
+} from "@solana/kit";
 import { ExactSvmSchemeV1 } from "../../../src/exact/v1/facilitator/scheme";
 import type { FacilitatorSvmSigner } from "../../../src/signer";
 import type { PaymentRequirementsV1 } from "@x402/core/types/v1";
 import type { PaymentPayloadV1 } from "@x402/core/types/v1";
-import { USDC_DEVNET_ADDRESS, MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS } from "../../../src/constants";
+import { MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS } from "../../../src/constants";
+import { USDC_DEVNET_ADDRESS } from "../../../src/defaultAssets";
 import * as svmUtils from "../../../src/utils";
+import {
+  encodeSignedTransaction,
+  placeholderFeePayerSignature,
+} from "../helpers/signedTransaction";
 
 // Encodes a SetComputeUnitPrice instruction: discriminator(3) + microLamports as u64 LE
 function makeComputePriceData(microLamports: bigint): Uint8Array {
@@ -28,6 +38,7 @@ describe("ExactSvmSchemeV1", () => {
           "FeePayer1111111111111111111111111111",
           "FacilitatorAddress1111111111111111111",
         ]) as never,
+      getSigner: vi.fn() as never,
       signTransactions: vi.fn() as never,
       signMessages: vi.fn().mockResolvedValue([
         {
@@ -180,6 +191,69 @@ describe("ExactSvmSchemeV1", () => {
       expect(result.isValid).toBe(false);
       // Transaction decoding or instruction parsing fails
       expect(result.invalidReason).toContain("invalid_exact_svm_payload_transaction");
+    });
+
+    it("should reject address lookup table transactions with a clean invalid reason", async () => {
+      const feePayer = await generateKeyPairSigner();
+      const altAddr = await generateKeyPairSigner();
+      const computeBudget = "ComputeBudget111111111111111111111111111111" as Address;
+
+      const compiled = {
+        version: 0 as const,
+        header: {
+          numSignerAccounts: 1,
+          numReadonlySignerAccounts: 0,
+          numReadonlyNonSignerAccounts: 1,
+        },
+        staticAccounts: [feePayer.address, computeBudget],
+        lifetimeToken: "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+        instructions: [
+          {
+            programAddressIndex: 1,
+            accountIndices: [2],
+            data: new Uint8Array([2, 0, 0, 0, 0]),
+          },
+        ],
+        addressTableLookups: [
+          {
+            lookupTableAddress: altAddr.address,
+            writableIndexes: [0],
+            readonlyIndexes: [],
+          },
+        ],
+      };
+
+      const messageBytes = getCompiledTransactionMessageEncoder().encode(compiled);
+      const transaction = await encodeSignedTransaction(
+        messageBytes,
+        [],
+        placeholderFeePayerSignature(feePayer.address),
+      );
+
+      mockSigner.getAddresses = vi.fn().mockReturnValue([feePayer.address]) as never;
+      const facilitator = new ExactSvmSchemeV1(mockSigner);
+      const result = await facilitator.verify(
+        {
+          x402Version: 1,
+          scheme: "exact",
+          network: "solana-devnet",
+          payload: { transaction },
+        } as never,
+        {
+          scheme: "exact",
+          network: "solana-devnet",
+          asset: USDC_DEVNET_ADDRESS,
+          maxAmountRequired: "100000",
+          payTo: "PayToAddress11111111111111111111111111",
+          maxTimeoutSeconds: 3600,
+          extra: { feePayer: feePayer.address },
+        } as never,
+      );
+
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe(
+        "invalid_exact_svm_payload_transaction_could_not_be_decoded",
+      );
     });
   });
 

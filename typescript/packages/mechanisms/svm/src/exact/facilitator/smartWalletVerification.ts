@@ -21,6 +21,7 @@ import type { PaymentRequirements, VerifyResponse } from "@x402/core/types";
 import { MEMO_PROGRAM_ADDRESS } from "../../constants";
 import type { FacilitatorSvmSigner, SvmInnerInstructionsResult } from "../../signer";
 import { decodeTransactionFromPayload } from "../../utils";
+import * as Errors from "./errors";
 
 const DEFAULT_SMART_WALLET_MAX_COMPUTE_UNITS = 400_000;
 const DEFAULT_SMART_WALLET_MAX_PRIORITY_FEE_MICROLAMPORTS = 50_000;
@@ -34,6 +35,76 @@ const TOKEN_PROGRAMS = new Set([
   TOKEN_2022_PROGRAM_ADDRESS.toString(),
 ]);
 
+export type SmartWalletLimits = {
+  maxComputeUnits?: number;
+  maxPriorityFeeMicroLamports?: number;
+};
+
+/**
+ * {@link FacilitatorSvmSigner} narrowed to the optional caps Path 2
+ * (simulation-based smart wallet payment verification) requires at runtime.
+ */
+export type SmartWalletVerifySigner = FacilitatorSvmSigner & {
+  simulateTransactionWithInnerInstructions: NonNullable<
+    FacilitatorSvmSigner["simulateTransactionWithInnerInstructions"]
+  >;
+  getConfirmedTransactionInnerInstructions: NonNullable<
+    FacilitatorSvmSigner["getConfirmedTransactionInnerInstructions"]
+  >;
+  getTokenAccountBalance: NonNullable<FacilitatorSvmSigner["getTokenAccountBalance"]>;
+  fetchAddressLookupTables: NonNullable<FacilitatorSvmSigner["fetchAddressLookupTables"]>;
+};
+
+const SMART_WALLET_VERIFY_METHODS = [
+  "simulateTransactionWithInnerInstructions",
+  "getConfirmedTransactionInnerInstructions",
+  "getTokenAccountBalance",
+  "fetchAddressLookupTables",
+] as const satisfies readonly (keyof SmartWalletVerifySigner)[];
+
+/**
+ * Assert a facilitator signer exposes every optional cap smart wallet payment
+ * verification needs.
+ *
+ * @param signer - Facilitator signer to validate
+ * @param label - Scheme or component name for error messages
+ * @throws Error when a required capability is missing
+ */
+export function assertSmartWalletVerifySigner(
+  signer: FacilitatorSvmSigner,
+  label = "ExactSvmScheme",
+): asserts signer is SmartWalletVerifySigner {
+  for (const method of SMART_WALLET_VERIFY_METHODS) {
+    if (typeof signer[method] !== "function") {
+      throw new Error(`${label} requires ${method} on the signer.`);
+    }
+  }
+}
+
+/**
+ * Rejects smart-wallet limits that cannot be compared safely.
+ *
+ * @param limits - Optional operator-provided compute budget caps
+ */
+export function assertSmartWalletLimits(limits?: SmartWalletLimits): void {
+  assertLimit("smartWalletMaxComputeUnits", limits?.maxComputeUnits, 1);
+  assertLimit("smartWalletMaxPriorityFeeMicroLamports", limits?.maxPriorityFeeMicroLamports, 0);
+}
+
+/**
+ * Rejects a configured limit outside its meaningful integer range.
+ *
+ * @param name - Option name, used in the error message
+ * @param value - Configured value, or undefined when the option is unset
+ * @param min - Smallest meaningful value for this option
+ */
+function assertLimit(name: string, value: number | undefined, min: number): void {
+  if (value === undefined) return;
+  if (!Number.isSafeInteger(value) || value < min) {
+    throw new Error(`${name} must be a safe integer >= ${min}, received ${value}`);
+  }
+}
+
 export type TransferCheckedInfo = {
   programId: string;
   amount: bigint;
@@ -41,6 +112,75 @@ export type TransferCheckedInfo = {
   destination: string;
   authority: string;
 };
+
+/**
+ * Instruction bytes as kit exposes them (ReadonlyUint8Array) plus a plain
+ * Uint8Array. Only length/index/DataView fields are required.
+ */
+type InstructionDataBytes = {
+  readonly [index: number]: number;
+  readonly length: number;
+  readonly buffer: ArrayBufferLike;
+  readonly byteOffset: number;
+  readonly byteLength: number;
+};
+
+export type DecodedInstructionView = {
+  programAddress: { toString(): string };
+  accounts?: ReadonlyArray<{ address: { toString(): string } }>;
+  data?: InstructionDataBytes;
+};
+
+/**
+ * Pre-decoded transaction view shared by Path 1 and Path 2 so the message is
+ * decompiled once per verify, including any resolved address lookup tables.
+ */
+export type DecodedTransactionView = {
+  transaction: Transaction;
+  compiled: {
+    staticAccounts?: readonly { toString(): string }[];
+    addressTableLookups?: ReadonlyArray<{
+      lookupTableAddress: { toString(): string };
+      writableIndexes: readonly number[];
+      readonlyIndexes: readonly number[];
+    }>;
+  };
+  decompiled: {
+    instructions?: ReadonlyArray<DecodedInstructionView>;
+  };
+  resolvedAccountKeys: readonly string[];
+};
+
+/**
+ * Builds the full loaded-account list: static keys, then writable lookup
+ * addresses, then readonly lookup addresses. Inner-instruction indices
+ * address this combined list, not static accounts alone.
+ *
+ * @param compiled - Compiled transaction message
+ * @param lookupMap - Resolved ALT address → account list, if any
+ * @returns Ordered account keys matching the Solana runtime load order
+ */
+export function resolveAccountKeys(
+  compiled: DecodedTransactionView["compiled"],
+  lookupMap?: Record<string, readonly string[]>,
+): string[] {
+  const keys = (compiled.staticAccounts ?? []).map(a => a.toString());
+  const lookups = compiled.addressTableLookups ?? [];
+  if (lookups.length === 0) return keys;
+
+  const writable: string[] = [];
+  const readonly: string[] = [];
+  for (const lookup of lookups) {
+    const table = lookupMap?.[lookup.lookupTableAddress.toString()] ?? [];
+    for (const idx of lookup.writableIndexes ?? []) {
+      if (table[idx]) writable.push(table[idx]);
+    }
+    for (const idx of lookup.readonlyIndexes ?? []) {
+      if (table[idx]) readonly.push(table[idx]);
+    }
+  }
+  return [...keys, ...writable, ...readonly];
+}
 
 /**
  * Asserts the fee payer does NOT appear in any instruction's accounts or as a
@@ -73,7 +213,7 @@ export async function assertFeePayerIsolated(
     // Resolve ALTs before decompiling so all accounts are visible
     if (!signer || !network || typeof signer.fetchAddressLookupTables !== "function") {
       throw new Error(
-        "smart_wallet_alt_resolution_not_available: transaction uses Address Lookup Tables " +
+        `${Errors.ErrSmartWalletAltResolutionUnavailable}: transaction uses Address Lookup Tables ` +
           "but signer does not implement fetchAddressLookupTables",
       );
     }
@@ -94,12 +234,23 @@ export async function assertFeePayerIsolated(
     decompiled = decompileTransactionMessage(compiled);
   }
 
-  const instructions = decompiled.instructions ?? [];
+  assertFeePayerIsolatedFromInstructions(decompiled.instructions ?? [], feePayerAddress);
+}
 
+/**
+ * Asserts the fee payer does not appear in already-decompiled instructions.
+ *
+ * @param instructions - Decompiled top-level instructions
+ * @param feePayerAddress - Facilitator fee payer that must remain isolated
+ */
+export function assertFeePayerIsolatedFromInstructions(
+  instructions: ReadonlyArray<DecodedInstructionView>,
+  feePayerAddress: string,
+): void {
   for (const ix of instructions) {
     if (ix.programAddress.toString() === feePayerAddress) {
       throw new Error(
-        `smart_wallet_fee_payer_not_isolated: fee payer ${feePayerAddress} invoked as program`,
+        `${Errors.ErrSmartWalletFeePayerNotIsolated}: fee payer ${feePayerAddress} invoked as program`,
       );
     }
 
@@ -107,7 +258,7 @@ export async function assertFeePayerIsolated(
     for (const account of accounts) {
       if (account.address.toString() === feePayerAddress) {
         throw new Error(
-          `smart_wallet_fee_payer_not_isolated: fee payer ${feePayerAddress} appears in instruction accounts (program: ${ix.programAddress})`,
+          `${Errors.ErrSmartWalletFeePayerNotIsolated}: fee payer ${feePayerAddress} appears in instruction accounts (program: ${ix.programAddress})`,
         );
       }
     }
@@ -125,37 +276,60 @@ export async function assertFeePayerIsolated(
  */
 export function validateComputeBudgetLimits(
   transaction: Transaction,
-  limits?: { maxComputeUnits?: number; maxPriorityFeeMicroLamports?: number },
+  limits?: SmartWalletLimits,
 ): void {
+  assertSmartWalletLimits(limits);
+
   const maxCU = limits?.maxComputeUnits ?? DEFAULT_SMART_WALLET_MAX_COMPUTE_UNITS;
   const maxPriorityFee =
     limits?.maxPriorityFeeMicroLamports ?? DEFAULT_SMART_WALLET_MAX_PRIORITY_FEE_MICROLAMPORTS;
 
   const compiled = getCompiledTransactionMessageDecoder().decode(transaction.messageBytes);
   const decompiled = decompileTransactionMessage(compiled);
-  const instructions = decompiled.instructions ?? [];
+  validateComputeBudgetLimitsFromInstructions(decompiled.instructions ?? [], {
+    maxComputeUnits: maxCU,
+    maxPriorityFeeMicroLamports: maxPriorityFee,
+  });
+}
+
+/**
+ * Validates ComputeBudget instructions already decompiled from the message.
+ *
+ * @param instructions - Decompiled top-level instructions
+ * @param limits - Resolved compute budget caps (defaults already applied)
+ * @param limits.maxComputeUnits - Maximum allowed compute units
+ * @param limits.maxPriorityFeeMicroLamports - Maximum allowed priority fee
+ */
+export function validateComputeBudgetLimitsFromInstructions(
+  instructions: ReadonlyArray<DecodedInstructionView>,
+  limits: { maxComputeUnits: number; maxPriorityFeeMicroLamports: number },
+): void {
+  const maxCU = limits.maxComputeUnits;
+  const maxPriorityFee = limits.maxPriorityFeeMicroLamports;
 
   for (const ix of instructions) {
     if (ix.programAddress.toString() !== COMPUTE_BUDGET_PROGRAM_ADDRESS.toString()) continue;
     const data = ix.data;
     if (!data || data.length === 0) {
-      throw new Error("smart_wallet_malformed_compute_budget: empty instruction data");
+      throw new Error(`${Errors.ErrSmartWalletMalformedComputeBudget}: empty instruction data`);
     }
 
     if (data[0] === IX_SET_COMPUTE_UNIT_LIMIT) {
       if (data.length < 5) {
-        throw new Error("smart_wallet_malformed_compute_limit");
+        throw new Error(Errors.ErrSmartWalletMalformedComputeLimit);
       }
       const units = new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(1, true);
       if (units > maxCU) {
-        throw new Error(`smart_wallet_compute_units_too_high: ${units} exceeds max ${maxCU}`);
+        throw new Error(
+          `${Errors.ErrSmartWalletComputeUnitsTooHigh}: ${units} exceeds max ${maxCU}`,
+        );
       }
       continue;
     }
 
     if (data[0] === IX_SET_COMPUTE_UNIT_PRICE) {
       if (data.length < 9) {
-        throw new Error("smart_wallet_malformed_compute_price");
+        throw new Error(Errors.ErrSmartWalletMalformedComputePrice);
       }
       const microLamports = new DataView(
         data.buffer,
@@ -164,7 +338,7 @@ export function validateComputeBudgetLimits(
       ).getBigUint64(1, true);
       if (microLamports > BigInt(maxPriorityFee)) {
         throw new Error(
-          `smart_wallet_priority_fee_too_high: ${microLamports} exceeds max ${maxPriorityFee}`,
+          `${Errors.ErrSmartWalletPriorityFeeTooHigh}: ${microLamports} exceeds max ${maxPriorityFee}`,
         );
       }
       continue;
@@ -174,7 +348,7 @@ export function validateComputeBudgetLimits(
     // Other ComputeBudget types (RequestHeapFrame, SetLoadedAccountsDataSizeLimit, etc.)
     // are rejected because they expand execution surface without being necessary
     // for payment outcome verification.
-    throw new Error(`smart_wallet_unsupported_compute_budget_instruction: type ${data[0]}`);
+    throw new Error(`${Errors.ErrSmartWalletUnsupportedComputeBudget}: type ${data[0]}`);
   }
 }
 
@@ -257,10 +431,17 @@ export function extractTransfersFromInnerInstructions(
  * Operator-configurable options for smart wallet verification.
  * Passed through from the ExactSvmScheme constructor.
  */
-export type SmartWalletOptions = {
+export type SmartWalletOptions = SmartWalletLimits & {
   enabled: boolean;
-  maxComputeUnits?: number;
-  maxPriorityFeeMicroLamports?: number;
+};
+
+/**
+ * Verify response plus the matched TransferChecked when Path 2 succeeds.
+ * Used by settle to fetch one pre-balance and pass the known ATA into
+ * post-settlement verification.
+ */
+export type SmartWalletVerifyResult = VerifyResponse & {
+  matchedTransfer?: TransferCheckedInfo;
 };
 
 /**
@@ -274,76 +455,98 @@ export type SmartWalletOptions = {
  *
  * @param transactionBase64 - Base64 encoded transaction
  * @param requirements - Payment requirements to verify against
- * @param signer - Facilitator signer (must implement simulateTransactionWithInnerInstructions)
+ * @param signer - Facilitator signer (must implement simulation verification caps)
  * @param feePayerAddress - Facilitator fee payer address
  * @param signerAddresses - All facilitator signer addresses (for self-spend protection)
  * @param options - Optional operator-configurable limits
+ * @param decoded - Pre-decoded transaction (avoids a second decode/decompile)
  * @returns Verification result
  */
 export async function verifySmartWalletTransaction(
   transactionBase64: string,
   requirements: PaymentRequirements,
-  signer: FacilitatorSvmSigner,
+  signer: SmartWalletVerifySigner,
   feePayerAddress: string,
   signerAddresses: readonly string[],
   options?: SmartWalletOptions,
-): Promise<VerifyResponse> {
-  const transaction = decodeTransactionFromPayload({ transaction: transactionBase64 });
+  decoded?: DecodedTransactionView,
+): Promise<SmartWalletVerifyResult> {
+  // Configuration errors must propagate to the operator rather than being
+  // reported to the payer as a transaction verification failure.
+  assertSmartWalletLimits(options);
+
+  const transaction =
+    decoded?.transaction ?? decodeTransactionFromPayload({ transaction: transactionBase64 });
+  const instructions = decoded?.decompiled.instructions;
 
   // 1. Fee payer must not appear in any instruction's accounts.
   try {
-    await assertFeePayerIsolated(transaction, feePayerAddress, signer, requirements.network);
+    if (instructions) {
+      assertFeePayerIsolatedFromInstructions(instructions, feePayerAddress);
+    } else {
+      await assertFeePayerIsolated(transaction, feePayerAddress, signer, requirements.network);
+    }
   } catch (error) {
     return {
       isValid: false,
-      invalidReason: error instanceof Error ? error.message : "smart_wallet_fee_payer_not_isolated",
+      invalidReason:
+        error instanceof Error ? error.message : Errors.ErrSmartWalletFeePayerNotIsolated,
       payer: "",
     };
   }
 
   // 2. Compute budget caps still apply (operator-configurable).
   try {
-    validateComputeBudgetLimits(transaction, {
-      maxComputeUnits: options?.maxComputeUnits,
-      maxPriorityFeeMicroLamports: options?.maxPriorityFeeMicroLamports,
-    });
+    if (instructions) {
+      const maxCU = options?.maxComputeUnits ?? DEFAULT_SMART_WALLET_MAX_COMPUTE_UNITS;
+      const maxPriorityFee =
+        options?.maxPriorityFeeMicroLamports ?? DEFAULT_SMART_WALLET_MAX_PRIORITY_FEE_MICROLAMPORTS;
+      validateComputeBudgetLimitsFromInstructions(instructions, {
+        maxComputeUnits: maxCU,
+        maxPriorityFeeMicroLamports: maxPriorityFee,
+      });
+    } else {
+      validateComputeBudgetLimits(transaction, {
+        maxComputeUnits: options?.maxComputeUnits,
+        maxPriorityFeeMicroLamports: options?.maxPriorityFeeMicroLamports,
+      });
+    }
   } catch (error) {
     return {
       isValid: false,
       invalidReason:
-        error instanceof Error ? error.message : "smart_wallet_compute_budget_violation",
+        error instanceof Error ? error.message : Errors.ErrSmartWalletComputeBudgetViolation,
       payer: "",
     };
   }
 
   // 3. Simulate with inner instructions.
-  if (typeof signer.simulateTransactionWithInnerInstructions !== "function") {
-    return {
-      isValid: false,
-      invalidReason: "smart_wallet_verification_not_available",
-      payer: "",
-    };
-  }
-
   let simResult: SvmInnerInstructionsResult;
   try {
     simResult = await signer.simulateTransactionWithInnerInstructions(
       transactionBase64,
-      feePayerAddress as Address,
       requirements.network,
     );
   } catch (error) {
     return {
       isValid: false,
-      invalidReason: `smart_wallet_simulation_failed: ${error instanceof Error ? error.message : String(error)}`,
+      invalidReason: `${Errors.ErrSmartWalletSimulationFailed}: ${error instanceof Error ? error.message : String(error)}`,
       payer: "",
     };
   }
 
   // 4. Extract TransferChecked from top-level instructions and CPI inner instructions.
-  const compiled = getCompiledTransactionMessageDecoder().decode(transaction.messageBytes);
-  const decompiled = decompileTransactionMessage(compiled);
-  const accountKeys = (compiled.staticAccounts ?? []).map(String);
+  const decompiledInstructions =
+    instructions ??
+    decompileTransactionMessage(
+      getCompiledTransactionMessageDecoder().decode(transaction.messageBytes),
+    ).instructions ??
+    [];
+  const accountKeys =
+    decoded?.resolvedAccountKeys ??
+    (
+      getCompiledTransactionMessageDecoder().decode(transaction.messageBytes).staticAccounts ?? []
+    ).map(String);
 
   // 4a. Verify memo content matches extra.memo when present.
   // Mirrors Path 1's Step 5b enforcement so a seller-required memo cannot be
@@ -351,13 +554,13 @@ export async function verifySmartWalletTransaction(
   // top-level instruction in both paths; wallet programs do not wrap it via CPI.
   const expectedMemo = requirements.extra?.memo as string | undefined;
   if (expectedMemo) {
-    const memoInstructions = (decompiled.instructions ?? []).filter(
+    const memoInstructions = decompiledInstructions.filter(
       ix => ix.programAddress.toString() === MEMO_PROGRAM_ADDRESS,
     );
     if (memoInstructions.length !== 1) {
       return {
         isValid: false,
-        invalidReason: "invalid_exact_svm_payload_memo_count",
+        invalidReason: Errors.ErrMemoCount,
         payer: "",
       };
     }
@@ -366,7 +569,7 @@ export async function verifySmartWalletTransaction(
     if (actualMemo !== expectedMemo) {
       return {
         isValid: false,
-        invalidReason: "invalid_exact_svm_payload_memo_mismatch",
+        invalidReason: Errors.ErrMemoMismatch,
         payer: "",
       };
     }
@@ -374,7 +577,7 @@ export async function verifySmartWalletTransaction(
 
   const allTransfers: TransferCheckedInfo[] = [];
 
-  for (const ix of decompiled.instructions ?? []) {
+  for (const ix of decompiledInstructions) {
     const progId = ix.programAddress.toString();
     if (!TOKEN_PROGRAMS.has(progId)) continue;
     const data = ix.data;
@@ -403,7 +606,7 @@ export async function verifySmartWalletTransaction(
     if (signerAddresses.includes(t.authority)) {
       return {
         isValid: false,
-        invalidReason: "invalid_exact_svm_payload_transaction_fee_payer_transferring_funds",
+        invalidReason: Errors.ErrFeePayerTransferringFunds,
         payer: t.authority,
       };
     }
@@ -429,7 +632,7 @@ export async function verifySmartWalletTransaction(
   if (expectedATAs.size === 0) {
     return {
       isValid: false,
-      invalidReason: "smart_wallet_cannot_derive_destination_ata",
+      invalidReason: Errors.ErrSmartWalletCannotDeriveATA,
       payer: "",
     };
   }
@@ -444,11 +647,15 @@ export async function verifySmartWalletTransaction(
 
   if (matchingTransfers.length === 0) {
     if (allTransfers.length === 0) {
-      return { isValid: false, invalidReason: "smart_wallet_no_transfer_in_simulation", payer: "" };
+      return {
+        isValid: false,
+        invalidReason: Errors.ErrSmartWalletNoTransferInSimulation,
+        payer: "",
+      };
     }
     return {
       isValid: false,
-      invalidReason: "smart_wallet_transfer_mismatch",
+      invalidReason: Errors.ErrSmartWalletTransferMismatch,
       payer: allTransfers[0].authority,
     };
   }
@@ -456,12 +663,16 @@ export async function verifySmartWalletTransaction(
   if (matchingTransfers.length > 1) {
     return {
       isValid: false,
-      invalidReason: "smart_wallet_multiple_matching_transfers",
+      invalidReason: Errors.ErrSmartWalletMultipleMatchingTransfers,
       payer: matchingTransfers[0].authority,
     };
   }
 
-  return { isValid: true, payer: matchingTransfers[0].authority };
+  return {
+    isValid: true,
+    payer: matchingTransfers[0].authority,
+    matchedTransfer: matchingTransfers[0],
+  };
 }
 
 /**
@@ -481,6 +692,9 @@ export async function verifySmartWalletTransaction(
  * @param signerAddresses - Facilitator signer addresses
  * @param balanceBefore - Destination ATA balance before settlement (for fallback)
  * @param balanceBeforeTokenProgram - Which token program the balanceBefore was captured from (SPL Token or Token-2022)
+ * @param knownDestinationAta - Destination ATA already identified at verify time.
+ *   When set, both the inner-instruction match and the balance-delta fallback
+ *   query this single account instead of deriving both token-program ATAs.
  * @returns Whether the transfer was verified on-chain
  */
 export async function verifyPostSettlement(
@@ -491,6 +705,7 @@ export async function verifyPostSettlement(
   signerAddresses: string[],
   balanceBefore: bigint | null,
   balanceBeforeTokenProgram?: string | null,
+  knownDestinationAta?: string | null,
 ): Promise<{ verified: boolean; method: "innerInstructions" | "balanceDelta" | "unverified" }> {
   const requiredAmount = BigInt(requirements.amount);
 
@@ -519,18 +734,22 @@ export async function verifyPostSettlement(
         // (programId as string, not index), so index-based resolution isn't needed.
         const transfers = extractTransfersFromInnerInstructions(confirmed.innerInstructions, []);
 
-        // Derive expected destination ATAs (same logic as in verifySmartWalletTransaction).
         const expectedATAs = new Set<string>();
-        for (const tokenProgram of [TOKEN_PROGRAM_ADDRESS, TOKEN_2022_PROGRAM_ADDRESS]) {
-          try {
-            const [ata] = await findAssociatedTokenPda({
-              mint: requirements.asset as Address,
-              owner: requirements.payTo as Address,
-              tokenProgram: tokenProgram as unknown as Address,
-            });
-            expectedATAs.add(ata.toString());
-          } catch {
-            // Skip invalid address combinations
+        if (knownDestinationAta) {
+          expectedATAs.add(knownDestinationAta);
+        } else {
+          // Derive expected destination ATAs (same logic as in verifySmartWalletTransaction).
+          for (const tokenProgram of [TOKEN_PROGRAM_ADDRESS, TOKEN_2022_PROGRAM_ADDRESS]) {
+            try {
+              const [ata] = await findAssociatedTokenPda({
+                mint: requirements.asset as Address,
+                owner: requirements.payTo as Address,
+                tokenProgram: tokenProgram as unknown as Address,
+              });
+              expectedATAs.add(ata.toString());
+            } catch {
+              // Skip invalid address combinations
+            }
           }
         }
 
@@ -560,6 +779,21 @@ export async function verifyPostSettlement(
   // check whether the destination ATA balance increased by at least the required amount.
   // Try both SPL Token and Token-2022 programs — the payment may use either.
   if (balanceBefore !== null && typeof signer.getTokenAccountBalance === "function") {
+    if (knownDestinationAta) {
+      try {
+        const balanceAfter = await signer.getTokenAccountBalance(knownDestinationAta, network);
+        if (balanceAfter !== null) {
+          if (balanceAfter - balanceBefore >= requiredAmount) {
+            return { verified: true, method: "balanceDelta" };
+          }
+          return { verified: false, method: "balanceDelta" };
+        }
+      } catch {
+        // Known ATA balance check failed — fall through to unverified.
+      }
+      return { verified: false, method: "unverified" };
+    }
+
     // If we know which token program was used for balanceBefore, check that one first.
     // Otherwise try both (SPL Token first, then Token-2022).
     const tokenProgramsToCheck = balanceBeforeTokenProgram

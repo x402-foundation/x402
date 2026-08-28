@@ -6,18 +6,33 @@ import pytest
 
 pytest.importorskip("pytoniq_core")
 
+from decimal import Decimal
+
 from x402.mechanisms.tvm import (
     TVM_MAINNET,
     TVM_TESTNET,
     USDT_MAINNET_MINTER,
     USDT_TESTNET_MINTER,
 )
+from x402.mechanisms.tvm.default_assets import get_default_asset
 from x402.mechanisms.tvm.exact import ExactTvmServerScheme
 from x402.schemas import AssetAmount, SupportedKind
 
 from .builders import EMPTY_FORWARD_PAYLOAD_B64, make_tvm_requirements
 
 ZERO_BIT_PAYLOAD_B64 = EMPTY_FORWARD_PAYLOAD_B64
+
+
+class TestPaymentFlows:
+    """Test payment_flows configuration."""
+
+    def test_declares_authorization_and_upfront_with_authorization_as_default(self):
+        server = ExactTvmServerScheme()
+
+        assert server.default_asset_transfer_method == "default"
+        assert server.payment_flows == {
+            "default": {"supported": ("authorization", "upfront"), "default": "authorization"},
+        }
 
 
 def _make_requirements(**overrides):
@@ -106,9 +121,9 @@ class TestParsePrice:
         def test_should_use_custom_money_parser_before_default_conversion(self):
             server = ExactTvmServerScheme()
 
-            def custom_parser(amount: float, network: str) -> AssetAmount | None:
+            def custom_parser(amount: str | int | float, network: str) -> AssetAmount | None:
                 assert network == TVM_MAINNET
-                if amount >= 100:
+                if Decimal(str(amount)) >= 100:
                     return AssetAmount(
                         amount="999",
                         asset="0:" + "9" * 64,
@@ -131,7 +146,7 @@ class TestParsePrice:
             server = ExactTvmServerScheme()
             parser_called = False
 
-            def tracking_parser(amount: float, network: str) -> AssetAmount | None:
+            def tracking_parser(amount: str | int | float, network: str) -> AssetAmount | None:
                 nonlocal parser_called
                 parser_called = True
                 return None
@@ -149,7 +164,7 @@ class TestParsePrice:
         def test_should_raise_when_network_has_no_default_asset(self):
             server = ExactTvmServerScheme()
 
-            with pytest.raises(ValueError, match="No default stablecoin configured"):
+            with pytest.raises(ValueError, match="No default asset configured"):
                 server.parse_price("1.00", "tvm:123")
 
 
@@ -236,15 +251,19 @@ class TestEnhancePaymentRequirements:
 
     class TestInternalHelpers:
         def test_get_default_asset_should_raise_for_unknown_network(self):
-            server = ExactTvmServerScheme()
-
-            with pytest.raises(ValueError, match="No default stablecoin configured"):
-                server._get_default_asset("tvm:123")
+            with pytest.raises(ValueError, match="No default asset configured"):
+                get_default_asset("tvm:123")
 
         def test_get_asset_decimals_should_return_default_for_usdt(self):
             server = ExactTvmServerScheme()
 
-            assert server._get_asset_decimals(_make_requirements(network=TVM_TESTNET)) == 6
+            assert (
+                server.get_asset_decimals(
+                    _make_requirements(network=TVM_TESTNET).asset,
+                    TVM_TESTNET,
+                )
+                == 6
+            )
 
 
 class TestRegisterMoneyParser:

@@ -63,7 +63,8 @@ Follow these rules for all code, documentation, and commit messages you produce:
 
 7. CHAIN AND TOKEN CONSTANTS. Never hardcode chain IDs, token addresses, or
    decimal values from memory. Always reference the constants defined in the
-   codebase (e.g., mechanisms/evm/constants, mechanisms/svm/constants).
+   codebase (e.g., mechanisms/<family>/constants for chain IDs and ABIs,
+   mechanisms/<family>/default_assets for USD-pegged token defaults).
 
 8. TEST CORRECTNESS. Generated tests must assert meaningful behavior, not just
    that "the function doesn't throw." Do not fabricate expected values — derive
@@ -186,7 +187,7 @@ This generates template files in:
 - `python/x402/http/paywall/svm_paywall_template.py`
 - `python/x402/http/paywall/avm_paywall_template.py`
 
-**EVM `decimals.ts`:** The paywall assumes **6** decimals for EVM chains (the usual USDC-style default). The generated map only lists chains where `DEFAULT_STABLECOINS` uses a different `decimals` value. If you add or change one of those entries, run `build:paywall` and commit the updated `decimals.ts` with the template files above. For a plain 6-decimal default, nothing new is added to the map.
+**EVM `decimals.ts`:** The paywall assumes **6** decimals for EVM chains (the usual USDC-style default). The generated map only lists chains where `DEFAULT_ASSETS` uses a different `decimals` value on the first entry for that network. If you add or change one of those entries, run `build:paywall` and commit the updated `decimals.ts` with the template files above. For a plain 6-decimal default, nothing new is added to the map.
 
 Commit the generated files with your PR.
 
@@ -248,7 +249,7 @@ After spec approval, implement in a **single SDK** (TypeScript, Python OR Go).
 |------|---------|-----------|
 | Unit | Isolated component tests | [`typescript/packages/mechanisms/evm/test/unit/`](typescript/packages/mechanisms/evm/test/unit/) |
 | Integration | Client/server/facilitator flow | [`typescript/packages/mechanisms/evm/test/integrations/`](typescript/packages/mechanisms/evm/test/integrations/) |
-| E2E | Full stack across SDKs | [`e2e/`](e2e/) |
+| E2E | Full stack across SDKs | [`e2e/`](e2e/) — see [Add a network](e2e/README.md#add-a-network): `config/mechanisms_<id>.json` + scheme registration in each language’s shared server/client/facilitator module (HTTP/MCP routes come from the catalog) |
 
 **Examples:**
 - Keep existing user-facing examples minimal

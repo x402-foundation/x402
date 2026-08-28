@@ -20,6 +20,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -235,6 +236,7 @@ func buildBatchedTypedData(
 // batchedPipeline holds the wired client/server/facilitator + helpers for one test run.
 type batchedPipeline struct {
 	clientScheme      *batchedclient.BatchSettlementEvmScheme
+	clientStorage     *batchedclient.InMemoryClientChannelStorage
 	serverScheme      *batchedserver.BatchSettlementEvmScheme
 	facilitatorScheme *batchedfacilitator.BatchSettlementEvmScheme
 	x402Client        *x402.X402Client
@@ -275,9 +277,11 @@ func buildBatchedPipeline(t *testing.T, keys *batchedTestKeys) *batchedPipeline 
 
 	salt := randomChannelSalt(t)
 
+	clientStorage := batchedclient.NewInMemoryClientChannelStorage()
 	clientScheme := batchedclient.NewBatchSettlementEvmScheme(clientSigner, &batchedclient.BatchSettlementEvmSchemeOptions{
 		DepositMultiplier: 5,
 		Salt:              salt,
+		Storage:           clientStorage,
 	})
 	x402Client := x402.Newx402Client()
 	x402Client.Register(batchedTestNetwork, clientScheme)
@@ -302,6 +306,7 @@ func buildBatchedPipeline(t *testing.T, keys *batchedTestKeys) *batchedPipeline 
 
 	return &batchedPipeline{
 		clientScheme:      clientScheme,
+		clientStorage:     clientStorage,
 		serverScheme:      serverScheme,
 		facilitatorScheme: facilitatorScheme,
 		x402Client:        x402Client,
@@ -423,6 +428,43 @@ func (p *batchedPipeline) channelIdForRequirements(req types.PaymentRequirements
 	return normalized
 }
 
+func settleChargedAmount(settle *x402.SettleResponse) *string {
+	if settle == nil || settle.Extra == nil {
+		return nil
+	}
+	v, ok := settle.Extra["chargedAmount"].(string)
+	if !ok {
+		return nil
+	}
+	return &v
+}
+
+func payloadDepositAmount(payload types.PaymentPayload) *string {
+	deposit, ok := payload.Payload["deposit"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	amount, ok := deposit["amount"].(string)
+	if !ok {
+		return nil
+	}
+	return &amount
+}
+
+func (p *batchedPipeline) applyClientSettle(t *testing.T, settle *x402.SettleResponse, payload types.PaymentPayload, req types.PaymentRequirements) {
+	t.Helper()
+	err := batchedclient.UpdateChannelFromSettle(p.clientStorage, batchedclient.ChannelSettleServer{
+		ChargedAmount: settleChargedAmount(settle),
+	}, batchedclient.ChannelSettleLocal{
+		ChannelId:     p.channelIdForRequirements(req),
+		RequestAmount: req.Amount,
+		DepositAmount: payloadDepositAmount(payload),
+	})
+	if err != nil {
+		t.Fatalf("updateChannelFromSettle: %v", err)
+	}
+}
+
 // resourceInfo returns a stub resource descriptor for createPaymentPayload.
 func batchedResourceInfo() *types.ResourceInfo {
 	return &types.ResourceInfo{
@@ -496,10 +538,7 @@ func TestBatchSettlementIntegration_DepositThenVoucher(t *testing.T) {
 	}
 	assertChannelHasBalance(ctx, t, pipe.facilitatorSigner, channelId)
 
-	// Mirror the TS flow: feed the settle response back so the client can update local state.
-	if err := pipe.clientScheme.ProcessSettleResponse(asMap(settle.Extra)); err != nil {
-		t.Fatalf("processSettleResponse: %v", err)
-	}
+	pipe.applyClientSettle(t, settle, firstPayload, *accepted)
 
 	// Second request — pure voucher (no chain tx).
 	secondPayload, err := pipe.x402Client.CreatePaymentPayload(ctx, accepts[0], resource, prr.Extensions)
@@ -529,17 +568,6 @@ func TestBatchSettlementIntegration_DepositThenVoucher(t *testing.T) {
 	if settle2.Transaction != "" {
 		t.Logf("voucher settle returned tx=%s (unexpected for off-chain voucher path; non-fatal)", settle2.Transaction)
 	}
-}
-
-// asMap converts a *Extra-like value (map or interface) to map[string]interface{}.
-func asMap(v interface{}) map[string]interface{} {
-	if v == nil {
-		return nil
-	}
-	if m, ok := v.(map[string]interface{}); ok {
-		return m
-	}
-	return nil
 }
 
 // ----------------------------------------------------------------------------
@@ -680,7 +708,7 @@ func TestBatchSettlementIntegration_MultiVoucherClaimSettle(t *testing.T) {
 		t.Fatalf("deposit settle: %v / %+v", err, depositSettle)
 	}
 	assertChannelHasBalance(ctx, t, pipe.facilitatorSigner, channelId)
-	_ = pipe.clientScheme.ProcessSettleResponse(asMap(depositSettle.Extra))
+	pipe.applyClientSettle(t, depositSettle, depositPayload, *depositMatch)
 
 	// Vouchers 2..4 (no chain tx — accumulates session.signedMaxClaimable).
 	for i := 0; i < 3; i++ {
@@ -697,7 +725,7 @@ func TestBatchSettlementIntegration_MultiVoucherClaimSettle(t *testing.T) {
 		if err != nil || !s.Success {
 			t.Fatalf("voucher %d settle: %v / %+v", i, err, s)
 		}
-		_ = pipe.clientScheme.ProcessSettleResponse(asMap(s.Extra))
+		pipe.applyClientSettle(t, s, voucher, *match)
 	}
 
 	// Now manually trigger a claim through the channel manager.
@@ -767,7 +795,7 @@ func makePaidRequest(ctx context.Context, t *testing.T, pipe *batchedPipeline, u
 	}
 	// PaymentRoundTripper now auto-dispatches the scheme's OnPaymentResponse hook
 	// after each paid retry, so local session state is folded back without a
-	// manual ProcessSettleResponse call (mirrors TS @x402/fetch behavior).
+	// manual UpdateChannelFromSettle call (mirrors TS @x402/fetch behavior).
 	return &settle
 }
 
@@ -1163,4 +1191,135 @@ func TestBatchSettlementIntegration_RefundRecoverableRetryExhaustion(t *testing.
 		t.Fatalf("expected retry-exhaustion error, got: %v", err)
 	}
 	t.Logf("retry exhaustion observed: %v", err)
+}
+
+// ----------------------------------------------------------------------------
+// Scenario 11: deposit settlement-pending reconciliation (settlement-pending
+// auto-recovery)
+// ----------------------------------------------------------------------------
+
+// TestBatchSettlementIntegration_DepositSettlementPendingReconciliation
+// exercises the settlement-pending-auto-recovery mechanism layer against a
+// real on-chain batch-settlement deposit: the first settle broadcasts a real
+// deposit transaction but is forced (via forcedPendingReceiptSigner) to fail
+// its receipt wait, producing a settlement_pending SettleError with the
+// broadcast hash attached and a PendingSettlementStore entry populated
+// (keyed on the deposit authorization signature). A second settle with the
+// identical payload, now with receipt-waiting no longer forced to fail, must
+// hit the pending-store fast path (skip verify/re-broadcast) and reconcile
+// against that already-broadcast transaction — succeeding once it actually
+// confirms on-chain, and critically with the SAME transaction hash as the
+// first attempt, proving no second deposit was ever broadcast.
+func TestBatchSettlementIntegration_DepositSettlementPendingReconciliation(t *testing.T) {
+	keys := loadBatchedTestKeys(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	clientEthClient, err := ethclient.Dial(keys.rpcURL)
+	if err != nil {
+		t.Fatalf("dial client RPC: %v", err)
+	}
+	clientSigner, err := evmsigners.NewClientSignerFromPrivateKeyWithClient(keys.clientPK, clientEthClient)
+	if err != nil {
+		t.Fatalf("client signer: %v", err)
+	}
+	realFacilitatorSigner, err := newRealFacilitatorEvmSigner(keys.facilitatorPK, keys.rpcURL)
+	if err != nil {
+		t.Fatalf("facilitator signer: %v", err)
+	}
+	facilitatorSigner := &forcedPendingReceiptSigner{FacilitatorEvmSigner: realFacilitatorSigner}
+	authorizerSigner, err := newBatchedAuthorizerSigner(keys.authorizerPK)
+	if err != nil {
+		t.Fatalf("authorizer signer: %v", err)
+	}
+
+	salt := randomChannelSalt(t)
+	clientScheme := batchedclient.NewBatchSettlementEvmScheme(clientSigner, &batchedclient.BatchSettlementEvmSchemeOptions{
+		DepositMultiplier: 5,
+		Salt:              salt,
+	})
+	x402Client := x402.Newx402Client()
+	x402Client.Register(batchedTestNetwork, clientScheme)
+
+	facilitatorScheme := batchedfacilitator.NewBatchSettlementEvmScheme(facilitatorSigner, authorizerSigner)
+	x402Facilitator := x402.Newx402Facilitator()
+	x402Facilitator.Register([]x402.Network{batchedTestNetwork}, facilitatorScheme)
+	facClient := &localEvmFacilitatorClient{facilitator: x402Facilitator}
+
+	serverScheme := batchedserver.NewBatchSettlementEvmScheme(keys.receiver, &batchedserver.BatchSettlementEvmSchemeServerConfig{
+		ReceiverAuthorizerSigner: authorizerSigner,
+	})
+	x402Server := x402.Newx402ResourceServer(x402.WithFacilitatorClient(facClient))
+	x402Server.Register(batchedTestNetwork, serverScheme)
+	if err := x402Server.Initialize(ctx); err != nil {
+		t.Fatalf("server initialize: %v", err)
+	}
+
+	requirements := types.PaymentRequirements{
+		Scheme:            batchsettlement.SchemeBatched,
+		Network:           string(batchedTestNetwork),
+		Asset:             batchedTestUSDC,
+		Amount:            "1000",
+		PayTo:             keys.receiver,
+		MaxTimeoutSeconds: 3600,
+		Extra: map[string]interface{}{
+			"name":                "USDC",
+			"version":             "2",
+			"assetTransferMethod": "eip3009",
+			"receiverAuthorizer":  authorizerSigner.Address(),
+		},
+	}
+	accepts := []types.PaymentRequirements{requirements}
+	resource := batchedResourceInfo()
+
+	prr := x402Server.CreatePaymentRequiredResponse(accepts, resource, "", nil)
+	depositPayload, err := x402Client.CreatePaymentPayload(ctx, accepts[0], resource, prr.Extensions)
+	if err != nil {
+		t.Fatalf("createPaymentPayload: %v", err)
+	}
+	if pType, _ := depositPayload.Payload["type"].(string); pType != "deposit" {
+		t.Fatalf("expected payload type=deposit, got %v", depositPayload.Payload["type"])
+	}
+	accepted := x402Server.FindMatchingRequirements(accepts, depositPayload)
+	if accepted == nil {
+		t.Fatal("no matching requirements")
+	}
+
+	// Attempt 1: broadcast is real; the receipt wait is forced to fail
+	// regardless of real chain confirmation speed.
+	facilitatorSigner.forcePending.Store(true)
+
+	_, settleErr := x402Server.SettlePayment(ctx, depositPayload, *accepted, nil)
+	if settleErr == nil {
+		t.Fatal("Expected settlement_pending error from a deliberately forced receipt-wait failure, got nil error")
+	}
+	var se *x402.SettleError
+	if !errors.As(settleErr, &se) {
+		t.Fatalf("Expected a *x402.SettleError, got %T: %v", settleErr, settleErr)
+	}
+	if se.ErrorReason != evmmech.ErrSettlementPending {
+		t.Fatalf("Expected errorReason %q, got %q (%v)", evmmech.ErrSettlementPending, se.ErrorReason, se)
+	}
+	if se.Transaction == "" {
+		t.Fatal("Expected a broadcast transaction hash on the settlement_pending error")
+	}
+	firstTxHash := se.Transaction
+
+	// Attempt 2: identical deposit payload, receipt-waiting no longer forced
+	// to fail. Must reconcile against firstTxHash (pending-store hit) rather
+	// than re-verifying and re-broadcasting a second deposit.
+	facilitatorSigner.forcePending.Store(false)
+
+	settleResponse, settleErr := x402Server.SettlePayment(ctx, depositPayload, *accepted, nil)
+	if settleErr != nil {
+		t.Fatalf("Expected the reconciliation settle to succeed once the original deposit tx confirms, got error: %v", settleErr)
+	}
+	if !settleResponse.Success {
+		t.Fatalf("Expected reconciled deposit settlement to succeed, got: %+v", settleResponse)
+	}
+	if settleResponse.Transaction != firstTxHash {
+		t.Fatalf("Reconciliation must reuse the already-broadcast deposit transaction (no second broadcast): first=%s second=%s",
+			firstTxHash, settleResponse.Transaction)
+	}
 }

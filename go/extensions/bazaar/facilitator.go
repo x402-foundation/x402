@@ -23,6 +23,38 @@ type ValidationResult struct {
 	Errors []string
 }
 
+// hasExternalSchemaReference recursively scans a decoded JSON Schema document for "$ref"/"$id"
+// values that are not same-document fragments (i.e. do not start with "#").
+//
+// gojsonschema's default loader resolves any other form -- absolute http(s):// URLs, file://
+// URIs, or relative paths -- via an outbound HTTP request or filesystem read during schema
+// compilation, before the instance is ever validated. Since schema is client-controlled (it
+// arrives in the payment payload), any such value is treated as unsafe (CWE-918 SSRF / local
+// file disclosure).
+func hasExternalSchemaReference(node any) bool {
+	switch v := node.(type) {
+	case map[string]any:
+		for key, value := range v {
+			if key == "$ref" || key == "$id" {
+				str, ok := value.(string)
+				if !ok || !strings.HasPrefix(str, "#") {
+					return true
+				}
+			}
+			if hasExternalSchemaReference(value) {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range v {
+			if hasExternalSchemaReference(item) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ValidateDiscoveryExtension validates a discovery extension's info against its schema
 //
 // Args:
@@ -42,6 +74,19 @@ type ValidationResult struct {
 //	    fmt.Println("Validation errors:", result.Errors)
 //	}
 func ValidateDiscoveryExtension(extension types.DiscoveryExtension) ValidationResult {
+	// The schema is attacker-controlled (it arrives in the client's payment payload).
+	// gojsonschema's default loader resolves "$ref"/"$id" values via an outbound HTTP
+	// request or filesystem read during compilation, before the instance is ever checked
+	// (CWE-918 SSRF / local file read). Only same-document fragment references (e.g.
+	// "#/definitions/foo") are safe, since they resolve against the in-memory document
+	// instead of fetching anything.
+	if hasExternalSchemaReference(map[string]any(extension.Schema)) {
+		return ValidationResult{
+			Valid:  false,
+			Errors: []string{"schema must not contain external $ref/$id references"},
+		}
+	}
+
 	// Convert schema to JSON
 	schemaJSON, err := json.Marshal(extension.Schema)
 	if err != nil {

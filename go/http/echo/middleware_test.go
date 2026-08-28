@@ -32,6 +32,22 @@ func (m *mockSchemeServer) Scheme() string {
 	return m.scheme
 }
 
+func (m *mockSchemeServer) DefaultAssetTransferMethod() string {
+	return x402.SDKDefaultAssetTransferMethod
+}
+
+func (m *mockSchemeServer) PaymentFlows() map[string]x402.PaymentFlowConfig {
+	auth := x402.PaymentFlowConfig{
+		Supported: []x402.PaymentFlowName{x402.PaymentFlowAuthorization},
+		Default:   x402.PaymentFlowAuthorization,
+	}
+	return map[string]x402.PaymentFlowConfig{
+		x402.SDKDefaultAssetTransferMethod: auth,
+		"eip3009":                          auth,
+		"permit2":                          auth,
+	}
+}
+
 func (m *mockSchemeServer) ParsePrice(price x402.Price, network x402.Network) (x402.AssetAmount, error) {
 	return x402.AssetAmount{
 		Asset:  "USDC",
@@ -1471,5 +1487,80 @@ func TestValidateBazaarExtensions_MalformedExtension(t *testing.T) {
 	}
 	if !strings.Contains(output, "malformed") {
 		t.Errorf("Expected 'malformed' in warning output, got: %q", output)
+	}
+}
+
+// TestPaymentMiddleware_EncodedPathDoesNotBypassPaymentGate guards against a
+// path-equivalence bypass (CWE-436): Echo's router dispatches on the escaped
+// path, so a request carrying "%2F" in a ":param" segment reaches the protected
+// handler. If the middleware matched routes on the decoded URL.Path instead,
+// the encoded slash would split the segment, the route regex would miss, and
+// the paid handler would run with no payment verification or settlement.
+func TestPaymentMiddleware_EncodedPathDoesNotBypassPaymentGate(t *testing.T) {
+	bypassPaths := []string{
+		"/api/users/1",       // baseline: plainly protected
+		"/api/users/x%2Fy",   // encoded slash splits the :id segment
+		"/api/users/x%2fy",   // lowercase encoding
+		"/api/users/x%252Fy", // double encoding survives a second decode pass
+		"/api/users/x%5Cy",   // encoded backslash
+		"/api/premium/",      // wildcard route with a bare trailing slash
+		"/api/premium/a%2Fb", // wildcard route with an encoded slash
+	}
+
+	routes := x402http.RoutesConfig{
+		"GET /api/users/:id": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{Scheme: "exact", PayTo: "0xtest", Price: "$1.00", Network: "eip155:1"},
+			},
+		},
+		"GET /api/premium/*": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{Scheme: "exact", PayTo: "0xtest", Price: "$1.00", Network: "eip155:1"},
+			},
+		},
+	}
+
+	for _, path := range bypassPaths {
+		t.Run(path, func(t *testing.T) {
+			mockClient := &mockFacilitatorClient{
+				supportedFunc: func(ctx context.Context) (x402.SupportedResponse, error) {
+					return x402.SupportedResponse{
+						Kinds: []x402.SupportedKind{
+							{X402Version: 2, Scheme: "exact", Network: "eip155:1"},
+						},
+						Extensions: []string{},
+						Signers:    make(map[string][]string),
+					}, nil
+				},
+			}
+
+			e := createTestEcho()
+			e.Use(PaymentMiddlewareFromConfig(routes,
+				WithFacilitatorClient(mockClient),
+				WithScheme("eip155:1", &mockSchemeServer{scheme: "exact"}),
+				WithSyncFacilitatorOnStart(true),
+				WithTimeout(5*time.Second),
+			))
+
+			handlerRan := false
+			paidHandler := func(c echo.Context) error {
+				handlerRan = true
+				return c.JSON(http.StatusOK, map[string]interface{}{"data": "protected"})
+			}
+			e.GET("/api/users/:id", paidHandler)
+			e.GET("/api/premium/*", paidHandler)
+
+			req := httptest.NewRequest("GET", path, nil)
+			req.Header.Set("Accept", "application/json")
+			w := httptest.NewRecorder()
+			e.ServeHTTP(w, req)
+
+			if handlerRan {
+				t.Errorf("payment bypassed: paid handler ran for %s (status %d)", path, w.Code)
+			}
+			if w.Code != http.StatusPaymentRequired {
+				t.Errorf("Expected status 402 for %s, got %d", path, w.Code)
+			}
+		})
 	}
 }

@@ -1,4 +1,4 @@
-import type { PaymentPayload } from "@x402/core/types";
+import type { FacilitatorContext, PaymentPayload } from "@x402/core/types";
 import type { FacilitatorEvmSigner } from "../signer";
 
 export const EIP2612_GAS_SPONSORING_KEY = "eip2612GasSponsoring" as const;
@@ -37,6 +37,9 @@ export type TransactionRequest =
   | { to: `0x${string}`; data: `0x${string}`; gas?: bigint };
 
 export type Erc20ApprovalGasSponsoringSigner = FacilitatorEvmSigner & {
+  /**
+   * Returns one hash per request for sequential execution, or one hash for an atomic bundle.
+   */
   sendTransactions(transactions: TransactionRequest[]): Promise<`0x${string}`[]>;
   simulateTransactions?(transactions: TransactionRequest[]): Promise<boolean>;
 };
@@ -174,4 +177,33 @@ export function resolveErc20ApprovalExtensionSigner(
 ): Erc20ApprovalGasSponsoringSigner | undefined {
   if (!extension) return undefined;
   return extension.signerForNetwork?.(network) ?? extension.signer;
+}
+
+/**
+ * Resolves the signer that should wait for a Permit2 settlement receipt.
+ *
+ * When the ERC-20-approval-gas-sponsoring extension broadcast the settlement
+ * transaction, that extension's signer may be a different account/RPC context
+ * than the base facilitator signer, so the receipt must be awaited through it
+ * instead. Depends only on `payload.extensions` and `context`, so it can be
+ * resolved before verify runs (the pending-settlement fast path skips verify
+ * entirely and reconciles a previously-broadcast transaction directly).
+ *
+ * @param signer - The base facilitator signer.
+ * @param payload - The payment payload (read for its extensions).
+ * @param context - Optional facilitator context providing extension signers.
+ * @returns The signer that should be used to await the settlement receipt.
+ */
+export function resolvePermit2ReceiptWaitSigner(
+  signer: FacilitatorEvmSigner,
+  payload: PaymentPayload,
+  context: FacilitatorContext | undefined,
+): FacilitatorEvmSigner {
+  if (!context) return signer;
+  const erc20Info = extractErc20ApprovalGasSponsoringInfo(payload);
+  if (!erc20Info) return signer;
+  const extension = context.getExtension<Erc20ApprovalGasSponsoringFacilitatorExtension>(
+    ERC20_APPROVAL_GAS_SPONSORING_KEY,
+  );
+  return resolveErc20ApprovalExtensionSigner(extension, payload.accepted.network) ?? signer;
 }

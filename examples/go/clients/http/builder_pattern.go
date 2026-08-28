@@ -2,6 +2,7 @@ package main
 
 import (
 	x402 "github.com/x402-foundation/x402/go/v2"
+	authcaptureclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/auth-capture/client"
 	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
 	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/client"
 	exactsvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
@@ -38,6 +39,7 @@ func createBuilderPatternClient(evmPrivateKey, svmPrivateKey, evmRpcURL string) 
 	// Register EVM schemes for all EVM networks
 	client.Register("eip155:*", exactevm.NewExactEvmScheme(evmSigner, rpcConfig))
 	client.Register("eip155:*", uptoevm.NewUptoEvmScheme(evmSigner, rpcConfig))
+	client.Register("eip155:*", authcaptureclient.NewAuthCaptureEvmScheme(evmSigner))
 
 	// You can also register specific networks for fine-grained control
 	// For example, use a different signer for Ethereum mainnet:

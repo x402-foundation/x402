@@ -7,7 +7,10 @@
 // carry no policy/business semantics.
 package facilitator
 
-import batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
+import (
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
+)
 
 const (
 	// Payload parsing errors
@@ -88,7 +91,9 @@ const (
 	ErrSettleTransactionFailed  = "invalid_batch_settlement_evm_settle_transaction_failed"
 	ErrRefundTransactionFailed  = "invalid_batch_settlement_evm_refund_transaction_failed"
 	ErrTransactionReverted      = "invalid_batch_settlement_evm_transaction_reverted"
-	ErrWaitForReceipt           = "invalid_batch_settlement_evm_wait_for_receipt_failed"
+	// Reserved wire value; do not reassign.
+	ErrWaitForReceipt    = "invalid_batch_settlement_evm_wait_for_receipt_failed"
+	ErrSettlementPending = evm.ErrSettlementPending
 
 	// Simulation errors
 	ErrDepositSimulationFailed = "invalid_batch_settlement_evm_deposit_simulation_failed"

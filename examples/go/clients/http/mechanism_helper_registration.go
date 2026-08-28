@@ -2,9 +2,11 @@ package main
 
 import (
 	x402 "github.com/x402-foundation/x402/go/v2"
+	authcaptureclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/auth-capture/client"
 	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
 	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/client"
 	exactsvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
+	uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/client"
 	evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
 	svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
 )
@@ -38,6 +40,7 @@ func createMechanismHelperRegistrationClient(evmPrivateKey, svmPrivateKey, evmRp
 	// Register EVM schemes for all EVM networks using wildcard
 	client.Register("eip155:*", exactevm.NewExactEvmScheme(evmSigner, rpcConfig))
 	client.Register("eip155:*", uptoevm.NewUptoEvmScheme(evmSigner, rpcConfig))
+	client.Register("eip155:*", authcaptureclient.NewAuthCaptureEvmScheme(evmSigner))
 
 	// Register SVM scheme if key is provided
 	if svmPrivateKey != "" {
@@ -50,6 +53,7 @@ func createMechanismHelperRegistrationClient(evmPrivateKey, svmPrivateKey, evmRp
 		// This registers:
 		// - solana:* (all Solana networks in v2)
 		client.Register("solana:*", exactsvm.NewExactSvmScheme(svmSigner))
+		client.Register("solana:*", uptosvm.NewUptoSvmScheme(svmSigner, nil))
 	}
 
 	// The fluent API allows chaining for clean code:

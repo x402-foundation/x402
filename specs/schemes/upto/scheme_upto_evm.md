@@ -236,6 +236,8 @@ In this example, the buyer signed for up to `20000` atomic units. The resource s
 4.  **Zero Settlement:**
     If the settled `amount = 0`, no on-chain transaction is required. The authorization simply expires unused.
 
+If the settlement transaction broadcasts successfully but its confirmation cannot be established (e.g. a node/RPC error or timeout while waiting for the receipt), the facilitator MAY return `settlement_pending` (see [§9 Error Handling](../../x402-specification-v2.md#9-error-handling)) with the broadcast transaction hash in `transaction`, so the caller can reconcile on chain before retrying.
+
 **Example SettlementResponse:**
 
 ```json

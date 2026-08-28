@@ -1,4 +1,4 @@
-import { Network } from "../types";
+import { Money, Network } from "../types";
 
 /**
  * Converts a JavaScript number to a plain decimal string, expanding scientific notation
@@ -33,29 +33,58 @@ export function numberToDecimalString(n: number): string {
 }
 
 /**
- * Parses a money string into a finite, non-negative decimal number.
+ * Parses a money string into a finite, non-negative decimal string.
  * Accepts plain decimal strings with an optional leading dollar sign.
+ * Rejects ticker suffixes — use {@link parseMoney} when a symbol may be present.
  *
  * @param money - The money string to parse
- * @returns Decimal number
+ * @returns The cleaned decimal substring (no `$`, no ticker)
  */
-export function parseMoneyString(money: string): number {
+export function parseMoneyString(money: string): string {
   const cleaned = money.replace(/^\$/, "").trim();
-  if (!/^-?\d+(?:\.\d+)?$/.test(cleaned) || /[eE]/.test(cleaned)) {
+  if (!/^\d+(?:\.\d+)?$/.test(cleaned) || /[eE]/.test(cleaned)) {
+    throw new Error(`Invalid money format: ${money}`);
+  }
+  return cleaned;
+}
+
+/**
+ * Parse money into `{ amount, symbol? }`. `"1.50 USDT"` → symbol; `"1.50 USD"`
+ * and bare amounts have none. Glued tickers (`"1.50USDT"`) are rejected.
+ *
+ * String prices keep the extracted decimal substring. Number prices are
+ * stringified once via {@link numberToDecimalString}; digits already lost in
+ * the caller's `number` stay lost.
+ *
+ * @param money - Money value (string or number)
+ * @returns Parsed decimal-string amount and optional uppercase ticker
+ */
+export function parseMoney(money: Money): { amount: string; symbol?: string } {
+  if (typeof money === "number") {
+    if (!Number.isFinite(money) || money < 0) {
+      throw new Error(`Invalid money format: ${money}`);
+    }
+    return { amount: numberToDecimalString(money) };
+  }
+
+  const trimmed = money.trim();
+  const match = trimmed.match(/^\$?\s*(-?\d+(?:\.\d+)?)(?:\s+([A-Za-z][A-Za-z0-9.]*))?$/);
+  if (!match) {
     throw new Error(`Invalid money format: ${money}`);
   }
 
-  const amount = Number(cleaned);
-  if (!Number.isFinite(amount) || amount < 0) {
-    throw new Error(`Invalid money format: ${money}`);
+  const amount = parseMoneyString(match[1]);
+  const rawSymbol = match[2];
+  if (!rawSymbol || rawSymbol.toUpperCase() === "USD") {
+    return { amount };
   }
-  return amount;
+  return { amount, symbol: rawSymbol.toUpperCase() };
 }
 
 /**
  * Convert a decimal amount to token smallest units.
  * Accepts only plain decimal strings — scientific notation is not allowed.
- * Throws if the amount is non-zero but too small to represent with the given decimal precision.
+ * Pads or truncates toward zero, including to `"0"`. Does not round.
  *
  * @param decimalAmount - The decimal amount as a plain string (e.g., "0.10")
  * @param decimals - The number of decimals for the token (e.g., 6 for USDC)
@@ -72,13 +101,7 @@ export function convertToTokenAmount(decimalAmount: string, decimals: number): s
   }
   const [intPart, decPart = ""] = decimalAmount.split(".");
   const paddedDec = decPart.padEnd(decimals, "0").slice(0, decimals);
-  const tokenAmount = (intPart + paddedDec).replace(/^0+/, "") || "0";
-  if (tokenAmount === "0" && /[1-9]/.test(decimalAmount)) {
-    throw new Error(
-      `Amount ${decimalAmount} is too small to represent with ${decimals} decimal places`,
-    );
-  }
-  return tokenAmount;
+  return (intPart + paddedDec).replace(/^0+/, "") || "0";
 }
 
 /**
@@ -239,3 +262,51 @@ export function deepEqual(obj1: unknown, obj2: unknown): boolean {
     return JSON.stringify(obj1) === JSON.stringify(obj2);
   }
 }
+
+/**
+ * Coerces a value for array-aware merging/comparison: an array passes through
+ * unchanged, while a bare scalar is wrapped as a single-element array so it can
+ * merge or compare against an array declared on the other side (e.g. an
+ * extension field documented as "string or array of strings"). Returns
+ * undefined for values that cannot participate (null, undefined, objects).
+ *
+ * @param value - Value to coerce
+ * @returns The value as an array, or undefined if it cannot be treated as one
+ */
+export function toComparableArray(value: unknown): unknown[] | undefined {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (value === null || value === undefined || typeof value === "object") {
+    return undefined;
+  }
+  return [value];
+}
+
+/**
+ * Extension info fields, keyed by extension key, where a conflicting array
+ * value declared by both server and client is additive rather than exclusive:
+ * the client's merge concatenates both sides (client first, deduped, see
+ * `mergeArraysUnique`), and the server's echo validation accepts any echo that
+ * is a superset of the advertised value. Scoped narrowly per field (rather
+ * than making all array fields additive) so unrelated extensions - e.g.
+ * sign-in-with-x's `resources` - keep exact array matching in both directions.
+ */
+export const ADDITIVE_ARRAY_INFO_FIELDS: Record<string, ReadonlySet<string>> = {
+  "builder-code": new Set(["s"]),
+};
+
+/**
+ * Caps the combined echoed length of an additive array field (see
+ * {@link ADDITIVE_ARRAY_INFO_FIELDS}) so a hand-crafted payload cannot pad the
+ * field past the sum of every party's own reservation and later crowd out a
+ * legitimately declared entry once truncated further downstream (e.g. by a
+ * facilitator extension). Core has no dependency on extension packages, so
+ * this value (builder-code's `MAX_CLIENT_SERVICE_CODES` +
+ * `MAX_SERVER_SERVICE_CODES`) is duplicated from
+ * `packages/extensions/src/builder-code/types.ts` and must be kept in sync by
+ * hand.
+ */
+export const ADDITIVE_ARRAY_MAX_LENGTHS: Record<string, Record<string, number>> = {
+  "builder-code": { s: 10 },
+};

@@ -136,6 +136,11 @@ function buildExpectedEndpoint(
   if (endpoint.requiresPayment !== true) {
     return null;
   }
+  // Catalog route `extensions` is the source of truth for declaration; only
+  // routes that declare bazaar are expected in the discovery catalog.
+  if (!endpoint.extensions?.includes("bazaar")) {
+    return null;
+  }
 
   const serverTransport = server.config.transport ?? "http";
   const serverUrl = `http://localhost:${serverPort}`;
@@ -477,7 +482,7 @@ async function validateFacilitatorDiscovery(
  * const result = await handleDiscoveryValidation(
  *   facilitators.map(f => ({ proxy: f.proxy, config: f.config })),
  *   servers,
- *   new Map([['express', 4021], ['hono', 4022]]),
+ *   new Map([['typescript/http/express', 4021], ['typescript/http/hono', 4022]]),
  *   undefined,
  *   testedDiscoveryScenarios,
  * );

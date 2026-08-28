@@ -49,6 +49,41 @@ func (n Network) Match(pattern Network) bool {
 // Price represents a price that can be specified in various formats
 type Price interface{}
 
+// DefaultMaxAmountPerPayment is the default USD cap for recognized default assets.
+const DefaultMaxAmountPerPayment = "$1"
+
+// DefaultAsset is a USD-pegged asset used for money strings and client spend caps.
+type DefaultAsset struct {
+	Asset    string
+	Decimals int
+	Symbol   string
+}
+
+// SpendControlAsset is an opt-in asset for SpendControls.AllowedAssets.
+// Default assets are always allowed; list non-default tokens here (and optional atomic caps).
+type SpendControlAsset struct {
+	Network Network
+	// Asset is an onchain asset id, or a default-asset symbol (e.g. "PYUSD").
+	Asset string
+	// MaxAmountPerPayment is an optional atomic per-payment cap. Empty means unset.
+	MaxAmountPerPayment string
+}
+
+// SpendControls are client spend controls enforced before policies.
+// By default only assets FindDefaultAsset recognizes are allowed, capped at
+// DefaultMaxAmountPerPayment. Disable with DisableSpendControls.
+type SpendControls struct {
+	// MaxAmountPerPayment is the per-payment USD cap on assets FindDefaultAsset recognizes.
+	// Empty means DefaultMaxAmountPerPayment. Disable with DisableMaxAmountPerPayment.
+	MaxAmountPerPayment string
+	// DisableMaxAmountPerPayment disables the USD cap (TS maxAmountPerPayment: false).
+	DisableMaxAmountPerPayment bool
+	// AllowAnyAsset allows any asset (USD cap still applies to defaults).
+	AllowAnyAsset bool
+	// AllowedAssets lists opt-in non-default assets (ignored when AllowAnyAsset is set).
+	AllowedAssets []SpendControlAsset
+}
+
 // AssetAmount represents an amount of a specific asset
 type AssetAmount struct {
 	Asset  string                 `json:"asset"`

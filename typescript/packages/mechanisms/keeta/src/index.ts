@@ -16,6 +16,15 @@ export type { ExactKeetaPayload } from "./types";
 // Export constants
 export * from "./constants";
 
+export {
+  DEFAULT_ASSETS,
+  getDefaultAsset,
+  findDefaultAsset,
+  USDC_MAINNET_ADDRESS,
+  USDC_TESTNET_ADDRESS,
+  type KeetaDefaultAsset,
+} from "./defaultAssets";
+
 // Export utilities
 export {
   getUsdcAddress,

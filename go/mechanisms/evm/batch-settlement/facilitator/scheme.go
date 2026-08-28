@@ -25,6 +25,7 @@ type BatchSettlementEvmScheme struct {
 	signer           evm.FacilitatorEvmSigner
 	authorizerSigner batchsettlement.AuthorizerSigner
 	config           BatchSettlementEvmSchemeConfig
+	pendingStore     x402.PendingSettlementStore
 }
 
 // NewBatchSettlementEvmScheme creates a new batch settlement facilitator scheme.
@@ -34,7 +35,11 @@ type BatchSettlementEvmScheme struct {
 // server omits signatures from the payload. When nil, no receiverAuthorizer is
 // advertised and servers must supply their own authorizer signatures.
 func NewBatchSettlementEvmScheme(signer evm.FacilitatorEvmSigner, authorizerSigner batchsettlement.AuthorizerSigner) *BatchSettlementEvmScheme {
-	return &BatchSettlementEvmScheme{signer: signer, authorizerSigner: authorizerSigner}
+	return &BatchSettlementEvmScheme{
+		signer:           signer,
+		authorizerSigner: authorizerSigner,
+		pendingStore:     x402.NewInMemoryPendingSettlementStore(),
+	}
 }
 
 // NewBatchSettlementEvmSchemeWithConfig creates a batch settlement facilitator scheme with
@@ -46,11 +51,27 @@ func NewBatchSettlementEvmSchemeWithConfig(
 	authorizerSigner batchsettlement.AuthorizerSigner,
 	config *BatchSettlementEvmSchemeConfig,
 ) *BatchSettlementEvmScheme {
-	s := &BatchSettlementEvmScheme{signer: signer, authorizerSigner: authorizerSigner}
+	s := &BatchSettlementEvmScheme{
+		signer:           signer,
+		authorizerSigner: authorizerSigner,
+		pendingStore:     x402.NewInMemoryPendingSettlementStore(),
+	}
 	if config != nil {
 		s.config = *config
 	}
 	return s
+}
+
+// SetPendingSettlementStore overrides the default in-memory PendingSettlementStore
+// used to reconcile deposit transactions that broadcast successfully but returned
+// settlement_pending (e.g. a receipt-wait timeout). Only the deposit settle path
+// consults this store; claim/settle/refund are single-signature onchain calls with
+// no equivalent broadcast-then-reconcile flow. A nil store is a no-op, preserving
+// the default in-memory instance.
+func (f *BatchSettlementEvmScheme) SetPendingSettlementStore(store x402.PendingSettlementStore) {
+	if store != nil {
+		f.pendingStore = store
+	}
 }
 
 // Scheme returns the scheme identifier.
@@ -154,7 +175,7 @@ func (f *BatchSettlementEvmScheme) Settle(
 			return nil, x402.NewSettleError(ErrInvalidDepositPayload, "", network, "",
 				fmt.Sprintf("failed to parse deposit payload: %s", err))
 		}
-		return SettleDeposit(ctx, f.signer, depositPayload, requirements, payload.Extensions, fctx, dataSuffix, f.config.EIP6492AllowedFactories)
+		return SettleDeposit(ctx, f.signer, depositPayload, requirements, payload.Extensions, fctx, dataSuffix, f.config.EIP6492AllowedFactories, f.pendingStore)
 	}
 
 	// Enriched refund settle-action (must be checked BEFORE plain claim, since both

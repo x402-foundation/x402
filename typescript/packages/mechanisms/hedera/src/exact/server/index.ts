@@ -1,2 +1,2 @@
 export { ExactHederaScheme } from "./scheme";
-export type { HederaServerConfig, HederaDefaultAssetConfig } from "./scheme";
+export type { HederaServerConfig, HederaServerDefaultAsset } from "./scheme";

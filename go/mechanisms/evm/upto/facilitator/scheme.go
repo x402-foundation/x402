@@ -17,8 +17,9 @@ type UptoEvmSchemeConfig struct {
 // UptoEvmScheme implements the SchemeNetworkFacilitator interface for EVM upto payments (V2).
 // Only supports Permit2 (no EIP-3009 path).
 type UptoEvmScheme struct {
-	signer evm.FacilitatorEvmSigner
-	config UptoEvmSchemeConfig
+	signer       evm.FacilitatorEvmSigner
+	config       UptoEvmSchemeConfig
+	pendingStore x402.PendingSettlementStore
 }
 
 func NewUptoEvmScheme(signer evm.FacilitatorEvmSigner, config *UptoEvmSchemeConfig) *UptoEvmScheme {
@@ -27,8 +28,18 @@ func NewUptoEvmScheme(signer evm.FacilitatorEvmSigner, config *UptoEvmSchemeConf
 		cfg = *config
 	}
 	return &UptoEvmScheme{
-		signer: signer,
-		config: cfg,
+		signer:       signer,
+		config:       cfg,
+		pendingStore: x402.NewInMemoryPendingSettlementStore(),
+	}
+}
+
+// SetPendingSettlementStore overrides the default in-memory
+// PendingSettlementStore. See ExactEvmScheme.SetPendingSettlementStore for
+// rationale. A nil store is a no-op.
+func (f *UptoEvmScheme) SetPendingSettlementStore(store x402.PendingSettlementStore) {
+	if store != nil {
+		f.pendingStore = store
 	}
 }
 
@@ -95,5 +106,5 @@ func (f *UptoEvmScheme) Settle(
 		return nil, x402.NewSettleError(ErrUptoInvalidPayload, "", network, "", fmt.Sprintf("failed to parse upto Permit2 payload: %s", err.Error()))
 	}
 
-	return SettleUptoPermit2(ctx, f.signer, payload, requirements, permit2Payload, fctx, f.config.SimulateInSettle)
+	return SettleUptoPermit2(ctx, f.signer, payload, requirements, permit2Payload, fctx, f.config.SimulateInSettle, f.pendingStore)
 }

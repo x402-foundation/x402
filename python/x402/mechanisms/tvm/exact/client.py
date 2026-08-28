@@ -27,6 +27,7 @@ from ..constants import (
     W5_EXTERNAL_SIGNED_OPCODE,
     W5_INTERNAL_SIGNED_OPCODE,
 )
+from ..default_assets import find_default_asset
 from ..provider import TvmProviderClient, create_tvm_provider_client
 from ..signer import ClientTvmSigner
 from ..trace_utils import (
@@ -51,6 +52,7 @@ class ExactTvmScheme:
     """TVM client implementation for the Exact payment scheme (V2)."""
 
     scheme = SCHEME_EXACT
+    find_default_asset = staticmethod(find_default_asset)
 
     def __init__(self, signer: ClientTvmSigner) -> None:
         self._signer = signer

@@ -117,6 +117,22 @@ def build_payload(requirements: PaymentRequirements | None = None) -> PaymentPay
     )
 
 
+class _HookSchemeServer:
+    scheme = "exact"
+    default_asset_transfer_method = "default"
+    payment_flows = {
+        "default": {"supported": ("authorization",), "default": "authorization"},
+    }
+
+    def parse_price(self, price, network):
+        from x402.schemas import AssetAmount
+
+        return AssetAmount(amount="1000000", asset="0x0000000000000000000000000000000000000000")
+
+    def enhance_payment_requirements(self, requirements, supported_kind, extensions):
+        return requirements
+
+
 @pytest.fixture(params=["async", "sync"])
 def server(request):
     if request.param == "async":
@@ -126,6 +142,7 @@ def server(request):
         client = MockFacilitatorClientSync()
         resource_server = x402ResourceServerSync(client)
 
+    resource_server.register("eip155:8453", _HookSchemeServer())
     resource_server.initialize()
     return resource_server, client
 

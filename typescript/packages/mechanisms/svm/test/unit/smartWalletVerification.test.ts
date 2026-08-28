@@ -3,7 +3,9 @@ import {
   assertFeePayerIsolated,
   validateComputeBudgetLimits,
   extractTransfersFromInnerInstructions,
+  verifySmartWalletTransaction,
 } from "../../src/exact/facilitator/smartWalletVerification";
+import * as Errors from "../../src/exact/facilitator/errors";
 import {
   appendTransactionMessageInstruction,
   createTransactionMessage,
@@ -74,7 +76,7 @@ describe("assertFeePayerIsolated", () => {
     ]);
 
     await expect(assertFeePayerIsolated(tx as never, feePayer.address)).rejects.toThrow(
-      "smart_wallet_fee_payer_not_isolated",
+      Errors.ErrSmartWalletFeePayerNotIsolated,
     );
   });
 
@@ -99,7 +101,7 @@ describe("assertFeePayerIsolated", () => {
     ]);
 
     await expect(assertFeePayerIsolated(tx as never, feePayer.address)).rejects.toThrow(
-      "smart_wallet_fee_payer_not_isolated",
+      Errors.ErrSmartWalletFeePayerNotIsolated,
     );
   });
 });
@@ -121,6 +123,23 @@ function buildSetComputeUnitPrice(microLamports: bigint): Uint8Array {
 }
 
 describe("validateComputeBudgetLimits", () => {
+  it.each([
+    ["maxComputeUnits", NaN, "smartWalletMaxComputeUnits"],
+    ["maxComputeUnits", Infinity, "smartWalletMaxComputeUnits"],
+    ["maxComputeUnits", 1.5, "smartWalletMaxComputeUnits"],
+    ["maxComputeUnits", 0, "smartWalletMaxComputeUnits"],
+    ["maxPriorityFeeMicroLamports", NaN, "smartWalletMaxPriorityFeeMicroLamports"],
+    ["maxPriorityFeeMicroLamports", Infinity, "smartWalletMaxPriorityFeeMicroLamports"],
+    ["maxPriorityFeeMicroLamports", 1.5, "smartWalletMaxPriorityFeeMicroLamports"],
+    ["maxPriorityFeeMicroLamports", -1, "smartWalletMaxPriorityFeeMicroLamports"],
+  ])("rejects %s = %s for direct callers", (option, value, expectedError) => {
+    // The empty transaction proves limit validation runs before message decoding;
+    // otherwise this would fail with an unrelated decoder error.
+    expect(() => validateComputeBudgetLimits({} as never, { [option]: value } as never)).toThrow(
+      expectedError,
+    );
+  });
+
   it("passes when CU and priority fee are within defaults", async () => {
     const feePayer = await generateKeyPairSigner();
 
@@ -149,7 +168,7 @@ describe("validateComputeBudgetLimits", () => {
     ]);
 
     expect(() => validateComputeBudgetLimits(tx as never)).toThrow(
-      "smart_wallet_compute_units_too_high",
+      Errors.ErrSmartWalletComputeUnitsTooHigh,
     );
   });
 
@@ -164,7 +183,7 @@ describe("validateComputeBudgetLimits", () => {
     ]);
 
     expect(() => validateComputeBudgetLimits(tx as never)).toThrow(
-      "smart_wallet_priority_fee_too_high",
+      Errors.ErrSmartWalletPriorityFeeTooHigh,
     );
   });
 
@@ -195,7 +214,7 @@ describe("validateComputeBudgetLimits", () => {
       validateComputeBudgetLimits(tx as never, {
         maxComputeUnits: 100_000,
       }),
-    ).toThrow("smart_wallet_compute_units_too_high");
+    ).toThrow(Errors.ErrSmartWalletComputeUnitsTooHigh);
   });
 
   it("rejects unknown ComputeBudget instruction type", async () => {
@@ -212,7 +231,7 @@ describe("validateComputeBudgetLimits", () => {
     ]);
 
     expect(() => validateComputeBudgetLimits(tx as never)).toThrow(
-      "smart_wallet_unsupported_compute_budget_instruction",
+      Errors.ErrSmartWalletUnsupportedComputeBudget,
     );
   });
 
@@ -227,8 +246,22 @@ describe("validateComputeBudgetLimits", () => {
     ]);
 
     expect(() => validateComputeBudgetLimits(tx as never)).toThrow(
-      "smart_wallet_malformed_compute_budget",
+      Errors.ErrSmartWalletMalformedComputeBudget,
     );
+  });
+});
+
+describe("verifySmartWalletTransaction configuration", () => {
+  it.each([
+    ["maxComputeUnits", NaN, "smartWalletMaxComputeUnits"],
+    ["maxPriorityFeeMicroLamports", NaN, "smartWalletMaxPriorityFeeMicroLamports"],
+  ])("propagates %s configuration errors", async (option, value, expectedError) => {
+    await expect(
+      verifySmartWalletTransaction("invalid transaction", {} as never, {} as never, "", [], {
+        enabled: true,
+        [option]: value,
+      } as never),
+    ).rejects.toThrow(expectedError);
   });
 });
 
@@ -432,6 +465,9 @@ describe("verifyPostSettlement", () => {
 
     const mockSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -480,6 +516,9 @@ describe("verifyPostSettlement", () => {
 
     const mockSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -514,6 +553,9 @@ describe("verifyPostSettlement", () => {
 
     const mockSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -542,6 +584,9 @@ describe("verifyPostSettlement", () => {
 
     const mockSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -570,6 +615,9 @@ describe("verifyPostSettlement", () => {
 
     const mockSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -598,6 +646,9 @@ describe("verifyPostSettlement", () => {
 
     const mockSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -630,6 +681,9 @@ describe("verifyPostSettlement", () => {
 
     const mockSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -663,6 +717,9 @@ describe("verifyPostSettlement", () => {
     let callCount = 0;
     const mockSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -701,6 +758,9 @@ describe("verifyPostSettlement", () => {
     let callCount = 0;
     const mockSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -730,11 +790,90 @@ describe("verifyPostSettlement", () => {
 });
 
 describe("ExactSvmScheme constructor enforcement", () => {
+  it.each([
+    ["smartWalletMaxComputeUnits", NaN],
+    ["smartWalletMaxComputeUnits", Infinity],
+    ["smartWalletMaxComputeUnits", 1.5],
+    ["smartWalletMaxComputeUnits", 0],
+    ["smartWalletMaxPriorityFeeMicroLamports", NaN],
+    ["smartWalletMaxPriorityFeeMicroLamports", Infinity],
+    ["smartWalletMaxPriorityFeeMicroLamports", 1.5],
+    ["smartWalletMaxPriorityFeeMicroLamports", -1],
+  ])("throws when %s is %s", async (option, value) => {
+    const { ExactSvmScheme } = await import("../../src/exact/facilitator/scheme");
+    const completeSigner = {
+      getAddresses: () => [],
+      signTransaction: async () => "",
+      simulateTransaction: async () => {},
+      sendTransaction: async () => "",
+      confirmTransaction: async () => {},
+      simulateTransactionWithInnerInstructions: async () => ({ innerInstructions: null }),
+      getConfirmedTransactionInnerInstructions: async () => null,
+      getTokenAccountBalance: async () => null,
+      fetchAddressLookupTables: async () => ({}),
+    };
+
+    expect(
+      () =>
+        new ExactSvmScheme(completeSigner as never, undefined, {
+          enableSmartWalletVerification: true,
+          [option]: value as number,
+        }),
+    ).toThrow(option);
+  });
+
+  it("accepts the minimum smart wallet limits", async () => {
+    const { ExactSvmScheme } = await import("../../src/exact/facilitator/scheme");
+    const completeSigner = {
+      getAddresses: () => [],
+      signTransaction: async () => "",
+      simulateTransaction: async () => {},
+      sendTransaction: async () => "",
+      confirmTransaction: async () => {},
+      simulateTransactionWithInnerInstructions: async () => ({ innerInstructions: null }),
+      getConfirmedTransactionInnerInstructions: async () => null,
+      getTokenAccountBalance: async () => null,
+      fetchAddressLookupTables: async () => ({}),
+    };
+
+    expect(
+      () =>
+        new ExactSvmScheme(completeSigner as never, undefined, {
+          enableSmartWalletVerification: true,
+          smartWalletMaxComputeUnits: 1,
+          smartWalletMaxPriorityFeeMicroLamports: 0,
+        }),
+    ).not.toThrow();
+  });
+
+  it("ignores dormant smart wallet limits when verification is disabled", async () => {
+    const { ExactSvmScheme } = await import("../../src/exact/facilitator/scheme");
+    const minimalSigner = {
+      getAddresses: () => [],
+      signTransaction: async () => "",
+      simulateTransaction: async () => {},
+      sendTransaction: async () => "",
+      confirmTransaction: async () => {},
+    };
+
+    expect(
+      () =>
+        new ExactSvmScheme(minimalSigner as never, undefined, {
+          enableSmartWalletVerification: false,
+          smartWalletMaxComputeUnits: NaN,
+          smartWalletMaxPriorityFeeMicroLamports: NaN,
+        }),
+    ).not.toThrow();
+  });
+
   it("throws when signer missing required methods for smart wallet verification", async () => {
     const { ExactSvmScheme } = await import("../../src/exact/facilitator/scheme");
 
     const incompleteSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -746,7 +885,7 @@ describe("ExactSvmScheme constructor enforcement", () => {
         new ExactSvmScheme(incompleteSigner as never, undefined, {
           enableSmartWalletVerification: true,
         }),
-    ).toThrow("enableSmartWalletVerification requires");
+    ).toThrow("ExactSvmScheme requires simulateTransactionWithInnerInstructions on the signer");
   });
 
   it("throws when signer has the other methods but lacks fetchAddressLookupTables", async () => {
@@ -756,6 +895,9 @@ describe("ExactSvmScheme constructor enforcement", () => {
     // because ALT-using wallets would otherwise fail later at verify time.
     const signerMissingAlt = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -770,7 +912,7 @@ describe("ExactSvmScheme constructor enforcement", () => {
         new ExactSvmScheme(signerMissingAlt as never, undefined, {
           enableSmartWalletVerification: true,
         }),
-    ).toThrow("enableSmartWalletVerification requires fetchAddressLookupTables");
+    ).toThrow("ExactSvmScheme requires fetchAddressLookupTables on the signer");
   });
 
   it("succeeds when signer has all required methods", async () => {
@@ -778,6 +920,9 @@ describe("ExactSvmScheme constructor enforcement", () => {
 
     const completeSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -801,6 +946,9 @@ describe("ExactSvmScheme constructor enforcement", () => {
 
     const minimalSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -870,6 +1018,7 @@ describe("assertFeePayerIsolated ALT handling", () => {
 
     const signerWithoutALT = {
       getAddresses: () => [feePayer.address],
+      getSigner: () => feePayer as never,
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -883,7 +1032,7 @@ describe("assertFeePayerIsolated ALT handling", () => {
         signerWithoutALT as never,
         "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
       ),
-    ).rejects.toThrow("smart_wallet_alt_resolution_not_available");
+    ).rejects.toThrow(Errors.ErrSmartWalletAltResolutionUnavailable);
   });
 
   it("catches fee payer hidden in ALT-resolved accounts", async () => {
@@ -925,6 +1074,7 @@ describe("assertFeePayerIsolated ALT handling", () => {
 
     const signerWithALT = {
       getAddresses: () => [feePayer.address],
+      getSigner: () => feePayer as never,
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -941,7 +1091,7 @@ describe("assertFeePayerIsolated ALT handling", () => {
         signerWithALT as never,
         "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
       ),
-    ).rejects.toThrow("smart_wallet_fee_payer_not_isolated");
+    ).rejects.toThrow(Errors.ErrSmartWalletFeePayerNotIsolated);
   });
 
   it("propagates ALT resolution failure instead of treating it as no ALTs", async () => {
@@ -986,12 +1136,13 @@ describe("assertFeePayerIsolated ALT handling", () => {
     // isolation check fails closed rather than proceeding with unresolved accounts.
     const signerWithFailingALT = {
       getAddresses: () => [feePayer.address],
+      getSigner: () => feePayer as never,
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
       confirmTransaction: async () => {},
       fetchAddressLookupTables: async () => {
-        throw new Error("smart_wallet_alt_resolution_failed: rpc unavailable");
+        throw new Error(`${Errors.ErrSmartWalletAltResolutionFailed}: rpc unavailable`);
       },
     };
 
@@ -1002,6 +1153,6 @@ describe("assertFeePayerIsolated ALT handling", () => {
         signerWithFailingALT as never,
         "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
       ),
-    ).rejects.toThrow("smart_wallet_alt_resolution_failed");
+    ).rejects.toThrow(Errors.ErrSmartWalletAltResolutionFailed);
   });
 });

@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import TypedDict, cast
+
+from typing_extensions import NotRequired
 
 try:
     from eth_utils import to_checksum_address
@@ -12,15 +16,18 @@ except ImportError as e:
         "EVM mechanism requires ethereum packages. Install with: pip install x402[evm]"
     ) from e
 
-from .....schemas import PaymentRequirements, SettleResponse
+from .....http.utils import decode_payment_response_header
+from .....schemas import PaymentRequirements
 from ....evm.signer import ClientEvmSigner, ClientEvmSignerWithReadContract
 from ..abi import BATCH_SETTLEMENT_ABI
 from ..constants import BATCH_SETTLEMENT_ADDRESS, MIN_WITHDRAW_DELAY
-from ..types import ChannelConfig, ChannelStateExtra
+from ..types import ChannelConfig
 from ..utils import compute_channel_id
 from .storage import BatchSettlementClientContext, ClientChannelStorage
 
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
+
+_NON_NEGATIVE_INT = re.compile(r"^\d+$")
 
 
 @dataclass
@@ -34,16 +41,28 @@ class BatchSettlementClientDeps:
     voucher_signer: ClientEvmSigner | None = None
 
 
-def _read_response_channel_state(extra: dict[str, Any] | None) -> ChannelStateExtra | None:
-    if not isinstance(extra, dict):
-        return None
-    cs = extra.get("channelState")
-    if not isinstance(cs, dict):
-        return None
-    try:
-        return ChannelStateExtra.from_dict(cs)
-    except (KeyError, ValueError):
-        return None
+class ChannelSettleLocal(TypedDict):
+    """Local inputs for applying a deposit or voucher settle.
+
+    `request_amount` is the per-request maximum (`PaymentRequirements.amount`);
+    the voucher ceiling was `charged_cumulative_amount + request_amount`.
+    `deposit_amount` is `payload.deposit.amount` for this payment and is added to
+    previous local `balance` after settle. Omit it on voucher-only.
+    """
+
+    channel_id: str
+    request_amount: str
+    deposit_amount: NotRequired[str]
+
+
+class _ChannelSettleServer(TypedDict, total=False):
+    charged_amount: str
+    charged_cumulative_amount: str
+
+
+class _ChannelSettleInput(TypedDict):
+    server: _ChannelSettleServer
+    local: ChannelSettleLocal
 
 
 def build_channel_config(
@@ -78,26 +97,54 @@ def build_channel_config(
     )
 
 
-def process_settle_response(
+def update_channel_from_settle(
     storage: ClientChannelStorage,
-    settle: SettleResponse,
+    input: _ChannelSettleInput,
 ) -> None:
-    """Update local channel state from a parsed `SettleResponse`."""
-    extra = settle.extra or {}
-    channel_state = _read_response_channel_state(extra)
-    if channel_state is None:
+    """Update local channel state after a deposit or voucher settle.
+
+    Next cumulative is previous local `charged_cumulative_amount` plus
+    `server.charged_amount` (capped at `local.request_amount`). Next balance is
+    previous local `balance` plus `local.deposit_amount` when present;
+    voucher-only leaves balance unchanged. The write is skipped when extra
+    `charged_cumulative_amount` is present and is not a non-negative integer
+    equal to that next cumulative. Server `channelState` fields are never copied.
+    """
+    server = input["server"]
+    local = input["local"]
+    charged_amount = 0
+    if "charged_amount" in server:
+        raw_charged = server["charged_amount"]
+        if not _NON_NEGATIVE_INT.match(raw_charged):
+            raise ValueError("invalid chargedAmount: not a non-negative integer")
+        charged_amount = int(raw_charged)
+    request_amount = int(local["request_amount"])
+    if charged_amount > request_amount:
+        raise ValueError("settle response chargedAmount exceeds PaymentRequirements.amount")
+
+    key = local["channel_id"].lower()
+    previous = storage.get(key)
+    deposit_amount = None if "deposit_amount" not in local else int(local["deposit_amount"])
+
+    if previous is None and charged_amount == 0 and deposit_amount is None:
         return
 
-    key = channel_state.channel_id.lower()
-    prev = storage.get(key)
-    nxt = prev.copy() if prev is not None else BatchSettlementClientContext()
+    previous_charged = previous.charged_cumulative_amount if previous is not None else None
+    next_charged_cumulative = int(previous_charged or "0") + charged_amount
+    if "charged_cumulative_amount" in server:
+        raw_cumulative = server["charged_cumulative_amount"]
+        if (
+            not _NON_NEGATIVE_INT.match(raw_cumulative)
+            or int(raw_cumulative) != next_charged_cumulative
+        ):
+            return
 
-    if channel_state.charged_cumulative_amount is not None:
-        nxt.charged_cumulative_amount = str(channel_state.charged_cumulative_amount)
-    if channel_state.balance is not None:
-        nxt.balance = str(channel_state.balance)
-    if channel_state.total_claimed is not None:
-        nxt.total_claimed = str(channel_state.total_claimed)
+    nxt = previous.copy() if previous is not None else BatchSettlementClientContext()
+    nxt.charged_cumulative_amount = str(next_charged_cumulative)
+
+    if deposit_amount is not None:
+        previous_balance = int(previous.balance or "0") if previous is not None else 0
+        nxt.balance = str(previous_balance + deposit_amount)
 
     storage.set(key, nxt)
 
@@ -105,34 +152,78 @@ def process_settle_response(
 def update_channel_after_refund(
     storage: ClientChannelStorage,
     channel_key: str,
-    settle_extra: dict[str, Any] | None,
+    refund_amount: str | None = None,
 ) -> None:
-    """Reconcile local channel state with the outcome of a cooperative refund.
+    """Update local channel state after a cooperative refund the client signed.
 
-    After a partial refund updates local balance from the server snapshot.
-    After a full refund (balance == 0) keeps a sentinel record so subsequent
-    refund attempts fail locally with "no remaining balance" rather than
-    triggering unnecessary network I/O.
+    Omitted `refund_amount` is a full refund: delete the local record. Otherwise
+    the signed amount is capped to the locally expected refundable balance.
+    Delete the record when that drains the refundable balance; otherwise subtract
+    the effective refund from balance. Cumulative is unchanged, and server
+    `channelState` is not an input.
     """
-    channel_state = _read_response_channel_state(settle_extra)
-    if channel_state is None:
+    if refund_amount is None:
         storage.delete(channel_key)
         return
 
-    try:
-        balance_after = int(channel_state.balance)
-    except (ValueError, TypeError):
+    amount = int(refund_amount)
+    previous = storage.get(channel_key)
+    previous_balance = int(previous.balance or "0") if previous is not None else 0
+    charged_cumulative_amount = (
+        int(previous.charged_cumulative_amount or "0") if previous is not None else 0
+    )
+    refundable_balance = (
+        previous_balance - charged_cumulative_amount
+        if previous_balance > charged_cumulative_amount
+        else 0
+    )
+    if amount >= refundable_balance:
         storage.delete(channel_key)
         return
 
-    prev = storage.get(channel_key)
-    nxt = prev.copy() if prev is not None else BatchSettlementClientContext()
-    nxt.balance = str(balance_after)
-    if channel_state.charged_cumulative_amount is not None:
-        nxt.charged_cumulative_amount = str(channel_state.charged_cumulative_amount)
-    if channel_state.total_claimed is not None:
-        nxt.total_claimed = str(channel_state.total_claimed)
+    nxt = previous.copy() if previous is not None else BatchSettlementClientContext()
+    nxt.balance = str(previous_balance - amount)
     storage.set(channel_key, nxt)
+
+
+def process_payment_response(
+    storage: ClientChannelStorage,
+    get_header: Callable[[str], str | None],
+    local: ChannelSettleLocal,
+) -> None:
+    """Process the `PAYMENT-RESPONSE` header after a successful request.
+
+    Decodes the untrusted header and delegates to `update_channel_from_settle`
+    with server `chargedAmount`, optional extra cumulative, and the caller-supplied
+    local channel inputs.
+    """
+    raw = get_header("PAYMENT-RESPONSE")
+    if not raw:
+        return
+
+    settle = decode_payment_response_header(raw)
+    if not settle.success:
+        return
+
+    extra = settle.extra
+    charged_amount: str | None = None
+    if extra is not None and "chargedAmount" in extra:
+        raw_charged = extra["chargedAmount"]
+        if not isinstance(raw_charged, str):
+            raise ValueError("invalid chargedAmount: not a non-negative integer")
+        charged_amount = raw_charged
+    channel_state = extra.get("channelState") if extra else None
+    charged_cumulative: str | None = None
+    if isinstance(channel_state, dict):
+        raw_cumulative = channel_state.get("chargedCumulativeAmount")
+        if isinstance(raw_cumulative, str):
+            charged_cumulative = raw_cumulative
+    server: _ChannelSettleServer = {}
+    if charged_amount is not None:
+        server["charged_amount"] = charged_amount
+    if charged_cumulative is not None:
+        server["charged_cumulative_amount"] = charged_cumulative
+    update_channel_from_settle(storage, {"server": server, "local": local})
 
 
 def read_channel_balance_and_total_claimed(
@@ -193,9 +284,11 @@ def get_channel(
 
 __all__ = [
     "BatchSettlementClientDeps",
+    "ChannelSettleLocal",
     "build_channel_config",
-    "process_settle_response",
+    "process_payment_response",
     "update_channel_after_refund",
+    "update_channel_from_settle",
     "read_channel_balance_and_total_claimed",
     "recover_channel",
     "has_channel",

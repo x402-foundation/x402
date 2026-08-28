@@ -10,6 +10,7 @@ These must be funded accounts on Base Sepolia with USDC.
 """
 
 import os
+from decimal import Decimal
 
 import pytest
 from eth_account import Account
@@ -47,6 +48,7 @@ from x402.schemas import (
     SupportedResponse,
     VerifyResponse,
 )
+from x402.schemas.helpers import convert_to_token_amount
 
 # =============================================================================
 # Environment Variable Loading
@@ -213,9 +215,13 @@ class TestEvmIntegrationV2:
         self.facilitator_address = self.facilitator_signer.address
 
         # Create client with EVM scheme using EthAccountSigner
-        self.client = x402ClientSync().register(
-            "eip155:84532",
-            ExactEvmClientScheme(self.client_signer),
+        self.client = (
+            x402ClientSync()
+            .register(
+                "eip155:84532",
+                ExactEvmClientScheme(self.client_signer),
+            )
+            .set_spend_controls(False)
         )
 
         # Create facilitator with EVM scheme using FacilitatorWeb3Signer
@@ -474,12 +480,12 @@ class TestEvmPriceParsing:
         """Test registering custom money parser."""
 
         # Register custom parser for large amounts
-        def large_amount_parser(amount: float, network: str):
-            if amount > 100:
+        def large_amount_parser(amount: str | int | float, network: str):
+            if Decimal(str(amount)) > 100:
                 from x402.schemas import AssetAmount
 
                 return AssetAmount(
-                    amount=str(int(amount * 1e18)),  # DAI has 18 decimals
+                    amount=convert_to_token_amount(str(amount), 18),  # DAI has 18 decimals
                     asset="0x6B175474E89094C44Da98b954EedeAC495271d0F",
                     extra={"token": "DAI", "tier": "large"},
                 )
@@ -763,6 +769,7 @@ class TestEvmUptoIntegrationV2:
         # Register both exact and upto
         self.client = x402ClientSync()
         self.client.register("eip155:84532", UptoEvmClientScheme(self.client_signer))
+        self.client.set_spend_controls(False)
 
         self.facilitator = x402FacilitatorSync()
         self.facilitator.register(

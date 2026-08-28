@@ -1,5 +1,8 @@
 """Tests for Bazaar facilitator functions."""
 
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
 from x402.extensions.bazaar import (
     BAZAAR,
     BodyDiscoveryInfo,
@@ -11,6 +14,7 @@ from x402.extensions.bazaar import (
     validate_discovery_extension,
 )
 from x402.extensions.bazaar.facilitator import (
+    _has_external_schema_reference,
     _is_valid_icon_url,
     _is_valid_route_template,
     _is_valid_service_name,
@@ -896,3 +900,170 @@ class TestExtractDiscoveryInfoV1Extensions:
         assert discovered.extensions is not None
         assert "outputSchema" not in discovered.extensions
         assert discovered.extensions[BAZAAR.key]["info"] == discovered.discovery_info
+
+
+class _CountingHandler(BaseHTTPRequestHandler):
+    """Records a hit and serves a trivial JSON Schema document."""
+
+    hits = 0
+
+    def do_GET(self) -> None:  # noqa: N802
+        type(self).hits += 1
+        body = b'{"type": "object"}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+        pass
+
+
+class TestValidateDiscoveryExtensionSSRF:
+    """Regression tests for CWE-918: a client-controlled schema $ref/$id must never be
+    dereferenced. jsonschema's default resolver dereferences any non-fragment $ref via an
+    outbound HTTP request or filesystem read during schema compilation, before the instance
+    is ever checked. Since ``schema`` arrives in the client's payment payload, this is a real
+    SSRF / local file disclosure vector.
+    """
+
+    def _serve(self) -> tuple[HTTPServer, str]:
+        _CountingHandler.hits = 0
+        server = HTTPServer(("127.0.0.1", 0), _CountingHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return server, f"http://127.0.0.1:{server.server_port}"
+
+    def test_rejects_ref_over_http_without_dereferencing_it(self) -> None:
+        server, base_url = self._serve()
+        try:
+            extension = {
+                "info": {"input": {"type": "http", "method": "GET"}},
+                "schema": {"$ref": f"{base_url}/attacker-schema.json"},
+            }
+
+            result = validate_discovery_extension(extension)
+
+            assert _CountingHandler.hits == 0, (
+                "an attacker-controlled $ref must never cause an outbound HTTP request "
+                "(CWE-918 SSRF)"
+            )
+            assert result.valid is False
+        finally:
+            server.shutdown()
+
+    def test_rejects_ref_via_file_uri_without_reading_the_file(self, tmp_path) -> None:
+        secret_path = tmp_path / "attacker-schema.json"
+        secret_path.write_text('{"type": "object"}')
+
+        extension = {
+            "info": {"input": {"type": "http", "method": "GET"}},
+            "schema": {"$ref": f"file://{secret_path}"},
+        }
+
+        result = validate_discovery_extension(extension)
+
+        assert result.valid is False
+
+    def test_rejects_ref_nested_inside_schema_properties(self) -> None:
+        server, base_url = self._serve()
+        try:
+            extension = {
+                "info": {"input": {"type": "http", "method": "GET"}},
+                "schema": {
+                    "properties": {
+                        "input": {"$ref": f"{base_url}/attacker-schema.json"},
+                    },
+                },
+            }
+
+            result = validate_discovery_extension(extension)
+
+            assert _CountingHandler.hits == 0, "nested $ref must not be dereferenced"
+            assert result.valid is False
+        finally:
+            server.shutdown()
+
+    def test_rejects_external_id(self) -> None:
+        extension = {
+            "info": {"input": {"type": "http", "method": "GET"}},
+            "schema": {"$id": "https://evil.example.com/schema.json", "type": "object"},
+        }
+
+        result = validate_discovery_extension(extension)
+
+        assert result.valid is False
+
+    def test_still_validates_schemas_with_only_local_fragment_refs(self) -> None:
+        extension = {
+            "info": {"input": {"type": "http", "method": "GET"}},
+            "schema": {
+                "$ref": "#/definitions/root",
+                "definitions": {"root": {"type": "object"}},
+            },
+        }
+
+        result = validate_discovery_extension(extension)
+
+        assert result.valid is True, result.errors
+
+    def test_extract_discovery_info_rejects_external_ref_end_to_end(self) -> None:
+        """Matches the real attack path: a client's paymentPayload with a malicious
+        extensions.bazaar.schema, processed via extract_discovery_info(validate=True) the
+        way a facilitator's verify hook does.
+        """
+        server, base_url = self._serve()
+        try:
+            ext_dict = {
+                "info": {"input": {"type": "http", "method": "GET"}},
+                "schema": {"$ref": f"{base_url}/attacker-schema.json"},
+            }
+            payload = {
+                "x402Version": 2,
+                "resource": {"url": "http://api.example.com/weather"},
+                "extensions": {BAZAAR.key: ext_dict},
+                "accepted": {},
+            }
+            requirements = {"scheme": "exact", "network": "eip155:84532"}
+
+            discovered = extract_discovery_info(payload, requirements)
+
+            assert _CountingHandler.hits == 0, (
+                "an attacker-controlled $ref in extensions.bazaar.schema must never cause "
+                "the facilitator to make an outbound HTTP request (CWE-918 SSRF)"
+            )
+            assert discovered is None, (
+                "a schema containing an external $ref should fail validation, not silently succeed"
+            )
+        finally:
+            server.shutdown()
+
+
+class TestHasExternalSchemaReference:
+    """Direct unit tests for the _has_external_schema_reference helper."""
+
+    def test_returns_false_for_empty_schema(self) -> None:
+        assert _has_external_schema_reference({}) is False
+
+    def test_returns_false_for_fragment_ref(self) -> None:
+        assert _has_external_schema_reference({"$ref": "#/definitions/foo"}) is False
+
+    def test_returns_true_for_http_ref(self) -> None:
+        assert _has_external_schema_reference({"$ref": "http://evil.com/x.json"}) is True
+
+    def test_returns_true_for_https_ref(self) -> None:
+        assert _has_external_schema_reference({"$ref": "https://evil.com/x.json"}) is True
+
+    def test_returns_true_for_file_ref(self) -> None:
+        assert _has_external_schema_reference({"$ref": "file:///etc/passwd"}) is True
+
+    def test_returns_true_for_relative_ref(self) -> None:
+        assert _has_external_schema_reference({"$ref": "../../etc/passwd"}) is True
+
+    def test_returns_true_for_external_id(self) -> None:
+        assert _has_external_schema_reference({"$id": "https://evil.com/x.json"}) is True
+
+    def test_returns_true_for_nested_ref_in_list(self) -> None:
+        schema = {"allOf": [{"type": "object"}, {"$ref": "http://evil.com/x.json"}]}
+        assert _has_external_schema_reference(schema) is True

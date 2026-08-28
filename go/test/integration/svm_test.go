@@ -5,8 +5,10 @@ package integration_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -116,7 +118,7 @@ func (s *realFacilitatorSvmSigner) SimulateTransaction(ctx context.Context, tx *
 	}
 
 	opts := rpc.SimulateTransactionOpts{
-		SigVerify:              true,
+		SigVerify:              false,
 		ReplaceRecentBlockhash: false,
 		Commitment:             svm.DefaultCommitment,
 	}
@@ -197,10 +199,112 @@ func (s *realFacilitatorSvmSigner) ConfirmTransaction(ctx context.Context, signa
 		}
 
 		// Wait before retrying
-		time.Sleep(svm.ConfirmRetryDelay)
+		delay := svm.ConfirmRetryDelay
+		if attempt < svm.ConfirmInitialAttempts {
+			delay = svm.ConfirmInitialRetryDelay
+		}
+		time.Sleep(delay)
 	}
 
 	return fmt.Errorf("transaction confirmation timed out after %d attempts", svm.MaxConfirmAttempts)
+}
+
+func (s *realFacilitatorSvmSigner) GetAccountInfo(
+	ctx context.Context,
+	account solana.PublicKey,
+	network string,
+	opts *rpc.GetAccountInfoOpts,
+) (*rpc.GetAccountInfoResult, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, err
+	}
+	return rpcClient.GetAccountInfoWithOpts(ctx, account, opts)
+}
+
+func (s *realFacilitatorSvmSigner) GetLatestBlockhash(ctx context.Context, network string) (solana.Hash, uint64, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return solana.Hash{}, 0, err
+	}
+	latest, err := rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
+	if err != nil {
+		return solana.Hash{}, 0, err
+	}
+	return latest.Value.Blockhash, latest.Value.LastValidBlockHeight, nil
+}
+
+func (s *realFacilitatorSvmSigner) GetSlot(ctx context.Context, network string, commitment rpc.CommitmentType) (uint64, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return 0, err
+	}
+	return rpcClient.GetSlot(ctx, commitment)
+}
+
+func (s *realFacilitatorSvmSigner) SimulateTransactionWithOpts(
+	ctx context.Context,
+	tx *solana.Transaction,
+	network string,
+	opts *rpc.SimulateTransactionOpts,
+) error {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return err
+	}
+	result, err := rpcClient.SimulateTransactionWithOpts(ctx, tx, opts)
+	if err != nil {
+		return fmt.Errorf("simulation failed: %w", err)
+	}
+	if result != nil && result.Value != nil && result.Value.Err != nil {
+		return fmt.Errorf("simulation failed: transaction would fail on-chain")
+	}
+	return nil
+}
+
+func (s *realFacilitatorSvmSigner) GetProgramAccounts(
+	ctx context.Context,
+	network string,
+	programID solana.PublicKey,
+	opts *rpc.GetProgramAccountsOpts,
+) (rpc.GetProgramAccountsResult, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, err
+	}
+	return rpcClient.GetProgramAccountsWithOpts(ctx, programID, opts)
+}
+
+func (s *realFacilitatorSvmSigner) SimulateTransactionWithInnerInstructions(ctx context.Context, tx *solana.Transaction, network string) ([]rpc.InnerInstruction, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, err
+	}
+	return svm.SimulateWithInnerInstructions(ctx, rpcClient, tx)
+}
+
+func (s *realFacilitatorSvmSigner) GetConfirmedTransactionInnerInstructions(ctx context.Context, signature solana.Signature, network string) ([]rpc.InnerInstruction, solana.PublicKeySlice, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, nil, err
+	}
+	return svm.ConfirmedTransactionInnerInstructions(ctx, rpcClient, signature)
+}
+
+func (s *realFacilitatorSvmSigner) GetTokenAccountBalance(ctx context.Context, tokenAccount solana.PublicKey, network string) (uint64, bool, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return 0, false, err
+	}
+	return svm.TokenAccountBalance(ctx, rpcClient, tokenAccount)
+}
+
+func (s *realFacilitatorSvmSigner) FetchAddressLookupTables(ctx context.Context, tables []solana.PublicKey, network string) (map[solana.PublicKey]solana.PublicKeySlice, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, err
+	}
+	return svm.AddressLookupTables(ctx, rpcClient, tables)
 }
 
 func (s *realFacilitatorSvmSigner) GetAddresses(ctx context.Context, network string) []solana.PublicKey {
@@ -573,3 +677,213 @@ func TestSVMIntegrationV1(t *testing.T) {
 	})
 }
 */
+
+// forcedPendingConfirmSigner wraps a real FacilitatorSvmSigner and, while
+// forcePending is true, makes ConfirmTransaction fail immediately instead of
+// delegating to the real (network-speed-dependent) confirmation polling.
+// SignTransaction and SendTransaction are always delegated unmodified via
+// interface embedding, so every broadcast is a real on-chain transaction;
+// only the confirmation wait is deterministically forced to fail so the
+// settlement_pending path can be exercised without racing devnet's real
+// confirmation latency.
+type forcedPendingConfirmSigner struct {
+	svm.FacilitatorSvmSigner
+	forcePending atomic.Bool
+}
+
+func (s *forcedPendingConfirmSigner) ConfirmTransaction(ctx context.Context, signature solana.Signature, network string) error {
+	if s.forcePending.Load() {
+		return fmt.Errorf("forced confirmation failure for settlement_pending integration test")
+	}
+	return s.FacilitatorSvmSigner.ConfirmTransaction(ctx, signature, network)
+}
+
+// buildSvmSettlementPendingFixture creates a real, signed, but not-yet-settled
+// SVM exact payment payload/requirements pair shared by the settlement-pending
+// integration tests below.
+func buildSvmSettlementPendingFixture(t *testing.T, ctx context.Context, clientPrivateKey, facilitatorAddress, resourceServerAddress string) (types.PaymentPayload, types.PaymentRequirements) {
+	t.Helper()
+
+	clientSigner, err := newRealClientSvmSigner(clientPrivateKey)
+	if err != nil {
+		t.Fatalf("Failed to create client signer: %v", err)
+	}
+	client := x402.Newx402Client()
+	client.Register(svm.SolanaDevnetCAIP2, svmclient.NewExactSvmScheme(clientSigner, &svm.ClientConfig{
+		RPCURL: "https://api.devnet.solana.com",
+	}))
+
+	accepts := []types.PaymentRequirements{
+		{
+			Scheme:  svm.SchemeExact,
+			Network: svm.SolanaDevnetCAIP2,
+			Asset:   svm.USDCDevnetAddress,
+			Amount:  "1000",
+			PayTo:   resourceServerAddress,
+			Extra: map[string]interface{}{
+				"feePayer": facilitatorAddress,
+			},
+		},
+	}
+	resource := &types.ResourceInfo{URL: "https://api.example.com/premium"}
+
+	selected, err := client.SelectPaymentRequirements(accepts)
+	if err != nil {
+		t.Fatalf("Failed to select payment requirements: %v", err)
+	}
+	paymentPayload, err := client.CreatePaymentPayload(ctx, selected, resource, nil)
+	if err != nil {
+		t.Fatalf("Failed to create payment payload: %v", err)
+	}
+	return paymentPayload, accepts[0]
+}
+
+// TestSVMIntegrationV2_SettlementPendingReconciliation exercises the
+// settlement-pending-auto-recovery mechanism layer against a real on-chain
+// SVM exact settlement: the first Settle call broadcasts for real but is
+// forced (via forcedPendingConfirmSigner) to fail ConfirmTransaction,
+// producing a settlement_pending SettleError with the broadcast signature
+// attached and a PendingSettlementStore entry populated. A second Settle
+// call with the same payload, now with confirmation no longer forced to
+// fail, must hit the pending-store fast path (skip verify/re-send) and
+// reconcile against that already-broadcast transaction, returning success
+// once it actually confirms on-chain — with the SAME signature as the first
+// attempt, proving no second transaction was ever broadcast.
+func TestSVMIntegrationV2_SettlementPendingReconciliation(t *testing.T) {
+	clientPrivateKey := os.Getenv("SVM_CLIENT_PRIVATE_KEY")
+	facilitatorPrivateKey := os.Getenv("SVM_FACILITATOR_PRIVATE_KEY")
+	facilitatorAddress := os.Getenv("SVM_FACILITATOR_ADDRESS")
+	resourceServerAddress := os.Getenv("SVM_RESOURCE_SERVER_ADDRESS")
+
+	if clientPrivateKey == "" || facilitatorPrivateKey == "" || facilitatorAddress == "" || resourceServerAddress == "" {
+		t.Skip("Skipping SVM settlement_pending reconciliation test: SVM_CLIENT_PRIVATE_KEY, SVM_FACILITATOR_PRIVATE_KEY, SVM_FACILITATOR_ADDRESS, and SVM_RESOURCE_SERVER_ADDRESS must be set")
+	}
+
+	ctx := context.Background()
+
+	realFacilitatorSigner, err := newRealFacilitatorSvmSigner(facilitatorPrivateKey, "https://api.devnet.solana.com")
+	if err != nil {
+		t.Fatalf("Failed to create facilitator signer: %v", err)
+	}
+	facilitatorSigner := &forcedPendingConfirmSigner{FacilitatorSvmSigner: realFacilitatorSigner}
+	svmFacilitatorScheme := svmfacilitator.NewExactSvmScheme(facilitatorSigner)
+
+	paymentPayload, requirements := buildSvmSettlementPendingFixture(t, ctx, clientPrivateKey, facilitatorAddress, resourceServerAddress)
+
+	// Attempt 1: broadcast is real; confirmation is forced to fail regardless
+	// of real devnet confirmation speed.
+	facilitatorSigner.forcePending.Store(true)
+
+	_, settleErr := svmFacilitatorScheme.Settle(ctx, paymentPayload, requirements, nil)
+	if settleErr == nil {
+		t.Fatal("Expected settlement_pending error from a deliberately forced confirmation failure, got nil error")
+	}
+	var se *x402.SettleError
+	if !errors.As(settleErr, &se) {
+		t.Fatalf("Expected a *x402.SettleError, got %T: %v", settleErr, settleErr)
+	}
+	if se.ErrorReason != svmfacilitator.ErrSettlementPending {
+		t.Fatalf("Expected errorReason %q, got %q (%v)", svmfacilitator.ErrSettlementPending, se.ErrorReason, se)
+	}
+	if se.Transaction == "" {
+		t.Fatal("Expected a broadcast transaction signature on the settlement_pending error")
+	}
+	firstSignature := se.Transaction
+
+	// Attempt 2: identical payload/requirements, confirmation no longer
+	// forced to fail. Must reconcile against firstSignature (pending-store
+	// hit) rather than re-verifying and re-sending.
+	facilitatorSigner.forcePending.Store(false)
+
+	settleResponse, settleErr := svmFacilitatorScheme.Settle(ctx, paymentPayload, requirements, nil)
+	if settleErr != nil {
+		t.Fatalf("Expected the reconciliation settle to succeed once the original tx confirms, got error: %v", settleErr)
+	}
+	if !settleResponse.Success {
+		t.Fatalf("Expected reconciled settlement to succeed, got: %+v", settleResponse)
+	}
+	if settleResponse.Transaction != firstSignature {
+		t.Fatalf("Reconciliation must reuse the already-broadcast transaction (no second broadcast): first=%s second=%s",
+			firstSignature, settleResponse.Transaction)
+	}
+}
+
+// TestSVMIntegrationV2_ResourceServerSettlementPendingRetry exercises the
+// generic x402ResourceServer.SettlePayment single-retry-on-settlement_pending
+// path against a real SVM broadcast. While
+// forcedPendingConfirmSigner.forcePending is true for the whole call, both
+// the initial attempt and the SDK's automatic single retry are forced to
+// fail confirmation, so both are expected to observe settlement_pending. The
+// key assertion is that the retry's reported transaction signature is
+// identical to the first attempt's, proving the resource-server retry drove
+// the mechanism's pending-cache fast path (reconciling against the one
+// broadcast transaction) rather than causing a second on-chain broadcast.
+func TestSVMIntegrationV2_ResourceServerSettlementPendingRetry(t *testing.T) {
+	clientPrivateKey := os.Getenv("SVM_CLIENT_PRIVATE_KEY")
+	facilitatorPrivateKey := os.Getenv("SVM_FACILITATOR_PRIVATE_KEY")
+	facilitatorAddress := os.Getenv("SVM_FACILITATOR_ADDRESS")
+	resourceServerAddress := os.Getenv("SVM_RESOURCE_SERVER_ADDRESS")
+
+	if clientPrivateKey == "" || facilitatorPrivateKey == "" || facilitatorAddress == "" || resourceServerAddress == "" {
+		t.Skip("Skipping SVM resource-server settlement_pending retry test: SVM_CLIENT_PRIVATE_KEY, SVM_FACILITATOR_PRIVATE_KEY, SVM_FACILITATOR_ADDRESS, and SVM_RESOURCE_SERVER_ADDRESS must be set")
+	}
+
+	ctx := context.Background()
+
+	realFacilitatorSigner, err := newRealFacilitatorSvmSigner(facilitatorPrivateKey, "https://api.devnet.solana.com")
+	if err != nil {
+		t.Fatalf("Failed to create facilitator signer: %v", err)
+	}
+	facilitatorSigner := &forcedPendingConfirmSigner{FacilitatorSvmSigner: realFacilitatorSigner}
+	facilitator := x402.Newx402Facilitator()
+	facilitator.Register([]x402.Network{svm.SolanaDevnetCAIP2}, svmfacilitator.NewExactSvmScheme(facilitatorSigner))
+	facilitatorClient := &localSvmFacilitatorClient{facilitator: facilitator, signer: realFacilitatorSigner}
+
+	server := x402.Newx402ResourceServer(x402.WithFacilitatorClient(facilitatorClient))
+	server.Register(svm.SolanaDevnetCAIP2, svmserver.NewExactSvmScheme())
+	if err := server.Initialize(ctx); err != nil {
+		t.Fatalf("Failed to initialize server: %v", err)
+	}
+
+	paymentPayload, requirements := buildSvmSettlementPendingFixture(t, ctx, clientPrivateKey, facilitatorAddress, resourceServerAddress)
+	accepted := server.FindMatchingRequirements([]types.PaymentRequirements{requirements}, paymentPayload)
+	if accepted == nil {
+		t.Fatal("No matching payment requirements found")
+	}
+
+	facilitatorSigner.forcePending.Store(true)
+
+	_, settleErr := server.SettlePayment(ctx, paymentPayload, *accepted, nil)
+	if settleErr == nil {
+		t.Fatal("Expected the resource server's (retried) settle to still return settlement_pending while confirmation is forced to fail, got nil error")
+	}
+	var se *x402.SettleError
+	if !errors.As(settleErr, &se) {
+		t.Fatalf("Expected a *x402.SettleError, got %T: %v", settleErr, settleErr)
+	}
+	if se.ErrorReason != svmfacilitator.ErrSettlementPending {
+		t.Fatalf("Expected errorReason %q after the single automatic retry, got %q (%v)", svmfacilitator.ErrSettlementPending, se.ErrorReason, se)
+	}
+	if se.Transaction == "" {
+		t.Fatal("Expected a broadcast transaction signature after the retried settlement_pending")
+	}
+	firstAttemptSignature := se.Transaction
+
+	// Reconcile with confirmation no longer forced to fail, directly against
+	// the resource server (its facilitator client shares the same in-process
+	// mechanism/pending-store instance) to confirm exactly one transaction
+	// was ever broadcast across every attempt so far.
+	facilitatorSigner.forcePending.Store(false)
+
+	settleResponse, settleErr := server.SettlePayment(ctx, paymentPayload, *accepted, nil)
+	if settleErr != nil {
+		t.Fatalf("Expected final reconciliation to succeed once the original tx confirms, got error: %v", settleErr)
+	}
+	if !settleResponse.Success {
+		t.Fatalf("Expected final reconciled settlement to succeed, got: %+v", settleResponse)
+	}
+	if settleResponse.Transaction != firstAttemptSignature {
+		t.Fatalf("Resource-server retry must not cause a second broadcast: first-attempt tx=%s final tx=%s",
+			firstAttemptSignature, settleResponse.Transaction)
+	}
+}

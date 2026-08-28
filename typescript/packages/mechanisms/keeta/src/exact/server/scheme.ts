@@ -2,20 +2,25 @@ import type {
   AssetAmount,
   MoneyParser,
   Network,
+  PaymentFlowConfig,
   PaymentRequirements,
   Price,
   SchemeNetworkServer,
 } from "@x402/core/types";
-import { convertToTokenAmount, numberToDecimalString, parseMoneyString } from "@x402/core/utils";
-import { getUsdcAddress, validateTokenAsset } from "../../utils";
+import { convertToTokenAmount, parseMoney } from "@x402/core/utils";
+import { findDefaultAsset, getDefaultAsset } from "../../defaultAssets";
+import { validateTokenAsset } from "../../utils";
 
 /**
  * Keeta server implementation for the Exact payment scheme.
  */
 export class ExactKeetaScheme implements SchemeNetworkServer {
   readonly scheme = "exact";
+  readonly defaultAssetTransferMethod = "default";
+  readonly paymentFlows = {
+    default: { supported: ["authorization", "upfront"], default: "authorization" },
+  } as const satisfies Record<string, PaymentFlowConfig>;
   private moneyParsers: MoneyParser[] = [];
-  private usdcAddressCache: Map<Network, string> = new Map();
 
   /**
    * Register a custom money parser in the parser chain.
@@ -26,6 +31,17 @@ export class ExactKeetaScheme implements SchemeNetworkServer {
   registerMoneyParser(parser: MoneyParser): ExactKeetaScheme {
     this.moneyParsers.push(parser);
     return this;
+  }
+
+  /**
+   * Decimals for a known default asset, or undefined.
+   *
+   * @param asset - Token address from payment requirements
+   * @param network - Target network
+   * @returns Decimals when the asset is a known default; otherwise undefined
+   */
+  getAssetDecimals(asset: string, network: Network): number | undefined {
+    return findDefaultAsset(asset, network)?.decimals;
   }
 
   /**
@@ -48,7 +64,7 @@ export class ExactKeetaScheme implements SchemeNetworkServer {
       return { amount: price.amount, asset: price.asset, extra: price.extra || {} };
     }
 
-    const amount = this.parseMoneyToDecimal(price);
+    const { amount, symbol } = parseMoney(price);
 
     for (const parser of this.moneyParsers) {
       const result = await parser(amount, network);
@@ -57,7 +73,7 @@ export class ExactKeetaScheme implements SchemeNetworkServer {
       }
     }
 
-    return this.defaultMoneyConversion(amount, network);
+    return this.defaultMoneyConversion(amount, network, symbol);
   }
 
   /**
@@ -91,40 +107,21 @@ export class ExactKeetaScheme implements SchemeNetworkServer {
   }
 
   /**
-   * Parse Money (string | number) to a decimal number.
-   * Handles formats like "$1.50", "1.50", 1.50, etc.
-   *
-   * @param money - The money value to parse
-   * @returns Decimal number
-   */
-  private parseMoneyToDecimal(money: string | number): number {
-    let decimalString = typeof money === "number" ? numberToDecimalString(money) : money;
-    return parseMoneyString(decimalString);
-  }
-
-  /**
    * Default money conversion implementation.
    * Converts decimal amount to USDC on the specified network.
    *
    * @param amount - The decimal amount (e.g., 1.50)
    * @param network - The network to use
+   * @param symbol - Optional ticker from a suffixed price
    * @returns The parsed asset amount in USDC
    */
-  private async defaultMoneyConversion(amount: number, network: Network): Promise<AssetAmount> {
-    // Convert decimal amount to token amount (USDC has 6 decimals)
-    const tokenAmount = convertToTokenAmount(amount.toString(), 6);
-
-    // Cache USDC address for the server's lifetime since it's not
-    // really expected to change. If it changes, the server must be restarted.
-    let usdcAddress = this.usdcAddressCache.get(network);
-    if (!usdcAddress) {
-      usdcAddress = await getUsdcAddress(network);
-      this.usdcAddressCache.set(network, usdcAddress);
-    }
+  private defaultMoneyConversion(amount: string, network: Network, symbol?: string): AssetAmount {
+    const assetInfo = getDefaultAsset(network, symbol);
+    const tokenAmount = convertToTokenAmount(amount, assetInfo.decimals);
 
     return {
       amount: tokenAmount,
-      asset: usdcAddress,
+      asset: assetInfo.asset,
       extra: {},
     };
   }

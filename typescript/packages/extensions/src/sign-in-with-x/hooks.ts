@@ -249,9 +249,9 @@ export function createSIWxClientHook(signer: SIWxSigner) {
   const signerIsSolana = isSolanaSigner(signer);
   const expectedSignatureType: SignatureType = signerIsSolana ? "ed25519" : "eip191";
 
-  return async (context: {
-    paymentRequired: { accepts?: Array<{ network: string }>; extensions?: Record<string, unknown> };
-  }): Promise<{ headers: Record<string, string> } | void> => {
+  return async (
+    context: PaymentRequiredContext,
+  ): Promise<{ headers: Record<string, string> } | void> => {
     const extensions = context.paymentRequired.extensions ?? {};
     const siwxExtension = extensions[SIGN_IN_WITH_X] as SIWxExtension | undefined;
 
@@ -275,7 +275,7 @@ export function createSIWxClientHook(signer: SIWxSigner) {
         type: matchingChain.type,
       };
 
-      const payload = await createSIWxPayload(completeInfo, signer);
+      const payload = await createSIWxPayload(completeInfo, signer, context.requestUrl);
       const header = encodeSIWxHeader(payload);
       return { headers: { [SIGN_IN_WITH_X]: header } };
     } catch {

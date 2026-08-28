@@ -306,6 +306,7 @@ class TransactionReceipt:
     status: int
     block_number: int
     tx_hash: str
+    logs: list[Any] | None = None
 
 
 @dataclass

@@ -1,0 +1,10 @@
+{
+  "$schemaComment": "SSOT for v2 mechanisms, split by network. This file holds cross-cutting harness env only. Each env key declares required + roles. Each network lives in its own mechanisms_<id>.json (env, testnet/mainnet identity, routes). Handlers always return `{ message: \"Protected endpoint accessed successfully\", timestamp }`. Legacy v1 is out of scope.",
+  "env": {
+    "PORT": { "required": true, "roles": ["server", "facilitator"] },
+    "FACILITATOR_URL": { "required": true, "roles": ["server"] },
+    "RESOURCE_SERVER_URL": { "required": true, "roles": ["client"] },
+    "ENDPOINT_PATH": { "required": true, "roles": ["client"] },
+    "MOCK_FACILITATOR_URL": { "required": false, "roles": ["server"] }
+  }
+}

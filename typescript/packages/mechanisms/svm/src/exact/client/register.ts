@@ -1,8 +1,10 @@
 import { x402Client, SelectPaymentRequirements, PaymentPolicy } from "@x402/core/client";
 import { Network } from "@x402/core/types";
+import { networkMatchesPattern } from "@x402/core/utils";
 import { ClientSvmSigner } from "../../signer";
 import { ExactSvmScheme } from "./scheme";
 import { ExactSvmSchemeV1 } from "../v1/client/scheme";
+import { V1_TO_V2_NETWORK_MAP } from "../../constants";
 import { NETWORKS } from "../../v1";
 
 /**
@@ -47,8 +49,18 @@ export function registerExactSvmScheme(client: x402Client, config: SvmClientConf
     client.register("solana:*", new ExactSvmScheme(config.signer));
   }
 
-  // Register all V1 networks
-  NETWORKS.forEach(network => {
+  const v1Networks =
+    config.networks && config.networks.length > 0
+      ? NETWORKS.filter(name => {
+          const v2Network = V1_TO_V2_NETWORK_MAP[name];
+          if (!v2Network) return false;
+          return config.networks!.some(pattern =>
+            networkMatchesPattern(pattern, v2Network as Network),
+          );
+        })
+      : NETWORKS;
+
+  v1Networks.forEach(network => {
     client.registerV1(network as Network, new ExactSvmSchemeV1(config.signer));
   });
 

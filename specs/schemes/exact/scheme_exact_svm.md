@@ -44,6 +44,8 @@ The protocol flow for `exact` on Solana is client-driven.
 12. Upon successful on-chain settlement, a `SettlementResponse` is returned from the Sponsor to the Resource Server.
 13. Resource Server grants the Client access to the resource in its response.
 
+Resource servers with long-running handlers SHOULD use payment flow `upfront`, because under `authorization` the handler must complete before the signed transaction's blockhash expires (~60–90 seconds).
+
 ---
 
 ## `PaymentRequirements` for `exact`

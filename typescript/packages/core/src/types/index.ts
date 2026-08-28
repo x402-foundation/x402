@@ -10,6 +10,7 @@ export {
   VerifyError,
   SettleError,
   FacilitatorResponseError,
+  FacilitatorTimeoutError,
   getFacilitatorResponseError,
 } from "./facilitator";
 export type {
@@ -30,6 +31,13 @@ export type {
   FacilitatorContext,
   SchemePaymentRequiredContext,
   SchemeEnrichPaymentRequiredResponseHook,
+  PaymentFlowName,
+  PaymentFlowPhases,
+  PaymentFlowConfig,
+  DefaultAsset,
+  DefaultAssetTable,
+  GetDefaultAsset,
+  FindDefaultAsset,
 } from "./mechanisms";
 export type { PaymentRequirementsV1, PaymentRequiredV1, PaymentPayloadV1 } from "./v1";
 export type {

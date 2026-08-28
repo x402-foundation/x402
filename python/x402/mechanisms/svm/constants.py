@@ -90,6 +90,16 @@ ERR_DUPLICATE_SETTLEMENT = "duplicate_settlement"
 ERR_MEMO_MISMATCH = "invalid_exact_svm_payload_memo_mismatch"
 ERR_MEMO_COUNT = "invalid_exact_svm_payload_memo_count"
 
+# Non-terminal settle error reason meaning a transaction was broadcast but
+# ConfirmTransaction could not observe its confirmation in time — mirrors
+# EVM's ERR_SETTLEMENT_PENDING (mechanisms/evm/constants.py) and the core
+# ERR_SETTLEMENT_PENDING (pending_settlement_store.py) so
+# x402ResourceServer's generic single-retry-on-settlement_pending logic
+# recognizes it uniformly across schemes/networks. Replaces the confirm-
+# timeout previously reported as ERR_TRANSACTION_FAILED, which was terminal
+# and gave callers no reconciliation path.
+ERR_SETTLEMENT_PENDING = "settlement_pending"
+
 # How long a transaction is held in the duplicate settlement cache (seconds).
 # Covers the Solana blockhash lifetime (~60-90s) with margin.
 SETTLEMENT_TTL_SECONDS = 120.0
@@ -104,43 +114,24 @@ class AssetInfo(TypedDict):
 
 
 class NetworkConfig(TypedDict):
-    """Configuration for a Solana network."""
+    """Transport endpoints for a Solana network."""
 
     rpc_url: str
     ws_url: str
-    default_asset: AssetInfo
 
 
-# Network configurations
+# Per-network transport endpoints (default assets live in default_assets.py).
 NETWORK_CONFIGS: dict[str, NetworkConfig] = {
-    # Solana Mainnet
     SOLANA_MAINNET_CAIP2: {
         "rpc_url": MAINNET_RPC_URL,
         "ws_url": MAINNET_WS_URL,
-        "default_asset": {
-            "address": USDC_MAINNET_ADDRESS,
-            "name": "USD Coin",
-            "decimals": 6,
-        },
     },
-    # Solana Devnet
     SOLANA_DEVNET_CAIP2: {
         "rpc_url": DEVNET_RPC_URL,
         "ws_url": DEVNET_WS_URL,
-        "default_asset": {
-            "address": USDC_DEVNET_ADDRESS,
-            "name": "USD Coin",
-            "decimals": 6,
-        },
     },
-    # Solana Testnet
     SOLANA_TESTNET_CAIP2: {
         "rpc_url": TESTNET_RPC_URL,
         "ws_url": TESTNET_WS_URL,
-        "default_asset": {
-            "address": USDC_TESTNET_ADDRESS,
-            "name": "USD Coin",
-            "decimals": 6,
-        },
     },
 }

@@ -9,7 +9,9 @@ import {
   FacilitatorResponseError,
   getFacilitatorResponseError as getCoreFacilitatorResponseError,
   PaymentCancellationDispatcher,
+  CompletedSettlement,
   SETTLEMENT_OVERRIDES_HEADER,
+  withPrivateCacheControl,
 } from "@x402/core/server";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { NextAdapter } from "./adapter";
@@ -38,6 +40,20 @@ export function createFacilitatorErrorResponse(error: FacilitatorResponseError):
 }
 
 /**
+ * Logs an unexpected error and builds a generic 500 without leaking internals.
+ *
+ * @param error - The unexpected error
+ * @returns A JSON 500 response
+ */
+export function createInternalErrorResponse(error: unknown): NextResponse {
+  console.error(error);
+  return new NextResponse(JSON.stringify({ error: "Internal Server Error" }), {
+    status: 500,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/**
  * Prepares an existing x402HTTPResourceServer with initialization logic
  *
  * @param httpServer - Pre-configured x402HTTPResourceServer instance
@@ -58,6 +74,11 @@ export function prepareHttpServer(
   // Store initialization promise (not the result)
   // httpServer.initialize() fetches facilitator support and validates routes
   let initPromise: Promise<void> | null = syncFacilitatorOnStart ? httpServer.initialize() : null;
+  // Attach a no-op rejection handler so an early failure (e.g. a facilitator
+  // request timeout) cannot become an unhandled rejection before the first
+  // protected request awaits initPromise. The original promise is kept, so that
+  // request still observes the failure and triggers the retry path.
+  void initPromise?.catch(() => {});
   let isInitialized = false;
 
   return {
@@ -154,8 +175,9 @@ export function handlePaymentError(response: HTTPResponseInstructions): NextResp
  * @param paymentPayload - The payment payload from the client
  * @param paymentRequirements - The payment requirements for the route
  * @param declaredExtensions - Optional declared extensions (for per-key enrichment)
- * @param cancellationDispatcher - Cancels verified payments that should not settle
+ * @param cancellationDispatcher - Cancels payments that should not settle after the handler
  * @param httpContext - HTTP request context for extensions
+ * @param beforeHandlerSettlement - Optional before-handler settle for PAYMENT-RESPONSE echo
  * @returns The response with settlement headers or an error response if settlement fails
  */
 export async function handleSettlement(
@@ -166,14 +188,26 @@ export async function handleSettlement(
   declaredExtensions: Record<string, unknown> | undefined,
   cancellationDispatcher: PaymentCancellationDispatcher,
   httpContext: HTTPRequestContext,
+  beforeHandlerSettlement?: CompletedSettlement,
 ): Promise<NextResponse> {
   // If the response from the protected route is >= 400, do not settle payment
   if (response.status >= 400) {
-    await cancellationDispatcher.cancel({
+    const cancelSettlement = await cancellationDispatcher.cancel({
       reason: "handler_failed",
       responseStatus: response.status,
     });
     response.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
+    const failureHeaders = httpServer.createFailurePathSettlementHeaders(
+      cancelSettlement,
+      beforeHandlerSettlement,
+      paymentPayload,
+      response.headers.get("Cache-Control"),
+    );
+    if (failureHeaders) {
+      Object.entries(failureHeaders).forEach(([key, value]) => {
+        response.headers.set(key, value);
+      });
+    }
     return response;
   }
 
@@ -191,6 +225,8 @@ export async function handleSettlement(
       paymentRequirements,
       declaredExtensions,
       { request: httpContext, responseBody, responseHeaders },
+      undefined,
+      beforeHandlerSettlement,
     );
 
     if (!result.success) {
@@ -207,6 +243,10 @@ export async function handleSettlement(
     Object.entries(result.headers).forEach(([key, value]) => {
       response.headers.set(key, value);
     });
+    response.headers.set(
+      "Cache-Control",
+      withPrivateCacheControl(response.headers.get("Cache-Control")),
+    );
 
     // Strip internal settlement override header before sending to client.
     response.headers.delete(SETTLEMENT_OVERRIDES_HEADER);

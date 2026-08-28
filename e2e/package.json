@@ -30,12 +30,11 @@
     "@x402/core": "workspace:*",
     "dotenv": "^17.0.1",
     "prompts": "^2.4.2",
-    "tsx": "^4.21.0",
     "viem": "^2.48.11",
-    "xrpl": "^4.6.0"
+    "xrpl": "^4.6.0",
+    "tsx": "4.21.0"
   },
   "devDependencies": {
-    "@types/express": "^4.17.0",
     "@types/node": "^22.13.4",
     "@types/prompts": "^2.4.9",
     "typescript": "^5.7.3",

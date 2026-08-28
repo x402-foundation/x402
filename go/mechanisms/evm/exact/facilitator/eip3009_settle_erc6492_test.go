@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
+	goethtypes "github.com/ethereum/go-ethereum/core/types"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
@@ -21,14 +22,29 @@ import (
 // wallet whose validator rejects the inner signature.
 type settleMockSigner struct {
 	codeByAddress map[string][]byte
+	receipt       *evm.TransactionReceipt
 	// writeErr, when set, is returned from WriteContract so settle classifies the reverted
 	// transfer via parseEIP3009TransferError instead of submitting it successfully.
 	writeErr error
+	// receiptErr, when set, is returned from WaitForTransactionReceipt to model a broadcast
+	// transaction whose confirmation could not be established (RPC error, timeout).
+	receiptErr error
+	// writeTxHash, when set, overrides the hash returned from WriteContract so tests can
+	// model a signer that reports success without a usable transaction hash.
+	writeTxHash string
+	// writeCalls counts WriteContract invocations, so pending-settlement
+	// reconciliation tests can assert the fast path never re-broadcasts.
+	writeCalls int
 }
 
 func (m *settleMockSigner) GetAddresses() []string { return []string{"0xFac11"} }
 
 func (m *settleMockSigner) ReadContract(ctx context.Context, address string, abi []byte, functionName string, args ...interface{}) (interface{}, error) {
+	// isValidSignature (EIP-1271) expects a bytes4 return; report a non-matching value so
+	// deployed-smart-wallet signature checks resolve to "invalid" rather than erroring.
+	if functionName == "isValidSignature" {
+		return []byte{0x00, 0x00, 0x00, 0x00}, nil
+	}
 	return nil, nil
 }
 
@@ -37,8 +53,12 @@ func (m *settleMockSigner) VerifyTypedData(ctx context.Context, address string, 
 }
 
 func (m *settleMockSigner) WriteContract(ctx context.Context, address string, abi []byte, functionName string, dataSuffix []byte, args ...interface{}) (string, error) {
+	m.writeCalls++
 	if m.writeErr != nil {
 		return "", m.writeErr
+	}
+	if m.writeTxHash != "" {
+		return m.writeTxHash, nil
 	}
 	return "0x" + strings.Repeat("ab", 32), nil
 }
@@ -48,6 +68,12 @@ func (m *settleMockSigner) SendTransaction(ctx context.Context, to string, data 
 }
 
 func (m *settleMockSigner) WaitForTransactionReceipt(ctx context.Context, txHash string) (*evm.TransactionReceipt, error) {
+	if m.receiptErr != nil {
+		return nil, m.receiptErr
+	}
+	if m.receipt != nil {
+		return m.receipt, nil
+	}
 	return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: txHash}, nil
 }
 
@@ -185,5 +211,94 @@ func TestSettleEIP3009_SubmitsTransferAfterDeploy(t *testing.T) {
 	}
 	if !resp.Success {
 		t.Fatalf("expected resp.Success = true, got %+v", resp)
+	}
+}
+
+func TestSettleEIP3009_RejectsTransferEventMismatch(t *testing.T) {
+	const (
+		factory = "0xca11bde05977b3631167028862be2a173976ca11"
+		payer   = "0x1234567890123456789012345678901234567890"
+		token   = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+	)
+	payload, requirements := counterfactualErc6492Payload(t)
+	txHash := "0x" + strings.Repeat("ab", 32)
+	signer := &settleMockSigner{
+		codeByAddress: map[string][]byte{
+			strings.ToLower(token): {0x60, 0x60},
+			strings.ToLower(payer): {},
+		},
+		receipt: &evm.TransactionReceipt{
+			Status: evm.TxStatusSuccess,
+			TxHash: txHash,
+			Logs: []*goethtypes.Log{
+				makeTransferLog(
+					common.HexToAddress(token),
+					common.HexToAddress(payer),
+					common.HexToAddress(requirements.PayTo),
+					big.NewInt(1),
+				),
+			},
+		},
+	}
+	scheme := NewExactEvmScheme(signer, &ExactEvmSchemeConfig{
+		EIP6492AllowedFactories: []string{factory},
+	})
+
+	resp, err := scheme.Settle(context.Background(), payload, requirements, nil)
+	if err == nil {
+		t.Fatalf("expected transfer event mismatch error, got success: %+v", resp)
+	}
+
+	se := &x402.SettleError{}
+	if !errors.As(err, &se) {
+		t.Fatalf("expected *x402.SettleError, got %T: %v", err, err)
+	}
+	if se.ErrorReason != ErrTransferEventMismatch {
+		t.Fatalf("expected reason %q, got %q", ErrTransferEventMismatch, se.ErrorReason)
+	}
+	if se.Transaction != txHash {
+		t.Fatalf("expected transaction %q, got %q", txHash, se.Transaction)
+	}
+}
+
+func TestSettleEIP3009_AcceptsMatchingTransferEvent(t *testing.T) {
+	const (
+		factory = "0xca11bde05977b3631167028862be2a173976ca11"
+		payer   = "0x1234567890123456789012345678901234567890"
+		token   = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+	)
+	payload, requirements := counterfactualErc6492Payload(t)
+	txHash := "0x" + strings.Repeat("ab", 32)
+	signer := &settleMockSigner{
+		codeByAddress: map[string][]byte{
+			strings.ToLower(token): {0x60, 0x60},
+			strings.ToLower(payer): {},
+		},
+		receipt: &evm.TransactionReceipt{
+			Status: evm.TxStatusSuccess,
+			TxHash: txHash,
+			Logs: []*goethtypes.Log{
+				makeTransferLog(
+					common.HexToAddress(token),
+					common.HexToAddress(payer),
+					common.HexToAddress(requirements.PayTo),
+					big.NewInt(1_000_000),
+				),
+			},
+		},
+	}
+	scheme := NewExactEvmScheme(signer, &ExactEvmSchemeConfig{
+		EIP6492AllowedFactories: []string{factory},
+	})
+
+	resp, err := scheme.Settle(context.Background(), payload, requirements, nil)
+	if err != nil {
+		t.Fatalf("expected settle success, got error: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected resp.Success = true, got %+v", resp)
+	}
+	if resp.Transaction != txHash {
+		t.Fatalf("expected transaction %q, got %q", txHash, resp.Transaction)
 	}
 }

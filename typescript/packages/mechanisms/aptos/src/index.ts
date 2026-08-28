@@ -12,3 +12,10 @@ export * from "./signer";
 
 // Utils
 export * from "./utils";
+
+export {
+  DEFAULT_ASSETS,
+  getDefaultAsset,
+  findDefaultAsset,
+  type AptosDefaultAsset,
+} from "./defaultAssets";

@@ -2,6 +2,9 @@ import type { SettleResponse } from "../types/facilitator";
 import type { PaymentRequirements } from "../types/payments";
 import { deepEqual } from "../utils";
 
+/** Protocol-reserved `extra` keys; enrichment must not add or change them. */
+const RESERVED_PAYMENT_FLOW_EXTRA_KEYS = ["paymentFlow", "assetTransferMethod"] as const;
+
 /**
  * True when a string field is treated as unset and may be filled by `enrichPaymentRequiredResponse`.
  *
@@ -32,7 +35,9 @@ export function snapshotPaymentRequirementsList(
  * **`payTo`**, **`amount`**, and **`asset`** may change only when the baseline value is vacant
  * (whitespace-only string). **`scheme`**, **`network`**, and **`maxTimeoutSeconds`** are never
  * writable by extensions. **`extra`** may gain new keys; values for keys present in the baseline
- * must be unchanged (deep-equal).
+ * must be unchanged (deep-equal). **`extra.paymentFlow`** and **`extra.assetTransferMethod`**
+ * are protocol-reserved: their presence and values must match the baseline (enrichment must
+ * not add or rewrite them).
  *
  * @param baseline - Snapshot taken before any enrich hooks for this response
  * @param current - Live `accepts` entries after an extension enrich step
@@ -87,11 +92,24 @@ export function assertAcceptsAllowlistedAfterExtensionEnrich(
         );
       }
     }
+
+    for (const key of RESERVED_PAYMENT_FLOW_EXTRA_KEYS) {
+      const inBaseline = Object.prototype.hasOwnProperty.call(b.extra, key);
+      const inCurrent = Object.prototype.hasOwnProperty.call(c.extra, key);
+      if (inBaseline !== inCurrent) {
+        throw new Error(
+          `[x402] extension "${extensionKey}" violated accepts mutation policy: extra["${key}"] is protocol-reserved and immutable during enrichment (index ${i})`,
+        );
+      }
+    }
   }
 }
 
 /**
  * Ensures scheme 402 enrichment only adds `extra` keys to matching accepts.
+ * **`extra.paymentFlow`** and **`extra.assetTransferMethod`** are protocol-reserved on every
+ * accept: their presence and values must match the baseline (enrichment must not add or
+ * rewrite them).
  *
  * @param baseline - Snapshot before the scheme enrich step
  * @param current - Live `accepts` entries after scheme enrichment
@@ -148,6 +166,16 @@ export function assertAcceptsAdditiveExtraAfterSchemeEnrich(
       throw new Error(
         `[x402] scheme "${scheme}" violated accepts mutation policy: only matching accepts may receive new extra fields (index ${i})`,
       );
+    }
+
+    for (const key of RESERVED_PAYMENT_FLOW_EXTRA_KEYS) {
+      const inBaseline = Object.prototype.hasOwnProperty.call(b.extra, key);
+      const inCurrent = Object.prototype.hasOwnProperty.call(c.extra, key);
+      if (inBaseline !== inCurrent) {
+        throw new Error(
+          `[x402] scheme "${scheme}" violated accepts mutation policy: extra["${key}"] is protocol-reserved and immutable during enrichment (index ${i})`,
+        );
+      }
     }
   }
 }

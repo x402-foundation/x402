@@ -42,6 +42,8 @@ The x402 protocol follows a standard request-response cycle with payment integra
 3. **Payment Authorization Request**: Client submits a signed payment authorization in the subsequent request
 4. **Settlement Response**: Server verifies the payment authorization and initiates blockchain settlement
 
+This cycle describes the default `authorization` payment flow, in which the payment is verified before the resource executes and settled afterward. Schemes may declare other flows that settle before execution; see section 6.1 Payment Flow Models.
+
 **3. Protocol Components**
 
 The x402 protocol involves three primary components:
@@ -125,7 +127,7 @@ Each `PaymentRequirements` object in the `accepts` array contains:
 | `asset`             | `string` | Required | Token contract address or ISO 4217 currency code for fiat     |
 | `payTo`             | `string` | Required | Recipient wallet address or role constant (e.g., "merchant")                                                              |
 | `maxTimeoutSeconds` | `number` | Required | Maximum time allowed for payment completion                                                                               |
-| `extra`             | `object` | Optional | Scheme-specific additional information                                                                                    |
+| `extra`             | `object` | Optional | Additional information. Reserved protocol keys: `assetTransferMethod`, `paymentFlow` (section 6.1); other keys are scheme-specific |
 
 The `ResourceInfo` object contains:
 
@@ -244,7 +246,7 @@ The `SettleResponse` schema contains the following fields:
 | `success`     | `boolean` | Required | Indicates whether the payment settlement was successful               |
 | `errorReason` | `string`  | Optional | Error reason if settlement failed (omitted if successful)             |
 | `payer`       | `string`  | Optional | Address of the payer's wallet                                         |
-| `transaction` | `string`  | Required | Blockchain transaction hash (empty string if settlement failed)       |
+| `transaction` | `string`  | Required | Blockchain transaction hash (empty string if no transaction was broadcast; MUST be non-empty when `errorReason` is `settlement_pending` — see [§9 Error Handling](#9-error-handling)) |
 | `network`     | `string`  | Required | Blockchain network identifier in CAIP-2 format                        |
 | `amount`      | `string`  | Optional | The actual amount settled in atomic units (omitted if not applicable) |
 | `extensions`  | `object`  | Optional | Protocol extensions data                                              |
@@ -271,55 +273,27 @@ Each scheme defines:
 
 - How to construct the `payload` field within `PaymentPayload`
 - Settlement and validation procedures
-- Scheme-specific requirements in the `extra` field of `PaymentRequirements`
+- Requirements in the `extra` field of `PaymentRequirements` (reserved protocol keys in section 6.1; remaining keys are scheme-specific)
 
-**6.1 Exact Scheme (EVM overview)**
+Individual schemes and their per-network bindings — including `exact`, `upto`, `batch-settlement`, and `auth-capture` — are specified under [`specs/schemes/`](./schemes/).
 
-The "exact" scheme uses EIP-3009 (Transfer with Authorization) to enable secure, gasless transfers of specific amounts of ERC-20 tokens.
+**6.1 Asset Transfer Methods and Payment Flow Models**
 
-**6.1.1 EIP-3009 Authorization**
+An `assetTransferMethod` identifies **how** value is authorized or moved for a mechanism (a scheme on a specific network) — for example `eip3009` vs `permit2` on EVM `exact`, or `sequence` vs `ticketSequence` on XRPL `exact`. Allowed `assetTransferMethod` string values are mechanism-defined; this protocol reserves the key name, not a global ATM vocabulary. Mechanisms MAY reuse the same ATM string across networks when semantics align. `extra.assetTransferMethod` and `extra.paymentFlow` are protocol-reserved keys in `PaymentRequirements.extra`: clients and servers MUST interpret them as defined here rather than as opaque scheme-private fields.
 
-The authorization follows the EIP-3009 standard for `transferWithAuthorization`:
+Schemes differ not only in how a payment is formed and validated, but in **when** settlement occurs relative to resource execution. A mechanism declares supported payment flows **per `assetTransferMethod`**, each with a default flow, plus a scheme-level default `assetTransferMethod` used when `extra.assetTransferMethod` is omitted. The resolved flow determines which of the facilitator's read-only `/verify` (section 7.1) and state-committing `/settle` (section 7.2) run, and in what order, around the resource server's execution of the protected request. A flow's ordering MAY omit `/verify` (see `upfront` and `escrow` below).
 
-```javascript
-const authorizationTypes = {
-  TransferWithAuthorization: [
-    { name: "from", type: "address" },
-    { name: "to", type: "address" },
-    { name: "value", type: "uint256" },
-    { name: "validAfter", type: "uint256" },
-    { name: "validBefore", type: "uint256" },
-    { name: "nonce", type: "bytes32" },
-  ],
-};
-```
+Omitting `extra.assetTransferMethod` or `extra.paymentFlow` means the mechanism default when resolving. When the resolved payment flow is not `authorization`, `PaymentRequired` `accepts[].extra.paymentFlow` MUST be present so clients can reason about pre-handler fund commitment without scheme-specific knowledge (for example, distinguishing an SVM upto `escrow` default from an EVM upto `authorization` default). `authorization` MAY be omitted or explicit. Resource servers MUST reject unsupported `assetTransferMethod` / payment flow combinations. Clients MUST NOT construct a payment for a `paymentFlow` they do not recognize, and SHOULD skip such `accepts[]` entries when selecting. When a resource offers both `authorization` (post-handler settlement) and a pre-handler-settlement flow (`upfront` or `escrow`) for the same request, clients SHOULD prefer `authorization`.
 
-**6.1.2 Verification Steps**
+The following flows are defined:
 
-The facilitator performs the following verification steps:
+| Flow                  | Ordering                                        | Description                                                                                                                              |
+| --------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `authorization` (default) | verify → resource → settle → respond        | Read-only verify before the resource executes; funds move only after it completes successfully. |
+| `upfront`             | settle → resource → respond                     | Payment is durably committed before the resource executes, giving the server finality first. Facilitator `/verify` is not part of this ordering; validity is established by settle. Required by networks with no pull-settlement primitive. |
+| `escrow`              | settle → resource → settle → respond            | A first settle commits a deposit or ceiling, the resource executes, and a second settle records the final charge. Facilitator `/verify` is not part of this ordering; the first settle is the pre-resource check. |
 
-1. **Signature Validation**: Verify the EIP-712 signature is valid and properly signed by the payer
-2. **Balance Verification**: Confirm the payer has sufficient token balance for the transfer
-3. **Amount Validation**: Ensure the payment amount exactly matches the required amount
-4. **Time Window Check**: Verify the authorization is within its valid time range
-5. **Parameter Matching**: Confirm authorization parameters match the original payment requirements
-6. **Transaction Simulation**: Simulate the `transferWithAuthorization` transaction to ensure it would succeed
-
-**6.1.3 Settlement**
-
-Settlement is performed by calling the `transferWithAuthorization` function on the ERC-20 contract with the signature and authorization parameters provided in the payment payload.
-
-**6.2 Exact Scheme (SVM overview)**
-
-For Solana (SVM), the `exact` scheme is implemented using `TransferChecked` for SPL tokens. Critical verification requirements include:
-
-- Enforcing a strict instruction layout (Compute Unit Limit, Compute Unit Price, TransferChecked)
-- Ensuring the facilitator fee payer does not appear in any instruction accounts and is not the transfer `authority` or `source`
-- Bounding compute unit price to mitigate gas abuse
-- Verifying the destination ATA matches the `payTo`/`asset` PDA and account existence rules
-- Requiring the transfer `amount` to exactly equal the `amount` specified in PaymentRequirements
-
-Full SVM details are specified in `specs/schemes/exact/scheme_exact_svm.md`.
+Invariant: at least one check — a verify or settle before the resource — MUST run before the resource executes. The resource never executes with nothing checked.
 
 **7. Facilitator Interface**
 
@@ -327,7 +301,7 @@ The facilitator provides HTTP REST APIs for payment verification and settlement.
 
 **7.1 POST /verify**
 
-Verifies a payment authorization without executing the transaction on the blockchain.
+Verifies a payment authorization without executing the transaction on the blockchain. `/verify` is **read-only**: it validates payment state but MUST NOT commit payment state or write onchain state. Resource servers invoke `/verify` only when the resolved payment flow's ordering includes it (section 6.1); `upfront` and `escrow` omit it.
 
 **Request (Exact Scheme):**
 
@@ -415,11 +389,13 @@ Example with actual data:
 
 **7.2 POST /settle**
 
-Executes a verified payment by broadcasting the transaction to the blockchain.
+Durably commits payment state for the request — establishing finality from the resource server's perspective — typically by updating a network ledger (for example, broadcasting a transaction). Commitment need not be an onchain write: for client-prepaid methods, settle MAY bind a payment proof to the request (for example, consuming a challenge or marking a transaction as used) after read-only observation of ledger or backend state. A settle need not be the final charge: it MAY establish an escrow, record a charge, or transfer funds, depending on the scheme and payment flow (see section 6.1 Payment Flow Models).
 
 **Request:** Same structure as `/verify` endpoint (contains `paymentPayload` and `paymentRequirements`).
 
 > **Note**: While the request structure is identical, some payment schemes may assign different semantics to fields at settlement time versus verification time. For example, in the `upto` scheme, the `amount` field in `paymentRequirements` represents the maximum authorized amount at verification time, but the actual amount to settle at settlement time. See individual scheme specifications for details.
+
+> **Note**: `/settle` MAY be invoked more than once for a single payment (for example, the `escrow` flow settles a deposit before the resource executes and the final charge after). A scheme defining multiple settles MUST specify how the facilitator distinguishes them from payload content. Because the client typically signs a single payload, that distinction is usually server-led (for example, a scheme-specific `step` field), though a facilitator MAY instead infer the step from network-ledger state.
 
 **Successful Response:**
 
@@ -617,6 +593,7 @@ The x402 protocol defines standard error codes that may be returned by facilitat
 - **`invalid_transaction_state`**: Blockchain transaction failed or was rejected
 - **`unexpected_verify_error`**: Unexpected error occurred during payment verification
 - **`unexpected_settle_error`**: Unexpected error occurred during payment settlement
+- **`settlement_pending`**: The settlement transaction was broadcast but its confirmation could not be established (e.g. a node/RPC error or timeout while waiting for the receipt). Facilitators MAY return this **non-terminal** code — the transaction may still confirm on chain. A `SettleResponse` with this `errorReason` MUST carry a non-empty `transaction` (the broadcast hash) and `network` so the caller can reconcile on chain before deciding whether to retry.
 
 **10. Security Considerations**
 

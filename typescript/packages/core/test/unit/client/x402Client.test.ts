@@ -100,10 +100,13 @@ describe("x402Client", () => {
       const paymentRequired = buildPaymentRequired({
         x402Version: 1,
         accepts: [
-          buildPaymentRequirements({
-            scheme: "v1-scheme",
-            network: "base-sepolia" as Network,
-          }),
+          {
+            ...buildPaymentRequirements({
+              scheme: "v1-scheme",
+              network: "base-sepolia" as Network,
+            }),
+            maxAmountRequired: "1000000",
+          } as unknown as PaymentRequirements,
         ],
       });
 
@@ -402,6 +405,159 @@ describe("x402Client", () => {
           metadata: {
             nested: { serverField: "server", clientField: "client" },
           },
+        });
+      });
+
+      it("merges conflicting array fields instead of replacing client values", async () => {
+        const client = new x402Client();
+        const mockClient = new MockSchemeNetworkClient("exact", {
+          x402Version: 2,
+          payload: { signature: "mock_signature" },
+        } as any);
+        client.register("eip155:8453" as Network, mockClient);
+        client.registerExtension({
+          key: "builder-code",
+          enrichPaymentPayload: async payload => ({
+            ...payload,
+            extensions: {
+              ...payload.extensions,
+              "builder-code": { info: { s: ["bc_shared", "bc_client"] } },
+            },
+          }),
+        });
+
+        const result = await client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+            ],
+            extensions: {
+              "builder-code": {
+                info: { a: "bc_app", s: ["bc_server", "bc_shared"] },
+                schema: { type: "object" },
+              },
+            },
+          }),
+        );
+
+        expect(result.extensions?.["builder-code"]).toEqual({
+          info: { a: "bc_app", s: ["bc_shared", "bc_client", "bc_server"] },
+          schema: { type: "object" },
+        });
+      });
+
+      it("merges a scalar array field against an array on the other side", async () => {
+        const client = new x402Client();
+        const mockClient = new MockSchemeNetworkClient("exact", {
+          x402Version: 2,
+          payload: { signature: "mock_signature" },
+        } as any);
+        client.register("eip155:8453" as Network, mockClient);
+        client.registerExtension({
+          key: "builder-code",
+          enrichPaymentPayload: async payload => ({
+            ...payload,
+            extensions: {
+              ...payload.extensions,
+              "builder-code": { info: { s: ["bc_client"] } },
+            },
+          }),
+        });
+
+        const result = await client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+            ],
+            extensions: {
+              "builder-code": {
+                info: { a: "bc_app", s: "bc_server" },
+                schema: { type: "object" },
+              },
+            },
+          }),
+        );
+
+        expect(result.extensions?.["builder-code"]).toEqual({
+          info: { a: "bc_app", s: ["bc_client", "bc_server"] },
+          schema: { type: "object" },
+        });
+      });
+
+      it("dedupes repeated entries within a single side of a merged array field", async () => {
+        const client = new x402Client();
+        const mockClient = new MockSchemeNetworkClient("exact", {
+          x402Version: 2,
+          payload: { signature: "mock_signature" },
+        } as any);
+        client.register("eip155:8453" as Network, mockClient);
+        client.registerExtension({
+          key: "builder-code",
+          enrichPaymentPayload: async payload => ({
+            ...payload,
+            extensions: {
+              ...payload.extensions,
+              "builder-code": { info: { s: ["bc_client", "bc_client"] } },
+            },
+          }),
+        });
+
+        const result = await client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+            ],
+            extensions: {
+              "builder-code": {
+                info: { a: "bc_app", s: ["bc_server", "bc_server"] },
+                schema: { type: "object" },
+              },
+            },
+          }),
+        );
+
+        expect(result.extensions?.["builder-code"]).toEqual({
+          info: { a: "bc_app", s: ["bc_client", "bc_server"] },
+          schema: { type: "object" },
+        });
+      });
+
+      it("keeps the server array for a non-additive extension field instead of concatenating", async () => {
+        // Array concatenation is scoped to ADDITIVE_ARRAY_INFO_FIELDS (builder-code's
+        // `s`); other extensions' conflicting array fields must keep the server's
+        // value, matching x402ResourceServer's exact-match requirement for them.
+        const client = new x402Client();
+        const mockClient = new MockSchemeNetworkClient("exact", {
+          x402Version: 2,
+          payload: { signature: "mock_signature" },
+        } as any);
+        client.register("eip155:8453" as Network, mockClient);
+        client.registerExtension({
+          key: "sign-in-with-x",
+          enrichPaymentPayload: async payload => ({
+            ...payload,
+            extensions: {
+              ...payload.extensions,
+              "sign-in-with-x": { info: { resources: ["https://evil.example.com"] } },
+            },
+          }),
+        });
+
+        const result = await client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+            ],
+            extensions: {
+              "sign-in-with-x": {
+                info: { resources: ["https://api.example.com/data"] },
+              },
+            },
+          }),
+        );
+
+        expect(result.extensions?.["sign-in-with-x"]).toEqual({
+          info: { resources: ["https://api.example.com/data"] },
         });
       });
 
@@ -724,6 +880,159 @@ describe("x402Client", () => {
         expect(mockClient.createPaymentPayloadCalls[0].requirements.amount).toBe("100000");
       });
     });
+
+    describe("Payment flow selection", () => {
+      it("should drop accepts with unrecognized paymentFlow", async () => {
+        const client = new x402Client();
+        const mockClient = new MockSchemeNetworkClient("exact");
+        client.register("eip155:8453" as Network, mockClient);
+
+        const knownReq = buildPaymentRequirements({
+          scheme: "exact",
+          network: "eip155:8453" as Network,
+          amount: "100",
+        });
+        const unknownReq = buildPaymentRequirements({
+          scheme: "exact",
+          network: "eip155:8453" as Network,
+          amount: "200",
+          extra: { paymentFlow: "future-flow" },
+        });
+
+        const paymentRequired = buildPaymentRequired({
+          accepts: [unknownReq, knownReq],
+        });
+
+        await client.createPaymentPayload(paymentRequired);
+
+        expect(mockClient.createPaymentPayloadCalls[0].requirements).toEqual(knownReq);
+      });
+
+      it("should throw when every accept has unrecognized paymentFlow", async () => {
+        const client = new x402Client();
+        const mockClient = new MockSchemeNetworkClient("exact");
+        client.register("eip155:8453" as Network, mockClient);
+
+        const paymentRequired = buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({
+              scheme: "exact",
+              network: "eip155:8453" as Network,
+              extra: { paymentFlow: "future-flow" },
+            }),
+          ],
+        });
+
+        await expect(client.createPaymentPayload(paymentRequired)).rejects.toThrow(
+          "No payment requirements with a recognized paymentFlow",
+        );
+      });
+
+      it("should prefer authorization over upfront when both are offered", async () => {
+        const client = new x402Client();
+        const mockClient = new MockSchemeNetworkClient("exact");
+        client.register("eip155:8453" as Network, mockClient);
+
+        const upfrontReq = buildPaymentRequirements({
+          scheme: "exact",
+          network: "eip155:8453" as Network,
+          amount: "100",
+          extra: { paymentFlow: "upfront" },
+        });
+        const authReq = buildPaymentRequirements({
+          scheme: "exact",
+          network: "eip155:8453" as Network,
+          amount: "200",
+        });
+
+        const paymentRequired = buildPaymentRequired({
+          accepts: [upfrontReq, authReq],
+        });
+
+        await client.createPaymentPayload(paymentRequired);
+
+        expect(mockClient.createPaymentPayloadCalls[0].requirements).toEqual(authReq);
+      });
+
+      it("should prefer explicit authorization over escrow when both are offered", async () => {
+        const client = new x402Client();
+        const mockClient = new MockSchemeNetworkClient("exact");
+        client.register("eip155:8453" as Network, mockClient);
+
+        const escrowReq = buildPaymentRequirements({
+          scheme: "exact",
+          network: "eip155:8453" as Network,
+          amount: "100",
+          extra: { paymentFlow: "escrow" },
+        });
+        const authReq = buildPaymentRequirements({
+          scheme: "exact",
+          network: "eip155:8453" as Network,
+          amount: "200",
+          extra: { paymentFlow: "authorization" },
+        });
+
+        const paymentRequired = buildPaymentRequired({
+          accepts: [escrowReq, authReq],
+        });
+
+        await client.createPaymentPayload(paymentRequired);
+
+        expect(mockClient.createPaymentPayloadCalls[0].requirements).toEqual(authReq);
+      });
+
+      it("should still select upfront when it is the only remaining accept", async () => {
+        const client = new x402Client();
+        const mockClient = new MockSchemeNetworkClient("exact");
+        client.register("eip155:8453" as Network, mockClient);
+
+        const upfrontReq = buildPaymentRequirements({
+          scheme: "exact",
+          network: "eip155:8453" as Network,
+          amount: "100",
+          extra: { paymentFlow: "upfront" },
+        });
+
+        const paymentRequired = buildPaymentRequired({
+          accepts: [upfrontReq],
+        });
+
+        await client.createPaymentPayload(paymentRequired);
+
+        expect(mockClient.createPaymentPayloadCalls[0].requirements).toEqual(upfrontReq);
+      });
+
+      it("should let custom policies override authorization preference", async () => {
+        const client = new x402Client();
+        const mockClient = new MockSchemeNetworkClient("exact");
+        client.register("eip155:8453" as Network, mockClient);
+
+        const upfrontReq = buildPaymentRequirements({
+          scheme: "exact",
+          network: "eip155:8453" as Network,
+          amount: "100",
+          extra: { paymentFlow: "upfront" },
+        });
+        const authReq = buildPaymentRequirements({
+          scheme: "exact",
+          network: "eip155:8453" as Network,
+          amount: "200",
+        });
+
+        const upfrontOnlyPolicy: PaymentPolicy = (_version, reqs) =>
+          reqs.filter(r => r.extra?.paymentFlow === "upfront");
+
+        client.registerPolicy(upfrontOnlyPolicy);
+
+        const paymentRequired = buildPaymentRequired({
+          accepts: [authReq, upfrontReq],
+        });
+
+        await client.createPaymentPayload(paymentRequired);
+
+        expect(mockClient.createPaymentPayloadCalls[0].requirements).toEqual(upfrontReq);
+      });
+    });
   });
 
   describe("Extension Hooks", () => {
@@ -768,17 +1077,23 @@ describe("x402Client", () => {
       });
     });
 
-    it("should NOT invoke extension when key is not in paymentRequired.extensions", async () => {
+    it("should invoke registered extension enrichPaymentPayload even when key is not in paymentRequired.extensions", async () => {
       const client = new x402Client();
       const mockClient = new MockSchemeNetworkClient("exact");
       client.register("eip155:84532" as Network, mockClient);
 
       let enrichCalled = false;
       client.registerExtension({
-        key: "missingExtension",
+        key: "clientOwnedExtension",
         enrichPaymentPayload: async payload => {
           enrichCalled = true;
-          return payload;
+          return {
+            ...payload,
+            extensions: {
+              ...payload.extensions,
+              clientOwnedExtension: { info: { s: "client_data" } },
+            },
+          };
         },
       });
 
@@ -792,9 +1107,12 @@ describe("x402Client", () => {
         extensions: {},
       });
 
-      await client.createPaymentPayload(paymentRequired);
+      const result = await client.createPaymentPayload(paymentRequired);
 
-      expect(enrichCalled).toBe(false);
+      expect(enrichCalled).toBe(true);
+      expect((result.extensions as Record<string, unknown>)?.clientOwnedExtension).toEqual({
+        info: { s: "client_data" },
+      });
     });
 
     it("should support chaining registerExtension", () => {
@@ -973,6 +1291,668 @@ describe("x402Client", () => {
       });
 
       expect(order).toEqual(["manual-response", "scheme-response", "extension-response"]);
+    });
+  });
+
+  describe("spendControls", () => {
+    const network = "eip155:8453" as Network;
+    const usdc = {
+      asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      decimals: 6,
+      symbol: "USDC",
+    };
+    const usdt = {
+      asset: "0xUsdTSecondaryAsset0000000000000000000001",
+      decimals: 6,
+      symbol: "USDT",
+    };
+    const mUsd = {
+      asset: "0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503",
+      decimals: 18,
+      symbol: "mUSD",
+    };
+
+    function clientWithDefaultAsset(
+      entry: { asset: string; decimals: number; symbol: string } = usdc,
+      controls?: Parameters<x402Client["setSpendControls"]>[0],
+    ) {
+      const mockClient = new MockSchemeNetworkClient("exact");
+      mockClient.setFindDefaultAsset((asset, _network) =>
+        asset.toLowerCase() === entry.asset.toLowerCase() ? entry : undefined,
+      );
+      const client = new x402Client();
+      client.register(network, mockClient);
+      if (controls !== undefined) {
+        client.setSpendControls(controls);
+      }
+      return { client, mockClient };
+    }
+
+    it("allows a payment at or below the default $1 USD cap", async () => {
+      const { client, mockClient } = clientWithDefaultAsset();
+      await client.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({
+              scheme: "exact",
+              network,
+              asset: usdc.asset,
+              amount: "1000000", // $1
+            }),
+          ],
+        }),
+      );
+      expect(mockClient.createPaymentPayloadCalls).toHaveLength(1);
+    });
+
+    it("rejects a payment above the default $1 USD cap", async () => {
+      const { client } = clientWithDefaultAsset();
+      await expect(
+        client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({
+                scheme: "exact",
+                network,
+                asset: usdc.asset,
+                amount: "1000001",
+              }),
+            ],
+          }),
+        ),
+      ).rejects.toThrow(/maxAmountPerPayment/);
+    });
+
+    it("picks the affordable accept when both under and over the cap are offered", async () => {
+      const { client, mockClient } = clientWithDefaultAsset();
+      await client.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({
+              scheme: "exact",
+              network,
+              asset: usdc.asset,
+              amount: "50000000", // $50
+            }),
+            buildPaymentRequirements({
+              scheme: "exact",
+              network,
+              asset: usdc.asset,
+              amount: "500000", // $0.50
+            }),
+          ],
+        }),
+      );
+      expect(mockClient.createPaymentPayloadCalls[0].requirements.amount).toBe("500000");
+    });
+
+    it("caps a second USD asset on the same network identically to the default", async () => {
+      const mockClient = new MockSchemeNetworkClient("exact");
+      mockClient.setFindDefaultAsset((asset, _network) => {
+        const lower = asset.toLowerCase();
+        if (lower === usdc.asset.toLowerCase()) return usdc;
+        if (lower === usdt.asset.toLowerCase()) return usdt;
+        return undefined;
+      });
+      const client = new x402Client();
+      client.register(network, mockClient);
+
+      await expect(
+        client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({
+                scheme: "exact",
+                network,
+                asset: usdt.asset,
+                amount: "2000000",
+              }),
+            ],
+          }),
+        ),
+      ).rejects.toThrow(/maxAmountPerPayment/);
+    });
+
+    it("rejects unrecognized assets by default and schemes without findDefaultAsset", async () => {
+      const { client } = clientWithDefaultAsset();
+      await expect(
+        client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({
+                scheme: "exact",
+                network,
+                asset: "0xCustomUnknownToken",
+                amount: "1",
+              }),
+            ],
+          }),
+        ),
+      ).rejects.toThrow(/spendControls\.allowedAssets/);
+
+      const bare = new MockSchemeNetworkClient("exact");
+      bare.clearFindDefaultAsset();
+      const bareClient = new x402Client();
+      bareClient.register(network, bare);
+      await expect(
+        bareClient.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({
+                scheme: "exact",
+                network,
+                asset: usdc.asset,
+                amount: "1",
+              }),
+            ],
+          }),
+        ),
+      ).rejects.toThrow(/spendControls\.allowedAssets/);
+    });
+
+    it("spendControls: false disables allowlist and USD cap", async () => {
+      const custom = "0xCustomUnknownToken";
+      const { client, mockClient } = clientWithDefaultAsset(usdc, false);
+
+      await client.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({
+              scheme: "exact",
+              network,
+              asset: custom,
+              amount: "999999999999",
+            }),
+          ],
+        }),
+      );
+      await client.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({
+              scheme: "exact",
+              network,
+              asset: usdc.asset,
+              amount: "5000000",
+            }),
+          ],
+        }),
+      );
+      expect(mockClient.createPaymentPayloadCalls).toHaveLength(2);
+    });
+
+    it("allowedAssets: true allows any asset while still applying the USD cap to defaults", async () => {
+      const custom = "0xCustomUnknownToken";
+      const { client, mockClient } = clientWithDefaultAsset(usdc, {
+        allowedAssets: true,
+      });
+
+      await client.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({
+              scheme: "exact",
+              network,
+              asset: custom,
+              amount: "999999999999",
+            }),
+          ],
+        }),
+      );
+      expect(mockClient.createPaymentPayloadCalls).toHaveLength(1);
+
+      await expect(
+        client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({
+                scheme: "exact",
+                network,
+                asset: usdc.asset,
+                amount: "1000001",
+              }),
+            ],
+          }),
+        ),
+      ).rejects.toThrow(/maxAmountPerPayment/);
+    });
+
+    it("scales the USD cap for an 18-decimal default asset", async () => {
+      const mockClient = new MockSchemeNetworkClient("exact");
+      mockClient.setFindDefaultAsset(mUsd);
+      const mezo = "eip155:31611" as Network;
+      const client18 = new x402Client().register(mezo, mockClient);
+
+      await expect(
+        client18.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({
+                scheme: "exact",
+                network: mezo,
+                asset: mUsd.asset,
+                amount: "1000000000000000001", // > $1 at 18 decimals
+              }),
+            ],
+          }),
+        ),
+      ).rejects.toThrow(/maxAmountPerPayment/);
+
+      await client18.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({
+              scheme: "exact",
+              network: mezo,
+              asset: mUsd.asset,
+              amount: "1000000000000000000", // exactly $1
+            }),
+          ],
+        }),
+      );
+      expect(mockClient.createPaymentPayloadCalls).toHaveLength(1);
+    });
+
+    it("honours maxAmountPerPayment: false, custom Money, and setSpendControls", async () => {
+      const { client, mockClient } = clientWithDefaultAsset(usdc, {
+        maxAmountPerPayment: false,
+      });
+      await client.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({
+              scheme: "exact",
+              network,
+              asset: usdc.asset,
+              amount: "5000000",
+            }),
+          ],
+        }),
+      );
+      expect(mockClient.createPaymentPayloadCalls).toHaveLength(1);
+
+      const mock5 = new MockSchemeNetworkClient("exact");
+      mock5.setFindDefaultAsset(usdc);
+      const client5 = x402Client.fromConfig({
+        schemes: [{ network, client: mock5 }],
+        spendControls: { maxAmountPerPayment: "$5" },
+      });
+      await client5.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({
+              scheme: "exact",
+              network,
+              asset: usdc.asset,
+              amount: "5000000",
+            }),
+          ],
+        }),
+      );
+      expect(mock5.createPaymentPayloadCalls).toHaveLength(1);
+
+      const mockNum = new MockSchemeNetworkClient("exact");
+      mockNum.setFindDefaultAsset(usdc);
+      const clientNum = new x402Client().register(network, mockNum).setSpendControls({
+        maxAmountPerPayment: 5,
+      });
+      await clientNum.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({
+              scheme: "exact",
+              network,
+              asset: usdc.asset,
+              amount: "5000000",
+            }),
+          ],
+        }),
+      );
+      expect(mockNum.createPaymentPayloadCalls).toHaveLength(1);
+    });
+
+    it("allows opt-in assets uncapped or with an atomic maxAmountPerPayment", async () => {
+      const customAsset = "0xCustomToken";
+      const { client: cappedClient } = clientWithDefaultAsset(usdc, {
+        allowedAssets: [{ asset: customAsset, network, maxAmountPerPayment: "10000" }],
+      });
+
+      await expect(
+        cappedClient.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({
+                scheme: "exact",
+                network,
+                asset: customAsset,
+                amount: "10001",
+              }),
+            ],
+          }),
+        ),
+      ).rejects.toThrow(/allowedAssets maxAmountPerPayment/);
+
+      const { client: uncappedClient, mockClient } = clientWithDefaultAsset(usdc, {
+        allowedAssets: [{ asset: customAsset.toLowerCase(), network: "eip155:*" as Network }],
+      });
+      await uncappedClient.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({
+              scheme: "exact",
+              network,
+              asset: customAsset,
+              amount: "999999999999",
+            }),
+          ],
+        }),
+      );
+      expect(mockClient.createPaymentPayloadCalls).toHaveLength(1);
+    });
+
+    it("drops a non-integer 402 amount on the per-asset atomic cap path", async () => {
+      const customAsset = "0xCustomToken";
+      const { client } = clientWithDefaultAsset(usdc, {
+        allowedAssets: [{ asset: customAsset, network, maxAmountPerPayment: "10000" }],
+      });
+
+      await expect(
+        client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({
+                scheme: "exact",
+                network,
+                asset: customAsset,
+                amount: "1.5",
+              }),
+            ],
+          }),
+        ),
+      ).rejects.toThrow(/allowedAssets maxAmountPerPayment/);
+    });
+
+    it("keeps a sibling accept when a mixed offer has a non-integer per-asset amount", async () => {
+      const customAsset = "0xCustomToken";
+      const { client, mockClient } = clientWithDefaultAsset(usdc, {
+        allowedAssets: [{ asset: customAsset, network, maxAmountPerPayment: "10000" }],
+      });
+
+      await client.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({
+              scheme: "exact",
+              network,
+              asset: customAsset,
+              amount: "1.5",
+            }),
+            buildPaymentRequirements({
+              scheme: "exact",
+              network,
+              asset: customAsset,
+              amount: "100",
+            }),
+          ],
+        }),
+      );
+      expect(mockClient.createPaymentPayloadCalls[0].requirements.amount).toBe("100");
+    });
+
+    it("errors when a per-asset cap is not an integer atomic amount", async () => {
+      const customAsset = "0xCustomToken";
+      for (const cap of ["$1", "1.5"] as const) {
+        const { client } = clientWithDefaultAsset(usdc, {
+          allowedAssets: [{ asset: customAsset, network, maxAmountPerPayment: cap }],
+        });
+
+        await expect(
+          client.createPaymentPayload(
+            buildPaymentRequired({
+              accepts: [
+                buildPaymentRequirements({
+                  scheme: "exact",
+                  network,
+                  asset: customAsset,
+                  amount: "100",
+                }),
+              ],
+            }),
+          ),
+        ).rejects.toThrow(/maxAmountPerPayment must be an integer atomic amount/);
+      }
+    });
+
+    it("overrides the USD cap for default assets by id or symbol", async () => {
+      const { client: byId, mockClient: mockById } = clientWithDefaultAsset(usdc, {
+        allowedAssets: [{ asset: usdc.asset, network, maxAmountPerPayment: "500000" }],
+      });
+
+      await expect(
+        byId.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({
+                scheme: "exact",
+                network,
+                asset: usdc.asset,
+                amount: "600000",
+              }),
+            ],
+          }),
+        ),
+      ).rejects.toThrow(/allowedAssets maxAmountPerPayment/);
+
+      await byId.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({
+              scheme: "exact",
+              network,
+              asset: usdc.asset,
+              amount: "400000",
+            }),
+          ],
+        }),
+      );
+      expect(mockById.createPaymentPayloadCalls).toHaveLength(1);
+
+      const pyusd = {
+        asset: "0xPayPalUsdAsset000000000000000000000001",
+        decimals: 6,
+        symbol: "PYUSD",
+      };
+      const mockPyusd = new MockSchemeNetworkClient("exact");
+      mockPyusd.setFindDefaultAsset((asset, _network) =>
+        asset.toLowerCase() === pyusd.asset.toLowerCase() ? pyusd : undefined,
+      );
+      const clientBySymbol = new x402Client().register(network, mockPyusd).setSpendControls({
+        allowedAssets: [{ asset: "pyusd", network, maxAmountPerPayment: "500000" }],
+      });
+
+      await expect(
+        clientBySymbol.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({
+                scheme: "exact",
+                network,
+                asset: pyusd.asset,
+                amount: "600000",
+              }),
+            ],
+          }),
+        ),
+      ).rejects.toThrow(/allowedAssets maxAmountPerPayment/);
+
+      await clientBySymbol.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({
+              scheme: "exact",
+              network,
+              asset: pyusd.asset,
+              amount: "400000",
+            }),
+          ],
+        }),
+      );
+      expect(mockPyusd.createPaymentPayloadCalls).toHaveLength(1);
+    });
+
+    it("keeps the USD cap when a default asset is listed without a per-entry cap", async () => {
+      const { client } = clientWithDefaultAsset(usdc, {
+        allowedAssets: [{ asset: usdc.symbol, network }],
+      });
+
+      await expect(
+        client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({
+                scheme: "exact",
+                network,
+                asset: usdc.asset,
+                amount: "1000001",
+              }),
+            ],
+          }),
+        ),
+      ).rejects.toThrow(/maxAmountPerPayment/);
+    });
+
+    it("allows defaults plus listed custom assets", async () => {
+      const custom = "0xCustomToken";
+      const { client, mockClient } = clientWithDefaultAsset(usdc, {
+        maxAmountPerPayment: false,
+        allowedAssets: [{ asset: custom, network }],
+      });
+
+      await client.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({
+              scheme: "exact",
+              network,
+              asset: usdc.asset,
+              amount: "1",
+            }),
+          ],
+        }),
+      );
+      await client.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({
+              scheme: "exact",
+              network,
+              asset: custom,
+              amount: "1",
+            }),
+          ],
+        }),
+      );
+      expect(mockClient.createPaymentPayloadCalls).toHaveLength(2);
+    });
+
+    it("caps v1 accepts via maxAmountRequired", async () => {
+      const mockClient = new MockSchemeNetworkClient("exact");
+      mockClient.setFindDefaultAsset(usdc);
+      const client = new x402Client();
+      client.registerV1("base" as Network, mockClient);
+
+      const v1Req = {
+        scheme: "exact",
+        network: "base",
+        asset: usdc.asset,
+        maxAmountRequired: "2000000",
+        payTo: "0xpay",
+        maxTimeoutSeconds: 60,
+        description: "",
+        mimeType: "",
+        resource: "https://example.com",
+      } as unknown as PaymentRequirements;
+
+      await expect(
+        client.createPaymentPayload(
+          buildPaymentRequired({
+            x402Version: 1,
+            accepts: [v1Req],
+          }),
+        ),
+      ).rejects.toThrow(/maxAmountPerPayment/);
+    });
+
+    it("only exposes requirements that passed spend controls to user policies", async () => {
+      const seen: string[] = [];
+      const { client, mockClient } = clientWithDefaultAsset(usdc);
+      client.registerPolicy((_version, reqs) => {
+        seen.push(...reqs.map(r => r.amount));
+        return reqs;
+      });
+
+      await client.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({
+              scheme: "exact",
+              network,
+              asset: usdc.asset,
+              amount: "50000000",
+            }),
+            buildPaymentRequirements({
+              scheme: "exact",
+              network,
+              asset: usdc.asset,
+              amount: "250000",
+            }),
+          ],
+        }),
+      );
+
+      expect(seen).toEqual(["250000"]);
+      expect(mockClient.createPaymentPayloadCalls[0].requirements.amount).toBe("250000");
+    });
+
+    it("compares non-integer decimal amounts to the USD cap directly", async () => {
+      const rlusd = {
+        asset: "524C555344000000000000000000000000000000",
+        decimals: 15,
+        symbol: "RLUSD",
+      };
+      const mockClient = new MockSchemeNetworkClient("exact");
+      mockClient.setFindDefaultAsset(rlusd);
+      const xrpl = "xrpl:1" as Network;
+      const client = new x402Client().register(xrpl, mockClient);
+
+      await client.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({
+              scheme: "exact",
+              network: xrpl,
+              asset: rlusd.asset,
+              amount: "1.0",
+            }),
+          ],
+        }),
+      );
+      expect(mockClient.createPaymentPayloadCalls).toHaveLength(1);
+
+      await expect(
+        client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({
+                scheme: "exact",
+                network: xrpl,
+                asset: rlusd.asset,
+                amount: "1.01",
+              }),
+            ],
+          }),
+        ),
+      ).rejects.toThrow(/maxAmountPerPayment/);
     });
   });
 });

@@ -3,6 +3,11 @@ import {
   SettlementOverrides,
   SkipHandlerDirective,
   PaymentCancellationDispatcher,
+  CompletedSettlement,
+  SettlePhase,
+  resolvePaymentFlow,
+  resolvePaymentFlowPhases,
+  resolveFailurePathSettlement,
 } from "../server";
 import {
   decodePaymentSignatureHeader,
@@ -22,6 +27,28 @@ import {
 import { x402Version } from "..";
 
 export const SETTLEMENT_OVERRIDES_HEADER = "Settlement-Overrides";
+
+export const PAYMENT_REQUIRED_CACHE_CONTROL = "no-store";
+
+/**
+ * Appends the `private` directive to an existing Cache-Control header value.
+ * Shared caches must not store responses with user-specific settlement metadata.
+ *
+ * @param value - Existing Cache-Control header value, or null/empty if unset
+ * @returns Cache-Control value with `private` merged in
+ */
+export function withPrivateCacheControl(value: string | null): string {
+  if (!value) {
+    return "private";
+  }
+
+  const directives = value.split(",").map(directive => directive.trim().toLowerCase());
+  if (directives.includes("private")) {
+    return value;
+  }
+
+  return `${value}, private`;
+}
 
 /**
  * Framework-agnostic HTTP adapter interface
@@ -278,6 +305,7 @@ export type HTTPProcessResult =
   | {
       type: "payment-verified";
       cancellationDispatcher: PaymentCancellationDispatcher;
+      beforeHandlerSettlement?: CompletedSettlement;
       paymentPayload: PaymentPayload;
       paymentRequirements: PaymentRequirements;
       declaredExtensions?: Record<string, unknown>;
@@ -316,7 +344,11 @@ export interface RouteValidationError {
   /** The network that failed validation */
   network: Network;
   /** The type of validation failure */
-  reason: "missing_scheme" | "missing_facilitator";
+  reason:
+    | "missing_scheme"
+    | "missing_facilitator"
+    | "unsupported_asset_transfer_method"
+    | "unsupported_payment_flow";
   /** Human-readable error message */
   message: string;
 }
@@ -377,12 +409,15 @@ export class x402HTTPResourceServer {
   private routesConfig: RoutesConfig;
   private paywallProvider?: PaywallProvider;
   private protectedRequestHooks: ProtectedRequestHook[] = [];
+  private warnedMissingBeforeHandlerSettlement = false;
 
   /**
    * Creates a new x402HTTPResourceServer instance.
    *
    * @param ResourceServer - The core x402ResourceServer instance to use
    * @param routes - Route configuration for payment-protected endpoints
+   * @throws RouteConfigurationError if a registered scheme does not support the
+   *         declared paymentFlow / assetTransferMethod
    */
   constructor(ResourceServer: x402ResourceServer, routes: RoutesConfig) {
     this.ResourceServer = ResourceServer;
@@ -402,6 +437,14 @@ export class x402HTTPResourceServer {
         config,
         pattern: parsed.path,
       });
+    }
+
+    const paymentFlowErrors = this.validateRouteConfiguration({
+      includeMissingScheme: false,
+      includeFacilitator: false,
+    });
+    if (paymentFlowErrors.length > 0) {
+      throw new RouteConfigurationError(paymentFlowErrors);
     }
   }
 
@@ -572,7 +615,7 @@ export class x402HTTPResourceServer {
       };
     }
 
-    // Verify payment
+    // Match requirements, resolve flow, then verify/settle per flow phases
     try {
       const matchingRequirements = this.ResourceServer.findMatchingRequirements(
         paymentRequired.accepts,
@@ -612,6 +655,9 @@ export class x402HTTPResourceServer {
         };
       }
 
+      const flow = this.ResourceServer.getPaymentFlow(paymentPayload, matchingRequirements);
+      const phases = resolvePaymentFlowPhases(flow);
+
       const verifyResult = await this.ResourceServer.verifyPayment(
         paymentPayload,
         matchingRequirements,
@@ -645,17 +691,46 @@ export class x402HTTPResourceServer {
         );
       }
 
+      let beforeHandlerSettlement: CompletedSettlement | undefined;
+
+      if (phases.settleBeforeHandler) {
+        const beforeSettleResult = await this.processSettlement(
+          paymentPayload,
+          matchingRequirements,
+          extensions,
+          transportContext,
+          undefined,
+          undefined,
+          "before-handler",
+        );
+        if (!beforeSettleResult.success) {
+          return { type: "payment-error", response: beforeSettleResult.response };
+        }
+        // Store SettleResponse only — omit SDK-only headers from CompletedSettlement.
+        const { result, requirements } = (({ headers: _, requirements, ...result }) => ({
+          result,
+          requirements,
+        }))(beforeSettleResult);
+        beforeHandlerSettlement = {
+          phase: "before-handler",
+          flow,
+          result,
+          requirements,
+        };
+      }
+
       const cancellationDispatcher = this.ResourceServer.createPaymentCancellationDispatcher(
         paymentPayload,
         matchingRequirements,
         extensions,
         transportContext,
+        beforeHandlerSettlement ? ["before-handler"] : [],
       );
 
-      // Payment is valid, return data needed for settlement
       return {
         type: "payment-verified",
         cancellationDispatcher,
+        beforeHandlerSettlement,
         paymentPayload,
         paymentRequirements: matchingRequirements,
         declaredExtensions: extensions,
@@ -686,6 +761,8 @@ export class x402HTTPResourceServer {
    * @param declaredExtensions - Optional declared extensions (for per-key enrichment)
    * @param transportContext - Optional HTTP transport context
    * @param settlementOverrides - Optional settlement overrides (e.g., partial settlement amount)
+   * @param beforeHandlerSettlement - Before-handler settle from processHTTPRequest (for PAYMENT-RESPONSE echo)
+   * @param phase - Explicit settle phase; omit to derive from the payment flow
    * @returns ProcessSettleResultResponse - SettleResponse with headers if success or errorReason if failure
    */
   async processSettlement(
@@ -694,6 +771,8 @@ export class x402HTTPResourceServer {
     declaredExtensions?: Record<string, unknown>,
     transportContext?: HTTPTransportContext,
     settlementOverrides?: SettlementOverrides,
+    beforeHandlerSettlement?: CompletedSettlement,
+    phase?: SettlePhase,
   ): Promise<ProcessSettleResultResponse> {
     if (transportContext?.request && !transportContext.request.method) {
       transportContext = {
@@ -704,6 +783,41 @@ export class x402HTTPResourceServer {
         },
       };
     }
+
+    const flow =
+      beforeHandlerSettlement?.flow ??
+      this.ResourceServer.getPaymentFlow(paymentPayload, requirements);
+    const phases = resolvePaymentFlowPhases(flow);
+
+    // After-handler path for flows that do not settle again: echo before-handler settle or no-op.
+    if (phase !== "before-handler" && !phases.settleAfterHandler) {
+      if (beforeHandlerSettlement) {
+        return {
+          ...beforeHandlerSettlement.result,
+          success: true,
+          headers: this.createSettlementHeaders(beforeHandlerSettlement.result),
+          requirements: beforeHandlerSettlement.requirements,
+        };
+      }
+      if (phases.settleBeforeHandler && !beforeHandlerSettlement) {
+        if (!this.warnedMissingBeforeHandlerSettlement) {
+          this.warnedMissingBeforeHandlerSettlement = true;
+          console.warn(
+            `[x402] Payment flow "${flow}" settles before the handler, but processSettlement was called without beforeHandlerSettlement from processHTTPRequest. Skipping after-handler settle. Pass that settle result to echo the before-handler PAYMENT-RESPONSE.`,
+          );
+        }
+      }
+      return {
+        success: true,
+        transaction: "",
+        network: requirements.network as Network,
+        headers: {},
+        requirements,
+      };
+    }
+
+    const resolvedPhase: SettlePhase = phase ?? "after-handler";
+
     try {
       // Resolve overrides: explicit param takes precedence, fall back to response header
       let resolvedOverrides = settlementOverrides;
@@ -727,15 +841,16 @@ export class x402HTTPResourceServer {
         declaredExtensions,
         transportContext,
         resolvedOverrides,
+        resolvedPhase,
       );
 
       if (!settleResponse.success) {
+        const errorReason = settleResponse.errorReason || "Settlement failed";
         const failure = {
           ...settleResponse,
           success: false as const,
-          errorReason: settleResponse.errorReason || "Settlement failed",
-          errorMessage:
-            settleResponse.errorMessage || settleResponse.errorReason || "Settlement failed",
+          errorReason,
+          errorMessage: settleResponse.errorMessage || errorReason,
           headers: this.createSettlementHeaders(settleResponse),
         };
         const response = await this.buildSettlementFailureResponse(failure, transportContext);
@@ -802,6 +917,67 @@ export class x402HTTPResourceServer {
   }
 
   /**
+   * Create settlement response headers
+   *
+   * @param settleResponse - Settlement response
+   * @returns Headers to add to response
+   */
+  createSettlementHeaders(settleResponse: SettleResponse): Record<string, string> {
+    const encoded = encodePaymentResponseHeader(settleResponse);
+    return { "PAYMENT-RESPONSE": encoded };
+  }
+
+  /**
+   * Headers for echoing a completed before-handler settle onto a response.
+   * Merges `private` into Cache-Control so shared caches do not store settlement metadata.
+   *
+   * Used when the resource handler fails after payment was already committed (e.g. `upfront`).
+   *
+   * @param settlement - Completed before-handler settle
+   * @param existingCacheControl - Existing Cache-Control value, if any
+   * @returns PAYMENT-RESPONSE and Cache-Control headers
+   */
+  createCompletedSettlementHeaders(
+    settlement: CompletedSettlement,
+    existingCacheControl?: string | null,
+  ): Record<string, string> {
+    return {
+      ...this.createSettlementHeaders(settlement.result),
+      "Cache-Control": withPrivateCacheControl(existingCacheControl ?? null),
+    };
+  }
+
+  /**
+   * PAYMENT-RESPONSE headers when the resource handler fails after before-handler settle.
+   * Prefers cancel/refund settle when present; otherwise echoes the upfront deposit receipt.
+   *
+   * @param cancelSettlement - Result from {@link PaymentCancellationDispatcher.cancel}, if any
+   * @param beforeHandlerSettlement - Completed before-handler settle, when present
+   * @param paymentPayload - Client payment payload (for escrow deposit recovery fields)
+   * @param existingCacheControl - Existing Cache-Control value, if any
+   * @returns PAYMENT-RESPONSE and Cache-Control headers, or undefined when neither receipt applies
+   */
+  createFailurePathSettlementHeaders(
+    cancelSettlement: SettleResponse | void | undefined,
+    beforeHandlerSettlement?: CompletedSettlement,
+    paymentPayload?: PaymentPayload,
+    existingCacheControl?: string | null,
+  ): Record<string, string> | undefined {
+    const receipt = resolveFailurePathSettlement(
+      cancelSettlement,
+      beforeHandlerSettlement,
+      paymentPayload,
+    );
+    if (!receipt) {
+      return undefined;
+    }
+    return {
+      ...this.createSettlementHeaders(receipt),
+      "Cache-Control": withPrivateCacheControl(existingCacheControl ?? null),
+    };
+  }
+
+  /**
    * Settle a verified payment that requested `skipHandler`, packaging the
    * result as a `payment-error` HTTPProcessResult so framework adapters can
    * write the response without invoking the route handler.
@@ -828,6 +1004,9 @@ export class x402HTTPResourceServer {
       requirements,
       declaredExtensions,
       transportContext,
+      undefined,
+      undefined,
+      "after-handler",
     );
 
     if (!settleResult.success) {
@@ -844,6 +1023,7 @@ export class x402HTTPResourceServer {
         headers: {
           "Content-Type": contentType,
           ...settleResult.headers,
+          "Cache-Control": withPrivateCacheControl(null),
         },
         body,
         isHtml: contentType.includes("text/html"),
@@ -880,6 +1060,7 @@ export class x402HTTPResourceServer {
       headers: {
         "Content-Type": contentType,
         ...settlementHeaders,
+        "Cache-Control": PAYMENT_REQUIRED_CACHE_CONTROL,
       },
       body,
       isHtml: contentType.includes("text/html"),
@@ -921,12 +1102,19 @@ export class x402HTTPResourceServer {
   }
 
   /**
-   * Validates that all payment options in routes have corresponding registered schemes
-   * and facilitator support.
+   * Validates that all payment options in routes have corresponding registered schemes,
+   * supported paymentFlow / assetTransferMethod and facilitator support.
    *
+   * @param options - Validation options
+   * @param options.includeMissingScheme - When true (default), report unregistered schemes
+   * @param options.includeFacilitator - When true (default), also check facilitator kinds
    * @returns Array of validation errors (empty if all routes are valid)
    */
-  private validateRouteConfiguration(): RouteValidationError[] {
+  private validateRouteConfiguration(
+    options: { includeMissingScheme?: boolean; includeFacilitator?: boolean } = {},
+  ): RouteValidationError[] {
+    const includeMissingScheme = options.includeMissingScheme !== false;
+    const includeFacilitator = options.includeFacilitator !== false;
     const errors: RouteValidationError[] = [];
 
     // Normalize routes to array of [pattern, config] pairs
@@ -955,19 +1143,67 @@ export class x402HTTPResourceServer {
 
       for (const option of paymentOptions) {
         // Check 1: Is scheme registered?
-        if (!this.ResourceServer.hasRegisteredScheme(option.network, option.scheme)) {
+        const schemeServer = this.ResourceServer.getRegisteredScheme(option.network, option.scheme);
+        if (!schemeServer) {
+          if (includeMissingScheme) {
+            errors.push({
+              routePattern: pattern,
+              scheme: option.scheme,
+              network: option.network,
+              reason: "missing_scheme",
+              message: `Route "${pattern}": No scheme implementation registered for "${option.scheme}" on network "${option.network}"`,
+            });
+          }
+          // Skip further checks if scheme isn't registered
+          continue;
+        }
+
+        // Check 2: Does the scheme support the declared ATM / paymentFlow?
+        const atm =
+          typeof option.extra?.assetTransferMethod === "string"
+            ? option.extra.assetTransferMethod
+            : schemeServer.defaultAssetTransferMethod;
+        if (!schemeServer.paymentFlows[atm]) {
           errors.push({
             routePattern: pattern,
             scheme: option.scheme,
             network: option.network,
-            reason: "missing_scheme",
-            message: `Route "${pattern}": No scheme implementation registered for "${option.scheme}" on network "${option.network}"`,
+            reason: "unsupported_asset_transfer_method",
+            message:
+              `Route "${pattern}": [x402] Scheme "${schemeServer.scheme}" does not support ` +
+              `assetTransferMethod "${atm}". Supported: ${Object.keys(schemeServer.paymentFlows).join(", ")}.`,
           });
-          // Skip facilitator check if scheme isn't registered
           continue;
         }
 
-        // Check 2: Does facilitator support this scheme/network combination?
+        try {
+          resolvePaymentFlow(schemeServer, {
+            scheme: option.scheme,
+            network: option.network,
+            asset: "",
+            amount: "0",
+            payTo: "",
+            maxTimeoutSeconds: 0,
+            extra: option.extra ?? {},
+          });
+        } catch (error) {
+          errors.push({
+            routePattern: pattern,
+            scheme: option.scheme,
+            network: option.network,
+            reason: "unsupported_payment_flow",
+            message:
+              error instanceof Error
+                ? `Route "${pattern}": ${error.message}`
+                : `Route "${pattern}": Unsupported paymentFlow`,
+          });
+        }
+
+        if (!includeFacilitator) {
+          continue;
+        }
+
+        // Check 3: Does facilitator support this scheme/network combination?
         const supportedKind = this.ResourceServer.getSupportedKind(
           x402Version,
           option.network,
@@ -1106,19 +1342,9 @@ export class x402HTTPResourceServer {
     return {
       headers: {
         "PAYMENT-REQUIRED": encodePaymentRequiredHeader(paymentRequired),
+        "Cache-Control": PAYMENT_REQUIRED_CACHE_CONTROL,
       },
     };
-  }
-
-  /**
-   * Create settlement response headers
-   *
-   * @param settleResponse - Settlement response
-   * @returns Headers to add to response
-   */
-  private createSettlementHeaders(settleResponse: SettleResponse): Record<string, string> {
-    const encoded = encodePaymentResponseHeader(settleResponse);
-    return { "PAYMENT-RESPONSE": encoded };
   }
 
   /**
@@ -1130,17 +1356,29 @@ export class x402HTTPResourceServer {
   private parseRoutePattern(pattern: string): { verb: string; regex: RegExp; path: string } {
     const [verb, path] = pattern.includes(" ") ? pattern.split(/\s+/) : ["*", pattern];
 
+    // A trailing "/*" must also match the bare prefix. normalizePath strips the
+    // trailing slash, so a request for "/api/premium/" arrives as "/api/premium",
+    // which a literal "/.*?" suffix would not match even though routers dispatch
+    // it to the protected handler.
+    const trailingWildcard = path.endsWith("/*");
+    const pathForRegex = trailingWildcard ? path.slice(0, -2) : path;
+
+    let regexBody = pathForRegex
+      .replace(/\\/g, "\\\\") // Escape backslashes first
+      .replace(/[$()+.?^{|}]/g, "\\$&") // Escape regex special chars
+      .replace(/\*/g, ".*?") // Wildcards
+      .replace(/\[([^\]]+)\]/g, "[^/]+") // Parameters (Next.js style [param])
+      .replace(/:([a-zA-Z_][a-zA-Z0-9_]*)/g, "[^/]+") // Parameters (Express style :param)
+      .replace(/\//g, "\\/"); // Escape slashes
+
+    if (trailingWildcard) {
+      regexBody += "(?:/.*?)?";
+    }
+
     const regex = new RegExp(
-      `^${
-        path
-          .replace(/\\/g, "\\\\") // Escape backslashes first
-          .replace(/[$()+.?^{|}]/g, "\\$&") // Escape regex special chars
-          .replace(/\*/g, ".*?") // Wildcards
-          .replace(/\[([^\]]+)\]/g, "[^/]+") // Parameters (Next.js style [param])
-          .replace(/:([a-zA-Z_][a-zA-Z0-9_]*)/g, "[^/]+") // Parameters (Express style :param)
-          .replace(/\//g, "\\/") // Escape slashes
-      }$`,
-      "i",
+      `^${regexBody}$`,
+      // "s" (dotAll): without it, "." can't match LF/CR/U+2028/U+2029, so a wildcard segment containing one fails to match.
+      "is",
     );
 
     return { verb: verb.toUpperCase(), regex, path };
@@ -1155,27 +1393,27 @@ export class x402HTTPResourceServer {
   private normalizePath(path: string): string {
     const pathWithoutQuery = path.split(/[?#]/)[0];
 
-    // Decode percent-escapes per segment, preserving encoded path separators
-    // (%2F, %5C) as their literal escaped form. Otherwise an attacker could
-    // hide a "/" inside a single segment (e.g. /api/report/a%2Fb), bypassing
-    // a :param route whose regex compiles to [^/]+ while the framework still
-    // dispatches the request as a single-segment match.
-    const parts = pathWithoutQuery.split(/(%2[fF]|%5[cC])/);
-    const decoded = parts
-      .map((part, i) => {
-        if (i % 2 === 1) return part;
+    // Decode percent-escapes per segment and re-escape any separator the decode
+    // yields, so a decoded byte can never create a segment boundary the router
+    // did not see. "\" is escaped rather than folded into "/" because routers
+    // treat it as an ordinary in-segment character; folding it would split the
+    // path into more segments than the router saw and fail open on a :param
+    // route whose regex compiles to [^/]+.
+    const normalized = pathWithoutQuery
+      .split("/")
+      .map(segment => {
+        let decoded: string;
         try {
-          return decodeURIComponent(part);
+          decoded = decodeURIComponent(segment);
         } catch {
-          return part;
+          // Malformed escape: match the raw segment rather than widening it.
+          return segment;
         }
+        return decoded.replace(/\//g, "%2F").replace(/\\/g, "%5C");
       })
-      .join("");
+      .join("/");
 
-    return decoded
-      .replace(/\\/g, "/")
-      .replace(/\/+/g, "/")
-      .replace(/(.+?)\/+$/, "$1");
+    return normalized.replace(/\/+/g, "/").replace(/(.+?)\/+$/, "$1");
   }
 
   /**

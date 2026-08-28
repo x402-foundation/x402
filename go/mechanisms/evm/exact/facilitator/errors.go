@@ -34,8 +34,11 @@ const (
 	ErrFailedToParseSignature  = "invalid_exact_evm_failed_to_parse_signature"
 	ErrFailedToCheckDeployment = "invalid_exact_evm_failed_to_check_deployment"
 	ErrFailedToExecuteTransfer = "invalid_exact_evm_failed_to_execute_transfer"
-	ErrFailedToGetReceipt      = "invalid_exact_evm_failed_to_get_receipt"
-	ErrTransactionFailed       = "invalid_exact_evm_transaction_failed"
+	// Reserved wire value (exact/v1); do not reassign.
+	ErrFailedToGetReceipt    = "invalid_exact_evm_failed_to_get_receipt"
+	ErrTransactionFailed     = "invalid_exact_evm_transaction_failed"
+	ErrTransferEventMismatch = "invalid_exact_evm_transfer_event_mismatch"
+	ErrSettlementPending     = evm.ErrSettlementPending
 
 	// Smart wallet errors (shared by EIP-3009 and Permit2)
 	ErrUndeployedSmartWallet       = "invalid_exact_evm_payload_undeployed_smart_wallet"
@@ -65,7 +68,7 @@ const (
 	ErrPermit2SimulationFailed    = evm.ErrPermit2SimulationFailed
 	ErrPermit2InsufficientBalance = evm.ErrPermit2InsufficientBalance
 	ErrPermit2ProxyNotDeployed    = evm.ErrPermit2ProxyNotDeployed
-	ErrErc20ApprovalTxFailed      = "erc20_approval_tx_failed"
+	ErrErc20ApprovalTxFailed      = evm.ErrErc20ApprovalTxFailed
 
 	// ERC-20 approval gas sponsoring errors
 	ErrErc20ApprovalInsufficientEth = evm.ErrErc20ApprovalInsufficientEth

@@ -57,4 +57,11 @@ export {
 } from "./constants";
 
 // Utils
-export { getDefaultAsset, normalizeTonAddress, priceToNano } from "./utils";
+export { normalizeTonAddress, priceToNano } from "./utils";
+
+export {
+  DEFAULT_ASSETS,
+  getDefaultAsset,
+  findDefaultAsset,
+  type TvmDefaultAsset,
+} from "./defaultAssets";

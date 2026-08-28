@@ -5,6 +5,8 @@ import { BatchSettlementSettlePayload } from "../types";
 import { batchSettlementABI } from "../abi";
 import { BATCH_SETTLEMENT_ADDRESS } from "../constants";
 import * as Errors from "../errors";
+import { truncateErrorMessage } from "../../utils";
+import { waitAndReturnSettleResponse } from "../../shared/settleReceipt";
 
 /**
  * Explicit gas limit for the `settle` transaction.
@@ -103,42 +105,30 @@ export async function executeSettle(
       dataSuffix,
     });
 
-    const receipt = await signer.waitForTransactionReceipt({ hash: tx });
-
-    if (receipt.status !== "success") {
-      return {
-        success: false,
-        errorReason: Errors.ErrSettleTransactionFailed,
-        errorMessage: `transaction reverted (receipt status ${receipt.status})`,
-        transaction: tx,
-        network,
-      };
-    }
-
-    let amount = "";
-    if (receipt.logs) {
-      const logs = parseEventLogs({
-        abi: batchSettlementABI,
-        eventName: "Settled",
-        logs: receipt.logs.filter(log => isAddressEqual(log.address, contractAddr)),
-      });
-      const settledLog = logs.find(
-        log => isAddressEqual(log.args.receiver, receiver) && isAddressEqual(log.args.token, token),
-      );
-      amount = settledLog?.args.amount.toString() ?? "0";
-    }
-
-    return {
-      success: true,
-      transaction: tx,
-      network,
-      amount,
-    };
+    return await waitAndReturnSettleResponse(signer, tx, network, undefined, {
+      failedStatusReason: Errors.ErrSettleTransactionFailed,
+      onSuccess: receipt => {
+        let amount = "";
+        if (receipt.logs) {
+          const logs = parseEventLogs({
+            abi: batchSettlementABI,
+            eventName: "Settled",
+            logs: receipt.logs.filter(log => isAddressEqual(log.address, contractAddr)),
+          });
+          const settledLog = logs.find(
+            log =>
+              isAddressEqual(log.args.receiver, receiver) && isAddressEqual(log.args.token, token),
+          );
+          amount = settledLog?.args.amount.toString() ?? "0";
+        }
+        return { success: true, transaction: tx, network, amount };
+      },
+    });
   } catch (e) {
     return {
       success: false,
       errorReason: Errors.ErrSettleTransactionFailed,
-      errorMessage: e instanceof Error ? e.message : String(e),
+      errorMessage: truncateErrorMessage(e instanceof Error ? e.message : String(e)),
       transaction: "",
       network,
     };

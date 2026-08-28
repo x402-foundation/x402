@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { ExactAvmScheme as ExactAvmServerScheme } from "../../src/exact/server/scheme";
 import {
   ALGORAND_MAINNET_CAIP2,
   ALGORAND_MAINNET_GENESIS_HASH,
@@ -16,6 +17,16 @@ import {
 } from "../../src";
 
 describe("@x402/avm", () => {
+  describe("ExactAvmScheme paymentFlows", () => {
+    it("declares authorization and upfront with authorization as the default", () => {
+      const server = new ExactAvmServerScheme();
+      expect(server.defaultAssetTransferMethod).toBe("default");
+      expect(server.paymentFlows).toEqual({
+        default: { supported: ["authorization", "upfront"], default: "authorization" },
+      });
+    });
+  });
+
   describe("constants", () => {
     it("should export correct CAIP-2 network identifiers", () => {
       expect(ALGORAND_MAINNET_CAIP2).toBe("algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k");

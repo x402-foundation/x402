@@ -1,4 +1,8 @@
-import { SchemeNetworkServer, SchemeServerHooks } from "../../../src/types/mechanisms";
+import {
+  PaymentFlowConfig,
+  SchemeNetworkServer,
+  SchemeServerHooks,
+} from "../../../src/types/mechanisms";
 import { AssetAmount, Network, Price } from "../../../src/types";
 import { PaymentRequirements } from "../../../src/types/payments";
 import type { SupportedKind } from "../../../src/types/facilitator";
@@ -8,10 +12,15 @@ import type { SupportedKind } from "../../../src/types/facilitator";
  */
 export class MockSchemeNetworkServer implements SchemeNetworkServer {
   public readonly scheme: string;
+  public readonly defaultAssetTransferMethod = "default";
+  public readonly paymentFlows: Readonly<Record<string, PaymentFlowConfig>> = {
+    default: { supported: ["authorization"], default: "authorization" },
+  };
   public readonly schemeHooks?: SchemeServerHooks;
+  public settleOnCancel?: SchemeNetworkServer["settleOnCancel"];
   private parsePriceResult: AssetAmount | Error;
   private enhanceResult: PaymentRequirements | Error | null = null;
-  private assetDecimalsResult: number | null = null;
+  private assetDecimalsResult: number | undefined | null = null;
 
   // Call tracking
   public parsePriceCalls: Array<{ price: Price; network: Network }> = [];
@@ -72,8 +81,11 @@ export class MockSchemeNetworkServer implements SchemeNetworkServer {
     return this.enhanceResult || paymentRequirements;
   }
 
-  getAssetDecimals(_asset: string, _network: Network): number {
-    return this.assetDecimalsResult ?? 6;
+  getAssetDecimals(_asset: string, _network: Network): number | undefined {
+    if (this.assetDecimalsResult === null) {
+      return 6;
+    }
+    return this.assetDecimalsResult;
   }
 
   // Helper methods for test configuration
@@ -81,7 +93,7 @@ export class MockSchemeNetworkServer implements SchemeNetworkServer {
    *
    * @param result
    */
-  setAssetDecimalsResult(result: number): void {
+  setAssetDecimalsResult(result: number | undefined): void {
     this.assetDecimalsResult = result;
   }
 

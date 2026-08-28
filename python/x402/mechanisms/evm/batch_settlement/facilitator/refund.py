@@ -13,11 +13,17 @@ except ImportError as e:
     ) from e
 
 from .....schemas import PaymentRequirements, SettleResponse
-from ...constants import TX_STATUS_SUCCESS
+from ...settle_receipt import wait_for_receipt_and_build_response
 from ...signer import FacilitatorEvmSigner
+from ...types import TransactionReceipt
+from ...utils import truncate_error_message
 from ..abi import BATCH_SETTLEMENT_ABI
 from ..authorizer_signer import sign_claim_batch, sign_refund
-from ..constants import BATCH_SETTLEMENT_ADDRESS
+from ..constants import (
+    BATCH_SETTLEMENT_ADDRESS,
+    CHANNEL_STATE_POLL_INTERVAL_S,
+    CHANNEL_STATE_POLL_S,
+)
 from ..errors import (
     ERR_AUTHORIZER_ADDRESS_MISMATCH,
     ERR_AUTHORIZER_NOT_CONFIGURED,
@@ -33,9 +39,6 @@ from ..types import (
 from ..utils import compute_channel_id
 from .claim import build_voucher_claim_args
 from .utils import read_channel_state, to_contract_channel_config
-
-_REFUND_STATE_POLL_S = 2.0
-_REFUND_STATE_POLL_INTERVAL_S = 0.15
 
 
 def _get_refundable_amount(
@@ -113,7 +116,7 @@ def _read_post_refund_state(
     signer: FacilitatorEvmSigner, channel_id: str, submitted_nonce: str
 ) -> ChannelState | None:
     expected = int(submitted_nonce) + 1
-    deadline = time.time() + _REFUND_STATE_POLL_S
+    deadline = time.time() + CHANNEL_STATE_POLL_S
     while True:
         try:
             state = read_channel_state(signer, channel_id)
@@ -123,7 +126,7 @@ def _read_post_refund_state(
             return state
         if time.time() >= deadline:
             return None
-        time.sleep(_REFUND_STATE_POLL_INTERVAL_S)
+        time.sleep(CHANNEL_STATE_POLL_INTERVAL_S)
 
 
 def _encode_calldata(function_name: str, args: list) -> bytes:
@@ -226,7 +229,7 @@ def execute_refund_with_signature(
                 return SettleResponse(
                     success=False,
                     error_reason=ERR_REFUND_SIMULATION_FAILED,
-                    error_message=str(e)[:500],
+                    error_message=truncate_error_message(str(e)),
                     transaction="",
                     network=network,
                 )
@@ -250,7 +253,7 @@ def execute_refund_with_signature(
                 return SettleResponse(
                     success=False,
                     error_reason=ERR_REFUND_SIMULATION_FAILED,
-                    error_message=str(e)[:500],
+                    error_message=truncate_error_message(str(e)),
                     transaction="",
                     network=network,
                 )
@@ -263,39 +266,41 @@ def execute_refund_with_signature(
                 data_suffix=data_suffix,
             )
 
-        receipt = signer.wait_for_transaction_receipt(tx)
-        if receipt.status != TX_STATUS_SUCCESS:
+        def _build_refund_success(_receipt: TransactionReceipt) -> SettleResponse:
+            post_state = (
+                _read_post_refund_state(signer, channel_id, payload.refund_nonce)
+                if pre_state and pre_state.withdraw_requested_at != 0
+                else None
+            )
+            if pre_state and post_state:
+                amount, extra = _build_refund_extra_from_post_state(
+                    channel_id, pre_state, post_state
+                )
+            else:
+                amount, extra = _build_refund_extra(payload, channel_id, pre_state)
+
             return SettleResponse(
-                success=False,
-                error_reason=ERR_REFUND_TRANSACTION_FAILED,
-                error_message=f"transaction reverted (receipt status {receipt.status})",
+                success=True,
                 transaction=tx,
                 network=network,
+                payer=payload.channel_config.payer,
+                amount=amount,
+                extra=extra,
             )
 
-        post_state = (
-            _read_post_refund_state(signer, channel_id, payload.refund_nonce)
-            if pre_state and pre_state.withdraw_requested_at != 0
-            else None
-        )
-        if pre_state and post_state:
-            amount, extra = _build_refund_extra_from_post_state(channel_id, pre_state, post_state)
-        else:
-            amount, extra = _build_refund_extra(payload, channel_id, pre_state)
-
-        return SettleResponse(
-            success=True,
-            transaction=tx,
-            network=network,
-            payer=payload.channel_config.payer,
-            amount=amount,
-            extra=extra,
+        return wait_for_receipt_and_build_response(
+            signer,
+            tx,
+            network,
+            payload.channel_config.payer,
+            failed_reason=ERR_REFUND_TRANSACTION_FAILED,
+            on_success=_build_refund_success,
         )
     except Exception as e:
         return SettleResponse(
             success=False,
             error_reason=ERR_REFUND_TRANSACTION_FAILED,
-            error_message=str(e)[:500],
+            error_message=truncate_error_message(str(e)),
             transaction="",
             network=network,
         )

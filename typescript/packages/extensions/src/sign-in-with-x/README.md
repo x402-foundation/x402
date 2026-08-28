@@ -146,8 +146,9 @@ const response = await httpClient.fetch(url);
 The client extension automatically:
 - Detects SIWX support in 402 responses
 - Matches your wallet's chain with server's `supportedChains`
+- Verifies the challenge is bound to the 402 response origin before signing
 - Signs and sends the authentication proof
-- Falls back to payment if SIWX auth fails
+- Falls back to payment if SIWX auth fails or the challenge is not origin-bound
 
 ### Manual Usage (Advanced)
 
@@ -179,8 +180,8 @@ const completeInfo = {
   type: matchingChain.type,
 };
 
-// 4. Create signed payload
-const payload = await createSIWxPayload(completeInfo, signer);
+// 4. Create signed payload (requestUrl must match challenge domain/uri origin)
+const payload = await createSIWxPayload(completeInfo, signer, response.url);
 
 // 5. Encode and send
 const header = encodeSIWxHeader(payload);
@@ -293,9 +294,13 @@ This enables:
 
 Note: Smart wallet verification requires RPC calls, while EOA verification is purely local.
 
-### `createSIWxPayload(serverInfo, signer)`
+### `createSIWxPayload(serverInfo, signer, requestUrl)`
 
-Client helper that creates and signs a complete payload.
+Client helper that verifies origin binding and creates a signed payload. `requestUrl` must be the final URL of the 402 response (after redirects). Signing is refused when the challenge `domain` or `uri` origin does not match that URL's origin. EIP-4361 `resources` may be cross-origin and are not checked.
+
+### `assertSIWxChallengeBoundToOrigin(info, responseUrl)`
+
+Throws when a SIWX challenge is not bound to the origin of the 402 response URL. Used internally by `createSIWxPayload`; exposed for manual integrations.
 
 ### `encodeSIWxHeader(payload)`
 

@@ -14,8 +14,12 @@ export {
 // Real cash implementation for integration and unit tests
 export {
   buildCashPaymentRequirements,
+  createCashX402Client,
   CashFacilitatorClient,
   CashSchemeNetworkClient,
   CashSchemeNetworkFacilitator,
   CashSchemeNetworkServer,
+  MockAuthorizeSchemeNetworkServer,
+  MockEscrowSchemeNetworkServer,
+  MockUpfrontSchemeNetworkServer,
 } from "./cash";

@@ -576,12 +576,12 @@ For custom implementations:
       type: matchingChain.type,
     };
 
-    // 4. Create signed payload
-    const payload = await createSIWxPayload(completeInfo, signer);
+    // 4. Create signed payload (pass the 402 response URL for origin binding)
+    const payload = await createSIWxPayload(completeInfo, signer, response.url);
 
     // 5. Encode and send
     const header = encodeSIWxHeader(payload);
-    const response = await fetch(url, {
+    const retryResponse = await fetch(url, {
       headers: { 'SIGN-IN-WITH-X': header }
     });
     ```
@@ -741,9 +741,9 @@ verifySIWxSignature(payload, {
 // Returns: { isValid: true; payer: string } | { isValid: false; invalidReason: SIWxVerifyCode; invalidMessage: string }
 ```
 
-### `createSIWxPayload(serverInfo, signer)`
+### `createSIWxPayload(serverInfo, signer, requestUrl)`
 
-Client helper that creates and signs a complete payload.
+Client helper that creates and signs a complete payload. `requestUrl` is the final URL of the 402 response (after redirects) and is required — signing is refused when the challenge `domain` or `uri` origin does not match that URL's origin.
 
 ### `encodeSIWxHeader(payload)`
 

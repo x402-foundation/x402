@@ -6,6 +6,8 @@ import { batchSettlementABI } from "../abi";
 import { BATCH_SETTLEMENT_ADDRESS } from "../constants";
 import { signClaimBatch } from "../authorizerSigner";
 import * as Errors from "../errors";
+import { truncateErrorMessage } from "../../utils";
+import { waitAndReturnSettleResponse } from "../../shared/settleReceipt";
 import { toContractChannelConfig } from "./utils";
 
 /**
@@ -105,29 +107,14 @@ export async function executeClaimWithSignature(
       dataSuffix,
     });
 
-    const receipt = await signer.waitForTransactionReceipt({ hash: tx });
-
-    if (receipt.status !== "success") {
-      return {
-        success: false,
-        errorReason: Errors.ErrClaimTransactionFailed,
-        errorMessage: `transaction reverted (receipt status ${receipt.status})`,
-        transaction: tx,
-        network,
-      };
-    }
-
-    return {
-      success: true,
-      transaction: tx,
-      network,
-      amount: "",
-    };
+    return await waitAndReturnSettleResponse(signer, tx, network, undefined, {
+      failedStatusReason: Errors.ErrClaimTransactionFailed,
+    });
   } catch (e) {
     return {
       success: false,
       errorReason: Errors.ErrClaimTransactionFailed,
-      errorMessage: e instanceof Error ? e.message : String(e),
+      errorMessage: truncateErrorMessage(e instanceof Error ? e.message : String(e)),
       transaction: "",
       network,
     };

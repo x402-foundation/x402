@@ -1,9 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { x402Client } from "@x402/core/client";
 import { ExactSvmScheme } from "../../src/exact";
+import { registerExactSvmScheme } from "../../src/exact/client/register";
+import { NETWORKS } from "../../src/v1";
 import type { ClientSvmSigner } from "../../src/signer";
-import type { PaymentRequirements } from "@x402/core/types";
-import { USDC_DEVNET_ADDRESS, SOLANA_DEVNET_CAIP2 } from "../../src/constants";
+import type { Network, PaymentRequirements } from "@x402/core/types";
+import { SOLANA_DEVNET_CAIP2 } from "../../src/constants";
+import { USDC_DEVNET_ADDRESS } from "../../src/defaultAssets";
 import { resolveBlockhash } from "../../src/utils";
+
+type ClientInternals = {
+  registeredClientSchemes: Map<number, Map<string, Map<string, unknown>>>;
+};
+
+function getRegisteredNetworks(client: x402Client, version: number): string[] {
+  const internals = client as unknown as ClientInternals;
+  const byNetwork = internals.registeredClientSchemes.get(version);
+  return byNetwork ? [...byNetwork.keys()] : [];
+}
 
 const PROVIDED_BLOCKHASH = "EZ3rST5dvHmbanh75jc4PuLfV96vp9fEYBVeNk4FfM1k";
 const FALLBACK_BLOCKHASH = "5Tx8F3jgSHx21CbtjwmdaKPLM5tWmreWAnPrbqHomSJF";
@@ -183,5 +197,41 @@ describe("resolveBlockhash", () => {
       lastValidBlockHeight: 67890n,
     });
     expect(send).toHaveBeenCalledOnce();
+  });
+});
+
+describe("registerExactSvmScheme", () => {
+  const mockSigner: ClientSvmSigner = {
+    address: "9xAXssX9j7vuK99c7cFwqbixzL3bFrzPy9PUhCtDPAYJ" as never,
+    signTransactions: vi.fn(),
+  };
+
+  it("scopes v1 registration to networks matching config.networks", () => {
+    const client = new x402Client();
+    registerExactSvmScheme(client, {
+      signer: mockSigner,
+      networks: ["solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp" as Network],
+    });
+
+    const v1Networks = getRegisteredNetworks(client, 1);
+    expect(v1Networks).toContain("solana");
+    expect(v1Networks).not.toContain("solana-devnet");
+    expect(getRegisteredNetworks(client, 2)).toEqual(["solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"]);
+  });
+
+  it("registers all v1 networks when config.networks uses a wildcard", () => {
+    const client = new x402Client();
+    registerExactSvmScheme(client, { signer: mockSigner, networks: ["solana:*" as Network] });
+
+    expect(getRegisteredNetworks(client, 1).sort()).toEqual([...NETWORKS].sort());
+    expect(getRegisteredNetworks(client, 2)).toEqual(["solana:*"]);
+  });
+
+  it("registers wildcard v2 and all v1 networks when networks is omitted", () => {
+    const client = new x402Client();
+    registerExactSvmScheme(client, { signer: mockSigner });
+
+    expect(getRegisteredNetworks(client, 2)).toEqual(["solana:*"]);
+    expect(getRegisteredNetworks(client, 1).sort()).toEqual([...NETWORKS].sort());
   });
 });

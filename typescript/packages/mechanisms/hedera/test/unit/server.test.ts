@@ -3,6 +3,16 @@ import type { PaymentRequirements } from "@x402/core/types";
 import { ExactHederaScheme } from "../../src/exact/server/scheme";
 
 describe("ExactHedera server scheme", () => {
+  describe("paymentFlows", () => {
+    it("declares authorization and upfront with authorization as the default", () => {
+      const scheme = new ExactHederaScheme();
+      expect(scheme.defaultAssetTransferMethod).toBe("default");
+      expect(scheme.paymentFlows).toEqual({
+        default: { supported: ["authorization", "upfront"], default: "authorization" },
+      });
+    });
+  });
+
   it("passes through explicit AssetAmount", async () => {
     const scheme = new ExactHederaScheme();
     const parsed = await scheme.parsePrice(

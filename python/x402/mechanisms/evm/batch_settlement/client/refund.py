@@ -90,13 +90,17 @@ def refund_channel(
         cached_id = _url_cache.get(url)
         if cached_id is not None:
             ch = deps.storage.get(cached_id)
-            if ch is not None:
-                charged = ch.charged_cumulative_amount or "0"
-                if ch.balance is not None and int(ch.balance) <= int(charged):
-                    raise RuntimeError(
-                        f"Refund failed: channel has no remaining balance "
-                        f"(balance={ch.balance}, chargedCumulativeAmount={charged})"
-                    )
+            if ch is None:
+                raise RuntimeError(
+                    "Refund failed: channel has no remaining balance "
+                    "(balance=0, chargedCumulativeAmount=0)"
+                )
+            charged = ch.charged_cumulative_amount or "0"
+            if ch.balance is not None and int(ch.balance) <= int(charged):
+                raise RuntimeError(
+                    f"Refund failed: channel has no remaining balance "
+                    f"(balance={ch.balance}, chargedCumulativeAmount={charged})"
+                )
 
     probe = _probe_refund_requirements(url, fetch)
 
@@ -158,12 +162,13 @@ def _execute_refund(
         settle_response = decode_payment_response_header(settle_header) if settle_header else None
 
         if settle_response is not None:
-            channel_id_key = _channel_key(deps, probe.requirements)
-            update_channel_after_refund(
-                deps.storage,
-                channel_id_key,
-                settle_response.extra or {},
-            )
+            if settle_response.success:
+                channel_id_key = _channel_key(deps, probe.requirements)
+                update_channel_after_refund(
+                    deps.storage,
+                    channel_id_key,
+                    refund_amount,
+                )
             if response.status == 402:
                 # Treat as failure even if PAYMENT-RESPONSE present.
                 raise RuntimeError(_format_refund_failure(settle_response))

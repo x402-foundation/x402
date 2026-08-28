@@ -1,10 +1,32 @@
 import { PaymentRequirements, VerifyResponse } from "@x402/core/types";
-import { encodeFunctionData, getAddress, Hex, parseErc6492Signature, parseSignature } from "viem";
+import {
+  encodeFunctionData,
+  getAddress,
+  Hex,
+  isAddressEqual,
+  parseErc6492Signature,
+  parseEventLogs,
+  parseSignature,
+  type Log,
+} from "viem";
 import { eip3009ABI } from "../../constants";
 import { multicall, ContractCall, RawContractCall } from "../../multicall";
 import { FacilitatorEvmSigner } from "../../signer";
 import { ExactEIP3009Payload } from "../../types";
 import * as Errors from "./errors";
+
+const erc20TransferEventAbi = [
+  {
+    type: "event",
+    name: "Transfer",
+    anonymous: false,
+    inputs: [
+      { name: "from", type: "address", indexed: true },
+      { name: "to", type: "address", indexed: true },
+      { name: "value", type: "uint256", indexed: false },
+    ],
+  },
+] as const;
 
 export interface Eip6492Deployment {
   factoryAddress: `0x${string}`;
@@ -214,6 +236,37 @@ export async function diagnoseEip3009SimulationFailure(
   }
 
   return { isValid: false, invalidReason: Errors.ErrEip3009SimulationFailed, payer };
+}
+
+/**
+ * Verifies that the post-settle receipt contains an ERC-20 Transfer event
+ * emitted by the expected token contract whose (from, to, value) matches the
+ * authorization.
+ *
+ * @param logs - Receipt logs to search for a matching Transfer
+ * @param erc20Address - The ERC-20 token contract that should have emitted the Transfer
+ * @param expected - The expected Transfer arguments from the authorization
+ * @param expected.from - Expected `from` of the Transfer event
+ * @param expected.to - Expected `to` of the Transfer event
+ * @param expected.value - Expected `value` of the Transfer event
+ * @returns true when a matching Transfer log is present, false otherwise
+ */
+export function verifyEip3009TransferEvent(
+  logs: readonly Log[],
+  erc20Address: `0x${string}`,
+  expected: { from: `0x${string}`; to: `0x${string}`; value: bigint },
+): boolean {
+  const transferLogs = parseEventLogs({
+    abi: erc20TransferEventAbi,
+    eventName: "Transfer",
+    logs: logs.filter(log => isAddressEqual(log.address, erc20Address)),
+  });
+  return transferLogs.some(
+    log =>
+      isAddressEqual(log.args.from, expected.from) &&
+      isAddressEqual(log.args.to, expected.to) &&
+      log.args.value === expected.value,
+  );
 }
 
 /**

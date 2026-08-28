@@ -13,6 +13,7 @@ import type {
   OnVerifiedPaymentCanceledHook,
   SettleContext,
   SettleResultContext,
+  VerifiedPaymentCanceledContext,
 } from "../server/x402ResourceServer";
 import type {
   BeforePaymentCreationHook,
@@ -22,16 +23,19 @@ import type {
 } from "../client/x402Client";
 
 /**
- * Money parser function that converts a numeric amount to an AssetAmount
- * Receives the amount as a decimal number (e.g., 1.50 for $1.50)
- * Returns null to indicate "cannot handle this amount", causing fallback to next parser
+ * Money parser that converts a decimal amount to an AssetAmount.
+ * `parsePrice` always passes the decimal string produced by parseMoney.
+ * Returns null to indicate "cannot handle this amount", causing fallback to next parser.
  * Always returns a Promise for consistency - use async/await
  *
- * @param amount - The decimal amount (e.g., 1.50)
+ * @param amount - Decimal amount as a string (or number, if the parser is called directly)
  * @param network - The network identifier for context
  * @returns AssetAmount or null to try next parser
  */
-export type MoneyParser = (amount: number, network: Network) => Promise<AssetAmount | null>;
+export type MoneyParser = (
+  amount: string | number,
+  network: Network,
+) => Promise<AssetAmount | null>;
 
 /**
  * Result of createPaymentPayload - the core payload fields.
@@ -59,9 +63,36 @@ export interface SchemeClientHooks {
   onPaymentResponse?: OnPaymentResponseHook;
 }
 
+/** USD-pegged asset for money strings and client spend caps. See DEFAULT_ASSETS.md. */
+export interface DefaultAsset {
+  /** Asset id as advertised in payment requirements. */
+  asset: string;
+  decimals: number;
+  /** Ticker for suffixed prices (e.g. `"0.10 USDC"`). */
+  symbol: string;
+}
+
+/** Per-network default assets; index 0 is the bare `"$0.10"` default. */
+export type DefaultAssetTable<T extends DefaultAsset = DefaultAsset> = Record<string, readonly T[]>;
+
+/** `(network, symbol?) => entry`; throws when unknown. */
+export type GetDefaultAsset<T extends DefaultAsset = DefaultAsset> = (
+  network: Network,
+  symbol?: string,
+) => T;
+
+/** `(asset, network) => entry | undefined`. */
+export type FindDefaultAsset<T extends DefaultAsset = DefaultAsset> = (
+  asset: string,
+  network: Network,
+) => T | undefined;
+
 export interface SchemeNetworkClient {
   readonly scheme: string;
   readonly schemeHooks?: SchemeClientHooks;
+
+  /** Optional reverse lookup for USD spend caps. Not the same as `getAssetDecimals`. */
+  findDefaultAsset?: FindDefaultAsset;
 
   createPaymentPayload(
     x402Version: number,
@@ -184,12 +215,63 @@ export type SchemeEnrichPaymentRequiredResponseHook = (
   ctx: SchemePaymentRequiredContext,
 ) => Promise<PaymentRequirements[] | void>;
 
+/**
+ * Named payment flow declared by a scheme. Controls whether core verifies and/or
+ * settles before the resource handler, and whether it settles after.
+ *
+ * Multi-settle flows (`escrow`) fire settle lifecycle hooks once per settle.
+ * Side-effecting hooks should branch on {@link SettleContext.phase}.
+ */
+export type PaymentFlowName = "authorization" | "upfront" | "escrow";
+
+/**
+ * Phase flags for a {@link PaymentFlowName}.
+ */
+export interface PaymentFlowPhases {
+  verifyBeforeHandler: boolean;
+  settleBeforeHandler: boolean;
+  settleAfterHandler: boolean;
+}
+
+/**
+ * Supported payment flows for one assetTransferMethod, plus the default when
+ * `extra.paymentFlow` is omitted.
+ */
+export interface PaymentFlowConfig {
+  readonly supported: readonly PaymentFlowName[];
+  /** Must be a member of {@link PaymentFlowConfig.supported}. */
+  readonly default: PaymentFlowName;
+}
+
 export interface SchemeNetworkServer {
   readonly scheme: string;
+  /**
+   * ATM used when `requirements.extra.assetTransferMethod` is absent.
+   * Use `"default"` only as SDK plumbing when the scheme has no on-wire ATM.
+   */
+  readonly defaultAssetTransferMethod: string;
+  /**
+   * Payment flows supported per assetTransferMethod.
+   * Every ATM the scheme accepts must appear here.
+   */
+  readonly paymentFlows: Readonly<Record<string, PaymentFlowConfig>>;
   readonly schemeHooks?: SchemeServerHooks;
+  readonly dynamicExtraFields?: string[];
   enrichPaymentRequiredResponse?: SchemeEnrichPaymentRequiredResponseHook;
   enrichSettlementPayload?: SchemeEnrichSettlementPayloadHook;
   enrichSettlementResponse?: SchemeEnrichSettlementResponseHook;
+
+  /**
+   * Optional: return payment requirements to settle when a verified payment is
+   * canceled (handler failure/throw or post-verify abort). Core calls
+   * `settlePayment` with the returned requirements; return void to skip settle.
+   *
+   * @param context - Cancellation context for the verified payment
+   * @returns Requirements to settle, or void to leave the payment unsettled
+   */
+  settleOnCancel?(
+    context: VerifiedPaymentCanceledContext,
+  ): PaymentRequirements | void | Promise<PaymentRequirements | void>;
 
   /**
    * Convert a user-friendly price to the scheme's specific amount and asset format
@@ -209,15 +291,14 @@ export interface SchemeNetworkServer {
   parsePrice(price: Price, network: Network): Promise<AssetAmount>;
 
   /**
-   * Optional: Return the decimal precision of the asset for a given network.
-   * Used by `resolveSettlementOverrideAmount` to convert dollar-format overrides to atomic units.
-   * Defaults to 6 when not implemented.
+   * Optional asset decimals for `$…` settlement overrides. Core throws when
+   * this is missing or returns undefined
    *
-   * @param asset - The asset address or symbol
-   * @param network - The network identifier
-   * @returns Number of decimal places for the asset
+   * @param asset - Asset address or symbol
+   * @param network - Network identifier
+   * @returns Decimal places, or undefined when unknown
    */
-  getAssetDecimals?(asset: string, network: Network): number;
+  getAssetDecimals?(asset: string, network: Network): number | undefined;
 
   /**
    * Build payment requirements for this scheme/network combination

@@ -457,6 +457,8 @@ Example facilitator response for a refund:
 
 `amount` is the amount returned to the payer.
 
+If a `deposit`, `claim`, `settle`, or `refund` transaction broadcasts successfully but its confirmation cannot be established (e.g. a node/RPC error or timeout while waiting for the receipt), the facilitator MAY return `settlement_pending` (see [§9 Error Handling](../../x402-specification-v2.md#9-error-handling)) with the broadcast transaction hash in `transaction`, so the caller can reconcile on chain before retrying.
+
 ### GET /supported
 
 The facilitator MAY declare a receiver authorizer whose role is to produce EIP-712 signatures for claims and refunds. The server may delegate to this address as its channel's `receiverAuthorizer`, or supply its own. Any address in `signers` may relay the resulting transactions.
@@ -523,14 +525,17 @@ The server must claim all outstanding vouchers before the withdraw delay elapses
 
 ### Steady State
 
-Before signing the next voucher, the client must verify from the payment response:
+PAYMENT-RESPONSE extra is untrusted. The client updates local state
+from its own previous state plus `extra.chargedAmount` (missing is `0`).
+It MUST NOT copy `extra.channelState` into that local state.
 
-1. `extra.chargedAmount <= PaymentRequirements.amount`
-2. `extra.channelState.chargedCumulativeAmount == previous + extra.chargedAmount`
-3. `extra.channelState.balance` is consistent with the client's expectation
-4. `extra.channelState.channelId` matches
+The client applies that update only when `chargedAmount <=
+PaymentRequirements.amount` and, if present,
+`channelState.chargedCumulativeAmount` equals `previous + chargedAmount`.
+Otherwise it MUST leave local state unchanged.
 
-If any check fails, the client must not sign further vouchers and should initiate withdrawal.
+The next voucher is signed from that local state. A skipped apply is
+not a new charge; desync is recovered via Corrective 402.
 
 ### Recovery After State Loss
 
@@ -647,6 +652,7 @@ The recovery baseline is:
 | `invalid_batch_settlement_evm_wait_for_receipt_failed`                   | Facilitator failed while waiting for the transaction receipt                 |
 | `invalid_batch_settlement_evm_withdraw_delay_mismatch`                   | Channel withdraw delay does not match `extra.withdrawDelay`                  |
 | `invalid_batch_settlement_evm_withdraw_delay_out_of_range`               | Withdraw delay is outside the 15 min - 30 day bounds                         |
+| `settlement_pending`                                                     | Broadcast succeeded but confirmation could not be established — **non-terminal**; carries the broadcast `transaction` hash so the caller can reconcile on chain before retrying |
 
 ---
 

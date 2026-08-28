@@ -296,8 +296,11 @@ func createMiddlewareHandler(server *x402http.HTTPServer, config *MiddlewareConf
 			adapter := NewEchoAdapter(c)
 			reqCtx := x402http.HTTPRequestContext{
 				Adapter: adapter,
-				Path:    c.Request().URL.Path,
-				Method:  c.Request().Method,
+				// EscapedPath, not Path: routers dispatch on the escaped path, so
+				// matching on the decoded one lets "%2F" split a segment here but
+				// not in the router, bypassing the payment gate.
+				Path:   c.Request().URL.EscapedPath(),
+				Method: c.Request().Method,
 			}
 
 			// Check if route requires payment before waiting for initialization
@@ -386,15 +389,26 @@ func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402ht
 		func() {
 			defer func() {
 				if rec := recover(); rec != nil {
+					var cancelSettlement *x402.SettleResponse
 					if result.CancellationDispatcher != nil {
 						perr, ok := rec.(error)
 						if !ok {
 							perr = fmt.Errorf("%v", rec)
 						}
-						result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+						cancelSettlement = result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
 							Reason: x402.CancellationReasonHandlerThrew,
 							Err:    perr,
 						})
+					}
+					if headers := server.CreateFailurePathSettlementHeaders(
+						cancelSettlement,
+						result.BeforeHandlerSettlement,
+						result.PaymentPayload,
+						origWriter.Header().Get("Cache-Control"),
+					); headers != nil {
+						for key, value := range headers {
+							origWriter.Header().Set(key, value)
+						}
 					}
 					panic(rec)
 				}
@@ -409,22 +423,44 @@ func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402ht
 
 	// If handler returned error, propagate it
 	if err != nil {
+		var cancelSettlement *x402.SettleResponse
 		if result.CancellationDispatcher != nil {
-			result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+			cancelSettlement = result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
 				Reason: x402.CancellationReasonHandlerThrew,
 				Err:    err,
 			})
+		}
+		if headers := server.CreateFailurePathSettlementHeaders(
+			cancelSettlement,
+			result.BeforeHandlerSettlement,
+			result.PaymentPayload,
+			origWriter.Header().Get("Cache-Control"),
+		); headers != nil {
+			for key, value := range headers {
+				origWriter.Header().Set(key, value)
+			}
 		}
 		return err
 	}
 
 	// Don't settle if response failed
 	if capture.statusCode >= 400 {
+		var cancelSettlement *x402.SettleResponse
 		if result.CancellationDispatcher != nil {
-			result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+			cancelSettlement = result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
 				Reason:         x402.CancellationReasonHandlerFailed,
 				ResponseStatus: capture.statusCode,
 			})
+		}
+		if headers := server.CreateFailurePathSettlementHeaders(
+			cancelSettlement,
+			result.BeforeHandlerSettlement,
+			result.PaymentPayload,
+			capture.Header().Get("Cache-Control"),
+		); headers != nil {
+			for key, value := range headers {
+				origWriter.Header().Set(key, value)
+			}
 		}
 		// Write captured error response
 		origWriter.WriteHeader(capture.statusCode)
@@ -443,6 +479,8 @@ func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402ht
 			ResponseHeaders: capture.Header(),
 		},
 		result.DeclaredExtensions,
+		result.BeforeHandlerSettlement,
+		"",
 	)
 
 	// Check settlement success
@@ -470,6 +508,7 @@ func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402ht
 	for key, value := range settleResult.Headers {
 		origWriter.Header().Set(key, value)
 	}
+	origWriter.Header().Set("Cache-Control", x402http.WithPrivateCacheControl(origWriter.Header().Get("Cache-Control")))
 
 	// Call settlement handler if configured
 	if config.SettlementHandler != nil {

@@ -9,6 +9,7 @@ import {
   JSONRPC_PAYMENT_REQUIRED_CODE,
 } from "../../src/types";
 import type { PaymentPayload, PaymentRequired, SettleResponse } from "@x402/core/types";
+import { x402Client } from "@x402/core/client";
 
 // ============================================================================
 // Mock Types
@@ -560,6 +561,33 @@ describe("createx402MCPClient", () => {
     });
 
     expect(client).toBeInstanceOf(x402MCPClient);
+  });
+
+  it("forwards spendControls into the payment client", () => {
+    const mockSchemeClient = {
+      createPaymentPayload: vi.fn(),
+    };
+    const spy = vi.spyOn(x402Client.prototype, "setSpendControls");
+
+    try {
+      createx402MCPClient({
+        name: "test-client",
+        version: "1.0.0",
+        schemes: [
+          {
+            network: "eip155:84532",
+            client: mockSchemeClient as unknown as Parameters<
+              typeof createx402MCPClient
+            >[0]["schemes"][0]["client"],
+          },
+        ],
+        spendControls: false,
+      });
+
+      expect(spy).toHaveBeenCalledWith(false);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

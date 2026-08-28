@@ -21,8 +21,26 @@ SCHEMA_2_ID = 0x02
 # Pattern for valid builder codes (lowercase alphanumeric + underscore, 1-32 chars)
 BUILDER_CODE_PATTERN = re.compile(r"^[a-z0-9_]{1,32}$")
 
-# Maximum number of service codes (`s`) encoded onchain at settlement
-MAX_SERVICE_CODES = 5
+# Maximum client-provided service codes reserved in the `s` array. Enforced by
+# BuilderCodeClientExtension independently of the server's reservation so one
+# side can never crowd out the other.
+MAX_CLIENT_SERVICE_CODES = 5
+
+# Maximum server-declared service codes reserved in the `s` array. Enforced by
+# declare_builder_code_extension independently of the client's reservation so
+# one side can never crowd out the other.
+MAX_SERVER_SERVICE_CODES = 5
+
+# Maximum facilitator-appended service codes reserved in the `s` array.
+# Enforced by BuilderCodeFacilitatorExtension for its own service_code.
+MAX_FACILITATOR_SERVICE_CODES = 1
+
+# Maximum number of service codes (`s`) encoded onchain at settlement — the
+# sum of each side's dedicated reservation (MAX_CLIENT_SERVICE_CODES,
+# MAX_SERVER_SERVICE_CODES, MAX_FACILITATOR_SERVICE_CODES).
+MAX_SERVICE_CODES = (
+    MAX_CLIENT_SERVICE_CODES + MAX_SERVER_SERVICE_CODES + MAX_FACILITATOR_SERVICE_CODES
+)
 
 
 @dataclass
@@ -49,6 +67,10 @@ class BuilderCodeFacilitatorConfig:
     Attributes:
         builder_code: The facilitator's own builder code, set as the ``w`` field at
             settlement when provided.
+        service_code: The facilitator's own service code, appended to the ``s`` field
+            at settlement when provided. Reserved independently of the client/server
+            ``s`` entries (see ``MAX_FACILITATOR_SERVICE_CODES``).
     """
 
     builder_code: str | None = None
+    service_code: str | None = None

@@ -13,7 +13,7 @@ cp .env-local .env
 2. Install dependencies:
 
 ```bash
-uv sync
+uv sync --reinstall-package x402
 ```
 
 ## Usage
@@ -28,7 +28,7 @@ uv run python main.py
 
 The example demonstrates the complete x402 payment flow:
 
-1. **Create x402 client** - Set up the payment client
+1. **Create x402 client** - Set up the payment client with default spend controls (`$1` USD cap on recognized pegged assets)
 2. **Register payment schemes** - Enable EVM and/or SVM payments:
    - `register_exact_evm_client` for Ethereum-based payments
    - `register_exact_svm_client` for Solana-based payments
@@ -51,7 +51,7 @@ from x402.mechanisms.svm import KeypairSigner
 from x402.mechanisms.svm.exact.register import register_exact_svm_client
 
 # Setup
-client = x402Client()
+client = x402Client().set_spend_controls({"max_amount_per_payment": "$1"})
 
 # Register EVM (Ethereum) payments
 account = Account.from_key(evm_private_key)
@@ -87,4 +87,5 @@ async with x402HttpxClient(client) as http:
 ## Learn More
 
 - [x402 Python SDK](../../../../python/x402/)
+- [Advanced Examples](../advanced/) for builder pattern registration, payment lifecycle hooks, network preferences, and spend controls
 - [x402 Protocol](https://x402.org)

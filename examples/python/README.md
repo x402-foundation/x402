@@ -23,6 +23,7 @@ uv run python main.py
 ### Servers
 - **[servers/fastapi/](./servers/fastapi/)** - FastAPI server with payment middleware
 - **[servers/flask/](./servers/flask/)** - Flask server with payment middleware
+- **[servers/upfront/](./servers/upfront/)** - `exact` scheme with `upfront` payment flow (settle before handler)
 - **[servers/custom/](./servers/custom/)** - Manual payment handling
 - **[servers/advanced/](./servers/advanced/)** - Dynamic pricing, hooks, and more
 

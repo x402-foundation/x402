@@ -319,6 +319,30 @@ class ValidationResult:
     errors: list[str] = field(default_factory=list)
 
 
+def _has_external_schema_reference(node: Any) -> bool:
+    """Recursively scan a decoded JSON Schema document for "$ref"/"$id" values that are
+    not same-document fragments (i.e. do not start with "#").
+
+    ``jsonschema``'s default resolver dereferences any other form -- absolute http(s)://
+    URLs, file:// URIs, or relative paths -- via an outbound HTTP request or filesystem
+    read during schema compilation, before the instance is ever validated. Since schema
+    is client-controlled (it arrives in the payment payload), any such value is treated
+    as unsafe (CWE-918 SSRF / local file disclosure).
+    """
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in ("$ref", "$id"):
+                if not isinstance(value, str) or not value.startswith("#"):
+                    return True
+            if _has_external_schema_reference(value):
+                return True
+    elif isinstance(node, list):
+        for item in node:
+            if _has_external_schema_reference(item):
+                return True
+    return False
+
+
 @dataclass
 class DiscoveredResource:
     """A discovered x402 resource with its metadata."""
@@ -375,6 +399,18 @@ def validate_discovery_extension(extension: DiscoveryExtension) -> ValidationRes
         else:
             schema = extension.schema_ if hasattr(extension, "schema_") else {}
             info = extension.info
+
+        # The schema is attacker-controlled (it arrives in the client's payment payload).
+        # jsonschema's default resolver dereferences "$ref"/"$id" values via an outbound
+        # HTTP request or filesystem read during compilation, before the instance is ever
+        # checked (CWE-918 SSRF / local file read). Only same-document fragment references
+        # (e.g. "#/definitions/foo") are safe, since they resolve against the in-memory
+        # document instead of fetching anything.
+        if _has_external_schema_reference(schema):
+            return ValidationResult(
+                valid=False,
+                errors=["schema must not contain external $ref/$id references"],
+            )
 
         # Convert info to dict if it's a Pydantic model
         if hasattr(info, "model_dump"):

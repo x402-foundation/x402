@@ -35,35 +35,75 @@ jobs:
         with:
           persist-credentials: false
 
-      # Detect families from GitHub secrets directly (before any install).
-      # Step-level env maps secrets into the shell so ci-select-families.sh
-      # can read them the same way as a local .env-backed run.
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+        with:
+          version: 11.1.1
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+
+      # Write secrets to e2e/.env so ci-select-families.sh (dotenv load),
+      # test.ts, and spawned servers/clients/facilitators can read wallet config.
+      - name: Create .env file
+        run: |
+          {
+            echo "SERVER_EVM_ADDRESS=${{ secrets.SERVER_EVM_ADDRESS }}"
+            echo "SERVER_SVM_ADDRESS=${{ secrets.SERVER_SVM_ADDRESS }}"
+            echo "SERVER_AVM_ADDRESS=${{ secrets.SERVER_AVM_ADDRESS }}"
+            echo "SERVER_APTOS_ADDRESS=${{ secrets.SERVER_APTOS_ADDRESS }}"
+            echo "SERVER_CCD_ADDRESS=${{ secrets.SERVER_CCD_ADDRESS }}"
+            echo "SERVER_HEDERA_ADDRESS=${{ secrets.SERVER_HEDERA_ADDRESS }}"
+            echo "SERVER_KEETA_ADDRESS=${{ secrets.SERVER_KEETA_ADDRESS }}"
+            echo "SERVER_STELLAR_ADDRESS=${{ secrets.SERVER_STELLAR_ADDRESS }}"
+            echo "SERVER_TVM_ADDRESS=${{ secrets.SERVER_TVM_ADDRESS }}"
+            echo "SERVER_NEAR_ADDRESS=${{ secrets.SERVER_NEAR_ADDRESS }}"
+            echo "SERVER_XRPL_ADDRESS=${{ secrets.SERVER_XRPL_ADDRESS }}"
+            echo "CLIENT_EVM_PRIVATE_KEY=${{ secrets.CLIENT_EVM_PRIVATE_KEY }}"
+            echo "CLIENT_SVM_PRIVATE_KEY=${{ secrets.CLIENT_SVM_PRIVATE_KEY }}"
+            echo "CLIENT_AVM_PRIVATE_KEY=${{ secrets.CLIENT_AVM_PRIVATE_KEY }}"
+            echo "CLIENT_APTOS_PRIVATE_KEY=${{ secrets.CLIENT_APTOS_PRIVATE_KEY }}"
+            echo "CLIENT_CCD_PRIVATE_KEY=${{ secrets.CLIENT_CCD_PRIVATE_KEY }}"
+            echo "CLIENT_CCD_ADDRESS=${{ secrets.CLIENT_CCD_ADDRESS }}"
+            echo "CLIENT_HEDERA_ACCOUNT_ID=${{ secrets.CLIENT_HEDERA_ACCOUNT_ID }}"
+            echo "CLIENT_HEDERA_PRIVATE_KEY=${{ secrets.CLIENT_HEDERA_PRIVATE_KEY }}"
+            echo "CLIENT_KEETA_MNEMONIC=${{ secrets.CLIENT_KEETA_MNEMONIC }}"
+            echo "CLIENT_STELLAR_PRIVATE_KEY=${{ secrets.CLIENT_STELLAR_PRIVATE_KEY }}"
+            echo "CLIENT_TVM_PRIVATE_KEY=${{ secrets.CLIENT_TVM_PRIVATE_KEY }}"
+            echo "CLIENT_NEAR_ACCOUNT_ID=${{ secrets.CLIENT_NEAR_ACCOUNT_ID }}"
+            echo "CLIENT_NEAR_PRIVATE_KEY=${{ secrets.CLIENT_NEAR_PRIVATE_KEY }}"
+            echo "CLIENT_XRPL_SEED=${{ secrets.CLIENT_XRPL_SEED }}"
+            echo "FACILITATOR_EVM_PRIVATE_KEY=${{ secrets.FACILITATOR_EVM_PRIVATE_KEY }}"
+            echo "FACILITATOR_SVM_PRIVATE_KEY=${{ secrets.FACILITATOR_SVM_PRIVATE_KEY }}"
+            echo "FACILITATOR_AVM_PRIVATE_KEY=${{ secrets.FACILITATOR_AVM_PRIVATE_KEY }}"
+            echo "FACILITATOR_APTOS_PRIVATE_KEY=${{ secrets.FACILITATOR_APTOS_PRIVATE_KEY }}"
+            echo "FACILITATOR_CCD_PRIVATE_KEY=${{ secrets.FACILITATOR_CCD_PRIVATE_KEY }}"
+            echo "FACILITATOR_CCD_ADDRESS=${{ secrets.FACILITATOR_CCD_ADDRESS }}"
+            echo "FACILITATOR_HEDERA_ACCOUNT_ID=${{ secrets.FACILITATOR_HEDERA_ACCOUNT_ID }}"
+            echo "FACILITATOR_HEDERA_PRIVATE_KEY=${{ secrets.FACILITATOR_HEDERA_PRIVATE_KEY }}"
+            echo "FACILITATOR_KEETA_MNEMONIC=${{ secrets.FACILITATOR_KEETA_MNEMONIC }}"
+            echo "FACILITATOR_STELLAR_PRIVATE_KEY=${{ secrets.FACILITATOR_STELLAR_PRIVATE_KEY }}"
+            echo "FACILITATOR_TVM_PRIVATE_KEY=${{ secrets.FACILITATOR_TVM_PRIVATE_KEY }}"
+            echo "FACILITATOR_NEAR_ACCOUNT_ID=${{ secrets.FACILITATOR_NEAR_ACCOUNT_ID }}"
+            echo "FACILITATOR_NEAR_PRIVATE_KEY=${{ secrets.FACILITATOR_NEAR_PRIVATE_KEY }}"
+            echo "SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY=${{ secrets.SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY }}"
+            echo "CLIENT_EVM_VOUCHER_SIGNER_PRIVATE_KEY=${{ secrets.CLIENT_EVM_VOUCHER_SIGNER_PRIVATE_KEY }}"
+            echo "TVM_PROVIDER=${{ secrets.TVM_PROVIDER }}"
+            echo "TVM_TONAPI_API_KEY=${{ secrets.TVM_TONAPI_API_KEY }}"
+            echo "TVM_TONCENTER_API_KEY=${{ secrets.TVM_TONCENTER_API_KEY }}"
+            echo "TVM_TESTNET_RPC_URL=${{ secrets.TVM_TESTNET_RPC_URL }}"
+            echo "EVM_TESTNET_RPC_URL=${{ secrets.EVM_TESTNET_RPC_URL }}"
+            echo "SVM_TESTNET_RPC_URL=${{ secrets.SVM_TESTNET_RPC_URL }}"
+          } > .env
+
+      - name: Install E2E dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Select protocol families from configured secrets
         id: families
-        env:
-          CLIENT_EVM_PRIVATE_KEY: ${{ secrets.CLIENT_EVM_PRIVATE_KEY }}
-          CLIENT_SVM_PRIVATE_KEY: ${{ secrets.CLIENT_SVM_PRIVATE_KEY }}
-          CLIENT_AVM_PRIVATE_KEY: ${{ secrets.CLIENT_AVM_PRIVATE_KEY }}
-          CLIENT_APTOS_PRIVATE_KEY: ${{ secrets.CLIENT_APTOS_PRIVATE_KEY }}
-          CLIENT_HEDERA_ACCOUNT_ID: ${{ secrets.CLIENT_HEDERA_ACCOUNT_ID }}
-          CLIENT_HEDERA_PRIVATE_KEY: ${{ secrets.CLIENT_HEDERA_PRIVATE_KEY }}
-          CLIENT_STELLAR_PRIVATE_KEY: ${{ secrets.CLIENT_STELLAR_PRIVATE_KEY }}
-          CLIENT_TVM_PRIVATE_KEY: ${{ secrets.CLIENT_TVM_PRIVATE_KEY }}
-          SERVER_EVM_ADDRESS: ${{ secrets.SERVER_EVM_ADDRESS }}
-          SERVER_SVM_ADDRESS: ${{ secrets.SERVER_SVM_ADDRESS }}
-          SERVER_AVM_ADDRESS: ${{ secrets.SERVER_AVM_ADDRESS }}
-          SERVER_APTOS_ADDRESS: ${{ secrets.SERVER_APTOS_ADDRESS }}
-          SERVER_HEDERA_ADDRESS: ${{ secrets.SERVER_HEDERA_ADDRESS }}
-          SERVER_STELLAR_ADDRESS: ${{ secrets.SERVER_STELLAR_ADDRESS }}
-          SERVER_TVM_ADDRESS: ${{ secrets.SERVER_TVM_ADDRESS }}
-          FACILITATOR_EVM_PRIVATE_KEY: ${{ secrets.FACILITATOR_EVM_PRIVATE_KEY }}
-          FACILITATOR_SVM_PRIVATE_KEY: ${{ secrets.FACILITATOR_SVM_PRIVATE_KEY }}
-          FACILITATOR_AVM_PRIVATE_KEY: ${{ secrets.FACILITATOR_AVM_PRIVATE_KEY }}
-          FACILITATOR_APTOS_PRIVATE_KEY: ${{ secrets.FACILITATOR_APTOS_PRIVATE_KEY }}
-          FACILITATOR_HEDERA_ACCOUNT_ID: ${{ secrets.FACILITATOR_HEDERA_ACCOUNT_ID }}
-          FACILITATOR_HEDERA_PRIVATE_KEY: ${{ secrets.FACILITATOR_HEDERA_PRIVATE_KEY }}
-          FACILITATOR_STELLAR_PRIVATE_KEY: ${{ secrets.FACILITATOR_STELLAR_PRIVATE_KEY }}
-          FACILITATOR_TVM_PRIVATE_KEY: ${{ secrets.FACILITATOR_TVM_PRIVATE_KEY }}
         run: |
           if [[ "${{ github.event_name }}" == "schedule" && "${{ github.event.schedule }}" == "0 5 * * 5" ]]; then
             VERSIONS="1,2"
@@ -90,19 +130,6 @@ jobs:
           echo "configured=true" >> "$GITHUB_OUTPUT"
           echo "Running minimized e2e for families: **$FAMILIES** ($RUN_SCOPE, versions: **$VERSIONS**)" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Setup pnpm
-        if: steps.families.outputs.configured == 'true'
-        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
-        with:
-          version: 11.1.1
-          run_install: false
-
-      - name: Setup Node.js
-        if: steps.families.outputs.configured == 'true'
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: "22"
-
       - name: Setup Go
         if: steps.families.outputs.configured == 'true'
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
@@ -127,57 +154,14 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
 
-      - name: Install E2E dependencies
-        if: steps.families.outputs.configured == 'true'
-        run: pnpm install --frozen-lockfile
-
       - name: Setup E2E components
         if: steps.families.outputs.configured == 'true'
         run: ./setup.sh
 
-      # Write secrets to e2e/.env so test.ts (dotenv) and spawned
-      # servers/clients/facilitators (dotenv/godotenv) can read wallet config.
-      - name: Create .env file
-        if: steps.families.outputs.configured == 'true'
-        run: |
-          {
-            echo "SERVER_EVM_ADDRESS=${{ secrets.SERVER_EVM_ADDRESS }}"
-            echo "SERVER_SVM_ADDRESS=${{ secrets.SERVER_SVM_ADDRESS }}"
-            echo "SERVER_AVM_ADDRESS=${{ secrets.SERVER_AVM_ADDRESS }}"
-            echo "SERVER_APTOS_ADDRESS=${{ secrets.SERVER_APTOS_ADDRESS }}"
-            echo "SERVER_HEDERA_ADDRESS=${{ secrets.SERVER_HEDERA_ADDRESS }}"
-            echo "SERVER_STELLAR_ADDRESS=${{ secrets.SERVER_STELLAR_ADDRESS }}"
-            echo "SERVER_TVM_ADDRESS=${{ secrets.SERVER_TVM_ADDRESS }}"
-            echo "CLIENT_EVM_PRIVATE_KEY=${{ secrets.CLIENT_EVM_PRIVATE_KEY }}"
-            echo "CLIENT_SVM_PRIVATE_KEY=${{ secrets.CLIENT_SVM_PRIVATE_KEY }}"
-            echo "CLIENT_AVM_PRIVATE_KEY=${{ secrets.CLIENT_AVM_PRIVATE_KEY }}"
-            echo "CLIENT_APTOS_PRIVATE_KEY=${{ secrets.CLIENT_APTOS_PRIVATE_KEY }}"
-            echo "CLIENT_HEDERA_ACCOUNT_ID=${{ secrets.CLIENT_HEDERA_ACCOUNT_ID }}"
-            echo "CLIENT_HEDERA_PRIVATE_KEY=${{ secrets.CLIENT_HEDERA_PRIVATE_KEY }}"
-            echo "CLIENT_STELLAR_PRIVATE_KEY=${{ secrets.CLIENT_STELLAR_PRIVATE_KEY }}"
-            echo "CLIENT_TVM_PRIVATE_KEY=${{ secrets.CLIENT_TVM_PRIVATE_KEY }}"
-            echo "FACILITATOR_EVM_PRIVATE_KEY=${{ secrets.FACILITATOR_EVM_PRIVATE_KEY }}"
-            echo "FACILITATOR_SVM_PRIVATE_KEY=${{ secrets.FACILITATOR_SVM_PRIVATE_KEY }}"
-            echo "FACILITATOR_AVM_PRIVATE_KEY=${{ secrets.FACILITATOR_AVM_PRIVATE_KEY }}"
-            echo "FACILITATOR_APTOS_PRIVATE_KEY=${{ secrets.FACILITATOR_APTOS_PRIVATE_KEY }}"
-            echo "FACILITATOR_HEDERA_ACCOUNT_ID=${{ secrets.FACILITATOR_HEDERA_ACCOUNT_ID }}"
-            echo "FACILITATOR_HEDERA_PRIVATE_KEY=${{ secrets.FACILITATOR_HEDERA_PRIVATE_KEY }}"
-            echo "FACILITATOR_STELLAR_PRIVATE_KEY=${{ secrets.FACILITATOR_STELLAR_PRIVATE_KEY }}"
-            echo "FACILITATOR_TVM_PRIVATE_KEY=${{ secrets.FACILITATOR_TVM_PRIVATE_KEY }}"
-            echo "SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY=${{ secrets.SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY }}"
-            echo "CLIENT_EVM_VOUCHER_SIGNER_PRIVATE_KEY=${{ secrets.CLIENT_EVM_VOUCHER_SIGNER_PRIVATE_KEY }}"
-            echo "TVM_PROVIDER=${{ secrets.TVM_PROVIDER }}"
-            echo "TONAPI_API_KEY=${{ secrets.TONAPI_API_KEY }}"
-            echo "TONAPI_BASE_URL=${{ secrets.TONAPI_BASE_URL }}"
-            echo "TONCENTER_API_KEY=${{ secrets.TONCENTER_API_KEY }}"
-            echo "BASE_SEPOLIA_RPC_URL=${{ secrets.BASE_SEPOLIA_RPC_URL }}"
-            echo "SOLANA_DEVNET_RPC_URL=${{ secrets.SOLANA_DEVNET_RPC_URL }}"
-          } > .env
-
       - name: Run minimized e2e tests (testnet)
         if: steps.families.outputs.configured == 'true'
         run: |
-          pnpm test --testnet --min --parallel -v --log=e2e-run.log --output-json=e2e-results.json --families=${{ steps.families.outputs.families }} --versions=${{ steps.families.outputs.versions }}
+          pnpm test --testnet --min --parallel -v --log=e2e-run.log --output-json=e2e-results.json --families=${{ steps.families.outputs.families }} --versions=${{ steps.families.outputs.versions }} --transport=http
 
       - name: Upload test results
         if: always() && steps.families.outputs.configured == 'true'

@@ -78,7 +78,8 @@ export function wrapFetchWithPayment(
     }
 
     // Run payment required hooks
-    const hookHeaders = await httpClient.handlePaymentRequired(paymentRequired);
+    const requestUrl = response.url || request.url;
+    const hookHeaders = await httpClient.handlePaymentRequired(paymentRequired, requestUrl);
     if (hookHeaders) {
       const hookRequest = clonedRequest.clone();
       for (const [key, value] of Object.entries(hookHeaders)) {

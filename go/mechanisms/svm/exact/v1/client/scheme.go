@@ -14,6 +14,7 @@ import (
 	"github.com/gagliardetto/solana-go/programs/token"
 	"github.com/gagliardetto/solana-go/rpc"
 
+	x402 "github.com/x402-foundation/x402/go/v2"
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
@@ -44,6 +45,14 @@ func (c *ExactSvmSchemeV1) Scheme() string {
 	return svm.SchemeExact
 }
 
+func (c *ExactSvmSchemeV1) FindDefaultAsset(asset string, network x402.Network) *x402.DefaultAsset {
+	info := svm.FindDefaultAsset(asset, string(network))
+	if info == nil {
+		return nil
+	}
+	return &x402.DefaultAsset{Asset: info.Asset, Decimals: info.Decimals, Symbol: info.Symbol}
+}
+
 // CreatePaymentPayload creates a V1 payment payload for the Exact scheme
 func (c *ExactSvmSchemeV1) CreatePaymentPayload(
 	ctx context.Context,
@@ -61,8 +70,6 @@ func (c *ExactSvmSchemeV1) CreatePaymentPayload(
 	if err != nil {
 		return types.PaymentPayloadV1{}, err
 	}
-
-	// Get RPC URL (custom or default)
 	rpcURL := config.RPCURL
 	if c.config != nil && c.config.RPCURL != "" {
 		rpcURL = c.config.RPCURL

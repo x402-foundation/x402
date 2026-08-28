@@ -10,6 +10,15 @@ import { ExactStellarScheme } from "../../src/exact/server/scheme";
 describe("ExactStellarScheme", () => {
   const server = new ExactStellarScheme();
 
+  describe("paymentFlows", () => {
+    it("declares authorization and upfront with authorization as the default", () => {
+      expect(server.defaultAssetTransferMethod).toBe("default");
+      expect(server.paymentFlows).toEqual({
+        default: { supported: ["authorization", "upfront"], default: "authorization" },
+      });
+    });
+  });
+
   describe("parsePrice", () => {
     describe("Stellar Pubnet network", () => {
       const network = STELLAR_PUBNET_CAIP2;

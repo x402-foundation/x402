@@ -2,7 +2,12 @@ package bazaar_test
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -3159,4 +3164,148 @@ func TestExtractDiscoveredResource_ServiceMetadata(t *testing.T) {
 		assert.Equal(t, []string{"weather"}, discovered.Tags)
 		assert.Equal(t, "https://api.example.com/icon.png", discovered.IconUrl)
 	})
+}
+
+// TestValidateDiscoveryExtension_SSRF reproduces CWE-918: a client-controlled schema `$ref`/`$id`
+// must never be dereferenced. gojsonschema's default loader resolves any unregistered `$ref` via
+// an outbound HTTP request or a filesystem read during schema compilation, before the instance is
+// ever checked. Since `schema` arrives in the client's payment payload, this is a real SSRF /
+// local file disclosure vector.
+func TestValidateDiscoveryExtension_SSRF(t *testing.T) {
+	t.Run("rejects a $ref over http without dereferencing it", func(t *testing.T) {
+		var hits int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&hits, 1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"type": "object"}`))
+		}))
+		defer server.Close()
+
+		extension := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "http", Method: bazaar.MethodGET},
+			},
+			Schema: bazaar.JSONSchema{"$ref": server.URL + "/attacker-schema.json"},
+		}
+
+		result := bazaar.ValidateDiscoveryExtension(extension)
+
+		assert.Equal(t, int32(0), atomic.LoadInt32(&hits),
+			"an attacker-controlled $ref must never cause an outbound HTTP request (CWE-918 SSRF)")
+		assert.False(t, result.Valid, "schema with an external $ref must be rejected")
+	})
+
+	t.Run("rejects a $ref via file:// URI without reading the file", func(t *testing.T) {
+		dir := t.TempDir()
+		secretPath := filepath.Join(dir, "attacker-schema.json")
+		require.NoError(t, os.WriteFile(secretPath, []byte(`{"type": "object"}`), 0o600))
+
+		extension := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "http", Method: bazaar.MethodGET},
+			},
+			Schema: bazaar.JSONSchema{"$ref": "file://" + secretPath},
+		}
+
+		result := bazaar.ValidateDiscoveryExtension(extension)
+
+		assert.False(t, result.Valid, "schema with a file:// $ref must be rejected")
+	})
+
+	t.Run("rejects a $ref nested inside schema properties", func(t *testing.T) {
+		var hits int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&hits, 1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"type": "object"}`))
+		}))
+		defer server.Close()
+
+		extension := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "http", Method: bazaar.MethodGET},
+			},
+			Schema: bazaar.JSONSchema{
+				"properties": map[string]interface{}{
+					"input": map[string]interface{}{"$ref": server.URL + "/attacker-schema.json"},
+				},
+			},
+		}
+
+		result := bazaar.ValidateDiscoveryExtension(extension)
+
+		assert.Equal(t, int32(0), atomic.LoadInt32(&hits), "nested $ref must not be dereferenced")
+		assert.False(t, result.Valid)
+	})
+
+	t.Run("rejects an external $id", func(t *testing.T) {
+		extension := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "http", Method: bazaar.MethodGET},
+			},
+			Schema: bazaar.JSONSchema{"$id": "https://evil.example.com/schema.json", "type": "object"},
+		}
+
+		result := bazaar.ValidateDiscoveryExtension(extension)
+
+		assert.False(t, result.Valid, "schema with an external $id must be rejected")
+	})
+
+	t.Run("still validates schemas with only local fragment refs", func(t *testing.T) {
+		extension := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "http", Method: bazaar.MethodGET},
+			},
+			Schema: bazaar.JSONSchema{
+				"$ref": "#/definitions/root",
+				"definitions": map[string]interface{}{
+					"root": map[string]interface{}{"type": "object"},
+				},
+			},
+		}
+
+		result := bazaar.ValidateDiscoveryExtension(extension)
+
+		assert.True(t, result.Valid, "local fragment $ref should still validate: %v", result.Errors)
+	})
+}
+
+// TestExtractDiscoveredResourceFromPaymentPayload_SSRF matches the real attack path: a client's
+// paymentPayload with a malicious extensions.bazaar.schema, processed via
+// ExtractDiscoveredResourceFromPaymentPayload(validate=true) the way a facilitator's
+// OnAfterVerify hook does.
+func TestExtractDiscoveredResourceFromPaymentPayload_SSRF(t *testing.T) {
+	var hits int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"type": "object"}`))
+	}))
+	defer server.Close()
+
+	extension := bazaar.DiscoveryExtension{
+		Info: bazaar.DiscoveryInfo{
+			Input: bazaar.QueryInput{Type: "http", Method: bazaar.MethodGET},
+		},
+		Schema: bazaar.JSONSchema{"$ref": server.URL + "/attacker-schema.json"},
+	}
+
+	payload := x402.PaymentPayload{
+		X402Version: 2,
+		Accepted:    x402.PaymentRequirements{Scheme: "exact", Network: "eip155:84532"},
+		Payload:     map[string]interface{}{},
+		Resource:    &x402.ResourceInfo{URL: "http://api.example.com/weather"},
+		Extensions:  map[string]interface{}{bazaar.BAZAAR.Key(): extension},
+	}
+	payloadBytes, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	discovered, err := bazaar.ExtractDiscoveredResourceFromPaymentPayload(payloadBytes, nil, true)
+
+	assert.Equal(t, int32(0), atomic.LoadInt32(&hits),
+		"an attacker-controlled $ref in extensions.bazaar.schema must never cause the facilitator "+
+			"to make an outbound HTTP request (CWE-918 SSRF)")
+	assert.Error(t, err,
+		"a schema containing an external $ref should fail validation, not silently succeed")
+	assert.Nil(t, discovered)
 }

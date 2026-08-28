@@ -12,6 +12,7 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +43,7 @@ import (
 	svmmech "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
 	svmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/v1/facilitator"
+	uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/facilitator"
 	x402types "github.com/x402-foundation/x402/go/v2/types"
 )
 
@@ -610,6 +612,22 @@ func isBatchSettlementRequirements(req x402.PaymentRequirementsView) bool {
 	return req.GetScheme() == batchsettlement.SchemeBatched
 }
 
+// skipsVerifyBeforeSettle reports whether the verified-payment cache check has
+// to be bypassed for these requirements. Escrow and upfront flows settle without
+// a prior /verify, and batch-settlement rewrites the payload between verify and
+// settle, so in both cases the cache lookup would never hit. Mirrors the TS e2e
+// facilitator (e2e/facilitators/typescript/index.ts).
+func skipsVerifyBeforeSettle(req x402.PaymentRequirementsView) bool {
+	if isBatchSettlementRequirements(req) {
+		return true
+	}
+	if req == nil {
+		return false
+	}
+	flow, _ := req.GetExtra()["paymentFlow"].(string)
+	return flow == string(x402.PaymentFlowEscrow) || flow == string(x402.PaymentFlowUpfront)
+}
+
 // Real SVM facilitator signer
 type realFacilitatorSvmSigner struct {
 	privateKey solana.PrivateKey
@@ -688,7 +706,7 @@ func (s *realFacilitatorSvmSigner) SimulateTransaction(ctx context.Context, tx *
 	}
 
 	opts := rpc.SimulateTransactionOpts{
-		SigVerify:              true,
+		SigVerify:              false,
 		ReplaceRecentBlockhash: false,
 		Commitment:             svmmech.DefaultCommitment,
 	}
@@ -767,14 +785,182 @@ func (s *realFacilitatorSvmSigner) ConfirmTransaction(ctx context.Context, signa
 		}
 
 		// Wait before retrying
-		time.Sleep(svmmech.ConfirmRetryDelay)
+		delay := svmmech.ConfirmRetryDelay
+		if attempt < svmmech.ConfirmInitialAttempts {
+			delay = svmmech.ConfirmInitialRetryDelay
+		}
+		time.Sleep(delay)
 	}
 
 	return fmt.Errorf("transaction confirmation timed out after %d attempts", svmmech.MaxConfirmAttempts)
 }
 
+func (s *realFacilitatorSvmSigner) GetAccountInfo(
+	ctx context.Context,
+	account solana.PublicKey,
+	network string,
+	opts *rpc.GetAccountInfoOpts,
+) (*rpc.GetAccountInfoResult, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, err
+	}
+	return rpcClient.GetAccountInfoWithOpts(ctx, account, opts)
+}
+
+func (s *realFacilitatorSvmSigner) GetLatestBlockhash(ctx context.Context, network string) (solana.Hash, uint64, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return solana.Hash{}, 0, err
+	}
+	latest, err := rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
+	if err != nil {
+		return solana.Hash{}, 0, err
+	}
+	return latest.Value.Blockhash, latest.Value.LastValidBlockHeight, nil
+}
+
+func (s *realFacilitatorSvmSigner) GetSlot(ctx context.Context, network string, commitment rpc.CommitmentType) (uint64, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return 0, err
+	}
+	return rpcClient.GetSlot(ctx, commitment)
+}
+
+func (s *realFacilitatorSvmSigner) SimulateTransactionWithOpts(
+	ctx context.Context,
+	tx *solana.Transaction,
+	network string,
+	opts *rpc.SimulateTransactionOpts,
+) error {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return err
+	}
+	result, err := rpcClient.SimulateTransactionWithOpts(ctx, tx, opts)
+	if err != nil {
+		return fmt.Errorf("simulation failed: %w", err)
+	}
+	if result != nil && result.Value != nil && result.Value.Err != nil {
+		return fmt.Errorf("simulation failed: transaction would fail on-chain")
+	}
+	return nil
+}
+
+func (s *realFacilitatorSvmSigner) GetProgramAccounts(
+	ctx context.Context,
+	network string,
+	programID solana.PublicKey,
+	opts *rpc.GetProgramAccountsOpts,
+) (rpc.GetProgramAccountsResult, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, err
+	}
+	return rpcClient.GetProgramAccountsWithOpts(ctx, programID, opts)
+}
+
+func (s *realFacilitatorSvmSigner) SimulateTransactionWithInnerInstructions(ctx context.Context, tx *solana.Transaction, network string) ([]rpc.InnerInstruction, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, err
+	}
+	return svmmech.SimulateWithInnerInstructions(ctx, rpcClient, tx)
+}
+
+func (s *realFacilitatorSvmSigner) GetConfirmedTransactionInnerInstructions(ctx context.Context, signature solana.Signature, network string) ([]rpc.InnerInstruction, solana.PublicKeySlice, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, nil, err
+	}
+	return svmmech.ConfirmedTransactionInnerInstructions(ctx, rpcClient, signature)
+}
+
+func (s *realFacilitatorSvmSigner) GetTokenAccountBalance(ctx context.Context, tokenAccount solana.PublicKey, network string) (uint64, bool, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return 0, false, err
+	}
+	return svmmech.TokenAccountBalance(ctx, rpcClient, tokenAccount)
+}
+
+func (s *realFacilitatorSvmSigner) FetchAddressLookupTables(ctx context.Context, tables []solana.PublicKey, network string) (map[solana.PublicKey]solana.PublicKeySlice, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, err
+	}
+	return svmmech.AddressLookupTables(ctx, rpcClient, tables)
+}
+
 func (s *realFacilitatorSvmSigner) GetAddresses(ctx context.Context, network string) []solana.PublicKey {
 	return []solana.PublicKey{s.privateKey.PublicKey()}
+}
+
+// catalogTestnetCaip2 reads testnet.caip2 from e2e/config/mechanisms_<id>.json.
+func catalogTestnetCaip2(networkID string) (string, error) {
+	candidates := []string{}
+	if injected := os.Getenv("E2E_MECHANISMS_CATALOG"); injected != "" {
+		candidates = append(candidates, injected)
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for {
+		candidates = append(candidates, filepath.Join(dir, "config"))
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	for _, catalogDir := range candidates {
+		path := filepath.Join(catalogDir, fmt.Sprintf("mechanisms_%s.json", networkID))
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			continue
+		}
+		var file struct {
+			Testnet struct {
+				Caip2 string `json:"caip2"`
+			} `json:"testnet"`
+		}
+		if err := json.Unmarshal(raw, &file); err != nil {
+			return "", fmt.Errorf("%s: %w", path, err)
+		}
+		if file.Testnet.Caip2 == "" {
+			return "", fmt.Errorf("%s: missing testnet.caip2", path)
+		}
+		return file.Testnet.Caip2, nil
+	}
+	return "", fmt.Errorf("could not locate mechanisms_%s.json", networkID)
+}
+
+// resolveNetworkCaip2 prefers `${ID}_NETWORK`, else catalog testnet CAIP-2.
+func resolveNetworkCaip2(networkID string) string {
+	if fromEnv := os.Getenv(strings.ToUpper(networkID) + "_NETWORK"); fromEnv != "" {
+		return fromEnv
+	}
+	caip2, err := catalogTestnetCaip2(networkID)
+	if err != nil {
+		log.Fatalf("❌ %v", err)
+	}
+	return caip2
+}
+
+// caip2Pattern derives a CAIP-2 namespace wildcard (eip155:*) from a concrete CAIP-2 id.
+func caip2Pattern(caip2 string) string {
+	ns, _, ok := strings.Cut(caip2, ":")
+	if !ok || ns == "" {
+		log.Fatalf("❌ invalid caip2: %s", caip2)
+	}
+	return ns + ":*"
+}
+
+// networkCaip2Pattern is the client/resource-server registration pattern for a catalog network.
+func networkCaip2Pattern(networkID string) string {
+	return caip2Pattern(resolveNetworkCaip2(networkID))
 }
 
 // Network configuration helpers
@@ -840,101 +1026,86 @@ func main() {
 		port = DefaultPort
 	}
 
-	// Network configuration from environment
-	evmNetwork := os.Getenv("EVM_NETWORK")
-	if evmNetwork == "" {
-		evmNetwork = "eip155:84532" // Default: Base Sepolia
-	}
-	svmNetwork := os.Getenv("SVM_NETWORK")
-	if svmNetwork == "" {
-		svmNetwork = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" // Default: Solana Devnet
-	}
+	// Network configuration — harness-injected `${ID}_NETWORK` or catalog testnet
+	evmNetwork := resolveNetworkCaip2("evm")
+	svmNetwork := resolveNetworkCaip2("svm")
 
-	log.Printf("🌐 EVM Network: %s", evmNetwork)
-	log.Printf("🌐 SVM Network: %s", svmNetwork)
-
-	evmPrivateKey := os.Getenv("EVM_PRIVATE_KEY")
-	if evmPrivateKey == "" {
-		log.Fatal("❌ EVM_PRIVATE_KEY environment variable is required")
+	evmPrivateKey := os.Getenv("FACILITATOR_EVM_PRIVATE_KEY")
+	svmPrivateKey := os.Getenv("FACILITATOR_SVM_PRIVATE_KEY")
+	if evmPrivateKey == "" && svmPrivateKey == "" {
+		log.Fatal("❌ At least one of FACILITATOR_EVM_PRIVATE_KEY or FACILITATOR_SVM_PRIVATE_KEY is required")
 	}
 
-	svmPrivateKey := os.Getenv("SVM_PRIVATE_KEY")
-	if svmPrivateKey == "" {
-		log.Fatal("❌ SVM_PRIVATE_KEY environment variable is required")
-	}
-
-	// Initialize the real EVM blockchain signer with dynamic RPC URL
-	evmRpcUrl := getEvmRpcUrl(evmNetwork)
-	log.Printf("🌐 EVM RPC URL: %s", evmRpcUrl)
-	evmSigner, err := newRealFacilitatorEvmSigner(evmPrivateKey, evmRpcUrl)
-	if err != nil {
-		log.Fatalf("Failed to create EVM signer: %v", err)
-	}
-
-	chainID, _ := evmSigner.GetChainID(context.Background())
-	addresses := evmSigner.GetAddresses()
-	log.Printf("EVM Facilitator account: %s", addresses[0])
-	log.Printf("Connected to chain ID: %s", chainID.String())
-
-	// Initialize the real SVM blockchain signer with dynamic RPC URL
-	svmRpcUrl := getSvmRpcUrl(svmNetwork)
-	log.Printf("🌐 SVM RPC URL: %s", svmRpcUrl)
-	svmSigner, err := newRealFacilitatorSvmSigner(svmPrivateKey, svmRpcUrl)
-	if err != nil {
-		log.Fatalf("Failed to create SVM signer: %v", err)
-	}
-
-	svmAddresses := svmSigner.GetAddresses(context.Background(), svmNetwork)
-	log.Printf("SVM Facilitator account: %s", svmAddresses[0].String())
-
-	// Initialize the x402 Facilitator with EVM and SVM support
 	facilitator := x402.Newx402Facilitator()
+	var evmSigner *realFacilitatorEvmSigner
 
-	// Register EVM schemes with dynamic network
-	evmConfig := &exactevm.ExactEvmSchemeConfig{}
-	evmFacilitatorScheme := exactevm.NewExactEvmScheme(evmSigner, evmConfig)
-	facilitator.Register([]x402.Network{x402.Network(evmNetwork)}, evmFacilitatorScheme)
+	if evmPrivateKey != "" {
+		log.Printf("🌐 EVM Network: %s", evmNetwork)
+		evmRpcUrl := getEvmRpcUrl(evmNetwork)
+		log.Printf("🌐 EVM RPC URL: %s", evmRpcUrl)
+		var err error
+		evmSigner, err = newRealFacilitatorEvmSigner(evmPrivateKey, evmRpcUrl)
+		if err != nil {
+			log.Fatalf("Failed to create EVM signer: %v", err)
+		}
 
-	// Register upto EVM scheme
-	uptoEvmFacilitatorScheme := uptoevm.NewUptoEvmScheme(evmSigner, nil)
-	facilitator.Register([]x402.Network{x402.Network(evmNetwork)}, uptoEvmFacilitatorScheme)
+		chainID, _ := evmSigner.GetChainID(context.Background())
+		addresses := evmSigner.GetAddresses()
+		log.Printf("EVM Facilitator account: %s", addresses[0])
+		log.Printf("Connected to chain ID: %s", chainID.String())
 
-	// Register batch-settlement EVM scheme. Mirrors TS:
-	// `new BatchSettlementEvmScheme(evmSigner, authorizerSigner)` where the
-	// authorizer key falls back to EVM_PRIVATE_KEY when
-	// EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY is not set.
-	authorizerKey := os.Getenv("EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY")
-	if authorizerKey == "" {
-		authorizerKey = evmPrivateKey
+		evmConfig := &exactevm.ExactEvmSchemeConfig{}
+		facilitator.Register([]x402.Network{x402.Network(evmNetwork)}, exactevm.NewExactEvmScheme(evmSigner, evmConfig))
+		facilitator.Register([]x402.Network{x402.Network(evmNetwork)}, uptoevm.NewUptoEvmScheme(evmSigner, nil))
+
+		batchedAuthorizer, err := newBatchedAuthorizerSigner(evmPrivateKey)
+		if err != nil {
+			log.Fatalf("Failed to create batch-settlement authorizer: %v", err)
+		}
+		log.Printf("EVM Receiver Authorizer (batch-settlement): %s", batchedAuthorizer.Address())
+		facilitator.Register(
+			[]x402.Network{x402.Network(evmNetwork)},
+			batchedevm.NewBatchSettlementEvmScheme(evmSigner, batchedAuthorizer),
+		)
+
+		evmV1Config := &exactevmv1.ExactEvmSchemeV1Config{}
+		facilitator.RegisterV1(
+			[]x402.Network{x402.Network(getV1EvmNetwork(evmNetwork))},
+			exactevmv1.NewExactEvmSchemeV1(evmSigner, evmV1Config),
+		)
+
+		facilitator.RegisterExtension(eip2612gassponsor.EIP2612GasSponsoring)
+		facilitator.RegisterExtension(&erc20approvalgassponsor.Erc20ApprovalFacilitatorExtension{Signer: evmSigner})
 	}
-	batchedAuthorizer, err := newBatchedAuthorizerSigner(authorizerKey)
-	if err != nil {
-		log.Fatalf("Failed to create batch-settlement authorizer: %v", err)
+
+	if svmPrivateKey != "" {
+		log.Printf("🌐 SVM Network: %s", svmNetwork)
+		svmRpcUrl := getSvmRpcUrl(svmNetwork)
+		log.Printf("🌐 SVM RPC URL: %s", svmRpcUrl)
+		svmSigner, err := newRealFacilitatorSvmSigner(svmPrivateKey, svmRpcUrl)
+		if err != nil {
+			log.Fatalf("Failed to create SVM signer: %v", err)
+		}
+
+		svmAddresses := svmSigner.GetAddresses(context.Background(), svmNetwork)
+		log.Printf("SVM Facilitator account: %s", svmAddresses[0].String())
+
+		facilitator.Register(
+			[]x402.Network{x402.Network(svmNetwork)},
+			svm.NewExactSvmScheme(svmSigner, &svm.Config{EnableSmartWalletVerification: true}),
+		)
+		facilitator.Register(
+			[]x402.Network{x402.Network(svmNetwork)},
+			uptosvm.NewUptoSvmScheme(svmSigner, nil),
+		)
+		facilitator.RegisterV1(
+			[]x402.Network{x402.Network(getV1SvmNetwork(svmNetwork))},
+			svmv1.NewExactSvmSchemeV1(svmSigner),
+		)
 	}
-	log.Printf("EVM Receiver Authorizer (batch-settlement): %s", batchedAuthorizer.Address())
-	batchedScheme := batchedevm.NewBatchSettlementEvmScheme(evmSigner, batchedAuthorizer)
-	facilitator.Register([]x402.Network{x402.Network(evmNetwork)}, batchedScheme)
-
-	evmV1Config := &exactevmv1.ExactEvmSchemeV1Config{}
-	evmFacilitatorV1Scheme := exactevmv1.NewExactEvmSchemeV1(evmSigner, evmV1Config)
-	facilitator.RegisterV1([]x402.Network{x402.Network(getV1EvmNetwork(evmNetwork))}, evmFacilitatorV1Scheme)
-
-	// Register SVM schemes with dynamic network
-	svmFacilitatorScheme := svm.NewExactSvmScheme(svmSigner)
-	facilitator.Register([]x402.Network{x402.Network(svmNetwork)}, svmFacilitatorScheme)
-
-	svmFacilitatorV1Scheme := svmv1.NewExactSvmSchemeV1(svmSigner)
-	facilitator.RegisterV1([]x402.Network{x402.Network(getV1SvmNetwork(svmNetwork))}, svmFacilitatorV1Scheme)
 
 	// Register the Bazaar discovery extension
 	facilitator.RegisterExtension(exttypes.BAZAAR)
-
-	// Register the EIP-2612 Gas Sponsoring extension
-	facilitator.RegisterExtension(eip2612gassponsor.EIP2612GasSponsoring)
-
-	// Register the ERC-20 Approval Gas Sponsoring extension
-	erc20Ext := &erc20approvalgassponsor.Erc20ApprovalFacilitatorExtension{Signer: evmSigner}
-	facilitator.RegisterExtension(erc20Ext)
 
 	// Lifecycle hooks for payment tracking and discovery
 	facilitator.
@@ -1028,10 +1199,9 @@ func main() {
 			// Batch-settlement is exempt: the resource server's `BeforeSettleHook`
 			// rewrites refund payloads (adds claims/amount/refundNonce) and rewrites
 			// voucher commits before /settle, so the payload bytes seen at settle
-			// time differ from the verify-time bytes. Mirrors the TS e2e fac
-			// (e2e/facilitators/typescript/index.ts ~548) which skips the cache
-			// check for `requirements.scheme === "batch-settlement"`.
-			if isBatchSettlementRequirements(ctx.Requirements) {
+			// time differ from the verify-time bytes. Escrow and upfront flows are
+			// exempt because they settle without a prior /verify.
+			if skipsVerifyBeforeSettle(ctx.Requirements) {
 				return nil, nil
 			}
 
@@ -1064,11 +1234,10 @@ func main() {
 		}).
 		OnAfterSettle(func(ctx x402.FacilitatorSettleResultContext) error {
 			// Hook 4: Clean up verified payment tracking after successful settlement.
-			// Skip cleanup for batch-settlement: the verify-time entry was keyed by
-			// a different payload (see OnBeforeSettle comment) so there's nothing
-			// to delete here, and the cache entry naturally ages out via the 5-min
-			// TTL check above. Mirrors TS e2e fac.
-			if !isBatchSettlementRequirements(ctx.Requirements) {
+			// Skip cleanup for the flows exempted above: the verify-time entry was
+			// keyed by a different payload, or never written at all, so there is
+			// nothing to delete here and any stale entry ages out via the 5-min TTL.
+			if !skipsVerifyBeforeSettle(ctx.Requirements) {
 				paymentHash := hashBytes(ctx.PayloadBytes)
 				verificationMutex.Lock()
 				delete(verifiedPayments, paymentHash)
@@ -1082,8 +1251,8 @@ func main() {
 		}).
 		OnSettleFailure(func(ctx x402.FacilitatorSettleFailureContext) (*x402.FacilitatorSettleFailureHookResult, error) {
 			// Hook 5: Clean up verified payment tracking on failure too. Same
-			// batch-settlement exemption as OnAfterSettle.
-			if !isBatchSettlementRequirements(ctx.Requirements) {
+			// exemptions as OnAfterSettle.
+			if !skipsVerifyBeforeSettle(ctx.Requirements) {
 				paymentHash := hashBytes(ctx.PayloadBytes)
 				verificationMutex.Lock()
 				delete(verifiedPayments, paymentHash)
@@ -1276,6 +1445,18 @@ func main() {
 	})
 
 	// Start the server
+	evmAddr := "(not configured)"
+	if evmSigner != nil {
+		evmAddr = evmSigner.GetAddresses()[0]
+	}
+	svmLabel := "(not configured)"
+	if svmPrivateKey != "" {
+		svmLabel = svmNetwork
+	}
+	evmLabel := "(not configured)"
+	if evmPrivateKey != "" {
+		evmLabel = evmNetwork
+	}
 	fmt.Printf(`
 ╔════════════════════════════════════════════════════════╗
 ║              x402 Go Facilitator                       ║
@@ -1294,7 +1475,7 @@ func main() {
 ║  • GET  /health              (health check)           ║
 ║  • POST /close               (shutdown server)        ║
 ╚════════════════════════════════════════════════════════╝
-`, port, evmNetwork, svmNetwork, evmSigner.GetAddresses()[0])
+`, port, evmLabel, svmLabel, evmAddr)
 
 	// Log that facilitator is ready (needed for e2e test discovery)
 	log.Println("Facilitator listening")
