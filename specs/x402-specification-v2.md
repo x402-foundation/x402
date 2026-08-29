@@ -536,6 +536,10 @@ List discoverable x402 resources from the Bazaar.
 }
 ```
 
+Filter behavior for this endpoint, including the optional `unappliedFilters`
+response field, is defined in the Bazaar extension specification at
+`specs/extensions/bazaar.md`.
+
 **8.2 GET /discovery/search**
 
 Search semantics and response shape are defined in the Bazaar extension specification at
