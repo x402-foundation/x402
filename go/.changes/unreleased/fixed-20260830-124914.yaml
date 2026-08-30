@@ -1,0 +1,3 @@
+kind: fixed
+body: Return EXTENSION-RESPONSES data from facilitator verify and settle requests when response bodies omit extensions.
+time: 2026-08-30T12:49:14.025505+09:00
