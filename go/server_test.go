@@ -1354,6 +1354,29 @@ func TestValidateExtensions(t *testing.T) {
 		}
 	})
 
+	t.Run("fails when flat undeclared builder-code carries app attribution", func(t *testing.T) {
+		p := payloadWith(map[string]interface{}{
+			"builder-code": map[string]interface{}{"a": "attacker_app"},
+		})
+		r := server.ValidateExtensions(nil, p)
+		if r.Valid || r.InvalidReason != "extension_echo_mismatch" || r.ExtensionKey != "builder-code" {
+			t.Fatalf("expected echo mismatch on flat undeclared builder-code app attribution, got %+v", r)
+		}
+	})
+
+	t.Run("fails when undeclared app attribution is outside an info envelope", func(t *testing.T) {
+		p := payloadWith(map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"a":    "attacker_app",
+				"info": map[string]interface{}{"s": []interface{}{"client_service"}},
+			},
+		})
+		r := server.ValidateExtensions(nil, p)
+		if r.Valid || r.InvalidReason != "extension_echo_mismatch" || r.ExtensionKey != "builder-code" {
+			t.Fatalf("expected echo mismatch on undeclared builder-code app attribution, got %+v", r)
+		}
+	})
+
 	t.Run("passes when client omits extensions", func(t *testing.T) {
 		if r := server.ValidateExtensions(serverExtensions, payloadWith(nil)); !r.Valid {
 			t.Fatalf("expected valid, got %+v", r)
@@ -1457,6 +1480,42 @@ func TestValidateExtensions(t *testing.T) {
 		})
 		if r := server.ValidateExtensions(structExtensions, p); !r.Valid {
 			t.Fatalf("expected valid, got %+v", r)
+		}
+	})
+
+	t.Run("passes with struct-declared builder-code and matching echo", func(t *testing.T) {
+		type builderInfo struct {
+			AppCode string `json:"a"`
+		}
+		type builderExtension struct {
+			Info builderInfo `json:"info"`
+		}
+		advertised := map[string]interface{}{
+			"builder-code": builderExtension{Info: builderInfo{AppCode: "honest_app"}},
+		}
+		p := payloadWith(map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"a": "honest_app"},
+			},
+		})
+		if r := server.ValidateExtensions(advertised, p); !r.Valid {
+			t.Fatalf("expected matching typed builder-code declaration to pass, got %+v", r)
+		}
+	})
+
+	t.Run("fails when typed undeclared builder-code carries app attribution", func(t *testing.T) {
+		type builderInfo struct {
+			AppCode string `json:"a"`
+		}
+		type builderExtension struct {
+			Info builderInfo `json:"info"`
+		}
+		p := payloadWith(map[string]interface{}{
+			"builder-code": builderExtension{Info: builderInfo{AppCode: "attacker_app"}},
+		})
+		r := server.ValidateExtensions(nil, p)
+		if r.Valid || r.InvalidReason != "extension_echo_mismatch" || r.ExtensionKey != "builder-code" {
+			t.Fatalf("expected echo mismatch on typed undeclared builder-code app attribution, got %+v", r)
 		}
 	})
 

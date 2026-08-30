@@ -903,16 +903,37 @@ func asStringAnyMap(v interface{}) (map[string]interface{}, bool) {
 	return nil, false
 }
 
-func builderCodeInfo(v interface{}) (map[string]interface{}, bool) {
-	extension, ok := asStringAnyMap(v)
+// normalizeJSONValue converts typed Go values to their generic wire shape.
+func normalizeJSONValue(v interface{}) interface{} {
+	encoded, err := json.Marshal(v)
+	if err != nil {
+		return v
+	}
+	var decoded interface{}
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		return v
+	}
+	return decoded
+}
+
+// builderCodeAppCodes reads both the flat protocol shape and the info envelope
+// used by the SDK so mixed representations cannot bypass attribution checks.
+func builderCodeAppCodes(v interface{}) []interface{} {
+	extension, ok := asStringAnyMap(normalizeJSONValue(v))
 	if !ok {
-		return nil, false
+		return nil
 	}
-	info, hasInfo := extension["info"]
-	if !hasInfo {
-		return extension, true
+
+	var codes []interface{}
+	if code, ok := extension["a"]; ok {
+		codes = append(codes, code)
 	}
-	return asStringAnyMap(info)
+	if info, ok := asStringAnyMap(extension["info"]); ok {
+		if code, ok := info["a"]; ok {
+			codes = append(codes, code)
+		}
+	}
+	return codes
 }
 
 // ExtensionValidationResult is returned by ValidateExtensions. Valid is true
@@ -939,17 +960,30 @@ func (s *x402ResourceServer) ValidateExtensions(
 
 	const builderCodeKey = "builder-code"
 	if echoedBuilderCode, ok := payload.Extensions[builderCodeKey]; ok {
-		if echoedInfo, ok := builderCodeInfo(echoedBuilderCode); ok {
-			if echoedAppCode, hasAppCode := echoedInfo["a"]; hasAppCode {
-				declaredBuilderCode, declared := serverExtensions[builderCodeKey]
-				declaredInfo, validDeclaration := builderCodeInfo(declaredBuilderCode)
-				declaredAppCode, hasDeclaredAppCode := declaredInfo["a"]
-				if !declared || !validDeclaration || !hasDeclaredAppCode || !DeepEqual(declaredAppCode, echoedAppCode) {
-					return ExtensionValidationResult{
-						Valid:         false,
-						InvalidReason: "extension_echo_mismatch",
-						ExtensionKey:  builderCodeKey,
+		echoedAppCodes := builderCodeAppCodes(echoedBuilderCode)
+		if len(echoedAppCodes) > 0 {
+			declaredAppCodes := builderCodeAppCodes(serverExtensions[builderCodeKey])
+			matchesDeclaration := len(declaredAppCodes) > 0
+			if matchesDeclaration {
+				declaredAppCode := declaredAppCodes[0]
+				for _, code := range declaredAppCodes[1:] {
+					if !DeepEqual(declaredAppCode, code) {
+						matchesDeclaration = false
+						break
 					}
+				}
+				for _, code := range echoedAppCodes {
+					if !DeepEqual(declaredAppCode, code) {
+						matchesDeclaration = false
+						break
+					}
+				}
+			}
+			if !matchesDeclaration {
+				return ExtensionValidationResult{
+					Valid:         false,
+					InvalidReason: "extension_echo_mismatch",
+					ExtensionKey:  builderCodeKey,
 				}
 			}
 		}
@@ -972,21 +1006,6 @@ func (s *x402ResourceServer) ValidateExtensions(
 		field              string
 	}
 
-	// normalize converts a server-declared value (which may be a typed struct)
-	// into the generic JSON shape the echoed payload already uses.
-	// Falls back to the original value when it is not JSON-encodable.
-	normalize := func(v interface{}) interface{} {
-		encoded, err := json.Marshal(v)
-		if err != nil {
-			return v
-		}
-		var decoded interface{}
-		if err := json.Unmarshal(encoded, &decoded); err != nil {
-			return v
-		}
-		return decoded
-	}
-
 	for key, echoedValue := range payload.Extensions {
 		serverValue, declared := serverExtensions[key]
 		if !declared {
@@ -994,7 +1013,7 @@ func (s *x402ResourceServer) ValidateExtensions(
 		}
 
 		// Compare the `info` envelope when present, otherwise the flat value.
-		advertised := normalize(serverValue)
+		advertised := normalizeJSONValue(serverValue)
 		if m, ok := advertised.(map[string]interface{}); ok {
 			if info, has := m["info"]; has {
 				advertised = info
