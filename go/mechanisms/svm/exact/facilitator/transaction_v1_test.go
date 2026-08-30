@@ -354,6 +354,33 @@ func TestExactSvmSchemeSettlesATransactionV1Transfer(t *testing.T) {
 	assert.Equal(t, 1, signer.sendCalls)
 }
 
+func TestExactSvmSchemeReconcilesPendingTransactionV1StaticTransfer(t *testing.T) {
+	payload, requirements, facilitatorAddr, owner := buildV1Payload(t, v1PayloadOptions{config: validV1Config()})
+	wantSig := solana.SignatureFromBytes(append([]byte{8}, make([]byte, 63)...))
+	signer := &mockSmartWalletSigner{
+		mockExactSvmSigner: mockExactSvmSigner{
+			addresses:     []solana.PublicKey{facilitatorAddr},
+			sendSignature: wantSig,
+			confirmErr:    errors.New("rpc: confirmation timeout"),
+		},
+	}
+	scheme := NewExactSvmScheme(signer, &Config{EnableSmartWalletVerification: true})
+
+	_, err := scheme.Settle(context.Background(), payload, requirements, nil)
+	var pending *x402.SettleError
+	require.True(t, errors.As(err, &pending))
+	assert.Equal(t, ErrSettlementPending, pending.ErrorReason)
+	assert.Equal(t, 1, signer.sendCalls)
+
+	signer.confirmErr = nil
+	resp, err := scheme.Settle(context.Background(), payload, requirements, nil)
+	require.NoError(t, err)
+	assert.True(t, resp.Success)
+	assert.Equal(t, wantSig.String(), resp.Transaction)
+	assert.Equal(t, owner.String(), resp.Payer)
+	assert.Equal(t, 1, signer.sendCalls, "retry must not rebroadcast")
+}
+
 func TestExactSvmSchemeSettleRejectsATransactionV1ConfigViolation(t *testing.T) {
 	payload, requirements, facilitatorAddr, _ := buildV1Payload(t, v1PayloadOptions{
 		config: validV1Config().WithPriorityFee(v1MaxPriorityFee + 1),

@@ -706,10 +706,14 @@ func (f *ExactSvmScheme) postSettlementVerified(
 
 func hasStaticTransferLayout(tx *solana.Transaction) bool {
 	n := len(tx.Message.Instructions)
-	if n < 3 || n > 7 {
+	minInstructions, maxInstructions, transferIndex := 3, 7, 2
+	if tx.Message.GetVersion() == solana.MessageVersionV1 {
+		minInstructions, maxInstructions, transferIndex = 1, 5, 0
+	}
+	if n < minInstructions || n > maxInstructions {
 		return false
 	}
-	transfer := tx.Message.Instructions[2]
+	transfer := tx.Message.Instructions[transferIndex]
 	programID, err := tx.Message.Program(transfer.ProgramIDIndex)
 	if err != nil {
 		return false
