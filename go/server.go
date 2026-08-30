@@ -903,6 +903,18 @@ func asStringAnyMap(v interface{}) (map[string]interface{}, bool) {
 	return nil, false
 }
 
+func builderCodeInfo(v interface{}) (map[string]interface{}, bool) {
+	extension, ok := asStringAnyMap(v)
+	if !ok {
+		return nil, false
+	}
+	info, hasInfo := extension["info"]
+	if !hasInfo {
+		return extension, true
+	}
+	return asStringAnyMap(info)
+}
+
 // ExtensionValidationResult is returned by ValidateExtensions. Valid is true
 // when the client either omitted extensions or echoed every server-advertised
 // field; otherwise InvalidReason/ExtensionKey describe the mismatch.
@@ -915,13 +927,32 @@ type ExtensionValidationResult struct {
 // ValidateExtensions checks that the client-echoed extension info preserves the
 // server-advertised subset for every key the server declared. Clients may add
 // fields and may omit extension keys entirely, but may not drop or change a
-// server-advertised value.
+// server-advertised value. Builder-code app attribution is server-owned and may
+// not be added without a matching declaration.
 func (s *x402ResourceServer) ValidateExtensions(
 	serverExtensions map[string]interface{},
 	payload types.PaymentPayload,
 ) ExtensionValidationResult {
 	if payload.X402Version != 2 {
 		return ExtensionValidationResult{Valid: true}
+	}
+
+	const builderCodeKey = "builder-code"
+	if echoedBuilderCode, ok := payload.Extensions[builderCodeKey]; ok {
+		if echoedInfo, ok := builderCodeInfo(echoedBuilderCode); ok {
+			if echoedAppCode, hasAppCode := echoedInfo["a"]; hasAppCode {
+				declaredBuilderCode, declared := serverExtensions[builderCodeKey]
+				declaredInfo, validDeclaration := builderCodeInfo(declaredBuilderCode)
+				declaredAppCode, hasDeclaredAppCode := declaredInfo["a"]
+				if !declared || !validDeclaration || !hasDeclaredAppCode || !DeepEqual(declaredAppCode, echoedAppCode) {
+					return ExtensionValidationResult{
+						Valid:         false,
+						InvalidReason: "extension_echo_mismatch",
+						ExtensionKey:  builderCodeKey,
+					}
+				}
+			}
+		}
 	}
 	if len(serverExtensions) == 0 || len(payload.Extensions) == 0 {
 		return ExtensionValidationResult{Valid: true}
