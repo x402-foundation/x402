@@ -77,6 +77,13 @@ const DEFAULT_SMART_WALLET_ALLOWED_PROGRAMS = [
 const IX_TOKEN_TRANSFER_CHECKED = 12;
 
 /**
+ * Maximum wallet-injected Lighthouse guard instructions tolerated by Path 1.
+ * Phantom currently brackets the transfer with four guards: three inserted
+ * before the TransferChecked and one appended after it (see #2097).
+ */
+const MAX_LIGHTHOUSE_INSTRUCTIONS = 4;
+
+/**
  * Which verification path produced a successful result.
  * Returned by the internal _verify so settle() knows whether post-settlement
  * TOCTOU verification is required, without re-deriving it from the transaction.
@@ -665,8 +672,18 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
    */
   private hasStaticTransferLayout(transaction: Transaction): boolean {
     const compiled = compiledMessageDecoder.decode(transaction.messageBytes);
-    const instructions = decompileTransactionMessage(compiled).instructions ?? [];
-    if (instructions.length < 3 || instructions.length > 7) {
+    const rawInstructions = decompileTransactionMessage(compiled).instructions ?? [];
+    const lighthouseCount = rawInstructions.filter(
+      ix => ix.programAddress.toString() === LIGHTHOUSE_PROGRAM_ADDRESS,
+    ).length;
+    const instructions = rawInstructions.filter(
+      ix => ix.programAddress.toString() !== LIGHTHOUSE_PROGRAM_ADDRESS,
+    );
+    if (
+      instructions.length < 3 ||
+      instructions.length > 4 ||
+      lighthouseCount > MAX_LIGHTHOUSE_INSTRUCTIONS
+    ) {
       return false;
     }
     const transferIx = instructions[2];
@@ -970,17 +987,32 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     requirements: PaymentRequirements,
     signerAddresses: string[],
   ): Promise<VerifyResponse> {
-    const instructions = decompiled.instructions ?? [];
+    const rawInstructions = decompiled.instructions ?? [];
 
-    // Allow 3-7 instructions:
+    // Phantom brackets the transfer with its Lighthouse guards - some inserted
+    // before the TransferChecked and some appended after it (see #2097), so
+    // guard position cannot be assumed. Validate the payment instructions
+    // positionally with the guards filtered out, and bound the guard count
+    // separately.
+    const lighthouseInstructions = rawInstructions.filter(
+      ix => ix.programAddress.toString() === LIGHTHOUSE_PROGRAM_ADDRESS,
+    );
+    const instructions = rawInstructions.filter(
+      ix => ix.programAddress.toString() !== LIGHTHOUSE_PROGRAM_ADDRESS,
+    );
+
+    // Allow 3-4 payment instructions:
     // - 3 instructions: ComputeLimit + ComputePrice + TransferChecked
-    // - 4 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse or Memo
-    // - 5 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse + Lighthouse or Memo
-    // - 6 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse + Lighthouse + Memo
-    // - 7 instructions: + a third wallet-injected Lighthouse (Phantom, see #2097)
+    // - 4 instructions: ComputeLimit + ComputePrice + TransferChecked + Memo
+    // plus up to MAX_LIGHTHOUSE_INSTRUCTIONS wallet-injected Lighthouse guards
+    // at any position.
     // See: https://github.com/x402-foundation/x402/issues/828
     //  and: https://github.com/x402-foundation/x402/issues/2097
-    if (instructions.length < 3 || instructions.length > 7) {
+    if (
+      instructions.length < 3 ||
+      instructions.length > 4 ||
+      lighthouseInstructions.length > MAX_LIGHTHOUSE_INSTRUCTIONS
+    ) {
       return {
         isValid: false,
         invalidReason: Errors.ErrTransactionInstructionsLength,
@@ -1110,7 +1142,8 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     }
 
     // Step 5: Verify optional instructions (if present)
-    // Allowed optional programs: Lighthouse (wallet protection) and Memo (uniqueness)
+    // Lighthouse guards were filtered out above, so the only allowed optional
+    // payment instruction is Memo (uniqueness)
     const optionalInstructions = instructions.slice(3);
     const invalidReasonByIndex = [
       Errors.ErrUnknownFourthInstruction,
