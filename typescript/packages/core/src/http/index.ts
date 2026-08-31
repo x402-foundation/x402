@@ -1,12 +1,28 @@
 import { SettleResponse } from "../types";
 import { PaymentPayload, PaymentRequired } from "../types/payments";
 import { Base64EncodedRegex, safeBase64Decode, safeBase64Encode } from "../utils";
+import { validatePaymentPayload } from "../schemas";
 
 // HTTP Methods that typically use query parameters
 export type QueryParamMethods = "GET" | "HEAD" | "DELETE";
 
 // HTTP Methods that typically use request body
 export type BodyMethods = "POST" | "PUT" | "PATCH";
+
+/**
+ * Error thrown when an incoming PAYMENT-SIGNATURE header cannot be decoded or validated.
+ */
+export class InvalidPaymentHeaderError extends Error {
+  /**
+   * Creates a new invalid payment header error.
+   *
+   * @param message - Human-readable error message for the invalid header
+   */
+  constructor(message: string = "Invalid PAYMENT-SIGNATURE header") {
+    super(message);
+    this.name = "InvalidPaymentHeaderError";
+  }
+}
 
 /**
  * Encodes a payment payload as a base64 header value.
@@ -26,9 +42,19 @@ export function encodePaymentSignatureHeader(paymentPayload: PaymentPayload): st
  */
 export function decodePaymentSignatureHeader(paymentSignatureHeader: string): PaymentPayload {
   if (!Base64EncodedRegex.test(paymentSignatureHeader)) {
-    throw new Error("Invalid payment signature header");
+    throw new InvalidPaymentHeaderError();
   }
-  return JSON.parse(safeBase64Decode(paymentSignatureHeader)) as PaymentPayload;
+  try {
+    const paymentPayload = validatePaymentPayload(
+      JSON.parse(safeBase64Decode(paymentSignatureHeader)),
+    );
+    if (paymentPayload.x402Version !== 2) {
+      throw new InvalidPaymentHeaderError();
+    }
+    return paymentPayload as PaymentPayload;
+  } catch {
+    throw new InvalidPaymentHeaderError();
+  }
 }
 
 /**
