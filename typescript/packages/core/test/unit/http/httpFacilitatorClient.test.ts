@@ -76,6 +76,66 @@ describe("HTTPFacilitatorClient", () => {
     expect(error.message).toContain("Facilitator supported returned invalid data");
   });
 
+  it("adds verify request context when fetch fails before a response arrives", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network unreachable")));
+
+    const client = new HTTPFacilitatorClient({ url: "https://facilitator.test" });
+    const error = await client
+      .verify(paymentPayload, paymentRequirements)
+      .catch(caught => caught as Error);
+
+    expect(error.message).toContain(
+      "Facilitator verify request to https://facilitator.test/verify failed",
+    );
+    expect(error.message).toContain("network unreachable");
+  });
+
+  it("adds settle request context when fetch fails before a response arrives", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("connection reset")));
+
+    const client = new HTTPFacilitatorClient({ url: "https://facilitator.test" });
+    const error = await client
+      .settle(paymentPayload, paymentRequirements)
+      .catch(caught => caught as Error);
+
+    expect(error.message).toContain(
+      "Facilitator settle request to https://facilitator.test/settle failed",
+    );
+    expect(error.message).toContain("connection reset");
+  });
+
+  it("adds supported request context when fetch fails before a response arrives", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("dns lookup failed")));
+
+    const client = new HTTPFacilitatorClient({ url: "https://facilitator.test" });
+    const error = await client.getSupported().catch(caught => caught as Error);
+
+    expect(error.message).toContain(
+      "Facilitator supported request to https://facilitator.test/supported failed",
+    );
+    expect(error.message).toContain("dns lookup failed");
+  });
+
+  it("adds verify auth-header context when auth setup fails", async () => {
+    const mockFetch = vi.fn();
+    vi.stubGlobal("fetch", mockFetch);
+
+    const client = new HTTPFacilitatorClient({
+      url: "https://facilitator.test",
+      createAuthHeaders: async () => {
+        throw new Error("missing API key");
+      },
+    });
+
+    const error = await client
+      .verify(paymentPayload, paymentRequirements)
+      .catch(caught => caught as Error);
+
+    expect(error.message).toContain("Facilitator verify auth header setup failed");
+    expect(error.message).toContain("missing API key");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it("preserves VerifyError semantics for valid non-200 verify responses", async () => {
     vi.stubGlobal(
       "fetch",
@@ -541,8 +601,10 @@ describe("request timeout", () => {
       .verify(paymentPayload, paymentRequirements)
       .catch(caught => caught as Error);
 
-    expect(error).toBe(fetchError);
-    expect(error).toBeInstanceOf(TypeError);
+    expect(error.message).toContain(
+      "Facilitator verify request to https://facilitator.test/verify failed",
+    );
+    expect(error.cause).toBe(fetchError);
     expect(error).not.toBeInstanceOf(FacilitatorTimeoutError);
   });
 
