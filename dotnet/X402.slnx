@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/X402.Core/X402.Core.csproj" />
+    <Project Path="src/X402.AspNetCore/X402.AspNetCore.csproj" />
+    <Project Path="src/X402.Mechanisms.Evm/X402.Mechanisms.Evm.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/X402.Core.Tests/X402.Core.Tests.csproj" />
+    <Project Path="tests/X402.App/X402.App.csproj" />
+    <Project Path="tests/X402.AspNetCore.Tests/X402.AspNetCore.Tests.csproj" />
+    <Project Path="tests/X402.Mechanisms.Evm.Tests/X402.Mechanisms.Evm.Tests.csproj" />
+  </Folder>
+</Solution>
