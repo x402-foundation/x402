@@ -6,6 +6,7 @@ used by both FastAPI and Flask middleware.
 
 from __future__ import annotations
 
+import copy
 import warnings
 from typing import Any
 
@@ -55,6 +56,26 @@ def register_bazaar_extension(server: Any) -> None:
         server.register_extension(bazaar_resource_server_extension)
     except ImportError:
         pass
+
+
+def _without_required_method(bazaar_ext: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of ``bazaar_ext`` with ``method`` dropped from the schema's
+    ``input.required``.
+
+    ``method`` is injected into both info and schema by the resource-server enricher
+    (``enrich_declaration``) at request time, so a freshly *declared* extension omits
+    it. Treating it as optional for the startup (pre-enrichment) info-vs-schema check
+    avoids flagging every not-yet-enriched route, while any other schema/info mismatch
+    is still caught (#2604).
+    """
+    ext = copy.deepcopy(bazaar_ext)
+    try:
+        required = ext["schema"]["properties"]["input"]["required"]
+    except (KeyError, TypeError):
+        return ext
+    if isinstance(required, list) and "method" in required:
+        ext["schema"]["properties"]["input"]["required"] = [r for r in required if r != "method"]
+    return ext
 
 
 def validate_bazaar_extensions(routes: RoutesConfig) -> None:
@@ -114,7 +135,10 @@ def validate_bazaar_extensions(routes: RoutesConfig) -> None:
                     stacklevel=3,
                 )
                 continue
-            result = validate_discovery_extension(bazaar_ext)
+            # `method` is injected into info+schema by the resource-server enricher
+            # at request time, so at startup a declared extension legitimately omits
+            # it — validate with `method` treated as optional (#2604).
+            result = validate_discovery_extension(_without_required_method(bazaar_ext))
             if not result.valid:
                 warnings.warn(
                     f'x402: Route "{pattern}" has an invalid bazaar extension: '

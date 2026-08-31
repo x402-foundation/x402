@@ -520,6 +520,52 @@ class TestSharedBazaarUtils:
         bazaar_warnings = [w for w in caught if "bazaar" in str(w.message).lower()]
         assert len(bazaar_warnings) == 0
 
+    def test_no_warning_on_declared_query_extension_pending_enrichment(self):
+        """#2604: a declared GET extension omits `method` (the resource-server enricher
+        injects it at request time), so startup validation must not warn about it."""
+        from x402.extensions.bazaar import declare_discovery_extension
+        from x402.http.middleware._bazaar_utils import validate_bazaar_extensions
+
+        routes = {
+            "GET /api/data": RouteConfig(
+                accepts=[_make_payment_option()],
+                extensions=declare_discovery_extension(
+                    input={"query": "x"},
+                    input_schema={"properties": {"query": {"type": "string"}}},
+                ),
+            )
+        }
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            validate_bazaar_extensions(routes)
+
+        bazaar_warnings = [w for w in caught if "bazaar" in str(w.message).lower()]
+        assert len(bazaar_warnings) == 0
+
+    def test_no_warning_on_declared_body_extension_pending_enrichment(self):
+        """#2604: same as above for a POST/body declaration."""
+        from x402.extensions.bazaar import declare_discovery_extension
+        from x402.http.middleware._bazaar_utils import validate_bazaar_extensions
+
+        routes = {
+            "POST /api/data": RouteConfig(
+                accepts=[_make_payment_option()],
+                extensions=declare_discovery_extension(
+                    input={"name": "John"},
+                    input_schema={"properties": {"name": {"type": "string"}}},
+                    body_type="json",
+                ),
+            )
+        }
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            validate_bazaar_extensions(routes)
+
+        bazaar_warnings = [w for w in caught if "bazaar" in str(w.message).lower()]
+        assert len(bazaar_warnings) == 0
+
     def test_validate_warns_on_spec_violation(self):
         from x402.http.middleware._bazaar_utils import validate_bazaar_extensions
 
