@@ -1,0 +1,4 @@
+# Local install artifacts for the self-contained generator.
+# The committed fixtures (L2.*.json) are the source-of-truth verified by CI.
+node_modules/
+package-lock.json

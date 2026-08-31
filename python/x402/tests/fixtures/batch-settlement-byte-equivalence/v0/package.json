@@ -1,0 +1,16 @@
+{
+  "name": "batch-settlement-byte-equivalence-fixtures",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Self-contained generator for batch-settlement EIP-712 byte-equivalence fixtures. Run `npm install && npx tsx _generator.ts` to regenerate.",
+  "type": "module",
+  "scripts": {
+    "generate": "tsx _generator.ts"
+  },
+  "dependencies": {
+    "viem": "2.48.11"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0"
+  }
+}
