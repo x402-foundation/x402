@@ -28,6 +28,7 @@ The payer signs a complete XRPL `Payment` transaction and pays the XRPL transact
 - `createTickets(signer, network, ticketCount)` - Creates XRPL Tickets for `ticketSequence` payments.
 - `getXrplTicketSequences(account, network)` - Lists an account's available ticket sequences.
 - `invoiceIdToInvoiceIdField(invoiceId)` - Converts an invoice id to an XRPL `InvoiceID`.
+- `buildFacilitatorAttributionMemos(sourceTag, facilitatorProof)` - Builds the canonical facilitator-attribution Memo.
 - XRPL network constants: `XRPL_MAINNET`, `XRPL_TESTNET`, `XRPL_DEVNET`.
 
 ### Subpath Exports
@@ -73,6 +74,33 @@ const ticketSequences = await createTickets(signer, "xrpl:1", 5);
 ```
 
 Each outstanding ticket locks owner reserve (currently 0.2 XRP on mainnet) until it is used or deleted, and an account can hold at most 250 outstanding tickets.
+
+## Facilitator Attribution
+
+Resource servers can explicitly bind a payment to the facilitator expected to submit it:
+
+- `extra.sourceTag` is an XRPL `uint32` selected by the resource server and copied into the signed transaction's `SourceTag`.
+- `extra.facilitatorProof` is an optional 32-byte hex commitment. It requires `sourceTag` and is encoded with that tag in one canonical typed Memo.
+
+```typescript
+{
+  scheme: "exact",
+  price: { amount: "1000000", asset: "XRP" },
+  network: "xrpl:1",
+  payTo: "r...",
+  extra: {
+    sourceTag: 804681468,
+    facilitatorProof:
+      "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
+  },
+}
+```
+
+The server checks the facilitator's `/supported` metadata before advertising these fields. The official facilitator advertises `features.sourceTag` and `features.facilitatorProof`; it never supplies a fallback tag. If the fields are omitted, the default client omits both `SourceTag` and `Memos`. For backward compatibility, a custom transaction preparer may preserve its own payer-signed `SourceTag`, but that value has no facilitator-attribution meaning.
+
+These fields label the facilitator expected by the resource server; they do not prove which network peer broadcast the signed blob. Do not use them alone for rewards, security decisions, or submitter accountability.
+
+Invoice binding is independent and continues to use `extra.invoiceId` plus the signed `InvoiceID` field. The facilitator-attribution Memo is never accepted as invoice binding.
 
 ## Testnet Setup
 
@@ -136,7 +164,7 @@ Use explicit asset pricing:
 }
 ```
 
-The server scheme adds `extra.areFeesSponsored: false` to the advertised requirements. Invoice binding is enforced when the resource configuration provides `extra.invoiceId`; requirements are rebuilt for every request, so the scheme never injects per-request values.
+The server scheme adds `extra.areFeesSponsored: false` to the advertised requirements. Invoice binding is enforced when the resource configuration provides `extra.invoiceId`; facilitator attribution is enforced only when the resource configuration provides `extra.sourceTag` and optionally `extra.facilitatorProof`. Requirements are rebuilt for every request, so the scheme never injects per-request values.
 
 ### Facilitator
 
@@ -147,7 +175,7 @@ import { ExactXrplScheme } from "@x402/xrpl/exact/facilitator";
 const facilitator = new x402Facilitator().register("xrpl:*", new ExactXrplScheme());
 ```
 
-Verification enforces the spec's checks: envelope consistency, offline signature validation, signer-to-account authorization (the embedded `SigningPubKey` must be the account's master key pair, unless disabled, or its configured regular key), destination and amount matching, NetworkID binding, per-method sequencing (current account `Sequence`, or ticket availability), `LastLedgerSequence` expiry policy, invoice binding via `InvoiceID`, fee caps, safety rejections (`Delegate`, `Memos`, `Paths`, `DeliverMin`, partial payments, multisigned blobs), and an XRPL simulation. Settlement re-runs verification, submits the signed blob, and succeeds only on a validated `tesSUCCESS` result.
+Verification enforces the spec's checks: envelope consistency, offline signature validation, signer-to-account authorization (the embedded `SigningPubKey` must be the account's master key pair, unless disabled, or its configured regular key), destination and amount matching, NetworkID binding, per-method sequencing (current account `Sequence`, or ticket availability), `LastLedgerSequence` expiry policy, invoice binding via `InvoiceID`, negotiated `SourceTag` and canonical facilitator-attribution Memo validation, fee caps, safety rejections (`Delegate`, unnegotiated `Memos`, `Paths`, `DeliverMin`, partial payments, multisigned blobs), and an XRPL simulation. Settlement re-runs verification, submits the signed blob, and succeeds only on a validated `tesSUCCESS` result.
 
 ## Duplicate Settlement Protection
 

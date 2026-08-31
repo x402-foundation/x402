@@ -62,6 +62,12 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | auth-capture | evm | `eip3009` | ✅ (client) | ✅ (client) | ❌ |
 | auth-capture | evm | `permit2` | ✅ (client) | ✅ (client) | ❌ |
 
+### XRPL Optional Capabilities
+
+| Capability | TypeScript | Go | Python |
+|------------|------------|-----|--------|
+| Facilitator attribution (`sourceTag`, `facilitatorProof`) | ✅ | ❌ | ❌ |
+
 ## Extensions
 
 | Extension | TypeScript | Go | Python |

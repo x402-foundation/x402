@@ -1,12 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 import { Wallet } from "xrpl";
-import { ExactXrplScheme } from "../../src/exact/facilitator/scheme";
-import { invoiceIdToInvoiceIdField } from "../../src";
+import { ExactXrplScheme as ExactXrplClientScheme } from "../../src/exact/client/scheme";
+import { ExactXrplScheme as ExactXrplFacilitatorScheme } from "../../src/exact/facilitator/scheme";
+import { ExactXrplScheme as ExactXrplServerScheme } from "../../src/exact/server/scheme";
+import {
+  buildFacilitatorAttributionMemos,
+  createXrplWalletSigner,
+  invoiceIdToInvoiceIdField,
+} from "../../src";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import type { Payment } from "xrpl";
 
 const payerWallet = Wallet.fromSeed("sEdTM1uX8pu2do5XvTnutH6HsouMaM2");
 const invoiceId = "INV-2026-XRPL-SETTLE";
+const sourceTag = 804_681_468;
+const facilitatorProof = "ab".repeat(32);
 
 const requirements: PaymentRequirements = {
   scheme: "exact",
@@ -18,21 +26,38 @@ const requirements: PaymentRequirements = {
   extra: { areFeesSponsored: false, invoiceId },
 };
 
-function payload(): PaymentPayload {
+const attributedRequirements: PaymentRequirements = {
+  ...requirements,
+  extra: { ...requirements.extra, sourceTag, facilitatorProof },
+};
+
+function payload(paymentRequirements: PaymentRequirements = requirements): PaymentPayload {
   const tx: Payment = {
     TransactionType: "Payment",
     Account: payerWallet.classicAddress,
-    Destination: requirements.payTo,
-    Amount: requirements.amount,
+    Destination: paymentRequirements.payTo,
+    Amount: paymentRequirements.amount,
     Fee: "12",
     Sequence: 1,
     LastLedgerSequence: 1_000,
     InvoiceID: invoiceIdToInvoiceIdField(invoiceId),
+    ...(typeof paymentRequirements.extra?.sourceTag === "number"
+      ? { SourceTag: paymentRequirements.extra.sourceTag }
+      : {}),
+    ...(typeof paymentRequirements.extra?.sourceTag === "number" &&
+    typeof paymentRequirements.extra?.facilitatorProof === "string"
+      ? {
+          Memos: buildFacilitatorAttributionMemos(
+            paymentRequirements.extra.sourceTag,
+            paymentRequirements.extra.facilitatorProof,
+          ),
+        }
+      : {}),
   };
 
   return {
     x402Version: 2,
-    accepted: requirements,
+    accepted: paymentRequirements,
     payload: { signedTxBlob: payerWallet.sign(tx).tx_blob },
   };
 }
@@ -44,7 +69,7 @@ describe("ExactXrplScheme settlement", () => {
       validated: true,
       resultCode: "tesSUCCESS",
     });
-    const facilitator = new ExactXrplScheme({
+    const facilitator = new ExactXrplFacilitatorScheme({
       getCurrentLedgerIndex: async () => 990,
       getAccountSequence: async () => 1,
       getAccountAuthorization: async () => ({ isMasterKeyDisabled: false }),
@@ -63,8 +88,57 @@ describe("ExactXrplScheme settlement", () => {
     expect(submitSignedTransaction).toHaveBeenCalledOnce();
   });
 
+  it("settles a payment with negotiated facilitator attribution", async () => {
+    const submitSignedTransaction = vi.fn().mockResolvedValue({
+      hash: "D".repeat(64),
+      validated: true,
+      resultCode: "tesSUCCESS",
+    });
+    const facilitator = new ExactXrplFacilitatorScheme({
+      getCurrentLedgerIndex: async () => 990,
+      getAccountSequence: async () => 1,
+      getAccountAuthorization: async () => ({ isMasterKeyDisabled: false }),
+      submitSignedTransaction,
+      simulateSignedTransaction: async () => ({ engineResult: "tesSUCCESS" }),
+    });
+    const server = new ExactXrplServerScheme();
+    const enhancedRequirements = await server.enhancePaymentRequirements(
+      attributedRequirements,
+      {
+        x402Version: 2,
+        scheme: "exact",
+        network: "xrpl:1",
+        extra: facilitator.getExtra("xrpl:1"),
+      },
+      [],
+    );
+    const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
+      preparePaymentTransaction: async transaction => ({
+        ...transaction,
+        Fee: "12",
+        Sequence: 1,
+        LastLedgerSequence: 1_000,
+      }),
+    });
+    const generated = await client.createPaymentPayload(2, enhancedRequirements);
+    const generatedPayload: PaymentPayload = {
+      x402Version: generated.x402Version,
+      accepted: enhancedRequirements,
+      payload: generated.payload,
+    };
+
+    const result = await facilitator.settle(generatedPayload, enhancedRequirements);
+
+    expect(result).toMatchObject({
+      success: true,
+      transaction: "D".repeat(64),
+      payer: payerWallet.classicAddress,
+    });
+    expect(submitSignedTransaction).toHaveBeenCalledOnce();
+  });
+
   it("fails settlement for a validated non-success result", async () => {
-    const facilitator = new ExactXrplScheme({
+    const facilitator = new ExactXrplFacilitatorScheme({
       getCurrentLedgerIndex: async () => 990,
       getAccountSequence: async () => 1,
       getAccountAuthorization: async () => ({ isMasterKeyDisabled: false }),

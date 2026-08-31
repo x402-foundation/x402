@@ -1,12 +1,16 @@
 import {
+  buildFacilitatorAttributionMemos,
   createTickets,
   createXrplClient,
+  getFacilitatorAttributionMemoError,
   getMaxLastLedgerSequence,
   getXrplTicketSequences,
   invoiceIdToInvoiceIdField,
   isDecimalString,
+  isValidFacilitatorProof,
   isIntegerString,
   isValidDestinationTag,
+  isValidSourceTag,
   isXrplAssetTransferMethod,
   isXrplNetwork,
   parseXrplNetworkId,
@@ -96,6 +100,12 @@ export class ExactXrplScheme implements SchemeNetworkClient {
         "XRPL exact payments require extra.destinationTag to be a 32-bit unsigned integer",
       );
     }
+    const sourceTag = isValidSourceTag(requirements.extra?.sourceTag)
+      ? requirements.extra.sourceTag
+      : undefined;
+    const facilitatorProof = isValidFacilitatorProof(requirements.extra?.facilitatorProof)
+      ? requirements.extra.facilitatorProof
+      : undefined;
     const isXrp = requirements.asset === "XRP";
     let amount: Payment["Amount"] = requirements.amount;
     let sendMax: Payment["SendMax"];
@@ -120,6 +130,10 @@ export class ExactXrplScheme implements SchemeNetworkClient {
       ...(this.options.feeDrops !== undefined ? { Fee: this.options.feeDrops } : {}),
       ...(lastLedgerSequence !== undefined ? { LastLedgerSequence: lastLedgerSequence } : {}),
       ...(destinationTag !== undefined ? { DestinationTag: destinationTag } : {}),
+      ...(sourceTag !== undefined ? { SourceTag: sourceTag } : {}),
+      ...(facilitatorProof !== undefined && sourceTag !== undefined
+        ? { Memos: buildFacilitatorAttributionMemos(sourceTag, facilitatorProof) }
+        : {}),
       ...(networkId > 1024 ? { NetworkID: networkId } : {}),
     };
 
@@ -186,7 +200,7 @@ export class ExactXrplScheme implements SchemeNetworkClient {
       ? await this.options.preparePaymentTransaction(transaction, requirements)
       : await this.autofillPaymentTransaction(transaction, requirements);
 
-    this.validatePreparedPaymentTransaction(preparedPayment, requirements.network, method);
+    this.validatePreparedPaymentTransaction(preparedPayment, requirements, method);
     return preparedPayment;
   }
 
@@ -225,12 +239,12 @@ export class ExactXrplScheme implements SchemeNetworkClient {
    * Ensures the transaction can be submitted after signing.
    *
    * @param transaction - Prepared XRPL payment transaction
-   * @param network - XRPL network id
+   * @param requirements - Payment requirements encoded by the transaction
    * @param method - Selected asset transfer method
    */
   private validatePreparedPaymentTransaction(
     transaction: Payment,
-    network: Network,
+    requirements: PaymentRequirements,
     method: XrplAssetTransferMethod,
   ): void {
     if (transaction.TransactionType !== "Payment") {
@@ -257,7 +271,28 @@ export class ExactXrplScheme implements SchemeNetworkClient {
     if (typeof transaction.LastLedgerSequence !== "number") {
       throw new Error("preparePaymentTransaction must set LastLedgerSequence");
     }
-    const networkId = parseXrplNetworkId(network);
+    const sourceTag = isValidSourceTag(requirements.extra?.sourceTag)
+      ? requirements.extra.sourceTag
+      : undefined;
+    if (sourceTag !== undefined && transaction.SourceTag !== sourceTag) {
+      throw new Error("preparePaymentTransaction must preserve the negotiated SourceTag");
+    }
+    const facilitatorProof = isValidFacilitatorProof(requirements.extra?.facilitatorProof)
+      ? requirements.extra.facilitatorProof
+      : undefined;
+    if (facilitatorProof === undefined) {
+      if (transaction.Memos !== undefined) {
+        throw new Error("preparePaymentTransaction must not add unnegotiated Memos");
+      }
+    } else if (
+      sourceTag === undefined ||
+      getFacilitatorAttributionMemoError(transaction.Memos, sourceTag, facilitatorProof) !==
+        undefined
+    ) {
+      throw new Error("preparePaymentTransaction must preserve the facilitator attribution Memo");
+    }
+
+    const networkId = parseXrplNetworkId(requirements.network);
     if (networkId <= 1024 && transaction.NetworkID !== undefined) {
       throw new Error(
         "preparePaymentTransaction must not set NetworkID for standard XRPL networks",
@@ -290,6 +325,23 @@ export class ExactXrplScheme implements SchemeNetworkClient {
     if (requirements.extra?.invoiceId !== undefined) {
       if (typeof requirements.extra.invoiceId !== "string" || requirements.extra.invoiceId === "") {
         throw new Error("XRPL exact payments require a non-empty extra.invoiceId when provided");
+      }
+    }
+    const sourceTag = requirements.extra?.sourceTag;
+    if (sourceTag !== undefined && !isValidSourceTag(sourceTag)) {
+      throw new Error(
+        "XRPL exact payments require extra.sourceTag to be a 32-bit unsigned integer",
+      );
+    }
+    const facilitatorProof = requirements.extra?.facilitatorProof;
+    if (facilitatorProof !== undefined) {
+      if (!isValidFacilitatorProof(facilitatorProof)) {
+        throw new Error(
+          "XRPL exact payments require extra.facilitatorProof to be 64 hexadecimal characters",
+        );
+      }
+      if (sourceTag === undefined) {
+        throw new Error("XRPL exact payments require extra.sourceTag with facilitatorProof");
       }
     }
     if (requirements.asset === "XRP") {
