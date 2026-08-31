@@ -35,6 +35,17 @@ app.use(paymentMiddleware(routes, resourceServer));
 3. **Server records** — Payment is recorded against the wallet address in storage
 4. **Later paid-route request** — Signature proves wallet ownership and grants access without re-payment
 
+## MCP Note
+
+This example is HTTP-based, but the same high-level SIWX pattern also applies to MCP:
+
+- surface the SIWX challenge in `PaymentRequired.extensions`
+- carry the signed proof in MCP `_meta`
+- record entitlement against the exact MCP resource, for example `mcp://tool/<toolName>`
+- allow later calls to that same paid tool through wallet-auth plus stored entitlement
+
+Today `@x402/mcp` is still payment-first and does not yet ship a first-class auth-only SIWX helper, so MCP servers that want this flow need custom wrapper logic around the existing MCP transport and the SIWX extension primitives shown here.
+
 ## Prerequisites
 
 - Node.js v20+ (install via [nvm](https://github.com/nvm-sh/nvm))

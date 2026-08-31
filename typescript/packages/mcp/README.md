@@ -236,6 +236,25 @@ const x402Mcp2 = wrapMCPClientWithPaymentFromConfig(mcpClient, {
 6. **Server settles payment** → Transaction submitted
 7. **Server returns result** → SettleResponse in `_meta["x402/payment-response"]`
 
+## Current Scope: Payment-First MCP
+
+`@x402/mcp` currently focuses on paid MCP tool execution.
+
+In particular:
+
+- `createPaymentWrapper()` requires at least one payment requirement
+- the package does not yet ship a first-class auth-only MCP helper
+- SIWX-style "pay once, then reopen the same paid tool without repaying" flows still need custom wrapper logic today
+
+If you want that pattern, the recommended shape is:
+
+1. Use the normal x402 payment flow for the first paid-tool unlock
+2. Record entitlement for the exact MCP resource, for example `mcp://tool/<toolName>`
+3. Carry wallet-auth material and any short-lived access grant in MCP `_meta`
+4. Re-check entitlement before allowing the later call through without payment
+
+For the wallet-auth building blocks, see the TypeScript [Sign-In-With-X server example](../../../examples/typescript/servers/sign-in-with-x/README.md).
+
 ## MCP SDK Limitation
 
 The x402 MCP transport spec defines payment errors using JSON-RPC's native error format:
