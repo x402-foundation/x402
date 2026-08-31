@@ -409,7 +409,7 @@ facilitator.registerExtension(
 );
 ```
 
-Reads `a` and `s` from the payment payload at settlement time, adds `w`, appends its own `serviceCode` to `s` (deduped), and encodes the ERC-8021 CBOR suffix.
+Reads `a` and `s` from the payment payload at settlement time, adds `w`, appends its own `serviceCode` to `s` (deduped), and encodes the ERC-8021 CBOR suffix. On v1 payloads, `a` is omitted from the suffix (the resource-server echo gate that validates `a` does not run on v1).
 
 ### Utilities
 
