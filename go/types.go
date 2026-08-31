@@ -274,3 +274,11 @@ func toViews[T PaymentRequirementsView](reqs []T) []PaymentRequirementsView {
 func fromView[T PaymentRequirementsView](view PaymentRequirementsView) T {
 	return view.(T)
 }
+
+// Context keys for HTTP request metadata
+type ContextKey string
+
+const (
+	RequestPathKey ContextKey = "x402_request_path"
+	RequestURLKey  ContextKey = "x402_request_url"
+)

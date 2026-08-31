@@ -336,8 +336,11 @@ func TestPaymentMiddleware_Returns402JSONForPaymentError(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatalf("Failed to parse response: %v", err)
 	}
-	if len(response) != 0 {
-		t.Errorf("Expected empty body {}, got %v", response)
+	if len(response) == 0 {
+		t.Errorf("Expected non-empty body mirroring requirements, got empty body")
+	}
+	if _, exists := response["x402Version"]; !exists {
+		t.Error("Expected x402Version in mirrored response body")
 	}
 }
 
