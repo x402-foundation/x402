@@ -432,7 +432,10 @@ Returns the list of payment schemes, networks, and extensions supported by the f
     {
       "x402Version": 2,
       "scheme": "exact",
-      "network": "eip155:84532"
+      "network": "eip155:84532",
+      "capabilities": {
+        "assetTransferMethod": ["eip3009", "permit2"]
+      }
     },
     {
       "x402Version": 2,
@@ -470,10 +473,21 @@ Each `SupportedKind` object in the `kinds` array contains:
 
 | Field Name    | Type     | Required | Description                                                |
 | ------------- | -------- | -------- | ---------------------------------------------------------- |
-| `x402Version` | `number` | Required | Protocol version supported (2 for v2)                      |
-| `scheme`      | `string` | Required | Payment scheme identifier (e.g., "exact")                  |
-| `network`     | `string` | Required | Blockchain network identifier in CAIP-2 format             |
-| `extra`       | `object` | Optional | Additional scheme-specific configuration                   |
+| `x402Version`  | `number` | Required | Protocol version supported (2 for v2)                                                                             |
+| `scheme`       | `string` | Required | Payment scheme identifier (e.g., "exact")                                                                         |
+| `network`      | `string` | Required | Blockchain network identifier in CAIP-2 format                                                                    |
+| `extra`        | `object` | Optional | Additional scheme-specific configuration                                                                          |
+| `capabilities` | `object` | Optional | Restricts which values the facilitator accepts for scheme-specific `PaymentRequirements.extra` fields; see §7.3.2. Absence implies full support. |
+
+**7.3.2 Capabilities**
+
+The optional `capabilities` object on a `SupportedKind` entry declares which values the facilitator will accept for specific fields in the server's `PaymentRequirements.extra` — the payment requirements the server advertises to clients. It does not describe the facilitator kind's own `extra` field above.
+
+Each key in `capabilities` is the name of a field in `PaymentRequirements.extra` for that scheme. Each value is an array of the strings the facilitator will accept for that field. Servers must not advertise a `PaymentRequirements.extra` field value that is absent from the corresponding `capabilities` array for the matched kind.
+
+**Default behavior:** If `capabilities` is absent from a kind, the facilitator is assumed to accept all values the scheme defines for that field. This is the backwards-compatible default for facilitators that predate this field.
+
+**Scheme obligation:** Scheme specifications that introduce selectable fields in `PaymentRequirements.extra` must document the corresponding `capabilities` key and enumerate its valid values.
 
 **8. Discovery API**
 
