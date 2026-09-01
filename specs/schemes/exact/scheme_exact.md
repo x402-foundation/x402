@@ -11,7 +11,14 @@ amount of funds they need to be transferred.
 - Purchasing digital credits
 - An LLM paying to use a tool
 
-## Appendix
+## Payment Flow
+
+By default, `exact` uses the `authorization` payment flow (verify → resource → settle): the payment is verified before the resource executes and settled afterward.
+
+`exact` MAY also use the `upfront` payment flow (settle → resource → respond) when the resource needs on-chain finality before execution. Payload creation, verification checks, and settlement mechanics are unchanged; only resource-server ordering changes. Facilitator `/verify` is not invoked; `/settle` both validates and commits the payment.
+
+When the resolved flow is not `authorization`, `accepts[].extra.paymentFlow` MUST be `"upfront"`. Clients SHOULD prefer `authorization` when both flows are offered. See [Payment Flow Models](../../x402-specification-v2.md) (section 6.1) in the core specification.
+
 
 ## Critical Validation Requirements
 

@@ -3,6 +3,7 @@ import express from "express";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { HTTPFacilitatorClient } from "@x402/core/server";
+import { convertToTokenAmount } from "@x402/core/utils";
 config();
 
 const evmAddress = process.env.EVM_ADDRESS as `0x${string}`;
@@ -42,7 +43,7 @@ app.use(
         // NOTE: Wrapped XDAI is not an EIP-3009 complaint token, and would fail the current ExactEvm implementation. This example is for demonstration purposes
         if (network == "eip155:100") {
           return {
-            amount: BigInt(Math.round(amount * 1e18)).toString(),
+            amount: convertToTokenAmount(String(amount), 18),
             asset: "0xe91d153e0b41518a2ce8dd3d7944fa863463a97d",
             extra: { token: "Wrapped XDAI" },
           };

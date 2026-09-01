@@ -129,9 +129,13 @@ def _create_sync_http_components(routes: dict) -> HTTPComponentsFixture:
     )
     facilitator_client = CashFacilitatorClientSync(facilitator)
 
-    payment_client = x402ClientSync().register(
-        "x402:cash",
-        CashSchemeNetworkClient("John"),
+    payment_client = (
+        x402ClientSync()
+        .register(
+            "x402:cash",
+            CashSchemeNetworkClient("John"),
+        )
+        .set_spend_controls(False)
     )
     http_client = x402HTTPClientSync(payment_client)
 
@@ -157,9 +161,13 @@ def _create_async_http_components(routes: dict) -> HTTPComponentsFixture:
     )
     facilitator_client = CashFacilitatorClient(facilitator)
 
-    payment_client = x402Client().register(
-        "x402:cash",
-        CashSchemeNetworkClient("John"),
+    payment_client = (
+        x402Client()
+        .register(
+            "x402:cash",
+            CashSchemeNetworkClient("John"),
+        )
+        .set_spend_controls(False)
     )
     http_client = x402HTTPClient(payment_client)
 

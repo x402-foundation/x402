@@ -19,6 +19,64 @@ Register hooks on the core resource server for verification and settlement lifec
 * **onSettleFailure** — Runs on settlement failure. Return `{ recovered: true, result }` to override.
 * **onVerifiedPaymentCanceled** — Runs when a verified payment is not settled. Triggered when the protected handler throws or returns an error response (`handler_threw`, `handler_failed`), or when an `onAfterVerify` hook aborts (`after_verify_aborted`).
 
+#### Settlement phases and multi-settle flows
+
+Every settle hook receives a `phase` field on its context indicating which settle invocation is running:
+
+| Phase | When it runs |
+|---|---|
+| `before-handler` | Settlement before the resource handler (e.g. `upfront`, `escrow` deposit) |
+| `after-handler` | Settlement after the resource handler (e.g. `authorization` charge, `escrow` claim) |
+| `cancel` | Refund or close settle from a verified-payment cancellation |
+
+The `escrow` payment flow settles twice — once before the handler and once after — so `onBeforeSettle`, `onAfterSettle`, `onSettleFailure`, and `enrichSettlementPayload` / `enrichSettlementResponse` each fire once per settle. If your hook has side effects that must not run twice (for example, sending a receipt email), branch on `context.phase`:
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    server.onAfterSettle(async (context) => {
+      // Only send receipt on the final charge, not the escrow deposit
+      if (context.phase !== "after-handler") return;
+
+      await sendReceipt({
+        transaction: context.result.transaction,
+        payer: context.result.payer,
+      });
+    });
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def send_receipt_on_final_charge(context):
+        # Only send receipt on the final charge, not the escrow deposit
+        if context.phase != "after-handler":
+            return
+
+        await send_receipt(
+            transaction=context.result.transaction,
+            payer=context.result.payer,
+        )
+
+    server.on_after_settle(send_receipt_on_final_charge)
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    server.OnAfterSettle(func(ctx x402.SettleResultContext) error {
+        // Only send receipt on the final charge, not the escrow deposit
+        if ctx.Phase != x402.SettlePhaseAfterHandler {
+            return nil
+        }
+
+        return sendReceipt(Receipt{
+            Transaction: ctx.Result.Transaction,
+            Payer:       ctx.Result.Payer,
+        })
+    })
+    ```
+  </Tab>
+</Tabs>
+
 These server-level hooks run for every payment regardless of which extensions are active. Extensions and schemes can also contribute lifecycle hook adapters that run only when their extension key or scheme/network is used. See [Extensions Overview](/extensions/overview) for extension-level behavior.
 
 <Tabs>
@@ -167,12 +225,14 @@ Register hooks for HTTP-specific request handling before payment processing. Use
 
 ### x402Client (Transport-agnostic)
 
-Register hooks on the core client for payment payload creation lifecycle events. Common use cases include enforcing spending limits, requiring approval for large payments or logging outgoing transactions.
+Register hooks on the core client for payment payload creation lifecycle events. Common use cases include requiring interactive approval for large payments or logging outgoing transactions.
 
 * **onBeforePaymentCreation** — Runs before creating a payment payload. Return `{ abort: true, reason }` to cancel.
 * **onAfterPaymentCreation** — Runs after successful payload creation.
 * **onPaymentCreationFailure** — Runs on failure. Return `{ recovered: true, payload }` to provide fallback.
 * **onPaymentResponse** — Runs after a paid request completes. Return `{ recovered: true }` to tell the transport to retry with a fresh payload.
+
+For static USD caps and asset allowlists, use [`spendControls`](/getting-started/quickstart-for-buyers#spend-controls) on the client config — it runs before hooks and is the preferred way to enforce spend limits. Use `onBeforePaymentCreation` for dynamic or interactive checks (e.g. prompting the user for approval).
 
 <Tabs>
   <Tab title="TypeScript">
@@ -182,11 +242,11 @@ Register hooks on the core client for payment payload creation lifecycle events.
     const client = new x402Client();
 
     client.onBeforePaymentCreation(async (context) => {
-      const maxAmount = BigInt("10000000"); // 10 USDC
-      const requestedAmount = BigInt(context.selectedRequirements.amount);
-
-      if (requestedAmount > maxAmount) {
-        return { abort: true, reason: "Payment exceeds spending limit" };
+      // Use this hook for interactive or dynamic checks.
+      // For static USD caps and asset allowlists, use spendControls instead.
+      const approved = await promptUser(context.selectedRequirements);
+      if (!approved) {
+        return { abort: true, reason: "User declined payment" };
       }
     });
     ```

@@ -52,8 +52,8 @@ The core package provides transport-agnostic primitives. Mechanism packages (`ev
 
 ### Prerequisites
 
-- Node.js >= 18.0.0
-- pnpm >= 10.7.0
+- Node.js >= 22.0.0
+- pnpm >= 11.1.1
 
 ### Installation
 

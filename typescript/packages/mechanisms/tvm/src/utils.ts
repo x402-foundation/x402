@@ -1,18 +1,12 @@
 import { Address, beginCell } from "@ton/core";
-import {
-  SUPPORTED_NETWORKS,
-  TVM_MAINNET,
-  TVM_TESTNET,
-  USDT_DECIMALS,
-  USDT_MAINNET_MINTER,
-  USDT_TESTNET_MINTER,
-} from "./constants";
+import { SUPPORTED_NETWORKS, USDT_DECIMALS } from "./constants";
 
 /**
  * Normalize a TON address to raw format (0:hex).
  * Accepts both raw format and user-friendly (bounceable/non-bounceable) format.
  *
- * @param address
+ * @param address - TON address in raw or user-friendly form
+ * @returns Address in raw `0:hex` format
  */
 export function normalizeTonAddress(address: string): string {
   const parsed = Address.parse(address);
@@ -35,7 +29,8 @@ export function priceToNano(price: string): bigint {
 /**
  * Check if a network identifier is a supported TVM network.
  *
- * @param network
+ * @param network - Network identifier to check
+ * @returns True when the network is supported
  */
 export function isValidTvmNetwork(network: string): boolean {
   return SUPPORTED_NETWORKS.has(network);
@@ -44,18 +39,11 @@ export function isValidTvmNetwork(network: string): boolean {
 /**
  * Determine if a network is testnet.
  *
- * @param network
+ * @param network - Network identifier to check
+ * @returns True when the network is TVM testnet
  */
 export function isTvmTestnet(network: string): boolean {
   return network === "tvm:-3";
-}
-
-export function getDefaultAsset(network: string): string {
-  if (network === TVM_MAINNET) return USDT_MAINNET_MINTER;
-  if (network === TVM_TESTNET) return USDT_TESTNET_MINTER;
-  throw new Error(
-    `No default stablecoin configured for network ${network}; specify an explicit asset`,
-  );
 }
 
 export function parseDecimalAmount(value: string | number, decimals: number): bigint {

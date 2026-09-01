@@ -9,7 +9,7 @@ import { x402ResourceServer } from "@x402/core/server";
 import {
   buildCashPaymentRequirements,
   CashFacilitatorClient,
-  CashSchemeNetworkClient,
+  createCashX402Client,
   CashSchemeNetworkFacilitator,
   CashSchemeNetworkServer,
 } from "../../../core/test/mocks";
@@ -32,9 +32,9 @@ describe("Builder Code Integration Tests", () => {
   let facilitator: x402Facilitator;
 
   beforeEach(async () => {
-    client = new x402Client()
-      .register("x402:cash", new CashSchemeNetworkClient("payer"))
-      .registerExtension(new BuilderCodeClientExtension(SERVICE));
+    client = createCashX402Client("payer").registerExtension(
+      new BuilderCodeClientExtension(SERVICE),
+    );
 
     facilitator = new x402Facilitator()
       .register("x402:cash", new CashSchemeNetworkFacilitator())
@@ -90,9 +90,9 @@ describe("Builder Code Integration Tests", () => {
   it("does not drop any service codes when client and server each use their full reservation", async () => {
     // Regression test for the reported policy issue: a client and server each declaring
     // up to their own dedicated reservation must not crowd out the other's entries.
-    const layeredClient = new x402Client()
-      .register("x402:cash", new CashSchemeNetworkClient("payer"))
-      .registerExtension(new BuilderCodeClientExtension(["bc_c1", "bc_c2", "bc_c3"]));
+    const layeredClient = createCashX402Client("payer").registerExtension(
+      new BuilderCodeClientExtension(["bc_c1", "bc_c2", "bc_c3"]),
+    );
 
     const accepts = [buildCashPaymentRequirements("merchant@example.com", "USD", "1")];
     const resource = {
@@ -214,9 +214,9 @@ describe("Builder Code Integration Tests", () => {
   });
 
   it("attributes multiple service codes from a layered client end-to-end", async () => {
-    const layeredClient = new x402Client()
-      .register("x402:cash", new CashSchemeNetworkClient("payer"))
-      .registerExtension(new BuilderCodeClientExtension(["bc_base_mcp", "bc_demo_app"]));
+    const layeredClient = createCashX402Client("payer").registerExtension(
+      new BuilderCodeClientExtension(["bc_base_mcp", "bc_demo_app"]),
+    );
 
     const accepts = [buildCashPaymentRequirements("merchant@example.com", "USD", "1")];
     const resource = {
@@ -269,5 +269,29 @@ describe("Builder Code Integration Tests", () => {
 
     const parsed = parseBuilderCodeSuffixFromCalldata(`0x${"00".repeat(4)}${suffix.slice(2)}`);
     expect(parsed).toEqual({ w: WALLET, s: [SERVICE] });
+  });
+
+  it("rejects forged builder-code app code when server did not declare builder-code", async () => {
+    const accepts = [buildCashPaymentRequirements("merchant@example.com", "USD", "1")];
+    const resource = {
+      url: "https://example.com/api/weather",
+      description: "Weather API",
+      mimeType: "application/json",
+    };
+    const paymentRequired = await server.createPaymentRequiredResponse(accepts, resource);
+
+    const paymentPayload = await client.createPaymentPayload(paymentRequired);
+    paymentPayload.extensions = {
+      ...paymentPayload.extensions,
+      [BUILDER_CODE]: {
+        info: { a: "forged_app", s: [SERVICE] },
+      },
+    };
+
+    expect(server.validateExtensions(paymentRequired, paymentPayload)).toEqual({
+      valid: false,
+      invalidReason: "extension_echo_mismatch",
+      extensionKey: BUILDER_CODE,
+    });
   });
 });

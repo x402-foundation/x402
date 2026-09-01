@@ -3,33 +3,23 @@ import type {
   Money,
   MoneyParser,
   Network,
+  PaymentFlowConfig,
   PaymentRequirements,
   Price,
   SchemeNetworkServer,
 } from "@x402/core/types";
-import { convertToTokenAmount, parseMoneyString } from "@x402/core/utils";
+import { convertToTokenAmount, parseMoney } from "@x402/core/utils";
+import { findDefaultAsset, getDefaultAsset, type HederaDefaultAsset } from "../../defaultAssets";
 import { assertSupportedHederaNetwork, isValidHederaAsset } from "../../utils";
-import {
-  HEDERA_MAINNET_CAIP2,
-  HEDERA_TESTNET_CAIP2,
-  HEDERA_MAINNET_USDC,
-  HEDERA_TESTNET_USDC,
-  HEDERA_USDC_DECIMALS,
-} from "../../constants";
 
-/**
- * Default token config used for Money parsing fallback.
- */
-export type HederaDefaultAssetConfig = {
-  asset: string;
-  decimals: number;
-};
+/** HTS token used when converting Money strings on the resource server. */
+export type HederaServerDefaultAsset = Pick<HederaDefaultAsset, "asset" | "decimals">;
 
 /**
  * Server-side options for Hedera exact scheme.
  */
 export type HederaServerConfig = {
-  defaultAssets?: Record<string, HederaDefaultAssetConfig>;
+  defaultAssets?: Record<string, HederaServerDefaultAsset>;
 };
 
 /**
@@ -37,6 +27,10 @@ export type HederaServerConfig = {
  */
 export class ExactHederaScheme implements SchemeNetworkServer {
   readonly scheme = "exact";
+  readonly defaultAssetTransferMethod = "default";
+  readonly paymentFlows = {
+    default: { supported: ["authorization", "upfront"], default: "authorization" },
+  } as const satisfies Record<string, PaymentFlowConfig>;
   private moneyParsers: MoneyParser[] = [];
 
   /**
@@ -55,6 +49,21 @@ export class ExactHederaScheme implements SchemeNetworkServer {
   registerMoneyParser(parser: MoneyParser): ExactHederaScheme {
     this.moneyParsers.push(parser);
     return this;
+  }
+
+  /**
+   * Decimals for a known default asset, or undefined.
+   *
+   * @param asset - HTS token id or HBAR asset id
+   * @param network - Target network
+   * @returns Decimals when the asset is a known default; otherwise undefined
+   */
+  getAssetDecimals(asset: string, network: Network): number | undefined {
+    const override = this.config.defaultAssets?.[network];
+    if (override?.asset === asset) {
+      return override.decimals;
+    }
+    return findDefaultAsset(asset, network)?.decimals;
   }
 
   /**
@@ -78,7 +87,7 @@ export class ExactHederaScheme implements SchemeNetworkServer {
       };
     }
 
-    const amount = this.parseMoneyToDecimal(price as Money);
+    const { amount, symbol } = parseMoney(price as Money);
 
     for (const parser of this.moneyParsers) {
       const parsed = await parser(amount, network);
@@ -87,7 +96,7 @@ export class ExactHederaScheme implements SchemeNetworkServer {
       }
     }
 
-    return this.defaultMoneyConversion(amount, network);
+    return this.defaultMoneyConversion(amount, network, symbol);
   }
 
   /**
@@ -99,7 +108,7 @@ export class ExactHederaScheme implements SchemeNetworkServer {
    * @param supportedKind.scheme - Payment scheme identifier
    * @param supportedKind.network - Network identifier
    * @param supportedKind.extra - Additional metadata from facilitator supported kinds
-   * @param facilitatorExtensions - Extension keys
+   * @param extensionKeys - Extension keys
    * @returns Enhanced requirements
    */
   enhancePaymentRequirements(
@@ -110,9 +119,9 @@ export class ExactHederaScheme implements SchemeNetworkServer {
       network: Network;
       extra?: Record<string, unknown>;
     },
-    facilitatorExtensions: string[],
+    extensionKeys: string[],
   ): Promise<PaymentRequirements> {
-    void facilitatorExtensions;
+    void extensionKeys;
     const extra: Record<string, unknown> = { ...(paymentRequirements.extra || {}) };
     if (typeof supportedKind.extra?.feePayer === "string") {
       extra.feePayer = supportedKind.extra.feePayer;
@@ -121,58 +130,29 @@ export class ExactHederaScheme implements SchemeNetworkServer {
   }
 
   /**
-   * Parse flexible money value into decimal number.
-   *
-   * @param money - Money input
-   * @returns Decimal number
-   */
-  private parseMoneyToDecimal(money: string | number): number {
-    if (typeof money === "number") {
-      return money;
-    }
-
-    return parseMoneyString(money);
-  }
-
-  /**
    * Default conversion when no custom parser handles the value.
    *
    * @param amount - Decimal amount
    * @param network - Hedera network
+   * @param symbol - Optional ticker from a suffixed price
    * @returns AssetAmount in configured default HTS token
    */
-  private defaultMoneyConversion(amount: number, network: Network): AssetAmount {
-    const tokenConfig = this.config.defaultAssets?.[network] ?? this.getBuiltInDefault(network);
-    if (!tokenConfig) {
-      throw new Error(
-        `No default HTS asset configured for network ${network}. Configure defaultAssets or provide explicit AssetAmount.`,
-      );
-    }
+  private defaultMoneyConversion(amount: string, network: Network, symbol?: string): AssetAmount {
+    const tokenConfig =
+      this.config.defaultAssets?.[network] ??
+      (() => {
+        const assetInfo = getDefaultAsset(network, symbol);
+        return { asset: assetInfo.asset, decimals: assetInfo.decimals };
+      })();
+
     if (!isValidHederaAsset(tokenConfig.asset) || tokenConfig.asset === "0.0.0") {
       throw new Error("Default Hedera asset must be an HTS fungible token ID");
     }
 
     return {
-      amount: convertToTokenAmount(amount.toString(), tokenConfig.decimals),
+      amount: convertToTokenAmount(amount, tokenConfig.decimals),
       asset: tokenConfig.asset,
       extra: {},
     };
-  }
-
-  /**
-   * Returns the built-in default asset config for known Hedera networks.
-   *
-   * @param network - CAIP-2 network identifier
-   * @returns Default asset config or undefined for unknown networks
-   */
-  private getBuiltInDefault(network: Network): HederaDefaultAssetConfig | undefined {
-    switch (network) {
-      case HEDERA_MAINNET_CAIP2:
-        return { asset: HEDERA_MAINNET_USDC, decimals: HEDERA_USDC_DECIMALS };
-      case HEDERA_TESTNET_CAIP2:
-        return { asset: HEDERA_TESTNET_USDC, decimals: HEDERA_USDC_DECIMALS };
-      default:
-        return undefined;
-    }
   }
 }

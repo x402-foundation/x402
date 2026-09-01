@@ -80,7 +80,9 @@ facilitator.register(["eip155:8453", "eip155:84532"], ExactEvmFacilitatorScheme(
 | `FacilitatorEvmSigner` | Protocol for facilitator signers |
 | `EthAccountSigner` | Client signer using eth-account |
 | `FacilitatorWeb3Signer` | Facilitator signer using web3.py |
-| `NETWORK_CONFIGS` | Network configuration mapping |
+| `DEFAULT_ASSETS` | USD-pegged default asset table (CAIP-2 → asset list) |
+| `get_default_asset` / `find_default_asset` | Forward and reverse default-asset lookups |
+| `get_evm_chain_id` | Resolve CAIP-2 chain ID for an EVM network |
 | `V1_NETWORKS` | List of V1 network names |
 
 ## Supported Networks

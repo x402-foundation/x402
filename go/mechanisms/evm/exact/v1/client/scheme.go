@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"time"
 
+	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 	evmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/evm/v1"
 	"github.com/x402-foundation/x402/go/v2/types"
@@ -27,6 +28,14 @@ func NewExactEvmSchemeV1(signer evm.ClientEvmSigner) *ExactEvmSchemeV1 {
 // Scheme returns the scheme identifier
 func (c *ExactEvmSchemeV1) Scheme() string {
 	return evm.SchemeExact
+}
+
+func (c *ExactEvmSchemeV1) FindDefaultAsset(asset string, network x402.Network) *x402.DefaultAsset {
+	info := evm.FindDefaultAsset(asset, string(network))
+	if info == nil {
+		return nil
+	}
+	return &x402.DefaultAsset{Asset: info.Asset, Decimals: info.Decimals, Symbol: info.Symbol}
 }
 
 // CreatePaymentPayload creates a V1 payment payload for the exact scheme

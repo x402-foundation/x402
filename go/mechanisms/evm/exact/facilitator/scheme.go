@@ -24,8 +24,9 @@ type ExactEvmSchemeConfig struct {
 
 // ExactEvmScheme implements the SchemeNetworkFacilitator interface for EVM exact payments (V2)
 type ExactEvmScheme struct {
-	signer evm.FacilitatorEvmSigner
-	config ExactEvmSchemeConfig
+	signer       evm.FacilitatorEvmSigner
+	config       ExactEvmSchemeConfig
+	pendingStore x402.PendingSettlementStore
 }
 
 // NewExactEvmScheme creates a new ExactEvmScheme
@@ -43,8 +44,21 @@ func NewExactEvmScheme(signer evm.FacilitatorEvmSigner, config *ExactEvmSchemeCo
 		cfg = *config
 	}
 	return &ExactEvmScheme{
-		signer: signer,
-		config: cfg,
+		signer:       signer,
+		config:       cfg,
+		pendingStore: x402.NewInMemoryPendingSettlementStore(),
+	}
+}
+
+// SetPendingSettlementStore overrides the default in-memory
+// PendingSettlementStore. Used by multi-instance facilitators (e.g.
+// cdp-facilitator) to inject a shared, network-backed implementation (e.g.
+// Redis) so a settle retry landing on a different replica still reconciles
+// against the transaction the first replica broadcast. A nil store is a
+// no-op.
+func (f *ExactEvmScheme) SetPendingSettlementStore(store x402.PendingSettlementStore) {
+	if store != nil {
+		f.pendingStore = store
 	}
 }
 
@@ -108,7 +122,8 @@ func (f *ExactEvmScheme) Settle(
 			return nil, x402.NewSettleError(ErrInvalidPayload, "", network, "", fmt.Sprintf("failed to parse Permit2 payload: %s", err.Error()))
 		}
 		return SettlePermit2(ctx, f.signer, payload, requirements, permit2Payload, fctx, &Permit2FacilitatorConfig{
-			SimulateInSettle: f.config.SimulateInSettle,
+			SimulateInSettle:       f.config.SimulateInSettle,
+			PendingSettlementStore: f.pendingStore,
 		})
 	}
 

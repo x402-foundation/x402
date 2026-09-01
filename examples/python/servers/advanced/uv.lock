@@ -2,6 +2,19 @@ version = 1
 revision = 3
 requires-python = ">=3.10"
 
+[options]
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer-span = "P3D"
+
+[[package]]
+name = "abnf"
+version = "2.9.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/78/55/5514e564539e23a4948795695d5f25c184f0e02ac18695db1c8d5e6f3d05/abnf-2.9.0.tar.gz", hash = "sha256:45af3643da2281e34b03fba467bdeb09797f5552d140907a578c2d8ec10fcdd5", size = 1088572, upload-time = "2026-08-27T11:12:45.963Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/43/4c/cb77419f4dd5e6086550a05f4bce9eb521c80a2b877215065331c2b476b7/abnf-2.9.0-py3-none-any.whl", hash = "sha256:8592e174c05cc6010f5250f2292b832993f92e2ae136d7618368ee89d649435e", size = 78100, upload-time = "2026-08-27T11:12:44.185Z" },
+]
+
 [[package]]
 name = "aiohappyeyeballs"
 version = "2.6.1"
@@ -2914,6 +2927,24 @@ wheels = [
 ]
 
 [[package]]
+name = "signinwithethereum"
+version = "5.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "abnf" },
+    { name = "eth-account" },
+    { name = "eth-utils" },
+    { name = "pydantic" },
+    { name = "pydantic-core" },
+    { name = "typing-extensions" },
+    { name = "web3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c6/9c/5bca1085418726e08c333b4b97891c2d03f12b99973418acf7357dd76a54/signinwithethereum-5.0.1.tar.gz", hash = "sha256:9661ac2020cb659cc7c3fc1f9b8a9ff59f2018e259f7a4e1ae641f126a475fa3", size = 165980, upload-time = "2026-04-24T12:16:09.533Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/83/22/ac218e503a9634757c09ab66e50a6dc3c9bfaaa877163a744516d33c85ce/signinwithethereum-5.0.1-py3-none-any.whl", hash = "sha256:53551a1073209f4f011589a957efb8603650af7be24433f966bf897405c0ebd3", size = 19342, upload-time = "2026-04-24T12:16:08.072Z" },
+]
+
+[[package]]
 name = "solana"
 version = "0.36.11"
 source = { registry = "https://pypi.org/simple" }
@@ -3349,7 +3380,7 @@ wheels = [
 
 [[package]]
 name = "x402"
-version = "2.5.0"
+version = "2.21.0"
 source = { editable = "../../../../python/x402" }
 dependencies = [
     { name = "nest-asyncio" },
@@ -3366,7 +3397,10 @@ evm = [
     { name = "web3" },
 ]
 extensions = [
+    { name = "idna" },
     { name = "jsonschema" },
+    { name = "pynacl" },
+    { name = "signinwithethereum" },
 ]
 fastapi = [
     { name = "fastapi", extra = ["standard"] },
@@ -3393,14 +3427,17 @@ requires-dist = [
     { name = "flask", marker = "extra == 'flask'", specifier = ">=3.0.0" },
     { name = "httpx", marker = "extra == 'httpx'", specifier = ">=0.28.1" },
     { name = "httpx", marker = "extra == 'tvm'", specifier = ">=0.28.1" },
+    { name = "idna", marker = "extra == 'extensions'", specifier = ">=3.4" },
     { name = "jsonschema", marker = "extra == 'extensions'", specifier = ">=4.0.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0.0" },
     { name = "nest-asyncio", specifier = ">=1.6.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pynacl", marker = "extra == 'extensions'", specifier = ">=1.5.0" },
     { name = "pynacl", marker = "extra == 'tvm'", specifier = ">=1.5.0" },
     { name = "pytoniq", marker = "extra == 'tvm'", specifier = ">=0.1.39" },
     { name = "pytoniq-core", marker = "extra == 'tvm'", specifier = ">=0.1.36" },
     { name = "requests", marker = "extra == 'requests'", specifier = ">=2.31.0" },
+    { name = "signinwithethereum", marker = "extra == 'extensions'", specifier = ">=5.0.1" },
     { name = "solana", marker = "extra == 'svm'", specifier = ">=0.36.0" },
     { name = "solders", marker = "extra == 'svm'", specifier = ">=0.27.0" },
     { name = "starlette", marker = "extra == 'fastapi'", specifier = ">=0.27.0" },
@@ -3423,6 +3460,7 @@ dev = [
     { name = "fastapi", extras = ["standard"], specifier = ">=0.115.0" },
     { name = "flask", specifier = ">=3.0.0" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "idna", specifier = ">=3.4" },
     { name = "jsonschema", specifier = ">=4.0.0" },
     { name = "mcp", specifier = ">=1.26.0" },
     { name = "mypy", specifier = ">=1.0.0" },
@@ -3434,6 +3472,7 @@ dev = [
     { name = "pytoniq-core", specifier = ">=0.1.36" },
     { name = "requests", specifier = ">=2.31.0" },
     { name = "ruff", specifier = ">=0.1.0" },
+    { name = "signinwithethereum", specifier = "==5.0.1" },
     { name = "solana", specifier = ">=0.36.0" },
     { name = "solders", specifier = ">=0.27.0" },
     { name = "starlette", specifier = ">=0.27.0" },

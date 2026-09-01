@@ -1,17 +1,26 @@
-import { x402Facilitator } from "../../../../src/facilitator";
-import { FacilitatorClient } from "../../../../src/server";
+import { x402Client } from "../../../src/client/x402Client";
+import { x402Facilitator } from "../../../src/facilitator";
+import { FacilitatorClient } from "../../../src/server";
+import { SettleResponse, SupportedResponse, VerifyResponse } from "../../../src/types/facilitator";
 import {
-  SettleResponse,
-  SupportedResponse,
-  VerifyResponse,
-} from "../../../../src/types/facilitator";
-import {
+  PaymentFlowConfig,
   SchemeNetworkClient,
   SchemeNetworkFacilitator,
   SchemeNetworkServer,
-} from "../../../../src/types/mechanisms";
-import { PaymentPayload, PaymentRequirements } from "../../../../src/types/payments";
-import { Price, AssetAmount, Network } from "../../../../src/types";
+} from "../../../src/types/mechanisms";
+import { PaymentPayload, PaymentRequirements } from "../../../src/types/payments";
+import { Price, AssetAmount, Network } from "../../../src/types";
+
+/**
+ * Cash integration client: allow any asset (cash amounts are decimal strings, not atomic).
+ *
+ * @param payer - Cash payer name embedded in the mock signature
+ */
+export function createCashX402Client(payer: string): x402Client {
+  return new x402Client()
+    .register("x402:cash", new CashSchemeNetworkClient(payer))
+    .setSpendControls(false);
+}
 
 /**
  *
@@ -162,6 +171,10 @@ export function buildCashPaymentRequirements(
  */
 export class CashSchemeNetworkServer implements SchemeNetworkServer {
   readonly scheme = "cash";
+  readonly defaultAssetTransferMethod = "default";
+  readonly paymentFlows: Readonly<Record<string, PaymentFlowConfig>> = {
+    default: { supported: ["authorization"], default: "authorization" },
+  };
 
   /**
    * Parses a price into asset amount format.
@@ -235,6 +248,32 @@ export class CashSchemeNetworkServer implements SchemeNetworkServer {
     void facilitatorExtensions;
     return paymentRequirements;
   }
+}
+
+/**
+ * Cash server that declares the default `authorization` payment flow.
+ * Used by integration tests to prove verify → work → settle wiring.
+ */
+export class MockAuthorizeSchemeNetworkServer extends CashSchemeNetworkServer {}
+
+/**
+ * Cash server that declares the `upfront` payment flow.
+ * Used by integration tests to prove settle → work wiring without a real prepaid scheme.
+ */
+export class MockUpfrontSchemeNetworkServer extends CashSchemeNetworkServer {
+  override readonly paymentFlows = {
+    default: { supported: ["upfront"], default: "upfront" },
+  } as const satisfies Record<string, PaymentFlowConfig>;
+}
+
+/**
+ * Cash server that declares the `escrow` payment flow.
+ * Used by integration tests to prove settle → work → settle wiring without a real escrow scheme.
+ */
+export class MockEscrowSchemeNetworkServer extends CashSchemeNetworkServer {
+  override readonly paymentFlows = {
+    default: { supported: ["escrow"], default: "escrow" },
+  } as const satisfies Record<string, PaymentFlowConfig>;
 }
 
 /**

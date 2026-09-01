@@ -18,6 +18,7 @@ import type {
   PaymentRequirements,
   SchemeNetworkClient,
 } from "@x402/core/types";
+import { findDefaultAsset } from "../../defaultAssets";
 import type { Payment } from "xrpl";
 
 /**
@@ -25,6 +26,7 @@ import type { Payment } from "xrpl";
  */
 export class ExactXrplScheme implements SchemeNetworkClient {
   readonly scheme = "exact";
+  findDefaultAsset = findDefaultAsset;
 
   /**
    * Creates a new XRPL exact client scheme.
@@ -296,8 +298,15 @@ export class ExactXrplScheme implements SchemeNetworkClient {
       }
       return;
     }
-    if (typeof requirements.extra?.issuer !== "string") {
+    const issuer = requirements.extra?.issuer;
+    if (typeof issuer !== "string") {
       throw new Error("XRPL IOU payments require extra.issuer");
+    }
+    const defaultAsset = this.findDefaultAsset(requirements.asset, requirements.network);
+    if (defaultAsset !== undefined && issuer !== defaultAsset.issuer) {
+      throw new Error(
+        `XRPL ${defaultAsset.symbol} payments require extra.issuer to be ${defaultAsset.issuer}`,
+      );
     }
     if (!isDecimalString(requirements.amount)) {
       throw new Error(

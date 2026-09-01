@@ -15,6 +15,7 @@ except ImportError as e:
         "SVM mechanism requires solana packages. Install with: pip install x402[svm]"
     ) from e
 
+from ...schemas.helpers import convert_to_token_amount
 from .constants import (
     NETWORK_CONFIGS,
     SOLANA_DEVNET_CAIP2,
@@ -76,17 +77,7 @@ def normalize_network(network: str) -> str:
 
 
 def get_network_config(network: str) -> NetworkConfig:
-    """Get configuration for a network.
-
-    Args:
-        network: Network identifier (CAIP-2 or V1 format).
-
-    Returns:
-        Network configuration.
-
-    Raises:
-        ValueError: If network is not supported.
-    """
+    """Return transport endpoints for a supported Solana network."""
     caip2_network = normalize_network(network)
     config = NETWORK_CONFIGS.get(caip2_network)
     if not config:
@@ -141,38 +132,25 @@ def get_asset_info(network: str, asset_address: str | None = None) -> AssetInfo:
         Asset information.
 
     Raises:
-        ValueError: If the address does not match the registered asset for the network.
+        ValueError: If the address does not match a registered asset for the network.
     """
-    config = get_network_config(network)
-    default_asset = config["default_asset"]
+    from .default_assets import find_default_asset, get_default_asset
 
-    if not asset_address or asset_address == default_asset["address"]:
-        return default_asset
+    if not asset_address:
+        entry = get_default_asset(network)
+    else:
+        found = find_default_asset(asset_address, network)
+        if found is None:
+            raise ValueError(
+                f"Token {asset_address} is not a registered asset for network {network}."
+            )
+        entry = found
 
-    raise ValueError(f"Token {asset_address} is not a registered asset for network {network}.")
-
-
-def convert_to_token_amount(decimal_amount: str, decimals: int) -> str:
-    """Convert a decimal amount to token smallest units.
-
-    Args:
-        decimal_amount: The decimal amount (e.g., "0.10").
-        decimals: The number of decimals for the token (e.g., 6 for USDC).
-
-    Returns:
-        The amount in smallest units as a string.
-
-    Raises:
-        ValueError: If amount is invalid.
-    """
-    try:
-        amount = Decimal(decimal_amount)
-    except Exception as e:
-        raise ValueError(f"Invalid amount: {decimal_amount}") from e
-
-    # Convert to smallest unit (e.g., for USDC with 6 decimals: 0.10 * 10^6 = 100000)
-    token_amount = int(amount * Decimal(10**decimals))
-    return str(token_amount)
+    return {
+        "address": entry["asset"],
+        "name": entry["symbol"],
+        "decimals": entry["decimals"],
+    }
 
 
 def parse_amount(amount: str, decimals: int) -> int:
@@ -185,9 +163,7 @@ def parse_amount(amount: str, decimals: int) -> int:
     Returns:
         Amount in smallest unit.
     """
-    d = Decimal(amount)
-    multiplier = Decimal(10**decimals)
-    return int(d * multiplier)
+    return int(convert_to_token_amount(amount, decimals))
 
 
 def format_amount(amount: int, decimals: int) -> str:
@@ -203,29 +179,6 @@ def format_amount(amount: int, decimals: int) -> str:
     d = Decimal(amount)
     divisor = Decimal(10**decimals)
     return str(d / divisor)
-
-
-def parse_money_to_decimal(money: str | float | int) -> float:
-    """Parse Money to decimal.
-
-    Handles formats like "$1.50", "1.50", 1.50.
-
-    Args:
-        money: Money value in various formats.
-
-    Returns:
-        Decimal amount as float.
-    """
-    if isinstance(money, int | float):
-        return float(money)
-
-    # Clean string
-    clean = money.strip()
-    clean = clean.lstrip("$")
-    clean = re.sub(r"\s*(USD|USDC|usd|usdc)\s*$", "", clean)
-    clean = clean.strip()
-
-    return float(clean)
 
 
 def transaction_message_hash(tx: VersionedTransaction) -> str:

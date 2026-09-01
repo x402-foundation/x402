@@ -4,6 +4,7 @@ import random
 from dataclasses import dataclass
 from typing import Any
 
+from ....pending_settlement_store import InMemoryPendingSettlementStore, PendingSettlementStore
 from ....schemas import (
     Network,
     PaymentPayload,
@@ -39,9 +40,13 @@ class UptoEvmScheme:
         self,
         signer: FacilitatorEvmSigner,
         config: UptoEvmSchemeConfig | None = None,
+        pending_store: PendingSettlementStore | None = None,
     ):
         self._signer = signer
         self._config = config or UptoEvmSchemeConfig()
+        self._pending_store: PendingSettlementStore = (
+            pending_store or InMemoryPendingSettlementStore()
+        )
 
     def get_extra(self, network: Network) -> dict[str, Any] | None:
         """Return facilitatorAddress so clients can bind the witness to this facilitator."""
@@ -85,4 +90,5 @@ class UptoEvmScheme:
             requirements,
             context,
             simulate_in_settle=self._config.simulate_in_settle,
+            pending_store=self._pending_store,
         )

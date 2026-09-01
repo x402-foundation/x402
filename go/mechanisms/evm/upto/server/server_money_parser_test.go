@@ -2,11 +2,16 @@ package server
 
 import (
 	"context"
-	"fmt"
+	"math/big"
 	"testing"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
 )
+
+func decimalGreaterThan(amount string, n int64) bool {
+	rat, ok := new(big.Rat).SetString(amount)
+	return ok && rat.Cmp(big.NewRat(n, 1)) > 0
+}
 
 const baseMainnetUSDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 
@@ -44,10 +49,14 @@ func TestParsePrice_DefaultNoCustomParsers(t *testing.T) {
 func TestParsePrice_CustomParser(t *testing.T) {
 	server := NewUptoEvmScheme()
 
-	server.RegisterMoneyParser(func(amount float64, network x402.Network) (*x402.AssetAmount, error) {
-		if amount > 100 {
+	server.RegisterMoneyParser(func(amount string, network x402.Network) (*x402.AssetAmount, error) {
+		if decimalGreaterThan(amount, 100) {
+			tokenAmount, err := x402.ConvertToTokenAmount(amount, 18)
+			if err != nil {
+				return nil, err
+			}
 			return &x402.AssetAmount{
-				Amount: fmt.Sprintf("%.0f", amount*1e18),
+				Amount: tokenAmount,
 				Asset:  "0x6B175474E89094C44Da98b954EedeAC495271d0F",
 				Extra:  map[string]interface{}{"token": "DAI"},
 			}, nil
@@ -125,10 +134,10 @@ func TestRegisterMoneyParser_Chainability(t *testing.T) {
 	server := NewUptoEvmScheme()
 
 	result := server.
-		RegisterMoneyParser(func(amount float64, network x402.Network) (*x402.AssetAmount, error) {
+		RegisterMoneyParser(func(amount string, network x402.Network) (*x402.AssetAmount, error) {
 			return nil, nil
 		}).
-		RegisterMoneyParser(func(amount float64, network x402.Network) (*x402.AssetAmount, error) {
+		RegisterMoneyParser(func(amount string, network x402.Network) (*x402.AssetAmount, error) {
 			return nil, nil
 		})
 

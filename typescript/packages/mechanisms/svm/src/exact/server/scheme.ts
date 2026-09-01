@@ -1,18 +1,15 @@
 import type {
   AssetAmount,
   Network,
+  PaymentFlowConfig,
   PaymentRequirements,
   Price,
   SchemeNetworkServer,
   MoneyParser,
 } from "@x402/core/types";
-import { parseMoneyString } from "@x402/core/utils";
-import {
-  convertToTokenAmount,
-  createRpcClient,
-  getUsdcAddress,
-  numberToDecimalString,
-} from "../../utils";
+import { convertToTokenAmount, parseMoney } from "@x402/core/utils";
+import { findDefaultAsset, getDefaultAsset } from "../../defaultAssets";
+import { createRpcClient } from "../../utils";
 
 /** Options for the server-side {@link ExactSvmScheme}. */
 export interface ExactSvmServerOptions {
@@ -29,6 +26,11 @@ export interface ExactSvmServerOptions {
  */
 export class ExactSvmScheme implements SchemeNetworkServer {
   readonly scheme = "exact";
+  readonly defaultAssetTransferMethod = "default";
+  readonly paymentFlows = {
+    default: { supported: ["authorization", "upfront"], default: "authorization" },
+  } as const satisfies Record<string, PaymentFlowConfig>;
+  readonly dynamicExtraFields = ["recentBlockhash", "lastValidBlockHeight"];
   private moneyParsers: MoneyParser[] = [];
 
   /**
@@ -42,7 +44,7 @@ export class ExactSvmScheme implements SchemeNetworkServer {
   /**
    * Register a custom money parser in the parser chain.
    * Multiple parsers can be registered - they will be tried in registration order.
-   * Each parser receives a decimal amount (e.g., 1.50 for $1.50).
+   * Each parser receives a decimal string (e.g., "1.50" for $1.50).
    * If a parser returns null, the next parser in the chain will be tried.
    * The default parser is always the final fallback.
    *
@@ -52,6 +54,17 @@ export class ExactSvmScheme implements SchemeNetworkServer {
   registerMoneyParser(parser: MoneyParser): ExactSvmScheme {
     this.moneyParsers.push(parser);
     return this;
+  }
+
+  /**
+   * Decimals for a known default asset, or undefined.
+   *
+   * @param asset - Asset address or symbol
+   * @param network - Target network
+   * @returns Decimals when the asset is a known default; otherwise undefined
+   */
+  getAssetDecimals(asset: string, network: Network): number | undefined {
+    return findDefaultAsset(asset, network)?.decimals;
   }
 
   /**
@@ -77,8 +90,7 @@ export class ExactSvmScheme implements SchemeNetworkServer {
       };
     }
 
-    // Parse Money to decimal number
-    const amount = this.parseMoneyToDecimal(price);
+    const { amount, symbol } = parseMoney(price);
 
     // Try each custom money parser in order
     for (const parser of this.moneyParsers) {
@@ -89,7 +101,7 @@ export class ExactSvmScheme implements SchemeNetworkServer {
     }
 
     // All custom parsers returned null, use default conversion
-    return this.defaultMoneyConversion(amount, network);
+    return this.defaultMoneyConversion(amount, network, symbol);
   }
 
   /**
@@ -143,35 +155,21 @@ export class ExactSvmScheme implements SchemeNetworkServer {
   }
 
   /**
-   * Parse Money (string | number) to a decimal number.
-   * Handles formats like "$1.50", "1.50", 1.50, etc.
-   *
-   * @param money - The money value to parse
-   * @returns Decimal number
-   */
-  private parseMoneyToDecimal(money: string | number): number {
-    if (typeof money === "number") {
-      return money;
-    }
-
-    return parseMoneyString(money.replace(/\s+(?:USD|USDC)$/i, ""));
-  }
-
-  /**
    * Default money conversion implementation.
-   * Converts decimal amount to USDC on the specified network.
+   * Converts decimal amount to a supported stablecoin on the specified network.
    *
    * @param amount - The decimal amount (e.g., 1.50)
    * @param network - The network to use
+   * @param symbol - Optional ticker from a suffixed price
    * @returns The parsed asset amount in USDC
    */
-  private defaultMoneyConversion(amount: number, network: Network): AssetAmount {
-    // Convert decimal amount to token amount (USDC has 6 decimals)
-    const tokenAmount = convertToTokenAmount(numberToDecimalString(amount), 6);
+  private defaultMoneyConversion(amount: string, network: Network, symbol?: string): AssetAmount {
+    const assetInfo = getDefaultAsset(network, symbol);
+    const tokenAmount = convertToTokenAmount(amount, assetInfo.decimals);
 
     return {
       amount: tokenAmount,
-      asset: getUsdcAddress(network),
+      asset: assetInfo.asset,
       extra: {},
     };
   }

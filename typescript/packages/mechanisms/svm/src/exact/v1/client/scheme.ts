@@ -36,12 +36,14 @@ import type { ClientSvmConfig, ClientSvmSigner } from "../../../signer";
 import type { ExactSvmPayloadV1 } from "../../../types";
 import { createRpcClient } from "../../../utils";
 import { getCachedMintMetadata, type MintMetadataCache } from "../../../mint-cache";
+import { findDefaultAsset } from "../../../defaultAssets";
 
 /**
  * SVM client implementation for the Exact payment scheme (V1).
  */
 export class ExactSvmSchemeV1 implements SchemeNetworkClient {
   readonly scheme = "exact";
+  findDefaultAsset = findDefaultAsset;
   private readonly mintCache: MintMetadataCache = new Map();
 
   /**

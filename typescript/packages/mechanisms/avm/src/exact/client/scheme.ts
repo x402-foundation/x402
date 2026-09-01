@@ -20,8 +20,9 @@ import type {
   PaymentPayloadResult,
 } from "@x402/core/types";
 import type { ClientAvmSigner, ClientAvmConfig } from "../../signer";
+import { findDefaultAsset } from "../../defaultAssets";
 import type { ExactAvmPayloadV2 } from "../../types";
-import { USDC_CONFIG } from "../../constants";
+import { getDefaultAsset } from "../../defaultAssets";
 import { encodeTransaction, isTestnetNetwork, normalizeAlgorandNetwork } from "../../utils";
 
 /**
@@ -32,6 +33,7 @@ import { encodeTransaction, isTestnetNetwork, normalizeAlgorandNetwork } from ".
  */
 export class ExactAvmScheme implements SchemeNetworkClient {
   readonly scheme = "exact";
+  findDefaultAsset = findDefaultAsset;
 
   /**
    * Creates a new ExactAvmScheme instance.
@@ -210,13 +212,12 @@ export class ExactAvmScheme implements SchemeNetworkClient {
       return asset;
     }
 
-    // Try to get from USDC config
-    const usdcConfig = USDC_CONFIG[normalizedNetwork];
-    if (usdcConfig) {
-      return usdcConfig.asaId;
+    // Try to get from default asset registry
+    try {
+      return getDefaultAsset(normalizedNetwork).asset;
+    } catch {
+      // Default to the asset as-is (might be an ASA ID)
+      return asset;
     }
-
-    // Default to the asset as-is (might be an ASA ID)
-    return asset;
   }
 }

@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
 	exttypes "github.com/x402-foundation/x402/go/v2/extensions/types"
@@ -25,6 +26,10 @@ var (
 	paramRegex      = regexp.MustCompile(`\\\[([^\]]+)\\\]`)
 	colonParamRegex = exttypes.ColonParamRegex
 )
+
+// Wire value for a broadcast settle whose receipt could not be confirmed.
+// Mirrored from mechanisms/evm to avoid an http→mechanisms import.
+const settlementPendingReason = "settlement_pending"
 
 // ============================================================================
 // HTTP Adapter Interface
@@ -204,6 +209,11 @@ type HTTPProcessResult struct {
 	// handler errors or returns a non-2xx status before settlement runs. Set when
 	// Type is ResultPaymentVerified.
 	CancellationDispatcher *x402.PaymentCancellationDispatcher
+	// BeforeHandlerSettlement is set when the payment flow settles before the
+	// resource handler (upfront / escrow). Adapters echo PAYMENT-RESPONSE from
+	// this on handler failure, and ProcessSettlement uses it when the flow does
+	// not settle again after the handler.
+	BeforeHandlerSettlement *x402.CompletedSettlement
 }
 
 // Result type constants
@@ -224,6 +234,11 @@ type ProcessSettleResult struct {
 	// Response contains HTTP instructions for the failure case (status 402, body, etc).
 	// Set when Success is false; nil when Success is true.
 	Response *HTTPResponseInstructions
+	// SettleResponse is the facilitator settle outcome (success or failure body).
+	// Present so callers can build a CompletedSettlement without re-deriving fields.
+	SettleResponse *x402.SettleResponse
+	// Requirements are the requirements used for this settle (echoed for CompletedSettlement).
+	Requirements types.PaymentRequirements
 }
 
 // ============================================================================
@@ -241,7 +256,9 @@ type RouteValidationError struct {
 	// Network is the network that failed validation
 	Network x402.Network
 
-	// Reason is the type of validation failure: "missing_scheme" or "missing_facilitator"
+	// Reason is the type of validation failure: "missing_scheme",
+	// "unsupported_asset_transfer_method", "unsupported_payment_flow", or
+	// "missing_facilitator"
 	Reason string
 
 	// Message is a human-readable error message
@@ -275,6 +292,7 @@ type x402HTTPResourceServer struct {
 	paywallProvider                PaywallProvider
 	protectedRequestHooks          []ProtectedRequestHook
 	extensionProtectedRequestHooks []scopedProtectedRequestHook
+	warnMissingBeforeHandlerOnce   sync.Once
 }
 
 type scopedProtectedRequestHook struct {
@@ -386,27 +404,78 @@ func (s *x402HTTPResourceServer) validateRouteConfiguration() error {
 		}
 
 		for _, option := range route.Config.Accepts {
+			pattern := route.Verb + " " + route.Regex.String()
+
 			// Check 1: Is the scheme registered for this network?
-			if !s.HasRegisteredScheme(option.Network, option.Scheme) {
+			schemeServer := s.GetRegisteredScheme(option.Network, option.Scheme)
+			if schemeServer == nil {
 				errors = append(errors, RouteValidationError{
-					RoutePattern: route.Verb + " " + route.Regex.String(),
+					RoutePattern: pattern,
 					Scheme:       option.Scheme,
 					Network:      option.Network,
 					Reason:       "missing_scheme",
-					Message:      fmt.Sprintf("Route %q: No scheme implementation registered for %q on network %q", route.Verb+" "+route.Regex.String(), option.Scheme, option.Network),
+					Message:      fmt.Sprintf("Route %q: No scheme implementation registered for %q on network %q", pattern, option.Scheme, option.Network),
 				})
-				// Skip facilitator check if scheme isn't registered
+				// Skip further checks if scheme isn't registered
 				continue
 			}
 
-			// Check 2: Does a facilitator support this scheme/network combination?
+			// Check 2: Does the scheme support the declared ATM / paymentFlow?
+			atm := schemeServer.DefaultAssetTransferMethod()
+			if option.Extra != nil {
+				if v, ok := option.Extra["assetTransferMethod"].(string); ok {
+					atm = v
+				}
+			}
+			flows := schemeServer.PaymentFlows()
+			if _, ok := flows[atm]; !ok {
+				supported := make([]string, 0, len(flows))
+				for k := range flows {
+					supported = append(supported, k)
+				}
+				errors = append(errors, RouteValidationError{
+					RoutePattern: pattern,
+					Scheme:       option.Scheme,
+					Network:      option.Network,
+					Reason:       "unsupported_asset_transfer_method",
+					Message: fmt.Sprintf(
+						`Route %q: [x402] Scheme %q does not support assetTransferMethod %q. Supported: %s.`,
+						pattern, schemeServer.Scheme(), atm, strings.Join(supported, ", "),
+					),
+				})
+				continue
+			}
+
+			extra := option.Extra
+			if extra == nil {
+				extra = map[string]interface{}{}
+			}
+			if _, _, err := x402.ResolvePaymentFlow(schemeServer, types.PaymentRequirements{
+				Scheme:            option.Scheme,
+				Network:           string(option.Network),
+				Asset:             "",
+				Amount:            "0",
+				PayTo:             "",
+				MaxTimeoutSeconds: 0,
+				Extra:             extra,
+			}); err != nil {
+				errors = append(errors, RouteValidationError{
+					RoutePattern: pattern,
+					Scheme:       option.Scheme,
+					Network:      option.Network,
+					Reason:       "unsupported_payment_flow",
+					Message:      fmt.Sprintf("Route %q: %s", pattern, err.Error()),
+				})
+			}
+
+			// Check 3: Does a facilitator support this scheme/network combination?
 			if !s.HasFacilitatorSupport(option.Network, option.Scheme) {
 				errors = append(errors, RouteValidationError{
-					RoutePattern: route.Verb + " " + route.Regex.String(),
+					RoutePattern: pattern,
 					Scheme:       option.Scheme,
 					Network:      option.Network,
 					Reason:       "missing_facilitator",
-					Message:      fmt.Sprintf("Route %q: Facilitator does not support scheme %q on network %q", route.Verb+" "+route.Regex.String(), option.Scheme, option.Network),
+					Message:      fmt.Sprintf("Route %q: Facilitator does not support scheme %q on network %q", pattern, option.Scheme, option.Network),
 				})
 			}
 		}
@@ -534,12 +603,13 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 	// Build requirements from all payment options (resolves dynamic values inline)
 	requirements, err := s.BuildPaymentRequirementsFromOptions(ctx, paymentOptions, reqCtx)
 	if err != nil {
+		log.Printf("[x402] Failed to build payment requirements: %v", err)
 		return HTTPProcessResult{
 			Type: ResultPaymentError,
 			Response: &HTTPResponseInstructions{
 				Status:  500,
 				Headers: map[string]string{"Content-Type": "application/json"},
-				Body:    map[string]string{"error": err.Error()},
+				Body:    map[string]string{"error": "Internal Server Error"},
 			},
 		}
 	}
@@ -611,12 +681,13 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 			unpaidResponse,
 		)
 		if err != nil {
+			log.Printf("[x402] Failed to create payment response: %v", err)
 			return HTTPProcessResult{
 				Type: ResultPaymentError,
 				Response: &HTTPResponseInstructions{
 					Status:  500,
 					Headers: map[string]string{"Content-Type": "application/json"},
-					Body:    map[string]string{"error": fmt.Sprintf("Failed to create payment response: %v", err)},
+					Body:    map[string]string{"error": "Internal Server Error"},
 				},
 			}
 		}
@@ -638,12 +709,13 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 
 		response, err := s.createHTTPResponseV2(paymentRequired, false, paywallConfig, "", nil)
 		if err != nil {
+			log.Printf("[x402] Failed to create payment response: %v", err)
 			return HTTPProcessResult{
 				Type: ResultPaymentError,
 				Response: &HTTPResponseInstructions{
 					Status:  500,
 					Headers: map[string]string{"Content-Type": "application/json"},
-					Body:    map[string]string{"error": fmt.Sprintf("Failed to create payment response: %v", err)},
+					Body:    map[string]string{"error": "Internal Server Error"},
 				},
 			}
 		}
@@ -677,12 +749,13 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 
 		response, err := s.createHTTPResponseV2(paymentRequired, false, paywallConfig, "", nil)
 		if err != nil {
+			log.Printf("[x402] Failed to create payment response: %v", err)
 			return HTTPProcessResult{
 				Type: ResultPaymentError,
 				Response: &HTTPResponseInstructions{
 					Status:  500,
 					Headers: map[string]string{"Content-Type": "application/json"},
-					Body:    map[string]string{"error": fmt.Sprintf("Failed to create payment response: %v", err)},
+					Body:    map[string]string{"error": "Internal Server Error"},
 				},
 			}
 		}
@@ -705,7 +778,65 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 	// Skip-handler runs inline; only attach a cancellation dispatcher when there
 	// is a downstream resource handler whose outcome can fail.
 	if result.SkipHandler == nil {
-		result.CancellationDispatcher = s.CreatePaymentCancellationDispatcherWithExtensions(ctx, *typedPayload, *matchingReqs, extensions)
+		flow, flowErr := s.GetPaymentFlow(*matchingReqs)
+		if flowErr != nil {
+			log.Printf("[x402] Failed to resolve payment flow: %v", flowErr)
+			return HTTPProcessResult{
+				Type: ResultPaymentError,
+				Response: &HTTPResponseInstructions{
+					Status:  500,
+					Headers: map[string]string{"Content-Type": "application/json"},
+					Body:    map[string]string{"error": "Internal Server Error"},
+				},
+			}
+		}
+		phases, phasesErr := x402.ResolvePaymentFlowPhases(flow)
+		if phasesErr != nil {
+			log.Printf("[x402] Failed to resolve payment flow phases: %v", phasesErr)
+			return HTTPProcessResult{
+				Type: ResultPaymentError,
+				Response: &HTTPResponseInstructions{
+					Status:  500,
+					Headers: map[string]string{"Content-Type": "application/json"},
+					Body:    map[string]string{"error": "Internal Server Error"},
+				},
+			}
+		}
+
+		var beforeHandlerSettlement *x402.CompletedSettlement
+		if phases.SettleBeforeHandler {
+			beforeSettleResult := s.ProcessSettlement(
+				ctx,
+				*typedPayload,
+				*matchingReqs,
+				nil,
+				nil,
+				extensions,
+				nil,
+				x402.SettlePhaseBeforeHandler,
+			)
+			if !beforeSettleResult.Success {
+				return HTTPProcessResult{
+					Type:     ResultPaymentError,
+					Response: beforeSettleResult.Response,
+				}
+			}
+			beforeHandlerSettlement = &x402.CompletedSettlement{
+				Phase:        x402.SettlePhaseBeforeHandler,
+				Flow:         flow,
+				Result:       beforeSettleResult.SettleResponse,
+				Requirements: beforeSettleResult.Requirements,
+			}
+		}
+		result.BeforeHandlerSettlement = beforeHandlerSettlement
+
+		var settledPhases []x402.SettlePhase
+		if beforeHandlerSettlement != nil {
+			settledPhases = []x402.SettlePhase{x402.SettlePhaseBeforeHandler}
+		}
+		result.CancellationDispatcher = s.CreatePaymentCancellationDispatcherWithExtensions(
+			ctx, *typedPayload, *matchingReqs, extensions, settledPhases,
+		)
 	}
 	return result
 }
@@ -718,12 +849,13 @@ func processProtectedRequestHook(
 ) (HTTPProcessResult, bool) {
 	result, err := hook(ctx, reqCtx, routeConfig)
 	if err != nil {
+		log.Printf("[x402] Protected request hook error: %v", err)
 		return HTTPProcessResult{
 			Type: ResultPaymentError,
 			Response: &HTTPResponseInstructions{
 				Status:  500,
 				Headers: map[string]string{"Content-Type": "application/json"},
-				Body:    map[string]string{"error": fmt.Sprintf("protected request hook error: %v", err)},
+				Body:    map[string]string{"error": "Internal Server Error"},
 			},
 		}, true
 	}
@@ -795,6 +927,10 @@ func MarshalSettlementOverrides(overrides *x402.SettlementOverrides) string {
 //
 // declaredExtensions is forwarded to SettlePaymentWithExtensions so per-extension
 // settle hooks fire only when their key is declared on the route.
+//
+// beforeHandlerSettlement is the before-handler settle from ProcessHTTPRequest
+// (for PAYMENT-RESPONSE echo when the flow does not settle after the handler).
+// Empty phase derives from the payment flow (after-handler settle path).
 func (s *x402HTTPResourceServer) ProcessSettlement(
 	ctx context.Context,
 	payload types.PaymentPayload,
@@ -802,7 +938,73 @@ func (s *x402HTTPResourceServer) ProcessSettlement(
 	overrides *x402.SettlementOverrides,
 	transportContext *HTTPTransportContext,
 	declaredExtensions map[string]interface{},
+	beforeHandlerSettlement *x402.CompletedSettlement,
+	phase x402.SettlePhase,
 ) *ProcessSettleResult {
+	flow := x402.PaymentFlowAuthorization
+	if beforeHandlerSettlement != nil {
+		flow = beforeHandlerSettlement.Flow
+	} else {
+		resolvedFlow, err := s.GetPaymentFlow(requirements)
+		if err != nil {
+			return s.buildSettlementFailureResult(err.Error(), x402.Network(requirements.Network), "", nil)
+		}
+		flow = resolvedFlow
+	}
+	phases, err := x402.ResolvePaymentFlowPhases(flow)
+	if err != nil {
+		return s.buildSettlementFailureResult(err.Error(), x402.Network(requirements.Network), "", nil)
+	}
+
+	// After-handler path for flows that do not settle again: echo before-handler settle or no-op.
+	if phase != x402.SettlePhaseBeforeHandler && !phases.SettleAfterHandler {
+		if beforeHandlerSettlement != nil && beforeHandlerSettlement.Result != nil {
+			headers, headerErr := s.CreateSettlementHeaders(beforeHandlerSettlement.Result)
+			if headerErr != nil {
+				return s.buildSettlementFailureResult(
+					fmt.Sprintf("failed to create settlement headers: %v", headerErr),
+					x402.Network(requirements.Network),
+					"",
+					nil,
+				)
+			}
+			return &ProcessSettleResult{
+				Success:        true,
+				Headers:        headers,
+				Transaction:    beforeHandlerSettlement.Result.Transaction,
+				Network:        beforeHandlerSettlement.Result.Network,
+				Payer:          beforeHandlerSettlement.Result.Payer,
+				SettleResponse: beforeHandlerSettlement.Result,
+				Requirements:   beforeHandlerSettlement.Requirements,
+			}
+		}
+		if phases.SettleBeforeHandler && beforeHandlerSettlement == nil {
+			s.warnMissingBeforeHandlerOnce.Do(func() {
+				log.Printf(
+					`[x402] Payment flow %q settles before the handler, but ProcessSettlement was called without beforeHandlerSettlement from ProcessHTTPRequest. Skipping after-handler settle. Pass that settle result to echo the before-handler PAYMENT-RESPONSE.`,
+					flow,
+				)
+			})
+		}
+		return &ProcessSettleResult{
+			Success:      true,
+			Headers:      map[string]string{},
+			Transaction:  "",
+			Network:      x402.Network(requirements.Network),
+			Requirements: requirements,
+			SettleResponse: &x402.SettleResponse{
+				Success:     true,
+				Transaction: "",
+				Network:     x402.Network(requirements.Network),
+			},
+		}
+	}
+
+	resolvedPhase := phase
+	if resolvedPhase == "" {
+		resolvedPhase = x402.SettlePhaseAfterHandler
+	}
+
 	resolved := overrides
 	if resolved == nil && transportContext != nil && transportContext.ResponseHeaders != nil {
 		if val := transportContext.ResponseHeaders.Get(SettlementOverridesHeader); val != "" {
@@ -814,16 +1016,16 @@ func (s *x402HTTPResourceServer) ProcessSettlement(
 		}
 	}
 
-	settleResult, err := s.SettlePaymentWithExtensions(ctx, payload, requirements, resolved, declaredExtensions)
+	settleResult, err := s.SettlePaymentWithExtensions(ctx, payload, requirements, resolved, declaredExtensions, resolvedPhase)
 	if err != nil {
-		return s.buildSettlementFailureResult(err.Error(), x402.Network(requirements.Network), "", nil)
+		return s.buildSettlementFailureResultFromError(err, x402.Network(requirements.Network))
 	}
 
 	if !settleResult.Success {
 		return s.buildSettlementFailureResult(settleResult.ErrorReason, settleResult.Network, settleResult.Payer, settleResult)
 	}
 
-	headers, err := s.createSettlementHeaders(settleResult)
+	headers, err := s.CreateSettlementHeaders(settleResult)
 	if err != nil {
 		return s.buildSettlementFailureResult(
 			fmt.Sprintf("failed to create settlement headers: %v", err),
@@ -834,12 +1036,102 @@ func (s *x402HTTPResourceServer) ProcessSettlement(
 	}
 
 	return &ProcessSettleResult{
-		Success:     true,
-		Headers:     headers,
-		Transaction: settleResult.Transaction,
-		Network:     settleResult.Network,
-		Payer:       settleResult.Payer,
+		Success:        true,
+		Headers:        headers,
+		Transaction:    settleResult.Transaction,
+		Network:        settleResult.Network,
+		Payer:          settleResult.Payer,
+		SettleResponse: settleResult,
+		Requirements:   requirements,
 	}
+}
+
+// CreateCompletedSettlementHeaders returns headers for echoing a completed
+// before-handler settle onto a response. Merges private into Cache-Control so
+// shared caches do not store settlement metadata.
+//
+// Used when the resource handler fails after payment was already committed (e.g. upfront).
+func (s *x402HTTPResourceServer) CreateCompletedSettlementHeaders(
+	settlement *x402.CompletedSettlement,
+	existingCacheControl string,
+) map[string]string {
+	if settlement == nil || settlement.Result == nil {
+		return map[string]string{
+			"Cache-Control": WithPrivateCacheControl(existingCacheControl),
+		}
+	}
+	headers, err := s.CreateSettlementHeaders(settlement.Result)
+	if err != nil {
+		return map[string]string{
+			"Cache-Control": WithPrivateCacheControl(existingCacheControl),
+		}
+	}
+	headers["Cache-Control"] = WithPrivateCacheControl(existingCacheControl)
+	return headers
+}
+
+// CreateFailurePathSettlementHeaders returns PAYMENT-RESPONSE headers when the
+// resource handler fails after before-handler settle. Prefers cancel/refund
+// settle when present; otherwise echoes the upfront deposit receipt.
+func (s *x402HTTPResourceServer) CreateFailurePathSettlementHeaders(
+	cancelSettlement *x402.SettleResponse,
+	beforeHandlerSettlement *x402.CompletedSettlement,
+	paymentPayload *types.PaymentPayload,
+	existingCacheControl string,
+) map[string]string {
+	receipt := x402.BuildFailurePathSettlementResponse(
+		cancelSettlement,
+		beforeHandlerSettlement,
+		paymentPayload,
+	)
+	if receipt != nil {
+		headers, err := s.CreateSettlementHeaders(receipt)
+		if err != nil {
+			return map[string]string{
+				"Cache-Control": WithPrivateCacheControl(existingCacheControl),
+			}
+		}
+		headers["Cache-Control"] = WithPrivateCacheControl(existingCacheControl)
+		return headers
+	}
+	// Preserve Cache-Control even when the before-handler settle has no result body.
+	if beforeHandlerSettlement != nil {
+		return s.CreateCompletedSettlementHeaders(beforeHandlerSettlement, existingCacheControl)
+	}
+	return nil
+}
+
+// sanitizedFailureTransaction returns the broadcast transaction hash for a failed
+// settlement only when the failure is settlement_pending. Every other terminal reason
+// must not surface a transaction value, regardless of whether the failure arrived as
+// an error or as a direct SettleResponse (e.g. from a remote facilitator client).
+func sanitizedFailureTransaction(errorReason, transaction string) string {
+	if errorReason == settlementPendingReason {
+		return transaction
+	}
+	return ""
+}
+
+// buildSettlementFailureResultFromError converts a Settle error into a
+// ProcessSettleResult. Preserves SettleError metadata (including the broadcast
+// hash for settlement_pending) in PAYMENT-RESPONSE.
+func (s *x402HTTPResourceServer) buildSettlementFailureResultFromError(err error, fallbackNetwork x402.Network) *ProcessSettleResult {
+	var se *x402.SettleError
+	if errors.As(err, &se) {
+		network := se.Network
+		if network == "" {
+			network = fallbackNetwork
+		}
+		return s.buildSettlementFailureResult(se.ErrorReason, network, se.Payer, &x402.SettleResponse{
+			Success:      false,
+			ErrorReason:  se.ErrorReason,
+			ErrorMessage: se.ErrorMessage,
+			Transaction:  se.Transaction,
+			Network:      network,
+			Payer:        se.Payer,
+		})
+	}
+	return s.buildSettlementFailureResult(err.Error(), fallbackNetwork, "", nil)
 }
 
 // buildSettlementFailureResult creates a ProcessSettleResult for settlement failure.
@@ -856,9 +1148,10 @@ func (s *x402HTTPResourceServer) buildSettlementFailureResult(errorReason string
 		failureResponse.Network = settleResult.Network
 		failureResponse.Payer = settleResult.Payer
 		failureResponse.ErrorMessage = settleResult.ErrorMessage
+		failureResponse.Transaction = sanitizedFailureTransaction(errorReason, settleResult.Transaction)
 	}
 
-	headers, err := s.createSettlementHeaders(&failureResponse)
+	headers, err := s.CreateSettlementHeaders(&failureResponse)
 	if err != nil {
 		// Fallback: return minimal result without PAYMENT-RESPONSE if encoding fails
 		return &ProcessSettleResult{
@@ -883,6 +1176,9 @@ func (s *x402HTTPResourceServer) buildSettlementFailureResult(errorReason string
 	return &ProcessSettleResult{
 		Success:     false,
 		ErrorReason: errorReason,
+		Transaction: failureResponse.Transaction,
+		Network:     failureResponse.Network,
+		Payer:       failureResponse.Payer,
 		Headers:     responseHeaders,
 		Response: &HTTPResponseInstructions{
 			Status:  402,
@@ -1011,8 +1307,8 @@ func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.Paym
 	}, nil
 }
 
-// createSettlementHeaders creates settlement response headers
-func (s *x402HTTPResourceServer) createSettlementHeaders(response *x402.SettleResponse) (map[string]string, error) {
+// CreateSettlementHeaders creates settlement response headers.
+func (s *x402HTTPResourceServer) CreateSettlementHeaders(response *x402.SettleResponse) (map[string]string, error) {
 	encodedHeader, err := encodePaymentResponseHeader(*response)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode payment response header: %w", err)
@@ -1238,12 +1534,30 @@ func parseRoutePattern(pattern string) (string, string, *regexp.Regexp) {
 		path = pattern
 	}
 
-	// Convert pattern to regex
-	regexPattern := "^" + regexp.QuoteMeta(path)
+	// Convert pattern to regex. The (?s) flag lets wildcard-derived `.*?` match
+	// a line feed: normalizePath decodes "%0A" to a raw LF inside a segment, and
+	// without (?s) a wildcard route misses such a path while routers still
+	// dispatch it to the protected handler, skipping payment verification
+	// (Go counterpart of the TypeScript dotAll fix).
+	regexPattern := "(?s)^" + regexp.QuoteMeta(path)
+
+	// A trailing "/*" must also match the bare prefix. normalizePath strips the
+	// trailing slash, so a request for "/api/premium/" arrives as "/api/premium",
+	// which a literal "/.*?" suffix would not match even though routers dispatch
+	// it to the protected handler.
+	trailingWildcard := strings.HasSuffix(regexPattern, `/\*`)
+	if trailingWildcard {
+		regexPattern = strings.TrimSuffix(regexPattern, `/\*`)
+	}
+
 	regexPattern = strings.ReplaceAll(regexPattern, `\*`, `.*?`)
 	// Handle parameters: [param] (Next.js style) and :param (Express style)
 	regexPattern = paramRegex.ReplaceAllString(regexPattern, `[^/]+`)
 	regexPattern = colonParamRegex.ReplaceAllString(regexPattern, `[^/]+`)
+
+	if trailingWildcard {
+		regexPattern += `(?:/.*?)?`
+	}
 	regexPattern += "$"
 
 	regex := regexp.MustCompile(regexPattern)
@@ -1251,20 +1565,40 @@ func parseRoutePattern(pattern string) (string, string, *regexp.Regexp) {
 	return verb, path, regex
 }
 
-// normalizePath normalizes a URL path for matching
+// normalizePath normalizes a URL path for matching.
+//
+// The input is expected to be the *escaped* request path (net/url's
+// URL.EscapedPath), which is the same view HTTP routers use to split a request
+// into segments. Percent-escapes are therefore decoded one segment at a time
+// and any separator they yield is re-escaped, so a decoded byte can never
+// create a segment boundary that the router did not see.
+//
+// Decoding the whole path in one pass, as an earlier version did, let an
+// attacker smuggle "%2F" (or "%5C") into a single segment: the middleware saw
+// "/api/users/x/y" and stopped matching "GET /api/users/:id", while the router
+// still dispatched the request to the protected handler, bypassing the payment
+// gate entirely (CWE-436).
 func normalizePath(path string) string {
 	// Remove query string and fragment
 	if idx := strings.IndexAny(path, "?#"); idx >= 0 {
 		path = path[:idx]
 	}
 
-	// Decode URL encoding
-	if decoded, err := url.PathUnescape(path); err == nil {
-		path = decoded
+	// Decode percent-escapes per segment, keeping decoded separators inside the
+	// segment they came from.
+	segments := strings.Split(path, "/")
+	for i, segment := range segments {
+		decoded, err := url.PathUnescape(segment)
+		if err != nil {
+			// Malformed escape sequence: match on the raw segment rather than
+			// silently widening it.
+			continue
+		}
+		decoded = strings.ReplaceAll(decoded, `/`, `%2F`)
+		segments[i] = strings.ReplaceAll(decoded, `\`, `%5C`)
 	}
+	path = strings.Join(segments, "/")
 
-	// Normalize slashes
-	path = strings.ReplaceAll(path, `\`, `/`)
 	// Replace multiple slashes with single slash
 	path = multiSlashRegex.ReplaceAllString(path, `/`)
 	// Remove trailing slash

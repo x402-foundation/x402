@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..schemas import PaymentPayload, PaymentRequirements, SettleResponse
 from ..schemas.errors import SettleError
+from ..schemas.hooks import CompletedSettlement, SettlePhase
 from ..schemas.v1 import PaymentPayloadV1
 from ..server import ResourceConfig
 from .types import (
@@ -177,10 +178,21 @@ class x402HTTPResourceServer(x402HTTPServerBase):
                         context=transport_context.request,
                         declared_extensions=declared_extensions,
                         transport_context=transport_context,
+                        phase="after-handler",
                     )
                     result = self._process_skip_handler_settlement(
                         settle_result,
                         skip_handler,
+                    )
+                elif phase == "settle_before_handler":
+                    payload, reqs, declared_extensions, transport_context = target
+                    result = await self.process_settlement(
+                        payload,
+                        reqs,
+                        context=transport_context.request,
+                        declared_extensions=declared_extensions,
+                        transport_context=transport_context,
+                        phase="before-handler",
                     )
                 else:
                     result = None
@@ -195,6 +207,9 @@ class x402HTTPResourceServer(x402HTTPServerBase):
         settlement_overrides: dict[str, Any] | None = None,
         declared_extensions: dict[str, Any] | None = None,
         transport_context: HTTPTransportContext | None = None,
+        *,
+        before_handler_settlement: CompletedSettlement | None = None,
+        phase: SettlePhase | None = None,
     ) -> ProcessSettleResult:
         """Process settlement after successful response (async).
 
@@ -206,19 +221,32 @@ class x402HTTPResourceServer(x402HTTPServerBase):
             context: Optional HTTP request context for route config lookup and hooks.
             settlement_overrides: Optional overrides (e.g. ``{"amount": "1000"}``
                 for partial settlement with the *upto* scheme).
+            before_handler_settlement: Before-handler settle from process_http_request.
+            phase: Explicit settle phase; omit to derive from the payment flow.
 
         Returns:
             ProcessSettleResult with headers if success, or response if failure.
         """
+        echoed = self._echo_or_skip_after_handler_settlement(
+            payment_payload,
+            requirements,
+            before_handler_settlement,
+            phase,
+        )
+        if echoed is not None:
+            return echoed
+
         effective_requirements = self._apply_settlement_overrides(
             requirements, settlement_overrides
         )
+        resolved_phase: SettlePhase = phase or "after-handler"
         try:
             settle_response = await self._server.settle_payment(
                 payment_payload,
                 effective_requirements,
                 declared_extensions=declared_extensions,
                 transport_context=transport_context,
+                phase=resolved_phase,
             )
 
             if not settle_response.success:
@@ -229,6 +257,7 @@ class x402HTTPResourceServer(x402HTTPServerBase):
                     transaction=settle_response.transaction,
                     network=settle_response.network,
                     payer=settle_response.payer,
+                    settle_response=settle_response,
                 )
                 failure.response = await self._build_settlement_failure_response_async(
                     failure, context
@@ -241,6 +270,7 @@ class x402HTTPResourceServer(x402HTTPServerBase):
                 transaction=settle_response.transaction,
                 network=settle_response.network,
                 payer=settle_response.payer,
+                settle_response=settle_response,
             )
 
         except SettleError as e:
@@ -259,6 +289,7 @@ class x402HTTPResourceServer(x402HTTPServerBase):
                 transaction=settle_response.transaction,
                 network=settle_response.network,
                 payer=settle_response.payer,
+                settle_response=settle_response,
             )
             failure.response = await self._build_settlement_failure_response_async(failure, context)
             return failure
@@ -277,6 +308,7 @@ class x402HTTPResourceServer(x402HTTPServerBase):
                 headers=self._create_settlement_headers(settle_response, requirements),
                 transaction="",
                 network=requirements.network,
+                settle_response=settle_response,
             )
             failure.response = await self._build_settlement_failure_response_async(failure, context)
             return failure
@@ -537,10 +569,21 @@ class x402HTTPResourceServerSync(x402HTTPServerBase):
                         context=transport_context.request,
                         declared_extensions=declared_extensions,
                         transport_context=transport_context,
+                        phase="after-handler",
                     )
                     result = self._process_skip_handler_settlement(
                         settle_result,
                         skip_handler,
+                    )
+                elif phase == "settle_before_handler":
+                    payload, reqs, declared_extensions, transport_context = target
+                    result = self.process_settlement(
+                        payload,
+                        reqs,
+                        context=transport_context.request,
+                        declared_extensions=declared_extensions,
+                        transport_context=transport_context,
+                        phase="before-handler",
                     )
                 else:
                     result = None

@@ -3,6 +3,8 @@ package x402
 import (
 	"context"
 	"sync"
+
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // ============================================================================
@@ -60,6 +62,95 @@ type AfterVerifyResult struct {
 	Response    *SkipHandlerDirective
 }
 
+// SettlePhase identifies which settle invocation is running.
+//
+// - before-handler — settle before the resource handler (upfront / escrow auth)
+// - after-handler — settle after the resource handler (authorization charge, escrow charge)
+// - cancel — refund/close settle from verified-payment cancellation
+//
+// Settle lifecycle hooks (beforeSettle, afterSettle, onSettleFailure,
+// enrichSettlementPayload, enrichSettlementResponse) fire once per settle.
+// Multi-settle flows (escrow) therefore invoke them more than once; branch on
+// this field when a hook has side effects that must not double-run.
+type SettlePhase string
+
+const (
+	SettlePhaseBeforeHandler SettlePhase = "before-handler"
+	SettlePhaseAfterHandler  SettlePhase = "after-handler"
+	SettlePhaseCancel        SettlePhase = "cancel"
+)
+
+// CompletedSettlement stores a settle that already ran (typically before-handler)
+// so adapters can echo PAYMENT-RESPONSE after the resource handler.
+type CompletedSettlement struct {
+	Phase        SettlePhase
+	Flow         PaymentFlowName
+	Result       *SettleResponse
+	Requirements types.PaymentRequirements
+}
+
+// BuildFailurePathSettlementResponse picks the settlement receipt to return when
+// the resource handler fails after a verified (and possibly before-handler settled)
+// payment. Preference order matches HTTP PAYMENT-RESPONSE headers:
+//  1. successful cancel settle
+//  2. failed cancel settle with deposit-recovery extras
+//  3. before-handler settle echo
+//  4. nil when nothing is available
+func BuildFailurePathSettlementResponse(
+	cancelSettlement *SettleResponse,
+	beforeHandlerSettlement *CompletedSettlement,
+	paymentPayload *types.PaymentPayload,
+) *SettleResponse {
+	if cancelSettlement != nil {
+		if cancelSettlement.Success {
+			return cancelSettlement
+		}
+		built := buildFailedCancelReceipt(cancelSettlement, beforeHandlerSettlement, paymentPayload)
+		return &built
+	}
+	if beforeHandlerSettlement != nil && beforeHandlerSettlement.Result != nil {
+		return beforeHandlerSettlement.Result
+	}
+	return nil
+}
+
+// buildFailedCancelReceipt builds a failed cancel receipt with deposit recovery
+// facts in extra (depositTransaction, depositAmount, channelId).
+func buildFailedCancelReceipt(
+	cancelSettlement *SettleResponse,
+	beforeHandlerSettlement *CompletedSettlement,
+	paymentPayload *types.PaymentPayload,
+) SettleResponse {
+	extra := map[string]interface{}{}
+	if cancelSettlement.Extra != nil {
+		for k, v := range cancelSettlement.Extra {
+			extra[k] = v
+		}
+	}
+	if beforeHandlerSettlement != nil && beforeHandlerSettlement.Result != nil {
+		extra["depositTransaction"] = beforeHandlerSettlement.Result.Transaction
+		extra["depositAmount"] = beforeHandlerSettlement.Result.Amount
+	}
+	if paymentPayload != nil && paymentPayload.Payload != nil {
+		if channelID, ok := paymentPayload.Payload["channelId"].(string); ok && channelID != "" {
+			extra["channelId"] = channelID
+		}
+	}
+	if len(extra) == 0 {
+		extra = nil
+	}
+	return SettleResponse{
+		Success:      false,
+		ErrorReason:  cancelSettlement.ErrorReason,
+		ErrorMessage: cancelSettlement.ErrorMessage,
+		Payer:        cancelSettlement.Payer,
+		Transaction:  "",
+		Network:      cancelSettlement.Network,
+		Extensions:   cancelSettlement.Extensions,
+		Extra:        extra,
+	}
+}
+
 // SettleContext contains information passed to settle hooks
 // Uses view interfaces for version-agnostic hooks
 // PayloadBytes and RequirementsBytes provide escape hatch for extensions (e.g., Bazaar)
@@ -71,6 +162,7 @@ type SettleContext struct {
 	// route. Extension hooks gate on `DeclaredExtensions[extKey]` being set
 	// before firing — mirrors TS `ctx.declaredExtensions[extensionKey]`.
 	DeclaredExtensions map[string]interface{}
+	Phase              SettlePhase
 	PayloadBytes       []byte // Raw bytes for extensions needing full data
 	RequirementsBytes  []byte // Raw bytes for extensions needing full data
 }
@@ -109,6 +201,7 @@ type VerifiedPaymentCanceledContext struct {
 	Reason         VerifiedPaymentCancellationReason
 	Err            error
 	ResponseStatus int
+	SettledPhases  []SettlePhase
 }
 
 // VerifiedPaymentCancelOptions describes a single cancellation event.
@@ -118,18 +211,23 @@ type VerifiedPaymentCancelOptions struct {
 	ResponseStatus int
 }
 
-// PaymentCancellationDispatcher fires onVerifiedPaymentCanceled hooks at most once.
+// PaymentCancellationDispatcher fires onVerifiedPaymentCanceled hooks at most once,
+// then optionally settles via SchemeNetworkServer SettleOnCancelProvider.
 type PaymentCancellationDispatcher struct {
 	once sync.Once
-	fire func(VerifiedPaymentCancelOptions)
+	fire func(VerifiedPaymentCancelOptions) *SettleResponse
 }
 
-// Cancel fires the underlying hooks. Safe to call multiple times — only the first call wins.
-func (d *PaymentCancellationDispatcher) Cancel(opts VerifiedPaymentCancelOptions) {
+// Cancel fires the underlying hooks (and optional cancel settle) at most once.
+// Returns the cancel settle response when the scheme provides settleOnCancel
+// requirements and settle runs; nil when cancel settle is skipped.
+func (d *PaymentCancellationDispatcher) Cancel(opts VerifiedPaymentCancelOptions) *SettleResponse {
 	if d == nil || d.fire == nil {
-		return
+		return nil
 	}
-	d.once.Do(func() { d.fire(opts) })
+	var result *SettleResponse
+	d.once.Do(func() { result = d.fire(opts) })
+	return result
 }
 
 // ============================================================================

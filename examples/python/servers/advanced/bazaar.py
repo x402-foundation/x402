@@ -1,5 +1,7 @@
 """Bazaar discovery extension example."""
 
+import json
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -16,9 +18,12 @@ from x402.http.middleware.fastapi import PaymentMiddlewareASGI
 from x402.http.types import RouteConfig
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.schemas import Network
+from x402.schemas.hooks import SettleResultContext, VerifyResultContext
 from x402.server import x402ResourceServer
 
 load_dotenv()
+
+logging.basicConfig(level=logging.INFO)
 
 # Config
 EVM_ADDRESS = os.getenv("EVM_ADDRESS")
@@ -44,6 +49,34 @@ facilitator = HTTPFacilitatorClient(FacilitatorConfig(url=FACILITATOR_URL))
 server = x402ResourceServer(facilitator)
 server.register(EVM_NETWORK, ExactEvmServerScheme())
 server.register_extension(bazaar_resource_server_extension)
+
+
+def _log_extension_responses(phase: str, ctx: VerifyResultContext | SettleResultContext) -> None:
+    """Process facilitator extension sidechannel metadata."""
+    extension_responses = ctx.extension_responses
+    if not extension_responses:
+        print(f"\n=== {phase}: no facilitator extension responses ===")
+        return
+
+    print(f"\n=== {phase}: facilitator extension responses (sidechannel) ===")
+    print(json.dumps(extension_responses, indent=2))
+
+    bazaar = extension_responses.get("bazaar")
+    if not isinstance(bazaar, dict):
+        return
+
+    status = bazaar.get("status")
+    if status == "success":
+        print("   ✅ Bazaar cataloging confirmed by facilitator")
+    elif status == "processing":
+        print("   ⏳ Bazaar cataloging in progress")
+    elif status == "rejected":
+        reason = bazaar.get("rejectedReason", "unknown")
+        print(f"   ⚠️  Bazaar rejected: {reason}")
+
+
+server.on_after_verify(lambda ctx: _log_extension_responses("After verify", ctx))
+server.on_after_settle(lambda ctx: _log_extension_responses("After settle", ctx))
 
 routes = {
     "GET /weather": RouteConfig(

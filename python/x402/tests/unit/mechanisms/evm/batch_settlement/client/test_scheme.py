@@ -7,6 +7,10 @@ import pytest
 try:
     from eth_account import Account
 
+    from x402.mechanisms.evm.batch_settlement.client.channel import (
+        BatchSettlementClientDeps,
+        build_channel_config,
+    )
     from x402.mechanisms.evm.batch_settlement.client.config import (
         BatchSettlementDepositPolicy,
         BatchSettlementEvmSchemeOptions,
@@ -21,10 +25,15 @@ try:
     from x402.mechanisms.evm.batch_settlement.constants import (
         SCHEME_BATCH_SETTLEMENT,
     )
-    from x402.mechanisms.evm.batch_settlement.types import ChannelConfig
+    from x402.mechanisms.evm.batch_settlement.types import ChannelConfig, is_voucher_payload
     from x402.mechanisms.evm.batch_settlement.utils import compute_channel_id
     from x402.mechanisms.evm.signers import EthAccountSigner
-    from x402.schemas import PaymentRequirements, SettleResponse
+    from x402.schemas import (
+        PaymentPayload,
+        PaymentRequirements,
+        PaymentResponseContext,
+        SettleResponse,
+    )
 except ImportError:
     pytest.skip("batch_settlement requires evm extras", allow_module_level=True)
 
@@ -176,28 +185,115 @@ class TestCreatePaymentPayload:
             s.create_payment_payload(req)
 
 
-class TestProcessSettleResponse:
-    def test_updates_client_storage(self):
+def _make_payment_payload(payload: dict) -> PaymentPayload:
+    return PaymentPayload(x402_version=2, accepted=_requirements(), payload=payload)
+
+
+def _make_settle(signer_address: str, extra: dict) -> SettleResponse:
+    return SettleResponse(
+        success=True,
+        transaction="0x",
+        network=NETWORK,
+        payer=signer_address,
+        extra=extra,
+    )
+
+
+def _deps(
+    signer: EthAccountSigner,
+    storage: InMemoryClientChannelStorage,
+) -> BatchSettlementClientDeps:
+    return BatchSettlementClientDeps(
+        signer=signer,
+        storage=storage,
+        salt="0x" + "00" * 32,
+    )
+
+
+class TestSchemeHooksOnPaymentResponse:
+    def test_delegates_to_update_channel_from_settle(self):
         signer = _signer()
         storage = InMemoryClientChannelStorage()
-        s = BatchSettlementEvmScheme(signer, BatchSettlementEvmSchemeOptions(storage=storage))
-        settle = SettleResponse(
-            success=True,
-            transaction="0xtx",
-            network=NETWORK,
-            extra={
-                "channelState": {
-                    "channelId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                    "balance": "500",
-                    "totalClaimed": "100",
-                    "chargedCumulativeAmount": "100",
-                }
-            },
+        client = BatchSettlementEvmScheme(signer, BatchSettlementEvmSchemeOptions(storage=storage))
+        requirements = _requirements(amount="1000")
+        channel_id = compute_channel_id(
+            build_channel_config(_deps(signer, storage), requirements), NETWORK
         )
-        s.process_settle_response(settle)
-        got = storage.get("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        assert got is not None
-        assert got.balance == "500"
+        storage.set(
+            channel_id.lower(),
+            BatchSettlementClientContext(
+                balance="9000",
+                charged_cumulative_amount="0",
+            ),
+        )
+
+        client.scheme_hooks.on_payment_response(
+            PaymentResponseContext(
+                payment_payload=_make_payment_payload({"type": "voucher"}),
+                requirements=requirements,
+                settle_response=_make_settle(
+                    signer.address,
+                    {
+                        "chargedAmount": "1000",
+                        "channelState": {
+                            "channelId": channel_id,
+                            "chargedCumulativeAmount": "1000",
+                            "balance": "9000",
+                        },
+                    },
+                ),
+            )
+        )
+
+        ctx = storage.get(channel_id.lower())
+        assert ctx is not None
+        assert ctx.charged_cumulative_amount == "1000"
+        assert ctx.balance == "9000"
+
+    def test_ignores_inflated_server_cumulative_so_the_next_voucher_is_not_the_remaining_escrow(
+        self,
+    ):
+        signer = _signer()
+        storage = InMemoryClientChannelStorage()
+        client = BatchSettlementEvmScheme(signer, BatchSettlementEvmSchemeOptions(storage=storage))
+        requirements = _requirements(amount="10000")
+        channel_id = compute_channel_id(
+            build_channel_config(_deps(signer, storage), requirements), NETWORK
+        )
+        storage.set(
+            channel_id.lower(),
+            BatchSettlementClientContext(
+                balance="50000",
+                charged_cumulative_amount="0",
+            ),
+        )
+
+        client.scheme_hooks.on_payment_response(
+            PaymentResponseContext(
+                payment_payload=_make_payment_payload({"type": "voucher"}),
+                requirements=requirements,
+                settle_response=_make_settle(
+                    signer.address,
+                    {
+                        "chargedAmount": "10000",
+                        "channelState": {
+                            "channelId": channel_id,
+                            "chargedCumulativeAmount": "40000",
+                            "balance": "50000",
+                        },
+                    },
+                ),
+            )
+        )
+
+        ctx = storage.get(channel_id.lower())
+        assert ctx is not None
+        assert ctx.charged_cumulative_amount == "0"
+        assert ctx.balance == "50000"
+
+        result = client.create_payment_payload(requirements)
+        assert is_voucher_payload(result)
+        assert result["voucher"]["maxClaimableAmount"] == "10000"
 
 
 class TestBuildChannelConfig:

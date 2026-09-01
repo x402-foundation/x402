@@ -146,12 +146,14 @@ class TestX402HTTPAdapter:
         # Create mock request
         mock_request = MagicMock(spec=requests.PreparedRequest)
         mock_request.headers = {}
+        mock_request.url = "https://api.example.com/"
 
         # Create 402 and 200 responses
         mock_402_response = MagicMock(spec=requests.Response)
         mock_402_response.status_code = 402
         mock_402_response.headers = {"PAYMENT-REQUIRED": encoded}
         mock_402_response.content = b"{}"
+        mock_402_response.url = "https://api.example.com/"
 
         mock_200_response = MagicMock(spec=requests.Response)
         mock_200_response.status_code = 200
@@ -187,6 +189,7 @@ class TestX402HTTPAdapter:
 
         mock_request = MagicMock(spec=requests.PreparedRequest)
         mock_request.headers = {}
+        mock_request.url = "https://api.example.com/"
 
         # Configure copy() to return a mock with a real dict for headers
         retry_headers: dict = {}
@@ -198,6 +201,7 @@ class TestX402HTTPAdapter:
         mock_402_response.status_code = 402
         mock_402_response.headers = {"PAYMENT-REQUIRED": encoded}
         mock_402_response.content = b"{}"
+        mock_402_response.url = "https://api.example.com/"
 
         mock_200_response = MagicMock(spec=requests.Response)
         mock_200_response.status_code = 200
@@ -246,11 +250,13 @@ class TestX402HTTPAdapter:
 
         mock_request = MagicMock(spec=requests.PreparedRequest)
         mock_request.headers = {}
+        mock_request.url = "https://example.com"
 
         mock_402_response = MagicMock(spec=requests.Response)
         mock_402_response.status_code = 402
         mock_402_response.headers = {}  # No header
         mock_402_response.content = json.dumps(v1_body).encode("utf-8")
+        mock_402_response.url = "https://example.com"
 
         mock_200_response = MagicMock(spec=requests.Response)
         mock_200_response.status_code = 200
@@ -304,11 +310,13 @@ class TestX402HTTPAdapter:
 
         mock_request = MagicMock(spec=requests.PreparedRequest)
         mock_request.headers = {}
+        mock_request.url = "https://example.com/api"
 
         mock_402 = MagicMock(spec=requests.Response)
         mock_402.status_code = 402
         mock_402.headers = {"PAYMENT-REQUIRED": encoded}
         mock_402.content = b"{}"
+        mock_402.url = "https://example.com/api"
 
         mock_200 = MagicMock(spec=requests.Response)
         mock_200.status_code = 200
@@ -350,6 +358,7 @@ class TestX402HTTPAdapter:
 
         mock_request = MagicMock(spec=requests.PreparedRequest)
         mock_request.headers = {}
+        mock_request.url = "https://example.com/api"
         mock_retry_request = MagicMock(spec=requests.PreparedRequest)
         mock_retry_request.headers = {}
         mock_request.copy.return_value = mock_retry_request
@@ -358,6 +367,7 @@ class TestX402HTTPAdapter:
         mock_initial_402.status_code = 402
         mock_initial_402.headers = {"PAYMENT-REQUIRED": encoded_required}
         mock_initial_402.content = b"{}"
+        mock_initial_402.url = "https://example.com/api"
 
         mock_paid_402 = MagicMock(spec=requests.Response)
         mock_paid_402.status_code = 402
@@ -481,7 +491,7 @@ class MockX402HTTPClient:
     def encode_payment_signature_header(self, _payload):
         return {"X-Payment": "mock_payment_header"}
 
-    def handle_payment_required(self, _payment_required):
+    def handle_payment_required(self, _payment_required, _request_url):
         return None
 
     def process_payment_result(self, _payment_payload, _get_header, _status):

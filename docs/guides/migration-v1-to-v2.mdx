@@ -322,8 +322,8 @@ In V2, hand-rolling `extensions.bazaar.schema` on a route config passes through 
 | `base` | `eip155:8453` | 8453 | Base Mainnet |
 | `ethereum` | `eip155:1` | 1 | Ethereum Mainnet |
 | `sepolia` | `eip155:11155111` | 11155111 | Ethereum Sepolia Testnet |
-| `solana-devnet` | `solana:devnet` | - | Solana Devnet |
-| `solana` | `solana:mainnet` | - | Solana Mainnet |
+| `solana-devnet` | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` | - | Solana Devnet |
+| `solana` | `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` | - | Solana Mainnet |
 
 ## Package Migration Reference
 

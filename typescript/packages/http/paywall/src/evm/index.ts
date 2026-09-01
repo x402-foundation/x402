@@ -12,7 +12,7 @@ import { NETWORK_DECIMALS } from "./gen/decimals";
  * Resolves the token decimals for a payment requirement by looking up the
  * network in the build-time-generated `NETWORK_DECIMALS` map. That map lists
  * only networks whose default stablecoin decimals differ from 6; it is derived
- * from `@x402/evm`'s `DEFAULT_STABLECOINS` (the same source the scheme
+ * from `@x402/evm`'s `DEFAULT_ASSETS` (the same source the scheme
  * `getAssetDecimals` methods read from) and is regenerated via
  * `pnpm --filter @x402/paywall run build:paywall`. Falls back to 6 (USDC
  * default) when the network is omitted from the map or unknown.

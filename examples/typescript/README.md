@@ -48,6 +48,7 @@ Servers that put a paywall in front of a resource. See [`servers/`](./servers/).
 | [`advanced/`](./servers/advanced/) | Dynamic pricing, payment routing, lifecycle hooks, discoverability |
 | [`custom/`](./servers/custom/) | Manual payment handling without an x402 middleware package |
 | [`self-facilitation/`](./servers/self-facilitation/) | In-process `x402Facilitator` instead of an external facilitator URL |
+| [`upfront/`](./servers/upfront/) | `exact` scheme with `upfront` payment flow (settle before handler) |
 | [`upto/`](./servers/upto/) | `upto` scheme: authorize a ceiling, settle only actual usage |
 | [`batch-settlement/`](./servers/batch-settlement/) | Off-chain vouchers claimed and settled in batches by a `ChannelManager` |
 | [`bazaar/`](./servers/bazaar/) | Makes a paid API discoverable via the Bazaar extension |
@@ -74,6 +75,7 @@ Services that verify and settle payments on-chain.
 | --- | --- |
 | [`basic/`](./facilitator/basic/) | Minimal facilitator exposing `/verify` and `/settle` |
 | [`advanced/`](./facilitator/advanced/) | All-networks support, Bazaar discovery, gas-sponsoring extensions, hooks |
+| [`upto/`](./facilitator/upto/) | `upto` scheme with SVM rent cleanup manager (EVM + SVM) |
 | [`batch-settlement/`](./facilitator/batch-settlement/) | Submits batch-settlement contract calls |
 | [`builder-code/`](./facilitator/builder-code/) | Appends ERC-8021 wallet attribution at settlement |
 

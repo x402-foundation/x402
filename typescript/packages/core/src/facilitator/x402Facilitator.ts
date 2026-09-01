@@ -340,9 +340,11 @@ export class x402Facilitator {
 
       // Check if verification failed (isValid: false)
       if (!verifyResult.isValid) {
+        const reason = verifyResult.invalidReason || "Verification failed";
+        const detail = verifyResult.invalidMessage;
         const failureContext: FacilitatorVerifyFailureContext = {
           ...context,
-          error: new Error(verifyResult.invalidReason || "Verification failed"),
+          error: new Error(detail ? `${reason}: ${detail}` : reason),
         };
 
         // Execute onVerifyFailure hooks

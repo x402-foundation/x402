@@ -8,6 +8,10 @@ import (
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
+func registerExactEvmScheme(s *x402ResourceServer) {
+	s.Register("eip155:8453", &mockSchemeNetworkServer{scheme: "exact"})
+}
+
 // Mock facilitator client for testing
 type mockFacilitatorClient struct {
 	verify func(ctx context.Context, payload []byte, reqs []byte) (*VerifyResponse, error)
@@ -121,6 +125,7 @@ func TestAfterVerifyHook(t *testing.T) {
 	var capturedResult *VerifyResponse
 
 	server := Newx402ResourceServer()
+	registerExactEvmScheme(server)
 
 	// Register hook to capture result
 	server.OnAfterVerify(func(ctx VerifyResultContext) (*AfterVerifyResult, error) {
@@ -167,6 +172,7 @@ func TestAfterVerifyHook(t *testing.T) {
 // Test OnVerifyFailure hook - recovery
 func TestOnVerifyFailureHook_Recover(t *testing.T) {
 	server := Newx402ResourceServer()
+	registerExactEvmScheme(server)
 
 	// Register hook that recovers from failure
 	server.OnVerifyFailure(func(ctx VerifyFailureContext) (*VerifyFailureHookResult, error) {
@@ -214,6 +220,7 @@ func TestOnVerifyFailureHook_NoRecover(t *testing.T) {
 	hookCalled := false
 
 	server := Newx402ResourceServer()
+	registerExactEvmScheme(server)
 
 	// Register hook that doesn't recover
 	server.OnVerifyFailure(func(ctx VerifyFailureContext) (*VerifyFailureHookResult, error) {
@@ -257,6 +264,7 @@ func TestAfterVerifyHook_Abort(t *testing.T) {
 	cancelReason := VerifiedPaymentCancellationReason("")
 
 	server := Newx402ResourceServer()
+	registerExactEvmScheme(server)
 	server.OnAfterVerify(func(ctx VerifyResultContext) (*AfterVerifyResult, error) {
 		return &AfterVerifyResult{
 			Abort:   true,
@@ -305,6 +313,7 @@ func TestAfterVerifyHook_Abort(t *testing.T) {
 
 func TestAfterVerifyHook_AbortKeepsResponseWhenCancelThrows(t *testing.T) {
 	server := Newx402ResourceServer()
+	registerExactEvmScheme(server)
 	server.OnAfterVerify(func(ctx VerifyResultContext) (*AfterVerifyResult, error) {
 		return &AfterVerifyResult{Abort: true, Reason: "aborted"}, nil
 	})
@@ -334,6 +343,7 @@ func TestAfterVerifyHook_AbortKeepsResponseWhenCancelThrows(t *testing.T) {
 
 func TestAfterVerifyHook_SkipHandlerStillWorks(t *testing.T) {
 	server := Newx402ResourceServer()
+	registerExactEvmScheme(server)
 	server.OnAfterVerify(func(ctx VerifyResultContext) (*AfterVerifyResult, error) {
 		return &AfterVerifyResult{
 			SkipHandler: true,
@@ -364,6 +374,7 @@ func TestAfterVerifyHook_SkipHandlerStillWorks(t *testing.T) {
 func TestOnVerifyFailureHook_RecoverRunsAfterVerify(t *testing.T) {
 	afterCalled := false
 	server := Newx402ResourceServer()
+	registerExactEvmScheme(server)
 	server.OnVerifyFailure(func(ctx VerifyFailureContext) (*VerifyFailureHookResult, error) {
 		return &VerifyFailureHookResult{
 			Recovered: true,
@@ -400,6 +411,7 @@ func TestOnVerifyFailureHook_RecoverRunsAfterVerify(t *testing.T) {
 
 func TestOnVerifyFailureHook_RecoverThenAfterVerifyAbort(t *testing.T) {
 	server := Newx402ResourceServer()
+	registerExactEvmScheme(server)
 	server.OnVerifyFailure(func(ctx VerifyFailureContext) (*VerifyFailureHookResult, error) {
 		return &VerifyFailureHookResult{
 			Recovered: true,
@@ -582,6 +594,7 @@ func TestMultipleHooks_ExecutionOrder(t *testing.T) {
 	executionOrder := []string{}
 
 	server := Newx402ResourceServer()
+	registerExactEvmScheme(server)
 
 	// Register multiple hooks in order
 	server.OnBeforeVerify(func(ctx VerifyContext) (*BeforeHookResult, error) {

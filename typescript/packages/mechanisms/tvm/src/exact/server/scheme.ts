@@ -1,26 +1,32 @@
 import {
   AssetAmount,
   Network,
+  PaymentFlowConfig,
   PaymentRequirements,
   Price,
   SchemeNetworkServer,
   MoneyParser,
 } from "@x402/core/types";
-import { convertToTokenAmount, numberToDecimalString, parseMoneyString } from "@x402/core/utils";
-import { USDT_DECIMALS, USDT_MAINNET_MINTER, USDT_TESTNET_MINTER } from "../../constants";
-import { getDefaultAsset, makeZeroBitCellBoc, normalizeTonAddress } from "../../utils";
+import { convertToTokenAmount, parseMoney } from "@x402/core/utils";
+import { findDefaultAsset, getDefaultAsset } from "../../defaultAssets";
+import { makeZeroBitCellBoc, normalizeTonAddress } from "../../utils";
 
 /**
  * TVM server implementation for the Exact payment scheme.
  */
 export class ExactTvmScheme implements SchemeNetworkServer {
   readonly scheme = "exact";
+  readonly defaultAssetTransferMethod = "default";
+  readonly paymentFlows = {
+    default: { supported: ["authorization", "upfront"], default: "authorization" },
+  } as const satisfies Record<string, PaymentFlowConfig>;
   private moneyParsers: MoneyParser[] = [];
 
   /**
    * Register a custom money parser in the parser chain.
    *
-   * @param parser
+   * @param parser - Custom function to convert amount to AssetAmount (or null to skip)
+   * @returns The scheme instance for chaining
    */
   registerMoneyParser(parser: MoneyParser): ExactTvmScheme {
     this.moneyParsers.push(parser);
@@ -40,11 +46,7 @@ export class ExactTvmScheme implements SchemeNetworkServer {
       };
     }
 
-    // Parse Money to decimal number
-    const amount =
-      typeof price === "number"
-        ? price
-        : parseMoneyString(price.replace(/\s*(?:USD|USDT)\s*$/i, ""));
+    const { amount, symbol } = parseMoney(price);
 
     // Try each custom money parser in order
     for (const parser of this.moneyParsers) {
@@ -55,7 +57,7 @@ export class ExactTvmScheme implements SchemeNetworkServer {
     }
 
     // Default: convert to USDT on TON
-    return this.defaultMoneyConversion(amount, network);
+    return this.defaultMoneyConversion(amount, network, symbol);
   }
 
   enhancePaymentRequirements(
@@ -74,7 +76,7 @@ export class ExactTvmScheme implements SchemeNetworkServer {
     } as Record<string, unknown>;
 
     if (!paymentRequirements.asset) {
-      paymentRequirements.asset = getDefaultAsset(paymentRequirements.network);
+      paymentRequirements.asset = getDefaultAsset(paymentRequirements.network).asset;
     }
     paymentRequirements.asset = normalizeTonAddress(paymentRequirements.asset);
     paymentRequirements.payTo = normalizeTonAddress(paymentRequirements.payTo);
@@ -104,10 +106,11 @@ export class ExactTvmScheme implements SchemeNetworkServer {
     return Promise.resolve(paymentRequirements);
   }
 
-  private defaultMoneyConversion(amount: number, network: Network): AssetAmount {
+  private defaultMoneyConversion(amount: string, network: Network, symbol?: string): AssetAmount {
+    const assetInfo = getDefaultAsset(network, symbol);
     return {
-      amount: convertToTokenAmount(numberToDecimalString(amount), USDT_DECIMALS),
-      asset: getDefaultAsset(network),
+      amount: convertToTokenAmount(amount, assetInfo.decimals),
+      asset: assetInfo.asset,
       extra: {
         areFeesSponsored: true,
         forwardPayload: makeZeroBitCellBoc(),
@@ -116,15 +119,13 @@ export class ExactTvmScheme implements SchemeNetworkServer {
     };
   }
 
-  getAssetDecimals(asset: string, _network: Network): number {
-    if (
-      normalizeTonAddress(asset) === USDT_MAINNET_MINTER ||
-      normalizeTonAddress(asset) === USDT_TESTNET_MINTER
-    ) {
-      return USDT_DECIMALS;
+  getAssetDecimals(asset: string, network: Network): number {
+    const decimals = findDefaultAsset(asset, network)?.decimals;
+    if (decimals === undefined) {
+      throw new Error(
+        `Token ${asset} is not a registered asset; provide amount in atomic units or extra.decimals`,
+      );
     }
-    throw new Error(
-      `Token ${asset} is not a registered asset; provide amount in atomic units or extra.decimals`,
-    );
+    return decimals;
   }
 }

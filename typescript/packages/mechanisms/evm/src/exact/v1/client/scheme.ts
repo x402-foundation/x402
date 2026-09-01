@@ -10,6 +10,7 @@ import { authorizationTypes } from "../../../constants";
 import { ClientEvmSigner } from "../../../signer";
 import { ExactEvmPayloadV1 } from "../../../types";
 import { createNonce } from "../../../utils";
+import { findDefaultAsset } from "../../../defaultAssets";
 import { EvmNetworkV1, getEvmChainIdV1 } from "../../../v1";
 
 /**
@@ -17,6 +18,7 @@ import { EvmNetworkV1, getEvmChainIdV1 } from "../../../v1";
  */
 export class ExactEvmSchemeV1 implements SchemeNetworkClient {
   readonly scheme = "exact";
+  findDefaultAsset = findDefaultAsset;
 
   /**
    * Creates a new ExactEvmClientV1 instance.

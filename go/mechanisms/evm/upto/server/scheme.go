@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/big"
-	"strconv"
 	"strings"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
@@ -29,14 +27,29 @@ func (s *UptoEvmScheme) Scheme() string {
 	return evm.SchemeUpto
 }
 
-// GetAssetDecimals implements AssetDecimalsProvider. Returns the decimal precision for the
-// given asset on the given network, falling back to 6 if the asset is not recognized.
-func (s *UptoEvmScheme) GetAssetDecimals(asset string, network x402.Network) int {
-	info, err := evm.GetAssetInfo(string(network), asset)
-	if err != nil || info == nil {
-		return 6
+// DefaultAssetTransferMethod returns the ATM used when extra.assetTransferMethod is absent.
+func (s *UptoEvmScheme) DefaultAssetTransferMethod() string {
+	return string(evm.AssetTransferMethodPermit2)
+}
+
+// PaymentFlows returns ATM-keyed payment flow support for upto EVM.
+func (s *UptoEvmScheme) PaymentFlows() map[string]x402.PaymentFlowConfig {
+	return map[string]x402.PaymentFlowConfig{
+		string(evm.AssetTransferMethodPermit2): {
+			Supported: []x402.PaymentFlowName{x402.PaymentFlowAuthorization},
+			Default:   x402.PaymentFlowAuthorization,
+		},
 	}
-	return info.Decimals
+}
+
+// GetAssetDecimals implements AssetDecimalsProvider. Returns the decimal precision for a
+// known default asset. ok is false when the asset is unrecognized.
+func (s *UptoEvmScheme) GetAssetDecimals(asset string, network x402.Network) (int, bool) {
+	found := evm.FindDefaultAsset(asset, string(network))
+	if found == nil {
+		return 0, false
+	}
+	return found.Decimals, true
 }
 
 func (s *UptoEvmScheme) RegisterMoneyParser(parser x402.MoneyParser) *UptoEvmScheme {
@@ -78,7 +91,7 @@ func (s *UptoEvmScheme) ParsePrice(price x402.Price, network x402.Network) (x402
 		}
 	}
 
-	decimalAmount, err := s.parseMoneyToDecimal(price)
+	decimalAmount, symbol, err := x402.ParseMoney(price)
 	if err != nil {
 		return x402.AssetAmount{}, err
 	}
@@ -93,76 +106,24 @@ func (s *UptoEvmScheme) ParsePrice(price x402.Price, network x402.Network) (x402
 		}
 	}
 
-	return s.defaultMoneyConversion(decimalAmount, network)
+	return s.defaultMoneyConversion(decimalAmount, network, symbol)
 }
 
-func (s *UptoEvmScheme) parseMoneyToDecimal(price x402.Price) (float64, error) {
-	switch v := price.(type) {
-	case string:
-		cleanPrice := strings.TrimSpace(v)
-		cleanPrice = strings.TrimPrefix(cleanPrice, "$")
-		cleanPrice = strings.TrimSpace(cleanPrice)
-
-		amount, err := strconv.ParseFloat(cleanPrice, 64)
-		if err != nil {
-			return 0, fmt.Errorf(ErrFailedToParsePrice+": '%s': %w", v, err)
-		}
-		return amount, nil
-
-	case float64:
-		return v, nil
-
-	case int:
-		return float64(v), nil
-
-	case int64:
-		return float64(v), nil
-
-	default:
-		return 0, fmt.Errorf(ErrUnsupportedPriceType+": %T", price)
-	}
-}
-
-func (s *UptoEvmScheme) defaultMoneyConversion(amount float64, network x402.Network) (x402.AssetAmount, error) {
-	networkStr := string(network)
-
-	config, err := evm.GetNetworkConfig(networkStr)
+func (s *UptoEvmScheme) defaultMoneyConversion(amount string, network x402.Network, symbol string) (x402.AssetAmount, error) {
+	assetInfo, tokenAmount, err := evm.ConvertDefaultMoney(amount, string(network), symbol)
 	if err != nil {
 		return x402.AssetAmount{}, err
 	}
 
-	if config.DefaultAsset.Address == "" {
-		return x402.AssetAmount{}, fmt.Errorf("no default stablecoin configured for network %s; use RegisterMoneyParser or specify an explicit AssetAmount", networkStr)
-	}
-
 	extra := map[string]interface{}{
-		"name":                config.DefaultAsset.Name,
-		"version":             config.DefaultAsset.Version,
+		"name":                assetInfo.Name,
+		"version":             assetInfo.Version,
 		"assetTransferMethod": "permit2",
 	}
 
-	oneUnit := float64(1)
-	for i := 0; i < config.DefaultAsset.Decimals; i++ {
-		oneUnit *= 10
-	}
-
-	if amount >= oneUnit && amount == float64(int64(amount)) {
-		return x402.AssetAmount{
-			Asset:  config.DefaultAsset.Address,
-			Amount: fmt.Sprintf("%.0f", amount),
-			Extra:  extra,
-		}, nil
-	}
-
-	amountStr := fmt.Sprintf("%.6f", amount)
-	parsedAmount, err := evm.ParseAmount(amountStr, config.DefaultAsset.Decimals)
-	if err != nil {
-		return x402.AssetAmount{}, fmt.Errorf(ErrFailedToConvertAmount+": %w", err)
-	}
-
 	return x402.AssetAmount{
-		Asset:  config.DefaultAsset.Address,
-		Amount: parsedAmount.String(),
+		Asset:  assetInfo.Asset,
+		Amount: tokenAmount,
 		Extra:  extra,
 	}, nil
 }
@@ -229,30 +190,4 @@ func (s *UptoEvmScheme) EnhancePaymentRequirements(
 	}
 
 	return requirements, nil
-}
-
-// ValidatePaymentRequirements validates that requirements are valid for this scheme.
-func (s *UptoEvmScheme) ValidatePaymentRequirements(requirements x402.PaymentRequirements) error {
-	if !evm.IsValidAddress(requirements.PayTo) {
-		return fmt.Errorf(ErrInvalidPayToAddress+": %s", requirements.PayTo)
-	}
-
-	if requirements.Amount == "" {
-		return errors.New(ErrAmountRequired)
-	}
-
-	amount, ok := new(big.Int).SetString(requirements.Amount, 10)
-	if !ok || amount.Sign() <= 0 {
-		return fmt.Errorf(ErrInvalidAmount+": %s", requirements.Amount)
-	}
-
-	if requirements.Asset != "" && !evm.IsValidAddress(requirements.Asset) {
-		networkStr := string(requirements.Network)
-		_, err := evm.GetAssetInfo(networkStr, requirements.Asset)
-		if err != nil {
-			return fmt.Errorf(ErrInvalidAsset+": %s", requirements.Asset)
-		}
-	}
-
-	return nil
 }

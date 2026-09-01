@@ -22,3 +22,10 @@ export * from "./signer";
 // Utilities
 export * from "./utils";
 export * from "./shared";
+
+export {
+  DEFAULT_ASSETS,
+  getDefaultAsset,
+  findDefaultAsset,
+  type StellarDefaultAsset,
+} from "./defaultAssets";

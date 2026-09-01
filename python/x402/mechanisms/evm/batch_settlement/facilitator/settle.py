@@ -10,8 +10,9 @@ except ImportError as e:
     ) from e
 
 from .....schemas import PaymentRequirements, SettleResponse
-from ...constants import TX_STATUS_SUCCESS
+from ...settle_receipt import wait_for_receipt_and_build_response
 from ...signer import FacilitatorEvmSigner
+from ...utils import truncate_error_message
 from ..abi import BATCH_SETTLEMENT_ABI
 from ..constants import BATCH_SETTLEMENT_ADDRESS
 from ..errors import (
@@ -56,7 +57,7 @@ def execute_settle(
         return SettleResponse(
             success=False,
             error_reason=ERR_RPC_READ_FAILED,
-            error_message=str(e)[:500],
+            error_message=truncate_error_message(str(e)),
             transaction="",
             network=network,
         )
@@ -67,7 +68,7 @@ def execute_settle(
         return SettleResponse(
             success=False,
             error_reason=ERR_SETTLE_SIMULATION_FAILED,
-            error_message=str(e)[:500],
+            error_message=truncate_error_message(str(e)),
             transaction="",
             network=network,
         )
@@ -81,32 +82,28 @@ def execute_settle(
             token,
             data_suffix=data_suffix,
         )
-        receipt = signer.wait_for_transaction_receipt(tx)
-        if receipt.status != TX_STATUS_SUCCESS:
-            return SettleResponse(
-                success=False,
-                error_reason=ERR_SETTLE_TRANSACTION_FAILED,
-                error_message=f"transaction reverted (receipt status {receipt.status})",
-                transaction=tx,
-                network=network,
-            )
-
-        amount = _parse_settled_amount(signer, receipt, contract_addr, receiver, token)
-
-        return SettleResponse(
-            success=True,
-            transaction=tx,
-            network=network,
-            amount=amount,
-        )
     except Exception as e:
         return SettleResponse(
             success=False,
             error_reason=ERR_SETTLE_TRANSACTION_FAILED,
-            error_message=str(e)[:500],
+            error_message=truncate_error_message(str(e)),
             transaction="",
             network=network,
         )
+
+    return wait_for_receipt_and_build_response(
+        signer,
+        tx,
+        network,
+        None,
+        failed_reason=ERR_SETTLE_TRANSACTION_FAILED,
+        on_success=lambda receipt: SettleResponse(
+            success=True,
+            transaction=tx,
+            network=network,
+            amount=_parse_settled_amount(signer, receipt, contract_addr, receiver, token),
+        ),
+    )
 
 
 def _unpack_pair(value) -> tuple[int, int]:

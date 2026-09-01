@@ -51,6 +51,38 @@ def extract_payment_from_meta(params: dict[str, Any]) -> PaymentPayload | None:
         return None
 
 
+def post_enrichment_accepts(payment_required: Any, fallback: list) -> list:
+    """Use enriched 402 accepts when they are a real list (not a Mock)."""
+    enriched = getattr(payment_required, "accepts", None)
+    return enriched if isinstance(enriched, list) else fallback
+
+
+def validate_payment_wrapper_accepts(resource_server: Any, accepts: list) -> None:
+    """Raise if a wrapper accept is unregistered or has an unsupported payment flow.
+
+    Skips resolution when the registered scheme has no real ``payment_flows``
+    table (test doubles / MagicMock).
+    """
+    from collections.abc import Mapping
+
+    from ..payment_flow import resolve_payment_flow
+
+    getter = getattr(resource_server, "get_registered_scheme", None)
+    if not callable(getter):
+        return
+    for requirement in accepts:
+        scheme_server = getter(requirement.network, requirement.scheme)
+        if scheme_server is None:
+            raise ValueError(
+                f'[x402] No scheme implementation registered for "{requirement.scheme}" '
+                f'on network "{requirement.network}"'
+            )
+        flows = getattr(scheme_server, "payment_flows", None)
+        if not isinstance(flows, Mapping):
+            continue
+        resolve_payment_flow(scheme_server, requirement)
+
+
 def attach_payment_to_meta(params: dict[str, Any], payload: PaymentPayload) -> dict[str, Any]:
     """Attach payment payload to request params.
 
@@ -364,6 +396,54 @@ def convert_mcp_result(mcp_result: Any) -> "MCPToolResult":
         is_error=is_error,
         meta=meta,
         structured_content=structured_content,
+    )
+
+
+def build_x402_client_config(
+    config_or_schemes: Any,
+) -> Any:
+    """Build ``x402ClientConfig`` from a config dict, scheme list, or existing config.
+
+    Accepts:
+    - ``x402ClientConfig`` (returned as-is)
+    - ``dict`` with ``schemes`` plus optional ``policies``, ``spend_controls``,
+      ``payment_requirements_selector``
+    - ``list`` of scheme registration dicts (``network``, ``client``, optional ``x402_version``)
+    """
+    from ..client_base import SchemeRegistration, x402ClientConfig
+
+    if isinstance(config_or_schemes, x402ClientConfig):
+        return config_or_schemes
+
+    if isinstance(config_or_schemes, list):
+        schemes_raw = config_or_schemes
+        policies = None
+        spend_controls = None
+        payment_requirements_selector = None
+    elif isinstance(config_or_schemes, dict):
+        schemes_raw = config_or_schemes.get("schemes", [])
+        policies = config_or_schemes.get("policies")
+        spend_controls = config_or_schemes.get("spend_controls")
+        payment_requirements_selector = config_or_schemes.get("payment_requirements_selector")
+    else:
+        raise TypeError(
+            "Expected x402ClientConfig, dict with 'schemes', or list of scheme registrations"
+        )
+
+    schemes = [
+        SchemeRegistration(
+            network=scheme["network"],
+            client=scheme["client"],
+            x402_version=scheme.get("x402_version", 2),
+        )
+        for scheme in schemes_raw
+    ]
+
+    return x402ClientConfig(
+        schemes=schemes,
+        policies=policies,
+        spend_controls=spend_controls,
+        payment_requirements_selector=payment_requirements_selector,
     )
 
 

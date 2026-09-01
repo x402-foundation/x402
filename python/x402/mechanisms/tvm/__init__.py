@@ -4,7 +4,6 @@ from .codecs.common import (
     get_network_global_id,
     normalize_address,
     parse_amount,
-    parse_money_to_decimal,
 )
 from .codecs.jetton import build_jetton_transfer_body, build_jetton_transfer_body_fields
 from .codecs.w5 import (
@@ -94,6 +93,9 @@ from .constants import (
     W5R1_CODE_HASH,
     W5R1_CODE_HEX,
 )
+
+# Default assets
+from .default_assets import DEFAULT_ASSETS, find_default_asset, get_default_asset
 from .exact.codec import parse_exact_tvm_payload
 from .provider import TonapiRestClient, ToncenterRestClient, create_tvm_provider_client
 from .settlement_cache import SettlementCache
@@ -218,6 +220,9 @@ __all__ = [
     "normalize_address",
     "parse_amount",
     "parse_exact_tvm_payload",
-    "parse_money_to_decimal",
     "verify_w5_signature",
+    # Default assets
+    "DEFAULT_ASSETS",
+    "find_default_asset",
+    "get_default_asset",
 ]

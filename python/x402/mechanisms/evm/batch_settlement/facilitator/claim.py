@@ -10,8 +10,9 @@ except ImportError as e:
     ) from e
 
 from .....schemas import PaymentRequirements, SettleResponse
-from ...constants import TX_STATUS_SUCCESS
+from ...settle_receipt import wait_for_receipt_and_build_response
 from ...signer import FacilitatorEvmSigner
+from ...utils import truncate_error_message
 from ..abi import BATCH_SETTLEMENT_ABI
 from ..authorizer_signer import sign_claim_batch
 from ..constants import BATCH_SETTLEMENT_ADDRESS
@@ -83,7 +84,7 @@ def execute_claim_with_signature(
         return SettleResponse(
             success=False,
             error_reason=ERR_CLAIM_SIMULATION_FAILED,
-            error_message=str(e)[:500],
+            error_message=truncate_error_message(str(e)),
             transaction="",
             network=network,
         )
@@ -97,29 +98,22 @@ def execute_claim_with_signature(
             sig_bytes,
             data_suffix=data_suffix,
         )
-        receipt = signer.wait_for_transaction_receipt(tx)
-        if receipt.status != TX_STATUS_SUCCESS:
-            return SettleResponse(
-                success=False,
-                error_reason=ERR_CLAIM_TRANSACTION_FAILED,
-                error_message=f"transaction reverted (receipt status {receipt.status})",
-                transaction=tx,
-                network=network,
-            )
-        return SettleResponse(
-            success=True,
-            transaction=tx,
-            network=network,
-            amount="",
-        )
     except Exception as e:
         return SettleResponse(
             success=False,
             error_reason=ERR_CLAIM_TRANSACTION_FAILED,
-            error_message=str(e)[:500],
+            error_message=truncate_error_message(str(e)),
             transaction="",
             network=network,
         )
+
+    return wait_for_receipt_and_build_response(
+        signer,
+        tx,
+        network,
+        None,
+        failed_reason=ERR_CLAIM_TRANSACTION_FAILED,
+    )
 
 
 __all__ = ["build_voucher_claim_args", "execute_claim_with_signature"]

@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from solders.keypair import Keypair
 
 from x402 import x402Facilitator
+from x402.http.extension_responses import EXTENSION_RESPONSES_HEADER
 from x402.extensions.bazaar import (
     DiscoveryResource,
     extract_discovery_info,
@@ -30,7 +31,7 @@ from x402.mechanisms.svm.exact.facilitator import ExactSvmScheme
 load_dotenv()
 
 # Configuration
-PORT = int(os.environ.get("PORT", "4022"))
+PORT = int(os.environ.get("PORT") or "4022")
 
 # Configuration - optional per network
 evm_private_key = os.environ.get("EVM_PRIVATE_KEY")
@@ -103,11 +104,10 @@ class BazaarCatalog:
 
 bazaar_catalog = BazaarCatalog()
 
-EXTENSION_RESPONSES_HEADER = "EXTENSION-RESPONSES"
-
 
 def _set_extension_responses_header(response: Response) -> None:
-    """Attach an example bazaar extension response header for client readback."""
+    """Attach bazaar extension outcomes on the facilitator sidechannel.
+    """
     extension_responses = {"bazaar": {"status": "success"}}
     encoded = base64.b64encode(json.dumps(extension_responses).encode("utf-8")).decode("ascii")
     response.headers[EXTENSION_RESPONSES_HEADER] = encoded

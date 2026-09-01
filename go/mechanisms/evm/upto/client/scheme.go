@@ -8,6 +8,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 
+	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/extensions/eip2612gassponsor"
 	"github.com/x402-foundation/x402/go/v2/extensions/erc20approvalgassponsor"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
@@ -31,6 +32,14 @@ func NewUptoEvmScheme(signer evm.ClientEvmSigner, config *UptoEvmSchemeConfig) *
 
 func (c *UptoEvmScheme) Scheme() string {
 	return evm.SchemeUpto
+}
+
+func (c *UptoEvmScheme) FindDefaultAsset(asset string, network x402.Network) *x402.DefaultAsset {
+	info := evm.FindDefaultAsset(asset, string(network))
+	if info == nil {
+		return nil
+	}
+	return &x402.DefaultAsset{Asset: info.Asset, Decimals: info.Decimals, Symbol: info.Symbol}
 }
 
 // CreatePaymentPayload creates a V2 payment payload for the upto scheme (always Permit2).

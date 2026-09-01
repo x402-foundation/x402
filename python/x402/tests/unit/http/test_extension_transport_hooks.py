@@ -172,6 +172,8 @@ async def test_client_extension_on_payment_required_runs_after_manual():
         accepts=[requirements],
         extensions={"cli-ext": {}},
     )
-    headers = await http_client.handle_payment_required(payment_required)
+    headers = await http_client.handle_payment_required(
+        payment_required, "https://api.example.com/"
+    )
     assert order == ["manual"]
     assert headers == {"X-Test": "1"}

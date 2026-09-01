@@ -44,6 +44,16 @@ describe("@x402/aptos", () => {
       const server = new ExactAptosServer();
       expect(server.scheme).toBe("exact");
     });
+
+    describe("paymentFlows", () => {
+      it("declares authorization and upfront with authorization as the default", () => {
+        const server = new ExactAptosServer();
+        expect(server.defaultAssetTransferMethod).toBe("default");
+        expect(server.paymentFlows).toEqual({
+          default: { supported: ["authorization", "upfront"], default: "authorization" },
+        });
+      });
+    });
   });
 
   describe("ExactAptosFacilitator", () => {

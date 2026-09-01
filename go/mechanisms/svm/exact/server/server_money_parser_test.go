@@ -1,21 +1,30 @@
 package server
 
 import (
-	"fmt"
+	"math/big"
 	"testing"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
 )
+
+func decimalGreaterThan(amount string, n int64) bool {
+	rat, ok := new(big.Rat).SetString(amount)
+	return ok && rat.Cmp(big.NewRat(n, 1)) > 0
+}
 
 // TestRegisterMoneyParser_SingleCustomParser tests a single custom money parser
 func TestRegisterMoneyParser_SingleCustomParser(t *testing.T) {
 	server := NewExactSvmScheme()
 
 	// Register custom parser: large amounts use custom token
-	server.RegisterMoneyParser(func(amount float64, network x402.Network) (*x402.AssetAmount, error) {
-		if amount > 100 {
+	server.RegisterMoneyParser(func(amount string, network x402.Network) (*x402.AssetAmount, error) {
+		if decimalGreaterThan(amount, 100) {
+			tokenAmount, err := x402.ConvertToTokenAmount(amount, 9)
+			if err != nil {
+				return nil, err
+			}
 			return &x402.AssetAmount{
-				Amount: fmt.Sprintf("%.0f", amount*1e9), // Custom token with 9 decimals
+				Amount: tokenAmount, // Custom token with 9 decimals
 				Asset:  "CustomLargeTokenMint111111111111111",
 				Extra: map[string]interface{}{
 					"token": "CUSTOM",
@@ -32,7 +41,7 @@ func TestRegisterMoneyParser_SingleCustomParser(t *testing.T) {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 
-	expectedAmount1 := fmt.Sprintf("%.0f", 150*1e9)
+	expectedAmount1 := "150000000000"
 	if result1.Amount != expectedAmount1 {
 		t.Errorf("Expected amount %s, got %s", expectedAmount1, result1.Amount)
 	}
@@ -67,10 +76,14 @@ func TestRegisterMoneyParser_MultipleInChain(t *testing.T) {
 	server := NewExactSvmScheme()
 
 	// Parser 1: Premium tier (> 1000)
-	server.RegisterMoneyParser(func(amount float64, network x402.Network) (*x402.AssetAmount, error) {
-		if amount > 1000 {
+	server.RegisterMoneyParser(func(amount string, network x402.Network) (*x402.AssetAmount, error) {
+		if decimalGreaterThan(amount, 1000) {
+			tokenAmount, err := x402.ConvertToTokenAmount(amount, 9)
+			if err != nil {
+				return nil, err
+			}
 			return &x402.AssetAmount{
-				Amount: fmt.Sprintf("%.0f", amount*1e9),
+				Amount: tokenAmount,
 				Asset:  "PremiumMint1111111111111111111111111",
 				Extra:  map[string]interface{}{"tier": "premium"},
 			}, nil
@@ -79,10 +92,14 @@ func TestRegisterMoneyParser_MultipleInChain(t *testing.T) {
 	})
 
 	// Parser 2: Large tier (> 100)
-	server.RegisterMoneyParser(func(amount float64, network x402.Network) (*x402.AssetAmount, error) {
-		if amount > 100 {
+	server.RegisterMoneyParser(func(amount string, network x402.Network) (*x402.AssetAmount, error) {
+		if decimalGreaterThan(amount, 100) {
+			tokenAmount, err := x402.ConvertToTokenAmount(amount, 9)
+			if err != nil {
+				return nil, err
+			}
 			return &x402.AssetAmount{
-				Amount: fmt.Sprintf("%.0f", amount*1e9),
+				Amount: tokenAmount,
 				Asset:  "LargeMint11111111111111111111111111",
 				Extra:  map[string]interface{}{"tier": "large"},
 			}, nil
@@ -123,10 +140,14 @@ func TestRegisterMoneyParser_MultipleInChain(t *testing.T) {
 func TestRegisterMoneyParser_StringPrices(t *testing.T) {
 	server := NewExactSvmScheme()
 
-	server.RegisterMoneyParser(func(amount float64, network x402.Network) (*x402.AssetAmount, error) {
-		if amount > 50 {
+	server.RegisterMoneyParser(func(amount string, network x402.Network) (*x402.AssetAmount, error) {
+		if decimalGreaterThan(amount, 50) {
+			tokenAmount, err := x402.ConvertToTokenAmount(amount, 9)
+			if err != nil {
+				return nil, err
+			}
 			return &x402.AssetAmount{
-				Amount: fmt.Sprintf("%.0f", amount*1e9),
+				Amount: tokenAmount,
 				Asset:  "CustomMint111111111111111111111111",
 			}, nil
 		}
@@ -162,10 +183,10 @@ func TestRegisterMoneyParser_Chainability(t *testing.T) {
 	server := NewExactSvmScheme()
 
 	result := server.
-		RegisterMoneyParser(func(amount float64, network x402.Network) (*x402.AssetAmount, error) {
+		RegisterMoneyParser(func(amount string, network x402.Network) (*x402.AssetAmount, error) {
 			return nil, nil
 		}).
-		RegisterMoneyParser(func(amount float64, network x402.Network) (*x402.AssetAmount, error) {
+		RegisterMoneyParser(func(amount string, network x402.Network) (*x402.AssetAmount, error) {
 			return nil, nil
 		})
 

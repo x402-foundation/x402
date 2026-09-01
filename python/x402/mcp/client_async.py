@@ -20,7 +20,6 @@ from .utils import (
     convert_mcp_result,
     extract_payment_required_from_result,
     extract_payment_response_from_meta,
-    register_schemes,
 )
 
 # Async hook type aliases
@@ -502,20 +501,21 @@ def wrap_mcp_client_with_payment(
 
 def wrap_mcp_client_with_payment_from_config(
     mcp_client: Any,
-    schemes: list[dict[str, Any]],
+    config_or_schemes: Any,
     *,
     auto_payment: bool = True,
     on_payment_requested: (
         Callable[[PaymentRequiredContext], bool | Awaitable[bool]] | None
     ) = None,
 ) -> x402MCPClient:
-    """Wrap an existing async MCP client with x402 payment handling using scheme registrations.
+    """Wrap an existing async MCP client with x402 payment handling from client config.
 
-    Similar to wrap_mcp_client_with_payment but uses scheme registrations directly.
+    Similar to wrap_mcp_client_with_payment but builds the payment client via
+    ``x402Client.from_config`` (schemes, policies, spend_controls, selector).
 
     Args:
         mcp_client: Existing async MCP SDK client
-        schemes: List of scheme registrations, each with 'network' and 'client' keys
+        config_or_schemes: ``x402ClientConfig``, config dict, or list of scheme registrations
         auto_payment: Whether to automatically create and submit payment
         on_payment_requested: Optional async callback for payment approval
 
@@ -531,17 +531,20 @@ def wrap_mcp_client_with_payment_from_config(
 
         x402_mcp = wrap_mcp_client_with_payment_from_config(
             mcp_client,
-            schemes=[
-                {"network": "eip155:84532", "client": ExactEvmClientScheme(signer)},
-            ],
+            {
+                "schemes": [
+                    {"network": "eip155:84532", "client": ExactEvmClientScheme(signer)},
+                ],
+                "spend_controls": {"max_amount_per_payment": "$5"},
+            },
             auto_payment=True,
         )
         ```
     """
     from .. import x402Client as x402ClientAsync
+    from .utils import build_x402_client_config
 
-    payment_client = x402ClientAsync()
-    register_schemes(payment_client, schemes)
+    payment_client = x402ClientAsync.from_config(build_x402_client_config(config_or_schemes))
 
     return x402MCPClient(
         mcp_client,
@@ -566,6 +569,9 @@ def create_x402_mcp_client_from_config(
         mcp_client: Underlying async MCP SDK client
         config: Configuration dictionary with:
             - schemes: List of scheme registrations (required)
+            - policies: Optional payment policies (same as ``x402Client.from_config``)
+            - spend_controls: Optional spend controls (same as ``x402Client.from_config``)
+            - payment_requirements_selector: Optional accept selector
             - auto_payment: Whether to automatically create and submit payment (default: True)
             - on_payment_requested: Optional callback for payment approval
 
@@ -591,13 +597,12 @@ def create_x402_mcp_client_from_config(
         ```
     """
     from .. import x402Client as x402ClientAsync
+    from .utils import build_x402_client_config
 
-    schemes = config.get("schemes", [])
     auto_payment = config.get("auto_payment", True)
     on_payment_requested = config.get("on_payment_requested")
 
-    payment_client = x402ClientAsync()
-    register_schemes(payment_client, schemes)
+    payment_client = x402ClientAsync.from_config(build_x402_client_config(config))
 
     return x402MCPClient(
         mcp_client,

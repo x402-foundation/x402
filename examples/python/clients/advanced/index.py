@@ -30,6 +30,7 @@ EXAMPLES = {
     "hooks": "Payment lifecycle hooks - before, after, failure callbacks",
     "preferred_network": "Custom network preference selector",
     "builder_pattern": "Network-specific registration with builder pattern",
+    "spend_controls": "Default $1 USD cap, allowed_assets, and per-asset caps",
 }
 
 
@@ -82,11 +83,19 @@ async def run_builder_pattern_example(private_key: str, url: str) -> None:
     await run_builder_pattern_example(private_key, url)
 
 
+async def run_spend_controls_example(private_key: str, url: str) -> None:
+    """Run the spend controls example."""
+    from spend_controls import run_spend_controls_example
+
+    await run_spend_controls_example(private_key, url)
+
+
 EXAMPLE_RUNNERS = {
     "all_networks": run_all_networks_example,
     "hooks": run_hooks_example,
     "preferred_network": run_preferred_network_example,
     "builder_pattern": run_builder_pattern_example,
+    "spend_controls": run_spend_controls_example,
 }
 
 
@@ -133,6 +142,7 @@ Available examples:
   hooks              Payment lifecycle hooks (before, after, failure)
   preferred_network  Custom network preference selector
   builder_pattern    Network-specific registration with builder pattern
+  spend_controls     Default $1 USD cap, allowed_assets, and per-asset caps
   all                Run all examples sequentially
 """,
     )

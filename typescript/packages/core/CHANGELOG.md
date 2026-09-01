@@ -1,5 +1,35 @@
 # @x402/core Changelog
 
+## 2.24.0
+
+### Minor Changes
+
+- Bumped to align version with dependent packages
+## 2.23.0
+
+### Minor Changes
+
+- [79b6259](https://github.com/x402-foundation/x402/commit/79b6259): Add scheme hooks for usage-based payments: `SchemeNetworkServer.settleOnCancel` settles once when a verified payment is canceled, and `dynamicExtraFields` excludes per-response `extra` keys from v2 requirement matching. Export `resolveFailurePathSettlement` and use it in MCP so handler failure/throw paths prefer cancel/refund receipts (with deposit recovery `extra` on failed cancel) over echoing the before-handler deposit alone. ([#3094](https://github.com/x402-foundation/x402/pull/3094)) - Thanks [@phdargen](https://github.com/phdargen) and [@lgalabru](https://github.com/lgalabru)!
+- [4f58723](https://github.com/x402-foundation/x402/commit/4f58723): Normalize each mechanism's default assets into `DEFAULT_ASSETS` + `getDefaultAsset` / `findDefaultAsset`, and add client `spendControls`: by default only recognized pegged assets are allowed with a `$1` USD cap; opt into other tokens via `allowedAssets` (list with optional integer atomic `maxAmountPerPayment`, or `true` to allow any); pass `spendControls: false` to disable all spend controls. A non-integer per-asset cap is a config error; a non-integer 402 amount on that path is dropped. Keeta, XRPL, and Concordium now ship USD defaults (USDC, RLUSD, USDR). XRPL pins the RLUSD issuer in the client scheme before signing. `$` settlement overrides throw when `getAssetDecimals` is unknown instead of guessing 6 decimals. Notable API moves: `DEFAULT_STABLECOINS` / `USDC_CONFIG` / `DEFAULT_ASSET_BY_NETWORK` → `DEFAULT_ASSETS` (list per network); identifier field `address` / `asaId` → `asset`; TVM `getDefaultAsset` returns an entry (use `.asset`). EVM `getAssetDecimals` is asset-aware; aptos unknown networks throw; EVM/SVM register helpers scope v1 networks to `config.networks`. Paywall uses `spendControls: false` (UI approval); MCP forwards `spendControls`. ([#3124](https://github.com/x402-foundation/x402/pull/3124)) - Thanks [@phdargen](https://github.com/phdargen)!
+- [c2612d3](https://github.com/x402-foundation/x402/commit/c2612d3): Require SIWX client origin binding before signing. `x402HTTPClient.handlePaymentRequired` now accepts the response URL and passes it to hooks via `PaymentRequiredContext.requestUrl`. **`createSIWxPayload(serverExtension, signer, requestUrl)`** — new required third argument: the final URL of the 402 response (after redirects). Callers that previously invoked `createSIWxPayload(info, signer)` must pass the response URL; signing is refused when challenge `domain` or `uri` origin does not match that URL's origin. ([#3133](https://github.com/x402-foundation/x402/pull/3133)) - Thanks [@phdargen](https://github.com/phdargen)!
+- [656437e](https://github.com/x402-foundation/x402/commit/656437e): Keep public `Money` as `string | number`, but parse and convert internally as decimal strings only. `parseMoney` / `parseMoneyString` return the extracted decimal substring; `MoneyParser` amount is `string | number` (`parsePrice` always passes a string). `convertToTokenAmount` pads/truncates toward zero including to `"0"` instead of throwing on dust. ([#3154](https://github.com/x402-foundation/x402/pull/3154)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+### Patch Changes
+
+- [ab1a31a](https://github.com/x402-foundation/x402/commit/ab1a31a): Handled missing accepted payment requirements without leaking a runtime error. ([#3180](https://github.com/x402-foundation/x402/pull/3180)) - Thanks [@JasonColapietro](https://github.com/JasonColapietro)!
+
+## 2.22.0
+
+### Minor Changes
+
+- [db5da2e](https://github.com/x402-foundation/x402/commit/db5da2e): Validate unsupported `paymentFlow` / `assetTransferMethod` at HTTP server construction and MCP `createPaymentWrapper` when the scheme is registered, and return a generic internal error from HTTP adapters and MCP wrappers for unexpected failures instead of leaking internal error details to clients. ([#3053](https://github.com/x402-foundation/x402/pull/3053)) - Thanks [@phdargen](https://github.com/phdargen)!
+- [db5da2e](https://github.com/x402-foundation/x402/commit/db5da2e): Require ATM-keyed `paymentFlows` (and `defaultAssetTransferMethod`) on every `SchemeNetworkServer`. Core resolves ATM/flow from the table, rejects unsupported combinations, and always signals non-`authorization` `paymentFlow` on the 402 wire. All schemes currently declare `authorization` only. ([#3053](https://github.com/x402-foundation/x402/pull/3053)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+### Patch Changes
+
+- [37412e7](https://github.com/x402-foundation/x402/commit/37412e7): Fixed a paywall bypass where a backslash in a `:param`/`[param]` segment let an unauthenticated request reach a protected handler. `normalizePath` rewrote `\` to `/` after decoding, so the middleware saw more segments than the framework router did, missed the route, and fell through to the handler with nothing settled. Percent-escapes are now decoded one segment at a time and any separator they yield is re-escaped, matching the Go and Python SDKs. Reachable on Express via a raw `\` and on Hono via `%5C`. ([#3116](https://github.com/x402-foundation/x402/pull/3116)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe) and [@claude](https://github.com/claude)!
+- [1601942](https://github.com/x402-foundation/x402/commit/1601942): Fixed trailing wildcard route matching when `normalizePath` strips a trailing slash, so bare prefix paths like `/api/premium` and `/api/premium/` still require payment under a `/*` route pattern. ([#3073](https://github.com/x402-foundation/x402/pull/3073)) - Thanks [@phdargen](https://github.com/phdargen)!
+
 ## 2.21.0
 
 ### Minor Changes

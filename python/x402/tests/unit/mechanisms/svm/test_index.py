@@ -128,6 +128,7 @@ class TestConvertToTokenAmount:
 
     def test_should_convert_decimal_amounts_to_token_units_6_decimals(self):
         """Should convert decimal amounts to token units (6 decimals)."""
+        assert convert_to_token_amount("4.02", 6) == "4020000"
         assert convert_to_token_amount("0.10", 6) == "100000"
         assert convert_to_token_amount("1.00", 6) == "1000000"
         assert convert_to_token_amount("0.01", 6) == "10000"
@@ -137,21 +138,87 @@ class TestConvertToTokenAmount:
         """Should handle whole numbers."""
         assert convert_to_token_amount("1", 6) == "1000000"
         assert convert_to_token_amount("100", 6) == "100000000"
+        assert convert_to_token_amount("0", 6) == "0"
 
     def test_should_handle_different_decimals(self):
         """Should handle different decimal places."""
         assert convert_to_token_amount("1", 9) == "1000000000"  # SOL
         assert convert_to_token_amount("1", 2) == "100"
         assert convert_to_token_amount("1", 0) == "1"
+        assert convert_to_token_amount("1", 7) == "10000000"
+        assert convert_to_token_amount("1.0", 18) == "1000000000000000000"
+
+    def test_should_truncate_excess_decimal_places(self):
+        """Should truncate extra digits toward zero rather than round."""
+        assert convert_to_token_amount("1.12345678", 7) == "11234567"
+        assert convert_to_token_amount("1.5", 0) == "1"
+        assert convert_to_token_amount("2.9", 0) == "2"
+
+    def test_should_handle_trailing_zeros(self):
+        """Should ignore trailing zeros after the decimal."""
+        assert convert_to_token_amount("1.0", 6) == "1000000"
+        assert convert_to_token_amount("0.1000000", 7) == "1000000"
+
+    def test_should_handle_negative_numbers(self):
+        """Should convert negative amounts."""
+        assert convert_to_token_amount("-1.5", 6) == "-1500000"
+
+    def test_should_handle_very_large_numbers(self):
+        """Should convert large decimal strings without float rounding."""
+        assert convert_to_token_amount("999999999.9999999", 7) == "9999999999999999"
+
+    def test_should_convert_small_amounts_with_sufficient_precision(self):
+        """Should convert amounts smaller than 1 when decimals are high enough."""
+        assert convert_to_token_amount("0.0000001", 9) == "100"
+        assert convert_to_token_amount("0.000000001", 9) == "1"
+        assert convert_to_token_amount("0.0000015", 9) == "1500"
+
+    def test_should_convert_smallest_representable_amount(self):
+        """Should convert exactly one atomic unit."""
+        assert convert_to_token_amount("0.0000001", 7) == "1"
+        assert convert_to_token_amount("0.000001", 6) == "1"
+        assert convert_to_token_amount("0.000000000000000001", 18) == "1"
+
+    def test_should_truncate_smaller_than_one_atomic_unit_to_zero(self):
+        """Should truncate dust below one atomic unit to 0."""
+        assert convert_to_token_amount("0.0000001", 6) == "0"
+        assert convert_to_token_amount("0.00000001", 7) == "0"
+        assert convert_to_token_amount("0.0000000001", 6) == "0"
+
+    def test_should_keep_explicit_zero(self):
+        """Should keep explicit zero inputs as 0."""
+        assert convert_to_token_amount("0", 6) == "0"
+        assert convert_to_token_amount("0.0", 6) == "0"
+        assert convert_to_token_amount("0.000000", 6) == "0"
+
+    def test_should_pad_and_truncate_toward_zero_without_rounding(self):
+        """Should pad/truncate toward zero, including MegaUSD 18-decimal prices."""
+        assert convert_to_token_amount("1.0000005", 6) == "1000000"
+        assert convert_to_token_amount("0.0000005", 6) == "0"
+        assert convert_to_token_amount("0.0000009", 6) == "0"
+        assert convert_to_token_amount("8975.978289462729", 18) == "8975978289462729000000"
+        assert convert_to_token_amount("8975.978289462729", 6) == "8975978289"
+
+    def test_should_reject_scientific_notation(self):
+        """Should reject scientific notation in decimal strings."""
+        with pytest.raises(ValueError, match="scientific notation"):
+            convert_to_token_amount("1e-7", 9)
+        with pytest.raises(ValueError, match="scientific notation"):
+            convert_to_token_amount("1e-6", 6)
+        with pytest.raises(ValueError, match="scientific notation"):
+            convert_to_token_amount("1.5e-6", 9)
+        with pytest.raises(ValueError, match="scientific notation"):
+            convert_to_token_amount("1E10", 6)
 
     def test_should_raise_for_invalid_amounts(self):
         """Should raise ValueError for invalid amounts."""
         with pytest.raises(ValueError, match="Invalid amount"):
+            convert_to_token_amount("invalid", 6)
+        with pytest.raises(ValueError, match="Invalid amount"):
             convert_to_token_amount("abc", 6)
         with pytest.raises(ValueError, match="Invalid amount"):
             convert_to_token_amount("", 6)
-        # NaN is parsed by Decimal but fails on conversion to int
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="Invalid amount"):
             convert_to_token_amount("NaN", 6)
 
 

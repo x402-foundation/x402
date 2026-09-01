@@ -21,6 +21,42 @@ export type CompleteSIWxInfo = SIWxExtensionInfo & {
 };
 
 /**
+ * Verifies that a SIWX challenge is bound to the origin of the resource that issued the 402.
+ *
+ * Checks `domain` and `uri` only. EIP-4361 `resources` may be cross-origin URIs and are not
+ * validated here (matching server-side validateSIWxMessage).
+ *
+ * @param info - Server extension info from the 402 response
+ * @param responseUrl - Final URL of the 402 response (after redirects)
+ * @throws Error when domain or uri origin does not match
+ */
+export function assertSIWxChallengeBoundToOrigin(
+  info: SIWxExtensionInfo,
+  responseUrl: string | URL,
+): void {
+  const origin = typeof responseUrl === "string" ? new URL(responseUrl) : responseUrl;
+
+  if (info.domain !== origin.host) {
+    throw new Error(
+      `SIWX challenge domain "${info.domain}" does not match response origin host "${origin.host}"`,
+    );
+  }
+
+  let uriOrigin: string;
+  try {
+    uriOrigin = new URL(info.uri).origin;
+  } catch {
+    throw new Error(`SIWX challenge uri "${info.uri}" is not a valid URL`);
+  }
+
+  if (uriOrigin !== origin.origin) {
+    throw new Error(
+      `SIWX challenge uri origin "${uriOrigin}" does not match response origin "${origin.origin}"`,
+    );
+  }
+}
+
+/**
  * Create a complete SIWX payload from server extension info with selected chain.
  *
  * Routes to EVM or Solana signing based on the chainId prefix:
@@ -29,19 +65,23 @@ export type CompleteSIWxInfo = SIWxExtensionInfo & {
  *
  * @param serverExtension - Server extension info with chain selected (includes chainId, type)
  * @param signer - Wallet that can sign messages (EVMSigner or SolanaSigner)
+ * @param requestUrl - Final URL of the 402 response (after redirects)
  * @returns Complete SIWX payload with signature
  *
  * @example
  * ```typescript
  * // EVM wallet
  * const completeInfo = { ...extension.info, chainId: "eip155:8453", type: "eip191" };
- * const payload = await createSIWxPayload(completeInfo, evmWallet);
+ * const payload = await createSIWxPayload(completeInfo, evmWallet, response.url);
  * ```
  */
 export async function createSIWxPayload(
   serverExtension: CompleteSIWxInfo,
   signer: SIWxSigner,
+  requestUrl: string | URL,
 ): Promise<SIWxPayload> {
+  assertSIWxChallengeBoundToOrigin(serverExtension, requestUrl);
+
   const isSolana = serverExtension.chainId.startsWith("solana:");
 
   // Get address and sign based on chain type

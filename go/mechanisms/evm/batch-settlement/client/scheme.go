@@ -123,6 +123,14 @@ func (c *BatchSettlementEvmScheme) Scheme() string {
 	return batchsettlement.SchemeBatched
 }
 
+func (c *BatchSettlementEvmScheme) FindDefaultAsset(asset string, network x402.Network) *x402.DefaultAsset {
+	info := evm.FindDefaultAsset(asset, string(network))
+	if info == nil {
+		return nil
+	}
+	return &x402.DefaultAsset{Asset: info.Asset, Decimals: info.Decimals, Symbol: info.Symbol}
+}
+
 // CreatePaymentPayload creates a batched payment payload.
 //
 // The client loads local session state, falls back to onchain recovery when
@@ -314,12 +322,31 @@ func (c *BatchSettlementEvmScheme) Refund(ctx context.Context, url string, optio
 	return RefundChannel(ctx, &refundContextAdapter{scheme: c}, url, options)
 }
 
+// ChannelSettleLocal is the client-owned input for applying a deposit or voucher settle.
+//
+// RequestAmount is the per-request maximum (PaymentRequirements.amount);
+// the voucher ceiling was chargedCumulativeAmount + requestAmount.
+// DepositAmount is payload.deposit.amount for this payment and is added to
+// previous local balance after settle. Omit it on voucher-only.
+type ChannelSettleLocal struct {
+	ChannelId     string
+	RequestAmount string
+	DepositAmount *string
+}
+
+// ChannelSettleServer is the untrusted settlement response fields used when
+// applying a deposit or voucher settle.
+type ChannelSettleServer struct {
+	ChargedAmount           *string
+	ChargedCumulativeAmount *string
+}
+
 // OnPaymentResponse implements x402.PaymentResponseHandler so the transport can
 // auto-sync local session state after every paid response.
 //
-// On a successful settle (HTTP 200 + PAYMENT-RESPONSE), folds the server-tracked
-// channel snapshot back into the local session so the next request signs a
-// voucher built from the right cumulative base.
+// On a successful settle, updates local channel state from previous state plus
+// capped chargedAmount and any client-signed deposit. Server channelState
+// fields are never copied. Failed settlements leave local state unchanged.
 //
 // On a corrective 402 (PAYMENT-REQUIRED carrying batch_settlement_cumulative_*
 // or signature recovery data), runs ProcessCorrectivePaymentRequired and reports
@@ -329,10 +356,67 @@ func (c *BatchSettlementEvmScheme) OnPaymentResponse(
 	prCtx x402.PaymentResponseContext,
 ) (x402.PaymentResponseResult, error) {
 	if prCtx.SettleResponse != nil {
-		if prCtx.SettleResponse.Extra != nil {
-			if err := c.ProcessSettleResponse(prCtx.SettleResponse.Extra); err != nil {
-				return x402.PaymentResponseResult{}, fmt.Errorf("process settle response: %w", err)
+		if !prCtx.SettleResponse.Success {
+			return x402.PaymentResponseResult{}, nil
+		}
+
+		config, err := c.BuildChannelConfig(prCtx.Requirements)
+		if err != nil {
+			return x402.PaymentResponseResult{}, err
+		}
+		channelId, err := batchsettlement.ComputeChannelId(config, prCtx.Requirements.Network)
+		if err != nil {
+			return x402.PaymentResponseResult{}, fmt.Errorf("compute channel id: %w", err)
+		}
+
+		payload := prCtx.PaymentPayload.Payload
+		if batchsettlement.IsRefundPayload(payload) {
+			var refundAmount *string
+			if amount, ok := payload["amount"].(string); ok {
+				refundAmount = &amount
 			}
+			if err := UpdateSessionAfterRefund(c.storage, strings.ToLower(channelId), refundAmount); err != nil {
+				return x402.PaymentResponseResult{}, fmt.Errorf("update channel after refund: %w", err)
+			}
+			return x402.PaymentResponseResult{}, nil
+		}
+
+		var chargedAmount *string
+		if extra := prCtx.SettleResponse.Extra; extra != nil {
+			if v, ok := extra["chargedAmount"]; ok {
+				s, isString := v.(string)
+				if !isString {
+					return x402.PaymentResponseResult{}, fmt.Errorf("invalid chargedAmount: not a non-negative integer")
+				}
+				chargedAmount = &s
+			}
+		}
+		var chargedCumulativeAmount *string
+		if extra := prCtx.SettleResponse.Extra; extra != nil {
+			if cs, ok := extra["channelState"].(map[string]interface{}); ok && cs != nil {
+				if v, ok := cs["chargedCumulativeAmount"].(string); ok {
+					chargedCumulativeAmount = &v
+				}
+			}
+		}
+		var depositAmount *string
+		if batchsettlement.IsDepositPayload(payload) {
+			if deposit, ok := payload["deposit"].(map[string]interface{}); ok {
+				if amount, ok := deposit["amount"].(string); ok {
+					depositAmount = &amount
+				}
+			}
+		}
+
+		if err := UpdateChannelFromSettle(c.storage, ChannelSettleServer{
+			ChargedAmount:           chargedAmount,
+			ChargedCumulativeAmount: chargedCumulativeAmount,
+		}, ChannelSettleLocal{
+			ChannelId:     channelId,
+			RequestAmount: prCtx.Requirements.Amount,
+			DepositAmount: depositAmount,
+		}); err != nil {
+			return x402.PaymentResponseResult{}, err
 		}
 		return x402.PaymentResponseResult{}, nil
 	}
@@ -352,46 +436,92 @@ func (c *BatchSettlementEvmScheme) OnPaymentResponse(
 	return x402.PaymentResponseResult{}, nil
 }
 
-// ProcessSettleResponse updates local session state from a settle response.
-// It merges present fields into the existing session.
-// Refund-specific reconciliation is handled at the refund call site via
-// UpdateSessionAfterRefund.
-func (c *BatchSettlementEvmScheme) ProcessSettleResponse(settle map[string]interface{}) error {
-	if settle == nil {
-		return nil
+// UpdateChannelFromSettle updates local channel state after a deposit or voucher settle.
+//
+// Next cumulative is previous local chargedCumulativeAmount plus
+// server.ChargedAmount (capped at local.RequestAmount). Next balance is
+// previous local balance plus local.DepositAmount when present;
+// voucher-only leaves balance unchanged. The write is skipped when extra
+// chargedCumulativeAmount is present and is not a non-negative integer equal
+// to that next cumulative. Server channelState fields are never copied.
+func UpdateChannelFromSettle(storage ClientChannelStorage, server ChannelSettleServer, local ChannelSettleLocal) error {
+	chargedAmount := big.NewInt(0)
+	if server.ChargedAmount != nil {
+		s := *server.ChargedAmount
+		if s == "" {
+			return fmt.Errorf("invalid chargedAmount: not a non-negative integer")
+		}
+		for i := 0; i < len(s); i++ {
+			if s[i] < '0' || s[i] > '9' {
+				return fmt.Errorf("invalid chargedAmount: not a non-negative integer")
+			}
+		}
+		chargedAmount.SetString(s, 10)
+	}
+	requestAmount, ok := new(big.Int).SetString(local.RequestAmount, 10)
+	if !ok {
+		return fmt.Errorf("invalid requestAmount")
+	}
+	if chargedAmount.Cmp(requestAmount) > 0 {
+		return fmt.Errorf("settle response chargedAmount exceeds PaymentRequirements.amount")
 	}
 
-	parsed, _ := batchsettlement.PaymentResponseExtraFromMap(settle)
-	if parsed == nil || parsed.ChannelState == nil {
-		return nil
-	}
-	cs := parsed.ChannelState
-	if cs.ChannelId == "" {
-		return nil
-	}
-	channelId, err := batchsettlement.NormalizeChannelId(cs.ChannelId)
-	if err != nil {
-		return err
-	}
-
-	prev, err := c.storage.Get(channelId)
+	previous, err := storage.Get(local.ChannelId)
 	if err != nil {
 		return fmt.Errorf("get channel session: %w", err)
 	}
+	var depositAmount *big.Int
+	if local.DepositAmount != nil {
+		d, ok := new(big.Int).SetString(*local.DepositAmount, 10)
+		if !ok {
+			return fmt.Errorf("invalid depositAmount")
+		}
+		depositAmount = d
+	}
+
+	if previous == nil && chargedAmount.Sign() == 0 && depositAmount == nil {
+		return nil
+	}
+
+	prevCharged := big.NewInt(0)
+	if previous != nil && previous.ChargedCumulativeAmount != "" {
+		if v, ok := new(big.Int).SetString(previous.ChargedCumulativeAmount, 10); ok {
+			prevCharged = v
+		}
+	}
+	nextChargedCumulative := new(big.Int).Add(prevCharged, chargedAmount)
+	if server.ChargedCumulativeAmount != nil {
+		s := *server.ChargedCumulativeAmount
+		valid := s != ""
+		for i := 0; valid && i < len(s); i++ {
+			if s[i] < '0' || s[i] > '9' {
+				valid = false
+			}
+		}
+		if !valid {
+			return nil
+		}
+		reported, _ := new(big.Int).SetString(s, 10)
+		if reported.Cmp(nextChargedCumulative) != 0 {
+			return nil
+		}
+	}
+
 	next := &BatchSettlementClientContext{}
-	if prev != nil {
-		*next = *prev
+	if previous != nil {
+		*next = *previous
 	}
-	if cs.ChargedCumulativeAmount != "" {
-		next.ChargedCumulativeAmount = cs.ChargedCumulativeAmount
+	next.ChargedCumulativeAmount = nextChargedCumulative.String()
+	if depositAmount != nil {
+		prevBalance := big.NewInt(0)
+		if previous != nil && previous.Balance != "" {
+			if v, ok := new(big.Int).SetString(previous.Balance, 10); ok {
+				prevBalance = v
+			}
+		}
+		next.Balance = new(big.Int).Add(prevBalance, depositAmount).String()
 	}
-	if cs.Balance != "" {
-		next.Balance = cs.Balance
-	}
-	if cs.TotalClaimed != "" {
-		next.TotalClaimed = cs.TotalClaimed
-	}
-	return c.storage.Set(channelId, next)
+	return storage.Set(local.ChannelId, next)
 }
 
 // HasSession checks if a session exists for the given channel ID.

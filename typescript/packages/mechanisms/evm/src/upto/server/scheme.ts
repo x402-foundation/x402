@@ -1,14 +1,16 @@
 import {
   AssetAmount,
   Network,
+  PaymentFlowConfig,
   PaymentRequirements,
   Price,
   SchemeNetworkServer,
   MoneyParser,
 } from "@x402/core/types";
-import { convertToTokenAmount, numberToDecimalString, parseMoneyString } from "@x402/core/utils";
+import { convertToTokenAmount, parseMoney } from "@x402/core/utils";
 import { getAddress } from "viem";
-import { getDefaultAsset } from "../../shared/defaultAssets";
+import { findDefaultAsset, getDefaultAsset } from "../../defaultAssets";
+import type { AssetTransferMethod } from "../../types";
 
 /**
  * EVM server implementation for the Upto payment scheme.
@@ -16,6 +18,10 @@ import { getDefaultAsset } from "../../shared/defaultAssets";
  */
 export class UptoEvmScheme implements SchemeNetworkServer {
   readonly scheme = "upto";
+  readonly defaultAssetTransferMethod: AssetTransferMethod = "permit2";
+  readonly paymentFlows = {
+    permit2: { supported: ["authorization"], default: "authorization" },
+  } as const satisfies Record<"permit2", PaymentFlowConfig>;
   private moneyParsers: MoneyParser[] = [];
 
   /**
@@ -30,19 +36,14 @@ export class UptoEvmScheme implements SchemeNetworkServer {
   }
 
   /**
-   * Returns the decimal precision of the default stablecoin for the given network.
-   * Implements the optional AssetDecimalsProvider interface used by resolveSettlementOverrideAmount.
+   * Decimals for a known default asset, or undefined.
    *
-   * @param _asset - The asset symbol (unused; defaults to the network's default stablecoin)
-   * @param network - The network to look up the default asset for
-   * @returns The number of decimal places for the asset
+   * @param asset - Asset address or symbol
+   * @param network - Target network
+   * @returns Decimals when the asset is a known default; otherwise undefined
    */
-  getAssetDecimals(_asset: string, network: Network): number {
-    try {
-      return getDefaultAsset(network).decimals;
-    } catch {
-      return 6;
-    }
+  getAssetDecimals(asset: string, network: Network): number | undefined {
+    return findDefaultAsset(asset, network)?.decimals;
   }
 
   /**
@@ -64,7 +65,7 @@ export class UptoEvmScheme implements SchemeNetworkServer {
       };
     }
 
-    const amount = this.parseMoneyToDecimal(price);
+    const { amount, symbol } = parseMoney(price);
 
     for (const parser of this.moneyParsers) {
       const result = await parser(amount, network);
@@ -73,7 +74,7 @@ export class UptoEvmScheme implements SchemeNetworkServer {
       }
     }
 
-    return this.defaultMoneyConversion(amount, network);
+    return this.defaultMoneyConversion(amount, network, symbol);
   }
 
   /**
@@ -112,33 +113,20 @@ export class UptoEvmScheme implements SchemeNetworkServer {
   }
 
   /**
-   * Parses a money string or number into a decimal value.
+   * Converts a decimal dollar amount to an AssetAmount using the default token for the network.
    *
-   * @param money - The money value to parse
-   * @returns The parsed decimal amount
-   */
-  private parseMoneyToDecimal(money: string | number): number {
-    if (typeof money === "number") {
-      return money;
-    }
-
-    return parseMoneyString(money);
-  }
-
-  /**
-   * Converts a numeric dollar amount to an AssetAmount using the default token for the network.
-   *
-   * @param amount - The dollar amount as a number
+   * @param amount - The decimal amount as a string
    * @param network - The target network
+   * @param symbol - Optional ticker from a suffixed price
    * @returns The converted asset amount with token metadata
    */
-  private defaultMoneyConversion(amount: number, network: Network): AssetAmount {
-    const assetInfo = getDefaultAsset(network);
-    const tokenAmount = convertToTokenAmount(numberToDecimalString(amount), assetInfo.decimals);
+  private defaultMoneyConversion(amount: string, network: Network, symbol?: string): AssetAmount {
+    const assetInfo = getDefaultAsset(network, symbol);
+    const tokenAmount = convertToTokenAmount(amount, assetInfo.decimals);
 
     return {
       amount: tokenAmount,
-      asset: assetInfo.address,
+      asset: assetInfo.asset,
       extra: {
         name: assetInfo.name,
         version: assetInfo.version,

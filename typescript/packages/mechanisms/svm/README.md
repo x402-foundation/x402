@@ -1,6 +1,10 @@
 # `@x402/svm` [![npm version](https://img.shields.io/npm/v/%40x402%2Fsvm.svg)](https://www.npmjs.com/package/@x402/svm)
 
-SVM (Solana Virtual Machine) implementation of the x402 payment protocol using the **Exact** payment scheme with SPL Token transfers.
+SVM (Solana Virtual Machine) implementation of the x402 payment protocol.
+
+**Payment schemes:**
+- **Exact** — fixed-price SPL Token transfers (client pays the advertised amount)
+- **Upto** — usage-based billing via [payment-channels](https://github.com/solana-foundation/payment-channels) (client authorizes a max; server settles actual usage)
 
 ## Installation
 
@@ -23,22 +27,32 @@ This package provides three main components for handling x402 payments on Solana
 **V2 Protocol Support** - Modern x402 protocol with CAIP-2 network identifiers
 
 **Client:**
-- `ExactSvmClient` - V2 client implementation using SPL Token
+- `ExactSvmScheme` - V2 exact client using SPL Token
 - `toClientSvmSigner(keypair)` - Converts Solana keypairs to x402 signers
 - `ClientSvmSigner` - TypeScript type for client signers
 - `ClientSvmConfig` - Optional RPC configuration
 
 **Facilitator:**
-- `ExactSvmFacilitator` - V2 facilitator for payment verification and settlement
+- `ExactSvmScheme` - V2 exact facilitator for payment verification and settlement
 - `toFacilitatorSvmSigner(keypair)` - Converts Solana keypairs to facilitator signers
-- `FacilitatorSvmSigner` - TypeScript type for facilitator signers
+- `FacilitatorSvmSigner` - TypeScript type for facilitator signers (`getSigner` optional; required by upto)
 - `FacilitatorRpcClient` - RPC client interface
 
 **Service:**
-- `ExactEvmServer` - V2 service for building payment requirements
+- `ExactSvmScheme` - V2 exact service for building payment requirements
 
 **Utilities:**
 - Network validation, asset info lookup, amount formatting, transaction encoding
+
+### Upto Scheme (`@x402/svm/upto/*`)
+
+Usage-based payments: authorize a ceiling, settle actual usage. See [Upto SVM Scheme](./src/upto/README.md).
+
+| Role | Import |
+|------|--------|
+| Client | `@x402/svm/upto/client` → `UptoSvmScheme` |
+| Server | `@x402/svm/upto/server` → `UptoSvmScheme` (requires `receiverAuthorizerSigner`) |
+| Facilitator | `@x402/svm/upto/facilitator` → `UptoSvmScheme` (requires `getSigner` on the facilitator signer) |
 
 ### V1 Package (`@x402/svm/v1`)
 
@@ -120,27 +134,30 @@ const paidFetch = wrapFetchWithPayment(fetch, client);
 
 ```typescript
 import { x402Client } from "@x402/core/client";
-import { ExactSvmClient } from "@x402/svm";
-import { ExactSvmClientV1 } from "@x402/svm/v1";
+import { ExactSvmScheme } from "@x402/svm/exact/client";
+import { UptoSvmScheme } from "@x402/svm/upto/client";
+import { ExactSvmSchemeV1 } from "@x402/svm/v1";
 
 const client = new x402Client()
-  .register("solana:*", new ExactSvmClient(signer))
-  .registerSchemeV1("solana-devnet", new ExactSvmClientV1(signer))
-  .registerSchemeV1("solana", new ExactSvmClientV1(signer));
+  .register("solana:*", new ExactSvmScheme(signer)) // fixed-price
+  .register("solana:*", new UptoSvmScheme(signer))  // usage-based
+  .registerSchemeV1("solana-devnet", new ExactSvmSchemeV1(signer))
+  .registerSchemeV1("solana", new ExactSvmSchemeV1(signer));
 ```
 
 ### 3. Using Config (Flexible)
 
 ```typescript
 import { x402Client } from "@x402/core/client";
-import { ExactSvmClient } from "@x402/svm";
+import { ExactSvmScheme } from "@x402/svm/exact/client";
+import { ExactSvmSchemeV1 } from "@x402/svm/v1";
 
 const client = x402Client.fromConfig({
   schemes: [
-    { network: "solana:*", client: new ExactSvmClient(signer) },
+    { network: "solana:*", client: new ExactSvmScheme(signer) },
     { 
       network: "solana-devnet", 
-      client: new ExactSvmClientV1(signer), 
+      client: new ExactSvmSchemeV1(signer), 
       x402Version: 1 
     }
   ]
@@ -169,10 +186,12 @@ Supports SPL Token and Token-2022 program tokens:
 
 ## Transaction Structure
 
-The exact payment scheme uses SPL Token `TransferChecked` instruction with:
+**Exact** uses SPL Token `TransferChecked` with:
 - Compute budget optimizations (unit limit + price)
 - Source/destination ATAs (Associated Token Accounts)
 - Partial signing (client signs, facilitator completes and submits)
+
+**Upto** uses the payment-channels program (`open` → escrow deposit, then `settle_and_seal` + `distribute` with a server voucher for the actual amount). Details in [Upto SVM Scheme](./src/upto/README.md).
 
 ## Duplicate Settlement Protection
 

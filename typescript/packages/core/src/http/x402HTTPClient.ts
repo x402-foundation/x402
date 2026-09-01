@@ -12,6 +12,7 @@ import { x402Client, type PaymentResponseContext } from "../client/x402Client";
  */
 export interface PaymentRequiredContext {
   paymentRequired: PaymentRequired;
+  requestUrl: string;
 }
 
 /**
@@ -67,13 +68,15 @@ export class x402HTTPClient {
    * Run hooks and return headers if any hook provides them.
    *
    * @param paymentRequired - The payment required response from the server
+   * @param requestUrl - The URL of the request that received the payment required response
    * @returns Headers to use for retry, or null to proceed to payment
    */
   async handlePaymentRequired(
     paymentRequired: PaymentRequired,
+    requestUrl: string,
   ): Promise<Record<string, string> | null> {
     for (const hook of this.getPaymentRequiredHooks(paymentRequired)) {
-      const result = await hook({ paymentRequired });
+      const result = await hook({ paymentRequired, requestUrl });
       if (result?.headers) {
         return result.headers;
       }

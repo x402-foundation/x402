@@ -84,6 +84,7 @@ ERR_ERC20_APPROVAL_WRONG_SPENDER = "invalid_batch_settlement_evm_erc20_approval_
 ERR_ERC20_APPROVAL_BROADCAST_FAILED = "invalid_batch_settlement_evm_erc20_approval_broadcast_failed"
 
 ERR_RPC_READ_FAILED = "invalid_batch_settlement_evm_rpc_read_failed"
+# Reserved wire value; do not reassign.
 ERR_WAIT_FOR_RECEIPT_FAILED = "invalid_batch_settlement_evm_wait_for_receipt_failed"
 ERR_TRANSACTION_REVERTED = "invalid_batch_settlement_evm_transaction_reverted"
 

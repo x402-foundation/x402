@@ -1,13 +1,26 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { x402Client } from "@x402/core/client";
+import { Network, PaymentRequirements } from "@x402/core/types";
 import { ExactEvmScheme } from "../../../src/exact/client/scheme";
+import { registerExactEvmScheme } from "../../../src/exact/client/register";
+import { NETWORKS } from "../../../src/v1";
 import {
   createPermit2ApprovalTx,
   getPermit2AllowanceReadParams,
 } from "../../../src/exact/client/permit2";
 import type { ClientEvmSigner } from "../../../src/signer";
-import { PaymentRequirements } from "@x402/core/types";
 import { PERMIT2_ADDRESS, x402ExactPermit2ProxyAddress } from "../../../src/constants";
 import { isPermit2Payload, isEIP3009Payload } from "../../../src/types";
+
+type ClientInternals = {
+  registeredClientSchemes: Map<number, Map<string, Map<string, unknown>>>;
+};
+
+function getRegisteredNetworks(client: x402Client, version: number): string[] {
+  const internals = client as unknown as ClientInternals;
+  const byNetwork = internals.registeredClientSchemes.get(version);
+  return byNetwork ? [...byNetwork.keys()] : [];
+}
 
 describe("ExactEvmScheme (Client)", () => {
   let client: ExactEvmScheme;
@@ -882,5 +895,38 @@ describe("Permit2 Approval Flow", () => {
       expect(result.extensions!.erc20ApprovalGasSponsoring).toBeDefined();
       expect(result.extensions!.eip2612GasSponsoring).toBeUndefined();
     });
+  });
+});
+
+describe("registerExactEvmScheme", () => {
+  const mockSigner: ClientEvmSigner = {
+    address: "0x1234567890123456789012345678901234567890",
+    signTypedData: vi.fn(),
+  };
+
+  it("scopes v1 registration to networks matching config.networks", () => {
+    const client = new x402Client();
+    registerExactEvmScheme(client, { signer: mockSigner, networks: ["eip155:8453"] });
+
+    const v1Networks = getRegisteredNetworks(client, 1);
+    expect(v1Networks).toContain("base");
+    expect(v1Networks).not.toContain("polygon");
+    expect(getRegisteredNetworks(client, 2)).toEqual(["eip155:8453"]);
+  });
+
+  it("registers all v1 networks when config.networks uses a wildcard", () => {
+    const client = new x402Client();
+    registerExactEvmScheme(client, { signer: mockSigner, networks: ["eip155:*" as Network] });
+
+    expect(getRegisteredNetworks(client, 1).sort()).toEqual([...NETWORKS].sort());
+    expect(getRegisteredNetworks(client, 2)).toEqual(["eip155:*"]);
+  });
+
+  it("registers wildcard v2 and all v1 networks when networks is omitted", () => {
+    const client = new x402Client();
+    registerExactEvmScheme(client, { signer: mockSigner });
+
+    expect(getRegisteredNetworks(client, 2)).toEqual(["eip155:*"]);
+    expect(getRegisteredNetworks(client, 1).sort()).toEqual([...NETWORKS].sort());
   });
 });

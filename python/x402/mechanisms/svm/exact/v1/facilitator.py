@@ -406,6 +406,7 @@ class ExactSvmSchemeV1:
             )
 
         except Exception as e:
+            self._settlement_cache.delete(tx_key)
             return SettleResponse(
                 success=False,
                 error_reason=ERR_TRANSACTION_FAILED,

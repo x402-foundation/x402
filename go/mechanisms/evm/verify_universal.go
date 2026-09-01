@@ -62,6 +62,7 @@ func VerifyUniversalSignature(
 	}
 
 	isDeployed := len(code) > 0
+	sigData.CodeDeployed = isDeployed
 	zeroFactory := [20]byte{}
 
 	// Step 5: Handle undeployed address

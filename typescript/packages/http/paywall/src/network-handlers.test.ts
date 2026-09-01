@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_STABLECOINS } from "@x402/evm";
+import { DEFAULT_ASSETS } from "@x402/evm";
 import { evmPaywall, getDefaultTokenDecimals } from "./evm";
 import { NETWORK_DECIMALS } from "./evm/gen/decimals";
 import { svmPaywall } from "./svm";
@@ -61,7 +61,7 @@ describe("Network Handlers", () => {
     });
 
     it("renders 1e15-atomic Mezo mUSD as 0.001 (18-decimal end-to-end)", () => {
-      // Mezo Testnet mUSD is 18-decimal in DEFAULT_STABLECOINS.
+      // Mezo Testnet mUSD is 18-decimal in DEFAULT_ASSETS.
       // 1e15 atomic = 0.001 mUSD. A regression to the old `parseFloat / 1e6`
       // path would render this as 1_000_000_000 (the order-of-magnitude bug
       // this PR fixes).
@@ -105,7 +105,7 @@ describe("Network Handlers", () => {
     });
 
     it("renders 1e6-atomic Base USDC as 1 (6-decimal end-to-end)", () => {
-      // Base mainnet USDC is 6-decimal in DEFAULT_STABLECOINS.
+      // Base mainnet USDC is 6-decimal in DEFAULT_ASSETS.
       // 1e6 atomic = 1.00 USDC. Asserts the same dispatch behaves correctly
       // for the canonical 6-decimal case alongside the 18-decimal case above.
       const req: PaymentRequirements = {
@@ -127,7 +127,7 @@ describe("Network Handlers", () => {
 
   describe("getDefaultTokenDecimals", () => {
     it("reads non-default decimals from the @x402/evm registry", () => {
-      // Mezo Testnet mUSD is 18-decimal in DEFAULT_STABLECOINS
+      // Mezo Testnet mUSD is 18-decimal in DEFAULT_ASSETS
       const req: PaymentRequirements = {
         ...evmRequirement,
         network: "eip155:31611",
@@ -138,12 +138,12 @@ describe("Network Handlers", () => {
 
     it("reads the registry value (not the fallback) for a known 6-decimal chain", () => {
       // Base mainnet USDC is in the registry at 6 decimals. Asserting
-      // alongside DEFAULT_STABLECOINS catches the case where the registry is
+      // alongside DEFAULT_ASSETS catches the case where the registry is
       // empty: the function would still return 6 via fallback, but the second
       // assertion would fail.
       const req: PaymentRequirements = { ...evmRequirement, network: "eip155:8453" };
       expect(getDefaultTokenDecimals(req)).toBe(6);
-      expect(DEFAULT_STABLECOINS["eip155:8453"]?.decimals).toBe(6);
+      expect(DEFAULT_ASSETS["eip155:8453"]?.[0]?.decimals).toBe(6);
     });
 
     it("falls back to 6 (USDC default) for networks not in the registry", () => {
@@ -154,23 +154,24 @@ describe("Network Handlers", () => {
       expect(getDefaultTokenDecimals(req)).toBe(6);
     });
 
-    it("NETWORK_DECIMALS overrides stay in sync with DEFAULT_STABLECOINS", () => {
+    it("NETWORK_DECIMALS overrides stay in sync with DEFAULT_ASSETS", () => {
       // The generated `src/evm/gen/decimals.ts` file is emitted by
-      // `src/evm/build.ts` from `@x402/evm`'s `DEFAULT_STABLECOINS`. Only
+      // `src/evm/build.ts` from `@x402/evm`'s `DEFAULT_ASSETS`. Only
       // networks whose decimals !== 6 are listed; others rely on the fallback
       // in `getDefaultTokenDecimals`. This pins the drift invariant in-process
       // (complements the CI regen-diff guard in #2054).
       const fallbackDecimals = 6;
-      for (const [network, info] of Object.entries(DEFAULT_STABLECOINS)) {
+      for (const [network, assets] of Object.entries(DEFAULT_ASSETS)) {
+        const info = assets[0];
         expect(
           NETWORK_DECIMALS[network] ?? fallbackDecimals,
           `effective decimals drift on ${network}`,
         ).toBe(info.decimals);
       }
-      const stablecoinKeys = new Set(Object.keys(DEFAULT_STABLECOINS));
+      const stablecoinKeys = new Set(Object.keys(DEFAULT_ASSETS));
       for (const network of Object.keys(NETWORK_DECIMALS)) {
         expect(stablecoinKeys.has(network)).toBe(true);
-        const info = DEFAULT_STABLECOINS[network];
+        const info = DEFAULT_ASSETS[network][0];
         expect(NETWORK_DECIMALS[network]).toBe(info!.decimals);
         expect(
           info!.decimals,

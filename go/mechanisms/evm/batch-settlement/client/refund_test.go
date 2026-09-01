@@ -132,9 +132,11 @@ func TestDecodePaymentResponseHeader_Errors(t *testing.T) {
 
 func TestUpdateSessionAfterRefund_FullRefundDeletes(t *testing.T) {
 	storage := NewInMemoryClientChannelStorage()
-	_ = storage.Set(testChannelID, &BatchSettlementClientContext{Balance: "100"})
-	err := UpdateSessionAfterRefund(storage, testChannelID, map[string]interface{}{"balance": "0"})
-	if err != nil {
+	_ = storage.Set(testChannelID, &BatchSettlementClientContext{
+		ChargedCumulativeAmount: "1000",
+		Balance:                 "5000",
+	})
+	if err := UpdateSessionAfterRefund(storage, testChannelID, nil); err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	if got, _ := storage.Get(testChannelID); got != nil {
@@ -142,62 +144,32 @@ func TestUpdateSessionAfterRefund_FullRefundDeletes(t *testing.T) {
 	}
 }
 
-func TestUpdateSessionAfterRefund_MissingBalanceDeletes(t *testing.T) {
-	storage := NewInMemoryClientChannelStorage()
-	_ = storage.Set(testChannelID, &BatchSettlementClientContext{Balance: "100"})
-	err := UpdateSessionAfterRefund(storage, testChannelID, map[string]interface{}{})
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if got, _ := storage.Get(testChannelID); got != nil {
-		t.Fatalf("session not deleted: %+v", got)
-	}
-}
-
-func TestUpdateSessionAfterRefund_PartialRefundUpdates(t *testing.T) {
+func TestUpdateSessionAfterRefund_SubtractsPartialFromLocalBalance(t *testing.T) {
 	storage := NewInMemoryClientChannelStorage()
 	_ = storage.Set(testChannelID, &BatchSettlementClientContext{
-		Balance:                 "1000",
-		ChargedCumulativeAmount: "100",
-		TotalClaimed:            "100",
-		Signature:               "0xsig",
+		ChargedCumulativeAmount: "1000",
+		Balance:                 "10000",
 	})
-	err := UpdateSessionAfterRefund(storage, testChannelID, map[string]interface{}{
-		"channelState": map[string]interface{}{
-			"balance":                 "500",
-			"chargedCumulativeAmount": "200",
-			"totalClaimed":            "150",
-		},
-	})
-	if err != nil {
+	if err := UpdateSessionAfterRefund(storage, testChannelID, strPtr("2000")); err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	got, _ := storage.Get(testChannelID)
-	if got == nil {
-		t.Fatal("session deleted but should be retained")
-	}
-	if got.Balance != "500" || got.ChargedCumulativeAmount != "200" || got.TotalClaimed != "150" {
-		t.Fatalf("not updated: %+v", got)
-	}
-	if got.Signature != "0xsig" {
-		t.Fatalf("signature lost: %q", got.Signature)
+	if got == nil || got.Balance != "8000" || got.ChargedCumulativeAmount != "1000" {
+		t.Fatalf("session = %+v", got)
 	}
 }
 
-func TestUpdateSessionAfterRefund_NoPriorSessionPartial(t *testing.T) {
+func TestUpdateSessionAfterRefund_DeletesWhenPartialCappedToRefundable(t *testing.T) {
 	storage := NewInMemoryClientChannelStorage()
-	err := UpdateSessionAfterRefund(storage, testChannelID, map[string]interface{}{
-		"channelState": map[string]interface{}{
-			"balance":                 "500",
-			"chargedCumulativeAmount": "10",
-		},
+	_ = storage.Set(testChannelID, &BatchSettlementClientContext{
+		ChargedCumulativeAmount: "9000",
+		Balance:                 "10000",
 	})
-	if err != nil {
+	if err := UpdateSessionAfterRefund(storage, testChannelID, strPtr("2000")); err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	got, _ := storage.Get(testChannelID)
-	if got == nil || got.Balance != "500" {
-		t.Fatalf("session not seeded: %+v", got)
+	if got, _ := storage.Get(testChannelID); got != nil {
+		t.Fatalf("session not deleted: %+v", got)
 	}
 }
 
@@ -207,11 +179,7 @@ func TestUpdateSessionAfterRefund_GetError(t *testing.T) {
 		storage: NewInMemoryClientChannelStorage(),
 		getErr:  storageErr,
 	}
-	err := UpdateSessionAfterRefund(storage, testChannelID, map[string]interface{}{
-		"channelState": map[string]interface{}{
-			"balance": "500",
-		},
-	})
+	err := UpdateSessionAfterRefund(storage, testChannelID, strPtr("2000"))
 	if !errors.Is(err, storageErr) {
 		t.Fatalf("expected storage error, got %v", err)
 	}
@@ -335,7 +303,6 @@ func (f *fakeRefundContext) RecoverSession(_ context.Context, _ types.PaymentReq
 	}
 	return f.recovered, nil
 }
-func (f *fakeRefundContext) ProcessSettleResponse(_ map[string]interface{}) error { return nil }
 func (f *fakeRefundContext) ProcessCorrectivePaymentRequired(_ context.Context, _ string, _ []types.PaymentRequirements) (bool, error) {
 	return false, nil
 }
@@ -710,20 +677,20 @@ func TestExecuteRefund_402MissingHeadersErrors(t *testing.T) {
 
 func TestExecuteRefund_SessionUpdateErrors(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		balance   string
-		configure func(*failingClientChannelStorage, error)
+		name         string
+		refundAmount string
+		configure    func(*failingClientChannelStorage, error)
 	}{
 		{
-			name:    "partial refund set",
-			balance: "500",
+			name:         "partial refund set",
+			refundAmount: "2000",
 			configure: func(storage *failingClientChannelStorage, err error) {
 				storage.setErr = err
 			},
 		},
 		{
-			name:    "full refund delete",
-			balance: "0",
+			name:         "full refund delete",
+			refundAmount: "",
 			configure: func(storage *failingClientChannelStorage, err error) {
 				storage.deleteErr = err
 			},
@@ -736,15 +703,7 @@ func TestExecuteRefund_SessionUpdateErrors(t *testing.T) {
 			tc.configure(storage, storageErr)
 			fctx.storage = storage
 
-			settle := x402.SettleResponse{
-				Success: true,
-				Extra: map[string]interface{}{
-					"channelState": map[string]interface{}{
-						"channelId": testChannelID,
-						"balance":   tc.balance,
-					},
-				},
-			}
+			settle := x402.SettleResponse{Success: true}
 			settleBytes, err := json.Marshal(settle)
 			if err != nil {
 				t.Fatalf("marshal settle response: %v", err)
@@ -758,7 +717,7 @@ func TestExecuteRefund_SessionUpdateErrors(t *testing.T) {
 
 			got, err := executeRefund(context.Background(), fctx, srv.URL,
 				types.PaymentRequirements{Scheme: batchsettlement.SchemeBatched, Network: "eip155:8453"},
-				"", http.DefaultClient)
+				tc.refundAmount, http.DefaultClient)
 			if !errors.Is(err, storageErr) {
 				t.Fatalf("expected storage error, got %v", err)
 			}

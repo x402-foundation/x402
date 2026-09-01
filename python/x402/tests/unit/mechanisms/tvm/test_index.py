@@ -42,7 +42,6 @@ from x402.mechanisms.tvm import (
     get_network_global_id,
     normalize_address,
     parse_amount,
-    parse_money_to_decimal,
 )
 from x402.mechanisms.tvm.exact import (
     ExactTvmClientScheme,
@@ -117,10 +116,6 @@ class TestAmountUtilities:
     def test_should_parse_amount_using_decimals(self):
         assert parse_amount("0.001", 6) == 1000
         assert parse_amount("1", 6) == 1000000
-
-    def test_should_parse_money_strings_without_currency_noise(self):
-        assert parse_money_to_decimal("$0.10") == 0.1
-        assert parse_money_to_decimal("2.5 USDT") == 2.5
 
     def test_should_normalize_raw_addresses(self):
         raw = "0:" + "1" * 64

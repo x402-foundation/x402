@@ -21,6 +21,8 @@ from .schemas import (
     ResourceConfig,
     ResourceInfo,
     ResourceVerifyResponse,
+    SettleError,
+    SettlePhase,
     SettleResponse,
     VerifiedPaymentCancelOptions,
 )
@@ -41,6 +43,8 @@ from .server_base import (
     SyncOnSettleFailureHook,
     SyncOnVerifiedPaymentCanceledHook,
     SyncOnVerifyFailureHook,
+    settle_with_pending_retry,
+    settle_with_pending_retry_async,
     x402ResourceServerBase,
 )
 
@@ -249,6 +253,7 @@ class x402ResourceServer(x402ResourceServerBase):
         *,
         declared_extensions: dict[str, Any] | None = None,
         transport_context: Any = None,
+        phase: SettlePhase = "after-handler",
     ) -> SettleResponse:
         """Settle a payment via facilitator.
 
@@ -259,6 +264,7 @@ class x402ResourceServer(x402ResourceServerBase):
             requirements_bytes: Raw requirements bytes (escape hatch).
             declared_extensions: Optional per-extension declarations for the request.
             transport_context: Optional transport-specific context (e.g. HTTP, MCP).
+            phase: Which settle invocation this is (defaults to ``after-handler``).
 
         Returns:
             SettleResponse with success=True or success=False.
@@ -275,18 +281,19 @@ class x402ResourceServer(x402ResourceServerBase):
             requirements_bytes,
             declared_extensions,
             transport_context,
+            phase,
         )
         result = None
         try:
             while True:
-                phase, target, ctx = gen.send(result)
-                if phase == "call_facilitator":
+                phase_cmd, target, ctx = gen.send(result)
+                if phase_cmd == "call_facilitator":
                     # target is client, ctx is (method_name, payload, requirements)
                     method_name, p, r = ctx
                     if method_name == "verify":
                         result = await target.verify(p, r)
                     else:
-                        result = await target.settle(p, r)
+                        result = await settle_with_pending_retry_async(target, p, r)
                 else:
                     result = await self._execute_hook(target, ctx)
         except StopIteration as e:
@@ -298,6 +305,7 @@ class x402ResourceServer(x402ResourceServerBase):
                 requirements_bytes,
                 declared_extensions,
                 transport_context,
+                phase,
             )
 
     async def _dispatch_verified_payment_canceled(
@@ -307,13 +315,16 @@ class x402ResourceServer(x402ResourceServerBase):
         declared_extensions: dict[str, Any] | None,
         options: VerifiedPaymentCancelOptions,
         transport_context: Any,
-    ) -> None:
+        settled_phases: tuple[SettlePhase, ...] | list[SettlePhase] | None = None,
+    ) -> SettleResponse | None:
+        resolved_phases = tuple(settled_phases or ())
         context = self._build_verified_payment_canceled_context(
             payload,
             requirements,
             declared_extensions,
             options,
             transport_context,
+            resolved_phases,
         )
         for label, hook in self._verified_payment_canceled_hooks(
             declared_extensions,
@@ -327,6 +338,38 @@ class x402ResourceServer(x402ResourceServerBase):
                     label,
                     error,
                 )
+
+        scheme = self._find_registered_scheme(requirements.scheme, requirements.network)
+        settle_on_cancel = getattr(scheme, "settle_on_cancel", None) if scheme else None
+        if settle_on_cancel is None or "before-handler" not in resolved_phases:
+            return None
+
+        label = f'scheme "{requirements.scheme}" settleOnCancel'
+        try:
+            cancel_requirements = settle_on_cancel(context)
+            if asyncio.iscoroutine(cancel_requirements):
+                cancel_requirements = await cancel_requirements
+            if not cancel_requirements:
+                return None
+            return await self.settle_payment(
+                payload,
+                cancel_requirements,
+                declared_extensions=declared_extensions,
+                transport_context=transport_context,
+                phase="cancel",
+            )
+        except Exception as error:
+            self._warn_resource_server_hook_failure("settleOnCancel", label, error)
+            error_message = str(error)
+            error_reason = error.error_reason if isinstance(error, SettleError) else error_message
+            error_detail = error.error_message if isinstance(error, SettleError) else None
+            return SettleResponse(
+                success=False,
+                error_reason=error_reason or error_message,
+                error_message=error_detail,
+                transaction="",
+                network=requirements.network,
+            )
 
     async def _execute_hook(self, hook: Any, context: Any) -> Any:
         """Execute hook, auto-detecting sync/async."""
@@ -530,6 +573,7 @@ class x402ResourceServerSync(x402ResourceServerBase):
         *,
         declared_extensions: dict[str, Any] | None = None,
         transport_context: Any = None,
+        phase: SettlePhase = "after-handler",
     ) -> SettleResponse:
         """Settle a payment via facilitator.
 
@@ -540,6 +584,7 @@ class x402ResourceServerSync(x402ResourceServerBase):
             requirements_bytes: Raw requirements bytes (escape hatch).
             declared_extensions: Optional per-extension declarations for the request.
             transport_context: Optional transport-specific context (e.g. HTTP, MCP).
+            phase: Which settle invocation this is (defaults to ``after-handler``).
 
         Returns:
             SettleResponse with success=True or success=False.
@@ -556,18 +601,19 @@ class x402ResourceServerSync(x402ResourceServerBase):
             requirements_bytes,
             declared_extensions,
             transport_context,
+            phase,
         )
         result = None
         try:
             while True:
-                phase, target, ctx = gen.send(result)
-                if phase == "call_facilitator":
+                phase_cmd, target, ctx = gen.send(result)
+                if phase_cmd == "call_facilitator":
                     # target is client, ctx is (method_name, payload, requirements)
                     method_name, p, r = ctx
                     if method_name == "verify":
                         result = target.verify(p, r)
                     else:
-                        result = target.settle(p, r)
+                        result = settle_with_pending_retry(target, p, r)
                 else:
                     result = self._execute_hook_sync(target, ctx)
         except StopIteration as e:
@@ -580,6 +626,7 @@ class x402ResourceServerSync(x402ResourceServerBase):
                 declared_extensions,
                 transport_context,
                 self._run_enrich_hook_sync,
+                phase,
             )
 
     def _dispatch_verified_payment_canceled_sync(
@@ -589,13 +636,16 @@ class x402ResourceServerSync(x402ResourceServerBase):
         declared_extensions: dict[str, Any] | None,
         options: VerifiedPaymentCancelOptions,
         transport_context: Any,
-    ) -> None:
+        settled_phases: tuple[SettlePhase, ...] | list[SettlePhase] | None = None,
+    ) -> SettleResponse | None:
+        resolved_phases = tuple(settled_phases or ())
         context = self._build_verified_payment_canceled_context(
             payload,
             requirements,
             declared_extensions,
             options,
             transport_context,
+            resolved_phases,
         )
         for label, hook in self._verified_payment_canceled_hooks(
             declared_extensions,
@@ -609,6 +659,42 @@ class x402ResourceServerSync(x402ResourceServerBase):
                     label,
                     error,
                 )
+
+        scheme = self._find_registered_scheme(requirements.scheme, requirements.network)
+        settle_on_cancel = getattr(scheme, "settle_on_cancel", None) if scheme else None
+        if settle_on_cancel is None or "before-handler" not in resolved_phases:
+            return None
+
+        label = f'scheme "{requirements.scheme}" settleOnCancel'
+        try:
+            cancel_requirements = settle_on_cancel(context)
+            if asyncio.iscoroutine(cancel_requirements):
+                cancel_requirements.close()
+                raise TypeError(
+                    "Async settle_on_cancel is not supported in x402ResourceServerSync. "
+                    "Use x402ResourceServer for async hook support."
+                )
+            if not cancel_requirements:
+                return None
+            return self.settle_payment(
+                payload,
+                cancel_requirements,
+                declared_extensions=declared_extensions,
+                transport_context=transport_context,
+                phase="cancel",
+            )
+        except Exception as error:
+            self._warn_resource_server_hook_failure("settleOnCancel", label, error)
+            error_message = str(error)
+            error_reason = error.error_reason if isinstance(error, SettleError) else error_message
+            error_detail = error.error_message if isinstance(error, SettleError) else None
+            return SettleResponse(
+                success=False,
+                error_reason=error_reason or error_message,
+                error_message=error_detail,
+                transaction="",
+                network=requirements.network,
+            )
 
     def _execute_hook_sync(self, hook: Any, context: Any) -> Any:
         """Execute hook synchronously. Raises if async hook detected."""

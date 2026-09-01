@@ -1,6 +1,7 @@
 import {
   AssetAmount,
   Network,
+  PaymentFlowConfig,
   PaymentPayload,
   PaymentRequirements,
   Price,
@@ -11,12 +12,12 @@ import {
 } from "@x402/core/types";
 import type { DeepReadonly } from "@x402/core/types";
 import type { SettleContext, SettleResultContext } from "@x402/core/server";
-import { convertToTokenAmount, numberToDecimalString, parseMoneyString } from "@x402/core/utils";
+import { convertToTokenAmount, parseMoney } from "@x402/core/utils";
 import type { FacilitatorClient } from "@x402/core/server";
 import { getAddress } from "viem";
 import { BatchSettlementChannelManager } from "./channelManager";
-import { getDefaultAsset } from "../../shared/defaultAssets";
-import type { AuthorizerSigner } from "../types";
+import { findDefaultAsset, getDefaultAsset } from "../../defaultAssets";
+import type { AuthorizerSigner, BatchSettlementAssetTransferMethod } from "../types";
 import { BATCH_SETTLEMENT_SCHEME, MIN_WITHDRAW_DELAY } from "../constants";
 import { InMemoryChannelStorage, ChannelStorage, type Channel } from "./storage";
 import {
@@ -54,6 +55,11 @@ export interface BatchSettlementRequestContext {
  */
 export class BatchSettlementEvmScheme implements SchemeNetworkServer {
   readonly scheme = BATCH_SETTLEMENT_SCHEME;
+  readonly defaultAssetTransferMethod: BatchSettlementAssetTransferMethod = "eip3009";
+  readonly paymentFlows = {
+    eip3009: { supported: ["authorization"], default: "authorization" },
+    permit2: { supported: ["authorization"], default: "authorization" },
+  } as const satisfies Record<BatchSettlementAssetTransferMethod, PaymentFlowConfig>;
   readonly schemeHooks: SchemeServerHooks;
 
   private readonly requestContexts = new WeakMap<
@@ -241,7 +247,7 @@ export class BatchSettlementEvmScheme implements SchemeNetworkServer {
       };
     }
 
-    const amount = this.parseMoneyToDecimal(price);
+    const { amount, symbol } = parseMoney(price);
 
     for (const parser of this.moneyParsers) {
       const result = await parser(amount, network);
@@ -250,7 +256,18 @@ export class BatchSettlementEvmScheme implements SchemeNetworkServer {
       }
     }
 
-    return this.defaultMoneyConversion(amount, network);
+    return this.defaultMoneyConversion(amount, network, symbol);
+  }
+
+  /**
+   * Decimals for a known default asset, or undefined.
+   *
+   * @param asset - Asset address or symbol
+   * @param network - Target network
+   * @returns Decimals when the asset is a known default; otherwise undefined
+   */
+  getAssetDecimals(asset: string, network: Network): number | undefined {
+    return findDefaultAsset(asset, network)?.decimals;
   }
 
   /**
@@ -394,7 +411,7 @@ export class BatchSettlementEvmScheme implements SchemeNetworkServer {
     network: Network,
     token?: `0x${string}`,
   ): BatchSettlementChannelManager {
-    const resolvedToken = token ?? (getDefaultAsset(network).address as `0x${string}`);
+    const resolvedToken = token ?? (getDefaultAsset(network).asset as `0x${string}`);
     return new BatchSettlementChannelManager({
       scheme: this,
       facilitator,
@@ -410,24 +427,17 @@ export class BatchSettlementEvmScheme implements SchemeNetworkServer {
    * @param money - Money string (may include `$`) or numeric amount.
    * @returns Parsed finite number.
    */
-  private parseMoneyToDecimal(money: string | number): number {
-    if (typeof money === "number") {
-      return money;
-    }
-
-    return parseMoneyString(money);
-  }
-
   /**
    * Converts a decimal dollar amount to the network's default token amount.
    *
    * @param amount - Decimal amount in display units.
    * @param network - Target chain/network for default asset resolution.
+   * @param symbol - Optional ticker from a suffixed price
    * @returns {@link AssetAmount} with integer token amount, contract address, and metadata.
    */
-  private defaultMoneyConversion(amount: number, network: Network): AssetAmount {
-    const assetInfo = getDefaultAsset(network);
-    const tokenAmount = convertToTokenAmount(numberToDecimalString(amount), assetInfo.decimals);
+  private defaultMoneyConversion(amount: string, network: Network, symbol?: string): AssetAmount {
+    const assetInfo = getDefaultAsset(network, symbol);
+    const tokenAmount = convertToTokenAmount(amount, assetInfo.decimals);
 
     // EIP-3009 tokens always need name/version for their transferWithAuthorization domain.
     // Permit2 tokens only need them if the token supports EIP-2612 (for gasless permit signing).
@@ -437,7 +447,7 @@ export class BatchSettlementEvmScheme implements SchemeNetworkServer {
 
     return {
       amount: tokenAmount,
-      asset: assetInfo.address,
+      asset: assetInfo.asset,
       extra: {
         ...(includeEip712Domain && {
           name: assetInfo.name,

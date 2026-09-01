@@ -542,3 +542,105 @@ class TestSharedBazaarUtils:
         bazaar_warnings = [w for w in caught if "bazaar" in str(w.message).lower()]
         assert len(bazaar_warnings) == 1
         assert "invalid bazaar extension" in str(bazaar_warnings[0].message).lower()
+
+    def test_validate_no_warning_on_declare_discovery_extension_get(self):
+        """Pre-enrichment declare_discovery_extension on a GET route should not warn."""
+        from x402.extensions.bazaar import OutputConfig, declare_discovery_extension
+        from x402.http.middleware._bazaar_utils import validate_bazaar_extensions
+
+        routes = {
+            "GET /weather": RouteConfig(
+                accepts=[_make_payment_option()],
+                extensions={
+                    **declare_discovery_extension(
+                        input={"city": "San Francisco"},
+                        input_schema={
+                            "properties": {"city": {"type": "string"}},
+                            "required": ["city"],
+                        },
+                        output=OutputConfig(
+                            example={"weather": "sunny", "temperature": 70},
+                            schema={
+                                "properties": {
+                                    "weather": {"type": "string"},
+                                    "temperature": {"type": "number"},
+                                },
+                                "required": ["weather", "temperature"],
+                            },
+                        ),
+                    )
+                },
+            )
+        }
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            validate_bazaar_extensions(routes)
+
+        bazaar_warnings = [w for w in caught if "bazaar" in str(w.message).lower()]
+        assert len(bazaar_warnings) == 0
+
+    def test_validate_no_warning_on_post_body_without_route_verb(self):
+        """Body extensions without a route verb should infer POST and not warn."""
+        from x402.extensions.bazaar import OutputConfig, declare_discovery_extension
+        from x402.http.middleware._bazaar_utils import validate_bazaar_extensions
+
+        routes = {
+            "*": RouteConfig(
+                accepts=[_make_payment_option()],
+                extensions={
+                    **declare_discovery_extension(
+                        input={"name": "John"},
+                        input_schema={
+                            "properties": {"name": {"type": "string"}},
+                            "required": ["name"],
+                        },
+                        body_type="json",
+                        output=OutputConfig(example={"success": True}),
+                    )
+                },
+            )
+        }
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            validate_bazaar_extensions(routes)
+
+        bazaar_warnings = [w for w in caught if "bazaar" in str(w.message).lower()]
+        assert len(bazaar_warnings) == 0
+
+    def test_with_synthetic_method_leaves_existing_method_unchanged(self):
+        from x402.http.middleware._bazaar_utils import _with_synthetic_method
+
+        ext = {
+            "info": {"input": {"type": "http", "method": "DELETE"}},
+            "schema": {},
+        }
+        result = _with_synthetic_method(ext, "GET /api")
+        assert result["info"]["input"]["method"] == "DELETE"
+
+    def test_with_synthetic_method_injects_from_route_pattern(self):
+        from x402.http.middleware._bazaar_utils import _with_synthetic_method
+
+        ext = {
+            "info": {"input": {"type": "http", "queryParams": {"city": "sf"}}},
+            "schema": {},
+        }
+        result = _with_synthetic_method(ext, "GET /weather")
+        assert result["info"]["input"]["method"] == "GET"
+
+    def test_with_synthetic_method_infers_post_from_body(self):
+        from x402.http.middleware._bazaar_utils import _with_synthetic_method
+
+        ext = {
+            "info": {
+                "input": {
+                    "type": "http",
+                    "bodyType": "json",
+                    "body": {"name": "John"},
+                }
+            },
+            "schema": {},
+        }
+        result = _with_synthetic_method(ext, "*")
+        assert result["info"]["input"]["method"] == "POST"

@@ -120,20 +120,21 @@ const pltRoute = {
   mimeType: "application/json",
 };
 
-// USD-style prices — register a money parser to map "$0.01" to a token
+// USD-style prices resolve to StablR USDR (6 decimals). Register a money parser for EURR or other PLTs.
+const usdRoute = {
+  scheme: "exact",
+  network: "ccd:9dd9ca4d19e9393877d2c44b70f89acb",
+  payTo: "4FmiTW2L4RvCsSVTjFAavYvrgnPLGNj43eiwPYmbhNqtAcMbWW",
+  price: "$0.01",  // 0.01 USDR
+  description: "Premium content",
+  mimeType: "application/json",
+};
+
 scheme.registerMoneyParser(async (amount, network) => ({
   amount: String(Math.round(amount * 1e6)),
   asset: "EURR",
   extra: {},
 }));
-const usdRoute = {
-  scheme: "exact",
-  network: "ccd:9dd9ca4d19e9393877d2c44b70f89acb",
-  payTo: "4FmiTW2L4RvCsSVTjFAavYvrgnPLGNj43eiwPYmbhNqtAcMbWW",
-  price: "$0.01",  // Parsed by registerMoneyParser → 0.01 EURR
-  description: "Premium content",
-  mimeType: "application/json",
-};
 ```
 
 ### 3. Facilitator Setup

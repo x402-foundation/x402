@@ -7,6 +7,8 @@ from typing import Any, TypedDict
 
 from .schemas import PaymentRequirements, SettleResponse
 
+RESERVED_PAYMENT_FLOW_EXTRA_KEYS = ("paymentFlow", "assetTransferMethod")
+
 
 def _deep_equal(a: Any, b: Any) -> bool:
     if type(a) is not type(b):
@@ -77,6 +79,13 @@ def assert_accepts_allowlisted_after_extension_enrich(
                     f'extra["{key}"] may not be changed (index {i})'
                 )
 
+        _assert_reserved_payment_flow_extra_unchanged(
+            b,
+            c,
+            f'[x402] extension "{extension_key}" violated accepts mutation policy:',
+            i,
+        )
+
 
 def assert_accepts_additive_extra_after_scheme_enrich(
     baseline: list[PaymentRequirements],
@@ -125,6 +134,29 @@ def assert_accepts_additive_extra_after_scheme_enrich(
             raise ValueError(
                 f'[x402] scheme "{scheme}" violated accepts mutation policy: '
                 f"only matching accepts may receive new extra fields (index {i})"
+            )
+
+        _assert_reserved_payment_flow_extra_unchanged(
+            b,
+            c,
+            f'[x402] scheme "{scheme}" violated accepts mutation policy:',
+            i,
+        )
+
+
+def _assert_reserved_payment_flow_extra_unchanged(
+    baseline: PaymentRequirements,
+    current: PaymentRequirements,
+    prefix: str,
+    index: int,
+) -> None:
+    for key in RESERVED_PAYMENT_FLOW_EXTRA_KEYS:
+        in_baseline = key in baseline.extra
+        in_current = key in current.extra
+        if in_baseline != in_current:
+            raise ValueError(
+                f'{prefix} extra["{key}"] is protocol-reserved and immutable '
+                f"during enrichment (index {index})"
             )
 
 

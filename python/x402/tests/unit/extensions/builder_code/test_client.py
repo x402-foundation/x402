@@ -81,6 +81,9 @@ class TestEnrichPaymentPayload:
 class _MockSchemeClient:
     scheme = "exact"
 
+    def find_default_asset(self, asset, _network=None):
+        return {"asset": asset, "decimals": 6, "symbol": "MOCK"}
+
     def create_payment_payload(self, requirements):
         return {"mock": "payload", "network": requirements.network}
 

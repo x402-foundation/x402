@@ -1,5 +1,41 @@
 # @x402/next Changelog
 
+## 2.24.0
+
+### Minor Changes
+
+- Updated dependencies [6557149](https://github.com/x402-foundation/x402/commit/6557149)
+  - @x402/paywall@2.24.0
+  - @x402/core@2.24.0
+  - @x402/extensions@2.24.0
+
+## 2.23.0
+
+### Minor Changes
+
+- Updated dependencies [79b6259](https://github.com/x402-foundation/x402/commit/79b6259)
+- Updated dependencies [4f58723](https://github.com/x402-foundation/x402/commit/4f58723)
+- Updated dependencies [ab1a31a](https://github.com/x402-foundation/x402/commit/ab1a31a)
+- Updated dependencies [c2612d3](https://github.com/x402-foundation/x402/commit/c2612d3)
+- Updated dependencies [656437e](https://github.com/x402-foundation/x402/commit/656437e)
+  - @x402/core@2.23.0
+  - @x402/paywall@2.23.0
+  - @x402/extensions@2.23.0
+
+## 2.22.0
+
+### Minor Changes
+
+- [db5da2e](https://github.com/x402-foundation/x402/commit/db5da2e): Validate unsupported `paymentFlow` / `assetTransferMethod` at HTTP server construction and MCP `createPaymentWrapper` when the scheme is registered, and return a generic internal error from HTTP adapters and MCP wrappers for unexpected failures instead of leaking internal error details to clients. ([#3053](https://github.com/x402-foundation/x402/pull/3053)) - Thanks [@phdargen](https://github.com/phdargen)!
+- [db5da2e](https://github.com/x402-foundation/x402/commit/db5da2e): Require ATM-keyed `paymentFlows` (and `defaultAssetTransferMethod`) on every `SchemeNetworkServer`. Core resolves ATM/flow from the table, rejects unsupported combinations, and always signals non-`authorization` `paymentFlow` on the 402 wire. All schemes currently declare `authorization` only. ([#3053](https://github.com/x402-foundation/x402/pull/3053)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Updated dependencies [37412e7](https://github.com/x402-foundation/x402/commit/37412e7)
+- Updated dependencies [db5da2e](https://github.com/x402-foundation/x402/commit/db5da2e)
+- Updated dependencies [db5da2e](https://github.com/x402-foundation/x402/commit/db5da2e)
+- Updated dependencies [1601942](https://github.com/x402-foundation/x402/commit/1601942)
+  - @x402/core@2.22.0
+  - @x402/extensions@2.22.0
+  - @x402/paywall@2.22.0
+
 ## 2.21.0
 
 ### Minor Changes

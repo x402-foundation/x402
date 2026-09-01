@@ -55,6 +55,18 @@ function facilitatorErrorResponse(c: Context, error: FacilitatorResponseError): 
 }
 
 /**
+ * Logs an unexpected error and builds a generic 500 without leaking internals.
+ *
+ * @param c - The current Hono context
+ * @param error - The unexpected error
+ * @returns A JSON 500 response
+ */
+function internalErrorResponse(c: Context, error: unknown): Response {
+  console.error(error);
+  return c.json({ error: "Internal Server Error" }, 500);
+}
+
+/**
  * Hono payment middleware for x402 protocol (direct HTTP server instance).
  *
  * Use this when you need to configure HTTP-level hooks.
@@ -163,7 +175,7 @@ export function paymentMiddlewareFromHTTPServer(
         if (facilitatorError) {
           return facilitatorErrorResponse(c, facilitatorError);
         }
-        throw error;
+        return internalErrorResponse(c, error);
       }
     }
 
@@ -181,7 +193,7 @@ export function paymentMiddlewareFromHTTPServer(
       if (error instanceof FacilitatorResponseError) {
         return facilitatorErrorResponse(c, error);
       }
-      throw error;
+      return internalErrorResponse(c, error);
     }
 
     // Handle the different result types
@@ -204,18 +216,39 @@ export function paymentMiddlewareFromHTTPServer(
 
       case "payment-verified":
         // Payment is valid, need to wrap response for settlement
-        const { cancellationDispatcher, paymentPayload, paymentRequirements, declaredExtensions } =
-          result;
+        const {
+          cancellationDispatcher,
+          beforeHandlerSettlement,
+          paymentPayload,
+          paymentRequirements,
+          declaredExtensions,
+        } = result;
 
         // Proceed to the next middleware or route handler
         try {
           await next();
         } catch (error) {
-          await cancellationDispatcher.cancel({
+          const cancelSettlement = await cancellationDispatcher.cancel({
             reason: "handler_threw",
             error,
           });
-          throw error;
+          if (!beforeHandlerSettlement && !cancelSettlement) {
+            throw error;
+          }
+          const res = internalErrorResponse(c, error);
+          const failureHeaders = httpServer.createFailurePathSettlementHeaders(
+            cancelSettlement,
+            beforeHandlerSettlement,
+            paymentPayload,
+            res.headers.get("Cache-Control"),
+          );
+          if (failureHeaders) {
+            Object.entries(failureHeaders).forEach(([key, value]) => {
+              res.headers.set(key, value);
+            });
+          }
+          c.res = res;
+          return;
         }
 
         // Get the current response
@@ -223,11 +256,22 @@ export function paymentMiddlewareFromHTTPServer(
 
         // If the response from the protected route is >= 400, do not settle payment
         if (res.status >= 400) {
-          await cancellationDispatcher.cancel({
+          const cancelSettlement = await cancellationDispatcher.cancel({
             reason: "handler_failed",
             responseStatus: res.status,
           });
           res.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
+          const failureHeaders = httpServer.createFailurePathSettlementHeaders(
+            cancelSettlement,
+            beforeHandlerSettlement,
+            paymentPayload,
+            res.headers.get("Cache-Control"),
+          );
+          if (failureHeaders) {
+            Object.entries(failureHeaders).forEach(([key, value]) => {
+              res.headers.set(key, value);
+            });
+          }
           return;
         }
 
@@ -248,6 +292,8 @@ export function paymentMiddlewareFromHTTPServer(
             paymentRequirements,
             declaredExtensions,
             { request: context, responseBody, responseHeaders },
+            undefined,
+            beforeHandlerSettlement,
           );
 
           if (!settleResult.success) {

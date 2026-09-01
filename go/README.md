@@ -67,6 +67,11 @@ Payment scheme implementations that can be registered by clients, servers, and f
   - `server/` - Server-side payment verification
   - `facilitator/` - Facilitator-side payment settlement
 
+- **`mechanisms/svm/upto`** - Solana usage-based payment using onchain payment channels
+  - `client/` - Client-side channel authorization
+  - `server/` - Server-side verification and settlement vouchers
+  - `facilitator/` - Facilitator-side channel opening, settlement, and rent cleanup
+
 Each role (client, server, facilitator) has its own mechanism implementation with appropriate functionality for that role.
 
 ### Extensions
@@ -207,10 +212,14 @@ github.com/x402-foundation/x402/go/v2
 │   │   ├── client/            - EVM client mechanism
 │   │   ├── server/            - EVM server mechanism
 │   │   └── facilitator/       - EVM facilitator mechanism
-│   └── svm/exact/
-│       ├── client/            - SVM client mechanism
-│       ├── server/            - SVM server mechanism
-│       └── facilitator/       - SVM facilitator mechanism
+│   ├── svm/exact/
+│   │   ├── client/            - SVM client mechanism
+│   │   ├── server/            - SVM server mechanism
+│   │   └── facilitator/       - SVM facilitator mechanism
+│   └── svm/upto/
+│       ├── client/            - SVM upto client mechanism
+│       ├── server/            - SVM upto server mechanism
+│       └── facilitator/       - SVM upto facilitator mechanism
 │
 ├── signers/                   - Signer helpers
 │   ├── evm/                   - EVM client signers
@@ -268,6 +277,7 @@ Transfer an exact amount to access a resource:
 - ✅ Extensible plugin architecture
 - ✅ Production ready with comprehensive testing
 - ✅ Lifecycle hooks for customization
+- ✅ Client spend controls (default-asset allowlist and $1 USD cap)
 
 ## Package Documentation
 

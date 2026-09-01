@@ -8,7 +8,8 @@ import {
   buildChannelConfig,
   getChannel,
   hasChannel,
-  processSettleResponse,
+  processPaymentResponse,
+  updateChannelFromSettle,
   recoverChannel,
   updateChannelAfterRefund,
 } from "../../../src/batch-settlement/client/channel";
@@ -568,88 +569,194 @@ describe("BatchSettlementEvmScheme — createPaymentPayload", () => {
   });
 });
 
-describe("processSettleResponse / schemeHooks", () => {
-  it("updates session fields from settle response extras", async () => {
+function makeSettle(signerAddress: string, extra: Record<string, unknown>): SettleResponse {
+  return {
+    success: true,
+    transaction: "0x",
+    network: NETWORK,
+    payer: signerAddress,
+    extra,
+  };
+}
+
+function makeFailedSettle(
+  signerAddress: string,
+  extra: Record<string, unknown> = {},
+): SettleResponse {
+  return {
+    success: false,
+    transaction: "",
+    network: NETWORK,
+    payer: signerAddress,
+    errorReason: "settlement_failed",
+    extra,
+  };
+}
+
+describe("updateChannelFromSettle / schemeHooks", () => {
+  it("applies capped chargedAmount to local cumulative and leaves balance unchanged", async () => {
     const signer = buildSigner(PAYER_PRIVATE_KEY);
     const storage = new InMemoryClientChannelStorage();
+    const requirements = makeRequirements({ amount: "1000" });
+    const deps = makeDeps({ signer, storage });
+    const channelId = computeChannelId(buildChannelConfig(deps, requirements));
+    await storage.set(channelId.toLowerCase(), {
+      balance: "9000",
+      chargedCumulativeAmount: "0",
+      totalClaimed: "500",
+    });
 
-    const channelId = "0xabc1230000000000000000000000000000000000000000000000000000000001";
-
-    const settle: SettleResponse = {
-      success: true,
-      transaction: "0x",
-      network: NETWORK,
-      payer: signer.address,
-      extra: {
+    const hooks = createBatchSettlementClientHooks(deps);
+    await hooks.onPaymentResponse!({
+      paymentPayload: makePaymentPayload({ type: "voucher" }),
+      requirements,
+      settleResponse: makeSettle(signer.address, {
+        chargedAmount: "1000",
         channelState: {
           channelId,
           chargedCumulativeAmount: "1000",
-          balance: "9000",
-          totalClaimed: "500",
+          balance: "1",
+          totalClaimed: "999",
         },
-      },
-    };
-
-    await processSettleResponse(storage, settle);
+      }),
+    });
     const ctx = await storage.get(channelId.toLowerCase());
     expect(ctx?.chargedCumulativeAmount).toBe("1000");
     expect(ctx?.balance).toBe("9000");
     expect(ctx?.totalClaimed).toBe("500");
   });
 
-  it("ignores settle responses with no channelId", async () => {
-    const signer = buildSigner(PAYER_PRIVATE_KEY);
+  it("ignores settle responses with no chargedAmount and no deposit", async () => {
     const storage = new InMemoryClientChannelStorage();
+    const channelId = "0xabc1230000000000000000000000000000000000000000000000000000000001";
 
-    await processSettleResponse(storage, {
-      success: true,
-      transaction: "0x",
-      network: NETWORK,
-      payer: signer.address,
-      extra: {},
-    } as SettleResponse);
+    await updateChannelFromSettle(storage, {
+      server: {},
+      local: { channelId, requestAmount: "1000" },
+    });
 
-    const all = await Promise.all(
-      ["0xabc1230000000000000000000000000000000000000000000000000000000001"].map(id =>
-        storage.get(id),
-      ),
-    );
-    expect(all.every(c => c === undefined)).toBe(true);
+    expect(await storage.get(channelId)).toBeUndefined();
   });
 
-  it("deletes channel record after a full refund response", async () => {
+  it("does not process a failed PAYMENT-RESPONSE header", async () => {
+    const signer = buildSigner(PAYER_PRIVATE_KEY);
+    const storage = new InMemoryClientChannelStorage();
+    const channelId = "0xabc1230000000000000000000000000000000000000000000000000000000001";
+    const { encodePaymentResponseHeader } = await import("@x402/core/http");
+    const responseHeader = encodePaymentResponseHeader(
+      makeFailedSettle(signer.address, { chargedAmount: "1000" }),
+    );
+
+    await processPaymentResponse(
+      storage,
+      name => (name === "PAYMENT-RESPONSE" ? responseHeader : undefined),
+      { channelId, requestAmount: "1000", depositAmount: "5000" },
+    );
+
+    expect(await storage.get(channelId)).toBeUndefined();
+  });
+
+  it("deletes channel record after a full refund", async () => {
     const storage = new InMemoryClientChannelStorage();
 
     const channelId = "0xabc1230000000000000000000000000000000000000000000000000000000002";
-    await storage.set(channelId.toLowerCase(), { chargedCumulativeAmount: "1000" });
-
-    await updateChannelAfterRefund(storage, channelId.toLowerCase(), {
-      channelState: { channelId, balance: "0" },
+    await storage.set(channelId.toLowerCase(), {
+      chargedCumulativeAmount: "1000",
+      balance: "5000",
     });
+
+    await updateChannelAfterRefund(storage, channelId.toLowerCase());
 
     expect(await storage.get(channelId.toLowerCase())).toBeUndefined();
   });
 
-  it("schemeHooks.onPaymentResponse delegates to processSettleResponse", async () => {
+  it("subtracts a partial refund from previous local balance", async () => {
+    const storage = new InMemoryClientChannelStorage();
+    const channelId = "0xabc1230000000000000000000000000000000000000000000000000000000002";
+    await storage.set(channelId.toLowerCase(), {
+      chargedCumulativeAmount: "1000",
+      balance: "10000",
+    });
+
+    await updateChannelAfterRefund(storage, channelId.toLowerCase(), "2000");
+
+    const ctx = await storage.get(channelId.toLowerCase());
+    expect(ctx?.balance).toBe("8000");
+    expect(ctx?.chargedCumulativeAmount).toBe("1000");
+  });
+
+  it("deletes local state when a partial refund is capped to the refundable balance", async () => {
+    const storage = new InMemoryClientChannelStorage();
+    const channelId = "0xabc1230000000000000000000000000000000000000000000000000000000002";
+    await storage.set(channelId.toLowerCase(), {
+      chargedCumulativeAmount: "9000",
+      balance: "10000",
+    });
+
+    await updateChannelAfterRefund(storage, channelId.toLowerCase(), "2000");
+
+    expect(await storage.get(channelId.toLowerCase())).toBeUndefined();
+  });
+
+  it("schemeHooks.onPaymentResponse delegates to updateChannelFromSettle", async () => {
     const signer = buildSigner(PAYER_PRIVATE_KEY);
     const storage = new InMemoryClientChannelStorage();
     const client = new BatchSettlementEvmScheme(signer, { storage });
+    const requirements = makeRequirements();
+    const channelId = computeChannelId(
+      buildChannelConfig(makeDeps({ signer, storage }), requirements),
+    );
+    await storage.set(channelId.toLowerCase(), {
+      balance: "9000",
+      chargedCumulativeAmount: "0",
+    });
 
-    const channelId = "0xabc1230000000000000000000000000000000000000000000000000000000003";
     await client.schemeHooks.onPaymentResponse!({
       paymentPayload: makePaymentPayload({ type: "voucher" }),
-      requirements: makeRequirements(),
-      settleResponse: {
-        success: true,
-        transaction: "0x",
-        network: NETWORK,
-        payer: signer.address,
-        extra: { channelState: { channelId, chargedCumulativeAmount: "42" } },
-      } as SettleResponse,
+      requirements,
+      settleResponse: makeSettle(signer.address, {
+        chargedAmount: "1000",
+        channelState: {
+          channelId,
+          chargedCumulativeAmount: "1000",
+          balance: "9000",
+        },
+      }),
     } as Parameters<NonNullable<typeof client.schemeHooks.onPaymentResponse>>[0]);
 
     const ctx = await storage.get(channelId.toLowerCase());
-    expect(ctx?.chargedCumulativeAmount).toBe("42");
+    expect(ctx?.chargedCumulativeAmount).toBe("1000");
+    expect(ctx?.balance).toBe("9000");
+  });
+
+  it("does not record a locally signed deposit when settlement fails", async () => {
+    const signer = buildSigner(PAYER_PRIVATE_KEY);
+    const storage = new InMemoryClientChannelStorage();
+    const deps = makeDeps({ signer, storage });
+    const hooks = createBatchSettlementClientHooks(deps);
+    const requirements = makeRequirements();
+    const config = buildChannelConfig(deps, requirements);
+    const channelId = computeChannelId(config);
+
+    await hooks.onPaymentResponse!({
+      paymentPayload: makePaymentPayload({
+        type: "deposit",
+        channelConfig: config,
+        voucher: {
+          channelId,
+          maxClaimableAmount: "1000",
+          signature: "0xdead",
+        },
+        deposit: {
+          amount: "5000",
+          authorization: {},
+        },
+      }),
+      requirements,
+      settleResponse: makeFailedSettle(signer.address, { chargedAmount: "1000" }),
+    });
+
+    expect(await storage.get(channelId.toLowerCase())).toBeUndefined();
   });
 
   it("routes refund settle responses through refund reconciliation", async () => {
@@ -657,8 +764,9 @@ describe("processSettleResponse / schemeHooks", () => {
     const storage = new InMemoryClientChannelStorage();
     const deps = makeDeps({ signer, storage });
     const hooks = createBatchSettlementClientHooks(deps);
-    const channelId = "0xabc1230000000000000000000000000000000000000000000000000000000004";
-    const config = buildChannelConfig(deps, makeRequirements());
+    const requirements = makeRequirements();
+    const config = buildChannelConfig(deps, requirements);
+    const channelId = computeChannelId(config);
 
     await storage.set(channelId.toLowerCase(), { chargedCumulativeAmount: "1000" });
     await hooks.onPaymentResponse!({
@@ -671,31 +779,329 @@ describe("processSettleResponse / schemeHooks", () => {
           signature: "0xdead",
         },
       }),
-      requirements: makeRequirements(),
-      settleResponse: {
-        success: true,
-        transaction: "0x",
-        network: NETWORK,
-        payer: signer.address,
-        extra: { channelState: { channelId, balance: "0" } },
-      } as SettleResponse,
+      requirements,
+      settleResponse: makeSettle(signer.address, {
+        channelState: { channelId, balance: "9999" },
+      }),
     });
 
     expect(await storage.get(channelId.toLowerCase())).toBeUndefined();
 
     await hooks.onPaymentResponse!({
       paymentPayload: makePaymentPayload({ type: "voucher" }),
-      requirements: makeRequirements(),
-      settleResponse: {
-        success: true,
-        transaction: "0x",
-        network: NETWORK,
-        payer: signer.address,
-        extra: { channelState: { channelId, balance: "0" } },
-      } as SettleResponse,
+      requirements,
+      settleResponse: makeSettle(signer.address, {
+        channelState: { channelId, balance: "0" },
+      }),
     });
 
-    expect((await storage.get(channelId.toLowerCase()))?.balance).toBe("0");
+    expect(await storage.get(channelId.toLowerCase())).toBeUndefined();
+  });
+
+  it("subtracts payload.amount on a partial refund and ignores server balance", async () => {
+    const signer = buildSigner(PAYER_PRIVATE_KEY);
+    const storage = new InMemoryClientChannelStorage();
+    const deps = makeDeps({ signer, storage });
+    const hooks = createBatchSettlementClientHooks(deps);
+    const requirements = makeRequirements();
+    const config = buildChannelConfig(deps, requirements);
+    const channelId = computeChannelId(config);
+
+    await storage.set(channelId.toLowerCase(), {
+      chargedCumulativeAmount: "1000",
+      balance: "10000",
+    });
+    await hooks.onPaymentResponse!({
+      paymentPayload: makePaymentPayload({
+        type: "refund",
+        channelConfig: config,
+        voucher: {
+          channelId,
+          maxClaimableAmount: "1000",
+          signature: "0xdead",
+        },
+        amount: "2000",
+      }),
+      requirements,
+      settleResponse: makeSettle(signer.address, {
+        channelState: { channelId, balance: "0" },
+      }),
+    });
+
+    const ctx = await storage.get(channelId.toLowerCase());
+    expect(ctx?.balance).toBe("8000");
+    expect(ctx?.chargedCumulativeAmount).toBe("1000");
+  });
+
+  it("leaves local state unchanged when refund settlement fails", async () => {
+    const signer = buildSigner(PAYER_PRIVATE_KEY);
+    const storage = new InMemoryClientChannelStorage();
+    const deps = makeDeps({ signer, storage });
+    const hooks = createBatchSettlementClientHooks(deps);
+    const requirements = makeRequirements();
+    const config = buildChannelConfig(deps, requirements);
+    const channelId = computeChannelId(config);
+    const previous = {
+      chargedCumulativeAmount: "1000",
+      balance: "10000",
+      totalClaimed: "500",
+    };
+    await storage.set(channelId.toLowerCase(), previous);
+
+    await hooks.onPaymentResponse!({
+      paymentPayload: makePaymentPayload({
+        type: "refund",
+        channelConfig: config,
+        voucher: {
+          channelId,
+          maxClaimableAmount: "1000",
+          signature: "0xdead",
+        },
+        amount: "2000",
+      }),
+      requirements,
+      settleResponse: makeFailedSettle(signer.address),
+    });
+
+    expect(await storage.get(channelId.toLowerCase())).toEqual(previous);
+  });
+
+  it("keys refund reconciliation by the locally computed channelId", async () => {
+    const signer = buildSigner(PAYER_PRIVATE_KEY);
+    const storage = new InMemoryClientChannelStorage();
+    const deps = makeDeps({ signer, storage });
+    const hooks = createBatchSettlementClientHooks(deps);
+    const requirements = makeRequirements();
+    const config = buildChannelConfig(deps, requirements);
+    const localId = computeChannelId(config);
+    const hostileId = "0xabc12300000000000000000000000000000000000000000000000000000000ff";
+
+    await storage.set(localId.toLowerCase(), { chargedCumulativeAmount: "1000", balance: "5000" });
+    await hooks.onPaymentResponse!({
+      paymentPayload: makePaymentPayload({
+        type: "refund",
+        channelConfig: config,
+        voucher: {
+          channelId: localId,
+          maxClaimableAmount: "1000",
+          signature: "0xdead",
+        },
+      }),
+      requirements,
+      settleResponse: makeSettle(signer.address, {
+        channelState: { channelId: hostileId, balance: "9999" },
+      }),
+    });
+
+    expect(await storage.get(localId.toLowerCase())).toBeUndefined();
+    expect(await storage.get(hostileId.toLowerCase())).toBeUndefined();
+  });
+});
+
+describe("updateChannelFromSettle local truth", () => {
+  const hostileChannelId = "0xabc12300000000000000000000000000000000000000000000000000000000aa";
+
+  async function seedChannel(
+    storage: InMemoryClientChannelStorage,
+    channelId: `0x${string}`,
+    fields: { balance: string; chargedCumulativeAmount: string },
+  ): Promise<void> {
+    await storage.set(channelId.toLowerCase(), fields);
+  }
+
+  it("ignores inflated server cumulative so the next voucher is not the remaining escrow", async () => {
+    const signer = buildSigner(PAYER_PRIVATE_KEY);
+    const storage = new InMemoryClientChannelStorage();
+    const client = new BatchSettlementEvmScheme(signer, { storage });
+    const requirements = makeRequirements({ amount: "10000" });
+    const channelId = computeChannelId(
+      buildChannelConfig(makeDeps({ signer, storage }), requirements),
+    );
+    await seedChannel(storage, channelId, { balance: "50000", chargedCumulativeAmount: "0" });
+
+    await client.schemeHooks.onPaymentResponse!({
+      paymentPayload: makePaymentPayload({ type: "voucher" }),
+      requirements,
+      settleResponse: makeSettle(signer.address, {
+        chargedAmount: "10000",
+        channelState: {
+          channelId,
+          chargedCumulativeAmount: "40000",
+          balance: "50000",
+        },
+      }),
+    });
+
+    const ctx = await storage.get(channelId.toLowerCase());
+    expect(ctx?.chargedCumulativeAmount).toBe("0");
+    expect(ctx?.balance).toBe("50000");
+
+    const result = await client.createPaymentPayload(2, requirements);
+    expect(isBatchSettlementVoucherPayload(result.payload as Record<string, unknown>)).toBe(true);
+    const payload = result.payload as { voucher: { maxClaimableAmount: string } };
+    expect(payload.voucher.maxClaimableAmount).toBe("10000");
+  });
+
+  it("does not write a second key when extra.channelId does not match", async () => {
+    const signer = buildSigner(PAYER_PRIVATE_KEY);
+    const storage = new InMemoryClientChannelStorage();
+    const requirements = makeRequirements({ amount: "10000" });
+    const channelId = computeChannelId(
+      buildChannelConfig(makeDeps({ signer, storage }), requirements),
+    );
+    await seedChannel(storage, channelId, { balance: "50000", chargedCumulativeAmount: "0" });
+
+    const hooks = createBatchSettlementClientHooks(makeDeps({ signer, storage }));
+    await hooks.onPaymentResponse!({
+      paymentPayload: makePaymentPayload({ type: "voucher" }),
+      requirements,
+      settleResponse: makeSettle(signer.address, {
+        chargedAmount: "10000",
+        channelState: {
+          channelId: hostileChannelId,
+          chargedCumulativeAmount: "10000",
+          balance: "50000",
+        },
+      }),
+    });
+
+    expect(await storage.get(hostileChannelId)).toBeUndefined();
+    const ctx = await storage.get(channelId.toLowerCase());
+    expect(ctx?.chargedCumulativeAmount).toBe("10000");
+    expect(ctx?.balance).toBe("50000");
+  });
+
+  it("rejects chargedAmount greater than requirements.amount", async () => {
+    const storage = new InMemoryClientChannelStorage();
+    const channelId = "0xabc1230000000000000000000000000000000000000000000000000000000005";
+    await seedChannel(storage, channelId, { balance: "50000", chargedCumulativeAmount: "0" });
+
+    await expect(
+      updateChannelFromSettle(storage, {
+        server: { chargedAmount: "20000" },
+        local: { channelId, requestAmount: "10000" },
+      }),
+    ).rejects.toThrow(/chargedAmount/);
+
+    const ctx = await storage.get(channelId.toLowerCase());
+    expect(ctx?.chargedCumulativeAmount).toBe("0");
+    expect(ctx?.balance).toBe("50000");
+  });
+
+  it("rejects a non-integer chargedAmount", async () => {
+    const storage = new InMemoryClientChannelStorage();
+    const channelId = "0xabc1230000000000000000000000000000000000000000000000000000000005";
+    await seedChannel(storage, channelId, { balance: "50000", chargedCumulativeAmount: "0" });
+
+    await expect(
+      updateChannelFromSettle(storage, {
+        server: { chargedAmount: "10.5" },
+        local: { channelId, requestAmount: "10000" },
+      }),
+    ).rejects.toThrow(/chargedAmount/);
+
+    expect((await storage.get(channelId.toLowerCase()))?.chargedCumulativeAmount).toBe("0");
+  });
+
+  it("ignores voucher-only channelState.balance deflation", async () => {
+    const signer = buildSigner(PAYER_PRIVATE_KEY);
+    const storage = new InMemoryClientChannelStorage();
+    const requirements = makeRequirements({ amount: "10000" });
+    const deps = makeDeps({ signer, storage });
+    const channelId = computeChannelId(buildChannelConfig(deps, requirements));
+    await seedChannel(storage, channelId, { balance: "50000", chargedCumulativeAmount: "0" });
+
+    const hooks = createBatchSettlementClientHooks(deps);
+    await hooks.onPaymentResponse!({
+      paymentPayload: makePaymentPayload({ type: "voucher" }),
+      requirements,
+      settleResponse: makeSettle(signer.address, {
+        chargedAmount: "10000",
+        channelState: {
+          channelId,
+          chargedCumulativeAmount: "10000",
+          balance: "10000",
+        },
+      }),
+    });
+
+    const ctx = await storage.get(channelId.toLowerCase());
+    expect(ctx?.chargedCumulativeAmount).toBe("10000");
+    expect(ctx?.balance).toBe("50000");
+  });
+
+  it("adds payload.deposit.amount to local balance", async () => {
+    const storage = new InMemoryClientChannelStorage();
+    const channelId = "0xabc1230000000000000000000000000000000000000000000000000000000008";
+
+    await updateChannelFromSettle(storage, {
+      server: { chargedAmount: "10000" },
+      local: { channelId, requestAmount: "10000", depositAmount: "50000" },
+    });
+
+    const ctx = await storage.get(channelId.toLowerCase());
+    expect(ctx?.chargedCumulativeAmount).toBe("10000");
+    expect(ctx?.balance).toBe("50000");
+  });
+
+  it("persists an honest previous + chargedAmount settle when extra cumulative is omitted", async () => {
+    const storage = new InMemoryClientChannelStorage();
+    const channelId = "0xabc1230000000000000000000000000000000000000000000000000000000007";
+    await seedChannel(storage, channelId, { balance: "50000", chargedCumulativeAmount: "0" });
+
+    await updateChannelFromSettle(storage, {
+      server: { chargedAmount: "10000" },
+      local: { channelId, requestAmount: "10000" },
+    });
+
+    const ctx = await storage.get(channelId.toLowerCase());
+    expect(ctx?.chargedCumulativeAmount).toBe("10000");
+    expect(ctx?.balance).toBe("50000");
+  });
+
+  it("persists when extra chargedCumulativeAmount matches previous plus chargedAmount", async () => {
+    const storage = new InMemoryClientChannelStorage();
+    const channelId = "0xabc1230000000000000000000000000000000000000000000000000000000007";
+    await seedChannel(storage, channelId, { balance: "50000", chargedCumulativeAmount: "0" });
+
+    await updateChannelFromSettle(storage, {
+      server: { chargedAmount: "10000", chargedCumulativeAmount: "10000" },
+      local: { channelId, requestAmount: "10000" },
+    });
+
+    const ctx = await storage.get(channelId.toLowerCase());
+    expect(ctx?.chargedCumulativeAmount).toBe("10000");
+    expect(ctx?.balance).toBe("50000");
+  });
+
+  it("writes nothing when extra chargedCumulativeAmount disagrees, including deposit", async () => {
+    const storage = new InMemoryClientChannelStorage();
+    const channelId = "0xabc1230000000000000000000000000000000000000000000000000000000009";
+    await seedChannel(storage, channelId, { balance: "50000", chargedCumulativeAmount: "0" });
+
+    await updateChannelFromSettle(storage, {
+      server: { chargedAmount: "10000", chargedCumulativeAmount: "40000" },
+      local: { channelId, requestAmount: "10000", depositAmount: "1000" },
+    });
+
+    const ctx = await storage.get(channelId.toLowerCase());
+    expect(ctx?.chargedCumulativeAmount).toBe("0");
+    expect(ctx?.balance).toBe("50000");
+  });
+
+  it("writes nothing when extra chargedCumulativeAmount is not a non-negative integer", async () => {
+    const storage = new InMemoryClientChannelStorage();
+    const channelId = "0xabc1230000000000000000000000000000000000000000000000000000000009";
+    await seedChannel(storage, channelId, { balance: "50000", chargedCumulativeAmount: "0" });
+
+    await updateChannelFromSettle(storage, {
+      server: { chargedAmount: "10000", chargedCumulativeAmount: "10.5" },
+      local: { channelId, requestAmount: "10000", depositAmount: "1000" },
+    });
+
+    const ctx = await storage.get(channelId.toLowerCase());
+    expect(ctx?.chargedCumulativeAmount).toBe("0");
+    expect(ctx?.balance).toBe("50000");
   });
 });
 
@@ -991,7 +1397,7 @@ describe("BatchSettlementEvmScheme — refund()", () => {
           {
             channelState: {
               channelId,
-              balance: "0",
+              balance: "9999",
               totalClaimed: "500",
               withdrawRequestedAt: 0,
               refundNonce: "1",
@@ -1009,7 +1415,7 @@ describe("BatchSettlementEvmScheme — refund()", () => {
     expect(settle.amount).toBe("9500");
     expect(settle.extra?.channelState).toMatchObject({
       channelId,
-      balance: "0",
+      balance: "9999",
       chargedCumulativeAmount: "500",
     });
     expect(processSpy).toHaveBeenCalledTimes(1);
@@ -1042,7 +1448,7 @@ describe("BatchSettlementEvmScheme — refund()", () => {
         refundSuccessResponse({
           channelState: {
             channelId,
-            balance: "8000",
+            balance: "0",
             chargedCumulativeAmount: "500",
             totalClaimed: "0",
           },

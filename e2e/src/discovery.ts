@@ -1,9 +1,11 @@
-import { readdirSync, readFileSync, existsSync } from 'fs';
+import { readdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { GenericServerProxy } from './servers/generic-server';
 import { GenericClientProxy } from './clients/generic-client';
 import { GenericFacilitatorProxy } from './facilitators/generic-facilitator';
-import { log, verboseLog, errorLog } from './logger';
+import { discoverComponentLocations, loadComponentConfig } from './component';
+import { schemesForComponent } from './mechanisms';
+import { verboseLog, errorLog } from './logger';
 import {
   TestConfig,
   DiscoveredServer,
@@ -17,11 +19,9 @@ import {
 
 export class TestDiscovery {
   private baseDir: string;
-  private includeLegacy: boolean;
 
-  constructor(baseDir: string = '.', includeLegacy: boolean = false) {
+  constructor(baseDir: string = '.') {
     this.baseDir = baseDir;
-    this.includeLegacy = includeLegacy;
   }
 
   /**
@@ -36,12 +36,9 @@ export class TestDiscovery {
       this.discoverServersInDirectory(serversDir, servers);
     }
 
-    // Discover servers from legacy directory if flag is set
-    if (this.includeLegacy) {
-      const legacyServersDir = join(this.baseDir, 'legacy', 'servers');
-      if (existsSync(legacyServersDir)) {
-        this.discoverServersInDirectory(legacyServersDir, servers, 'legacy-');
-      }
+    const legacyServersDir = join(this.baseDir, 'legacy', 'servers');
+    if (existsSync(legacyServersDir)) {
+      this.discoverServersInDirectory(legacyServersDir, servers, 'legacy/');
     }
 
     return servers;
@@ -51,30 +48,20 @@ export class TestDiscovery {
    * Helper method to discover servers in a specific directory
    */
   private discoverServersInDirectory(serversDir: string, servers: DiscoveredServer[], namePrefix: string = ''): void {
-    let serverDirs = readdirSync(serversDir, { withFileTypes: true })
-      .filter(dirent => dirent.isDirectory())
-      .map(dirent => dirent.name);
-
-    for (const serverName of serverDirs) {
-      const serverDir = join(serversDir, serverName);
-      const configPath = join(serverDir, 'test.config.json');
-
-      if (existsSync(configPath)) {
-        try {
-          const configContent = readFileSync(configPath, 'utf-8');
-          const config: TestConfig = JSON.parse(configContent);
-
-          if (config.type === 'server' && config.enabled !== false) {
-            servers.push({
-              name: namePrefix + serverName,
-              directory: serverDir,
-              config,
-              proxy: new GenericServerProxy(serverDir)
-            });
-          }
-        } catch (error) {
-          errorLog(`Failed to load config for server ${namePrefix}${serverName}: ${error}`);
+    for (const loc of discoverComponentLocations(serversDir)) {
+      try {
+        const name = namePrefix + loc.name;
+        const config = loadComponentConfig(loc.directory, name) as TestConfig | null;
+        if (config && config.type === 'server' && config.enabled !== false) {
+          servers.push({
+            name,
+            directory: loc.directory,
+            config,
+            proxy: new GenericServerProxy(loc.directory),
+          });
         }
+      } catch (error) {
+        errorLog(`Failed to load config for server ${namePrefix}${loc.name}: ${error}`);
       }
     }
   }
@@ -91,12 +78,9 @@ export class TestDiscovery {
       this.discoverClientsInDirectory(clientsDir, clients);
     }
 
-    // Discover clients from legacy directory if flag is set
-    if (this.includeLegacy) {
-      const legacyClientsDir = join(this.baseDir, 'legacy', 'clients');
-      if (existsSync(legacyClientsDir)) {
-        this.discoverClientsInDirectory(legacyClientsDir, clients, 'legacy-');
-      }
+    const legacyClientsDir = join(this.baseDir, 'legacy', 'clients');
+    if (existsSync(legacyClientsDir)) {
+      this.discoverClientsInDirectory(legacyClientsDir, clients, 'legacy/');
     }
 
     return clients;
@@ -114,12 +98,9 @@ export class TestDiscovery {
       this.discoverFacilitatorsInDirectory(facilitatorsDir, facilitators);
     }
 
-    // Discover facilitators from legacy directory if flag is set
-    if (this.includeLegacy) {
-      const legacyFacilitatorsDir = join(this.baseDir, 'legacy', 'facilitators');
-      if (existsSync(legacyFacilitatorsDir)) {
-        this.discoverFacilitatorsInDirectory(legacyFacilitatorsDir, facilitators, 'legacy-');
-      }
+    const legacyFacilitatorsDir = join(this.baseDir, 'legacy', 'facilitators');
+    if (existsSync(legacyFacilitatorsDir)) {
+      this.discoverFacilitatorsInDirectory(legacyFacilitatorsDir, facilitators, 'legacy-');
     }
 
     return facilitators;
@@ -129,8 +110,8 @@ export class TestDiscovery {
    * Helper method to discover facilitators in a specific directory
    */
   private discoverFacilitatorsInDirectory(facilitatorsDir: string, facilitators: DiscoveredFacilitator[], namePrefix: string = '', isExternal: boolean = false): void {
-    let facilitatorDirs = readdirSync(facilitatorsDir, { withFileTypes: true })
-      .filter(dirent => dirent.isDirectory())
+    const facilitatorDirs = readdirSync(facilitatorsDir, { withFileTypes: true })
+      .filter(dirent => dirent.isDirectory() && dirent.name !== 'node_modules' && dirent.name !== 'shared')
       .map(dirent => dirent.name);
 
     for (const facilitatorName of facilitatorDirs) {
@@ -150,25 +131,19 @@ export class TestDiscovery {
         continue;
       }
 
-      const configPath = join(facilitatorDir, 'test.config.json');
-
-      if (existsSync(configPath)) {
-        try {
-          const configContent = readFileSync(configPath, 'utf-8');
-          const config: TestConfig = JSON.parse(configContent);
-
-          if (config.type === 'facilitator' && config.enabled !== false) {
-            facilitators.push({
-              name: namePrefix + facilitatorName,
-              directory: facilitatorDir,
-              config,
-              proxy: new GenericFacilitatorProxy(facilitatorDir),
-              isExternal
-            });
-          }
-        } catch (error) {
-          errorLog(`Failed to load config for facilitator ${namePrefix}${facilitatorName}: ${error}`);
+      try {
+        const config = loadComponentConfig(facilitatorDir) as TestConfig | null;
+        if (config && config.type === 'facilitator' && config.enabled !== false) {
+          facilitators.push({
+            name: namePrefix + facilitatorName,
+            directory: facilitatorDir,
+            config,
+            proxy: new GenericFacilitatorProxy(facilitatorDir),
+            isExternal,
+          });
         }
+      } catch (error) {
+        errorLog(`Failed to load config for facilitator ${namePrefix}${facilitatorName}: ${error}`);
       }
     }
   }
@@ -177,30 +152,20 @@ export class TestDiscovery {
    * Helper method to discover clients in a specific directory
    */
   private discoverClientsInDirectory(clientsDir: string, clients: DiscoveredClient[], namePrefix: string = ''): void {
-    let clientDirs = readdirSync(clientsDir, { withFileTypes: true })
-      .filter(dirent => dirent.isDirectory())
-      .map(dirent => dirent.name);
-
-    for (const clientName of clientDirs) {
-      const clientDir = join(clientsDir, clientName);
-      const configPath = join(clientDir, 'test.config.json');
-
-      if (existsSync(configPath)) {
-        try {
-          const configContent = readFileSync(configPath, 'utf-8');
-          const config: TestConfig = JSON.parse(configContent);
-
-          if (config.type === 'client' && config.enabled !== false) {
-            clients.push({
-              name: namePrefix + clientName,
-              directory: clientDir,
-              config,
-              proxy: new GenericClientProxy(clientDir)
-            });
-          }
-        } catch (error) {
-          errorLog(`Failed to load config for client ${namePrefix}${clientName}: ${error}`);
+    for (const loc of discoverComponentLocations(clientsDir)) {
+      try {
+        const name = namePrefix + loc.name;
+        const config = loadComponentConfig(loc.directory, name) as TestConfig | null;
+        if (config && config.type === 'client' && config.enabled !== false) {
+          clients.push({
+            name,
+            directory: loc.directory,
+            config,
+            proxy: new GenericClientProxy(loc.directory),
+          });
         }
+      } catch (error) {
+        errorLog(`Failed to load config for client ${namePrefix}${loc.name}: ${error}`);
       }
     }
   }
@@ -267,16 +232,24 @@ export class TestDiscovery {
             continue;
           }
 
-          // For EVM endpoints, check the client supports the endpoint's
-          // payment scheme and asset transfer method. Both `schemes` and
-          // `evm.assetTransferMethods` must be declared explicitly on the
-          // client config — there is no implicit default.
+          // Scheme support is per network: Python may implement EVM upto but not SVM upto.
+          const clientLanguage = client.config.language;
+          if (!clientLanguage) {
+            verboseLog(`  ⚠️  Skipping ${client.name}: No language specified`);
+            continue;
+          }
+          const clientSchemesForFamily = schemesForComponent(
+            clientLanguage,
+            endpointProtocolFamily,
+            client.config.schemes,
+          );
+          if (!clientSchemesForFamily.includes(endpointScheme)) {
+            verboseLog(`  ⚠️  Skipping ${client.name} ↔ ${server.name} ${endpoint.path}: Payment scheme mismatch (client supports [${clientSchemesForFamily.join(', ')}] on ${endpointProtocolFamily}, endpoint requires ${endpointScheme})`);
+            continue;
+          }
+
+          // For EVM endpoints, also check asset transfer method.
           if (endpointProtocolFamily === 'evm') {
-            const clientSchemes = client.config.schemes ?? [];
-            if (endpointScheme && !clientSchemes.includes(endpointScheme)) {
-              verboseLog(`  ⚠️  Skipping ${client.name} ↔ ${server.name} ${endpoint.path}: Payment scheme mismatch (client supports [${clientSchemes.join(', ')}], endpoint requires ${endpointScheme})`);
-              continue;
-            }
             const endpointAtm = endpointAssetTransferMethod(endpoint)!;
             const clientAssetMethods = client.config.evm?.assetTransferMethods ?? [];
             if (!clientAssetMethods.includes(endpointAtm)) {
@@ -286,19 +259,27 @@ export class TestDiscovery {
           }
 
           // Find facilitators that support this protocol family, version,
-          // payment scheme, and asset transfer method. Facilitators must
-          // declare `schemes` and `evm.assetTransferMethods` explicitly.
+          // payment scheme, and (for EVM) asset transfer method. Facilitators
+          // must declare `schemes` and `evm.assetTransferMethods` explicitly.
           const matchingFacilitators = facilitators.filter(f => {
             const supportsProtocol = f.config.protocolFamilies?.includes(endpointProtocolFamily);
             const supportsVersion = f.config.x402Versions?.includes(serverVersion);
+            const facilLanguage = f.config.language;
+            if (!facilLanguage) return false;
+            const clientFacilitators = client.config.facilitators;
+            if (clientFacilitators && !clientFacilitators.includes(f.name)) {
+              return false;
+            }
+            const facilSchemesForFamily = schemesForComponent(
+              facilLanguage,
+              endpointProtocolFamily,
+              f.config.schemes,
+            );
+            if (!facilSchemesForFamily.includes(endpointScheme)) return false;
             if (endpointProtocolFamily === 'evm') {
               const endpointAtm = endpointAssetTransferMethod(endpoint)!;
               const facilAssetMethods = f.config.evm?.assetTransferMethods ?? [];
               if (!facilAssetMethods.includes(endpointAtm)) return false;
-              if (endpointScheme) {
-                const facilSchemes = f.config.schemes ?? [];
-                if (!facilSchemes.includes(endpointScheme)) return false;
-              }
             }
             return supportsProtocol && supportsVersion;
           });
@@ -330,9 +311,6 @@ export class TestDiscovery {
 
     verboseLog('🔍 Test Discovery Summary');
     verboseLog('========================');
-    if (this.includeLegacy) {
-      verboseLog('🔄 Legacy mode enabled - including legacy implementations');
-    }
     verboseLog(`📡 Servers found: ${servers.length}`);
     servers.forEach(server => {
       const paidEndpoints = server.config.endpoints?.filter(e => e.requiresPayment).length || 0;

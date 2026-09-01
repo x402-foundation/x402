@@ -275,6 +275,23 @@ class TestPaymentResponseHeader:
         assert decoded.success is False
         assert decoded.error_reason == "Insufficient funds"
 
+    def test_encode_excludes_extension_responses_sidechannel(self):
+        """PAYMENT-RESPONSE must not include facilitator extension_responses."""
+        settle = SettleResponse(
+            success=True,
+            transaction="0xabc123",
+            network="eip155:8453",
+            payer="0x1234567890123456789012345678901234567890",
+            extension_responses={"bazaar": {"status": "processing"}},
+        )
+        encoded = encode_payment_response_header(settle)
+        decoded_json = safe_base64_decode(encoded)
+        data = json.loads(decoded_json)
+
+        assert "extensionResponses" not in data
+        assert "extension_responses" not in data
+        assert "bazaar" not in data
+
 
 class TestDetectPaymentRequiredVersion:
     """Tests for version detection."""

@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { PaymentRequirements } from "@x402/core/types";
+import { x402Client } from "@x402/core/client";
 import { getNewKeetaAccount } from "./utils";
 import { ExactKeetaScheme } from "../../src/exact/client/scheme";
 import { KEETA_TESTNET_CAIP2 } from "../../src/constants";
+import { USDC_TESTNET_ADDRESS } from "../../src/defaultAssets";
 import { KTA_TESTNET_ADDRESS } from "../../src/utils";
 
 const PAY_TO = getNewKeetaAccount().publicKeyString.toString();
@@ -43,6 +45,43 @@ describe("ExactKeetaScheme (client)", () => {
 
   it("has scheme set to exact", () => {
     expect(scheme.scheme).toBe("exact");
+  });
+
+  it("recognizes documented USDC via findDefaultAsset and rejects native KTA", () => {
+    expect(scheme.findDefaultAsset?.(USDC_TESTNET_ADDRESS, KEETA_TESTNET_CAIP2)?.symbol).toBe(
+      "USDC",
+    );
+    expect(scheme.findDefaultAsset?.(KTA_TESTNET_ADDRESS, KEETA_TESTNET_CAIP2)).toBeUndefined();
+  });
+
+  describe("spendControls", () => {
+    function paymentRequired(asset: string, amount: string) {
+      return {
+        x402Version: 2,
+        resource: { url: "https://example.com/resource" },
+        accepts: [createRequirements({ asset, amount })],
+      };
+    }
+
+    it("auto-allows documented USDC at or below the $1 cap", async () => {
+      const client = new x402Client().register(KEETA_TESTNET_CAIP2, scheme);
+      await client.createPaymentPayload(paymentRequired(USDC_TESTNET_ADDRESS, "1000000"));
+      expect(signer.computePaymentBlock).toHaveBeenCalledOnce();
+    });
+
+    it("rejects documented USDC above the $1 cap", async () => {
+      const client = new x402Client().register(KEETA_TESTNET_CAIP2, scheme);
+      await expect(
+        client.createPaymentPayload(paymentRequired(USDC_TESTNET_ADDRESS, "1000001")),
+      ).rejects.toThrow(/maxAmountPerPayment/);
+    });
+
+    it("rejects native KTA unless opted in via allowedAssets", async () => {
+      const client = new x402Client().register(KEETA_TESTNET_CAIP2, scheme);
+      await expect(
+        client.createPaymentPayload(paymentRequired(KTA_TESTNET_ADDRESS, "1000")),
+      ).rejects.toThrow(/spendControls\.allowedAssets/);
+    });
   });
 
   describe("createPaymentPayload", () => {

@@ -1,11 +1,30 @@
 import { BaseProxy, RunConfig } from '../proxy-base';
+import { loadComponentConfig } from '../component';
 import { ServerProxy, ServerConfig } from '../types';
 import { verboseLog, errorLog } from '../logger';
 import { resolveEvmPermit2Asset } from '../networks/networks';
+import { CATALOG_DIR } from '../mechanisms';
+import {
+  excludedServerCredentialKeys,
+  forwardConfigEnv,
+  forwardRoleCredentials,
+  injectNetworkEnv,
+} from '../env';
 
-export interface ProtectedResponse {
-  message: string;
-  timestamp: string;
+/** Mirror a component's declared narrowing into the env its server reads. */
+function routeExclusionEnv(config: unknown): Record<string, string> {
+  const { excludeSchemes, excludeNetworks } = (config ?? {}) as {
+    excludeSchemes?: string[];
+    excludeNetworks?: string[];
+  };
+  const env: Record<string, string> = {};
+  if (excludeSchemes?.length) {
+    env.E2E_EXCLUDE_SCHEMES = excludeSchemes.join(',');
+  }
+  if (excludeNetworks?.length) {
+    env.E2E_EXCLUDE_NETWORKS = excludeNetworks.join(',');
+  }
+  return env;
 }
 
 export interface HealthResponse {
@@ -32,166 +51,120 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
     // Use different ready logs for different server types
     const readyLog = directory.includes('next') ? 'Ready' : 'Server listening';
     super(directory, readyLog);
-
-    // Load endpoints from test config
     this.loadEndpoints();
   }
 
   private loadEndpoints(): void {
     try {
-      const { readFileSync, existsSync } = require('fs');
-      const { join } = require('path');
-      const configPath = join(this.directory, 'test.config.json');
+      const config = loadComponentConfig(this.directory) as {
+        endpoints?: Array<{ path: string; health?: boolean; close?: boolean }>;
+      } | null;
+      if (!config?.endpoints) return;
 
-      if (existsSync(configPath)) {
-        const configContent = readFileSync(configPath, 'utf-8');
-        const config = JSON.parse(configContent);
-
-        // Load health endpoint
-        const healthEndpoint = config.endpoints?.find((endpoint: any) => endpoint.health);
-        if (healthEndpoint) {
-          this.healthEndpoint = healthEndpoint.path;
-        }
-
-        // Load close endpoint
-        const closeEndpoint = config.endpoints?.find((endpoint: any) => endpoint.close);
-        if (closeEndpoint) {
-          this.closeEndpoint = closeEndpoint.path;
-        }
+      const healthEndpoint = config.endpoints.find(endpoint => endpoint.health);
+      if (healthEndpoint) {
+        this.healthEndpoint = healthEndpoint.path;
       }
-    } catch (error) {
+
+      const closeEndpoint = config.endpoints.find(endpoint => endpoint.close);
+      if (closeEndpoint) {
+        this.closeEndpoint = closeEndpoint.path;
+      }
+    } catch {
       // Fallback to defaults if config loading fails
       errorLog(`Failed to load endpoints from config for ${this.directory}, using defaults`);
     }
   }
 
+  private loadConfig(): any {
+    return loadComponentConfig(this.directory);
+  }
+
   async start(config: ServerConfig): Promise<void> {
     this.port = config.port;
+    const componentConfig = this.loadConfig();
 
     // Check if this is a v1 (legacy) server based on directory name
     const isV1Server = this.directory.includes('legacy/');
 
     verboseLog(`  📂 Server directory: ${this.directory}, isV1: ${isV1Server}`);
 
-    // For legacy servers, translate CAIP-2 to v1 network names
-    let evmNetwork: string = config.networks.evm.caip2;
-    let svmNetwork: string = config.networks.svm.caip2;
-
     if (isV1Server) {
-      evmNetwork = translateNetworkForV1(config.networks.evm.caip2);
-      svmNetwork = translateNetworkForV1(config.networks.svm.caip2);
-
-      verboseLog(`  🔄 Translating networks for v1 server: ${config.networks.evm.caip2} → ${evmNetwork}, ${config.networks.svm.caip2} → ${svmNetwork}`);
+      verboseLog(
+        `  🔄 Translating networks for v1 server: ${config.networks.evm.caip2} → legacy EVM/SVM values`,
+      );
     }
+
+    const baseEnv: Record<string, string> = {
+      PORT: config.port.toString(),
+      ...forwardRoleCredentials('server', config.enabledFamilies),
+      ...injectNetworkEnv(config.networks, { legacyV1: isV1Server }),
+      EVM_PERMIT2_ASSET: resolveEvmPermit2Asset(config.networks),
+      FACILITATOR_URL: config.facilitatorUrl || '',
+      MOCK_FACILITATOR_URL: config.mockFacilitatorUrl || '',
+      // Servers resolve their own routes from the same catalog the harness uses,
+      // including the exclusions that narrow a surface (e.g. echo, no batching).
+      E2E_MECHANISMS_CATALOG: CATALOG_DIR,
+      ...routeExclusionEnv(componentConfig),
+    };
 
     const runConfig: RunConfig = {
       port: config.port,
-      env: {
-        PORT: config.port.toString(),
-
-        // EVM network config
-        EVM_NETWORK: evmNetwork,
-        EVM_RPC_URL: config.networks.evm.rpcUrl,
-        EVM_PAYEE_ADDRESS: config.evmPayTo,
-        EVM_PERMIT2_ASSET: resolveEvmPermit2Asset(config.networks),
-
-        // SVM network config
-        SVM_NETWORK: svmNetwork,
-        SVM_RPC_URL: config.networks.svm.rpcUrl,
-        SVM_PAYEE_ADDRESS: config.svmPayTo,
-
-        // AVM network config
-        AVM_NETWORK: config.networks.avm.caip2,
-        AVM_RPC_URL: config.networks.avm.rpcUrl,
-        AVM_PAYEE_ADDRESS: config.avmPayTo,
-
-        // Aptos network config
-        APTOS_NETWORK: config.networks.aptos.caip2,
-        APTOS_RPC_URL: config.networks.aptos.rpcUrl,
-        APTOS_PAYEE_ADDRESS: config.aptosPayTo,
-
-        // Concordium network config
-        CCD_NETWORK: config.networks.ccd.caip2,
-        CCD_PAYEE_ADDRESS: config.ccdPayTo,
-
-        // Hedera network config. HEDERA_ASSET / HEDERA_AMOUNT are only
-        // forwarded when set by the caller; the resource servers apply their
-        // own HBAR defaults (0.0.0 / 100000 tinybars) when absent, so passing
-        // an empty string here would clobber those defaults.
-        HEDERA_NETWORK: config.networks.hedera.caip2,
-        HEDERA_NODE_URL: config.networks.hedera.rpcUrl,
-        HEDERA_PAYEE_ADDRESS: config.hederaPayTo,
-        ...(config.hederaAsset !== undefined ? { HEDERA_ASSET: config.hederaAsset } : {}),
-        ...(config.hederaAmount !== undefined ? { HEDERA_AMOUNT: config.hederaAmount } : {}),
-
-        // Keeta network config
-        KEETA_NETWORK: config.networks.keeta.caip2,
-        KEETA_PAYEE_ADDRESS: config.keetaPayTo,
-
-        // Stellar network config
-        STELLAR_NETWORK: config.networks.stellar.caip2,
-        STELLAR_RPC_URL: config.networks.stellar.rpcUrl,
-        STELLAR_PAYEE_ADDRESS: config.stellarPayTo,
-
-        // TVM network config
-        TVM_NETWORK: config.networks.tvm.caip2,
-        TVM_PAYEE_ADDRESS: config.tvmPayTo,
-
-        // NEAR network config
-        NEAR_NETWORK: config.networks.near.caip2,
-        NEAR_RPC_URL: config.networks.near.rpcUrl,
-        NEAR_PAYEE_ADDRESS: config.nearPayTo,
-        ...(config.nearAsset !== undefined ? { NEAR_ASSET: config.nearAsset } : {}),
-        ...(config.nearAmount !== undefined ? { NEAR_AMOUNT: config.nearAmount } : {}),
-
-        // XRPL network config
-        XRPL_NETWORK: config.networks.xrpl.caip2,
-        XRPL_WS_URL: config.networks.xrpl.rpcUrl,
-        XRPL_PAYEE_ADDRESS: config.xrplPayTo,
-        ...(config.xrplAsset !== undefined ? { XRPL_ASSET: config.xrplAsset } : {}),
-        ...(config.xrplAmount !== undefined ? { XRPL_AMOUNT: config.xrplAmount } : {}),
-        ...(config.xrplIssuer !== undefined ? { XRPL_ISSUER: config.xrplIssuer } : {}),
-
-        // Facilitator
-        FACILITATOR_URL: config.facilitatorUrl || '',
-        MOCK_FACILITATOR_URL: config.mockFacilitatorUrl || '',
-
-        ...(config.batchSettlement
-          ? {
-              EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY:
-                config.batchSettlement.receiverAuthorizerPrivateKey,
-            }
-          : {}),
-      }
+      // Optional family-specific vars (HEDERA_ASSET, SERVER_NEAR_ASSET, etc.) are
+      // forwarded from the root process via forwardConfigEnv + test.config.json.
+      env: forwardConfigEnv(componentConfig, baseEnv, config.enabledFamilies),
+      // Strip SERVER_*_ADDRESS for excluded families even if they're inherited
+      // from the harness's own process.env (e.g. e2e/.env), so a component never
+      // registers a scheme its paired facilitator doesn't support.
+      unsetEnv: excludedServerCredentialKeys(config.enabledFamilies),
     };
 
     await this.startProcess(runConfig);
   }
 
-  async protected(): Promise<ServerResult<ProtectedResponse>> {
-    try {
-      const response = await fetch(`http://localhost:${this.port}/protected`);
+  /**
+   * Catch catalog drift: every paid route a component declares must be mounted,
+   * so an unpaid GET reaches the payment middleware instead of falling through
+   * to the router. Only a missing route (404/405) fails the check — any other
+   * status means the middleware owns the path, and a payment-time error there is
+   * the test suite's job to report, not a startup failure. Only families enabled
+   * for this run are checked, since the server drops routes whose payee is unset.
+   */
+  async verifyPaidRoutes(enabledFamilies?: string[]): Promise<{ ok: boolean; problems: string[] }> {
+    const config = this.loadConfig() as {
+      endpoints?: Array<{
+        path: string;
+        method?: string;
+        requiresPayment?: boolean;
+        protocolFamily?: string;
+      }>;
+    } | null;
 
-      if (!response.ok) {
-        return {
-          success: false,
-          error: `Protected endpoint failed: ${response.status} ${response.statusText}`,
-          statusCode: response.status
-        };
+    const paths = (config?.endpoints ?? [])
+      .filter(endpoint => endpoint.requiresPayment && (endpoint.method ?? 'GET') === 'GET')
+      .filter(
+        endpoint =>
+          !enabledFamilies ||
+          !endpoint.protocolFamily ||
+          enabledFamilies.includes(endpoint.protocolFamily),
+      )
+      .map(endpoint => endpoint.path);
+
+    const problems: string[] = [];
+    for (const path of paths) {
+      try {
+        const response = await fetch(`http://localhost:${this.port}${path}`);
+        if (response.status === 404 || response.status === 405) {
+          problems.push(`${path} → ${response.status} (declared in the catalog but not mounted)`);
+        } else if (response.status !== 402) {
+          verboseLog(`  ⚠️  ${path} answered ${response.status} instead of 402 without payment`);
+        }
+      } catch (error) {
+        problems.push(`${path} → ${error instanceof Error ? error.message : String(error)}`);
       }
-
-      const data = await response.json();
-      return {
-        success: true,
-        data: data as ProtectedResponse,
-        statusCode: response.status
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : String(error)
-      };
     }
+
+    return { ok: problems.length === 0, problems };
   }
 
   async health(): Promise<ServerResult<HealthResponse>> {
@@ -202,7 +175,7 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
         return {
           success: false,
           error: `Health check failed: ${response.status} ${response.statusText}`,
-          statusCode: response.status
+          statusCode: response.status,
         };
       }
 
@@ -210,12 +183,12 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
       return {
         success: true,
         data: data as HealthResponse,
-        statusCode: response.status
+        statusCode: response.status,
       };
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
       };
     }
   }
@@ -223,14 +196,14 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
   async close(): Promise<ServerResult<CloseResponse>> {
     try {
       const response = await fetch(`http://localhost:${this.port}${this.closeEndpoint}`, {
-        method: 'POST'
+        method: 'POST',
       });
 
       if (!response.ok) {
         return {
           success: false,
           error: `Close failed: ${response.status} ${response.statusText}`,
-          statusCode: response.status
+          statusCode: response.status,
         };
       }
 
@@ -238,12 +211,12 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
       return {
         success: true,
         data: data as CloseResponse,
-        statusCode: response.status
+        statusCode: response.status,
       };
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
       };
     }
   }
@@ -259,7 +232,7 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
         } else {
           verboseLog('Graceful shutdown failed, using force kill');
         }
-      } catch (error) {
+      } catch {
         verboseLog('Graceful shutdown failed, using force kill');
       }
     }
@@ -267,34 +240,7 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
     await this.stopProcess();
   }
 
-  getHealthUrl(): string {
-    return `http://localhost:${this.port}${this.healthEndpoint}`;
-  }
-
-  getProtectedPath(): string {
-    return `/protected`;
-  }
-
   getUrl(): string {
     return `http://localhost:${this.port}`;
   }
-}
-
-/**
- * Translates v2 CAIP-2 network format to v1 simple format for legacy servers
- *
- * @param network - Network in CAIP-2 format (e.g., "eip155:84532")
- * @returns Network in v1 format (e.g., "base-sepolia")
- */
-function translateNetworkForV1(network: string): string {
-  const networkMap: Record<string, string> = {
-    // Testnets
-    'eip155:84532': 'base-sepolia',
-    'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1': 'solana-devnet',
-    // Mainnets
-    'eip155:8453': 'base',
-    'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp': 'solana',
-  };
-
-  return networkMap[network] || network;
 }

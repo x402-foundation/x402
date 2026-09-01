@@ -88,4 +88,18 @@ export default [
       "@typescript-eslint/member-ordering": "off",
     },
   },
+  {
+    // Vendored Codama client + ported payment-channel primitives. These mirror
+    // upstream generated/Rust code, so they are exempt from the hand-written
+    // JSDoc-completeness rules (correctness rules like check-param-names still apply).
+    files: ["src/payment-channels/**/*.ts"],
+    rules: {
+      "jsdoc/require-jsdoc": "off",
+      "jsdoc/require-description": "off",
+      "jsdoc/require-param": "off",
+      "jsdoc/require-param-description": "off",
+      "jsdoc/require-returns": "off",
+      "jsdoc/require-returns-description": "off",
+    },
+  },
 ];

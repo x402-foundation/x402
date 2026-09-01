@@ -21,7 +21,7 @@ This directory contains examples demonstrating how to use the x402 v2 SDK with d
 cd httpx
 cp .env-local .env
 # Edit .env with your EVM_PRIVATE_KEY and/or SVM_PRIVATE_KEY
-uv sync
+uv sync --reinstall-package x402
 uv run python main.py
 ```
 
@@ -31,13 +31,14 @@ uv run python main.py
 cd requests
 cp .env-local .env
 # Edit .env with your EVM_PRIVATE_KEY and/or SVM_PRIVATE_KEY
-uv sync
+uv sync --reinstall-package x402
 uv run python main.py
 ```
 
 ## Features Demonstrated
 
 - **Automatic 402 handling** - Payment handling is transparent to your code
+- **Spend controls** - Default `$1` USD cap on recognized pegged assets (see [advanced examples](./advanced/))
 - **EVM payments** - Uses `EthAccountSigner` with `register_exact_evm_client`
 - **Payment response extraction** - Shows how to decode settlement confirmations
 - **Environment validation** - Checks for required configuration

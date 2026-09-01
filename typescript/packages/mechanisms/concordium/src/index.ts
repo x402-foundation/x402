@@ -14,5 +14,13 @@ export * from "./types";
 // Constants
 export * from "./constants";
 
+export {
+  DEFAULT_ASSETS,
+  getDefaultAsset,
+  findDefaultAsset,
+  USDR_TOKEN_ID,
+  type ConcordiumDefaultAsset,
+} from "./defaultAssets";
+
 // Signer utilities
 export * from "./signer";

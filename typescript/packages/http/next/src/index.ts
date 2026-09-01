@@ -4,7 +4,6 @@ import {
   x402ResourceServer,
   x402HTTPResourceServer,
   RoutesConfig,
-  RouteConfig,
   FacilitatorClient,
   FacilitatorResponseError,
   checkIfBazaarNeeded,
@@ -19,6 +18,7 @@ import {
   handlePaymentError,
   handleSettlement,
   createFacilitatorErrorResponse,
+  createInternalErrorResponse,
   getFacilitatorResponseError,
 } from "./utils";
 
@@ -115,7 +115,7 @@ export function paymentProxyFromHTTPServer(
       if (facilitatorError) {
         return createFacilitatorErrorResponse(facilitatorError);
       }
-      throw error;
+      return createInternalErrorResponse(error);
     }
 
     // Await bazaar extension loading if needed
@@ -132,7 +132,7 @@ export function paymentProxyFromHTTPServer(
       if (error instanceof FacilitatorResponseError) {
         return createFacilitatorErrorResponse(error);
       }
-      throw error;
+      return createInternalErrorResponse(error);
     }
 
     // Handle the different result types
@@ -156,6 +156,7 @@ export function paymentProxyFromHTTPServer(
           result.declaredExtensions,
           result.cancellationDispatcher,
           context,
+          result.beforeHandlerSettlement,
         );
       }
     }
@@ -266,7 +267,7 @@ export function paymentProxyFromConfig(
  * const resourceServer = new x402ResourceServer(facilitatorClient)
  *   .register(NETWORK, new ExactEvmScheme());
  *
- * const httpServer = new x402HTTPResourceServer(resourceServer, { "*": routeConfig })
+ * const httpServer = new x402HTTPResourceServer(resourceServer, { "/api/protected": routeConfig })
  *   .onProtectedRequest(requestHook);
  *
  * const handler = async (request: NextRequest) => {
@@ -304,9 +305,19 @@ export function withX402FromHTTPServer<T = unknown>(
       });
   }
 
+  let warnedNoMatch = false;
+
   return async (request: NextRequest): Promise<NextResponse<T>> => {
     // Only initialize when processing a protected route
-    await init();
+    try {
+      await init();
+    } catch (error) {
+      const facilitatorError = getFacilitatorResponseError(error);
+      if (facilitatorError) {
+        return createFacilitatorErrorResponse(facilitatorError) as NextResponse<T>;
+      }
+      return createInternalErrorResponse(error) as NextResponse<T>;
+    }
 
     // Await bazaar extension loading if needed
     if (bazaarPromise) {
@@ -317,11 +328,36 @@ export function withX402FromHTTPServer<T = unknown>(
     const context = createRequestContext(request);
 
     // Process payment requirement check
-    const result = await httpServer.processHTTPRequest(context, paywallConfig);
+    let result: Awaited<ReturnType<x402HTTPResourceServer["processHTTPRequest"]>>;
+    try {
+      result = await httpServer.processHTTPRequest(context, paywallConfig);
+    } catch (error) {
+      if (error instanceof FacilitatorResponseError) {
+        return createFacilitatorErrorResponse(error) as NextResponse<T>;
+      }
+      return createInternalErrorResponse(error) as NextResponse<T>;
+    }
 
     // Handle the different result types
     switch (result.type) {
       case "no-payment-required":
+        // This wrapper protects a single handler, so with pattern-keyed routes every
+        // request should match one; a miss means the pattern is wrong and the handler
+        // is being served without payment.
+        if (
+          !warnedNoMatch &&
+          !("accepts" in httpServer.routes) &&
+          !httpServer.requiresPayment(context)
+        ) {
+          warnedNoMatch = true;
+          const patterns = Object.keys(httpServer.routes)
+            .map(pattern => `"${pattern}"`)
+            .join(", ");
+          console.warn(
+            `[x402] Request path "${context.path}" did not match any configured route pattern (${patterns}); ` +
+              `the handler ran without payment. Check the route patterns passed to withX402.`,
+          );
+        }
         // No payment needed, proceed directly to the route handler
         return routeHandler(request);
 
@@ -334,11 +370,26 @@ export function withX402FromHTTPServer<T = unknown>(
         try {
           handlerResponse = await routeHandler(request);
         } catch (error) {
-          await result.cancellationDispatcher.cancel({
+          const cancelSettlement = await result.cancellationDispatcher.cancel({
             reason: "handler_threw",
             error,
           });
-          throw error;
+          if (!result.beforeHandlerSettlement && !cancelSettlement) {
+            throw error;
+          }
+          const response = createInternalErrorResponse(error);
+          const failureHeaders = httpServer.createFailurePathSettlementHeaders(
+            cancelSettlement,
+            result.beforeHandlerSettlement,
+            result.paymentPayload,
+            response.headers.get("Cache-Control"),
+          );
+          if (failureHeaders) {
+            Object.entries(failureHeaders).forEach(([key, value]) => {
+              response.headers.set(key, value);
+            });
+          }
+          return response as NextResponse<T>;
         }
         return handleSettlement(
           httpServer,
@@ -348,6 +399,7 @@ export function withX402FromHTTPServer<T = unknown>(
           result.declaredExtensions,
           result.cancellationDispatcher,
           context,
+          result.beforeHandlerSettlement,
         ) as Promise<NextResponse<T>>;
       }
     }
@@ -362,7 +414,12 @@ export function withX402FromHTTPServer<T = unknown>(
  * response (status < 400). This provides more precise control over when payments are settled.
  *
  * @param routeHandler - The API route handler function to wrap
- * @param routeConfig - Payment configuration for this specific route
+ * @param routes - Payment configuration for this route: either a bare route config
+ * (matches any path, like the previous behavior) or a single-entry map keyed by the
+ * route's path pattern (e.g. `{ "/api/users/[id]": config }`). Prefer the keyed form
+ * when using bazaar discovery extensions so the resource is indexed with the correct path.
+ * The pattern must match the request path exactly as served (including any `basePath`);
+ * if it does not match, the handler runs without payment and a warning is logged.
  * @param server - Pre-configured x402ResourceServer instance
  * @param paywallConfig - Optional configuration for the built-in paywall UI
  * @param paywall - Optional custom paywall provider (overrides default)
@@ -384,13 +441,15 @@ export function withX402FromHTTPServer<T = unknown>(
  * export const GET = withX402(
  *   handler,
  *   {
- *     accepts: {
- *       scheme: "exact",
- *       payTo: "0x123...",
- *       price: "$0.01",
- *       network: "eip155:84532",
+ *     "/api/protected": {
+ *       accepts: {
+ *         scheme: "exact",
+ *         payTo: "0x123...",
+ *         price: "$0.01",
+ *         network: "eip155:84532",
+ *       },
+ *       description: "Access to protected API",
  *     },
- *     description: "Access to protected API",
  *   },
  *   server,
  * );
@@ -398,13 +457,12 @@ export function withX402FromHTTPServer<T = unknown>(
  */
 export function withX402<T = unknown>(
   routeHandler: (request: NextRequest) => Promise<NextResponse<T>>,
-  routeConfig: RouteConfig,
+  routes: RoutesConfig,
   server: x402ResourceServer,
   paywallConfig?: PaywallConfig,
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
 ): (request: NextRequest) => Promise<NextResponse<T>> {
-  const routes = { "*": routeConfig };
   // Create the x402 HTTP server instance with the resource server
   const httpServer = new x402HTTPResourceServer(server, routes);
 

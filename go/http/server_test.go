@@ -10,8 +10,20 @@ import (
 	"testing"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
+
+// TestSettlementPendingReasonMatchesMechanismConstant pins that the http-layer literal,
+// which is mirrored to avoid an http→mechanisms import, stays in lockstep with the
+// canonical mechanisms/evm constant. If the mechanism ever renames the reason, this
+// fails rather than silently letting the sanitizer strip the hash off a pending settle.
+func TestSettlementPendingReasonMatchesMechanismConstant(t *testing.T) {
+	if settlementPendingReason != evm.ErrSettlementPending {
+		t.Errorf("settlementPendingReason = %q, want %q (mechanisms/evm.ErrSettlementPending)",
+			settlementPendingReason, evm.ErrSettlementPending)
+	}
+}
 
 // Mock HTTP adapter for testing
 type mockHTTPAdapter struct {
@@ -617,6 +629,7 @@ func TestProcessSettlement(t *testing.T) {
 	server := Newx402HTTPResourceServer(
 		RoutesConfig{},
 		x402.WithFacilitatorClient(mockClient),
+		x402.WithSchemeServer("eip155:1", &mockSchemeServer{scheme: "exact"}),
 	)
 	_ = server.Initialize(ctx)
 
@@ -635,7 +648,7 @@ func TestProcessSettlement(t *testing.T) {
 	}
 
 	// Test settlement processing
-	result := server.ProcessSettlement(ctx, payload, requirements, nil, nil, nil)
+	result := server.ProcessSettlement(ctx, payload, requirements, nil, nil, nil, nil, "")
 	if !result.Success {
 		t.Fatalf("Unexpected failure: %v", result.ErrorReason)
 	}
@@ -667,6 +680,7 @@ func TestProcessSettlement_Failure(t *testing.T) {
 	server := Newx402HTTPResourceServer(
 		RoutesConfig{},
 		x402.WithFacilitatorClient(mockClient),
+		x402.WithSchemeServer("eip155:1", &mockSchemeServer{scheme: "exact"}),
 	)
 	_ = server.Initialize(ctx)
 
@@ -684,12 +698,76 @@ func TestProcessSettlement_Failure(t *testing.T) {
 		Payload:     map[string]interface{}{},
 	}
 
-	result := server.ProcessSettlement(ctx, payload, requirements, nil, nil, nil)
+	result := server.ProcessSettlement(ctx, payload, requirements, nil, nil, nil, nil, "")
 	if result.Success {
 		t.Fatal("Expected settlement failure")
 	}
 	if result.Headers == nil || result.Headers["PAYMENT-RESPONSE"] == "" {
 		t.Error("Expected PAYMENT-RESPONSE header on settlement failure")
+	}
+	if result.Response == nil {
+		t.Fatal("Expected response instructions")
+	}
+}
+
+// TestProcessSettlement_MechanismErrorPreservesReasonAndTransaction pins that a
+// mechanism-level failure returned as an error (the common path — see
+// go/mechanisms/evm/exact/facilitator/permit2.go's Settle) is not flattened into an
+// opaque err.Error() string. Non-terminal reasons like settlement_pending carry the
+// broadcast transaction hash, which must survive into the PAYMENT-RESPONSE header so
+// the caller can reconcile on chain.
+func TestProcessSettlement_MechanismErrorPreservesReasonAndTransaction(t *testing.T) {
+	ctx := context.Background()
+	pendingTxHash := "0x" + strings.Repeat("ab", 32)
+
+	mockClient := &mockFacilitatorClient{
+		settle: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {
+			return nil, x402.NewSettleError("settlement_pending", "0xpayer", "eip155:1", pendingTxHash, "rpc: timeout waiting for receipt")
+		},
+	}
+
+	server := Newx402HTTPResourceServer(
+		RoutesConfig{},
+		x402.WithFacilitatorClient(mockClient),
+		x402.WithSchemeServer("eip155:1", &mockSchemeServer{scheme: "exact"}),
+	)
+	_ = server.Initialize(ctx)
+
+	requirements := types.PaymentRequirements{
+		Scheme:  "exact",
+		Network: "eip155:1",
+		Asset:   "USDC",
+		Amount:  "1000000",
+		PayTo:   "0xtest",
+	}
+	payload := types.PaymentPayload{
+		X402Version: 2,
+		Accepted:    requirements,
+		Payload:     map[string]interface{}{},
+	}
+
+	result := server.ProcessSettlement(ctx, payload, requirements, nil, nil, nil, nil, "")
+	if result.Success {
+		t.Fatal("Expected settlement failure")
+	}
+	if result.ErrorReason != "settlement_pending" {
+		t.Errorf("expected ErrorReason %q, got %q", "settlement_pending", result.ErrorReason)
+	}
+	if result.Transaction != pendingTxHash {
+		t.Errorf("expected Transaction %q preserved, got %q", pendingTxHash, result.Transaction)
+	}
+	if result.Headers == nil || result.Headers["PAYMENT-RESPONSE"] == "" {
+		t.Fatal("Expected PAYMENT-RESPONSE header on settlement failure")
+	}
+	decoded, err := decodePaymentResponseHeader(result.Headers["PAYMENT-RESPONSE"])
+	if err != nil {
+		t.Fatalf("failed to decode PAYMENT-RESPONSE header: %v", err)
+	}
+	if decoded.ErrorReason != "settlement_pending" {
+		t.Errorf("expected header errorReason %q, got %q", "settlement_pending", decoded.ErrorReason)
+	}
+	if decoded.Transaction != pendingTxHash {
+		t.Errorf("expected header transaction %q, got %q", pendingTxHash, decoded.Transaction)
 	}
 	if result.Response == nil {
 		t.Fatal("Expected Response to be set on settlement failure")
@@ -703,6 +781,108 @@ func TestProcessSettlement_Failure(t *testing.T) {
 	}
 	if result.Response.Headers["Cache-Control"] != "no-store" {
 		t.Errorf("Expected Cache-Control no-store, got %q", result.Response.Headers["Cache-Control"])
+	}
+}
+
+// TestProcessSettlement_TerminalMechanismErrorDiscardsTransaction pins that a terminal
+// (non-settlement_pending) SettleError never surfaces a transaction value, even if a
+// misbehaving mechanism populated one — sanitizedFailureTransaction must strip it.
+func TestProcessSettlement_TerminalMechanismErrorDiscardsTransaction(t *testing.T) {
+	ctx := context.Background()
+	payer := "0xpayer"
+	mockClient := &mockFacilitatorClient{
+		settle: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {
+			return nil, x402.NewSettleError("invalid_payment", payer, "eip155:1", payer, "payment rejected")
+		},
+	}
+	server := Newx402HTTPResourceServer(
+		RoutesConfig{},
+		x402.WithFacilitatorClient(mockClient),
+		x402.WithSchemeServer("eip155:1", &mockSchemeServer{scheme: "exact"}),
+	)
+	_ = server.Initialize(ctx)
+	requirements := types.PaymentRequirements{
+		Scheme:  "exact",
+		Network: "eip155:1",
+		Asset:   "USDC",
+		Amount:  "1000000",
+		PayTo:   "0xtest",
+	}
+	payload := types.PaymentPayload{
+		X402Version: 2,
+		Accepted:    requirements,
+		Payload:     map[string]interface{}{},
+	}
+
+	result := server.ProcessSettlement(ctx, payload, requirements, nil, nil, nil, nil, "")
+	if result.Transaction != "" {
+		t.Errorf("expected empty transaction, got %q", result.Transaction)
+	}
+	decoded, err := decodePaymentResponseHeader(result.Headers["PAYMENT-RESPONSE"])
+	if err != nil {
+		t.Fatalf("failed to decode PAYMENT-RESPONSE header: %v", err)
+	}
+	if decoded.Transaction != "" {
+		t.Errorf("expected empty header transaction, got %q", decoded.Transaction)
+	}
+}
+
+func TestCreateFailurePathSettlementHeaders_FailedCancelReceipt(t *testing.T) {
+	server := Newx402HTTPResourceServer(RoutesConfig{})
+	cancelSettlement := &x402.SettleResponse{
+		Success:     false,
+		ErrorReason: "refund_failed",
+		Transaction: "should-not-appear",
+		Network:     "eip155:8453",
+	}
+	beforeHandlerSettlement := &x402.CompletedSettlement{
+		Phase: x402.SettlePhaseBeforeHandler,
+		Flow:  x402.PaymentFlowEscrow,
+		Result: &x402.SettleResponse{
+			Success:     true,
+			Amount:      "100000",
+			Transaction: "0xdeposit",
+			Network:     "eip155:8453",
+		},
+		Requirements: types.PaymentRequirements{
+			Scheme:  "exact",
+			Network: "eip155:8453",
+		},
+	}
+	paymentPayload := &types.PaymentPayload{
+		Payload: map[string]interface{}{"channelId": "channel-123"},
+	}
+
+	headers := server.CreateFailurePathSettlementHeaders(
+		cancelSettlement,
+		beforeHandlerSettlement,
+		paymentPayload,
+		"",
+	)
+	if headers == nil || headers["PAYMENT-RESPONSE"] == "" {
+		t.Fatal("expected PAYMENT-RESPONSE headers")
+	}
+	decoded, err := decodePaymentResponseHeader(headers["PAYMENT-RESPONSE"])
+	if err != nil {
+		t.Fatalf("decode PAYMENT-RESPONSE: %v", err)
+	}
+	if decoded.Success {
+		t.Fatal("expected failed cancel receipt")
+	}
+	if decoded.Transaction != "" {
+		t.Fatalf("expected empty transaction, got %q", decoded.Transaction)
+	}
+	if decoded.Amount != "" {
+		t.Fatalf("expected no amount on failed cancel receipt, got %q", decoded.Amount)
+	}
+	if decoded.Extra["depositTransaction"] != "0xdeposit" {
+		t.Fatalf("expected depositTransaction, got %#v", decoded.Extra)
+	}
+	if decoded.Extra["depositAmount"] != "100000" {
+		t.Fatalf("expected depositAmount, got %#v", decoded.Extra)
+	}
+	if decoded.Extra["channelId"] != "channel-123" {
+		t.Fatalf("expected channelId, got %#v", decoded.Extra)
 	}
 }
 
@@ -722,7 +902,11 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 		},
 	}
 
-	server := Newx402HTTPResourceServer(RoutesConfig{}, x402.WithFacilitatorClient(mockClient))
+	server := Newx402HTTPResourceServer(
+		RoutesConfig{},
+		x402.WithFacilitatorClient(mockClient),
+		x402.WithSchemeServer("eip155:1", &mockSchemeServer{scheme: "exact"}),
+	)
 	_ = server.Initialize(ctx)
 
 	requirements := types.PaymentRequirements{
@@ -745,7 +929,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 			ResponseHeaders: h,
 		}
 
-		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil)
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil, nil, "")
 		if !result.Success {
 			t.Fatalf("unexpected failure: %v", result.ErrorReason)
 		}
@@ -768,7 +952,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 		}
 		explicit := &x402.SettlementOverrides{Amount: "200"}
 
-		result := server.ProcessSettlement(ctx, payload, requirements, explicit, tc, nil)
+		result := server.ProcessSettlement(ctx, payload, requirements, explicit, tc, nil, nil, "")
 		if !result.Success {
 			t.Fatalf("unexpected failure: %v", result.ErrorReason)
 		}
@@ -790,7 +974,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 			ResponseHeaders: h,
 		}
 
-		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil)
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil, nil, "")
 		if !result.Success {
 			t.Fatalf("unexpected failure: %v", result.ErrorReason)
 		}
@@ -812,7 +996,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 			ResponseHeaders: h,
 		}
 
-		server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil)
+		server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil, nil, "")
 
 		if tc.ResponseHeaders.Get(SettlementOverridesHeader) != "" {
 			t.Error("expected settlement-overrides header to be deleted from transport context")
@@ -823,7 +1007,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 	})
 
 	t.Run("nil transport context is safe", func(t *testing.T) {
-		result := server.ProcessSettlement(ctx, payload, requirements, nil, nil, nil)
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, nil, nil, nil, "")
 		if !result.Success {
 			t.Fatalf("unexpected failure: %v", result.ErrorReason)
 		}
@@ -834,7 +1018,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 			Request:         &HTTPRequestContext{Path: "/test", Method: "GET"},
 			ResponseHeaders: nil,
 		}
-		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil)
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil, nil, "")
 		if !result.Success {
 			t.Fatalf("unexpected failure: %v", result.ErrorReason)
 		}
@@ -848,7 +1032,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 			ResponseHeaders: h,
 		}
 
-		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil)
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil, nil, "")
 		if !result.Success {
 			t.Fatalf("unexpected failure: %v", result.ErrorReason)
 		}
@@ -871,7 +1055,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 			ResponseHeaders: h,
 		}
 
-		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil)
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil, nil, "")
 		if !result.Success {
 			t.Fatalf("unexpected failure: %v", result.ErrorReason)
 		}
@@ -986,6 +1170,16 @@ func TestNormalizePath(t *testing.T) {
 		{"/api#fragment", "/api"},
 		{"/api%20space", "/api space"},
 		{"", "/"},
+
+		// Encoded separators must stay inside the segment they were sent in,
+		// otherwise they split a ":param" segment that the router keeps whole.
+		{"/api/users/x%2Fy", "/api/users/x%2Fy"},
+		{"/api/users/x%2fy", "/api/users/x%2Fy"},
+		{"/api/users/x%5Cy", "/api/users/x%5Cy"},
+		// Only one round of decoding: %252F must not collapse into a separator.
+		{"/api/users/x%252Fy", "/api/users/x%2Fy"},
+		// Malformed escapes are matched raw rather than silently widened.
+		{"/api/users/x%zzy", "/api/users/x%zzy"},
 	}
 
 	for _, tt := range tests {
@@ -993,6 +1187,64 @@ func TestNormalizePath(t *testing.T) {
 			result := normalizePath(tt.input)
 			if result != tt.expected {
 				t.Errorf("Expected %s, got %s", tt.expected, result)
+			}
+		})
+	}
+}
+
+// TestRouteMatching_PathNormalizationBypass covers CWE-436 path-equivalence
+// bypasses: a request the router dispatches to a protected handler must still
+// match the route pattern that guards it. Paths here are the escaped form the
+// middleware passes in (URL.EscapedPath).
+func TestRouteMatching_PathNormalizationBypass(t *testing.T) {
+	tests := []struct {
+		name        string
+		pattern     string
+		escapedPath string
+		shouldMatch bool
+	}{
+		{"param baseline", "GET /api/users/:id", "/api/users/1", true},
+		{"param encoded slash", "GET /api/users/:id", "/api/users/x%2Fy", true},
+		{"param lowercase encoded slash", "GET /api/users/:id", "/api/users/x%2fy", true},
+		{"param double encoded slash", "GET /api/users/:id", "/api/users/x%252Fy", true},
+		{"param encoded backslash", "GET /api/users/:id", "/api/users/x%5Cy", true},
+		{"param encoded percent", "GET /api/users/:id", "/api/users/x%25y", true},
+		{"bracket param encoded slash", "GET /api/users/[id]", "/api/users/x%2Fy", true},
+		// A genuine extra segment is a different route and must not match.
+		{"param real extra segment", "GET /api/users/:id", "/api/users/x/y", false},
+
+		{"wildcard baseline", "GET /api/premium/*", "/api/premium/abc", true},
+		{"wildcard trailing slash", "GET /api/premium/*", "/api/premium/", true},
+		{"wildcard bare prefix", "GET /api/premium/*", "/api/premium", true},
+		{"wildcard deep path", "GET /api/premium/*", "/api/premium/a/b/c", true},
+		// normalizePath decodes %0A to a raw LF inside the segment. RE2's `.`
+		// does not match LF without (?s), so these missed the wildcard while
+		// routers still dispatched the handler — payment bypass (CWE-436),
+		// Go counterpart of the TypeScript/Python dotAll fixes.
+		{"wildcard encoded LF", "GET /api/premium/*", "/api/premium/a%0Ab", true},
+		{"wildcard trailing encoded LF", "GET /api/premium/*", "/api/premium/report%0A", true},
+		{"wildcard LF in deep path", "GET /api/premium/*", "/api/premium/a%0A/b", true},
+		// RE2's `.` excludes only \n; CR already matched before the (?s) fix.
+		{"wildcard encoded CR", "GET /api/premium/*", "/api/premium/a%0Db", true},
+		// Params compile to [^/]+, which matches LF regardless of (?s).
+		{"param encoded LF", "GET /api/users/:id", "/api/users/x%0Ay", true},
+		// The wildcard must not leak onto a sibling prefix.
+		{"wildcard sibling prefix", "GET /api/premium/*", "/api/premiumx", false},
+		{"wildcard unrelated", "GET /api/premium/*", "/api/other", false},
+
+		{"static baseline", "GET /api/compute", "/api/compute", true},
+		{"static trailing slash", "GET /api/compute", "/api/compute/", true},
+		{"static unrelated", "GET /api/compute", "/api/computex", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, regex := parseRoutePattern(tt.pattern)
+			normalized := normalizePath(tt.escapedPath)
+
+			if got := regex.MatchString(normalized); got != tt.shouldMatch {
+				t.Errorf("pattern %q vs path %q (normalized %q): match=%v, want %v",
+					tt.pattern, tt.escapedPath, normalized, got, tt.shouldMatch)
 			}
 		})
 	}
@@ -1286,11 +1538,31 @@ func (m *mockSchemeServer) Scheme() string {
 	return m.scheme
 }
 
+func (m *mockSchemeServer) DefaultAssetTransferMethod() string {
+	return x402.SDKDefaultAssetTransferMethod
+}
+
+func (m *mockSchemeServer) PaymentFlows() map[string]x402.PaymentFlowConfig {
+	auth := x402.PaymentFlowConfig{
+		Supported: []x402.PaymentFlowName{x402.PaymentFlowAuthorization},
+		Default:   x402.PaymentFlowAuthorization,
+	}
+	return map[string]x402.PaymentFlowConfig{
+		x402.SDKDefaultAssetTransferMethod: auth,
+		"eip3009":                          auth,
+		"permit2":                          auth,
+	}
+}
+
 func (m *mockSchemeServer) ParsePrice(price x402.Price, network x402.Network) (x402.AssetAmount, error) {
 	return x402.AssetAmount{
 		Asset:  "USDC",
 		Amount: "1000000",
 	}, nil
+}
+
+func (m *mockSchemeServer) GetAssetDecimals(asset string, network x402.Network) (int, bool) {
+	return 6, true
 }
 
 func (m *mockSchemeServer) EnhancePaymentRequirements(ctx context.Context, base types.PaymentRequirements, supported types.SupportedKind, extensions []string) (types.PaymentRequirements, error) {

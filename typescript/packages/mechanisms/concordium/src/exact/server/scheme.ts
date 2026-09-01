@@ -1,12 +1,14 @@
 import type {
   AssetAmount,
   Network,
+  PaymentFlowConfig,
   PaymentRequirements,
   Price,
   SchemeNetworkServer,
   MoneyParser,
 } from "@x402/core/types";
-import { parseMoneyString } from "@x402/core/utils";
+import { convertToTokenAmount, parseMoney } from "@x402/core/utils";
+import { findDefaultAsset, getDefaultAsset } from "../../defaultAssets";
 
 /**
  * Concordium server scheme for exact payments.
@@ -14,13 +16,15 @@ import { parseMoneyString } from "@x402/core/utils";
  * Supports:
  * - Native CCD via explicit AssetAmount: { amount: "1000", asset: "CCD" }
  * - PLT tokens via explicit AssetAmount: { amount: "100", asset: "<token-id>" }
- * - Money (string/number) only when a money parser is registered
- *
- * There is no default asset fallback — raw numbers and USD strings
- * will throw unless a money parser is registered via {@link registerMoneyParser}.
+ * - Money (string/number) resolved to StablR USDR via {@link getDefaultAsset}
+ * - {@link registerMoneyParser} for EURR and other PLTs (tried before the USDR default)
  */
 export class ExactConcordiumScheme implements SchemeNetworkServer {
   readonly scheme = "exact";
+  readonly defaultAssetTransferMethod = "default";
+  readonly paymentFlows = {
+    default: { supported: ["authorization", "upfront"], default: "authorization" },
+  } as const satisfies Record<string, PaymentFlowConfig>;
 
   /** Custom money parser chain — tried in registration order */
   private moneyParsers: MoneyParser[] = [];
@@ -29,8 +33,7 @@ export class ExactConcordiumScheme implements SchemeNetworkServer {
    * Registers a custom money parser in the parser chain.
    *
    * Parsers are tried in registration order. Return `null` to skip to the
-   * next parser. There is no default fallback — if all parsers return null,
-   * {@link parsePrice} throws.
+   * next parser. If all parsers return null, prices fall through to USDR.
    *
    * @param parser - Custom function returning AssetAmount or null
    * @returns This instance for chaining
@@ -38,7 +41,7 @@ export class ExactConcordiumScheme implements SchemeNetworkServer {
    * @example
    * ```typescript
    * scheme.registerMoneyParser(async (amount, network) => ({
-   *   amount: String(Math.round(amount * 1e6)),
+   *   amount: convertToTokenAmount(String(amount), 6),
    *   asset: "EURR",
    *   extra: {},
    * }));
@@ -50,12 +53,23 @@ export class ExactConcordiumScheme implements SchemeNetworkServer {
   }
 
   /**
+   * Decimals for a known default asset, or undefined.
+   *
+   * @param asset - PLT token id from payment requirements
+   * @param network - Target network
+   * @returns Decimals when the asset is a known default; otherwise undefined
+   */
+  getAssetDecimals(asset: string, network: Network): number | undefined {
+    return findDefaultAsset(asset, network)?.decimals;
+  }
+
+  /**
    * Parse price into AssetAmount.
    *
    * - **AssetAmount**: passed through in atomic units. The `asset` field is
    *   required — throws if missing.
-   * - **Money** (string | number): tries registered money parsers in order.
-   *   Throws if no parser matches — there is no silent CCD fallback.
+   * - **Money** (string | number): tries registered money parsers in order,
+   *   then USDR via {@link getDefaultAsset}. Native CCD is never a silent fallback.
    *
    * @param price - Price to parse
    * @param network - Network identifier
@@ -74,20 +88,14 @@ export class ExactConcordiumScheme implements SchemeNetworkServer {
       };
     }
 
-    // Money: parse to decimal, try registered parsers
-    const amount = this.parseMoneyToDecimal(price);
+    const { amount, symbol } = parseMoney(price);
 
     for (const parser of this.moneyParsers) {
       const result = await parser(amount, network);
       if (result !== null) return result;
     }
 
-    // No parser matched — throw, no silent CCD fallback
-    throw new Error(
-      `Cannot resolve price "${String(price)}" to a Concordium asset. ` +
-        `Register a money parser via registerMoneyParser() to map prices ` +
-        `to a specific token (e.g., EURR, USDR).`,
-    );
+    return this.defaultMoneyConversion(amount, network, symbol);
   }
 
   /**
@@ -126,13 +134,19 @@ export class ExactConcordiumScheme implements SchemeNetworkServer {
   }
 
   /**
-   * Parses Money (string | number) to a plain decimal number.
+   * Default conversion when no custom parser handles the value.
    *
-   * @param money - Raw price to parse
-   * @returns Decimal number
+   * @param amount - Decimal amount
+   * @param network - Network identifier
+   * @param symbol - Optional ticker from a suffixed price
+   * @returns Asset amount in USDR atomic units
    */
-  private parseMoneyToDecimal(money: string | number): number {
-    if (typeof money === "number") return money;
-    return parseMoneyString(money);
+  private defaultMoneyConversion(amount: string, network: Network, symbol?: string): AssetAmount {
+    const assetInfo = getDefaultAsset(network, symbol);
+    return {
+      amount: convertToTokenAmount(amount, assetInfo.decimals),
+      asset: assetInfo.asset,
+      extra: {},
+    };
   }
 }

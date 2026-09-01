@@ -19,7 +19,8 @@ Checklist for adding a new payment mechanism / scheme. Follow the [general contr
 ## Code patterns
 
 - Wire schemes with the builder pattern, not `register*` helpers. A new v2-only mechanism registers its scheme under the family wildcard: `client.register("<family>:*", new Exact<Chain>Scheme(...))` (and the same on `x402ResourceServer`). Do NOT implement a `registerExact<Chain>Scheme` helper. Those exist only in the EVM/SVM mechanisms to also register the legacy v1 schemes for backward compat.
-- Reuse core utilities instead of reimplementing them. For example, import `convertToTokenAmount`, `numberToDecimalString`, and `parseMoneyString` from `@x402/core/utils` for TS or similar for Go/python SDKs.
+- Reuse core utilities instead of reimplementing them. For example, import `convertToTokenAmount`, `numberToDecimalString`, and `parseMoney` from `@x402/core/utils` for TS or similar for Go/python SDKs.
+- If the mechanism supports `$` string pricing, add `defaultAssets.ts` / `default_assets.go` / `default_assets.py` with `DEFAULT_ASSETS`, `getDefaultAsset`/`GetDefaultAsset`/`get_default_asset`, and `findDefaultAsset`/`FindDefaultAsset`/`find_default_asset` (see [DEFAULT_ASSETS.md](../../../../DEFAULT_ASSETS.md)). Expose the reverse lookup on the client scheme so `@x402/core` spend controls recognize USD-pegged defaults. Chains without a canonical USD stablecoin may omit the file and require explicit `AssetAmount` pricing instead. Do not put default assets in `constants` or bundled network-config maps.
 - Do NOT modify other packages (core, http, ...). If this is deemed necessary, discuss with maintainers first.
 
 ## Tests
@@ -54,9 +55,10 @@ uv run pytest tests/integrations/
 
 ### E2E tests
 
-- The `e2e/` harness runs every client × server × facilitator combination. Requires funded testnet accounts.
-- Register the network signer in the facilitator and all client frameworks. 
-- Add protected routes for all server frameworks. 
+- The `e2e/` harness runs client × server × facilitator combinations from the mechanisms catalog. Requires funded testnet accounts.
+- Add `e2e/config/mechanisms_<id>.json` (`env`, `testnet`/`mainnet`, `routes` with `sdks`). Do **not** edit per-framework route lists or CAIP-2 pattern tables — HTTP/MCP endpoints are derived from the catalog.
+- Register the scheme once per language in the shared modules only: `e2e/servers/<lang>/`, `e2e/clients/<lang>/`, `e2e/facilitators/<lang>/`.
+- Add wallet/payee placeholders to `e2e/.env-local`.
 - Run them and confirm all pass.
 
 ```bash

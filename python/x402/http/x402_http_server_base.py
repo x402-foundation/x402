@@ -9,10 +9,14 @@ import dataclasses
 import html
 import logging
 import re
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from typing import TYPE_CHECKING, Any, Literal, Protocol
-from urllib.parse import unquote
 
+from ..payment_flow import (
+    resolve_failure_path_settlement,
+    resolve_payment_flow,
+    resolve_payment_flow_phases,
+)
 from ..schemas import (
     PaymentPayload,
     PaymentRequired,
@@ -20,9 +24,15 @@ from ..schemas import (
     ResourceInfo,
     SettleResponse,
     SkipHandlerDirective,
+    convert_to_token_amount,
 )
 from ..schemas.errors import SettleError
-from ..schemas.hooks import AbortProtectedRequestResult, GrantAccessResult
+from ..schemas.hooks import (
+    AbortProtectedRequestResult,
+    CompletedSettlement,
+    GrantAccessResult,
+    SettlePhase,
+)
 from ..schemas.v1 import PaymentPayloadV1
 from .constants import (
     PAYMENT_REQUIRED_HEADER,
@@ -76,6 +86,25 @@ def with_private_cache_control(value: str | None) -> str:
     return f"{value}, private"
 
 
+def _path_unescape(segment: str) -> str | None:
+    """Decode one path segment; return None if any escape is malformed."""
+    out: list[str] = []
+    i = 0
+    while i < len(segment):
+        if segment[i] != "%":
+            out.append(segment[i])
+            i += 1
+            continue
+        if i + 2 >= len(segment):
+            return None
+        hex_digits = segment[i + 1 : i + 3]
+        if not re.fullmatch(r"[0-9A-Fa-f]{2}", hex_digits):
+            return None
+        out.append(chr(int(hex_digits, 16)))
+        i += 3
+    return "".join(out)
+
+
 # ============================================================================
 # Paywall Provider Protocol
 # ============================================================================
@@ -111,6 +140,7 @@ ProcessPhase = Literal[
     "resolve_options",
     "verify_payment",
     "skip_handler_settlement",
+    "settle_before_handler",
 ]
 ProcessCommand = tuple[ProcessPhase, Any, Any]  # (phase, target, context)
 
@@ -143,9 +173,17 @@ class x402HTTPServerBase:
         self._compiled_routes: list[CompiledRoute] = []
         self._paywall_provider: PaywallProvider | None = None
         self._protected_request_hooks: list[ProtectedRequestHook] = []
+        self._warned_missing_before_handler_settlement = False
 
         # Compile routes
         self._compile_routes(routes)
+
+        payment_flow_errors = self._validate_route_configuration(
+            include_missing_scheme=False,
+            include_facilitator=False,
+        )
+        if payment_flow_errors:
+            raise RouteConfigurationError(payment_flow_errors)
 
     def _compile_routes(self, routes: RoutesConfig) -> None:
         """Compile route patterns to regex for matching."""
@@ -499,6 +537,9 @@ class x402HTTPServerBase:
 
         # Verify payment (yield for async/sync handling)
         try:
+            flow = self._server.get_payment_flow(payment_payload, matching_reqs)
+            phases = resolve_payment_flow_phases(flow)
+
             verify_result = yield (
                 "verify_payment",
                 (payment_payload, matching_reqs, extensions, transport_context),
@@ -540,11 +581,37 @@ class x402HTTPServerBase:
                 )
                 return skip_result
 
+            before_handler_settlement: CompletedSettlement | None = None
+
+            if phases.settle_before_handler:
+                before_settle = yield (
+                    "settle_before_handler",
+                    (payment_payload, matching_reqs, extensions, transport_context),
+                    None,
+                )
+                if not before_settle.success:
+                    return HTTPProcessResult(
+                        type=RESULT_PAYMENT_ERROR,
+                        response=before_settle.response,
+                    )
+                if before_settle.settle_response is None:
+                    return HTTPProcessResult(
+                        type=RESULT_PAYMENT_ERROR,
+                        response=before_settle.response,
+                    )
+                before_handler_settlement = CompletedSettlement(
+                    phase="before-handler",
+                    flow=flow,
+                    result=before_settle.settle_response,
+                    requirements=matching_reqs,
+                )
+
             cancellation_dispatcher = self._server.create_payment_cancellation_dispatcher(
                 payment_payload,
                 matching_reqs,
                 extensions,
                 transport_context,
+                ["before-handler"] if before_handler_settlement is not None else [],
             )
 
             return HTTPProcessResult(
@@ -553,6 +620,7 @@ class x402HTTPServerBase:
                 payment_requirements=matching_reqs,
                 declared_extensions=extensions,
                 cancellation_dispatcher=cancellation_dispatcher,
+                before_handler_settlement=before_handler_settlement,
             )
 
         except Exception as e:
@@ -624,7 +692,7 @@ class x402HTTPServerBase:
     def resolve_settlement_override_amount(
         raw_amount: str,
         requirements: PaymentRequirements,
-        decimals: int = 6,
+        decimals: int | None = None,
     ) -> str:
         """Resolve a settlement override amount to atomic units."""
         percent_match = re.match(r"^(\d+(?:\.\d{0,2})?)%$", raw_amount)
@@ -638,8 +706,12 @@ class x402HTTPServerBase:
 
         dollar_match = re.match(r"^\$(\d+(?:\.\d+)?)$", raw_amount)
         if dollar_match:
-            dollars = float(dollar_match.group(1))
-            return str(round(dollars * (10**decimals)))
+            if decimals is None:
+                raise ValueError(
+                    f'Cannot convert dollar settlement override "{raw_amount}" to atomic units: '
+                    "asset decimals are unknown. Pass an atomic amount or register the asset."
+                )
+            return convert_to_token_amount(dollar_match.group(1), decimals)
 
         return raw_amount
 
@@ -652,15 +724,19 @@ class x402HTTPServerBase:
         if overrides is None or "amount" not in overrides:
             return requirements
 
-        scheme = self._server._find_registered_scheme(requirements.scheme, requirements.network)
-        decimals = 6
-        if scheme is not None:
-            get_decimals = getattr(scheme, "get_asset_decimals", None)
-            if callable(get_decimals):
-                decimals = get_decimals(requirements.asset or "", requirements.network)
+        raw_amount = str(overrides["amount"])
+        # Only `$…` overrides need asset decimals. Atomic and percent formats must
+        # not force a decimals lookup (unknown custom mints would otherwise fail).
+        decimals = None
+        if re.match(r"^\$(\d+(?:\.\d+)?)$", raw_amount):
+            scheme = self._server.get_registered_scheme(requirements.network, requirements.scheme)
+            if scheme is not None:
+                get_decimals = getattr(scheme, "get_asset_decimals", None)
+                if callable(get_decimals):
+                    decimals = get_decimals(requirements.asset or "", requirements.network)
 
         resolved = self.resolve_settlement_override_amount(
-            str(overrides["amount"]),
+            raw_amount,
             requirements,
             decimals,
         )
@@ -703,6 +779,9 @@ class x402HTTPServerBase:
         settlement_overrides: dict[str, Any] | None = None,
         declared_extensions: dict[str, Any] | None = None,
         transport_context: HTTPTransportContext | None = None,
+        *,
+        before_handler_settlement: CompletedSettlement | None = None,
+        phase: SettlePhase | None = None,
     ) -> ProcessSettleResult:
         """Process settlement after successful response.
 
@@ -714,19 +793,32 @@ class x402HTTPServerBase:
             context: Optional HTTP request context for route config lookup and hooks.
             settlement_overrides: Optional overrides (e.g. ``{"amount": "1000"}``
                 for partial settlement with the *upto* scheme).
+            before_handler_settlement: Before-handler settle from process_http_request.
+            phase: Explicit settle phase; omit to derive from the payment flow.
 
         Returns:
             ProcessSettleResult with headers if success, or response if failure.
         """
+        echoed = self._echo_or_skip_after_handler_settlement(
+            payment_payload,
+            requirements,
+            before_handler_settlement,
+            phase,
+        )
+        if echoed is not None:
+            return echoed
+
         effective_requirements = self._apply_settlement_overrides(
             requirements, settlement_overrides
         )
+        resolved_phase: SettlePhase = phase or "after-handler"
         try:
             settle_response = self._server.settle_payment(
                 payment_payload,
                 effective_requirements,
                 declared_extensions=declared_extensions,
                 transport_context=transport_context,
+                phase=resolved_phase,
             )
 
             if not settle_response.success:
@@ -737,6 +829,7 @@ class x402HTTPServerBase:
                     transaction=settle_response.transaction,
                     network=settle_response.network,
                     payer=settle_response.payer,
+                    settle_response=settle_response,
                 )
                 failure.response = self._build_settlement_failure_response(failure, context)
                 return failure
@@ -747,6 +840,7 @@ class x402HTTPServerBase:
                 transaction=settle_response.transaction,
                 network=settle_response.network,
                 payer=settle_response.payer,
+                settle_response=settle_response,
             )
 
         except SettleError as e:
@@ -765,6 +859,7 @@ class x402HTTPServerBase:
                 transaction=settle_response.transaction,
                 network=settle_response.network,
                 payer=settle_response.payer,
+                settle_response=settle_response,
             )
             failure.response = self._build_settlement_failure_response(failure, context)
             return failure
@@ -783,6 +878,7 @@ class x402HTTPServerBase:
                 headers=self._create_settlement_headers(settle_response, requirements),
                 transaction="",
                 network=requirements.network,
+                settle_response=settle_response,
             )
             failure.response = self._build_settlement_failure_response(failure, context)
             return failure
@@ -866,6 +962,94 @@ class x402HTTPServerBase:
             PAYMENT_RESPONSE_HEADER: encode_payment_response_header(settle_response),
         }
 
+    def create_completed_settlement_headers(
+        self,
+        settlement: CompletedSettlement,
+        existing_cache_control: str | None = None,
+    ) -> dict[str, str]:
+        """Headers for echoing a completed before-handler settle onto a response."""
+        return {
+            **self._create_settlement_headers(settlement.result, settlement.requirements),
+            "Cache-Control": with_private_cache_control(existing_cache_control),
+        }
+
+    def create_failure_path_settlement_headers(
+        self,
+        cancel_settlement: SettleResponse | None,
+        before_handler_settlement: CompletedSettlement | None = None,
+        payment_payload: PaymentPayload | None = None,
+        existing_cache_control: str | None = None,
+    ) -> dict[str, str] | None:
+        """PAYMENT-RESPONSE headers when the resource handler fails after deposit."""
+        receipt = resolve_failure_path_settlement(
+            cancel_settlement,
+            before_handler_settlement,
+            payment_payload,
+        )
+        if receipt is None:
+            return None
+        return {
+            PAYMENT_RESPONSE_HEADER: encode_payment_response_header(receipt),
+            "Cache-Control": with_private_cache_control(existing_cache_control),
+        }
+
+    def _echo_or_skip_after_handler_settlement(
+        self,
+        payment_payload: PaymentPayload | PaymentPayloadV1,
+        requirements: PaymentRequirements,
+        before_handler_settlement: CompletedSettlement | None,
+        phase: SettlePhase | None,
+    ) -> ProcessSettleResult | None:
+        """Echo before-handler settle, or skip, when the flow does not settle after the handler."""
+        if before_handler_settlement is not None:
+            flow = before_handler_settlement.flow
+        else:
+            get_flow = getattr(self._server, "get_payment_flow", None)
+            if not callable(get_flow):
+                flow = "authorization"
+            else:
+                try:
+                    flow = get_flow(payment_payload, requirements)
+                except (TypeError, ValueError, AttributeError):
+                    flow = "authorization"
+        phases = resolve_payment_flow_phases(flow)
+        if phase == "before-handler" or phases.settle_after_handler:
+            return None
+        if before_handler_settlement is not None:
+            echo = before_handler_settlement.result
+            return ProcessSettleResult(
+                success=True,
+                headers=self._create_settlement_headers(
+                    echo, before_handler_settlement.requirements
+                ),
+                transaction=echo.transaction,
+                network=echo.network,
+                payer=echo.payer,
+                settle_response=echo,
+            )
+        if phases.settle_before_handler and before_handler_settlement is None:
+            if not self._warned_missing_before_handler_settlement:
+                self._warned_missing_before_handler_settlement = True
+                logger.warning(
+                    '[x402] Payment flow "%s" settles before the handler, but '
+                    "processSettlement was called without beforeHandlerSettlement "
+                    "from processHTTPRequest. Skipping after-handler settle. Pass "
+                    "that settle result to echo the before-handler PAYMENT-RESPONSE.",
+                    flow,
+                )
+        empty = SettleResponse(
+            success=True,
+            transaction="",
+            network=requirements.network,
+        )
+        return ProcessSettleResult(
+            success=True,
+            headers={},
+            transaction="",
+            network=requirements.network,
+            settle_response=empty,
+        )
+
     def _build_settlement_failure_response(
         self,
         failure: ProcessSettleResult,
@@ -900,8 +1084,13 @@ class x402HTTPServerBase:
             is_html=content_type.startswith("text/html"),
         )
 
-    def _validate_route_configuration(self) -> list[RouteValidationError]:
-        """Validate all payment options have registered schemes."""
+    def _validate_route_configuration(
+        self,
+        *,
+        include_missing_scheme: bool = True,
+        include_facilitator: bool = True,
+    ) -> list[RouteValidationError]:
+        """Validate all payment options have registered schemes and supported flows."""
         errors: list[RouteValidationError] = []
 
         for route in self._compiled_routes:
@@ -928,20 +1117,78 @@ class x402HTTPServerBase:
                 options = [options]
 
             for option in options:
-                # Check scheme registered
-                if not self._server.has_registered_scheme(option.network, option.scheme):
-                    errors.append(
-                        RouteValidationError(
-                            route_pattern=pattern,
-                            scheme=option.scheme,
-                            network=option.network,
-                            reason="missing_scheme",
-                            message=f'Route "{pattern}": No scheme for "{option.scheme}" on "{option.network}"',
+                getter = getattr(self._server, "get_registered_scheme", None)
+                if not callable(getter):
+                    continue
+                scheme_server = getter(option.network, option.scheme)
+                if scheme_server is None:
+                    if include_missing_scheme:
+                        errors.append(
+                            RouteValidationError(
+                                route_pattern=pattern,
+                                scheme=option.scheme,
+                                network=option.network,
+                                reason="missing_scheme",
+                                message=(
+                                    f'Route "{pattern}": No scheme implementation registered '
+                                    f'for "{option.scheme}" on network "{option.network}"'
+                                ),
+                            )
                         )
-                    )
                     continue
 
-                # Check facilitator support
+                payment_flows = getattr(scheme_server, "payment_flows", None)
+                if isinstance(payment_flows, Mapping):
+                    extra = option.extra or {}
+                    extra_atm = extra.get("assetTransferMethod")
+                    atm = (
+                        extra_atm
+                        if isinstance(extra_atm, str)
+                        else getattr(scheme_server, "default_asset_transfer_method", None)
+                    )
+                    if atm is not None and atm not in payment_flows:
+                        supported = ", ".join(payment_flows)
+                        errors.append(
+                            RouteValidationError(
+                                route_pattern=pattern,
+                                scheme=option.scheme,
+                                network=option.network,
+                                reason="unsupported_asset_transfer_method",
+                                message=(
+                                    f'Route "{pattern}": [x402] Scheme "{scheme_server.scheme}" '
+                                    f'does not support assetTransferMethod "{atm}". '
+                                    f"Supported: {supported}."
+                                ),
+                            )
+                        )
+                        continue
+                    try:
+                        resolve_payment_flow(
+                            scheme_server,
+                            PaymentRequirements(
+                                scheme=option.scheme,
+                                network=option.network,
+                                asset="",
+                                amount="0",
+                                pay_to="",
+                                max_timeout_seconds=0,
+                                extra=extra,
+                            ),
+                        )
+                    except (ValueError, TypeError) as error:
+                        errors.append(
+                            RouteValidationError(
+                                route_pattern=pattern,
+                                scheme=option.scheme,
+                                network=option.network,
+                                reason="unsupported_payment_flow",
+                                message=f'Route "{pattern}": {error}',
+                            )
+                        )
+
+                if not include_facilitator:
+                    continue
+
                 supported_kind = self._server.get_supported_kind(2, option.network, option.scheme)
                 if not supported_kind:
                     errors.append(
@@ -950,7 +1197,10 @@ class x402HTTPServerBase:
                             scheme=option.scheme,
                             network=option.network,
                             reason="missing_facilitator",
-                            message=f'Route "{pattern}": Facilitator doesn\'t support "{option.scheme}" on "{option.network}"',
+                            message=(
+                                f'Route "{pattern}": Facilitator does not support scheme '
+                                f'"{option.scheme}" on network "{option.network}"'
+                            ),
                         )
                     )
 
@@ -968,28 +1218,52 @@ class x402HTTPServerBase:
             verb = "*"
             path = pattern
 
+        # A trailing "/*" must also match the bare prefix. _normalize_path strips
+        # the trailing slash, so a request for "/api/premium/" arrives as
+        # "/api/premium", which a literal "/.*?" suffix would not match even
+        # though routers dispatch it to the protected handler.
+        trailing_wildcard = path.endswith("/*")
+        path_for_regex = path[:-2] if trailing_wildcard else path
+
         # Convert to regex
-        regex_pattern = "^" + re.escape(path)
+        regex_pattern = "^" + re.escape(path_for_regex)
         regex_pattern = regex_pattern.replace(r"\*", ".*?")  # Wildcards
         regex_pattern = re.sub(r"\\\[([^\]]+)\\\]", r"[^/]+", regex_pattern)  # [param]
         regex_pattern = re.sub(r":([a-zA-Z_]\w*)", r"[^/]+", regex_pattern)  # :param
+        if trailing_wildcard:
+            regex_pattern += r"(?:/.*?)?"
         regex_pattern += "$"
 
-        return verb, path, re.compile(regex_pattern, re.IGNORECASE)
+        # re.DOTALL: without it, "." (from a "*" wildcard) does not match a line
+        # feed, so a request path whose wildcard tail contains a decoded LF fails
+        # to match its own route, skipping payment verification and settlement.
+        return verb, path, re.compile(regex_pattern, re.IGNORECASE | re.DOTALL)
 
     @staticmethod
     def _normalize_path(path: str) -> str:
-        """Normalize path for matching."""
-        # Remove query string and fragment
+        """Normalize path for matching.
+
+        The input is expected to be the *escaped* request path, which is the
+        same view HTTP routers use to split a request into segments.
+        Percent-escapes are decoded one segment at a time and any separator they
+        yield is re-escaped, so a decoded byte can never create a segment
+        boundary that the router did not see.
+        """
         path = path.split("?")[0].split("#")[0]
 
-        # Decode URL encoding
-        try:
-            path = unquote(path)
-        except Exception:
-            pass
+        segments = path.split("/")
+        normalized_segments: list[str] = []
+        for segment in segments:
+            decoded = _path_unescape(segment)
+            if decoded is None:
+                # Malformed escape sequence: match on the raw segment rather than
+                # silently widening it.
+                normalized_segments.append(segment)
+                continue
+            decoded = decoded.replace("/", "%2F").replace("\\", "%5C")
+            normalized_segments.append(decoded)
+        path = "/".join(normalized_segments)
 
-        # Normalize slashes
         path = re.sub(r"/+", "/", path)
         path = path.rstrip("/")
 

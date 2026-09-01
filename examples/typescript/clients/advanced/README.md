@@ -1,6 +1,6 @@
 # Advanced x402 Client Examples
 
-Advanced patterns for x402 TypeScript clients demonstrating builder pattern registration, payment lifecycle hooks, and network preferences.
+Advanced patterns for x402 TypeScript clients demonstrating builder pattern registration, payment lifecycle hooks, network preferences, and spend controls.
 
 ```typescript
 import { x402Client, wrapFetchWithPayment } from "@x402/fetch";
@@ -124,6 +124,7 @@ Each example demonstrates a specific advanced pattern:
 | `builder-pattern` | `pnpm dev:builder-pattern` | Fine-grained network registration |
 | `hooks` | `pnpm dev:hooks` | Payment lifecycle hooks |
 | `preferred-network` | `pnpm dev:preferred-network` | Client-side network preferences |
+| `spend-controls` | `pnpm dev:spend-controls` | Default `$1` USD cap, `allowedAssets`, and per-asset caps |
 
 ## Testing the Examples
 
@@ -258,6 +259,41 @@ const response = await fetchWithPayment("http://localhost:4021/weather");
 
 - Prefer payments on specific chains
 - User preference settings in wallet UIs
+
+## Example: Spend Controls
+
+By default the client caps recognized pegged assets at `$1` and rejects everything else. Use `spendControls` to raise the cap or opt into non-default tokens (native XRP/CCD, custom ERC-20s).
+
+```typescript
+const client = x402Client.fromConfig({
+  schemes: [{ network: "eip155:*", client: new ExactEvmScheme(evmSigner) }],
+  spendControls: {
+    maxAmountPerPayment: "$1", // default USD cap on recognized pegged assets
+    allowedAssets: [
+      // opt-in non-default with atomic cap
+      { network: "eip155:*", asset: "0xCustomToken", maxAmountPerPayment: "2000000" },
+      // opt-in non-default uncapped
+      { network: "eip155:*", asset: "0xOtherToken" },
+      // override USD cap for a default asset by ticker (or on-chain id)
+      { network: "eip155:*", asset: "USDC", maxAmountPerPayment: "1000000" },
+    ],
+  },
+});
+```
+
+| Control | Purpose |
+| --- | --- |
+| `maxAmountPerPayment` | USD ceiling on recognized pegged assets (default `$1`). Set `false` to remove. |
+| `allowedAssets` | Opt-in for non-default tokens. List of `{ network, asset }` with optional atomic `maxAmountPerPayment`, or `true` to allow any asset. |
+| `spendControls: false` | Disable all spend controls. Use only for UI-confirmed flows (paywall). |
+
+Native assets (XRP, CCD, KTA, ETH, SOL, HBAR) are not in `DEFAULT_ASSETS`. The `all-networks` example opts into XRP and CCD via `allowedAssets` so those paths still run.
+
+**Use case:**
+
+- Bound spend against a malicious 402 or unbounded custom token
+- Allow a specific custom token without disabling the USD cap on stables
+- Override the cap for one ticker (e.g. PYUSD) without raising it globally
 
 ## Hook Best Practices
 

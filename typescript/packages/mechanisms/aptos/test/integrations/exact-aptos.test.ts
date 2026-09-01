@@ -21,6 +21,7 @@ import { ExactAptosScheme as ExactAptosServer } from "../../src/exact/server/sch
 import { ExactAptosScheme as ExactAptosFacilitator } from "../../src/exact/facilitator/scheme";
 import { createClientSigner, toFacilitatorAptosSigner } from "../../src";
 import type { ExactAptosPayload } from "../../src/types";
+import { convertToTokenAmount } from "@x402/core/utils";
 
 // Load private keys from environment
 const CLIENT_PRIVATE_KEY = process.env.APTOS_CLIENT_PRIVATE_KEY;
@@ -454,9 +455,9 @@ describe("Aptos Integration Tests", () => {
     it("should use registerMoneyParser for custom conversion", async () => {
       // register custom parser: large amounts use a different token
       aptosServer.registerMoneyParser(async (amount, _network) => {
-        if (amount > 100) {
+        if (Number(amount) > 100) {
           return {
-            amount: (amount * 1e8).toString(), // APT has 8 decimals
+            amount: convertToTokenAmount(String(amount), 8), // APT has 8 decimals
             asset: "0x000000000000000000000000000000000000000000000000000000000000000a", // APT
             extra: { token: "APT", tier: "large" },
           };
@@ -494,9 +495,9 @@ describe("Aptos Integration Tests", () => {
     it("should support multiple MoneyParser in chain", async () => {
       aptosServer
         .registerMoneyParser(async amount => {
-          if (amount > 1000) {
+          if (Number(amount) > 1000) {
             return {
-              amount: (amount * 1e8).toString(),
+              amount: convertToTokenAmount(String(amount), 8),
               asset: "0xAPT",
               extra: { tier: "vip" },
             };
@@ -504,9 +505,9 @@ describe("Aptos Integration Tests", () => {
           return null;
         })
         .registerMoneyParser(async amount => {
-          if (amount > 100) {
+          if (Number(amount) > 100) {
             return {
-              amount: (amount * 1e6).toString(),
+              amount: convertToTokenAmount(String(amount), 6),
               asset: "0xUSDT",
               extra: { tier: "premium" },
             };

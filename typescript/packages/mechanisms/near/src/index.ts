@@ -18,3 +18,10 @@ export { SettlementCache } from "./settlement-cache";
 
 // Utilities
 export * from "./utils";
+
+export {
+  DEFAULT_ASSETS,
+  getDefaultAsset,
+  findDefaultAsset,
+  type NearDefaultAsset,
+} from "./defaultAssets";

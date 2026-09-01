@@ -35,7 +35,7 @@ from x402.mechanisms.evm.batch_settlement.client import (
     BatchSettlementDepositPolicy,
     BatchSettlementEvmSchemeOptions,
     InMemoryClientChannelStorage,
-    process_settle_response,
+    update_channel_from_settle,
 )
 from x402.mechanisms.evm.batch_settlement.client import (
     BatchSettlementEvmScheme as BatchSettlementClientScheme,
@@ -250,7 +250,21 @@ class TestBatchSettlementEvmIntegration:
         deposit_channel_id = first_payload.payload["voucher"]["channelId"]
         _wait_for_channel_balance(self.w3, deposit_channel_id)
 
-        process_settle_response(self.client_storage, settle_response)
+        deposit_amount = first_payload.payload["deposit"]["amount"]
+        extra = settle_response.extra or {}
+        update_channel_from_settle(
+            self.client_storage,
+            {
+                "server": {"charged_amount": extra["chargedAmount"]}
+                if extra.get("chargedAmount") is not None
+                else {},
+                "local": {
+                    "channel_id": deposit_channel_id,
+                    "request_amount": accepted.amount,
+                    "deposit_amount": deposit_amount,
+                },
+            },
+        )
 
         followup_required = self.server.create_payment_required_response(accepts, resource)
         second_payload = self.client.create_payment_payload(followup_required)

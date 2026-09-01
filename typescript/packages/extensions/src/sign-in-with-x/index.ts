@@ -49,7 +49,7 @@ export { buildSIWxSchema } from "./schema";
 
 // Client
 export { createSIWxMessage } from "./message";
-export { createSIWxPayload } from "./client";
+export { assertSIWxChallengeBoundToOrigin, createSIWxPayload } from "./client";
 export { encodeSIWxHeader } from "./encode";
 export { wrapFetchWithSIWx } from "./fetch";
 export {

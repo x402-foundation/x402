@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from starlette.datastructures import Headers, QueryParams
 
+from x402 import x402Facilitator, x402ResourceServer
 from x402.http.facilitator_client_base import FacilitatorResponseError
 from x402.http.middleware.fastapi import (
     FastAPIAdapter,
@@ -29,7 +30,17 @@ from x402.http.types import (
     RouteConfig,
 )
 from x402.schemas import PaymentPayload, PaymentRequirements
-from x402.schemas.hooks import PaymentCancellationDispatcher, VerifiedPaymentCancelOptions
+from x402.schemas.hooks import (
+    CompletedSettlement,
+    PaymentCancellationDispatcher,
+    VerifiedPaymentCancelOptions,
+)
+
+from ....mocks import (
+    CashFacilitatorClient,
+    CashSchemeNetworkFacilitator,
+    CashSchemeNetworkServer,
+)
 
 # =============================================================================
 # Helpers
@@ -72,6 +83,7 @@ def make_mock_fastapi_request(
     mock_request.url.path = path
     mock_request.url.__str__ = lambda self: f"https://example.com{path}"
     mock_request.state = MagicMock()
+    mock_request.scope = {"raw_path": path.encode("ascii")}
     return mock_request
 
 
@@ -618,6 +630,172 @@ class TestFastAPIMiddlewareIntegration:
             assert isinstance(cancel_options.error, RuntimeError)
             mock_http_server_instance.process_settlement.assert_not_called()
 
+    def test_echoes_before_handler_receipt_when_handler_returns_error_status(self):
+        app = FastAPI()
+
+        @app.get("/api/protected")
+        def protected_route():
+            return JSONResponse({"error": "failed"}, status_code=500)
+
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+        payment_payload = make_v2_payload()
+        payment_requirements = make_payment_requirements()
+        before_handler_settlement = CompletedSettlement(
+            phase="before-handler",
+            flow="upfront",
+            result=MagicMock(),
+            requirements=payment_requirements,
+        )
+
+        with patch("x402.http.middleware.fastapi.x402HTTPResourceServer") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request = AsyncMock(
+                return_value=HTTPProcessResult(
+                    type="payment-verified",
+                    payment_payload=payment_payload,
+                    payment_requirements=payment_requirements,
+                    before_handler_settlement=before_handler_settlement,
+                )
+            )
+            mock_http_server_instance.create_failure_path_settlement_headers.return_value = {
+                "PAYMENT-RESPONSE": "before-handler-receipt",
+                "Cache-Control": "private",
+            }
+            mock_http_server.return_value = mock_http_server_instance
+
+            @app.middleware("http")
+            async def x402_middleware(request: Request, call_next):
+                return await payment_middleware(
+                    routes, mock_server, sync_facilitator_on_start=False
+                )(request, call_next)
+
+            with TestClient(app) as client:
+                response = client.get("/api/protected")
+
+            assert response.status_code == 500
+            assert response.headers["PAYMENT-RESPONSE"] == "before-handler-receipt"
+            assert response.headers["Cache-Control"] == "private"
+            headers_fn = mock_http_server_instance.create_failure_path_settlement_headers
+            headers_fn.assert_called_once_with(
+                None, before_handler_settlement, payment_payload, ANY
+            )
+            mock_http_server_instance.process_settlement.assert_not_called()
+
+    def test_attaches_cancel_receipt_headers_when_handler_throws(self):
+        app = FastAPI()
+
+        @app.get("/api/protected")
+        def protected_route():
+            raise RuntimeError("handler failed")
+
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+        payment_payload = make_v2_payload()
+        payment_requirements = make_payment_requirements()
+        before_handler_settlement = CompletedSettlement(
+            phase="before-handler",
+            flow="escrow",
+            result=MagicMock(),
+            requirements=payment_requirements,
+        )
+        dispatcher = MagicMock(spec=PaymentCancellationDispatcher)
+        dispatcher.cancel = AsyncMock(
+            return_value=MagicMock(success=True, amount="0", transaction="0xrefund")
+        )
+
+        with patch("x402.http.middleware.fastapi.x402HTTPResourceServer") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request = AsyncMock(
+                return_value=HTTPProcessResult(
+                    type="payment-verified",
+                    payment_payload=payment_payload,
+                    payment_requirements=payment_requirements,
+                    cancellation_dispatcher=dispatcher,
+                    before_handler_settlement=before_handler_settlement,
+                )
+            )
+            mock_http_server_instance.create_failure_path_settlement_headers.return_value = {
+                "PAYMENT-RESPONSE": "cancel-receipt",
+                "Cache-Control": "private",
+            }
+            mock_http_server.return_value = mock_http_server_instance
+
+            @app.middleware("http")
+            async def x402_middleware(request: Request, call_next):
+                return await payment_middleware(
+                    routes, mock_server, sync_facilitator_on_start=False
+                )(request, call_next)
+
+            with TestClient(app) as client:
+                response = client.get("/api/protected")
+
+            assert response.status_code == 500
+            assert response.json() == {"error": "Internal Server Error"}
+            assert response.headers["PAYMENT-RESPONSE"] == "cancel-receipt"
+            dispatcher.cancel.assert_awaited_once()
+            mock_http_server_instance.process_settlement.assert_not_called()
+
+    def test_unexpected_process_http_request_error_returns_generic_500(self):
+        app = FastAPI()
+
+        @app.get("/api/protected")
+        def protected_route():
+            return {"data": "Protected content"}
+
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+
+        with patch("x402.http.middleware.fastapi.x402HTTPResourceServer") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request = AsyncMock(
+                side_effect=RuntimeError("scheme exploded")
+            )
+            mock_http_server.return_value = mock_http_server_instance
+
+            @app.middleware("http")
+            async def x402_middleware(request: Request, call_next):
+                return await payment_middleware(
+                    routes, mock_server, sync_facilitator_on_start=False
+                )(request, call_next)
+
+            with TestClient(app) as client:
+                response = client.get("/api/protected")
+
+            assert response.status_code == 500
+            assert response.json() == {"error": "Internal Server Error"}
+            assert "scheme exploded" not in response.text
+
     def test_invalid_facilitator_verify_response_returns_502(self):
         """Test that invalid facilitator data during verify returns 502 instead of 500."""
         app = FastAPI()
@@ -921,3 +1099,64 @@ class TestPaymentMiddlewareASGI:
 
         assert hasattr(middleware, "_middleware")
         assert callable(middleware._middleware)
+
+
+class TestEncodedPathBypass:
+    @staticmethod
+    def _bypass_routes() -> dict[str, RouteConfig]:
+        option = PaymentOption(
+            scheme="cash",
+            pay_to="Alice",
+            price="$0.01",
+            network="x402:cash",
+        )
+        return {
+            "GET /api/report/:id": RouteConfig(accepts=option),
+            "GET /api/premium/*": RouteConfig(accepts=option),
+        }
+
+    @staticmethod
+    def _cash_server() -> x402ResourceServer:
+        facilitator = x402Facilitator().register(
+            ["x402:cash"],
+            CashSchemeNetworkFacilitator(),
+        )
+        server = x402ResourceServer(CashFacilitatorClient(facilitator))
+        server.register("x402:cash", CashSchemeNetworkServer())
+        server.initialize()
+        return server
+
+    @pytest.fixture()
+    def client(self):
+        app = FastAPI()
+
+        @app.middleware("http")
+        async def x402_middleware(request: Request, call_next):
+            return await payment_middleware(
+                self._bypass_routes(),
+                self._cash_server(),
+                sync_facilitator_on_start=False,
+            )(request, call_next)
+
+        @app.api_route("/{path:path}", methods=["GET"])
+        async def catch_all(path: str) -> dict[str, str]:
+            return {"status": "ok"}
+
+        return TestClient(app)
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/api/report/baseline",
+            "/api/report/a%2Fb",
+            "/api/report/a%252Fb",
+            "/api/report/a%5Cb",
+            "/api/premium/",
+            "/api/premium",
+        ],
+    )
+    def test_protected_paths_return_402(self, client, path: str) -> None:
+        assert client.get(path).status_code == 402
+
+    def test_unrelated_path_is_not_gated(self, client) -> None:
+        assert client.get("/health").status_code == 200

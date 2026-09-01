@@ -5,11 +5,13 @@ import {
   SettleResponse,
   VerifyResponse,
 } from "@x402/core/types";
+import { InMemoryPendingSettlementStore, PendingSettlementStore } from "@x402/core/facilitator";
 import {
   extractEip2612GasSponsoringInfo,
   extractErc20ApprovalGasSponsoringInfo,
   ERC20_APPROVAL_GAS_SPONSORING_KEY,
   resolveErc20ApprovalExtensionSigner,
+  resolvePermit2ReceiptWaitSigner,
   type Eip2612GasSponsoringInfo,
   type Erc20ApprovalGasSponsoringFacilitatorExtension,
   type Erc20ApprovalGasSponsoringSigner,
@@ -25,7 +27,7 @@ import {
 import * as Errors from "./errors";
 import { FacilitatorEvmSigner } from "../../signer";
 import { ExactPermit2Payload } from "../../types";
-import { getEvmChainId } from "../../utils";
+import { finalHashFromTwoRequestSend, getEvmChainId, isValidTxHash } from "../../utils";
 import { validateErc20ApprovalForPayment } from "./erc20approval";
 import { verifyTypedDataSignature } from "../../shared/verifySignature";
 import {
@@ -37,10 +39,13 @@ import {
   validateEip2612PermitForPayment,
   buildExactPermit2SettleArgs,
   splitEip2612Signature,
-  waitAndReturnSettleResponse,
   mapSettleError,
   type Permit2ProxyConfig,
 } from "../../shared/permit2";
+import {
+  waitAndReturnSettleResponse,
+  withPendingSettlementStore,
+} from "../../shared/settleReceipt";
 
 const exactProxyConfig: Permit2ProxyConfig = {
   proxyAddress: x402ExactPermit2ProxyAddress,
@@ -324,6 +329,11 @@ export async function verifyPermit2(
  * @param permit2Payload - The Permit2 specific payload
  * @param context - Optional facilitator context for extension-provided capabilities
  * @param config - Optional facilitator config (simulateInSettle)
+ * @param store - Pending-settlement store. A prior settle attempt for this exact
+ *   payload that broadcast a transaction whose receipt wait failed
+ *   (settlement_pending) is reconciled against here instead of re-verifying and
+ *   re-broadcasting. Defaults to a fresh in-memory store when omitted (no
+ *   cross-call sharing).
  * @returns Promise resolving to settlement response
  */
 export async function settlePermit2(
@@ -333,8 +343,38 @@ export async function settlePermit2(
   permit2Payload: ExactPermit2Payload,
   context?: FacilitatorContext,
   config?: Permit2FacilitatorConfig,
+  store: PendingSettlementStore = new InMemoryPendingSettlementStore(),
 ): Promise<SettleResponse> {
   const payer = permit2Payload.permit2Authorization.from;
+  const signature = permit2Payload.signature;
+
+  // Fast path: a prior settle attempt for this exact payload already
+  // broadcast a transaction whose receipt wait failed (settlement_pending).
+  // Reconcile against it instead of re-verifying/re-broadcasting.
+  if (signature) {
+    const cachedTx = await store.get(signature);
+    if (cachedTx) {
+      // Remove before reconciling (rather than after) so a concurrent retry
+      // of the same payload misses here instead of also reconciling: it
+      // falls through to the normal broadcast path, which independently
+      // rejects it as an on-chain replay (nonce already consumed).
+      await store.delete(signature);
+      const receiptWaitSigner = resolvePermit2ReceiptWaitSigner(signer, payload, context);
+      return withPendingSettlementStore(
+        store,
+        signature,
+        () =>
+          waitAndReturnSettleResponse(
+            receiptWaitSigner,
+            cachedTx as `0x${string}`,
+            payload.accepted.network,
+            payer,
+            { failedStatusReason: Errors.ErrTransactionFailed },
+          ),
+        Errors.ErrTransactionFailed,
+      );
+    }
+  }
 
   const valid = await verifyPermit2(signer, payload, requirements, permit2Payload, context, {
     simulate: config?.simulateInSettle ?? false,
@@ -357,13 +397,19 @@ export async function settlePermit2(
   // Branch: EIP-2612 gas sponsoring (atomic settleWithPermit via contract)
   const eip2612Info = extractEip2612GasSponsoringInfo(payload);
   if (eip2612Info) {
-    return settlePermit2WithEIP2612(
-      exactProxyConfig,
-      signer,
-      payload,
-      permit2Payload,
-      eip2612Info,
-      dataSuffix,
+    return withPendingSettlementStore(
+      store,
+      signature,
+      () =>
+        settlePermit2WithEIP2612(
+          exactProxyConfig,
+          signer,
+          payload,
+          permit2Payload,
+          eip2612Info,
+          dataSuffix,
+        ),
+      Errors.ErrTransactionFailed,
     );
   }
 
@@ -379,19 +425,30 @@ export async function settlePermit2(
       payload.accepted.network,
     );
     if (extensionSigner) {
-      return settlePermit2WithERC20Approval(
-        exactProxyConfig,
-        extensionSigner,
-        payload,
-        permit2Payload,
-        erc20Info,
-        dataSuffix,
+      return withPendingSettlementStore(
+        store,
+        signature,
+        () =>
+          settlePermit2WithERC20Approval(
+            exactProxyConfig,
+            extensionSigner,
+            payload,
+            permit2Payload,
+            erc20Info,
+            dataSuffix,
+          ),
+        Errors.ErrTransactionFailed,
       );
     }
   }
 
   // Branch: standard settle (allowance already on-chain)
-  return settlePermit2Direct(exactProxyConfig, signer, payload, permit2Payload, dataSuffix);
+  return withPendingSettlementStore(
+    store,
+    signature,
+    () => settlePermit2Direct(exactProxyConfig, signer, payload, permit2Payload, dataSuffix),
+    Errors.ErrTransactionFailed,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -438,7 +495,9 @@ async function settlePermit2WithEIP2612(
       dataSuffix,
     });
 
-    return waitAndReturnSettleResponse(signer, tx, payload, payer);
+    return await waitAndReturnSettleResponse(signer, tx, payload.accepted.network, payer, {
+      failedStatusReason: Errors.ErrTransactionFailed,
+    });
   } catch (error) {
     return mapSettleError(error, payload, payer);
   }
@@ -481,8 +540,20 @@ async function settlePermit2WithERC20Approval(
       { to: config.proxyAddress, data: settleData, gas: BigInt(300_000) },
     ]);
 
-    const settleTxHash = txHashes[txHashes.length - 1];
-    return waitAndReturnSettleResponse(extensionSigner, settleTxHash, payload, payer);
+    const settleTxHash = finalHashFromTwoRequestSend(txHashes);
+    if (!settleTxHash || !isValidTxHash(settleTxHash)) {
+      throw new Error(
+        `${Errors.ErrErc20ApprovalTxFailed}: extension signer returned no valid settlement transaction hash`,
+      );
+    }
+
+    return await waitAndReturnSettleResponse(
+      extensionSigner,
+      settleTxHash,
+      payload.accepted.network,
+      payer,
+      { failedStatusReason: Errors.ErrTransactionFailed },
+    );
   } catch (error) {
     return mapSettleError(error, payload, payer);
   }
@@ -515,7 +586,9 @@ async function settlePermit2Direct(
       dataSuffix,
     });
 
-    return waitAndReturnSettleResponse(signer, tx, payload, payer);
+    return await waitAndReturnSettleResponse(signer, tx, payload.accepted.network, payer, {
+      failedStatusReason: Errors.ErrTransactionFailed,
+    });
   } catch (error) {
     return mapSettleError(error, payload, payer);
   }

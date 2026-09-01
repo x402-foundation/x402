@@ -2,84 +2,101 @@
 
 ## Summary
 
-`auth-capture` is a payment scheme where funds can be held and settled later. The client authorizes a maximum amount, and the facilitator submits it — either locking funds in escrow for later settlement (two-phase) or sending them directly to the receiver with refund capability (single-shot).
+`auth-capture` is a payment scheme in which the client authorizes a maximum amount, and the payment then has a lifecycle: it can be held before it is finalized, finalized for less than the maximum, cancelled outright, or returned after the fact. Where `exact` moves a fixed amount once and offers no way to give it back, `auth-capture` is for payments whose final amount is not known when the client authorizes, or which may later need to be undone.
 
-The **captureAuthorizer** is the entity authorized to authorize, capture, void, refund, or charge a payment. In a facilitator-submits flow, that's either the facilitator itself or any smart contract that ends up calling the underlying escrow.
+## Example use cases
 
-Unlike `exact`, which has no built-in mechanism for returning funds, `auth-capture` supports returning funds to the client through void, refund, and reclaim.
+- Refundable payments with buyer protection.
+- Delayed delivery, where the client needs recourse if the service turns out to be unsatisfactory.
+- Metered work priced only once it completes: hold the ceiling, capture the actual cost.
+- Subscription or session billing with periodic captures against one authorization.
 
-## Example Use Cases
+## Lifecycle operations
 
-- Refundable payments with buyer protection
-- Delayed delivery where the client needs recourse if the service is unsatisfactory
-- Subscription or session billing with periodic captures against a single authorization
 
-## Settlement Paths
+| Operation   | Effect                                                          | Repeatable                                            |
+| ----------- | --------------------------------------------------------------- | ----------------------------------------------------- |
+| `authorize` | Reserves the client's funds, where they are held.               | No — once per payment.                                |
+| `charge`    | Collects and distributes the funds in one step, with no hold.   | No — once per payment.                                |
+| `capture`   | Pays held funds out to the receiver.                            | Yes — up to the held total.                           |
+| `void`      | Releases the remaining hold back to the client.                 | No — only while a hold remains.                       |
+| `refund`    | Returns captured funds to the client.                           | Yes — up to the amount captured and not yet refunded. |
+| `reclaim`   | Client recovers its own hold after the capture deadline passes. | No.                                                   |
 
-The scheme supports two settlement paths, selected via `extra.autoCapture`:
 
-| `autoCapture`     | Behavior                                                                                                                     |
-| :---------------- | :--------------------------------------------------------------------------------------------------------------------------- |
-| `false` (default) | Two-phase. Funds held in escrow. CaptureAuthorizer can capture, void, refund. Client can reclaim if capture deadline passes. |
-| `true`            | Single-shot. Funds sent directly to receiver. CaptureAuthorizer can refund post-settlement.                                  |
+`reclaim` is the client's unilateral escape hatch and is never relayed through the facilitator. Every other operation is initiated by the resource server and relayed by the facilitator, except where a network binding runs later lifecycle operations out of band.
 
-### Two-phase (`autoCapture: false`, default)
+## Payment flows
 
-```
-AUTHORIZE → RESOURCE DELIVERED → CAPTURE / VOID → (REFUND)
-```
+Which operations a payment can undergo follows from its payment flow:
 
-1. **Authorize**: Client authorization is submitted — funds locked in escrow.
-2. **Resource delivered**: Server returns the resource (HTTP 200).
-3. **Capture or void**: The captureAuthorizer can capture (finalize funds to the receiver) or void (release escrowed funds back to client).
-4. **Reclaim**: If the capture deadline passes without action, the client can reclaim directly.
-5. **Refund**: After capture, the captureAuthorizer can refund within the refund window.
 
-### Single-shot (`autoCapture: true`)
+| `extra.paymentFlow` | Ordering                   | Lifecycle                                                                                                                                                                                              |
+| ------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `escrow`            | settle → resource → settle | `authorize` places the hold before the resource runs, then `capture` or `void` afterwards, and `refund` later still. If the capture deadline passes with the hold untouched, the client can `reclaim`. |
+| `authorization`     | verify → resource → settle | `charge` after the resource runs, and `refund` later. No hold, therefore no `capture`, `void`, or `reclaim`.                                                                                           |
 
-```
-CHARGE → RESOURCE DELIVERED → (REFUND)
-```
 
-1. **Charge**: Client authorization is submitted — funds sent directly to receiver.
-2. **Resource delivered**: Server returns the resource (HTTP 200).
-3. **Refund**: The captureAuthorizer can refund within the refund window.
+The scheme default is `escrow`. 
 
-No capture, void, or reclaim — funds are never held in escrow.
+## Lifecycle operations are `/settle` calls
 
-## Core Properties
+Because a payment can settle more than once, the facilitator must be able to tell the settlements apart. The payment flow already fixes whether the client's authorization is settled as `authorize` or as `charge`, so the client names no operation. Later operations are named on the settle payload (for example `payload.type` of `"capture"`, `"void"`, or `"refund"`). No new facilitator endpoint is involved.
 
-### Fund Safety
+Those later lifecycle settles are outside the `escrow` ordering above. The flow's post-resource settle is the in-request finalize; further `capture`, `void`, and `refund` calls are scheme lifecycle, not a rewrite of that ordering. `refund` is always after the fact.
 
-- Cannot overcharge — settlement amount is capped by the client-signed maximum.
-- Two-phase path: client can reclaim escrowed funds after the capture deadline if no action is taken.
-- Fee bounds are client-signed and enforced at settlement.
+For `escrow`, that post-resource `capture` (or `void`) MAY complete synchronously during the request, or asynchronously after it returns. Asynchronous finalize requires the resource server to retain durable state for the payment. Sync versus async is a server choice; the wire format does not name a mode.
 
-### Replay Prevention
+A network binding MAY relay only the collect settle (`authorize` or `charge`) and leave later lifecycle operations out of band.
 
-- Each payment has a unique nonce derived from the payment parameters and a fresh client-generated salt.
-- Nonce is consumed on-chain at settlement, preventing double-spend.
+## Core properties
 
-### Expiry Enforcement
+**Fund safety.** The amount settled is capped by the client-authorized maximum, and any fee is bounded by client-authorized limits. Held funds remain recoverable once the capture deadline passes, so a resource server that abandons a payment cannot strand it forever.
 
-Two absolute-timestamp deadlines govern the payment lifecycle (network-specific implementations may add a derived pre-approval expiry from `maxTimeoutSeconds`):
+**Payment identity.** Each payment has a unique identity. A collected authorization cannot be collected again.
 
-- **Capture deadline** (`captureDeadline`): Last moment to capture escrowed funds (two-phase); after this, the client can reclaim.
-- **Refund deadline** (`refundDeadline`): Last moment to issue a refund on captured or charged payments.
+**Expiry enforcement.** Two absolute timestamps govern the lifecycle. The capture deadline (`extra.captureDeadline`) is the last moment held funds can be captured, and the moment `reclaim` becomes available. The refund deadline (`extra.refundDeadline`) is the last moment a refund can be issued. A network binding MAY derive further deadlines, such as a pre-approval expiry from `maxTimeoutSeconds`.
+
+**Server consent.** `charge` (the settled amount), `capture`, `void`, and `refund` are not client-authorized. A network binding MUST authenticate that facilitator-relayed operations of those kinds are consented to by the resource server (or run them out of band under the operator's own rules). `authorize` is client-authorized.
+
+**Replay protection.** `capture` and `refund` are repeatable up to remaining balances; each consent for them MUST be single-use. Who enforces that — facilitator or settlement layer — is binding-defined.
 
 ## Relationship to `exact`
 
-| Aspect     | `exact`            | `auth-capture`                                                        |
-| :--------- | :----------------- | :-------------------------------------------------------------------- |
-| Settlement | Immediate transfer | Via escrow (two-phase) or direct with refund capability (single-shot) |
-| Refundable | No                 | Yes (both paths)                                                      |
-| Fee system | None               | Configurable (min/max bounds, client-signed)                          |
+
+| Aspect     | `exact`                                 | `auth-capture`                                                       |
+| ---------- | --------------------------------------- | -------------------------------------------------------------------- |
+| Amount     | Fixed, known when the client authorizes | Up to a client-authorized maximum, finalized later                   |
+| Settlement | One transfer                            | Hold then capture (`escrow`), or direct (`authorization`)            |
+| Reversible | No                                      | Yes — `void` before capture, `refund` after, `reclaim` by the client |
+| Fees       | None                                    | Client-bounded, taken at capture or charge                           |
+
 
 ## Appendix
 
-Network-specific implementation details (contracts, signature formats, verification logic) are in per-network documents: `scheme_auth_capture_evm.md` (EVM).
+### Network requirements
 
-### References
+Every `auth-capture` network binding MUST specify:
 
-- [Escrow Scheme Proposal — Agentokratia (Issue #834)](https://github.com/coinbase/x402/issues/834)
-- [Escrow Scheme Proposal — x402r (Issue #1011)](https://github.com/coinbase/x402/issues/1011)
+1. **Hold / settlement mechanism** — how funds are reserved, captured, voided, and refunded, and how deadlines are enforced.
+2. **Client authorization format** — the payload the client produces, and how the payment's identity derives from it.
+3. **Operator model** — who may drive each lifecycle operation, and which operations the facilitator relays.
+4. **Server consent** — how facilitator-relayed lifecycle operations are authenticated as originating from the resource server.
+5. **Replay protection** — how repeatable operations (`capture`, `refund`) are made single-use per consent.
+6. **Per-operation verification and settlement** — the checks a facilitator runs for each operation, and the call it makes.
+7. **Refund funding** — who supplies refund liquidity, given that a facilitator must not be an unexpected source of value.
+8. **Sync capture-and-void** — how a single `/settle` can finalize a partial capture and release any remainder when lifecycle is facilitator-relayed.
+
+### Network bindings
+
+- [`scheme_auth_capture_evm.md`](./scheme_auth_capture_evm.md) — EVM.
+
+## Version History
+
+
+| Version | Date       | Changes                                    | Authors   |
+| ------- | ---------- | ------------------------------------------ | --------- |
+| v1.1    | 2026-08-18 | Payment flow lifecycles and operator types | @phdargen |
+| v1.0    | 2026-05-13 | Initial draft                              | @A1igator |
+
+

@@ -128,6 +128,19 @@ describe("type guards", () => {
       expect(isEip3009Payload(rest)).toBe(false);
     });
 
+    it("accepts a bound payload that also carries saltNonce", () => {
+      expect(
+        isEip3009Payload({
+          ...validEip3009,
+          saltNonce: "0x0000000000000000000000000000000000000000000000000000000000000abc",
+        }),
+      ).toBe(true);
+    });
+
+    it("rejects a lifecycle payload even if authorization is present", () => {
+      expect(isEip3009Payload({ ...validEip3009, type: "capture" })).toBe(false);
+    });
+
     it("rejects a Permit2 payload (no authorization field)", () => {
       expect(isEip3009Payload(validPermit2)).toBe(false);
     });

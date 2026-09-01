@@ -28,7 +28,13 @@ from .hook_policy import (
     snapshot_payment_requirements_list,
     snapshot_settle_response_core,
 )
-from .interfaces import SchemeNetworkServer, SchemePaymentRequiredContext
+from .interfaces import PaymentFlowName, SchemeNetworkServer, SchemePaymentRequiredContext
+from .payment_flow import (
+    apply_payment_flow_wire_extra,
+    resolve_payment_flow,
+    resolve_payment_flow_phases,
+)
+from .pending_settlement_store import ERR_SETTLEMENT_PENDING
 from .schemas import (
     X402_VERSION,
     AbortResult,
@@ -48,6 +54,7 @@ from .schemas import (
     ServerPaymentRequiredContext,
     SettleContext,
     SettleFailureContext,
+    SettlePhase,
     SettleResponse,
     SettleResultContext,
     SkipHandlerDirective,
@@ -201,6 +208,37 @@ def _object_contains_subset(
     return True
 
 
+def _payment_requirements_match_accepted(
+    required: PaymentRequirements,
+    accepted: PaymentRequirements,
+    dynamic_extra_fields: list[str] | None = None,
+) -> bool:
+    """Return whether a client-selected requirement satisfies a server-advertised one.
+
+    Core payment terms must match exactly. Server-declared ``extra`` fields must
+    be a subset of the client's ``accepted.extra``. Fields listed in
+    ``dynamic_extra_fields`` are excluded from the extra comparison.
+    """
+    if (
+        required.scheme != accepted.scheme
+        or required.network != accepted.network
+        or required.amount != accepted.amount
+        or required.asset != accepted.asset
+        or required.pay_to != accepted.pay_to
+        or required.max_timeout_seconds != accepted.max_timeout_seconds
+    ):
+        return False
+
+    required_extra = required.extra or {}
+    if not required_extra:
+        return True
+
+    return _object_contains_subset(
+        _omit_fields(required_extra, dynamic_extra_fields),
+        _omit_fields(accepted.extra or {}, dynamic_extra_fields),
+    )
+
+
 # ============================================================================
 # FacilitatorClient Protocols (Async and Sync)
 # ============================================================================
@@ -252,6 +290,66 @@ class FacilitatorClientSync(Protocol):
     def get_supported(self) -> SupportedResponse:
         """Get supported payment kinds."""
         ...
+
+
+# ============================================================================
+# Single automatic settle retry on settlement_pending
+# ============================================================================
+#
+# When a settle attempt's receipt/confirmation wait fails, a mechanism (see
+# PendingSettlementStore in pending_settlement_store.py) returns success=False
+# with error_reason="settlement_pending" and a populated `transaction` hash.
+# The resource server resends the identical payload/requirements exactly once
+# so the mechanism's own PendingSettlementStore check reconciles against the
+# already-broadcast transaction instead of verifying and broadcasting a
+# second one. No mutation, backoff, or sleep here — the mechanism layer owns
+# any bounded waiting. Any other outcome (success, or a different failure
+# reason) short-circuits after the first call, and this is capped at exactly
+# one retry regardless of the second outcome, so it can never loop.
+#
+# This lives once, above all scheme/network dispatch, in the driver loops
+# that call `client.settle(...)` at the "call_facilitator" phase of the
+# settle generator (see `settle_payment` in server.py, both sync and async).
+
+
+def is_retryable_settlement_pending(result: SettleResponse) -> bool:
+    """Report whether a settle result is a retryable settlement_pending.
+
+    True when the result is a non-terminal settlement_pending failure that
+    carries a broadcast transaction hash to reconcile against.
+    """
+    return (
+        not result.success
+        and result.error_reason == ERR_SETTLEMENT_PENDING
+        and bool(result.transaction)
+    )
+
+
+def settle_with_pending_retry(
+    client: FacilitatorClientSync,
+    payload: PaymentPayload | PaymentPayloadV1,
+    requirements: PaymentRequirements | PaymentRequirementsV1,
+) -> SettleResponse:
+    """Call client.settle once, retrying exactly once on settlement_pending.
+
+    See the module-level comment above for the retry semantics.
+    """
+    result = client.settle(payload, requirements)
+    if not is_retryable_settlement_pending(result):
+        return result
+    return client.settle(payload, requirements)
+
+
+async def settle_with_pending_retry_async(
+    client: FacilitatorClient,
+    payload: PaymentPayload | PaymentPayloadV1,
+    requirements: PaymentRequirements | PaymentRequirementsV1,
+) -> SettleResponse:
+    """Async counterpart of settle_with_pending_retry."""
+    result = await client.settle(payload, requirements)
+    if not is_retryable_settlement_pending(result):
+        return result
+    return await client.settle(payload, requirements)
 
 
 # ============================================================================
@@ -411,6 +509,10 @@ class x402ResourceServerBase:
                 return True
 
         return False
+
+    def get_registered_scheme(self, network: Network, scheme: str) -> SchemeNetworkServer | None:
+        """Return the registered scheme server for a network, if any."""
+        return self._find_registered_scheme(scheme, network)
 
     def get_supported_kind(
         self, version: int, network: Network, scheme: str
@@ -582,6 +684,9 @@ class x402ResourceServerBase:
             supported_kind,
             extensions or [],
         )
+
+        resolved = resolve_payment_flow(server, enhanced)
+        enhanced.extra = apply_payment_flow_wire_extra(dict(enhanced.extra or {}), resolved)
 
         return [enhanced]
 
@@ -1000,18 +1105,40 @@ class x402ResourceServerBase:
         available: list[PaymentRequirements],
         payload: PaymentPayload,
     ) -> PaymentRequirements | None:
-        """Find requirements that match a payment payload."""
+        """Find the server-advertised requirement that matches a client payload.
+
+        For v2, all server-declared fields must match, including ``extra``
+        (subset check). Scheme-declared ``dynamic_extra_fields`` are omitted
+        from the extra comparison.
+        """
         for req in available:
-            if (
-                payload.accepted.scheme == req.scheme
-                and payload.accepted.network == req.network
-                and payload.accepted.amount == req.amount
-                and payload.accepted.asset == req.asset
-                and payload.accepted.pay_to == req.pay_to
+            scheme = self._find_registered_scheme(req.scheme, req.network)
+            dynamic_extra_fields = getattr(scheme, "dynamic_extra_fields", None) if scheme else None
+            if _payment_requirements_match_accepted(
+                req,
+                payload.accepted,
+                dynamic_extra_fields,
             ):
                 return req
 
         return None
+
+    def get_payment_flow(
+        self,
+        _payload: PaymentPayload,
+        requirements: PaymentRequirements,
+    ) -> PaymentFlowName:
+        """Resolve the payment flow name for a payload/requirements pair.
+
+        Flow is requirements-driven. Raises when no scheme is registered.
+        """
+        scheme = self._find_registered_scheme(requirements.scheme, requirements.network)
+        if scheme is None:
+            raise ValueError(
+                "[x402] No server implementation registered for scheme: "
+                f"{requirements.scheme}, network: {requirements.network}"
+            )
+        return resolve_payment_flow(scheme, requirements).payment_flow
 
     # ========================================================================
     # Extensions
@@ -1027,6 +1154,7 @@ class x402ResourceServerBase:
         declared_extensions: dict[str, Any] | None,
         transport_context: Any,
         run_hook: Callable[..., Any],
+        phase: SettlePhase = "after-handler",
     ) -> SettleResponse:
         if not settle_result.success:
             return settle_result
@@ -1038,6 +1166,7 @@ class x402ResourceServerBase:
             requirements_bytes=requirements_bytes,
             declared_extensions=declared_extensions or {},
             transport_context=transport_context,
+            phase=phase,
             result=settle_result,
         )
         matched_scheme = {
@@ -1062,6 +1191,7 @@ class x402ResourceServerBase:
         requirements_bytes: bytes | None,
         declared_extensions: dict[str, Any] | None,
         transport_context: Any,
+        phase: SettlePhase = "after-handler",
     ) -> SettleResponse:
         if not settle_result.success:
             return settle_result
@@ -1073,6 +1203,7 @@ class x402ResourceServerBase:
             requirements_bytes=requirements_bytes,
             declared_extensions=declared_extensions or {},
             transport_context=transport_context,
+            phase=phase,
             result=settle_result,
         )
         matched_scheme = {
@@ -1110,6 +1241,7 @@ class x402ResourceServerBase:
         requirements: PaymentRequirements | PaymentRequirementsV1,
         declared_extensions: dict[str, Any] | None = None,
         transport_context: Any = None,
+        settled_phases: list[SettlePhase] | None = None,
     ) -> PaymentCancellationDispatcher:
         """Create cancellation controls for a verified payment attempt."""
         return PaymentCancellationDispatcher(
@@ -1118,6 +1250,7 @@ class x402ResourceServerBase:
             requirements,
             declared_extensions,
             transport_context,
+            settled_phases,
         )
 
     @staticmethod
@@ -1149,15 +1282,18 @@ class x402ResourceServerBase:
         declared_extensions: dict[str, Any] | None,
         options: VerifiedPaymentCancelOptions,
         transport_context: Any,
+        settled_phases: tuple[SettlePhase, ...] | list[SettlePhase] | None = None,
     ) -> VerifiedPaymentCanceledContext:
         return VerifiedPaymentCanceledContext(
             payment_payload=payload,
             requirements=requirements,
             declared_extensions=declared_extensions or {},
             transport_context=transport_context,
+            phase="cancel",
             reason=options.reason,
             error=options.error,
             response_status=options.response_status,
+            settled_phases=tuple(settled_phases or ()),
         )
 
     # ========================================================================
@@ -1221,6 +1357,14 @@ class x402ResourceServerBase:
                     extension_keys,
                 )
                 return verify_response
+
+        if isinstance(requirements, PaymentRequirements) and not isinstance(
+            requirements, PaymentRequirementsV1
+        ):
+            flow = self.get_payment_flow(payload, requirements)  # type: ignore[arg-type]
+            phases = resolve_payment_flow_phases(flow)
+            if not phases.verify_before_handler:
+                return ResourceVerifyResponse(verify=VerifyResponse(is_valid=True))
 
         try:
             # Get scheme and network
@@ -1385,6 +1529,7 @@ class x402ResourceServerBase:
         requirements_bytes: bytes | None,
         declared_extensions: dict[str, Any] | None = None,
         transport_context: Any = None,
+        phase: SettlePhase = "after-handler",
     ) -> Generator[HookCommand, Any, SettleResponse]:
         """Core settle logic as generator.
 
@@ -1402,6 +1547,7 @@ class x402ResourceServerBase:
             requirements_bytes=requirements_bytes,
             declared_extensions=declared,
             transport_context=transport_context,
+            phase=phase,
         )
         matched_scheme = {
             "network": requirements.network,
@@ -1429,6 +1575,7 @@ class x402ResourceServerBase:
                     requirements_bytes=requirements_bytes,
                     declared_extensions=declared_extensions or {},
                     transport_context=transport_context,
+                    phase=phase,
                     result=result.result,
                 )
                 for _label, after_hook in get_labeled_server_hooks(
@@ -1481,6 +1628,7 @@ class x402ResourceServerBase:
                     requirements_bytes=requirements_bytes,
                     declared_extensions=declared_extensions or {},
                     transport_context=transport_context,
+                    phase=phase,
                     error=Exception(settle_result.error_reason or "Settlement failed"),
                 )
                 for _label, hook in get_labeled_server_hooks(
@@ -1498,6 +1646,7 @@ class x402ResourceServerBase:
                             requirements_bytes=requirements_bytes,
                             declared_extensions=declared,
                             transport_context=transport_context,
+                            phase=phase,
                             result=result.result,
                         )
                         for _after_label, after_hook in get_labeled_server_hooks(
@@ -1519,6 +1668,7 @@ class x402ResourceServerBase:
                 requirements_bytes=requirements_bytes,
                 declared_extensions=declared,
                 transport_context=transport_context,
+                phase=phase,
                 result=settle_result,
             )
             for _label, hook in get_labeled_server_hooks(
@@ -1539,6 +1689,7 @@ class x402ResourceServerBase:
                 requirements_bytes=requirements_bytes,
                 declared_extensions=declared,
                 transport_context=transport_context,
+                phase=phase,
                 error=e,
             )
             for _label, hook in get_labeled_server_hooks(

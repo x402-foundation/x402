@@ -18,7 +18,7 @@ import type { SIWxPayload } from "./types";
  *
  * @example
  * ```typescript
- * const payload = await createSIWxPayload(serverInfo, signer);
+ * const payload = await createSIWxPayload(serverInfo, signer, response.url);
  * const header = encodeSIWxHeader(payload);
  *
  * fetch(url, {

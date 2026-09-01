@@ -37,6 +37,11 @@ class VerifyResponse(BaseX402Model):
     invalid_message: str | None = None
     payer: str | None = None
     extensions: dict[str, Any] | None = None
+    extension_responses: dict[str, Any] | None = Field(
+        default=None,
+        exclude=True,
+        description="Facilitator extension sidechannel; not serialized to buyers.",
+    )
     extra: dict[str, Any] | None = None
 
 
@@ -75,6 +80,11 @@ class SettleResponse(BaseX402Model):
     network: Network
     amount: str | None = None
     extensions: dict[str, Any] | None = None
+    extension_responses: dict[str, Any] | None = Field(
+        default=None,
+        exclude=True,
+        description="Facilitator extension sidechannel; not serialized to buyers.",
+    )
     extra: dict[str, Any] | None = None
 
 

@@ -17,6 +17,7 @@ import type {
   SchemeNetworkClient,
   Network,
 } from "@x402/core/types";
+import { findDefaultAsset } from "../../defaultAssets";
 import type { ClientConcordiumSigner } from "../../signer";
 import type { ExactConcordiumPayloadV2 } from "../../types";
 import { getConcordiumGrpcUrl, parseGrpcUrl } from "../../constants";
@@ -53,6 +54,7 @@ export interface ClientConcordiumConfig {
  */
 export class ExactConcordiumScheme implements SchemeNetworkClient {
   readonly scheme = "exact";
+  findDefaultAsset = findDefaultAsset;
 
   /**
    * Creates a new ExactConcordiumScheme instance.

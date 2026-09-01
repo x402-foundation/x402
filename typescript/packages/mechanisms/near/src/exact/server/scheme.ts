@@ -2,12 +2,14 @@ import type {
   AssetAmount,
   MoneyParser,
   Network,
+  PaymentFlowConfig,
   PaymentRequirements,
   Price,
   SchemeNetworkServer,
 } from "@x402/core/types";
-import { convertToTokenAmount, numberToDecimalString, parseMoneyString } from "@x402/core/utils";
-import { DEFAULT_ASSET_BY_NETWORK, DEFAULT_TOKEN_DECIMALS, isNearNetwork } from "../../constants";
+import { convertToTokenAmount, parseMoney } from "@x402/core/utils";
+import { isNearNetwork } from "../../constants";
+import { findDefaultAsset, getDefaultAsset } from "../../defaultAssets";
 
 /**
  * Supported-kind shape passed to `enhancePaymentRequirements` (mirrors the core
@@ -25,6 +27,10 @@ type SupportedKindLike = {
  */
 export class ExactNearScheme implements SchemeNetworkServer {
   readonly scheme = "exact";
+  readonly defaultAssetTransferMethod = "default";
+  readonly paymentFlows = {
+    default: { supported: ["authorization", "upfront"], default: "authorization" },
+  } as const satisfies Record<string, PaymentFlowConfig>;
   private readonly moneyParsers: MoneyParser[] = [];
 
   /**
@@ -36,6 +42,17 @@ export class ExactNearScheme implements SchemeNetworkServer {
   registerMoneyParser(parser: MoneyParser): ExactNearScheme {
     this.moneyParsers.push(parser);
     return this;
+  }
+
+  /**
+   * Decimals for a known default asset, or undefined.
+   *
+   * @param asset - Asset address or symbol
+   * @param network - Target network
+   * @returns Decimals when the asset is a known default; otherwise undefined
+   */
+  getAssetDecimals(asset: string, network: Network): number | undefined {
+    return findDefaultAsset(asset, network)?.decimals;
   }
 
   /**
@@ -61,26 +78,16 @@ export class ExactNearScheme implements SchemeNetworkServer {
       };
     }
 
-    const decimal = this.parseMoneyToDecimal(price);
+    const { amount, symbol } = parseMoney(price);
 
     for (const parser of this.moneyParsers) {
-      const parsed = await parser(decimal, network);
+      const parsed = await parser(amount, network);
       if (parsed !== null) {
         return parsed;
       }
     }
 
-    const tokenAmount = convertToTokenAmount(
-      numberToDecimalString(decimal),
-      DEFAULT_TOKEN_DECIMALS,
-    );
-    const asset = this.defaultAssetForNetwork(network);
-
-    return {
-      amount: tokenAmount,
-      asset,
-      extra: {},
-    };
+    return this.defaultMoneyConversion(amount, network, symbol);
   }
 
   /**
@@ -107,35 +114,21 @@ export class ExactNearScheme implements SchemeNetworkServer {
   }
 
   /**
-   * Parses money-like value into decimal number.
+   * Default conversion when no custom parser handles the value.
    *
-   * @param money - Money value
-   * @returns Decimal amount
-   */
-  private parseMoneyToDecimal(money: string | number): number {
-    if (typeof money === "number") {
-      if (!Number.isFinite(money) || money < 0) {
-        throw new Error(`Invalid money format: ${money}`);
-      }
-      return money;
-    }
-
-    return parseMoneyString(money);
-  }
-
-  /**
-   * Resolves default asset for known NEAR networks.
-   *
+   * @param amount - Decimal amount
    * @param network - Network identifier
-   * @returns Default NEP-141 asset id
+   * @param symbol - Optional ticker from a suffixed price
+   * @returns Asset amount in the configured default NEP-141 token
    */
-  private defaultAssetForNetwork(network: Network): string {
-    if (network === "near:mainnet") {
-      return DEFAULT_ASSET_BY_NETWORK["near:mainnet"];
-    }
-    if (network === "near:testnet") {
-      return DEFAULT_ASSET_BY_NETWORK["near:testnet"];
-    }
-    throw new Error(`No default NEAR asset configured for network: ${network}`);
+  private defaultMoneyConversion(amount: string, network: Network, symbol?: string): AssetAmount {
+    const assetInfo = getDefaultAsset(network, symbol);
+    const tokenAmount = convertToTokenAmount(amount, assetInfo.decimals);
+
+    return {
+      amount: tokenAmount,
+      asset: assetInfo.asset,
+      extra: {},
+    };
   }
 }

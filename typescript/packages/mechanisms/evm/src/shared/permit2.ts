@@ -18,7 +18,7 @@ import {
 import { getAddress, encodeFunctionData, parseErc6492Signature } from "viem";
 import { PERMIT2_ADDRESS, eip3009ABI, erc20AllowanceAbi, permit2WitnessTypes } from "../constants";
 import { multicall, ContractCall } from "../multicall";
-import { createPermit2Nonce, getEvmChainId } from "../utils";
+import { createPermit2Nonce, getEvmChainId, truncateErrorMessage } from "../utils";
 import {
   ErrPermit2612AmountMismatch,
   ErrPermit2InvalidAmount,
@@ -31,13 +31,13 @@ import {
   ErrPermit2SimulationFailed,
   ErrPermit2InsufficientBalance,
   ErrPermit2ProxyNotDeployed,
-  ErrInvalidTransactionState,
   ErrTransactionFailed,
   ErrInvalidEip2612ExtensionFormat,
   ErrEip2612FromMismatch,
   ErrEip2612AssetMismatch,
   ErrEip2612SpenderNotPermit2,
   ErrEip2612DeadlineExpired,
+  ErrErc20ApprovalBroadcastFailed,
   ErrErc20ApprovalTxFailed,
 } from "../exact/facilitator/errors";
 import { ClientEvmSigner, FacilitatorEvmSigner } from "../signer";
@@ -158,41 +158,6 @@ export async function verifyPermit2Allowance(
 }
 
 /**
- * Waits for a transaction receipt and returns the appropriate SettleResponse.
- *
- * @param signer - Signer with waitForTransactionReceipt capability
- * @param tx - The transaction hash to wait for
- * @param payload - The payment payload (for network info)
- * @param payer - The payer address
- * @returns Promise resolving to a settlement response indicating success or failure
- */
-export async function waitAndReturnSettleResponse(
-  signer: Pick<FacilitatorEvmSigner, "waitForTransactionReceipt">,
-  tx: `0x${string}`,
-  payload: PaymentPayload,
-  payer: `0x${string}`,
-): Promise<SettleResponse> {
-  const receipt = await signer.waitForTransactionReceipt({ hash: tx });
-
-  if (receipt.status !== "success") {
-    return {
-      success: false,
-      errorReason: ErrInvalidTransactionState,
-      transaction: tx,
-      network: payload.accepted.network,
-      payer,
-    };
-  }
-
-  return {
-    success: true,
-    transaction: tx,
-    network: payload.accepted.network,
-    payer,
-  };
-}
-
-/**
  * Maps contract revert errors to structured SettleResponse error reasons.
  *
  * Inspects the error message for known contract revert strings and maps them
@@ -226,14 +191,14 @@ export function mapSettleError(
       errorReason = ErrPermit2InvalidSignature;
     } else if (message.includes("InvalidNonce")) {
       errorReason = ErrPermit2InvalidNonce;
-    } else if (message.includes("erc20_approval_tx_failed")) {
-      errorReason = ErrErc20ApprovalTxFailed;
+    } else if (message.includes(ErrErc20ApprovalTxFailed)) {
+      errorReason = ErrErc20ApprovalBroadcastFailed;
     } else if (message.includes("AmountExceedsPermitted")) {
       errorReason = ErrUptoAmountExceedsPermitted;
     } else if (message.includes("UnauthorizedFacilitator")) {
       errorReason = ErrUptoUnauthorizedFacilitator;
     } else {
-      errorReason = `${ErrTransactionFailed}: ${message.slice(0, 500)}`;
+      errorReason = `${ErrTransactionFailed}: ${truncateErrorMessage(message)}`;
     }
   }
   return {
