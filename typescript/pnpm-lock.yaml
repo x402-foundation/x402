@@ -101,6 +101,9 @@ importers:
       ajv:
         specifier: ^8.17.1
         version: 8.17.1
+      ajv-formats:
+        specifier: ^3.0.1
+        version: 3.0.1(ajv@8.17.1)
       jose:
         specifier: ^5.9.6
         version: 5.10.0

@@ -47,6 +47,7 @@
     "@scure/base": "^1.2.6",
     "@x402/core": "workspace:~",
     "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
     "jose": "^5.9.6",
     "@signinwithethereum/siwe": "^4.1.0",
     "tweetnacl": "^1.0.3",
