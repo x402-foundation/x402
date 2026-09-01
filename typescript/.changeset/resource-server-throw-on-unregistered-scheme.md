@@ -1,5 +1,5 @@
 ---
-"@x402/core": major
+"@x402/core": patch
 ---
 
 `x402ResourceServer.buildPaymentRequirements()` now throws when no scheme server is registered for the requested scheme and network, instead of logging a `console.warn` and resolving with an empty array. It previously produced a 402 response carrying an empty `accepts` list, which is unusable to a client and gives no signal that the server is misconfigured. The new error matches the adjacent guard that already throws when the facilitator does not advertise the scheme and network.
