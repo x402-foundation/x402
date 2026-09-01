@@ -398,6 +398,47 @@ describe("Builder Code Extension", () => {
 
       expect(parsed).toEqual({ w: WALLET, a: APP });
     });
+
+    it("drops client app code on v1 payloads but still encodes service codes", () => {
+      const ext = new BuilderCodeFacilitatorExtension({
+        builderCode: WALLET,
+        serviceCode: "bc_fac",
+      });
+      const suffix = ext.buildDataSuffix({
+        ...suffixContext({
+          paymentPayloadExtensions: {
+            [BUILDER_CODE]: { info: { a: APP, s: SERVICE }, schema: {} },
+          },
+        }),
+        paymentPayload: {
+          ...basePayload(),
+          x402Version: 1,
+          extensions: {
+            [BUILDER_CODE]: { info: { a: APP, s: SERVICE }, schema: {} },
+          },
+        },
+      });
+      if (!suffix) {
+        throw new Error("Expected builder-code suffix");
+      }
+
+      const parsed = parseBuilderCodeSuffixFromCalldata(
+        `0xdeadbeef${suffix.slice(2)}` as `0x${string}`,
+      );
+      expect(parsed).toEqual({ w: WALLET, s: [SERVICE, "bc_fac"] });
+    });
+
+    it("encodes service codes on v2 payloads when app code is absent", () => {
+      const parsed = parsedFromFacilitator(
+        suffixContext({
+          paymentPayloadExtensions: {
+            [BUILDER_CODE]: { info: { s: SERVICE }, schema: {} },
+          },
+        }),
+      );
+
+      expect(parsed).toEqual({ w: WALLET, s: [SERVICE] });
+    });
   });
 
   describe("suffix encode and parse", () => {

@@ -1206,11 +1206,18 @@ func TestResolveSettlementOverrideAmount(t *testing.T) {
 			expected string
 		}{
 			{"50%", "2000", "1000"},
+			{"12.5%", "2000", "250"},
+			{"12.50%", "2000", "250"},
 			{"100%", "2000", "2000"},
 			{"0%", "2000", "0"},
 			{"25%", "2000", "500"},
 			{"33.33%", "3000", "999"},
 			{"10.5%", "1000", "105"},
+			{"50%", "3", "1"},
+			{"999999999999999999999%", "1000000", "9999999999999999999990000"},
+			{"92233720368547758.08%", "1000000", "922337203685477580800"},
+			{"184467440737095516.16%", "1000000", "1844674407370955161600"},
+			{"50%", "18446744073709551616", "9223372036854775808"},
 		}
 		for _, tt := range tests {
 			reqs := types.PaymentRequirements{Amount: tt.amount}
@@ -1221,6 +1228,14 @@ func TestResolveSettlementOverrideAmount(t *testing.T) {
 			if result != tt.expected {
 				t.Errorf("ResolveSettlementOverrideAmount(%q, amount=%s) = %q, want %q", tt.input, tt.amount, result, tt.expected)
 			}
+		}
+	})
+
+	t.Run("percent format with invalid requirements amount", func(t *testing.T) {
+		reqs := types.PaymentRequirements{Amount: "not-a-number"}
+		_, err := ResolveSettlementOverrideAmount("50%", reqs, 6)
+		if err == nil {
+			t.Fatal("expected invalid requirements amount error")
 		}
 	})
 

@@ -7,7 +7,7 @@ client examples in this repo.
 ## Setup
 
 ```bash
-uv sync
+uv sync --reinstall-package x402
 ```
 
 ## Environment

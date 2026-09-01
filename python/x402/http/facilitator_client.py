@@ -6,9 +6,7 @@ implementations for communicating with remote facilitator services.
 
 from __future__ import annotations
 
-import base64
 import json
-import logging
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import ValidationError
@@ -21,6 +19,7 @@ from ..schemas import (
     VerifyResponse,
 )
 from ..schemas.v1 import PaymentPayloadV1, PaymentRequirementsV1
+from .extension_responses import extract_extension_responses_header, log_extension_responses
 from .facilitator_client_base import (
     AuthHeaders,
     AuthProvider,
@@ -54,6 +53,7 @@ _ResponseModelT = TypeVar(
     SettleResponse,
     SupportedResponse,
 )
+_ResponseWithSidechannelT = TypeVar("_ResponseWithSidechannelT", VerifyResponse, SettleResponse)
 
 
 def _response_excerpt(response: Any, limit: int = 200) -> str:
@@ -89,43 +89,14 @@ def _parse_facilitator_response(
         ) from exc
 
 
-_logger = logging.getLogger("x402")
-
-_EXTENSION_RESPONSE_LOG_FIELD_ALLOWLIST = ["status", "rejectedReason", "reason", "code"]
-
-
-def _log_extension_responses_header(response: Any) -> None:
-    """Read the EXTENSION-RESPONSES header and log allowlisted fields.
-
-    Silently ignores malformed headers.
-
-    Args:
-        response: The HTTP response object (httpx.Response).
-    """
-    header = response.headers.get("EXTENSION-RESPONSES") or response.headers.get(
-        "extension-responses"
-    )
-    if not header:
-        return
-    try:
-        decoded = base64.b64decode(header).decode("utf-8")
-        header_extensions: dict[str, Any] = json.loads(decoded)
-        if not isinstance(header_extensions, dict):
-            return
-        sanitized: dict[str, dict[str, Any]] = {}
-        for extension_key, payload in header_extensions.items():
-            filtered: dict[str, Any] = {}
-            if isinstance(payload, dict):
-                for field in _EXTENSION_RESPONSE_LOG_FIELD_ALLOWLIST:
-                    if field in payload:
-                        filtered[field] = payload[field]
-            sanitized[extension_key] = filtered
-        _logger.info(
-            "[x402] extension responses: %s",
-            json.dumps(sanitized),
-        )
-    except Exception:
-        pass
+def _attach_extension_responses(
+    result: _ResponseWithSidechannelT,
+    response: Any,
+) -> _ResponseWithSidechannelT:
+    """Populate extension_responses from the HTTP sidechannel."""
+    header_obj = extract_extension_responses_header(response)
+    log_extension_responses(header_obj)
+    return result.model_copy(update={"extension_responses": header_obj})
 
 
 # ============================================================================
@@ -330,8 +301,7 @@ class HTTPFacilitatorClient(HTTPFacilitatorClientBase):
             raise ValueError(f"Facilitator verify failed ({response.status_code}): {response.text}")
 
         result = _parse_facilitator_response(response, VerifyResponse, "verify")
-        _log_extension_responses_header(response)
-        return result
+        return _attach_extension_responses(result, response)
 
     async def _settle_http(
         self,
@@ -353,8 +323,7 @@ class HTTPFacilitatorClient(HTTPFacilitatorClientBase):
             raise ValueError(f"Facilitator settle failed ({response.status_code}): {response.text}")
 
         result = _parse_facilitator_response(response, SettleResponse, "settle")
-        _log_extension_responses_header(response)
-        return result
+        return _attach_extension_responses(result, response)
 
 
 # ============================================================================
@@ -550,8 +519,7 @@ class HTTPFacilitatorClientSync(HTTPFacilitatorClientBase):
             raise ValueError(f"Facilitator verify failed ({response.status_code}): {response.text}")
 
         result = _parse_facilitator_response(response, VerifyResponse, "verify")
-        _log_extension_responses_header(response)
-        return result
+        return _attach_extension_responses(result, response)
 
     def _settle_http(
         self,
@@ -573,5 +541,4 @@ class HTTPFacilitatorClientSync(HTTPFacilitatorClientBase):
             raise ValueError(f"Facilitator settle failed ({response.status_code}): {response.text}")
 
         result = _parse_facilitator_response(response, SettleResponse, "settle")
-        _log_extension_responses_header(response)
-        return result
+        return _attach_extension_responses(result, response)

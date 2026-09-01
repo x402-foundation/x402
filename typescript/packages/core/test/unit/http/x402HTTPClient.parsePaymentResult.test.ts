@@ -121,4 +121,17 @@ describe("x402HTTPClient.parsePaymentResult", () => {
 
     expect(result).toEqual({ status: 200, paymentStatus: "none", body, header: undefined });
   });
+
+  it("encodePaymentResponseHeader excludes extensionResponses sidechannel", () => {
+    const settleResponse = buildSettleResponse({
+      success: true,
+      transaction: "0xabc",
+    });
+    settleResponse.extensionResponses = { bazaar: { status: "processing" } };
+    const encoded = encodePaymentResponseHeader(settleResponse);
+    const decoded = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+    expect(decoded.extensionResponses).toBeUndefined();
+    expect(decoded.success).toBe(true);
+    expect(decoded.transaction).toBe("0xabc");
+  });
 });

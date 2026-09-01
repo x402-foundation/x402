@@ -21,6 +21,7 @@ import type { DeepReadonly } from "../types/readonly";
 import {
   ADDITIVE_ARRAY_INFO_FIELDS,
   ADDITIVE_ARRAY_MAX_LENGTHS,
+  SERVER_OWNED_INFO_FIELDS,
   deepEqual,
   convertToTokenAmount,
   findByNetworkAndScheme,
@@ -768,12 +769,10 @@ export class x402ResourceServer {
     );
 
     if (!SchemeNetworkServer) {
-      // Fallback to placeholder implementation if no server registered
-      // TODO: Remove this fallback once implementations are registered
-      console.warn(
-        `No server implementation registered for scheme: ${scheme}, network: ${resourceConfig.network}`,
+      throw new Error(
+        `No server implementation registered for ${scheme} on ${resourceConfig.network}. ` +
+          `Make sure to call register() with a scheme server for this network.`,
       );
-      return requirements;
     }
 
     // Find the matching supported kind from facilitator
@@ -1461,33 +1460,39 @@ export class x402ResourceServer {
     }
 
     const serverExtensions = paymentRequired.extensions;
-    if (!serverExtensions || Object.keys(serverExtensions).length === 0) {
-      return { valid: true };
-    }
-
     const clientExtensions = paymentPayload.extensions;
     if (!clientExtensions || Object.keys(clientExtensions).length === 0) {
       return { valid: true };
     }
 
     for (const [key, echoedValue] of Object.entries(clientExtensions)) {
-      if (!Object.prototype.hasOwnProperty.call(serverExtensions, key)) {
-        continue;
-      }
-
-      const advertisedInfo = getExtensionInfo(serverExtensions[key]);
+      const advertisedInfo = getExtensionInfo(serverExtensions?.[key]);
       const echoedInfo = getExtensionInfo(echoedValue);
 
-      const dynamicFields = this.registeredExtensions.get(key)?.dynamicInfoFields;
-      const additiveFields = ADDITIVE_ARRAY_INFO_FIELDS[key];
-      const maxLengths = ADDITIVE_ARRAY_MAX_LENGTHS[key];
+      if (serverExtensions && Object.prototype.hasOwnProperty.call(serverExtensions, key)) {
+        const dynamicFields = this.registeredExtensions.get(key)?.dynamicInfoFields;
+        const additiveFields = ADDITIVE_ARRAY_INFO_FIELDS[key];
+        const maxLengths = ADDITIVE_ARRAY_MAX_LENGTHS[key];
+        if (
+          !extensionInfoMatchesAdvertised(
+            omitFields(advertisedInfo, dynamicFields),
+            omitFields(echoedInfo, dynamicFields),
+            additiveFields,
+            maxLengths,
+          )
+        ) {
+          return {
+            valid: false,
+            invalidReason: "extension_echo_mismatch",
+            extensionKey: key,
+          };
+        }
+      }
+
+      const serverOwnedFields = SERVER_OWNED_INFO_FIELDS[key];
       if (
-        !extensionInfoMatchesAdvertised(
-          omitFields(advertisedInfo, dynamicFields),
-          omitFields(echoedInfo, dynamicFields),
-          additiveFields,
-          maxLengths,
-        )
+        serverOwnedFields &&
+        !serverOwnedInfoFieldsMatch(advertisedInfo, echoedInfo, serverOwnedFields)
       ) {
         return {
           valid: false,
@@ -1944,6 +1949,50 @@ function getExtensionInfo(value: unknown): unknown {
     return (value as Record<string, unknown>).info;
   }
   return value;
+}
+
+/**
+ * Returns whether client-echoed server-owned fields match the server advertisement.
+ * When the server did not declare the extension, `advertised` is treated as empty
+ * so clients cannot invent fields such as builder-code `a`.
+ *
+ * @param advertised - Extension info advertised by the server, if any.
+ * @param echoed - Extension info echoed back by the client.
+ * @param serverOwnedFields - Field names the client must not invent.
+ * @returns True when every echoed server-owned field matches the advertisement.
+ */
+function serverOwnedInfoFieldsMatch(
+  advertised: unknown,
+  echoed: unknown,
+  serverOwnedFields: ReadonlySet<string>,
+): boolean {
+  if (echoed === null || typeof echoed !== "object" || Array.isArray(echoed)) {
+    return true;
+  }
+
+  const echoedRecord = echoed as Record<string, unknown>;
+  const advertisedRecord =
+    advertised !== null && typeof advertised === "object" && !Array.isArray(advertised)
+      ? (advertised as Record<string, unknown>)
+      : {};
+
+  for (const field of serverOwnedFields) {
+    if (!Object.prototype.hasOwnProperty.call(echoedRecord, field)) {
+      continue;
+    }
+    const echoedValue = echoedRecord[field];
+    if (echoedValue === undefined) {
+      continue;
+    }
+    if (
+      !Object.prototype.hasOwnProperty.call(advertisedRecord, field) ||
+      !deepEqual(advertisedRecord[field], echoedValue)
+    ) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /**

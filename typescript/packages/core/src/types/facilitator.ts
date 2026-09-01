@@ -13,6 +13,7 @@ export type VerifyResponse = {
   invalidMessage?: string;
   payer?: string;
   extensions?: Record<string, unknown>;
+  extensionResponses?: Record<string, unknown>;
   extra?: Record<string, unknown>;
 };
 
@@ -32,6 +33,7 @@ export type SettleResponse = {
   /** Actual amount settled in atomic token units. Present for schemes like `upto` where settlement amount may differ from the authorized maximum. */
   amount?: string;
   extensions?: Record<string, unknown>;
+  extensionResponses?: Record<string, unknown>;
   extra?: Record<string, unknown>;
 };
 

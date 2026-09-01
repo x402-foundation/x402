@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from x402.http.extension_responses import EXTENSION_RESPONSES_HEADER
 from x402.http.facilitator_client import (
     HTTPFacilitatorClient,
     HTTPFacilitatorClientSync,
@@ -37,6 +39,105 @@ def make_v2_payload(signature: str = "0xmock") -> PaymentPayload:
         payload={"signature": signature},
         accepted=make_payment_requirements(),
     )
+
+
+def _encode_extension_responses(payload: dict) -> str:
+    return base64.b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8")
+
+
+def _make_settle_response() -> dict:
+    return {
+        "success": True,
+        "transaction": "0xabc",
+        "network": "eip155:8453",
+        "payer": "0x1234567890123456789012345678901234567890",
+    }
+
+
+@pytest.mark.asyncio
+async def test_async_verify_sets_extension_responses_from_header():
+    """Verify should populate extension_responses without touching extensions."""
+    header_payload = {"bazaar": {"status": "processing"}}
+    response = MagicMock(status_code=200, text="ok")
+    response.json.return_value = {"isValid": True, "payer": "0xpayer"}
+    response.headers = {EXTENSION_RESPONSES_HEADER: _encode_extension_responses(header_payload)}
+
+    http_client = MagicMock()
+    http_client.post = AsyncMock(return_value=response)
+
+    client = HTTPFacilitatorClient(
+        FacilitatorConfig(url="https://facilitator.test", http_client=http_client)
+    )
+
+    result = await client.verify(make_v2_payload(), make_payment_requirements())
+
+    assert result.extension_responses == header_payload
+    assert result.extensions is None
+
+
+@pytest.mark.asyncio
+async def test_async_settle_keeps_body_extensions_independent_from_sidechannel():
+    """Body extensions and header extension_responses must remain separate."""
+    body_extensions = {"terms": {"info": {"format": "uri"}}}
+    header_payload = {"bazaar": {"status": "success"}}
+    response = MagicMock(status_code=200, text="ok")
+    response.json.return_value = {
+        **_make_settle_response(),
+        "extensions": body_extensions,
+    }
+    response.headers = {EXTENSION_RESPONSES_HEADER: _encode_extension_responses(header_payload)}
+
+    http_client = MagicMock()
+    http_client.post = AsyncMock(return_value=response)
+
+    client = HTTPFacilitatorClient(
+        FacilitatorConfig(url="https://facilitator.test", http_client=http_client)
+    )
+
+    result = await client.settle(make_v2_payload(), make_payment_requirements())
+
+    assert result.extensions == body_extensions
+    assert result.extension_responses == header_payload
+
+
+@pytest.mark.asyncio
+async def test_async_verify_ignores_malformed_extension_responses_header():
+    response = MagicMock(status_code=200, text="ok")
+    response.json.return_value = {"isValid": True, "payer": "0xpayer"}
+    response.headers = {EXTENSION_RESPONSES_HEADER: "not-valid"}
+
+    http_client = MagicMock()
+    http_client.post = AsyncMock(return_value=response)
+
+    client = HTTPFacilitatorClient(
+        FacilitatorConfig(url="https://facilitator.test", http_client=http_client)
+    )
+
+    result = await client.verify(make_v2_payload(), make_payment_requirements())
+
+    assert result.extension_responses is None
+
+
+def test_sync_settle_sets_extension_responses_from_header():
+    header_payload = {
+        "bazaar": {"status": "processing"},
+        "builder_code": {"status": "accepted"},
+    }
+    response = MagicMock(status_code=200, text="ok")
+    response.json.return_value = _make_settle_response()
+    response.headers = {EXTENSION_RESPONSES_HEADER: _encode_extension_responses(header_payload)}
+
+    http_client = MagicMock()
+    http_client.post.return_value = response
+
+    client = HTTPFacilitatorClientSync(
+        FacilitatorConfig(url="https://facilitator.test", http_client=http_client)
+    )
+
+    result = client.settle(make_v2_payload(), make_payment_requirements())
+
+    assert result.extension_responses == header_payload
+    assert result.extensions is None
 
 
 @pytest.mark.asyncio

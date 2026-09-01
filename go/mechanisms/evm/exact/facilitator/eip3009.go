@@ -84,6 +84,13 @@ func (f *ExactEvmScheme) verifyEIP3009(
 		return nil, x402.NewVerifyError(ErrInvalidSignatureFormat, evmPayload.Authorization.From, err.Error())
 	}
 
+	// Run the asset-contract check concurrently with signature classification.
+	assetCheckCh := make(chan assetContractCheck, 1)
+	go func() {
+		reason, err := evm.ValidateAssetIsContract(ctx, f.signer, requirements.Asset)
+		assetCheckCh <- assetContractCheck{reason: reason, err: err}
+	}()
+
 	classification, err := ClassifyEIP3009Signature(
 		ctx,
 		f.signer,
@@ -115,10 +122,12 @@ func (f *ExactEvmScheme) verifyEIP3009(
 		}
 	}
 
-	if errReason, err := evm.ValidateAssetIsContract(ctx, f.signer, requirements.Asset); err != nil {
-		return nil, fmt.Errorf("asset contract check failed: %w", err)
-	} else if errReason != "" {
-		return nil, x402.NewVerifyError(errReason, evmPayload.Authorization.From, fmt.Sprintf("asset %s is not a deployed contract", requirements.Asset))
+	assetResult := <-assetCheckCh
+	if assetResult.err != nil {
+		return nil, fmt.Errorf("asset contract check failed: %w", assetResult.err)
+	}
+	if assetResult.reason != "" {
+		return nil, x402.NewVerifyError(assetResult.reason, evmPayload.Authorization.From, fmt.Sprintf("asset %s is not a deployed contract", requirements.Asset))
 	}
 
 	if simulate {

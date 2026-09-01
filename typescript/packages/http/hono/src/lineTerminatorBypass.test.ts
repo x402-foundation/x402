@@ -3,6 +3,9 @@ import { Hono } from "hono";
 import { x402HTTPResourceServer, x402ResourceServer } from "@x402/core/server";
 import { paymentMiddleware } from "./index";
 
+/** Network the routing tests price their protected routes on. */
+const TEST_NETWORK = "eip155:84532";
+
 /**
  * Checks CAT finding f2e83cec-d5d5-4076-bd4e-55e060d216b1 against the real
  * Hono request pipeline (not a hand-built mock Context).
@@ -63,11 +66,36 @@ describe("hono end-to-end: percent-encoded line terminator under wildcard route"
      * wildcard route, plus a catch-all so an unprotected path resolves to
      * 200 instead of a framework 404.
      *
+     * The resource server has the `exact` scheme registered and a stub
+     * facilitator advertising it, so a matched route answers 402 rather than
+     * failing to build payment requirements.
+     *
      * @returns The configured Hono app.
      */
-    function buildApp() {
+    async function buildApp() {
       const app = new Hono();
-      const resourceServer = new x402ResourceServer();
+      const resourceServer = new x402ResourceServer({
+        getSupported: async () => ({
+          kinds: [{ x402Version: 2, scheme: "exact", network: TEST_NETWORK }],
+          extensions: [],
+          signers: {},
+        }),
+        verify: async () => ({ isValid: true }),
+        settle: async () => ({ success: true, transaction: "", network: TEST_NETWORK }),
+      });
+      resourceServer.register(TEST_NETWORK, {
+        scheme: "exact",
+        parsePrice: async () => ({
+          amount: "1000000",
+          asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+          extra: {},
+        }),
+        enhancePaymentRequirements: async paymentRequirements => paymentRequirements,
+        defaultAssetTransferMethod: "default",
+        paymentFlows: { default: { supported: ["upfront"], default: "upfront" } },
+      });
+      await resourceServer.initialize();
+
       app.use(
         "*",
         paymentMiddleware(
@@ -77,7 +105,7 @@ describe("hono end-to-end: percent-encoded line terminator under wildcard route"
                 scheme: "exact",
                 payTo: "0xabc",
                 price: "$1.00",
-                network: "eip155:84532",
+                network: TEST_NETWORK,
               },
             },
           },
@@ -102,7 +130,7 @@ describe("hono end-to-end: percent-encoded line terminator under wildcard route"
     });
 
     it("returns 402 for a baseline wildcard match, and requiresPayment is called", async () => {
-      const res = await buildApp().request("/api/premium/report");
+      const res = await (await buildApp()).request("/api/premium/report");
       expect(res.status).toBe(402);
       expect(requiresPaymentSpy).toHaveBeenCalledTimes(1);
     });
@@ -115,7 +143,7 @@ describe("hono end-to-end: percent-encoded line terminator under wildcard route"
     ])(
       "returns 404 for an encoded %s and never calls requiresPayment (no bypass reaches the paid handler)",
       async (_, path) => {
-        const res = await buildApp().request(path);
+        const res = await (await buildApp()).request(path);
 
         expect(res.status).toBe(404);
         expect(requiresPaymentSpy).not.toHaveBeenCalled();
@@ -123,7 +151,7 @@ describe("hono end-to-end: percent-encoded line terminator under wildcard route"
     );
 
     it("returns 200 (middleware skipped) for an unrelated path", async () => {
-      const res = await buildApp().request("/health");
+      const res = await (await buildApp()).request("/health");
       expect(res.status).toBe(200);
       expect(requiresPaymentSpy).toHaveBeenCalledTimes(1);
     });

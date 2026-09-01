@@ -242,26 +242,30 @@ Integrate the payment middleware into your application. You will need to provide
     export const GET = withX402(
       handler,
       {
-        accepts: [
-          {
-            scheme: "exact",
-            price: "$0.001",
-            network: "eip155:84532", // Base Sepolia
-            payTo: evmAddress,
-          },
-          {
-            scheme: "exact",
-            price: "$0.001",
-            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", // Solana Devnet
-            payTo: svmAddress,
-          },
-        ],
-        description: "Access to weather API",
-        mimeType: "application/json",
+        "/api/weather": {
+          accepts: [
+            {
+              scheme: "exact",
+              price: "$0.001",
+              network: "eip155:84532", // Base Sepolia
+              payTo: evmAddress,
+            },
+            {
+              scheme: "exact",
+              price: "$0.001",
+              network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", // Solana Devnet
+              payTo: svmAddress,
+            },
+          ],
+          description: "Access to weather API",
+          mimeType: "application/json",
+        },
       },
       server,
     );
     ```
+
+    The second argument to `withX402` is a `RoutesConfig`. Key the config by the route's path pattern (e.g. `{ "/api/weather": config }`) so that Bazaar discovery indexes the resource with the correct path. The pattern must match the request path exactly as served (including any `basePath`). If the pattern does not match, the handler runs without payment protection and a warning is logged once.
   </Tab>
   <Tab title="Hono">
     Full example in the repo [here](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/hono).

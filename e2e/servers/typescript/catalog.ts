@@ -7,7 +7,7 @@
 import {
   CLOSE_PATH,
   HEALTH_PATH,
-  filterRoutes,
+  availableRoutes,
   resolvePaymentRoutes,
   routeFilterFromEnv,
   sdkRoutesFor,
@@ -28,7 +28,7 @@ const routeFilter = routeFilterFromEnv(key => process.env[key]);
  * configured — those answer 501 via {@link getUnconfiguredResponseForPath}.
  */
 export function catalogRoutes(): SdkRoute[] {
-  return filterRoutes(sdkRoutesFor(SDK), routeFilter);
+  return availableRoutes(sdkRoutesFor(SDK), key => process.env[key], routeFilter);
 }
 
 /** Catalog routes with env-dependent payment requirements resolved. */

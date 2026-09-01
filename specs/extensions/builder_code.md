@@ -167,12 +167,11 @@ Declaring more than a party's own reservation at that layer MUST be rejected (se
 
 When a facilitator settles a payment containing the `builder-code` extension, it:
 
-1. When the resource server declared `builder-code.info.a`, verifies that `PaymentPayload.extensions["builder-code"].a` matches `PaymentRequired.extensions["builder-code"].info.a`
-2. Reads `a` (app code) and `s` (service codes) from the payment payload extensions
-3. Adds its own builder code as the `w` (wallet) field
-4. Optionally appends its own service code to `s` (deduped against the echoed entries), up to its `MAX_FACILITATOR_SERVICE_CODES` reservation
-5. Encodes the combined data as an ERC-8021 Schema 2 CBOR suffix
-6. Appends the suffix to the settlement transaction calldata
+1. Reads `a` (app code) and `s` (service codes) from the payment payload extensions
+2. Adds its own builder code as the `w` (wallet) field
+3. Optionally appends its own service code to `s` (deduped against the echoed entries), up to its `MAX_FACILITATOR_SERVICE_CODES` reservation
+4. Encodes the combined data as an ERC-8021 Schema 2 CBOR suffix
+5. Appends the suffix to the settlement transaction calldata
 
 The facilitator's builder code and service code are configured at initialization and validated against the same `^[a-z0-9_]{1,32}$` pattern.
 
@@ -289,7 +288,7 @@ The resource server MUST also reject the payment (`extension_echo_mismatch`) bef
 
 ### App Code Echo Validation
 
-When the resource server declared `builder-code` in `PaymentRequired`, the facilitator MUST verify that the `a` field echoed by the client in `PaymentPayload.extensions["builder-code"]` exactly matches the `a` field declared by the application in `PaymentRequired.extensions["builder-code"].info`. A mismatch indicates the client tampered with the attribution and the payment MUST be rejected.
+The resource server is the authority for `a`. Before forwarding a v2 payment to the facilitator, the resource server MUST reject the payment (`extension_echo_mismatch`) when `PaymentPayload.extensions["builder-code"].a` is present and does not exactly match `PaymentRequired.extensions["builder-code"].info.a` (including when the server did not declare `a`).
 
 
 ### Schema Validation

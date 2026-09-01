@@ -2,7 +2,7 @@
   "env": {
     "SERVER_SVM_ADDRESS": { "required": true, "roles": ["server"] },
     "SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY": {
-      "required": true,
+      "required": false,
       "roles": ["server"]
     },
     "CLIENT_SVM_PRIVATE_KEY": { "required": true, "roles": ["client"] },
@@ -36,6 +36,7 @@
     },
     "/upto/svm": {
       "scheme": "upto",
+      "requiresEnv": "SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY",
       "sdks": ["typescript", "go"],
       "paymentFlow": "escrow",
       "price": { "usd": "$0.002" },

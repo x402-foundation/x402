@@ -150,12 +150,9 @@ func SchemeBindings(cfg Config) []SchemeBinding {
 				return exactSVM
 			case "upto":
 				if uptoSVM == nil {
-					// The authorizer signs settlement vouchers; without it the
-					// server cannot authorize any channel settlement.
 					authorizerKey := os.Getenv("SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY")
 					if authorizerKey == "" {
-						fmt.Println("❌ SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY is required for upto on svm")
-						os.Exit(1)
+						return nil
 					}
 					authorizer, err := svmsigners.NewReceiverAuthorizerSignerFromPrivateKey(authorizerKey)
 					if err != nil {

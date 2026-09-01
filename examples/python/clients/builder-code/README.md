@@ -30,7 +30,7 @@ async with x402HttpxClient(client) as http:
 1. Install dependencies:
 
 ```bash
-uv sync
+uv sync --reinstall-package x402
 ```
 
 2. Copy `.env-local` to `.env` and set required variables:
@@ -56,12 +56,12 @@ Optional:
 # Terminal 1: facilitator
 cd ../../facilitator/builder-code
 cp .env-local .env
-uv sync && uv run python main.py
+uv sync --reinstall-package x402 && uv run python main.py
 
 # Terminal 2: server
 cd ../../servers/builder-code
 cp .env-local .env
-uv sync && uv run python main.py
+uv sync --reinstall-package x402 && uv run python main.py
 ```
 
 4. Run the client:

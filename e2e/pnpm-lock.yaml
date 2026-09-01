@@ -10,9 +10,15 @@ importers:
 
   .:
     dependencies:
+      '@aptos-labs/ts-sdk':
+        specifier: ^5.2.1
+        version: 5.2.1(got@11.8.6)
       '@concordium/web-sdk':
         specifier: ^12.0.0
         version: 12.0.2(@protobuf-ts/runtime-rpc@2.11.1)(cbor2@1.12.0)
+      '@keetanetwork/keetanet-client':
+        specifier: ^0.18.1
+        version: 0.18.1
       '@modelcontextprotocol/sdk':
         specifier: ^1.15.1
         version: 1.25.3(hono@4.10.2)(zod@4.1.12)
@@ -31,12 +37,39 @@ importers:
       '@swig-wallet/lib':
         specifier: ^2.0.0
         version: 2.0.0(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.8.3)(ws@8.18.3(bufferutil@4.0.9)(utf-8-validate@5.0.10))
+      '@x402/aptos':
+        specifier: workspace:*
+        version: link:../typescript/packages/mechanisms/aptos
+      '@x402/avm':
+        specifier: workspace:*
+        version: link:../typescript/packages/mechanisms/avm
       '@x402/concordium':
         specifier: workspace:*
         version: link:../typescript/packages/mechanisms/concordium
       '@x402/core':
         specifier: workspace:*
         version: link:../typescript/packages/core
+      '@x402/evm':
+        specifier: workspace:*
+        version: link:../typescript/packages/mechanisms/evm
+      '@x402/hedera':
+        specifier: workspace:*
+        version: link:../typescript/packages/mechanisms/hedera
+      '@x402/keeta':
+        specifier: workspace:*
+        version: link:../typescript/packages/mechanisms/keeta
+      '@x402/near':
+        specifier: workspace:*
+        version: link:../typescript/packages/mechanisms/near
+      '@x402/stellar':
+        specifier: workspace:*
+        version: link:../typescript/packages/mechanisms/stellar
+      '@x402/svm':
+        specifier: workspace:*
+        version: link:../typescript/packages/mechanisms/svm
+      '@x402/tvm':
+        specifier: workspace:*
+        version: link:../typescript/packages/mechanisms/tvm
       dotenv:
         specifier: ^17.0.1
         version: 17.0.1

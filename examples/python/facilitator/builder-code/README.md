@@ -28,7 +28,7 @@ and fill required environment variables:
 2. Install dependencies:
 
 ```bash
-uv sync
+uv sync --reinstall-package x402
 ```
 
 3. Run the server:

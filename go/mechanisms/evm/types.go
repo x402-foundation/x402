@@ -533,4 +533,8 @@ type ERC6492SignatureData struct {
 	Factory         [20]byte // CREATE2 factory address (zero address if not ERC-6492)
 	FactoryCalldata []byte   // Calldata to deploy the wallet (empty if not ERC-6492)
 	InnerSignature  []byte   // The actual signature (EIP-1271 or EOA)
+
+	// CodeDeployed reports whether the signer had bytecode, as determined by
+	// VerifyUniversalSignature. Zero value elsewhere.
+	CodeDeployed bool
 }

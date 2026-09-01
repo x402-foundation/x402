@@ -21,6 +21,12 @@ type VerifyPermit2Options struct {
 	Simulate *bool
 }
 
+// assetContractCheck carries evm.ValidateAssetIsContract's result out of a goroutine.
+type assetContractCheck struct {
+	reason string
+	err    error
+}
+
 func (o *VerifyPermit2Options) shouldSimulate() bool {
 	if o == nil || o.Simulate == nil {
 		return true
@@ -57,11 +63,12 @@ func VerifyPermit2(
 
 	tokenAddress := evm.NormalizeAddress(requirements.Asset)
 
-	if errReason, err := evm.ValidateAssetIsContract(ctx, signer, requirements.Asset); err != nil {
-		return nil, fmt.Errorf("asset contract check failed: %w", err)
-	} else if errReason != "" {
-		return nil, x402.NewVerifyError(errReason, payer, fmt.Sprintf("asset %s is not a deployed contract", requirements.Asset))
-	}
+	// Run the asset-contract check concurrently with the signature check below.
+	assetCheckCh := make(chan assetContractCheck, 1)
+	go func() {
+		reason, err := evm.ValidateAssetIsContract(ctx, signer, requirements.Asset)
+		assetCheckCh <- assetContractCheck{reason: reason, err: err}
+	}()
 
 	// Verify spender is x402ExactPermit2Proxy
 	if !strings.EqualFold(permit2Payload.Permit2Authorization.Spender, evm.X402ExactPermit2ProxyAddress) {
@@ -116,12 +123,25 @@ func VerifyPermit2(
 		return nil, x402.NewVerifyError(ErrInvalidSignatureFormat, payer, err.Error())
 	}
 
-	sigValid, sigErr := verifyPermit2Signature(ctx, signer, permit2Payload.Permit2Authorization, signatureBytes, chainID)
+	sigValid, sigData, sigErr := verifyPermit2Signature(ctx, signer, permit2Payload.Permit2Authorization, signatureBytes, chainID)
+
+	assetResult := <-assetCheckCh
+	if assetResult.err != nil {
+		return nil, fmt.Errorf("asset contract check failed: %w", assetResult.err)
+	}
+	if assetResult.reason != "" {
+		return nil, x402.NewVerifyError(assetResult.reason, payer, fmt.Sprintf("asset %s is not a deployed contract", requirements.Asset))
+	}
+
 	if sigErr != nil || !sigValid {
-		// Check if payer is a deployed smart contract
-		// ERC-1271 signatures may not be verifiable by all signer implementations
-		code, codeErr := signer.GetCode(ctx, payer)
-		if codeErr != nil || len(code) == 0 {
+		// Check if payer is a deployed smart contract.
+		deployed := false
+		if sigData != nil {
+			deployed = sigData.CodeDeployed
+		} else if code, codeErr := signer.GetCode(ctx, payer); codeErr == nil {
+			deployed = len(code) > 0
+		}
+		if !deployed {
 			return nil, x402.NewVerifyError(ErrPermit2InvalidSignature, payer, "invalid signature")
 		}
 		// Deployed smart contract: fall through to simulation
@@ -450,18 +470,17 @@ func verifyPermit2Signature(
 	authorization evm.Permit2Authorization,
 	signature []byte,
 	chainID *big.Int,
-) (bool, error) {
+) (bool, *evm.ERC6492SignatureData, error) {
 	hash, err := evm.HashPermit2Authorization(authorization, chainID)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 
 	var hash32 [32]byte
 	copy(hash32[:], hash)
 
 	// Use universal verification (supports EOA and EIP-1271)
-	valid, _, err := evm.VerifyUniversalSignature(ctx, signer, authorization.From, hash32, signature, true)
-	return valid, err
+	return evm.VerifyUniversalSignature(ctx, signer, authorization.From, hash32, signature, true)
 }
 
 var validateEip2612PermitForPayment = evm.ValidateEip2612PermitForPayment

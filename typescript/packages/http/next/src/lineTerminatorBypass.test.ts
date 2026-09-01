@@ -3,6 +3,9 @@ import { NextRequest } from "next/server";
 import { x402ResourceServer } from "@x402/core/server";
 import { paymentProxy } from "./index";
 
+/** Network the routing tests price their protected routes on. */
+const TEST_NETWORK = "eip155:84532";
+
 /**
  * Reproduces CAT finding f2e83cec-d5d5-4076-bd4e-55e060d216b1 against the
  * real Next.js proxy (no `@x402/core/server` mocking, unlike index.test.ts).
@@ -16,12 +19,35 @@ import { paymentProxy } from "./index";
 describe("next end-to-end: percent-encoded line terminator under wildcard route", () => {
   /**
    * Builds a Next.js payment proxy protecting a wildcard route, backed by a
-   * real `x402ResourceServer` (not mocked).
+   * real `x402ResourceServer` (not mocked) with the `exact` scheme registered
+   * and a stub facilitator advertising it, so a matched route answers 402
+   * instead of failing to build payment requirements.
    *
    * @returns The configured proxy handler.
    */
-  function buildProxy() {
-    const resourceServer = new x402ResourceServer();
+  async function buildProxy() {
+    const resourceServer = new x402ResourceServer({
+      getSupported: async () => ({
+        kinds: [{ x402Version: 2, scheme: "exact", network: TEST_NETWORK }],
+        extensions: [],
+        signers: {},
+      }),
+      verify: async () => ({ isValid: true }),
+      settle: async () => ({ success: true, transaction: "", network: TEST_NETWORK }),
+    });
+    resourceServer.register(TEST_NETWORK, {
+      scheme: "exact",
+      parsePrice: async () => ({
+        amount: "1000000",
+        asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        extra: {},
+      }),
+      enhancePaymentRequirements: async paymentRequirements => paymentRequirements,
+      defaultAssetTransferMethod: "default",
+      paymentFlows: { default: { supported: ["upfront"], default: "upfront" } },
+    });
+    await resourceServer.initialize();
+
     return paymentProxy(
       {
         "/api/premium/*": {
@@ -29,7 +55,7 @@ describe("next end-to-end: percent-encoded line terminator under wildcard route"
             scheme: "exact",
             payTo: "0xabc",
             price: "$1.00",
-            network: "eip155:84532",
+            network: TEST_NETWORK,
           },
         },
       },
@@ -42,36 +68,42 @@ describe("next end-to-end: percent-encoded line terminator under wildcard route"
   }
 
   it("returns 402 for a baseline wildcard match", async () => {
-    const res = await buildProxy()(new NextRequest("https://example.com/api/premium/report"));
+    const res = await (
+      await buildProxy()
+    )(new NextRequest("https://example.com/api/premium/report"));
     expect(res.status).toBe(402);
   });
 
   it("returns 402 even when the tail contains %E2%80%A8 (U+2028 LINE SEPARATOR)", async () => {
-    const res = await buildProxy()(
-      new NextRequest("https://example.com/api/premium/report%E2%80%A8"),
-    );
+    const res = await (
+      await buildProxy()
+    )(new NextRequest("https://example.com/api/premium/report%E2%80%A8"));
     expect(res.status).toBe(402);
   });
 
   it("returns 402 even when the tail contains %E2%80%A9 (U+2029 PARAGRAPH SEPARATOR)", async () => {
-    const res = await buildProxy()(
-      new NextRequest("https://example.com/api/premium/report%E2%80%A9"),
-    );
+    const res = await (
+      await buildProxy()
+    )(new NextRequest("https://example.com/api/premium/report%E2%80%A9"));
     expect(res.status).toBe(402);
   });
 
   it("returns 402 even when the tail contains %0A (encoded LF)", async () => {
-    const res = await buildProxy()(new NextRequest("https://example.com/api/premium/report%0A"));
+    const res = await (
+      await buildProxy()
+    )(new NextRequest("https://example.com/api/premium/report%0A"));
     expect(res.status).toBe(402);
   });
 
   it("returns 402 even when the tail contains %0D (encoded CR)", async () => {
-    const res = await buildProxy()(new NextRequest("https://example.com/api/premium/report%0D"));
+    const res = await (
+      await buildProxy()
+    )(new NextRequest("https://example.com/api/premium/report%0D"));
     expect(res.status).toBe(402);
   });
 
   it("returns NextResponse.next() (middleware skipped) for an unrelated path", async () => {
-    const res = await buildProxy()(new NextRequest("https://example.com/health"));
+    const res = await (await buildProxy())(new NextRequest("https://example.com/health"));
     // NextResponse.next() is a 200 passthrough carrying this signal header.
     expect(res.status).toBe(200);
     expect(res.headers.get("x-middleware-next")).toBe("1");

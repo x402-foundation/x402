@@ -6,7 +6,7 @@ import {
   type RouteConfig,
 } from "@x402/core/server";
 
-import { PROTECTED_ROUTE_MESSAGE } from "../../../../../src/mechanisms";
+import { PROTECTED_ROUTE_MESSAGE, nextWithX402HttpPath } from "../../../../../src/mechanisms";
 import {
   buildUnconfiguredFamilyError,
   loadServerEnv,
@@ -76,7 +76,11 @@ export function createWithX402GetHandler(catalogPath: string, server: x402Resour
     }
 
     if (!wrapped) {
-      wrapped = withX402(buildWithX402Handler(catalogPath, cfg), routeConfig, server);
+      wrapped = withX402(
+        buildWithX402Handler(catalogPath, cfg),
+        { [nextWithX402HttpPath(catalogPath)]: routeConfig },
+        server,
+      );
     }
     return wrapped(req);
   };

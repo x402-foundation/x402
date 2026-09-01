@@ -62,7 +62,7 @@ Use this approach when you need:
 
 3. Install dependencies:
    ```bash
-   uv sync
+   uv sync --reinstall-package x402
    ```
 
 ## Running

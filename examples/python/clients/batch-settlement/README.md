@@ -9,7 +9,7 @@ at the end to claw back any unused channel balance.
 ## Setup
 
 ```bash
-uv sync
+uv sync --reinstall-package x402
 ```
 
 ## Environment

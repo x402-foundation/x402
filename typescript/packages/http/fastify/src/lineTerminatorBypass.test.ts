@@ -5,6 +5,41 @@ import type { AddressInfo } from "node:net";
 import { x402ResourceServer } from "@x402/core/server";
 import { paymentMiddleware } from "./index";
 
+/** Network the routing tests price their protected routes on. */
+const TEST_NETWORK = "eip155:84532";
+
+/**
+ * Builds an initialized resource server with the `exact` scheme registered and
+ * a stub facilitator advertising it, so a matched route answers 402 instead of
+ * failing to build payment requirements.
+ *
+ * @returns A resource server that serves a real 402 for a matched route.
+ */
+async function buildTestResourceServer(): Promise<x402ResourceServer> {
+  const resourceServer = new x402ResourceServer({
+    getSupported: async () => ({
+      kinds: [{ x402Version: 2, scheme: "exact", network: TEST_NETWORK }],
+      extensions: [],
+      signers: {},
+    }),
+    verify: async () => ({ isValid: true }),
+    settle: async () => ({ success: true, transaction: "", network: TEST_NETWORK }),
+  });
+  resourceServer.register(TEST_NETWORK, {
+    scheme: "exact",
+    parsePrice: async () => ({
+      amount: "1000000",
+      asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      extra: {},
+    }),
+    enhancePaymentRequirements: async paymentRequirements => paymentRequirements,
+    defaultAssetTransferMethod: "default",
+    paymentFlows: { default: { supported: ["upfront"], default: "upfront" } },
+  });
+  await resourceServer.initialize();
+  return resourceServer;
+}
+
 /**
  * Issue a single HTTP GET to the given port + raw path and return the
  * response status. The path is sent verbatim — Node does not re-encode
@@ -41,7 +76,7 @@ describe("fastify end-to-end: percent-encoded line terminator under wildcard rou
 
   beforeAll(async () => {
     app = Fastify();
-    const resourceServer = new x402ResourceServer();
+    const resourceServer = await buildTestResourceServer();
     paymentMiddleware(
       app,
       {
@@ -50,7 +85,7 @@ describe("fastify end-to-end: percent-encoded line terminator under wildcard rou
             scheme: "exact",
             payTo: "0xabc",
             price: "$1.00",
-            network: "eip155:84532",
+            network: TEST_NETWORK,
           },
         },
       },

@@ -33,7 +33,7 @@ routes = {
 1. Install dependencies:
 
 ```bash
-uv sync
+uv sync --reinstall-package x402
 ```
 
 2. Copy `.env-local` to `.env` and fill required environment variables:
@@ -62,7 +62,7 @@ You can test the server using the example client:
 cd ../../clients/builder-code
 cp .env-local .env
 # Fill in EVM_PRIVATE_KEY and CLIENT_BUILDER_CODE
-uv sync
+uv sync --reinstall-package x402
 uv run python main.py
 ```
 

@@ -26,7 +26,7 @@ cp .env-local .env
 3. Install dependencies:
 
 ```bash
-uv sync
+uv sync --reinstall-package x402
 ```
 
 ## Running

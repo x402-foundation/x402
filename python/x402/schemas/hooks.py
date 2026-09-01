@@ -263,6 +263,10 @@ class VerifyResultContext(VerifyContext):
         if self.result is None:
             raise ValueError("result is required for VerifyResultContext")
 
+    @property
+    def extension_responses(self) -> dict[str, Any] | None:
+        return self.result.extension_responses
+
 
 @dataclass
 class VerifyFailureContext(VerifyContext):
@@ -318,6 +322,10 @@ class SettleResultContext(SettleContext):
     def __post_init__(self) -> None:
         if self.result is None:
             raise ValueError("result is required for SettleResultContext")
+
+    @property
+    def extension_responses(self) -> dict[str, Any] | None:
+        return self.result.extension_responses
 
 
 @dataclass

@@ -20,7 +20,7 @@ To fund your TVM payer wallet, request testnet TON from [@testgiver_ton_bot](htt
 
    ```bash
    cd examples/python/clients/advanced
-   uv sync
+   uv sync --reinstall-package x402
    ```
 
 2. **Configure environment:**
@@ -34,7 +34,7 @@ To fund your TVM payer wallet, request testnet TON from [@testgiver_ton_bot](htt
 
    ```bash
    cd examples/python/servers/fastapi
-   uv sync && uv run uvicorn main:app --port 4021
+   uv sync --reinstall-package x402 && uv run uvicorn main:app --port 4021
    ```
 
 ## Running Examples
