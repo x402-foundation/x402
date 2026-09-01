@@ -1,5 +1,5 @@
 import { x402Version } from "..";
-import { SettleResponse, VerifyResponse } from "../types/facilitator";
+import { SettleResponse, SettleError, VerifyResponse } from "../types/facilitator";
 import { FacilitatorExtension } from "../types/extensions";
 import { SchemeNetworkFacilitator, FacilitatorContext } from "../types/mechanisms";
 import { PaymentPayload, PaymentRequirements } from "../types/payments";
@@ -36,6 +36,20 @@ export interface FacilitatorSettleFailureContext extends FacilitatorSettleContex
   error: Error;
 }
 
+export interface FacilitatorUncertainSettlementContext {
+  paymentPayload: PaymentPayload;
+  requirements: PaymentRequirements;
+  payer?: string;
+  payTo: string;
+  value: string;
+  nonce?: string;
+  txHash?: string;
+  validBefore?: number;
+  network: Network;
+  facilitatorResponse?: SettleResponse;
+  error: Error;
+}
+
 /**
  * Facilitator Hook Type Definitions
  */
@@ -60,6 +74,10 @@ export type FacilitatorOnSettleFailureHook = (
   context: FacilitatorSettleFailureContext,
 ) => Promise<void | { recovered: true; result: SettleResponse }>;
 
+export type FacilitatorOnUncertainSettlementHook = (
+  context: FacilitatorUncertainSettlementContext,
+) => void | Promise<void>;
+
 /**
  * Facilitator client for the x402 payment protocol.
  * Manages payment scheme registration, verification, and settlement.
@@ -77,6 +95,7 @@ export class x402Facilitator {
   private beforeSettleHooks: FacilitatorBeforeSettleHook[] = [];
   private afterSettleHooks: FacilitatorAfterSettleHook[] = [];
   private onSettleFailureHooks: FacilitatorOnSettleFailureHook[] = [];
+  private onUncertainSettlementHooks: FacilitatorOnUncertainSettlementHook[] = [];
 
   /**
    * Registers a scheme facilitator for the current x402 version.
@@ -206,6 +225,19 @@ export class x402Facilitator {
    */
   onSettleFailure(hook: FacilitatorOnSettleFailureHook): x402Facilitator {
     this.onSettleFailureHooks.push(hook);
+    return this;
+  }
+
+  /**
+   * Register a hook to execute when settlement fails and onSettleFailure hooks
+   * cannot recover. Fires with structured metadata for downstream reconciliation.
+   * Hook errors are caught and never break the main settlement response.
+   *
+   * @param hook - The hook function to register
+   * @returns The x402Facilitator instance for chaining
+   */
+  onUncertainSettlement(hook: FacilitatorOnUncertainSettlementHook): x402Facilitator {
+    this.onUncertainSettlementHooks.push(hook);
     return this;
   }
 
@@ -482,6 +514,20 @@ export class x402Facilitator {
         }
       }
 
+      // Fire onUncertainSettlement hooks — settlement is uncertain
+      const uncertainContext = this.buildUncertainSettlementContext(
+        paymentPayload,
+        paymentRequirements,
+        error as Error,
+      );
+      for (const hook of this.onUncertainSettlementHooks) {
+        try {
+          await hook(uncertainContext);
+        } catch {
+          // Hook errors must not break main payment response
+        }
+      }
+
       throw error;
     }
   }
@@ -500,6 +546,66 @@ export class x402Facilitator {
       ): T | undefined {
         return extensionsMap.get(key) as T | undefined;
       },
+    };
+  }
+
+  /**
+   * Builds an UncertainSettlementContext from payment and error data.
+   * Extracts payer, nonce, txHash, and validBefore from the payload
+   * without deriving values from policy fields.
+   *
+   * @param paymentPayload - The payment payload being settled
+   * @param paymentRequirements - The payment requirements
+   * @param error - The error thrown during settlement
+   * @returns Structured metadata for downstream reconciliation
+   */
+  private buildUncertainSettlementContext(
+    paymentPayload: PaymentPayload,
+    paymentRequirements: PaymentRequirements,
+    error: Error,
+  ): FacilitatorUncertainSettlementContext {
+    const isSettleError =
+      error instanceof SettleError ||
+      ("errorReason" in error && "transaction" in error && "network" in error);
+
+    const payloadRecord = paymentPayload.payload as Record<string, unknown>;
+
+    const payer = isSettleError
+      ? (error as SettleError).payer
+      : typeof payloadRecord?.from === "string"
+        ? (payloadRecord.from as string)
+        : undefined;
+
+    const txHash = isSettleError ? (error as SettleError).transaction : undefined;
+
+    let facilitatorResponse: SettleResponse | undefined;
+    if (isSettleError) {
+      const se = error as SettleError;
+      facilitatorResponse = {
+        success: false,
+        errorReason: se.errorReason,
+        errorMessage: se.errorMessage,
+        transaction: se.transaction,
+        network: se.network,
+        payer: se.payer,
+      };
+    }
+
+    const nonceCandidate = payloadRecord?.nonce ?? payloadRecord?.salt;
+    const validBeforeCandidate = payloadRecord?.validBefore ?? payloadRecord?.deadline;
+
+    return {
+      paymentPayload,
+      requirements: paymentRequirements,
+      payer,
+      payTo: paymentRequirements.payTo,
+      value: paymentRequirements.amount,
+      nonce: typeof nonceCandidate === "string" ? nonceCandidate : undefined,
+      txHash,
+      validBefore: typeof validBeforeCandidate === "number" ? validBeforeCandidate : undefined,
+      network: paymentRequirements.network,
+      facilitatorResponse,
+      error,
     };
   }
 

@@ -326,9 +326,160 @@ describe("x402Facilitator - Lifecycle Hooks", () => {
         .onVerifyFailure(async () => {})
         .onBeforeSettle(async () => {})
         .onAfterSettle(async () => {})
-        .onSettleFailure(async () => {});
+        .onSettleFailure(async () => {})
+        .onUncertainSettlement(async () => {});
 
       expect(result).toBe(facilitator);
+    });
+
+    it("should support sync hook for onUncertainSettlement", async () => {
+      const facilitator = new x402Facilitator();
+
+      const mockScheme = new MockSchemeFacilitator(undefined, async () => {
+        throw new Error("Settlement failed");
+      });
+      facilitator.register("eip155:8453", mockScheme);
+
+      let hookFired = false;
+      facilitator.onUncertainSettlement(() => {
+        hookFired = true;
+      });
+
+      await expect(
+        facilitator.settle(buildPaymentPayload(), buildPaymentRequirements()),
+      ).rejects.toThrow("Settlement failed");
+
+      expect(hookFired).toBe(true);
+    });
+  });
+
+  describe("onUncertainSettlement", () => {
+    it("should fire when settlement fails and is not recovered", async () => {
+      const facilitator = new x402Facilitator();
+
+      const mockScheme = new MockSchemeFacilitator(undefined, async () => {
+        throw new Error("Settlement failed");
+      });
+      facilitator.register("eip155:8453", mockScheme);
+
+      let capturedContext: any = undefined;
+      facilitator.onUncertainSettlement(async context => {
+        capturedContext = context;
+      });
+
+      await expect(
+        facilitator.settle(buildPaymentPayload(), buildPaymentRequirements()),
+      ).rejects.toThrow("Settlement failed");
+
+      expect(capturedContext).toBeDefined();
+      expect(capturedContext.payTo).toBe("0xRecipient");
+      expect(capturedContext.value).toBe("1000000");
+      expect(capturedContext.network).toBe("eip155:8453");
+      expect(capturedContext.error.message).toBe("Settlement failed");
+      expect(capturedContext.txHash).toBeUndefined();
+      expect(capturedContext.paymentPayload).toBeDefined();
+      expect(capturedContext.requirements).toBeDefined();
+    });
+
+    it("should NOT fire when onSettleFailure recovers", async () => {
+      const facilitator = new x402Facilitator();
+
+      const mockScheme = new MockSchemeFacilitator(undefined, async () => {
+        throw new Error("Settlement failed");
+      });
+      facilitator.register("eip155:8453", mockScheme);
+
+      let hookFired = false;
+      facilitator.onUncertainSettlement(async () => {
+        hookFired = true;
+      });
+
+      facilitator.onSettleFailure(async () => {
+        return {
+          recovered: true,
+          result: {
+            success: true,
+            transaction: "0xRecovered",
+            network: "eip155:8453",
+          },
+        };
+      });
+
+      const result = await facilitator.settle(buildPaymentPayload(), buildPaymentRequirements());
+
+      expect(result.success).toBe(true);
+      expect(hookFired).toBe(false);
+    });
+
+    it("should include canonical identity fields and handle missing txHash", async () => {
+      const facilitator = new x402Facilitator();
+
+      const payload = buildPaymentPayload();
+      payload.payload = { nonce: "42", from: "0xPayer" };
+
+      const mockScheme = new MockSchemeFacilitator(undefined, async () => {
+        throw new Error("Network error");
+      });
+      facilitator.register("eip155:8453", mockScheme);
+
+      let capturedContext: any = undefined;
+      facilitator.onUncertainSettlement(async context => {
+        capturedContext = context;
+      });
+
+      await expect(facilitator.settle(payload, buildPaymentRequirements())).rejects.toThrow(
+        "Network error",
+      );
+
+      expect(capturedContext.payer).toBe("0xPayer");
+      expect(capturedContext.payTo).toBe("0xRecipient");
+      expect(capturedContext.value).toBe("1000000");
+      expect(capturedContext.nonce).toBe("42");
+      expect(capturedContext.txHash).toBeUndefined();
+      expect(capturedContext.network).toBe("eip155:8453");
+      expect(capturedContext.error.message).toBe("Network error");
+    });
+
+    it("should fall back to salt when nonce is absent", async () => {
+      const facilitator = new x402Facilitator();
+
+      const payload = buildPaymentPayload();
+      payload.payload = { salt: "0xSalt", from: "0xPayer" };
+
+      const mockScheme = new MockSchemeFacilitator(undefined, async () => {
+        throw new Error("Network error");
+      });
+      facilitator.register("eip155:8453", mockScheme);
+
+      let capturedContext: any = undefined;
+      facilitator.onUncertainSettlement(async context => {
+        capturedContext = context;
+      });
+
+      await expect(facilitator.settle(payload, buildPaymentRequirements())).rejects.toThrow(
+        "Network error",
+      );
+
+      expect(capturedContext.nonce).toBe("0xSalt");
+    });
+
+    it("should isolate hook errors so settlement flow is not broken", async () => {
+      const facilitator = new x402Facilitator();
+
+      const mockScheme = new MockSchemeFacilitator(undefined, async () => {
+        throw new Error("Settlement failed");
+      });
+      facilitator.register("eip155:8453", mockScheme);
+
+      facilitator.onUncertainSettlement(async () => {
+        throw new Error("Hook exploded");
+      });
+
+      const error = await facilitator
+        .settle(buildPaymentPayload(), buildPaymentRequirements())
+        .catch(e => e);
+
+      expect(error.message).toBe("Settlement failed");
     });
   });
 });
