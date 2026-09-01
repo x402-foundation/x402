@@ -73,7 +73,7 @@ describe("ExactCasperScheme server", () => {
     const scheme = new ExactCasperScheme();
 
     const enhanced = await scheme.enhancePaymentRequirements(
-      buildRequirements({ amount: "1.5" }),
+      buildRequirements({ amount: "1500000" }),
       supportedKind,
       [],
     );

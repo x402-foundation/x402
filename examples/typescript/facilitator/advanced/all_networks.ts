@@ -208,7 +208,9 @@ if (casperPrivateKey) {
     casperPrivateKey,
     process.env.CASPER_PRIVATE_KEY_ALGORITHM === "secp256k1" ? 2 : 1, // Default to ED25519 if not specified,
     {
-      rpcUrlConfig: casperRpcUrl ? { [CASPER_NETWORK]: casperRpcUrl } : undefined,
+      rpcUrlConfig: casperRpcUrl
+        ? { [CASPER_NETWORK]: casperRpcUrl }
+        : undefined,
       preflightHooks: {
         getBalance: async () => 10n ** 30n,
         getAuthorizationState: async () => "unused",

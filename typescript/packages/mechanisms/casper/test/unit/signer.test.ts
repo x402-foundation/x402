@@ -5,19 +5,17 @@ const { newSpeculativeClient, speculativeExec } = vi.hoisted(() => ({
   speculativeExec: vi.fn(),
 }));
 
-vi.mock("casper-js-sdk", async importOriginal => {
-  const actual = await importOriginal<typeof import("casper-js-sdk")>();
+vi.mock("../../src/casper-sdk", async importOriginal => {
+  const actual = await importOriginal<typeof import("../../src/casper-sdk")>();
   return {
-    default: {
-      ...actual.default,
-      SpeculativeClient: {
-        newSpeculativeClient: newSpeculativeClient.mockImplementation(() => ({ speculativeExec })),
-      },
+    ...actual,
+    SpeculativeClient: {
+      newSpeculativeClient: newSpeculativeClient.mockImplementation(() => ({ speculativeExec })),
     },
   };
 });
 
-import casperSdk from "casper-js-sdk";
+import { Args, ContractCallBuilder, KeyAlgorithm, PrivateKey } from "../../src/casper-sdk";
 import {
   toClientCasperSigner,
   toFacilitatorCasperSigner,
@@ -25,18 +23,16 @@ import {
   createFacilitatorCasperSigner,
 } from "../../src/signer";
 
-const { KeyAlgorithm, PrivateKey } = casperSdk;
-
 function privateKeyHex(privateKey: InstanceType<typeof PrivateKey>): string {
   return Buffer.from(privateKey.toBytes()).toString("hex");
 }
 
 function buildDeploy(privateKey: InstanceType<typeof PrivateKey>) {
-  const transaction = new casperSdk.ContractCallBuilder()
+  const transaction = new ContractCallBuilder()
     .from(privateKey.publicKey)
     .byPackageHash("a".repeat(64))
     .entryPoint("transfer_with_authorization")
-    .runtimeArgs(casperSdk.Args.fromMap({}))
+    .runtimeArgs(Args.fromMap({}))
     .chainName("casper-test")
     .payment(2_500_000_000)
     .buildFor1_5();
@@ -75,33 +71,56 @@ describe("Casper signer adapters", () => {
     expect(signer.getPublicKeyHex("casper:casper-test")).toMatch(/^01[0-9a-f]{64}$/i);
   });
 
-  it("fails closed for default preflight checks", async () => {
+  it("omits optional preflight hooks when they are not configured", async () => {
     const privateKey = PrivateKey.generate(KeyAlgorithm.ED25519);
     const signer = await toFacilitatorCasperSigner(privateKey, {
       rpcUrlConfig: { "casper:casper-test": "http://localhost:11101/rpc" },
     });
 
-    // await expect(
-    //   signer.getBalance({
-    //     network: "casper:casper-test",
-    //     asset: "a".repeat(64),
-    //     account: "00" + "b".repeat(64),
-    //   }),
-    // ).rejects.toThrow("Casper balance preflight is not configured");
+    expect(signer.getBalance).toBeUndefined();
+    expect(signer.getAuthorizationState).toBeUndefined();
+    expect(signer.assertTransferWithAuthorizationSupported).toBeUndefined();
+  });
+
+  it("exposes configured preflight hooks", async () => {
+    const privateKey = PrivateKey.generate(KeyAlgorithm.ED25519);
+    const getBalance = vi.fn(async () => 10n);
+    const getAuthorizationState = vi.fn(async () => "unused" as const);
+    const assertTransferWithAuthorizationSupported = vi.fn(async () => {});
+    const signer = await toFacilitatorCasperSigner(privateKey, {
+      rpcUrlConfig: { "casper:casper-test": "http://localhost:11101/rpc" },
+      preflightHooks: {
+        getBalance,
+        getAuthorizationState,
+        assertTransferWithAuthorizationSupported,
+      },
+    });
+
     await expect(
-      signer.getAuthorizationState({
+      signer.getBalance?.({
+        network: "casper:casper-test",
+        asset: "a".repeat(64),
+        account: "00" + "b".repeat(64),
+      }),
+    ).resolves.toBe(10n);
+    await expect(
+      signer.getAuthorizationState?.({
         network: "casper:casper-test",
         asset: "a".repeat(64),
         payer: "00" + "b".repeat(64),
         nonce: "c".repeat(64),
       }),
-    ).rejects.toThrow("Casper authorization-state preflight is not configured");
+    ).resolves.toBe("unused");
     await expect(
-      signer.assertTransferWithAuthorizationSupported({
+      signer.assertTransferWithAuthorizationSupported?.({
         network: "casper:casper-test",
         asset: "a".repeat(64),
       }),
-    ).rejects.toThrow("Casper contract preflight is not configured");
+    ).resolves.toBeUndefined();
+
+    expect(getBalance).toHaveBeenCalledTimes(1);
+    expect(getAuthorizationState).toHaveBeenCalledTimes(1);
+    expect(assertTransferWithAuthorizationSupported).toHaveBeenCalledTimes(1);
   });
 
   it("creates a client signer from a hex private key", async () => {
@@ -167,7 +186,7 @@ describe("Casper signer adapters", () => {
   });
 
   it("calls speculativeExec with the deploy", async () => {
-    speculativeExec.mockResolvedValueOnce({ executionResultV1: { success: {} } });
+    speculativeExec.mockResolvedValueOnce({ executionResult: {} });
     const privateKey = PrivateKey.generate(KeyAlgorithm.ED25519);
     const deploy = buildDeploy(privateKey);
     const signer = await toFacilitatorCasperSigner(privateKey, {
@@ -203,7 +222,7 @@ describe("Casper signer adapters", () => {
   });
 
   it("reuses a speculative client for calls sharing a URL", async () => {
-    speculativeExec.mockResolvedValue({ executionResultV1: { success: {} } });
+    speculativeExec.mockResolvedValue({ executionResult: {} });
     const privateKey = PrivateKey.generate(KeyAlgorithm.ED25519);
     const signer = await toFacilitatorCasperSigner(privateKey, {
       speculativeRpcUrlConfig: { "casper:casper-test": "http://localhost:7778/rpc" },
@@ -224,9 +243,7 @@ describe("Casper signer adapters", () => {
   });
 
   it("throws speculative execution failure messages", async () => {
-    speculativeExec.mockResolvedValueOnce({
-      executionResultV1: { failure: { errorMessage: "reverted" } },
-    });
+    speculativeExec.mockResolvedValueOnce({ executionResult: { errorMessage: "reverted" } });
     const privateKey = PrivateKey.generate(KeyAlgorithm.ED25519);
     const signer = await toFacilitatorCasperSigner(privateKey, {
       speculativeRpcUrlConfig: { "casper:casper-test": "http://localhost:7778/rpc" },

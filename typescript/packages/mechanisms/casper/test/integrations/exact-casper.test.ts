@@ -1,4 +1,3 @@
-import casperSdk, { type Transaction } from "casper-js-sdk";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { x402Client, x402HTTPClient } from "@x402/core/client";
 import { x402Facilitator } from "@x402/core/facilitator";
@@ -17,6 +16,7 @@ import type {
   SupportedResponse,
   VerifyResponse,
 } from "@x402/core/types";
+import { KeyAlgorithm, PrivateKey, type Transaction } from "../../src/casper-sdk";
 import { CASPER_TESTNET_CAIP2 } from "../../src/constants";
 import { ExactCasperScheme as ExactCasperClient } from "../../src/exact/client/scheme";
 import { ExactCasperScheme as ExactCasperFacilitator } from "../../src/exact/facilitator/scheme";
@@ -27,8 +27,6 @@ import type {
   ExactCasperPayload,
   FacilitatorCasperSigner,
 } from "../../src/types";
-
-const { KeyAlgorithm, PrivateKey } = casperSdk;
 
 const NETWORK = CASPER_TESTNET_CAIP2 as Network;
 const ASSET = "aabbccddeeff0011223344556677889900aabbccddeeff001122334455667788";
@@ -51,7 +49,7 @@ class CasperFacilitatorClient implements FacilitatorClient {
    *
    * @param facilitator - x402 facilitator.
    */
-  constructor(private readonly facilitator: x402Facilitator) { }
+  constructor(private readonly facilitator: x402Facilitator) {}
 
   /**
    * Verify payment.
@@ -103,10 +101,10 @@ function createMockFacilitatorSigner(
     getPublicKeyHex: () => FACILITATOR_PRIVATE_KEY.publicKey.toHex(),
     // getBalance: vi.fn(async () => 10n ** 30n),
     getAuthorizationState: vi.fn(async (): Promise<CasperAuthorizationState> => "unused"),
-    assertTransferWithAuthorizationSupported: vi.fn(async () => { }),
-    signTransaction: vi.fn(async (_transaction: Transaction) => { }),
+    assertTransferWithAuthorizationSupported: vi.fn(async () => {}),
+    signTransaction: vi.fn(async (_transaction: Transaction) => {}),
     putTransaction: vi.fn(async () => "a".repeat(64)),
-    waitForTransaction: vi.fn(async () => { }),
+    waitForTransaction: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -118,7 +116,7 @@ function buildPaymentRequirements(
     scheme: "exact",
     network: NETWORK,
     asset: ASSET,
-    amount: "3000000000",
+    amount: "10000",
     payTo: PAY_TO,
     maxTimeoutSeconds: 300,
     extra: {
@@ -136,7 +134,11 @@ const resource = {
 };
 
 function buildClient(): x402Client {
-  return new x402Client().register(NETWORK, new ExactCasperClient(CLIENT_SIGNER));
+  return new x402Client()
+    .setSpendControls({
+      allowedAssets: [{ network: NETWORK, asset: ASSET, maxAmountPerPayment: "3000000000" }],
+    })
+    .register(NETWORK, new ExactCasperClient(CLIENT_SIGNER));
 }
 
 async function buildServer(
@@ -196,7 +198,7 @@ describe("Casper integration", () => {
       expect(exactPayload.authorization).toMatchObject({
         from: CLIENT_ADDRESS,
         to: PAY_TO,
-        value: "3000000000",
+        value: "10000",
         nonce: expect.stringMatching(/^[0-9a-fA-F]{64}$/),
       });
 
@@ -218,7 +220,7 @@ describe("Casper integration", () => {
       const accepts = [buildPaymentRequirements()];
       const paymentRequired = await server.createPaymentRequiredResponse(accepts, resource);
       const paymentPayload = await client.createPaymentPayload(paymentRequired);
-      const tamperedRequirements = buildPaymentRequirements({ amount: "3000000001" });
+      const tamperedRequirements = buildPaymentRequirements({ amount: "10001" });
 
       const verifyResponse = await server.verifyPayment(paymentPayload, tamperedRequirements);
 
@@ -226,24 +228,6 @@ describe("Casper integration", () => {
       expect(verifyResponse.invalidReason).toBe("invalid_exact_casper_facilitator_amount_mismatch");
       expect(verifyResponse.payer).toBe(CLIENT_ADDRESS);
     });
-
-    // it("rejects a payment when preflight reports an insufficient balance", async () => {
-    //   server = await buildServer(
-    //     createMockFacilitatorSigner({ getBalance: vi.fn(async () => 1n) }),
-    //   );
-    //   const accepts = [buildPaymentRequirements()];
-    //   const paymentRequired = await server.createPaymentRequiredResponse(accepts, resource);
-    //   const paymentPayload = await client.createPaymentPayload(paymentRequired);
-    //   const accepted = server.findMatchingRequirements(accepts, paymentPayload);
-
-    //   const verifyResponse = await server.verifyPayment(paymentPayload, accepted!);
-
-    //   expect(verifyResponse.isValid).toBe(false);
-    //   expect(verifyResponse.invalidReason).toBe(
-    //     "invalid_exact_casper_facilitator_insufficient_balance",
-    //   );
-    //   expect(verifyResponse.payer).toBe(CLIENT_ADDRESS);
-    // });
 
     it("maps settlement verification failures to unsuccessful settlement responses", async () => {
       server = await buildServer(
@@ -277,7 +261,7 @@ describe("Casper integration", () => {
           scheme: "exact",
           payTo: PAY_TO,
           price: {
-            amount: "3000000000",
+            amount: "10000",
             asset: ASSET,
             extra: {
               name: TOKEN_NAME,
@@ -397,24 +381,29 @@ describe("Casper integration", () => {
       });
     });
 
-    it("converts decimal AssetAmount values using registered Casper asset decimals", async () => {
-      casperServer.registerAsset(NETWORK, ASSET, 6);
-
-      const requirements = await server.buildPaymentRequirements({
-        scheme: "exact",
-        payTo: PAY_TO,
-        price: {
-          amount: "1.5",
+    it("converts decimal money prices using registered Casper money parser", async () => {
+      casperServer.registerMoneyParser(async (amount, network) => {
+        if (network !== NETWORK) {
+          return null;
+        }
+        return {
+          amount: String(Math.round(amount * 1e6)),
           asset: ASSET,
           extra: {
             name: TOKEN_NAME,
             version: TOKEN_VERSION,
           },
-        },
+        };
+      });
+
+      const requirements = await server.buildPaymentRequirements({
+        scheme: "exact",
+        payTo: PAY_TO,
+        price: "$0.05",
         network: NETWORK,
       });
 
-      expect(requirements[0].amount).toBe("1500000");
+      expect(requirements[0].amount).toBe("50000");
       expect(requirements[0].extra).toMatchObject({
         name: TOKEN_NAME,
         version: TOKEN_VERSION,
@@ -425,7 +414,7 @@ describe("Casper integration", () => {
       casperServer.registerMoneyParser(async amount => {
         if (amount > 100) {
           return {
-            amount: String(Math.round(amount * 1e9)),
+            amount: String(Math.round(amount * 1e6)),
             asset: ASSET,
             extra: {
               name: TOKEN_NAME,
@@ -444,7 +433,7 @@ describe("Casper integration", () => {
         network: NETWORK,
       });
 
-      expect(requirements[0].amount).toBe("150000000000");
+      expect(requirements[0].amount).toBe("150000000");
       expect(requirements[0].asset).toBe(ASSET);
       expect(requirements[0].extra).toMatchObject({
         name: TOKEN_NAME,
@@ -458,7 +447,7 @@ describe("Casper integration", () => {
         .registerMoneyParser(async amount => {
           if (amount > 1000) {
             return {
-              amount: String(Math.round(amount * 1e9)),
+              amount: String(Math.round(amount * 1e6)),
               asset: ASSET,
               extra: { name: TOKEN_NAME, version: TOKEN_VERSION, tier: "vip" },
             };
@@ -469,7 +458,7 @@ describe("Casper integration", () => {
           await Promise.resolve();
           if (amount > 100) {
             return {
-              amount: String(Math.round(amount * 1e9)),
+              amount: String(Math.round(amount * 1e6)),
               asset: ASSET,
               extra: { name: TOKEN_NAME, version: TOKEN_VERSION, tier: "premium" },
             };
@@ -491,7 +480,7 @@ describe("Casper integration", () => {
         price: "$150.00",
         network: NETWORK,
       });
-      expect(premium[0].amount).toBe("150000000000");
+      expect(premium[0].amount).toBe("150000000");
       expect(premium[0].extra?.tier).toBe("premium");
     });
 

@@ -118,13 +118,9 @@ To create and fund an XRPL Testnet payer account:
 
 #### Casper Testnet
 
-Create or reuse a dedicated Casper testnet account or wallet key, then fund any
-account that submits Casper transactions with testnet CSPR from the
-[CSPR.live testnet faucet](https://testnet.cspr.live/tools/faucet). CSPR is
-required for gas on Casper Testnet. 
+Create or reuse a dedicated Casper testnet account or wallet key, then fund any account that submits Casper transactions with testnet CSPR from the [CSPR.live testnet faucet](https://testnet.cspr.live/tools/faucet). CSPR is required for gas on Casper Testnet.
 
-Use [testnet.cspr.trade](https://testnet.cspr.trade) to get wrapped CSPR (WCSPR) or csprUSD for
-the client payments.
+Use [testnet.cspr.trade](https://testnet.cspr.trade) to get wrapped CSPR (WCSPR) or csprUSD for the client payments.
 
 ## Available Examples
 

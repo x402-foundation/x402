@@ -1,10 +1,8 @@
-import casperSdk from "casper-js-sdk";
 import { describe, expect, it } from "vitest";
+import { KeyAlgorithm, PrivateKey } from "../../src/casper-sdk";
 import { ExactCasperScheme } from "../../src/exact/client/scheme";
 import { toClientCasperSigner } from "../../src/signer";
 import type { ExactCasperPayload } from "../../src/types";
-
-const { KeyAlgorithm, PrivateKey } = casperSdk;
 
 const testAsset = "aabbccddeeff0011223344556677889900aabbccddeeff001122334455667788";
 const testPayTo = "00aabbccddeeff0011223344556677889900aabbccddeeff001122334455667788";

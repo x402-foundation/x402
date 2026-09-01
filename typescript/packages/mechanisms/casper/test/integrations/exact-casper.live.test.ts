@@ -29,7 +29,7 @@ const TOKEN_NAME = process.env.CASPER_TOKEN_NAME;
 const TOKEN_VERSION = process.env.CASPER_TOKEN_VERSION;
 const TOKEN_DECIMALS = process.env.CASPER_TOKEN_DECIMALS
   ? parseInt(process.env.CASPER_TOKEN_DECIMALS, 10)
-  : 9;
+  : 6;
 const NETWORK = (process.env.CASPER_NETWORK || CASPER_TESTNET_CAIP2) as Network;
 const RPC_URL = process.env.CASPER_RPC_URL || "https://node.testnet.casper.network/rpc";
 const SPECEXEC_RPC_URL = process.env.CASPER_SPECEXEC_RPC_URL;
@@ -62,7 +62,7 @@ class CasperFacilitatorClient implements FacilitatorClient {
    *
    * @param facilitator - x402 facilitator.
    */
-  constructor(private readonly facilitator: x402Facilitator) { }
+  constructor(private readonly facilitator: x402Facilitator) {}
 
   /**
    * Verify payment.
@@ -118,13 +118,17 @@ describeLive(
           preflightHooks: {
             // getBalance: async () => 10n ** 30n,
             getAuthorizationState: async (): Promise<CasperAuthorizationState> => "unused",
-            assertTransferWithAuthorizationSupported: async () => { },
+            assertTransferWithAuthorizationSupported: async () => {},
           },
           speculativeRpcUrlConfig: SPECEXEC_RPC_URL ? { [NETWORK]: SPECEXEC_RPC_URL } : undefined,
         },
       );
 
-      const client = new x402Client().register(NETWORK, new ExactCasperClient(clientSigner));
+      const client = new x402Client()
+        .setSpendControls({
+          allowedAssets: [{ network: NETWORK, asset: ASSET!, maxAmountPerPayment: "1000000" }],
+        })
+        .register(NETWORK, new ExactCasperClient(clientSigner));
       const facilitator = new x402Facilitator().register(
         NETWORK,
         new ExactCasperFacilitator(facilitatorSigner),
@@ -138,7 +142,7 @@ describeLive(
         network: NETWORK,
         payTo: PAY_TO!,
         price: {
-          amount: "3000000000",
+          amount: "10000",
           asset: ASSET!,
           extra: {
             name: TOKEN_NAME!,
@@ -159,7 +163,7 @@ describeLive(
           scheme: "exact",
           network: NETWORK,
           asset: ASSET!,
-          amount: "3000000000",
+          amount: "10000",
           payTo: PAY_TO!,
           maxTimeoutSeconds: 300,
           extra: expect.objectContaining({

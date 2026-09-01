@@ -8,10 +8,7 @@ import type {
   SchemeNetworkServer,
   SupportedKind,
 } from "@x402/core/types";
-import {
-  convertToTokenAmount,
-  parseMoney,
-} from "@x402/core/utils";
+import { parseMoney } from "@x402/core/utils";
 import { SCHEME_EXACT } from "../../constants";
 import { isValidCasperAddress, isValidContractPackageHash } from "../../utils";
 import { findDefaultAsset } from "../../defaultAssets";
@@ -22,17 +19,6 @@ export const ErrInvalidPayTo = "invalid_exact_casper_server_invalid_payto";
 export const ErrMissingTokenName = "invalid_exact_casper_server_missing_token_name";
 export const ErrMissingTokenVersion = "invalid_exact_casper_server_missing_token_version";
 export const ErrFailedToParseAmount = "invalid_exact_casper_server_failed_to_parse_amount";
-
-/**
- * Build a decimals registry key.
- *
- * @param network - Network identifier.
- * @param asset - Asset package hash.
- * @returns Registry key.
- */
-function assetDecimalsKey(network: Network, asset: string): string {
-  return `${network}:${asset}`;
-}
 
 /**
  * Casper server implementation for the exact payment scheme.
@@ -87,7 +73,7 @@ export class ExactCasperScheme implements SchemeNetworkServer {
       };
     }
 
-    const { amount, symbol } = parseMoney(price);
+    const { amount } = parseMoney(price);
 
     // Try each custom money parser in order
     for (const parser of this.moneyParsers) {

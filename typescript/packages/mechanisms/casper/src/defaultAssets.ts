@@ -14,7 +14,7 @@ import {
   CSPR_USDC_TESTNET_ASSET,
 } from "./constants";
 
-export type CasperDefaultAsset = DefaultAsset & { name: string};
+export type CasperDefaultAsset = DefaultAsset & { name: string };
 
 /** Default USD-pegged assets by CAIP-2 network; index 0 is the `"$0.10"` default. */
 export const DEFAULT_ASSETS: DefaultAssetTable<CasperDefaultAsset> = {

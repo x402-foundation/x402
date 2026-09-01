@@ -71,7 +71,7 @@ For testing on Aptos testnet, you can obtain test tokens from these faucets:
 Create or reuse a dedicated Casper testnet account or wallet key, then fund any
 account that submits Casper transactions with testnet CSPR from the
 [CSPR.live testnet faucet](https://testnet.cspr.live/tools/faucet). CSPR is
-required for gas on Casper Testnet. 
+required for gas on Casper Testnet.
 
 Use [testnet.cspr.trade](https://testnet.cspr.trade) to get wrapped CSPR (WCSPR) or csprUSD for
 the client payments.

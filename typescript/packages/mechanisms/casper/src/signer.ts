@@ -126,23 +126,23 @@ export async function toFacilitatorCasperSigner(
 
   const simulateTransferWithAuthorization = hasSpeculativeRpcUrl
     ? async ({ network, deploy }: CasperSpeculativeTransferParams): Promise<void> => {
-      const speculativeClient = getSpeculativeClient(network);
-      if (!speculativeClient) {
-        return;
-      }
+        const speculativeClient = getSpeculativeClient(network);
+        if (!speculativeClient) {
+          return;
+        }
 
-      const result = await speculativeClient.speculativeExec("1", deploy);
-      const v2ErrorMessage = result.executionResult?.errorMessage;
-      if (v2ErrorMessage) {
-        throw new Error(`speculative execution failed: ${v2ErrorMessage}`);
-      }
-      if (result.executionResult) {
-        return;
-      }
+        const result = await speculativeClient.speculativeExec("1", deploy);
+        const v2ErrorMessage = result.executionResult?.errorMessage;
+        if (v2ErrorMessage) {
+          throw new Error(`speculative execution failed: ${v2ErrorMessage}`);
+        }
+        if (result.executionResult) {
+          return;
+        }
 
-      const rawJSON = result.rawJSON === undefined ? "" : `: ${JSON.stringify(result.rawJSON)}`;
-      throw new Error(`speculative execution returned an unrecognized response${rawJSON}`);
-    }
+        const rawJSON = result.rawJSON === undefined ? "" : `: ${JSON.stringify(result.rawJSON)}`;
+        throw new Error(`speculative execution returned an unrecognized response${rawJSON}`);
+      }
     : undefined;
 
   return {
@@ -154,9 +154,16 @@ export async function toFacilitatorCasperSigner(
 
     ...(preflightHooks?.getBalance ? { getBalance: preflightHooks.getBalance } : {}),
 
-    ...(preflightHooks?.getAuthorizationState ? { getAuthorizationState: preflightHooks.getAuthorizationState } : {}),
+    ...(preflightHooks?.getAuthorizationState
+      ? { getAuthorizationState: preflightHooks.getAuthorizationState }
+      : {}),
 
-    ...(preflightHooks?.assertTransferWithAuthorizationSupported ? { assertTransferWithAuthorizationSupported: preflightHooks.assertTransferWithAuthorizationSupported } : {}),
+    ...(preflightHooks?.assertTransferWithAuthorizationSupported
+      ? {
+          assertTransferWithAuthorizationSupported:
+            preflightHooks.assertTransferWithAuthorizationSupported,
+        }
+      : {}),
 
     ...(simulateTransferWithAuthorization ? { simulateTransferWithAuthorization } : {}),
 

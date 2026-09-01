@@ -80,7 +80,7 @@
       "price": {
         "amount": "10000000",
         "amountEnv": "SERVER_CASPER_AMOUNT",
-        "asset": "003d80df21ba4ee4d66a2a1f60c32570dd5685e4b279f6538162a5fd1314847c1e",
+        "asset": "0cb6f94834c60510d532b0ae077b18b4100874a4c867396d61c2b13c790ead52",
         "assetEnv": "SERVER_CASPER_ASSET",
         "extraEnv": {
           "name": {

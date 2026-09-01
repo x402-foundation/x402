@@ -83,7 +83,7 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
   constructor(
     private readonly signer: FacilitatorCasperSigner,
     private readonly config: ExactCasperSchemeConfig = {},
-  ) { }
+  ) {}
 
   /**
    * Get supported endpoint extra data.
