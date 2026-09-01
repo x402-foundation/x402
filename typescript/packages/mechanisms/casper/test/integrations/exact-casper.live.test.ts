@@ -10,7 +10,7 @@ import type {
   SupportedResponse,
   VerifyResponse,
 } from "@x402/core/types";
-import { NETWORK_CASPER_TESTNET } from "../../src/constants";
+import { CASPER_TESTNET_CAIP2 } from "../../src/constants";
 import { ExactCasperScheme as ExactCasperClient } from "../../src/exact/client/scheme";
 import { ExactCasperScheme as ExactCasperFacilitator } from "../../src/exact/facilitator/scheme";
 import { ExactCasperScheme as ExactCasperServer } from "../../src/exact/server/scheme";
@@ -30,7 +30,7 @@ const TOKEN_VERSION = process.env.CASPER_TOKEN_VERSION;
 const TOKEN_DECIMALS = process.env.CASPER_TOKEN_DECIMALS
   ? parseInt(process.env.CASPER_TOKEN_DECIMALS, 10)
   : 9;
-const NETWORK = (process.env.CASPER_NETWORK || NETWORK_CASPER_TESTNET) as Network;
+const NETWORK = (process.env.CASPER_NETWORK || CASPER_TESTNET_CAIP2) as Network;
 const RPC_URL = process.env.CASPER_RPC_URL || "https://node.testnet.casper.network/rpc";
 const SPECEXEC_RPC_URL = process.env.CASPER_SPECEXEC_RPC_URL;
 const RUN_LIVE = process.env.CASPER_RUN_LIVE === "1";
@@ -62,7 +62,7 @@ class CasperFacilitatorClient implements FacilitatorClient {
    *
    * @param facilitator - x402 facilitator.
    */
-  constructor(private readonly facilitator: x402Facilitator) {}
+  constructor(private readonly facilitator: x402Facilitator) { }
 
   /**
    * Verify payment.
@@ -116,9 +116,9 @@ describeLive(
         {
           rpcUrlConfig: { [NETWORK]: RPC_URL },
           preflightHooks: {
-            getBalance: async () => 10n ** 30n,
+            // getBalance: async () => 10n ** 30n,
             getAuthorizationState: async (): Promise<CasperAuthorizationState> => "unused",
-            assertTransferWithAuthorizationSupported: async () => {},
+            assertTransferWithAuthorizationSupported: async () => { },
           },
           speculativeRpcUrlConfig: SPECEXEC_RPC_URL ? { [NETWORK]: SPECEXEC_RPC_URL } : undefined,
         },

@@ -4,6 +4,7 @@ import type {
   SchemeNetworkClient,
 } from "@x402/core/types";
 import { SCHEME_EXACT } from "../../constants";
+import { findDefaultAsset } from "../../defaultAssets";
 import type { ClientCasperSigner, ExactCasperAuthorization } from "../../types";
 import {
   buildTransferWithAuthorizationDigest,
@@ -17,6 +18,7 @@ import {
  */
 export class ExactCasperScheme implements SchemeNetworkClient {
   readonly scheme = SCHEME_EXACT;
+  findDefaultAsset = findDefaultAsset;
 
   /**
    * Create a new exact Casper client scheme.

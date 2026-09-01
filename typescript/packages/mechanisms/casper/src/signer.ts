@@ -1,5 +1,4 @@
-import casperSdk from "casper-js-sdk";
-import type { KeyAlgorithm as KeyAlgorithmType, PrivateKey as PrivateKeyType } from "casper-js-sdk";
+import { HttpHandler, KeyAlgorithm, PrivateKey, RpcClient, SpeculativeClient } from "./casper-sdk";
 import type { Network } from "@x402/core/types";
 import { NetworkConfigs, type NetworkConfig } from "./constants";
 import type {
@@ -11,8 +10,6 @@ import type {
   ToFacilitatorCasperSignerOptions,
 } from "./types";
 import { chainNameFromNetwork } from "./utils";
-
-const { HttpHandler, KeyAlgorithm, PrivateKey, RpcClient, SpeculativeClient } = casperSdk;
 
 const ACCOUNT_HASH_PREFIX = "00";
 
@@ -43,7 +40,7 @@ function resolveRpcUrl(network: Network, config?: RpcUrlConfig): string {
  * @param privateKey - Casper private key.
  * @returns Client signer.
  */
-export function toClientCasperSigner(privateKey: PrivateKeyType): ClientCasperSigner {
+export function toClientCasperSigner(privateKey: PrivateKey): ClientCasperSigner {
   const accountAddress = `${ACCOUNT_HASH_PREFIX}${privateKey.publicKey.accountHash().toHex()}`;
   const publicKey = privateKey.publicKey.toHex();
 
@@ -63,7 +60,7 @@ export function toClientCasperSigner(privateKey: PrivateKeyType): ClientCasperSi
  */
 export async function createClientCasperSigner(
   privateKey: string,
-  algorithm: KeyAlgorithmType = KeyAlgorithm.ED25519,
+  algorithm: KeyAlgorithm = KeyAlgorithm.ED25519,
 ): Promise<ClientCasperSigner> {
   return toClientCasperSigner(PrivateKey.fromHex(privateKey, algorithm));
 }
@@ -76,7 +73,7 @@ export async function createClientCasperSigner(
  * @returns Facilitator signer.
  */
 export async function toFacilitatorCasperSigner(
-  privateKey: PrivateKeyType,
+  privateKey: PrivateKey,
   options: ToFacilitatorCasperSignerOptions = {},
 ): Promise<FacilitatorCasperSigner> {
   const { rpcUrlConfig, preflightHooks = {}, speculativeRpcUrlConfig } = options;
@@ -129,23 +126,23 @@ export async function toFacilitatorCasperSigner(
 
   const simulateTransferWithAuthorization = hasSpeculativeRpcUrl
     ? async ({ network, deploy }: CasperSpeculativeTransferParams): Promise<void> => {
-        const speculativeClient = getSpeculativeClient(network);
-        if (!speculativeClient) {
-          return;
-        }
-
-        const result = await speculativeClient.speculativeExec("1", deploy);
-        const v2ErrorMessage = result.executionResult?.errorMessage;
-        if (v2ErrorMessage) {
-          throw new Error(`speculative execution failed: ${v2ErrorMessage}`);
-        }
-        if (result.executionResult) {
-          return;
-        }
-
-        const rawJSON = result.rawJSON === undefined ? "" : `: ${JSON.stringify(result.rawJSON)}`;
-        throw new Error(`speculative execution returned an unrecognized response${rawJSON}`);
+      const speculativeClient = getSpeculativeClient(network);
+      if (!speculativeClient) {
+        return;
       }
+
+      const result = await speculativeClient.speculativeExec("1", deploy);
+      const v2ErrorMessage = result.executionResult?.errorMessage;
+      if (v2ErrorMessage) {
+        throw new Error(`speculative execution failed: ${v2ErrorMessage}`);
+      }
+      if (result.executionResult) {
+        return;
+      }
+
+      const rawJSON = result.rawJSON === undefined ? "" : `: ${JSON.stringify(result.rawJSON)}`;
+      throw new Error(`speculative execution returned an unrecognized response${rawJSON}`);
+    }
     : undefined;
 
   return {
@@ -155,12 +152,12 @@ export async function toFacilitatorCasperSigner(
 
     getPublicKeyHex: () => privateKey.publicKey.toHex(),
 
-    getBalance: async params => {
-      if (!preflightHooks.getBalance) {
-        throw new Error("Casper balance preflight is not configured");
-      }
-      return preflightHooks.getBalance(params);
-    },
+    // getBalance: async params => {
+    //   if (!preflightHooks.getBalance) {
+    //     throw new Error("Casper balance preflight is not configured");
+    //   }
+    //   return preflightHooks.getBalance(params);
+    // },
 
     getAuthorizationState: async params => {
       if (!preflightHooks.getAuthorizationState) {
@@ -232,7 +229,7 @@ export async function toFacilitatorCasperSigner(
  */
 export async function createFacilitatorCasperSigner(
   privateKey: string,
-  algorithm: KeyAlgorithmType = KeyAlgorithm.ED25519,
+  algorithm: KeyAlgorithm = KeyAlgorithm.ED25519,
   options: FacilitatorCasperSignerOptions = {},
 ): Promise<FacilitatorCasperSigner> {
   return toFacilitatorCasperSigner(PrivateKey.fromHex(privateKey, algorithm), options);

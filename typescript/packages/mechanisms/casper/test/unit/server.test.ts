@@ -1,20 +1,24 @@
 import { describe, expect, it } from "vitest";
 import { ExactCasperScheme } from "../../src/exact/server/scheme";
+import {
+  CASPER_TESTNET_CAIP2,
+  CSPR_USDC_DECIMALS,
+  CSPR_USDC_NAME,
+  CSPR_USDC_TESTNET_ASSET,
+} from "../../src";
 
-const testAsset = "aabbccddeeff0011223344556677889900aabbccddeeff001122334455667788";
 const testPayTo = "00aabbccddeeff0011223344556677889900aabbccddeeff001122334455667788";
-const testNetwork = "casper:casper-test";
 
 function buildRequirements(overrides: Record<string, unknown> = {}) {
   return {
     scheme: "exact",
-    network: testNetwork,
-    asset: testAsset,
+    network: CASPER_TESTNET_CAIP2,
+    asset: CSPR_USDC_TESTNET_ASSET,
     amount: "1000000",
     payTo: testPayTo,
     maxTimeoutSeconds: 300,
     extra: {
-      name: "TestToken",
+      name: CSPR_USDC_NAME,
       version: "1",
     },
     ...overrides,
@@ -24,7 +28,7 @@ function buildRequirements(overrides: Record<string, unknown> = {}) {
 const supportedKind = {
   x402Version: 2,
   scheme: "exact",
-  network: testNetwork,
+  network: CASPER_TESTNET_CAIP2,
   extra: {},
 };
 
@@ -32,13 +36,17 @@ describe("ExactCasperScheme server", () => {
   it("returns explicit AssetAmount with extra preserved", async () => {
     const scheme = new ExactCasperScheme();
     const result = await scheme.parsePrice(
-      { amount: "1000000", asset: testAsset, extra: { name: "MyToken", version: "1" } },
-      testNetwork,
+      {
+        amount: "1000000",
+        asset: CSPR_USDC_TESTNET_ASSET,
+        extra: { name: "MyToken", version: "1" },
+      },
+      CASPER_TESTNET_CAIP2,
     );
 
     expect(result).toEqual({
       amount: "1000000",
-      asset: testAsset,
+      asset: CSPR_USDC_TESTNET_ASSET,
       extra: { name: "MyToken", version: "1" },
     });
   });
@@ -47,23 +55,22 @@ describe("ExactCasperScheme server", () => {
     const scheme = new ExactCasperScheme();
     scheme.registerMoneyParser(async () => ({
       amount: "9999",
-      asset: testAsset,
+      asset: CSPR_USDC_TESTNET_ASSET,
       extra: { name: "Custom", version: "2" },
     }));
 
-    await expect(new ExactCasperScheme().parsePrice("1.00", testNetwork)).rejects.toThrow(
+    await expect(new ExactCasperScheme().parsePrice("1.00", CASPER_TESTNET_CAIP2)).rejects.toThrow(
       "invalid_exact_casper_server_no_default_asset",
     );
-    expect(await scheme.parsePrice(1.0, testNetwork)).toEqual({
+    expect(await scheme.parsePrice(1.0, CASPER_TESTNET_CAIP2)).toEqual({
       amount: "9999",
-      asset: testAsset,
+      asset: CSPR_USDC_TESTNET_ASSET,
       extra: { name: "Custom", version: "2" },
     });
   });
 
   it("enhances and validates payment requirements", async () => {
     const scheme = new ExactCasperScheme();
-    scheme.registerAsset(testNetwork, testAsset, 6);
 
     const enhanced = await scheme.enhancePaymentRequirements(
       buildRequirements({ amount: "1.5" }),
@@ -73,7 +80,7 @@ describe("ExactCasperScheme server", () => {
 
     expect(enhanced.amount).toBe("1500000");
     expect(enhanced.extra).toMatchObject({
-      name: "TestToken",
+      name: CSPR_USDC_NAME,
       version: "1",
     });
   });
@@ -96,7 +103,7 @@ describe("ExactCasperScheme server", () => {
     ).rejects.toThrow("invalid_exact_casper_server_missing_token_name");
     await expect(
       scheme.enhancePaymentRequirements(
-        buildRequirements({ extra: { name: "TestToken" } }),
+        buildRequirements({ extra: { name: CSPR_USDC_NAME } }),
         supportedKind,
         [],
       ),
@@ -105,9 +112,10 @@ describe("ExactCasperScheme server", () => {
 
   it("returns registered or default decimals", () => {
     const scheme = new ExactCasperScheme();
-    scheme.registerAsset(testNetwork, testAsset, 9);
 
-    expect(scheme.getAssetDecimals(testAsset, testNetwork)).toBe(9);
-    expect(scheme.getAssetDecimals("unknown", testNetwork)).toBe(9);
+    expect(scheme.getAssetDecimals(CSPR_USDC_TESTNET_ASSET, CASPER_TESTNET_CAIP2)).toBe(
+      CSPR_USDC_DECIMALS,
+    );
+    expect(scheme.getAssetDecimals("unknown", CASPER_TESTNET_CAIP2)).toBe(undefined);
   });
 });

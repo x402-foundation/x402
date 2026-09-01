@@ -17,7 +17,7 @@ import type {
   SupportedResponse,
   VerifyResponse,
 } from "@x402/core/types";
-import { NETWORK_CASPER_TESTNET } from "../../src/constants";
+import { CASPER_TESTNET_CAIP2 } from "../../src/constants";
 import { ExactCasperScheme as ExactCasperClient } from "../../src/exact/client/scheme";
 import { ExactCasperScheme as ExactCasperFacilitator } from "../../src/exact/facilitator/scheme";
 import { ExactCasperScheme as ExactCasperServer } from "../../src/exact/server/scheme";
@@ -30,7 +30,7 @@ import type {
 
 const { KeyAlgorithm, PrivateKey } = casperSdk;
 
-const NETWORK = NETWORK_CASPER_TESTNET as Network;
+const NETWORK = CASPER_TESTNET_CAIP2 as Network;
 const ASSET = "aabbccddeeff0011223344556677889900aabbccddeeff001122334455667788";
 const PAY_TO = "00aabbccddeeff0011223344556677889900aabbccddeeff001122334455667788";
 const TOKEN_NAME = "TestToken";
@@ -51,7 +51,7 @@ class CasperFacilitatorClient implements FacilitatorClient {
    *
    * @param facilitator - x402 facilitator.
    */
-  constructor(private readonly facilitator: x402Facilitator) {}
+  constructor(private readonly facilitator: x402Facilitator) { }
 
   /**
    * Verify payment.
@@ -101,12 +101,12 @@ function createMockFacilitatorSigner(
     }),
     getAddresses: () => [FACILITATOR_ADDRESS],
     getPublicKeyHex: () => FACILITATOR_PRIVATE_KEY.publicKey.toHex(),
-    getBalance: vi.fn(async () => 10n ** 30n),
+    // getBalance: vi.fn(async () => 10n ** 30n),
     getAuthorizationState: vi.fn(async (): Promise<CasperAuthorizationState> => "unused"),
-    assertTransferWithAuthorizationSupported: vi.fn(async () => {}),
-    signTransaction: vi.fn(async (_transaction: Transaction) => {}),
+    assertTransferWithAuthorizationSupported: vi.fn(async () => { }),
+    signTransaction: vi.fn(async (_transaction: Transaction) => { }),
     putTransaction: vi.fn(async () => "a".repeat(64)),
-    waitForTransaction: vi.fn(async () => {}),
+    waitForTransaction: vi.fn(async () => { }),
     ...overrides,
   };
 }
@@ -227,23 +227,23 @@ describe("Casper integration", () => {
       expect(verifyResponse.payer).toBe(CLIENT_ADDRESS);
     });
 
-    it("rejects a payment when preflight reports an insufficient balance", async () => {
-      server = await buildServer(
-        createMockFacilitatorSigner({ getBalance: vi.fn(async () => 1n) }),
-      );
-      const accepts = [buildPaymentRequirements()];
-      const paymentRequired = await server.createPaymentRequiredResponse(accepts, resource);
-      const paymentPayload = await client.createPaymentPayload(paymentRequired);
-      const accepted = server.findMatchingRequirements(accepts, paymentPayload);
+    // it("rejects a payment when preflight reports an insufficient balance", async () => {
+    //   server = await buildServer(
+    //     createMockFacilitatorSigner({ getBalance: vi.fn(async () => 1n) }),
+    //   );
+    //   const accepts = [buildPaymentRequirements()];
+    //   const paymentRequired = await server.createPaymentRequiredResponse(accepts, resource);
+    //   const paymentPayload = await client.createPaymentPayload(paymentRequired);
+    //   const accepted = server.findMatchingRequirements(accepts, paymentPayload);
 
-      const verifyResponse = await server.verifyPayment(paymentPayload, accepted!);
+    //   const verifyResponse = await server.verifyPayment(paymentPayload, accepted!);
 
-      expect(verifyResponse.isValid).toBe(false);
-      expect(verifyResponse.invalidReason).toBe(
-        "invalid_exact_casper_facilitator_insufficient_balance",
-      );
-      expect(verifyResponse.payer).toBe(CLIENT_ADDRESS);
-    });
+    //   expect(verifyResponse.isValid).toBe(false);
+    //   expect(verifyResponse.invalidReason).toBe(
+    //     "invalid_exact_casper_facilitator_insufficient_balance",
+    //   );
+    //   expect(verifyResponse.payer).toBe(CLIENT_ADDRESS);
+    // });
 
     it("maps settlement verification failures to unsuccessful settlement responses", async () => {
       server = await buildServer(

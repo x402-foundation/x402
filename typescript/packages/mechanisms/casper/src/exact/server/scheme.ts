@@ -2,14 +2,19 @@ import type {
   AssetAmount,
   MoneyParser,
   Network,
+  PaymentFlowConfig,
   PaymentRequirements,
   Price,
   SchemeNetworkServer,
   SupportedKind,
 } from "@x402/core/types";
-import { convertToTokenAmount, numberToDecimalString, parseMoneyString } from "@x402/core/utils";
+import {
+  convertToTokenAmount,
+  parseMoney,
+} from "@x402/core/utils";
 import { SCHEME_EXACT } from "../../constants";
 import { isValidCasperAddress, isValidContractPackageHash } from "../../utils";
+import { findDefaultAsset } from "../../defaultAssets";
 
 export const ErrNoDefaultAsset = "invalid_exact_casper_server_no_default_asset";
 export const ErrInvalidAsset = "invalid_exact_casper_server_invalid_asset";
@@ -34,6 +39,10 @@ function assetDecimalsKey(network: Network, asset: string): string {
  */
 export class ExactCasperScheme implements SchemeNetworkServer {
   readonly scheme = SCHEME_EXACT;
+  readonly defaultAssetTransferMethod = "default";
+  readonly paymentFlows = {
+    default: { supported: ["authorization"], default: "authorization" },
+  } as const satisfies Record<string, PaymentFlowConfig>;
   private moneyParsers: MoneyParser[] = [];
   private assetDecimals = new Map<string, number>();
 
@@ -49,27 +58,14 @@ export class ExactCasperScheme implements SchemeNetworkServer {
   }
 
   /**
-   * Register asset decimals for a network.
-   *
-   * @param network - Network identifier.
-   * @param asset - Asset package hash.
-   * @param decimals - Token decimals.
-   * @returns This scheme.
-   */
-  registerAsset(network: Network, asset: string, decimals: number): ExactCasperScheme {
-    this.assetDecimals.set(assetDecimalsKey(network, asset), decimals);
-    return this;
-  }
-
-  /**
-   * Get asset decimals for settlement overrides.
+   * Decimals for a known default asset, or undefined.
    *
    * @param asset - Asset package hash.
    * @param network - Network identifier.
    * @returns Token decimals.
    */
-  getAssetDecimals(asset: string, network: Network): number {
-    return this.assetDecimals.get(assetDecimalsKey(network, asset)) ?? 9;
+  getAssetDecimals(asset: string, network: Network): number | undefined {
+    return findDefaultAsset(asset, network)?.decimals;
   }
 
   /**
@@ -91,13 +87,11 @@ export class ExactCasperScheme implements SchemeNetworkServer {
       };
     }
 
-    const amount =
-      typeof price === "number"
-        ? numberToDecimalString(price)
-        : numberToDecimalString(parseMoneyString(price));
+    const { amount, symbol } = parseMoney(price);
 
+    // Try each custom money parser in order
     for (const parser of this.moneyParsers) {
-      const result = await parser(Number(amount), network);
+      const result = await parser(amount, network);
       if (result !== null) {
         return result;
       }
@@ -126,20 +120,6 @@ export class ExactCasperScheme implements SchemeNetworkServer {
       throw new Error(`${ErrInvalidPayTo}: ${paymentRequirements.payTo}`);
     }
 
-    let amount = paymentRequirements.amount;
-    if (amount.includes(".")) {
-      const decimals = this.getAssetDecimals(
-        paymentRequirements.asset,
-        paymentRequirements.network,
-      );
-      try {
-        amount = convertToTokenAmount(amount, decimals);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`${ErrFailedToParseAmount}: ${message}`);
-      }
-    }
-
     const extra = { ...paymentRequirements.extra };
     if (typeof extra.name !== "string" || extra.name === "") {
       throw new Error(ErrMissingTokenName);
@@ -158,7 +138,6 @@ export class ExactCasperScheme implements SchemeNetworkServer {
 
     return {
       ...paymentRequirements,
-      amount,
       extra,
     };
   }

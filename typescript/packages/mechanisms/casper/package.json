@@ -46,7 +46,7 @@
   "dependencies": {
     "@casper-ecosystem/casper-eip-712": "1.2.1",
     "@x402/core": "workspace:~",
-    "casper-js-sdk": "5.0.12"
+    "casper-js-sdk": "5.0.10"
   },
   "exports": {
     ".": {

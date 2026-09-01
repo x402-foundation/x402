@@ -78,7 +78,7 @@ if (!facilitatorUrl) {
 const AVM_NETWORK = (process.env.AVM_NETWORK || ALGORAND_TESTNET_CAIP2) as Network; // Algorand Testnet
 const APTOS_NETWORK = (process.env.APTOS_NETWORK || APTOS_TESTNET_CAIP2) as Network; // Aptos Testnet
 const CASPER_NETWORK = (process.env.CASPER_NETWORK || "casper:casper-test") as Network; // Casper Testnet
-const CASPER_AMOUNT = (process.env.CASPER_AMOUNT || "1500000000") as string; // Casper CEP-18 amount (e.g., "1500000000" for 1.5 WCSPR)
+const CASPER_AMOUNT = (process.env.CASPER_AMOUNT || "900000") as string; // Casper CEP-18 amount (e.g., "1500000000" for 1.5 WCSPR)
 const CASPER_ASSET = (process.env.CASPER_ASSET ||
   "3d80df21ba4ee4d66a2a1f60c32570dd5685e4b279f6538162a5fd1314847c1e") as string; // Defaults to Casper WCSPR CEP-18
 const CASPER_TOKEN_NAME = (process.env.CASPER_TOKEN_NAME || "Wrapped CSPR") as string; // Casper CEP-18 token name (e.g., "Wrapped CSPR")
@@ -128,7 +128,7 @@ if (casperAddress) {
       extra: {
         name: CASPER_TOKEN_NAME,
         version: CASPER_TOKEN_VERSION,
-        decimals: 9,
+        decimals: 6,
       },
     },
     network: CASPER_NETWORK,
