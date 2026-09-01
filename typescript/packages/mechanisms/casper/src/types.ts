@@ -61,7 +61,7 @@ export type RpcUrlConfig = Record<string, string>;
 export type SpeculativeRpcUrlConfig = Record<string, string>;
 
 export type PreflightHooks = {
-  //getBalance?: (params: CasperBalanceParams) => Promise<bigint>;
+  getBalance?: (params: CasperBalanceParams) => Promise<bigint>;
   getAuthorizationState?: (params: CasperPreflightParams) => Promise<CasperAuthorizationState>;
   assertTransferWithAuthorizationSupported?: (params: {
     network: Network;
@@ -106,15 +106,15 @@ export type FacilitatorCasperSigner = {
   /** Get the facilitator public key for settlement transactions. */
   getPublicKeyHex(network: Network): string;
   /** Read payer balance for the required asset. */
-  // getBalance(params: CasperBalanceParams): Promise<bigint>;
+  getBalance?(params: CasperBalanceParams): Promise<bigint>;
   /** Read CEP-3009 authorization state for the payer and nonce. */
-  getAuthorizationState(params: CasperPreflightParams): Promise<CasperAuthorizationState>;
+  getAuthorizationState?(params: CasperPreflightParams): Promise<CasperAuthorizationState>;
   /** Fail when the asset cannot support CEP-3009 transfer_with_authorization. */
-  assertTransferWithAuthorizationSupported(params: {
+  assertTransferWithAuthorizationSupported?(params: {
     network: Network;
     asset: string;
   }): Promise<void>;
-  /** Optionally simulate a transfer before submission. */
+  /** Simulate a transfer before submission. */
   simulateTransferWithAuthorization?(params: CasperSpeculativeTransferParams): Promise<void>;
   /** Sign a Casper transaction. */
   signTransaction(transaction: Transaction, network: Network): Promise<void>;

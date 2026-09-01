@@ -145,10 +145,10 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
       return signatureValidation;
     }
 
-    // const preflightValidation = await this.validatePreflight(exactPayload, requirements);
-    // if (preflightValidation) {
-    //   return preflightValidation;
-    // }
+    const preflightValidation = await this.validatePreflight(exactPayload, requirements);
+    if (preflightValidation) {
+      return preflightValidation;
+    }
 
     const simulationValidation = await this.validateSpeculativeExecution(
       exactPayload,
@@ -428,43 +428,49 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
       return invalid(ErrNetworkMismatch, payer, message);
     }
 
-    // try {
-    //   const balance = await this.signer.getBalance({
-    //     network: requirements.network,
-    //     asset: requirements.asset,
-    //     account: payer,
-    //   });
-    //   if (balance < BigInt(requirements.amount)) {
-    //     return invalid(ErrInsufficientBalance, payer);
-    //   }
-    // } catch (error) {
-    //   const message = error instanceof Error ? error.message : String(error);
-    //   return invalid(ErrInsufficientBalance, payer, message);
-    // }
+    if (this.signer.getBalance) {
+      try {
+        const balance = await this.signer.getBalance({
+          network: requirements.network,
+          asset: requirements.asset,
+          account: payer,
+        });
+        if (balance < BigInt(requirements.amount)) {
+          return invalid(ErrInsufficientBalance, payer);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return invalid(ErrInsufficientBalance, payer, message);
+      }
+    }
 
-    // try {
-    //   const state = await this.signer.getAuthorizationState({
-    //     network: requirements.network,
-    //     asset: requirements.asset,
-    //     payer,
-    //     nonce: payload.authorization.nonce,
-    //   });
-    //   if (state !== "unused") {
-    //     return invalid(ErrAuthorizationUsed, payer, state);
-    //   }
-    // } catch (error) {
-    //   const message = error instanceof Error ? error.message : String(error);
-    //   return invalid(ErrAuthorizationUsed, payer, message);
-    // }
+    if (this.signer.getAuthorizationState) {
+      try {
+        const state = await this.signer.getAuthorizationState({
+          network: requirements.network,
+          asset: requirements.asset,
+          payer,
+          nonce: payload.authorization.nonce,
+        });
+        if (state !== "unused") {
+          return invalid(ErrAuthorizationUsed, payer, state);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return invalid(ErrAuthorizationUsed, payer, message);
+      }
+    }
 
-    try {
-      await this.signer.assertTransferWithAuthorizationSupported({
-        network: requirements.network,
-        asset: requirements.asset,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return invalid(ErrUnsupportedAsset, payer, message);
+    if (this.signer.assertTransferWithAuthorizationSupported) {
+      try {
+        await this.signer.assertTransferWithAuthorizationSupported({
+          network: requirements.network,
+          asset: requirements.asset,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return invalid(ErrUnsupportedAsset, payer, message);
+      }
     }
 
     return undefined;

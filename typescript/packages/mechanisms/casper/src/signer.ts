@@ -152,26 +152,11 @@ export async function toFacilitatorCasperSigner(
 
     getPublicKeyHex: () => privateKey.publicKey.toHex(),
 
-    // getBalance: async params => {
-    //   if (!preflightHooks.getBalance) {
-    //     throw new Error("Casper balance preflight is not configured");
-    //   }
-    //   return preflightHooks.getBalance(params);
-    // },
+    ...(preflightHooks?.getBalance ? { getBalance: preflightHooks.getBalance } : {}),
 
-    getAuthorizationState: async params => {
-      if (!preflightHooks.getAuthorizationState) {
-        throw new Error("Casper authorization-state preflight is not configured");
-      }
-      return preflightHooks.getAuthorizationState(params);
-    },
+    ...(preflightHooks?.getAuthorizationState ? { getAuthorizationState: preflightHooks.getAuthorizationState } : {}),
 
-    assertTransferWithAuthorizationSupported: async params => {
-      if (!preflightHooks.assertTransferWithAuthorizationSupported) {
-        throw new Error("Casper contract preflight is not configured");
-      }
-      await preflightHooks.assertTransferWithAuthorizationSupported(params);
-    },
+    ...(preflightHooks?.assertTransferWithAuthorizationSupported ? { assertTransferWithAuthorizationSupported: preflightHooks.assertTransferWithAuthorizationSupported } : {}),
 
     ...(simulateTransferWithAuthorization ? { simulateTransferWithAuthorization } : {}),
 
