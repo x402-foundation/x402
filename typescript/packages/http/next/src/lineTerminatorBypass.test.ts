@@ -43,6 +43,8 @@ describe("next end-to-end: percent-encoded line terminator under wildcard route"
         extra: {},
       }),
       enhancePaymentRequirements: async paymentRequirements => paymentRequirements,
+      defaultAssetTransferMethod: "default",
+      paymentFlows: { default: { supported: ["upfront"], default: "upfront" } },
     });
     await resourceServer.initialize();
 

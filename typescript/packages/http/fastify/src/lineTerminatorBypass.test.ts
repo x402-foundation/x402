@@ -33,6 +33,8 @@ async function buildTestResourceServer(): Promise<x402ResourceServer> {
       extra: {},
     }),
     enhancePaymentRequirements: async paymentRequirements => paymentRequirements,
+    defaultAssetTransferMethod: "default",
+    paymentFlows: { default: { supported: ["upfront"], default: "upfront" } },
   });
   await resourceServer.initialize();
   return resourceServer;

@@ -34,6 +34,8 @@ async function buildTestResourceServer(): Promise<x402ResourceServer> {
       extra: {},
     }),
     enhancePaymentRequirements: async paymentRequirements => paymentRequirements,
+    defaultAssetTransferMethod: "default",
+    paymentFlows: { default: { supported: ["upfront"], default: "upfront" } },
   });
   await resourceServer.initialize();
   return resourceServer;
@@ -131,7 +133,7 @@ describe("express end-to-end: trailing wildcard route prefix", () => {
 
   beforeAll(async () => {
     const app = express();
-    const resourceServer = new x402ResourceServer();
+    const resourceServer = await buildTestResourceServer();
     app.use(
       paymentMiddleware(
         {
