@@ -42,6 +42,8 @@ export type {
 export type { PaymentRequirementsV1, PaymentRequiredV1, PaymentPayloadV1 } from "./v1";
 export type {
   FacilitatorExtension,
+  FacilitatorSettleContext,
+  FacilitatorSettleResultContext,
   ResourceServerExtension,
   ResourceServerExtensionHooks,
   PaymentRequiredContext,
