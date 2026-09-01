@@ -297,6 +297,16 @@ export const ADDITIVE_ARRAY_INFO_FIELDS: Record<string, ReadonlySet<string>> = {
 };
 
 /**
+ * Extension info fields, keyed by extension key, that only the resource server
+ * may declare. Clients MUST NOT invent these on echo; core cannot import
+ * `@x402/extensions`, so the key/field list is duplicated here (same as
+ * {@link ADDITIVE_ARRAY_INFO_FIELDS}).
+ */
+export const SERVER_OWNED_INFO_FIELDS: Record<string, ReadonlySet<string>> = {
+  "builder-code": new Set(["a"]),
+};
+
+/**
  * Caps the combined echoed length of an additive array field (see
  * {@link ADDITIVE_ARRAY_INFO_FIELDS}) so a hand-crafted payload cannot pad the
  * field past the sum of every party's own reservation and later crowd out a

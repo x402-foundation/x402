@@ -276,7 +276,8 @@ func (c *ExactEvmScheme) createEIP3009Payload(
 	}
 
 	// V2 specific: No buffer on validAfter (can use immediately)
-	validAfter, validBefore := evm.CreateValidityWindow(time.Hour)
+	timeoutDuration := time.Duration(requirements.MaxTimeoutSeconds) * time.Second
+	validAfter, validBefore := evm.CreateValidityWindow(timeoutDuration)
 
 	// Extract extra fields for EIP-3009
 	tokenName := assetInfo.Name

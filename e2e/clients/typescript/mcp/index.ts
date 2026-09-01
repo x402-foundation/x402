@@ -115,7 +115,7 @@ try {
     batchSettlementPhase,
     batchSettlementScheme,
     issueRequest,
-    refund: () => batchSettlementScheme.refund(toolResourceUrl, { fetch: mcpRefundFetch }),
+    refund: () => batchSettlementScheme!.refund(toolResourceUrl, { fetch: mcpRefundFetch }),
   });
 } catch (error: unknown) {
   console.log(

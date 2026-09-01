@@ -82,7 +82,7 @@ uv sync --reinstall-package x402
 
 ```bash
 cd ../../servers/sign-in-with-x
-uv sync
+uv sync --reinstall-package x402
 uv run python main.py
 ```
 

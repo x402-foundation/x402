@@ -1972,6 +1972,28 @@ describe("Bazaar Discovery Extension", () => {
       expect(input.pathParams).toEqual({ var1: "san-francisco" });
     });
 
+    it("should not emit routeTemplate for a bare wildcard * pattern", () => {
+      const declared = declareDiscoveryExtension({
+        input: {},
+        inputSchema: { properties: {} },
+      });
+      const extension = declared.bazaar;
+
+      const httpContext: HTTPRequestContext = {
+        method: "GET",
+        path: "/api/rotation",
+        routePattern: "*",
+        adapter: createMockAdapterWithPath("/api/rotation"),
+      };
+
+      const enriched = bazaarResourceServerExtension.enrichDeclaration!(
+        extension,
+        httpContext,
+      ) as Record<string, unknown>;
+
+      expect(enriched.routeTemplate).toBeUndefined();
+    });
+
     it("should auto-convert multiple wildcards to :var1, :var2, etc.", () => {
       const declared = declareDiscoveryExtension({
         input: {},

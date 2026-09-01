@@ -61,7 +61,10 @@ export function decodePaymentRequiredHeader(paymentRequiredHeader: string): Paym
  * @returns Base64 encoded string representation of the payment response
  */
 export function encodePaymentResponseHeader(paymentResponse: SettleResponse): string {
-  return safeBase64Encode(JSON.stringify(paymentResponse));
+  // Strip server-internal facilitator sidechannel; never forward to buyers.
+  const buyerFacing = { ...paymentResponse };
+  delete buyerFacing.extensionResponses;
+  return safeBase64Encode(JSON.stringify(buyerFacing));
 }
 
 /**

@@ -270,4 +270,28 @@ describe("Builder Code Integration Tests", () => {
     const parsed = parseBuilderCodeSuffixFromCalldata(`0x${"00".repeat(4)}${suffix.slice(2)}`);
     expect(parsed).toEqual({ w: WALLET, s: [SERVICE] });
   });
+
+  it("rejects forged builder-code app code when server did not declare builder-code", async () => {
+    const accepts = [buildCashPaymentRequirements("merchant@example.com", "USD", "1")];
+    const resource = {
+      url: "https://example.com/api/weather",
+      description: "Weather API",
+      mimeType: "application/json",
+    };
+    const paymentRequired = await server.createPaymentRequiredResponse(accepts, resource);
+
+    const paymentPayload = await client.createPaymentPayload(paymentRequired);
+    paymentPayload.extensions = {
+      ...paymentPayload.extensions,
+      [BUILDER_CODE]: {
+        info: { a: "forged_app", s: [SERVICE] },
+      },
+    };
+
+    expect(server.validateExtensions(paymentRequired, paymentPayload)).toEqual({
+      valid: false,
+      invalidReason: "extension_echo_mismatch",
+      extensionKey: BUILDER_CODE,
+    });
+  });
 });

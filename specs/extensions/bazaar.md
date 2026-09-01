@@ -470,13 +470,23 @@ Search responses may include:
 | `pagination.limit` | `number` | Yes (when `pagination` is an object) | Number of results in this page |
 | `pagination.cursor` | `string` or `null` | Yes (when `pagination` is an object) | Cursor for the next page, or `null` if unavailable |
 
-### Verify and Settlement Response Header
+### Verify and Settlement Response Sidechannel
 
-After processing a `PaymentPayload`, a facilitator **MAY** append an `EXTENSION-RESPONSES` HTTP header to the verify or settlement response to communicate extension-specific outcomes to the client.
+Extension data flows through three distinct channels:
 
-**Header name:** `EXTENSION-RESPONSES`
+| Channel | Wire | Audience | Purpose |
+| ------- | ---- | -------- | ------- |
+| `PaymentRequired.extensions` | 402 response body | Buyer and server | Extension declarations the buyer echoes |
+| `SettleResponse.extensions` | `PAYMENT-RESPONSE` | Buyer and server | Settlement metadata both may consume; server enriches via hooks |
+| `EXTENSION-RESPONSES` object | Facilitator transport sidechannel (HTTP header today) | Server internal only | Facilitator extension processing outcomes; **never forwarded to the buyer** |
 
-**Header value:** A base64-encoded JSON object keyed by extension name. The `bazaar` key contains the bazaar extension's response:
+On HTTP, facilitators communicate the sidechannel using the `EXTENSION-RESPONSES` header. The transport definition and general keyed-object format are specified in [x402-specification-v2 §7.2.1](../x402-specification-v2.md#721-extension-responses-sidechannel). This section defines the `bazaar` payload under the `bazaar` key.
+
+After processing a `PaymentPayload`, a facilitator **MAY** append extension outcomes to the sidechannel on verify or settlement responses.
+
+**HTTP header name:** `EXTENSION-RESPONSES`
+
+**HTTP header value:** A base64-encoded JSON object keyed by extension name. The `bazaar` key contains the bazaar extension's response:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -505,7 +515,6 @@ EXTENSION-RESPONSES: eyJiYXphYXIiOnsic3RhdHVzIjoicmVqZWN0ZWQiLCJyZWplY3RlZFJlYXN
 ```
 *(base64 of `{"bazaar":{"status":"rejected","rejectedReason":"info failed schema validation"}}`)*
 
-Clients that understand the `bazaar` extension SHOULD read the `bazaar` key of this header to confirm cataloging succeeded and surface any rejection reason for debugging.
 
 ---
 

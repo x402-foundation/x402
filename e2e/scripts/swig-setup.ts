@@ -18,11 +18,11 @@
  * Funding uses the standard e2e exact price ($0.001 = 1000 base units). If Swig
  * balance is below one payment, tops up to 10× that amount.
  *
- * On first Swig creation, persists SWIG_ACCOUNT_ADDRESS (and SWIG_ID_BASE58 when
- * generated) to e2e/.env automatically.
+ * On success, always upserts SWIG_ACCOUNT_ADDRESS (and SWIG_ID_BASE58 when known)
+ * into e2e/.env so later CI steps and spawned clients can read the fixture.
  *
  * Prints a JSON result line on success:
- *   {"ok":true,"swigAccountAddress":"..."}
+ *   {"ok":true,"swigAccountAddress":"...","created":true,"swigIdBase58":"..."}
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -158,12 +158,28 @@ function persistSwigEnv(envPath: string, resolved: ResolvedSwigAccount): void {
   const updates: Record<string, string> = {
     SWIG_ACCOUNT_ADDRESS: resolved.address,
   };
-  if (resolved.swigIdBase58) {
-    updates.SWIG_ID_BASE58 = resolved.swigIdBase58;
+  const swigIdBase58 = resolved.swigIdBase58 ?? process.env.SWIG_ID_BASE58;
+  if (swigIdBase58) {
+    updates.SWIG_ID_BASE58 = swigIdBase58;
   }
 
   upsertEnvFile(envPath, updates);
   console.log(`💾 Saved Swig settings to ${envPath}`);
+}
+
+/** CI-friendly lines so the next workflow step / operator can copy env values. */
+function printSwigEnvSummary(resolved: ResolvedSwigAccount): void {
+  if (resolved.created) {
+    console.log("\n✅ New Swig smart wallet created:");
+  } else {
+    console.log("\n✅ Using existing Swig smart wallet:");
+  }
+  console.log(`   SWIG_ACCOUNT_ADDRESS=${resolved.address}`);
+  const swigIdBase58 = resolved.swigIdBase58 ?? process.env.SWIG_ID_BASE58;
+  if (swigIdBase58) {
+    console.log(`   SWIG_ID_BASE58=${swigIdBase58}`);
+  }
+  console.log("");
 }
 
 async function resolveSwigAccountAddress(
@@ -309,11 +325,17 @@ async function main(): Promise<void> {
   const resolved = await resolveSwigAccountAddress(connection, authority);
   await ensureSwigFunded(connection, authority, resolved.address, mint);
 
-  if (resolved.created) {
-    persistSwigEnv(join(process.cwd(), ".env"), resolved);
-  }
+  persistSwigEnv(join(process.cwd(), ".env"), resolved);
+  printSwigEnvSummary(resolved);
 
-  console.log(JSON.stringify({ ok: true, swigAccountAddress: resolved.address }));
+  console.log(
+    JSON.stringify({
+      ok: true,
+      swigAccountAddress: resolved.address,
+      created: resolved.created,
+      ...(resolved.swigIdBase58 ? { swigIdBase58: resolved.swigIdBase58 } : {}),
+    }),
+  );
 }
 
 main().catch(error => {

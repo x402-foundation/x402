@@ -6,6 +6,41 @@ import type { AddressInfo } from "node:net";
 import { x402ResourceServer } from "@x402/core/server";
 import { paymentMiddleware } from "./index";
 
+/** Network the routing tests price their protected routes on. */
+const TEST_NETWORK = "eip155:84532";
+
+/**
+ * Builds an initialized resource server with the `exact` scheme registered and
+ * a stub facilitator advertising it, so a matched route answers 402 instead of
+ * failing to build payment requirements.
+ *
+ * @returns A resource server that serves a real 402 for a matched route.
+ */
+async function buildTestResourceServer(): Promise<x402ResourceServer> {
+  const resourceServer = new x402ResourceServer({
+    getSupported: async () => ({
+      kinds: [{ x402Version: 2, scheme: "exact", network: TEST_NETWORK }],
+      extensions: [],
+      signers: {},
+    }),
+    verify: async () => ({ isValid: true }),
+    settle: async () => ({ success: true, transaction: "", network: TEST_NETWORK }),
+  });
+  resourceServer.register(TEST_NETWORK, {
+    scheme: "exact",
+    parsePrice: async () => ({
+      amount: "1000000",
+      asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      extra: {},
+    }),
+    enhancePaymentRequirements: async paymentRequirements => paymentRequirements,
+    defaultAssetTransferMethod: "default",
+    paymentFlows: { default: { supported: ["upfront"], default: "upfront" } },
+  });
+  await resourceServer.initialize();
+  return resourceServer;
+}
+
 /**
  * Issue an HTTP GET to the local server, simulating a real browser
  * (Accept: text/html + Mozilla User-Agent so the middleware serves the
@@ -45,7 +80,7 @@ describe("express end-to-end: fallback paywall HTML does not reflect attacker in
 
   beforeAll(async () => {
     const app = express();
-    const resourceServer = new x402ResourceServer();
+    const resourceServer = await buildTestResourceServer();
     app.use(
       paymentMiddleware(
         {
@@ -54,7 +89,7 @@ describe("express end-to-end: fallback paywall HTML does not reflect attacker in
               scheme: "exact",
               payTo: "0xabc",
               price: "$1.00",
-              network: "eip155:84532",
+              network: TEST_NETWORK,
             },
           },
         },

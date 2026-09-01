@@ -1,0 +1,3 @@
+kind: fixed
+body: Stop false-positive bazaar startup warnings for pre-enrichment HTTP extensions by injecting a synthetic method from the route pattern (or body/query inference) before JSON-schema validation, matching TypeScript middleware behavior
+time: 2026-08-31T14:38:26.740113+02:00

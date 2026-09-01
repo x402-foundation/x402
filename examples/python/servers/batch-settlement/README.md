@@ -15,7 +15,7 @@ For Flask or other sync servers, use `HTTPFacilitatorClientSync` with
 ## Setup
 
 ```bash
-uv sync
+uv sync --reinstall-package x402
 ```
 
 ## Environment

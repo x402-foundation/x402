@@ -21,7 +21,7 @@ This directory contains examples demonstrating how to use the x402 v2 SDK with d
 cd httpx
 cp .env-local .env
 # Edit .env with your EVM_PRIVATE_KEY and/or SVM_PRIVATE_KEY
-uv sync
+uv sync --reinstall-package x402
 uv run python main.py
 ```
 
@@ -31,7 +31,7 @@ uv run python main.py
 cd requests
 cp .env-local .env
 # Edit .env with your EVM_PRIVATE_KEY and/or SVM_PRIVATE_KEY
-uv sync
+uv sync --reinstall-package x402
 uv run python main.py
 ```
 

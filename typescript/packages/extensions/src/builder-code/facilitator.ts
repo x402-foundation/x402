@@ -98,7 +98,8 @@ export class BuilderCodeFacilitatorExtension implements FacilitatorExtension {
   /**
    * Builds the ERC-8021 Schema 2 calldata suffix for a settlement transaction.
    *
-   * - `a` and `s` are read from the client's payment payload extensions.
+   * - On v2 payloads, `a` is read from the client's payment payload extensions.
+   * - On v1 payloads, client `a` is omitted (no resource-server echo gate); `s` is still read.
    * - `w` is the facilitator's own code when configured.
    * - The facilitator's own `s` entry (`config.serviceCode`) is appended after the
    *   echoed client/server codes, within its own {@link MAX_FACILITATOR_SERVICE_CODES}
@@ -109,9 +110,11 @@ export class BuilderCodeFacilitatorExtension implements FacilitatorExtension {
    */
   buildDataSuffix(ctx: DataSuffixContext): Hex | undefined {
     const clientExt = extractClientExtension(ctx.paymentPayload.extensions);
-
+    // v1 payloads omit `a`: the resource-server echo gate does not run on v1.
     const a =
-      typeof clientExt?.a === "string" && BUILDER_CODE_PATTERN.test(clientExt.a)
+      ctx.paymentPayload.x402Version === 2 &&
+      typeof clientExt?.a === "string" &&
+      BUILDER_CODE_PATTERN.test(clientExt.a)
         ? clientExt.a
         : undefined;
     const echoedServiceCodes = resolveServiceCodes(clientExt?.s);

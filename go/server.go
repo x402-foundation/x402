@@ -8,7 +8,6 @@ import (
 	"log"
 	"math/big"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,13 +28,19 @@ var (
 func ResolveSettlementOverrideAmount(rawAmount string, requirements types.PaymentRequirements, decimals int) (string, error) {
 	if m := percentRegex.FindStringSubmatch(rawAmount); m != nil {
 		parts := strings.SplitN(m[1], ".", 2)
-		intPart, _ := strconv.ParseInt(parts[0], 10, 64)
-		decPart := int64(0)
+		integerPart, ok := new(big.Int).SetString(parts[0], 10)
+		if !ok {
+			return "", fmt.Errorf("invalid percent amount: %s", rawAmount)
+		}
+		fractionalPart := new(big.Int)
 		if len(parts) == 2 {
 			padded := (parts[1] + "00")[:2]
-			decPart, _ = strconv.ParseInt(padded, 10, 64)
+			if _, ok := fractionalPart.SetString(padded, 10); !ok {
+				return "", fmt.Errorf("invalid percent amount: %s", rawAmount)
+			}
 		}
-		scaledPercent := big.NewInt(intPart*100 + decPart)
+		scaledPercent := new(big.Int).Mul(integerPart, big.NewInt(100))
+		scaledPercent.Add(scaledPercent, fractionalPart)
 		base, ok := new(big.Int).SetString(requirements.Amount, 10)
 		if !ok {
 			return "", fmt.Errorf("invalid requirements amount: %s", requirements.Amount)

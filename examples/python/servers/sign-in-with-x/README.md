@@ -66,7 +66,7 @@ At least one of `EVM_ADDRESS` or `SVM_ADDRESS` is required.
 2. Install dependencies:
 
 ```bash
-uv sync
+uv sync --reinstall-package x402
 ```
 
 3. Run the server:
@@ -84,7 +84,7 @@ Start the SIWX client to test:
 ```bash
 cd ../../clients/sign-in-with-x
 # Ensure .env is setup with EVM_PRIVATE_KEY or SVM_PRIVATE_KEY
-uv sync
+uv sync --reinstall-package x402
 uv run python main.py
 ```
 

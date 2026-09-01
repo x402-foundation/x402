@@ -677,6 +677,67 @@ describe("withX402", () => {
     expect(body).toEqual({});
     expect(response.headers.get("PAYMENT-RESPONSE")).toBe("settlement-failed-encoded");
   });
+
+  it("passes a pattern-keyed routes config to x402HTTPResourceServer unchanged", async () => {
+    const mockServer = createMockHttpServer({ type: "no-payment-required" });
+    setupMockCreateHttpServer(mockServer);
+    const handler = vi.fn().mockResolvedValue(NextResponse.json({ data: "protected" }));
+    const routes = { "/api/users/[id]": mockRouteConfig };
+
+    const wrappedHandler = withX402(handler, routes, {} as unknown as x402ResourceServer);
+    const response = await wrappedHandler(createMockRequest());
+
+    expect(vi.mocked(x402HTTPResourceServer)).toHaveBeenCalledWith(expect.anything(), routes);
+    expect(response.status).toBe(200);
+  });
+
+  it("passes a bare route config through for core's default wildcard handling", () => {
+    const mockServer = createMockHttpServer({ type: "no-payment-required" });
+    setupMockCreateHttpServer(mockServer);
+    const handler = vi.fn().mockResolvedValue(NextResponse.json({ data: "protected" }));
+
+    withX402(handler, mockRouteConfig, {} as unknown as x402ResourceServer);
+
+    expect(vi.mocked(x402HTTPResourceServer)).toHaveBeenCalledWith(
+      expect.anything(),
+      mockRouteConfig,
+    );
+  });
+
+  it("warns once when a pattern-keyed routes config matches no request", async () => {
+    const mockServer = createMockHttpServer({ type: "no-payment-required" });
+    vi.mocked(mockServer.requiresPayment).mockReturnValue(false);
+    setupMockCreateHttpServer(mockServer);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const handler = vi.fn().mockResolvedValue(NextResponse.json({ data: "protected" }));
+
+    const wrappedHandler = withX402(
+      handler,
+      { "/api/users/[id]": mockRouteConfig },
+      {} as unknown as x402ResourceServer,
+    );
+    await wrappedHandler(createMockRequest());
+    await wrappedHandler(createMockRequest());
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toContain('"/api/users/[id]"');
+    expect(handler).toHaveBeenCalledTimes(2);
+    warnSpy.mockRestore();
+  });
+
+  it("does not warn for a bare route config when no route matches", async () => {
+    const mockServer = createMockHttpServer({ type: "no-payment-required" });
+    vi.mocked(mockServer.requiresPayment).mockReturnValue(false);
+    setupMockCreateHttpServer(mockServer);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const handler = vi.fn().mockResolvedValue(NextResponse.json({ data: "protected" }));
+
+    const wrappedHandler = withX402(handler, mockRouteConfig, {} as unknown as x402ResourceServer);
+    await wrappedHandler(createMockRequest());
+
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
 });
 
 describe("paymentProxyFromConfig", () => {

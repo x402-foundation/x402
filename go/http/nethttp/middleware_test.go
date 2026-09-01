@@ -14,6 +14,7 @@ import (
 	"time"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/bazaar"
 	x402http "github.com/x402-foundation/x402/go/v2/http"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
@@ -1436,7 +1437,7 @@ func TestValidateBazaarExtensions_NoBazaar(t *testing.T) {
 	}
 
 	output := captureStdout(func() {
-		validateBazaarExtensions(routes)
+		bazaar.ValidateBazaarRouteExtensions(routes)
 	})
 
 	if strings.Contains(output, "Warning") || strings.Contains(output, "bazaar") {
@@ -1471,7 +1472,7 @@ func TestValidateBazaarExtensions_ValidExtension(t *testing.T) {
 	}
 
 	output := captureStdout(func() {
-		validateBazaarExtensions(routes)
+		bazaar.ValidateBazaarRouteExtensions(routes)
 	})
 
 	if strings.Contains(output, "Warning") || strings.Contains(output, "invalid") {
@@ -1508,7 +1509,7 @@ func TestValidateBazaarExtensions_InvalidExtension(t *testing.T) {
 	}
 
 	output := captureStdout(func() {
-		validateBazaarExtensions(routes)
+		bazaar.ValidateBazaarRouteExtensions(routes)
 	})
 
 	if !strings.Contains(output, "Warning") {
@@ -1532,7 +1533,7 @@ func TestValidateBazaarExtensions_MalformedExtension(t *testing.T) {
 	}
 
 	output := captureStdout(func() {
-		validateBazaarExtensions(routes)
+		bazaar.ValidateBazaarRouteExtensions(routes)
 	})
 
 	if !strings.Contains(output, "Warning") {

@@ -94,6 +94,7 @@ type catalogRouteDefinition struct {
 	Network             string            `json:"network"`
 	AssetTransferMethod string            `json:"assetTransferMethod"`
 	Sdks                []string          `json:"sdks"`
+	RequiresEnv         string            `json:"requiresEnv"`
 	Price               catalogPrice      `json:"price"`
 	Extensions          []string          `json:"extensions"`
 	SettlementOverride  *SettlementAmount `json:"settlementOverride"`
@@ -120,6 +121,7 @@ type CatalogRoute struct {
 	Scheme              string
 	Network             string
 	AssetTransferMethod string
+	RequiresEnv         string
 	Price               catalogPrice
 	Extensions          []string
 	SettlementOverride  *SettlementAmount
@@ -355,12 +357,16 @@ func CatalogRoutes() []CatalogRoute {
 		if excludedSchemes[definition.Scheme] || excludedNetworks[definition.Network] {
 			continue
 		}
+		if definition.RequiresEnv != "" && os.Getenv(definition.RequiresEnv) == "" {
+			continue
+		}
 
 		routes = append(routes, CatalogRoute{
 			Path:                path,
 			Scheme:              definition.Scheme,
 			Network:             definition.Network,
 			AssetTransferMethod: definition.AssetTransferMethod,
+			RequiresEnv:         definition.RequiresEnv,
 			Price:               definition.Price,
 			Extensions:          definition.Extensions,
 			SettlementOverride:  definition.SettlementOverride,

@@ -1,0 +1,1 @@
+Added optional `extension_responses` on `VerifyResponse` and `SettleResponse`. The HTTP facilitator client populates it from the `EXTENSION-RESPONSES` header. `encode_payment_response_header` excludes the sidechannel from buyer-facing `PAYMENT-RESPONSE` encoding.

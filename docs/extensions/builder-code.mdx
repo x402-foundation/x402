@@ -392,7 +392,9 @@ client.registerExtension(new BuilderCodeClientExtension(["bc_mcp_server", "bc_my
 
 Accepts a single string or an array of strings. Attaches the client's `s` code(s) to every payment payload when registered. When the server declared `builder-code`, the core client merge also preserves the server's `a` code, concatenating any server-declared `s` with the client's (client entries first). Multiple codes are useful for layered clients (e.g. an MCP server acting as middleware) that need to attribute multiple participants. Throws if more than `MAX_CLIENT_SERVICE_CODES` codes are given.
 
-<Note>`s` is split into dedicated, non-overlapping reservations: up to `MAX_CLIENT_SERVICE_CODES` (**5**) for the client, `MAX_SERVER_SERVICE_CODES` (**5**) for the server, and `MAX_FACILITATOR_SERVICE_CODES` (**1**) for the facilitator's own code — a total of `MAX_SERVICE_CODES` (**11**). `declareBuilderCodeExtension`, `BuilderCodeClientExtension`, and the facilitator's `serviceCode` config each reject more entries than their own reservation, so no compliant combination can crowd out another party's codes. The resource server also rejects a client echo whose combined `s` exceeds the client+server budget (**10**) before settlement, and facilitators additionally truncate to that same budget as a defensive backstop against a malformed payload sent directly to a facilitator.</Note>
+<Note>`s` is split into dedicated, non-overlapping reservations: up to `MAX_CLIENT_SERVICE_CODES` (**5**) for the client, `MAX_SERVER_SERVICE_CODES` (**5**) for the server, and `MAX_FACILITATOR_SERVICE_CODES` (**1**) for the facilitator's own code — a total of `MAX_SERVICE_CODES` (**11**). `declareBuilderCodeExtension`, `BuilderCodeClientExtension`, and the facilitator's `serviceCode` config each reject more entries than their own reservation, so no compliant combination can crowd out another party's codes. The resource server also rejects a client echo whose combined `s` exceeds the client+server budget (**10**) before settlement, and facilitators additionally truncate to that same budget as a defensive backstop against a malformed payload sent directly to a facilitator.
+
+`a` is a server-owned field: on v2 payloads, the resource server rejects the payment (`extension_echo_mismatch`) if the client echoes an `a` value that doesn't exactly match the server's advertised value, or if the client sets `a` when the server did not declare `builder-code` at all. Clients must only echo `a` when the server declared it, and must use the exact value from the `PaymentRequired` response.</Note>
 
 ### Facilitator
 
@@ -409,7 +411,7 @@ facilitator.registerExtension(
 );
 ```
 
-Reads `a` and `s` from the payment payload at settlement time, adds `w`, appends its own `serviceCode` to `s` (deduped), and encodes the ERC-8021 CBOR suffix.
+Reads `a` and `s` from the payment payload at settlement time, adds `w`, appends its own `serviceCode` to `s` (deduped), and encodes the ERC-8021 CBOR suffix. On v1 payloads, `a` is omitted from the suffix (the resource-server echo gate that validates `a` does not run on v1).
 
 ### Utilities
 

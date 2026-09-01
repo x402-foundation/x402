@@ -8,7 +8,7 @@ Examples for the x402 Python SDK.
 cd clients/httpx
 cp .env-local .env
 # Edit .env with your EVM_PRIVATE_KEY and/or SVM_PRIVATE_KEY
-uv sync
+uv sync --reinstall-package x402
 uv run python main.py
 ```
 

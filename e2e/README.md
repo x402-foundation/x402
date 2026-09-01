@@ -113,6 +113,15 @@ cd facilitators/go
 go mod tidy && go build -o go .
 ```
 
+### Wallet status
+
+Print facilitator / client / server addresses plus facilitator native and client payment-token balances for every family whose catalog-required env keys are set.
+
+```bash
+pnpm wallet:status
+pnpm wallet:status --mainnet
+```
+
 ## Usage
 
 ### Interactive Test Mode

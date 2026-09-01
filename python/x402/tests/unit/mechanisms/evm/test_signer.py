@@ -1,6 +1,7 @@
 """Tests for EVM signer implementations."""
 
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -135,6 +136,42 @@ class TestFacilitatorWeb3Signer:
         )
 
         assert signer.address == account.address
+
+    @pytest.mark.parametrize(
+        ("signer_kwargs", "expected_gas_limit"),
+        [
+            pytest.param({}, 500_000, id="default"),
+            pytest.param({"gas_limit": 750_000}, 750_000, id="configured"),
+        ],
+    )
+    def test_transactions_use_gas_limit(self, signer_kwargs, expected_gas_limit):
+        """Transactions should use the default or configured gas limit."""
+        account = Account.create()
+        signer = FacilitatorWeb3Signer(
+            private_key=account.key.hex(),
+            rpc_url="https://sepolia.base.org",
+            **signer_kwargs,
+        )
+        builder = Mock()
+        builder.build_transaction.side_effect = lambda tx: tx
+        signer._w3 = Mock()
+        signer._w3.eth.contract.return_value.functions.transfer = Mock(return_value=builder)
+        signer._w3.eth.get_transaction_count.return_value = 0
+        signer._w3.eth.gas_price = 1
+        signer._w3.eth.send_raw_transaction.return_value = bytes.fromhex("12" * 32)
+        signer._account.sign_transaction = Mock(
+            return_value=SimpleNamespace(raw_transaction=b"signed")
+        )
+
+        signer.write_contract("0x1111111111111111111111111111111111111111", [], "transfer")
+        signer.send_transaction("0x2222222222222222222222222222222222222222", b"")
+
+        assert [
+            call.args[0]["gas"] for call in signer._account.sign_transaction.call_args_list
+        ] == [
+            expected_gas_limit,
+            expected_gas_limit,
+        ]
 
     def test_should_have_required_methods(self):
         """Should have all required facilitator signer methods."""
