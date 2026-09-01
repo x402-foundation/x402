@@ -1450,6 +1450,20 @@ func TestValidateExtensions(t *testing.T) {
 		}
 	})
 
+	t.Run("passes for v1 payloads with forged builder-code app attribution", func(t *testing.T) {
+		p := types.PaymentPayload{
+			X402Version: 1,
+			Extensions: map[string]interface{}{
+				"builder-code": map[string]interface{}{
+					"info": map[string]interface{}{"a": "forged_app"},
+				},
+			},
+		}
+		if r := server.ValidateExtensions(nil, p); !r.Valid {
+			t.Fatalf("expected v1 extensions to remain outside echo validation, got %+v", r)
+		}
+	})
+
 	// Extensions declared as typed Go structs (e.g. eip2612gassponsor.Extension)
 	// must validate the same way as map-declared extensions. Mirrors the gas
 	// extension shape inline to avoid an import cycle (eip2612gassponsor imports
