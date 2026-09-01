@@ -142,6 +142,16 @@ func (f *ExactSvmSchemeV1) Verify(
 		return nil, x402.NewVerifyError(ErrTransactionCouldNotBeDecoded, "", err.Error())
 	}
 
+	// Narrower than svm.IsSupportedTransactionVersion, whose rationale applies:
+	// the compute budget checks below read the ComputeBudget instruction pair
+	// that a transaction v1 message does not carry. Transaction v1 support lives
+	// in the current protocol's ExactSvmScheme.
+	version := tx.Message.GetVersion()
+	if version != solana.MessageVersionLegacy && version != solana.MessageVersionV0 {
+		return nil, x402.NewVerifyError(ErrUnsupportedTransactionVersion, "",
+			fmt.Sprintf("unsupported transaction version: MessageVersion %d (only legacy and v0 are supported)", version))
+	}
+
 	if err := exactv2.VerifyRequiredSignatures(tx, feePayerStr); err != nil {
 		return nil, x402.NewVerifyError(err.Error(), "", err.Error())
 	}

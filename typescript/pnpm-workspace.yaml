@@ -16,6 +16,11 @@ packageExtensions:
       tslib: "^2.8.1"
 minimumReleaseAge: 4320 # Only install package versions that have been published for at least 3 days.
 minimumReleaseAgeStrict: true
+minimumReleaseAgeExclude:
+  # token-2022 0.16.0 is the only release compatible with @solana/kit v8; its
+  # release-train siblings (@solana/kit 8.0.0, @solana-program/token 0.16.0)
+  # already cleared the age gate.
+  - "@solana-program/token-2022"
 allowBuilds:
   bigint-buffer: true
   bufferutil: true

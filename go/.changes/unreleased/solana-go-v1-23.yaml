@@ -1,0 +1,2 @@
+kind: changed
+body: Upgrade github.com/gagliardetto/solana-go to v1.23.0, which decodes and builds transaction v1 (SIMD-0385) messages and validates ed25519 keypairs on construction. `Message.SetVersion` now returns an error alongside the message; every call site propagates it. The SVM schemes still accept only legacy and v0 transactions.

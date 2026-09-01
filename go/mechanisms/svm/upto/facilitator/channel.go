@@ -437,7 +437,9 @@ func buildSignedTransaction(
 	if err != nil {
 		return nil, fmt.Errorf("failed to build transaction: %w", err)
 	}
-	tx.Message.SetVersion(solana.MessageVersionV0)
+	if _, err := tx.Message.SetVersion(solana.MessageVersionV0); err != nil {
+		return nil, fmt.Errorf("failed to set transaction message version: %w", err)
+	}
 
 	// Size the signature array to the header before signing: solana-go only
 	// grows it to the signer's own index, which would leave a short array (and

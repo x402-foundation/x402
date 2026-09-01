@@ -265,7 +265,9 @@ func TestSolanaMessageVersioning(t *testing.T) {
 		}
 
 		// Set to V0
-		msg.SetVersion(solana.MessageVersionV0)
+		if _, err := msg.SetVersion(solana.MessageVersionV0); err != nil {
+			t.Fatalf("Failed to set message version: %v", err)
+		}
 
 		// Should now be versioned
 		if !msg.IsVersioned() {
@@ -284,7 +286,9 @@ func TestSolanaMessageVersioning(t *testing.T) {
 			AccountKeys:     []solana.PublicKey{solana.MustPublicKeyFromBase58("11111111111111111111111111111111")},
 			RecentBlockhash: solana.MustHashFromBase58("11111111111111111111111111111111"),
 		}
-		msg.SetVersion(solana.MessageVersionV0)
+		if _, err := msg.SetVersion(solana.MessageVersionV0); err != nil {
+			t.Fatalf("Failed to set message version: %v", err)
+		}
 
 		// Serialize
 		msgBytes, err := msg.MarshalBinary()

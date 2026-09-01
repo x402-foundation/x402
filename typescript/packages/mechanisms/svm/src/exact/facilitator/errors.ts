@@ -26,6 +26,19 @@ export const ErrUnknownSixthInstruction = "invalid_exact_svm_payload_unknown_six
 export const ErrUnknownSeventhInstruction = "invalid_exact_svm_payload_unknown_seventh_instruction";
 export const ErrUnknownOptionalInstruction =
   "invalid_exact_svm_payload_unknown_optional_instruction";
+
+// Transaction version errors
+export const ErrUnsupportedTransactionVersion = "unsupported_transaction_version";
+
+// Transaction v1 (SIMD-0385) message config errors
+export const ErrV1ConfigComputeLimitMissing =
+  "invalid_exact_svm_payload_transaction_config_compute_limit_missing";
+export const ErrV1ConfigComputeLimitTooHigh =
+  "invalid_exact_svm_payload_transaction_config_compute_limit_too_high";
+export const ErrV1ConfigLoadedAccountsDataSizeLimitMissing =
+  "invalid_exact_svm_payload_transaction_config_loaded_accounts_data_size_limit_missing";
+export const ErrV1ConfigPriorityFeeTooHigh =
+  "invalid_exact_svm_payload_transaction_config_priority_fee_too_high";
 export const ErrComputeLimitInstruction =
   "invalid_exact_svm_payload_transaction_instructions_compute_limit_instruction";
 export const ErrComputePriceInstruction =
@@ -68,6 +81,12 @@ export const ErrSmartWalletPriorityFeeTooHigh =
   "invalid_exact_svm_smart_wallet_priority_fee_too_high";
 export const ErrSmartWalletUnsupportedComputeBudget =
   "invalid_exact_svm_smart_wallet_unsupported_compute_budget_instruction";
+export const ErrSmartWalletUnsupportedTransactionVersion =
+  "invalid_exact_svm_smart_wallet_unsupported_transaction_version";
+export const ErrSmartWalletComputeUnitLimitMissing =
+  "invalid_exact_svm_smart_wallet_compute_unit_limit_missing";
+export const ErrSmartWalletLoadedAccountsDataSizeLimitMissing =
+  "invalid_exact_svm_smart_wallet_loaded_accounts_data_size_limit_missing";
 export const ErrSmartWalletAltResolutionUnavailable =
   "invalid_exact_svm_smart_wallet_alt_resolution_not_available";
 export const ErrSmartWalletAltResolutionFailed =

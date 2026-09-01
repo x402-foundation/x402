@@ -23,6 +23,7 @@ from ....schemas import (
 from ..constants import (
     COMPUTE_BUDGET_PROGRAM_ADDRESS,
     ERR_AMOUNT_INSUFFICIENT,
+    ERR_COMPUTE_PRICE_TOO_HIGH,
     ERR_DUPLICATE_SETTLEMENT,
     ERR_FEE_PAYER_MISSING,
     ERR_FEE_PAYER_NOT_MANAGED,
@@ -42,8 +43,14 @@ from ..constants import (
     ERR_TRANSACTION_FAILED,
     ERR_UNKNOWN_FIFTH_INSTRUCTION,
     ERR_UNKNOWN_FOURTH_INSTRUCTION,
+    ERR_UNKNOWN_OPTIONAL_INSTRUCTION,
     ERR_UNKNOWN_SIXTH_INSTRUCTION,
     ERR_UNSUPPORTED_SCHEME,
+    ERR_UNSUPPORTED_TRANSACTION_VERSION,
+    ERR_V1_CONFIG_COMPUTE_LIMIT_MISSING,
+    ERR_V1_CONFIG_COMPUTE_LIMIT_TOO_HIGH,
+    ERR_V1_CONFIG_LOADED_ACCOUNTS_DATA_SIZE_LIMIT_MISSING,
+    ERR_V1_CONFIG_PRIORITY_FEE_TOO_HIGH,
     LIGHTHOUSE_PROGRAM_ADDRESS,
     MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
     MEMO_PROGRAM_ADDRESS,
@@ -55,11 +62,26 @@ from ..settlement_cache import SettlementCache
 from ..signer import FacilitatorSvmSigner
 from ..types import ExactSvmPayload
 from ..utils import (
+    check_v1_transaction_config,
     decode_transaction_from_payload,
     derive_ata,
     get_token_payer_from_transaction,
+    get_transaction_version,
+    get_v1_transaction_config,
+    is_supported_transaction_version,
     transaction_message_hash,
 )
+
+# Version 1 config violations, as reported by check_v1_transaction_config, mapped
+# onto this scheme's reason codes.
+V1_CONFIG_INVALID_REASONS = {
+    "compute_unit_limit_missing": ERR_V1_CONFIG_COMPUTE_LIMIT_MISSING,
+    "compute_unit_limit_too_high": ERR_V1_CONFIG_COMPUTE_LIMIT_TOO_HIGH,
+    "loaded_accounts_data_size_limit_missing": (
+        ERR_V1_CONFIG_LOADED_ACCOUNTS_DATA_SIZE_LIMIT_MISSING
+    ),
+    "priority_fee_too_high": ERR_V1_CONFIG_PRIORITY_FEE_TOO_HIGH,
+}
 
 
 class ExactSvmScheme:
@@ -138,8 +160,9 @@ class ExactSvmScheme:
 
         Validates:
         - Scheme and network match
-        - Transaction structure (3-6 instructions)
-        - Compute budget instructions are valid
+        - Transaction version is legacy, 0 or 1
+        - Transaction structure (3-6 instructions, or 1-5 on version 1)
+        - Compute budget instructions (or message.config on version 1) are valid
         - TransferChecked instruction:
           - Token program is known (Token or Token-2022)
           - Mint matches requirements.asset
@@ -186,54 +209,77 @@ class ExactSvmScheme:
             )
 
         message = tx.message
+
+        # Checked before the layout rules below, which are chosen by version.
+        version = get_transaction_version(message)
+        if not is_supported_transaction_version(version):
+            return VerifyResponse(
+                is_valid=False, invalid_reason=ERR_UNSUPPORTED_TRANSACTION_VERSION, payer=""
+            )
+        is_version_1 = version == 1
+
         instructions = message.instructions
         static_accounts = list(message.account_keys)
 
-        # 3-6 instructions: ComputeLimit + ComputePrice + TransferChecked + optional Lighthouse/Memo
-        if len(instructions) < 3 or len(instructions) > 6:
+        # Legacy and version 0, 3-6 instructions:
+        #   ComputeLimit + ComputePrice + TransferChecked + optional Lighthouse/Memo
+        # Version 1, 1-5 instructions: the compute budget lives in message.config,
+        # so the ComputeBudget prefix is gone and TransferChecked comes first.
+        min_instructions, max_instructions = (1, 5) if is_version_1 else (3, 6)
+        if len(instructions) < min_instructions or len(instructions) > max_instructions:
             return VerifyResponse(
                 is_valid=False, invalid_reason=ERR_INVALID_INSTRUCTION_COUNT, payer=""
             )
 
-        # Step 3: Verify Compute Budget Instructions
-        compute_budget_program = Pubkey.from_string(COMPUTE_BUDGET_PROGRAM_ADDRESS)
-
-        # Verify compute unit limit instruction (index 0)
-        cu_limit_ix = instructions[0]
-        cu_limit_program = static_accounts[cu_limit_ix.program_id_index]
-        cu_limit_data = bytes(cu_limit_ix.data)
-
-        if cu_limit_program != compute_budget_program or len(cu_limit_data) < 1:
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_INVALID_COMPUTE_LIMIT, payer=""
+        # Step 3: Verify the compute budget, from message.config on version 1 and
+        # from the two-instruction ComputeBudget prefix on earlier versions.
+        if is_version_1:
+            violation = check_v1_transaction_config(
+                get_v1_transaction_config(message),
+                max_compute_units=None,
+                max_priority_fee_micro_lamports=MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
             )
-        if cu_limit_data[0] != 2:  # SetComputeUnitLimit discriminator
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_INVALID_COMPUTE_LIMIT, payer=""
-            )
+            if violation:
+                return VerifyResponse(
+                    is_valid=False, invalid_reason=V1_CONFIG_INVALID_REASONS[violation], payer=""
+                )
+        else:
+            compute_budget_program = Pubkey.from_string(COMPUTE_BUDGET_PROGRAM_ADDRESS)
 
-        # Verify compute unit price instruction (index 1)
-        cu_price_ix = instructions[1]
-        cu_price_program = static_accounts[cu_price_ix.program_id_index]
-        cu_price_data = bytes(cu_price_ix.data)
+            # Verify compute unit limit instruction (index 0)
+            cu_limit_ix = instructions[0]
+            cu_limit_program = static_accounts[cu_limit_ix.program_id_index]
+            cu_limit_data = bytes(cu_limit_ix.data)
 
-        if cu_price_program != compute_budget_program or len(cu_price_data) < 9:
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_INVALID_COMPUTE_PRICE, payer=""
-            )
-        if cu_price_data[0] != 3:  # SetComputeUnitPrice discriminator
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_INVALID_COMPUTE_PRICE, payer=""
-            )
+            if cu_limit_program != compute_budget_program or len(cu_limit_data) < 1:
+                return VerifyResponse(
+                    is_valid=False, invalid_reason=ERR_INVALID_COMPUTE_LIMIT, payer=""
+                )
+            if cu_limit_data[0] != 2:  # SetComputeUnitLimit discriminator
+                return VerifyResponse(
+                    is_valid=False, invalid_reason=ERR_INVALID_COMPUTE_LIMIT, payer=""
+                )
 
-        # Parse microLamports (u64, little-endian) and check against max
-        micro_lamports = int.from_bytes(cu_price_data[1:9], "little")
-        if micro_lamports > MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS:
-            return VerifyResponse(
-                is_valid=False,
-                invalid_reason="invalid_exact_svm_payload_transaction_instructions_compute_price_instruction_too_high",
-                payer="",
-            )
+            # Verify compute unit price instruction (index 1)
+            cu_price_ix = instructions[1]
+            cu_price_program = static_accounts[cu_price_ix.program_id_index]
+            cu_price_data = bytes(cu_price_ix.data)
+
+            if cu_price_program != compute_budget_program or len(cu_price_data) < 9:
+                return VerifyResponse(
+                    is_valid=False, invalid_reason=ERR_INVALID_COMPUTE_PRICE, payer=""
+                )
+            if cu_price_data[0] != 3:  # SetComputeUnitPrice discriminator
+                return VerifyResponse(
+                    is_valid=False, invalid_reason=ERR_INVALID_COMPUTE_PRICE, payer=""
+                )
+
+            # Parse microLamports (u64, little-endian) and check against max
+            micro_lamports = int.from_bytes(cu_price_data[1:9], "little")
+            if micro_lamports > MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS:
+                return VerifyResponse(
+                    is_valid=False, invalid_reason=ERR_COMPUTE_PRICE_TOO_HIGH, payer=""
+                )
 
         # Get token payer
         payer = get_token_payer_from_transaction(tx)
@@ -243,7 +289,8 @@ class ExactSvmScheme:
             )
 
         # Step 4: Verify Transfer Instruction
-        transfer_ix = instructions[2]
+        transfer_index = 0 if is_version_1 else 2
+        transfer_ix = instructions[transfer_index]
         transfer_program = static_accounts[transfer_ix.program_id_index]
         transfer_program_str = str(transfer_program)
 
@@ -255,16 +302,24 @@ class ExactSvmScheme:
                 is_valid=False, invalid_reason=ERR_NO_TRANSFER_INSTRUCTION, payer=payer
             )
 
-        # Step 5: Verify optional instructions (if present)
-        optional_instructions = instructions[3:]
+        # Step 5: Verify optional instructions (if present). Only Lighthouse
+        # (wallet protection) and Memo (uniqueness) may follow the transfer, so on
+        # version 1 this also rejects any ComputeBudget instruction.
+        optional_instructions = instructions[transfer_index + 1 :]
         if optional_instructions:
             lighthouse_program = Pubkey.from_string(LIGHTHOUSE_PROGRAM_ADDRESS)
             memo_program = Pubkey.from_string(MEMO_PROGRAM_ADDRESS)
-            invalid_reasons = [
-                ERR_UNKNOWN_FOURTH_INSTRUCTION,
-                ERR_UNKNOWN_FIFTH_INSTRUCTION,
-                ERR_UNKNOWN_SIXTH_INSTRUCTION,
-            ]
+            # These name absolute instruction indices, so they describe only the
+            # legacy and version 0 layout, where options start at index 3.
+            invalid_reasons = (
+                []
+                if is_version_1
+                else [
+                    ERR_UNKNOWN_FOURTH_INSTRUCTION,
+                    ERR_UNKNOWN_FIFTH_INSTRUCTION,
+                    ERR_UNKNOWN_SIXTH_INSTRUCTION,
+                ]
+            )
 
             for idx, optional_ix in enumerate(optional_instructions):
                 optional_program = static_accounts[optional_ix.program_id_index]
@@ -274,7 +329,7 @@ class ExactSvmScheme:
                 reason = (
                     invalid_reasons[idx]
                     if idx < len(invalid_reasons)
-                    else ERR_UNKNOWN_SIXTH_INSTRUCTION
+                    else ERR_UNKNOWN_OPTIONAL_INSTRUCTION
                 )
                 return VerifyResponse(is_valid=False, invalid_reason=reason, payer=payer)
 

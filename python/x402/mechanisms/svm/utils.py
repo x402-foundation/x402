@@ -8,6 +8,13 @@ from typing import TYPE_CHECKING
 
 try:
     from solders.hash import Hash, ParseHashError
+    from solders.message import (
+        Message,
+        MessageV1,
+        TransactionConfig,
+        VersionedMessage,
+        to_bytes_versioned,
+    )
     from solders.pubkey import Pubkey
     from solders.transaction import VersionedTransaction
 except ImportError as e:
@@ -34,10 +41,10 @@ from .constants import (
 from .types import ExactSvmPayload, TransactionInfo
 
 if TYPE_CHECKING:
-    from solana.rpc.api import Client as SolanaClient
+    from .rpc import SvmRpcClient
 
 
-def resolve_blockhash(client: "SolanaClient", recent_blockhash: object = None) -> Hash:
+def resolve_blockhash(client: "SvmRpcClient", recent_blockhash: object = None) -> Hash:
     """Use a valid supplied blockhash, falling back to the latest blockhash from RPC."""
     if isinstance(recent_blockhash, str) and recent_blockhash:
         try:
@@ -215,6 +222,104 @@ def decode_transaction_from_payload(payload: ExactSvmPayload) -> VersionedTransa
         return VersionedTransaction.from_bytes(tx_bytes)
     except Exception as e:
         raise ValueError("invalid_exact_svm_payload_transaction") from e
+
+
+def get_transaction_version(message: VersionedMessage) -> int | str:
+    """Return the version of a decoded transaction message.
+
+    Legacy messages have no version prefix; versioned messages are serialized
+    behind a single byte of ``0x80 | version``, so the low seven bits of that
+    byte name the version for any version solders can decode — including ones
+    newer than this code.
+
+    Args:
+        message: Decoded transaction message.
+
+    Returns:
+        "legacy" for an unversioned message, otherwise the version number.
+    """
+    if isinstance(message, Message):
+        return "legacy"
+    return to_bytes_versioned(message)[0] & 0x7F
+
+
+def is_supported_transaction_version(version: int | str) -> bool:
+    """Return whether a transaction version is one the SVM schemes can police.
+
+    Every SVM verification path derives its sponsorship policy from
+    version-specific structure: legacy and version 0 transactions declare their
+    compute budget in a ComputeBudget instruction pair, while version 1
+    (SIMD-0385) carries it in ``message.config`` and has no ComputeBudget
+    instructions at all. A future version could relocate it again, and an
+    instruction scan over a layout it does not model finds nothing to reject and
+    passes vacuously, leaving the priority fee the facilitator pays unbounded.
+    This is therefore an allowlist, not a denylist of known-bad versions:
+    anything unmodelled must be rejected the moment solders learns to decode it.
+
+    Args:
+        version: Version reported by get_transaction_version.
+
+    Returns:
+        True if the version is legacy, 0 or 1, False otherwise.
+    """
+    return version == "legacy" or version == 0 or version == 1
+
+
+def get_v1_transaction_config(message: VersionedMessage) -> TransactionConfig | None:
+    """Return a version 1 message's compute budget config.
+
+    Args:
+        message: Decoded transaction message of any version.
+
+    Returns:
+        The message config, or None when the message is not version 1.
+    """
+    return message.config if isinstance(message, MessageV1) else None
+
+
+def check_v1_transaction_config(
+    config: TransactionConfig | None,
+    max_compute_units: int | None,
+    max_priority_fee_micro_lamports: int,
+) -> str | None:
+    """Check a version 1 transaction's config against the facilitator's fee policy.
+
+    This enforces on ``message.config`` what the ComputeBudget instruction checks
+    enforce on legacy and version 0 transactions.
+
+    A version 1 transaction that leaves ``compute_unit_limit`` unset is budgeted
+    zero compute units, and one that leaves ``loaded_accounts_data_size_limit``
+    unset is budgeted zero bytes of account data; either way it cannot execute,
+    so both are required. The priority fee is a total in lamports rather than
+    micro-lamports per compute unit, so the per-CU cap is normalized against the
+    declared compute unit limit: the fee passes when ``priority_fee * 1e6 <=
+    max_priority_fee_micro_lamports * compute_unit_limit``, which bounds the
+    facilitator's SOL exposure to exactly what the equivalent version 0
+    transaction could charge. ``heap_size`` and the magnitude of
+    ``loaded_accounts_data_size_limit`` are left uncapped: unlike their version 0
+    instruction forms they add no execution surface, and their compute cost is
+    already bounded by the capped compute unit limit.
+
+    Args:
+        config: The transaction's message.config, or None.
+        max_compute_units: Maximum allowed compute_unit_limit, or None for no cap.
+        max_priority_fee_micro_lamports: Per-compute-unit price cap the total fee
+            is normalized against.
+
+    Returns:
+        The name of the first violation found, or None when the config is acceptable.
+    """
+    compute_unit_limit = config.compute_unit_limit if config else None
+    if not compute_unit_limit:
+        return "compute_unit_limit_missing"
+    if max_compute_units is not None and compute_unit_limit > max_compute_units:
+        return "compute_unit_limit_too_high"
+    if not (config and config.loaded_accounts_data_size_limit):
+        return "loaded_accounts_data_size_limit_missing"
+    priority_fee = config.priority_fee or 0
+    if priority_fee * 1_000_000 > max_priority_fee_micro_lamports * compute_unit_limit:
+        return "priority_fee_too_high"
+    return None
 
 
 def get_token_payer_from_transaction(tx: VersionedTransaction) -> str:

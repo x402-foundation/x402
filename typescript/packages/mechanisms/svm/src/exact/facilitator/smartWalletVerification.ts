@@ -20,7 +20,11 @@ import {
 import type { PaymentRequirements, VerifyResponse } from "@x402/core/types";
 import { MEMO_PROGRAM_ADDRESS } from "../../constants";
 import type { FacilitatorSvmSigner, SvmInnerInstructionsResult } from "../../signer";
-import { decodeTransactionFromPayload } from "../../utils";
+import {
+  checkV1TransactionConfig,
+  decodeTransactionFromPayload,
+  isSupportedTransactionVersion,
+} from "../../utils";
 import * as Errors from "./errors";
 
 const DEFAULT_SMART_WALLET_MAX_COMPUTE_UNITS = 400_000;
@@ -147,6 +151,12 @@ export type DecodedTransactionView = {
   };
   decompiled: {
     instructions?: ReadonlyArray<DecodedInstructionView>;
+    version: number | string;
+    config?: {
+      computeUnitLimit?: number;
+      loadedAccountsDataSizeLimit?: number;
+      priorityFeeLamports?: bigint;
+    };
   };
   resolvedAccountKeys: readonly string[];
 };
@@ -266,8 +276,11 @@ export function assertFeePayerIsolatedFromInstructions(
 }
 
 /**
- * Validates ComputeBudget instructions without enforcing a program allowlist.
+ * Validates compute budget limits without enforcing a program allowlist.
  * Caps compute units and priority fees to bound the facilitator's fee exposure.
+ * Legacy and version 0 transactions are checked by scanning their
+ * ComputeBudget instructions; version 1 transactions are checked against
+ * `message.config`.
  *
  * @param transaction - Decoded transaction to inspect
  * @param limits - Optional operator-provided overrides for compute budget caps
@@ -285,27 +298,83 @@ export function validateComputeBudgetLimits(
     limits?.maxPriorityFeeMicroLamports ?? DEFAULT_SMART_WALLET_MAX_PRIORITY_FEE_MICROLAMPORTS;
 
   const compiled = getCompiledTransactionMessageDecoder().decode(transaction.messageBytes);
+
+  // Fail closed on any version these checks predate.
+  if (!isSupportedTransactionVersion(compiled.version)) {
+    throw new Error(`${Errors.ErrSmartWalletUnsupportedTransactionVersion}: ${compiled.version}`);
+  }
+
   const decompiled = decompileTransactionMessage(compiled);
-  validateComputeBudgetLimitsFromInstructions(decompiled.instructions ?? [], {
+  validateComputeBudgetLimitsFromMessage(decompiled, {
     maxComputeUnits: maxCU,
     maxPriorityFeeMicroLamports: maxPriorityFee,
   });
 }
 
 /**
- * Validates ComputeBudget instructions already decompiled from the message.
+ * Validates the compute budget of an already-decompiled message, whether it is
+ * declared in ComputeBudget instructions or in a version 1 `message.config`.
  *
- * @param instructions - Decompiled top-level instructions
+ * The version dispatch lives here rather than at the call sites so that a
+ * caller holding a decompiled message cannot reach the instruction scan without
+ * it: on a version whose budget is not in instructions, that scan finds nothing
+ * and passes vacuously.
+ *
+ * @param decompiled - Decompiled transaction message
  * @param limits - Resolved compute budget caps (defaults already applied)
  * @param limits.maxComputeUnits - Maximum allowed compute units
  * @param limits.maxPriorityFeeMicroLamports - Maximum allowed priority fee
  */
-export function validateComputeBudgetLimitsFromInstructions(
-  instructions: ReadonlyArray<DecodedInstructionView>,
+export function validateComputeBudgetLimitsFromMessage(
+  decompiled: DecodedTransactionView["decompiled"],
   limits: { maxComputeUnits: number; maxPriorityFeeMicroLamports: number },
 ): void {
+  const instructions = decompiled.instructions ?? [];
   const maxCU = limits.maxComputeUnits;
   const maxPriorityFee = limits.maxPriorityFeeMicroLamports;
+
+  // Fail closed on any version these checks predate.
+  if (!isSupportedTransactionVersion(decompiled.version)) {
+    throw new Error(`${Errors.ErrSmartWalletUnsupportedTransactionVersion}: ${decompiled.version}`);
+  }
+
+  // Version 1 transactions carry compute budget and priority fee in
+  // `message.config`, which is authoritative: any ComputeBudget instruction
+  // present anyway is rejected outright rather than trusted.
+  if (decompiled.version === 1) {
+    for (const ix of instructions) {
+      if (ix.programAddress.toString() === COMPUTE_BUDGET_PROGRAM_ADDRESS.toString()) {
+        throw new Error(
+          `${Errors.ErrSmartWalletUnsupportedComputeBudget}: version 1 transactions must use message.config`,
+        );
+      }
+    }
+    const violation = checkV1TransactionConfig(decompiled.config, {
+      maxComputeUnits: maxCU,
+      maxPriorityFeeMicroLamports: maxPriorityFee,
+    });
+    if (violation === "compute_unit_limit_missing") {
+      throw new Error(
+        `${Errors.ErrSmartWalletComputeUnitLimitMissing}: version 1 transactions must set config.computeUnitLimit`,
+      );
+    }
+    if (violation === "compute_unit_limit_too_high") {
+      throw new Error(
+        `${Errors.ErrSmartWalletComputeUnitsTooHigh}: ${decompiled.config?.computeUnitLimit} exceeds max ${maxCU}`,
+      );
+    }
+    if (violation === "loaded_accounts_data_size_limit_missing") {
+      throw new Error(
+        `${Errors.ErrSmartWalletLoadedAccountsDataSizeLimitMissing}: version 1 transactions must set config.loadedAccountsDataSizeLimit`,
+      );
+    }
+    if (violation === "priority_fee_too_high") {
+      throw new Error(
+        `${Errors.ErrSmartWalletPriorityFeeTooHigh}: ${decompiled.config?.priorityFeeLamports} lamports exceeds max ${maxPriorityFee} micro-lamports per CU over ${decompiled.config?.computeUnitLimit} CUs`,
+      );
+    }
+    return;
+  }
 
   for (const ix of instructions) {
     if (ix.programAddress.toString() !== COMPUTE_BUDGET_PROGRAM_ADDRESS.toString()) continue;
@@ -497,11 +566,11 @@ export async function verifySmartWalletTransaction(
 
   // 2. Compute budget caps still apply (operator-configurable).
   try {
-    if (instructions) {
+    if (decoded) {
       const maxCU = options?.maxComputeUnits ?? DEFAULT_SMART_WALLET_MAX_COMPUTE_UNITS;
       const maxPriorityFee =
         options?.maxPriorityFeeMicroLamports ?? DEFAULT_SMART_WALLET_MAX_PRIORITY_FEE_MICROLAMPORTS;
-      validateComputeBudgetLimitsFromInstructions(instructions, {
+      validateComputeBudgetLimitsFromMessage(decoded.decompiled, {
         maxComputeUnits: maxCU,
         maxPriorityFeeMicroLamports: maxPriorityFee,
       });

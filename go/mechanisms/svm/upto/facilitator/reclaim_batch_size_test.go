@@ -40,7 +40,8 @@ func buildReclaimBatchTransaction(t *testing.T, n int) *solana.Transaction {
 	}
 	tx, err := builder.Build()
 	require.NoError(t, err)
-	tx.Message.SetVersion(solana.MessageVersionV0)
+	_, err = tx.Message.SetVersion(solana.MessageVersionV0)
+	require.NoError(t, err)
 	tx.Signatures = make([]solana.Signature, tx.Message.Header.NumRequiredSignatures)
 	return tx
 }

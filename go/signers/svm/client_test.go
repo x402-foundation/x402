@@ -9,8 +9,9 @@ import (
 )
 
 // Test private key (deterministic for testing)
-// This is a valid test key for Solana
-const testPrivateKeyBase58 = "4Z7cXSyeFR8wNGMVXUE1TwtKn5D5Vu7FzEv69dokLv7KrQk7h2enu1bSz1tLTjKLuqBm1cUYXL9j3xTmD8wWEqmr"
+// This is a valid Solana keypair — seed and public key halves agree, as the
+// SDK requires — for the public key Br89qXP48gkMN6c1QzmyQFcoQXzUCLXT7nYTdSJTKTXt.
+const testPrivateKeyBase58 = "3mzv7AKKWSJzA8HfuAT85tLhuwi4mGsME4bRjUhJ2yojdR6LCjbgfwBfki3T2YGkc6LbcfYoHEjzX9XiQhH5SsFU"
 
 func TestNewClientSignerFromPrivateKey(t *testing.T) {
 	tests := []struct {

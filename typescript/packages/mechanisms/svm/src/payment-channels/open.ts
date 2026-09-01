@@ -422,6 +422,7 @@ export interface VerifyOpenResult {
 
 type CompiledOpenMessage = {
   addressTableLookups?: readonly unknown[];
+  version?: number | string;
   header: {
     numReadonlyNonSignerAccounts: number;
     numReadonlySignerAccounts: number;
@@ -475,6 +476,15 @@ export async function verifyOpenTransaction(
   if (message.addressTableLookups && message.addressTableLookups.length > 0) {
     throw new Error(
       "verifyOpenTransaction: address lookup tables are not permitted in an open transaction",
+    );
+  }
+
+  // Every check below reads the compiled `instructions` list, which a version 1
+  // message does not carry. The spec limits open transactions to legacy or
+  // version 0; reject anything newer explicitly.
+  if (message.version !== "legacy" && message.version !== 0) {
+    throw new Error(
+      `verifyOpenTransaction: unsupported transaction version ${String(message.version)}; open transactions must be legacy or version 0`,
     );
   }
 

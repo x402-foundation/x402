@@ -70,6 +70,16 @@ func VerifyOpenTransaction(transactionBase64 string, expected VerifyOpenExpected
 	}
 	message := &tx.Message
 
+	// Narrower than svm.IsSupportedTransactionVersion, whose rationale applies:
+	// every check below is indexed over a legacy/v0 compiled message and reads
+	// the compute budget out of ComputeBudget instructions.
+	if version := message.GetVersion(); version != solana.MessageVersionLegacy && version != solana.MessageVersionV0 {
+		return nil, fmt.Errorf(
+			"verifyOpenTransaction: unsupported_transaction_version: MessageVersion %d; an open transaction must be legacy or v0",
+			version,
+		)
+	}
+
 	// Address Lookup Tables hide instruction programs and accounts from the
 	// static key list, so every program must be visible before signing.
 	if len(message.AddressTableLookups) > 0 {

@@ -1,10 +1,59 @@
 """Tests for SVM signer implementations."""
 
-import pytest
-from solders.keypair import Keypair
+import base64
 
-from x402.mechanisms.svm import SOLANA_DEVNET_CAIP2
+import pytest
+from solders.hash import Hash
+from solders.instruction import AccountMeta, Instruction
+from solders.keypair import Keypair
+from solders.message import Message, MessageV0, MessageV1, TransactionConfig, to_bytes_versioned
+from solders.pubkey import Pubkey
+from solders.signature import Signature
+from solders.transaction import VersionedTransaction
+
+from x402.mechanisms.svm import MEMO_PROGRAM_ADDRESS, SOLANA_DEVNET_CAIP2
 from x402.mechanisms.svm.signers import FacilitatorKeypairSigner, KeypairSigner
+
+FIXED_BLOCKHASH = "5Tx8F3jgSHx21CbtjwmdaKPLM5tWmreWAnPrbqHomSJF"
+
+
+def build_transaction(
+    version: int | str, fee_payer: Keypair, authority: Keypair | None = None
+) -> VersionedTransaction:
+    """Build a transaction of the given version with a memo instruction.
+
+    Signature slot 0 is left as a placeholder for the facilitator to fill, which
+    is the shape a payer submits. Any co-signer signs for real.
+
+    Args:
+        version: "legacy", 0 or 1.
+        fee_payer: Keypair that pays fees and owns signature slot 0.
+        authority: Optional co-signer occupying signature slot 1.
+
+    Returns:
+        The transaction, with slot 0 unsigned.
+    """
+    accounts = [] if authority is None else [AccountMeta(authority.pubkey(), True, False)]
+    memo_ix = Instruction(Pubkey.from_string(MEMO_PROGRAM_ADDRESS), bytes([1]), accounts)
+    blockhash = Hash.from_string(FIXED_BLOCKHASH)
+
+    message: Message | MessageV0 | MessageV1
+    if version == "legacy":
+        message = Message.new_with_blockhash([memo_ix], fee_payer.pubkey(), blockhash)
+    elif version == 0:
+        message = MessageV0.try_compile(fee_payer.pubkey(), [memo_ix], [], blockhash)
+    else:
+        message = MessageV1.try_compile(
+            fee_payer.pubkey(),
+            [memo_ix],
+            blockhash,
+            TransactionConfig(compute_unit_limit=20_000, loaded_accounts_data_size_limit=65_536),
+        )
+
+    signatures = [Signature.default()]
+    if authority is not None:
+        signatures.append(authority.sign_message(to_bytes_versioned(message)))
+    return VersionedTransaction.populate(message, signatures)
 
 
 class TestKeypairSigner:
@@ -100,45 +149,38 @@ class TestFacilitatorKeypairSigner:
                 tx_base64, "UnknownAddress11111111111111111111", SOLANA_DEVNET_CAIP2
             )
 
-    def test_is_versioned_transaction_should_detect_legacy(self):
-        """_is_versioned_transaction should detect legacy transactions."""
-        keypair = Keypair()
-        signer = FacilitatorKeypairSigner(keypair)
+    @pytest.mark.parametrize("version", ["legacy", 0, 1])
+    def test_sign_transaction_signs_the_versioned_message(self, version):
+        """The facilitator signature must verify against the message serialized
+        behind its own version prefix, which is absent for legacy, 0x80 for
+        version 0 and 0x81 for version 1."""
+        fee_payer = Keypair()
+        signer = FacilitatorKeypairSigner(fee_payer)
+        tx = build_transaction(version, fee_payer)
 
-        # Legacy transaction: first byte of message < 128 (numRequiredSignatures = 1)
-        # Format: [sig_count_compact_u16] [signatures...] [message...]
-        # This is a minimal legacy transaction with 1 signature slot
-        # CompactU16(1) = 0x01, then 64 zero bytes for signature, then legacy message header
-        legacy_tx_bytes = bytes([0x01])  # 1 signature
-        legacy_tx_bytes += bytes(64)  # Empty signature
-        legacy_tx_bytes += bytes(
-            [0x01, 0x00, 0x00]
-        )  # Legacy header: numReqSigs=1, numReadonlySigned=0, numReadonlyUnsigned=0
-        legacy_tx_bytes += bytes([0x01])  # 1 account key
-        legacy_tx_bytes += bytes(32)  # Account key
-        legacy_tx_bytes += bytes(32)  # Recent blockhash
-        legacy_tx_bytes += bytes([0x00])  # 0 instructions
+        signed_base64 = signer.sign_transaction(
+            base64.b64encode(bytes(tx)).decode(), str(fee_payer.pubkey()), SOLANA_DEVNET_CAIP2
+        )
 
-        assert signer._is_versioned_transaction(legacy_tx_bytes) is False
+        signed = VersionedTransaction.from_bytes(base64.b64decode(signed_base64))
+        message_bytes = to_bytes_versioned(signed.message)
+        assert signed.signatures[0].verify(fee_payer.pubkey(), message_bytes)
 
-    def test_is_versioned_transaction_should_detect_versioned(self):
-        """_is_versioned_transaction should detect versioned (v0) transactions."""
-        keypair = Keypair()
-        signer = FacilitatorKeypairSigner(keypair)
+    def test_sign_transaction_preserves_the_payer_signature_slot(self):
+        """Only slot 0 is overwritten; a co-signer's signature must survive."""
+        fee_payer = Keypair()
+        authority = Keypair()
+        signer = FacilitatorKeypairSigner(fee_payer)
+        tx = build_transaction(0, fee_payer, authority)
+        original = list(tx.signatures)
 
-        # Versioned transaction: first byte of message >= 128 (0x80 for v0)
-        # Format: [sig_count_compact_u16] [signatures...] [version_byte] [message...]
-        versioned_tx_bytes = bytes([0x01])  # 1 signature
-        versioned_tx_bytes += bytes(64)  # Empty signature
-        versioned_tx_bytes += bytes([0x80])  # Version byte for v0 (128)
-        versioned_tx_bytes += bytes([0x01, 0x00, 0x00])  # Header
-        versioned_tx_bytes += bytes([0x01])  # 1 account key
-        versioned_tx_bytes += bytes(32)  # Account key
-        versioned_tx_bytes += bytes(32)  # Recent blockhash
-        versioned_tx_bytes += bytes([0x00])  # 0 instructions
-        versioned_tx_bytes += bytes([0x00])  # 0 address table lookups
+        signed_base64 = signer.sign_transaction(
+            base64.b64encode(bytes(tx)).decode(), str(fee_payer.pubkey()), SOLANA_DEVNET_CAIP2
+        )
 
-        assert signer._is_versioned_transaction(versioned_tx_bytes) is True
+        signed = VersionedTransaction.from_bytes(base64.b64decode(signed_base64))
+        assert signed.signatures[0] != original[0]
+        assert signed.signatures[1] == original[1]
 
     def test_from_base58_with_single_key(self):
         """from_base58 should create signer from single base58 key."""

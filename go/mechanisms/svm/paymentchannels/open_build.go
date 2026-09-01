@@ -110,7 +110,9 @@ func BuildOpenTransaction(args BuildOpenArgs) (*BuiltOpen, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to build open transaction: %w", err)
 	}
-	tx.Message.SetVersion(solana.MessageVersionV0)
+	if _, err := tx.Message.SetVersion(solana.MessageVersionV0); err != nil {
+		return nil, fmt.Errorf("failed to set open transaction message version: %w", err)
+	}
 
 	return &BuiltOpen{
 		ChannelID:   channelID,

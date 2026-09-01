@@ -490,7 +490,8 @@ func TestVerifyOpenTransactionRejectsWritableHeaderElevation(t *testing.T) {
 		AddInstruction(fixture.openInstruction(t)).
 		Build()
 	require.NoError(t, err)
-	tx.Message.SetVersion(solana.MessageVersionV0)
+	_, err = tx.Message.SetVersion(solana.MessageVersionV0)
+	require.NoError(t, err)
 
 	// Promote the first read-only account to writable, then sign the tampered
 	// message so only the account policy can catch it.
@@ -537,7 +538,8 @@ func TestVerifyOpenTransactionRejectsAddressLookupTables(t *testing.T) {
 		AddInstruction(fixture.openInstruction(t)).
 		Build()
 	require.NoError(t, err)
-	tx.Message.SetVersion(solana.MessageVersionV0)
+	_, err = tx.Message.SetVersion(solana.MessageVersionV0)
+	require.NoError(t, err)
 	tx.Message.AddressTableLookups = solana.MessageAddressTableLookupSlice{{
 		AccountKey:      testKeypair(t).PublicKey(),
 		WritableIndexes: []uint8{0},
@@ -555,7 +557,8 @@ func TestVerifyOpenTransactionRejectsForgedPayerSignature(t *testing.T) {
 		AddInstruction(fixture.openInstruction(t)).
 		Build()
 	require.NoError(t, err)
-	tx.Message.SetVersion(solana.MessageVersionV0)
+	_, err = tx.Message.SetVersion(solana.MessageVersionV0)
+	require.NoError(t, err)
 	tx.Signatures = make([]solana.Signature, tx.Message.Header.NumRequiredSignatures)
 	// Sign with a key that is not the payer, then park it in the payer's slot.
 	signTransaction(t, tx, fixture.payerKey)
@@ -565,4 +568,17 @@ func TestVerifyOpenTransactionRejectsForgedPayerSignature(t *testing.T) {
 
 	_, err = VerifyOpenTransaction(encodeTransaction(t, tx), fixture.expected())
 	require.ErrorContains(t, err, "invalid signature for payload.from")
+}
+
+// Every check an open is subjected to is indexed over a legacy or v0 compiled
+// message and reads the compute budget out of ComputeBudget instructions, which
+// transaction v1 (SIMD-0385) moves into an inline message config. A version
+// those checks predate is therefore rejected outright, ahead of the
+// lookup-table, signer, signature and account checks.
+func TestVerifyOpenTransactionRejectsUnsupportedTransactionVersions(t *testing.T) {
+	fixture := newOpenFixture(t)
+
+	_, err := VerifyOpenTransaction(fixture.buildTransactionV1Open(t), fixture.expected())
+
+	require.ErrorContains(t, err, "unsupported_transaction_version")
 }
