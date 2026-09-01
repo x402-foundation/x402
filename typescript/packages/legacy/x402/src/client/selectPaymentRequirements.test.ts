@@ -6,6 +6,10 @@ import { PaymentRequirements, Network } from "../types";
 import { getUsdcChainConfigForChain } from "../shared/evm";
 import { getNetworkId } from "../shared/network";
 
+const BASE_CAIP2 = "eip155:8453";
+const SOLANA_MAINNET_CAIP2 =
+  "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
+
 /**
  * Test helper to create a payment requirement with the given network, asset, and overrides.
  *
@@ -144,15 +148,15 @@ describe("selectPaymentRequirements", () => {
     expect(selected.network).toBe("avalanche");
   });
 
-  it("when no broadly accepted requirement exists, returns the first requirement", () => {
+  it("fails closed when no broadly accepted requirement exists", () => {
     const reqs: PaymentRequirements[] = [
       makeRequirement("avalanche", "0x6666666666666666666666666666666666666666"),
       makeRequirement("base", "0x7777777777777777777777777777777777777777"),
     ];
 
-    const selected = selectPaymentRequirements(reqs, "solana");
-    // No matches for solana; function returns the first element in input order
-    expect(selected.network).toBe("avalanche");
+    expect(() => selectPaymentRequirements(reqs, "solana")).toThrow(
+      "No payment requirements match the requested network and scheme",
+    );
   });
 
   it("supports SVM networks by matching their USDC asset", () => {
@@ -166,4 +170,51 @@ describe("selectPaymentRequirements", () => {
     expect(selected.network).toBe("solana");
     expect(selected.asset).toBe(solanaUsdc);
   });
+
+  it.each([
+    ["Base first", [BASE_CAIP2, SOLANA_MAINNET_CAIP2]],
+    ["Solana first", [SOLANA_MAINNET_CAIP2, BASE_CAIP2]],
+  ])(
+    "selects an exact Solana CAIP-2 match with %s",
+    (_label, orderedNetworks) => {
+      const reqs = orderedNetworks.map(network =>
+        makeRequirement(
+          network as Network,
+          network === SOLANA_MAINNET_CAIP2
+            ? "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+            : "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        ),
+      );
+
+      const selected = selectPaymentRequirements(
+        reqs,
+        SOLANA_MAINNET_CAIP2 as Network,
+        "exact",
+      );
+
+      expect(selected.network).toBe(SOLANA_MAINNET_CAIP2);
+    },
+  );
+
+  it.each([
+    ["Base first", [BASE_CAIP2, SOLANA_MAINNET_CAIP2]],
+    ["Solana first", [SOLANA_MAINNET_CAIP2, BASE_CAIP2]],
+  ])(
+    "fails closed for legacy Solana aliases against CAIP-2 offers with %s",
+    (_label, orderedNetworks) => {
+      const reqs = orderedNetworks.map(network =>
+        makeRequirement(network as Network, "asset"),
+      );
+
+      expect(() =>
+        selectPaymentRequirements(
+          reqs,
+          ["solana", "solana-devnet"],
+          "exact",
+        ),
+      ).toThrow(
+        "No payment requirements match the requested network and scheme",
+      );
+    },
+  );
 });

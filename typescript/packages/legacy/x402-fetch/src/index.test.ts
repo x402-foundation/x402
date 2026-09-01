@@ -165,4 +165,30 @@ describe("fetchWithPayment()", () => {
       } as RequestInitWithRetry),
     ).rejects.toBe(paymentError);
   });
+
+  it("does not sign or retry when no payment requirement matches", async () => {
+    const selectionError = new Error(
+      "No payment requirements match the requested network and scheme",
+    );
+    const { createPaymentHeader, selectPaymentRequirements } = await import("x402/client");
+    (selectPaymentRequirements as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw selectionError;
+    });
+    mockFetch.mockResolvedValue(
+      createResponse(402, {
+        accepts: validPaymentRequirements,
+        x402Version: 1,
+      }),
+    );
+
+    await expect(
+      wrappedFetch("https://api.example.com", {
+        method: "GET",
+      } as RequestInitWithRetry),
+    ).rejects.toBe(selectionError);
+
+    expect(createPaymentHeader).not.toHaveBeenCalled();
+    expect(mockWalletClient.signMessage).not.toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
 });
