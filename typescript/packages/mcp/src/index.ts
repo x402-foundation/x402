@@ -17,6 +17,7 @@ export type {
   x402MCPClientConfig,
   MCPContentItem,
 } from "./client";
+export { PaidResponseValidationError } from "./client";
 
 // Server exports
 export { createPaymentWrapper } from "./server";
@@ -61,6 +62,9 @@ export type {
   PaymentRequiredContext,
   PaymentRequiredHookResult,
   PaymentRequiredHook,
+  PaidResponseValidationView,
+  ValidatePaidResponseContext,
+  ValidatePaidResponse,
 } from "./types";
 
 // Utility exports
