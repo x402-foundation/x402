@@ -8,9 +8,10 @@ import (
 
 // BuilderCodeFacilitatorExtension manages builder-code attribution at settlement
 // time. When BuilderCode is set, it is encoded as the wallet code (`w`); the app
-// code (`a`) and service code (`s`) are read from the client payment payload
-// extensions. When ServiceCode is set, it is appended to `s` within the
-// facilitator's own MAX_FACILITATOR_SERVICE_CODES reservation. It implements
+// code (`a`) is read from v2 client payment payload extensions, while service
+// codes (`s`) are read from either version. When ServiceCode is set, it is
+// appended to `s` within the facilitator's own
+// MAX_FACILITATOR_SERVICE_CODES reservation. It implements
 // evm.BuilderCodeFacilitatorExtension so the base evm settle paths can resolve
 // and append the ERC-8021 calldata suffix.
 type BuilderCodeFacilitatorExtension struct {
@@ -33,12 +34,13 @@ func (e *BuilderCodeFacilitatorExtension) Key() string {
 }
 
 // BuildDataSuffix builds the ERC-8021 Schema 2 calldata suffix for a settlement.
-// `a` and `s` come from the client payment payload extensions; `w` is the
-// facilitator's own code when configured. The facilitator's own `s` entry
-// (ServiceCode) is appended after the echoed client/server codes, within its
-// own MAX_FACILITATOR_SERVICE_CODES reservation. Returns an error when
-// ServiceCode is set but is not a valid builder code. Returns nil when no
-// attribution is present.
+// For v2 payloads, `a` comes from the client payment payload extensions. It is
+// omitted for v1 payloads, where the resource-server echo gate does not run.
+// `s` is read for either version and `w` is the facilitator's own code when
+// configured. The facilitator's own `s` entry (ServiceCode) is appended after
+// the echoed client/server codes, within its own MAX_FACILITATOR_SERVICE_CODES
+// reservation. Returns an error when ServiceCode is set but is not a valid
+// builder code. Returns nil when no attribution is present.
 func (e *BuilderCodeFacilitatorExtension) BuildDataSuffix(ctx evm.DataSuffixContext) ([]byte, error) {
 	clientExt := extractClientExtension(ctx.Payload.Extensions)
 
@@ -46,8 +48,10 @@ func (e *BuilderCodeFacilitatorExtension) BuildDataSuffix(ctx evm.DataSuffixCont
 	if validateCode(e.BuilderCode) {
 		data.W = e.BuilderCode
 	}
-	if a, ok := clientExt["a"].(string); ok && validateCode(a) {
-		data.A = a
+	if ctx.Payload.X402Version == 2 {
+		if a, ok := clientExt["a"].(string); ok && validateCode(a) {
+			data.A = a
+		}
 	}
 	data.S = resolveServiceCodes(clientExt["s"])
 	if e.ServiceCode != "" {

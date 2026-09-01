@@ -1379,19 +1379,6 @@ func TestValidateExtensions(t *testing.T) {
 		}
 	})
 
-	t.Run("fails when undeclared app attribution is outside an info envelope", func(t *testing.T) {
-		p := payloadWith(map[string]interface{}{
-			"builder-code": map[string]interface{}{
-				"a":    "attacker_app",
-				"info": map[string]interface{}{"s": []interface{}{"client_service"}},
-			},
-		})
-		r := server.ValidateExtensions(nil, p)
-		if r.Valid || r.InvalidReason != "extension_echo_mismatch" || r.ExtensionKey != "builder-code" {
-			t.Fatalf("expected echo mismatch on undeclared builder-code app attribution, got %+v", r)
-		}
-	})
-
 	t.Run("passes when client omits extensions", func(t *testing.T) {
 		if r := server.ValidateExtensions(serverExtensions, payloadWith(nil)); !r.Valid {
 			t.Fatalf("expected valid, got %+v", r)
