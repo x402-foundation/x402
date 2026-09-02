@@ -277,7 +277,7 @@ export class BatchSvmScheme implements SchemeNetworkServer {
       const state = await this.store.get(request.channelId);
       this.requestContexts.delete(ctx.paymentPayload);
       if (!state) return this.abort(BatchError.CHANNEL_STATE, "missing replay state");
-      return { skip: true, result: acceptedResponse(state, ctx.requirements, false) };
+      return { skip: true, result: acceptedResponse(state, ctx.requirements) };
     }
     if (!request?.pendingId) return this.abort(CHANNEL_BUSY, "missing reservation");
     const state = await this.store.get(request.channelId);
@@ -305,7 +305,7 @@ export class BatchSvmScheme implements SchemeNetworkServer {
         };
       });
       this.requestContexts.delete(ctx.paymentPayload);
-      return { skip: true, result: acceptedResponse(committed, ctx.requirements, true) };
+      return { skip: true, result: acceptedResponse(committed, ctx.requirements) };
     } catch (error) {
       return this.abort(
         classifyError(error),
@@ -516,17 +516,16 @@ export class BatchSvmScheme implements SchemeNetworkServer {
   }
 }
 
-function acceptedResponse(
-  state: ChannelState,
-  requirements: PaymentRequirements,
-  committed: boolean,
-): SettleResponse {
-  const charged = committed ? requirements.amount : "0";
+function acceptedResponse(state: ChannelState, requirements: PaymentRequirements): SettleResponse {
   return {
     amount: "",
     extra: {
       channelState: snapshot(state),
-      chargedAmount: charged,
+      // The fixed per-request price, on a fresh acceptance and on a replay
+      // alike: a replay answers an authorization that was already charged this
+      // amount, so reporting zero would tell the client it paid nothing for a
+      // request it did pay for.
+      chargedAmount: requirements.amount,
       commitmentId: `${state.channelId}:${state.pendingRequest?.maxClaimableAmount ?? state.signedMaxClaimable}`,
     },
     network: requirements.network,

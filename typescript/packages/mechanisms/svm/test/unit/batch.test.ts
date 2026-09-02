@@ -313,6 +313,44 @@ describe("batch-settlement SVM", () => {
       });
     });
 
+    it("reports the real charged amount when settling a replay", async () => {
+      const store = new MemoryChannelStore();
+      const voucher = await signedVoucher(1_000n);
+      await store.put(
+        serverState({
+          chargedCumulativeAmount: 1_000n,
+          highestVoucherExpiresAt: voucher.expiresAt,
+          highestVoucherSignature: voucher.signature,
+          signedMaxClaimable: 1_000n,
+        }),
+      );
+      const server = new BatchServerScheme({ store });
+      const context = {
+        declaredExtensions: {},
+        paymentPayload: {
+          accepted: requirements(),
+          payload: { channelConfig, type: "voucher" as const, voucher },
+          x402Version: 2,
+        },
+        requirements: requirements(),
+      };
+      await server.schemeHooks.onBeforeVerify!(context);
+
+      const settled = await server.schemeHooks.onBeforeSettle!({
+        ...context,
+        phase: "after-handler",
+      });
+      // The replayed authorization was charged the request price. Reporting
+      // zero would tell the client it paid nothing for a request it paid for.
+      expect(settled).toMatchObject({
+        result: {
+          extra: { chargedAmount: "1000", commitmentId: `${channelId}:1000` },
+          success: true,
+        },
+        skip: true,
+      });
+    });
+
     it("re-serves an exact replay only through the application response cache", async () => {
       const store = new MemoryChannelStore();
       const voucher = await signedVoucher(1_000n);
