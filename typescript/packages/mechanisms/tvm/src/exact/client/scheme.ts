@@ -6,6 +6,7 @@ import {
 } from "@x402/core/types";
 import { Address, beginCell, external, internal, storeMessage, type Cell } from "@ton/core";
 import { ClientTvmSigner } from "../../signer";
+import { findDefaultAsset } from "../../defaultAssets";
 import { TvmPaymentPayload } from "../../types";
 import {
   DEFAULT_JETTON_WALLET_MESSAGE_AMOUNT,
@@ -63,6 +64,7 @@ export interface ExactTvmClientConfig {
  */
 export class ExactTvmScheme implements SchemeNetworkClient {
   readonly scheme = "exact";
+  findDefaultAsset = findDefaultAsset;
   private readonly clients = new Map<string, TvmProviderClient>();
 
   constructor(

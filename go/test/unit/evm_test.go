@@ -3,6 +3,7 @@ package unit_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
@@ -220,6 +221,57 @@ func TestEVMDualVersionSupport(t *testing.T) {
 		// Verify V2 structure (has scheme/network in Accepted)
 		if payloadV2.Accepted.Scheme == "" {
 			t.Error("Expected V2 payload to have Accepted.Scheme")
+		}
+	})
+}
+
+func TestEVMSpendControls(t *testing.T) {
+	usdc := "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+	network := x402.Network("eip155:8453")
+	client := x402.Newx402Client()
+	client.Register(network, evmclient.NewExactEvmScheme(&mockClientEvmSigner{}, nil))
+
+	req := func(asset, amount string) types.PaymentRequirements {
+		return types.PaymentRequirements{
+			Scheme:  evm.SchemeExact,
+			Network: string(network),
+			Asset:   asset,
+			Amount:  amount,
+			PayTo:   "0x9876543210987654321098765432109876543210",
+		}
+	}
+
+	t.Run("documented USDC at or below $1 is allowed", func(t *testing.T) {
+		selected, err := client.SelectPaymentRequirements([]types.PaymentRequirements{req(usdc, "1000000")})
+		if err != nil {
+			t.Fatalf("expected allow: %v", err)
+		}
+		if selected.Amount != "1000000" {
+			t.Fatalf("amount = %s", selected.Amount)
+		}
+	})
+
+	t.Run("above $1 is rejected", func(t *testing.T) {
+		_, err := client.SelectPaymentRequirements([]types.PaymentRequirements{req(usdc, "1000001")})
+		if err == nil || !strings.Contains(err.Error(), "maxAmountPerPayment") {
+			t.Fatalf("expected cap error, got %v", err)
+		}
+	})
+
+	t.Run("unknown asset is rejected unless allowedAssets", func(t *testing.T) {
+		custom := "0x0000000000000000000000000000000000000001"
+		_, err := client.SelectPaymentRequirements([]types.PaymentRequirements{req(custom, "1")})
+		if err == nil || !strings.Contains(err.Error(), "spendControls.allowedAssets") {
+			t.Fatalf("expected allowlist error, got %v", err)
+		}
+
+		optIn := x402.Newx402Client()
+		optIn.Register(network, evmclient.NewExactEvmScheme(&mockClientEvmSigner{}, nil))
+		optIn.SetSpendControls(x402.SpendControls{
+			AllowedAssets: []x402.SpendControlAsset{{Network: network, Asset: custom}},
+		})
+		if _, err := optIn.SelectPaymentRequirements([]types.PaymentRequirements{req(custom, "1")}); err != nil {
+			t.Fatalf("opt-in custom asset: %v", err)
 		}
 	})
 }

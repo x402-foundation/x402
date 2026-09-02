@@ -47,6 +47,19 @@ function normalizeWildcardPattern(pattern: string): string {
 }
 
 /**
+ * Returns true when a route pattern contains only wildcard segments (e.g. `"*"`),
+ * with no literal path segments. Bare wildcards must not produce a routeTemplate
+ * for discovery catalog indexing.
+ *
+ * @param pattern - Route pattern from route matching (path only, no HTTP method)
+ * @returns True if every segment is a wildcard
+ */
+function isWildcardOnlyPattern(pattern: string): boolean {
+  const segments = pattern.split("/").filter(segment => segment.length > 0);
+  return segments.length > 0 && segments.every(segment => segment === "*");
+}
+
+/**
  * Converts a parameterized route pattern into a :param template and extracts concrete
  * param values from the URL path in a single call.
  *
@@ -200,6 +213,9 @@ export const bazaarResourceServerExtension: ResourceServerExtension = {
     // pathParams carries runtime values (distinct from pathParamsSchema in the declaration).
     // Wildcard * segments are auto-converted to :var1, :var2, etc. for catalog normalization.
     const rawRoutePattern = (transportContext as HTTPRequestContext).routePattern;
+    if (rawRoutePattern && isWildcardOnlyPattern(rawRoutePattern)) {
+      return enrichedResult;
+    }
     const routePattern = rawRoutePattern ? normalizeWildcardPattern(rawRoutePattern) : undefined;
     const dynamicRoute = routePattern
       ? extractDynamicRouteInfo(routePattern, transportContext.adapter.getPath())

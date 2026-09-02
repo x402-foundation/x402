@@ -31,6 +31,7 @@ const x402Mcp = createx402MCPClient({
   name: "x402-mcp-e2e-client",
   version: "1.0.0",
   schemes,
+  spendControls: false,
   autoPayment: true,
   onPaymentRequested: async () => true,
 });
@@ -114,7 +115,7 @@ try {
     batchSettlementPhase,
     batchSettlementScheme,
     issueRequest,
-    refund: () => batchSettlementScheme.refund(toolResourceUrl, { fetch: mcpRefundFetch }),
+    refund: () => batchSettlementScheme!.refund(toolResourceUrl, { fetch: mcpRefundFetch }),
   });
 } catch (error: unknown) {
   console.log(

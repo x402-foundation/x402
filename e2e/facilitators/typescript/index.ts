@@ -395,7 +395,11 @@ const bazaarCatalog = new BazaarCatalog();
 function createPaymentHash(paymentPayload: PaymentPayload): string {
   return crypto
     .createHash("sha256")
-    .update(JSON.stringify(paymentPayload))
+    .update(
+      JSON.stringify(paymentPayload, (_, value) =>
+        typeof value === "bigint" ? value.toString() : value,
+      ),
+    )
     .digest("hex");
 }
 
@@ -559,7 +563,7 @@ if (svmSigner) {
     )
     .register(
       SVM_NETWORK as Network,
-      new UptoSvmScheme(svmSigner, { rpcUrl: SVM_RPC_URL }),
+      new UptoSvmScheme(svmSigner),
     )
     .registerV1(SVM_V1_NETWORKS as Network[], new ExactSvmSchemeV1(svmSigner));
 }

@@ -23,6 +23,7 @@ import { ExactConcordiumScheme as ExactConcordiumFacilitator } from "../../src/e
 import { toConcordiumFacilitatorSigner } from "../../src/signer";
 import type { ClientConcordiumSigner } from "../../src/signer";
 import type { ExactConcordiumPayloadV2, SimpleTransferPayload } from "../../src/types";
+import { convertToTokenAmount } from "@x402/core/utils";
 import {
   CONCORDIUM_TESTNET_CAIP2,
   getConcordiumGrpcUrl,
@@ -536,9 +537,9 @@ describe("Concordium Integration Tests", () => {
 
     it("should use registerMoneyParser for custom conversion", async () => {
       concordiumServer.registerMoneyParser(async (amount, _network) => {
-        if (amount > 100) {
+        if (Number(amount) > 100) {
           return {
-            amount: String(Math.round(amount * 1e6)),
+            amount: convertToTokenAmount(String(amount), 6),
             asset: "EURR",
             extra: { tier: "large" },
           };
@@ -571,9 +572,9 @@ describe("Concordium Integration Tests", () => {
     it("should support multiple MoneyParser in chain", async () => {
       concordiumServer
         .registerMoneyParser(async amount => {
-          if (amount > 1000) {
+          if (Number(amount) > 1000) {
             return {
-              amount: String(Math.round(amount * 1e6)),
+              amount: convertToTokenAmount(String(amount), 6),
               asset: "EURR",
               extra: { tier: "vip" },
             };
@@ -581,9 +582,9 @@ describe("Concordium Integration Tests", () => {
           return null;
         })
         .registerMoneyParser(async amount => {
-          if (amount > 100) {
+          if (Number(amount) > 100) {
             return {
-              amount: String(Math.round(amount * 1e6)),
+              amount: convertToTokenAmount(String(amount), 6),
               asset: "USDR",
               extra: { tier: "premium" },
             };

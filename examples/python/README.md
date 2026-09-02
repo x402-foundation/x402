@@ -8,7 +8,7 @@ Examples for the x402 Python SDK.
 cd clients/httpx
 cp .env-local .env
 # Edit .env with your EVM_PRIVATE_KEY and/or SVM_PRIVATE_KEY
-uv sync
+uv sync --reinstall-package x402
 uv run python main.py
 ```
 
@@ -23,6 +23,7 @@ uv run python main.py
 ### Servers
 - **[servers/fastapi/](./servers/fastapi/)** - FastAPI server with payment middleware
 - **[servers/flask/](./servers/flask/)** - Flask server with payment middleware
+- **[servers/upfront/](./servers/upfront/)** - `exact` scheme with `upfront` payment flow (settle before handler)
 - **[servers/custom/](./servers/custom/)** - Manual payment handling
 - **[servers/advanced/](./servers/advanced/)** - Dynamic pricing, hooks, and more
 

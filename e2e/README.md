@@ -50,7 +50,7 @@ Four edits, no catalog type to touch:
 3. **Client** — register the scheme in `clients/<lang>/` (e.g. [`clients/typescript/client.ts`](clients/typescript/client.ts) / [`clients/python/client.py`](clients/python/client.py) / [`clients/go/client.go`](clients/go/client.go)).
 4. **Facilitator** — register the scheme in [`facilitators/typescript`](facilitators/typescript) / [`facilitators/go`](facilitators/go) / [`facilitators/python`](facilitators/python).
 
-Also add `SERVER_*` / `CLIENT_*` / `FACILITATOR_*` secrets to [`.env-local`](.env-local) and the [Environment Variables](#environment-variables) section below. HTTP frameworks, Next, and MCP all pick up routes and scheme registration from the language-root modules — no per-framework CAIP-2 tables. Only custom flows (e.g. svm-smart-wallet) keep a local `endpoints` overlay.
+Also add `SERVER_*` / `CLIENT_*` / `FACILITATOR_*` secrets to [`.env-local`](.env-local) and the [Environment Variables](#environment-variables) section below. HTTP frameworks, Next, and MCP all pick up routes and scheme registration from the language-root modules — no per-framework CAIP-2 tables. Custom client surfaces (e.g. svm-smart-wallet) keep a local `test.config.json` overlay for narrowing (`protocolFamilies`, `facilitators`, extra env) — not a separate catalog route.
 
 ## Add an HTTP framework
 
@@ -61,16 +61,16 @@ Also add `SERVER_*` / `CLIENT_*` / `FACILITATOR_*` secrets to [`.env-local`](.en
 
 ## Custom flows (escape hatches)
 
-These keep local `endpoints` overlays and/or special orchestration — not just a catalog append:
+These keep local `test.config.json` overlays and/or special orchestration — not just a catalog append:
 
 | Flow | Where it lives |
 |------|----------------|
 | Batch-settlement multi-phase | Catalog `routes` entries + orchestration in [`test.ts`](test.ts) + shared scheme registration |
 | Gas sponsoring / Permit2 coldstart | Route `schemeOptions.coldstart` + declared gas `extensions` + fund/revoke/drain in `test.ts` + facilitator extension registration |
-| Swig smart wallet | Overlay [`clients/typescript/http/svm-smart-wallet/test.config.json`](clients/typescript/http/svm-smart-wallet/test.config.json) + [`scripts/swig-setup.ts`](scripts/swig-setup.ts) |
+| Swig smart wallet | Client overlay [`clients/typescript/http/svm-smart-wallet/test.config.json`](clients/typescript/http/svm-smart-wallet/test.config.json) (`protocolFamilies`, `facilitators`, Swig env) + [`scripts/swig-setup.ts`](scripts/swig-setup.ts); uses catalog route `/exact/svm` |
 | Legacy (v1) | `legacy/` trees only — separate configs; do not extend the mechanisms catalog for v1 |
 
-If an SDK implements a route end-to-end (client + server + facilitator), list it in that route’s `sdks`. Omit only when the mechanism package is missing (e.g. Go has no TVM; Python/Go have no AVM/NEAR/XRPL; Go/Python have no SVM upto).
+If an SDK implements a route end-to-end (client + server + facilitator), list it in that route’s `sdks`. Omit only when the mechanism package is missing (e.g. Go has no TVM; Python/Go have no AVM/NEAR/XRPL; Python has no SVM upto).
 
 ## Legacy
 
@@ -113,6 +113,15 @@ cd facilitators/go
 go mod tidy && go build -o go .
 ```
 
+### Wallet status
+
+Print facilitator / client / server addresses plus facilitator native and client payment-token balances for every family whose catalog-required env keys are set.
+
+```bash
+pnpm wallet:status
+pnpm wallet:status --mainnet
+```
+
 ## Usage
 
 ### Interactive Test Mode
@@ -128,6 +137,8 @@ Launches an interactive CLI where you can select:
 - **Extensions** - Additional features like Bazaar discovery
 - **Protocols** - EVM, SVM, AVM, Aptos, Concordium, Hedera, NEAR, Stellar, and/or TVM networks
 - **Payment schemes** (when multiple apply) - `exact`, `upto`, or `batch-settlement`
+- **Payment flows** (when multiple apply) - `authorization`, `upfront`, or `escrow`
+- **Asset transfer methods** (when multiple apply) - `eip3009`, `permit2`, `sequence`, or `ticketSequence`
 
 Every valid combination of your selections will be tested. For example, selecting 2 facilitators, 3 servers, and 2 clients will generate and run all compatible test scenarios.
 
@@ -253,6 +264,14 @@ TVM_PROVIDER=tonapi \
 TVM_TONAPI_API_KEY=<tonapi-key> \
 pnpm test --testnet --families=tvm --facilitators=python --clients=python/http/httpx,python/http/requests --servers=python/http/fastapi,python/http/flask --min -v
 ```
+
+Catalog dimensions can also be filtered from the CLI (`pnpm test --help` for the full list):
+
+```bash
+pnpm test --testnet --min --families=evm --sdk=ts --paymentflow=upfront --assetTransferMethod=eip3009
+```
+
+`--sdk` keeps scenarios whose client, server, and facilitator are that language (`ts` / `typescript`, `py` / `python`, `go`). `--paymentflow` and `--assetTransferMethod` match the catalog route fields (omitted `paymentFlow` is `authorization`).
 
 Optional environment variables (batch-settlement scheme):
 

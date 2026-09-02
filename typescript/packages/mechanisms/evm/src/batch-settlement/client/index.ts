@@ -13,7 +13,7 @@ export { createBatchSettlementEIP3009DepositPayload } from "./eip3009";
 export { signVoucher } from "./voucher";
 export { refundChannel } from "./refund";
 export type { RefundOptions } from "./refund";
-export { createBatchSettlementClientHooks, handleBatchSettlementPaymentResponse } from "./hooks";
+export { createBatchSettlementClientHooks } from "./hooks";
 export { computeChannelId } from "../utils";
 
 export {
@@ -29,12 +29,12 @@ export {
   getChannel,
   hasChannel,
   processPaymentResponse,
-  processSettleResponse,
   readChannelBalanceAndTotalClaimed,
   recoverChannel,
   updateChannelAfterRefund,
+  updateChannelFromSettle,
 } from "./channel";
-export type { BatchSettlementClientDeps } from "./channel";
+export type { BatchSettlementClientDeps, ChannelSettleLocal } from "./channel";
 
 export {
   processCorrectivePaymentRequired,

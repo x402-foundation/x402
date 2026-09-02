@@ -3,11 +3,16 @@ import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
 import { type Address } from "@solana/kit";
 import type { PaymentPayload, PaymentRequirements, SchemeNetworkClient } from "@x402/core/types";
 
+import { findDefaultAsset } from "../../defaultAssets";
 import { buildOpenPaymentChannelTransaction } from "../../payment-channels/open";
 import type { ClientSvmConfig, ClientSvmSigner } from "../../signer";
 import { type UptoSvmPayloadV2 } from "../../types";
 import { createRpcClient, resolveBlockhash, resolveOpenSlot } from "../../utils";
-import { resolveUptoSvmPaymentChannelConfig } from "../shared";
+import {
+  parseTokenProgramHint,
+  resolveUptoSvmMemo,
+  resolveUptoSvmPaymentChannelConfig,
+} from "../shared";
 
 /**
  * SVM client implementation for the `upto` payment scheme.
@@ -21,11 +26,14 @@ import { resolveUptoSvmPaymentChannelConfig } from "../shared";
 export class UptoSvmScheme implements SchemeNetworkClient {
   readonly scheme = "upto";
 
+  /** Lets client spend controls recognize the network's default stablecoins. */
+  findDefaultAsset = findDefaultAsset;
+
   /**
    * Creates a new upto SVM client.
    *
    * @param signer - The payer's SVM signer
-   * @param config - Optional configuration with a custom RPC URL
+   * @param config - Optional configuration, such as a custom RPC URL
    */
   constructor(
     private readonly signer: ClientSvmSigner,
@@ -49,7 +57,7 @@ export class UptoSvmScheme implements SchemeNetworkClient {
     const rpc = createRpcClient(paymentRequirements.network, this.config?.rpcUrl);
 
     // Resolve the token program: prefer the requirement's hint, else read the mint.
-    let tokenProgram = paymentRequirements.extra?.tokenProgram as string | undefined;
+    let tokenProgram = parseTokenProgramHint(paymentRequirements.extra);
     if (!tokenProgram) {
       const mint = await fetchMint(rpc, paymentRequirements.asset as Address);
       const programAddress = mint.programAddress.toString();
@@ -75,7 +83,7 @@ export class UptoSvmScheme implements SchemeNetworkClient {
       deposit: maxAmount,
       feePayer: channelConfig.feePayer,
       gracePeriod: channelConfig.withdrawDelay,
-      memo: paymentRequirements.extra?.memo as string | undefined,
+      memo: resolveUptoSvmMemo(paymentRequirements.extra),
       mint: paymentRequirements.asset,
       openSlot,
       payee: channelConfig.feePayer,

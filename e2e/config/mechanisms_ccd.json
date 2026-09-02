@@ -27,6 +27,17 @@
         "asset": "CCD"
       },
       "extensions": ["bazaar"]
+    },
+    "/exact/ccd/upfront": {
+      "scheme": "exact",
+      "sdks": ["typescript"],
+      "paymentFlow": "upfront",
+      "price": {
+        "amount": "1000",
+        "amountEnv": "CCD_WEATHER_PRICE_MICRO_CCD",
+        "asset": "CCD"
+      },
+      "extensions": ["bazaar"]
     }
   }
 }

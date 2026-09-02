@@ -15,6 +15,10 @@ amount of funds they need to be transferred.
 
 By default, `exact` uses the `authorization` payment flow (verify → resource → settle): the payment is verified before the resource executes and settled afterward.
 
+`exact` MAY also use the `upfront` payment flow (settle → resource → respond) when the resource needs on-chain finality before execution. Payload creation, verification checks, and settlement mechanics are unchanged; only resource-server ordering changes. Facilitator `/verify` is not invoked; `/settle` both validates and commits the payment.
+
+When the resolved flow is not `authorization`, `accepts[].extra.paymentFlow` MUST be `"upfront"`. Clients SHOULD prefer `authorization` when both flows are offered. See [Payment Flow Models](../../x402-specification-v2.md) (section 6.1) in the core specification.
+
 `exact` MAY also use the `upfront` payment flow (settle → resource → respond) when the resource needs payment finality before execution.
 
 `authorization` SHOULD be preferred wherever the asset transfer method permits it, and clients SHOULD choose it when a resource offers both, because the payment commits only after the resource handler succeeds, so a failed handler leaves the client uncharged. Under `upfront` the payment commits first, so a handler failure leaves the client charged with nothing delivered; this specification defines no refund, and any remedy is the resource server's own arrangement. A method whose validity window or replay primitive bounds how long a handler may take SHOULD offer `upfront` for handlers that can exceed that bound.

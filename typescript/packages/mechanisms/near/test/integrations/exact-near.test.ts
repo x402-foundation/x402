@@ -16,11 +16,12 @@ import type {
   VerifyResponse,
 } from "@x402/core/types";
 import { beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_ASSET_BY_NETWORK } from "../../src/constants";
+import { getDefaultAsset } from "../../src";
 import { ExactNearScheme as ExactNearClient } from "../../src/exact/client";
 import { ExactNearScheme as ExactNearFacilitator } from "../../src/exact/facilitator";
 import { ExactNearScheme as ExactNearServer } from "../../src/exact/server";
 import type { ExactNearPayload } from "../../src/types";
+import { convertToTokenAmount } from "@x402/core/utils";
 import {
   FIXTURE,
   buildSignedDelegateB64,
@@ -257,7 +258,7 @@ describe("NEAR Integration Tests", () => {
 
         expect(requirements).toHaveLength(1);
         expect(requirements[0].amount).toBe(testCase.expectedAmount);
-        expect(requirements[0].asset).toBe(DEFAULT_ASSET_BY_NETWORK[FIXTURE.network]);
+        expect(requirements[0].asset).toBe(getDefaultAsset(FIXTURE.network).asset);
       }
     });
 
@@ -283,9 +284,9 @@ describe("NEAR Integration Tests", () => {
 
     it("should use registerMoneyParser for custom conversion", async () => {
       nearServer.registerMoneyParser(async (amount, _network) => {
-        if (amount > 100) {
+        if (Number(amount) > 100) {
           return {
-            amount: String(Math.round(amount * 1e8)),
+            amount: convertToTokenAmount(String(amount), 8),
             asset: "premium-usdc.testnet",
             extra: { tier: "large" },
           };
@@ -310,7 +311,7 @@ describe("NEAR Integration Tests", () => {
         network: FIXTURE.network as Network,
       });
       expect(smallRequirements[0].amount).toBe("50000000");
-      expect(smallRequirements[0].asset).toBe(DEFAULT_ASSET_BY_NETWORK[FIXTURE.network]);
+      expect(smallRequirements[0].asset).toBe(getDefaultAsset(FIXTURE.network).asset);
     });
   });
 });

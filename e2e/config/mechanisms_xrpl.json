@@ -35,10 +35,48 @@
       },
       "extensions": ["bazaar"]
     },
+    "/exact/xrpl/sequence/upfront": {
+      "scheme": "exact",
+      "assetTransferMethod": "sequence",
+      "sdks": ["typescript"],
+      "paymentFlow": "upfront",
+      "price": {
+        "amount": "1000",
+        "amountEnv": "SERVER_XRPL_AMOUNT",
+        "asset": "XRP",
+        "assetEnv": "SERVER_XRPL_ASSET",
+        "extraEnv": {
+          "issuer": {
+            "env": "SERVER_XRPL_ISSUER",
+            "whenAssetOverridden": true
+          }
+        }
+      },
+      "extensions": ["bazaar"]
+    },
     "/exact/xrpl/ticketSequence": {
       "scheme": "exact",
       "assetTransferMethod": "ticketSequence",
       "sdks": ["typescript"],
+      "price": {
+        "amount": "1000",
+        "amountEnv": "SERVER_XRPL_AMOUNT",
+        "asset": "XRP",
+        "assetEnv": "SERVER_XRPL_ASSET",
+        "extraEnv": {
+          "issuer": {
+            "env": "SERVER_XRPL_ISSUER",
+            "whenAssetOverridden": true
+          }
+        }
+      },
+      "extensions": ["bazaar"]
+    },
+    "/exact/xrpl/ticketSequence/upfront": {
+      "scheme": "exact",
+      "assetTransferMethod": "ticketSequence",
+      "sdks": ["typescript"],
+      "paymentFlow": "upfront",
       "price": {
         "amount": "1000",
         "amountEnv": "SERVER_XRPL_AMOUNT",

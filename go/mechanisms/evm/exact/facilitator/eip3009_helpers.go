@@ -172,11 +172,8 @@ func ClassifyEIP3009Signature(
 		return classification, nil
 	}
 
-	code, err := signer.GetCode(ctx, authorization.From)
-	if err != nil {
-		return nil, err
-	}
-	if len(code) > 0 {
+	// Reuse the GetCode result VerifyUniversalSignature already fetched.
+	if sigData.CodeDeployed {
 		classification.IsSmartWallet = true
 		return classification, nil
 	}

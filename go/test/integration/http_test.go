@@ -92,6 +92,7 @@ func TestHTTPIntegration(t *testing.T) {
 
 		// Setup x402 client with cash scheme
 		x402Client := x402.Newx402Client()
+		x402Client.DisableSpendControls()
 		x402Client.Register("x402:cash", cash.NewSchemeNetworkClient("John"))
 
 		// Setup HTTP client wrapper
@@ -344,6 +345,7 @@ func TestHTTPIntegration_FacilitatorReturnsIsValidFalse(t *testing.T) {
 			// Build a structurally valid payment payload using the cash client so
 			// the server accepts the header encoding and reaches the facilitator call.
 			x402Client := x402.Newx402Client()
+			x402Client.DisableSpendControls()
 			x402Client.Register("x402:cash", cash.NewSchemeNetworkClient("Alice"))
 			httpClient := x402http.Newx402HTTPClient(x402Client)
 

@@ -2,7 +2,9 @@
 
 Exercises x402 SVM **Path 2** (simulation-based smart wallet verification) using a [Swig](https://build.onswig.com/) wallet via [`@swig-wallet/kit`](https://build.onswig.com/reference/typescript/kit).
 
-Path 1 static validation rejects Swig-wrapped transactions (unknown program layout). With `enableSmartWalletVerification: true` on the facilitator, verification falls back to Path 2: simulate the transaction, inspect CPI inner instructions for `TransferChecked`, and match amount/mint/recipient.
+Path 1 static validation rejects Swig-wrapped transactions (unknown program layout). With smart wallet verification enabled on the facilitator, verification falls back to Path 2: simulate the transaction, inspect CPI inner instructions for `TransferChecked`, and match amount/mint/recipient.
+
+This is a **client variant** like `fetch` or `axios` — it hits the same catalog route `/exact/svm` as other SVM clients. The local [`test.config.json`](test.config.json) overlay narrows it to SVM exact v2, declares Swig env, and lists compatible facilitators (`typescript`, `go` until Python adds Path 2).
 
 ## How it works
 
@@ -37,11 +39,9 @@ First run writes `SWIG_ACCOUNT_ADDRESS` to `e2e/.env` automatically.
 ```bash
 cd e2e
 pnpm install
-pnpm test --testnet --clients=typescript/http/svm-smart-wallet --servers=typescript/http/express --facilitators=typescript --endpoints=/exact/svm --min
+pnpm test --testnet --clients=typescript/http/svm-smart-wallet --servers=typescript/http/express --endpoints=/exact/svm --min
 ```
 
-The harness runs `swig-setup` automatically before each svm-smart-wallet endpoint when the Swig USDC balance is below one payment — no manual setup needed for `pnpm test`.
+The harness runs `swig-setup` automatically before each svm-smart-wallet scenario when the Swig USDC balance is below one payment — no manual setup needed for `pnpm test`.
 
-Use the **TypeScript** facilitator — it must register `ExactSvmScheme` with `enableSmartWalletVerification: true` (configured in `e2e/facilitators/typescript`).
-
-Go and Python facilitators do not implement SVM Path 2 yet; tests against those facilitators will fail verification.
+TypeScript and Go e2e facilitators register SVM exact with smart wallet verification enabled. Scenario discovery reads `facilitators` from this client's overlay, so Python is excluded until it implements Path 2.

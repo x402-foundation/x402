@@ -20,6 +20,13 @@
       "sdks": ["typescript"],
       "price": { "usd": "$0.001" },
       "extensions": ["bazaar"]
+    },
+    "/exact/aptos/upfront": {
+      "scheme": "exact",
+      "sdks": ["typescript"],
+      "paymentFlow": "upfront",
+      "price": { "usd": "$0.001" },
+      "extensions": ["bazaar"]
     }
   }
 }

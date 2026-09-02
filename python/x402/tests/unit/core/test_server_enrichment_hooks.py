@@ -57,6 +57,10 @@ class MockFacilitatorClientSync(MockFacilitatorClient):
 
 class SchemeEnrichServer:
     scheme = "exact"
+    default_asset_transfer_method = "default"
+    payment_flows = {
+        "default": {"supported": ("authorization",), "default": "authorization"},
+    }
 
     def parse_price(self, price, network):
         from x402.schemas import AssetAmount

@@ -10,7 +10,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from x402.http.types import HTTPRequestContext, RouteConfig
+from x402 import x402ResourceServer
+from x402.http.types import HTTPRequestContext, PaymentOption, RouteConfig, RouteConfigurationError
 from x402.http.x402_http_server_base import x402HTTPServerBase
 
 
@@ -129,3 +130,58 @@ class TestRouteMatchingPathNormalizationBypass:
     ) -> None:
         server = x402HTTPServerBase(MagicMock(), {pattern: RouteConfig(accepts=[])})
         assert server.requires_payment(_context(escaped_path)) is should_match
+
+
+class _ExactAuthorizeScheme:
+    scheme = "exact"
+    default_asset_transfer_method = "default"
+    payment_flows = {
+        "default": {"supported": ("authorization",), "default": "authorization"},
+    }
+
+
+class TestPaymentFlowRouteValidation:
+    def _server(self) -> x402ResourceServer:
+        resource_server = x402ResourceServer()
+        resource_server.register("eip155:8453", _ExactAuthorizeScheme())
+        return resource_server
+
+    def test_unsupported_payment_flow_at_construction(self) -> None:
+        with pytest.raises(RouteConfigurationError) as exc:
+            x402HTTPServerBase(
+                self._server(),
+                {
+                    "GET /api/data": RouteConfig(
+                        accepts=PaymentOption(
+                            scheme="exact",
+                            pay_to="0x123",
+                            price="$0.01",
+                            network="eip155:8453",
+                            extra={"paymentFlow": "escrow"},
+                        )
+                    )
+                },
+            )
+        assert len(exc.value.errors) == 1
+        assert exc.value.errors[0].reason == "unsupported_payment_flow"
+        assert "does not support paymentFlow" in exc.value.errors[0].message
+
+    def test_unsupported_asset_transfer_method_at_construction(self) -> None:
+        with pytest.raises(RouteConfigurationError) as exc:
+            x402HTTPServerBase(
+                self._server(),
+                {
+                    "GET /api/data": RouteConfig(
+                        accepts=PaymentOption(
+                            scheme="exact",
+                            pay_to="0x123",
+                            price="$0.01",
+                            network="eip155:8453",
+                            extra={"assetTransferMethod": "not-a-real-atm"},
+                        )
+                    )
+                },
+            )
+        assert len(exc.value.errors) == 1
+        assert exc.value.errors[0].reason == "unsupported_asset_transfer_method"
+        assert "does not support assetTransferMethod" in exc.value.errors[0].message

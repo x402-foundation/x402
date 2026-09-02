@@ -463,7 +463,7 @@ The Bazaar extension supports parameterized routes (e.g., `/users/[userId]`, `/w
 
 This means `/users/123`, `/users/456`, and `/users/789` all map to the same catalog entry: `/users/:userId`.
 
-**Note:** Wildcard segments (`*`) are automatically converted to named parameters (`:var1`, `:var2`, etc.) for catalog normalization.
+**Note:** Wildcard segments (`*`) within a path (e.g. `/api/*/data`) are automatically converted to named parameters (`:var1`, `:var2`, etc.) for catalog normalization. However, bare wildcard patterns (e.g. `"*"` with no literal path segments) do **not** produce a `routeTemplate` — use a keyed path pattern in `withX402` (e.g. `{ "/api/weather": config }`) so the resource is indexed with the correct URL.
 
 #### Service Metadata
 

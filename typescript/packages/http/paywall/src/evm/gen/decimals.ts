@@ -1,5 +1,5 @@
 // THIS FILE IS AUTO-GENERATED - DO NOT EDIT
-// Source: @x402/evm DEFAULT_STABLECOINS (decimals !== 6 only).
+// Source: @x402/evm DEFAULT_ASSETS (decimals !== 6 only).
 // Regenerate via: pnpm --filter @x402/paywall run build:paywall
 
 /**

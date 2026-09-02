@@ -182,19 +182,27 @@ func parseSettleSuccessResponse(body []byte) (*x402.SettleResponse, error) {
 
 var extensionResponseLogFieldAllowlist = []string{"status", "rejectedReason", "reason", "code"}
 
-// logExtensionResponsesHeader reads the EXTENSION-RESPONSES header from an HTTP response
-// and logs allowlisted fields. Silently ignores malformed headers.
-func logExtensionResponsesHeader(resp *http.Response) {
+// extractExtensionResponsesHeader decodes an EXTENSION-RESPONSES header into an object.
+// Missing or malformed headers are ignored.
+func extractExtensionResponsesHeader(resp *http.Response) map[string]interface{} {
 	header := resp.Header.Get("EXTENSION-RESPONSES")
 	if header == "" {
-		return
+		return nil
 	}
 	decoded, err := base64.StdEncoding.DecodeString(header)
 	if err != nil {
-		return
+		return nil
 	}
 	var headerExtensions map[string]interface{}
 	if err := json.Unmarshal(decoded, &headerExtensions); err != nil {
+		return nil
+	}
+	return headerExtensions
+}
+
+// logExtensionResponses logs allowlisted fields from decoded extension responses.
+func logExtensionResponses(headerExtensions map[string]interface{}) {
+	if headerExtensions == nil {
 		return
 	}
 	sanitized := make(map[string]map[string]interface{}, len(headerExtensions))
@@ -469,7 +477,9 @@ func (c *HTTPFacilitatorClient) verifyHTTP(ctx context.Context, version int, pay
 	if err != nil {
 		return nil, err
 	}
-	logExtensionResponsesHeader(resp)
+	headerExtensions := extractExtensionResponsesHeader(resp)
+	logExtensionResponses(headerExtensions)
+	result.ExtensionResponses = headerExtensions
 	return result, nil
 }
 
@@ -551,6 +561,8 @@ func (c *HTTPFacilitatorClient) settleHTTP(ctx context.Context, version int, pay
 	if err != nil {
 		return nil, err
 	}
-	logExtensionResponsesHeader(resp)
+	headerExtensions := extractExtensionResponsesHeader(resp)
+	logExtensionResponses(headerExtensions)
+	result.ExtensionResponses = headerExtensions
 	return result, nil
 }

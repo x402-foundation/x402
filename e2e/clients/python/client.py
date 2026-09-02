@@ -124,6 +124,9 @@ def create_e2e_client(*, sync: bool = False) -> ClientContext:
             ExactTvmClientScheme(WalletV5R1MnemonicSigner(tvm_config)),
         )
 
+    # E2e exercises custom assets and amounts above the default $1 USD cap.
+    client.set_spend_controls(False)
+
     return ClientContext(
         base_url=base_url,
         endpoint_path=endpoint_path,

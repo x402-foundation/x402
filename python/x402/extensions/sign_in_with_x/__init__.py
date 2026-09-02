@@ -1,6 +1,6 @@
 """Sign-In-With-X extension for x402 v2."""
 
-from .client import CompleteSIWxInfo, create_siwx_payload
+from .client import CompleteSIWxInfo, assert_siwx_challenge_bound_to_origin, create_siwx_payload
 from .declare import declare_siwx_extension, get_signature_type
 from .encode import encode_siwx_header
 from .evm import (
@@ -103,6 +103,7 @@ __all__ = [
     "verify_siwx_signature",
     "build_siwx_schema",
     "create_siwx_message",
+    "assert_siwx_challenge_bound_to_origin",
     "create_siwx_payload",
     "encode_siwx_header",
     "create_siwx_client_extension",

@@ -48,6 +48,7 @@ Servers that put a paywall in front of a resource. See [`servers/`](./servers/).
 | [`advanced/`](./servers/advanced/) | Dynamic pricing, payment routing, lifecycle hooks, discoverability |
 | [`custom/`](./servers/custom/) | Manual payment handling without an x402 middleware package |
 | [`self-facilitation/`](./servers/self-facilitation/) | In-process `x402Facilitator` instead of an external facilitator URL |
+| [`upfront/`](./servers/upfront/) | `exact` scheme with `upfront` payment flow (settle before handler) |
 | [`upto/`](./servers/upto/) | `upto` scheme: authorize a ceiling, settle only actual usage |
 | [`batch-settlement/`](./servers/batch-settlement/) | Off-chain vouchers claimed and settled in batches by a `ChannelManager` |
 | [`bazaar/`](./servers/bazaar/) | Makes a paid API discoverable via the Bazaar extension |

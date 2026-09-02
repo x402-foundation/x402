@@ -10,7 +10,7 @@ import {
 import {
   buildCashPaymentRequirements,
   CashFacilitatorClient,
-  CashSchemeNetworkClient,
+  createCashX402Client,
   CashSchemeNetworkFacilitator,
   CashSchemeNetworkServer,
 } from "../mocks";
@@ -22,7 +22,7 @@ describe("Core Integration Tests", () => {
     let server: x402ResourceServer;
 
     beforeEach(async () => {
-      client = new x402Client().register("x402:cash", new CashSchemeNetworkClient("John"));
+      client = createCashX402Client("John");
 
       const facilitator = new x402Facilitator().register(
         "x402:cash",
@@ -102,10 +102,7 @@ describe("Core Integration Tests", () => {
 
       const facilitatorClient = new CashFacilitatorClient(facilitator);
 
-      const paymentClient = new x402Client().register(
-        "x402:cash",
-        new CashSchemeNetworkClient("John"),
-      );
+      const paymentClient = createCashX402Client("John");
       client = new x402HTTPClient(paymentClient) as x402HTTPClient;
 
       // Create resource server and register schemes

@@ -188,6 +188,25 @@ func TestBuildDataSuffixReadsAppCode(t *testing.T) {
 	}
 }
 
+func TestBuildDataSuffixDropsAppCodeForV1Payload(t *testing.T) {
+	ctx := suffixContext(map[string]interface{}{"a": appCode, "s": serviceCode})
+	ctx.Payload.X402Version = 1
+
+	ext := &BuilderCodeFacilitatorExtension{BuilderCode: walletCode, ServiceCode: "bc_fac"}
+	suffix, err := ext.BuildDataSuffix(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	parsed, ok := ParseBuilderCodeSuffixFromCalldata("0xdeadbeef" + hex.EncodeToString(suffix))
+	if !ok {
+		t.Fatal("expected a valid suffix")
+	}
+	want := []string{serviceCode, "bc_fac"}
+	if parsed.W != walletCode || parsed.A != "" || !reflect.DeepEqual(parsed.S, want) {
+		t.Fatalf("expected wallet and client/facilitator services without app code, got %+v", parsed)
+	}
+}
+
 func TestBuildDataSuffixIgnoresInvalidWalletCode(t *testing.T) {
 	ext := &BuilderCodeFacilitatorExtension{BuilderCode: "X"}
 	suffix, err := ext.BuildDataSuffix(suffixContext(map[string]interface{}{"a": appCode}))

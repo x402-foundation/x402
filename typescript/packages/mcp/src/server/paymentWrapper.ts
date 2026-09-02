@@ -590,6 +590,16 @@ async function settlePaymentResult(
       "after-handler",
     );
 
+    if (!settleResult.success) {
+      return createSettlementFailedResult(
+        resourceServer,
+        toolName,
+        config,
+        settleResult.errorReason || settleResult.errorMessage || "Settlement failed",
+        transportContext,
+      );
+    }
+
     if (config.hooks?.onAfterSettlement) {
       const settlementContext: SettlementContext = {
         ...hookContext,

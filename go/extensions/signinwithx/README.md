@@ -85,4 +85,6 @@ x402Client := x402.Newx402Client().
 ```
 
 The HTTP client first tries to satisfy a `sign-in-with-x` challenge by sending a
-`SIGN-IN-WITH-X` header. If auth fails, the normal x402 payment flow continues.
+`SIGN-IN-WITH-X` header. It verifies the challenge is bound to the 402 response
+origin before signing. If auth fails or the challenge is not origin-bound, the
+normal x402 payment flow continues.

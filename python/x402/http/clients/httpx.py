@@ -144,7 +144,14 @@ class x402AsyncTransport(AsyncBaseTransport):
 
             payment_required = self._http_client.get_payment_required_response(get_header, body)
 
-            hook_headers = await self._http_client.handle_payment_required(payment_required)
+            try:
+                request_url = str(response.url)
+            except RuntimeError:
+                request_url = ""
+            request_url = request_url or str(request.url)
+            hook_headers = await self._http_client.handle_payment_required(
+                payment_required, request_url
+            )
             if hook_headers:
                 hook_response = await self._send_retry(request, hook_headers)
                 if hook_response.status_code != 402:

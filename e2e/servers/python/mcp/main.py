@@ -44,7 +44,7 @@ def main() -> None:
     # descriptions too even though they never register a tool below.
     tool_descriptions = {
         route.path: route_description(
-            route.network, route.scheme, route.asset_transfer_method, route.extensions
+            route.network, route.scheme, route.asset_transfer_method, route.extensions, route.payment_flow
         )
         for route in catalog_routes()
     }

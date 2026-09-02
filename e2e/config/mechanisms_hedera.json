@@ -29,6 +29,18 @@
         "assetEnv": "HEDERA_ASSET"
       },
       "extensions": ["bazaar"]
+    },
+    "/exact/hedera/upfront": {
+      "scheme": "exact",
+      "sdks": ["typescript"],
+      "paymentFlow": "upfront",
+      "price": {
+        "amount": "100000",
+        "amountEnv": "HEDERA_AMOUNT",
+        "asset": "0.0.0",
+        "assetEnv": "HEDERA_ASSET"
+      },
+      "extensions": ["bazaar"]
     }
   }
 }

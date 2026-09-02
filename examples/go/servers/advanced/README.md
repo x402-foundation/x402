@@ -226,11 +226,15 @@ Accept payments in custom tokens. Register a money parser on the scheme to suppo
 
 ```go
 evmScheme := evm.NewExactEvmScheme().RegisterMoneyParser(
-    func(amount float64, network x402.Network) (*x402.AssetAmount, error) {
+    func(amount string, network x402.Network) (*x402.AssetAmount, error) {
         // Use Wrapped XDAI on Gnosis Chain
         if string(network) == "eip155:100" {
+            tokenAmount, err := x402.ConvertToTokenAmount(amount, 18)
+            if err != nil {
+                return nil, err
+            }
             return &x402.AssetAmount{
-                Amount: fmt.Sprintf("%.0f", amount*1e18),
+                Amount: tokenAmount,
                 Asset:  "0xe91d153e0b41518a2ce8dd3d7944fa863463a97d",
                 Extra:  map[string]interface{}{"token": "Wrapped XDAI"},
             }, nil

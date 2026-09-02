@@ -51,7 +51,7 @@ async with x402HttpxClient(client) as http:
 1. Install dependencies:
 
 ```bash
-uv sync
+uv sync --reinstall-package x402
 ```
 
 2. Copy `.env-local` to `.env` and add your private key:

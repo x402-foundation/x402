@@ -38,6 +38,9 @@ import {
   getTokenPayerFromTransaction,
   transactionMessageHash,
 } from "../../../utils";
+import { verifyRequiredSignatures } from "../../facilitator/signatureVerification";
+
+const compiledMessageDecoder = getCompiledTransactionMessageDecoder();
 
 const IX_TOKEN_TRANSFER_CHECKED = 12;
 
@@ -155,8 +158,42 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
       };
     }
 
-    const compiled = getCompiledTransactionMessageDecoder().decode(transaction.messageBytes);
-    const decompiled = decompileTransactionMessage(compiled);
+    let compiled;
+    try {
+      compiled = compiledMessageDecoder.decode(transaction.messageBytes);
+    } catch {
+      return {
+        isValid: false,
+        invalidReason: "invalid_exact_svm_payload_transaction_could_not_be_decoded",
+        payer: "",
+      };
+    }
+
+    const signatureCheck = await verifyRequiredSignatures(
+      transaction,
+      compiled,
+      requirementsV1.extra.feePayer,
+    );
+    if (!signatureCheck.ok) {
+      return {
+        isValid: false,
+        invalidReason: signatureCheck.invalidReason,
+        payer: "",
+      };
+    }
+
+    let decompiled;
+    try {
+      decompiled = decompileTransactionMessage(compiled);
+    } catch {
+      // v1 has no ALT resolution; reject lookup-table transactions cleanly
+      // rather than throwing out of verify().
+      return {
+        isValid: false,
+        invalidReason: "invalid_exact_svm_payload_transaction_could_not_be_decoded",
+        payer: "",
+      };
+    }
     const instructions = decompiled.instructions ?? [];
 
     // Allow 3-6 instructions:
@@ -344,20 +381,12 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
       }
     }
 
-    // Step 6: Sign and Simulate Transaction
+    // Step 6: Simulate Transaction
     // CRITICAL: Simulation proves transaction will succeed (catches insufficient balance, invalid accounts, etc)
+    // Signatures are verified locally; the fee-payer slot is unsigned until settle.
     try {
-      const feePayer = requirementsV1.extra.feePayer as Address;
-
-      // Sign transaction with the feePayer's signer
-      const fullySignedTransaction = await this.signer.signTransaction(
-        exactSvmPayload.transaction,
-        feePayer,
-        requirements.network,
-      );
-
       // Simulate to verify transaction would succeed
-      await this.signer.simulateTransaction(fullySignedTransaction, requirements.network);
+      await this.signer.simulateTransaction(exactSvmPayload.transaction, requirements.network);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       return {
@@ -390,8 +419,40 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
     const payloadV1 = payload as unknown as PaymentPayloadV1;
     const exactSvmPayload = payload.payload as ExactSvmPayloadV1;
 
+    // Decode the transaction to compute the message hash used as the cache key.
+    // Must remain synchronous (before any await) so concurrent settle calls for
+    // the same payment are caught before any async work begins.
+    let txKey: string | undefined;
+    let decodedTx: ReturnType<typeof decodeTransactionFromPayload> | undefined;
+    try {
+      decodedTx = decodeTransactionFromPayload(exactSvmPayload);
+      txKey = transactionMessageHash(decodedTx);
+    } catch {
+      txKey = undefined;
+    }
+
+    // Duplicate settlement check keyed on message hash (immune to mutable fee-payer sig at slot 0).
+    if (txKey && this.settlementCache.isDuplicate(txKey)) {
+      let payer = "";
+      try {
+        payer = getTokenPayerFromTransaction(decodedTx!) || "";
+      } catch {
+        payer = "";
+      }
+      return {
+        success: false,
+        network: payloadV1.network,
+        transaction: "",
+        errorReason: "duplicate_settlement",
+        payer,
+      };
+    }
+
     const valid = await this.verify(payload, requirements);
     if (!valid.isValid) {
+      if (txKey) {
+        this.settlementCache.delete(txKey);
+      }
       return {
         success: false,
         network: payloadV1.network,
@@ -401,22 +462,7 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
       };
     }
 
-    // Decode the transaction to compute the message hash used as the cache key.
-    // Must remain synchronous (before any await) so concurrent settle calls for
-    // the same payment are caught before any async work begins.
-    const decodedTx = decodeTransactionFromPayload(exactSvmPayload);
-
-    // Duplicate settlement check keyed on message hash (immune to mutable fee-payer sig at slot 0).
-    const txKey = transactionMessageHash(decodedTx);
-    if (this.settlementCache.isDuplicate(txKey)) {
-      return {
-        success: false,
-        network: payloadV1.network,
-        transaction: "",
-        errorReason: "duplicate_settlement",
-        payer: valid.payer || "",
-      };
-    }
+    txKey ??= transactionMessageHash(decodeTransactionFromPayload(exactSvmPayload));
 
     try {
       // Extract feePayer from requirements (already validated in verify)

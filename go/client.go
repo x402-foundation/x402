@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"reflect"
+	"regexp"
+	"strings"
 	"sync"
 
 	"github.com/x402-foundation/x402/go/v2/types"
@@ -32,6 +35,9 @@ type x402Client struct {
 	afterPaymentCreationHooks     []AfterPaymentCreationHook
 	onPaymentCreationFailureHooks []OnPaymentCreationFailureHook
 	onPaymentResponseHooks        []OnPaymentResponseHook
+
+	spendControlsEnabled bool
+	spendControls        SpendControls
 }
 
 // ClientOption configures the client
@@ -51,6 +57,21 @@ func WithPolicy(policy PaymentPolicy) ClientOption {
 	}
 }
 
+// WithSpendControls sets spend controls at creation time.
+func WithSpendControls(controls SpendControls) ClientOption {
+	return func(c *x402Client) {
+		c.spendControlsEnabled = true
+		c.spendControls = controls
+	}
+}
+
+// WithSpendControlsDisabled disables spend controls at creation time.
+func WithSpendControlsDisabled() ClientOption {
+	return func(c *x402Client) {
+		c.spendControlsEnabled = false
+	}
+}
+
 // Newx402Client creates a new x402 client
 func Newx402Client(opts ...ClientOption) *x402Client {
 	c := &x402Client{
@@ -59,6 +80,7 @@ func Newx402Client(opts ...ClientOption) *x402Client {
 		requirementsSelector: DefaultPaymentSelector,
 		policies:             []PaymentPolicy{},
 		extensions:           make(map[string]ClientExtension),
+		spendControlsEnabled: true,
 	}
 
 	for _, opt := range opts {
@@ -163,6 +185,23 @@ func (c *x402Client) OnPaymentResponse(hook OnPaymentResponseHook) *x402Client {
 	return c
 }
 
+// SetSpendControls enables spend controls with the given configuration.
+func (c *x402Client) SetSpendControls(controls SpendControls) *x402Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.spendControlsEnabled = true
+	c.spendControls = controls
+	return c
+}
+
+// DisableSpendControls disables all spend controls (any asset, no caps).
+func (c *x402Client) DisableSpendControls() *x402Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.spendControlsEnabled = false
+	return c
+}
+
 // HandlePaymentResponse dispatches the OnPaymentResponse lifecycle for a paid
 // response: invokes the scheme's PaymentResponseHandler (if implemented) followed
 // by every user-registered OnPaymentResponseHook. Returns Recovered=true if any
@@ -229,8 +268,13 @@ func (c *x402Client) SelectPaymentRequirementsV1(requirements []types.PaymentReq
 	// Convert to views for selector/policies
 	views := toViews(supported)
 
+	// Apply spend controls before policies
+	filtered, err := c.applySpendControls(1, views)
+	if err != nil {
+		return types.PaymentRequirementsV1{}, err
+	}
+
 	// Apply policies
-	filtered := views
 	for _, policy := range c.policies {
 		filtered = policy(filtered)
 		if len(filtered) == 0 {
@@ -251,9 +295,10 @@ func (c *x402Client) SelectPaymentRequirementsV1(requirements []types.PaymentReq
 // Selection process:
 //  1. Filter by registered schemes (network + scheme support)
 //  2. Drop accepts with unrecognized extra.paymentFlow
-//  3. Apply all registered policies in order
-//  4. Prefer authorization (omit or explicit) over upfront/escrow when both remain
-//  5. Use selector to choose final requirement
+//  3. Apply spend controls (default-asset allowlist and USD cap)
+//  4. Apply all registered policies in order
+//  5. Prefer authorization (omit or explicit) over upfront/escrow when both remain
+//  6. Use selector to choose final requirement
 func (c *x402Client) SelectPaymentRequirements(requirements []types.PaymentRequirements) (types.PaymentRequirements, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -298,8 +343,13 @@ func (c *x402Client) SelectPaymentRequirements(requirements []types.PaymentRequi
 	// Convert to views for selector/policies
 	views := toViews(recognized)
 
-	// Step 3: Apply policies
-	filtered := views
+	// Step 3: Apply spend controls
+	filtered, err := c.applySpendControls(2, views)
+	if err != nil {
+		return types.PaymentRequirements{}, err
+	}
+
+	// Step 4: Apply policies
 	for _, policy := range c.policies {
 		filtered = policy(filtered)
 		if len(filtered) == 0 {
@@ -310,7 +360,7 @@ func (c *x402Client) SelectPaymentRequirements(requirements []types.PaymentRequi
 		}
 	}
 
-	// Step 4: Prefer authorization when both post- and pre-handler flows remain
+	// Step 5: Prefer authorization when both post- and pre-handler flows remain
 	var authorizationViews []PaymentRequirementsView
 	for _, req := range filtered {
 		extra := req.GetExtra()
@@ -326,9 +376,203 @@ func (c *x402Client) SelectPaymentRequirements(requirements []types.PaymentRequi
 		filtered = authorizationViews
 	}
 
-	// Step 5: Select final and convert back
+	// Step 6: Select final and convert back
 	selected := c.requirementsSelector(filtered)
 	return fromView[types.PaymentRequirements](selected), nil
+}
+
+var atomicAmountPattern = regexp.MustCompile(`^\d+$`)
+
+// applySpendControls filters by spend controls (default-asset allowlist → opt-in assets → caps).
+// Keeps any accept that fits so a mixed offer can still pay the affordable option.
+func (c *x402Client) applySpendControls(x402Version int, requirements []PaymentRequirementsView) ([]PaymentRequirementsView, error) {
+	if !c.spendControlsEnabled {
+		return requirements, nil
+	}
+	controls := c.spendControls
+
+	rawAmountOf := func(requirement PaymentRequirementsView) string {
+		return requirement.GetAmount()
+	}
+	amountOf := func(requirement PaymentRequirementsView) *big.Int {
+		n, ok := new(big.Int).SetString(rawAmountOf(requirement), 10)
+		if !ok {
+			return big.NewInt(0)
+		}
+		return n
+	}
+	schemeFor := func(requirement PaymentRequirementsView) any {
+		network := Network(requirement.GetNetwork())
+		scheme := requirement.GetScheme()
+		if x402Version == 1 {
+			return any(findByNetworkAndScheme(c.schemesV1, scheme, network))
+		}
+		return any(findByNetworkAndScheme(c.schemes, scheme, network))
+	}
+	defaultAssetFor := func(requirement PaymentRequirementsView) *DefaultAsset {
+		finder, ok := schemeFor(requirement).(DefaultAssetFinder)
+		if !ok {
+			return nil
+		}
+		return finder.FindDefaultAsset(requirement.GetAsset(), Network(requirement.GetNetwork()))
+	}
+	matchesAssetEntry := func(entry SpendControlAsset, requirement PaymentRequirementsView) bool {
+		if !MatchesNetwork(entry.Network, Network(requirement.GetNetwork())) {
+			return false
+		}
+		if strings.EqualFold(entry.Asset, requirement.GetAsset()) {
+			return true
+		}
+		defaultAsset := defaultAssetFor(requirement)
+		return defaultAsset != nil && strings.EqualFold(defaultAsset.Symbol, entry.Asset)
+	}
+	var assetEntries []SpendControlAsset
+	if !controls.AllowAnyAsset {
+		assetEntries = controls.AllowedAssets
+	}
+	findAssetEntry := func(requirement PaymentRequirementsView) *SpendControlAsset {
+		for i := range assetEntries {
+			if matchesAssetEntry(assetEntries[i], requirement) {
+				return &assetEntries[i]
+			}
+		}
+		return nil
+	}
+
+	filtered := requirements
+	if !controls.AllowAnyAsset {
+		filtered = filtered[:0]
+		for _, requirement := range requirements {
+			if defaultAssetFor(requirement) != nil || findAssetEntry(requirement) != nil {
+				filtered = append(filtered, requirement)
+			}
+		}
+	}
+	if len(filtered) == 0 {
+		return nil, fmt.Errorf(
+			"all payment requirements were rejected by spendControls: only default assets " +
+				"or entries in spendControls.allowedAssets are allowed. Add an allowedAssets " +
+				"entry for non-default tokens, set allowedAssets: true, or set spendControls: false",
+		)
+	}
+
+	usdLimit := DefaultMaxAmountPerPayment
+	usdLimitDisabled := controls.DisableMaxAmountPerPayment
+	if !usdLimitDisabled && controls.MaxAmountPerPayment != "" {
+		usdLimit = controls.MaxAmountPerPayment
+	}
+
+	beforeAmountCaps := filtered
+	rejectedByAssetCap := false
+	var rejectedUsdSymbol string
+
+	capped := beforeAmountCaps[:0]
+	for _, requirement := range beforeAmountCaps {
+		assetEntry := findAssetEntry(requirement)
+		if assetEntry != nil && assetEntry.MaxAmountPerPayment != "" {
+			if !atomicAmountPattern.MatchString(assetEntry.MaxAmountPerPayment) {
+				return nil, fmt.Errorf(
+					"spendControls.allowedAssets[].maxAmountPerPayment must be an integer atomic amount, not a dollar value; got %q",
+					assetEntry.MaxAmountPerPayment,
+				)
+			}
+			if !atomicAmountPattern.MatchString(rawAmountOf(requirement)) {
+				rejectedByAssetCap = true
+				continue
+			}
+			capN, _ := new(big.Int).SetString(assetEntry.MaxAmountPerPayment, 10)
+			if amountOf(requirement).Cmp(capN) <= 0 {
+				capped = append(capped, requirement)
+			} else {
+				rejectedByAssetCap = true
+			}
+			continue
+		}
+
+		defaultAsset := defaultAssetFor(requirement)
+		if defaultAsset == nil {
+			capped = append(capped, requirement)
+			continue
+		}
+
+		if usdLimitDisabled {
+			capped = append(capped, requirement)
+			continue
+		}
+
+		rawAmount := rawAmountOf(requirement)
+		if !atomicAmountPattern.MatchString(rawAmount) {
+			valueScaled, err := ConvertToTokenAmount(rawAmount, 18)
+			if err != nil {
+				return nil, err
+			}
+			parsed, err := ParseMoneyString(usdLimit)
+			if err != nil {
+				return nil, err
+			}
+			capScaled, err := ConvertToTokenAmount(parsed, 18)
+			if err != nil {
+				return nil, err
+			}
+			valueN, _ := new(big.Int).SetString(valueScaled, 10)
+			capN, _ := new(big.Int).SetString(capScaled, 10)
+			if valueN.Cmp(capN) <= 0 {
+				capped = append(capped, requirement)
+			} else {
+				rejectedUsdSymbol = defaultAsset.Symbol
+			}
+			continue
+		}
+
+		parsed, err := ParseMoneyString(usdLimit)
+		if err != nil {
+			return nil, err
+		}
+		maxAtomic, err := ConvertToTokenAmount(parsed, defaultAsset.Decimals)
+		if err != nil {
+			return nil, err
+		}
+		maxN, _ := new(big.Int).SetString(maxAtomic, 10)
+		if amountOf(requirement).Cmp(maxN) <= 0 {
+			capped = append(capped, requirement)
+		} else {
+			rejectedUsdSymbol = defaultAsset.Symbol
+		}
+	}
+	filtered = capped
+
+	if len(filtered) == 0 {
+		allAssetCapped := rejectedByAssetCap
+		if allAssetCapped {
+			for _, requirement := range beforeAmountCaps {
+				entry := findAssetEntry(requirement)
+				if entry == nil || entry.MaxAmountPerPayment == "" {
+					allAssetCapped = false
+					break
+				}
+			}
+		}
+		if allAssetCapped {
+			return nil, fmt.Errorf(
+				"all payment requirements were rejected by spendControls.allowedAssets maxAmountPerPayment. " +
+					"Raise the per-asset cap, or omit maxAmountPerPayment to allow uncapped " +
+					"(default assets then fall back to the top-level USD cap)",
+			)
+		}
+		symbolNote := ""
+		if rejectedUsdSymbol != "" {
+			symbolNote = ", including " + rejectedUsdSymbol
+		}
+		return nil, fmt.Errorf(
+			"all payment requirements were rejected by spendControls.maxAmountPerPayment "+
+				"(%s%s). Raise maxAmountPerPayment, set it to false to disable, "+
+				"set allowedAssets[].maxAmountPerPayment for a per-asset atomic cap, "+
+				"or set spendControls: false to disable all spend controls",
+			usdLimit, symbolNote,
+		)
+	}
+
+	return filtered, nil
 }
 
 // CreatePaymentPayloadV1 creates a V1 payment payload

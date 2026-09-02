@@ -13,13 +13,13 @@ import (
 //
 // Args:
 //
-//	amount: Decimal amount (e.g., 1.50 for $1.50)
+//	amount: Decimal string (e.g., "1.50" for $1.50)
 //	network: Network identifier
 //
 // Returns:
 //
 //	AssetAmount or nil if this parser cannot handle the conversion
-type MoneyParser func(amount float64, network Network) (*AssetAmount, error)
+type MoneyParser func(amount string, network Network) (*AssetAmount, error)
 
 // ============================================================================
 // V1 Interfaces (Legacy - explicitly versioned)
@@ -98,6 +98,12 @@ type ExtensionAwareClient interface {
 	CreatePaymentPayloadWithExtensions(ctx context.Context, requirements types.PaymentRequirements, extensions map[string]interface{}) (types.PaymentPayload, error)
 }
 
+// DefaultAssetFinder is an optional reverse lookup for USD spend caps.
+// Not the same as AssetDecimalsProvider.
+type DefaultAssetFinder interface {
+	FindDefaultAsset(asset string, network Network) *DefaultAsset
+}
+
 // PaymentResponseContext is passed to PaymentResponseHandler implementations after
 // the transport receives the response to a paid request. Exactly one of SettleResponse
 // or PaymentRequired is populated:
@@ -126,7 +132,7 @@ type PaymentResponseResult struct {
 // PaymentResponseHandler is an optional interface that SchemeNetworkClient
 // implementations satisfy to reconcile local state after a paid response.
 // The transport (PaymentRoundTripper) invokes this hook automatically — user
-// code does not need to call ProcessSettleResponse manually.
+// code does not need to update local channel state manually.
 //
 // Mirrors the TS schemeHooks.onPaymentResponse field on SchemeClientHooks.
 type PaymentResponseHandler interface {
@@ -238,9 +244,9 @@ type SchemeNetworkServer interface {
 // AssetDecimalsProvider is an optional interface that SchemeNetworkServer implementations
 // can satisfy to report the decimal precision of the asset for a given network.
 // SettlePayment uses this to convert dollar-format settlement overrides to atomic units.
-// Falls back to 6 decimals when the scheme does not implement this interface.
+// ok is false when the asset is not a known default (TS undefined).
 type AssetDecimalsProvider interface {
-	GetAssetDecimals(asset string, network Network) int
+	GetAssetDecimals(asset string, network Network) (decimals int, ok bool)
 }
 
 // SettleOnCancelProvider is an optional interface for schemes that settle once when a

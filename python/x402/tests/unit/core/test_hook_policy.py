@@ -3,6 +3,7 @@
 import pytest
 
 from x402.hook_policy import (
+    assert_accepts_additive_extra_after_scheme_enrich,
     assert_accepts_allowlisted_after_extension_enrich,
     assert_additive_payload_enrichment,
     assert_additive_settlement_extra,
@@ -169,3 +170,73 @@ def test_merge_additive_settlement_extra() -> None:
             "charged_cumulative_amount": "200",
         },
     }
+
+
+@pytest.mark.parametrize(
+    ("key", "injected_value"),
+    [("paymentFlow", "upfront"), ("assetTransferMethod", "permit2")],
+)
+def test_extension_enrich_rejects_reserved_extra_injection(key: str, injected_value: str) -> None:
+    baseline = snapshot_payment_requirements_list(
+        [_build_payment_requirements(extra={"schemeField": "x"})]
+    )
+    current = snapshot_payment_requirements_list(baseline)
+    current[0].extra = {**current[0].extra, key: injected_value}
+    with pytest.raises(ValueError, match=rf'extra\["{key}"\].*protocol-reserved'):
+        assert_accepts_allowlisted_after_extension_enrich(baseline, current, "ext")
+
+
+@pytest.mark.parametrize(
+    ("key", "baseline_value", "injected_value"),
+    [
+        ("paymentFlow", "authorization", "upfront"),
+        ("assetTransferMethod", "eip3009", "permit2"),
+    ],
+)
+def test_extension_enrich_rejects_reserved_extra_change(
+    key: str, baseline_value: str, injected_value: str
+) -> None:
+    baseline = snapshot_payment_requirements_list(
+        [_build_payment_requirements(extra={key: baseline_value})]
+    )
+    current = snapshot_payment_requirements_list(baseline)
+    current[0].extra = {**current[0].extra, key: injected_value}
+    with pytest.raises(ValueError, match=rf'extra\["{key}"\]'):
+        assert_accepts_allowlisted_after_extension_enrich(baseline, current, "ext")
+
+
+@pytest.mark.parametrize(
+    ("key", "injected_value"),
+    [("paymentFlow", "upfront"), ("assetTransferMethod", "permit2")],
+)
+def test_scheme_enrich_rejects_reserved_extra_injection(key: str, injected_value: str) -> None:
+    baseline = snapshot_payment_requirements_list(
+        [_build_payment_requirements(extra={"name": "USDC"})]
+    )
+    current = snapshot_payment_requirements_list(baseline)
+    current[0].extra = {**current[0].extra, key: injected_value}
+    with pytest.raises(ValueError, match=rf'extra\["{key}"\].*protocol-reserved'):
+        assert_accepts_additive_extra_after_scheme_enrich(
+            baseline, current, baseline[0].scheme, baseline[0].network
+        )
+
+
+@pytest.mark.parametrize(
+    ("key", "baseline_value", "injected_value"),
+    [
+        ("paymentFlow", "escrow", "upfront"),
+        ("assetTransferMethod", "eip3009", "permit2"),
+    ],
+)
+def test_scheme_enrich_rejects_reserved_extra_change(
+    key: str, baseline_value: str, injected_value: str
+) -> None:
+    baseline = snapshot_payment_requirements_list(
+        [_build_payment_requirements(extra={key: baseline_value})]
+    )
+    current = snapshot_payment_requirements_list(baseline)
+    current[0].extra = {**current[0].extra, key: injected_value}
+    with pytest.raises(ValueError, match=rf'extra\["{key}"\]'):
+        assert_accepts_additive_extra_after_scheme_enrich(
+            baseline, current, baseline[0].scheme, baseline[0].network
+        )

@@ -10,7 +10,12 @@ import type {
   Address,
 } from "@solana/kit";
 import { fetchAddressesForLookupTables, getBase64EncodedWireTransaction } from "@solana/kit";
-import { createRpcClient, decodeTransactionFromPayload } from "./utils";
+import {
+  createRpcClient,
+  decodeTransactionFromPayload,
+  TransactionOnchainFailureError,
+} from "./utils";
+import { ErrSmartWalletAltResolutionFailed } from "./exact/facilitator/errors";
 
 /**
  * Client-side signer for creating and signing Solana transactions
@@ -106,6 +111,24 @@ export type FacilitatorRpcCapabilities = {
   fetchMint(address: string): Promise<unknown>;
 };
 
+/** Options passed to {@link FacilitatorSvmSigner.simulateTransaction}. */
+export type FacilitatorSimulateTransactionOptions = {
+  /**
+   * When true, the RPC verifies signatures during simulation. Defaults to false
+   * because the fee-payer slot is often unsigned until settle.
+   */
+  sigVerify?: boolean;
+  /**
+   * When true, the RPC substitutes a fresh blockhash before simulating (for
+   * facilitator-built messages compiled against a placeholder). Defaults to false.
+   */
+  replaceRecentBlockhash?: boolean;
+  /** Simulation commitment. Defaults to `"confirmed"`. */
+  commitment?: string;
+  /** Wire encoding of the transaction. Defaults to `"base64"`. */
+  encoding?: string;
+};
+
 /**
  * Minimal facilitator signer interface for SVM operations.
  * Supports multiple signers for load balancing and high availability.
@@ -144,14 +167,20 @@ export type FacilitatorSvmSigner = {
   signTransaction(transaction: string, feePayer: Address, network: string): Promise<string>;
 
   /**
-   * Simulate a signed transaction to verify it would succeed
-   * Implementation manages RPC client selection and simulation details
+   * Simulate a transaction to verify it would succeed onchain.
+   * By default does not verify signatures (RPC `sigVerify` is off). Callers must
+   * verify required signatures themselves; the fee-payer slot may be unsigned.
    *
-   * @param transaction - Base64 encoded signed transaction
+   * @param transaction - Base64 encoded transaction (may be partially signed)
    * @param network - CAIP-2 network identifier
+   * @param options - Optional simulation overrides
    * @throws Error if simulation fails
    */
-  simulateTransaction(transaction: string, network: string): Promise<void>;
+  simulateTransaction(
+    transaction: string,
+    network: string,
+    options?: FacilitatorSimulateTransactionOptions,
+  ): Promise<void>;
 
   /**
    * Send a signed transaction to the network
@@ -171,7 +200,10 @@ export type FacilitatorSvmSigner = {
    * @param signature - Transaction signature to confirm
    * @param network - CAIP-2 network identifier
    * @returns Promise that resolves when transaction is confirmed
-   * @throws Error if confirmation fails or times out
+   * @throws {TransactionOnchainFailureError} If the transaction reached the chain and failed
+   *   there (terminal — safe to release dedup/pending-settlement locks)
+   * @throws Error for any other confirmation failure, e.g. a wait timeout (non-terminal —
+   *   the outcome is unknown, so callers must not treat it as a definite failure)
    */
   confirmTransaction(signature: string, network: string): Promise<void>;
 
@@ -184,14 +216,12 @@ export type FacilitatorSvmSigner = {
    * The default toFacilitatorSvmSigner() factory provides an implementation.
    *
    * @param transaction - Base64 encoded transaction (may be partially signed)
-   * @param feePayer - Fee payer address to sign with before simulation
    * @param network - CAIP-2 network identifier
    * @returns Inner instructions from simulation, or null if unavailable
    * @throws Error if simulation fails (transaction would revert on-chain)
    */
   simulateTransactionWithInnerInstructions?(
     transaction: string,
-    feePayer: Address,
     network: string,
   ): Promise<SvmInnerInstructionsResult>;
 
@@ -241,6 +271,61 @@ export type FacilitatorSvmSigner = {
     lookupTableAddresses: string[],
     network: string,
   ): Promise<Record<string, string[]>>;
+
+  /**
+   * Fetch one account's onchain data. Optional — required by the `upto` scheme;
+   * {@link toFacilitatorSvmSigner} provides an implementation.
+   */
+  getAccountInfo?(
+    accountAddress: string,
+    network: string,
+    options?: { commitment?: string; encoding?: string },
+  ): Promise<FacilitatorAccountInfo | null>;
+
+  /**
+   * Fetch a recent blockhash. Optional — required by the `upto` scheme;
+   * {@link toFacilitatorSvmSigner} provides an implementation.
+   */
+  getLatestBlockhash?(network: string): Promise<{
+    blockhash: string;
+    lastValidBlockHeight: bigint;
+  }>;
+
+  /**
+   * Fetch the current slot. Optional — required by the `upto` scheme;
+   * {@link toFacilitatorSvmSigner} provides an implementation.
+   */
+  getSlot?(network: string, commitment?: string): Promise<bigint>;
+
+  /**
+   * Scan program accounts. Optional — required only for `upto` rent-cleanup
+   * discovery sweeps; {@link toFacilitatorSvmSigner} provides an implementation.
+   */
+  getProgramAccounts?(
+    network: string,
+    programId: string,
+    config: {
+      commitment?: string;
+      encoding?: string;
+      filters?: readonly unknown[];
+    },
+  ): Promise<readonly FacilitatorProgramAccount[]>;
+};
+
+/** Account info returned by {@link FacilitatorSvmSigner.getAccountInfo}. */
+export type FacilitatorAccountInfo = {
+  data: [string, string] | string;
+  owner: string;
+  lamports: bigint;
+};
+
+/** One row from {@link FacilitatorSvmSigner.getProgramAccounts}. */
+export type FacilitatorProgramAccount = {
+  pubkey: Address;
+  account: {
+    data: [string, string];
+    owner: Address;
+  };
 };
 
 /**
@@ -311,15 +396,21 @@ export function createRpcCapabilitiesFromRpc(
       return await rpc
         .sendTransaction(transaction as never, {
           encoding: "base64",
+          skipPreflight: true,
+          preflightCommitment: "confirmed",
         })
         .send();
     },
     confirmTransaction: async signature => {
-      let confirmed = false;
-      let attempts = 0;
-      const maxAttempts = 30;
+      // Poll at 250ms for the first ~2s (Solana slots are ~400ms), then 1s,
+      // keeping the same ~30s confirmation budget as the previous 30×1s loop.
+      const initialDelayMs = 250;
+      const initialWindowMs = 2_000;
+      const fallbackDelayMs = 1_000;
+      const maxWaitMs = 30_000;
+      const startedAt = Date.now();
 
-      while (!confirmed && attempts < maxAttempts) {
+      while (Date.now() - startedAt < maxWaitMs) {
         const status = await rpc.getSignatureStatuses([signature as never]).send();
         const entry = status.value[0];
 
@@ -331,14 +422,14 @@ export function createRpcCapabilitiesFromRpc(
             const errorStr = JSON.stringify(entry.err, (_, v) =>
               typeof v === "bigint" ? v.toString() : v,
             );
-            throw new Error(`Transaction failed onchain: ${errorStr}`);
+            throw new TransactionOnchainFailureError(`Transaction failed onchain: ${errorStr}`);
           }
-          confirmed = true;
           return entry;
         }
 
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        attempts++;
+        const elapsed = Date.now() - startedAt;
+        const delay = elapsed < initialWindowMs ? initialDelayMs : fallbackDelayMs;
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
 
       throw new Error("Transaction confirmation timeout");
@@ -469,15 +560,22 @@ export function toFacilitatorSvmSigner(
       return getBase64EncodedWireTransaction(fullySignedTx);
     },
 
-    simulateTransaction: async (transaction: string, network: string) => {
+    simulateTransaction: async (
+      transaction: string,
+      network: string,
+      options?: FacilitatorSimulateTransactionOptions,
+    ) => {
       const rpc = getRpcForNetwork(network);
       const result = await rpc
-        .simulateTransaction(transaction as never, {
-          sigVerify: true,
-          replaceRecentBlockhash: false,
-          commitment: "confirmed",
-          encoding: "base64",
-        })
+        .simulateTransaction(
+          transaction as never,
+          {
+            sigVerify: options?.sigVerify ?? false,
+            replaceRecentBlockhash: options?.replaceRecentBlockhash ?? false,
+            commitment: options?.commitment ?? "confirmed",
+            encoding: options?.encoding ?? "base64",
+          } as never,
+        )
         .send();
 
       if (result.value.err) {
@@ -494,6 +592,8 @@ export function toFacilitatorSvmSigner(
       return await rpc
         .sendTransaction(transaction as never, {
           encoding: "base64",
+          skipPreflight: true,
+          preflightCommitment: "confirmed",
         })
         .send();
     },
@@ -504,34 +604,13 @@ export function toFacilitatorSvmSigner(
       await rpcCapabilities.confirmTransaction(signature);
     },
 
-    simulateTransactionWithInnerInstructions: async (
-      transaction: string,
-      feePayer: Address,
-      network: string,
-    ) => {
-      if (feePayer !== signer.address) {
-        throw new Error(`No signer for feePayer ${feePayer}. Available: ${signer.address}`);
-      }
-
-      const tx = decodeTransactionFromPayload({ transaction });
-      const signableMessage = {
-        content: tx.messageBytes,
-        signatures: tx.signatures,
-      };
-      const [facilitatorSignatureDictionary] = await signer.signMessages([
-        signableMessage as never,
-      ]);
-      const signedTx = {
-        ...tx,
-        signatures: { ...tx.signatures, ...facilitatorSignatureDictionary },
-      };
-      const signedBase64 = getBase64EncodedWireTransaction(signedTx);
-
+    simulateTransactionWithInnerInstructions: async (transaction: string, network: string) => {
       // Signature and blockhash verification during simulation.
       //
-      // sigVerify: true — matches the existing Path 1 simulation behavior. Ensures all
-      // transaction signatures are valid, preventing an attacker from passing verify()
-      // with forged signatures and getting free resource access before on-chain failure.
+      // sigVerify: false — required signatures are verified locally before this
+      // call. The fee-payer slot is unsigned until settle, so RPC-side
+      // sigVerify would reject a valid payment. Account state, fee-payer
+      // balance, and precompiles are still evaluated by simulation.
       //
       // replaceRecentBlockhash: false — preserves the original blockhash so signatures
       // remain valid (they cover the full message including blockhash). Also required for
@@ -546,9 +625,9 @@ export function toFacilitatorSvmSigner(
       const rpc = getRpcForNetwork(network);
       const result = await rpc
         .simulateTransaction(
-          signedBase64 as never,
+          transaction as never,
           {
-            sigVerify: true,
+            sigVerify: false,
             replaceRecentBlockhash: false,
             commitment: "confirmed",
             encoding: "base64",
@@ -644,9 +723,46 @@ export function toFacilitatorSvmSigner(
         // accounts. The caller (assertFeePayerIsolated) converts this into a
         // verify failure so a transient RPC blip fails the payment safely.
         throw new Error(
-          `smart_wallet_alt_resolution_failed: ${error instanceof Error ? error.message : String(error)}`,
+          `${ErrSmartWalletAltResolutionFailed}: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
+    },
+
+    getAccountInfo: async (accountAddress, network, options) => {
+      const rpc = getRpcForNetwork(network);
+      const result = await rpc
+        .getAccountInfo(accountAddress as never, {
+          commitment: (options?.commitment ?? "confirmed") as never,
+          encoding: (options?.encoding ?? "base64") as never,
+        })
+        .send();
+      const value = result.value as FacilitatorAccountInfo | null;
+      return value;
+    },
+
+    getLatestBlockhash: async (network: string) => {
+      const rpc = getRpcForNetwork(network);
+      const result = await rpc.getLatestBlockhash({ commitment: "finalized" }).send();
+      return {
+        blockhash: result.value.blockhash,
+        lastValidBlockHeight: result.value.lastValidBlockHeight,
+      };
+    },
+
+    getSlot: async (network: string, commitment = "finalized") => {
+      const rpc = getRpcForNetwork(network);
+      return await rpc.getSlot({ commitment: commitment as never }).send();
+    },
+
+    getProgramAccounts: async (network, programId, config) => {
+      const rpc = getRpcForNetwork(network);
+      return await rpc
+        .getProgramAccounts(programId as Address, {
+          commitment: (config.commitment ?? "confirmed") as never,
+          encoding: "base64",
+          filters: config.filters as never,
+        })
+        .send();
     },
   };
 }

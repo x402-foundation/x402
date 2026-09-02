@@ -1,16 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { COMPUTE_BUDGET_PROGRAM_ADDRESS } from "@solana-program/compute-budget";
 import { ExactSvmScheme } from "../../src/exact/facilitator/scheme";
+import * as Errors from "../../src/exact/facilitator/errors";
 import { ExactSvmSchemeV1 } from "../../src/exact/v1/facilitator/scheme";
 import { SettlementCache } from "../../src/settlement-cache";
 import type { FacilitatorSvmSigner } from "../../src/signer";
 import type { PaymentRequirements, PaymentPayload } from "@x402/core/types";
 import type { PaymentPayloadV1, PaymentRequirementsV1 } from "@x402/core/types/v1";
-import {
-  USDC_DEVNET_ADDRESS,
-  SOLANA_DEVNET_CAIP2,
-  MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
-} from "../../src/constants";
+import { SOLANA_DEVNET_CAIP2, MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS } from "../../src/constants";
+import { USDC_DEVNET_ADDRESS } from "../../src/defaultAssets";
 import * as svmUtils from "../../src/utils";
 
 // Encodes a SetComputeUnitPrice instruction: discriminator(3) + microLamports as u64 LE
@@ -115,7 +113,7 @@ describe("ExactSvmScheme", () => {
       const result = await facilitator.verify(payload, requirements);
 
       expect(result.isValid).toBe(false);
-      expect(result.invalidReason).toBe("unsupported_scheme");
+      expect(result.invalidReason).toBe(Errors.ErrUnsupportedScheme);
     });
 
     it("should reject if network does not match", async () => {
@@ -156,7 +154,7 @@ describe("ExactSvmScheme", () => {
 
       // Network check happens early in Step 1 (before transaction parsing)
       expect(result.isValid).toBe(false);
-      expect(result.invalidReason).toBe("network_mismatch");
+      expect(result.invalidReason).toBe(Errors.ErrNetworkMismatch);
     });
 
     it("should reject if feePayer is missing", async () => {
@@ -419,7 +417,7 @@ describe("ExactSvmScheme", () => {
       const result = await facilitator.settle(payload, requirements);
 
       expect(result.success).toBe(false);
-      expect(result.errorReason).toBe("unsupported_scheme");
+      expect(result.errorReason).toBe(Errors.ErrUnsupportedScheme);
       expect(result.network).toBe(SOLANA_DEVNET_CAIP2);
     });
   });
@@ -473,15 +471,17 @@ describe("ExactSvmScheme", () => {
     function setupSettleMocks(facilitator: ExactSvmScheme) {
       // settle() calls the internal _verify (which also reports the path), so we
       // mock that to isolate the duplicate-cache logic from real verification.
-      vi.spyOn(
-        facilitator as unknown as {
-          _verify: (...args: unknown[]) => Promise<unknown>;
-        },
-        "_verify",
-      ).mockResolvedValue({
-        response: { isValid: true, payer: "PayerAddress" },
-        verificationPath: "static",
-      });
+      const verifySpy = vi
+        .spyOn(
+          facilitator as unknown as {
+            _verify: (...args: unknown[]) => Promise<unknown>;
+          },
+          "_verify",
+        )
+        .mockResolvedValue({
+          response: { isValid: true, payer: "PayerAddress" },
+          verificationPath: "static",
+        });
       (mockSigner as Record<string, unknown>).signTransaction = vi
         .fn()
         .mockResolvedValue("signedTx");
@@ -491,11 +491,13 @@ describe("ExactSvmScheme", () => {
       (mockSigner as Record<string, unknown>).confirmTransaction = vi
         .fn()
         .mockResolvedValue(undefined);
+      return { verifySpy };
     }
 
     it("should reject duplicate settlement of the same transaction", async () => {
       const facilitator = new ExactSvmScheme(mockSigner);
-      setupSettleMocks(facilitator);
+      const { verifySpy } = setupSettleMocks(facilitator);
+      vi.spyOn(svmUtils, "getTokenPayerFromTransaction").mockReturnValue("TokenPayer111");
 
       const payload = makePayload("sameTransactionBase64==");
 
@@ -505,6 +507,46 @@ describe("ExactSvmScheme", () => {
       const result2 = await facilitator.settle(payload, requirements);
       expect(result2.success).toBe(false);
       expect(result2.errorReason).toBe("duplicate_settlement");
+      expect(result2.payer).toBe("TokenPayer111");
+      expect(verifySpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("should release the settlement cache when verification fails so a retry can proceed", async () => {
+      const facilitator = new ExactSvmScheme(mockSigner);
+      const verify = vi.spyOn(
+        facilitator as unknown as { _verify: (...args: unknown[]) => Promise<unknown> },
+        "_verify",
+      );
+      verify
+        .mockResolvedValueOnce({
+          response: {
+            isValid: false,
+            invalidReason: Errors.ErrTransactionSimulationFailed,
+            payer: "",
+          },
+          verificationPath: null,
+        })
+        .mockResolvedValueOnce({
+          response: { isValid: true, payer: "PayerAddress" },
+          verificationPath: "static",
+        });
+      (mockSigner as Record<string, unknown>).signTransaction = vi
+        .fn()
+        .mockResolvedValue("signedTx");
+      (mockSigner as Record<string, unknown>).sendTransaction = vi
+        .fn()
+        .mockResolvedValue("txSignature123");
+      (mockSigner as Record<string, unknown>).confirmTransaction = vi
+        .fn()
+        .mockResolvedValue(undefined);
+
+      const payload = makePayload("retryAfterVerifyFail==");
+      const result1 = await facilitator.settle(payload, requirements);
+      expect(result1.success).toBe(false);
+      expect(result1.errorReason).toBe(Errors.ErrTransactionSimulationFailed);
+
+      const result2 = await facilitator.settle(payload, requirements);
+      expect(result2.success).toBe(true);
     });
 
     it("should release the settlement cache when send/confirm fails so a retry can proceed", async () => {
@@ -518,7 +560,7 @@ describe("ExactSvmScheme", () => {
       const payload = makePayload("retryAfterTransientFailure==");
       const result1 = await facilitator.settle(payload, requirements);
       expect(result1.success).toBe(false);
-      expect(result1.errorReason).toBe("transaction_failed");
+      expect(result1.errorReason).toBe(Errors.ErrTransactionFailed);
 
       const result2 = await facilitator.settle(payload, requirements);
       expect(result2.success).toBe(true);

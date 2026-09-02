@@ -7,7 +7,6 @@ const channelMocks = vi.hoisted(() => ({
   channelExists: vi.fn(),
   fetchAndVerifyOpenChannel: vi.fn(),
   simulateOpenSettleDistribute: vi.fn(),
-  simulateZeroChargeSettle: vi.fn(),
   submitSettle: vi.fn(),
 }));
 
@@ -21,7 +20,6 @@ vi.mock("../../src/upto/facilitator/channel", async () => {
     channelExists: channelMocks.channelExists,
     fetchAndVerifyOpenChannel: channelMocks.fetchAndVerifyOpenChannel,
     simulateOpenSettleDistribute: channelMocks.simulateOpenSettleDistribute,
-    simulateZeroChargeSettle: channelMocks.simulateZeroChargeSettle,
     submitSettle: channelMocks.submitSettle,
   };
 });
@@ -32,46 +30,54 @@ vi.mock("../../src/utils", async () => {
     ...actual,
     createRpcClient: () => ({
       getSlot: () => ({ send: async () => 123_456_789n }),
+      getLatestBlockhash: () => ({
+        send: async () => ({
+          value: { blockhash: USDC_MAINNET_ADDRESS, lastValidBlockHeight: 1n },
+        }),
+      }),
+      getAccountInfo: () => ({ send: async () => ({ value: null }) }),
+      getProgramAccounts: () => ({ send: async () => [] }),
+      simulateTransaction: () => ({ send: async () => ({ value: { err: null } }) }),
+      sendTransaction: () => ({ send: async () => USDC_MAINNET_ADDRESS }),
+      getSignatureStatuses: () => ({
+        send: async () => ({ value: [{ err: null, confirmationStatus: "confirmed" }] }),
+      }),
     }),
   };
 });
 
-import {
-  TOKEN_PROGRAM_ADDRESS,
-  SOLANA_DEVNET_CAIP2,
-  USDC_DEVNET_ADDRESS,
-  USDC_MAINNET_ADDRESS,
-} from "../../src/constants";
+import { TOKEN_PROGRAM_ADDRESS, SOLANA_DEVNET_CAIP2 } from "../../src/constants";
+import { USDC_DEVNET_ADDRESS, USDC_MAINNET_ADDRESS } from "../../src/defaultAssets";
 import { buildOpenPaymentChannelTransaction } from "../../src/payment-channels/open";
 import { signVoucher } from "../../src/payment-channels/voucher";
 import { toFacilitatorSvmSigner } from "../../src/signer";
 import type { FacilitatorSvmSigner } from "../../src/signer";
 import {
   ERR_CHANNEL_ALREADY_OPEN,
+  ERR_CHANNEL_BROADCAST,
   ERR_EXPIRES_AT_MISMATCH,
   ERR_CHANNEL_LIFETIME_EXCEEDED,
   ERR_UNEXPECTED_VOUCHER,
   UptoSvmScheme,
 } from "../../src/upto/facilitator/scheme";
+import { ErrSettlementPending } from "../../src/exact/facilitator/errors";
+import {
+  SettlementConfirmationTimeoutError,
+  SettlementSimulationError,
+} from "../../src/upto/facilitator/channel";
 import type { UptoChannelStorage } from "../../src/upto/facilitator/channelStorage";
 import { UptoSvmRentCleanupManager } from "../../src/upto/facilitator/rentCleanupManager";
 import type { UptoSvmPayloadV2 } from "../../src/types";
+import { challengeExpiresAt, MAX_TIMEOUT_SECONDS } from "./upto.testUtils";
 
 const OPEN_SLOT = 123_456_789n;
 const WITHDRAW_DELAY = 900;
-const MAX_TIMEOUT_SECONDS = 300;
-
-/** Challenge-bound expiry used by facilitator lifecycle tests. */
-function challengeExpiresAt(maxTimeoutSeconds = MAX_TIMEOUT_SECONDS): number {
-  return Math.floor(Date.now() / 1000) + maxTimeoutSeconds;
-}
 
 describe("UptoSvmScheme facilitator channel lifecycle", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     channelMocks.channelExists.mockResolvedValue(false);
     channelMocks.simulateOpenSettleDistribute.mockResolvedValue(undefined);
-    channelMocks.simulateZeroChargeSettle.mockResolvedValue(undefined);
     channelMocks.broadcastOpen.mockResolvedValue(USDC_MAINNET_ADDRESS);
     channelMocks.submitSettle.mockResolvedValue(USDC_MAINNET_ADDRESS);
   });
@@ -161,8 +167,41 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
 
     expect(channelMocks.fetchAndVerifyOpenChannel).toHaveBeenCalledTimes(1);
     expect(channelMocks.broadcastOpen).not.toHaveBeenCalled();
-    expect(channelMocks.simulateZeroChargeSettle).not.toHaveBeenCalled();
     expect(channelMocks.submitSettle).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes the configured settle compute budget through to submitSettle", async () => {
+    const { facilitator, payload, requirements, receiverAuthorizer, uptoPayload } =
+      await buildFixture({
+        computeUnitPriceMicroLamports: 7,
+        settleComputeUnitLimit: 123_456,
+      });
+
+    const voucherSignature = await signVoucher(receiverAuthorizer, {
+      channelId: uptoPayload.channelId,
+      cumulativeAmount: 0n,
+      expiresAt: BigInt(uptoPayload.expiresAt),
+    });
+    await expect(
+      facilitator.settle(
+        {
+          ...payload,
+          payload: { ...uptoPayload, voucherSignature },
+        },
+        { ...requirements, amount: "0" },
+      ),
+    ).resolves.toMatchObject({ success: true });
+
+    expect(channelMocks.submitSettle).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      SOLANA_DEVNET_CAIP2,
+      expect.anything(),
+      expect.objectContaining({
+        computeUnitLimit: 123_456,
+        computeUnitPriceMicroLamports: 7,
+      }),
+    );
   });
 
   it("rejects settlement that exceeds the signed ceiling without touching the chain", async () => {
@@ -192,7 +231,6 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
     expect(channelMocks.channelExists).not.toHaveBeenCalled();
     expect(channelMocks.fetchAndVerifyOpenChannel).not.toHaveBeenCalled();
     expect(channelMocks.simulateOpenSettleDistribute).not.toHaveBeenCalled();
-    expect(channelMocks.simulateZeroChargeSettle).not.toHaveBeenCalled();
   });
 
   it("rejects maxTimeoutSeconds above maxChannelLifetimeSecs", async () => {
@@ -260,7 +298,6 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
     });
     expect(channelMocks.broadcastOpen).not.toHaveBeenCalled();
     expect(channelMocks.simulateOpenSettleDistribute).not.toHaveBeenCalled();
-    expect(channelMocks.simulateZeroChargeSettle).not.toHaveBeenCalled();
     expect(channelMocks.fetchAndVerifyOpenChannel).not.toHaveBeenCalled();
   });
 
@@ -359,6 +396,7 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
     expect(channelMocks.simulateOpenSettleDistribute).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
+      SOLANA_DEVNET_CAIP2,
       expect.objectContaining({
         openTransactionBase64: uptoPayload.openTransaction,
         channel: expect.objectContaining({
@@ -367,7 +405,6 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
         }),
       }),
     );
-    expect(channelMocks.simulateZeroChargeSettle).not.toHaveBeenCalled();
   });
 
   it("does not broadcast open when composite settlement simulation fails on deposit", async () => {
@@ -803,6 +840,67 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
       });
     });
 
+    // A confirmation timeout means the transaction's fate is unknown, not
+    // failed — it is reported as the generic, non-terminal settlement_pending
+    // reason (unified with EVM/the wire spec) with the broadcast signature
+    // preserved, instead of the previous terminal-looking distinct reason, so
+    // the resource server's automatic retry (and, on a subsequent settle
+    // call, this scheme's own pending-settlement fast path) can reconcile
+    // against it.
+    it("returns settlement_pending with the broadcast signature when confirmation times out", async () => {
+      const { facilitator, payload, requirements, receiverAuthorizer, uptoPayload } =
+        await buildFixture();
+      channelMocks.submitSettle.mockRejectedValue(
+        new SettlementConfirmationTimeoutError(
+          "Sig11111111111111111111111111111111111111111" as never,
+        ),
+      );
+      const voucherSignature = await signVoucher(receiverAuthorizer, {
+        channelId: uptoPayload.channelId,
+        cumulativeAmount: 0n,
+        expiresAt: BigInt(uptoPayload.expiresAt),
+      });
+      await expect(
+        facilitator.settle(
+          { ...payload, payload: { ...uptoPayload, voucherSignature } },
+          { ...requirements, amount: "0" },
+        ),
+      ).resolves.toMatchObject({
+        success: false,
+        errorReason: ErrSettlementPending,
+        transaction: "Sig11111111111111111111111111111111111111111",
+      });
+    });
+
+    // The claim cache must survive a confirmation timeout: the first
+    // transaction may still land, so a retry must not be allowed to race a
+    // second settle_and_seal against it while the outcome is unresolved.
+    // (Reconciliation of the cached signature on a subsequent settle call is
+    // covered by dedicated pending-settlement-store tests, which mock the
+    // signer's confirmTransaction directly rather than exercising a real RPC.)
+    it("keeps the claim cache entry after a confirmation timeout, blocking a fresh re-submit", async () => {
+      const { facilitator, payload, requirements, receiverAuthorizer, uptoPayload } =
+        await buildFixture();
+      channelMocks.submitSettle.mockRejectedValue(
+        new SettlementConfirmationTimeoutError(
+          "Sig11111111111111111111111111111111111111111" as never,
+        ),
+      );
+      const voucherSignature = await signVoucher(receiverAuthorizer, {
+        channelId: uptoPayload.channelId,
+        cumulativeAmount: 0n,
+        expiresAt: BigInt(uptoPayload.expiresAt),
+      });
+      const claimPayload = { ...payload, payload: { ...uptoPayload, voucherSignature } };
+      const claimRequirements = { ...requirements, amount: "0" };
+
+      await expect(facilitator.settle(claimPayload, claimRequirements)).resolves.toMatchObject({
+        success: false,
+        errorReason: ErrSettlementPending,
+      });
+      expect(channelMocks.submitSettle).toHaveBeenCalledTimes(1);
+    });
+
     it("releases the claim cache when submitSettle fails so a retry can proceed", async () => {
       const { facilitator, payload, requirements, receiverAuthorizer, uptoPayload } =
         await buildFixture();
@@ -828,7 +926,7 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
       expect(channelMocks.submitSettle).toHaveBeenCalledTimes(2);
     });
 
-    it("returns success when channel storage upsert fails after deposit settle", async () => {
+    it("fails closed when channel storage upsert fails before deposit broadcast", async () => {
       const onStorageError = vi.fn();
       const failingStorage: UptoChannelStorage = {
         upsert: vi.fn().mockRejectedValue(new Error("storage unavailable")),
@@ -904,31 +1002,117 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
           requirements,
         ),
       ).resolves.toMatchObject({
-        success: true,
+        success: false,
+        errorReason: ERR_CHANNEL_BROADCAST,
       });
       expect(failingStorage.upsert).toHaveBeenCalled();
+      expect(channelMocks.broadcastOpen).not.toHaveBeenCalled();
       expect(onStorageError).toHaveBeenCalledWith(
         expect.any(Error),
         expect.objectContaining({ channelId: uptoPayload.channelId, phase: "settle" }),
       );
     });
 
-    it("throws when UptoSvmScheme is constructed with a signer lacking getSigner", () => {
+    it("succeeds on retry once channel storage recovers from a prior deposit failure", async () => {
+      const feePayer = await generateKeyPairSigner();
+      const payer = await generateKeyPairSigner();
+      const receiverAuthorizer = await generateKeyPairSigner();
+      const open = await buildOpenPaymentChannelTransaction({
+        authorizedSigner: receiverAuthorizer.address,
+        blockhash: { blockhash: USDC_MAINNET_ADDRESS, lastValidBlockHeight: 0n },
+        deposit: 1_000_000n,
+        feePayer: feePayer.address,
+        gracePeriod: WITHDRAW_DELAY,
+        mint: USDC_DEVNET_ADDRESS,
+        openSlot: OPEN_SLOT,
+        payee: feePayer.address,
+        payer,
+        recipients: [{ bps: 10_000, recipient: receiverAuthorizer.address }],
+        tokenProgram: TOKEN_PROGRAM_ADDRESS,
+      });
+      const requirements: PaymentRequirements = {
+        scheme: "upto",
+        network: SOLANA_DEVNET_CAIP2,
+        asset: USDC_DEVNET_ADDRESS,
+        amount: "1000000",
+        payTo: receiverAuthorizer.address,
+        maxTimeoutSeconds: 300,
+        extra: {
+          feePayer: feePayer.address,
+          recentSlot: OPEN_SLOT.toString(),
+          receiverAuthorizer: receiverAuthorizer.address,
+          tokenProgram: TOKEN_PROGRAM_ADDRESS,
+          withdrawDelay: WITHDRAW_DELAY,
+        },
+      };
+      const uptoPayload: UptoSvmPayloadV2 = {
+        authorizedSigner: receiverAuthorizer.address,
+        channelId: open.channelId,
+        deposit: "1000000",
+        expiresAt: challengeExpiresAt(),
+        from: payer.address,
+        maxAmount: "1000000",
+        nonce: open.salt.toString(),
+        openSlot: OPEN_SLOT.toString(),
+        openTransaction: open.transaction,
+        validAfter: 0,
+      };
+      channelMocks.fetchAndVerifyOpenChannel.mockResolvedValue({
+        authorizedSigner: receiverAuthorizer.address,
+        channelId: open.channelId,
+        deposit: 1_000_000n,
+        mint: requirements.asset,
+        openSlot: OPEN_SLOT,
+        payee: feePayer.address,
+        payer: payer.address,
+        rentPayer: feePayer.address,
+        splits: [{ bps: 10_000, recipient: receiverAuthorizer.address }],
+      });
+      const toggleableStorage: UptoChannelStorage = {
+        upsert: vi
+          .fn()
+          .mockRejectedValueOnce(new Error("storage unavailable"))
+          .mockResolvedValueOnce(undefined),
+        get: vi.fn(),
+        list: vi.fn().mockResolvedValue([]),
+        delete: vi.fn(),
+      };
+      const scheme = new UptoSvmScheme(toFacilitatorSvmSigner(feePayer), {
+        channelStorage: toggleableStorage,
+      });
+      const payload = {
+        x402Version: 2,
+        accepted: requirements,
+        payload: uptoPayload as unknown as Record<string, unknown>,
+      };
+
+      await expect(scheme.settle(payload, requirements)).resolves.toMatchObject({
+        success: false,
+        errorReason: ERR_CHANNEL_BROADCAST,
+      });
+      await expect(scheme.settle(payload, requirements)).resolves.toMatchObject({
+        success: true,
+      });
+    });
+
+    it("throws when UptoSvmScheme is constructed with a signer lacking upto read RPC", () => {
       const exactOnlySigner: FacilitatorSvmSigner = {
         getAddresses: () => ["11111111111111111111111111111111" as never],
+        getSigner: vi.fn(),
         signTransaction: vi.fn(),
         simulateTransaction: vi.fn(),
         sendTransaction: vi.fn(),
         confirmTransaction: vi.fn(),
       };
-      expect(() => new UptoSvmScheme(exactOnlySigner)).toThrow(
-        "UptoSvmScheme requires getSigner on the signer",
+      expect(() => new UptoSvmScheme(exactOnlySigner as never)).toThrow(
+        "UptoSvmScheme requires getAccountInfo on the signer",
       );
     });
 
-    it("throws when UptoSvmRentCleanupManager is constructed with a signer lacking getSigner", () => {
+    it("throws when UptoSvmRentCleanupManager is constructed with a signer lacking upto read RPC", () => {
       const exactOnlySigner: FacilitatorSvmSigner = {
         getAddresses: () => ["11111111111111111111111111111111" as never],
+        getSigner: vi.fn(),
         signTransaction: vi.fn(),
         simulateTransaction: vi.fn(),
         sendTransaction: vi.fn(),
@@ -937,11 +1121,33 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
       expect(
         () =>
           new UptoSvmRentCleanupManager({
-            signer: exactOnlySigner,
+            signer: exactOnlySigner as never,
             storage: { upsert: vi.fn(), get: vi.fn(), list: vi.fn(), delete: vi.fn() },
             network: SOLANA_DEVNET_CAIP2,
           }),
-      ).toThrow("UptoSvmRentCleanupManager requires getSigner on the signer");
+      ).toThrow("UptoSvmRentCleanupManager requires getAccountInfo on the signer");
+    });
+
+    it("returns invalid_upto_svm_settlement_simulation when claim submitSettle simulation fails", async () => {
+      const { facilitator, payload, requirements, receiverAuthorizer, uptoPayload } =
+        await buildFixture();
+      channelMocks.submitSettle.mockRejectedValue(
+        new SettlementSimulationError(new Error("sim failed")),
+      );
+      const voucherSignature = await signVoucher(receiverAuthorizer, {
+        channelId: uptoPayload.channelId,
+        cumulativeAmount: 0n,
+        expiresAt: BigInt(uptoPayload.expiresAt),
+      });
+      await expect(
+        facilitator.settle(
+          { ...payload, payload: { ...uptoPayload, voucherSignature } },
+          { ...requirements, amount: "0" },
+        ),
+      ).resolves.toMatchObject({
+        success: false,
+        errorReason: "invalid_upto_svm_settlement_simulation",
+      });
     });
   });
 });

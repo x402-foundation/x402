@@ -204,9 +204,13 @@ class TestMCPEVMIntegration:
         )
 
         # Create client with EVM scheme
-        self.client = x402ClientSync().register(
-            "eip155:84532",
-            ExactEvmClientScheme(self.client_signer),
+        self.client = (
+            x402ClientSync()
+            .register(
+                "eip155:84532",
+                ExactEvmClientScheme(self.client_signer),
+            )
+            .set_spend_controls(False)
         )
 
         # Create facilitator with EVM scheme

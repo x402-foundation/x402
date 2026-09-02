@@ -64,12 +64,12 @@ await mcpServer.connect(transport);
 ### Client - Using Factory Function
 
 ```typescript
-import { createX402MCPClient } from "@x402/mcp";
+import { createx402MCPClient } from "@x402/mcp";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 
 // Create client with factory (simplest approach)
-const client = createX402MCPClient({
+const client = createx402MCPClient({
   name: "my-agent",
   version: "1.0.0",
   schemes: [{ network: "eip155:84532", client: new ExactEvmScheme(walletAccount) }],
@@ -229,7 +229,7 @@ const x402Mcp2 = wrapMCPClientWithPaymentFromConfig(mcpClient, {
 ## Payment Flow
 
 1. **Client calls tool** → No payment attached
-2. **Server returns 402** → PaymentRequired in structured result (see SDK Limitation below)
+2. **Server returns PaymentRequired** → In a structured tool result
 3. **Client creates payment** → Using x402Client
 4. **Client retries with payment** → PaymentPayload in `_meta["x402/payment"]`
 5. **Server verifies & executes** → Tool runs if payment valid
@@ -238,21 +238,32 @@ const x402Mcp2 = wrapMCPClientWithPaymentFromConfig(mcpClient, {
 
 ## MCP SDK Limitation
 
-The x402 MCP transport spec defines payment errors using JSON-RPC's native error format:
-```json
-{ "error": { "code": 402, "data": { /* PaymentRequired */ } } }
-```
+The MCP TypeScript SDK v1 converts `McpError` exceptions to tool results with `isError: true`, losing the `error.data` field. To work around this, `@x402/mcp` signals payment requirements using a tool result with `isError: true`.
 
-However, the MCP SDK converts `McpError` exceptions to tool results with `isError: true`, losing the `error.data` field. To work around this, we embed the error structure in the result content:
+Per the x402 MCP transport, `PaymentRequired` is included directly in `structuredContent` and JSON-encoded in the first text content item:
 
 ```json
 {
-  "content": [{ "type": "text", "text": "{\"x402/error\": {\"code\": 402, \"data\": {...}}}" }],
+  "structuredContent": { "x402Version": 2, "accepts": [] },
+  "content": [{ "type": "text", "text": "{\"x402Version\":2,\"accepts\":[]}" }],
   "isError": true
 }
 ```
 
-The client parses this structure to extract PaymentRequired data. This is a pragmatic workaround that maintains compatibility while we track upstream SDK improvements.
+### Supported PaymentRequired Shapes
+
+The client accepts 4 `PaymentRequired` shapes across 2 response types. A payment requirement may be returned as either a tool result or a JSON-RPC error:
+
+| Order | Response Type | Error Code | Shape | Example |
+|-------|---------------|------------|-------|---------|
+| 1 | Tool result ⭐ | — | `result.structuredContent`<br>+<br>`result.content[0].text` (JSON-encoded) | `{`<br>&nbsp;&nbsp;`result: {`<br>&nbsp;&nbsp;&nbsp;&nbsp;`isError: true,`<br>&nbsp;&nbsp;&nbsp;&nbsp;`structuredContent: PaymentRequired,`<br>&nbsp;&nbsp;&nbsp;&nbsp;`content: [{ text: "<PaymentRequired JSON>" }]`<br>&nbsp;&nbsp;`}`<br>`}` |
+| 1 | JSON-RPC error | `-32042` | `error.data.x402` | `{`<br>&nbsp;&nbsp;`error: {`<br>&nbsp;&nbsp;&nbsp;&nbsp;`data: {`<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`x402: PaymentRequired`<br>&nbsp;&nbsp;&nbsp;&nbsp;`}`<br>&nbsp;&nbsp;`}`<br>`}` |
+| 2 | JSON-RPC error | `-32042` | `error.data` | `{`<br>&nbsp;&nbsp;`error: {`<br>&nbsp;&nbsp;&nbsp;&nbsp;`data: PaymentRequired`<br>&nbsp;&nbsp;`}`<br>`}` |
+| 3 | JSON-RPC error | `402` | `error.data` | `{`<br>&nbsp;&nbsp;`error: {`<br>&nbsp;&nbsp;&nbsp;&nbsp;`data: PaymentRequired`<br>&nbsp;&nbsp;`}`<br>`}` |
+
+⭐ Server generated & recommended shape.
+
+For tool results, the client checks `result.structuredContent` first, then falls back to `result.content[0].text`. For JSON-RPC errors, it uses `error.data.x402` first when available, otherwise `error.data`.
 
 ## Configuration Options
 
@@ -260,18 +271,8 @@ The client parses this structure to extract PaymentRequired data. This is a prag
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `autoPayment` | `boolean` | `true` | Automatically retry with payment on 402 |
+| `autoPayment` | `boolean` | `true` | Automatically retry with payment when payment is required |
 | `onPaymentRequested` | `function` | `() => true` | Hook for human-in-the-loop approval when payment is requested |
-
-### X402MCPServerConfig (Factory)
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `name` | `string` | Required | MCP server name |
-| `version` | `string` | Required | MCP server version |
-| `facilitator` | `string \| FacilitatorClient` | Default facilitator | Facilitator for payment processing |
-| `schemes` | `SchemeRegistration[]` | `[]` | Payment scheme registrations |
-| `syncFacilitatorOnStart` | `boolean` | `true` | Initialize facilitator immediately |
 
 ### MCPToolPaymentConfig
 
@@ -289,22 +290,19 @@ The client parses this structure to extract PaymentRequired data. This is a prag
 
 | Option | Type | Required | Description |
 |--------|------|----------|-------------|
-| `scheme` | `string` | Yes | Payment scheme (e.g., "exact") |
-| `network` | `Network` | Yes | CAIP-2 network ID (e.g., "eip155:84532") |
-| `payTo` | `string` | Yes | Recipient wallet address |
-| `price` | `Price` | No | Price - omit to specify per-tool |
-| `maxTimeoutSeconds` | `number` | No | Payment timeout (default: 60) |
-| `extra` | `object` | No | Scheme-specific parameters |
-| `resource` | `object` | No | Resource metadata |
+| `accepts` | `PaymentRequirements[]` | Yes | Payment requirements accepted for the tool |
+| `resource` | `object` | No | Resource metadata for the tool |
+| `hooks` | `object` | No | Payment lifecycle hooks |
+| `extensions` | `Record<string, unknown>` | No | x402 extensions included in the `PaymentRequired` response |
 
 ## Hooks
 
 ### Client Hooks
 
 ```typescript
-const client = createX402MCPClient({...});
+const client = createx402MCPClient({...});
 
-// Called when a 402 is received (before payment)
+// Called when payment is required (before payment)
 // Return { payment } to use custom payment, { abort: true } to stop
 client.onPaymentRequired(async ({ toolName, paymentRequired }) => {
   const cached = await cache.get(toolName);
@@ -319,30 +317,6 @@ client.onBeforePayment(async ({ paymentRequired }) => {
 // Called after payment is submitted
 client.onAfterPayment(async ({ paymentPayload, settleResponse }) => {
   await saveReceipt(settleResponse.transaction);
-});
-```
-
-### Server Hooks
-
-```typescript
-const server = createX402MCPServer({...});
-
-// Called after verification, before tool execution
-// Return false to abort and return 402
-server.onBeforeExecution(async ({ toolName, paymentPayload }) => {
-  if (isBlocked(paymentPayload.signer)) {
-    return false; // Aborts execution
-  }
-});
-
-// Called after tool execution, before settlement
-server.onAfterExecution(async ({ toolName, result }) => {
-  metrics.recordExecution(toolName, result.isError);
-});
-
-// Called after successful settlement
-server.onAfterSettlement(async ({ toolName, settlement }) => {
-  await logTransaction(toolName, settlement.transaction);
 });
 ```
 

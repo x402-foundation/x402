@@ -29,6 +29,18 @@
         "assetEnv": "SERVER_NEAR_ASSET"
       },
       "extensions": ["bazaar"]
+    },
+    "/exact/near/upfront": {
+      "scheme": "exact",
+      "sdks": ["typescript"],
+      "paymentFlow": "upfront",
+      "price": {
+        "amount": "1000000000000000000000",
+        "amountEnv": "SERVER_NEAR_AMOUNT",
+        "asset": "wrap.testnet",
+        "assetEnv": "SERVER_NEAR_ASSET"
+      },
+      "extensions": ["bazaar"]
     }
   }
 }

@@ -55,7 +55,7 @@ async def main() -> None:
     evm_private_key, svm_private_key, base_url, endpoint_path = validate_environment()
 
     # Create x402 client
-    client = x402Client()
+    client = x402Client().set_spend_controls({"max_amount_per_payment": "$1"})
 
     # Register EVM payment scheme if private key provided
     if evm_private_key:

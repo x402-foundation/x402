@@ -22,6 +22,7 @@ from .constants import (
     ERR_PERMIT2_INVALID_DESTINATION,
     ERR_PERMIT2_INVALID_OWNER,
     ERR_RECIPIENT_MISMATCH,
+    ERR_SETTLEMENT_PENDING,
     ERR_SMART_WALLET_DEPLOYMENT_FAILED,
     ERR_TRANSACTION_FAILED,
     ERR_UNDEPLOYED_SMART_WALLET,
@@ -37,7 +38,6 @@ from .constants import (
     ERR_VALID_AFTER_FUTURE,
     ERR_VALID_BEFORE_EXPIRED,
     IS_VALID_SIGNATURE_ABI,
-    NETWORK_CONFIGS,
     SCHEME_EXACT,
     SCHEME_UPTO,
     TRANSFER_WITH_AUTHORIZATION_BYTES_ABI,
@@ -47,8 +47,10 @@ from .constants import (
     UPTO_PERMIT2_WITNESS_TYPES,
     X402_UPTO_PERMIT2_PROXY_ADDRESS,
     AssetInfo,
-    NetworkConfig,
 )
+
+# Default assets
+from .default_assets import DEFAULT_ASSETS, find_default_asset, get_default_asset
 
 # EIP-712
 from .eip712 import (
@@ -98,13 +100,12 @@ from .utils import (
     format_amount,
     get_asset_info,
     get_evm_chain_id,
-    get_network_config,
     hex_to_bytes,
     is_valid_address,
     is_valid_network,
+    is_valid_tx_hash,
     normalize_address,
     parse_amount,
-    parse_money_to_decimal,
 )
 
 # V1 legacy constants (re-exported for backward compatibility)
@@ -130,7 +131,6 @@ __all__ = [
     "TX_STATUS_FAILED",
     "ERC6492_MAGIC_VALUE",
     "EIP1271_MAGIC_VALUE",
-    "NETWORK_CONFIGS",
     "V1_NETWORKS",
     "V1_NETWORK_CHAIN_IDS",
     "ERR_INVALID_SIGNATURE",
@@ -146,6 +146,7 @@ __all__ = [
     "ERR_NETWORK_MISMATCH",
     "ERR_UNSUPPORTED_SCHEME",
     "ERR_TRANSACTION_FAILED",
+    "ERR_SETTLEMENT_PENDING",
     "ERR_FAILED_TO_GET_NETWORK_CONFIG",
     "ERR_FAILED_TO_GET_ASSET_INFO",
     "ERR_FAILED_TO_VERIFY_SIGNATURE",
@@ -169,7 +170,6 @@ __all__ = [
     "BALANCE_OF_ABI",
     "IS_VALID_SIGNATURE_ABI",
     "AssetInfo",
-    "NetworkConfig",
     # Types
     "ExactEIP3009Authorization",
     "ExactEIP3009Payload",
@@ -195,17 +195,20 @@ __all__ = [
     "FacilitatorWeb3Signer",
     # Utilities
     "get_evm_chain_id",
-    "get_network_config",
     "get_asset_info",
     "is_valid_network",
     "create_nonce",
     "normalize_address",
     "is_valid_address",
+    "is_valid_tx_hash",
     "parse_amount",
     "format_amount",
     "hex_to_bytes",
     "bytes_to_hex",
-    "parse_money_to_decimal",
+    # Default assets
+    "DEFAULT_ASSETS",
+    "find_default_asset",
+    "get_default_asset",
     # EIP-712
     "hash_typed_data",
     "hash_eip3009_authorization",

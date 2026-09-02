@@ -1,4 +1,5 @@
 import type { PaymentPayload, PaymentRequirements, SchemeNetworkClient } from "@x402/core/types";
+import { findDefaultAsset } from "../../defaultAssets";
 import type { ClientKeetaSigner } from "../../signer";
 import type { ExactKeetaPayload } from "../../types";
 import * as KeetaNet from "@keetanetwork/keetanet-client";
@@ -8,6 +9,7 @@ import * as KeetaNet from "@keetanetwork/keetanet-client";
  */
 export class ExactKeetaScheme implements SchemeNetworkClient {
   readonly scheme = "exact";
+  findDefaultAsset = findDefaultAsset;
 
   /**
    * Creates a new ExactKeetaScheme instance.

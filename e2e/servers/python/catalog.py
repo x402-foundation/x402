@@ -103,6 +103,7 @@ class CatalogRoute:
     price: dict[str, Any]
     extensions: list[str]
     settlement_override: dict[str, str] | None
+    payment_flow: str | None
 
 
 @dataclass(frozen=True)
@@ -166,6 +167,7 @@ def catalog_routes() -> list[CatalogRoute]:
                 price=definition["price"],
                 extensions=list(definition.get("extensions", [])),
                 settlement_override=definition.get("settlementOverride"),
+                payment_flow=definition.get("paymentFlow"),
             )
         )
 
@@ -258,6 +260,23 @@ def _resolve_price(
     return price, None
 
 
+def _merge_route_extra(
+    price_extra: dict[str, str] | None,
+    payment_flow: str | None,
+) -> dict[str, str] | None:
+    """Merge price-derived extra with catalog paymentFlow.
+
+    Authorization is omitted on the wire, matching core applyPaymentFlowWireExtra.
+    """
+    wire_flow = payment_flow if payment_flow and payment_flow != "authorization" else None
+    if not wire_flow and not price_extra:
+        return None
+    extra = dict(price_extra or {})
+    if wire_flow:
+        extra["paymentFlow"] = wire_flow
+    return extra
+
+
 def resolve_routes(env: Callable[[str], str | None] = os.getenv) -> list[ResolvedRoute]:
     """Resolve catalog routes for one server process.
 
@@ -274,6 +293,7 @@ def resolve_routes(env: Callable[[str], str | None] = os.getenv) -> list[Resolve
 
         caip2 = network_caip2(route.network, env)
         price, extra = _resolve_price(route, caip2, env)
+        extra = _merge_route_extra(extra, route.payment_flow)
 
         resolved.append(
             ResolvedRoute(
@@ -328,6 +348,7 @@ def route_description(
     scheme: str,
     asset_transfer_method: str | None,
     extensions: list[str] | None,
+    payment_flow: str | None = None,
 ) -> str:
     """Human-readable description for an MCP tool, mirroring the TS catalog helper."""
     label = network_id.upper()
@@ -339,7 +360,10 @@ def route_description(
         if ext_id in _GAS_SPONSORING_LABELS
     ]
     suffix = f" with {' and '.join(sponsoring)}" if sponsoring else ""
-    return f"Protected {scheme_prefix}{transfer}endpoint on {label}{suffix}"
+    flow = ""
+    if payment_flow and payment_flow != "authorization":
+        flow = f" {payment_flow}"
+    return f"Protected {scheme_prefix}{transfer}endpoint on {label}{flow}{suffix}"
 
 
 def route_discovery_output() -> dict[str, Any]:

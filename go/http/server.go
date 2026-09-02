@@ -27,6 +27,10 @@ var (
 	colonParamRegex = exttypes.ColonParamRegex
 )
 
+// Wire value for a broadcast settle whose receipt could not be confirmed.
+// Mirrored from mechanisms/evm to avoid an http→mechanisms import.
+const settlementPendingReason = "settlement_pending"
+
 // ============================================================================
 // HTTP Adapter Interface
 // ============================================================================
@@ -1014,7 +1018,7 @@ func (s *x402HTTPResourceServer) ProcessSettlement(
 
 	settleResult, err := s.SettlePaymentWithExtensions(ctx, payload, requirements, resolved, declaredExtensions, resolvedPhase)
 	if err != nil {
-		return s.buildSettlementFailureResult(err.Error(), x402.Network(requirements.Network), "", nil)
+		return s.buildSettlementFailureResultFromError(err, x402.Network(requirements.Network))
 	}
 
 	if !settleResult.Success {
@@ -1097,6 +1101,39 @@ func (s *x402HTTPResourceServer) CreateFailurePathSettlementHeaders(
 	return nil
 }
 
+// sanitizedFailureTransaction returns the broadcast transaction hash for a failed
+// settlement only when the failure is settlement_pending. Every other terminal reason
+// must not surface a transaction value, regardless of whether the failure arrived as
+// an error or as a direct SettleResponse (e.g. from a remote facilitator client).
+func sanitizedFailureTransaction(errorReason, transaction string) string {
+	if errorReason == settlementPendingReason {
+		return transaction
+	}
+	return ""
+}
+
+// buildSettlementFailureResultFromError converts a Settle error into a
+// ProcessSettleResult. Preserves SettleError metadata (including the broadcast
+// hash for settlement_pending) in PAYMENT-RESPONSE.
+func (s *x402HTTPResourceServer) buildSettlementFailureResultFromError(err error, fallbackNetwork x402.Network) *ProcessSettleResult {
+	var se *x402.SettleError
+	if errors.As(err, &se) {
+		network := se.Network
+		if network == "" {
+			network = fallbackNetwork
+		}
+		return s.buildSettlementFailureResult(se.ErrorReason, network, se.Payer, &x402.SettleResponse{
+			Success:      false,
+			ErrorReason:  se.ErrorReason,
+			ErrorMessage: se.ErrorMessage,
+			Transaction:  se.Transaction,
+			Network:      network,
+			Payer:        se.Payer,
+		})
+	}
+	return s.buildSettlementFailureResult(err.Error(), fallbackNetwork, "", nil)
+}
+
 // buildSettlementFailureResult creates a ProcessSettleResult for settlement failure.
 // It includes PAYMENT-RESPONSE header and empty body by default.
 func (s *x402HTTPResourceServer) buildSettlementFailureResult(errorReason string, network x402.Network, payer string, settleResult *x402.SettleResponse) *ProcessSettleResult {
@@ -1111,6 +1148,7 @@ func (s *x402HTTPResourceServer) buildSettlementFailureResult(errorReason string
 		failureResponse.Network = settleResult.Network
 		failureResponse.Payer = settleResult.Payer
 		failureResponse.ErrorMessage = settleResult.ErrorMessage
+		failureResponse.Transaction = sanitizedFailureTransaction(errorReason, settleResult.Transaction)
 	}
 
 	headers, err := s.CreateSettlementHeaders(&failureResponse)
@@ -1138,6 +1176,9 @@ func (s *x402HTTPResourceServer) buildSettlementFailureResult(errorReason string
 	return &ProcessSettleResult{
 		Success:     false,
 		ErrorReason: errorReason,
+		Transaction: failureResponse.Transaction,
+		Network:     failureResponse.Network,
+		Payer:       failureResponse.Payer,
 		Headers:     responseHeaders,
 		Response: &HTTPResponseInstructions{
 			Status:  402,

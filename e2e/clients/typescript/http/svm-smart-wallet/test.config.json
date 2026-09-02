@@ -1,11 +1,21 @@
 {
   "name": "typescript/http/svm-smart-wallet",
   "type": "client",
-  "enabled": false,
+  "enabled": true,
   "language": "typescript",
-  "protocolFamilies": ["svm"],
-  "x402Versions": [2],
-  "schemes": ["exact"],
+  "protocolFamilies": [
+    "svm"
+  ],
+  "x402Versions": [
+    2
+  ],
+  "schemes": [
+    "exact"
+  ],
+  "facilitators": [
+    "typescript",
+    "go"
+  ],
   "environment": {
     "required": [
       "CLIENT_SVM_PRIVATE_KEY",

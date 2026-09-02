@@ -26,5 +26,12 @@ describe("@x402/keeta", () => {
       expect(getUsdcAddress).toBeDefined();
       expect(networkToKeetaNetwork).toBeDefined();
     });
+
+    it("should export default asset helpers", async () => {
+      const { findDefaultAsset, getDefaultAsset, DEFAULT_ASSETS } = await import("../../src/index");
+      expect(findDefaultAsset).toBeDefined();
+      expect(getDefaultAsset).toBeDefined();
+      expect(DEFAULT_ASSETS).toBeDefined();
+    });
   });
 });

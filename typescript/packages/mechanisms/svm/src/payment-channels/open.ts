@@ -7,6 +7,10 @@
  */
 
 import {
+  getSetComputeUnitLimitInstruction,
+  getSetComputeUnitPriceInstruction,
+} from "@solana-program/compute-budget";
+import {
   AccountRole,
   appendTransactionMessageInstructions,
   type Address,
@@ -35,6 +39,7 @@ import { findAssociatedTokenPda } from "@solana-program/token-2022";
 
 import {
   COMPUTE_BUDGET_PROGRAM_ADDRESS,
+  DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
   LIGHTHOUSE_PROGRAM_ADDRESS,
   MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
   MAX_MEMO_BYTES,
@@ -52,6 +57,19 @@ import { verifyEd25519Signature } from "./voucher";
 const U64_MAX = (1n << 64n) - 1n;
 /** Spec ceiling for `SetComputeUnitLimit` on an open transaction. */
 export const OPEN_MAX_COMPUTE_UNIT_LIMIT = 400_000;
+/**
+ * Default `SetComputeUnitLimit` for a built open transaction. Without one the
+ * runtime reserves 200,000 CU per instruction (SIMD-0170) — 400,000 for the
+ * open + memo pair — while an observed open consumes ~51,000 CU. The default
+ * keeps ~1.8x headroom over that, and any `SetComputeUnitPrice` priority fee
+ * is charged on the requested limit, so right-sizing buys the same scheduling
+ * priority at a fraction of the fee. Assumes standard SPL Token (or
+ * Token-2022 without execution extensions) behavior — mints whose escrow
+ * transfer runs compute-heavy extensions (e.g. transfer hooks) need an
+ * explicit {@link BuildOpenArgs.computeUnitLimit} override, up to the spec
+ * ceiling {@link OPEN_MAX_COMPUTE_UNIT_LIMIT}.
+ */
+export const OPEN_DEFAULT_COMPUTE_UNIT_LIMIT = 90_000;
 /** Spec ceiling for optional Phantom/Solflare Lighthouse assertions after `open`. */
 const OPEN_MAX_LIGHTHOUSE_INSTRUCTIONS = 3;
 /** Max optional suffix length after `open` (3 Lighthouse + 1 Memo). */
@@ -115,6 +133,22 @@ export interface BuildOpenArgs {
    * data; otherwise a random hex nonce is emitted for uniqueness.
    */
   memo?: string | undefined;
+  /**
+   * `SetComputeUnitLimit` units for the transaction. Defaults to
+   * {@link OPEN_DEFAULT_COMPUTE_UNIT_LIMIT}; `0` omits the instruction (the
+   * runtime then derives the spec-maximum 400,000 CU reservation). Must not
+   * exceed {@link OPEN_MAX_COMPUTE_UNIT_LIMIT}; facilitators may enforce a
+   * stricter `maxComputeUnits` at verification.
+   */
+  computeUnitLimit?: number | undefined;
+  /**
+   * `SetComputeUnitPrice` in microlamports per compute unit. The fee payer
+   * (facilitator) pays the resulting priority fee on the requested limit.
+   * Defaults to `DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS` (1); `0` omits the
+   * instruction. Must not exceed `MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS`;
+   * facilitators may enforce a stricter `maxPriorityFeeMicroLamports`.
+   */
+  computeUnitPriceMicroLamports?: number | undefined;
 }
 
 /** Result of {@link buildOpenPaymentChannelTransaction}. */
@@ -265,6 +299,38 @@ export async function buildOpenPaymentChannelTransaction(args: BuildOpenArgs): P
     data: memoData,
   };
 
+  const computeUnitLimit = args.computeUnitLimit ?? OPEN_DEFAULT_COMPUTE_UNIT_LIMIT;
+  if (
+    !Number.isSafeInteger(computeUnitLimit) ||
+    computeUnitLimit < 0 ||
+    computeUnitLimit > OPEN_MAX_COMPUTE_UNIT_LIMIT
+  ) {
+    throw new Error(
+      `computeUnitLimit must be an integer in [0, ${OPEN_MAX_COMPUTE_UNIT_LIMIT}], received ${args.computeUnitLimit}`,
+    );
+  }
+  const computeUnitPrice =
+    args.computeUnitPriceMicroLamports ?? DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS;
+  if (
+    !Number.isSafeInteger(computeUnitPrice) ||
+    computeUnitPrice < 0 ||
+    computeUnitPrice > MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS
+  ) {
+    throw new Error(
+      `computeUnitPriceMicroLamports must be an integer in [0, ${MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS}], received ${args.computeUnitPriceMicroLamports}`,
+    );
+  }
+  // Spec layout: optional ComputeBudget prefix (SetComputeUnitLimit MUST
+  // precede SetComputeUnitPrice) → exactly one open → optional Memo suffix.
+  const computeBudgetIxs = [
+    ...(computeUnitLimit > 0
+      ? [getSetComputeUnitLimitInstruction({ units: computeUnitLimit })]
+      : []),
+    ...(computeUnitPrice > 0
+      ? [getSetComputeUnitPriceInstruction({ microLamports: computeUnitPrice })]
+      : []),
+  ];
+
   const message = pipe(
     createTransactionMessage({ version: 0 }),
     msg => setTransactionMessageFeePayer(feePayer, msg),
@@ -276,7 +342,7 @@ export async function buildOpenPaymentChannelTransaction(args: BuildOpenArgs): P
         },
         msg,
       ),
-    msg => appendTransactionMessageInstructions([instruction, memoIx], msg),
+    msg => appendTransactionMessageInstructions([...computeBudgetIxs, instruction, memoIx], msg),
   );
   const signed = await partiallySignTransactionMessageWithSigners(message);
 

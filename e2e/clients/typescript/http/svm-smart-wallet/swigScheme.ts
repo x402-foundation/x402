@@ -23,12 +23,13 @@ import {
   type KeyPairSigner,
 } from "@solana/kit";
 import { fetchSwig, getSignInstructions, getSwigWalletAddress } from "@swig-wallet/kit";
+import { findDefaultAsset } from "@x402/svm";
 import type { PaymentPayload, PaymentRequirements, SchemeNetworkClient } from "@x402/core/types";
 
 const DEVNET_RPC_URL = "https://api.devnet.solana.com";
 const MEMO_PROGRAM_ADDRESS = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr" as Address;
 const MAX_MEMO_BYTES = 256;
-const SMART_WALLET_COMPUTE_UNIT_LIMIT = 200_000;
+const SMART_WALLET_COMPUTE_UNIT_LIMIT = 400_000;
 const SMART_WALLET_COMPUTE_UNIT_PRICE_MICROLAMPORTS = 10_000n;
 
 /**
@@ -41,6 +42,7 @@ const SMART_WALLET_COMPUTE_UNIT_PRICE_MICROLAMPORTS = 10_000n;
  */
 export class ExactSwigSvmScheme implements SchemeNetworkClient {
   readonly scheme = "exact";
+  findDefaultAsset = findDefaultAsset;
 
   /**
    * @param authority - Ed25519 signer for the Swig root role

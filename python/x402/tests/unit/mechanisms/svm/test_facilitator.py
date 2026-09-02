@@ -10,6 +10,7 @@ from x402.mechanisms.svm import (
     USDC_DEVNET_ADDRESS,
 )
 from x402.mechanisms.svm.exact import ExactSvmFacilitatorScheme
+from x402.mechanisms.svm.utils import transaction_message_hash
 from x402.schemas import PaymentPayload, PaymentRequirements, ResourceInfo, VerifyResponse
 
 
@@ -37,6 +38,13 @@ class MockFacilitatorSigner:
         pass
 
 
+class _ConfirmTimeoutSigner(MockFacilitatorSigner):
+    """Signer whose broadcast never confirms in time (settlement_pending)."""
+
+    def confirm_transaction(self, signature: str, network: str) -> None:
+        raise TimeoutError("rpc: timeout waiting for confirmation")
+
+
 class TestExactSvmSchemeConstructor:
     """Test ExactSvmScheme facilitator constructor."""
 
@@ -46,6 +54,18 @@ class TestExactSvmSchemeConstructor:
         facilitator = ExactSvmFacilitatorScheme(signer)
 
         assert facilitator.scheme == "exact"
+
+    def test_uses_provided_pending_store_instead_of_a_fresh_default(self):
+        """A caller-supplied PendingSettlementStore must be the instance actually used,
+        not merely accepted and ignored in favor of the default. This is what lets a
+        multi-instance facilitator inject a shared, network-backed store."""
+        from x402.pending_settlement_store import InMemoryPendingSettlementStore
+
+        signer = MockFacilitatorSigner()
+        custom_store = InMemoryPendingSettlementStore()
+        facilitator = ExactSvmFacilitatorScheme(signer, pending_store=custom_store)
+
+        assert facilitator._pending_store is custom_store
 
 
 class TestVerify:
@@ -247,11 +267,237 @@ class TestSettle:
             extra={"feePayer": "FeePayer1111111111111111111111111111"},
         )
 
-        result = facilitator.settle(payload, requirements)
+        # settle() now decodes the transaction up front (to key the pending-settlement
+        # store) before verify() runs, so an arbitrary test string needs a fake decode to
+        # reach the scheme-mismatch check below.
+        with patch(
+            "x402.mechanisms.svm.exact.facilitator.decode_transaction_from_payload",
+            side_effect=lambda payload: _FakeTx(payload.transaction),
+        ):
+            result = facilitator.settle(payload, requirements)
 
         assert result.success is False
         assert result.error_reason == "unsupported_scheme"
         assert result.network == SOLANA_DEVNET_CAIP2
+
+    def test_should_fail_settlement_with_settlement_pending_on_confirm_timeout(self):
+        """Confirm-timeout must report settlement_pending (not transaction_failed) and
+        populate the pending-settlement store with the broadcast signature."""
+
+        signer = _ConfirmTimeoutSigner()
+        facilitator = ExactSvmFacilitatorScheme(signer)
+        requirements = PaymentRequirements(
+            scheme="exact",
+            network=SOLANA_DEVNET_CAIP2,
+            asset=USDC_DEVNET_ADDRESS,
+            amount="100000",
+            pay_to="PayToAddress11111111111111111111111111",
+            max_timeout_seconds=3600,
+            extra={"feePayer": "FeePayer1111111111111111111111111111"},
+        )
+        payload = PaymentPayload(
+            x402_version=2,
+            resource=ResourceInfo(
+                url="http://example.com/protected",
+                description="Test resource",
+                mime_type="application/json",
+            ),
+            accepted=requirements,
+            payload={"transaction": "pendingTransaction=="},
+        )
+
+        with patch(
+            "x402.mechanisms.svm.exact.facilitator.decode_transaction_from_payload",
+            side_effect=lambda payload: _FakeTx(payload.transaction),
+        ):
+            with patch.object(
+                facilitator,
+                "verify",
+                return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
+            ):
+                result = facilitator.settle(payload, requirements)
+
+        assert result.success is False
+        assert result.error_reason == "settlement_pending"
+        assert result.transaction == "mockSignature123"
+        assert (
+            facilitator._pending_store.get(
+                transaction_message_hash(_FakeTx("pendingTransaction=="))
+            )
+            == "mockSignature123"
+        )
+
+
+def _make_settle_fixtures(signer, transaction: str = "cachedTransaction=="):
+    facilitator = ExactSvmFacilitatorScheme(signer)
+    requirements = PaymentRequirements(
+        scheme="exact",
+        network=SOLANA_DEVNET_CAIP2,
+        asset=USDC_DEVNET_ADDRESS,
+        amount="100000",
+        pay_to="PayToAddress11111111111111111111111111",
+        max_timeout_seconds=3600,
+        extra={"feePayer": "FeePayer1111111111111111111111111111"},
+    )
+    payload = PaymentPayload(
+        x402_version=2,
+        resource=ResourceInfo(
+            url="http://example.com/protected",
+            description="Test resource",
+            mime_type="application/json",
+        ),
+        accepted=requirements,
+        payload={"transaction": transaction},
+    )
+    return facilitator, payload, requirements
+
+
+class TestSettlePendingSettlementStoreReconciliation:
+    """Cache-hit reconciliation and store-lifecycle tests for ExactSvmScheme.settle()."""
+
+    def test_cache_miss_broadcast_success_leaves_store_empty(self):
+        signer = MockFacilitatorSigner()
+        facilitator, payload, requirements = _make_settle_fixtures(signer)
+
+        with patch(
+            "x402.mechanisms.svm.exact.facilitator.decode_transaction_from_payload",
+            side_effect=lambda p: _FakeTx(p.transaction),
+        ):
+            with patch.object(
+                facilitator,
+                "verify",
+                return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
+            ):
+                result = facilitator.settle(payload, requirements)
+
+        assert result.success is True
+        assert (
+            facilitator._pending_store.get(
+                transaction_message_hash(_FakeTx(payload.payload["transaction"]))
+            )
+            is None
+        )
+
+    def test_cache_hit_skips_verify_and_send_then_reconciles_success(self):
+        signer = _ConfirmTimeoutSigner()
+        facilitator, payload, requirements = _make_settle_fixtures(signer)
+
+        with patch(
+            "x402.mechanisms.svm.exact.facilitator.decode_transaction_from_payload",
+            side_effect=lambda p: _FakeTx(p.transaction),
+        ):
+            with patch.object(
+                facilitator,
+                "verify",
+                return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
+            ):
+                first = facilitator.settle(payload, requirements)
+                assert first.success is False
+
+                # The signature confirms on the next attempt.
+                signer.confirm_transaction = lambda signature, network: None
+                with patch.object(
+                    facilitator,
+                    "verify",
+                    side_effect=AssertionError("verify must be skipped on a pending-store hit"),
+                ):
+                    second = facilitator.settle(payload, requirements)
+
+        assert second.success is True
+        assert second.transaction == first.transaction
+        tx_key = transaction_message_hash(_FakeTx(payload.payload["transaction"]))
+        assert facilitator._pending_store.get(tx_key) is None
+
+    def test_cache_hit_still_unconfirmed_returns_settlement_pending_again(self):
+        signer = _ConfirmTimeoutSigner()
+        facilitator, payload, requirements = _make_settle_fixtures(signer)
+
+        with patch(
+            "x402.mechanisms.svm.exact.facilitator.decode_transaction_from_payload",
+            side_effect=lambda p: _FakeTx(p.transaction),
+        ):
+            with patch.object(
+                facilitator,
+                "verify",
+                return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
+            ):
+                first = facilitator.settle(payload, requirements)
+                second = facilitator.settle(payload, requirements)
+
+        assert first.success is False
+        assert second.success is False
+        assert second.error_reason == "settlement_pending"
+        assert second.transaction == first.transaction
+
+    def test_verify_only_failure_is_terminal_and_never_touches_store(self):
+        signer = MockFacilitatorSigner()
+        facilitator, payload, requirements = _make_settle_fixtures(signer)
+
+        with patch(
+            "x402.mechanisms.svm.exact.facilitator.decode_transaction_from_payload",
+            side_effect=lambda p: _FakeTx(p.transaction),
+        ):
+            with patch.object(
+                facilitator,
+                "verify",
+                return_value=VerifyResponse(is_valid=False, invalid_reason="invalid_signature"),
+            ):
+                result = facilitator.settle(payload, requirements)
+
+        assert result.success is False
+        assert result.error_reason == "invalid_signature"
+        tx_key = transaction_message_hash(_FakeTx(payload.payload["transaction"]))
+        assert facilitator._pending_store.get(tx_key) is None
+
+    def test_confirm_timeout_preserves_duplicate_cache_entry(self):
+        """A confirm-wait timeout is non-terminal (the transaction really was broadcast), so
+        the dedup lock must stay held — otherwise a fresh settle for the identical payload
+        (e.g. from a caller without a shared PendingSettlementStore) could re-verify and
+        re-send a transaction that's already in flight. Mirrors the Go/TS SVM exact tests.
+        """
+
+        signer = _ConfirmTimeoutSigner()
+        facilitator, payload, requirements = _make_settle_fixtures(signer)
+
+        with patch(
+            "x402.mechanisms.svm.exact.facilitator.decode_transaction_from_payload",
+            side_effect=lambda p: _FakeTx(p.transaction),
+        ):
+            with patch.object(
+                facilitator,
+                "verify",
+                return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
+            ):
+                result = facilitator.settle(payload, requirements)
+
+        assert result.success is False
+        tx_key = transaction_message_hash(_FakeTx(payload.payload["transaction"]))
+        assert facilitator._settlement_cache.is_duplicate(tx_key) is True
+
+    def test_send_failure_is_terminal_and_deletes_duplicate_cache_entry(self):
+        class _SendFailsSigner(MockFacilitatorSigner):
+            def send_transaction(self, tx_base64: str, network: str) -> str:
+                raise RuntimeError("rpc: connection refused")
+
+        signer = _SendFailsSigner()
+        facilitator, payload, requirements = _make_settle_fixtures(signer)
+
+        with patch(
+            "x402.mechanisms.svm.exact.facilitator.decode_transaction_from_payload",
+            side_effect=lambda p: _FakeTx(p.transaction),
+        ):
+            with patch.object(
+                facilitator,
+                "verify",
+                return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
+            ):
+                facilitator.settle(payload, requirements)
+                tx_key = transaction_message_hash(_FakeTx(payload.payload["transaction"]))
+
+                # The failed send must not leave the transaction stuck in the duplicate
+                # cache — a retry with the identical payload should reach send again
+                # rather than being rejected as a duplicate.
+                assert facilitator._settlement_cache.is_duplicate(tx_key) is False
 
 
 class TestFacilitatorSchemeAttributes:

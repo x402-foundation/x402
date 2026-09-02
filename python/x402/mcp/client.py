@@ -220,6 +220,16 @@ class x402MCPClientSync:
         self._auto_payment = auto_payment
         self._on_payment_requested = on_payment_requested
 
+    @property
+    def client(self) -> Any:
+        """Get underlying MCP client."""
+        return self._mcp_client
+
+    @property
+    def payment_client(self) -> x402ClientSync:
+        """Get underlying x402 payment client."""
+        return self._payment_client
+
     def call_tool(
         self,
         name: str,
@@ -347,3 +357,40 @@ def _try_extract_payment_json(text: str) -> dict | None:
             pass
 
     return None
+
+
+def wrap_mcp_client_with_payment_sync(
+    mcp_client: Any,
+    payment_client: x402ClientSync,
+    *,
+    auto_payment: bool = True,
+    on_payment_requested: Any = None,
+) -> x402MCPClientSync:
+    """Wrap an existing sync MCP client with x402 payment handling."""
+    return x402MCPClientSync(
+        mcp_client,
+        payment_client,
+        auto_payment=auto_payment,
+        on_payment_requested=on_payment_requested,
+    )
+
+
+def wrap_mcp_client_with_payment_from_config_sync(
+    mcp_client: Any,
+    *,
+    schemes: list[dict[str, Any]] | None = None,
+    config: Any = None,
+    auto_payment: bool = True,
+    on_payment_requested: Any = None,
+) -> x402MCPClientSync:
+    """Wrap a sync MCP client using ``x402ClientSync.from_config``."""
+    from .utils import build_x402_client_config
+
+    config_or_schemes = config if config is not None else (schemes or [])
+    payment_client = x402ClientSync.from_config(build_x402_client_config(config_or_schemes))
+    return x402MCPClientSync(
+        mcp_client,
+        payment_client,
+        auto_payment=auto_payment,
+        on_payment_requested=on_payment_requested,
+    )

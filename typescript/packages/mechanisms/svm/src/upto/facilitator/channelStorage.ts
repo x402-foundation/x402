@@ -25,6 +25,10 @@ export interface UptoChannelRecord {
 /** Pluggable storage of channels the facilitator sponsors rent for. */
 export interface UptoChannelStorage {
   get(channelId: string): Promise<UptoChannelRecord | undefined>;
+  /**
+   * Every stored record, in any order. The rent cleanup manager sorts by
+   * channel id before scanning, so implementations do not have to.
+   */
   list(): Promise<UptoChannelRecord[]>;
   upsert(record: UptoChannelRecord): Promise<void>;
   delete(channelId: string): Promise<void>;

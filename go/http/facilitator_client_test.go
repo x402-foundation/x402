@@ -1,12 +1,16 @@
 package http
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -356,6 +360,186 @@ func TestHTTPFacilitatorClientSettleInvalidResponse(t *testing.T) {
 	}
 	if !strings.Contains(responseErr.Error(), "facilitator settle returned invalid data") {
 		t.Errorf("Expected invalid data message, got %q", responseErr.Error())
+	}
+}
+
+func TestHTTPFacilitatorClientExtensionResponses(t *testing.T) {
+	ctx := context.Background()
+	requirements := x402.PaymentRequirements{
+		Scheme:  "exact",
+		Network: "eip155:1",
+		Asset:   "USDC",
+		Amount:  "1000000",
+		PayTo:   "0xrecipient",
+	}
+	payload := x402.PaymentPayload{
+		X402Version: 2,
+		Accepted:    requirements,
+		Payload:     map[string]interface{}{"sig": "test"},
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("Failed to marshal payload: %v", err)
+	}
+	requirementsBytes, err := json.Marshal(requirements)
+	if err != nil {
+		t.Fatalf("Failed to marshal requirements: %v", err)
+	}
+
+	headerExtensions := map[string]interface{}{
+		"bazaar": map[string]interface{}{
+			"status":    "accepted",
+			"catalogId": "cat-1",
+		},
+	}
+	headerJSON, err := json.Marshal(headerExtensions)
+	if err != nil {
+		t.Fatalf("Failed to marshal header extensions: %v", err)
+	}
+	validHeader := base64.StdEncoding.EncodeToString(headerJSON)
+
+	tests := []struct {
+		name                       string
+		endpoint                   string
+		body                       string
+		header                     string
+		expectedExtensions         map[string]interface{}
+		expectedExtensionResponses map[string]interface{}
+	}{
+		{
+			name:                       "verify attaches valid header to sidechannel",
+			endpoint:                   "/verify",
+			body:                       `{"isValid":true}`,
+			header:                     validHeader,
+			expectedExtensionResponses: headerExtensions,
+		},
+		{
+			name:                       "settle attaches valid header to sidechannel",
+			endpoint:                   "/settle",
+			body:                       `{"success":true,"transaction":"0xabc","network":"eip155:8453"}`,
+			header:                     validHeader,
+			expectedExtensionResponses: headerExtensions,
+		},
+		{
+			name:                       "body extensions remain separate from sidechannel",
+			endpoint:                   "/verify",
+			body:                       `{"isValid":true,"extensions":{"bazaar":{"status":"from-body"}}}`,
+			header:                     validHeader,
+			expectedExtensions:         map[string]interface{}{"bazaar": map[string]interface{}{"status": "from-body"}},
+			expectedExtensionResponses: headerExtensions,
+		},
+		{
+			name:                       "empty body extensions remain separate from sidechannel",
+			endpoint:                   "/settle",
+			body:                       `{"success":true,"transaction":"0xabc","network":"eip155:8453","extensions":{}}`,
+			header:                     validHeader,
+			expectedExtensions:         map[string]interface{}{},
+			expectedExtensionResponses: headerExtensions,
+		},
+		{
+			name:     "missing header leaves extensions nil",
+			endpoint: "/verify",
+			body:     `{"isValid":true}`,
+		},
+		{
+			name:     "malformed base64 is ignored",
+			endpoint: "/verify",
+			body:     `{"isValid":true}`,
+			header:   "not-valid-base64!!!",
+		},
+		{
+			name:     "malformed JSON is ignored",
+			endpoint: "/settle",
+			body:     `{"success":true,"transaction":"0xabc","network":"eip155:8453"}`,
+			header:   base64.StdEncoding.EncodeToString([]byte("not-json")),
+		},
+		{
+			name:     "null is ignored",
+			endpoint: "/verify",
+			body:     `{"isValid":true}`,
+			header:   base64.StdEncoding.EncodeToString([]byte("null")),
+		},
+		{
+			name:     "array is ignored",
+			endpoint: "/settle",
+			body:     `{"success":true,"transaction":"0xabc","network":"eip155:8453"}`,
+			header:   base64.StdEncoding.EncodeToString([]byte(`[{"status":"accepted"}]`)),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != tt.endpoint {
+					t.Errorf("Expected path %s, got %s", tt.endpoint, r.URL.Path)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if tt.header != "" {
+					w.Header().Set("EXTENSION-RESPONSES", tt.header)
+				}
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+
+			client := NewHTTPFacilitatorClient(&FacilitatorConfig{URL: server.URL})
+			var extensions, extensionResponses map[string]interface{}
+			if tt.endpoint == "/verify" {
+				response, err := client.Verify(ctx, payloadBytes, requirementsBytes)
+				if err != nil {
+					t.Fatalf("Unexpected verify error: %v", err)
+				}
+				extensions = response.Extensions
+				extensionResponses = response.ExtensionResponses
+			} else {
+				response, err := client.Settle(ctx, payloadBytes, requirementsBytes)
+				if err != nil {
+					t.Fatalf("Unexpected settle error: %v", err)
+				}
+				extensions = response.Extensions
+				extensionResponses = response.ExtensionResponses
+			}
+
+			if !reflect.DeepEqual(extensions, tt.expectedExtensions) {
+				t.Fatalf("Expected extensions %#v, got %#v", tt.expectedExtensions, extensions)
+			}
+			if !reflect.DeepEqual(extensionResponses, tt.expectedExtensionResponses) {
+				t.Fatalf("Expected extension responses %#v, got %#v", tt.expectedExtensionResponses, extensionResponses)
+			}
+		})
+	}
+}
+
+func TestLogExtensionResponsesSanitizesFields(t *testing.T) {
+	headerJSON := []byte(`{"bazaar":{"status":"rejected","rejectedReason":"invalid schema","catalogId":"cat-1"},"other":{"reason":"ok","code":"ready","secret":"hidden"}}`)
+	response := &http.Response{Header: http.Header{
+		"Extension-Responses": []string{base64.StdEncoding.EncodeToString(headerJSON)},
+	}}
+	headerExtensions := extractExtensionResponsesHeader(response)
+
+	var output bytes.Buffer
+	originalWriter := log.Writer()
+	originalFlags := log.Flags()
+	originalPrefix := log.Prefix()
+	log.SetOutput(&output)
+	log.SetFlags(0)
+	log.SetPrefix("")
+	t.Cleanup(func() {
+		log.SetOutput(originalWriter)
+		log.SetFlags(originalFlags)
+		log.SetPrefix(originalPrefix)
+	})
+
+	logExtensionResponses(headerExtensions)
+
+	for _, allowed := range []string{`"status":"rejected"`, `"rejectedReason":"invalid schema"`, `"reason":"ok"`, `"code":"ready"`} {
+		if !strings.Contains(output.String(), allowed) {
+			t.Errorf("Expected log output to contain %s, got %q", allowed, output.String())
+		}
+	}
+	for _, disallowed := range []string{"catalogId", "cat-1", "secret", "hidden"} {
+		if strings.Contains(output.String(), disallowed) {
+			t.Errorf("Expected log output to omit %q, got %q", disallowed, output.String())
+		}
 	}
 }
 

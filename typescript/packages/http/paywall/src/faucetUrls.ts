@@ -13,6 +13,7 @@ export const FAUCET_URLS: Record<string, string> = {
   "eip155:2201": "https://faucet.stable.xyz/faucet", // Stable Testnet
   "eip155:72344": "https://testnet.radiustech.xyz/wallet", // Radius Testnet
   "eip155:11142220": "https://faucet.circle.com/", // Celo Sepolia
+  "eip155:1328": "https://faucet.circle.com/", // Sei Testnet
   // SVM testnets
   "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1": "https://faucet.circle.com/",
   // AVM testnets

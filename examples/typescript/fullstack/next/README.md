@@ -104,12 +104,13 @@ export const config = {
 
 ### Weather API Route (using withX402)
 
-The `/api/weather` route demonstrates the `withX402` wrapper for individual API routes:
+The `/api/weather` route demonstrates the `withX402` wrapper for individual API routes. It uses bazaar discovery, so the route config is keyed by path (`/api/weather`). For a static route without discovery, a bare config (no path key) is enough — see [`@x402/next` README](../../../../typescript/packages/http/next/README.md#protecting-api-routes).
 
 ```typescript
 // app/api/weather/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { withX402 } from "@x402/next";
+import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import { server, paywall, evmAddress, svmAddress } from "../../../proxy";
 
 const handler = async (_: NextRequest) => {
@@ -124,22 +125,33 @@ const handler = async (_: NextRequest) => {
 export const GET = withX402(
   handler,
   {
-    accepts: [
-      {
-        scheme: "exact",
-        price: "$0.001",
-        network: "eip155:84532",
-        payTo: evmAddress,
+    "/api/weather": {
+      accepts: [
+        {
+          scheme: "exact",
+          price: "$0.001",
+          network: "eip155:84532",
+          payTo: evmAddress,
+        },
+        {
+          scheme: "exact",
+          price: "$0.001",
+          network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+          payTo: svmAddress,
+        },
+      ],
+      description: "Access to weather API",
+      mimeType: "application/json",
+      extensions: {
+        ...declareDiscoveryExtension({
+          output: {
+            example: {
+              report: { weather: "sunny", temperature: 72 },
+            },
+          },
+        }),
       },
-      {
-        scheme: "exact",
-        price: "$0.001",
-        network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
-        payTo: svmAddress,
-      },
-    ],
-    description: "Access to weather API",
-    mimeType: "application/json",
+    },
   },
   server,
   undefined, // paywallConfig (using custom paywall from proxy.ts)
@@ -233,6 +245,8 @@ The `withX402` function wraps API route handlers. This is the recommended approa
 |----------|----------|
 | `paymentProxy` | Protecting page routes or multiple routes with a single configuration |
 | `withX402` | Protecting individual API routes where you need precise control over settlement timing |
+
+For `withX402`, pass a **bare route config** on static routes; key by path pattern (e.g. `{ "/api/users/[id]": config }`) when the URL has dynamic segments or you use bazaar discovery and want an explicit catalog path. Details: [`@x402/next` README](../../../../typescript/packages/http/next/README.md#protecting-api-routes).
 
 ## Extending the Example
 

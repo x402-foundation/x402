@@ -1636,6 +1636,9 @@ importers:
 
   packages/mechanisms/svm:
     dependencies:
+      '@noble/hashes':
+        specifier: ^1.8.0
+        version: 1.8.0
       '@solana-program/compute-budget':
         specifier: ^0.11.0
         version: 0.11.0(@solana/kit@6.1.0(bufferutil@4.0.9)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.2)(utf-8-validate@5.0.10))
@@ -9609,7 +9612,7 @@ snapshots:
     dependencies:
       '@noble/ciphers': 2.1.1
       '@noble/curves': 2.0.1
-      '@noble/hashes': 2.0.1
+      '@noble/hashes': 2.2.0
       ajv: 8.17.1
       algo-msgpack-with-bigint: 2.1.1
       bn.js: 5.2.3

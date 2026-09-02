@@ -12,6 +12,7 @@ except ImportError as e:
         "SVM mechanism requires solana packages. Install with: pip install x402[svm]"
     ) from e
 
+from ....pending_settlement_store import InMemoryPendingSettlementStore, PendingSettlementStore
 from ....schemas import (
     Network,
     PaymentPayload,
@@ -35,6 +36,7 @@ from ..constants import (
     ERR_NETWORK_MISMATCH,
     ERR_NO_TRANSFER_INSTRUCTION,
     ERR_RECIPIENT_MISMATCH,
+    ERR_SETTLEMENT_PENDING,
     ERR_SIMULATION_FAILED,
     ERR_TRANSACTION_DECODE_FAILED,
     ERR_TRANSACTION_FAILED,
@@ -77,15 +79,23 @@ class ExactSvmScheme:
         self,
         signer: FacilitatorSvmSigner,
         settlement_cache: SettlementCache | None = None,
+        pending_store: PendingSettlementStore | None = None,
     ):
         """Create ExactSvmScheme facilitator.
 
         Args:
             signer: SVM signer for verification and settlement.
             settlement_cache: Optional shared settlement cache (one is created if omitted).
+            pending_store: Optional store letting a retried settle for the same
+                transaction reconcile against an already-broadcast signature instead of
+                re-verifying and re-sending (see settlement_pending). Defaults to a fresh
+                in-memory store when omitted.
         """
         self._signer = signer
         self._settlement_cache = settlement_cache or SettlementCache()
+        self._pending_store: PendingSettlementStore = (
+            pending_store or InMemoryPendingSettlementStore()
+        )
 
     def get_extra(self, network: Network) -> dict[str, Any] | None:
         """Get mechanism-specific extra data for the supported kinds endpoint.
@@ -379,6 +389,43 @@ class ExactSvmScheme:
         svm_payload = ExactSvmPayload.from_dict(payload.payload)
         network = str(payload.accepted.network)
 
+        # Parse and decode the transaction up front (no RPC calls) so we can key the
+        # PendingSettlementStore on the message hash before doing any verify/sign/send work.
+        try:
+            tx = decode_transaction_from_payload(svm_payload)
+            tx_key = transaction_message_hash(tx)
+        except Exception as e:
+            return SettleResponse(
+                success=False,
+                error_reason=ERR_TRANSACTION_DECODE_FAILED,
+                error_message=str(e),
+                network=network,
+                payer="",
+                transaction="",
+            )
+
+        # Pending-settlement fast path: a prior settle for this exact transaction
+        # broadcast successfully but its confirm_transaction wait failed. Reconcile
+        # against the already-broadcast signature instead of re-verifying and
+        # re-sending: Solana transactions embed a recent blockhash that expires (so a
+        # resend can fail even when the original is still perfectly valid), and if the
+        # original actually did land, a second verify's balance-based simulation could
+        # now spuriously fail (funds already moved).
+        cached_signature = self._pending_store.get(tx_key)
+        if cached_signature is not None:
+            # Remove before reconciling (rather than after) so a concurrent
+            # retry of the same payload misses here instead of also
+            # reconciling: it falls through to the settlement_cache dedup
+            # check below, which independently rejects it as a duplicate.
+            self._pending_store.delete(tx_key)
+            # Best-effort payer for the response; a lookup failure here doesn't block
+            # reconciliation (the payload already broadcast successfully).
+            try:
+                payer = get_token_payer_from_transaction(tx) or ""
+            except Exception:
+                payer = ""
+            return self._reconcile_pending_settlement(tx_key, cached_signature, payer, network)
+
         # First verify
         verify_result = self.verify(payload, requirements, context)
         if not verify_result.is_valid:
@@ -390,11 +437,7 @@ class ExactSvmScheme:
                 transaction="",
             )
 
-        # Decode the transaction to compute the message hash used as the cache key.
-        tx = decode_transaction_from_payload(svm_payload)
-
         # Duplicate settlement check keyed on message hash (immune to mutable fee-payer sig at slot 0).
-        tx_key = transaction_message_hash(tx)
         if self._settlement_cache.is_duplicate(tx_key):
             return SettleResponse(
                 success=False,
@@ -404,7 +447,6 @@ class ExactSvmScheme:
                 transaction="",
             )
 
-        signature = ""
         try:
             # Extract feePayer from requirements (already validated in verify)
             extra = requirements.extra or {}
@@ -414,26 +456,102 @@ class ExactSvmScheme:
             fully_signed_tx = self._signer.sign_transaction(
                 svm_payload.transaction, fee_payer, network
             )
-
-            # Send transaction to network
-            signature = self._signer.send_transaction(fully_signed_tx, network)
-
-            # Wait for confirmation
-            self._signer.confirm_transaction(signature, network)
-
-            return SettleResponse(
-                success=True,
-                transaction=signature,
-                network=network,
-                payer=verify_result.payer,
-            )
-
         except Exception as e:
+            self._settlement_cache.delete(tx_key)
             return SettleResponse(
                 success=False,
                 error_reason=ERR_TRANSACTION_FAILED,
                 error_message=str(e),
-                transaction=signature,
+                transaction="",
                 network=network,
                 payer=verify_result.payer or "",
             )
+
+        try:
+            # Send transaction to network
+            signature = self._signer.send_transaction(fully_signed_tx, network)
+        except Exception as e:
+            self._settlement_cache.delete(tx_key)
+            return SettleResponse(
+                success=False,
+                error_reason=ERR_TRANSACTION_FAILED,
+                error_message=str(e),
+                transaction="",
+                network=network,
+                payer=verify_result.payer or "",
+            )
+
+        # Wait for confirmation, shared with the pending-settlement reconciliation
+        # path in _reconcile_pending_settlement() below.
+        return self._await_confirmation(tx_key, signature, verify_result.payer or "", network)
+
+    def _reconcile_pending_settlement(
+        self,
+        tx_key: str,
+        signature: str,
+        payer: str,
+        network: str,
+    ) -> SettleResponse:
+        """Handle a PendingSettlementStore cache hit.
+
+        A prior settle call for this transaction (keyed by tx_key, the message hash)
+        already broadcast `signature` but couldn't confirm it before returning
+        settlement_pending. Re-awaits confirmation of that same signature rather than
+        re-verifying/re-signing/re-sending — see the fast-path comment in settle() for
+        why re-sending is unsafe here.
+        """
+        return self._await_confirmation(tx_key, signature, payer, network)
+
+    def _await_confirmation(
+        self,
+        tx_key: str,
+        signature: str,
+        payer: str,
+        network: str,
+    ) -> SettleResponse:
+        """Waits for confirmation of an already-broadcast signature and builds the
+        settle response, shared by the fresh-broadcast path in settle() and the
+        pending-settlement reconciliation path in _reconcile_pending_settlement().
+
+        On confirm failure, records/refreshes the pending-settlement entry so a
+        retry reconciles via the fast path instead of re-verifying/re-sending.
+        """
+        try:
+            self._signer.confirm_transaction(signature, network)
+        except Exception as e:
+            try:
+                self._pending_store.set(tx_key, signature)
+            except Exception as store_error:
+                # Can't guarantee a later retry will find this to reconcile
+                # against — a blind retry could re-verify/re-broadcast and
+                # double-send. Downgrade to terminal, preserving the signature
+                # for manual reconciliation.
+                return SettleResponse(
+                    success=False,
+                    error_reason=ERR_TRANSACTION_FAILED,
+                    error_message=(
+                        f"settlement_pending, but failed to persist for retry: {store_error}"
+                    ),
+                    transaction=signature,
+                    network=network,
+                    payer=payer,
+                )
+            return SettleResponse(
+                success=False,
+                error_reason=ERR_SETTLEMENT_PENDING,
+                error_message=str(e),
+                transaction=signature,
+                network=network,
+                payer=payer,
+            )
+
+        try:
+            self._pending_store.delete(tx_key)
+        except Exception:
+            pass  # best-effort; a stale entry merely lingers until TTL expiry
+        return SettleResponse(
+            success=True,
+            transaction=signature,
+            network=network,
+            payer=payer,
+        )

@@ -21,7 +21,9 @@ import type { DeepReadonly } from "../types/readonly";
 import {
   ADDITIVE_ARRAY_INFO_FIELDS,
   ADDITIVE_ARRAY_MAX_LENGTHS,
+  SERVER_OWNED_INFO_FIELDS,
   deepEqual,
+  convertToTokenAmount,
   findByNetworkAndScheme,
   toComparableArray,
 } from "../utils";
@@ -141,6 +143,19 @@ export interface SettleFailureContext extends SettleContext {
   error: Error;
 }
 
+/**
+ * Generic (scheme/network-agnostic) settle error reason meaning a
+ * transaction broadcast successfully but its receipt/confirmation wait
+ * failed — non-terminal, and always carries the broadcast transaction hash
+ * so a caller can reconcile onchain. Duplicated here (rather than imported
+ * from a mechanism package) so core does not depend on the mechanisms
+ * packages, mirroring Go's `x402.ErrSettlementPending`
+ * (`go/errors.go`) and its mechanism-level counterparts
+ * (`evm.ErrSettlementPending`, `svm.ErrSettlementPending`). Used by
+ * {@link x402ResourceServer.settlePayment}'s single automatic settle retry.
+ */
+const SETTLEMENT_PENDING_REASON = "settlement_pending";
+
 export type VerifiedPaymentCancellationReason =
   | "handler_threw"
   | "handler_failed"
@@ -254,13 +269,13 @@ export interface SettlementOverrides {
  *
  * @param rawAmount - The override amount string (e.g., `"1000"`, `"50%"`, `"$0.05"`)
  * @param requirements - The payment requirements containing the base amount
- * @param decimals - Decimal precision to use for dollar-format conversion (default 6)
+ * @param decimals - Decimal precision for dollar-format conversion. Required for `$…` amounts.
  * @returns The resolved amount as an atomic-unit string
  */
 export function resolveSettlementOverrideAmount(
   rawAmount: string,
   requirements: PaymentRequirements,
-  decimals: number = 6,
+  decimals?: number,
 ): string {
   // Percent format: "50%" or "33.33%"
   const percentMatch = rawAmount.match(/^(\d+(?:\.\d{0,2})?)%$/);
@@ -274,8 +289,13 @@ export function resolveSettlementOverrideAmount(
   // Dollar price format: "$0.05"
   const dollarMatch = rawAmount.match(/^\$(\d+(?:\.\d+)?)$/);
   if (dollarMatch) {
-    const dollars = parseFloat(dollarMatch[1]);
-    return Math.round(dollars * 10 ** decimals).toString();
+    if (decimals === undefined) {
+      throw new Error(
+        `Cannot convert dollar settlement override "${rawAmount}" to atomic units: ` +
+          `asset decimals are unknown. Pass an atomic amount or register the asset.`,
+      );
+    }
+    return convertToTokenAmount(dollarMatch[1], decimals);
   }
 
   // Raw atomic units (existing behavior)
@@ -412,10 +432,10 @@ export class x402ResourceServer {
   }
 
   /**
-   * Returns the decimal precision for the asset specified in the given payment requirements.
-   * Looks up the registered scheme for the network and delegates to its getAssetDecimals
-   * method if available. Falls back to 6 (standard for USDC stablecoins) when the scheme
-   * does not implement getAssetDecimals or is not registered.
+   * Returns the decimal precision for display of the asset in the given payment
+   * requirements. Looks up the registered scheme and delegates to getAssetDecimals
+   * when available. Falls back to 6 for display-only callers. Settlement `$…`
+   * overrides must not use this fallback — they throw when decimals are unknown.
    *
    * @param requirements - The payment requirements containing scheme, network, and asset
    * @returns The number of decimal places for the asset
@@ -749,12 +769,10 @@ export class x402ResourceServer {
     );
 
     if (!SchemeNetworkServer) {
-      // Fallback to placeholder implementation if no server registered
-      // TODO: Remove this fallback once implementations are registered
-      console.warn(
-        `No server implementation registered for scheme: ${scheme}, network: ${resourceConfig.network}`,
+      throw new Error(
+        `No server implementation registered for ${scheme} on ${resourceConfig.network}. ` +
+          `Make sure to call register() with a scheme server for this network.`,
       );
-      return requirements;
     }
 
     // Find the matching supported kind from facilitator
@@ -1191,16 +1209,17 @@ export class x402ResourceServer {
     if (settlementOverrides?.amount !== undefined) {
       // Only `$…` overrides need asset decimals. Atomic and percent formats must
       // not force a decimals lookup (unknown custom mints would otherwise fail).
-      let decimals = 6;
+      let decimals: number | undefined;
       if (/^\$\d+(?:\.\d+)?$/.test(settlementOverrides.amount)) {
         const scheme = findByNetworkAndScheme(
           this.registeredServerSchemes,
           requirements.scheme,
           requirements.network as Network,
         );
-        decimals =
-          scheme?.getAssetDecimals?.(requirements.asset ?? "", requirements.network as Network) ??
-          6;
+        decimals = scheme?.getAssetDecimals?.(
+          requirements.asset ?? "",
+          requirements.network as Network,
+        );
       }
       effectiveRequirements = {
         ...requirements,
@@ -1308,7 +1327,11 @@ export class x402ResourceServer {
 
         for (const client of this.facilitatorClients) {
           try {
-            settleResult = await client.settle(settlePayload, effectiveRequirements);
+            settleResult = await this.settleWithPendingRetry(
+              client,
+              settlePayload,
+              effectiveRequirements,
+            );
             break;
           } catch (error) {
             lastError = error as Error;
@@ -1325,7 +1348,41 @@ export class x402ResourceServer {
         }
       } else {
         // Use the specific facilitator that supports this payment
-        settleResult = await facilitatorClient.settle(settlePayload, effectiveRequirements);
+        settleResult = await this.settleWithPendingRetry(
+          facilitatorClient,
+          settlePayload,
+          effectiveRequirements,
+        );
+      }
+
+      // A returned (non-thrown) settleResult with success:false — e.g. from a
+      // remote/HTTP facilitator, or a settlement_pending outcome that
+      // survived the single automatic retry above — previously looked like a
+      // success: afterSettle hooks would run and callers would treat the
+      // response as settled. Route it through onSettleFailure like a thrown
+      // error so hooks get a chance to recover.
+      if (!settleResult.success) {
+        const failureContext: SettleFailureContext = {
+          ...context,
+          error: settleResponseToError(settleResult),
+        };
+
+        for (const { label, hook } of this.getLabeledHooks(
+          "onSettleFailure",
+          extensionKeysInUse,
+          matchedScheme,
+        )) {
+          try {
+            const result = await hook(failureContext);
+            if (result && "recovered" in result && result.recovered) {
+              return result.result;
+            }
+          } catch (error) {
+            this.warnResourceServerHookFailure("onSettleFailure", label, error);
+          }
+        }
+
+        return settleResult;
       }
 
       // Execute afterSettle hooks
@@ -1403,33 +1460,39 @@ export class x402ResourceServer {
     }
 
     const serverExtensions = paymentRequired.extensions;
-    if (!serverExtensions || Object.keys(serverExtensions).length === 0) {
-      return { valid: true };
-    }
-
     const clientExtensions = paymentPayload.extensions;
     if (!clientExtensions || Object.keys(clientExtensions).length === 0) {
       return { valid: true };
     }
 
     for (const [key, echoedValue] of Object.entries(clientExtensions)) {
-      if (!Object.prototype.hasOwnProperty.call(serverExtensions, key)) {
-        continue;
-      }
-
-      const advertisedInfo = getExtensionInfo(serverExtensions[key]);
+      const advertisedInfo = getExtensionInfo(serverExtensions?.[key]);
       const echoedInfo = getExtensionInfo(echoedValue);
 
-      const dynamicFields = this.registeredExtensions.get(key)?.dynamicInfoFields;
-      const additiveFields = ADDITIVE_ARRAY_INFO_FIELDS[key];
-      const maxLengths = ADDITIVE_ARRAY_MAX_LENGTHS[key];
+      if (serverExtensions && Object.prototype.hasOwnProperty.call(serverExtensions, key)) {
+        const dynamicFields = this.registeredExtensions.get(key)?.dynamicInfoFields;
+        const additiveFields = ADDITIVE_ARRAY_INFO_FIELDS[key];
+        const maxLengths = ADDITIVE_ARRAY_MAX_LENGTHS[key];
+        if (
+          !extensionInfoMatchesAdvertised(
+            omitFields(advertisedInfo, dynamicFields),
+            omitFields(echoedInfo, dynamicFields),
+            additiveFields,
+            maxLengths,
+          )
+        ) {
+          return {
+            valid: false,
+            invalidReason: "extension_echo_mismatch",
+            extensionKey: key,
+          };
+        }
+      }
+
+      const serverOwnedFields = SERVER_OWNED_INFO_FIELDS[key];
       if (
-        !extensionInfoMatchesAdvertised(
-          omitFields(advertisedInfo, dynamicFields),
-          omitFields(echoedInfo, dynamicFields),
-          additiveFields,
-          maxLengths,
-        )
+        serverOwnedFields &&
+        !serverOwnedInfoFieldsMatch(advertisedInfo, echoedInfo, serverOwnedFields)
       ) {
         return {
           valid: false,
@@ -1455,6 +1518,10 @@ export class x402ResourceServer {
   ): PaymentRequirements | undefined {
     switch (paymentPayload.x402Version) {
       case 2:
+        if (!paymentPayload.accepted) {
+          return undefined;
+        }
+
         // For v2, all server-declared requirements must match.
         // The client may include additive scheme-specific metadata under `accepted.extra`.
         // Scheme-declared dynamicExtraFields are omitted from the extra comparison
@@ -1471,6 +1538,10 @@ export class x402ResourceServer {
           );
         });
       case 1:
+        if (!paymentPayload.accepted) {
+          return undefined;
+        }
+
         // For v1, match by scheme and network
         return availableRequirements.find(
           req =>
@@ -1482,6 +1553,47 @@ export class x402ResourceServer {
           `Unsupported x402 version: ${(paymentPayload as PaymentPayload).x402Version}`,
         );
     }
+  }
+
+  /**
+   * Calls `facilitatorClient.settle` once, then retries exactly once with the
+   * identical payload/requirements when the outcome is a non-terminal
+   * `settlement_pending` failure carrying a broadcast transaction hash. Sits
+   * above all scheme/network dispatch — the mechanism that actually handles
+   * the retry (via its own `PendingSettlementStore` check) reconciles against
+   * the already-broadcast transaction instead of verifying and broadcasting
+   * a second one. No mutation, backoff, or sleep: the mechanism layer owns
+   * any bounded waiting. Any other outcome (success, or a different failure
+   * reason) short-circuits after the first call. Capped at exactly one retry
+   * regardless of the second outcome, so this can never loop. Mirrors Go's
+   * `settleWithPendingRetry` (`go/server.go`).
+   *
+   * @param facilitatorClient - The facilitator client to call
+   * @param settlePayload - The (possibly enriched) settle-local payload
+   * @param effectiveRequirements - The effective payment requirements
+   * @returns The settle result, either from the first attempt or the single retry
+   */
+  private async settleWithPendingRetry(
+    facilitatorClient: FacilitatorClient,
+    settlePayload: PaymentPayload,
+    effectiveRequirements: PaymentRequirements,
+  ): Promise<SettleResponse> {
+    let result: SettleResponse | undefined;
+    let retryable: boolean;
+    try {
+      result = await facilitatorClient.settle(settlePayload, effectiveRequirements);
+      retryable = isRetryableSettlementPendingResult(result);
+    } catch (error) {
+      if (!isRetryableSettlementPendingError(error)) {
+        throw error;
+      }
+      retryable = true;
+    }
+
+    if (!retryable) {
+      return result!;
+    }
+    return facilitatorClient.settle(settlePayload, effectiveRequirements);
   }
 
   /**
@@ -1840,6 +1952,50 @@ function getExtensionInfo(value: unknown): unknown {
 }
 
 /**
+ * Returns whether client-echoed server-owned fields match the server advertisement.
+ * When the server did not declare the extension, `advertised` is treated as empty
+ * so clients cannot invent fields such as builder-code `a`.
+ *
+ * @param advertised - Extension info advertised by the server, if any.
+ * @param echoed - Extension info echoed back by the client.
+ * @param serverOwnedFields - Field names the client must not invent.
+ * @returns True when every echoed server-owned field matches the advertisement.
+ */
+function serverOwnedInfoFieldsMatch(
+  advertised: unknown,
+  echoed: unknown,
+  serverOwnedFields: ReadonlySet<string>,
+): boolean {
+  if (echoed === null || typeof echoed !== "object" || Array.isArray(echoed)) {
+    return true;
+  }
+
+  const echoedRecord = echoed as Record<string, unknown>;
+  const advertisedRecord =
+    advertised !== null && typeof advertised === "object" && !Array.isArray(advertised)
+      ? (advertised as Record<string, unknown>)
+      : {};
+
+  for (const field of serverOwnedFields) {
+    if (!Object.prototype.hasOwnProperty.call(echoedRecord, field)) {
+      continue;
+    }
+    const echoedValue = echoedRecord[field];
+    if (echoedValue === undefined) {
+      continue;
+    }
+    if (
+      !Object.prototype.hasOwnProperty.call(advertisedRecord, field) ||
+      !deepEqual(advertisedRecord[field], echoedValue)
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
  * Returns a copy of an object without the named dynamic fields.
  *
  * @param value - Object to filter (extension info or payment-requirements extra).
@@ -1879,6 +2035,55 @@ function extensionInfoMatchesAdvertised(
   maxLengths?: Record<string, number>,
 ): boolean {
   return objectContainsSubset(advertised, echoed, additiveFields, maxLengths);
+}
+
+/**
+ * Reports whether a returned (non-thrown) settle outcome is a retryable
+ * `settlement_pending`: `success: false`, `errorReason === "settlement_pending"`,
+ * and a non-empty `transaction` hash. Mirrors Go's `isRetryableSettlementPending`
+ * (`go/server.go`) for the HTTP/remote `FacilitatorClient` path.
+ *
+ * @param result - The settle response to inspect
+ * @returns Whether the result is a retryable settlement_pending outcome
+ */
+function isRetryableSettlementPendingResult(result: SettleResponse): boolean {
+  return (
+    !result.success && result.errorReason === SETTLEMENT_PENDING_REASON && !!result.transaction
+  );
+}
+
+/**
+ * Reports whether a thrown settle outcome is a retryable `settlement_pending`:
+ * a {@link SettleError} with `errorReason === "settlement_pending"` and a
+ * non-empty `transaction` hash. Mirrors Go's `isRetryableSettlementPending`
+ * (`go/server.go`) for the local/in-process `FacilitatorClient` path, where a
+ * business-logic settlement_pending failure is thrown rather than returned.
+ *
+ * @param error - The thrown value to inspect
+ * @returns Whether the error is a retryable settlement_pending outcome
+ */
+function isRetryableSettlementPendingError(error: unknown): boolean {
+  return (
+    error instanceof SettleError &&
+    error.errorReason === SETTLEMENT_PENDING_REASON &&
+    !!error.transaction
+  );
+}
+
+/**
+ * Synthesizes an {@link Error} from a returned `success: false`
+ * {@link SettleResponse} so it can flow through the same
+ * {@link SettleFailureContext} / {@link OnSettleFailureHook} path as a thrown
+ * error. Mirrors Go's `settleResponseToError` (`go/server.go`) and Python's
+ * `Exception(settle_result.error_reason or "Settlement failed")` fallback
+ * (`python/x402/server_base.py`).
+ *
+ * @param result - The failed settle response
+ * @returns A {@link SettleError} carrying the response's failure details
+ */
+function settleResponseToError(result: SettleResponse): SettleError {
+  const reason = result.errorReason || "Settlement failed";
+  return new SettleError(500, { ...result, errorReason: reason });
 }
 
 /**

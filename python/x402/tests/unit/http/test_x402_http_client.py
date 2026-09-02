@@ -310,7 +310,9 @@ class TestX402HTTPClient:
         encoded = encode_payment_required_header(payment_required)
         headers = {PAYMENT_REQUIRED_HEADER: encoded}
 
-        payment_headers, payload = await http_client.handle_402_response(headers, None)
+        payment_headers, payload = await http_client.handle_402_response(
+            headers, None, "https://api.example.com/"
+        )
 
         assert PAYMENT_SIGNATURE_HEADER in payment_headers
         assert payload.x402_version == 2
@@ -351,7 +353,9 @@ class TestX402HTTPClientSync:
         encoded = encode_payment_required_header(payment_required)
         headers = {PAYMENT_REQUIRED_HEADER: encoded}
 
-        payment_headers, payload = http_client.handle_402_response(headers, None)
+        payment_headers, payload = http_client.handle_402_response(
+            headers, None, "https://api.example.com/"
+        )
 
         assert PAYMENT_SIGNATURE_HEADER in payment_headers
         assert payload.x402_version == 2
@@ -486,6 +490,7 @@ class TestPaymentRoundTripper:
             headers={},
             body=None,
             retry_func=lambda h: "should not be called",
+            request_url="https://api.example.com/",
         )
 
         assert result is None
@@ -515,6 +520,7 @@ class TestPaymentRoundTripper:
             headers=headers,
             body=None,
             retry_func=retry_func,
+            request_url="https://api.example.com/",
         )
 
         assert result == "retry_response"
@@ -541,6 +547,7 @@ class TestPaymentRoundTripper:
             headers=headers,
             body=None,
             retry_func=lambda h: "first",
+            request_url="https://api.example.com/",
         )
 
         # Manually set retry count to simulate already retried
@@ -554,4 +561,5 @@ class TestPaymentRoundTripper:
                 headers=headers,
                 body=None,
                 retry_func=lambda h: "should not happen",
+                request_url="https://api.example.com/",
             )

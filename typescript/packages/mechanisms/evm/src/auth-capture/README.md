@@ -16,6 +16,10 @@ See the [scheme specification](https://github.com/x402-foundation/x402/blob/main
 
 Register `AuthCaptureEvmScheme` with an `x402Client`. The client validates the requirement's `extra` fields, reconstructs the PaymentInfo struct, computes the payer-agnostic hash, and emits an ERC-3009 (default) or Permit2 payload.
 
+When `extra.receiverAuthorizer` or `extra.policy` is non-zero, salt binding is on: the client emits a random `saltNonce` and a keccak `salt` committing to those addresses. Otherwise the wire is the unbound shape (`salt` is random 32 bytes, no `saltNonce`).
+
+The client resolves the commerce-payments deployment from optional `extra.authCaptureEscrow` (v1.1 default when omitted). That selects the escrow bound into the signature nonce and the collector used for `authorization.to` / `permit2Authorization.spender`.
+
 ```typescript
 import { x402Client } from "@x402/core/client";
 import { AuthCaptureEvmScheme } from "@x402/evm/auth-capture/client";
@@ -51,6 +55,9 @@ Optional:
 | Field | Default | Notes |
 | --- | --- | --- |
 | `assetTransferMethod` | `"eip3009"` | `"eip3009"` (ERC-3009) or `"permit2"` (Uniswap Permit2). See below. |
+| `authCaptureEscrow` | v1.1 escrow | Escrow address selecting the commerce-payments deployment (v1.0 or v1.1). |
+| `receiverAuthorizer` | `address(0)` | When non-zero, enables salt binding. |
+| `policy` | `address(0)` | When non-zero, enables salt binding. |
 
 ## Asset transfer methods
 
@@ -74,7 +81,9 @@ Canonical `AuthCaptureEscrow` and EIP-3009 / Permit2 token collector addresses l
 
 ## Examples
 
-- [Client example](../../../../../examples/clients/auth-capture)
+- [`@x402/fetch` client example](../../../../../examples/typescript/clients/fetch/)
+- [`@x402/axios` client example](../../../../../examples/typescript/clients/axios/)
+- [Go HTTP client example](../../../../../examples/go/clients/http/)
 
 ## See also
 

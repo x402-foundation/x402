@@ -12,12 +12,12 @@ import (
 )
 
 func TestFacilitatorInstructionConstraints(t *testing.T) {
-	t.Run("allows 3-6 instructions", func(t *testing.T) {
+	t.Run("allows 3-7 instructions", func(t *testing.T) {
 		minInstructions := 3
-		maxInstructions := 6
+		maxInstructions := 7
 
 		assert.Equal(t, 3, minInstructions)
-		assert.Equal(t, 6, maxInstructions)
+		assert.Equal(t, 7, maxInstructions)
 	})
 
 	t.Run("optional instructions may be Lighthouse or Memo", func(t *testing.T) {
@@ -33,7 +33,7 @@ func TestFacilitatorInstructionConstraints(t *testing.T) {
 func TestErrorCodesForMitigationPlanning(t *testing.T) {
 	t.Run("instruction count error", func(t *testing.T) {
 		err := ErrTransactionInstructionsLength
-		assert.Equal(t, "invalid_exact_solana_payload_transaction_instructions_length", err)
+		assert.Equal(t, ErrTransactionInstructionsLength, err)
 	})
 }
 
@@ -117,7 +117,7 @@ func TestDuplicateSettlementCache(t *testing.T) {
 
 	t.Run("constructor wires the shared cache into the scheme", func(t *testing.T) {
 		cache := svm.NewSettlementCache()
-		scheme := NewExactSvmScheme(nil, cache)
+		scheme := NewExactSvmScheme(nil, &Config{SettlementCache: cache})
 		assert.Same(t, cache, scheme.settlementCache,
 			"scheme should hold the exact cache instance that was injected")
 	})

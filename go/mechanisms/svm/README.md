@@ -59,6 +59,27 @@ github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator
 - Used for verifying transaction signatures and settling payments on-chain
 - Requires facilitator signer with Solana RPC integration
 
+## Upto Payment Scheme
+
+The **upto** scheme enables usage-based billing: the client authorizes a maximum amount in an onchain payment channel, and the server settles only what was actually consumed. See the [upto scheme README](./upto/README.md) for client, server, and facilitator usage.
+
+### Export Paths
+
+```
+github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/client
+github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/server
+github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/facilitator
+```
+
+The server role additionally needs a voucher signer from `github.com/x402-foundation/x402/go/v2/signers/svm`:
+
+```go
+authorizer, err := svmsigners.NewReceiverAuthorizerSignerFromPrivateKey(os.Getenv("SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"))
+scheme := uptoserver.NewUptoSvmScheme(&uptoserver.Config{ReceiverAuthorizerSigner: authorizer})
+```
+
+The payment-channels program bindings the scheme is built on live in [`paymentchannels/`](./paymentchannels/) and can be used directly for channel tooling.
+
 ## Supported Networks
 
 All Solana networks using CAIP-2 network identifiers:
@@ -69,7 +90,7 @@ All Solana networks using CAIP-2 network identifiers:
 
 Use `solana:*` wildcard to support all Solana networks.
 
-## Scheme Implementation
+## Scheme Implementations
 
 The **exact** scheme implements fixed-amount payments:
 
@@ -78,6 +99,14 @@ The **exact** scheme implements fixed-amount payments:
 - **Signing**: Partial transaction signing (client + facilitator)
 - **Fees**: Rent and transaction fees paid by facilitator
 - **Confirmation**: On-chain settlement with transaction signature
+
+The **upto** scheme implements usage-based payments:
+
+- **Method**: [payment-channels](https://github.com/solana-foundation/payment-channels) program (`CHNLxYvVA28MJP9PrFuDXccuoGXAx7jBacfLEkahyGsX`)
+- **Token**: any SPL Token or Token-2022 mint
+- **Signing**: client signs the channel `open`; the server signs an Ed25519 settlement voucher
+- **Fees**: channel rent and transaction fees paid by facilitator, reclaimable after settlement
+- **Confirmation**: two settles per request — a deposit that opens the channel and a claim that seals and distributes it
 
 ## Duplicate Settlement Protection
 
@@ -99,12 +128,12 @@ For full details on the race condition and mitigation strategy, see the [Exact S
 
 ## Future Schemes
 
-This directory currently contains only the **exact** scheme implementation. As new payment schemes are developed for Solana networks, they will be added here alongside the exact implementation:
+As new payment schemes are developed for Solana networks, they will be added here alongside the existing implementations:
 
 ```
 svm/
 ├── exact/          - Fixed amount payments (current)
-├── upto/           - Variable amount up to a limit (planned)
+├── upto/           - Variable amount up to a limit (current)
 ├── subscription/   - Recurring payments (planned)
 └── batch/          - Batched payments (planned)
 ```
@@ -130,3 +159,4 @@ See [CONTRIBUTING.md](../../../CONTRIBUTING.md) for more details.
 - **[Mechanisms Overview](../README.md)** - About mechanisms in general
 - **[EVM Mechanisms](../evm/README.md)** - Ethereum implementations
 - **[Exact Scheme Specification](../../../specs/schemes/exact/)** - Exact scheme specifications
+- **[Upto SVM Scheme Specification](../../../specs/schemes/upto/scheme_upto_svm.md)** - Payment-channel scheme specification

@@ -1,5 +1,6 @@
 import { config } from "dotenv";
 import { x402Client, wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
+import { AuthCaptureEvmScheme } from "@x402/evm/auth-capture/client";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { UptoEvmScheme } from "@x402/evm/upto/client";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
@@ -20,8 +21,6 @@ const url = `${baseURL}${endpointPath}`;
 /**
  * Example demonstrating how to use @x402/fetch to make requests to x402-protected endpoints.
  *
- * Uses the builder pattern to register payment schemes directly.
- *
  * Required environment variables (at least one):
  * - EVM_PRIVATE_KEY: The private key of the EVM signer
  * - SVM_PRIVATE_KEY: The private key of the SVM signer
@@ -36,11 +35,15 @@ async function main(): Promise<void> {
   }
 
   const client = new x402Client();
+  client.setSpendControls({
+    maxAmountPerPayment: "$1",
+  });
   if (evmPrivateKey) {
     const evmSigner = privateKeyToAccount(evmPrivateKey);
     const rpcOptions = evmRpcUrl ? { rpcUrl: evmRpcUrl } : undefined;
     client.register("eip155:*", new ExactEvmScheme(evmSigner, rpcOptions));
     client.register("eip155:*", new UptoEvmScheme(evmSigner, rpcOptions));
+    client.register("eip155:*", new AuthCaptureEvmScheme(evmSigner));
   }
   if (svmPrivateKey) {
     const svmSigner = await createKeyPairSignerFromBytes(base58.decode(svmPrivateKey));
@@ -52,9 +55,11 @@ async function main(): Promise<void> {
   const httpClient = new x402HTTPClient(client);
 
   console.log(`Making request to: ${url}\n`);
+  const requestT0 = performance.now();
   const response = await fetchWithPayment(url, { method: "GET" });
   const result = await httpClient.processResponse(response);
   console.dir(result, { depth: null });
+  console.log(`Request completed in ${((performance.now() - requestT0) / 1000).toFixed(3)}s`);
 }
 
 main().catch(error => {

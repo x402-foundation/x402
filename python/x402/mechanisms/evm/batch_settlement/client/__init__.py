@@ -3,13 +3,15 @@
 from ..utils import compute_channel_id
 from .channel import (
     BatchSettlementClientDeps,
+    ChannelSettleLocal,
     build_channel_config,
     get_channel,
     has_channel,
-    process_settle_response,
+    process_payment_response,
     read_channel_balance_and_total_claimed,
     recover_channel,
     update_channel_after_refund,
+    update_channel_from_settle,
 )
 from .config import (
     BatchSettlementDepositPolicy,
@@ -24,10 +26,7 @@ from .config import (
 )
 from .eip3009 import create_batch_settlement_eip3009_deposit_payload
 from .file_storage import FileChannelStorageOptions, FileClientChannelStorage
-from .hooks import (
-    create_batch_settlement_client_hooks,
-    handle_batch_settlement_payment_response,
-)
+from .hooks import create_batch_settlement_client_hooks
 from .permit2 import create_batch_settlement_permit2_deposit_payload
 from .recovery import (
     process_corrective_payment_required,
@@ -47,6 +46,7 @@ __all__ = [
     "BatchSettlementEvmScheme",
     "BatchSettlementClientContext",
     "BatchSettlementClientDeps",
+    "ChannelSettleLocal",
     "BatchSettlementDepositPolicy",
     "BatchSettlementDepositStrategy",
     "BatchSettlementDepositStrategyContext",
@@ -64,11 +64,10 @@ __all__ = [
     "create_batch_settlement_permit2_deposit_payload",
     "deposit_amount_for_request",
     "get_channel",
-    "handle_batch_settlement_payment_response",
     "has_channel",
     "is_batch_settlement_evm_scheme_options",
     "process_corrective_payment_required",
-    "process_settle_response",
+    "process_payment_response",
     "read_channel_balance_and_total_claimed",
     "recover_channel",
     "recover_from_onchain_state",
@@ -77,5 +76,6 @@ __all__ = [
     "resolve_client_options",
     "sign_voucher",
     "update_channel_after_refund",
+    "update_channel_from_settle",
     "validate_deposit_policy",
 ]

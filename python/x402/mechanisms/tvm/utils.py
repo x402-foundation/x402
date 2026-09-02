@@ -18,7 +18,6 @@ from .codecs.common import (
     get_network_global_id,
     normalize_address,
     parse_amount,
-    parse_money_to_decimal,
 )
 from .codecs.jetton import (
     build_jetton_transfer_body,
@@ -55,7 +54,6 @@ __all__ = [
     "parse_amount",
     "parse_exact_tvm_payload",
     "parse_jetton_transfer",
-    "parse_money_to_decimal",
     "parse_out_list",
     "parse_w5_init_data",
     "serialize_out_list",

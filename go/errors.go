@@ -44,6 +44,16 @@ const (
 	ErrFailedToMarshalRequirements = "failed_to_marshal_requirements"
 )
 
+// ErrSettlementPending is the generic (scheme/network-agnostic) settle error
+// reason meaning a transaction broadcast successfully but its receipt/
+// confirmation wait failed — non-terminal, and always carries the broadcast
+// transaction hash so a caller can reconcile onchain. Mirrors
+// evm.ErrSettlementPending (go/mechanisms/evm/errors.go); duplicated here as a
+// plain string constant so core does not depend on the mechanisms package.
+// x402ResourceServer.SettlePaymentWithExtensions uses this to drive its
+// single automatic settle retry (see settleWithPendingRetry in server.go).
+const ErrSettlementPending = "settlement_pending"
+
 // NewPaymentError creates a new payment error
 func NewPaymentError(code, message string, details map[string]interface{}) *PaymentError {
 	return &PaymentError{

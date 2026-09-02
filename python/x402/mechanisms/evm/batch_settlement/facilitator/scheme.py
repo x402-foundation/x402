@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .....interfaces import FacilitatorContext
+from .....pending_settlement_store import InMemoryPendingSettlementStore, PendingSettlementStore
 from .....schemas import (
     PaymentPayload,
     PaymentRequirements,
@@ -60,6 +61,7 @@ class BatchSettlementEvmFacilitator:
         signer: FacilitatorEvmSigner,
         authorizer_signer: AuthorizerSigner | None = None,
         config: BatchSettlementEvmFacilitatorConfig | None = None,
+        pending_store: PendingSettlementStore | None = None,
     ) -> None:
         """Create a facilitator scheme for verifying and settling batch-settlement payments.
 
@@ -71,11 +73,20 @@ class BatchSettlementEvmFacilitator:
                 missing authorizer signatures using this key. Omit it so no `receiverAuthorizer`
                 is advertised and servers supply their own signatures.
             config: Optional configuration (e.g. ERC-6492 factory allowlist).
+            pending_store: Optional store letting a retried deposit settle reconcile against
+                an already-broadcast transaction instead of re-verifying and re-broadcasting
+                (see settlement_pending). Only the deposit settle path consults this store;
+                claim/settle/refund are single-signature onchain calls with no equivalent
+                broadcast-then-reconcile flow. Defaults to a fresh in-memory store when
+                omitted.
         """
         self._signer = signer
         self._authorizer_signer = authorizer_signer
         cfg = config or BatchSettlementEvmFacilitatorConfig()
         self._eip6492_allowed_factories = list(cfg.eip6492_allowed_factories)
+        self._pending_store: PendingSettlementStore = (
+            pending_store or InMemoryPendingSettlementStore()
+        )
 
     def get_extra(self, network: str) -> dict | None:
         if self._authorizer_signer is None:
@@ -153,6 +164,7 @@ class BatchSettlementEvmFacilitator:
                 context,
                 self._eip6492_allowed_factories,
                 data_suffix=data_suffix,
+                pending_store=self._pending_store,
             )
 
         if is_claim_payload(raw):

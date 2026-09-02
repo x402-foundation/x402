@@ -52,7 +52,7 @@ from x402.mechanisms.evm.batch_settlement.client import (
     RefundOptions,
     compute_channel_id,
     has_channel,
-    process_settle_response,
+    update_channel_from_settle,
 )
 from x402.mechanisms.evm.batch_settlement.client import (
     BatchSettlementEvmScheme as BatchSettlementClientScheme,
@@ -285,7 +285,7 @@ class _Pipeline:
     # ---------- Direct-API helpers (no HTTP) ----------
 
     def direct_pay(self, amount: str) -> SettleResponse:
-        """One direct-API paid request: verify + settle + process_settle_response."""
+        """One direct-API paid request: verify + settle + update_channel_from_settle."""
         accepts = [self.requirements(amount)]
         payment_required = self.x402_server.create_payment_required_response(accepts, _resource())
         payload = self.x402_client.create_payment_payload(payment_required)
@@ -297,7 +297,18 @@ class _Pipeline:
         settle = self.x402_server.settle_payment(payload, accepted)
         if not settle.success:
             pytest.fail(f"settle failed: {settle.error_reason}: {settle.error_message}")
-        process_settle_response(self.client_storage, settle)
+        extra = settle.extra or {}
+        local: dict[str, str] = {
+            "channel_id": payload.payload["voucher"]["channelId"],
+            "request_amount": accepted.amount,
+        }
+        deposit = payload.payload.get("deposit")
+        if isinstance(deposit, dict) and deposit.get("amount") is not None:
+            local["deposit_amount"] = deposit["amount"]
+        server: dict[str, str] = {}
+        if extra.get("chargedAmount") is not None:
+            server["charged_amount"] = extra["chargedAmount"]
+        update_channel_from_settle(self.client_storage, {"server": server, "local": local})
         return settle
 
 

@@ -48,44 +48,54 @@ const client = new x402Client().register(
 );
 
 const fetchWithPayment = wrapFetchWithPayment(fetch, client);
+const httpClient = new x402HTTPClient(client);
 
-fetchWithPayment(url, {
-  method: "GET",
-})
-  .then(async response => {
-    const data = await response.json();
-    const paymentResponse = new x402HTTPClient(client).getPaymentSettleResponse(name =>
-      response.headers.get(name),
-    );
+try {
+  const response = await fetchWithPayment(url, { method: "GET" });
+  const parsed = await httpClient.processResponse(response);
 
-    if (!paymentResponse) {
-      console.log(
-        JSON.stringify({
-          success: true,
-          data,
-          status_code: response.status,
-        }),
-      );
-      process.exit(0);
-      return;
-    }
-
-    console.log(
-      JSON.stringify({
-        success: paymentResponse.success,
-        data,
-        status_code: response.status,
-        payment_response: paymentResponse,
-      }),
-    );
-    process.exit(paymentResponse.success ? 0 : 1);
-  })
-  .catch(error => {
+  if (parsed.paymentStatus === "payment_required") {
+    const header = parsed.header;
+    const reason =
+      header && !("success" in header) && header.error ? header.error : "Payment required";
     console.log(
       JSON.stringify({
         success: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: reason,
+        data: parsed.body,
+        status_code: parsed.status,
       }),
     );
     process.exit(1);
-  });
+  }
+
+  if (parsed.paymentStatus === "none") {
+    console.log(
+      JSON.stringify({
+        success: true,
+        data: parsed.body,
+        status_code: parsed.status,
+      }),
+    );
+    process.exit(0);
+  }
+
+  const paymentResponse = parsed.header && "success" in parsed.header ? parsed.header : undefined;
+  console.log(
+    JSON.stringify({
+      success: parsed.paymentStatus === "settled",
+      data: parsed.body,
+      status_code: parsed.status,
+      payment_response: paymentResponse,
+    }),
+  );
+  process.exit(parsed.paymentStatus === "settled" ? 0 : 1);
+} catch (error) {
+  console.log(
+    JSON.stringify({
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    }),
+  );
+  process.exit(1);
+}

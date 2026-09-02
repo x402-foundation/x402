@@ -10,7 +10,7 @@ import { x402ResourceServer } from "../../src/server";
 import {
   buildCashPaymentRequirements,
   CashFacilitatorClient,
-  CashSchemeNetworkClient,
+  createCashX402Client,
   CashSchemeNetworkFacilitator,
   CashSchemeNetworkServer,
 } from "../mocks";
@@ -22,7 +22,7 @@ describe("Extension Integration Tests", () => {
     let server: x402ResourceServer;
 
     beforeEach(async () => {
-      client = new x402Client().register("x402:cash", new CashSchemeNetworkClient("John"));
+      client = createCashX402Client("John");
 
       const facilitator = new x402Facilitator().register(
         "x402:cash",

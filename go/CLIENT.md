@@ -113,7 +113,14 @@ client.Register("eip155:*", evm.NewExactEvmScheme(evmSigner, nil))
 
 // All Solana networks
 client.Register("solana:*", svm.NewExactSvmScheme(svmSigner))
+
+// Usage-based Solana services, alongside the fixed-price ones above
+client.Register("solana:*", uptosvm.NewUptoSvmScheme(svmSigner, nil))
 ```
+
+Registering more than one scheme for the same network is how a client supports
+both fixed-price (`exact`) and usage-based (`upto`) services. See the
+[upto SVM README](mechanisms/svm/upto/README.md) for details on the channel flow.
 
 #### Specific Network Registration
 
@@ -164,7 +171,45 @@ client.Register("eip155:*", evm.NewExactEvmScheme(defaultSigner, &evm.ExactEvmSc
 }))
 ```
 
-### 4. HTTP Integration
+### 4. Spend Controls
+
+Built-in safety rails applied before policies during accept selection. Use these for amount and asset bounds—not for network preference.
+
+`Newx402Client()` enables spend controls by default: only assets the registered scheme's `FindDefaultAsset` recognizes are allowed, with a **`$1`** USD ceiling. Opt into other tokens via `AllowedAssets`, or call `DisableSpendControls()` to disable all spend controls.
+
+```go
+client := x402.Newx402Client().
+    SetSpendControls(x402.SpendControls{
+        MaxAmountPerPayment: "$5", // USD cap on default assets; empty => "$1"
+        AllowedAssets: []x402.SpendControlAsset{
+            // opt-in non-default with atomic cap
+            {Network: "eip155:8453", Asset: "0xCustomToken", MaxAmountPerPayment: "2000000"},
+            // opt-in non-default uncapped
+            {Network: "eip155:8453", Asset: "0xOtherToken"},
+            // override USD cap for a default asset by ticker (or on-chain id)
+            {Network: "eip155:8453", Asset: "PYUSD", MaxAmountPerPayment: "500000"},
+        },
+        // AllowAnyAsset: true, // allow any asset (USD cap still applies to defaults)
+    }).
+    Register("eip155:*", evm.NewExactEvmScheme(signer, nil))
+
+// Or disable all spend controls (any asset, no caps):
+// client.DisableSpendControls()
+```
+
+Accept selection runs in three stages: **spend controls** enforce built-in safety caps, **policies** filter the remaining list, and **paymentRequirementsSelector** picks one accept (default: first remaining). Do not use policies for USD caps or asset allowlists—that is what spend controls are for.
+
+| Control | Purpose |
+|---------|---------|
+| `DisableSpendControls()` | Disable all spend controls (any asset, no caps). Useful for UI-confirmed flows (paywall) and tests. |
+| `MaxAmountPerPayment` | USD ceiling on payments in recognized USD-pegged assets (default **`$1`**). Set a higher value to raise the cap, or `DisableMaxAmountPerPayment: true` to remove it. |
+| `AllowedAssets` | Opt-in for non-default tokens. Omit for default assets only; `AllowAnyAsset: true` to allow any asset; or a list of `{ Network, Asset }` with optional atomic `MaxAmountPerPayment` per entry. Per-entry `MaxAmountPerPayment` is an integer atomic string (`"2000000"`), not `"$1"`. `Asset` may be an on-chain id or a default-asset symbol (e.g. `"PYUSD"`). |
+
+Network scoping is separate: register only the networks you intend to pay on. Unregistered networks are never selected regardless of spend controls.
+
+See [Advanced Examples](../examples/go/clients/advanced/) for a runnable spend-controls example.
+
+### 5. HTTP Integration
 
 The HTTP layer adds automatic payment handling to standard HTTP clients.
 
@@ -328,6 +373,14 @@ func (c *X402Client) Register(network Network, scheme SchemeNetworkClient) *X402
 func (c *X402Client) OnBeforePaymentCreation(hook BeforePaymentCreationHook) *X402Client
 func (c *X402Client) OnAfterPaymentCreation(hook AfterPaymentCreationHook) *X402Client
 func (c *X402Client) OnPaymentCreationFailure(hook PaymentCreationFailureHook) *X402Client
+```
+
+**Spend Control Methods:**
+```go
+func (c *X402Client) SetSpendControls(controls SpendControls) *X402Client
+func (c *X402Client) DisableSpendControls() *X402Client
+func WithSpendControls(controls SpendControls) ClientOption
+func WithSpendControlsDisabled() ClientOption
 ```
 
 **Payment Methods:**

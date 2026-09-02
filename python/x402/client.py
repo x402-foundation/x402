@@ -13,6 +13,7 @@ from typing import Any, TypeVar
 from typing_extensions import Self
 
 from .client_base import (
+    DEFAULT_MAX_AMOUNT_PER_PAYMENT,
     AfterPaymentCreationHook,
     BeforePaymentCreationHook,
     HookCommand,
@@ -20,6 +21,8 @@ from .client_base import (
     OnPaymentResponseHook,
     PaymentRequirementsSelector,
     SchemeRegistration,
+    SpendControlAsset,
+    SpendControls,
     SyncAfterPaymentCreationHook,
     SyncBeforePaymentCreationHook,
     SyncOnPaymentCreationFailureHook,
@@ -51,6 +54,9 @@ __all__ = [
     "x402ClientSync",
     "x402ClientConfig",
     "SchemeRegistration",
+    "SpendControlAsset",
+    "SpendControls",
+    "DEFAULT_MAX_AMOUNT_PER_PAYMENT",
     "default_payment_selector",
     "prefer_network",
     "prefer_scheme",
@@ -110,6 +116,8 @@ class x402Client(x402ClientBase):
                 client.register(scheme.network, scheme.client)  # type: ignore[arg-type]
         for policy in config.policies or []:
             client.register_policy(policy)
+        if config.spend_controls is not None:
+            client.set_spend_controls(config.spend_controls)
         return client
 
     # ========================================================================
@@ -297,6 +305,8 @@ class x402ClientSync(x402ClientBase):
                 client.register(scheme.network, scheme.client)  # type: ignore[arg-type]
         for policy in config.policies or []:
             client.register_policy(policy)
+        if config.spend_controls is not None:
+            client.set_spend_controls(config.spend_controls)
         return client
 
     # ========================================================================

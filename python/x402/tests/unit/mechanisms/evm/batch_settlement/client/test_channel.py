@@ -11,13 +11,15 @@ try:
     from eth_account import Account
     from eth_utils import to_checksum_address
 
+    from x402.http.utils import encode_payment_response_header
     from x402.mechanisms.evm.batch_settlement.client.channel import (
         BatchSettlementClientDeps,
         build_channel_config,
         get_channel,
         has_channel,
-        process_settle_response,
+        process_payment_response,
         update_channel_after_refund,
+        update_channel_from_settle,
     )
     from x402.mechanisms.evm.batch_settlement.client.storage import (
         BatchSettlementClientContext,
@@ -25,6 +27,7 @@ try:
     )
     from x402.mechanisms.evm.batch_settlement.constants import MIN_WITHDRAW_DELAY
     from x402.mechanisms.evm.signers import EthAccountSigner
+    from x402.schemas import SettleResponse
 except ImportError:
     pytest.skip("batch_settlement requires evm extras", allow_module_level=True)
 
@@ -103,133 +106,259 @@ class TestBuildChannelConfig:
             )
 
 
-def _settle_response(extra: dict[str, Any] | None) -> SimpleNamespace:
-    return SimpleNamespace(extra=extra)
+NETWORK = "eip155:84532"
 
 
-class TestProcessSettleResponse:
-    def test_noop_on_missing_channel_state(self):
+def _seed_channel(
+    storage: InMemoryClientChannelStorage,
+    channel_id: str,
+    *,
+    balance: str,
+    charged_cumulative_amount: str,
+) -> None:
+    storage.set(
+        channel_id.lower(),
+        BatchSettlementClientContext(
+            balance=balance,
+            charged_cumulative_amount=charged_cumulative_amount,
+        ),
+    )
+
+
+def _make_failed_settle(signer_address: str, extra: dict[str, Any] | None = None) -> SettleResponse:
+    return SettleResponse(
+        success=False,
+        transaction="",
+        network=NETWORK,
+        payer=signer_address,
+        error_reason="settlement_failed",
+        extra=extra or {},
+    )
+
+
+class TestUpdateChannelFromSettle:
+    def test_ignores_settle_responses_with_no_charged_amount_and_no_deposit(self):
         storage = InMemoryClientChannelStorage()
-        process_settle_response(storage, _settle_response(None))
-        process_settle_response(storage, _settle_response({}))
-        assert (
-            storage.get("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-            is None
-        )
+        channel_id = "0xabc1230000000000000000000000000000000000000000000000000000000001"
 
-    def test_creates_context_when_absent(self):
-        storage = InMemoryClientChannelStorage()
-        process_settle_response(
+        update_channel_from_settle(
             storage,
-            _settle_response(
-                {
-                    "channelState": {
-                        "channelId": "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-                        "balance": "1000",
-                        "totalClaimed": "100",
-                        "chargedCumulativeAmount": "100",
-                    }
-                }
-            ),
+            {"server": {}, "local": {"channel_id": channel_id, "request_amount": "1000"}},
         )
-        got = storage.get("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        assert got is not None
-        assert got.balance == "1000"
-        assert got.total_claimed == "100"
-        assert got.charged_cumulative_amount == "100"
 
-    def test_updates_existing_context_in_place(self):
+        assert storage.get(channel_id) is None
+
+    def test_does_not_process_a_failed_payment_response_header(self):
+        signer = _signer()
         storage = InMemoryClientChannelStorage()
+        channel_id = "0xabc1230000000000000000000000000000000000000000000000000000000001"
+        response_header = encode_payment_response_header(
+            _make_failed_settle(signer.address, {"chargedAmount": "1000"})
+        )
+
+        process_payment_response(
+            storage,
+            lambda name: response_header if name == "PAYMENT-RESPONSE" else None,
+            {"channel_id": channel_id, "request_amount": "1000", "deposit_amount": "5000"},
+        )
+
+        assert storage.get(channel_id) is None
+
+    def test_deletes_channel_record_after_a_full_refund(self):
+        storage = InMemoryClientChannelStorage()
+        channel_id = "0xabc1230000000000000000000000000000000000000000000000000000000002"
         storage.set(
-            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            channel_id.lower(),
             BatchSettlementClientContext(
-                balance="2000",
-                signed_max_claimable="50",
-                signature="0xprev",
+                charged_cumulative_amount="1000",
+                balance="5000",
             ),
         )
-        process_settle_response(
-            storage,
-            _settle_response(
-                {
-                    "channelState": {
-                        "channelId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                        "balance": "1000",
-                        "totalClaimed": "100",
-                        "chargedCumulativeAmount": "100",
-                    }
-                }
+
+        update_channel_after_refund(storage, channel_id.lower())
+
+        assert storage.get(channel_id.lower()) is None
+
+    def test_subtracts_a_partial_refund_from_previous_local_balance(self):
+        storage = InMemoryClientChannelStorage()
+        channel_id = "0xabc1230000000000000000000000000000000000000000000000000000000002"
+        storage.set(
+            channel_id.lower(),
+            BatchSettlementClientContext(
+                charged_cumulative_amount="1000",
+                balance="10000",
             ),
         )
-        got = storage.get("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        assert got is not None
-        assert got.balance == "1000"
-        # Unrelated fields are preserved.
-        assert got.signed_max_claimable == "50"
-        assert got.signature == "0xprev"
 
+        update_channel_after_refund(storage, channel_id.lower(), "2000")
 
-class TestUpdateChannelAfterRefund:
-    def test_no_extra_deletes_record(self):
-        storage = InMemoryClientChannelStorage()
-        storage.set(
-            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            BatchSettlementClientContext(balance="100"),
-        )
-        update_channel_after_refund(
-            storage, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", None
-        )
-        assert (
-            storage.get("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-            is None
-        )
-
-    def test_zero_balance_keeps_sentinel_record(self):
-        storage = InMemoryClientChannelStorage()
-        storage.set(
-            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            BatchSettlementClientContext(balance="100"),
-        )
-        update_channel_after_refund(
-            storage,
-            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            {
-                "channelState": {
-                    "channelId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                    "balance": "0",
-                    "totalClaimed": "100",
-                }
-            },
-        )
-        # Full refund: sentinel kept so subsequent refund attempts fail locally
-        # with "no remaining balance" rather than triggering unnecessary I/O.
-        ctx = storage.get("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        ctx = storage.get(channel_id.lower())
         assert ctx is not None
-        assert ctx.balance == "0"
-        assert ctx.total_claimed == "100"
+        assert ctx.balance == "8000"
+        assert ctx.charged_cumulative_amount == "1000"
 
-    def test_remaining_balance_updates_record(self):
+    def test_deletes_local_state_when_a_partial_refund_is_capped_to_the_refundable_balance(
+        self,
+    ):
         storage = InMemoryClientChannelStorage()
+        channel_id = "0xabc1230000000000000000000000000000000000000000000000000000000002"
         storage.set(
-            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            BatchSettlementClientContext(balance="100"),
+            channel_id.lower(),
+            BatchSettlementClientContext(
+                charged_cumulative_amount="9000",
+                balance="10000",
+            ),
         )
-        update_channel_after_refund(
+
+        update_channel_after_refund(storage, channel_id.lower(), "2000")
+
+        assert storage.get(channel_id.lower()) is None
+
+    def test_rejects_charged_amount_greater_than_requirements_amount(self):
+        storage = InMemoryClientChannelStorage()
+        channel_id = "0xabc1230000000000000000000000000000000000000000000000000000000005"
+        _seed_channel(storage, channel_id, balance="50000", charged_cumulative_amount="0")
+
+        with pytest.raises(ValueError, match="chargedAmount"):
+            update_channel_from_settle(
+                storage,
+                {
+                    "server": {"charged_amount": "20000"},
+                    "local": {"channel_id": channel_id, "request_amount": "10000"},
+                },
+            )
+
+        ctx = storage.get(channel_id.lower())
+        assert ctx is not None
+        assert ctx.charged_cumulative_amount == "0"
+        assert ctx.balance == "50000"
+
+    def test_rejects_a_non_integer_charged_amount(self):
+        storage = InMemoryClientChannelStorage()
+        channel_id = "0xabc1230000000000000000000000000000000000000000000000000000000005"
+        _seed_channel(storage, channel_id, balance="50000", charged_cumulative_amount="0")
+
+        with pytest.raises(ValueError, match="chargedAmount"):
+            update_channel_from_settle(
+                storage,
+                {
+                    "server": {"charged_amount": "10.5"},
+                    "local": {"channel_id": channel_id, "request_amount": "10000"},
+                },
+            )
+
+        ctx = storage.get(channel_id.lower())
+        assert ctx is not None
+        assert ctx.charged_cumulative_amount == "0"
+
+    def test_adds_payload_deposit_amount_to_local_balance(self):
+        storage = InMemoryClientChannelStorage()
+        channel_id = "0xabc1230000000000000000000000000000000000000000000000000000000008"
+
+        update_channel_from_settle(
             storage,
-            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             {
-                "channelState": {
-                    "channelId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                    "balance": "30",
-                    "totalClaimed": "70",
-                    "chargedCumulativeAmount": "70",
-                }
+                "server": {"charged_amount": "10000"},
+                "local": {
+                    "channel_id": channel_id,
+                    "request_amount": "10000",
+                    "deposit_amount": "50000",
+                },
             },
         )
-        got = storage.get("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        assert got is not None
-        assert got.balance == "30"
-        assert got.total_claimed == "70"
+
+        ctx = storage.get(channel_id.lower())
+        assert ctx is not None
+        assert ctx.charged_cumulative_amount == "10000"
+        assert ctx.balance == "50000"
+
+    def test_persists_an_honest_previous_plus_charged_amount_when_extra_cumulative_is_omitted(
+        self,
+    ):
+        storage = InMemoryClientChannelStorage()
+        channel_id = "0xabc1230000000000000000000000000000000000000000000000000000000007"
+        _seed_channel(storage, channel_id, balance="50000", charged_cumulative_amount="0")
+
+        update_channel_from_settle(
+            storage,
+            {
+                "server": {"charged_amount": "10000"},
+                "local": {"channel_id": channel_id, "request_amount": "10000"},
+            },
+        )
+
+        ctx = storage.get(channel_id.lower())
+        assert ctx is not None
+        assert ctx.charged_cumulative_amount == "10000"
+        assert ctx.balance == "50000"
+
+    def test_persists_when_extra_charged_cumulative_amount_matches_previous_plus_charged_amount(
+        self,
+    ):
+        storage = InMemoryClientChannelStorage()
+        channel_id = "0xabc1230000000000000000000000000000000000000000000000000000000007"
+        _seed_channel(storage, channel_id, balance="50000", charged_cumulative_amount="0")
+
+        update_channel_from_settle(
+            storage,
+            {
+                "server": {"charged_amount": "10000", "charged_cumulative_amount": "10000"},
+                "local": {"channel_id": channel_id, "request_amount": "10000"},
+            },
+        )
+
+        ctx = storage.get(channel_id.lower())
+        assert ctx is not None
+        assert ctx.charged_cumulative_amount == "10000"
+        assert ctx.balance == "50000"
+
+    def test_writes_nothing_when_extra_charged_cumulative_amount_disagrees_including_deposit(
+        self,
+    ):
+        storage = InMemoryClientChannelStorage()
+        channel_id = "0xabc1230000000000000000000000000000000000000000000000000000000009"
+        _seed_channel(storage, channel_id, balance="50000", charged_cumulative_amount="0")
+
+        update_channel_from_settle(
+            storage,
+            {
+                "server": {"charged_amount": "10000", "charged_cumulative_amount": "40000"},
+                "local": {
+                    "channel_id": channel_id,
+                    "request_amount": "10000",
+                    "deposit_amount": "1000",
+                },
+            },
+        )
+
+        ctx = storage.get(channel_id.lower())
+        assert ctx is not None
+        assert ctx.charged_cumulative_amount == "0"
+        assert ctx.balance == "50000"
+
+    def test_writes_nothing_when_extra_charged_cumulative_amount_is_not_a_non_negative_integer(
+        self,
+    ):
+        storage = InMemoryClientChannelStorage()
+        channel_id = "0xabc1230000000000000000000000000000000000000000000000000000000009"
+        _seed_channel(storage, channel_id, balance="50000", charged_cumulative_amount="0")
+
+        update_channel_from_settle(
+            storage,
+            {
+                "server": {"charged_amount": "10000", "charged_cumulative_amount": "10.5"},
+                "local": {
+                    "channel_id": channel_id,
+                    "request_amount": "10000",
+                    "deposit_amount": "1000",
+                },
+            },
+        )
+
+        ctx = storage.get(channel_id.lower())
+        assert ctx is not None
+        assert ctx.charged_cumulative_amount == "0"
+        assert ctx.balance == "50000"
 
 
 class TestHasAndGetChannel:

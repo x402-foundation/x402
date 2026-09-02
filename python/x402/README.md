@@ -178,7 +178,7 @@ Mismatched variants raise `TypeError` at runtime.
 
 ## Client Configuration
 
-Use `from_config()` for declarative setup:
+Use `from_config()` for declarative setup. Accept selection runs in three stages: **`spend_controls`** enforce built-in safety caps, **`policies`** filter the remaining list, and **`payment_requirements_selector`** picks one accept (default: first remaining).
 
 ```python
 from x402 import x402Client, x402ClientConfig, SchemeRegistration
@@ -193,14 +193,43 @@ config = x402ClientConfig(
         SchemeRegistration(network="solana:*", client=ExactSvmScheme(signer)),
         SchemeRegistration(network="tvm:*", client=ExactTvmScheme(tvm_signer)),
     ],
+    spend_controls={"max_amount_per_payment": "$5"},
     policies=[prefer_network("eip155:8453")],
 )
 client = x402Client.from_config(config)
 ```
 
+### Spend controls
+
+Built-in safety rails applied before policies. Use these for amount and asset bounds—not for network preference.
+
+By default only assets `find_default_asset` recognizes are allowed, with a **`$1`** USD ceiling. Opt into other tokens via `allowed_assets`, or pass `spend_controls=False` to disable all spend controls.
+
+```python
+spend_controls = {
+    "max_amount_per_payment": "$5",  # USD cap on default assets; False to remove
+    "allowed_assets": [
+        # opt-in non-default with atomic cap
+        {"network": "eip155:8453", "asset": "0xCustomToken", "max_amount_per_payment": "2000000"},
+        # opt-in non-default uncapped
+        {"network": "eip155:8453", "asset": "0xOtherToken"},
+        # override USD cap for a default asset by ticker (or on-chain id)
+        {"network": "eip155:8453", "asset": "PYUSD", "max_amount_per_payment": "500000"},
+    ],
+    # or: "allowed_assets": True  # allow any asset (USD cap still applies to defaults)
+}
+# or: spend_controls=False  # disable all spend controls (any asset, no caps)
+```
+
+| Control | Purpose |
+|---------|---------|
+| `spend_controls: False` | Disable all spend controls (any asset, no caps). Useful for UI-confirmed flows (paywall) and tests. |
+| `max_amount_per_payment` | USD ceiling on payments in recognized USD-pegged assets (default **`$1`**). Set a higher value to raise the cap, or **`False`** to remove it. |
+| `allowed_assets` | Opt-in for non-default tokens. Omit for default assets only; `True` to allow any asset; or a list of `{ network, asset }` with optional integer atomic `max_amount_per_payment` per entry (e.g. `"2000000"`, not `"$1"`). |
+
 ## Policies
 
-Filter or prioritize payment requirements:
+Filter or prioritize payment requirements. Policies run **after** spend controls and before the selector. Do not use policies for USD caps or asset allowlists—that is what `spend_controls` is for.
 
 ```python
 from x402 import prefer_network, prefer_scheme, max_amount

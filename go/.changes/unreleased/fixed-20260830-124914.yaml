@@ -1,0 +1,3 @@
+kind: fixed
+body: Expose EXTENSION-RESPONSES data to resource servers without forwarding it to buyers.
+time: 2026-08-30T12:49:14.025505+09:00

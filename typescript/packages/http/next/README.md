@@ -48,6 +48,8 @@ export const config = {
 
 API routes are protected using the `withX402` route wrapper. This is the recommended approach to protect API routes as it guarantees payment settlement only AFTER successful API responses (status < 400). API routes can also be protected by `paymentProxy`, however this will charge clients for failed API responses:
 
+**Static routes** — pass a bare route config (second argument). Payment matches any request to the handler; no path key required:
+
 ```typescript
 // app/api/your-endpoint/route.ts
 import { NextRequest, NextResponse } from "next/server";
@@ -71,6 +73,30 @@ export const GET = withX402(
   server, // your configured x402ResourceServer
 );
 ```
+
+**Dynamic routes** (`/api/users/[id]`, catch-all `[...slug]`, etc.) — key the config by the route's path pattern so bazaar discovery gets the correct `routeTemplate` and path params:
+
+```typescript
+export const GET = withX402(
+  handler,
+  {
+    "/api/users/[id]": {
+      accepts: {
+        scheme: "exact",
+        price: "$0.01",
+        network: "eip155:84532",
+        payTo: "0xYourAddress",
+      },
+      description: "Access to user API",
+    },
+  },
+  server,
+);
+```
+
+For static routes that use bazaar discovery (`declareDiscoveryExtension`), you may also key by path (e.g. `{ "/api/your-endpoint": config }`) — optional, but makes the catalog URL explicit.
+
+The pattern must match the request path exactly as served (including any `basePath`, no trailing slash). If a keyed pattern does not match — a typo, a missing dynamic segment — the handler runs **without** payment protection; `withX402` logs a warning once when this happens.
 
 ## Configuration
 
@@ -103,7 +129,7 @@ The `withX402` function wraps API route handlers. This is the recommended approa
 ```typescript
 withX402(
   routeHandler: (request: NextRequest) => Promise<NextResponse>,
-  routeConfig: RouteConfig,
+  routes: RoutesConfig,
   server: x402ResourceServer,
   paywallConfig?: PaywallConfig,
   paywall?: PaywallProvider,
@@ -114,7 +140,7 @@ withX402(
 #### Parameters
 
 1. **`routeHandler`** (required): Your API route handler function
-2. **`routeConfig`** (required): Payment configuration for this specific route
+2. **`routes`** (required): Payment configuration — a **bare `RouteConfig`** for static routes (matches any path to the handler), or a **map keyed by path pattern** for dynamic routes (e.g. `{ "/api/users/[id]": config }`). See [Protecting API Routes](#protecting-api-routes) above.
 3. **`server`** (required): Pre-configured x402ResourceServer instance
 4. **`paywallConfig`** (optional): Configuration for the built-in paywall UI
 5. **`paywall`** (optional): Custom paywall provider

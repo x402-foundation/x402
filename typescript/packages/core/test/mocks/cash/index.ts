@@ -1,18 +1,26 @@
-import { x402Facilitator } from "../../../../src/facilitator";
-import { FacilitatorClient } from "../../../../src/server";
-import {
-  SettleResponse,
-  SupportedResponse,
-  VerifyResponse,
-} from "../../../../src/types/facilitator";
+import { x402Client } from "../../../src/client/x402Client";
+import { x402Facilitator } from "../../../src/facilitator";
+import { FacilitatorClient } from "../../../src/server";
+import { SettleResponse, SupportedResponse, VerifyResponse } from "../../../src/types/facilitator";
 import {
   PaymentFlowConfig,
   SchemeNetworkClient,
   SchemeNetworkFacilitator,
   SchemeNetworkServer,
-} from "../../../../src/types/mechanisms";
-import { PaymentPayload, PaymentRequirements } from "../../../../src/types/payments";
-import { Price, AssetAmount, Network } from "../../../../src/types";
+} from "../../../src/types/mechanisms";
+import { PaymentPayload, PaymentRequirements } from "../../../src/types/payments";
+import { Price, AssetAmount, Network } from "../../../src/types";
+
+/**
+ * Cash integration client: allow any asset (cash amounts are decimal strings, not atomic).
+ *
+ * @param payer - Cash payer name embedded in the mock signature
+ */
+export function createCashX402Client(payer: string): x402Client {
+  return new x402Client()
+    .register("x402:cash", new CashSchemeNetworkClient(payer))
+    .setSpendControls(false);
+}
 
 /**
  *

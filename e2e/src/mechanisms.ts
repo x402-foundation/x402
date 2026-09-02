@@ -16,6 +16,7 @@
 import { readFileSync, readdirSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import type { PaymentFlowName } from '@x402/core/types';
 
 /** Keep local types here to avoid circular imports with types.ts / networks.ts. */
 export type SdkId = 'typescript' | 'python' | 'go';
@@ -25,6 +26,8 @@ export type CatalogNetworkId = string;
 
 type PaymentScheme = 'exact' | 'upto' | 'batch-settlement';
 type AssetTransferMethod = 'eip3009' | 'permit2' | 'sequence' | 'ticketSequence';
+/** Payment ordering on the accept; mirrors core {@link PaymentFlowName}. */
+export type PaymentFlow = PaymentFlowName;
 export type NetworkMode = 'testnet' | 'mainnet';
 
 /** Per-key env declaration in mechanisms_*.json. */
@@ -110,6 +113,14 @@ export type RouteDefinition = {
   extensions?: string[];
   /** Settle less than the maximum (upto scheme). */
   settlementOverride?: { amount: string };
+  /**
+   * Payment flow for this route. Omitted or `"authorization"` is the default
+   * (verify → resource → settle). Non-authorization values are merged into
+   * route `extra.paymentFlow`, matching core wire rules.
+   */
+  paymentFlow?: PaymentFlow;
+  /** Omit this route unless the named env var is set (optional add-on routes). */
+  requiresEnv?: string;
 };
 
 /** Fixed success body for every paid route (`timestamp` is added by the server). */
@@ -157,6 +168,7 @@ type EndpointLike = {
   protocolFamily?: CatalogNetworkId;
   scheme?: PaymentScheme;
   assetTransferMethod?: AssetTransferMethod;
+  paymentFlow?: PaymentFlow;
   schemeOptions?: Record<string, boolean>;
   extensions?: string[];
   health?: boolean;
@@ -289,6 +301,23 @@ export function schemesForSdkNetwork(sdk: string, network: CatalogNetworkId): Pa
   return Array.from(schemes);
 }
 
+/**
+ * Schemes a harness component supports on one network. When `declaredSchemes`
+ * is set (client/facilitator test.config), intersect with the SDK catalog so
+ * custom surfaces like svm-smart-wallet do not inherit every SDK route scheme.
+ */
+export function schemesForComponent(
+  sdk: string,
+  network: CatalogNetworkId,
+  declaredSchemes: PaymentScheme[] | undefined,
+): PaymentScheme[] {
+  const sdkSchemes = schemesForSdkNetwork(sdk, network);
+  if (!declaredSchemes?.length) {
+    return sdkSchemes;
+  }
+  return declaredSchemes.filter(scheme => sdkSchemes.includes(scheme));
+}
+
 /** EVM asset transfer methods declared on an SDK's routes. */
 export function evmAssetTransferMethodsForSdk(sdk: string): AssetTransferMethod[] | undefined {
   const methods = new Set<AssetTransferMethod>();
@@ -319,7 +348,9 @@ function routeDescription(route: SdkRoute): string {
     .map(id => GAS_SPONSORING_LABELS[id])
     .filter(Boolean);
   const suffix = sponsoring.length > 0 ? ` with ${sponsoring.join(' and ')}` : '';
-  return `Protected ${scheme}${transfer}endpoint on ${label}${suffix}`;
+  const flow =
+    route.paymentFlow && route.paymentFlow !== 'authorization' ? ` ${route.paymentFlow}` : '';
+  return `Protected ${scheme}${transfer}endpoint on ${label}${flow}${suffix}`;
 }
 
 /** MCP tool name for a catalog path: `/exact/evm/eip3009` → `exact_evm_eip3009`. */
@@ -340,6 +371,7 @@ export function sdkRouteToEndpoint(route: SdkRoute, transport: RouteTransport = 
       protocolFamily: route.network,
       scheme: route.scheme,
       assetTransferMethod: route.assetTransferMethod,
+      paymentFlow: route.paymentFlow,
       schemeOptions: route.schemeOptions,
       extensions: route.extensions,
     };
@@ -353,6 +385,7 @@ export function sdkRouteToEndpoint(route: SdkRoute, transport: RouteTransport = 
     protocolFamily: route.network,
     scheme: route.scheme,
     assetTransferMethod: route.assetTransferMethod,
+    paymentFlow: route.paymentFlow,
     schemeOptions: route.schemeOptions,
     extensions: route.extensions,
   };
@@ -426,6 +459,13 @@ export type RouteFilter = {
   excludeNetworks?: string[];
 };
 
+export function routeEnvSatisfied(route: SdkRoute, env: EnvLookup): boolean {
+  if (!route.requiresEnv) {
+    return true;
+  }
+  return Boolean(env(route.requiresEnv)?.trim());
+}
+
 export function filterRoutes(routes: SdkRoute[], filter?: RouteFilter): SdkRoute[] {
   if (!filter?.excludeSchemes?.length && !filter?.excludeNetworks?.length) {
     return routes;
@@ -435,8 +475,20 @@ export function filterRoutes(routes: SdkRoute[], filter?: RouteFilter): SdkRoute
   return routes.filter(route => !schemes.has(route.scheme) && !networks.has(route.network));
 }
 
-export function sdkRoutesToEndpoints(sdk: string, filter?: RouteFilter): EndpointLike[] {
-  return filterRoutes(sdkRoutesFor(sdk), filter).map(route => sdkRouteToEndpoint(route));
+export function availableRoutes(
+  routes: SdkRoute[],
+  env: EnvLookup,
+  filter?: RouteFilter,
+): SdkRoute[] {
+  return filterRoutes(routes, filter).filter(route => routeEnvSatisfied(route, env));
+}
+
+export function sdkRoutesToEndpoints(
+  sdk: string,
+  env: EnvLookup = key => process.env[key],
+  filter?: RouteFilter,
+): EndpointLike[] {
+  return availableRoutes(sdkRoutesFor(sdk), env, filter).map(route => sdkRouteToEndpoint(route));
 }
 
 /**
@@ -462,12 +514,16 @@ export function extensionsForSdk(sdk: string, role: ConfigRole): string[] {
 }
 
 /**
- * Env keys the harness assigns itself per run (not operator-supplied), so the
- * facilitator env preflight check must never flag them as "missing". `PORT`
- * is the only one: it's allocated by {@link createPortAllocator} and injected
- * by `GenericFacilitatorProxy.start`, well after the preflight check runs.
+ * Env keys the harness assigns per run (not operator-supplied), so the
+ * facilitator/client env preflight check must never flag them as "missing".
+ * - `PORT`: allocated by {@link createPortAllocator}, injected at facilitator start.
+ * - `RESOURCE_SERVER_URL` / `ENDPOINT_PATH`: set per scenario by {@link GenericClientProxy}.
  */
-export const FACILITATOR_ENV_PREFLIGHT_ALLOWLIST: ReadonlySet<string> = new Set(['PORT']);
+export const FACILITATOR_ENV_PREFLIGHT_ALLOWLIST: ReadonlySet<string> = new Set([
+  'PORT',
+  'RESOURCE_SERVER_URL',
+  'ENDPOINT_PATH',
+]);
 
 /**
  * Which roles read an env key: catalog declaration, else SERVER_/CLIENT_/
@@ -581,7 +637,7 @@ export function enrichConfigFromMechanisms(
     excludeSchemes: config.excludeSchemes as string[] | undefined,
     excludeNetworks: config.excludeNetworks as string[] | undefined,
   };
-  const routes = filterRoutes(sdkRoutesFor(sdk), filter);
+  const routes = availableRoutes(sdkRoutesFor(sdk), key => process.env[key], filter);
 
   const fromCatalog = NETWORK_IDS.filter(id => routes.some(route => route.network === id));
   const protocolFamilies =
@@ -788,6 +844,21 @@ function serverAddressEnvKey(network: CatalogNetworkId): string {
   return `SERVER_${network.toUpperCase()}_ADDRESS`;
 }
 
+/** Merge price-derived `extra` with catalog `paymentFlow` (authorization omitted on wire). */
+function mergeRouteExtra(
+  priceExtra: Record<string, string> | undefined,
+  paymentFlow?: PaymentFlow,
+): Record<string, string> | undefined {
+  const wireFlow = paymentFlow && paymentFlow !== 'authorization' ? paymentFlow : undefined;
+  if (!wireFlow && !priceExtra) {
+    return undefined;
+  }
+  return {
+    ...priceExtra,
+    ...(wireFlow ? { paymentFlow: wireFlow } : {}),
+  };
+}
+
 function resolvePrice(
   route: SdkRoute,
   caip2: string,
@@ -853,13 +924,14 @@ export function resolvePaymentRoutes(
 ): ResolvedRoute[] {
   const resolved: ResolvedRoute[] = [];
 
-  for (const route of filterRoutes(sdkRoutesFor(sdk), filter)) {
+  for (const route of availableRoutes(sdkRoutesFor(sdk), env, filter)) {
     const def = getNetworkDefinition(route.network);
     const payTo = env(serverAddressEnvKey(route.network));
     if (!payTo) continue;
 
     const caip2 = env(derivedNetworkKey(route.network)) ?? def.networks.testnet.caip2;
-    const { price, extra } = resolvePrice(route, caip2, env);
+    const { price, extra: priceExtra } = resolvePrice(route, caip2, env);
+    const extra = mergeRouteExtra(priceExtra, route.paymentFlow);
 
     resolved.push({
       path: route.path,

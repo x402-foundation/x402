@@ -46,6 +46,12 @@ export function parseArgs(): ParsedArgs {
     arg.startsWith('--versions=') ||
     arg.startsWith('--families=') ||
     arg.startsWith('--schemes=') ||
+    arg.startsWith('--sdk=') ||
+    arg.startsWith('--sdks=') ||
+    arg.startsWith('--paymentflow=') ||
+    arg.startsWith('--paymentFlow=') ||
+    arg.startsWith('--assetTransferMethod=') ||
+    arg.startsWith('--asset-transfer-method=') ||
     arg.startsWith('--endpoints=')
   );
 
@@ -98,6 +104,13 @@ export function parseArgs(): ParsedArgs {
   const versions = parseListArg(args, '--versions')?.map(v => parseInt(v));
   const families = parseListArg(args, '--families');
   const schemes = parseListArg(args, '--schemes');
+  const sdks = parseListArg(args, '--sdk', '--sdks');
+  const paymentFlows = parseListArg(args, '--paymentflow', '--paymentFlow');
+  const assetTransferMethods = parseListArg(
+    args,
+    '--assetTransferMethod',
+    '--asset-transfer-method',
+  );
   const endpoints = parseListArg(args, '--endpoints');
 
   return {
@@ -114,6 +127,9 @@ export function parseArgs(): ParsedArgs {
       versions,
       protocolFamilies: families,
       schemes,
+      sdks,
+      paymentFlows,
+      assetTransferMethods,
       endpoints,
     },
     showHelp: false,
@@ -126,10 +142,10 @@ export function parseArgs(): ParsedArgs {
   };
 }
 
-function parseListArg(args: string[], argName: string): string[] | undefined {
-  const arg = args.find(a => a.startsWith(`${argName}=`));
+function parseListArg(args: string[], ...argNames: string[]): string[] | undefined {
+  const arg = args.find(a => argNames.some(name => a.startsWith(`${name}=`)));
   if (!arg) return undefined;
-  const value = arg.split('=')[1];
+  const value = arg.split('=').slice(1).join('=');
   return value.split(',').map(v => v.trim()).filter(v => v.length > 0);
 }
 
@@ -154,6 +170,9 @@ export function printHelp(): void {
   console.log('  --versions=<list>          Comma-separated version numbers (e.g., 1,2)');
   console.log('  --families=<list>          Comma-separated protocol families (e.g., evm,svm,hedera,tvm)');
   console.log('  --schemes=<list>           Payment schemes: exact, upto, batch-settlement');
+  console.log('  --sdk=<list>               SDK languages: ts, go, python (aliases: typescript, py)');
+  console.log('  --paymentflow=<list>       Payment flows: authorization, upfront, escrow');
+  console.log('  --assetTransferMethod=<list>  Asset transfer methods: eip3009, permit2, sequence, ticketSequence');
   console.log('  --endpoints=<list>         Comma-separated endpoint paths or regex patterns (auto-anchored)');
   console.log('');
   console.log('Options:');
@@ -178,6 +197,8 @@ export function printHelp(): void {
   console.log("  pnpm test --testnet --endpoints='/protected'              # Exact path match");
   console.log("  pnpm test --testnet --endpoints='/protected-permit2.*'   # Regex: all permit2 routes");
   console.log('  pnpm test --testnet --schemes=exact,batch-settlement     # Only those payment schemes');
+  console.log('  pnpm test --testnet --sdk=ts --paymentflow=upfront       # TypeScript SDK, upfront routes');
+  console.log('  pnpm test --testnet --assetTransferMethod=eip3009        # EIP-3009 transfer method only');
   console.log('  pnpm test --testnet --min --parallel -v                   # Parallel mode');
   console.log('  pnpm test --testnet --min --parallel --concurrency=2 -v   # Limited concurrency');
   console.log('');

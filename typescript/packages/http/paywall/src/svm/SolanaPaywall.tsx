@@ -185,6 +185,7 @@ export function SolanaPaywall({ paymentRequired, onSuccessfulResponse }: SolanaP
       setStatus("Creating payment signature...");
 
       const client = new x402Client();
+      client.setSpendControls(false); // UI already confirms
       client.register("solana:*", new ExactSvmScheme(walletSigner));
 
       const paymentPayload = await client.createPaymentPayload(paymentRequired);

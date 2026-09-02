@@ -1,6 +1,7 @@
 import { AccountAddress, Aptos, AptosConfig, SimpleTransaction } from "@aptos-labs/ts-sdk";
 import type { PaymentPayload, PaymentRequirements, SchemeNetworkClient } from "@x402/core/types";
 import { APTOS_ADDRESS_REGEX, getAptosNetwork, getAptosRpcUrl } from "../../constants";
+import { findDefaultAsset } from "../../defaultAssets";
 import type { ClientAptosSigner, ClientAptosConfig } from "../../signer";
 import type { ExactAptosPayload } from "../../types";
 import { encodeAptosPayload } from "../../utils";
@@ -10,6 +11,7 @@ import { encodeAptosPayload } from "../../utils";
  */
 export class ExactAptosScheme implements SchemeNetworkClient {
   readonly scheme = "exact";
+  findDefaultAsset = findDefaultAsset;
 
   /**
    * Creates a new ExactAptosScheme instance.

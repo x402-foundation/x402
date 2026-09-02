@@ -8,6 +8,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 
+	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/extensions/eip2612gassponsor"
 	"github.com/x402-foundation/x402/go/v2/extensions/erc20approvalgassponsor"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
@@ -33,6 +34,14 @@ func NewExactEvmScheme(signer evm.ClientEvmSigner, config *ExactEvmSchemeConfig)
 // Scheme returns the scheme identifier
 func (c *ExactEvmScheme) Scheme() string {
 	return evm.SchemeExact
+}
+
+func (c *ExactEvmScheme) FindDefaultAsset(asset string, network x402.Network) *x402.DefaultAsset {
+	info := evm.FindDefaultAsset(asset, string(network))
+	if info == nil {
+		return nil
+	}
+	return &x402.DefaultAsset{Asset: info.Asset, Decimals: info.Decimals, Symbol: info.Symbol}
 }
 
 // CreatePaymentPayload creates a V2 payment payload for the exact scheme.
@@ -267,7 +276,8 @@ func (c *ExactEvmScheme) createEIP3009Payload(
 	}
 
 	// V2 specific: No buffer on validAfter (can use immediately)
-	validAfter, validBefore := evm.CreateValidityWindow(time.Hour)
+	timeoutDuration := time.Duration(requirements.MaxTimeoutSeconds) * time.Second
+	validAfter, validBefore := evm.CreateValidityWindow(timeoutDuration)
 
 	// Extract extra fields for EIP-3009
 	tokenName := assetInfo.Name

@@ -13,7 +13,7 @@ import { getEvmChainId } from "../../utils";
 import { ClientEvmSigner } from "../../signer";
 import { signEip2612Permit } from "../../exact/client/eip2612";
 import { signErc20ApprovalTransaction } from "../../exact/client/erc20approval";
-import { resolveExtensionRpcCapabilities, type ExactEvmSchemeOptions } from "../rpc";
+import { resolveExtensionRpcCapabilities, type EvmSchemeOptions } from "../rpc";
 
 /**
  * Attempts to sign an EIP-2612 permit for gasless Permit2 approval.
@@ -28,7 +28,7 @@ import { resolveExtensionRpcCapabilities, type ExactEvmSchemeOptions } from "../
  */
 export async function trySignEip2612PermitExtension(
   signer: ClientEvmSigner,
-  options: ExactEvmSchemeOptions | undefined,
+  options: EvmSchemeOptions | undefined,
   requirements: PaymentRequirements,
   result: PaymentPayloadResult,
   context?: PaymentPayloadContext,
@@ -105,7 +105,7 @@ export async function trySignEip2612PermitExtension(
  */
 export async function trySignErc20ApprovalExtension(
   signer: ClientEvmSigner,
-  options: ExactEvmSchemeOptions | undefined,
+  options: EvmSchemeOptions | undefined,
   requirements: PaymentRequirements,
   context?: PaymentPayloadContext,
   approvalAmount?: string,

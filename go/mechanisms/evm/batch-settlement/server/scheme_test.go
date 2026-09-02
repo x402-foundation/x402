@@ -131,7 +131,7 @@ func TestParsePrice_UnsupportedType(t *testing.T) {
 func TestRegisterMoneyParser_OverridesDefault(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
 	called := false
-	s.RegisterMoneyParser(func(_ float64, _ x402.Network) (*x402.AssetAmount, error) {
+	s.RegisterMoneyParser(func(_ string, _ x402.Network) (*x402.AssetAmount, error) {
 		called = true
 		return &x402.AssetAmount{Amount: "777", Asset: "0xcustom"}, nil
 	})
@@ -400,10 +400,10 @@ func TestSession_RoundTrip_CaseInsensitive(t *testing.T) {
 	}
 }
 
-func TestGetAssetDecimals_DefaultsTo6(t *testing.T) {
+func TestGetAssetDecimals_UnknownAsset(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	if got := s.GetAssetDecimals("0xunknown", x402.Network("nope")); got != 6 {
-		t.Fatalf("got %d", got)
+	if _, ok := s.GetAssetDecimals("0xunknown", x402.Network("nope")); ok {
+		t.Fatal("expected ok=false for unknown asset")
 	}
 }
 
@@ -415,19 +415,19 @@ func TestCreateChannelManager_NotNil(t *testing.T) {
 	}
 }
 
-func TestParseMoneyToDecimal_AllNumericTypes(t *testing.T) {
+func TestParseMoney_AllNumericTypes(t *testing.T) {
 	cases := []struct {
 		in   x402.Price
-		want float64
+		want string
 	}{
-		{"1.5", 1.5},
-		{"$2.25", 2.25},
-		{float64(3.5), 3.5},
-		{int(4), 4.0},
-		{int64(5), 5.0},
+		{"1.5", "1.5"},
+		{"$2.25", "2.25"},
+		{float64(3.5), "3.5"},
+		{int(4), "4"},
+		{int64(5), "5"},
 	}
 	for _, c := range cases {
-		got, err := parseMoneyToDecimal(c.in)
+		got, _, err := x402.ParseMoney(c.in)
 		if err != nil {
 			t.Fatalf("err on %v: %v", c.in, err)
 		}
@@ -437,14 +437,14 @@ func TestParseMoneyToDecimal_AllNumericTypes(t *testing.T) {
 	}
 }
 
-func TestParseMoneyToDecimal_BadString(t *testing.T) {
-	if _, err := parseMoneyToDecimal("nope"); err == nil {
+func TestParseMoney_BadString(t *testing.T) {
+	if _, _, err := x402.ParseMoney("nope"); err == nil {
 		t.Fatal("expected error")
 	}
 }
 
-func TestParseMoneyToDecimal_UnsupportedType(t *testing.T) {
-	if _, err := parseMoneyToDecimal(big.NewInt(1)); err == nil {
+func TestParseMoney_UnsupportedType(t *testing.T) {
+	if _, _, err := x402.ParseMoney(big.NewInt(1)); err == nil {
 		t.Fatal("expected error")
 	}
 }

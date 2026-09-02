@@ -124,6 +124,28 @@ func TestEnhancePaymentRequirementsRecentBlockhash(t *testing.T) {
 	})
 }
 
+func TestEnhancePaymentRequirementsRejectsUnsupportedNetwork(t *testing.T) {
+	server := NewExactSvmScheme()
+	requirements := types.PaymentRequirements{
+		Scheme:            "exact",
+		Network:           "solana:fake",
+		Asset:             "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+		Amount:            "100000",
+		PayTo:             "GsbwXfJraMomNxBcjK7xK2xQx5MQgQUF2k3wEX2Q9z3w",
+		MaxTimeoutSeconds: 300,
+	}
+	supportedKind := types.SupportedKind{
+		X402Version: 2,
+		Scheme:      "exact",
+		Network:     "solana:fake",
+		Extra:       map[string]interface{}{"feePayer": "FeePay3r1111111111111111111111111111111111"},
+	}
+
+	_, err := server.EnhancePaymentRequirements(context.Background(), requirements, supportedKind, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported Solana network")
+}
+
 func TestFindMatchingRequirements_StaleBlockhash(t *testing.T) {
 	network := "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
 	scheme := NewExactSvmScheme()

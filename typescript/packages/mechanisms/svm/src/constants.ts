@@ -28,65 +28,6 @@ export const TESTNET_WS_URL = "wss://api.testnet.solana.com";
 export const MAINNET_WS_URL = "wss://api.mainnet-beta.solana.com";
 
 /**
- * USDC token mint addresses (default stablecoin)
- */
-export const USDC_MAINNET_ADDRESS = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
-export const USDC_DEVNET_ADDRESS = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
-export const USDC_TESTNET_ADDRESS = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"; // Same as devnet
-
-/**
- * Supported stablecoin mint addresses.
- */
-export const USDT_MAINNET_ADDRESS = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
-
-export const USDG_MAINNET_ADDRESS = "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH";
-export const USDG_DEVNET_ADDRESS = "4F6PM96JJxngmHnZLBh9n58RH4aTVNWvDs2nuwrT5BP7";
-export const USDG_TESTNET_ADDRESS = "4F6PM96JJxngmHnZLBh9n58RH4aTVNWvDs2nuwrT5BP7"; // Same as devnet
-
-export const PYUSD_MAINNET_ADDRESS = "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo";
-export const PYUSD_DEVNET_ADDRESS = "CXk2AMBfi3TwaEL2468s6zP8xq9NxTXjp9gjMgzeUynM";
-export const PYUSD_TESTNET_ADDRESS = "CXk2AMBfi3TwaEL2468s6zP8xq9NxTXjp9gjMgzeUynM"; // Same as devnet
-
-export const CASH_MAINNET_ADDRESS = "CASHx9KJUStyftLFWGvEVf59SGeG9sh5FfcnZMVPCASH";
-
-export const SVM_STABLECOIN_MINTS = {
-  USDC: {
-    mainnet: USDC_MAINNET_ADDRESS,
-    devnet: USDC_DEVNET_ADDRESS,
-    testnet: USDC_TESTNET_ADDRESS,
-  },
-  USDT: {
-    mainnet: USDT_MAINNET_ADDRESS,
-  },
-  USDG: {
-    mainnet: USDG_MAINNET_ADDRESS,
-    devnet: USDG_DEVNET_ADDRESS,
-    testnet: USDG_TESTNET_ADDRESS,
-  },
-  PYUSD: {
-    mainnet: PYUSD_MAINNET_ADDRESS,
-    devnet: PYUSD_DEVNET_ADDRESS,
-    testnet: PYUSD_TESTNET_ADDRESS,
-  },
-  CASH: {
-    mainnet: CASH_MAINNET_ADDRESS,
-  },
-} as const;
-
-export type SvmStablecoinSymbol = keyof typeof SVM_STABLECOIN_MINTS;
-
-/** Decimal precision for every mint in {@link SVM_STABLECOIN_MINTS}. */
-export const SVM_STABLECOIN_DECIMALS = 6;
-
-export const SVM_STABLECOIN_TOKEN_PROGRAMS: Record<SvmStablecoinSymbol, string> = {
-  USDC: TOKEN_PROGRAM_ADDRESS,
-  USDT: TOKEN_PROGRAM_ADDRESS,
-  USDG: TOKEN_2022_PROGRAM_ADDRESS,
-  PYUSD: TOKEN_2022_PROGRAM_ADDRESS,
-  CASH: TOKEN_2022_PROGRAM_ADDRESS,
-};
-
-/**
  * Compute budget configuration
  * All prices are in microlamports (1 lamport = 1,000,000 microlamports)
  */
@@ -122,3 +63,25 @@ export const V1_TO_V2_NETWORK_MAP: Record<string, string> = {
   "solana-devnet": SOLANA_DEVNET_CAIP2,
   "solana-testnet": SOLANA_TESTNET_CAIP2,
 };
+
+/**
+ * Normalize v1 or CAIP-2 SVM network id to CAIP-2.
+ *
+ * @param network - V1 name or CAIP-2 id
+ * @returns CAIP-2 network identifier
+ */
+export function normalizeNetwork(network: string): string {
+  if (network.includes(":")) {
+    const supported = [SOLANA_MAINNET_CAIP2, SOLANA_DEVNET_CAIP2, SOLANA_TESTNET_CAIP2];
+    if (!supported.includes(network)) {
+      throw new Error(`Unsupported SVM network: ${network}`);
+    }
+    return network;
+  }
+
+  const caip2Network = V1_TO_V2_NETWORK_MAP[network];
+  if (!caip2Network) {
+    throw new Error(`Unsupported SVM network: ${network}`);
+  }
+  return caip2Network;
+}

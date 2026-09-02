@@ -58,7 +58,7 @@ class TestV1GetAssetInfo:
         assert info["decimals"] == 6
 
     def test_should_raise_for_unknown_v1_network(self):
-        with pytest.raises(ValueError, match="No default asset for v1 network"):
+        with pytest.raises(ValueError, match="Unknown v1 network"):
             get_asset_info("eip155:8453", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")
 
     def test_should_raise_for_unregistered_asset_address(self):

@@ -845,12 +845,12 @@ export class x402HTTPResourceServer {
       );
 
       if (!settleResponse.success) {
+        const errorReason = settleResponse.errorReason || "Settlement failed";
         const failure = {
           ...settleResponse,
           success: false as const,
-          errorReason: settleResponse.errorReason || "Settlement failed",
-          errorMessage:
-            settleResponse.errorMessage || settleResponse.errorReason || "Settlement failed",
+          errorReason,
+          errorMessage: settleResponse.errorMessage || errorReason,
           headers: this.createSettlementHeaders(settleResponse),
         };
         const response = await this.buildSettlementFailureResponse(failure, transportContext);

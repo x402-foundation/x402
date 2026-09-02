@@ -107,8 +107,19 @@ const scheme = new UptoSvmScheme(svmSigner, {
 
 // Optional: reclaim PDA rent from sealed/distributed channels
 const rentCleanup = scheme.createRentCleanupManager(network);
-rentCleanup.start({ intervalSecs: 60 });
+rentCleanup.start({ intervalSecs: 60, discoveryIntervalSecs: 86_400 });
 ```
+
+Cleanup works from the scheme's channel storage. `discoveryIntervalSecs`
+additionally arms `discover()`, the spec §6 recovery sweep that finds
+Distributed channels this facilitator paid rent for that storage lost track of
+and adds them for a later cleanup pass to reclaim. A sweep is a
+`getProgramAccounts` scan per managed signer, so run it rarely — daily, not on
+the cleanup interval. Omit it to leave discovery off.
+
+`stop()` returns a promise: it cancels the loops and waits for the in-flight
+pass, so await it during shutdown rather than exiting underneath a broadcast
+settle.
 
 The upto facilitator's `getExtra()` returns a `feePayer` address. That key is set as channel `payee` (zero distribution share) and `rent_payer`: it co-signs `open`, sponsors fees/rent, and signs `settle_and_seal`. Nonzero settlement still requires the server's `receiverAuthorizer` voucher.
 

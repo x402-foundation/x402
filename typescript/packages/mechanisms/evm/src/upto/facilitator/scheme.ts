@@ -6,9 +6,24 @@ import {
   SettleResponse,
   VerifyResponse,
 } from "@x402/core/types";
+import { InMemoryPendingSettlementStore, PendingSettlementStore } from "@x402/core/facilitator";
 import { FacilitatorEvmSigner } from "../../signer";
 import { UptoPermit2Payload, isUptoPermit2Payload } from "../../types";
 import { verifyUptoPermit2, settleUptoPermit2 } from "./permit2";
+
+/** Optional configuration for {@link UptoEvmScheme}. */
+export interface UptoEvmSchemeConfig {
+  /**
+   * Lets a retried settle for the same payload reconcile against an
+   * already-broadcast transaction instead of re-verifying and
+   * re-broadcasting (see {@link PendingSettlementStore}). Defaults to a
+   * fresh in-memory store shared across all settle calls on this scheme
+   * instance. Inject a shared, network-backed implementation (e.g. Redis)
+   * for a multi-instance facilitator so a settle retry landing on a
+   * different replica still reconciles correctly.
+   */
+  pendingSettlementStore?: PendingSettlementStore;
+}
 
 /**
  * EVM facilitator implementation for the Upto payment scheme.
@@ -17,13 +32,20 @@ import { verifyUptoPermit2, settleUptoPermit2 } from "./permit2";
 export class UptoEvmScheme implements SchemeNetworkFacilitator {
   readonly scheme = "upto";
   readonly caipFamily = "eip155:*";
+  private readonly pendingStore: PendingSettlementStore;
 
   /**
    * Creates a new UptoEvmScheme facilitator instance.
    *
    * @param signer - The EVM signer for facilitator operations
+   * @param config - Optional configuration
    */
-  constructor(private readonly signer: FacilitatorEvmSigner) {}
+  constructor(
+    private readonly signer: FacilitatorEvmSigner,
+    config?: UptoEvmSchemeConfig,
+  ) {
+    this.pendingStore = config?.pendingSettlementStore ?? new InMemoryPendingSettlementStore();
+  }
 
   /**
    * Returns extra metadata required by the upto scheme, including the facilitator address.
@@ -106,6 +128,7 @@ export class UptoEvmScheme implements SchemeNetworkFacilitator {
       requirements,
       rawPayload as UptoPermit2Payload,
       context,
+      this.pendingStore,
     );
   }
 }

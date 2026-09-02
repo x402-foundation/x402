@@ -1,13 +1,5 @@
 package evm
 
-// Shared EVM error constants used across all EVM payment types.
-// Values must never change without a coordinated update across all SDKs.
-const (
-	// ErrAssetNotDeployedContract is returned when the payment asset address has no bytecode.
-	// EOAs return empty data on any eth_call without reverting, causing silent no-op settlements.
-	ErrAssetNotDeployedContract = "asset_not_deployed_contract"
-)
-
 // Shared Permit2 error constants used by both the exact and upto facilitators.
 // Both schemes write these strings to JSON responses and facilitate cross-SDK parity,
 // so the values must never change without a coordinated update across all SDKs.
@@ -38,4 +30,7 @@ const (
 	// ERC-20 approval gas-sponsoring errors
 	ErrErc20ApprovalInsufficientEth = "erc20_approval_insufficient_eth_for_gas"
 	ErrErc20ApprovalBroadcastFailed = "erc20_approval_broadcast_failed"
+	// Sentinel used to route invalid settlement hashes from the extension signer
+	// into ErrErc20ApprovalBroadcastFailed.
+	ErrErc20ApprovalTxFailed = "erc20_approval_tx_failed"
 )

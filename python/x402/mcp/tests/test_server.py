@@ -23,13 +23,23 @@ class MockResourceServer:
 
     def __init__(self):
         """Initialize mock server."""
-        self.verify_payment = Mock()
-        self.settle_payment = Mock()
+        self.verify_payment = Mock(return_value=Mock(is_valid=True, skip_handler=None))
+        self.settle_payment = Mock(
+            return_value=SettleResponse(
+                success=True,
+                transaction="0xtx123",
+                network="eip155:84532",
+            )
+        )
         # Create a Mock that wraps the real method so we can track calls
         self._create_payment_required_response_impl = self._create_payment_required_response_real
         self.create_payment_required_response = MagicMock(
             side_effect=self._create_payment_required_response_real
         )
+        self.create_payment_cancellation_dispatcher = Mock(
+            return_value=Mock(cancel=Mock(return_value=None), cancel_sync=Mock(return_value=None))
+        )
+        self.get_payment_flow = Mock(return_value="authorization")
 
     def verify_payment(self, payload, requirements):
         """Mock verify payment."""
@@ -1001,3 +1011,97 @@ def test_hook_context_carries_expected_fields():
     settle_ctx = captured_settlement[0]
     assert settle_ctx.settlement is not None
     assert settle_ctx.settlement.success is True
+
+
+def _mcp_accepts():
+    return [
+        PaymentRequirements(
+            scheme="exact",
+            network="eip155:84532",
+            amount="1000",
+            asset="USDC",
+            pay_to="0xrecipient",
+            max_timeout_seconds=300,
+        )
+    ]
+
+
+def _mcp_payload():
+    return PaymentPayload(
+        x402_version=2,
+        accepted=_mcp_accepts()[0],
+        payload={"signature": "0x123"},
+    )
+
+
+def _mcp_extra(payload):
+    return {
+        "_meta": {"x402/payment": payload.model_dump()},
+        "toolName": "test",
+    }
+
+
+def test_echoes_before_handler_settlement_when_handler_throws_under_upfront():
+    from x402.mcp.types import MCP_PAYMENT_RESPONSE_META_KEY
+
+    server = MockResourceServer()
+    server.get_payment_flow = Mock(return_value="upfront")
+    server.settle_payment = Mock(
+        return_value=SettleResponse(success=True, transaction="0xdeposit", network="eip155:84532")
+    )
+    paid = create_payment_wrapper(server, PaymentWrapperConfig(accepts=_mcp_accepts()))
+
+    def handler(_args, _context):
+        raise RuntimeError("handler failed")
+
+    result = paid(handler)({"test": "arg"}, _mcp_extra(_mcp_payload()))
+    assert result.is_error is True
+    assert result.content == [{"type": "text", "text": "Internal Server Error"}]
+    assert result.meta[MCP_PAYMENT_RESPONSE_META_KEY]["transaction"] == "0xdeposit"
+    assert server.settle_payment.call_count == 1
+
+
+def test_prefers_cancel_refund_receipt_when_handler_throws_under_escrow():
+    from x402.mcp.types import MCP_PAYMENT_RESPONSE_META_KEY
+
+    server = MockResourceServer()
+    server.get_payment_flow = Mock(return_value="escrow")
+    server.settle_payment = Mock(
+        return_value=SettleResponse(
+            success=True, amount="100000", transaction="0xdeposit", network="eip155:84532"
+        )
+    )
+    cancel_receipt = SettleResponse(
+        success=True, amount="0", transaction="0xrefund", network="eip155:84532"
+    )
+    dispatcher = Mock()
+    dispatcher.cancel_sync = Mock(return_value=cancel_receipt)
+    dispatcher.cancel = Mock(return_value=cancel_receipt)
+    server.create_payment_cancellation_dispatcher = Mock(return_value=dispatcher)
+
+    paid = create_payment_wrapper(server, PaymentWrapperConfig(accepts=_mcp_accepts()))
+
+    def handler(_args, _context):
+        raise RuntimeError("handler failed")
+
+    result = paid(handler)({"test": "arg"}, _mcp_extra(_mcp_payload()))
+    assert result.is_error is True
+    assert result.content == [{"type": "text", "text": "Internal Server Error"}]
+    assert result.meta[MCP_PAYMENT_RESPONSE_META_KEY]["transaction"] == "0xrefund"
+    dispatcher.cancel_sync.assert_called_once()
+
+
+def test_unexpected_errors_return_generic_internal_server_error():
+    server = MockResourceServer()
+    server.get_payment_flow = Mock(
+        side_effect=ValueError('[x402] Scheme "exact" does not support paymentFlow "escrow"')
+    )
+    paid = create_payment_wrapper(server, PaymentWrapperConfig(accepts=_mcp_accepts()))
+
+    def handler(_args, _context):
+        return {"content": [{"type": "text", "text": "success"}]}
+
+    result = paid(handler)({"test": "arg"}, _mcp_extra(_mcp_payload()))
+    assert result.is_error is True
+    assert result.content == [{"type": "text", "text": "Internal Server Error"}]
+    assert "does not support paymentFlow" not in str(result.content)

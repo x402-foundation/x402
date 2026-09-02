@@ -4,7 +4,7 @@ Next.js demo that exposes **`GET /api/weather`** behind `withX402` with the **ba
 
 Parallels:
 
-- Response shape / `withX402` usage: `examples/typescript/fullstack/next/app/api/weather/route.ts`
+- Response shape / `withX402` usage: `examples/typescript/fullstack/next/app/api/weather/route.ts` (path-keyed config + bazaar discovery; static routes can use a bare config instead)
 - Batch-settlement Express example wiring: `examples/typescript/servers/batch-settlement/index.ts`
 - Batch-settlement client: `examples/typescript/clients/batch-settlement`
 

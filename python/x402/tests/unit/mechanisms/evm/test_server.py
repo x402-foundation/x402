@@ -1,12 +1,28 @@
 """Tests for ExactEvmScheme server."""
 
+from decimal import Decimal
+
 import pytest
 
 from x402.mechanisms.evm import (
-    get_network_config,
+    get_default_asset,
 )
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.schemas import AssetAmount, PaymentRequirements, SupportedKind
+from x402.schemas.helpers import convert_to_token_amount
+
+
+class TestPaymentFlows:
+    """Test payment_flows configuration."""
+
+    def test_declares_authorization_and_upfront_with_authorization_as_default(self):
+        server = ExactEvmServerScheme()
+
+        assert server.default_asset_transfer_method == "eip3009"
+        assert server.payment_flows == {
+            "eip3009": {"supported": ("authorization", "upfront"), "default": "authorization"},
+            "permit2": {"supported": ("authorization", "upfront"), "default": "authorization"},
+        }
 
 
 class TestParsePrice:
@@ -23,7 +39,7 @@ class TestParsePrice:
             result = server.parse_price("$0.10", network)
 
             assert result.amount == "100000"  # 0.10 USDC = 100000 smallest units
-            assert result.asset == get_network_config(network)["default_asset"]["address"]
+            assert result.asset == get_default_asset(network)["asset"]
             assert result.extra == {"name": "USD Coin", "version": "2"}
 
         def test_should_parse_simple_number_string_prices(self):
@@ -34,7 +50,7 @@ class TestParsePrice:
             result = server.parse_price("0.10", network)
 
             assert result.amount == "100000"
-            assert result.asset == get_network_config(network)["default_asset"]["address"]
+            assert result.asset == get_default_asset(network)["asset"]
 
         def test_should_parse_number_prices(self):
             """Should parse number prices."""
@@ -44,7 +60,7 @@ class TestParsePrice:
             result = server.parse_price(0.1, network)
 
             assert result.amount == "100000"
-            assert result.asset == get_network_config(network)["default_asset"]["address"]
+            assert result.asset == get_default_asset(network)["asset"]
 
         def test_should_handle_larger_amounts(self):
             """Should handle larger amounts."""
@@ -67,12 +83,25 @@ class TestParsePrice:
     class TestEthereumMainnetNetwork:
         """Test Ethereum Mainnet network."""
 
-        def test_should_raise_for_network_without_default_stablecoin(self):
-            """Should raise ValueError when network has no default stablecoin configured."""
+        def test_should_use_ethereum_usdc_address(self):
+            """Should use Ethereum mainnet USDC address."""
             server = ExactEvmServerScheme()
             network = "eip155:1"
 
-            with pytest.raises(ValueError, match="No default stablecoin"):
+            result = server.parse_price("1.00", network)
+
+            assert result.asset == get_default_asset(network)["asset"]
+            assert result.amount == "1000000"
+
+    class TestUnknownNetwork:
+        """Test networks without a configured default stablecoin."""
+
+        def test_should_raise_for_network_without_default_stablecoin(self):
+            """Should raise ValueError when network has no default stablecoin configured."""
+            server = ExactEvmServerScheme()
+            network = "eip155:999999"
+
+            with pytest.raises(ValueError, match="No default asset configured"):
                 server.parse_price("1.00", network)
 
     class TestBaseSepoliaNetwork:
@@ -85,8 +114,28 @@ class TestParsePrice:
 
             result = server.parse_price("1.00", network)
 
-            assert result.asset == get_network_config(network)["default_asset"]["address"]
+            assert result.asset == get_default_asset(network)["asset"]
             assert result.amount == "1000000"
+
+    class TestHighPrecisionConversion:
+        """18-decimal MegaUSD exactness and 6-decimal truncation."""
+
+        def test_keeps_18_decimal_megausd_exact_for_high_precision_string(self):
+            server = ExactEvmServerScheme()
+            result = server.parse_price("8975.978289462729", "eip155:4326")
+            assert result.amount == "8975978289462729000000"
+
+        def test_truncates_extra_fractional_digits_on_6_decimal_base_usdc(self):
+            server = ExactEvmServerScheme()
+            result = server.parse_price("8975.978289462729", "eip155:8453")
+            assert result.amount == "8975978289"
+
+        def test_truncates_price_smaller_than_one_atomic_unit_to_zero(self):
+            server = ExactEvmServerScheme()
+            result = server.parse_price("$0.00000001", "eip155:8453")
+            assert result.amount == "0"
+            result_number = server.parse_price(0.00000001, "eip155:8453")
+            assert result_number.amount == "0"
 
     class TestPreParsedPriceObjects:
         """Test pre-parsed price objects."""
@@ -148,7 +197,7 @@ class TestEnhancePaymentRequirements:
         requirements = PaymentRequirements(
             scheme="exact",
             network=network,
-            asset=get_network_config(network)["default_asset"]["address"],
+            asset=get_default_asset(network)["asset"],
             amount="100000",
             pay_to="0x1234567890123456789012345678901234567890",
             max_timeout_seconds=3600,
@@ -178,7 +227,7 @@ class TestEnhancePaymentRequirements:
         requirements = PaymentRequirements(
             scheme="exact",
             network=network,
-            asset=get_network_config(network)["default_asset"]["address"],
+            asset=get_default_asset(network)["asset"],
             amount="100000",
             pay_to="0x1234567890123456789012345678901234567890",
             max_timeout_seconds=3600,
@@ -206,7 +255,7 @@ class TestEnhancePaymentRequirements:
         requirements = PaymentRequirements(
             scheme="exact",
             network=network,
-            asset=get_network_config(network)["default_asset"]["address"],
+            asset=get_default_asset(network)["asset"],
             amount="1.5",  # Decimal amount
             pay_to="0x1234567890123456789012345678901234567890",
             max_timeout_seconds=3600,
@@ -248,8 +297,7 @@ class TestEnhancePaymentRequirements:
 
         result = server.enhance_payment_requirements(requirements, supported_kind, [])
 
-        config = get_network_config(network)
-        assert result.asset == config["default_asset"]["address"]
+        assert result.asset == get_default_asset(network)["asset"]
 
 
 class TestRegisterMoneyParser:
@@ -263,11 +311,11 @@ class TestRegisterMoneyParser:
             server = ExactEvmServerScheme()
             network = "eip155:8453"
 
-            def custom_parser(amount: float, network: str) -> AssetAmount | None:
+            def custom_parser(amount: str | int | float, network: str) -> AssetAmount | None:
                 # Custom logic: different conversion for large amounts
-                if amount > 100:
+                if Decimal(str(amount)) > 100:
                     return AssetAmount(
-                        amount=str(int(amount * 1e9)),  # Custom decimals
+                        amount=convert_to_token_amount(str(amount), 9),  # Custom decimals
                         asset="0xCustomToken123456789012345678901234567890",
                         extra={"token": "CUSTOM", "tier": "large"},
                     )
@@ -283,17 +331,17 @@ class TestRegisterMoneyParser:
 
             # Small amount should fall back to default (USDC)
             result2 = server.parse_price(50, network)
-            assert result2.asset == get_network_config(network)["default_asset"]["address"]
+            assert result2.asset == get_default_asset(network)["asset"]
             assert result2.amount == "50000000"  # 50 * 1e6
 
-        def test_should_receive_decimal_number_not_raw_string(self):
-            """Should receive decimal number, not raw string."""
+        def test_should_receive_decimal_string_not_raw_input(self):
+            """Should receive a decimal string, not the raw money input."""
             server = ExactEvmServerScheme()
             network = "eip155:8453"
-            received_amounts: list[float] = []
+            received_amounts: list[str | int | float] = []
             received_networks: list[str] = []
 
-            def capture_parser(amount: float, network: str) -> AssetAmount | None:
+            def capture_parser(amount: str | int | float, network: str) -> AssetAmount | None:
                 received_amounts.append(amount)
                 received_networks.append(network)
                 return None  # Use default
@@ -301,14 +349,14 @@ class TestRegisterMoneyParser:
             server.register_money_parser(capture_parser)
 
             server.parse_price("$1.50", network)
-            assert received_amounts[-1] == 1.5
+            assert received_amounts[-1] == "1.50"
             assert received_networks[-1] == network
 
             server.parse_price("5.25", network)
-            assert received_amounts[-1] == 5.25
+            assert received_amounts[-1] == "5.25"
 
             server.parse_price(10.99, network)
-            assert received_amounts[-1] == 10.99
+            assert received_amounts[-1] == "10.99"
 
         def test_should_not_call_parser_for_asset_amount_passthrough(self):
             """Should not call parser for AssetAmount (pass-through)."""
@@ -316,7 +364,7 @@ class TestRegisterMoneyParser:
             network = "eip155:8453"
             parser_called = False
 
-            def tracking_parser(amount: float, network: str) -> AssetAmount | None:
+            def tracking_parser(amount: str | int | float, network: str) -> AssetAmount | None:
                 nonlocal parser_called
                 parser_called = True
                 return None
@@ -340,7 +388,7 @@ class TestRegisterMoneyParser:
             server = ExactEvmServerScheme()
             network = "eip155:8453"
 
-            def null_parser(amount: float, network: str) -> AssetAmount | None:
+            def null_parser(amount: str | int | float, network: str) -> AssetAmount | None:
                 return None  # Always delegate
 
             server.register_money_parser(null_parser)
@@ -348,7 +396,7 @@ class TestRegisterMoneyParser:
             result = server.parse_price(1, network)
 
             # Should use default USDC
-            assert result.asset == get_network_config(network)["default_asset"]["address"]
+            assert result.asset == get_default_asset(network)["asset"]
             assert result.amount == "1000000"
 
     class TestMultipleParsersChainOfResponsibility:
@@ -360,19 +408,19 @@ class TestRegisterMoneyParser:
             network = "eip155:8453"
             execution_order: list[int] = []
 
-            def parser1(amount: float, network: str) -> AssetAmount | None:
+            def parser1(amount: str | int | float, network: str) -> AssetAmount | None:
                 execution_order.append(1)
-                if amount > 1000:
+                if Decimal(str(amount)) > 1000:
                     return AssetAmount(amount="1", asset="0xParser1Token", extra={})
                 return None
 
-            def parser2(amount: float, network: str) -> AssetAmount | None:
+            def parser2(amount: str | int | float, network: str) -> AssetAmount | None:
                 execution_order.append(2)
-                if amount > 100:
+                if Decimal(str(amount)) > 100:
                     return AssetAmount(amount="2", asset="0xParser2Token", extra={})
                 return None
 
-            def parser3(amount: float, network: str) -> AssetAmount | None:
+            def parser3(amount: str | int | float, network: str) -> AssetAmount | None:
                 execution_order.append(3)
                 return AssetAmount(amount="3", asset="0xParser3Token", extra={})
 
@@ -390,15 +438,15 @@ class TestRegisterMoneyParser:
             network = "eip155:8453"
             execution_order: list[int] = []
 
-            def parser1(amount: float, network: str) -> AssetAmount | None:
+            def parser1(amount: str | int | float, network: str) -> AssetAmount | None:
                 execution_order.append(1)
                 return None
 
-            def parser2(amount: float, network: str) -> AssetAmount | None:
+            def parser2(amount: str | int | float, network: str) -> AssetAmount | None:
                 execution_order.append(2)
                 return AssetAmount(amount="winner", asset="0xWinnerToken", extra={})
 
-            def parser3(amount: float, network: str) -> AssetAmount | None:
+            def parser3(amount: str | int | float, network: str) -> AssetAmount | None:
                 execution_order.append(3)  # Should not execute
                 return AssetAmount(amount="3", asset="0xParser3Token", extra={})
 
@@ -423,7 +471,7 @@ class TestRegisterMoneyParser:
             result = server.parse_price(1, network)
 
             # Should use default USDC
-            assert result.asset == get_network_config(network)["default_asset"]["address"]
+            assert result.asset == get_default_asset(network)["asset"]
             assert result.amount == "1000000"
 
     class TestErrorHandling:
@@ -434,7 +482,7 @@ class TestRegisterMoneyParser:
             server = ExactEvmServerScheme()
             network = "eip155:8453"
 
-            def error_parser(amount: float, network: str) -> AssetAmount | None:
+            def error_parser(amount: str | int | float, network: str) -> AssetAmount | None:
                 raise RuntimeError("Parser error: amount exceeds limit")
 
             server.register_money_parser(error_parser)
@@ -449,10 +497,10 @@ class TestRegisterMoneyParser:
             """Should return self for chaining."""
             server = ExactEvmServerScheme()
 
-            def parser1(amount: float, network: str) -> AssetAmount | None:
+            def parser1(amount: str | int | float, network: str) -> AssetAmount | None:
                 return None
 
-            def parser2(amount: float, network: str) -> AssetAmount | None:
+            def parser2(amount: str | int | float, network: str) -> AssetAmount | None:
                 return None
 
             result = server.register_money_parser(parser1).register_money_parser(parser2)
@@ -466,9 +514,9 @@ class TestRegisterMoneyParser:
             """Should handle zero amounts."""
             server = ExactEvmServerScheme()
             network = "eip155:8453"
-            received_amount: float | None = None
+            received_amount: str | int | float | None = None
 
-            def capture_parser(amount: float, network: str) -> AssetAmount | None:
+            def capture_parser(amount: str | int | float, network: str) -> AssetAmount | None:
                 nonlocal received_amount
                 received_amount = amount
                 return None
@@ -476,15 +524,15 @@ class TestRegisterMoneyParser:
             server.register_money_parser(capture_parser)
 
             server.parse_price(0, network)
-            assert received_amount == 0
+            assert received_amount == "0"
 
         def test_should_handle_very_small_decimal_amounts(self):
             """Should handle very small decimal amounts."""
             server = ExactEvmServerScheme()
             network = "eip155:8453"
-            received_amount: float | None = None
+            received_amount: str | int | float | None = None
 
-            def capture_parser(amount: float, network: str) -> AssetAmount | None:
+            def capture_parser(amount: str | int | float, network: str) -> AssetAmount | None:
                 nonlocal received_amount
                 received_amount = amount
                 return None
@@ -492,15 +540,15 @@ class TestRegisterMoneyParser:
             server.register_money_parser(capture_parser)
 
             server.parse_price(0.000001, network)
-            assert received_amount == 0.000001
+            assert received_amount == "0.000001"
 
         def test_should_handle_very_large_amounts(self):
             """Should handle very large amounts."""
             server = ExactEvmServerScheme()
             network = "eip155:8453"
-            received_amount: float | None = None
+            received_amount: str | int | float | None = None
 
-            def capture_parser(amount: float, network: str) -> AssetAmount | None:
+            def capture_parser(amount: str | int | float, network: str) -> AssetAmount | None:
                 nonlocal received_amount
                 received_amount = amount
                 return None
@@ -508,22 +556,24 @@ class TestRegisterMoneyParser:
             server.register_money_parser(capture_parser)
 
             server.parse_price(999999999.99, network)
-            assert received_amount == 999999999.99
+            assert received_amount == "999999999.99"
 
-        def test_should_handle_negative_amounts_parser_can_validate(self):
-            """Should handle negative amounts (parser can validate)."""
+        def test_should_reject_negative_amounts_before_custom_parsers_run(self):
+            """Should reject negative amounts before custom parsers run."""
             server = ExactEvmServerScheme()
             network = "eip155:8453"
+            parser_called = False
 
-            def validate_parser(amount: float, network: str) -> AssetAmount | None:
-                if amount < 0:
-                    raise ValueError("Negative amounts not supported")
+            def validate_parser(amount: str | int | float, network: str) -> AssetAmount | None:
+                nonlocal parser_called
+                parser_called = True
                 return None
 
             server.register_money_parser(validate_parser)
 
-            with pytest.raises(ValueError, match="Negative amounts not supported"):
+            with pytest.raises(ValueError, match="Invalid money format: -10"):
                 server.parse_price(-10, network)
+            assert parser_called is False
 
     class TestRealWorldUseCases:
         """Test real-world use cases."""
@@ -532,11 +582,11 @@ class TestRegisterMoneyParser:
             """Should support network-specific tokens."""
             server = ExactEvmServerScheme()
 
-            def network_parser(amount: float, network: str) -> AssetAmount | None:
+            def network_parser(amount: str | int | float, network: str) -> AssetAmount | None:
                 # Base Sepolia uses custom test token
                 if "84532" in network:  # Base Sepolia
                     return AssetAmount(
-                        amount=str(int(amount * 1e6)),
+                        amount=convert_to_token_amount(str(amount), 6),
                         asset="0xTestToken123456789012345678901234567890",
                         extra={"network": "sepolia", "token": "TEST"},
                     )
@@ -549,29 +599,26 @@ class TestRegisterMoneyParser:
             assert sepolia_result.asset == "0xTestToken123456789012345678901234567890"
 
             mainnet_result = server.parse_price(10, "eip155:8453")
-            assert (
-                mainnet_result.asset
-                == get_network_config("eip155:8453")["default_asset"]["address"]
-            )
+            assert mainnet_result.asset == get_default_asset("eip155:8453")["asset"]
 
         def test_should_support_tiered_pricing(self):
             """Should support tiered pricing."""
             server = ExactEvmServerScheme()
             network = "eip155:8453"
 
-            def premium_parser(amount: float, network: str) -> AssetAmount | None:
-                if amount > 1000:
+            def premium_parser(amount: str | int | float, network: str) -> AssetAmount | None:
+                if Decimal(str(amount)) > 1000:
                     return AssetAmount(
-                        amount=str(int(amount * 1e9)),  # Different decimals
+                        amount=convert_to_token_amount(str(amount), 9),  # Different decimals
                         asset="0xPremiumToken123456789012345678901234567890",
                         extra={"tier": "premium"},
                     )
                 return None
 
-            def standard_parser(amount: float, network: str) -> AssetAmount | None:
-                if amount > 100:
+            def standard_parser(amount: str | int | float, network: str) -> AssetAmount | None:
+                if Decimal(str(amount)) > 100:
                     return AssetAmount(
-                        amount=str(int(amount * 1e6)),
+                        amount=convert_to_token_amount(str(amount), 6),
                         asset="0xStandardToken123456789012345678901234567890",
                         extra={"tier": "standard"},
                     )
@@ -588,7 +635,7 @@ class TestRegisterMoneyParser:
             assert standard.extra.get("tier") == "standard"
 
             basic = server.parse_price(50, network)
-            assert basic.asset == get_network_config(network)["default_asset"]["address"]
+            assert basic.asset == get_default_asset(network)["asset"]
 
     class TestIntegrationWithParsePriceFlow:
         """Test integration with parsePrice flow."""
@@ -599,7 +646,7 @@ class TestRegisterMoneyParser:
             network = "eip155:8453"
             call_log: list[dict] = []
 
-            def logging_parser(amount: float, network: str) -> AssetAmount | None:
+            def logging_parser(amount: str | int | float, network: str) -> AssetAmount | None:
                 call_log.append({"amount": amount})
                 return None  # Use default
 
@@ -610,6 +657,6 @@ class TestRegisterMoneyParser:
             server.parse_price(42.25, network)
 
             assert len(call_log) == 3
-            assert call_log[0]["amount"] == 10.5
-            assert call_log[1]["amount"] == 25.75
-            assert call_log[2]["amount"] == 42.25
+            assert call_log[0]["amount"] == "10.50"
+            assert call_log[1]["amount"] == "25.75"
+            assert call_log[2]["amount"] == "42.25"

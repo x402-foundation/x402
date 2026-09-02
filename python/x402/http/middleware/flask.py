@@ -177,6 +177,19 @@ def _facilitator_error_wsgi_response(
     return [body]
 
 
+def _internal_error_wsgi_response(
+    start_response: Callable[..., Any],
+    extra_headers: dict[str, str] | None = None,
+) -> list[bytes]:
+    """Return a generic 500 without leaking unexpected exception details."""
+    body = json.dumps({"error": "Internal Server Error"}).encode("utf-8")
+    headers = [("Content-Type", "application/json")]
+    if extra_headers:
+        headers.extend(extra_headers.items())
+    start_response("500 Internal Server Error", headers)
+    return [body]
+
+
 class ResponseWrapper:
     """Wrapper to capture and buffer WSGI response for settlement.
 
@@ -366,6 +379,9 @@ class PaymentMiddleware:
                 result = self._http_server.process_http_request(context, self._paywall_config)
             except FacilitatorResponseError as error:
                 return _facilitator_error_wsgi_response(start_response, error)
+            except Exception:
+                logger.exception("x402: unexpected error while processing an HTTP payment request")
+                return _internal_error_wsgi_response(start_response)
 
             if result.type == "no-payment-required":
                 return self._original_wsgi(environ, start_response)
@@ -412,20 +428,46 @@ class PaymentMiddleware:
                     for chunk in self._original_wsgi(environ, response_wrapper):
                         body_chunks.append(chunk)
                 except BaseException as error:
+                    cancel_settlement = None
                     if dispatcher is not None:
-                        dispatcher.cancel_sync(
+                        cancel_settlement = dispatcher.cancel_sync(
                             VerifiedPaymentCancelOptions(reason="handler_threw", error=error)
                         )
-                    raise
+                    failure_headers = self._http_server.create_failure_path_settlement_headers(
+                        cancel_settlement,
+                        result.before_handler_settlement,
+                        result.payment_payload,
+                    )
+                    if not isinstance(failure_headers, dict) or not failure_headers:
+                        raise
+                    return _internal_error_wsgi_response(start_response, failure_headers)
 
                 if response_wrapper.status_code is not None and response_wrapper.status_code >= 400:
+                    cancel_settlement = None
                     if dispatcher is not None:
-                        dispatcher.cancel_sync(
+                        cancel_settlement = dispatcher.cancel_sync(
                             VerifiedPaymentCancelOptions(
                                 reason="handler_failed",
                                 response_status=response_wrapper.status_code,
                             )
                         )
+                    existing_cache_control = next(
+                        (
+                            value
+                            for key, value in response_wrapper.headers
+                            if key.lower() == "cache-control"
+                        ),
+                        None,
+                    )
+                    failure_headers = self._http_server.create_failure_path_settlement_headers(
+                        cancel_settlement,
+                        result.before_handler_settlement,
+                        result.payment_payload,
+                        existing_cache_control,
+                    )
+                    if isinstance(failure_headers, dict):
+                        for key, value in failure_headers.items():
+                            response_wrapper.add_header(key, value)
                     response_wrapper.send_response(body_chunks)
                     return []
 
@@ -451,6 +493,7 @@ class PaymentMiddleware:
                             settlement_overrides=overrides,
                             declared_extensions=result.declared_extensions,
                             transport_context=transport_context,
+                            before_handler_settlement=result.before_handler_settlement,
                         )
 
                         if settle_result.success:

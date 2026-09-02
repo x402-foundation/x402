@@ -43,6 +43,7 @@ import (
 	svmmech "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
 	svmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/v1/facilitator"
+	uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/facilitator"
 	x402types "github.com/x402-foundation/x402/go/v2/types"
 )
 
@@ -611,6 +612,22 @@ func isBatchSettlementRequirements(req x402.PaymentRequirementsView) bool {
 	return req.GetScheme() == batchsettlement.SchemeBatched
 }
 
+// skipsVerifyBeforeSettle reports whether the verified-payment cache check has
+// to be bypassed for these requirements. Escrow and upfront flows settle without
+// a prior /verify, and batch-settlement rewrites the payload between verify and
+// settle, so in both cases the cache lookup would never hit. Mirrors the TS e2e
+// facilitator (e2e/facilitators/typescript/index.ts).
+func skipsVerifyBeforeSettle(req x402.PaymentRequirementsView) bool {
+	if isBatchSettlementRequirements(req) {
+		return true
+	}
+	if req == nil {
+		return false
+	}
+	flow, _ := req.GetExtra()["paymentFlow"].(string)
+	return flow == string(x402.PaymentFlowEscrow) || flow == string(x402.PaymentFlowUpfront)
+}
+
 // Real SVM facilitator signer
 type realFacilitatorSvmSigner struct {
 	privateKey solana.PrivateKey
@@ -689,7 +706,7 @@ func (s *realFacilitatorSvmSigner) SimulateTransaction(ctx context.Context, tx *
 	}
 
 	opts := rpc.SimulateTransactionOpts{
-		SigVerify:              true,
+		SigVerify:              false,
 		ReplaceRecentBlockhash: false,
 		Commitment:             svmmech.DefaultCommitment,
 	}
@@ -768,10 +785,112 @@ func (s *realFacilitatorSvmSigner) ConfirmTransaction(ctx context.Context, signa
 		}
 
 		// Wait before retrying
-		time.Sleep(svmmech.ConfirmRetryDelay)
+		delay := svmmech.ConfirmRetryDelay
+		if attempt < svmmech.ConfirmInitialAttempts {
+			delay = svmmech.ConfirmInitialRetryDelay
+		}
+		time.Sleep(delay)
 	}
 
 	return fmt.Errorf("transaction confirmation timed out after %d attempts", svmmech.MaxConfirmAttempts)
+}
+
+func (s *realFacilitatorSvmSigner) GetAccountInfo(
+	ctx context.Context,
+	account solana.PublicKey,
+	network string,
+	opts *rpc.GetAccountInfoOpts,
+) (*rpc.GetAccountInfoResult, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, err
+	}
+	return rpcClient.GetAccountInfoWithOpts(ctx, account, opts)
+}
+
+func (s *realFacilitatorSvmSigner) GetLatestBlockhash(ctx context.Context, network string) (solana.Hash, uint64, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return solana.Hash{}, 0, err
+	}
+	latest, err := rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
+	if err != nil {
+		return solana.Hash{}, 0, err
+	}
+	return latest.Value.Blockhash, latest.Value.LastValidBlockHeight, nil
+}
+
+func (s *realFacilitatorSvmSigner) GetSlot(ctx context.Context, network string, commitment rpc.CommitmentType) (uint64, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return 0, err
+	}
+	return rpcClient.GetSlot(ctx, commitment)
+}
+
+func (s *realFacilitatorSvmSigner) SimulateTransactionWithOpts(
+	ctx context.Context,
+	tx *solana.Transaction,
+	network string,
+	opts *rpc.SimulateTransactionOpts,
+) error {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return err
+	}
+	result, err := rpcClient.SimulateTransactionWithOpts(ctx, tx, opts)
+	if err != nil {
+		return fmt.Errorf("simulation failed: %w", err)
+	}
+	if result != nil && result.Value != nil && result.Value.Err != nil {
+		return fmt.Errorf("simulation failed: transaction would fail on-chain")
+	}
+	return nil
+}
+
+func (s *realFacilitatorSvmSigner) GetProgramAccounts(
+	ctx context.Context,
+	network string,
+	programID solana.PublicKey,
+	opts *rpc.GetProgramAccountsOpts,
+) (rpc.GetProgramAccountsResult, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, err
+	}
+	return rpcClient.GetProgramAccountsWithOpts(ctx, programID, opts)
+}
+
+func (s *realFacilitatorSvmSigner) SimulateTransactionWithInnerInstructions(ctx context.Context, tx *solana.Transaction, network string) ([]rpc.InnerInstruction, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, err
+	}
+	return svmmech.SimulateWithInnerInstructions(ctx, rpcClient, tx)
+}
+
+func (s *realFacilitatorSvmSigner) GetConfirmedTransactionInnerInstructions(ctx context.Context, signature solana.Signature, network string) ([]rpc.InnerInstruction, solana.PublicKeySlice, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, nil, err
+	}
+	return svmmech.ConfirmedTransactionInnerInstructions(ctx, rpcClient, signature)
+}
+
+func (s *realFacilitatorSvmSigner) GetTokenAccountBalance(ctx context.Context, tokenAccount solana.PublicKey, network string) (uint64, bool, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return 0, false, err
+	}
+	return svmmech.TokenAccountBalance(ctx, rpcClient, tokenAccount)
+}
+
+func (s *realFacilitatorSvmSigner) FetchAddressLookupTables(ctx context.Context, tables []solana.PublicKey, network string) (map[solana.PublicKey]solana.PublicKeySlice, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, err
+	}
+	return svmmech.AddressLookupTables(ctx, rpcClient, tables)
 }
 
 func (s *realFacilitatorSvmSigner) GetAddresses(ctx context.Context, network string) []solana.PublicKey {
@@ -971,7 +1090,14 @@ func main() {
 		svmAddresses := svmSigner.GetAddresses(context.Background(), svmNetwork)
 		log.Printf("SVM Facilitator account: %s", svmAddresses[0].String())
 
-		facilitator.Register([]x402.Network{x402.Network(svmNetwork)}, svm.NewExactSvmScheme(svmSigner))
+		facilitator.Register(
+			[]x402.Network{x402.Network(svmNetwork)},
+			svm.NewExactSvmScheme(svmSigner, &svm.Config{EnableSmartWalletVerification: true}),
+		)
+		facilitator.Register(
+			[]x402.Network{x402.Network(svmNetwork)},
+			uptosvm.NewUptoSvmScheme(svmSigner, nil),
+		)
 		facilitator.RegisterV1(
 			[]x402.Network{x402.Network(getV1SvmNetwork(svmNetwork))},
 			svmv1.NewExactSvmSchemeV1(svmSigner),
@@ -1073,10 +1199,9 @@ func main() {
 			// Batch-settlement is exempt: the resource server's `BeforeSettleHook`
 			// rewrites refund payloads (adds claims/amount/refundNonce) and rewrites
 			// voucher commits before /settle, so the payload bytes seen at settle
-			// time differ from the verify-time bytes. Mirrors the TS e2e fac
-			// (e2e/facilitators/typescript/index.ts ~548) which skips the cache
-			// check for `requirements.scheme === "batch-settlement"`.
-			if isBatchSettlementRequirements(ctx.Requirements) {
+			// time differ from the verify-time bytes. Escrow and upfront flows are
+			// exempt because they settle without a prior /verify.
+			if skipsVerifyBeforeSettle(ctx.Requirements) {
 				return nil, nil
 			}
 
@@ -1109,11 +1234,10 @@ func main() {
 		}).
 		OnAfterSettle(func(ctx x402.FacilitatorSettleResultContext) error {
 			// Hook 4: Clean up verified payment tracking after successful settlement.
-			// Skip cleanup for batch-settlement: the verify-time entry was keyed by
-			// a different payload (see OnBeforeSettle comment) so there's nothing
-			// to delete here, and the cache entry naturally ages out via the 5-min
-			// TTL check above. Mirrors TS e2e fac.
-			if !isBatchSettlementRequirements(ctx.Requirements) {
+			// Skip cleanup for the flows exempted above: the verify-time entry was
+			// keyed by a different payload, or never written at all, so there is
+			// nothing to delete here and any stale entry ages out via the 5-min TTL.
+			if !skipsVerifyBeforeSettle(ctx.Requirements) {
 				paymentHash := hashBytes(ctx.PayloadBytes)
 				verificationMutex.Lock()
 				delete(verifiedPayments, paymentHash)
@@ -1127,8 +1251,8 @@ func main() {
 		}).
 		OnSettleFailure(func(ctx x402.FacilitatorSettleFailureContext) (*x402.FacilitatorSettleFailureHookResult, error) {
 			// Hook 5: Clean up verified payment tracking on failure too. Same
-			// batch-settlement exemption as OnAfterSettle.
-			if !isBatchSettlementRequirements(ctx.Requirements) {
+			// exemptions as OnAfterSettle.
+			if !skipsVerifyBeforeSettle(ctx.Requirements) {
 				paymentHash := hashBytes(ctx.PayloadBytes)
 				verificationMutex.Lock()
 				delete(verifiedPayments, paymentHash)

@@ -33,6 +33,26 @@ from .types import TransactionReceipt, TypedDataDomain, TypedDataField  # noqa: 
 # out-of-gas. 500k covers known smart-account factories with headroom.
 _DEFAULT_TX_GAS_LIMIT = 500_000
 
+# Seconds to wait for a settlement receipt before raising. Unchanged from the previous
+# hardcoded bound; override it below a platform request deadline.
+_DEFAULT_CONFIRMATION_TIMEOUT_SECONDS = 120
+
+
+def _hex_with_0x_prefix(value: Any) -> str:
+    """Return value.hex() guaranteed to carry the 0x prefix.
+
+    Newer major versions of hexbytes/web3 changed HexBytes.hex() to match plain
+    bytes.hex() semantics (no 0x prefix), whereas the rest of this module (and every
+    other EVM mechanism module) always manually prefixes hex-encoded byte strings with
+    "0x". Broadcast tx hashes returned bare would fail is_valid_tx_hash's "0x" + 64 hex
+    check downstream and be misreported as a terminal invalid-hash failure instead of a
+    real broadcast — this defends against that regardless of the installed
+    hexbytes/web3 version.
+    """
+    raw = str(value.hex())
+    return raw if raw.startswith("0x") else "0x" + raw
+
+
 # ERC20 ABI for balance checks
 _ERC20_BALANCE_ABI = [
     {
@@ -270,12 +290,18 @@ class FacilitatorWeb3Signer:
         self,
         private_key: str,
         rpc_url: str,
+        confirmation_timeout_seconds: float = _DEFAULT_CONFIRMATION_TIMEOUT_SECONDS,
+        gas_limit: int = _DEFAULT_TX_GAS_LIMIT,
     ) -> None:
         """Initialize signer with private key and RPC connection.
 
         Args:
             private_key: Hex private key with or without 0x prefix.
             rpc_url: Ethereum RPC endpoint URL.
+            confirmation_timeout_seconds: Seconds to wait for a settlement receipt before
+                raising. Set below your platform's request deadline so settle returns
+                `settlement_pending` instead of the process being killed mid-wait.
+            gas_limit: Gas limit for transactions sent by the facilitator.
 
         """
         # Normalize private key format
@@ -284,6 +310,8 @@ class FacilitatorWeb3Signer:
 
         self._account = Account.from_key(private_key)
         self._w3 = Web3(Web3.HTTPProvider(rpc_url))
+        self._confirmation_timeout_seconds = confirmation_timeout_seconds
+        self._gas_limit = gas_limit
 
         # Add PoA middleware for testnets (Base, Polygon, etc.)
         self._w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
@@ -501,7 +529,7 @@ class FacilitatorWeb3Signer:
             {
                 "from": self._account.address,
                 "nonce": self._reserve_nonce(),
-                "gas": _DEFAULT_TX_GAS_LIMIT,
+                "gas": self._gas_limit,
                 "gasPrice": self._w3.eth.gas_price,
             }
         )
@@ -516,7 +544,7 @@ class FacilitatorWeb3Signer:
         signed_tx = self._account.sign_transaction(tx)
         tx_hash = self._w3.eth.send_raw_transaction(signed_tx.raw_transaction)
 
-        return tx_hash.hex()
+        return _hex_with_0x_prefix(tx_hash)
 
     def send_transaction(self, to: str, data: bytes) -> str:
         """Send a raw transaction.
@@ -533,28 +561,35 @@ class FacilitatorWeb3Signer:
             "to": Web3.to_checksum_address(to),
             "data": data,
             "nonce": self._reserve_nonce(),
-            "gas": _DEFAULT_TX_GAS_LIMIT,
+            "gas": self._gas_limit,
             "gasPrice": self._w3.eth.gas_price,
         }
 
         signed_tx = self._account.sign_transaction(tx)
         tx_hash = self._w3.eth.send_raw_transaction(signed_tx.raw_transaction)
 
-        return tx_hash.hex()
+        return _hex_with_0x_prefix(tx_hash)
 
     def wait_for_transaction_receipt(self, tx_hash: str) -> TransactionReceipt:
         """Wait for a transaction to be mined.
+
+        Bounded by `confirmation_timeout_seconds` from the constructor.
 
         Args:
             tx_hash: Transaction hash to wait for.
 
         Returns:
             Transaction receipt.
+
+        Raises:
+            web3.exceptions.TimeExhausted: The receipt did not arrive in time.
         """
         if not tx_hash.startswith("0x"):
             tx_hash = "0x" + tx_hash
 
-        receipt = self._w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+        receipt = self._w3.eth.wait_for_transaction_receipt(
+            tx_hash, timeout=self._confirmation_timeout_seconds
+        )
 
         return TransactionReceipt(
             status=TX_STATUS_SUCCESS if receipt["status"] == 1 else 0,

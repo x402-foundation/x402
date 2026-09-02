@@ -69,7 +69,7 @@ func main() {
 
 	if svmSigner != nil {
 		settlementCache := svmmech.NewSettlementCache()
-		facilitator.Register([]x402.Network{svmNetwork}, svm.NewExactSvmScheme(svmSigner, settlementCache))
+		facilitator.Register([]x402.Network{svmNetwork}, svm.NewExactSvmScheme(svmSigner, &svm.Config{SettlementCache: settlementCache}))
 		facilitator.RegisterV1([]x402.Network{"solana-devnet"}, svmv1.NewExactSvmSchemeV1(svmSigner, settlementCache))
 	}
 
@@ -96,6 +96,11 @@ func main() {
 
 	// Verify endpoint - verifies payment signatures
 	r.POST("/verify", func(c *gin.Context) {
+		endpointT0 := time.Now()
+		defer func() {
+			fmt.Printf("/verify completed in %.3fs\n", time.Since(endpointT0).Seconds())
+		}()
+
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 		defer cancel()
 
@@ -129,6 +134,11 @@ func main() {
 
 	// Settle endpoint - settles payments on-chain
 	r.POST("/settle", func(c *gin.Context) {
+		endpointT0 := time.Now()
+		defer func() {
+			fmt.Printf("/settle completed in %.3fs\n", time.Since(endpointT0).Seconds())
+		}()
+
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
 		defer cancel()
 

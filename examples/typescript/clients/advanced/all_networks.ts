@@ -125,8 +125,12 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Create x402 client
-  const client = new x402Client();
+  const client = new x402Client().setSpendControls({
+    allowedAssets: [
+      { network: "xrpl:*", asset: "XRP" },
+      { network: "ccd:*", asset: "CCD" },
+    ],
+  });
 
   // Register AVM scheme if private key is provided
   if (avmPrivateKey) {

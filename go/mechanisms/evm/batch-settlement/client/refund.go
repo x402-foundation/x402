@@ -83,48 +83,54 @@ func RefundChannel(ctx context.Context, scheme RefundContext, url string, option
 	return executeRefund(ctx, scheme, url, requirements, refundAmount, httpClient)
 }
 
-// UpdateSessionAfterRefund reconciles local session state with the outcome of a
-// cooperative refund. Deletes the session when the post-refund balance is zero
-// (full refund), otherwise updates balance/chargedCumulativeAmount/totalClaimed
-// from the server snapshot (partial refund — channel stays open).
-func UpdateSessionAfterRefund(storage ClientChannelStorage, channelKey string, settleExtra map[string]interface{}) error {
-	parsed, _ := batchsettlement.PaymentResponseExtraFromMap(settleExtra)
-
-	balanceStr := ""
-	chargedStr := ""
-	totalClaimedStr := ""
-	if parsed != nil && parsed.ChannelState != nil {
-		balanceStr = parsed.ChannelState.Balance
-		chargedStr = parsed.ChannelState.ChargedCumulativeAmount
-		totalClaimedStr = parsed.ChannelState.TotalClaimed
-	}
-
-	var balanceAfter *big.Int
-	if balanceStr != "" {
-		if bal, ok := new(big.Int).SetString(balanceStr, 10); ok {
-			balanceAfter = bal
-		}
-	}
-
-	if balanceAfter == nil || balanceAfter.Sign() <= 0 {
+// UpdateSessionAfterRefund updates local channel state after a cooperative refund
+// the client signed.
+//
+// A nil refundAmount is a full refund: delete the local record. Otherwise
+// the signed amount is capped to the locally expected refundable balance.
+// Delete the record when that drains the refundable balance; otherwise subtract
+// the effective refund from balance. Cumulative is unchanged, and server
+// channelState is not an input.
+func UpdateSessionAfterRefund(storage ClientChannelStorage, channelKey string, refundAmount *string) error {
+	if refundAmount == nil {
 		return storage.Delete(channelKey)
 	}
 
-	prev, err := storage.Get(channelKey)
+	amount, ok := new(big.Int).SetString(*refundAmount, 10)
+	if !ok {
+		return fmt.Errorf("invalid refundAmount")
+	}
+	previous, err := storage.Get(channelKey)
 	if err != nil {
 		return fmt.Errorf("get channel session: %w", err)
 	}
+	previousBalance := big.NewInt(0)
+	chargedCumulativeAmount := big.NewInt(0)
+	if previous != nil {
+		if previous.Balance != "" {
+			if v, ok := new(big.Int).SetString(previous.Balance, 10); ok {
+				previousBalance = v
+			}
+		}
+		if previous.ChargedCumulativeAmount != "" {
+			if v, ok := new(big.Int).SetString(previous.ChargedCumulativeAmount, 10); ok {
+				chargedCumulativeAmount = v
+			}
+		}
+	}
+	refundableBalance := big.NewInt(0)
+	if previousBalance.Cmp(chargedCumulativeAmount) > 0 {
+		refundableBalance.Sub(previousBalance, chargedCumulativeAmount)
+	}
+	if amount.Cmp(refundableBalance) >= 0 {
+		return storage.Delete(channelKey)
+	}
+
 	next := &BatchSettlementClientContext{}
-	if prev != nil {
-		*next = *prev
+	if previous != nil {
+		*next = *previous
 	}
-	next.Balance = balanceAfter.String()
-	if chargedStr != "" {
-		next.ChargedCumulativeAmount = chargedStr
-	}
-	if totalClaimedStr != "" {
-		next.TotalClaimed = totalClaimedStr
-	}
+	next.Balance = new(big.Int).Sub(previousBalance, amount).String()
 	return storage.Set(channelKey, next)
 }
 
@@ -259,16 +265,21 @@ func executeRefund(
 			return nil, fmt.Errorf("refund: decode PAYMENT-RESPONSE: %w", err)
 		}
 
-		// The caller knows it just initiated a refund, so reconcile directly via
-		// UpdateSessionAfterRefund (deletes on full drain). The channelId is read
-		// from the nested `channelState` shape.
-		if settle != nil && settle.Extra != nil {
-			if cs, ok := settle.Extra["channelState"].(map[string]interface{}); ok {
-				if channelId, ok := cs["channelId"].(string); ok && channelId != "" {
-					if err := UpdateSessionAfterRefund(scheme.Storage(), channelId, settle.Extra); err != nil {
-						return settle, fmt.Errorf("refund: update channel session: %w", err)
-					}
-				}
+		if settle != nil && settle.Success {
+			config, cfgErr := scheme.BuildChannelConfig(requirements)
+			if cfgErr != nil {
+				return settle, fmt.Errorf("refund: build channel config: %w", cfgErr)
+			}
+			channelId, idErr := batchsettlement.ComputeChannelId(config, requirements.Network)
+			if idErr != nil {
+				return settle, fmt.Errorf("refund: compute channel id: %w", idErr)
+			}
+			var amount *string
+			if refundAmount != "" {
+				amount = &refundAmount
+			}
+			if err := UpdateSessionAfterRefund(scheme.Storage(), strings.ToLower(channelId), amount); err != nil {
+				return settle, fmt.Errorf("refund: update channel session: %w", err)
 			}
 		}
 		return settle, nil

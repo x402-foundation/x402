@@ -6,10 +6,39 @@ used by both FastAPI and Flask middleware.
 
 from __future__ import annotations
 
+import re
 import warnings
 from typing import Any
 
 from ..types import RouteConfig, RoutesConfig
+
+_HTTP_VERB_RE = re.compile(r"^(GET|POST|PUT|PATCH|DELETE|HEAD)\b", re.IGNORECASE)
+
+
+def _with_synthetic_method(ext: dict[str, Any], pattern: str) -> dict[str, Any]:
+    """Inject a synthetic method for startup schema validation only.
+
+    Pre-enrichment HTTP extensions intentionally omit ``method``; it is added at
+    request time by ``bazaar_resource_server_extension``. Without a synthetic
+    value, jsonschema reports a false positive for the required ``method`` field.
+
+    Priority: (1) route pattern verb (e.g. ``"GET /api"``), (2) body vs query inference.
+    Returns the same object unchanged if ``method`` is already present.
+    """
+    info = ext.get("info") or {}
+    input_data = info.get("input") or {}
+    if not isinstance(input_data, dict) or input_data.get("method"):
+        return ext
+
+    verb_match = _HTTP_VERB_RE.match(pattern)
+    if verb_match:
+        method = verb_match.group(1).upper()
+    elif input_data.get("body") is not None or input_data.get("bodyType") is not None:
+        method = "POST"
+    else:
+        method = "GET"
+
+    return {**ext, "info": {**info, "input": {**input_data, "method": method}}}
 
 
 def check_if_bazaar_needed(routes: RoutesConfig) -> bool:
@@ -114,7 +143,7 @@ def validate_bazaar_extensions(routes: RoutesConfig) -> None:
                     stacklevel=3,
                 )
                 continue
-            result = validate_discovery_extension(bazaar_ext)
+            result = validate_discovery_extension(_with_synthetic_method(bazaar_ext, pattern))
             if not result.valid:
                 warnings.warn(
                     f'x402: Route "{pattern}" has an invalid bazaar extension: '

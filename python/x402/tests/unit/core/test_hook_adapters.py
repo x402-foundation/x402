@@ -35,6 +35,10 @@ class _SchemeBeforeVerify:
 
 class _SchemeServer(BeforeVerifyHookProvider):
     scheme = "exact"
+    default_asset_transfer_method = "default"
+    payment_flows = {
+        "default": {"supported": ("authorization",), "default": "authorization"},
+    }
 
     def __init__(self) -> None:
         self.before_verify_hook = _SchemeBeforeVerify()

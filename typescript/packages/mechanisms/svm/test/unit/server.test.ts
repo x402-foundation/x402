@@ -1,21 +1,27 @@
 import { describe, it, expect } from "vitest";
 import { ExactSvmScheme } from "../../src/exact/server/scheme";
 import {
-  CASH_MAINNET_ADDRESS,
-  PYUSD_DEVNET_ADDRESS,
-  PYUSD_MAINNET_ADDRESS,
-  USDC_MAINNET_ADDRESS,
-  USDC_DEVNET_ADDRESS,
-  USDG_DEVNET_ADDRESS,
-  USDG_MAINNET_ADDRESS,
-  USDT_MAINNET_ADDRESS,
   SOLANA_MAINNET_CAIP2,
   SOLANA_DEVNET_CAIP2,
   SOLANA_TESTNET_CAIP2,
 } from "../../src/constants";
+import {
+  USDC_DEVNET_ADDRESS,
+  USDC_MAINNET_ADDRESS,
+  getDefaultAsset,
+} from "../../src/defaultAssets";
 
 describe("ExactSvmScheme", () => {
   const server = new ExactSvmScheme();
+
+  describe("paymentFlows", () => {
+    it("declares authorization and upfront with authorization as the default", () => {
+      expect(server.defaultAssetTransferMethod).toBe("default");
+      expect(server.paymentFlows).toEqual({
+        default: { supported: ["authorization", "upfront"], default: "authorization" },
+      });
+    });
+  });
 
   describe("parsePrice", () => {
     describe("Solana Mainnet network", () => {
@@ -53,19 +59,19 @@ describe("ExactSvmScheme", () => {
       it("should parse supported stablecoin suffixes", async () => {
         await expect(server.parsePrice("0.10 USDT", network)).resolves.toMatchObject({
           amount: "100000",
-          asset: USDT_MAINNET_ADDRESS,
+          asset: getDefaultAsset(network, "USDT").asset,
         });
         await expect(server.parsePrice("0.10 USDG", network)).resolves.toMatchObject({
           amount: "100000",
-          asset: USDG_MAINNET_ADDRESS,
+          asset: getDefaultAsset(network, "USDG").asset,
         });
         await expect(server.parsePrice("0.10 PYUSD", network)).resolves.toMatchObject({
           amount: "100000",
-          asset: PYUSD_MAINNET_ADDRESS,
+          asset: getDefaultAsset(network, "PYUSD").asset,
         });
         await expect(server.parsePrice("0.10 CASH", network)).resolves.toMatchObject({
           amount: "100000",
-          asset: CASH_MAINNET_ADDRESS,
+          asset: getDefaultAsset(network, "CASH").asset,
         });
       });
 
@@ -86,10 +92,10 @@ describe("ExactSvmScheme", () => {
 
       it("should use Devnet Token-2022 stablecoin addresses", async () => {
         const usdg = await server.parsePrice("1.00 USDG", network);
-        expect(usdg.asset).toBe(USDG_DEVNET_ADDRESS);
+        expect(usdg.asset).toBe(getDefaultAsset(network, "USDG").asset);
 
         const pyusd = await server.parsePrice("1.00 PYUSD", network);
-        expect(pyusd.asset).toBe(PYUSD_DEVNET_ADDRESS);
+        expect(pyusd.asset).toBe(getDefaultAsset(network, "PYUSD").asset);
       });
     });
 

@@ -34,6 +34,16 @@ class SettlementCache:
             self._entries[key] = time.monotonic()
             return False
 
+    def delete(self, key: str) -> None:
+        """Remove key's dedup entry, e.g. after a broadcast/send failure.
+
+        Lets a subsequent settle attempt for the same key (a genuine retry, not a
+        duplicate) proceed rather than being rejected as a duplicate forever until the TTL
+        elapses.
+        """
+        with self._lock:
+            self._entries.pop(key, None)
+
     # Exposed for testing (e.g. backdating entries to simulate TTL expiry).
     @property
     def entries(self) -> dict[str, float]:

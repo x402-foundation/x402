@@ -6,6 +6,7 @@ import {
   SettleResponse,
   VerifyResponse,
 } from "@x402/core/types";
+import { InMemoryPendingSettlementStore, PendingSettlementStore } from "@x402/core/facilitator";
 import { FacilitatorEvmSigner } from "../../signer";
 import { ExactEvmPayloadV2, ExactEIP3009Payload, isPermit2Payload } from "../../types";
 import { verifyEIP3009, settleEIP3009 } from "./eip3009";
@@ -28,6 +29,16 @@ export interface ExactEvmSchemeConfig {
    * @default false
    */
   simulateInSettle?: boolean;
+  /**
+   * Lets a retried settle for the same payload reconcile against an
+   * already-broadcast transaction instead of re-verifying and
+   * re-broadcasting (see {@link PendingSettlementStore}). Defaults to a
+   * fresh in-memory store shared across all settle calls on this scheme
+   * instance. Inject a shared, network-backed implementation (e.g. Redis)
+   * for a multi-instance facilitator so a settle retry landing on a
+   * different replica still reconciles correctly.
+   */
+  pendingSettlementStore?: PendingSettlementStore;
 }
 
 /**
@@ -39,7 +50,8 @@ export interface ExactEvmSchemeConfig {
 export class ExactEvmScheme implements SchemeNetworkFacilitator {
   readonly scheme = "exact";
   readonly caipFamily = "eip155:*";
-  private readonly config: Required<ExactEvmSchemeConfig>;
+  private readonly config: Required<Omit<ExactEvmSchemeConfig, "pendingSettlementStore">>;
+  private readonly pendingStore: PendingSettlementStore;
 
   /**
    * Creates a new ExactEvmScheme facilitator instance.
@@ -55,6 +67,7 @@ export class ExactEvmScheme implements SchemeNetworkFacilitator {
       eip6492AllowedFactories: config?.eip6492AllowedFactories ?? [],
       simulateInSettle: config?.simulateInSettle ?? false,
     };
+    this.pendingStore = config?.pendingSettlementStore ?? new InMemoryPendingSettlementStore();
   }
 
   /**
@@ -127,12 +140,26 @@ export class ExactEvmScheme implements SchemeNetworkFacilitator {
     const isPermit2 = isPermit2Payload(rawPayload);
 
     if (isPermit2) {
-      return settlePermit2(this.signer, payload, requirements, rawPayload, context, {
-        simulateInSettle: this.config.simulateInSettle,
-      });
+      return settlePermit2(
+        this.signer,
+        payload,
+        requirements,
+        rawPayload,
+        context,
+        { simulateInSettle: this.config.simulateInSettle },
+        this.pendingStore,
+      );
     }
 
     const eip3009Payload: ExactEIP3009Payload = rawPayload;
-    return settleEIP3009(this.signer, payload, requirements, eip3009Payload, this.config, context);
+    return settleEIP3009(
+      this.signer,
+      payload,
+      requirements,
+      eip3009Payload,
+      this.config,
+      context,
+      this.pendingStore,
+    );
   }
 }

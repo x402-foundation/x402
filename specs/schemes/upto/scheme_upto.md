@@ -12,6 +12,10 @@ This scheme is ideal for usage-based pricing models where the final cost is not 
 - Bandwidth or data transfer metering (charge per byte transferred in a single request)
 - Dynamic compute pricing (charge based on actual resources consumed)
 
+## Payment Flow
+
+`upto` cannot use `upfront` because the settled amount is known only after the route handler runs, so settlement cannot precede resource execution.
+
 ## Core Properties (MUST)
 
 The `upto` scheme MUST enforce the following properties across ALL network implementations:

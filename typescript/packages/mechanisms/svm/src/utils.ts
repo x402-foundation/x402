@@ -1,6 +1,9 @@
-import { createHash } from "node:crypto";
+import { sha256 } from "@noble/hashes/sha256";
+import { ErrInvalidPayloadTransaction } from "./exact/facilitator/errors";
 import {
+  isAddress,
   getBase58Encoder,
+  getBase64Decoder,
   getBase64Encoder,
   getTransactionDecoder,
   getCompiledTransactionMessageDecoder,
@@ -19,55 +22,36 @@ import {
 } from "@solana/kit";
 import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
 import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
-import type { Network, PaymentRequirements } from "@x402/core/types";
+import type { PendingSettlementStore } from "@x402/core/facilitator";
+import type { Network, PaymentRequirements, SettleResponse } from "@x402/core/types";
 import {
   SVM_ADDRESS_REGEX,
   DEVNET_RPC_URL,
   TESTNET_RPC_URL,
   MAINNET_RPC_URL,
-  SVM_STABLECOIN_MINTS,
-  SVM_STABLECOIN_TOKEN_PROGRAMS,
   SOLANA_MAINNET_CAIP2,
   SOLANA_DEVNET_CAIP2,
   SOLANA_TESTNET_CAIP2,
-  V1_TO_V2_NETWORK_MAP,
+  normalizeNetwork,
 } from "./constants";
-import type { SvmStablecoinSymbol } from "./constants";
+import { DEFAULT_ASSETS, findDefaultAsset, getDefaultAsset } from "./defaultAssets";
 import type { ExactSvmPayloadV1 } from "./types";
+import { SLOT_COMMITMENT } from "./upto/shared";
 
-/**
- * Normalize network identifier to CAIP-2 format
- * Handles both V1 names (solana, solana-devnet) and V2 CAIP-2 format
- *
- * @param network - Network identifier (V1 or V2 format)
- * @returns CAIP-2 network identifier
- */
-export function normalizeNetwork(network: Network): string {
-  // If it's already CAIP-2 format (contains ":"), validate it's supported
-  if (network.includes(":")) {
-    const supported = [SOLANA_MAINNET_CAIP2, SOLANA_DEVNET_CAIP2, SOLANA_TESTNET_CAIP2];
-    if (!supported.includes(network)) {
-      throw new Error(`Unsupported SVM network: ${network}`);
-    }
-    return network;
-  }
-
-  // Otherwise, it's a V1 network name, convert to CAIP-2
-  const caip2Network = V1_TO_V2_NETWORK_MAP[network];
-  if (!caip2Network) {
-    throw new Error(`Unsupported SVM network: ${network}`);
-  }
-  return caip2Network;
-}
+export { normalizeNetwork } from "./constants";
 
 /**
  * Validate Solana address format
+ *
+ * The regex gates the charset and length; `isAddress` additionally requires the
+ * base58 to decode to 32 bytes, which the regex alone allows through. Anything
+ * looser accepts strings no Solana runtime (or the Go SDK's decoder) would.
  *
  * @param address - Base58 encoded address string
  * @returns true if address is valid, false otherwise
  */
 export function validateSvmAddress(address: string): boolean {
-  return SVM_ADDRESS_REGEX.test(address);
+  return SVM_ADDRESS_REGEX.test(address) && isAddress(address);
 }
 
 /**
@@ -81,7 +65,7 @@ export function validateSvmAddress(address: string): boolean {
  * @returns Base64-encoded SHA-256 hash of the transaction message bytes
  */
 export function transactionMessageHash(transaction: Transaction): string {
-  return createHash("sha256").update(Buffer.from(transaction.messageBytes)).digest("base64");
+  return getBase64Decoder().decode(sha256(Uint8Array.from(transaction.messageBytes)));
 }
 
 /**
@@ -98,7 +82,7 @@ export function decodeTransactionFromPayload(svmPayload: ExactSvmPayloadV1): Tra
     return transactionDecoder.decode(transactionBytes);
   } catch (error) {
     console.error("Error decoding transaction:", error);
-    throw new Error("invalid_exact_svm_payload_transaction");
+    throw new Error(ErrInvalidPayloadTransaction);
   }
 }
 
@@ -217,9 +201,9 @@ export async function resolveBlockhash(
  *
  * Prefers a server-provided slot carried in the 402 challenge
  * (`extra.recentSlot`) so the client needn't make its own RPC round-trip. Falls
- * back to `rpc.getSlot()` when the challenge omits it or contains a malformed
- * value. Default RPC commitment (`finalized`) keeps `openSlot <= clock.slot`
- * true when the open lands.
+ * back to `rpc.getSlot({ commitment: SLOT_COMMITMENT })` when the challenge
+ * omits it or contains a malformed value. Finalized commitment keeps
+ * `openSlot <= clock.slot` true when the open lands, matching the facilitator.
  *
  * @param rpc - RPC client used for the fallback fetch
  * @param requirements - The payment requirements (challenge) being paid
@@ -254,7 +238,7 @@ export async function resolveOpenSlot(
     }
   }
 
-  return await rpc.getSlot().send();
+  return await rpc.getSlot({ commitment: SLOT_COMMITMENT }).send();
 }
 
 /**
@@ -264,48 +248,18 @@ export async function resolveOpenSlot(
  * @returns USDC mint address for the network
  */
 export function getUsdcAddress(network: Network): string {
-  const address = getStablecoinAddress("USDC", network);
-  if (!address) throw new Error(`No USDC address configured for network: ${network}`);
-  return address;
-}
-
-type StablecoinNetworkKey = "mainnet" | "devnet" | "testnet";
-
-/**
- * Map a network identifier to its stablecoin-mint lookup key.
- *
- * @param network - Network identifier (CAIP-2 or V1 format)
- * @returns The "mainnet" | "devnet" | "testnet" key
- */
-function stablecoinNetworkKey(network: Network): StablecoinNetworkKey {
-  const caip2Network = normalizeNetwork(network);
-
-  switch (caip2Network) {
-    case SOLANA_MAINNET_CAIP2:
-      return "mainnet";
-    case SOLANA_DEVNET_CAIP2:
-      return "devnet";
-    case SOLANA_TESTNET_CAIP2:
-      return "testnet";
-    default:
-      throw new Error(`Unsupported network: ${network}`);
-  }
+  return getDefaultAsset(network).asset;
 }
 
 /**
- * Get the default mint address for a supported stablecoin on a network.
- * Stablecoins without a devnet/testnet mint fall back to their mainnet mint.
+ * Get the mint address for a supported stablecoin on a network.
  *
  * @param symbol - Stablecoin symbol
  * @param network - Network identifier (CAIP-2 or V1 format)
  * @returns Mint address for the symbol and network
  */
-export function getStablecoinAddress(symbol: SvmStablecoinSymbol, network: Network): string {
-  const key = stablecoinNetworkKey(network);
-  const mints = SVM_STABLECOIN_MINTS[symbol] as Partial<Record<StablecoinNetworkKey, string>>;
-  const address = mints[key] ?? mints.mainnet;
-  if (!address) throw new Error(`No ${symbol} address configured for network: ${network}`);
-  return address;
+export function getStablecoinAddress(symbol: string, network: Network): string {
+  return getDefaultAsset(network, symbol).asset;
 }
 
 /**
@@ -318,10 +272,11 @@ export function getStablecoinAddress(symbol: SvmStablecoinSymbol, network: Netwo
 export function resolveStablecoinMint(currency: string, network: Network): string | undefined {
   const normalized = currency.toUpperCase();
   if (normalized === "SOL") return undefined;
-  if (normalized in SVM_STABLECOIN_MINTS) {
-    return getStablecoinAddress(normalized as SvmStablecoinSymbol, network);
+  try {
+    return getDefaultAsset(network, currency).asset;
+  } catch {
+    return currency;
   }
-  return currency;
 }
 
 /**
@@ -330,14 +285,14 @@ export function resolveStablecoinMint(currency: string, network: Network): strin
  * @param currency - Stablecoin symbol or raw mint address
  * @returns Supported stablecoin symbol if recognized
  */
-export function getStablecoinSymbol(currency: string): SvmStablecoinSymbol | undefined {
+export function getStablecoinSymbol(currency: string): string | undefined {
   const normalized = currency.toUpperCase();
-  if (normalized in SVM_STABLECOIN_MINTS) return normalized as SvmStablecoinSymbol;
-
-  for (const [symbol, mints] of Object.entries(SVM_STABLECOIN_MINTS)) {
-    if ((Object.values(mints) as string[]).includes(currency)) {
-      return symbol as SvmStablecoinSymbol;
-    }
+  for (const assets of Object.values(DEFAULT_ASSETS)) {
+    if (!assets) continue;
+    const match = assets.find(
+      entry => entry.symbol.toUpperCase() === normalized || entry.asset === currency,
+    );
+    if (match) return match.symbol;
   }
 }
 
@@ -351,8 +306,92 @@ export function getStablecoinSymbol(currency: string): SvmStablecoinSymbol | und
  */
 export function getStablecoinTokenProgram(currency: string, network: Network): string {
   const resolvedMint = resolveStablecoinMint(currency, network);
-  const symbol = getStablecoinSymbol(resolvedMint ?? currency);
-  return symbol ? SVM_STABLECOIN_TOKEN_PROGRAMS[symbol] : TOKEN_PROGRAM_ADDRESS.toString();
+  if (!resolvedMint) return TOKEN_PROGRAM_ADDRESS.toString();
+  const byMint = findDefaultAsset(resolvedMint, network);
+  if (byMint) return byMint.tokenProgram;
+  try {
+    return getDefaultAsset(network, currency).tokenProgram;
+  } catch {
+    return TOKEN_PROGRAM_ADDRESS.toString();
+  }
+}
+
+/**
+ * Thrown by a {@link PendingSettlementStore}-aware confirmation wait (e.g.
+ * `FacilitatorSvmSigner.confirmTransaction`) when the transaction reached the
+ * chain and failed there — a definite onchain rejection, not a
+ * confirmation-wait timeout whose outcome is still unknown. Callers must
+ * treat this as terminal: release any dedup/pending-settlement lock and
+ * report a failure instead of `settlement_pending`. Any other confirmation
+ * error (timeout or otherwise) is treated conservatively as non-terminal,
+ * since a fresh broadcast while the original might still land risks a
+ * double-spend.
+ */
+export class TransactionOnchainFailureError extends Error {
+  /**
+   * Create the error for a transaction that reached the chain and failed there.
+   *
+   * @param message - Description of the onchain failure, e.g. the decoded transaction error
+   */
+  constructor(message: string) {
+    super(message);
+    this.name = "TransactionOnchainFailureError";
+  }
+}
+
+/**
+ * Persists `signature` under `key` in `store` so a subsequent settle attempt
+ * for the same payload can reconcile against it instead of re-broadcasting,
+ * then returns the `settlement_pending` response carrying `error`'s message.
+ *
+ * If the store write itself fails, a later retry has no record to reconcile
+ * against — returning `settlement_pending` regardless would let it blindly
+ * re-verify/re-broadcast and risk a double-send. In that case this instead
+ * returns a terminal failure (`terminalReason`), preserving `signature` for
+ * manual reconciliation.
+ *
+ * @param store - The pending-settlement store to update
+ * @param key - Deterministic key for this payload (e.g. a signature or channel id)
+ * @param signature - The broadcast signature to persist and report
+ * @param payer - The payer address
+ * @param network - Network the transaction was broadcast to
+ * @param pendingReason - Error reason to report when the store write succeeds
+ * @param terminalReason - Error reason to report when the store write fails
+ * @param error - The confirmation-wait error that triggered this call
+ * @returns The settlement_pending or terminal SettleResponse
+ */
+export async function recordPendingOrTerminal(
+  store: PendingSettlementStore,
+  key: string,
+  signature: string,
+  payer: string,
+  network: Network,
+  pendingReason: string,
+  terminalReason: string,
+  error: unknown,
+): Promise<SettleResponse> {
+  try {
+    await store.set(key, signature);
+  } catch (storeError) {
+    return {
+      success: false,
+      errorReason: terminalReason,
+      errorMessage: `settlement_pending, but failed to persist for retry: ${
+        storeError instanceof Error ? storeError.message : String(storeError)
+      }`,
+      transaction: signature,
+      network,
+      payer,
+    };
+  }
+  return {
+    success: false,
+    errorReason: pendingReason,
+    errorMessage: error instanceof Error ? error.message : String(error),
+    transaction: signature,
+    network,
+    payer,
+  };
 }
 
 // Re-export from core for backward compatibility

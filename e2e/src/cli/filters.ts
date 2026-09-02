@@ -1,7 +1,29 @@
-import { TestScenario, endpointPaymentScheme } from '../types';
+import {
+  TestScenario,
+  endpointPaymentScheme,
+  endpointPaymentFlow,
+  endpointAssetTransferMethod,
+  type PaymentFlow,
+  type AssetTransferMethod,
+} from '../types';
 
 /** x402 payment scheme for filtering. */
 export type PaymentSchemeKind = 'exact' | 'upto' | 'batch-settlement';
+
+/** CLI aliases for catalog SDK ids (`typescript` / `python` / `go`). */
+const SDK_ALIASES: Record<string, string> = {
+  ts: 'typescript',
+  typescript: 'typescript',
+  py: 'python',
+  python: 'python',
+  go: 'go',
+};
+
+/** Normalize `--sdk` values (`ts` → `typescript`). Unknown ids pass through lowercased. */
+export function normalizeSdkId(value: string): string {
+  const key = value.trim().toLowerCase();
+  return SDK_ALIASES[key] ?? key;
+}
 
 /**
  * Classify a scenario's payment scheme for filtering (`endpoint.scheme`, default `exact`).
@@ -16,6 +38,31 @@ export function getUniquePaymentSchemes(scenarios: TestScenario[]): PaymentSchem
   return Array.from(set).sort();
 }
 
+export function getScenarioPaymentFlow(scenario: TestScenario): PaymentFlow {
+  return endpointPaymentFlow(scenario.endpoint);
+}
+
+export function getUniquePaymentFlows(scenarios: TestScenario[]): PaymentFlow[] {
+  const set = new Set<PaymentFlow>();
+  scenarios.forEach(s => set.add(getScenarioPaymentFlow(s)));
+  return Array.from(set).sort();
+}
+
+export function getScenarioAssetTransferMethod(
+  scenario: TestScenario,
+): AssetTransferMethod | undefined {
+  return endpointAssetTransferMethod(scenario.endpoint);
+}
+
+export function getUniqueAssetTransferMethods(scenarios: TestScenario[]): AssetTransferMethod[] {
+  const set = new Set<AssetTransferMethod>();
+  scenarios.forEach(s => {
+    const method = getScenarioAssetTransferMethod(s);
+    if (method) set.add(method);
+  });
+  return Array.from(set).sort();
+}
+
 export interface TestFilters {
   transports?: string[];
   facilitators?: string[];
@@ -25,6 +72,9 @@ export interface TestFilters {
   versions?: number[];
   protocolFamilies?: string[];
   schemes?: string[];
+  sdks?: string[];
+  paymentFlows?: string[];
+  assetTransferMethods?: string[];
   endpoints?: string[];        // Regex patterns to filter by endpoint path
 }
 
@@ -87,6 +137,36 @@ export function filterScenarios(
       const normalized = filters.schemes.map(s => s.trim().toLowerCase());
       const kind = getScenarioPaymentScheme(scenario);
       if (!normalized.includes(kind)) {
+        return false;
+      }
+    }
+
+    // SDK language filter — client, server, and facilitator must all be in the list
+    if (filters.sdks && filters.sdks.length > 0) {
+      const allowed = new Set(filters.sdks.map(normalizeSdkId));
+      const languages = [
+        scenario.client.config.language,
+        scenario.server.config.language,
+        scenario.facilitator?.config.language,
+      ].filter((lang): lang is string => Boolean(lang));
+      if (languages.some(lang => !allowed.has(lang))) {
+        return false;
+      }
+    }
+
+    // Payment flow filter (omitted catalog value = authorization)
+    if (filters.paymentFlows && filters.paymentFlows.length > 0) {
+      const normalized = filters.paymentFlows.map(s => s.trim().toLowerCase());
+      if (!normalized.includes(getScenarioPaymentFlow(scenario))) {
+        return false;
+      }
+    }
+
+    // Asset transfer method filter
+    if (filters.assetTransferMethods && filters.assetTransferMethods.length > 0) {
+      const normalized = filters.assetTransferMethods.map(s => s.trim().toLowerCase());
+      const method = getScenarioAssetTransferMethod(scenario);
+      if (!method || !normalized.includes(method.toLowerCase())) {
         return false;
       }
     }
