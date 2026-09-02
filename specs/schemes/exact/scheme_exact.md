@@ -40,26 +40,49 @@ The client signs a transaction but does not submit it. The facilitator submits i
 - Replay protection: the mechanism MUST rely on the network's own replay primitive (account nonce, UTXO consumption, or equivalent) and MUST verify that primitive is unconsumed at settle time. Facilitators SHOULD NOT be required to maintain a consumed-payment store for this family.
 - Expiry: where the network supports transaction validity windows, the signed transaction's window MUST cover the advertised `maxTimeoutSeconds` at settle time.
 
-### Payment proof (client-executed)
- 
-The client executes the payment itself and presents a proof of it. Settle validates that proof and binds it to the request. This family applies where the payer cannot produce a signed but unsubmitted transaction or where the client's payment initiates asynchronous downstream settlement rather than being the settlement itself. It carries strictly weaker guarantees than a facilitator-submitted method and requires the state described below.
+## Payment Flow
 
-Proofs are specific to each mechanism: an onchain transaction reference, or a cryptographic settlement secret such as a payment preimage.
+By default, `exact` uses the `authorization` payment flow (verify → resource → settle): the payment is verified before the resource executes and settled afterward.
 
-- Proof identity: the payment payload MUST carry the mechanism's proof artifact. Mechanisms MUST define a canonical consumption identifier for the payment, formed as a CAIP-2 network identifier joined to the mechanism's canonical payment identifier (an onchain transaction hash, a payment hash, or equivalent). Mechanisms MAY define a narrower identifier where a single payment can satisfy more than one requirement set.
-  - Mechanisms MAY accept more than one proof form where the network supports it; where they do, they MUST state how each form is identified and validated, and MUST define a consumption identifier for each.
-- Proof validation: mechanisms MUST make clear whether the proof is self-verifying, i.e., cryptographically checkable against the payment requirements without querying a ledger or node, as when a preimage is checked against a payment hash, or whether validation requires observing ledger or backend state. Self-verifying proofs SHOULD be preferred, as they remove a liveness and trust dependency from settle.
-- Single-use claim: a proof MUST be atomically claimed before the resource executes. Where two requests present the same proof concurrently, exactly one MUST succeed in claiming it, the other MUST be rejected.
-- Requirement binding: presenting a proof alone does not establish that the payment was made for this request. Mechanisms MUST declare which binding they rely on, from: (a) a payment instrument unique to this request — a per-payment recipient address, or an invoice issued for this request — so that a payment against that instrument is bound to the requirements that advertised it; (b) a server-issued nonce carried in the payment itself, as a memo, destination tag, `OP_RETURN` output, or calldata suffix; (c) a signature by the payer over the payment requirements, carried in the payment payload; or (d) a commitment to the payment requirements signed by the payee and embedded in the payment instrument the client must satisfy, such as a BOLT11 `description_hash` over the canonicalized requirements. Mechanisms MUST NOT depend on an optional protocol extension to obtain this binding, and MUST NOT rely on transport integrity alone.
-- Payer identity: mechanisms relying on a declared payer address MUST state that a declared, or even ownership-proven, address does not bind the actual sender of the payment. The sender is observable only once the payment exists.
-- Amount acceptance: acceptance follows the amount semantics of the exact scheme. Because the client controls the amount it sends, mechanisms MUST state how a non-conforming payment, below or above the required amount, is handled, including whether and by what path it is returned.
-- Finality: mechanisms MUST declare the condition under which a payment is final, i.e, which observable event constitutes finality for settle, which party owns confirmation-depth policy on networks with probabilistic finality, and where settlement completes in more than one stage, which stage is the finality boundary. That single declaration determines the payment's state at settle time: *not yet final*, where the condition is unmet but may still be met; *final-success*, where it has been met; and *final-failure*, where it can no longer be met. The latter two are terminal states, and the requirements below are expressed in those terms.
-   - Not yet final: where the payment is not yet final, settle MUST NOT permanently consume the proof, MUST NOT deliver the resource, and MUST return an error identifying the unmet condition. The proof MUST remain usable for a later attempt: any in-flight claim held for the failed attempt MUST be released before returning, and implementations MUST ensure that an attempt terminating abnormally cannot leave a proof claimed indefinitely.
-   - Proof lifecycle: the proof MUST be claimed as in-flight when settle begins and permanently consumed only when the payment reaches a terminal state. A proof MUST NOT be permanently consumed before then, so that a transient settlement failure does not burn a payment that never delivered the resource, and MUST NOT be accepted again afterward.
-- Failure disposition: mechanisms MUST state, for each final-failure state, whether the payment is returned to the payer and by what path. Refunds are out of protocol unless the mechanism provides one; clients MUST NOT assume a refund path exists.
-- Capability documentation: mechanisms MUST document their `assetTransferMethod` value and any variants, so that facilitator support for the method can be enumerated by capability declaration; see `GET /supported` (section 7.3) in the core specification.
+`exact` MAY also use the `upfront` payment flow (settle → resource → respond) when the resource needs payment finality before execution.
 
-Mechanisms whose payment instrument can be held conditionally before being settled or released, MAY instead target the `escrow` payment flow (section 6.1), where settle runs both before and after the resource executes.
+`authorization` SHOULD be preferred wherever the asset transfer method permits it, and clients SHOULD choose it when a resource offers both, because the payment commits only after the resource handler succeeds, so a failed handler leaves the client uncharged. Under `upfront` the payment commits first, so a handler failure leaves the client charged with nothing delivered; this specification defines no refund, and any remedy is the resource server's own arrangement. A method whose validity window or replay primitive bounds how long a handler may take SHOULD offer `upfront` for handlers that can exceed that bound.
+
+## Asset Transfer Method Families
+
+Asset transfer methods fall into two families, separated by which party submits the value-moving operation. These are descriptive categories for this specification: they are not `assetTransferMethod` values and introduce no new wire field. A mechanism MUST state which family each of its methods belongs to and MUST satisfy that family's requirements, and MAY define more than one method in the same family.
+
+### Facilitator-submitted
+
+The client signs a payment but does not submit it; the facilitator submits it during settle. The signed object MAY be an authorization the facilitator wraps in its own transaction, or a network-level transaction the facilitator only relays. Submission does not imply sponsorship: the facilitator MAY pay the network fee, or MAY only relay a payment the payer funds itself. A method in this family MAY use `authorization` or `upfront`, and MAY support both; the mechanism declares which it supports and which is the default.
+
+Each method MUST declare:
+
+- **Fee payer**: sponsored by the facilitator, or self-funded by the payer.
+- **Replay primitive**: exclusive to this payment, or shared with the payer's account state. Where shared, state the resulting limit on concurrent pending payments per payer, and that unrelated payer activity can invalidate the payment after the resource handler has already run.
+- **Validity window**: bounded, and by what; or unbounded, in which case state how the payer invalidates an unused signed payment and how long the facilitator may retain it.
+- **Duplicate submission**: whether resubmitting an already-submitted payload is distinguishable from the original at the network interface.
+
+Each method MUST satisfy:
+
+- **Transfer correctness**: settlement MUST produce exactly one identifiable transfer of `amount` of `asset` to `payTo`. Operations incidental to making that payment, such as fee payment or change outputs, do not disqualify it; a binding MAY constrain transaction structure further as sponsor policy.
+- **Facilitator safety**: where the facilitator sponsors the fee, no operation in the signed payment may debit the facilitator beyond that fee.
+- **Replay**: the network's own primitive is authoritative. A consumed primitive MUST produce a settlement failure, never a success.
+- **Duplicate delivery**: the network primitive prevents double-spend, not double-delivery. Where a resubmission is indistinguishable from the original, submission returns success to every caller and one payment yields several resources. Such methods MUST deduplicate settlements atomically across every process serving `/settle`, retaining each key until its payment can no longer land.
+
+### Client-submitted (payment proof)
+
+The client submits the payment itself and presents a proof of it; settle validates that proof and binds it to the request. This family applies where the payer cannot produce a signed but unsubmitted payment, or where the client's payment initiates asynchronous downstream settlement rather than being the settlement itself. Methods in this family MUST use `upfront`: the payment is already submitted when the payload is presented, so no earlier ordering is available.
+
+Each method MUST satisfy:
+
+- **Instrument and proof**: the payment instrument the client must satisfy MUST be advertised in the payment requirements — in a standard field where one applies, such as a per-payment recipient address in `payTo`, otherwise in `accepts[].extra` — together with its validity window. The proof artifact MUST be carried in `PaymentPayload.payload`. Self-verifying proofs — those checkable against the requirements without querying a node or indexer — SHOULD be preferred, since they remove a liveness and trust dependency from settle.
+- **Request binding**: a proof establishes that a payment happened, not that it was made for this request. Unbound, a proof is equally valid at any resource server sharing `payTo` whose amount it satisfies. A method MUST bind the payment to the requirements by one of: an instrument unique to this request; a server-issued nonce carried in the payment; a payer signature over the requirements; or a payee commitment to the requirements embedded in the instrument. Binding also keeps deduplication within a single facilitator: a bound proof can only be replayed against the request it was bound to, so the settling facilitator needs no store beyond its own, whereas an unbound proof would have to be checked against a store shared by every facilitator serving that `payTo`.
+- **Single-use claim**: a proof MUST be claimed atomically before the resource executes; of two concurrent presentations, exactly one MUST succeed. Methods MUST define a canonical consumption key for the payment, formed as a CAIP-2 network identifier joined to the network's canonical payment identifier (a transaction hash, a payment hash, or equivalent).
+- **Retention bound**: a consumed proof MUST be recorded for as long as it stays presentable. An expiring instrument bounds this; where a proof stays presentable indefinitely, the method MUST declare a maximum proof age, or retention is unbounded.
+- **Amount acceptance**: acceptance follows the amount semantics of `exact`. Because the client controls the amount it sends, methods MUST state how a non-conforming payment, below or above the required amount, is handled, including whether and by what path it is returned.
+- **Finality**: declare the observable event that makes a payment final and which party owns confirmation-depth policy. Where settlement completes in more than one stage, declare which stage is the finality boundary. While that condition is unmet but still reachable, settle MUST NOT consume the proof or deliver the resource, and MUST return an error naming the unmet condition; any in-flight claim held for that attempt MUST be released before returning, and an attempt terminating abnormally MUST NOT leave a proof claimed indefinitely.
+- **Failure disposition**: where the finality condition can no longer be met, methods MUST state whether the payment is returned to the payer and by what path. Clients MUST NOT assume a return path exists.
 
 ## Critical Validation Requirements
 
