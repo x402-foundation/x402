@@ -518,6 +518,10 @@ export class BatchSvmScheme implements SchemeNetworkServer {
 
 function acceptedResponse(state: ChannelState, requirements: PaymentRequirements): SettleResponse {
   return {
+    success: true,
+    payer: state.payer,
+    transaction: "",
+    network: requirements.network,
     amount: "",
     extra: {
       channelState: snapshot(state),
@@ -528,20 +532,16 @@ function acceptedResponse(state: ChannelState, requirements: PaymentRequirements
       chargedAmount: requirements.amount,
       commitmentId: `${state.channelId}:${state.pendingRequest?.maxClaimableAmount ?? state.signedMaxClaimable}`,
     },
-    network: requirements.network,
-    payer: state.payer,
-    success: true,
-    transaction: "",
   };
 }
 
 function snapshot(state: ChannelState) {
   return {
-    balance: state.deposit.toString(),
     channelId: state.channelId,
-    chargedCumulativeAmount: state.chargedCumulativeAmount.toString(),
+    balance: state.deposit.toString(),
     totalClaimed: state.settled.toString(),
     withdrawRequestedAt: state.closeRequestedAt ?? 0,
+    chargedCumulativeAmount: state.chargedCumulativeAmount.toString(),
   };
 }
 

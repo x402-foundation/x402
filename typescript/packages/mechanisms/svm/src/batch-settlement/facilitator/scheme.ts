@@ -884,16 +884,17 @@ function snapshotChannel(
   channel: Channel,
   chargedCumulativeAmount?: bigint,
 ): BatchChannelState {
-  return {
-    balance: channel.deposit.toString(),
+  const snapshot: BatchChannelState = {
     channelId,
-    ...(chargedCumulativeAmount === undefined
-      ? {}
-      : { chargedCumulativeAmount: chargedCumulativeAmount.toString() }),
+    balance: channel.deposit.toString(),
     totalClaimed: channel.settlement.settled.toString(),
     withdrawRequestedAt:
       channel.status === ChannelStatus.Closing ? Number(channel.closureStartedAt) : 0,
   };
+  if (chargedCumulativeAmount !== undefined) {
+    snapshot.chargedCumulativeAmount = chargedCumulativeAmount.toString();
+  }
+  return snapshot;
 }
 
 function depositResponse(
@@ -905,11 +906,11 @@ function depositResponse(
   chargedCumulativeAmount: bigint,
 ): SettleResponse {
   return {
-    amount: channel.deposit.toString(),
-    network,
-    payer: channel.payer,
     success: true,
+    payer: channel.payer,
     transaction,
+    network,
+    amount: channel.deposit.toString(),
     extra: {
       channelState: snapshotChannel(channelId, channel, chargedCumulativeAmount),
       chargedAmount: chargedAmount.toString(),
@@ -925,10 +926,10 @@ function refundResponse(
   transaction: string,
 ): SettleResponse {
   return {
-    network,
-    payer: channel.payer,
     success: true,
+    payer: channel.payer,
     transaction,
+    network,
     extra: { channelState: snapshotChannel(channelId, channel) },
   };
 }

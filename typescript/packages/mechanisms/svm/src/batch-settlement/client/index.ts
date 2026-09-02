@@ -8,6 +8,4 @@ export {
   type BuiltDeposit,
   signBatchVoucher,
 } from "./channel";
-export type { BatchSvmClientConfig as BatchSvmSchemeConfig } from "./scheme";
-export { registerBatchSvmScheme } from "./register";
-export type { BatchSvmClientConfig } from "./register";
+export type { BatchSvmClientConfig } from "./scheme";

@@ -9,6 +9,7 @@ import type {
 } from "@x402/core/types";
 
 import { TOKEN_2022_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS } from "../../constants";
+import { findDefaultAsset } from "../../defaultAssets";
 import { buildTopUpPaymentChannelTransaction, parseU64 } from "../../payment-channels/open";
 import type { ClientSvmConfig } from "../../signer";
 import { createRpcClient, resolveBlockhash, resolveOpenSlot } from "../../utils";
@@ -71,6 +72,7 @@ export interface BatchSvmClientConfig extends ClientSvmConfig {
 
 export class BatchSvmScheme implements SchemeNetworkClient {
   readonly scheme = BATCH_SETTLEMENT_SCHEME;
+  findDefaultAsset = findDefaultAsset;
   readonly schemeHooks: SchemeClientHooks = {
     onPaymentResponse: async ctx => {
       await this.handlePaymentResponse(ctx);
