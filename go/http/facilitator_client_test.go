@@ -399,39 +399,42 @@ func TestHTTPFacilitatorClientExtensionResponses(t *testing.T) {
 	validHeader := base64.StdEncoding.EncodeToString(headerJSON)
 
 	tests := []struct {
-		name               string
-		endpoint           string
-		body               string
-		header             string
-		expectedExtensions map[string]interface{}
+		name                       string
+		endpoint                   string
+		body                       string
+		header                     string
+		expectedExtensions         map[string]interface{}
+		expectedExtensionResponses map[string]interface{}
 	}{
 		{
-			name:               "verify attaches valid header when body omits extensions",
-			endpoint:           "/verify",
-			body:               `{"isValid":true}`,
-			header:             validHeader,
-			expectedExtensions: headerExtensions,
+			name:                       "verify attaches valid header to sidechannel",
+			endpoint:                   "/verify",
+			body:                       `{"isValid":true}`,
+			header:                     validHeader,
+			expectedExtensionResponses: headerExtensions,
 		},
 		{
-			name:               "settle attaches valid header when body omits extensions",
-			endpoint:           "/settle",
-			body:               `{"success":true,"transaction":"0xabc","network":"eip155:8453"}`,
-			header:             validHeader,
-			expectedExtensions: headerExtensions,
+			name:                       "settle attaches valid header to sidechannel",
+			endpoint:                   "/settle",
+			body:                       `{"success":true,"transaction":"0xabc","network":"eip155:8453"}`,
+			header:                     validHeader,
+			expectedExtensionResponses: headerExtensions,
 		},
 		{
-			name:               "body extensions override header",
-			endpoint:           "/verify",
-			body:               `{"isValid":true,"extensions":{"bazaar":{"status":"from-body"}}}`,
-			header:             validHeader,
-			expectedExtensions: map[string]interface{}{"bazaar": map[string]interface{}{"status": "from-body"}},
+			name:                       "body extensions remain separate from sidechannel",
+			endpoint:                   "/verify",
+			body:                       `{"isValid":true,"extensions":{"bazaar":{"status":"from-body"}}}`,
+			header:                     validHeader,
+			expectedExtensions:         map[string]interface{}{"bazaar": map[string]interface{}{"status": "from-body"}},
+			expectedExtensionResponses: headerExtensions,
 		},
 		{
-			name:               "empty body extensions override header",
-			endpoint:           "/settle",
-			body:               `{"success":true,"transaction":"0xabc","network":"eip155:8453","extensions":{}}`,
-			header:             validHeader,
-			expectedExtensions: map[string]interface{}{},
+			name:                       "empty body extensions remain separate from sidechannel",
+			endpoint:                   "/settle",
+			body:                       `{"success":true,"transaction":"0xabc","network":"eip155:8453","extensions":{}}`,
+			header:                     validHeader,
+			expectedExtensions:         map[string]interface{}{},
+			expectedExtensionResponses: headerExtensions,
 		},
 		{
 			name:     "missing header leaves extensions nil",
@@ -479,23 +482,28 @@ func TestHTTPFacilitatorClientExtensionResponses(t *testing.T) {
 			defer server.Close()
 
 			client := NewHTTPFacilitatorClient(&FacilitatorConfig{URL: server.URL})
-			var extensions map[string]interface{}
+			var extensions, extensionResponses map[string]interface{}
 			if tt.endpoint == "/verify" {
 				response, err := client.Verify(ctx, payloadBytes, requirementsBytes)
 				if err != nil {
 					t.Fatalf("Unexpected verify error: %v", err)
 				}
 				extensions = response.Extensions
+				extensionResponses = response.ExtensionResponses
 			} else {
 				response, err := client.Settle(ctx, payloadBytes, requirementsBytes)
 				if err != nil {
 					t.Fatalf("Unexpected settle error: %v", err)
 				}
 				extensions = response.Extensions
+				extensionResponses = response.ExtensionResponses
 			}
 
 			if !reflect.DeepEqual(extensions, tt.expectedExtensions) {
 				t.Fatalf("Expected extensions %#v, got %#v", tt.expectedExtensions, extensions)
+			}
+			if !reflect.DeepEqual(extensionResponses, tt.expectedExtensionResponses) {
+				t.Fatalf("Expected extension responses %#v, got %#v", tt.expectedExtensionResponses, extensionResponses)
 			}
 		})
 	}

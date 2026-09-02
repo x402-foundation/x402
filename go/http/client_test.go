@@ -614,6 +614,26 @@ func TestEncodePaymentResponseHeader_ChannelStateOrder(t *testing.T) {
 	}
 }
 
+func TestEncodePaymentResponseHeaderOmitsExtensionResponses(t *testing.T) {
+	encoded, err := encodePaymentResponseHeader(x402.SettleResponse{
+		Success:            true,
+		Transaction:        "0xtx",
+		Network:            "eip155:1",
+		ExtensionResponses: map[string]interface{}{"bazaar": map[string]interface{}{"status": "accepted"}},
+	})
+	if err != nil {
+		t.Fatalf("encodePaymentResponseHeader: %v", err)
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if strings.Contains(string(decoded), "extensionResponses") || strings.Contains(string(decoded), "bazaar") {
+		t.Fatalf("extension responses leaked into PAYMENT-RESPONSE: %s", decoded)
+	}
+}
+
 func TestPaymentRoundTripper(t *testing.T) {
 	// Create a test server that returns 402 first, then 200
 	callCount := 0

@@ -479,9 +479,7 @@ func (c *HTTPFacilitatorClient) verifyHTTP(ctx context.Context, version int, pay
 	}
 	headerExtensions := extractExtensionResponsesHeader(resp)
 	logExtensionResponses(headerExtensions)
-	if result.Extensions == nil {
-		result.Extensions = headerExtensions
-	}
+	result.ExtensionResponses = headerExtensions
 	return result, nil
 }
 
@@ -565,8 +563,6 @@ func (c *HTTPFacilitatorClient) settleHTTP(ctx context.Context, version int, pay
 	}
 	headerExtensions := extractExtensionResponsesHeader(resp)
 	logExtensionResponses(headerExtensions)
-	if result.Extensions == nil {
-		result.Extensions = headerExtensions
-	}
+	result.ExtensionResponses = headerExtensions
 	return result, nil
 }

@@ -121,7 +121,9 @@ type VerifyResponse struct {
 	InvalidMessage string                 `json:"invalidMessage,omitempty"`
 	Payer          string                 `json:"payer,omitempty"`
 	Extensions     map[string]interface{} `json:"extensions,omitempty"`
-	Extra          map[string]interface{} `json:"extra,omitempty"`
+	// ExtensionResponses is a facilitator sidechannel for resource-server hooks.
+	ExtensionResponses map[string]interface{} `json:"-"`
+	Extra              map[string]interface{} `json:"extra,omitempty"`
 
 	// SkipHandler is an in-process directive set by an AfterVerifyHook that wants
 	// the HTTP layer to bypass the resource handler and settle inline. It is never
@@ -140,7 +142,9 @@ type SettleResponse struct {
 	Network      Network                `json:"network"`
 	Amount       string                 `json:"amount,omitempty"`
 	Extensions   map[string]interface{} `json:"extensions,omitempty"`
-	Extra        map[string]interface{} `json:"extra,omitempty"`
+	// ExtensionResponses is a facilitator sidechannel for resource-server hooks.
+	ExtensionResponses map[string]interface{} `json:"-"`
+	Extra              map[string]interface{} `json:"extra,omitempty"`
 }
 
 // SettlementOverrides allows overriding settlement parameters.
