@@ -1,0 +1,7 @@
+{
+  "name": "AgentToll",
+  "description": "Base-native onchain data for AI agents, pay-per-call via x402 — token safety checks, wallet portfolios, and a git-committed track record.",
+  "logoUrl": "/logos/agenttoll.png",
+  "websiteUrl": "https://agenttoll.app",
+  "category": "Services/Endpoints"
+}
