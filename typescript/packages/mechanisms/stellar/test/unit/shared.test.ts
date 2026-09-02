@@ -1,4 +1,6 @@
+import { Buffer } from "buffer";
 import {
+  nativeToScVal,
   SorobanDataBuilder,
   xdr,
   Networks as StellarNetworks,
@@ -8,6 +10,11 @@ import { AssembledTransaction } from "@stellar/stellar-sdk/contract";
 import { Api } from "@stellar/stellar-sdk/rpc";
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import { STELLAR_TESTNET_CAIP2 } from "../../src/constants";
+import {
+  InsufficientBalanceError,
+  SimulationFailedError,
+  TrustlineMissingError,
+} from "../../src/errors";
 import { ExactStellarScheme } from "../../src/exact/client/scheme";
 import { gatherAuthEntrySignatureStatus, handleSimulationResult } from "../../src/shared";
 import { createEd25519Signer } from "../../src/signer";
@@ -25,6 +32,55 @@ vi.mock("../../src/utils", async () => {
 
 describe("Stellar Shared Utilities", () => {
   describe("handleSimulationResult", () => {
+    const context = {
+      payer: "GBBO4ZDDZTSM2IUKQYBAST3CFHNPFXECGEFTGWTA2WELR2BIWDK57UVE",
+      payee: "GCHEI4PQEFJOA27MNZRPQNLGURS6KASW76X5UZCUZIXCOJLKXYCXOR2W",
+      asset: "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+    };
+    const BALANCE_ERROR_CODE = 10;
+    const BALANCE_RANGE_MESSAGE = "resulting balance is not within the allowed range";
+    const TRUSTLINE_MISSING_ERROR_CODE = 13;
+    const TRUSTLINE_MISSING_MESSAGE = "trustline entry is missing for account";
+
+    const captureError = (callback: () => void): Error => {
+      try {
+        callback();
+      } catch (error) {
+        if (error instanceof Error) {
+          return error;
+        }
+        throw error;
+      }
+      throw new Error("Expected callback to throw");
+    };
+
+    const createDiagnosticErrorEvent = (
+      errorCode: number,
+      args: xdr.ScVal[],
+    ): xdr.DiagnosticEvent => {
+      const eventV0 = new xdr.ContractEventV0({
+        topics: [
+          nativeToScVal("error", { type: "symbol" }),
+          xdr.ScVal.scvError(xdr.ScError.sceContract(errorCode)),
+        ],
+        data: xdr.ScVal.scvVec(args),
+      });
+      const body = xdr.ContractEventBody.fromXDR(
+        Buffer.concat([Buffer.from([0, 0, 0, 0]), xdr.ContractEventV0.toXDR(eventV0)]),
+      );
+      const event = new xdr.ContractEvent({
+        ext: xdr.ExtensionPoint.fromXDR(Buffer.from([0, 0, 0, 0])),
+        contractId: null,
+        type: xdr.ContractEventType.diagnostic(),
+        body,
+      });
+
+      return new xdr.DiagnosticEvent({
+        inSuccessfulContractCall: false,
+        event,
+      });
+    };
+
     it("should throw error when simulation is undefined", () => {
       expect(() => handleSimulationResult(undefined)).toThrow("Simulation result is undefined");
     });
@@ -52,30 +108,154 @@ describe("Stellar Shared Utilities", () => {
       );
     });
 
-    it("should throw error when simulation has type ERROR", () => {
+    it("should throw a typed generic error for an unmapped simulation failure", () => {
+      const rawError = "Transaction simulation failed: insufficient balance";
       const mockErrorSimulation: Api.SimulateTransactionResponse = {
         id: "test-id",
         latestLedger: 12345,
+        events: [],
         _parsed: true,
-        error: "Transaction simulation failed: insufficient balance",
+        error: rawError,
       } as Api.SimulateTransactionErrorResponse;
 
-      expect(() => handleSimulationResult(mockErrorSimulation)).toThrow(
-        /Stellar simulation failed with error message: Transaction simulation failed: insufficient balance/,
-      );
+      const error = captureError(() => handleSimulationResult(mockErrorSimulation, context));
+
+      expect(error).toBeInstanceOf(SimulationFailedError);
+      expect(error).toMatchObject({ cause: rawError });
+    });
+
+    it("should keep a known failure generic when diagnostics do not identify an account", () => {
+      const rawError = `HostError: ${TRUSTLINE_MISSING_MESSAGE}`;
+      const mockErrorSimulation = {
+        id: "test-id",
+        latestLedger: 12345,
+        events: [],
+        _parsed: true,
+        error: rawError,
+      } as Api.SimulateTransactionErrorResponse;
+
+      const error = captureError(() => handleSimulationResult(mockErrorSimulation, context));
+
+      expect(error).toBeInstanceOf(SimulationFailedError);
+      expect(error).not.toBeInstanceOf(TrustlineMissingError);
+      expect(error).toMatchObject({ cause: rawError });
+    });
+
+    it.each([
+      ["payer", context.payer],
+      ["payee", context.payee],
+    ])("should use the missing trustline %s from diagnostic events", (_, account) => {
+      const rawError = `HostError: ${TRUSTLINE_MISSING_MESSAGE}`;
+      const mockErrorSimulation = {
+        id: "test-id",
+        latestLedger: 12345,
+        events: [
+          createDiagnosticErrorEvent(TRUSTLINE_MISSING_ERROR_CODE, [
+            nativeToScVal(TRUSTLINE_MISSING_MESSAGE),
+            nativeToScVal(account, { type: "address" }),
+          ]),
+        ],
+        _parsed: true,
+        error: rawError,
+      } as Api.SimulateTransactionErrorResponse;
+
+      const error = captureError(() => handleSimulationResult(mockErrorSimulation, context));
+
+      expect(error).toBeInstanceOf(TrustlineMissingError);
+      expect(error).toMatchObject({
+        account,
+        asset: context.asset,
+        cause: rawError,
+      });
+    });
+
+    it("should keep a foreign trustline diagnostic generic", () => {
+      const rawError = `HostError: ${TRUSTLINE_MISSING_MESSAGE}`;
+      const foreignAccount = "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER";
+      const mockErrorSimulation = {
+        id: "test-id",
+        latestLedger: 12345,
+        events: [
+          createDiagnosticErrorEvent(TRUSTLINE_MISSING_ERROR_CODE, [
+            nativeToScVal(TRUSTLINE_MISSING_MESSAGE),
+            nativeToScVal(foreignAccount, { type: "address" }),
+          ]),
+        ],
+        _parsed: true,
+        error: rawError,
+      } as Api.SimulateTransactionErrorResponse;
+
+      const error = captureError(() => handleSimulationResult(mockErrorSimulation, context));
+
+      expect(error).toBeInstanceOf(SimulationFailedError);
+      expect(error).not.toBeInstanceOf(TrustlineMissingError);
+      expect(error).toMatchObject({ cause: rawError });
+    });
+
+    it("should keep an over-limit recipient balance generic", () => {
+      const rawError = `HostError: ${BALANCE_RANGE_MESSAGE}`;
+      const mockErrorSimulation = {
+        id: "test-id",
+        latestLedger: 12345,
+        events: [
+          createDiagnosticErrorEvent(BALANCE_ERROR_CODE, [
+            nativeToScVal(BALANCE_RANGE_MESSAGE),
+            xdr.ScVal.scvI64(xdr.Int64.fromString("0")),
+            xdr.ScVal.scvI64(xdr.Int64.fromString("101")),
+            xdr.ScVal.scvI64(xdr.Int64.fromString("100")),
+          ]),
+        ],
+        _parsed: true,
+        error: rawError,
+      } as Api.SimulateTransactionErrorResponse;
+
+      const error = captureError(() => handleSimulationResult(mockErrorSimulation, context));
+
+      expect(error).toBeInstanceOf(SimulationFailedError);
+      expect(error).not.toBeInstanceOf(InsufficientBalanceError);
+      expect(error).toMatchObject({ cause: rawError });
+    });
+
+    it("should map an insufficient balance to the payer and asset", () => {
+      const rawError = "Error(Contract, #10)";
+      const mockErrorSimulation = {
+        id: "test-id",
+        latestLedger: 12345,
+        events: [
+          createDiagnosticErrorEvent(BALANCE_ERROR_CODE, [
+            nativeToScVal(BALANCE_RANGE_MESSAGE),
+            xdr.ScVal.scvI64(xdr.Int64.fromString("100")),
+            xdr.ScVal.scvI64(xdr.Int64.fromString("99")),
+            xdr.ScVal.scvI64(xdr.Int64.fromString("1000")),
+          ]),
+        ],
+        _parsed: true,
+        error: rawError,
+      } as Api.SimulateTransactionErrorResponse;
+
+      const error = captureError(() => handleSimulationResult(mockErrorSimulation, context));
+
+      expect(error).toBeInstanceOf(InsufficientBalanceError);
+      expect(error).toMatchObject({
+        account: context.payer,
+        asset: context.asset,
+        cause: rawError,
+      });
     });
 
     it("should handle simulation with empty error message", () => {
       const mockErrorSimulation: Api.SimulateTransactionResponse = {
         id: "test-id",
         latestLedger: 12345,
+        events: [],
         _parsed: true,
         error: "",
       } as Api.SimulateTransactionErrorResponse;
 
-      expect(() => handleSimulationResult(mockErrorSimulation)).toThrow(
-        /Stellar simulation failed/,
-      );
+      const error = captureError(() => handleSimulationResult(mockErrorSimulation, context));
+
+      expect(error).toBeInstanceOf(SimulationFailedError);
+      expect(error).toMatchObject({ cause: "" });
     });
 
     it("should not throw error when simulation is successful", () => {

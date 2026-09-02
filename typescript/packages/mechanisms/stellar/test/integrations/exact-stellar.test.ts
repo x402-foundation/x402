@@ -18,7 +18,12 @@ import {
 } from "@x402/core/types";
 import { convertToTokenAmount } from "@x402/core/utils";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createEd25519Signer, Ed25519Signer, STELLAR_TESTNET_CAIP2 } from "../../src";
+import {
+  createEd25519Signer,
+  Ed25519Signer,
+  InsufficientBalanceError,
+  STELLAR_TESTNET_CAIP2,
+} from "../../src";
 import { ExactStellarScheme as ExactStellarClient } from "../../src/exact/client";
 import { ExactStellarScheme as ExactStellarFacilitator } from "../../src/exact/facilitator";
 import { ExactStellarScheme as ExactStellarServer } from "../../src/exact/server";
@@ -158,17 +163,22 @@ function buildStellarPaymentRequirements(
 }
 
 /**
- * Helper to check if an error is due to insufficient balance
+ * Checks whether an error represents an insufficient Stellar balance.
+ *
+ * @param error - Error to inspect
+ * @returns Whether the error indicates insufficient balance
  */
 function isInsufficientBalanceError(error: unknown): boolean {
-  if (error instanceof Error) {
-    return (
-      error.message.includes("resulting balance is not within the allowed range") ||
-      error.message.includes("insufficient balance") ||
-      error.message.includes("Error(Contract, #10)")
-    );
+  if (error instanceof InsufficientBalanceError) {
+    return true;
   }
-  return false;
+
+  return (
+    error instanceof Error &&
+    (error.message.includes("resulting balance is not within the allowed range") ||
+      error.message.includes("insufficient balance") ||
+      error.message.includes("Error(Contract, #10)"))
+  );
 }
 
 describe.skipIf(missingEnvVars)("Stellar Integration Tests", () => {
