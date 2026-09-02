@@ -71,6 +71,7 @@ jobs:
           publish_package "packages/mechanisms/svm"
           publish_package "packages/mechanisms/avm"
           publish_package "packages/mechanisms/aptos"
+          publish_package "packages/mechanisms/casper"
           publish_package "packages/mechanisms/stellar"
           publish_package "packages/mechanisms/hedera"
           publish_package "packages/mechanisms/keeta"

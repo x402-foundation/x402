@@ -7,6 +7,7 @@ import { UptoSvmScheme } from "@x402/svm/upto/server";
 import { base58 } from "@scure/base";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { ExactAptosScheme } from "@x402/aptos/exact/server";
+import { ExactCasperScheme } from "@x402/casper/exact/server";
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
 import { ExactKeetaScheme } from "@x402/keeta/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
@@ -106,6 +107,9 @@ async function registerFamilySchemes(
     }
     case "aptos":
       server.register(pattern, new ExactAptosScheme());
+      return;
+    case "casper":
+      server.register(pattern, new ExactCasperScheme());
       return;
     case "hedera":
       server.register(pattern, new ExactHederaScheme());

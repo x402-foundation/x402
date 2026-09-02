@@ -14,6 +14,8 @@ import { UptoSvmScheme } from "@x402/svm/upto/client";
 import { ExactSvmSchemeV1 } from "@x402/svm/v1";
 import { ExactAptosScheme } from "@x402/aptos/exact/client";
 import { Account, Ed25519PrivateKey, PrivateKey, PrivateKeyVariants } from "@aptos-labs/ts-sdk";
+import { ExactCasperScheme } from "@x402/casper/exact/client";
+import { ClientCasperSigner, createClientCasperSigner } from "@x402/casper";
 import { createClientHederaSigner, PrivateKey as HederaPrivateKey } from "@x402/hedera";
 import { ExactHederaScheme } from "@x402/hedera/exact/client";
 import { ExactKeetaScheme } from "@x402/keeta/exact/client";
@@ -177,6 +179,14 @@ export async function createE2EClient(): Promise<E2EClientContext> {
     aptosAccount = Account.fromPrivateKey({ privateKey: aptosPrivateKey });
   }
 
+  let casperClientSigner: ClientCasperSigner | undefined;
+  if (process.env.CLIENT_CASPER_PRIVATE_KEY) {
+    casperClientSigner = await createClientCasperSigner(
+      process.env.CLIENT_CASPER_PRIVATE_KEY,
+      process.env.CLIENT_CASPER_PRIVATE_KEY_ALGORITHM === "secp256k1" ? 2 : 1, // Default to ED25519 if not specified
+    );
+  }
+
   let hederaClientSigner: ReturnType<typeof createClientHederaSigner> | undefined;
   if (process.env.CLIENT_HEDERA_ACCOUNT_ID && process.env.CLIENT_HEDERA_PRIVATE_KEY) {
     hederaClientSigner = createClientHederaSigner(
@@ -213,16 +223,16 @@ export async function createE2EClient(): Promise<E2EClientContext> {
   const tvmProvider = (process.env.TVM_PROVIDER || TVM_PROVIDER_TONCENTER).toLowerCase();
   const tvmScheme = tvmPrivateKey
     ? new ExactTvmScheme(
-        toClientTvmSigner(parseTvmKeyPair(tvmPrivateKey), {
-          network: tvmNetwork,
-          provider: tvmProvider,
-          apiKey:
-            tvmProvider === TVM_PROVIDER_TONAPI
-              ? process.env.TVM_TONAPI_API_KEY
-              : process.env.TVM_TONCENTER_API_KEY,
-          providerBaseUrl: process.env.TVM_RPC_URL,
-        }),
-      )
+      toClientTvmSigner(parseTvmKeyPair(tvmPrivateKey), {
+        network: tvmNetwork,
+        provider: tvmProvider,
+        apiKey:
+          tvmProvider === TVM_PROVIDER_TONAPI
+            ? process.env.TVM_TONAPI_API_KEY
+            : process.env.TVM_TONCENTER_API_KEY,
+        providerBaseUrl: process.env.TVM_RPC_URL,
+      }),
+    )
     : undefined;
 
   if (ccdPrivateKey && ccdAddress) {
@@ -241,6 +251,12 @@ export async function createE2EClient(): Promise<E2EClientContext> {
     schemes.push({
       network: networkCaip2Pattern("aptos"),
       client: new ExactAptosScheme(aptosAccount),
+    });
+  }
+  if (casperClientSigner) {
+    schemes.push({
+      network: networkCaip2Pattern("casper"),
+      client: new ExactCasperScheme(casperClientSigner),
     });
   }
   if (hederaClientSigner) {

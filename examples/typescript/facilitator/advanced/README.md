@@ -12,6 +12,7 @@ Express.js facilitator service demonstrating advanced x402 patterns including al
 - Hedera account id + private key for Hedera testnet fees (optional)
 - Keeta mnemonic (seed phrase) and wallet with Testnet KTA for transaction fees (create wallet on [Keeta Testnet Wallet](https://wallet.test.keeta.com/) and fund via [Keeta Testnet Faucet](https://faucet.test.keeta.com/))
 - No XRPL account or key: the XRPL facilitator is keyless (the payer signs and pays transaction fees); set `XRPL_NETWORK` to enable it (optional)
+- Casper private key with testnet CSPR for transaction fees (fund via the [CSPR.live testnet faucet](https://testnet.cspr.live/tools/faucet))
 
 ## Setup
 
@@ -25,6 +26,10 @@ and fill required environment variables:
 
 - `APTOS_PRIVATE_KEY` - Aptos Ed25519 private key for fee payer (optional; `all-networks`)
 - `APTOS_RPC_URL` - Aptos RPC URL (optional; `all-networks`)
+- `CASPER_PRIVATE_KEY` - Casper private key as 64-character hex (optional; `all-networks`)
+- `CASPER_PRIVATE_KEY_ALGORITHM` - Casper private key algorithm, either `ed25519` (default) or `secp256k1` (optional; `all-networks`)
+- `CASPER_NETWORK` - Casper network CAIP-2 (optional; defaults to `casper:casper-test`)
+- `CASPER_RPC_URL` - Casper JSON-RPC URL (optional; defaults to the SDK testnet RPC for known networks)
 - `CCD_FACILITATOR_PRIVATE_KEY` - Concordium Ed25519 private key for sponsor signing (optional; `all-networks`)
 - `CCD_FACILITATOR_ADDRESS` - Concordium sponsor account address (optional; `all-networks`)
 - `CCD_NETWORK` - Concordium network CAIP-2 (optional; defaults to `ccd:4221332d34e1694168c2a0c0b3fd0f27`)
@@ -60,6 +65,16 @@ For testing on Aptos testnet, you can obtain test tokens from these faucets:
 
 - **Test APT**: https://aptos.dev/network/faucet or through an account on [geomi.dev](https://geomi.dev/manage/faucet)
 - **Test USDC**: https://faucet.circle.com/
+
+#### Casper Testnet
+
+Create or reuse a dedicated Casper testnet account or wallet key, then fund any
+account that submits Casper transactions with testnet CSPR from the
+[CSPR.live testnet faucet](https://testnet.cspr.live/tools/faucet). CSPR is
+required for gas on Casper Testnet.
+
+Use [testnet.cspr.trade](https://testnet.cspr.trade) to get wrapped CSPR (WCSPR) or csprUSD for
+the client payments.
 
 ## Available Examples
 
@@ -274,6 +289,8 @@ Networks use [CAIP-2](https://github.com/ChainAgnostic/CAIPs/blob/main/CAIPs/cai
 
 - `aptos:2` — Aptos Testnet
 - `aptos:1` — Aptos Mainnet
+- `casper:casper-test` - Casper Testnet
+- `casper:casper` - Casper Mainnet
 - `eip155:84532` — Base Sepolia
 - `eip155:8453` — Base Mainnet
 - `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` — Solana Devnet

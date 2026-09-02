@@ -70,6 +70,12 @@ and fill required environment variables:
 - `AVM_ADDRESS` - Algorand address to receive payments (optional for `all-networks`)
 - `AVM_NETWORK` - Algorand network CAIP-2 (optional; defaults to canonical Algorand Testnet)
 - `APTOS_ADDRESS` - Aptos account address to receive payments (optional for `all-networks`)
+- `CASPER_ADDRESS` - Casper address to receive payments (optional for `all-networks`)
+- `CASPER_NETWORK` - Casper network CAIP-2 (optional; defaults to `casper:casper-test`)
+- `CASPER_ASSET` - CEP-18 contract package hash (optional for `all-networks`)
+- `CASPER_TOKEN_NAME` - CEP-3009 EIP-712 token name (optional for `all-networks`)
+- `CASPER_TOKEN_VERSION` - CEP-3009 EIP-712 token version (optional for `all-networks`)
+- `CASPER_AMOUNT` - Casper CEP-18 amount (optional; defaults to `1500000000`)
 - `CCD_ADDRESS` - Concordium account address to receive payments (optional for `all-networks`)
 - `EVM_ADDRESS` - Ethereum address to receive payments
 - `SVM_ADDRESS` - Solana address to receive payments (optional for `all-networks`)
@@ -137,6 +143,12 @@ The receiving account must exist on the ledger, i.e. hold the [base reserve](htt
 
 1. Use the [XRPL Testnet faucet](https://xrpl.org/resources/dev-tools/xrp-faucets) to generate a funded account, and copy its classic address (starts with `r`) into `XRPL_ADDRESS`.
 2. The `all-networks` example prices in XRP drops, so no further setup is needed. To receive issued-currency (IOU) payments instead, the receiving account must hold a [trust line](https://xrpl.org/docs/concepts/tokens/fungible-tokens) to the issuer.
+
+#### Casper Testnet
+
+Create or reuse a dedicated Casper testnet account or wallet key, then fund any account that submits Casper transactions with testnet CSPR from the [CSPR.live testnet faucet](https://testnet.cspr.live/tools/faucet). CSPR is required for gas on Casper Testnet.
+
+Use [testnet.cspr.trade](https://testnet.cspr.trade) to get wrapped CSPR (WCSPR) or csprUSD for the client payments.
 
 ## Available Examples
 

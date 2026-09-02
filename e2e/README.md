@@ -203,8 +203,10 @@ CLIENT_EVM_PRIVATE_KEY=0x...        # EVM private key for client payments
 CLIENT_SVM_PRIVATE_KEY=...          # Solana private key for client payments
 CLIENT_AVM_PRIVATE_KEY=...          # Algorand private key for client payments
 CLIENT_APTOS_PRIVATE_KEY=...        # Aptos private key for client payments (hex string)
-CLIENT_CCD_PRIVATE_KEY=...         # Concordium private key for client payments
-CLIENT_CCD_ADDRESS=...            # Concordium account address for client payments
+CLIENT_CASPER_PRIVATE_KEY=...       # Casper private key for client payments
+CLIENT_CASPER_PRIVATE_KEY_ALGORITHM=ed25519 # Optional: ed25519 (default) or secp256k1
+CLIENT_CCD_PRIVATE_KEY=...          # Concordium private key for client payments
+CLIENT_CCD_ADDRESS=...              # Concordium account address for client payments
 CLIENT_HEDERA_ACCOUNT_ID=0.0....    # Hedera account id for client payments
 CLIENT_HEDERA_PRIVATE_KEY=0x...     # Hedera ECDSA private key for client payments
 CLIENT_KEETA_MNEMONIC=...           # Keeta mnemonic for client payments
@@ -219,6 +221,7 @@ SERVER_EVM_ADDRESS=0x...            # Where servers receive EVM payments
 SERVER_SVM_ADDRESS=...              # Where servers receive Solana payments
 SERVER_AVM_ADDRESS=...              # Where servers receive Algorand payments
 SERVER_APTOS_ADDRESS=0x...          # Where servers receive Aptos payments
+SERVER_CASPER_ADDRESS=00...         # Where servers receive Casper payments
 SERVER_CCD_ADDRESS=...              # Where servers receive Concordium payments
 SERVER_HEDERA_ADDRESS=0.0....       # Where servers receive Hedera payments
 SERVER_KEETA_ADDRESS=keeta_...      # Where servers receive Keeta payments
@@ -232,6 +235,8 @@ FACILITATOR_EVM_PRIVATE_KEY=0x...   # EVM private key for facilitator
 FACILITATOR_SVM_PRIVATE_KEY=...     # Solana private key for facilitator
 FACILITATOR_AVM_PRIVATE_KEY=...     # Algorand private key for facilitator
 FACILITATOR_APTOS_PRIVATE_KEY=...   # Aptos private key for facilitator (hex string)
+FACILITATOR_CASPER_PRIVATE_KEY=...  # Casper private key for facilitator gas payments
+FACILITATOR_CASPER_PRIVATE_KEY_ALGORITHM=ed25519 # Optional: ed25519 (default) or secp256k1
 FACILITATOR_CCD_PRIVATE_KEY=...    # Concordium private key for facilitator
 FACILITATOR_CCD_ADDRESS=...       # Concordium account address for facilitator
 FACILITATOR_HEDERA_ACCOUNT_ID=0.0... # Hedera fee payer account id for facilitator
@@ -242,6 +247,16 @@ FACILITATOR_TVM_PRIVATE_KEY=...     # TVM private key for facilitator
 FACILITATOR_NEAR_ACCOUNT_ID=...     # NEAR relayer account id (submits meta-tx, sponsors gas)
 FACILITATOR_NEAR_PRIVATE_KEY=ed25519:... # NEAR relayer private key
 # XRPL needs no facilitator wallet — the facilitator is keyless (payer signs and pays fees)
+
+# Casper CEP-18 support
+CASPER_ASSET=...                    # CEP-18 contract package hash (64 hex chars, no 0x/hash-)
+CASPER_TOKEN_NAME=...               # CEP-3009 EIP-712 token name
+CASPER_TOKEN_VERSION=...            # CEP-3009 EIP-712 token version
+CASPER_AMOUNT=1                     # Optional; defaults to 1
+
+# Casper network override
+CASPER_TESTNET_RPC_URL=https://node.testnet.casper.network/rpc # Optional; defaults by network
+CASPER_SPECULATIVE_RPC_URL=https://node-specexec.testnet.casper.network/rpc # Optional
 
 # Concordium network override
 CCD_NETWORK=ccd:4221332d34e1694168c2a0c0b3fd0f27  # Optional; defaults to testnet
@@ -350,6 +365,16 @@ You need **three separate NEAR testnet accounts** for e2e tests — client (paye
 3. Give the **client (payer)** the payment token. The default asset is **wNEAR** (`wrap.testnet`, a NEP-141): wrap NEAR via `wrap.testnet` `near_deposit`. Both payer and merchant must be `storage_deposit`-registered on the token contract.
 
 > **Note:** payer key = `CLIENT_NEAR_*`, relayer key = `FACILITATOR_NEAR_*`, merchant = `SERVER_NEAR_ADDRESS`. `CLIENT_NEAR_ACCOUNT_ID` is required because a NEAR private key identifies a public key, but the signer must also know which account owns that access key to read its nonce and set the delegated action `senderId`. Override the token with `SERVER_NEAR_ASSET` / `SERVER_NEAR_AMOUNT` (defaults: `wrap.testnet` / `1000000000000000000000` = 0.001 wNEAR; set them to a NEP-141 like Circle USDC for stablecoin runs).
+
+#### Casper Testnet
+
+Create or reuse dedicated Casper testnet accounts or wallet keys for the client,
+server payee, and facilitator. Fund any account that submits Casper transactions
+with testnet CSPR from the [CSPR.live testnet faucet](https://testnet.cspr.live/tools/faucet);
+CSPR is required for gas on Casper Testnet. 
+
+Use [testnet.cspr.trade](https://testnet.cspr.trade) to get wrapped CSPR (WCSPR) or csprUSD for
+the client payments.
 
 ## Example Session
 

@@ -20,6 +20,8 @@ import { x402Client, wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
 import { ExactAptosScheme } from "@x402/aptos/exact/client";
 import { toClientAvmSigner } from "@x402/avm";
 import { ExactAvmScheme } from "@x402/avm/exact/client";
+import { createClientCasperSigner } from "@x402/casper";
+import { ExactCasperScheme } from "@x402/casper/exact/client";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/client";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { UptoEvmScheme } from "@x402/evm/upto/client";
@@ -54,6 +56,7 @@ config();
 // Configuration - optional per network
 const avmPrivateKey = process.env.AVM_PRIVATE_KEY as string | undefined;
 const aptosPrivateKey = process.env.APTOS_PRIVATE_KEY as string | undefined;
+const casperPrivateKey = process.env.CASPER_PRIVATE_KEY as string | undefined;
 const ccdPrivateKey = process.env.CCD_PRIVATE_KEY as string | undefined;
 const ccdAddress = process.env.CCD_ADDRESS as string | undefined;
 const evmPrivateKey = process.env.EVM_PRIVATE_KEY as `0x${string}` | undefined;
@@ -109,6 +112,7 @@ async function main(): Promise<void> {
   if (
     !avmPrivateKey &&
     !aptosPrivateKey &&
+    !casperPrivateKey &&
     !(ccdPrivateKey && ccdAddress) &&
     !evmPrivateKey &&
     !keetaMnemonic &&
@@ -120,7 +124,7 @@ async function main(): Promise<void> {
     !xrplSeed
   ) {
     console.error(
-      "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CCD_PRIVATE_KEY + CCD_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_ACCOUNT_ID + NEAR_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY, TVM_PRIVATE_KEY, or XRPL_SEED is required",
+      "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CASPER_PRIVATE_KEY, CCD_PRIVATE_KEY + CCD_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_ACCOUNT_ID + NEAR_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY, TVM_PRIVATE_KEY, or XRPL_SEED is required",
     );
     process.exit(1);
   }
@@ -148,6 +152,16 @@ async function main(): Promise<void> {
     const account = Account.fromPrivateKey({ privateKey: new Ed25519PrivateKey(formattedKey) });
     client.register("aptos:*", new ExactAptosScheme(account));
     console.log(`Initialized Aptos account: ${account.accountAddress.toStringLong()}`);
+  }
+
+  // Register Casper scheme if private key is provided
+  if (casperPrivateKey) {
+    const casperSigner = await createClientCasperSigner(
+      casperPrivateKey,
+      process.env.CASPER_PRIVATE_KEY_ALGORITHM === "secp256k1" ? 2 : 1, // Default to ED25519 if not specified
+    );
+    client.register("casper:*", new ExactCasperScheme(casperSigner));
+    console.log(`Initialized Casper account: ${casperSigner.accountAddress()}`);
   }
 
   // Register Concordium scheme if private key and address are provided

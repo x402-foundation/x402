@@ -21,6 +21,8 @@ import { base58 } from "@scure/base";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { toFacilitatorAptosSigner } from "@x402/aptos";
 import { ExactAptosScheme } from "@x402/aptos/exact/facilitator";
+import { FacilitatorCasperSigner, createFacilitatorCasperSigner } from "@x402/casper";
+import { ExactCasperScheme } from "@x402/casper/exact/facilitator";
 import { toFacilitatorAvmSigner } from "@x402/avm";
 import { ExactAvmScheme } from "@x402/avm/exact/facilitator";
 import { x402Facilitator } from "@x402/core/facilitator";
@@ -114,6 +116,7 @@ const KEETA_NETWORK = resolveNetworkCaip2("keeta");
 const STELLAR_NETWORK = resolveNetworkCaip2("stellar");
 const TVM_NETWORK = resolveNetworkCaip2("tvm");
 const NEAR_NETWORK = resolveNetworkCaip2("near");
+const CASPER_NETWORK = resolveNetworkCaip2("casper");
 const NEAR_RPC_URL = process.env.NEAR_RPC_URL;
 const XRPL_NETWORK = resolveNetworkCaip2("xrpl");
 const XRPL_RPC_URL = process.env.XRPL_RPC_URL;
@@ -124,6 +127,7 @@ const EVM_RPC_URL = process.env.EVM_RPC_URL;
 const SVM_RPC_URL = process.env.SVM_RPC_URL;
 const AVM_RPC_URL = process.env.AVM_RPC_URL;
 const APTOS_RPC_URL = process.env.APTOS_RPC_URL;
+const CASPER_RPC_URL = process.env.CASPER_RPC_URL;
 const HEDERA_RPC_URL = process.env.HEDERA_RPC_URL;
 const STELLAR_RPC_URL = process.env.STELLAR_RPC_URL;
 const TVM_PROVIDER = (process.env.TVM_PROVIDER || TVM_PROVIDER_TONCENTER).toLowerCase();
@@ -142,6 +146,7 @@ function getEvmChain(network: string): Chain {
 console.log(`🌐 EVM Network: ${EVM_NETWORK}`);
 console.log(`🌐 SVM Network: ${SVM_NETWORK}`);
 console.log(`🌐 Aptos Network: ${APTOS_NETWORK}`);
+console.log(`🌐 Casper Network: ${CASPER_NETWORK}`);
 console.log(`🌐 AVM Network: ${AVM_NETWORK}`);
 console.log(`🌐 Hedera Network: ${HEDERA_NETWORK}`);
 console.log(`🌐 Keeta Network: ${KEETA_NETWORK}`);
@@ -154,6 +159,7 @@ if (SVM_RPC_URL) console.log(`🌐 SVM RPC URL: ${SVM_RPC_URL}`);
 if (AVM_RPC_URL) console.log(`🌐 AVM RPC URL: ${AVM_RPC_URL}`);
 if (APTOS_RPC_URL) console.log(`🌐 Aptos RPC URL: ${APTOS_RPC_URL}`);
 if (HEDERA_RPC_URL) console.log(`🌐 Hedera Node URL: ${HEDERA_RPC_URL}`);
+if (CASPER_RPC_URL) console.log(`🌐 Casper RPC URL: ${CASPER_RPC_URL}`);
 if (STELLAR_RPC_URL) console.log(`🌐 Stellar RPC URL: ${STELLAR_RPC_URL}`);
 console.log(`🌐 TVM Provider: ${TVM_PROVIDER}`);
 
@@ -161,6 +167,7 @@ const hasFacilitatorCredential = [
   process.env.FACILITATOR_EVM_PRIVATE_KEY,
   process.env.FACILITATOR_SVM_PRIVATE_KEY,
   process.env.FACILITATOR_APTOS_PRIVATE_KEY,
+  process.env.FACILITATOR_CASPER_PRIVATE_KEY && process.env.FACILITATOR_CASPER_PRIVATE_KEY_ALGORITHM,
   process.env.FACILITATOR_AVM_PRIVATE_KEY,
   process.env.FACILITATOR_HEDERA_ACCOUNT_ID && process.env.FACILITATOR_HEDERA_PRIVATE_KEY,
   process.env.FACILITATOR_KEETA_MNEMONIC,
@@ -179,8 +186,8 @@ if (!hasFacilitatorCredential) {
 // Initialize the EVM account from private key when configured
 const evmAccount = process.env.FACILITATOR_EVM_PRIVATE_KEY
   ? privateKeyToAccount(process.env.FACILITATOR_EVM_PRIVATE_KEY as `0x${string}`, {
-      nonceManager,
-    })
+    nonceManager,
+  })
   : undefined;
 if (evmAccount) {
   console.info(`EVM Facilitator account: ${evmAccount.address}`);
@@ -190,12 +197,12 @@ if (evmAccount) {
 // delegate to this address or supply their own (SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY).
 const authorizerSigner: AuthorizerSigner | undefined = evmAccount
   ? {
-      address: evmAccount.address,
-      signTypedData: (params) =>
-        evmAccount.signTypedData(
-          params as Parameters<typeof evmAccount.signTypedData>[0],
-        ),
-    }
+    address: evmAccount.address,
+    signTypedData: (params) =>
+      evmAccount.signTypedData(
+        params as Parameters<typeof evmAccount.signTypedData>[0],
+      ),
+  }
   : undefined;
 if (authorizerSigner) {
   console.info(`EVM Receiver Authorizer: ${authorizerSigner.address}`);
@@ -204,8 +211,8 @@ if (authorizerSigner) {
 // Initialize the SVM account from private key when configured
 const svmAccount = process.env.FACILITATOR_SVM_PRIVATE_KEY
   ? await createKeyPairSignerFromBytes(
-      base58.decode(process.env.FACILITATOR_SVM_PRIVATE_KEY as string),
-    )
+    base58.decode(process.env.FACILITATOR_SVM_PRIVATE_KEY as string),
+  )
   : undefined;
 if (svmAccount) {
   console.info(`SVM Facilitator account: ${svmAccount.address}`);
@@ -230,6 +237,15 @@ let avmSigner: ReturnType<typeof toFacilitatorAvmSigner> | undefined;
 if (process.env.FACILITATOR_AVM_PRIVATE_KEY) {
   avmSigner = toFacilitatorAvmSigner(process.env.FACILITATOR_AVM_PRIVATE_KEY as string);
   console.info(`AVM Facilitator account: ${avmSigner.getAddresses()[0]}`);
+}
+
+let casperFacilitatorSigner: FacilitatorCasperSigner | undefined;
+if (process.env.FACILITATOR_CASPER_PRIVATE_KEY) {
+  casperFacilitatorSigner = await createFacilitatorCasperSigner(
+    process.env.FACILITATOR_CASPER_PRIVATE_KEY,
+    process.env.FACILITATOR_CASPER_PRIVATE_KEY_ALGORITHM === "secp256k1" ? 2 : 1 // Default to ED25519 if not specified);
+  );
+  console.info(`Casper Facilitator account: ${casperFacilitatorSigner.getAddresses(CASPER_NETWORK as Network)[0]}`);
 }
 
 // Initialize the Hedera signer from account + private key (optional)
@@ -324,60 +340,60 @@ if (process.env.FACILITATOR_CCD_PRIVATE_KEY && process.env.FACILITATOR_CCD_ADDRE
 const evmChain = getEvmChain(EVM_NETWORK);
 const viemClient = evmAccount
   ? createWalletClient({
-      account: evmAccount,
-      chain: evmChain,
-      transport: http(EVM_RPC_URL),
-    }).extend(publicActions)
+    account: evmAccount,
+    chain: evmChain,
+    transport: http(EVM_RPC_URL),
+  }).extend(publicActions)
   : undefined;
 
 const evmSigner = evmAccount && viemClient
   ? toFacilitatorEvmSigner({
-      address: evmAccount.address,
-      readContract: (args: {
-        address: `0x${string}`;
-        abi: readonly unknown[];
-        functionName: string;
-        args?: readonly unknown[];
-      }) =>
-        viemClient.readContract({
-          ...args,
-          args: args.args || [],
-        }),
-      verifyTypedData: (args: {
-        address: `0x${string}`;
-        domain: Record<string, unknown>;
-        types: Record<string, unknown>;
-        primaryType: string;
-        message: Record<string, unknown>;
-        signature: `0x${string}`;
-      }) => viemClient.verifyTypedData(args as any),
-      writeContract: (args: {
-        address: `0x${string}`;
-        abi: readonly unknown[];
-        functionName: string;
-        args: readonly unknown[];
-        gas?: bigint;
-      }) =>
-        viemClient.writeContract({
-          ...args,
-          args: args.args || [],
-          gas: args.gas,
-        }),
-      sendTransaction: (args: { to: `0x${string}`; data: `0x${string}` }) =>
-        viemClient.sendTransaction(args),
-      waitForTransactionReceipt: (args: { hash: `0x${string}` }) =>
-        viemClient.waitForTransactionReceipt(args),
-      getCode: (args: { address: `0x${string}` }) => viemClient.getCode(args),
-    })
+    address: evmAccount.address,
+    readContract: (args: {
+      address: `0x${string}`;
+      abi: readonly unknown[];
+      functionName: string;
+      args?: readonly unknown[];
+    }) =>
+      viemClient.readContract({
+        ...args,
+        args: args.args || [],
+      }),
+    verifyTypedData: (args: {
+      address: `0x${string}`;
+      domain: Record<string, unknown>;
+      types: Record<string, unknown>;
+      primaryType: string;
+      message: Record<string, unknown>;
+      signature: `0x${string}`;
+    }) => viemClient.verifyTypedData(args as any),
+    writeContract: (args: {
+      address: `0x${string}`;
+      abi: readonly unknown[];
+      functionName: string;
+      args: readonly unknown[];
+      gas?: bigint;
+    }) =>
+      viemClient.writeContract({
+        ...args,
+        args: args.args || [],
+        gas: args.gas,
+      }),
+    sendTransaction: (args: { to: `0x${string}`; data: `0x${string}` }) =>
+      viemClient.sendTransaction(args),
+    waitForTransactionReceipt: (args: { hash: `0x${string}` }) =>
+      viemClient.waitForTransactionReceipt(args),
+    getCode: (args: { address: `0x${string}` }) => viemClient.getCode(args),
+  })
   : undefined;
 
 // Facilitator can now handle all Solana networks with automatic RPC creation
 // Pass custom RPC URL if provided
 const svmSigner = svmAccount
   ? toFacilitatorSvmSigner(
-      svmAccount,
-      SVM_RPC_URL ? { defaultRpcUrl: SVM_RPC_URL } : undefined,
-    )
+    svmAccount,
+    SVM_RPC_URL ? { defaultRpcUrl: SVM_RPC_URL } : undefined,
+  )
   : undefined;
 
 // Facilitator can handle all Aptos networks with automatic RPC creation
@@ -574,6 +590,12 @@ if (aptosSigner) {
   facilitator.register(
     APTOS_NETWORK as Network,
     new ExactAptosScheme(aptosSigner),
+  );
+}
+if (casperFacilitatorSigner) {
+  facilitator.register(
+    CASPER_NETWORK as Network,
+    new ExactCasperScheme(casperFacilitatorSigner),
   );
 }
 if (hederaSigner) {
@@ -933,6 +955,7 @@ app.get("/health", (req, res) => {
     svmNetwork: SVM_NETWORK,
     avmNetwork: avmSigner ? AVM_NETWORK : "(not configured)",
     aptosNetwork: aptosAccount ? APTOS_NETWORK : "(not configured)",
+    casperNetwork: casperFacilitatorSigner ? CASPER_NETWORK : "(not configured)",
     hederaNetwork: hederaSigner ? HEDERA_NETWORK : "(not configured)",
     keetaNetwork: process.env.FACILITATOR_KEETA_MNEMONIC ? KEETA_NETWORK : "(not configured)",
     stellarNetwork: stellarSigner ? STELLAR_NETWORK : "(not configured)",
@@ -972,6 +995,7 @@ let server = app.listen(parseInt(PORT), () => {
 ║  SVM Network:  ${SVM_NETWORK}                          ║
 ║  AVM Network:  ${AVM_NETWORK}                          ║
 ║  Aptos Network: ${APTOS_NETWORK}                       ║
+║  Casper Network: ${CASPER_NETWORK}                         ║
 ║  Hedera Network: ${HEDERA_NETWORK}                     ║
 ║  Keeta Network: ${KEETA_NETWORK}                       ║
 ║  NEAR Network: ${NEAR_NETWORK}                         ║
