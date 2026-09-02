@@ -10,10 +10,22 @@ import type {
 
 import { TOKEN_2022_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS } from "../../constants";
 import { findDefaultAsset } from "../../defaultAssets";
-import { buildTopUpPaymentChannelTransaction, parseU64 } from "../../payment-channels/open";
+import {
+  buildTopUpPaymentChannelTransaction,
+  findPaymentChannelPda,
+  parseU64,
+} from "../../payment-channels/open";
+import { encodeVoucherMessageBytes, verifyVoucherSignature } from "../../payment-channels/voucher";
 import type { ClientSvmConfig } from "../../signer";
 import { createRpcClient, resolveBlockhash, resolveOpenSlot } from "../../utils";
-import { BATCH_SETTLEMENT_SCHEME, isBatchPayload, type BatchPayload } from "../types";
+import { BatchError } from "../errors";
+import {
+  BATCH_SETTLEMENT_SCHEME,
+  isBatchPayload,
+  type BatchChannelState,
+  type BatchPayload,
+  type BatchVoucherState,
+} from "../types";
 import {
   type BatchClientSigner,
   BatchChannelTracker,
@@ -75,7 +87,8 @@ export class BatchSvmScheme implements SchemeNetworkClient {
   findDefaultAsset = findDefaultAsset;
   readonly schemeHooks: SchemeClientHooks = {
     onPaymentResponse: async ctx => {
-      await this.handlePaymentResponse(ctx);
+      const recovered = await this.handlePaymentResponse(ctx);
+      return recovered ? { recovered: true } : undefined;
     },
   };
   private readonly channels = new Map<string, OpenChannel>();
@@ -271,21 +284,37 @@ export class BatchSvmScheme implements SchemeNetworkClient {
     });
   }
 
-  private async handlePaymentResponse(ctx: PaymentResponseContext): Promise<void> {
+  /**
+   * Reconcile local channel state with the server's answer.
+   *
+   * Returns whether the client resynchronized and the request should be
+   * retried.
+   */
+  private async handlePaymentResponse(ctx: PaymentResponseContext): Promise<boolean> {
     const payload = ctx.paymentPayload.payload;
     if (!isBatchPayload(payload) || (payload.type !== "voucher" && payload.type !== "deposit")) {
-      return;
+      return false;
     }
     const pending = [...this.pending.values()].find(
       candidate => candidate.tracker.channelId === payload.voucher.channelId,
     );
-    if (!pending) return;
+    if (!pending) return false;
     this.pending.delete(pending.key);
 
     if (!ctx.settleResponse?.success) {
       await this.restoreConfirmedChannel(pending);
-      return;
+      // A corrective 402 carries the base the server is actually charging
+      // from. Adopting it — against this client's own signature — turns a
+      // dead channel back into a usable one.
+      return ctx.paymentRequired
+        ? this.adoptCorrectiveState(pending, ctx.paymentRequired)
+        : false;
     }
+
+    // The response is the server's report, not this client's accounting. The
+    // charge is capped at the price this request advertised, the cumulative is
+    // computed locally and only cross-checked against the server's, and the
+    // escrow comes from the deposit this client itself signed.
     const extra = ctx.settleResponse.extra as
       | {
           commitmentId?: unknown;
@@ -293,18 +322,33 @@ export class BatchSvmScheme implements SchemeNetworkClient {
           channelState?: { balance?: unknown; chargedCumulativeAmount?: unknown };
         }
       | undefined;
-    const charged = extra?.channelState?.chargedCumulativeAmount;
-    const balance = extra?.channelState?.balance;
+    const requestAmount = parseU64(ctx.requirements.amount, "requirements.amount");
+    const charged =
+      typeof extra?.chargedAmount === "string" && /^\d+$/.test(extra.chargedAmount)
+        ? BigInt(extra.chargedAmount)
+        : undefined;
+    if (charged === undefined || charged > requestAmount) {
+      throw new Error("batch-settlement PAYMENT-RESPONSE charged more than the advertised price");
+    }
+    const confirmedCumulative = (pending.confirmed?.tracker.cumulative ?? 0n) + charged;
+    const reported = extra?.channelState?.chargedCumulativeAmount;
     if (
       extra?.commitmentId !== `${payload.voucher.channelId}:${pending.cumulative}` ||
-      extra.chargedAmount !== ctx.requirements.amount ||
-      charged !== pending.cumulative.toString() ||
-      typeof balance !== "string"
+      confirmedCumulative !== pending.cumulative ||
+      (typeof reported === "string" && reported !== confirmedCumulative.toString())
     ) {
-      throw new Error("batch-settlement PAYMENT-RESPONSE did not confirm the submitted allocation");
+      // The server confirmed something this client did not submit. Leave local
+      // state untouched rather than adopt an accounting it cannot derive; the
+      // next request resynchronizes through a corrective 402.
+      await this.restoreConfirmedChannel(pending);
+      return false;
     }
+    // A deposit's escrow is what this client signed for, not what the server
+    // reports holding.
+    const deposited =
+      payload.type === "deposit" ? parseU64(payload.deposit.amount, "deposit.amount") : 0n;
     pending.tracker.commit(pending.cumulative);
-    pending.deposit = parseU64(balance, "channelState.balance");
+    pending.deposit = (pending.confirmed?.deposit ?? 0n) + deposited;
     this.channels.set(pending.key, pending);
     await this.config.channelStorage?.set(pending.key, {
       channelConfig: pending.tracker.channelConfig,
@@ -312,6 +356,71 @@ export class BatchSvmScheme implements SchemeNetworkClient {
       chargedCumulativeAmount: pending.cumulative.toString(),
       deposit: pending.deposit.toString(),
     });
+    return false;
+  }
+
+  /**
+   * Adopt the cumulative base from a corrective 402.
+   *
+   * The snapshot is only the server's word for what it has charged, so it is
+   * accepted only against `voucherState`: an Ed25519 signature over the
+   * 50-byte voucher message, which only this client's own authorizer key could
+   * have produced. Without that proof the server has no accepted voucher, and
+   * the client resynchronizes from the onchain settled watermark instead.
+   */
+  private async adoptCorrectiveState(
+    pending: PendingChannel,
+    paymentRequired: { error?: string | undefined; accepts: PaymentRequirements[] },
+  ): Promise<boolean> {
+    if (paymentRequired.error !== BatchError.CUMULATIVE_AMOUNT_MISMATCH) return false;
+    const accept = paymentRequired.accepts.find(
+      candidate => candidate.scheme === BATCH_SETTLEMENT_SCHEME,
+    );
+    const channelState = accept?.extra?.channelState as BatchChannelState | undefined;
+    if (!channelState?.chargedCumulativeAmount) return false;
+    const charged = parseU64(channelState.chargedCumulativeAmount, "chargedCumulativeAmount");
+    const claimed = parseU64(channelState.totalClaimed, "totalClaimed");
+    // A server may never claim to have charged less than the chain has already
+    // settled, nor more than the client signed for.
+    if (charged < claimed) return false;
+
+    const voucherState = accept?.extra?.voucherState as BatchVoucherState | undefined;
+    if (voucherState) {
+      const signed = parseU64(voucherState.signedMaxClaimable, "signedMaxClaimable");
+      if (charged > signed) return false;
+      const verified = await verifyVoucherSignature({
+        message: encodeVoucherMessageBytes({
+          channelId: pending.tracker.channelId,
+          cumulativeAmount: signed,
+          expiresAt: BigInt(voucherState.expiresAt),
+        }),
+        signatureBase58: voucherState.signature,
+        signerBase58: pending.tracker.channelConfig.payerAuthorizer,
+      });
+      if (!verified) return false;
+    } else if (charged !== claimed) {
+      // No proof: the only base a client may adopt unproven is the one the
+      // chain itself reports as settled.
+      return false;
+    }
+
+    const adopted: OpenChannel = {
+      deposit: parseU64(channelState.balance, "channelState.balance"),
+      tracker: new BatchChannelTracker(
+        pending.tracker.channelId,
+        pending.tracker.channelConfig,
+        this.signer,
+        charged,
+      ),
+    };
+    this.channels.set(pending.key, adopted);
+    await this.config.channelStorage?.set(pending.key, {
+      channelConfig: adopted.tracker.channelConfig,
+      channelId: adopted.tracker.channelId,
+      chargedCumulativeAmount: charged.toString(),
+      deposit: adopted.deposit.toString(),
+    });
+    return true;
   }
 
   private hydrateChannel(record: BatchClientChannelRecord): OpenChannel {

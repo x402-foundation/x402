@@ -11,6 +11,7 @@ import type {
 import type {
   AssetAmount,
   MoneyParser,
+  SchemePaymentRequiredContext,
   Network,
   PaymentFlowConfig,
   PaymentPayload,
@@ -39,7 +40,17 @@ import { type ChannelState, type ChannelStore, MemoryChannelStore } from "./stor
 
 type ParsedMoney = { amount: number; stablecoin?: SvmStablecoinSymbol };
 type SvmStablecoinSymbol = "USDC" | "USDT" | "USDG" | "PYUSD" | "CASH";
-type RequestContext = { channelId: string; pendingId?: string; replay?: boolean };
+type RequestContext = {
+  channelId: string;
+  pendingId?: string;
+  replay?: boolean;
+  /**
+   * Set when this server held no record for the channel, so the cumulative
+   * rule could not be applied before the facilitator confirmed onchain state.
+   * `afterVerify` rebuilds the record from that snapshot and applies it there.
+   */
+  unknownChannel?: boolean;
+};
 
 const PRICE_STABLECOINS = new Set(["USDC", "USDT", "USDG", "PYUSD", "CASH"]);
 const MIN_WITHDRAW_DELAY = 900;
@@ -74,6 +85,54 @@ export class BatchSvmScheme implements SchemeNetworkServer {
   } as const satisfies Record<string, PaymentFlowConfig>;
   readonly dynamicExtraFields = ["recentBlockhash", "recentSlot"];
   readonly schemeHooks: SchemeServerHooks;
+
+  /**
+   * Attach the corrective channel state a client needs to resynchronize after
+   * a cumulative-amount mismatch.
+   *
+   * The snapshot alone would be the server's unproven word for how much it has
+   * charged, so it travels with `voucherState`: the signature the client itself
+   * produced at that cumulative amount. A server with no accepted voucher —
+   * one that just rebuilt the record from onchain state — omits the proof, and
+   * the client resynchronizes from the chain instead. See spec section 4.6.
+   */
+  enrichPaymentRequiredResponse = async (
+    ctx: SchemePaymentRequiredContext,
+  ): Promise<PaymentRequirements[] | void> => {
+    if (ctx.error !== BatchError.CUMULATIVE_AMOUNT_MISMATCH) return;
+    const raw = ctx.paymentPayload?.payload;
+    if (!raw || !isBatchPayload(raw)) return;
+    const channelId = this.requestContexts.get(ctx.paymentPayload!)?.channelId;
+    if (!channelId) return;
+    const state = await this.store.get(channelId);
+    if (!state) return;
+    const accept = ctx.requirements.find(
+      requirement =>
+        requirement.scheme === BATCH_SETTLEMENT_SCHEME &&
+        requirement.network === ctx.paymentPayload!.accepted.network,
+    );
+    if (!accept) return;
+    accept.extra = {
+      ...accept.extra,
+      channelState: {
+        channelId: state.channelId,
+        balance: state.deposit.toString(),
+        totalClaimed: state.settled.toString(),
+        withdrawRequestedAt: state.closeRequestedAt ?? 0,
+        chargedCumulativeAmount: state.chargedCumulativeAmount.toString(),
+      },
+      ...(state.highestVoucherSignature !== undefined
+        ? {
+            voucherState: {
+              signedMaxClaimable: state.signedMaxClaimable.toString(),
+              expiresAt: state.highestVoucherExpiresAt ?? 0,
+              signature: state.highestVoucherSignature,
+            },
+          }
+        : {}),
+    };
+    return ctx.requirements;
+  };
 
   private readonly store: ChannelStore;
   private readonly requestContexts = new WeakMap<DeepReadonly<PaymentPayload>, RequestContext>();
@@ -162,10 +221,18 @@ export class BatchSvmScheme implements SchemeNetworkServer {
     try {
       const channelId = await this.validatePayload(raw, ctx.requirements);
       const state = await this.store.get(channelId);
-      if (raw.type !== "deposit" && !state) throw new Error(BatchError.CHANNEL_STATE);
       if (state) this.assertStoredConfig(state, raw.channelConfig);
 
       if (raw.type === "deposit" || raw.type === "voucher") {
+        // A channel this server holds no record for is not a dead end: the
+        // facilitator verifies the voucher against confirmed onchain state,
+        // and `afterVerify` rebuilds the record from the snapshot it returns.
+        // Refusing here instead would strand the payer's escrow behind a
+        // forced close every time this server lost its store.
+        if (!state && raw.type === "voucher") {
+          this.requestContexts.set(ctx.paymentPayload, { channelId, unknownChannel: true });
+          return;
+        }
         const expected = (state?.chargedCumulativeAmount ?? 0n) + BigInt(ctx.requirements.amount);
         const submitted = BigInt(raw.voucher.maxClaimableAmount);
         const replay =
@@ -177,6 +244,7 @@ export class BatchSvmScheme implements SchemeNetworkServer {
         }
         this.requestContexts.set(ctx.paymentPayload, { channelId, replay });
       } else {
+        if (!state) throw new Error(BatchError.CHANNEL_STATE);
         this.requestContexts.set(ctx.paymentPayload, { channelId });
       }
       // Deposits and refunds must be verified by the facilitator: it statically
@@ -223,6 +291,34 @@ export class BatchSvmScheme implements SchemeNetworkServer {
         skipHandler: true,
         response,
       };
+    }
+
+    // The facilitator has now confirmed this payload against onchain state and
+    // returned the channel snapshot. Persisting it is what lets a server with
+    // no record of a live channel serve it, and what keeps `deposit`, `settled`
+    // and the close state from drifting behind the chain.
+    const snapshot = readVerifiedChannelState(ctx.result);
+    if (snapshot && !this.applySnapshot(request.channelId, raw, ctx.requirements, snapshot)) {
+      return this.abort(BatchError.CHANNEL_STATE, "verified channel snapshot is unusable");
+    }
+    if (snapshot) {
+      await this.persistSnapshot(request.channelId, raw, ctx.requirements, snapshot);
+    }
+
+    // The cumulative rule could not be applied before the record existed.
+    if (request.unknownChannel) {
+      const state = await this.store.get(request.channelId);
+      if (!state) return this.abort(BatchError.CHANNEL_STATE, "channel state unavailable");
+      const submitted = BigInt(raw.type === "refund" ? "0" : raw.voucher.maxClaimableAmount);
+      const expected = state.chargedCumulativeAmount + BigInt(ctx.requirements.amount);
+      if (submitted !== expected) {
+        // The corrective 402 that follows carries this rebuilt snapshot and no
+        // voucher proof, so the client resynchronizes from onchain state.
+        return this.abort(
+          BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+          `voucher authorizes ${submitted}, expected ${expected}`,
+        );
+      }
     }
 
     const pendingId = `${Date.now()}:${(this.reservationSequence += 1)}`;
@@ -448,6 +544,104 @@ export class BatchSvmScheme implements SchemeNetworkServer {
     if (voucher.expiresAt !== 0) throw new Error(BatchError.VOUCHER_EXPIRY);
   }
 
+  /**
+   * Whether a verified snapshot can be applied to this channel at all.
+   *
+   * A snapshot that reports a settled watermark above the escrow, or a channel
+   * already closing, is not something to build a serving record on.
+   */
+  private applySnapshot(
+    channelId: string,
+    raw: BatchPayload,
+    requirements: PaymentRequirements,
+    snapshot: VerifiedChannelState,
+  ): boolean {
+    if (snapshot.channelId !== undefined && snapshot.channelId !== channelId) return false;
+    if (snapshot.withdrawRequestedAt !== 0) return false;
+    if (snapshot.balance !== undefined && snapshot.totalClaimed > snapshot.balance) return false;
+    void raw;
+    void requirements;
+    return true;
+  }
+
+  /**
+   * Merge a confirmed onchain snapshot into the channel record, creating it
+   * when this server has none.
+   *
+   * A rebuilt record starts charging from the onchain settled watermark. That
+   * is the most this server can honestly claim to have charged: a voucher
+   * above it is unclaimable without the signature that vanished with the
+   * store, so starting there forfeits nothing that was not already lost — and
+   * starting from zero would accept vouchers the program can never settle,
+   * because `settle` requires a strictly increasing watermark.
+   */
+  private async persistSnapshot(
+    channelId: string,
+    raw: BatchPayload,
+    requirements: PaymentRequirements,
+    snapshot: VerifiedChannelState,
+  ): Promise<void> {
+    await this.store.update(channelId, current => {
+      const base = current ?? this.recoveredState(raw, requirements, channelId, snapshot);
+      return {
+        ...base,
+        // An escrow ceiling only ever rises; never let a stale read lower a
+        // deposit the chain has confirmed.
+        deposit: snapshot.balance !== undefined && snapshot.balance > base.deposit
+          ? snapshot.balance
+          : base.deposit,
+        settled: snapshot.totalClaimed > base.settled ? snapshot.totalClaimed : base.settled,
+        chargedCumulativeAmount:
+          snapshot.totalClaimed > base.chargedCumulativeAmount
+            ? snapshot.totalClaimed
+            : base.chargedCumulativeAmount,
+        signedMaxClaimable:
+          snapshot.totalClaimed > base.signedMaxClaimable
+            ? snapshot.totalClaimed
+            : base.signedMaxClaimable,
+        ...(snapshot.withdrawRequestedAt !== 0
+          ? { closeRequestedAt: snapshot.withdrawRequestedAt, status: "closing" as const }
+          : {}),
+      };
+    });
+  }
+
+  /**
+   * A channel record rebuilt from a confirmed onchain snapshot.
+   *
+   * Every immutable field comes from the payload the facilitator validated
+   * against that snapshot, so a record can only be built for a channel whose
+   * bindings the client itself authorized.
+   */
+  private recoveredState(
+    raw: BatchPayload,
+    requirements: PaymentRequirements,
+    channelId: string,
+    snapshot: VerifiedChannelState,
+  ): ChannelState {
+    const extra = requirements.extra!;
+    return {
+      channelConfig: raw.channelConfig,
+      channelId,
+      chargedCumulativeAmount: snapshot.totalClaimed,
+      deposit: snapshot.balance ?? 0n,
+      feePayer: String(extra.feePayer),
+      mint: requirements.asset,
+      openSlot: BigInt(raw.channelConfig.openSlot),
+      payer: raw.channelConfig.payer,
+      payerAuthorizer: raw.channelConfig.payerAuthorizer,
+      payoutWatermark: 0n,
+      receiver: requirements.payTo,
+      receiverAuthorizer: raw.channelConfig.receiverAuthorizer,
+      salt: BigInt(raw.channelConfig.salt),
+      settled: snapshot.totalClaimed,
+      signedMaxClaimable: snapshot.totalClaimed,
+      status: "open",
+      tokenProgram: String(extra.tokenProgram),
+      withdrawDelay: raw.channelConfig.withdrawDelay,
+    };
+  }
+
   private provisionalState(
     raw: BatchPayload,
     requirements: PaymentRequirements,
@@ -542,6 +736,41 @@ function snapshot(state: ChannelState) {
     totalClaimed: state.settled.toString(),
     withdrawRequestedAt: state.closeRequestedAt ?? 0,
     chargedCumulativeAmount: state.chargedCumulativeAmount.toString(),
+  };
+}
+
+/** A channel snapshot a facilitator confirmed against the chain. */
+type VerifiedChannelState = {
+  channelId?: string | undefined;
+  balance?: bigint | undefined;
+  totalClaimed: bigint;
+  withdrawRequestedAt: number;
+};
+
+/**
+ * Read the channel snapshot from a facilitator verify response.
+ *
+ * Returns nothing when the response carries none — a `deposit` verify has no
+ * channel to snapshot yet — or when a field is not the shape it claims: a
+ * malformed snapshot must not become a serving record.
+ */
+function readVerifiedChannelState(result: VerifyResponse): VerifiedChannelState | undefined {
+  const raw = (result.extra as { channelState?: unknown } | undefined)?.channelState;
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const state = raw as Record<string, unknown>;
+  const digits = (value: unknown): bigint | undefined =>
+    typeof value === "string" && /^\d+$/.test(value) ? BigInt(value) : undefined;
+  const totalClaimed = digits(state.totalClaimed);
+  if (totalClaimed === undefined) return undefined;
+  const withdrawRequestedAt =
+    typeof state.withdrawRequestedAt === "number" && Number.isInteger(state.withdrawRequestedAt)
+      ? state.withdrawRequestedAt
+      : 0;
+  return {
+    ...(typeof state.channelId === "string" ? { channelId: state.channelId } : {}),
+    ...(digits(state.balance) !== undefined ? { balance: digits(state.balance) } : {}),
+    totalClaimed,
+    withdrawRequestedAt,
   };
 }
 

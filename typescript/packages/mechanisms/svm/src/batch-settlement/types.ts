@@ -13,7 +13,24 @@ export type BatchExtra = {
   recentBlockhash?: string | undefined;
   recentSlot?: number | undefined;
   channelState?: BatchChannelState | undefined;
-  voucherState?: BatchVoucher | undefined;
+  voucherState?: BatchVoucherState | undefined;
+};
+
+/**
+ * The signed voucher proof a corrective 402 carries, so the client can adopt a
+ * new cumulative base without taking the server's word for it.
+ *
+ * This is not a {@link BatchVoucher}: it names only the cumulative amount the
+ * server holds a signature for, and the client rederives the channel id it
+ * verifies against. See the scheme spec section 4.6.
+ */
+export type BatchVoucherState = {
+  /** Cumulative amount the server holds a client signature for. */
+  signedMaxClaimable: string;
+  /** Expiry in the signed message; always `0` in this scheme. */
+  expiresAt: number;
+  /** Base58 Ed25519 signature over the 50-byte voucher message. */
+  signature: string;
 };
 
 export type BatchChannelConfig = {
