@@ -13,35 +13,6 @@ amount of funds they need to be transferred.
 
 ## Payment Flow
 
-By default, `exact` uses the `authorization` payment flow (verify → resource → settle): the payment is verified before the resource executes and settled afterward. See [Payment Flow Models](../../x402-specification-v2.md) (section 6.1) in the core specification.
-
-## Asset Transfer Methods for Pre-Handler Settlement: The `upfront` Payment Flow
- 
-`exact` may also be used with the `upfront` payment flow (settle → resource → respond). In that ordering the facilitator's `/verify` endpoint is not invoked: validity is established by settle, and commitment does not need to be an onchain write — settle MAY bind a payment to the request after read-only observation of ledger state. See [Payment Flow Models](../../x402-specification-v2.md) (section 6.1) and `/settle` (section 7.2) in the core specification.
-
-The families described below are descriptive categories used by this specification. They are not `assetTransferMethod` values, and this section introduces no new field. `assetTransferMethod` values remain mechanism-defined (section 6.1), and settlement ordering is already set in the wire by `extra.paymentFlow`. A mechanism MUST state which family its method belongs to and MUST satisfy that family's requirements below.
- 
-Two families of asset transfer method are defined under this flow. They differ in which party submits the payment, which determines how replay safety is obtained:
- 
-| Family | Who submits the payment | Replay safety | Facilitator state |
-| --- | --- | --- | --- |
-| Signed transaction (facilitator-submitted) | Facilitator, during settle | Network-enforced (account nonce, UTXO, or equivalent) | None required |
-| Payment proof (client-executed) | Client, before the request reaches the resource server | Enforced by the mechanism, the payment instrument, and a consumed-proof store | Consumed-proof store required |
- 
-Mechanisms SHOULD implement a facilitator-submitted method where the network and payer tooling permit it, and a client-executed one only where they do not.
- 
-### Signed transaction (facilitator-submitted)
- 
-The client signs a transaction but does not submit it. The facilitator submits it during settle. Because the transaction is submitted by the facilitator within the request's own settlement, replay safety is inherited from the network and no facilitator-side deduplication is required.
- 
-- Submission: the facilitator MUST submit the signed transaction during settle, before the resource executes, and MUST NOT return success until the transaction has reached the mechanism's declared finality condition.
-- Transfer correctness: the signed transaction MUST transfer exactly `requirements.amount` of `requirements.asset` to `payTo`, and MUST NOT contain additional value-moving operations.
-- Facilitator safety: the facilitator's own address MUST NOT appear as a funding source or transfer authority in the signed transaction.
-- Replay protection: the mechanism MUST rely on the network's own replay primitive (account nonce, UTXO consumption, or equivalent) and MUST verify that primitive is unconsumed at settle time. Facilitators SHOULD NOT be required to maintain a consumed-payment store for this family.
-- Expiry: where the network supports transaction validity windows, the signed transaction's window MUST cover the advertised `maxTimeoutSeconds` at settle time.
-
-## Payment Flow
-
 By default, `exact` uses the `authorization` payment flow (verify → resource → settle): the payment is verified before the resource executes and settled afterward.
 
 `exact` MAY also use the `upfront` payment flow (settle → resource → respond) when the resource needs payment finality before execution.
