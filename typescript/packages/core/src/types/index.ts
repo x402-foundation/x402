@@ -55,6 +55,12 @@ export type {
   SettleFailureContext,
   VerifiedPaymentCanceledContext,
 } from "./extensions";
+export type {
+  RiskCheckExtensionInfo,
+  RiskCheckClientInfo,
+  RiskCheckResult,
+  RiskCheckDiscovery,
+} from "./risk-check";
 
 export type { DeepReadonly } from "./readonly";
 
