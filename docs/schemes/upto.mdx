@@ -361,6 +361,14 @@ For custom facilitator implementations, use `UptoSvmScheme` from the facilitator
     maxChannelLifetimeSecs := 3600
     scheme := uptosvm.NewUptoSvmScheme(svmSigner, &uptosvm.Config{
         MaxChannelLifetimeSecs: &maxChannelLifetimeSecs,
+        // Optional: advertise receiverAuthorizer for delegated server mode.
+        // Requires ResolveCallerIdentity — construction panics without it.
+        // AuthorizerSigner: authorizer,
+        // ResolveCallerIdentity: func(ctx uptosvm.DelegatedSettleContext) (string, error) {
+        //     return authenticateSettleCaller(ctx) // JWT / SIWX / mTLS subject
+        // },
+        // Optional: shared store for multi-replica facilitators. Default is in-memory.
+        // DelegatedAuthStore: sharedRedisDelegatedAuthStore,
     })
     facilitator.Register([]x402.Network{network}, scheme)
 
