@@ -103,6 +103,8 @@ export interface BuildDepositArgs {
   firstCharge: bigint;
   withdrawDelay: number;
   memo?: string | undefined;
+  /** Channel-derivation salt; random when omitted. */
+  salt?: bigint | undefined;
 }
 
 export interface BuiltDeposit {
@@ -130,6 +132,7 @@ export async function buildDepositPayload(args: BuildDepositArgs): Promise<Built
     payee: args.feePayer,
     payer: args.payer,
     recipients: [{ bps: 10_000, recipient: args.receiver }],
+    ...(args.salt !== undefined ? { salt: args.salt } : {}),
     tokenProgram: args.tokenProgram,
   });
   const channelConfig: BatchChannelConfig = {

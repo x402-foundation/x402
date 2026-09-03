@@ -10,12 +10,10 @@ import type {
 
 import { TOKEN_2022_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS } from "../../constants";
 import { findDefaultAsset } from "../../defaultAssets";
-import {
-  buildTopUpPaymentChannelTransaction,
-  findPaymentChannelPda,
-  parseU64,
-} from "../../payment-channels/open";
+import { buildTopUpPaymentChannelTransaction, parseU64 } from "../../payment-channels/open";
 import { encodeVoucherMessageBytes, verifyVoucherSignature } from "../../payment-channels/voucher";
+import { discoverChannelsByPayer, type ProgramAccountScan } from "../../payment-channels/discovery";
+import { ChannelStatus } from "../../payment-channels/generated/types/channelStatus";
 import type { ClientSvmConfig } from "../../signer";
 import { createRpcClient, resolveBlockhash, resolveOpenSlot } from "../../utils";
 import { BatchError } from "../errors";
@@ -32,6 +30,7 @@ import {
   buildDepositPayload,
   buildRefundPayload,
 } from "./channel";
+import { type BatchRefundOptions, refundBatchChannel } from "./refund";
 
 interface OpenChannel {
   tracker: BatchChannelTracker;
@@ -80,6 +79,20 @@ export interface BatchSvmClientConfig extends ClientSvmConfig {
   depositAmount?: bigint | string | undefined;
   /** Persists confirmed state and a replayable pending allocation. */
   channelStorage?: BatchClientChannelStorage | undefined;
+  /**
+   * Channel-derivation salt. Defaults to `0`.
+   *
+   * A random salt would open a fresh channel on every start, stranding the
+   * escrow in the last one behind a forced close. Change it only to run
+   * several channels against the same server on purpose.
+   */
+  salt?: bigint | string | undefined;
+  /**
+   * Scan the chain for a channel this wallet already opened when no local
+   * record exists. On by default; a client that keeps durable storage and
+   * wants to avoid the scan can turn it off.
+   */
+  discoverChannels?: boolean | undefined;
 }
 
 export class BatchSvmScheme implements SchemeNetworkClient {
@@ -175,6 +188,19 @@ export class BatchSvmScheme implements SchemeNetworkClient {
       return payment;
     }
 
+    // Before funding a second channel, look for one this wallet already opened.
+    const discovered = await this.discoverChannel(requirements, terms);
+    if (discovered) {
+      this.channels.set(key, discovered);
+      await this.config.channelStorage?.set(key, {
+        channelConfig: discovered.tracker.channelConfig,
+        channelId: discovered.tracker.channelId,
+        chargedCumulativeAmount: discovered.tracker.cumulative.toString(),
+        deposit: discovered.deposit.toString(),
+      });
+      return this.createPaymentPayload(x402Version, requirements);
+    }
+
     const deposit = this.config.depositAmount
       ? parseU64(this.config.depositAmount, "depositAmount")
       : charge;
@@ -195,6 +221,7 @@ export class BatchSvmScheme implements SchemeNetworkClient {
       payer: this.signer,
       receiver: requirements.payTo,
       receiverAuthorizer: terms.receiverAuthorizer,
+      salt: this.salt(),
       tokenProgram: terms.tokenProgram,
       withdrawDelay: terms.withdrawDelay,
     });
@@ -213,6 +240,27 @@ export class BatchSvmScheme implements SchemeNetworkClient {
   }
 
   /**
+   * Close the channel backing `url` and start its refund.
+   *
+   * Probes the route for the requirements the channel was opened against,
+   * sends the payer-signed `request_close`, and returns what the server
+   * reported. The escrow itself comes back after the forced-close grace
+   * period, so a successful response means the close started, not that funds
+   * have moved.
+   *
+   * @param url - Any protected route on the channel to close
+   * @param options - Fetch override, or requirements to skip the probe
+   * @returns The settlement response describing the initiated close
+   */
+  async refund(url: string, options?: BatchRefundOptions) {
+    return refundBatchChannel(
+      (x402Version, requirements) => this.createRefundPayload(x402Version, requirements),
+      url,
+      options,
+    );
+  }
+
+  /**
    * Build the payer-signed portable refund operation for the cached channel.
    *
    * @param x402Version
@@ -224,8 +272,11 @@ export class BatchSvmScheme implements SchemeNetworkClient {
   ): Promise<Pick<PaymentPayload, "x402Version" | "payload">> {
     const terms = await this.resolveTerms(requirements);
     const key = this.channelKey(requirements, terms.feePayer, terms.withdrawDelay);
-    const existing = await this.loadChannel(key);
-    if (!existing) throw new Error("no cached batch-settlement channel to refund");
+    // A client with no local record is exactly the one that needs to close a
+    // channel it can no longer pay from, so fall back to the chain.
+    const existing =
+      (await this.loadChannel(key)) ?? (await this.discoverChannel(requirements, terms));
+    if (!existing) throw new Error("no batch-settlement channel to refund");
     const rpc = createRpcClient(requirements.network, this.config.rpcUrl);
     const blockhash = await resolveBlockhash(rpc, requirements);
     return {
@@ -238,6 +289,92 @@ export class BatchSvmScheme implements SchemeNetworkClient {
         memo: terms.memo,
         payer: this.signer,
       }),
+    };
+  }
+
+  private salt(): bigint {
+    return this.config.salt === undefined ? 0n : parseU64(this.config.salt, "salt");
+  }
+
+  /**
+   * Find a channel this wallet already opened against these terms.
+   *
+   * A client with no local record would otherwise open a second channel and
+   * leave the first one's escrow to a forced close. The scan is filtered on
+   * `payer`, and every row's PDA is rederived from its own fields before it is
+   * trusted, so a crafted account cannot pass itself off as a channel.
+   *
+   * The adopted cumulative base is the onchain settled watermark: the charges
+   * above it exist only in vouchers this client no longer has, and the server
+   * rebuilds from the same watermark, so both sides agree.
+   *
+   * @param requirements
+   * @param terms
+   * @param terms.feePayer
+   * @param terms.withdrawDelay
+   * @param terms.tokenProgram
+   * @param terms.receiverAuthorizer
+   */
+  private async discoverChannel(
+    requirements: PaymentRequirements,
+    terms: {
+      feePayer: string;
+      withdrawDelay: number;
+      tokenProgram: string;
+      receiverAuthorizer?: string | undefined;
+    },
+  ): Promise<OpenChannel | undefined> {
+    if (this.config.discoverChannels === false) return undefined;
+    const rpc = createRpcClient(requirements.network, this.config.rpcUrl);
+    const scan: ProgramAccountScan = async (programId, filters) =>
+      (await rpc
+        .getProgramAccounts(programId as Address, {
+          commitment: "confirmed",
+          encoding: "base64",
+          filters: filters as never,
+        })
+        .send()) as never;
+    let found;
+    try {
+      found = await discoverChannelsByPayer(scan, this.signer.address);
+    } catch {
+      // Discovery is an optimization over opening a new channel, never a
+      // precondition for paying.
+      return undefined;
+    }
+    const salt = this.salt();
+    const usable = found.filter(
+      candidate =>
+        candidate.channel.status === ChannelStatus.Open &&
+        candidate.channel.closureStartedAt === 0n &&
+        candidate.channel.payee === terms.feePayer &&
+        candidate.channel.mint === requirements.asset &&
+        candidate.channel.authorizedSigner === this.signer.address &&
+        candidate.channel.gracePeriod === terms.withdrawDelay &&
+        candidate.channel.salt === salt,
+    );
+    // Prefer the newest, so a channel opened after an earlier one was drained
+    // wins.
+    usable.sort((left, right) => (left.channel.openSlot < right.channel.openSlot ? 1 : -1));
+    const channel = usable[0];
+    if (!channel) return undefined;
+    return {
+      deposit: channel.channel.deposit,
+      tracker: new BatchChannelTracker(
+        channel.channelId,
+        {
+          openSlot: Number(channel.channel.openSlot),
+          payer: channel.channel.payer,
+          payerAuthorizer: channel.channel.authorizedSigner,
+          receiver: requirements.payTo,
+          ...(terms.receiverAuthorizer ? { receiverAuthorizer: terms.receiverAuthorizer } : {}),
+          salt: channel.channel.salt.toString(),
+          token: channel.channel.mint,
+          withdrawDelay: channel.channel.gracePeriod,
+        },
+        this.signer,
+        channel.channel.settlement.settled,
+      ),
     };
   }
 
@@ -289,6 +426,8 @@ export class BatchSvmScheme implements SchemeNetworkClient {
    *
    * Returns whether the client resynchronized and the request should be
    * retried.
+   *
+   * @param ctx
    */
   private async handlePaymentResponse(ctx: PaymentResponseContext): Promise<boolean> {
     const payload = ctx.paymentPayload.payload;
@@ -306,9 +445,7 @@ export class BatchSvmScheme implements SchemeNetworkClient {
       // A corrective 402 carries the base the server is actually charging
       // from. Adopting it — against this client's own signature — turns a
       // dead channel back into a usable one.
-      return ctx.paymentRequired
-        ? this.adoptCorrectiveState(pending, ctx.paymentRequired)
-        : false;
+      return ctx.paymentRequired ? this.adoptCorrectiveState(pending, ctx.paymentRequired) : false;
     }
 
     // The response is the server's report, not this client's accounting. The
@@ -367,6 +504,11 @@ export class BatchSvmScheme implements SchemeNetworkClient {
    * 50-byte voucher message, which only this client's own authorizer key could
    * have produced. Without that proof the server has no accepted voucher, and
    * the client resynchronizes from the onchain settled watermark instead.
+   *
+   * @param pending
+   * @param paymentRequired
+   * @param paymentRequired.error
+   * @param paymentRequired.accepts
    */
   private async adoptCorrectiveState(
     pending: PendingChannel,
