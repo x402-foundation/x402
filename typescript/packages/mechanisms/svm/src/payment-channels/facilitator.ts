@@ -395,6 +395,11 @@ export interface SubmitSettleOptions {
    */
   computeUnitLimit?: number | undefined;
   /**
+   * Blockhash to pin the transaction to. Fetched through the caller's
+   * transport when omitted; supply it to overlap the fetch with other reads.
+   */
+  latestBlockhash?: { blockhash: string; lastValidBlockHeight: bigint } | undefined;
+  /**
    * `SetComputeUnitPrice` in microlamports per compute unit attached to the
    * settlement transaction; `0` omits the instruction. Defaults to
    * `DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS` (1).
@@ -424,6 +429,97 @@ export async function submitSettle(
   instructions: readonly ServerInstruction[],
   options: SubmitSettleOptions = {},
 ): Promise<Signature> {
+  const { value: fetched } = await rpc
+    .getLatestBlockhash({ commitment: BLOCKHASH_COMMITMENT })
+    .send();
+  const wire = await buildChannelTransaction(
+    feePayer,
+    { blockhash: fetched.blockhash, lastValidBlockHeight: fetched.lastValidBlockHeight },
+    instructions,
+    options,
+  );
+  const signature = await rpc.sendTransaction(wire, { encoding: "base64" }).send();
+  await confirmSignature(rpc, signature);
+  return signature;
+}
+
+/** The subset of a facilitator signer a channel submission needs. */
+export type ChannelSubmitSigner = {
+  getLatestBlockhash?(
+    network: string,
+  ): Promise<{ blockhash: string; lastValidBlockHeight: bigint }>;
+  simulateTransaction(transaction: string, network: string): Promise<unknown>;
+  sendTransaction(transaction: string, network: string): Promise<string>;
+  confirmTransaction(signature: string, network: string): Promise<unknown>;
+};
+
+/**
+ * Thrown when explicit simulation rejects a channel transaction, so the caller
+ * can report it as a settlement-simulation failure rather than a generic send
+ * error. The transaction was never broadcast.
+ */
+export class ChannelSimulationError extends Error {
+  constructor(readonly cause: unknown) {
+    super(`channel transaction simulation failed: ${String(cause)}`);
+    this.name = "ChannelSimulationError";
+  }
+}
+
+/**
+ * Sign, simulate, broadcast and confirm a channel transaction through the
+ * facilitator signer.
+ *
+ * Simulation is explicit rather than left to the node's preflight, for two
+ * reasons: a preflight rejection arrives as an opaque send error, and a batch
+ * packs several channels into one transaction, so a caller that cannot tell
+ * simulation from transport has no way to report which batch failed or why.
+ * The signer then sends with preflight skipped, so the node does not simulate
+ * the same bytes a second time.
+ *
+ * @param feePayer - Signs as the transaction fee payer
+ * @param signer - Facilitator signer used for blockhash, simulate, send, confirm
+ * @param network - CAIP-2 network to submit against
+ * @param instructions - Channel instructions to submit
+ * @param options - Compute budget and blockhash overrides
+ * @returns The confirmed transaction signature
+ */
+export async function submitChannelTransactionWithSigner(
+  feePayer: PaymentChannelSvmSigner,
+  signer: ChannelSubmitSigner,
+  network: string,
+  instructions: readonly ServerInstruction[],
+  options: SubmitSettleOptions = {},
+): Promise<Signature> {
+  if (typeof signer.getLatestBlockhash !== "function") {
+    throw new Error(
+      "submitChannelTransactionWithSigner requires getLatestBlockhash on the signer. " +
+        "Use toFacilitatorSvmSigner() which provides all required methods.",
+    );
+  }
+  const latestBlockhash = options.latestBlockhash ?? (await signer.getLatestBlockhash(network));
+  const wire = await buildChannelTransaction(feePayer, latestBlockhash, instructions, options);
+  try {
+    await signer.simulateTransaction(wire, network);
+  } catch (error) {
+    throw new ChannelSimulationError(error);
+  }
+  const signature = (await signer.sendTransaction(wire, network)) as Signature;
+  try {
+    await signer.confirmTransaction(signature, network);
+  } catch (error) {
+    if (error instanceof SettlementConfirmationTimeoutError) throw error;
+    throw new SettlementConfirmationTimeoutError(signature);
+  }
+  return signature;
+}
+
+/** Build and sign the wire transaction both submission paths broadcast. */
+async function buildChannelTransaction(
+  feePayer: PaymentChannelSvmSigner,
+  latestBlockhash: { blockhash: string; lastValidBlockHeight: bigint },
+  instructions: readonly ServerInstruction[],
+  options: SubmitSettleOptions,
+): Promise<ReturnType<typeof getBase64EncodedWireTransaction>> {
   const computeUnitLimit = options.computeUnitLimit ?? DEFAULT_SETTLE_COMPUTE_UNIT_LIMIT;
   const computeUnitPrice =
     options.computeUnitPriceMicroLamports ?? DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS;
@@ -433,10 +529,6 @@ export async function submitSettle(
       ? [getSetComputeUnitPriceInstruction({ microLamports: computeUnitPrice })]
       : []),
   ];
-
-  const { value: latestBlockhash } = await rpc
-    .getLatestBlockhash({ commitment: BLOCKHASH_COMMITMENT })
-    .send();
   const message = pipe(
     createTransactionMessage({ version: 0 }),
     m => setTransactionMessageFeePayerSigner(feePayer, m),
@@ -451,10 +543,7 @@ export async function submitSettle(
     m => appendTransactionMessageInstructions([...computeBudgetIxs, ...instructions], m),
   );
   const signed = await signTransactionMessageWithSigners(message);
-  const wire = getBase64EncodedWireTransaction(signed);
-  const signature = await rpc.sendTransaction(wire, { encoding: "base64" }).send();
-  await confirmSignature(rpc, signature);
-  return signature;
+  return getBase64EncodedWireTransaction(signed);
 }
 
 /**

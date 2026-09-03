@@ -1,5 +1,5 @@
 /* eslint-disable jsdoc/require-jsdoc */
-import { type Address, address } from "@solana/kit";
+import { type Address, address, type Signature } from "@solana/kit";
 import { fetchMint } from "@solana-program/token-2022";
 import type {
   Network,
@@ -37,7 +37,8 @@ import {
   channelExists,
   getChannelDistributionHash,
   simulateOpenSettleDistribute,
-  submitSettle,
+  submitChannelTransactionWithSigner,
+  ChannelSimulationError,
 } from "../../payment-channels/facilitator";
 import { PaymentChannelRentCleanupManager } from "../../payment-channels/rentCleanup";
 import {
@@ -318,9 +319,9 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
         }),
       ),
     );
-    const signature = await submitSettle(
-      this.resolveFeePayer(feePayer),
-      rpc,
+    const signature = await this.submitRedemption(
+      feePayer,
+      requirements.network,
       prepared.flatMap(item => item.instructions),
     );
     const accepts = [];
@@ -379,9 +380,9 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     if (!feePayer || prepared.some(item => item.feePayer !== feePayer)) {
       throw new Error(BatchError.FEE_PAYER_MISMATCH);
     }
-    const signature = await submitSettle(
-      this.resolveFeePayer(feePayer),
-      rpc,
+    const signature = await this.submitRedemption(
+      feePayer,
+      requirements.network,
       prepared.map(item => item.instruction),
     );
     for (const item of prepared) {
@@ -751,6 +752,41 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
 
   private assertExpiry(expiresAt: number): void {
     if (expiresAt !== 0) throw new Error(BatchError.VOUCHER_EXPIRY);
+  }
+
+  /**
+   * Submit a redemption batch: claim or distribute.
+   *
+   * Simulation is explicit and its failure is reported as
+   * `settlement_simulation` rather than as a generic send error. A batch packs
+   * several channels into one transaction, so a caller that cannot tell
+   * simulation from transport cannot tell a poisoned batch from a flaky node —
+   * and would retry the same doomed batch forever. The signer then broadcasts
+   * with preflight skipped, so the node does not simulate the same bytes again.
+   *
+   * @param feePayer - Address of the managed fee payer to sign with
+   * @param network - CAIP-2 network to submit against
+   * @param instructions - The batch's channel instructions
+   * @returns The confirmed transaction signature
+   */
+  private async submitRedemption(
+    feePayer: string,
+    network: string,
+    instructions: readonly ServerInstruction[],
+  ): Promise<Signature> {
+    try {
+      return await submitChannelTransactionWithSigner(
+        this.resolveFeePayer(feePayer),
+        this.signer,
+        network,
+        instructions,
+      );
+    } catch (error) {
+      if (error instanceof ChannelSimulationError) {
+        throw new Error(`${BatchError.SETTLEMENT_SIMULATION}: ${String(error.cause)}`);
+      }
+      throw error;
+    }
   }
 
   private resolveFeePayer(feePayer: string): FacilitatorSigningCapabilities {
