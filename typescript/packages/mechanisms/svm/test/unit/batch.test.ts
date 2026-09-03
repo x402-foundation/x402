@@ -313,6 +313,221 @@ describe("batch-settlement SVM", () => {
       });
     });
 
+    it("rebuilds an unknown channel from the verified onchain snapshot", async () => {
+      const store = new MemoryChannelStore();
+      const server = new BatchServerScheme({ store });
+      // The client believes it was charged 4000; the chain has settled 2000,
+      // which is all this server can rebuild from.
+      const voucher = await signedVoucher(5_000n);
+      const context = {
+        declaredExtensions: {},
+        paymentPayload: {
+          accepted: requirements(),
+          payload: { channelConfig, type: "voucher" as const, voucher },
+          x402Version: 2,
+        },
+        requirements: requirements(),
+      };
+
+      // An empty store must not short-circuit the facilitator: only it can say
+      // whether the voucher matches confirmed onchain state.
+      expect(await server.schemeHooks.onBeforeVerify!(context)).toBeUndefined();
+      expect(await store.get(channelId)).toBeUndefined();
+
+      const verified = await server.schemeHooks.onAfterVerify!({
+        ...context,
+        result: {
+          isValid: true,
+          payer: payer.address,
+          extra: {
+            channelState: {
+              channelId,
+              balance: "10000",
+              totalClaimed: "2000",
+              withdrawRequestedAt: 0,
+            },
+          },
+        },
+      });
+
+      const rebuilt = await store.get(channelId);
+      // The settled watermark is the baseline: a record starting at zero would
+      // accept vouchers the program can never apply.
+      expect(rebuilt).toMatchObject({
+        chargedCumulativeAmount: 2_000n,
+        deposit: 10_000n,
+        settled: 2_000n,
+        signedMaxClaimable: 2_000n,
+      });
+      // 5000 is not 2000 + 1000, so the request is refused — but now there is a
+      // record for the corrective 402 to report.
+      expect(verified).toMatchObject({
+        abort: true,
+        reason: BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+      });
+    });
+
+    it("serves the first voucher a rebuilt record expects", async () => {
+      const store = new MemoryChannelStore();
+      const server = new BatchServerScheme({ store });
+      const voucher = await signedVoucher(3_000n);
+      const context = {
+        declaredExtensions: {},
+        paymentPayload: {
+          accepted: requirements(),
+          payload: { channelConfig, type: "voucher" as const, voucher },
+          x402Version: 2,
+        },
+        requirements: requirements(),
+      };
+      await server.schemeHooks.onBeforeVerify!(context);
+      const verified = await server.schemeHooks.onAfterVerify!({
+        ...context,
+        result: {
+          isValid: true,
+          payer: payer.address,
+          extra: {
+            channelState: {
+              channelId,
+              balance: "10000",
+              // Settled at 2000, so 2000 + 1000 is exactly what this voucher
+              // authorizes.
+              totalClaimed: "2000",
+              withdrawRequestedAt: 0,
+            },
+          },
+        },
+      });
+      expect(verified).toBeUndefined();
+      expect(await store.get(channelId)).toMatchObject({
+        chargedCumulativeAmount: 2_000n,
+        pendingRequest: { maxClaimableAmount: 3_000n },
+      });
+    });
+
+    it("refuses to rebuild a record for a channel that is closing", async () => {
+      const store = new MemoryChannelStore();
+      const server = new BatchServerScheme({ store });
+      const voucher = await signedVoucher(3_000n);
+      const context = {
+        declaredExtensions: {},
+        paymentPayload: {
+          accepted: requirements(),
+          payload: { channelConfig, type: "voucher" as const, voucher },
+          x402Version: 2,
+        },
+        requirements: requirements(),
+      };
+      await server.schemeHooks.onBeforeVerify!(context);
+      const verified = await server.schemeHooks.onAfterVerify!({
+        ...context,
+        result: {
+          isValid: true,
+          payer: payer.address,
+          extra: {
+            channelState: {
+              channelId,
+              balance: "10000",
+              totalClaimed: "2000",
+              // A forced close is running: its grace period bounds redemption,
+              // so no further charge may be accepted.
+              withdrawRequestedAt: 1_760_000_000,
+            },
+          },
+        },
+      });
+      expect(verified).toMatchObject({ abort: true, reason: BatchError.CHANNEL_STATE });
+      expect(await store.get(channelId)).toBeUndefined();
+    });
+
+    it("carries the charged base and its own proof in a corrective 402", async () => {
+      const store = new MemoryChannelStore();
+      const held = await signedVoucher(3_000n);
+      await store.put(
+        serverState({
+          chargedCumulativeAmount: 3_000n,
+          highestVoucherExpiresAt: 0,
+          highestVoucherSignature: held.signature,
+          settled: 2_000n,
+          signedMaxClaimable: 3_000n,
+        }),
+      );
+      const server = new BatchServerScheme({ store });
+      const stale = await signedVoucher(9_000n);
+      const paymentPayload = {
+        accepted: requirements(),
+        payload: { channelConfig, type: "voucher" as const, voucher: stale },
+        x402Version: 2,
+      };
+      const context = { declaredExtensions: {}, paymentPayload, requirements: requirements() };
+      expect(await server.schemeHooks.onBeforeVerify!(context)).toMatchObject({
+        abort: true,
+        reason: BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+      });
+
+      const accepts = [requirements()];
+      const enriched = await server.enrichPaymentRequiredResponse({
+        error: BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+        paymentPayload,
+        paymentRequiredResponse: { accepts, x402Version: 2 },
+        requirements: accepts,
+        resourceInfo: { url: "https://example.test/paid" },
+      });
+      expect(enriched?.[0]?.extra).toMatchObject({
+        channelState: { chargedCumulativeAmount: "3000", totalClaimed: "2000" },
+        // The proof is the client's own signature at that cumulative amount,
+        // so the client can check the base rather than trust it.
+        voucherState: { expiresAt: 0, signature: held.signature, signedMaxClaimable: "3000" },
+      });
+      // And the proof verifies against the client's authorizer key.
+      const state = enriched![0]!.extra!.voucherState as {
+        signedMaxClaimable: string;
+        expiresAt: number;
+        signature: string;
+      };
+      expect(
+        await verifyVoucherSignature({
+          message: encodeVoucherMessageBytes({
+            channelId,
+            cumulativeAmount: BigInt(state.signedMaxClaimable),
+            expiresAt: BigInt(state.expiresAt),
+          }),
+          signatureBase58: state.signature,
+          signerBase58: channelConfig.payerAuthorizer,
+        }),
+      ).toBe(true);
+    });
+
+    it("omits the voucher proof when it holds no accepted voucher", async () => {
+      const store = new MemoryChannelStore();
+      // A record rebuilt from chain has a base but no signature to prove it.
+      await store.put(serverState({ chargedCumulativeAmount: 2_000n, settled: 2_000n }));
+      const server = new BatchServerScheme({ store });
+      const stale = await signedVoucher(9_000n);
+      const paymentPayload = {
+        accepted: requirements(),
+        payload: { channelConfig, type: "voucher" as const, voucher: stale },
+        x402Version: 2,
+      };
+      await server.schemeHooks.onBeforeVerify!({
+        declaredExtensions: {},
+        paymentPayload,
+        requirements: requirements(),
+      });
+      const accepts = [requirements()];
+      const enriched = await server.enrichPaymentRequiredResponse({
+        error: BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+        paymentPayload,
+        paymentRequiredResponse: { accepts, x402Version: 2 },
+        requirements: accepts,
+        resourceInfo: { url: "https://example.test/paid" },
+      });
+      expect(enriched?.[0]?.extra?.channelState).toMatchObject({
+        chargedCumulativeAmount: "2000",
+      });
+      expect(enriched?.[0]?.extra?.voucherState).toBeUndefined();
+    });
+
     it("reports the real charged amount when settling a replay", async () => {
       const store = new MemoryChannelStore();
       const voucher = await signedVoucher(1_000n);
@@ -451,6 +666,261 @@ describe("batch-settlement SVM", () => {
       expect((await tracker.voucher(1_000n)).maxClaimableAmount).toBe("1000");
       expect((await tracker.voucher(1_500n)).maxClaimableAmount).toBe("2500");
       expect(tracker.channelConfig).toEqual(channelConfig);
+    });
+
+    /**
+     * Register a pending allocation the way a restarted client would, without
+     * touching an RPC.
+     */
+    async function pendingClient(pending: {
+      amount: string;
+      cumulative: string;
+      deposit: string;
+      confirmed?: { cumulative: string; deposit: string };
+      payment: Record<string, unknown>;
+    }) {
+      const records = new Map();
+      const storage: BatchClientChannelStorage = {
+        delete: async key => {
+          records.delete(key);
+        },
+        get: async key => records.get(key),
+        set: async (key, record) => {
+          records.set(key, record);
+        },
+      };
+      const key = "pending-allocation";
+      await storage.set(key, {
+        channelConfig,
+        channelId,
+        chargedCumulativeAmount: pending.confirmed?.cumulative ?? "0",
+        deposit: pending.confirmed?.deposit ?? "0",
+        hasConfirmedState: pending.confirmed !== undefined,
+        pending: {
+          amount: pending.amount,
+          chargedCumulativeAmount: pending.cumulative,
+          deposit: pending.deposit,
+          payment: pending.payment as never,
+        },
+      });
+      const client = new BatchClientScheme(payer, { channelStorage: storage });
+      await (
+        client as unknown as { loadChannel(channelKey: string): Promise<unknown> }
+      ).loadChannel(key);
+      return { client, key, storage };
+    }
+
+    function voucherPayment(voucher: BatchVoucher) {
+      return {
+        payload: { channelConfig, type: "voucher" as const, voucher },
+        x402Version: 2,
+      };
+    }
+
+    it("adopts a corrective cumulative base against its own signature", async () => {
+      const stale = await signedVoucher(1_000n);
+      const { client, key, storage } = await pendingClient({
+        amount: "1000",
+        cumulative: "1000",
+        deposit: "10000",
+        payment: voucherPayment(stale),
+      });
+      // The server holds this client's own signature at 3000.
+      const held = await signedVoucher(3_000n);
+      const corrective = requirements();
+      corrective.extra = {
+        ...corrective.extra,
+        channelState: {
+          balance: "10000",
+          channelId,
+          chargedCumulativeAmount: "3000",
+          totalClaimed: "2000",
+          withdrawRequestedAt: 0,
+        },
+        voucherState: { expiresAt: 0, signature: held.signature, signedMaxClaimable: "3000" },
+      };
+
+      const result = await client.schemeHooks.onPaymentResponse!({
+        paymentPayload: { accepted: requirements(), ...voucherPayment(stale) },
+        paymentRequired: {
+          accepts: [corrective],
+          error: BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+          x402Version: 2,
+        },
+        requirements: requirements(),
+        settleResponse: { success: false },
+      } as Parameters<NonNullable<typeof client.schemeHooks.onPaymentResponse>>[0]);
+
+      // The transport retries, now signing from the base the server proved.
+      expect(result).toMatchObject({ recovered: true });
+      expect(await storage.get(key)).toMatchObject({
+        chargedCumulativeAmount: "3000",
+        deposit: "10000",
+      });
+    });
+
+    it("refuses a corrective base it did not sign", async () => {
+      const stale = await signedVoucher(1_000n);
+      const stranger = await generateKeyPairSigner();
+      const forged = await signBatchVoucher(stranger, {
+        channelId,
+        expiresAt: 0,
+        maxClaimableAmount: 3_000n,
+      });
+      const cases: { what: string; voucherState: unknown; charged: string }[] = [
+        // Signed by a key that is not this client's authorizer.
+        {
+          charged: "3000",
+          voucherState: { expiresAt: 0, signature: forged.signature, signedMaxClaimable: "3000" },
+          what: "a foreign signature",
+        },
+        // A proof for less than the server claims to have charged.
+        {
+          charged: "4000",
+          voucherState: {
+            expiresAt: 0,
+            signature: (await signedVoucher(3_000n)).signature,
+            signedMaxClaimable: "3000",
+          },
+          what: "a base above the proof",
+        },
+        // No proof at all, and a base the chain does not corroborate.
+        { charged: "3000", voucherState: undefined, what: "an unproven base" },
+      ];
+
+      for (const { what, voucherState, charged } of cases) {
+        const { client, key, storage } = await pendingClient({
+          amount: "1000",
+          confirmed: { cumulative: "1000", deposit: "10000" },
+          cumulative: "2000",
+          deposit: "10000",
+          payment: voucherPayment(stale),
+        });
+        const corrective = requirements();
+        corrective.extra = {
+          ...corrective.extra,
+          channelState: {
+            balance: "10000",
+            channelId,
+            chargedCumulativeAmount: charged,
+            totalClaimed: "2000",
+            withdrawRequestedAt: 0,
+          },
+          ...(voucherState ? { voucherState } : {}),
+        };
+        const result = await client.schemeHooks.onPaymentResponse!({
+          paymentPayload: { accepted: requirements(), ...voucherPayment(stale) },
+          paymentRequired: {
+            accepts: [corrective],
+            error: BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+            x402Version: 2,
+          },
+          requirements: requirements(),
+          settleResponse: { success: false },
+        } as Parameters<NonNullable<typeof client.schemeHooks.onPaymentResponse>>[0]);
+        expect(result, what).toBeUndefined();
+        // The confirmed base is restored, never the server's claim.
+        expect(await storage.get(key), what).toMatchObject({
+          chargedCumulativeAmount: "1000",
+        });
+      }
+    });
+
+    it("adopts an unproven base only when the chain corroborates it", async () => {
+      const stale = await signedVoucher(1_000n);
+      const { client, key, storage } = await pendingClient({
+        amount: "1000",
+        cumulative: "1000",
+        deposit: "10000",
+        payment: voucherPayment(stale),
+      });
+      const corrective = requirements();
+      // A server that rebuilt its record from chain holds no voucher, so the
+      // base it reports is the settled watermark itself.
+      corrective.extra = {
+        ...corrective.extra,
+        channelState: {
+          balance: "10000",
+          channelId,
+          chargedCumulativeAmount: "2000",
+          totalClaimed: "2000",
+          withdrawRequestedAt: 0,
+        },
+      };
+      const result = await client.schemeHooks.onPaymentResponse!({
+        paymentPayload: { accepted: requirements(), ...voucherPayment(stale) },
+        paymentRequired: {
+          accepts: [corrective],
+          error: BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+          x402Version: 2,
+        },
+        requirements: requirements(),
+        settleResponse: { success: false },
+      } as Parameters<NonNullable<typeof client.schemeHooks.onPaymentResponse>>[0]);
+      expect(result).toMatchObject({ recovered: true });
+      expect(await storage.get(key)).toMatchObject({ chargedCumulativeAmount: "2000" });
+    });
+
+    it("does not take the server's word for what it charged or holds", async () => {
+      const voucher = await signedVoucher(1_000n);
+      const deposit = {
+        payload: {
+          channelConfig,
+          deposit: { amount: "10000", transaction: "open-transaction" },
+          type: "deposit" as const,
+          voucher,
+        },
+        x402Version: 2,
+      };
+      const respond = async (
+        extra: Record<string, unknown>,
+      ): Promise<{ result: unknown; stored: unknown }> => {
+        const { client, key, storage } = await pendingClient({
+          amount: "1000",
+          cumulative: "1000",
+          deposit: "10000",
+          payment: deposit,
+        });
+        const result = await client.schemeHooks.onPaymentResponse!({
+          paymentPayload: { accepted: requirements(), ...deposit },
+          requirements: requirements(),
+          settleResponse: { extra, success: true },
+        } as Parameters<NonNullable<typeof client.schemeHooks.onPaymentResponse>>[0]);
+        return { result, stored: await storage.get(key) };
+      };
+
+      // A charge above the advertised price is refused outright.
+      await expect(
+        respond({
+          chargedAmount: "1001",
+          channelState: { balance: "10000", chargedCumulativeAmount: "1000" },
+          commitmentId: `${channelId}:1000`,
+        }),
+      ).rejects.toThrow(/charged more than the advertised price/);
+
+      // A cumulative the client cannot derive leaves local state alone rather
+      // than adopting the server's accounting.
+      expect(
+        (
+          await respond({
+            chargedAmount: "1000",
+            channelState: { balance: "10000", chargedCumulativeAmount: "9999" },
+            commitmentId: `${channelId}:1000`,
+          })
+        ).stored,
+      ).toBeUndefined();
+
+      // The escrow is the deposit this client signed, not the balance the
+      // server reports — here inflated tenfold.
+      expect(
+        (
+          await respond({
+            chargedAmount: "1000",
+            channelState: { balance: "100000", chargedCumulativeAmount: "1000" },
+            commitmentId: `${channelId}:1000`,
+          })
+        ).stored,
+      ).toMatchObject({ chargedCumulativeAmount: "1000", deposit: "10000" });
     });
 
     it("discards a recovered pending open when settlement fails", async () => {

@@ -86,6 +86,23 @@ export class BatchSvmScheme implements SchemeNetworkServer {
   readonly dynamicExtraFields = ["recentBlockhash", "recentSlot"];
   readonly schemeHooks: SchemeServerHooks;
 
+  private readonly store: ChannelStore;
+  private readonly requestContexts = new WeakMap<DeepReadonly<PaymentPayload>, RequestContext>();
+  private moneyParsers: MoneyParser[] = [];
+  private reservationSequence = 0;
+
+  constructor(private readonly config: BatchSvmServerConfig = {}) {
+    this.store = config.store ?? new MemoryChannelStore();
+    this.schemeHooks = {
+      onBeforeVerify: ctx => this.beforeVerify(ctx),
+      onAfterVerify: ctx => this.afterVerify(ctx),
+      onBeforeSettle: ctx => this.beforeSettle(ctx),
+      onAfterSettle: ctx => this.afterSettle(ctx),
+      onSettleFailure: ctx => this.onSettleFailure(ctx),
+      onVerifiedPaymentCanceled: ctx => this.onCanceled(ctx),
+    };
+  }
+
   /**
    * Attach the corrective channel state a client needs to resynchronize after
    * a cumulative-amount mismatch.
@@ -95,6 +112,9 @@ export class BatchSvmScheme implements SchemeNetworkServer {
    * produced at that cumulative amount. A server with no accepted voucher —
    * one that just rebuilt the record from onchain state — omits the proof, and
    * the client resynchronizes from the chain instead. See spec section 4.6.
+   *
+   * @param ctx - Payment-required context for the failed request
+   * @returns The enriched requirements, or nothing when there is nothing to add
    */
   enrichPaymentRequiredResponse = async (
     ctx: SchemePaymentRequiredContext,
@@ -102,8 +122,16 @@ export class BatchSvmScheme implements SchemeNetworkServer {
     if (ctx.error !== BatchError.CUMULATIVE_AMOUNT_MISMATCH) return;
     const raw = ctx.paymentPayload?.payload;
     if (!raw || !isBatchPayload(raw)) return;
-    const channelId = this.requestContexts.get(ctx.paymentPayload!)?.channelId;
-    if (!channelId) return;
+    // The mismatch is usually detected before any request context exists, so
+    // the channel comes from the payload — and only from one that validates,
+    // signature included. Otherwise naming a channel would be enough to read
+    // its state.
+    let channelId: string;
+    try {
+      channelId = await this.validatePayload(raw, ctx.paymentPayload!.accepted);
+    } catch {
+      return;
+    }
     const state = await this.store.get(channelId);
     if (!state) return;
     const accept = ctx.requirements.find(
@@ -133,23 +161,6 @@ export class BatchSvmScheme implements SchemeNetworkServer {
     };
     return ctx.requirements;
   };
-
-  private readonly store: ChannelStore;
-  private readonly requestContexts = new WeakMap<DeepReadonly<PaymentPayload>, RequestContext>();
-  private moneyParsers: MoneyParser[] = [];
-  private reservationSequence = 0;
-
-  constructor(private readonly config: BatchSvmServerConfig = {}) {
-    this.store = config.store ?? new MemoryChannelStore();
-    this.schemeHooks = {
-      onBeforeVerify: ctx => this.beforeVerify(ctx),
-      onAfterVerify: ctx => this.afterVerify(ctx),
-      onBeforeSettle: ctx => this.beforeSettle(ctx),
-      onAfterSettle: ctx => this.afterSettle(ctx),
-      onSettleFailure: ctx => this.onSettleFailure(ctx),
-      onVerifiedPaymentCanceled: ctx => this.onCanceled(ctx),
-    };
-  }
 
   getChannelStore(): ChannelStore {
     return this.store;
@@ -298,7 +309,7 @@ export class BatchSvmScheme implements SchemeNetworkServer {
     // no record of a live channel serve it, and what keeps `deposit`, `settled`
     // and the close state from drifting behind the chain.
     const snapshot = readVerifiedChannelState(ctx.result);
-    if (snapshot && !this.applySnapshot(request.channelId, raw, ctx.requirements, snapshot)) {
+    if (snapshot && !this.applySnapshot(request.channelId, snapshot)) {
       return this.abort(BatchError.CHANNEL_STATE, "verified channel snapshot is unusable");
     }
     if (snapshot) {
@@ -549,18 +560,15 @@ export class BatchSvmScheme implements SchemeNetworkServer {
    *
    * A snapshot that reports a settled watermark above the escrow, or a channel
    * already closing, is not something to build a serving record on.
+   *
+   * @param channelId - Channel the snapshot must describe
+   * @param snapshot - Confirmed onchain snapshot from the facilitator
+   * @returns Whether the snapshot may be persisted
    */
-  private applySnapshot(
-    channelId: string,
-    raw: BatchPayload,
-    requirements: PaymentRequirements,
-    snapshot: VerifiedChannelState,
-  ): boolean {
+  private applySnapshot(channelId: string, snapshot: VerifiedChannelState): boolean {
     if (snapshot.channelId !== undefined && snapshot.channelId !== channelId) return false;
     if (snapshot.withdrawRequestedAt !== 0) return false;
     if (snapshot.balance !== undefined && snapshot.totalClaimed > snapshot.balance) return false;
-    void raw;
-    void requirements;
     return true;
   }
 
@@ -574,6 +582,11 @@ export class BatchSvmScheme implements SchemeNetworkServer {
    * store, so starting there forfeits nothing that was not already lost — and
    * starting from zero would accept vouchers the program can never settle,
    * because `settle` requires a strictly increasing watermark.
+   *
+   * @param channelId - Channel to merge into
+   * @param raw - The payload the facilitator validated against the chain
+   * @param requirements - Requirements that payload answered
+   * @param snapshot - Confirmed onchain snapshot
    */
   private async persistSnapshot(
     channelId: string,
@@ -587,9 +600,10 @@ export class BatchSvmScheme implements SchemeNetworkServer {
         ...base,
         // An escrow ceiling only ever rises; never let a stale read lower a
         // deposit the chain has confirmed.
-        deposit: snapshot.balance !== undefined && snapshot.balance > base.deposit
-          ? snapshot.balance
-          : base.deposit,
+        deposit:
+          snapshot.balance !== undefined && snapshot.balance > base.deposit
+            ? snapshot.balance
+            : base.deposit,
         settled: snapshot.totalClaimed > base.settled ? snapshot.totalClaimed : base.settled,
         chargedCumulativeAmount:
           snapshot.totalClaimed > base.chargedCumulativeAmount
@@ -612,6 +626,12 @@ export class BatchSvmScheme implements SchemeNetworkServer {
    * Every immutable field comes from the payload the facilitator validated
    * against that snapshot, so a record can only be built for a channel whose
    * bindings the client itself authorized.
+   *
+   * @param raw - The payload the facilitator validated against the chain
+   * @param requirements - Requirements that payload answered
+   * @param channelId - Channel the record is for
+   * @param snapshot - Confirmed onchain snapshot
+   * @returns A channel record seeded from the chain
    */
   private recoveredState(
     raw: BatchPayload,
@@ -753,6 +773,9 @@ type VerifiedChannelState = {
  * Returns nothing when the response carries none — a `deposit` verify has no
  * channel to snapshot yet — or when a field is not the shape it claims: a
  * malformed snapshot must not become a serving record.
+ *
+ * @param result - The facilitator's verify response
+ * @returns The snapshot, or nothing when the response carries none
  */
 function readVerifiedChannelState(result: VerifyResponse): VerifiedChannelState | undefined {
   const raw = (result.extra as { channelState?: unknown } | undefined)?.channelState;
