@@ -256,11 +256,44 @@ export async function broadcastOpen(
   feePayer: Address,
   network: string,
   openTransactionBase64: string,
+  onBroadcast?: (signature: string) => Promise<void>,
 ): Promise<string> {
   const wire = await facilitator.signTransaction(openTransactionBase64, feePayer, network);
   const signature = await facilitator.sendTransaction(wire, network);
-  await facilitator.confirmTransaction(signature, network);
+  // Report the signature before confirming, so a caller that persists it can
+  // reconcile even if this process dies mid-wait.
+  await onBroadcast?.(signature);
+  try {
+    await facilitator.confirmTransaction(signature, network);
+  } catch (error) {
+    // The transaction is on the network; only its outcome is unknown. Carry
+    // the signature out so the caller can record it and reconcile later
+    // instead of broadcasting the same escrow a second time.
+    throw new ChannelBroadcastConfirmationError(signature, error);
+  }
   return signature;
+}
+
+/**
+ * Thrown when a client transaction was broadcast but its confirmation could
+ * not be observed.
+ *
+ * Not a failure: the transaction may still land. The caller must persist
+ * {@link signature} and reconcile against it rather than rebroadcast, because
+ * a second broadcast of a setup transaction would escrow twice.
+ */
+export class ChannelBroadcastConfirmationError extends Error {
+  /**
+   * @param signature - Signature of the transaction already on the network
+   * @param cause - The confirmation error that interrupted the wait
+   */
+  constructor(
+    readonly signature: string,
+    readonly cause: unknown,
+  ) {
+    super(`broadcast ${signature} could not be confirmed: ${String(cause)}`);
+    this.name = "ChannelBroadcastConfirmationError";
+  }
 }
 
 /** Channel fields needed to build settle+distribute for readiness simulation. */
@@ -395,6 +428,12 @@ export interface SubmitSettleOptions {
    */
   computeUnitLimit?: number | undefined;
   /**
+   * Called with the signature once the transaction is on the network and
+   * before its confirmation is awaited, so a caller can persist it and
+   * reconcile later rather than broadcast the same work twice.
+   */
+  onBroadcast?: ((signature: string) => Promise<void>) | undefined;
+  /**
    * Blockhash to pin the transaction to. Fetched through the caller's
    * transport when omitted; supply it to overlap the fetch with other reads.
    */
@@ -504,6 +543,7 @@ export async function submitChannelTransactionWithSigner(
     throw new ChannelSimulationError(error);
   }
   const signature = (await signer.sendTransaction(wire, network)) as Signature;
+  await options.onBroadcast?.(signature);
   try {
     await signer.confirmTransaction(signature, network);
   } catch (error) {

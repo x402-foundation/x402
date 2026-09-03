@@ -39,6 +39,8 @@ import {
   simulateOpenSettleDistribute,
   submitChannelTransactionWithSigner,
   ChannelSimulationError,
+  ChannelBroadcastConfirmationError,
+  SettlementConfirmationTimeoutError,
 } from "../../payment-channels/facilitator";
 import { PaymentChannelRentCleanupManager } from "../../payment-channels/rentCleanup";
 import {
@@ -47,6 +49,13 @@ import {
   type PaymentChannelStorage,
 } from "../../payment-channels/storage";
 import { createRpcClient } from "../../utils";
+import {
+  InMemoryPendingSettlementStore,
+  type PendingSettlementStore,
+} from "@x402/core/facilitator";
+
+import { recordPendingOrTerminal, TransactionOnchainFailureError } from "../../utils";
+import { ErrSettlementPending } from "../../exact/facilitator/errors";
 import { BatchError } from "../errors";
 import {
   BATCH_SETTLEMENT_SCHEME,
@@ -70,6 +79,14 @@ export const MAX_CHANNELS_PER_SETTLE_TX = 4;
 
 export interface BatchSvmFacilitatorConfig {
   rpcUrl?: string | undefined;
+  /**
+   * Durable record of transactions this facilitator broadcast but could not
+   * confirm, so a retry — or a restart — reconciles against the signature
+   * instead of broadcasting the same escrow or redemption again. Defaults to
+   * an in-memory store, which does not survive a restart; production
+   * deployments should supply a durable one.
+   */
+  pendingSettlementStore?: PendingSettlementStore | undefined;
   /** Shared, facilitator-owned lifecycle index used for rent cleanup. */
   channelStorage?: PaymentChannelStorage | undefined;
   maxPriorityFeeMicroLamports?: number | undefined;
@@ -106,6 +123,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
   readonly caipFamily = "solana:*";
   private readonly channelStorage: PaymentChannelStorage;
   private readonly settlementCache = new SettlementCache();
+  private readonly pendingStore: PendingSettlementStore;
 
   constructor(
     private readonly signer: FacilitatorSvmSigner,
@@ -118,6 +136,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       throw new Error("BatchSvmScheme requires at least one fee payer signer");
     }
     this.channelStorage = config.channelStorage ?? new InMemoryPaymentChannelStorage();
+    this.pendingStore = config.pendingSettlementStore ?? new InMemoryPendingSettlementStore();
   }
 
   getExtra(_: Network): Record<string, unknown> {
@@ -319,11 +338,21 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
         }),
       ),
     );
-    const signature = await this.submitRedemption(
+    // Keyed by exactly what this batch advances, so a retry of the same claim
+    // reconciles while a different one proceeds.
+    const claimKey = `batch:claim:${requirements.network}:${prepared
+      .map(item => `${item.channelId}:${item.cumulative}`)
+      .sort()
+      .join(",")}`;
+    const submitted = await this.submitRedemption(
       feePayer,
       requirements.network,
       prepared.flatMap(item => item.instructions),
+      claimKey,
+      prepared[0]?.channel.payer ?? "",
     );
+    if (!submitted.ok) return submitted.response;
+    const signature = submitted.signature;
     const accepts = [];
     for (const item of prepared) {
       const confirmed = await this.fetchChannel(rpc, item.channelId);
@@ -380,11 +409,20 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     if (!feePayer || prepared.some(item => item.feePayer !== feePayer)) {
       throw new Error(BatchError.FEE_PAYER_MISMATCH);
     }
-    const signature = await this.submitRedemption(
+    const distributeKey = `batch:distribute:${requirements.network}:${prepared
+      .map(item => `${item.channelId}:${item.settled}`)
+      .sort()
+      .join(",")}`;
+    const submitted = await this.submitRedemption(
       feePayer,
       requirements.network,
       prepared.map(item => item.instruction),
+      distributeKey,
+      // A distribution names no payer: it pays the receiver from settled funds.
+      "",
     );
+    if (!submitted.ok) return submitted.response;
+    const signature = submitted.signature;
     for (const item of prepared) {
       const confirmed = await this.fetchChannel(rpc, item.channelId);
       if (confirmed.settlement.payoutWatermark !== item.settled) {
@@ -508,14 +546,10 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       return this.settleFailure(payment, "duplicate_settlement", payload.channelConfig.payer);
     }
     if (validated.isTopUp) {
-      await this.signer.simulateTransaction(
-        await this.signer.signTransaction(
-          payload.deposit.transaction,
-          address(terms.feePayer),
-          requirements.network,
-        ),
-        requirements.network,
-      );
+      // Simulated unsigned: `sigVerify` is off, so the fee payer's signature
+      // adds nothing here, and not asking for it keeps simulation portable
+      // across signer backends that will not sign the same bytes twice.
+      await this.signer.simulateTransaction(payload.deposit.transaction, requirements.network);
     } else {
       await simulateOpenSettleDistribute(terms.feePayerSigner, rpc, {
         channel: {
@@ -538,18 +572,29 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       payTo: requirements.payTo,
       tokenProgram: terms.tokenProgram,
     });
-    let signature: string;
-    try {
-      signature = await broadcastOpen(
-        this.signer,
-        address(terms.feePayer),
-        requirements.network,
-        payload.deposit.transaction,
-      );
-    } catch (error) {
-      this.settlementCache.delete(key);
-      throw error;
-    }
+    const broadcast = await this.broadcastDurably(
+      key,
+      requirements.network,
+      payload.channelConfig.payer,
+      async onBroadcast => {
+        try {
+          return await broadcastOpen(
+            this.signer,
+            address(terms.feePayer),
+            requirements.network,
+            payload.deposit.transaction,
+            onBroadcast,
+          );
+        } catch (error) {
+          // Only a transaction that never reached the network frees the
+          // duplicate lock; one already broadcast is reconciled, not resent.
+          if (pendingSignatureOf(error) === undefined) this.settlementCache.delete(key);
+          throw error;
+        }
+      },
+    );
+    if (!broadcast.ok) return broadcast.response;
+    const signature = broadcast.signature;
     const channel = await this.fetchChannel(rpc, channelId);
     this.assertDepositChannel(channel, validated, requirements);
     return depositResponse(
@@ -651,26 +696,31 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       payTo: requirements.payTo,
       tokenProgram: terms.tokenProgram,
     });
-    let signature: string;
-    try {
-      await this.signer.simulateTransaction(
-        await this.signer.signTransaction(
-          payload.transaction,
-          address(terms.feePayer),
-          requirements.network,
-        ),
-        requirements.network,
-      );
-      signature = await broadcastOpen(
-        this.signer,
-        address(terms.feePayer),
-        requirements.network,
-        payload.transaction,
-      );
-    } catch (error) {
-      this.settlementCache.delete(key);
-      throw error;
-    }
+    const broadcast = await this.broadcastDurably(
+      key,
+      requirements.network,
+      channel.payer,
+      async onBroadcast => {
+        try {
+          // Simulated unsigned: the fee payer's signature is not what the
+          // program checks here, and leaving it off keeps simulation portable
+          // across signer backends that will not sign twice.
+          await this.signer.simulateTransaction(payload.transaction, requirements.network);
+          return await broadcastOpen(
+            this.signer,
+            address(terms.feePayer),
+            requirements.network,
+            payload.transaction,
+            onBroadcast,
+          );
+        } catch (error) {
+          if (pendingSignatureOf(error) === undefined) this.settlementCache.delete(key);
+          throw error;
+        }
+      },
+    );
+    if (!broadcast.ok) return broadcast.response;
+    const signature = broadcast.signature;
     const closing = await this.fetchChannel(
       createRpcClient(requirements.network, this.config.rpcUrl),
       channelId,
@@ -755,6 +805,127 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
   }
 
   /**
+   * Broadcast through the pending-settlement record, or reconcile against a
+   * broadcast this facilitator already made and could not confirm.
+   *
+   * A confirmation wait that ends without an answer says nothing about the
+   * transaction: it may still land. Rebroadcasting then would escrow or redeem
+   * twice, so the signature is recorded before the wait and reconciled on the
+   * next attempt — including after a restart, when the in-memory duplicate
+   * cache is gone.
+   *
+   * @param key - Deterministic key for this exact piece of work
+   * @param network - Network the work is submitted to
+   * @param payer - Payer reported on a pending or failed response
+   * @param broadcast - Sends the transaction, reporting its signature to
+   *   `onBroadcast` before waiting on confirmation
+   * @returns The confirmed signature, or the response to answer with
+   */
+  private async broadcastDurably(
+    key: string,
+    network: Network,
+    payer: string,
+    broadcast: (onBroadcast: (signature: string) => Promise<void>) => Promise<string>,
+  ): Promise<{ ok: true; signature: string } | { ok: false; response: SettleResponse }> {
+    const recorded = await this.pendingStore.get(key);
+    if (recorded) {
+      // Removed before reconciling so a concurrent retry misses here and is
+      // turned away as a duplicate rather than reconciling in parallel.
+      await this.pendingStore.delete(key);
+      return this.reconcileBroadcast(key, recorded, network, payer);
+    }
+    let signature: string;
+    try {
+      signature = await broadcast(async broadcastSignature => {
+        await this.pendingStore.set(key, broadcastSignature);
+      });
+    } catch (error) {
+      const pending = pendingSignatureOf(error);
+      if (pending === undefined) throw error;
+      return {
+        ok: false,
+        response: await recordPendingOrTerminal(
+          this.pendingStore,
+          key,
+          pending,
+          payer,
+          network,
+          ErrSettlementPending,
+          "transaction_failed",
+          error,
+        ),
+      };
+    }
+    await this.forgetPending(key);
+    return { ok: true, signature };
+  }
+
+  /**
+   * Wait on a signature this facilitator already broadcast.
+   *
+   * @param key - The pending record's key
+   * @param signature - The recorded signature
+   * @param network - Network the transaction was submitted to
+   * @param payer - Payer reported on a pending or failed response
+   * @returns The confirmed signature, or the response to answer with
+   */
+  private async reconcileBroadcast(
+    key: string,
+    signature: string,
+    network: Network,
+    payer: string,
+  ): Promise<{ ok: true; signature: string } | { ok: false; response: SettleResponse }> {
+    try {
+      await this.signer.confirmTransaction(signature, network);
+    } catch (error) {
+      if (error instanceof TransactionOnchainFailureError) {
+        // A definite onchain rejection: nothing landed, so the record is
+        // dropped and the caller reports a failure rather than a pending.
+        await this.forgetPending(key);
+        return {
+          ok: false,
+          response: {
+            errorMessage: error.message,
+            errorReason: "transaction_failed",
+            network,
+            payer,
+            success: false,
+            transaction: signature,
+          },
+        };
+      }
+      return {
+        ok: false,
+        response: await recordPendingOrTerminal(
+          this.pendingStore,
+          key,
+          signature,
+          payer,
+          network,
+          ErrSettlementPending,
+          "transaction_failed",
+          error,
+        ),
+      };
+    }
+    await this.forgetPending(key);
+    return { ok: true, signature };
+  }
+
+  /**
+   * Drop a pending record; a storage hiccup must not mask a confirmed result.
+   *
+   * @param key - The pending record to drop
+   */
+  private async forgetPending(key: string): Promise<void> {
+    try {
+      await this.pendingStore.delete(key);
+    } catch {
+      // Best effort: the work is confirmed either way.
+    }
+  }
+
+  /**
    * Submit a redemption batch: claim or distribute.
    *
    * Simulation is explicit and its failure is reported as
@@ -767,26 +938,36 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
    * @param feePayer - Address of the managed fee payer to sign with
    * @param network - CAIP-2 network to submit against
    * @param instructions - The batch's channel instructions
-   * @returns The confirmed transaction signature
+   * @param key - Deterministic key for this exact batch
+   * @param payer - Payer reported on a pending or failed response
+   * @returns The confirmed signature, or the response to answer with
    */
   private async submitRedemption(
     feePayer: string,
-    network: string,
+    network: Network,
     instructions: readonly ServerInstruction[],
-  ): Promise<Signature> {
-    try {
-      return await submitChannelTransactionWithSigner(
-        this.resolveFeePayer(feePayer),
-        this.signer,
-        network,
-        instructions,
-      );
-    } catch (error) {
-      if (error instanceof ChannelSimulationError) {
-        throw new Error(`${BatchError.SETTLEMENT_SIMULATION}: ${String(error.cause)}`);
+    key: string,
+    payer: string,
+  ): Promise<{ ok: true; signature: Signature } | { ok: false; response: SettleResponse }> {
+    const broadcast = await this.broadcastDurably(key, network, payer, async onBroadcast => {
+      try {
+        return await submitChannelTransactionWithSigner(
+          this.resolveFeePayer(feePayer),
+          this.signer,
+          network,
+          instructions,
+          { onBroadcast },
+        );
+      } catch (error) {
+        if (error instanceof ChannelSimulationError) {
+          throw new Error(`${BatchError.SETTLEMENT_SIMULATION}: ${String(error.cause)}`);
+        }
+        throw error;
       }
-      throw error;
-    }
+    });
+    return broadcast.ok
+      ? { ok: true, signature: broadcast.signature as Signature }
+      : { ok: false, response: broadcast.response };
   }
 
   private resolveFeePayer(feePayer: string): FacilitatorSigningCapabilities {
@@ -913,6 +1094,19 @@ export function calculateDistributionAmount(
     }
     return total + channel.settled - channel.payoutWatermark;
   }, 0n);
+}
+
+/**
+ * The signature carried by an error that means "broadcast, outcome unknown",
+ * or `undefined` for anything else.
+ *
+ * @param error - The error a broadcast attempt threw
+ * @returns The signature already on the network, when there is one
+ */
+function pendingSignatureOf(error: unknown): string | undefined {
+  if (error instanceof ChannelBroadcastConfirmationError) return error.signature;
+  if (error instanceof SettlementConfirmationTimeoutError) return String(error.signature);
+  return undefined;
 }
 
 function snapshotChannel(
