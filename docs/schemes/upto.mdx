@@ -380,6 +380,18 @@ For custom facilitator implementations, use `UptoSvmScheme` from the facilitator
     })
     defer cleanup.Stop()
     ```
+
+    Selected `Config` fields for the Go SVM upto facilitator:
+
+    | Field | Type | Default | Description |
+    |-------|------|---------|-------------|
+    | `MaxChannelLifetimeSecs` | `*int` | `3600` | Maximum accepted channel lifetime in seconds. |
+    | `ChannelReadMaxAttempts` | `*int` | `6` | How many times settle re-reads a channel account after a confirmed open that is not yet visible. Raise on providers with slower replica convergence. |
+    | `ChannelReadBackoffStep` | `*time.Duration` | `200ms` | Linear backoff step between re-reads: attempt N waits `N × step`. Total budget is `step × (attempts−1) × attempts / 2`. |
+    | `AuthorizerSigner` | `ReceiverAuthorizerSigner` | `nil` | Enables facilitator-delegated receiver authorization. Requires `ResolveCallerIdentity`. |
+    | `ResolveCallerIdentity` | `func` | `nil` | Resolves a stable caller identity for delegated settles. Required when `AuthorizerSigner` is set. |
+    | `DelegatedAuthStore` | `DelegatedAuthStore` | In-memory | Stores channel → caller identity bindings. Inject a shared implementation for multi-replica facilitators. |
+    | `ChannelStorage` | `ChannelStorage` | In-memory | Indexes sponsored channels for rent cleanup. Inject a durable store for multi-process facilitators. |
   </Tab>
 </Tabs>
 
