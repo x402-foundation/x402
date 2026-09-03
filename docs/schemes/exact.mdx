@@ -463,6 +463,16 @@ The EVM implementation supports two transfer methods:
 
 Permit2 may require a one-time approval. The gas sponsoring extensions can let the facilitator handle that approval path for compatible tokens.
 
+### Go EVM facilitator options
+
+Pass an `ExactEvmSchemeConfig` to `NewExactEvmScheme` to tune facilitator behavior:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `EIP6492AllowedFactories` | `[]string` | `[]` (disabled) | Allowlist of factory contract addresses for ERC-6492 smart wallet deployment. An empty list blocks all factory calls. |
+| `SimulateInSettle` | `bool` | `false` | Re-run transfer simulation during settle. Verify always simulates. |
+| `EnableParallelVerifySimulation` | `bool` | `false` | Start the onchain transfer simulation concurrently with signature classification during verify, removing one RPC round trip. The tradeoff is one wasted `eth_call` per payment rejected on signature grounds. Leave unset on metered RPC providers or when invalid payments are common. |
+
 ### Examples
 
 * [TypeScript server example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/express)
