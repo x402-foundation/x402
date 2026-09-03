@@ -83,6 +83,16 @@ export interface ChannelStore {
   get(channelId: string): Promise<ChannelState | undefined>;
 
   /**
+   * Every channel this store holds.
+   *
+   * Optional: only a redemption worker needs to enumerate, and a store built
+   * for request serving alone can leave it out. Implementations may return a
+   * weakly-consistent snapshot — a worker reconciles each channel against the
+   * chain anyway.
+   */
+  list?(): Promise<ChannelState[]>;
+
+  /**
    * Insert or overwrite a channel's state.
    *
    * @param state - The channel state
@@ -109,6 +119,19 @@ export class MemoryChannelStore implements ChannelStore {
   private readonly locks = new Map<string, Promise<unknown>>();
 
   /** @inheritdoc */
+  /**
+   * @inheritdoc
+   * @returns Every channel this store holds
+   */
+  list(): Promise<ChannelState[]> {
+    return Promise.resolve([...this.channels.values()]);
+  }
+
+  /**
+   * @inheritdoc
+   * @param channelId - Channel PDA (base58)
+   * @returns The state, or undefined if unknown
+   */
   get(channelId: string): Promise<ChannelState | undefined> {
     return Promise.resolve(this.channels.get(channelId));
   }

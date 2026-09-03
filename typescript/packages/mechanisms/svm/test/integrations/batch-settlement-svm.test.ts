@@ -15,6 +15,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { BatchSvmScheme as BatchClientScheme } from "../../src/batch-settlement/client/scheme";
 import { BatchSvmScheme as BatchFacilitatorScheme } from "../../src/batch-settlement/facilitator/scheme";
 import { BatchSvmScheme as BatchServerScheme } from "../../src/batch-settlement/server/scheme";
+import { BatchChannelManager } from "../../src/batch-settlement/server/channelManager";
 import { MemoryChannelStore } from "../../src/batch-settlement/server/storage";
 import { SOLANA_DEVNET_CAIP2, TOKEN_PROGRAM_ADDRESS } from "../../src/constants";
 import { USDC_DEVNET_ADDRESS } from "../../src/defaultAssets";
@@ -211,7 +212,6 @@ describe("batch-settlement SVM onchain", () => {
 
     /** The channel this suite opens, and the server state that tracks it. */
     let channelId: string;
-    let channelConfig: Record<string, unknown>;
     let lifecycleStore: MemoryChannelStore;
 
     it(
@@ -234,8 +234,6 @@ describe("batch-settlement SVM onchain", () => {
         expect(settled.success, JSON.stringify(settled)).toBe(true);
 
         channelId = (payload.payload as { voucher: { channelId: string } }).voucher.channelId;
-        channelConfig = (payload.payload as { channelConfig: Record<string, unknown> })
-          .channelConfig;
         const rpc = createRpcClient(NETWORK, RPC_URL);
         const channel = await fetchMaybeChannel(rpc, channelId as never);
         expect(channel.exists).toBe(true);
@@ -365,62 +363,37 @@ describe("batch-settlement SVM onchain", () => {
       expect(settled.success, JSON.stringify(settled)).toBe(true);
     });
 
-    it("claims the voucher and distributes onchain", { timeout: 180_000 }, async () => {
-      const state = await lifecycleStore.get(channelId);
-      expect(state?.highestVoucherSignature).toBeDefined();
+    it("redeems through the channel manager", { timeout: 180_000 }, async () => {
+      // The worker an operator actually runs: it reads its own channel store,
+      // claims what has vouchers, then distributes what those claims settled.
       const facilitator = new x402Facilitator().register(
         NETWORK,
         new BatchFacilitatorScheme(toFacilitatorSvmSigner(operator, { defaultRpcUrl: RPC_URL }), {
           rpcUrl: RPC_URL,
         }),
       );
-      const requirements = accepts()[0]!;
+      const before = await usdcBalance(receiver.address);
+      const errors: unknown[] = [];
+      const manager = new BatchChannelManager({
+        onError: error => errors.push(error),
+        requirements: accepts()[0]!,
+        settle: (payload, requirements) => facilitator.settle(payload as never, requirements),
+        store: lifecycleStore,
+      });
 
-      const claimed = await facilitator.settle(
-        {
-          accepted: requirements,
-          payload: {
-            claims: [
-              {
-                signature: state!.highestVoucherSignature!,
-                voucher: {
-                  channelConfig,
-                  channelId,
-                  expiresAt: 0,
-                  maxClaimableAmount: state!.signedMaxClaimable.toString(),
-                },
-              },
-            ],
-            type: "claim",
-          },
-          x402Version: 2,
-        } as never,
-        requirements,
-      );
-      expect(claimed.success, JSON.stringify(claimed)).toBe(true);
+      const redeemed = await manager.redeem();
+      expect(errors, JSON.stringify(errors.map(String))).toEqual([]);
+      expect(redeemed.claimed).toEqual([channelId]);
+      expect(redeemed.distributed).toEqual([channelId]);
 
       const rpc = createRpcClient(NETWORK, RPC_URL);
-      const afterClaim = await fetchMaybeChannel(rpc, channelId as never);
-      expect(afterClaim.exists && afterClaim.data.settlement.settled).toBe(
-        state!.signedMaxClaimable,
-      );
-
-      const receiverBefore = await usdcBalance(receiver.address);
-      const distributed = await facilitator.settle(
-        {
-          accepted: requirements,
-          payload: { channels: [{ channelConfig, channelId }], type: "settle" },
-          x402Version: 2,
-        } as never,
-        requirements,
-      );
-      expect(distributed.success, JSON.stringify(distributed)).toBe(true);
-      // The point of the whole scheme: the receiver actually holds the money.
-      expect(await usdcBalance(receiver.address)).toBeGreaterThan(receiverBefore);
-      const afterDistribute = await fetchMaybeChannel(rpc, channelId as never);
-      expect(afterDistribute.exists && afterDistribute.data.settlement.payoutWatermark).toBe(
-        state!.signedMaxClaimable,
-      );
+      const settledOnchain = await fetchMaybeChannel(rpc, channelId as never);
+      const charged = (await lifecycleStore.get(channelId))!.chargedCumulativeAmount;
+      expect(settledOnchain.exists && settledOnchain.data.settlement.settled).toBe(charged);
+      expect(settledOnchain.exists && settledOnchain.data.settlement.payoutWatermark).toBe(charged);
+      // The receiver holds the money, and a second pass finds nothing to do.
+      expect(await usdcBalance(receiver.address)).toBeGreaterThan(before);
+      expect(await manager.redeem()).toEqual({ claimed: [], distributed: [] });
     });
 
     it("tops up a channel whose escrow is spent", { timeout: 120_000 }, async () => {
