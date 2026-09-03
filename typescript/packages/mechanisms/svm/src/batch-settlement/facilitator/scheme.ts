@@ -1,6 +1,5 @@
 /* eslint-disable jsdoc/require-jsdoc */
-import { type Address, address, type Signature } from "@solana/kit";
-import { fetchMint } from "@solana-program/token-2022";
+import { address, type Signature } from "@solana/kit";
 import type {
   Network,
   PaymentPayload,
@@ -16,7 +15,7 @@ import {
   discoverChannelsByRentPayer,
   type DiscoveredChannel,
 } from "../../payment-channels/discovery";
-import { fetchMaybeChannel, type Channel } from "../../payment-channels/generated/accounts/channel";
+import { getChannelDecoder, type Channel } from "../../payment-channels/generated/accounts/channel";
 import {
   buildDistributeInstruction,
   buildSettleInstructions,
@@ -34,7 +33,6 @@ import { SettlementCache } from "../../settlement-cache";
 import type { FacilitatorSigningCapabilities, FacilitatorSvmSigner } from "../../signer";
 import {
   broadcastOpen,
-  channelExists,
   getChannelDistributionHash,
   simulateOpenSettleDistribute,
   submitChannelTransactionWithSigner,
@@ -282,14 +280,13 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       payTo: string;
       tokenProgram: string;
     }[] = [];
-    const rpc = createRpcClient(requirements.network, this.config.rpcUrl);
     for (const claim of payload.claims) {
       const terms = await this.resolveTerms(claim.voucher.channelConfig, requirements);
       const channelId = await this.deriveChannelId(claim.voucher.channelConfig, terms.feePayer);
       if (channelId !== claim.voucher.channelId) throw new Error(BatchError.CHANNEL_ID_MISMATCH);
       const cumulative = parseU64(claim.voucher.maxClaimableAmount, "maxClaimableAmount");
       this.assertExpiry(claim.voucher.expiresAt);
-      const channel = await this.fetchChannel(rpc, channelId);
+      const channel = await this.fetchChannel(requirements.network, channelId);
       this.assertClaimChannel(channel, claim.voucher.channelConfig, terms, requirements, [
         ChannelStatus.Open,
       ]);
@@ -355,7 +352,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     const signature = submitted.signature;
     const accepts = [];
     for (const item of prepared) {
-      const confirmed = await this.fetchChannel(rpc, item.channelId);
+      const confirmed = await this.fetchChannel(requirements.network, item.channelId);
       if (confirmed.settlement.settled !== item.cumulative) {
         throw new Error(BatchError.CHANNEL_STATE);
       }
@@ -380,7 +377,6 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     if (payload.channels.length > MAX_CHANNELS_PER_SETTLE_TX) {
       throw new Error(`${BatchError.PAYLOAD_TYPE}: too many channels`);
     }
-    const rpc = createRpcClient(requirements.network, this.config.rpcUrl);
     const prepared: {
       channelId: string;
       feePayer: string;
@@ -392,7 +388,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       const terms = await this.resolveTerms(entry.channelConfig, requirements);
       const channelId = await this.deriveChannelId(entry.channelConfig, terms.feePayer);
       if (channelId !== entry.channelId) throw new Error(BatchError.CHANNEL_ID_MISMATCH);
-      const channel = await this.fetchChannel(rpc, channelId);
+      const channel = await this.fetchChannel(requirements.network, channelId);
       this.assertClaimChannel(channel, entry.channelConfig, terms, requirements, [
         ChannelStatus.Open,
         ChannelStatus.Sealed,
@@ -424,7 +420,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     if (!submitted.ok) return submitted.response;
     const signature = submitted.signature;
     for (const item of prepared) {
-      const confirmed = await this.fetchChannel(rpc, item.channelId);
+      const confirmed = await this.fetchChannel(requirements.network, item.channelId);
       if (confirmed.settlement.payoutWatermark !== item.settled) {
         throw new Error(`${BatchError.CHANNEL_STATE}: distribution watermark did not advance`);
       }
@@ -468,13 +464,12 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     });
     if (!voucherValid) throw new Error(`${BatchError.VOUCHER_SIGNATURE}: invalid voucher`);
     this.assertExpiry(payload.voucher.expiresAt);
-    const rpc = createRpcClient(requirements.network, this.config.rpcUrl);
-    const existing = await fetchMaybeChannel(rpc, address(channelId));
-    if (existing.exists) {
-      this.assertClaimChannel(existing.data, payload.channelConfig, terms, requirements, [
+    const existing = await this.readChannel(requirements.network, channelId);
+    if (existing) {
+      this.assertClaimChannel(existing, payload.channelConfig, terms, requirements, [
         ChannelStatus.Open,
       ]);
-      const expectedDeposit = existing.data.deposit + deposit;
+      const expectedDeposit = existing.deposit + deposit;
       if (voucherAmount < charge || voucherAmount > expectedDeposit) {
         throw new Error(
           `${BatchError.CUMULATIVE_AMOUNT_MISMATCH}: voucher exceeds topped-up ceiling`,
@@ -529,9 +524,8 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     // A channel can be opened once and topped up many times. Deduplicate only
     // an identical signed setup transaction, never all deposits for a channel.
     const key = `batch:deposit:${requirements.network}:${payload.deposit.transaction}`;
-    const rpc = createRpcClient(requirements.network, this.config.rpcUrl);
-    if ((await channelExists(rpc, channelId)) && !validated.isTopUp) {
-      const existing = await this.fetchChannel(rpc, channelId);
+    if ((await this.readChannel(requirements.network, channelId)) && !validated.isTopUp) {
+      const existing = await this.fetchChannel(requirements.network, channelId);
       this.assertDepositChannel(existing, validated, requirements);
       return depositResponse(
         channelId,
@@ -551,19 +545,26 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       // across signer backends that will not sign the same bytes twice.
       await this.signer.simulateTransaction(payload.deposit.transaction, requirements.network);
     } else {
-      await simulateOpenSettleDistribute(terms.feePayerSigner, rpc, {
-        channel: {
-          channelId,
-          mint: requirements.asset,
-          network: requirements.network,
-          payee: terms.feePayer,
-          payer: payload.channelConfig.payer,
-          rentPayer: terms.feePayer,
-          splits: [{ bps: 10_000, recipient: requirements.payTo }],
-          tokenProgram: terms.tokenProgram,
+      // The only read still on its own client: this shared helper simulates
+      // the open/settle/distribute chain through an rpc of its own, and is
+      // used by `upto` too.
+      await simulateOpenSettleDistribute(
+        terms.feePayerSigner,
+        createRpcClient(requirements.network, this.config.rpcUrl),
+        {
+          channel: {
+            channelId,
+            mint: requirements.asset,
+            network: requirements.network,
+            payee: terms.feePayer,
+            payer: payload.channelConfig.payer,
+            rentPayer: terms.feePayer,
+            splits: [{ bps: 10_000, recipient: requirements.payTo }],
+            tokenProgram: terms.tokenProgram,
+          },
+          openTransactionBase64: payload.deposit.transaction,
         },
-        openTransactionBase64: payload.deposit.transaction,
-      });
+      );
     }
     await this.trackChannel({
       channelId,
@@ -595,7 +596,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     );
     if (!broadcast.ok) return broadcast.response;
     const signature = broadcast.signature;
-    const channel = await this.fetchChannel(rpc, channelId);
+    const channel = await this.fetchChannel(requirements.network, channelId);
     this.assertDepositChannel(channel, validated, requirements);
     return depositResponse(
       channelId,
@@ -634,10 +635,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       signerBase58: payload.channelConfig.payerAuthorizer,
     });
     if (!valid) throw new Error(BatchError.VOUCHER_SIGNATURE);
-    const channel = await this.fetchChannel(
-      createRpcClient(requirements.network, this.config.rpcUrl),
-      channelId,
-    );
+    const channel = await this.fetchChannel(requirements.network, channelId);
     this.assertClaimChannel(channel, payload.channelConfig, terms, requirements, [
       ChannelStatus.Open,
     ]);
@@ -664,10 +662,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       memo: terms.memo,
       payer: payload.channelConfig.payer,
     });
-    const channel = await this.fetchChannel(
-      createRpcClient(requirements.network, this.config.rpcUrl),
-      channelId,
-    );
+    const channel = await this.fetchChannel(requirements.network, channelId);
     this.assertClaimChannel(channel, payload.channelConfig, terms, requirements, [
       ChannelStatus.Open,
       ChannelStatus.Closing,
@@ -721,10 +716,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     );
     if (!broadcast.ok) return broadcast.response;
     const signature = broadcast.signature;
-    const closing = await this.fetchChannel(
-      createRpcClient(requirements.network, this.config.rpcUrl),
-      channelId,
-    );
+    const closing = await this.fetchChannel(requirements.network, channelId);
     if (closing.status !== ChannelStatus.Closing) {
       throw new Error(`${BatchError.CLOSE_STATE}: request_close did not enter Closing`);
     }
@@ -773,9 +765,21 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     if (tokenProgram !== TOKEN_PROGRAM_ADDRESS && tokenProgram !== TOKEN_2022_PROGRAM_ADDRESS) {
       throw new Error(BatchError.TOKEN_PROGRAM);
     }
-    const rpc = createRpcClient(requirements.network, this.config.rpcUrl);
-    const mint = await fetchMint(rpc, requirements.asset as Address);
-    if (mint.programAddress.toString() !== tokenProgram) throw new Error(BatchError.TOKEN_PROGRAM);
+    // A mint's owner is its token program, so the declared one is checked
+    // with an account read rather than a decode.
+    if (typeof this.signer.getAccountInfo !== "function") {
+      throw new Error(
+        "BatchSvmScheme requires getAccountInfo on the facilitator signer. " +
+          "Use toFacilitatorSvmSigner() which provides all required methods.",
+      );
+    }
+    const mint = await this.signer.getAccountInfo(requirements.asset, requirements.network, {
+      commitment: "confirmed",
+      encoding: "base64",
+    });
+    if (!mint || mint.owner.toString() !== tokenProgram) {
+      throw new Error(BatchError.TOKEN_PROGRAM);
+    }
     const memo = extra.memo;
     if (memo !== undefined && typeof memo !== "string")
       throw new Error(BatchError.SETUP_TRANSACTION);
@@ -829,9 +833,13 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
   ): Promise<{ ok: true; signature: string } | { ok: false; response: SettleResponse }> {
     const recorded = await this.pendingStore.get(key);
     if (recorded) {
-      // Removed before reconciling so a concurrent retry misses here and is
-      // turned away as a duplicate rather than reconciling in parallel.
-      await this.pendingStore.delete(key);
+      // Reconciled before the record is dropped, not after. Dropping it first
+      // would leave a concurrent retry — one that read no record because this
+      // call had already removed it — to broadcast the work a second time,
+      // with only the in-memory duplicate cache in the way. That cache is
+      // empty after a restart, which is exactly when a pending record is being
+      // reconciled. Two callers reconciling the same signature is harmless:
+      // they confirm the same transaction and reach the same answer.
       return this.reconcileBroadcast(key, recorded, network, payer);
     }
     let signature: string;
@@ -977,13 +985,37 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     return this.signer.getSigner!(address(feePayer));
   }
 
-  private async fetchChannel(
-    rpc: ReturnType<typeof createRpcClient>,
-    channelId: string,
-  ): Promise<Channel> {
+  /**
+   * Read a channel account through the facilitator signer.
+   *
+   * Every read goes through the same transport that signs, simulates and
+   * broadcasts, so an operator configuring one RPC does not find reads
+   * quietly answered by another.
+   *
+   * @param network - CAIP-2 network to read from
+   * @param channelId - Channel PDA (base58)
+   * @returns The decoded channel, or undefined when the account is absent
+   */
+  private async readChannel(network: string, channelId: string): Promise<Channel | undefined> {
+    if (typeof this.signer.getAccountInfo !== "function") {
+      throw new Error(
+        "BatchSvmScheme requires getAccountInfo on the facilitator signer. " +
+          "Use toFacilitatorSvmSigner() which provides all required methods.",
+      );
+    }
+    const account = await this.signer.getAccountInfo(channelId, network, {
+      commitment: "confirmed",
+      encoding: "base64",
+    });
+    if (!account) return undefined;
+    const encoded = Array.isArray(account.data) ? account.data[0] : account.data;
+    return getChannelDecoder().decode(Buffer.from(encoded, "base64"));
+  }
+
+  private async fetchChannel(network: string, channelId: string): Promise<Channel> {
     for (let attempt = 0; attempt < CHANNEL_READ_ATTEMPTS; attempt += 1) {
-      const account = await fetchMaybeChannel(rpc, address(channelId), { commitment: "confirmed" });
-      if (account.exists) return account.data;
+      const channel = await this.readChannel(network, channelId);
+      if (channel) return channel;
       if (attempt + 1 < CHANNEL_READ_ATTEMPTS) {
         await new Promise(resolve =>
           setTimeout(resolve, CHANNEL_READ_INITIAL_BACKOFF_MS * 2 ** attempt),
