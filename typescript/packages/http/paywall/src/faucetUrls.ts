@@ -18,6 +18,8 @@ export const FAUCET_URLS: Record<string, string> = {
   "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1": "https://faucet.circle.com/",
   // AVM testnets
   "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe": "https://dispenser.testnet.aws.algodev.network/",
+  // Stellar testnets
+  "stellar:testnet": "https://faucet.circle.com/",
 };
 
 /**
