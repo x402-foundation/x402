@@ -28,6 +28,7 @@ import {
   isPaymentRequiredError,
 } from "../types";
 import { extractPaymentResponseFromMeta } from "../utils";
+import { applyValidatePaidToolResult } from "./paidResponseValidation";
 
 // ============================================================================
 // MCP SDK Result Types
@@ -83,6 +84,49 @@ function isMCPCallToolResult(result: unknown): result is MCPCallToolResult {
   return Array.isArray(obj.content);
 }
 
+/**
+ * Maps an MCP SDK tool result into the internal result-with-meta shape.
+ *
+ * @param result - Raw MCP SDK tool result
+ * @returns Internal result including structured content and meta when present
+ */
+function toResultWithMeta(result: MCPCallToolResult): MCPResultWithMeta {
+  return {
+    content: result.content,
+    ...(result.isError !== undefined ? { isError: result.isError } : {}),
+    ...(result.structuredContent !== undefined
+      ? { structuredContent: result.structuredContent }
+      : {}),
+    ...(result._meta !== undefined ? { _meta: result._meta } : {}),
+  };
+}
+
+/**
+ * Maps an MCP SDK tool result into the public x402 MCP tool call result.
+ *
+ * @param result - Raw MCP SDK tool result
+ * @param paymentMade - Whether a payment was submitted for this call
+ * @param paymentResponse - Settlement metadata when present on the paid result
+ * @param includeStructuredContent - When true, expose structured content on the public result
+ * @returns Public tool call result
+ */
+function toToolCallResult(
+  result: MCPCallToolResult,
+  paymentMade: boolean,
+  paymentResponse?: SettleResponse,
+  includeStructuredContent = false,
+): x402MCPToolCallResult {
+  return {
+    content: result.content,
+    ...(includeStructuredContent && result.structuredContent !== undefined
+      ? { structuredContent: result.structuredContent }
+      : {}),
+    ...(result.isError !== undefined ? { isError: result.isError } : {}),
+    ...(paymentResponse !== undefined ? { paymentResponse } : {}),
+    paymentMade,
+  };
+}
+
 // ============================================================================
 // Hook Types
 // ============================================================================
@@ -113,9 +157,11 @@ export type AfterPaymentHook = (context: {
 export interface x402MCPToolCallResult {
   /** The tool result content, forwarded directly from MCP SDK */
   content: MCPContentItem[];
+  /** Structured tool result when returned after caller-owned validation accepts */
+  structuredContent?: Record<string, unknown>;
   /** Whether the tool returned an error */
   isError?: boolean;
-  /** Payment settlement response if payment was made */
+  /** Payment settlement response when the paid result included it */
   paymentResponse?: SettleResponse;
   /** Whether payment was required and submitted */
   paymentMade: boolean;
@@ -172,7 +218,8 @@ export interface x402MCPToolCallResult {
 export class x402MCPClient {
   private readonly mcpClient: Client;
   private readonly _paymentClient: x402Client;
-  private readonly options: Required<x402MCPClientOptions>;
+  private readonly options: Required<Omit<x402MCPClientOptions, "validatePaidResponse">> &
+    Pick<x402MCPClientOptions, "validatePaidResponse">;
   private readonly paymentRequiredHooks: PaymentRequiredHook[] = [];
   private readonly beforePaymentHooks: BeforePaymentHook[] = [];
   private readonly afterPaymentHooks: AfterPaymentHook[] = [];
@@ -194,6 +241,7 @@ export class x402MCPClient {
     this.options = {
       autoPayment: options.autoPayment ?? true,
       onPaymentRequested: options.onPaymentRequested ?? (() => true),
+      validatePaidResponse: options.validatePaidResponse,
     };
   }
 
@@ -502,11 +550,7 @@ export class x402MCPClient {
 
     if (!paymentRequired) {
       // Not a payment required response, forward original MCP response as-is
-      return {
-        content: result.content,
-        isError: result.isError,
-        paymentMade: false,
-      };
+      return toToolCallResult(result, false);
     }
 
     // Payment required - run onPaymentRequired hooks first
@@ -525,7 +569,13 @@ export class x402MCPClient {
         }
         if (hookResult.payment) {
           // Use the hook-provided payment
-          return this.callToolWithPayment(name, args, hookResult.payment, options);
+          return this.callToolWithPayment(
+            name,
+            args,
+            hookResult.payment,
+            options,
+            paymentRequired,
+          );
         }
       }
     }
@@ -564,7 +614,7 @@ export class x402MCPClient {
     const paymentPayload = await this._paymentClient.createPaymentPayload(paymentRequired);
 
     // Retry with payment
-    return this.callToolWithPayment(name, args, paymentPayload, options);
+    return this.callToolWithPayment(name, args, paymentPayload, options, paymentRequired);
   }
 
   /**
@@ -580,6 +630,7 @@ export class x402MCPClient {
    * @param options.timeout - Request timeout in milliseconds (default: 60000)
    * @param options.signal - AbortSignal for cancellation
    * @param options.resetTimeoutOnProgress - If true, progress notifications reset the timeout
+   * @param sellerPaymentRequired - Seller requirement from the original 402 when known
    * @returns The tool result with payment metadata
    */
   async callToolWithPayment(
@@ -587,8 +638,8 @@ export class x402MCPClient {
     args: Record<string, unknown>,
     paymentPayload: PaymentPayload,
     options?: { timeout?: number; signal?: AbortSignal; resetTimeoutOnProgress?: boolean },
+    sellerPaymentRequired?: PaymentRequired,
   ): Promise<x402MCPToolCallResult> {
-    // Build the call parameters with payment metadata
     // Note: The MCP SDK's callTool accepts _meta but the types don't always expose it
     const callParams = {
       name,
@@ -607,11 +658,7 @@ export class x402MCPClient {
     }
 
     // Build result with meta for extraction (preserve _meta if present)
-    const resultWithMeta: MCPResultWithMeta = {
-      content: result.content,
-      isError: result.isError,
-      _meta: result._meta,
-    };
+    const resultWithMeta = toResultWithMeta(result);
 
     // Extract payment response from _meta
     const paymentResponse = extractPaymentResponseFromMeta(resultWithMeta);
@@ -626,13 +673,13 @@ export class x402MCPClient {
       });
     }
 
-    const paymentRequired = this.extractPaymentRequiredFromResult(result);
+    const embeddedPaymentRequired = this.extractPaymentRequiredFromResult(result);
     const recoveryResult = paymentPayload.accepted
       ? await this._paymentClient.handlePaymentResponse({
         paymentPayload,
         requirements: paymentPayload.accepted,
         ...(paymentResponse ? { settleResponse: paymentResponse } : {}),
-        ...(paymentRequired ? { paymentRequired } : {}),
+        ...(embeddedPaymentRequired ? { paymentRequired: embeddedPaymentRequired } : {}),
       })
       : undefined;
 
@@ -640,11 +687,11 @@ export class x402MCPClient {
     // state from it, then we retry once with a fresh payload from that response.
     // Corrective terms (amount/asset/payTo) are server-controlled — re-run the
     // same approval / abort gates used for the first payment before signing again.
-    if (recoveryResult?.recovered && paymentRequired) {
+    if (recoveryResult?.recovered && embeddedPaymentRequired) {
       const correctiveRequiredContext: PaymentRequiredContext = {
         toolName: name,
         arguments: args,
-        paymentRequired,
+        paymentRequired: embeddedPaymentRequired,
       };
       let correctivePayload: PaymentPayload | undefined;
       for (const hook of this.paymentRequiredHooks) {
@@ -661,7 +708,7 @@ export class x402MCPClient {
         const correctiveRequestedContext: PaymentRequestedContext = {
           toolName: name,
           arguments: args,
-          paymentRequired,
+          paymentRequired: embeddedPaymentRequired,
         };
         const correctiveApproved =
           await this.options.onPaymentRequested(correctiveRequestedContext);
@@ -671,7 +718,7 @@ export class x402MCPClient {
         for (const hook of this.beforePaymentHooks) {
           await hook(correctiveRequestedContext);
         }
-        correctivePayload = await this._paymentClient.createPaymentPayload(paymentRequired);
+        correctivePayload = await this._paymentClient.createPaymentPayload(embeddedPaymentRequired);
       }
 
       const freshPayload = correctivePayload;
@@ -688,11 +735,7 @@ export class x402MCPClient {
         throw new Error("Invalid MCP tool result: missing content array");
       }
 
-      const retryResultWithMeta: MCPResultWithMeta = {
-        content: retryResult.content,
-        isError: retryResult.isError,
-        _meta: retryResult._meta,
-      };
+      const retryResultWithMeta = toResultWithMeta(retryResult);
       const retryPaymentResponse = extractPaymentResponseFromMeta(retryResultWithMeta);
 
       for (const hook of this.afterPaymentHooks) {
@@ -704,33 +747,52 @@ export class x402MCPClient {
         });
       }
 
-      const retryCorrectivePaymentRequired = this.extractPaymentRequiredFromResult(retryResult);
+      const retryEmbeddedPaymentRequired = this.extractPaymentRequiredFromResult(retryResult);
       if (freshPayload.accepted) {
         await this._paymentClient.handlePaymentResponse({
           paymentPayload: freshPayload,
           requirements: freshPayload.accepted,
           ...(retryPaymentResponse ? { settleResponse: retryPaymentResponse } : {}),
-          ...(retryCorrectivePaymentRequired
-            ? { paymentRequired: retryCorrectivePaymentRequired }
+          ...(retryEmbeddedPaymentRequired
+            ? { paymentRequired: retryEmbeddedPaymentRequired }
             : {}),
         });
       }
 
-      return {
-        content: retryResult.content,
-        isError: retryResult.isError,
-        paymentResponse: retryPaymentResponse ?? undefined,
-        paymentMade: true,
-      };
+      if (!retryEmbeddedPaymentRequired) {
+        await this.validatePaidToolResultIfNeeded(
+          retryResultWithMeta,
+          embeddedPaymentRequired,
+          freshPayload,
+          true,
+          retryPaymentResponse ?? undefined,
+        );
+      }
+
+      return toToolCallResult(
+        retryResult,
+        true,
+        retryPaymentResponse ?? undefined,
+        this.options.validatePaidResponse !== undefined,
+      );
     }
 
-    // Forward original MCP response content as-is
-    return {
-      content: result.content,
-      isError: result.isError,
-      paymentResponse: paymentResponse ?? undefined,
-      paymentMade: true,
-    };
+    if (!embeddedPaymentRequired) {
+      await this.validatePaidToolResultIfNeeded(
+        resultWithMeta,
+        sellerPaymentRequired,
+        paymentPayload,
+        false,
+        paymentResponse ?? undefined,
+      );
+    }
+
+    return toToolCallResult(
+      result,
+      true,
+      paymentResponse ?? undefined,
+      this.options.validatePaidResponse !== undefined,
+    );
   }
 
   /**
@@ -790,6 +852,30 @@ export class x402MCPClient {
   // ============================================================================
   // Private Methods
   // ============================================================================
+
+  /**
+   * Runs optional caller-owned validation on a final paid application result.
+   *
+   * @param resultWithMeta - Live paid tool result
+   * @param sellerPaymentRequired - Seller requirement when known
+   * @param paymentPayload - Payment payload used for the paid attempt
+   * @param recovered - Whether this is the bounded recovery path
+   * @param paymentResponse - Settlement metadata when present on the paid result
+   */
+  private async validatePaidToolResultIfNeeded(
+    resultWithMeta: MCPResultWithMeta,
+    sellerPaymentRequired: PaymentRequired | undefined,
+    paymentPayload: PaymentPayload,
+    recovered: boolean,
+    paymentResponse?: SettleResponse,
+  ): Promise<void> {
+    await applyValidatePaidToolResult(this.options.validatePaidResponse, resultWithMeta, {
+      recovered,
+      paymentPayload,
+      ...(sellerPaymentRequired !== undefined ? { paymentRequired: sellerPaymentRequired } : {}),
+      ...(paymentResponse !== undefined ? { paymentResponse } : {}),
+    });
+  }
 
   /**
    * Extracts PaymentRequired from a tool result (structured 402 response).
@@ -931,6 +1017,9 @@ export interface x402MCPClientConfig {
    * Return true to proceed with payment, false to abort.
    */
   onPaymentRequested?: (context: PaymentRequestedContext) => Promise<boolean> | boolean;
+
+  /** Optional caller-owned paid-response validation (see x402MCPClientOptions). */
+  validatePaidResponse?: x402MCPClientOptions["validatePaidResponse"];
 
   /**
    * Additional MCP client options
@@ -1079,5 +1168,6 @@ export function createx402MCPClient(config: x402MCPClientConfig): x402MCPClient 
   return new x402MCPClient(mcpClient, paymentClient, {
     autoPayment: config.autoPayment,
     onPaymentRequested: config.onPaymentRequested,
+    validatePaidResponse: config.validatePaidResponse,
   });
 }

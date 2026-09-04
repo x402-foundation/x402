@@ -2,12 +2,18 @@
  * Unit tests for x402MCPClient
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { x402MCPClient, createx402MCPClient, wrapMCPClientWithPayment } from "../../src/client";
+import {
+  x402MCPClient,
+  createx402MCPClient,
+  wrapMCPClientWithPayment,
+  PaidResponseValidationError,
+} from "../../src/client";
 import {
   MCP_PAYMENT_REQUIRED_CODE,
   MCP_PAYMENT_META_KEY,
   JSONRPC_PAYMENT_REQUIRED_CODE,
 } from "../../src/types";
+import type { x402MCPClientOptions } from "../../src/types";
 import type { PaymentPayload, PaymentRequired, SettleResponse } from "@x402/core/types";
 import { x402Client } from "@x402/core/client";
 
@@ -1084,6 +1090,305 @@ describe("x402MCPClient McpError(-32042) handling", () => {
       mockMcpClient.callTool.mockRejectedValueOnce(networkError);
 
       await expect(client.getToolPaymentRequirements("tool")).rejects.toThrow(networkError);
+    });
+  });
+});
+
+describe("x402MCPClient paid-response validation", () => {
+  let mockMcpClient: MockMCPClient;
+  let mockPaymentClient: MockPaymentClient;
+
+  const paidApplicationResult = {
+    content: [{ type: "text", text: "paid body" }],
+    structuredContent: { ok: true, value: 42 },
+    _meta: { "x402/payment-response": mockSettleResponse, trace: "abc" },
+  };
+
+  const createValidationClient = (options?: x402MCPClientOptions) =>
+    new x402MCPClient(
+      mockMcpClient as unknown as Parameters<typeof wrapMCPClientWithPayment>[0],
+      mockPaymentClient as unknown as Parameters<typeof wrapMCPClientWithPayment>[1],
+      options,
+    );
+
+  beforeEach(() => {
+    mockMcpClient = createMockMCPClient();
+    mockPaymentClient = createMockPaymentClient();
+  });
+
+  it("preserves default paid success when no validator is configured", async () => {
+    const client = createValidationClient();
+
+    mockMcpClient.callTool
+      .mockResolvedValueOnce(createEmbeddedPaymentError(mockPaymentRequired))
+      .mockResolvedValueOnce(paidApplicationResult);
+
+    const result = await client.callTool("paid_tool");
+
+    expect(result).toEqual({
+      content: paidApplicationResult.content,
+      paymentResponse: mockSettleResponse,
+      paymentMade: true,
+    });
+    expect(result).not.toHaveProperty("structuredContent");
+    expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns a valid paid body when the validator accepts it", async () => {
+    const validatePaidResponse = vi.fn();
+    const client = createValidationClient({ validatePaidResponse });
+
+    mockMcpClient.callTool
+      .mockResolvedValueOnce(createEmbeddedPaymentError(mockPaymentRequired))
+      .mockResolvedValueOnce(paidApplicationResult);
+
+    const result = await client.callTool("paid_tool");
+
+    expect(result.structuredContent).toEqual({ ok: true, value: 42 });
+    expect(validatePaidResponse).toHaveBeenCalledWith(
+      {
+        content: paidApplicationResult.content,
+        structuredContent: paidApplicationResult.structuredContent,
+      },
+      expect.objectContaining({
+        paymentRequired: mockPaymentRequired,
+        recovered: false,
+        paymentPayload: mockPaymentPayload,
+        paymentResponse: mockSettleResponse,
+      }),
+    );
+    expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws PaidResponseValidationError without retrying payment on invalid output", async () => {
+    const client = createValidationClient({
+      validatePaidResponse: () => {
+        throw new Error("missing required field");
+      },
+    });
+
+    mockMcpClient.callTool
+      .mockResolvedValueOnce(createEmbeddedPaymentError(mockPaymentRequired))
+      .mockResolvedValueOnce(paidApplicationResult);
+
+    await expect(client.callTool("paid_tool")).rejects.toMatchObject({
+      name: "PaidResponseValidationError",
+      message: "missing required field",
+      paymentResponse: mockSettleResponse,
+      paymentPayload: mockPaymentPayload,
+      paymentRequired: mockPaymentRequired,
+      recovered: false,
+      result: {
+        content: paidApplicationResult.content,
+        structuredContent: paidApplicationResult.structuredContent,
+        _meta: paidApplicationResult._meta,
+      },
+    });
+    expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledTimes(1);
+  });
+
+  it("validates the bounded recovery result with recovered=true", async () => {
+    const correctivePaymentRequired: PaymentRequired = {
+      ...mockPaymentRequired,
+      accepts: [
+        {
+          ...mockPaymentRequired.accepts[0],
+          extra: {
+            ...mockPaymentRequired.accepts[0].extra,
+            channelState: { chargedCumulativeAmount: "2000" },
+          },
+        },
+      ],
+    };
+    const freshPayload: PaymentPayload = {
+      ...mockPaymentPayload,
+      payload: { ...mockPaymentPayload.payload, signature: "0xfresh" },
+    };
+    const validatePaidResponse = vi.fn();
+    const client = createValidationClient({ validatePaidResponse });
+
+    mockPaymentClient.createPaymentPayload
+      .mockResolvedValueOnce(mockPaymentPayload)
+      .mockResolvedValueOnce(freshPayload);
+    mockPaymentClient.handlePaymentResponse
+      .mockResolvedValueOnce({ recovered: true })
+      .mockResolvedValueOnce(undefined);
+    mockMcpClient.callTool
+      .mockResolvedValueOnce(createEmbeddedPaymentError(mockPaymentRequired))
+      .mockResolvedValueOnce(createEmbeddedPaymentError(correctivePaymentRequired))
+      .mockResolvedValueOnce({
+        content: [{ type: "text", text: "recovered body" }],
+        structuredContent: { recovered: true },
+        _meta: { "x402/payment-response": mockSettleResponse },
+      });
+
+    await client.callTool("paid_tool");
+
+    expect(validatePaidResponse).toHaveBeenCalledWith(
+      {
+        content: [{ type: "text", text: "recovered body" }],
+        structuredContent: { recovered: true },
+      },
+      expect.objectContaining({
+        paymentRequired: correctivePaymentRequired,
+        recovered: true,
+        paymentPayload: freshPayload,
+        paymentResponse: mockSettleResponse,
+      }),
+    );
+    expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not create another payment when recovery output fails validation", async () => {
+    const correctivePaymentRequired: PaymentRequired = {
+      ...mockPaymentRequired,
+      accepts: [
+        {
+          ...mockPaymentRequired.accepts[0],
+          extra: {
+            ...mockPaymentRequired.accepts[0].extra,
+            channelState: { chargedCumulativeAmount: "2000" },
+          },
+        },
+      ],
+    };
+    const freshPayload: PaymentPayload = {
+      ...mockPaymentPayload,
+      payload: { ...mockPaymentPayload.payload, signature: "0xfresh" },
+    };
+    const client = createValidationClient({
+      validatePaidResponse: (_view, context) => {
+        if (context.recovered) {
+          throw new Error("invalid recovery output");
+        }
+      },
+    });
+
+    mockPaymentClient.createPaymentPayload
+      .mockResolvedValueOnce(mockPaymentPayload)
+      .mockResolvedValueOnce(freshPayload);
+    mockPaymentClient.handlePaymentResponse
+      .mockResolvedValueOnce({ recovered: true })
+      .mockResolvedValueOnce(undefined);
+    mockMcpClient.callTool
+      .mockResolvedValueOnce(createEmbeddedPaymentError(mockPaymentRequired))
+      .mockResolvedValueOnce(createEmbeddedPaymentError(correctivePaymentRequired))
+      .mockResolvedValueOnce({
+        content: [{ type: "text", text: "recovered body" }],
+        _meta: { "x402/payment-response": mockSettleResponse },
+      });
+
+    await expect(client.callTool("paid_tool")).rejects.toThrow("invalid recovery output");
+    expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledTimes(2);
+  });
+
+  it("fail-closes when the paid result cannot be detached for validation", async () => {
+    const cloneSpy = vi.spyOn(globalThis, "structuredClone").mockImplementation(() => {
+      throw new Error("clone blocked");
+    });
+
+    try {
+      const client = createValidationClient({
+        validatePaidResponse: () => {},
+      });
+
+      mockMcpClient.callTool
+        .mockResolvedValueOnce(createEmbeddedPaymentError(mockPaymentRequired))
+        .mockResolvedValueOnce(paidApplicationResult);
+
+      await expect(client.callTool("paid_tool")).rejects.toBeInstanceOf(
+        PaidResponseValidationError,
+      );
+      expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledTimes(1);
+    } finally {
+      cloneSpy.mockRestore();
+    }
+  });
+
+  it("does not let validator mutation alter the returned paid result", async () => {
+    const client = createValidationClient({
+      validatePaidResponse: view => {
+        view.content[0]!.text = "mutated";
+        view.structuredContent!.value = 999;
+      },
+    });
+
+    mockMcpClient.callTool
+      .mockResolvedValueOnce(createEmbeddedPaymentError(mockPaymentRequired))
+      .mockResolvedValueOnce(paidApplicationResult);
+
+    const result = await client.callTool("paid_tool");
+
+    expect(result.content).toEqual(paidApplicationResult.content);
+    expect(result.structuredContent).toEqual(paidApplicationResult.structuredContent);
+    expect(result.paymentResponse).toEqual(mockSettleResponse);
+  });
+
+  it("preserves original authority and settlement evidence when validator mutates context and rejects", async () => {
+    const client = createValidationClient({
+      validatePaidResponse: (_view, context) => {
+        if (context.paymentRequired) {
+          context.paymentRequired.resource.url = "https://mutated.example";
+        }
+        context.paymentPayload.payload.signature = "0xmutated";
+        if (context.paymentResponse) {
+          context.paymentResponse.success = false;
+          context.paymentResponse.transaction = "0xmutated";
+        }
+        throw new Error("rejected after mutation");
+      },
+    });
+
+    mockMcpClient.callTool
+      .mockResolvedValueOnce(createEmbeddedPaymentError(mockPaymentRequired))
+      .mockResolvedValueOnce(paidApplicationResult);
+
+    await expect(client.callTool("paid_tool")).rejects.toMatchObject({
+      name: "PaidResponseValidationError",
+      message: "rejected after mutation",
+      paymentRequired: mockPaymentRequired,
+      paymentPayload: mockPaymentPayload,
+      paymentResponse: mockSettleResponse,
+      recovered: false,
+      result: {
+        content: paidApplicationResult.content,
+        structuredContent: paidApplicationResult.structuredContent,
+        _meta: paidApplicationResult._meta,
+      },
+    });
+    expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledTimes(1);
+  });
+
+  it("validates direct callToolWithPayment without fabricating paymentRequired", async () => {
+    const validatePaidResponse = vi.fn();
+    const client = createValidationClient({ validatePaidResponse });
+
+    mockMcpClient.callTool.mockResolvedValueOnce(paidApplicationResult);
+
+    await client.callToolWithPayment("tool", {}, mockPaymentPayload);
+
+    expect(validatePaidResponse).toHaveBeenCalledTimes(1);
+    expect(validatePaidResponse.mock.calls[0]?.[1]).not.toHaveProperty("paymentRequired");
+  });
+
+  it("validates paid output without settlement metadata when none is present", async () => {
+    const validatePaidResponse = vi.fn();
+    const client = createValidationClient({ validatePaidResponse });
+
+    mockMcpClient.callTool
+      .mockResolvedValueOnce(createEmbeddedPaymentError(mockPaymentRequired))
+      .mockResolvedValueOnce({
+        content: [{ type: "text", text: "paid without receipt" }],
+        structuredContent: { ok: true },
+      });
+
+    await client.callTool("paid_tool");
+
+    expect(validatePaidResponse).toHaveBeenCalledTimes(1);
+    expect(validatePaidResponse.mock.calls[0]?.[1]).not.toHaveProperty("paymentResponse");
+    expect(validatePaidResponse.mock.calls[0]?.[1]).toMatchObject({
+      paymentRequired: mockPaymentRequired,
+      recovered: false,
     });
   });
 });

@@ -152,6 +152,35 @@ export type PaymentRequiredHook = (
 ) => Promise<PaymentRequiredHookResult | void> | PaymentRequiredHookResult | void;
 
 /**
+ * Detached snapshot given to a caller-owned paid-response validator.
+ */
+export type PaidResponseValidationView = {
+  content: ToolContentItem[];
+  isError?: boolean;
+  structuredContent?: Record<string, unknown>;
+};
+
+/**
+ * Context passed to a caller-owned paid-response validator.
+ */
+export type ValidatePaidResponseContext = {
+  /** Seller requirement from the original 402 when known (e.g. via `callTool`). */
+  paymentRequired?: PaymentRequired;
+  recovered: boolean;
+  /** Settlement metadata when the paid result included it. */
+  paymentResponse?: SettleResponse;
+  paymentPayload: PaymentPayload;
+};
+
+/**
+ * Optional caller-owned check of a paid application tool result.
+ */
+export type ValidatePaidResponse = (
+  result: PaidResponseValidationView,
+  context: ValidatePaidResponseContext,
+) => void | Promise<void>;
+
+/**
  * Options for x402MCPClient
  */
 export interface x402MCPClientOptions {
@@ -173,6 +202,15 @@ export interface x402MCPClientOptions {
    * This can be used to implement human-in-the-loop approval.
    */
   onPaymentRequested?: (context: PaymentRequestedContext) => Promise<boolean> | boolean;
+
+  /**
+   * When set, runs on the final paid application result after any present
+   * settlement metadata has been processed (ordinary and bounded recovery paths),
+   * before the result is returned. The callback receives a detached view; the
+   * original tool result and settlement evidence are preserved on
+   * PaidResponseValidationError. Absent by default; current behavior is unchanged.
+   */
+  validatePaidResponse?: ValidatePaidResponse;
 }
 
 /**
@@ -257,9 +295,11 @@ export interface ToolContentItem {
 export interface MCPToolResultWithPayment {
   /** Standard MCP tool result content */
   content: ToolContentItem[];
+  /** Structured tool result when provided by the server */
+  structuredContent?: Record<string, unknown>;
   /** Whether the tool execution resulted in an error */
   isError?: boolean;
-  /** Payment response metadata (settlement info) */
+  /** Payment response metadata when the paid result included it */
   paymentResponse?: SettleResponse;
 }
 
@@ -297,6 +337,8 @@ export interface MCPMetaWithPaymentResponse {
 export interface MCPResultWithMeta {
   /** Tool result content */
   content?: ToolContentItem[];
+  /** Structured tool result when provided by the server */
+  structuredContent?: Record<string, unknown>;
   /** Whether the result is an error */
   isError?: boolean;
   /** Metadata including potential payment response */
