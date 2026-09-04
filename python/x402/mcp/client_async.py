@@ -6,7 +6,7 @@ import warnings
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from ..schemas import PaymentPayload, PaymentRequired
+from ..schemas import PaymentPayload, PaymentRequired, PaymentRequiredV1
 from .types import (
     AfterPaymentContext,
     MCPToolCallResult,
@@ -18,6 +18,7 @@ from .types import (
 from .utils import (
     attach_payment_to_meta,
     convert_mcp_result,
+    extract_payment_required_from_error,
     extract_payment_required_from_result,
     extract_payment_response_from_meta,
 )
@@ -160,7 +161,14 @@ class x402MCPClient:
         """
         # First attempt without payment
         call_params = {"name": name, "arguments": args}
-        result = await self._call_mcp_tool(call_params, **kwargs)
+        try:
+            result = await self._call_mcp_tool(call_params, **kwargs)
+        except Exception as exc:
+            # Check if the thrown exception carries payment data (e.g. McpError -32042)
+            payment_required = extract_payment_required_from_error(exc)
+            if payment_required is None:
+                raise
+            return await self._handle_payment_required(name, args, payment_required, **kwargs)
 
         # Check if this is a payment required response
         payment_required = extract_payment_required_from_result(result)
@@ -173,7 +181,19 @@ class x402MCPClient:
                 payment_made=False,
             )
 
-        # Payment required - run hooks first
+        return await self._handle_payment_required(name, args, payment_required, **kwargs)
+
+    async def _handle_payment_required(
+        self,
+        name: str,
+        args: dict[str, Any],
+        payment_required: PaymentRequired | PaymentRequiredV1,
+        **kwargs: Any,
+    ) -> MCPToolCallResult:
+        """Handle a payment-required signal (from isError result or thrown exception).
+
+        Runs hooks, checks auto_payment, creates payment, and retries.
+        """
         payment_required_context = PaymentRequiredContext(
             tool_name=name,
             arguments=args,
@@ -276,7 +296,7 @@ class x402MCPClient:
         name: str,
         args: dict[str, Any],
         **kwargs: Any,
-    ) -> PaymentRequired | None:
+    ) -> PaymentRequired | PaymentRequiredV1 | None:
         """Probe a tool to discover its payment requirements.
 
         WARNING: This actually calls the tool, so it may have side effects.
@@ -290,7 +310,13 @@ class x402MCPClient:
             PaymentRequired if found, None otherwise
         """
         call_params = {"name": name, "arguments": args}
-        result = await self._call_mcp_tool(call_params, **kwargs)
+        try:
+            result = await self._call_mcp_tool(call_params, **kwargs)
+        except Exception as exc:
+            payment_required = extract_payment_required_from_error(exc)
+            if payment_required is None:
+                raise
+            return payment_required
         return extract_payment_required_from_result(result)
 
     async def _call_mcp_tool(self, params: dict[str, Any], **kwargs: Any) -> MCPToolResult:

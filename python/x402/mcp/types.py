@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 # Protocol constants for MCP x402 payment integration.
 MCP_PAYMENT_REQUIRED_CODE = 402
+JSONRPC_PAYMENT_REQUIRED_CODE = -32042
 MCP_PAYMENT_META_KEY = "x402/payment"
 MCP_PAYMENT_RESPONSE_META_KEY = "x402/payment-response"
 
