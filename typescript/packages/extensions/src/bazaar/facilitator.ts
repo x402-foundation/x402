@@ -573,12 +573,28 @@ export function extractDiscoveryInfo(
     return null;
   }
 
-  // Strip query params (?) and hash sections (#) for discovery cataloging
+  // Strip query params (?) and hash sections (#) for discovery cataloging.
+  // `url.origin` is only meaningful for a WHATWG "special scheme" (http,
+  // https, ws, wss, ftp, file) — those are the only schemes the URL spec
+  // defines a real origin for. Any other scheme (e.g. mcp://) parses to an
+  // opaque origin, which URL.prototype.origin serializes as the literal
+  // string "null". That's not a reason to skip stripping too: `protocol`,
+  // `host`, and `pathname` all populate correctly for an opaque-origin URL
+  // (only `origin` collapses), so reconstructing from those three still
+  // strips the query/fragment this function exists to strip, without
+  // reintroducing a per-scheme allowlist. A producer declaring
+  // `mcp://tool/x?session=abc` would otherwise carry that query into the
+  // canonical, recreating the per-variant catalog duplication the
+  // stripping exists to prevent. See
+  // https://github.com/x402-foundation/x402/pull/3138#issuecomment-5273664506.
   const url = new URL(resourceUrl);
   // If a routeTemplate is present (dynamic route), use it as the canonical path
-  const canonicalUrl = routeTemplate
-    ? `${url.origin}${routeTemplate}`
-    : `${url.origin}${url.pathname}`;
+  const canonicalUrl =
+    url.origin === "null"
+      ? `${url.protocol}//${url.host}${url.pathname}`
+      : routeTemplate
+        ? `${url.origin}${routeTemplate}`
+        : `${url.origin}${url.pathname}`;
 
   // Extract description and mimeType from resource info (v2) or requirements (v1)
   let description: string | undefined;
