@@ -317,6 +317,17 @@ export function paymentMiddlewareFromHTTPServer(
               withPrivateCacheControl(res.headers.get("Cache-Control")),
             );
             res.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
+            // Rebuild from the buffered bytes so the body does not depend on the
+            // original stream's state across the settlement await. `new Response`
+            // rejects statuses outside 200-599, and any body on a null-body status;
+            // throwing here would settle the payment and then return 402.
+            if (res.status >= 200 && res.status < 600) {
+              res = new Response(responseBody.length > 0 ? responseBody : null, {
+                status: res.status,
+                statusText: res.statusText,
+                headers: res.headers,
+              });
+            }
           }
         } catch (error) {
           if (error instanceof FacilitatorResponseError) {

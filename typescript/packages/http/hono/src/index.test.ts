@@ -147,6 +147,22 @@ function setupMockHttpServer(
 }
 
 /**
+ * Creates a Hono app with the payment middleware mounted on /api/*.
+ *
+ * @param handler - Handler for GET /api/test.
+ * @returns The app.
+ */
+function createPaidApp(handler: Parameters<Hono["get"]>[1]): Hono {
+  const app = new Hono();
+  app.use(
+    "/api/*",
+    paymentMiddleware(mockRoutes, {} as unknown as x402ResourceServer, undefined, undefined, false),
+  );
+  app.get("/api/test", handler);
+  return app;
+}
+
+/**
  * Creates a mock Hono Context for testing.
  *
  * @param options - Configuration options for the mock context.
@@ -414,7 +430,133 @@ describe("paymentMiddleware", () => {
       undefined,
       undefined,
     );
-    expect(responseHeaders.get("PAYMENT-RESPONSE")).toBe("settled");
+    expect(context.res?.headers.get("PAYMENT-RESPONSE")).toBe("settled");
+  });
+
+  it("sends the handler response to the client after settlement succeeds", async () => {
+    setupMockHttpServer({
+      type: "payment-verified",
+      paymentPayload: mockPaymentPayload,
+      paymentRequirements: mockPaymentRequirements,
+    });
+    // Settlement against a real facilitator takes seconds; what was buffered
+    // before it started must still reach the client once it resolves.
+    mockProcessSettlement.mockImplementation(async () => {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      return { success: true, headers: { "PAYMENT-RESPONSE": "settled" } };
+    });
+
+    const app = createPaidApp(
+      () =>
+        new Response('{"ok":true}', {
+          status: 200,
+          statusText: "Totally Fine",
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+            "content-length": "11",
+            "x-custom": "kept",
+          },
+        }),
+    );
+
+    const res = await app.request("/api/test");
+
+    expect(res.status).toBe(200);
+    expect(res.statusText).toBe("Totally Fine");
+    expect(res.headers.get("PAYMENT-RESPONSE")).toBe("settled");
+    expect(res.headers.get("content-type")).toBe("application/json; charset=utf-8");
+    expect(res.headers.get("content-length")).toBe("11");
+    expect(res.headers.get("x-custom")).toBe("kept");
+    expect(res.headers.get("Cache-Control")).toContain("private");
+    expect(await res.text()).toBe('{"ok":true}');
+  });
+
+  it("keeps a null-body status intact after settlement succeeds", async () => {
+    setupMockHttpServer(
+      {
+        type: "payment-verified",
+        paymentPayload: mockPaymentPayload,
+        paymentRequirements: mockPaymentRequirements,
+      },
+      { success: true, headers: { "PAYMENT-RESPONSE": "settled" } },
+    );
+
+    const app = createPaidApp(c => c.body(null, 204));
+
+    const res = await app.request("/api/test");
+
+    expect(res.status).toBe(204);
+    expect(res.headers.get("PAYMENT-RESPONSE")).toBe("settled");
+  });
+
+  it("keeps multiple Set-Cookie headers separate through the rebuild", async () => {
+    setupMockHttpServer(
+      {
+        type: "payment-verified",
+        paymentPayload: mockPaymentPayload,
+        paymentRequirements: mockPaymentRequirements,
+      },
+      { success: true, headers: { "PAYMENT-RESPONSE": "settled" } },
+    );
+
+    const app = createPaidApp(() => {
+      // Carrying headers into the rebuilt response must not collapse these into one.
+      const headers = new Headers({ "content-type": "application/json" });
+      headers.append("set-cookie", "a=1; Path=/");
+      headers.append("set-cookie", "b=2; Path=/");
+      return new Response('{"ok":true}', { status: 200, headers });
+    });
+
+    const res = await app.request("/api/test");
+
+    expect(res.headers.getSetCookie()).toEqual(["a=1; Path=/", "b=2; Path=/"]);
+    expect(res.headers.get("PAYMENT-RESPONSE")).toBe("settled");
+  });
+
+  it("does not turn an unreconstructable response into a 402 after settling", async () => {
+    setupMockHttpServer(
+      {
+        type: "payment-verified",
+        paymentPayload: mockPaymentPayload,
+        paymentRequirements: mockPaymentRequirements,
+      },
+      { success: true, headers: { "PAYMENT-RESPONSE": "settled" } },
+    );
+
+    const middleware = paymentMiddleware(
+      mockRoutes,
+      {} as unknown as x402ResourceServer,
+      undefined,
+      undefined,
+      false,
+    );
+    const context = createMockContext();
+
+    // A status outside 200-599 makes `new Response()` throw whatever the body is.
+    // Undici cannot build one, but workerd can (a 101 upgrade carries a webSocket),
+    // so the middleware has to survive receiving it. The payment is already settled
+    // onchain at this point, so a 402 here would charge and withhold.
+    const responseHeaders = new Headers();
+    responseHeaders.set("Settlement-Overrides", JSON.stringify({ amount: "32%" }));
+    const upgradeResponse = {
+      status: 101,
+      headers: responseHeaders,
+      clone: () => ({
+        arrayBuffer: async () => new ArrayBuffer(0),
+      }),
+    } as unknown as Response;
+
+    const next = vi.fn().mockImplementation(async () => {
+      context.res = upgradeResponse;
+    });
+
+    await middleware(context, next);
+
+    expect(context.json).not.toHaveBeenCalledWith({}, 402);
+    expect(context.res).toBe(upgradeResponse);
+    expect(context.res?.status).toBe(101);
+    expect(context.res?.headers.get("PAYMENT-RESPONSE")).toBe("settled");
+    expect(context.res?.headers.has("Settlement-Overrides")).toBe(false);
   });
 
   it("strips settlement override header from client response", async () => {
@@ -452,8 +594,8 @@ describe("paymentMiddleware", () => {
 
     await middleware(context, next);
 
-    expect(responseHeaders.has("Settlement-Overrides")).toBe(false);
-    expect(responseHeaders.get("PAYMENT-RESPONSE")).toBe("settled");
+    expect(context.res?.headers.has("Settlement-Overrides")).toBe(false);
+    expect(context.res?.headers.get("PAYMENT-RESPONSE")).toBe("settled");
   });
 
   it("skips settlement when handler returns >= 400", async () => {
