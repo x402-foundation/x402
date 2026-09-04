@@ -113,6 +113,16 @@
         "types": "./dist/cjs/builder-code/index.d.ts",
         "default": "./dist/cjs/builder-code/index.js"
       }
+    },
+    "./authorization-evidence": {
+      "import": {
+        "types": "./dist/esm/authorization-evidence/index.d.mts",
+        "default": "./dist/esm/authorization-evidence/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/authorization-evidence/index.d.ts",
+        "default": "./dist/cjs/authorization-evidence/index.js"
+      }
     }
   },
   "files": [

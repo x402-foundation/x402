@@ -8,6 +8,7 @@ const baseConfig = {
     "offer-receipt/index": "src/offer-receipt/index.ts",
     "payment-identifier/index": "src/payment-identifier/index.ts",
     "builder-code/index": "src/builder-code/index.ts",
+    "authorization-evidence/index": "src/authorization-evidence/index.ts",
   },
   dts: {
     resolve: true,
