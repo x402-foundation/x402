@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "build:vercel": "cd .. && pnpm install && cd site && pnpm -r --filter=site... run build",
+    "build:vercel": "cd .. && pnpm install && pnpm -r --filter=site^... exec -- tsup --no-dts && pnpm --filter=@x402/core exec -- tsup && cd site && pnpm build",
     "start": "next start",
     "format": "prettier -c .prettierrc --write \"**/*.{ts,js,cjs,json,md}\"",
     "format:check": "prettier -c .prettierrc --check \"**/*.{ts,js,cjs,json,md}\"",
