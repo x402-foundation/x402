@@ -1,0 +1,8 @@
+{
+  "name": "x402Stacks Skill",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "/logos/x402Stacks.svg",
+  "description": "Agent skill for Claude Code, Cursor, and other AI coding tools. Scaffolds x402 payment-gated API endpoints on Stacks.",
+  "websiteUrl": "https://stacksx402.com",
+  "githubUrl": "https://github.com/x402Stacks/x402stacks-skill"
+}

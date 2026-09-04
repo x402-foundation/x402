@@ -1,0 +1,8 @@
+{
+  "name": "x402Stacks",
+  "category": "Client-Side Integrations",
+  "logoUrl": "/logos/x402Stacks.svg",
+  "description": "TypeScript client/server library (x402-stacks on npm) for x402 payments on Stacks. Supports STX, sBTC, and USDCx tokens with axios interceptors and Express middleware.",
+  "websiteUrl": "https://stacksx402.com",
+  "githubUrl": "https://github.com/x402Stacks/x402-stacks-sdk"
+}

@@ -1,0 +1,8 @@
+{
+  "name": "AIBTC Skills",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "/logos/aibtc.png",
+  "description": "AI agent skills for Bitcoin, Stacks, and x402 operations. Agents can execute, probe, and scaffold x402 payment-gated endpoints from any skills-compatible AI coding tool.",
+  "websiteUrl": "https://aibtc.com",
+  "githubUrl": "https://github.com/aibtcdev/skills"
+}

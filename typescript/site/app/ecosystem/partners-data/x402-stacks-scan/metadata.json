@@ -1,0 +1,7 @@
+{
+  "name": "x402StacksScan",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "/logos/x402Stacks.svg",
+  "description": "Ecosystem explorer for x402 on Stacks. Discover x402-enabled endpoints, view payment analytics, and browse registered services.",
+  "websiteUrl": "https://scan.stacksx402.com"
+}
