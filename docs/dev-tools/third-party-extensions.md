@@ -10,3 +10,4 @@ description: "Packages built by ecosystem partners that extend x402 beyond the c
 | [PEAC Protocol](https://x402.peacprotocol.org) | Verifiable receipts for x402 payments | TypeScript | [GitHub](https://github.com/peacprotocol/peac) · [npm](https://www.npmjs.com/package/@peac/adapter-x402) |
 | [x402r](https://x402r.org) | Non-custodial refund and arbitration protocol | Typescript | [GitHub](https://github.com/BackTrackCo/x402r-sdk) · [npm](https://www.npmjs.com/package/@x402r/sdk ) |
 | [zauth](https://zauthx402.com) | Monitoring, verification, and refund SDK | TypeScript | [GitHub](https://github.com/zauthofficial/zauthSDK) · [npm](https://www.npmjs.com/package/@zauthx402/sdk) |
+| [0mod HTTP 402 Gateway](https://0mod.com) | Edge HTTP 402 API Gateway & MCP server for AI agents using x402 micropayments on Base USDC | TypeScript | [GitHub](https://github.com/zeromodern/mcp-server-0mod) · [npm](https://www.npmjs.com/package/@zeromodern/mcp-server-0mod) |
