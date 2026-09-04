@@ -10,9 +10,9 @@ fails, and returns the resulting TRON transaction ID.
 
 | Network | GasFreeController | Beacon | Default relayer base URL |
 | --- | --- | --- | --- |
-| `tron:0x2b6653dc` | `TFFAMQLZybALaLb4uxHA9RBE7pxhUAjF3U` | `TSP9UW6FQhT76XD2jWA6ipGMx3yGbjDffP` | `https://facilitator.bankofai.io/mainnet` |
-| `tron:0xcd8690dc` | `THQGuFzL87ZqhxkgqYEryRAd7gqFqL5rdc` | `TLtCGmaxH3PbuaF6kbybwteZcHptEdgQGC` | `https://facilitator.bankofai.io/nile` |
-| `tron:0x94a9059e` | `TQghdCeVDA6CnuNVTUhfaAyPfTetqZWNpm` | `TQ1jvA3nLDMDNbJoMPLzTPoqAg8NvZ5CCW` | `https://facilitator.bankofai.io/shasta` |
+| `tron:728126428` | `TFFAMQLZybALaLb4uxHA9RBE7pxhUAjF3U` | `TSP9UW6FQhT76XD2jWA6ipGMx3yGbjDffP` | `https://facilitator.bankofai.io/mainnet` |
+| `tron:3448148188` | `THQGuFzL87ZqhxkgqYEryRAd7gqFqL5rdc` | `TLtCGmaxH3PbuaF6kbybwteZcHptEdgQGC` | `https://facilitator.bankofai.io/nile` |
+| `tron:2494104990` | `TQghdCeVDA6CnuNVTUhfaAyPfTetqZWNpm` | `TQ1jvA3nLDMDNbJoMPLzTPoqAg8NvZ5CCW` | `https://facilitator.bankofai.io/shasta` |
 
 Deployments MAY override the relayer URL, but MUST retain the controller associated with the selected
 network unless using a separately specified GasFree deployment.
@@ -30,7 +30,7 @@ NOT be advertised as `extra.fee`.
   "x402Version": 2,
   "accepted": {
     "scheme": "exact_gasfree",
-    "network": "tron:0xcd8690dc",
+    "network": "tron:3448148188",
     "amount": "1000",
     "asset": "TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf",
     "payTo": "TReceiverAddress",
@@ -116,7 +116,10 @@ The facilitator MUST:
 The facilitator re-verifies, performs a best-effort balance check for `amount + maxFee` at
 `gasfreeAddress`, submits the message and signature to `POST /api/v1/gasfree/submit`, and polls the
 returned trace ID. Success requires a terminal success/on-chain state and a non-empty transaction
-hash.
+hash that is a valid TRON transaction ID. If polling becomes indeterminate after the relayer has
+exposed a valid transaction ID, settlement returns `settlement_pending` with that transaction ID.
+This matches the receipt-timeout behavior of the other settlement schemes and does not imply a
+Facilitator-managed reconciliation workflow.
 
 ## Error Codes
 
@@ -124,7 +127,8 @@ Stable reasons include `invalid_exact_gasfree_scheme`, `invalid_exact_gasfree_ne
 `missing_gasfree_payload`, `gasfree_token_mismatch`, `gasfree_amount_mismatch`,
 `gasfree_payto_mismatch`, `gasfree_fee_to_mismatch`, `gasfree_expired`,
 `invalid_gasfree_signature`, `insufficient_funds`, `gasfree_api_no_response`,
-`gasfree_missing_transaction_hash`, and `gasfree_provider_list_unavailable`.
+`gasfree_missing_transaction_hash`, `gasfree_invalid_transaction_hash`,
+`gasfree_transaction_failed`, `settlement_pending`, and `gasfree_provider_list_unavailable`.
 
 Relayer transport errors may be returned as `errorReason` text by the current implementation.
 

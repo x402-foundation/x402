@@ -13,9 +13,9 @@ The upto proxy deployments are:
 
 | Network | `x402UptoPermit2Proxy` |
 | --- | --- |
-| `tron:0x2b6653dc` | `TBLeFPkfDiweBbYmAPqnakaFBPDt9p93sR` |
-| `tron:0xcd8690dc` | `TKvcqQ7S2bYyys5ZZNpjj9xGiPhiwzHq1K` |
-| `tron:0x94a9059e` | `TMxpieW75DQiA9QaoTB1ifJWeQpuppSB1g` |
+| `tron:728126428` | `TBLeFPkfDiweBbYmAPqnakaFBPDt9p93sR` |
+| `tron:3448148188` | `TKvcqQ7S2bYyys5ZZNpjj9xGiPhiwzHq1K` |
+| `tron:2494104990` | `TMxpieW75DQiA9QaoTB1ifJWeQpuppSB1g` |
 
 ## Payment Requirements
 
@@ -33,7 +33,7 @@ the resource server replaces it with the actual amount. The signed maximum remai
   "x402Version": 2,
   "accepted": {
     "scheme": "upto",
-    "network": "tron:0xcd8690dc",
+    "network": "tron:3448148188",
     "amount": "10000",
     "asset": "TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf",
     "payTo": "TReceiverAddress",
@@ -92,12 +92,20 @@ then verifies again. It rejects `actualAmount > signedMaximum`.
 - For `actualAmount == 0`, it returns success with an empty transaction ID and `amount: "0"`; no
   nonce is consumed on-chain.
 
+For a nonzero settlement, the facilitator waits for a receipt using a configurable confirmation
+budget (90 seconds by default). If the budget expires, receipt RPC fails, or receipt effect
+processing is indeterminate after broadcast, it returns `success: false`,
+`errorReason: "settlement_pending"`, and the original transaction ID. An explicit revert is
+terminal and also preserves the transaction ID. A caller MUST reconcile the original transaction
+and MUST NOT rebroadcast the authorization in response to `settlement_pending`.
+
 ## Error Codes
 
 Stable reasons include `invalid_upto_tron_scheme`, `invalid_upto_tron_network_mismatch`,
 `unsupported_payload_type`, `invalid_permit2_spender`, `invalid_permit2_facilitator`,
 `permit2_amount_mismatch`, `permit2_token_mismatch`, `permit2_allowance_required`,
-`upto_settlement_exceeds_amount`, `insufficient_funds`, and `transaction_failed`.
+`upto_settlement_exceeds_amount`, `insufficient_funds`, `settlement_pending`, and
+`transaction_failed`.
 
 ## Security Considerations
 

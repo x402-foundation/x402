@@ -13,9 +13,9 @@ the protocol boundary and normalized to 20-byte hex for hashing, typed data, and
 
 | Network | Channel contract | ERC-3009 collector | Permit2 collector |
 | --- | --- | --- | --- |
-| `tron:0x2b6653dc` | `TW9yNhTySkEHYfjnGQU2u4NAsdb1tW4fbm` | `TTWA7aWMdx4jfcbp8XRAS2JAd2sUhyF9qj` | `TAg5qqp1K9x5KeSTWnRa8LT79B5HUjzSHY` |
-| `tron:0xcd8690dc` | `TWBwWHZWwH8TzrZnbxit1J645VGYY1K2fA` | `TJUQ3BQt4YFg8EeevjiUa5LbfSGz5BxzRW` | `TEp6bCqSEKAr99sCiqANC84RtRwx7xGbA4` |
-| `tron:0x94a9059e` | `TA3MZHMLsgi8JMU1DL8H4gKp1YjJKATibf` | `TRd1KBfy1iUs6R45oZrtbLUjtcSKzXAvPG` | `TNmfrxbKCHqPUTj9zHVfg4Dq8WNZXPyf1x` |
+| `tron:728126428` | `TW9yNhTySkEHYfjnGQU2u4NAsdb1tW4fbm` | `TTWA7aWMdx4jfcbp8XRAS2JAd2sUhyF9qj` | `TAg5qqp1K9x5KeSTWnRa8LT79B5HUjzSHY` |
+| `tron:3448148188` | `TWBwWHZWwH8TzrZnbxit1J645VGYY1K2fA` | `TJUQ3BQt4YFg8EeevjiUa5LbfSGz5BxzRW` | `TEp6bCqSEKAr99sCiqANC84RtRwx7xGbA4` |
+| `tron:2494104990` | `TA3MZHMLsgi8JMU1DL8H4gKp1YjJKATibf` | `TRd1KBfy1iUs6R45oZrtbLUjtcSKzXAvPG` | `TNmfrxbKCHqPUTj9zHVfg4Dq8WNZXPyf1x` |
 
 The channel TIP-712 domain is `{ name: "x402 Batch Settlement", version: "1", chainId,
 verifyingContract: channelContract }`.
@@ -135,12 +135,25 @@ corrective `channelState`/`voucherState` when the client must resynchronize.
 Successful deposit settlement returns the deposited amount and channel state. Voucher request
 responses carry `chargedAmount`, channel state, and the latest signed voucher in `SettleResponse.extra`.
 
+For every broadcast action (`deposit`, `claim`, `settle`, or `refund`), the facilitator waits for a
+receipt using a configurable confirmation budget (90 seconds by default). If the budget expires,
+receipt RPC fails, or receipt effect processing is indeterminate after broadcast, it returns
+`success: false`, `errorReason: "settlement_pending"`, and the original transaction ID. An explicit
+revert is terminal and also preserves the transaction ID. The original transaction MUST be
+reconciled and MUST NOT be rebroadcast.
+
+When an operation returns `settlement_pending`, the resource server MUST retain the corresponding
+channel reservation until the original transaction reaches a terminal status. It commits channel
+state after confirmed success and releases only the matching reservation after confirmed revert.
+Status-query failures remain fail-closed and MUST NOT cause a reservation to be released merely
+because its ordinary TTL elapsed.
+
 ## Error Codes
 
 TRON errors use the prefix `invalid_batch_settlement_tron_`. Stable categories cover channel lookup
 and ID mismatch, token/receiver/authorizer mismatch, invalid voucher signatures, cumulative amount
 bounds, deposit authorization or allowance failures, channel busy/resynchronization, invalid refund
-amounts, RPC reads, and failed deposit/claim/settle/refund transactions. The exported names in
+amounts, RPC reads, `settlement_pending`, and failed deposit/claim/settle/refund transactions. The exported names in
 `typescript/packages/mechanisms/tron/src/batch-settlement/errors.ts` are the authoritative list.
 
 ## Security Considerations
