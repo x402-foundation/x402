@@ -26,12 +26,14 @@
     "@x402/hedera": "workspace:*",
     "@x402/keeta": "workspace:*",
     "@x402/near": "workspace:*",
+    "@x402/starknet": "workspace:*",
     "@x402/stellar": "workspace:*",
     "@x402/svm": "workspace:*",
     "@x402/tvm": "workspace:*",
     "@x402/xrpl": "workspace:*",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "starknet": "^8.9.2",
     "viem": "^2.48.11"
   },
   "devDependencies": {

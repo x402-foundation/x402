@@ -135,7 +135,7 @@ Launches an interactive CLI where you can select:
 - **Servers** - Protected endpoints requiring payment (Express, Gin, Hono, Next.js, FastAPI, Flask, etc.)
 - **Clients** - Payment-capable HTTP clients (axios, fetch, httpx, requests, etc.)
 - **Extensions** - Additional features like Bazaar discovery
-- **Protocols** - EVM, SVM, AVM, Aptos, Concordium, Hedera, NEAR, Stellar, and/or TVM networks
+- **Protocols** - EVM, SVM, AVM, Aptos, Concordium, Hedera, NEAR, Starknet, Stellar, and/or TVM networks
 - **Payment schemes** (when multiple apply) - `exact`, `upto`, or `batch-settlement`
 - **Payment flows** (when multiple apply) - `authorization`, `upfront`, or `escrow`
 - **Asset transfer methods** (when multiple apply) - `eip3009`, `permit2`, `sequence`, or `ticketSequence`
@@ -213,6 +213,8 @@ CLIENT_TVM_PRIVATE_KEY=...          # TVM private key for client payments
 CLIENT_NEAR_ACCOUNT_ID=...          # NEAR payer account id that owns the access key
 CLIENT_NEAR_PRIVATE_KEY=ed25519:... # NEAR private key for that payer account
 CLIENT_XRPL_SEED=s...               # XRPL seed for client payments (payer signs and pays fees)
+CLIENT_STARKNET_ADDRESS=0x...       # Starknet payer account contract address
+CLIENT_STARKNET_PRIVATE_KEY=0x...   # Starknet private key for that payer account (payer needs no gas)
 
 # Server payment addresses
 SERVER_EVM_ADDRESS=0x...            # Where servers receive EVM payments
@@ -226,6 +228,7 @@ SERVER_STELLAR_ADDRESS=...          # Where servers receive Stellar payments
 SERVER_TVM_ADDRESS=...              # Where servers receive TVM payments
 SERVER_NEAR_ADDRESS=...             # Where servers receive NEAR payments (merchant account)
 SERVER_XRPL_ADDRESS=r...            # Where servers receive XRPL payments
+SERVER_STARKNET_ADDRESS=0x...       # Where servers receive Starknet payments
 
 # Facilitator wallets (⚠️ TEST WALLETS ONLY — used to fund/drain client between tests)
 FACILITATOR_EVM_PRIVATE_KEY=0x...   # EVM private key for facilitator
@@ -242,6 +245,8 @@ FACILITATOR_TVM_PRIVATE_KEY=...     # TVM private key for facilitator
 FACILITATOR_NEAR_ACCOUNT_ID=...     # NEAR relayer account id (submits meta-tx, sponsors gas)
 FACILITATOR_NEAR_PRIVATE_KEY=ed25519:... # NEAR relayer private key
 # XRPL needs no facilitator wallet — the facilitator is keyless (payer signs and pays fees)
+FACILITATOR_STARKNET_ADDRESS=0x...  # Starknet executor account address (pays every settlement fee)
+FACILITATOR_STARKNET_PRIVATE_KEY=0x... # Starknet private key for that executor account
 
 # Concordium network override
 CCD_NETWORK=ccd:4221332d34e1694168c2a0c0b3fd0f27  # Optional; defaults to testnet
@@ -350,6 +355,20 @@ You need **three separate NEAR testnet accounts** for e2e tests — client (paye
 3. Give the **client (payer)** the payment token. The default asset is **wNEAR** (`wrap.testnet`, a NEP-141): wrap NEAR via `wrap.testnet` `near_deposit`. Both payer and merchant must be `storage_deposit`-registered on the token contract.
 
 > **Note:** payer key = `CLIENT_NEAR_*`, relayer key = `FACILITATOR_NEAR_*`, merchant = `SERVER_NEAR_ADDRESS`. `CLIENT_NEAR_ACCOUNT_ID` is required because a NEAR private key identifies a public key, but the signer must also know which account owns that access key to read its nonce and set the delegated action `senderId`. Override the token with `SERVER_NEAR_ASSET` / `SERVER_NEAR_AMOUNT` (defaults: `wrap.testnet` / `1000000000000000000000` = 0.001 wNEAR; set them to a NEP-141 like Circle USDC for stablecoin runs).
+
+#### Starknet Sepolia
+
+You need **two deployed Starknet Sepolia accounts** for e2e tests, client (payer) and facilitator (executor), plus a merchant address for the server:
+
+1. The payer account must use an account class implementing SNIP-9 v2 (it must expose `execute_from_outside_v2` and `is_valid_outside_execution_nonce`); current Argent and Braavos classes do, older ones do not, and the payer will otherwise be rejected at verification. The executor can be any deployed Starknet account that signs v3 `INVOKE` transactions. Create and deploy the payer and executor accounts (e.g. `sncast account create` + `sncast account deploy`, or any Starknet wallet), then export each account's address (`0x...`) and private key (`0x...`). A Starknet account is a contract, so it must be deployed before it can sign; an undeployed (counterfactual) address will not work. See the [Starknet Sepolia quickstart](https://docs.starknet.io/build/quickstart/sepolia). `SERVER_STARKNET_ADDRESS` only receives the transfer, never signs, and needs no key.
+2. Fund the facilitator (executor) account with Sepolia STRK from the [Starknet faucet](https://faucet.starknet.io/); it submits the SNIP-9 `execute_from_outside_v2` call and pays the whole transaction fee, so it must stay funded. The payer needs a one-time STRK balance too, because deploying its account contract in step 1 costs gas. Once deployed, the payer never pays a fee again: it only signs.
+3. Give **only the client (payer)** the payment token. The default asset is Circle USDC on Sepolia, `0x0512feAc6339Ff7889822cb5aA2a86C848e9D392bB0E3E237C008674feeD8343` (6 decimals), from the [Circle faucet](https://faucet.circle.com/) (select Starknet Sepolia).
+
+```bash
+pnpm test --testnet --min --families=starknet --versions=2
+```
+
+> **Note:** payer = `CLIENT_STARKNET_ADDRESS` + `CLIENT_STARKNET_PRIVATE_KEY`, executor = `FACILITATOR_STARKNET_ADDRESS` + `FACILITATOR_STARKNET_PRIVATE_KEY`, merchant = `SERVER_STARKNET_ADDRESS`. The payer needs **no STRK and no ETH**, only a token balance: settlement is fully sponsored, and the executor account is the only one that ever pays fees. `CLIENT_STARKNET_ADDRESS` is required because a Starknet private key does not identify the account contract that authorizes it. `PaymentRequirements.extra.feePayer` is advertised by the facilitator through `/supported` and copied verbatim by the resource server, so a Starknet 402 cannot be served without a facilitator that advertises a fee payer.
 
 ## Example Session
 

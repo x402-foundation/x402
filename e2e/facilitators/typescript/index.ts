@@ -82,6 +82,13 @@ import { ExactTvmScheme } from "@x402/tvm/exact/facilitator";
 import { createFacilitatorNearSigner, type FacilitatorNearSignerConfig } from "@x402/near";
 import { ExactNearScheme as ExactNearFacilitatorScheme } from "@x402/near/exact/facilitator";
 import { ExactXrplScheme as ExactXrplFacilitatorScheme } from "@x402/xrpl/exact/facilitator";
+import {
+  createStarknetProvider,
+  toFacilitatorStarknetSigner,
+  type FacilitatorStarknetSigner,
+} from "@x402/starknet";
+import { ExactStarknetScheme as ExactStarknetFacilitatorScheme } from "@x402/starknet/exact/facilitator";
+import { Account as StarknetAccount } from "starknet";
 import * as KeetaNet from "@keetanetwork/keetanet-client";
 import crypto from "crypto";
 import dotenv from "dotenv";
@@ -114,6 +121,7 @@ const KEETA_NETWORK = resolveNetworkCaip2("keeta");
 const STELLAR_NETWORK = resolveNetworkCaip2("stellar");
 const TVM_NETWORK = resolveNetworkCaip2("tvm");
 const NEAR_NETWORK = resolveNetworkCaip2("near");
+const STARKNET_NETWORK = resolveNetworkCaip2("starknet");
 const NEAR_RPC_URL = process.env.NEAR_RPC_URL;
 const XRPL_NETWORK = resolveNetworkCaip2("xrpl");
 const XRPL_RPC_URL = process.env.XRPL_RPC_URL;
@@ -126,6 +134,7 @@ const AVM_RPC_URL = process.env.AVM_RPC_URL;
 const APTOS_RPC_URL = process.env.APTOS_RPC_URL;
 const HEDERA_RPC_URL = process.env.HEDERA_RPC_URL;
 const STELLAR_RPC_URL = process.env.STELLAR_RPC_URL;
+const STARKNET_RPC_URL = process.env.STARKNET_RPC_URL;
 const TVM_PROVIDER = (process.env.TVM_PROVIDER || TVM_PROVIDER_TONCENTER).toLowerCase();
 
 // Map CAIP-2 network IDs to viem chains
@@ -155,6 +164,7 @@ if (AVM_RPC_URL) console.log(`🌐 AVM RPC URL: ${AVM_RPC_URL}`);
 if (APTOS_RPC_URL) console.log(`🌐 Aptos RPC URL: ${APTOS_RPC_URL}`);
 if (HEDERA_RPC_URL) console.log(`🌐 Hedera Node URL: ${HEDERA_RPC_URL}`);
 if (STELLAR_RPC_URL) console.log(`🌐 Stellar RPC URL: ${STELLAR_RPC_URL}`);
+if (STARKNET_RPC_URL) console.log(`🌐 Starknet RPC URL: ${STARKNET_RPC_URL}`);
 console.log(`🌐 TVM Provider: ${TVM_PROVIDER}`);
 
 const hasFacilitatorCredential = [
@@ -389,6 +399,20 @@ const aptosSigner = aptosAccount
   )
   : undefined;
 
+// Initialize the Starknet facilitator signer from its own funded account (optional).
+// That account is the announced extra.feePayer and pays the gas for every settlement.
+let starknetSigner: FacilitatorStarknetSigner | undefined;
+if (process.env.FACILITATOR_STARKNET_ADDRESS && process.env.FACILITATOR_STARKNET_PRIVATE_KEY) {
+  starknetSigner = toFacilitatorStarknetSigner(
+    new StarknetAccount({
+      provider: createStarknetProvider(STARKNET_NETWORK, STARKNET_RPC_URL),
+      address: process.env.FACILITATOR_STARKNET_ADDRESS,
+      signer: process.env.FACILITATOR_STARKNET_PRIVATE_KEY,
+    }),
+  );
+  console.info(`Starknet Facilitator account: ${process.env.FACILITATOR_STARKNET_ADDRESS}`);
+}
+
 const verifiedPayments = new Map<string, number>();
 const bazaarCatalog = new BazaarCatalog();
 
@@ -596,6 +620,15 @@ if (tvmSigner) {
 }
 if (nearSigner) {
   facilitator.register(NEAR_NETWORK as Network, new ExactNearFacilitatorScheme(nearSigner));
+}
+if (starknetSigner) {
+  facilitator.register(
+    STARKNET_NETWORK as Network,
+    new ExactStarknetFacilitatorScheme(
+      starknetSigner,
+      STARKNET_RPC_URL ? { rpcUrl: STARKNET_RPC_URL } : undefined,
+    ),
+  );
 }
 if (process.env.XRPL_NETWORK) {
   facilitator.register(
@@ -975,6 +1008,7 @@ let server = app.listen(parseInt(PORT), () => {
 ║  Hedera Network: ${HEDERA_NETWORK}                     ║
 ║  Keeta Network: ${KEETA_NETWORK}                       ║
 ║  NEAR Network: ${NEAR_NETWORK}                         ║
+║  Starknet Network: ${STARKNET_NETWORK}                 ║
 ║  XRPL Network: ${XRPL_NETWORK}                         ║
 ║  CCD Network:  ${CCD_NETWORK}                          ║
 ║  EVM Address:  ${evmAccount?.address ?? "(not configured)"}                   ║
@@ -984,6 +1018,7 @@ let server = app.listen(parseInt(PORT), () => {
 ║  Keeta Address: ${keetaSigner?.getAddresses()[0] || "(not configured)"} ║
 ║  Stellar Address: ${stellarSigner ? stellarSigner.address : "(not configured)"} ║
 ║  NEAR Address: ${process.env.FACILITATOR_NEAR_ACCOUNT_ID || "(not configured)"} ║
+║  Starknet Address: ${process.env.FACILITATOR_STARKNET_ADDRESS || "(not configured)"} ║
 ║  CCD Address:  ${concordiumSigner ? concordiumSigner.getAddress() : "(not configured)"} ║
 ║  Extensions:   bazaar                                  ║
 ║                                                        ║

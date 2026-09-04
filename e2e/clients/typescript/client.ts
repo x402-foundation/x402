@@ -18,6 +18,12 @@ import { createClientHederaSigner, PrivateKey as HederaPrivateKey } from "@x402/
 import { ExactHederaScheme } from "@x402/hedera/exact/client";
 import { ExactKeetaScheme } from "@x402/keeta/exact/client";
 import { toClientKeetaSigner, type ClientKeetaSigner } from "@x402/keeta";
+import {
+  createStarknetProvider,
+  toClientStarknetSigner,
+} from "@x402/starknet";
+import { ExactStarknetScheme } from "@x402/starknet/exact/client";
+import { Account as StarknetAccount } from "starknet";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import { createEd25519Signer, type Ed25519Signer } from "@x402/stellar";
 import { ExactTvmScheme } from "@x402/tvm/exact/client";
@@ -259,6 +265,22 @@ export async function createE2EClient(): Promise<E2EClientContext> {
     schemes.push({
       network: networkCaip2Pattern("stellar"),
       client: new ExactStellarScheme(stellarSigner),
+    });
+  }
+  if (process.env.CLIENT_STARKNET_ADDRESS && process.env.CLIENT_STARKNET_PRIVATE_KEY) {
+    const starknetSigner = toClientStarknetSigner(
+      new StarknetAccount({
+        provider: createStarknetProvider(
+          resolveNetworkCaip2("starknet"),
+          process.env.STARKNET_RPC_URL,
+        ),
+        address: process.env.CLIENT_STARKNET_ADDRESS,
+        signer: process.env.CLIENT_STARKNET_PRIVATE_KEY,
+      }),
+    );
+    schemes.push({
+      network: networkCaip2Pattern("starknet"),
+      client: new ExactStarknetScheme(starknetSigner),
     });
   }
   if (avmSigner) {

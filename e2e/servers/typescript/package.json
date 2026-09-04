@@ -23,6 +23,7 @@
     "@x402/keeta": "workspace:*",
     "@x402/mcp": "workspace:*",
     "@x402/near": "workspace:*",
+    "@x402/starknet": "workspace:*",
     "@x402/stellar": "workspace:*",
     "@x402/svm": "workspace:*",
     "@x402/tvm": "workspace:*",
@@ -30,6 +31,7 @@
     "express": "^4.18.2",
     "fastify": "^5.3.3",
     "hono": "^4.7.1",
+    "starknet": "^8.9.2",
     "viem": "^2.48.11"
   },
   "devDependencies": {
