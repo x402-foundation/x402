@@ -521,12 +521,38 @@ export class x402Facilitator {
     }
     const schemeDataArray = this.registeredFacilitatorSchemes.get(x402Version)!;
 
-    // Add new scheme data (supports multiple facilitators with same scheme name)
-    schemeDataArray.push({
-      facilitator,
-      networks: new Set(networks),
-      pattern: this.derivePattern(networks),
-    });
+    // One SchemeData entry per CAIP-2 namespace present in `networks`, not
+    // one entry for the whole (possibly mixed-namespace) list: a single
+    // `pattern` can only ever be a wildcard for ONE namespace at a time
+    // (derivePattern's own contract), so a mixed-namespace registration
+    // (e.g. ["stellar:testnet", "eip155:8453"]) needs one wildcard per
+    // namespace it actually covers, not a single pattern collapsed onto
+    // the first network's namespace, which previously provided no
+    // wildcard coverage in ANY namespace involved: it just duplicated the
+    // exact-match Set's own coverage of that one network. `networks`
+    // stays the SAME full set on every entry, so exact matching (checked
+    // first in verify()/settle()'s dispatch loop, before pattern
+    // matching) is unaffected either way; only the wildcard fallback
+    // needed to become namespace-scoped.
+    const networksByNamespace = new Map<string, Network[]>();
+    for (const network of networks) {
+      const namespace = network.split(":")[0];
+      const existing = networksByNamespace.get(namespace);
+      if (existing) {
+        existing.push(network);
+      } else {
+        networksByNamespace.set(namespace, [network]);
+      }
+    }
+
+    const fullNetworkSet = new Set(networks);
+    for (const namespaceNetworks of networksByNamespace.values()) {
+      schemeDataArray.push({
+        facilitator,
+        networks: fullNetworkSet,
+        pattern: this.derivePattern(namespaceNetworks),
+      });
+    }
 
     return this;
   }
