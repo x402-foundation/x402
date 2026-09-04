@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "x402-cloudflare-workers-example",
+  "main": "index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"], // required: @x402/hono pulls in Node builtins (url) transitively
+  "vars": {
+    "FACILITATOR_URL": "https://x402.org/facilitator"
+  },
+  "observability": { "enabled": true }
+  // EVM_ADDRESS is a secret, not a var: `wrangler secret put EVM_ADDRESS`
+  // (or add it to .dev.vars locally — see .dev.vars.example).
+}

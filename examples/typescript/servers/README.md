@@ -8,6 +8,7 @@ This directory contains TypeScript server examples demonstrating how to protect 
 | --- | --- |
 | [`express/`](./express/) | Using `@x402/express` middleware |
 | [`hono/`](./hono/) | Using `@x402/hono` middleware |
+| [`cloudflare-workers/`](./cloudflare-workers/) | `@x402/hono` deployed to the edge on Cloudflare Workers, no server process |
 | [`fastify/`](./fastify/) | Using `@x402/fastify` middleware |
 | [`self-facilitation/`](./self-facilitation/) | Express middleware with in-process SDK facilitator |
 | [`advanced/`](./advanced/) | Advanced patterns: hooks, dynamic pricing, custom tokens |

@@ -1,0 +1,34 @@
+{
+  "name": "@x402/cloudflare-workers-server-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "wrangler types --env-file .dev.vars.example && tsc --noEmit",
+    "cf-typegen": "wrangler types --env-file .dev.vars.example",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "format": "prettier -c .prettierrc --write \"**/*.{ts,js,cjs,json,md}\"",
+    "format:check": "prettier -c .prettierrc --check \"**/*.{ts,js,cjs,json,md}\"",
+    "lint": "eslint . --ext .ts --fix",
+    "lint:check": "eslint . --ext .ts"
+  },
+  "dependencies": {
+    "@x402/core": "workspace:*",
+    "@x402/hono": "workspace:*",
+    "@x402/evm": "workspace:*",
+    "hono": "^4.7.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.24.0",
+    "@types/node": "^22.13.4",
+    "@typescript-eslint/eslint-plugin": "^8.29.1",
+    "@typescript-eslint/parser": "^8.29.1",
+    "eslint": "^9.24.0",
+    "eslint-plugin-import": "^2.31.0",
+    "eslint-plugin-jsdoc": "^50.6.9",
+    "eslint-plugin-prettier": "^5.2.6",
+    "prettier": "3.5.2",
+    "typescript": "^5.7.3",
+    "wrangler": "^4.127.1"
+  }
+}

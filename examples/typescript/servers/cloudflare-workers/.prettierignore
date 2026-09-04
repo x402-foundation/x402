@@ -1,0 +1,9 @@
+docs/
+dist/
+node_modules/
+coverage/
+.github/
+src/client
+worker-configuration.d.ts
+**/**/*.json
+*.md
