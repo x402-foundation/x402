@@ -446,6 +446,71 @@ Lists discoverable x402 resources.
 | `limit`   | `number` | Optional | Maximum number of results to return |
 | `offset`  | `number` | Optional | Number of results to skip for pagination |
 
+##### Filter Semantics
+
+These rules apply to `GET /discovery/resources`.
+
+When a request supplies `type`, `payTo`, `scheme`, `network`, or `extensions`,
+the implementation **MUST** do one of the following:
+
+1. apply the filter, so every entry in `items` satisfies it; when nothing matches,
+   `items` is empty and `pagination.total`, when present, is `0`; or
+2. include the parameter name in `unappliedFilters`.
+
+An implementation **MUST NOT** return `200` with an item that does not satisfy a supplied
+filter unless that parameter is named in `unappliedFilters`.
+
+For a value that is syntactically malformed for its parameter, an implementation **MAY**
+instead return `400` with a JSON object whose `error` member is a non-empty string. A
+well-formed value that matches no catalog entry is not malformed. For example,
+`eip155:999999999` satisfies the CAIP-2 syntax and therefore must be applied or declared,
+whereas `!!!` does not.
+
+| Field | Type | Required | Description |
+| ----- | ---- | -------- | ----------- |
+| `unappliedFilters` | array of string | No | Supplied filter parameters that were not applied. Omitted or empty when every supplied filter was applied. |
+
+For example, this request asks for HTTP resources on an unknown but syntactically valid
+network:
+
+```http
+GET /discovery/resources?type=http&network=eip155:999999999
+```
+
+A proxy that applies `type` but cannot apply `network` may return its HTTP results only
+if it declares `network`:
+
+```json
+{
+  "x402Version": 2,
+  "items": [
+    {
+      "resource": "https://api.example.com/data",
+      "type": "http",
+      "x402Version": 2,
+      "accepts": [
+        {
+          "scheme": "exact",
+          "network": "eip155:8453",
+          "amount": "10000",
+          "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+          "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+          "maxTimeoutSeconds": 60,
+          "extra": {}
+        }
+      ],
+      "lastUpdated": 1703123456
+    }
+  ],
+  "pagination": { "limit": 50, "offset": 0, "total": 1234 },
+  "unappliedFilters": ["network"]
+}
+```
+
+The declaration is a list of parameter names so clients can handle an unapplied filter
+programmatically. Conformance vectors are in
+[`bazaar_discovery_conformance.md`](bazaar_discovery_conformance.md).
+
 #### `GET /discovery/search`
 
 Searches discoverable x402 resources using a natural-language query. Response shape mirrors the list endpoint with a `resources` array and optional `pagination`.
