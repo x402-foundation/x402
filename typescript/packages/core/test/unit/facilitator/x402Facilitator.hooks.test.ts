@@ -331,4 +331,130 @@ describe("x402Facilitator - Lifecycle Hooks", () => {
       expect(result).toBe(facilitator);
     });
   });
+
+  describe("hook error isolation", () => {
+    it("resolves settle() with the settle result when an afterSettle hook throws", async () => {
+      const facilitator = new x402Facilitator();
+      facilitator.register("eip155:8453", new MockSchemeFacilitator());
+
+      let failureHookCalled = false;
+      facilitator.onAfterSettle(async () => {
+        throw new Error("observer crashed");
+      });
+      facilitator.onSettleFailure(async () => {
+        failureHookCalled = true;
+      });
+
+      const result = await facilitator.settle(buildPaymentPayload(), buildPaymentRequirements());
+
+      // Settlement already executed onchain: the caller must still receive it.
+      expect(result.success).toBe(true);
+      expect(result.transaction).toBe("0xMockTx");
+      // A throwing observer is not a settlement failure.
+      expect(failureHookCalled).toBe(false);
+    });
+
+    it("resolves verify() with the verify result when an afterVerify hook throws", async () => {
+      const facilitator = new x402Facilitator();
+      facilitator.register("eip155:8453", new MockSchemeFacilitator());
+
+      let failureHookCalled = false;
+      facilitator.onAfterVerify(async () => {
+        throw new Error("observer crashed");
+      });
+      facilitator.onVerifyFailure(async () => {
+        failureHookCalled = true;
+      });
+
+      const result = await facilitator.verify(buildPaymentPayload(), buildPaymentRequirements());
+
+      expect(result.isValid).toBe(true);
+      expect(failureHookCalled).toBe(false);
+    });
+
+    it("continues verification when a beforeVerify hook throws", async () => {
+      const facilitator = new x402Facilitator();
+      facilitator.register("eip155:8453", new MockSchemeFacilitator());
+
+      const executionOrder: number[] = [];
+      facilitator
+        .onBeforeVerify(async () => {
+          executionOrder.push(1);
+          throw new Error("hook crashed");
+        })
+        .onBeforeVerify(async () => {
+          executionOrder.push(2);
+        });
+
+      const result = await facilitator.verify(buildPaymentPayload(), buildPaymentRequirements());
+
+      expect(result.isValid).toBe(true);
+      expect(executionOrder).toEqual([1, 2]);
+    });
+
+    it("continues settlement when a beforeSettle hook throws, still honoring a later abort", async () => {
+      const facilitator = new x402Facilitator();
+      facilitator.register("eip155:8453", new MockSchemeFacilitator());
+
+      facilitator
+        .onBeforeSettle(async () => {
+          throw new Error("hook crashed");
+        })
+        .onBeforeSettle(async () => {
+          return { abort: true, reason: "blocked" };
+        });
+
+      await expect(
+        facilitator.settle(buildPaymentPayload(), buildPaymentRequirements()),
+      ).rejects.toThrow("Settlement aborted: blocked");
+    });
+
+    it("lets a later onVerifyFailure hook recover when an earlier one throws", async () => {
+      const facilitator = new x402Facilitator();
+      facilitator.register(
+        "eip155:8453",
+        new MockSchemeFacilitator(async () => ({ isValid: false, invalidReason: "bad payment" })),
+      );
+
+      const recovered: VerifyResponse = { isValid: true, payer: "0xRecovered" };
+      facilitator
+        .onVerifyFailure(async () => {
+          throw new Error("first failure hook crashed");
+        })
+        .onVerifyFailure(async () => {
+          return { recovered: true, result: recovered };
+        });
+
+      const result = await facilitator.verify(buildPaymentPayload(), buildPaymentRequirements());
+
+      expect(result).toEqual(recovered);
+    });
+
+    it("lets a later onSettleFailure hook recover when an earlier one throws", async () => {
+      const facilitator = new x402Facilitator();
+      facilitator.register(
+        "eip155:8453",
+        new MockSchemeFacilitator(undefined, async () => {
+          throw new Error("settlement rpc error");
+        }),
+      );
+
+      const recovered: SettleResponse = {
+        success: true,
+        transaction: "0xRecoveredTx",
+        network: "eip155:8453",
+      };
+      facilitator
+        .onSettleFailure(async () => {
+          throw new Error("first failure hook crashed");
+        })
+        .onSettleFailure(async () => {
+          return { recovered: true, result: recovered };
+        });
+
+      const result = await facilitator.settle(buildPaymentPayload(), buildPaymentRequirements());
+
+      expect(result).toEqual(recovered);
+    });
+  });
 });
