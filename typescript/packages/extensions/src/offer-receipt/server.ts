@@ -20,6 +20,7 @@ import {
   type OfferReceiptIssuer,
   type OfferReceiptDeclaration,
   type OfferInput,
+  type ResponseDigestInput,
   type SignedOffer,
   type SignedReceipt,
   type JWSSigner,
@@ -93,6 +94,9 @@ const RECEIPT_SCHEMA = {
             payer: { type: "string" },
             issuedAt: { type: "integer" },
             transaction: { type: "string" },
+            responseHash: { type: "string" },
+            responseHashAlg: { type: "string" },
+            responseHashEncoding: { type: "string", enum: ["raw", "jcs", ""] },
           },
           required: ["version", "network", "resourceUrl", "payer", "issuedAt"],
         },
@@ -234,12 +238,26 @@ export function createOfferReceiptExtension(issuer: OfferReceiptIssuer): Resourc
       // Determine whether to include transaction hash (default: false for privacy)
       const includeTxHash = config?.includeTxHash === true;
 
+      // Determine whether to bind a hash of the delivered response body (default:
+      // false). When enabled and a body is available on the transport context, the
+      // receipt is upgraded to a proof-of-delivery receipt (§5.6). If no body is
+      // available, a payment-only receipt is issued instead of failing.
+      const includeResponseDigest = config?.includeResponseDigest === true;
+      const responseBody = includeResponseDigest
+        ? (context.transportContext as HTTPTransportContext)?.body
+        : undefined;
+      const response =
+        responseBody !== undefined
+          ? ({ body: responseBody as ResponseDigestInput["body"] } as ResponseDigestInput)
+          : undefined;
+
       try {
         const signedReceipt: SignedReceipt = await issuer.issueReceipt(
           resourceUrl,
           payer,
           network,
           includeTxHash ? transaction || undefined : undefined,
+          response,
         );
         // Return extension data per spec structure
         return {
@@ -270,6 +288,7 @@ export function declareOfferReceiptExtension(
   return {
     [OFFER_RECEIPT]: {
       includeTxHash: config?.includeTxHash,
+      includeResponseDigest: config?.includeResponseDigest,
       offerValiditySeconds: config?.offerValiditySeconds,
     },
   };
@@ -295,8 +314,14 @@ export function createJWSOfferReceiptIssuer(kid: string, jwsSigner: JWSSigner): 
       return createOfferJWS(resourceUrl, input, jwsSigner);
     },
 
-    async issueReceipt(resourceUrl: string, payer: string, network: string, transaction?: string) {
-      return createReceiptJWS({ resourceUrl, payer, network, transaction }, jwsSigner);
+    async issueReceipt(
+      resourceUrl: string,
+      payer: string,
+      network: string,
+      transaction?: string,
+      response?: ResponseDigestInput,
+    ) {
+      return createReceiptJWS({ resourceUrl, payer, network, transaction, response }, jwsSigner);
     },
   };
 }
@@ -320,8 +345,17 @@ export function createEIP712OfferReceiptIssuer(
       return createOfferEIP712(resourceUrl, input, signTypedData);
     },
 
-    async issueReceipt(resourceUrl: string, payer: string, network: string, transaction?: string) {
-      return createReceiptEIP712({ resourceUrl, payer, network, transaction }, signTypedData);
+    async issueReceipt(
+      resourceUrl: string,
+      payer: string,
+      network: string,
+      transaction?: string,
+      response?: ResponseDigestInput,
+    ) {
+      return createReceiptEIP712(
+        { resourceUrl, payer, network, transaction, response },
+        signTypedData,
+      );
     },
   };
 }

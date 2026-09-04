@@ -17,6 +17,15 @@ export const OFFER_RECEIPT = "offer-receipt";
  */
 export type SignatureFormat = "jws" | "eip712";
 
+/**
+ * Response-body hash encoding for delivery binding (§5.6)
+ *
+ * - "raw": hash of the exact response bytes as delivered
+ * - "jcs": hash of the RFC 8785 (JCS) canonical form, reproducible from parsed
+ *   data in any language even after the raw bytes are re-serialized
+ */
+export type ResponseHashEncoding = "raw" | "jcs";
+
 // ============================================================================
 // Low-Level Signer Interfaces
 // ============================================================================
@@ -136,6 +145,15 @@ export interface ReceiptPayload {
   issuedAt: number;
   /** Blockchain transaction hash (optional - for verifiability over privacy) */
   transaction: string;
+  /**
+   * 0x-prefixed hash of the delivered response body (proof-of-delivery, §5.6).
+   * Present only in payload version >= 2. Empty string means "not bound".
+   */
+  responseHash?: string;
+  /** Hash algorithm for `responseHash` (currently "sha256"). Version >= 2 only. */
+  responseHashAlg?: string;
+  /** Encoding the `responseHash` was computed over ("raw" | "jcs"). Version >= 2 only. */
+  responseHashEncoding?: ResponseHashEncoding | "";
 }
 
 /**
@@ -174,6 +192,11 @@ export type SignedReceipt = JWSSignedReceipt | EIP712SignedReceipt;
 export interface OfferReceiptDeclaration {
   /** Include transaction hash in receipt (default: false for privacy). Set to true for verifiability. */
   includeTxHash?: boolean;
+  /**
+   * Bind a hash of the delivered response body into the receipt (default: false,
+   * §5.6). Turns a proof-of-payment receipt into a proof-of-delivery receipt.
+   */
+  includeResponseDigest?: boolean;
   /** Offer validity duration in seconds. Default: 300 (see x402ResourceServer.ts) */
   offerValiditySeconds?: number;
 }
@@ -216,6 +239,7 @@ export interface OfferReceiptIssuer {
     payer: string,
     network: string,
     transaction?: string,
+    response?: ResponseDigestInput,
   ): Promise<SignedReceipt>;
 }
 
@@ -299,4 +323,27 @@ export interface ReceiptInput {
   network: string;
   /** The transaction hash (optional, for verifiability) */
   transaction?: string;
+  /**
+   * Bind the delivered response body to the receipt (proof-of-delivery, §5.6).
+   * When provided, the receipt is issued as payload version 2 with the
+   * response-hash fields populated.
+   */
+  response?: ResponseDigestInput;
+}
+
+/**
+ * Input describing the delivered response to bind into a receipt (§5.6).
+ */
+export interface ResponseDigestInput {
+  /**
+   * The delivered response body. A string or Uint8Array is hashed as-is for
+   * encoding "raw". A JSON value (object/array) is canonicalized (JCS) for
+   * encoding "jcs".
+   */
+  body: string | Uint8Array | Record<string, unknown> | unknown[];
+  /**
+   * How to hash `body`. Defaults to "jcs" for JSON values (object/array) and
+   * "raw" for strings/bytes.
+   */
+  encoding?: ResponseHashEncoding;
 }
