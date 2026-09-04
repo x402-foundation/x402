@@ -16,6 +16,7 @@ try:
         ERR_INVALID_SCHEME,
         ERR_NETWORK_MISMATCH,
         ERR_SETTLE_TRANSACTION_FAILED,
+        ERR_SETTLED_EVENT_MISMATCH,
     )
     from x402.mechanisms.evm.batch_settlement.facilitator import refund as refund_mod
     from x402.mechanisms.evm.batch_settlement.facilitator.claim import (
@@ -523,6 +524,32 @@ class TestSettleReceiptWait:
 
         assert out.success is False
         assert out.error_reason == ERR_SETTLEMENT_PENDING
+        assert out.transaction == _SUCCESSFUL_TX_HASH
+
+    def test_noop_receipt_without_settled_event_fails_closed(self):
+        payload = SettlePayload(
+            receiver="0x3333333333333333333333333333333333333333",
+            token="0x5555555555555555555555555555555555555555",
+        )
+
+        class _EmptyLogsSigner:
+            def read_contract(self, *args, **kwargs):
+                return (1000, 0)
+
+            def write_contract(self, *args, **kwargs):
+                return _SUCCESSFUL_TX_HASH
+
+            def wait_for_transaction_receipt(self, tx):
+                return _FakeReceipt()
+
+        out = execute_settle(
+            _EmptyLogsSigner(),  # type: ignore[arg-type]
+            payload,
+            _requirements(),
+        )
+
+        assert out.success is False
+        assert out.error_reason == ERR_SETTLED_EVENT_MISMATCH
         assert out.transaction == _SUCCESSFUL_TX_HASH
 
 

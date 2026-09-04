@@ -82,10 +82,32 @@ func ExecuteSettle(
 		return nil, err
 	}
 
+	// Settled event. Re-read receivers and require totalSettled advanced.
+	_, postSettled, postErr := readReceiverSettlementTotals(ctx, signer, receiver, token)
+	if postErr != nil {
+		return &x402.SettleResponse{ //nolint:nilerr // RPC read failure -> error encoded in response
+			Success:      false,
+			ErrorReason:  ErrRpcReadFailed,
+			ErrorMessage: postErr.Error(),
+			Transaction:  txHash,
+			Network:      network,
+		}, nil
+	}
+	if postSettled.Cmp(totalSettled) <= 0 {
+		return &x402.SettleResponse{ //nolint:nilerr // no-op settle -> error encoded in response
+			Success:      false,
+			ErrorReason:  ErrSettledEventMismatch,
+			ErrorMessage: "settle receipt did not advance totalSettled (possible no-op early return)",
+			Transaction:  txHash,
+			Network:      network,
+		}, nil
+	}
+
 	return &x402.SettleResponse{
 		Success:     true,
 		Transaction: txHash,
 		Network:     network,
+		Amount:      new(big.Int).Sub(postSettled, totalSettled).String(),
 	}, nil
 }
 

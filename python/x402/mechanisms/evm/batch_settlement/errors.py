@@ -46,6 +46,7 @@ ERR_SETTLE_PAYLOAD = "invalid_batch_settlement_evm_settle_payload"
 ERR_SETTLE_SIMULATION_FAILED = "invalid_batch_settlement_evm_settle_simulation_failed"
 ERR_SETTLE_TRANSACTION_FAILED = "invalid_batch_settlement_evm_settle_transaction_failed"
 ERR_NOTHING_TO_SETTLE = "invalid_batch_settlement_evm_nothing_to_settle"
+ERR_SETTLED_EVENT_MISMATCH = "invalid_batch_settlement_evm_settled_event_mismatch"
 ERR_UNKNOWN_SETTLE_ACTION = "invalid_batch_settlement_evm_unknown_settle_action"
 
 ERR_REFUND_PAYLOAD = "invalid_batch_settlement_evm_refund_payload"
