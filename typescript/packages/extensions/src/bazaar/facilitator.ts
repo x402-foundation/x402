@@ -9,6 +9,7 @@
 
 import { domainToASCII } from "node:url";
 import Ajv from "ajv/dist/2020.js";
+import addFormats from "ajv-formats";
 import type {
   PaymentPayload,
   PaymentRequirements,
@@ -354,6 +355,7 @@ export function validateDiscoveryExtension(extension: DiscoveryExtension): Valid
     }
 
     const ajv = new Ajv({ strict: false, allErrors: true });
+    addFormats(ajv, ["uri", "date-time"]);
     const validate = ajv.compile(extension.schema);
 
     // The schema describes the structure of info directly
