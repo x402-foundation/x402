@@ -6,7 +6,7 @@ import { createWalletClient, createPublicClient, http, parseEther, formatEther, 
 import { privateKeyToAccount } from 'viem/accounts';
 import { base, baseSepolia } from 'viem/chains';
 import { TestDiscovery } from './src/discovery';
-import { ClientConfig, ScenarioResult, ServerConfig, TestScenario, endpointAssetTransferMethod, endpointPaymentScheme, endpointUsesBatchSettlement } from './src/types';
+import { ClientConfig, ScenarioResult, ServerConfig, TestScenario, endpointAssetTransferMethod, endpointPaymentFlow, endpointPaymentScheme, endpointUsesBatchSettlement } from './src/types';
 import { config as loggerConfig, log, verboseLog, errorLog, close as closeLogger, createComboLogger } from './src/logger';
 import { handleDiscoveryValidation, shouldRunDiscoveryValidation, type TestedDiscoveryScenario } from './extensions/bazaar';
 import { parseArgs, printHelp } from './src/cli/args';
@@ -1129,12 +1129,61 @@ async function runTest() {
     endpoint: string;
     facilitator: string;
     protocolFamily: string;
+    scheme: string;
+    assetTransferMethod: string;
+    paymentFlow: string;
+    transport: string;
+    version: string;
     passed: boolean;
     error?: string;
     transaction?: string;
     depositTransaction?: string;
     refundTransaction?: string;
     network?: string;
+  }
+
+  function scenarioDimensions(
+    scenario: TestScenario,
+  ): Pick<DetailedTestResult, 'scheme' | 'assetTransferMethod' | 'paymentFlow' | 'transport' | 'version'> {
+    return {
+      scheme: endpointPaymentScheme(scenario.endpoint),
+      assetTransferMethod: endpointAssetTransferMethod(scenario.endpoint) ?? 'n/a',
+      paymentFlow: endpointPaymentFlow(scenario.endpoint),
+      transport: scenario.server.config.transport || 'http',
+      version: String(scenario.server.config.x402Version ?? 1),
+    };
+  }
+
+  function buildBreakdown(
+    results: DetailedTestResult[],
+    key: keyof DetailedTestResult,
+  ): Record<string, { passed: number; failed: number }> {
+    return results.reduce((acc, test) => {
+      const k = String(test[key]);
+      if (!acc[k]) acc[k] = { passed: 0, failed: 0 };
+      if (test.passed) acc[k].passed++;
+      else acc[k].failed++;
+      return acc;
+    }, {} as Record<string, { passed: number; failed: number }>);
+  }
+
+  function logBreakdown(
+    title: string,
+    breakdown: Record<string, { passed: number; failed: number }>,
+    padEnd = 15,
+    style: 'rate' | 'total' = 'rate',
+  ): void {
+    log(`📊 ${title}:`);
+    Object.entries(breakdown).forEach(([name, stats]) => {
+      const total = stats.passed + stats.failed;
+      if (style === 'total') {
+        log(` ${name.toUpperCase()}: ✅ ${stats.passed} / ❌ ${stats.failed} / 📈 ${total} total`);
+        return;
+      }
+      const passRate = total > 0 ? Math.round((stats.passed / total) * 100) : 0;
+      log(` ${name.padEnd(padEnd)} ✅ ${stats.passed} / ❌ ${stats.failed} (${passRate}%)`);
+    });
+    log('');
   }
 
   let testResults: DetailedTestResult[] = [];
@@ -1330,6 +1379,7 @@ async function runTest() {
             endpoint: scenario.endpoint.path,
             facilitator: scenario.facilitator?.name || 'none',
             protocolFamily: scenario.protocolFamily,
+            ...scenarioDimensions(scenario),
             passed: !fullError,
             error: fullError,
             transaction: refundTransaction || depositTransaction,
@@ -1370,6 +1420,7 @@ async function runTest() {
             endpoint: scenario.endpoint.path,
             facilitator: scenario.facilitator?.name || 'none',
             protocolFamily: scenario.protocolFamily,
+            ...scenarioDimensions(scenario),
             passed: false,
             error: initialError,
             depositTransaction: getBatchStep(initialResult, 'deposit')?.payment_response?.transaction,
@@ -1410,6 +1461,7 @@ async function runTest() {
             endpoint: scenario.endpoint.path,
             facilitator: scenario.facilitator?.name || 'none',
             protocolFamily: scenario.protocolFamily,
+            ...scenarioDimensions(scenario),
             passed: false,
             error: recoveryError,
             transaction: refundTransaction || depositTransaction,
@@ -1434,6 +1486,7 @@ async function runTest() {
           endpoint: scenario.endpoint.path,
           facilitator: scenario.facilitator?.name || 'none',
           protocolFamily: scenario.protocolFamily,
+          ...scenarioDimensions(scenario),
           passed: true,
           transaction: refundTransaction || depositTransaction,
           depositTransaction,
@@ -1454,6 +1507,7 @@ async function runTest() {
         endpoint: scenario.endpoint.path,
         facilitator: scenario.facilitator?.name || 'none',
         protocolFamily: scenario.protocolFamily,
+        ...scenarioDimensions(scenario),
         passed: result.success,
         error: result.error,
         transaction: result.payment_response?.transaction,
@@ -1483,6 +1537,7 @@ async function runTest() {
         endpoint: scenario.endpoint.path,
         facilitator: scenario.facilitator?.name || 'none',
         protocolFamily: scenario.protocolFamily,
+        ...scenarioDimensions(scenario),
         passed: false,
         error: errorMsg,
       };
@@ -1549,6 +1604,7 @@ async function runTest() {
         endpoint: scenario.endpoint.path,
         facilitator: scenario.facilitator?.name || 'none',
         protocolFamily: scenario.protocolFamily,
+        ...scenarioDimensions(scenario),
         passed: false,
         error: 'Server failed to start',
       }));
@@ -1585,6 +1641,7 @@ async function runTest() {
             endpoint: scenario.endpoint.path,
             facilitator: scenario.facilitator?.name || 'none',
             protocolFamily: scenario.protocolFamily,
+            ...scenarioDimensions(scenario),
             passed: false,
             error,
           });
@@ -1846,99 +1903,45 @@ async function runTest() {
     log('');
   }
 
-  // Breakdown by facilitator
-  const facilitatorBreakdown = testResults.reduce((acc, test) => {
-    const key = test.facilitator;
-    if (!acc[key]) acc[key] = { passed: 0, failed: 0 };
-    if (test.passed) acc[key].passed++;
-    else acc[key].failed++;
-    return acc;
-  }, {} as Record<string, { passed: number; failed: number }>);
+  logBreakdown('Breakdown by Facilitator', buildBreakdown(testResults, 'facilitator'));
+  logBreakdown('Breakdown by Server', buildBreakdown(testResults, 'server'), 20);
+  logBreakdown('Breakdown by Client', buildBreakdown(testResults, 'client'), 20);
+  logBreakdown('Breakdown by Scheme', buildBreakdown(testResults, 'scheme'));
+  logBreakdown('Breakdown by Asset Transfer Method', buildBreakdown(testResults, 'assetTransferMethod'), 20);
+  logBreakdown('Breakdown by Transport', buildBreakdown(testResults, 'transport'));
+  logBreakdown('Breakdown by Version', buildBreakdown(testResults, 'version'));
 
-  log('📊 Breakdown by Facilitator:');
-  Object.entries(facilitatorBreakdown).forEach(([facilitator, stats]) => {
-    const total = stats.passed + stats.failed;
-    const passRate = total > 0 ? Math.round((stats.passed / total) * 100) : 0;
-    log(` ${facilitator.padEnd(15)} ✅ ${stats.passed} / ❌ ${stats.failed} (${passRate}%)`);
-  });
-  log('');
+  const paymentFlowBreakdown = buildBreakdown(testResults, 'paymentFlow');
+  if (Object.keys(paymentFlowBreakdown).length > 1) {
+    logBreakdown('Breakdown by Payment Flow', paymentFlowBreakdown);
+  }
 
-  // Breakdown by server
-  const serverBreakdown = testResults.reduce((acc, test) => {
-    const key = test.server;
-    if (!acc[key]) acc[key] = { passed: 0, failed: 0 };
-    if (test.passed) acc[key].passed++;
-    else acc[key].failed++;
-    return acc;
-  }, {} as Record<string, { passed: number; failed: number }>);
-
-  log('📊 Breakdown by Server:');
-  Object.entries(serverBreakdown).forEach(([server, stats]) => {
-    const total = stats.passed + stats.failed;
-    const passRate = total > 0 ? Math.round((stats.passed / total) * 100) : 0;
-    log(` ${server.padEnd(20)} ✅ ${stats.passed} / ❌ ${stats.failed} (${passRate}%)`);
-  });
-  log('');
-
-  // Breakdown by client
-  const clientBreakdown = testResults.reduce((acc, test) => {
-    const key = test.client;
-    if (!acc[key]) acc[key] = { passed: 0, failed: 0 };
-    if (test.passed) acc[key].passed++;
-    else acc[key].failed++;
-    return acc;
-  }, {} as Record<string, { passed: number; failed: number }>);
-
-  log('📊 Breakdown by Client:');
-  Object.entries(clientBreakdown).forEach(([client, stats]) => {
-    const total = stats.passed + stats.failed;
-    const passRate = total > 0 ? Math.round((stats.passed / total) * 100) : 0;
-    log(`   ${client.padEnd(20)} ✅ ${stats.passed} / ❌ ${stats.failed} (${passRate}%)`);
-  });
-  log('');
-
-  // Protocol family breakdown
-  const protocolBreakdown = testResults.reduce((acc, test) => {
-    const key = test.protocolFamily;
-    if (!acc[key]) acc[key] = { passed: 0, failed: 0 };
-    if (test.passed) acc[key].passed++;
-    else acc[key].failed++;
-    return acc;
-  }, {} as Record<string, { passed: number; failed: number }>);
-
+  const protocolBreakdown = buildBreakdown(testResults, 'protocolFamily');
   if (Object.keys(protocolBreakdown).length > 1) {
-    log('📊 Protocol Family Breakdown:');
-    Object.entries(protocolBreakdown).forEach(([protocol, stats]) => {
-      const total = stats.passed + stats.failed;
-      log(` ${protocol.toUpperCase()}: ✅ ${stats.passed} / ❌ ${stats.failed} / 📈 ${total} total`);
-    });
-    log('');
+    logBreakdown('Protocol Family Breakdown', protocolBreakdown, 15, 'total');
   }
 
   // Write structured JSON output if requested
   if (parsedArgs.outputJson) {
-    const breakdown = (results: DetailedTestResult[], key: keyof DetailedTestResult) =>
-      results.reduce((acc, test) => {
-        const k = String(test[key]);
-        if (!acc[k]) acc[k] = { passed: 0, failed: 0 };
-        if (test.passed) acc[k].passed++;
-        else acc[k].failed++;
-        return acc;
-      }, {} as Record<string, { passed: number; failed: number }>);
-
     const jsonOutput = {
       summary: {
         total: passed + failed,
         passed,
         failed,
         networkMode,
+        durationMinutes: Number(((Date.now() - startTime) / 60_000).toFixed(2)),
       },
       results: testResults,
       breakdowns: {
-        byFacilitator: breakdown(testResults, 'facilitator'),
-        byServer: breakdown(testResults, 'server'),
-        byClient: breakdown(testResults, 'client'),
-        byProtocolFamily: breakdown(testResults, 'protocolFamily'),
+        byFacilitator: buildBreakdown(testResults, 'facilitator'),
+        byServer: buildBreakdown(testResults, 'server'),
+        byClient: buildBreakdown(testResults, 'client'),
+        byScheme: buildBreakdown(testResults, 'scheme'),
+        byAssetTransferMethod: buildBreakdown(testResults, 'assetTransferMethod'),
+        byTransport: buildBreakdown(testResults, 'transport'),
+        byVersion: buildBreakdown(testResults, 'version'),
+        byPaymentFlow: buildBreakdown(testResults, 'paymentFlow'),
+        byProtocolFamily: buildBreakdown(testResults, 'protocolFamily'),
       },
     };
 

@@ -17,7 +17,8 @@
     "permit2:revoke": "tsx scripts/permit2-approval.ts revoke",
     "swig:setup": "tsx scripts/swig-setup.ts",
     "xrpl:iou:setup": "tsx scripts/xrpl-iou-setup.ts",
-    "wallet:status": "tsx scripts/print-wallet-status.ts"
+    "wallet:status": "tsx scripts/print-wallet-status.ts",
+    "results:summary": "tsx scripts/print-e2e-summary.ts"
   },
   "dependencies": {
     "@aptos-labs/ts-sdk": "^5.2.1",
