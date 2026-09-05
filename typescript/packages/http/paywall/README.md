@@ -1,13 +1,13 @@
 # `@x402/paywall` [![npm version](https://img.shields.io/npm/v/%40x402%2Fpaywall.svg)](https://www.npmjs.com/package/@x402/paywall)
 
-Modular paywall UI for the x402 payment protocol with support for EVM and Solana networks.
+Modular paywall UI for the x402 payment protocol with support for EVM, Solana, Algorand and Stellar networks.
 
 ## Features
 
 - Pre-built paywall UI out of the box
-- Wallet connection (MetaMask, Coinbase Wallet, Phantom, etc.)
+- Wallet connection (MetaMask, Coinbase Wallet, Phantom, Freighter, etc.)
 - USDC balance checking
-- Multi-network support (EVM + Solana)
+- Multi-network support (EVM + Solana + Algorand + Stellar)
 - Tree-shakeable - only bundle what you need
 - Fully customizable via builder pattern
 
@@ -62,7 +62,25 @@ const paywall = createPaywall()
   .build();
 ```
 
-### Option 3: Multi-Network
+### Option 3: Stellar Only
+
+```typescript
+import { createPaywall } from '@x402/paywall';
+import { stellarPaywall } from '@x402/paywall/stellar';
+
+const paywall = createPaywall()
+  .withNetwork(stellarPaywall)
+  .withConfig({
+    appName: 'My Stellar App',
+    testnet: true,
+    stellarRpcUrl: 'https://soroban-testnet.stellar.org' // optional Soroban RPC override
+  })
+  .build();
+```
+
+Wallets: Freighter, Hana, Klever and OneKey via [Stellar Wallets Kit](https://github.com/Creit-Tech/Stellar-Wallets-Kit). The buyer signs the Soroban authorization entry (`signAuthEntry`); fees are sponsored by the facilitator, so the buyer needs no XLM. The paywall shows a trustline banner when the account has no USDC trustline.
+
+### Option 4: Multi-Network
 
 ```typescript
 import { createPaywall } from '@x402/paywall';
@@ -89,6 +107,11 @@ interface PaywallConfig {
   appLogo?: string;              // App logo URL
   currentUrl?: string;           // URL of protected resource
   testnet?: boolean;             // Use testnet (default: true)
+}
+
+// Stellar handler accepts one extra field
+interface StellarPaywallConfig extends PaywallConfig {
+  stellarRpcUrl?: string;        // Soroban RPC URL override (defaults to the network's public RPC)
 }
 ```
 
@@ -126,6 +149,9 @@ const paywall = createPaywall()
 
 **Solana Networks** (via `svmPaywall`):
 - CAIP-2: `solana:*` (e.g., `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` for mainnet)
+
+**Stellar Networks** (via `stellarPaywall`):
+- CAIP-2: `stellar:pubnet` and `stellar:testnet`
 
 ## With HTTP Middleware
 

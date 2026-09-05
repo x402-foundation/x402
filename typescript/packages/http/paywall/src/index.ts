@@ -16,3 +16,5 @@ export type {
 export { evmPaywall } from "./evm";
 export { svmPaywall } from "./svm";
 export { avmPaywall } from "./avm";
+export { stellarPaywall } from "./stellar";
+export type { StellarPaywallConfig } from "./stellar";
