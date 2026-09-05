@@ -52,6 +52,7 @@ tvm = [
     "pytoniq-core>=0.1.36",
     "PyNaCl>=1.5.0",
 ]
+xrpl = ["xrpl-py>=4.2.0"]
 
 # MCP (Model Context Protocol) integration
 mcp = ["mcp>=1.0.0"]
@@ -67,8 +68,8 @@ extensions = [
 # Convenience bundles
 clients = ["x402[httpx,requests]"]
 servers = ["x402[flask,fastapi]"]
-mechanisms = ["x402[evm,svm,tvm]"]
-all = ["x402[httpx,requests,flask,fastapi,evm,svm,tvm,mcp,extensions]"]
+mechanisms = ["x402[evm,svm,tvm,xrpl]"]
+all = ["x402[httpx,requests,flask,fastapi,evm,svm,tvm,xrpl,mcp,extensions]"]
 
 [dependency-groups]
 dev = [
@@ -97,6 +98,8 @@ dev = [
     "pytoniq>=0.1.39",
     "pytoniq-core>=0.1.36",
     "PyNaCl>=1.5.0",
+    # XRPL dependencies
+    "xrpl-py>=4.2.0",
     # MCP dependencies
     "mcp>=1.26.0",
     "nest-asyncio>=1.6.0",

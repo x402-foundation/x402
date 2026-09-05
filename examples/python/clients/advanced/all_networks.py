@@ -13,6 +13,7 @@ import sys
 
 from dotenv import load_dotenv
 from eth_account import Account
+from xrpl.wallet import Wallet
 
 from x402 import x402Client
 from x402.http import x402HTTPClient
@@ -29,16 +30,19 @@ from x402.mechanisms.tvm import (
     WalletV5R1MnemonicSigner,
 )
 from x402.mechanisms.tvm.exact import ExactTvmClientScheme
+from x402.mechanisms.xrpl import XRPL_TESTNET
+from x402.mechanisms.xrpl.exact import ExactXrplClientScheme
 
 # Load environment variables
 load_dotenv()
 
 
-def validate_environment() -> tuple[str | None, str | None, str | None, str, str]:
+def validate_environment() -> tuple[str | None, str | None, str | None, str | None, str, str]:
     """Validate required environment variables.
 
     Returns:
-        Tuple of (evm_private_key, svm_private_key, tvm_private_key, base_url, endpoint_path).
+        Tuple of (evm_private_key, svm_private_key, tvm_private_key, xrpl_seed,
+        base_url, endpoint_path).
 
     Raises:
         SystemExit: If required environment variables are missing.
@@ -46,12 +50,16 @@ def validate_environment() -> tuple[str | None, str | None, str | None, str, str
     evm_private_key = os.getenv("EVM_PRIVATE_KEY")
     svm_private_key = os.getenv("SVM_PRIVATE_KEY")
     tvm_private_key = os.getenv("TVM_PRIVATE_KEY")
+    xrpl_seed = os.getenv("XRPL_SEED")
     base_url = os.getenv("RESOURCE_SERVER_URL")
     endpoint_path = os.getenv("ENDPOINT_PATH")
 
     # Validate at least one signer credential is provided
-    if not evm_private_key and not svm_private_key and not tvm_private_key:
-        print("❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or TVM_PRIVATE_KEY is required")
+    if not evm_private_key and not svm_private_key and not tvm_private_key and not xrpl_seed:
+        print(
+            "❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, TVM_PRIVATE_KEY, "
+            "or XRPL_SEED is required"
+        )
         print("Please copy .env-local to .env and fill in the values.")
         sys.exit(1)
 
@@ -67,6 +75,7 @@ def validate_environment() -> tuple[str | None, str | None, str | None, str, str
         evm_private_key,
         svm_private_key,
         tvm_private_key,
+        xrpl_seed,
         base_url,
         endpoint_path,
     )
@@ -75,7 +84,7 @@ def validate_environment() -> tuple[str | None, str | None, str | None, str, str
 async def main() -> None:
     """Main entry point demonstrating httpx with x402 payments."""
     # Validate environment
-    evm_private_key, svm_private_key, tvm_private_key, base_url, endpoint_path = (
+    evm_private_key, svm_private_key, tvm_private_key, xrpl_seed, base_url, endpoint_path = (
         validate_environment()
     )
 
@@ -117,6 +126,13 @@ async def main() -> None:
         tvm_signer = WalletV5R1MnemonicSigner(tvm_config)
         client.register(tvm_network, ExactTvmClientScheme(tvm_signer))
         print(f"Initialized TVM account: {tvm_signer.address}")
+
+    # Register XRPL payment scheme if seed provided
+    if xrpl_seed:
+        xrpl_wallet = Wallet.from_seed(xrpl_seed)
+        xrpl_network = os.getenv("XRPL_NETWORK", XRPL_TESTNET)
+        client.register(xrpl_network, ExactXrplClientScheme(xrpl_wallet))
+        print(f"Initialized XRPL account: {xrpl_wallet.address}")
 
     # Create HTTP client helper for payment response extraction
     http_client = x402HTTPClient(client)
