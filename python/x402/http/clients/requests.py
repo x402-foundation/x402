@@ -5,7 +5,6 @@ Provides HTTPAdapter and convenience functions for sync requests.Session.
 
 from __future__ import annotations
 
-import copy
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -16,6 +15,8 @@ except ImportError as e:
     raise ImportError(
         "requests client requires the requests package. Install with: uv add x402[requests]"
     ) from e
+
+from ..utils import ResponseBodyTooLargeError, read_limited_body
 
 if TYPE_CHECKING:
     from ...client import x402ClientConfig, x402ClientSync
@@ -121,8 +122,10 @@ class x402HTTPAdapter(HTTPAdapter):
             return response
 
         try:
-            # Save content before parsing (avoid consuming stream)
-            content = copy.deepcopy(response.content)
+            try:
+                content = read_limited_body(response.raw)
+            finally:
+                response.close()
 
             # Parse PaymentRequired (try header first for V2, then body for V1)
             def get_header(name: str) -> str | None:
@@ -145,6 +148,10 @@ class x402HTTPAdapter(HTTPAdapter):
                 hook_response = super().send(hook_request, **kwargs)
                 if hook_response.status_code != 402:
                     return hook_response
+                try:
+                    read_limited_body(hook_response.raw)
+                finally:
+                    hook_response.close()
 
             # Create payment payload (sync)
             payment_payload = self._client.create_payment_payload(payment_required)
@@ -191,6 +198,8 @@ class x402HTTPAdapter(HTTPAdapter):
             return paid_response
 
         except PaymentError:
+            raise
+        except ResponseBodyTooLargeError:
             raise
         except Exception as e:
             raise PaymentError(f"Failed to handle payment: {e}") from e

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 
 from x402.extensions.bazaar import (
@@ -19,10 +20,12 @@ from x402.extensions.bazaar import (
     with_bazaar,
 )
 from x402.extensions.bazaar.facilitator_client import (
+    MAX_DISCOVERY_RESPONSE_BYTES,
     _parse_discovery_resource_item,
     _parse_list_response,
     _parse_search_response,
 )
+from x402.http.utils import ResponseBodyTooLargeError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -37,13 +40,15 @@ def _make_client(url: str = "https://facilitator.example.com") -> MagicMock:
     return client
 
 
-def _make_http_response(status_code: int = 200, json_data: dict | None = None) -> MagicMock:
-    """Create a mock HTTP response."""
-    response = MagicMock()
-    response.status_code = status_code
-    response.text = json.dumps(json_data or {})
-    response.json.return_value = json_data or {}
-    return response
+def _make_http_response(
+    status_code: int = 200, json_data: dict | None = None, text: str = ""
+) -> httpx.Response:
+    """Create an HTTP response."""
+    if json_data is not None:
+        content = json.dumps(json_data).encode("utf-8")
+    else:
+        content = text.encode("utf-8")
+    return httpx.Response(status_code, content=content)
 
 
 LIST_RESPONSE_FIXTURE = {
@@ -305,16 +310,14 @@ class TestListResources:
         assert result.pagination.total == 1
 
     def test_raises_on_error_response(self) -> None:
-        response = _make_http_response(500, {})
-        response.text = "internal server error"
+        response = _make_http_response(500, text="internal server error")
         extended = self._make_extended(response)
 
         with pytest.raises(ValueError, match="listDiscoveryResources failed \\(500\\)"):
             extended.extensions.bazaar.list_resources()
 
     def test_raises_on_404(self) -> None:
-        response = _make_http_response(404, {})
-        response.text = "not found"
+        response = _make_http_response(404, text="not found")
         extended = self._make_extended(response)
 
         with pytest.raises(ValueError, match="listDiscoveryResources failed \\(404\\)"):
@@ -456,8 +459,7 @@ class TestSearch:
             extended.extensions.bazaar.search(SearchDiscoveryResourcesParams(query=""))
 
     def test_raises_on_error_response(self) -> None:
-        response = _make_http_response(500, {})
-        response.text = "search failed"
+        response = _make_http_response(500, text="search failed")
         extended = self._make_extended(response)
 
         with pytest.raises(ValueError, match="searchDiscoveryResources failed \\(500\\)"):
@@ -579,3 +581,49 @@ class TestDiscoveryResourceSerialization:
             "serviceName": "Weather API",
             "tags": ["weather", "api"],
         }
+
+
+class _TrackingSyncStream(httpx.SyncByteStream):
+    def __init__(self, nbytes: int) -> None:
+        self.closed = False
+        self._nbytes = nbytes
+
+    def __iter__(self):
+        remaining = self._nbytes
+        while remaining > 0:
+            n = min(65536, remaining)
+            remaining -= n
+            yield b"\x00" * n
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_discovery_clients_reject_oversized_responses() -> None:
+    tests = [
+        (
+            "list success",
+            200,
+            lambda client: client.extensions.bazaar.list_resources(),
+        ),
+        (
+            "search error",
+            500,
+            lambda client: client.extensions.bazaar.search(
+                SearchDiscoveryResourcesParams(query="test")
+            ),
+        ),
+    ]
+
+    for name, status_code, call in tests:
+        stream = _TrackingSyncStream(MAX_DISCOVERY_RESPONSE_BYTES + 1)
+        response = httpx.Response(status_code, stream=stream)
+        client = _make_client()
+        http_client = MagicMock()
+        http_client.get.return_value = response
+        client._get_client.return_value = http_client
+        extended = with_bazaar(client)
+
+        with pytest.raises(ResponseBodyTooLargeError):
+            call(extended)
+        assert stream.closed, name

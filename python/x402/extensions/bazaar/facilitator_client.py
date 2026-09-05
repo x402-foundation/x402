@@ -6,11 +6,18 @@ client with discovery query functionality.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from x402.http.utils import ResponseBodyTooLargeError, read_limited_body
+
 if TYPE_CHECKING:
     from x402.http.facilitator_client import HTTPFacilitatorClient
+
+# Catalog pages carry resource extensions and MCP JSON schemas, so they need
+# more room than control-plane JSON.
+MAX_DISCOVERY_RESPONSE_BYTES = 4 << 20
 
 
 @dataclass
@@ -258,14 +265,24 @@ class BazaarExtension:
             endpoint,
             headers=headers,
             params=query_params if query_params else None,
+            stream=True,
         )
+        try:
+            body = read_limited_body(response.iter_bytes(), MAX_DISCOVERY_RESPONSE_BYTES)
+        except ResponseBodyTooLargeError:
+            raise
+        except Exception as err:
+            raise ValueError("failed to read response body") from err
+        finally:
+            response.close()
 
         if response.status_code != 200:
             raise ValueError(
-                f"Facilitator listDiscoveryResources failed ({response.status_code}): {response.text}"
+                f"Facilitator listDiscoveryResources failed ({response.status_code}): "
+                f"{body.decode('utf-8', errors='replace')}"
             )
 
-        data = response.json()
+        data = json.loads(body)
         return _parse_list_response(data)
 
     def search(
@@ -333,14 +350,24 @@ class BazaarExtension:
             endpoint,
             headers=headers,
             params=query_params,
+            stream=True,
         )
+        try:
+            body = read_limited_body(response.iter_bytes(), MAX_DISCOVERY_RESPONSE_BYTES)
+        except ResponseBodyTooLargeError:
+            raise
+        except Exception as err:
+            raise ValueError("failed to read response body") from err
+        finally:
+            response.close()
 
         if response.status_code != 200:
             raise ValueError(
-                f"Facilitator searchDiscoveryResources failed ({response.status_code}): {response.text}"
+                f"Facilitator searchDiscoveryResources failed ({response.status_code}): "
+                f"{body.decode('utf-8', errors='replace')}"
             )
 
-        data = response.json()
+        data = json.loads(body)
         return _parse_search_response(data)
 
 
