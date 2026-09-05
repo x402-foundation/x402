@@ -1,4 +1,5 @@
 import { x402Client, x402ClientConfig, x402HTTPClient } from "@x402/core/client";
+import { readLimitedBody } from "@x402/core/http";
 import { type PaymentRequired } from "@x402/core/types";
 
 /**
@@ -53,6 +54,8 @@ export function wrapFetchWithPayment(
       return response;
     }
 
+    const responseText = await readLimitedBody(response);
+
     // Parse payment requirements from response
     let paymentRequired: PaymentRequired;
     try {
@@ -62,7 +65,6 @@ export function wrapFetchWithPayment(
       // Try to get from headers first (v2), then from body (v1)
       let body: PaymentRequired | undefined;
       try {
-        const responseText = await response.text();
         if (responseText) {
           body = JSON.parse(responseText) as PaymentRequired;
         }
@@ -89,6 +91,7 @@ export function wrapFetchWithPayment(
       if (hookResponse.status !== 402) {
         return hookResponse; // Hook succeeded
       }
+      await readLimitedBody(hookResponse);
       // Hook's retry got 402, fall through to payment
     }
 
@@ -179,7 +182,7 @@ export type {
   SelectPaymentRequirements,
   x402ClientConfig,
 } from "@x402/core/client";
-export { decodePaymentResponseHeader } from "@x402/core/http";
+export { decodePaymentResponseHeader, ResponseBodyTooLargeError } from "@x402/core/http";
 export type {
   Network,
   PaymentPayload,

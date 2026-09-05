@@ -7,13 +7,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   withBazaar,
+  MAX_DISCOVERY_RESPONSE_BYTES,
   type DiscoveryResource,
   type DiscoveryResourcesResponse,
   type ListDiscoveryResourcesParams,
   type SearchDiscoveryResourcesParams,
   type SearchDiscoveryResourcesResponse,
 } from "../src/bazaar/facilitatorClient";
-import { HTTPFacilitatorClient } from "@x402/core/http";
+import { HTTPFacilitatorClient, ResponseBodyTooLargeError } from "@x402/core/http";
 
 describe("Bazaar Client Extension - facilitatorClient", () => {
   describe("Type definitions", () => {
@@ -227,10 +228,7 @@ describe("Bazaar Client Extension - facilitatorClient", () => {
           pagination: { limit: 20, offset: 0, total: 0 },
         };
 
-        mockFetch.mockResolvedValue({
-          ok: true,
-          json: () => Promise.resolve(mockResponse),
-        });
+        mockFetch.mockResolvedValue(new Response(JSON.stringify(mockResponse), { status: 200 }));
 
         const facilitatorClient = new HTTPFacilitatorClient({
           url: "https://x402.org/facilitator",
@@ -253,10 +251,7 @@ describe("Bazaar Client Extension - facilitatorClient", () => {
           pagination: { limit: 10, offset: 5, total: 100 },
         };
 
-        mockFetch.mockResolvedValue({
-          ok: true,
-          json: () => Promise.resolve(mockResponse),
-        });
+        mockFetch.mockResolvedValue(new Response(JSON.stringify(mockResponse), { status: 200 }));
 
         const facilitatorClient = new HTTPFacilitatorClient({
           url: "https://x402.org/facilitator",
@@ -284,12 +279,9 @@ describe("Bazaar Client Extension - facilitatorClient", () => {
       });
 
       it("should throw error on non-ok response", async () => {
-        mockFetch.mockResolvedValue({
-          ok: false,
-          status: 500,
-          statusText: "Internal Server Error",
-          text: () => Promise.resolve("Server error"),
-        });
+        mockFetch.mockResolvedValue(
+          new Response("Server error", { status: 500, statusText: "Internal Server Error" }),
+        );
 
         const facilitatorClient = new HTTPFacilitatorClient({
           url: "https://x402.org/facilitator",
@@ -331,10 +323,7 @@ describe("Bazaar Client Extension - facilitatorClient", () => {
           },
         };
 
-        mockFetch.mockResolvedValue({
-          ok: true,
-          json: () => Promise.resolve(mockResponse),
-        });
+        mockFetch.mockResolvedValue(new Response(JSON.stringify(mockResponse), { status: 200 }));
 
         const facilitatorClient = new HTTPFacilitatorClient({
           url: "https://x402.org/facilitator",
@@ -361,10 +350,7 @@ describe("Bazaar Client Extension - facilitatorClient", () => {
           resources: [],
         };
 
-        mockFetch.mockResolvedValue({
-          ok: true,
-          json: () => Promise.resolve(mockResponse),
-        });
+        mockFetch.mockResolvedValue(new Response(JSON.stringify(mockResponse), { status: 200 }));
 
         const facilitatorClient = new HTTPFacilitatorClient({
           url: "https://x402.org/facilitator",
@@ -390,10 +376,7 @@ describe("Bazaar Client Extension - facilitatorClient", () => {
           pagination: { limit: 10, cursor: "eyJwYWdlIjoyfQ==" },
         };
 
-        mockFetch.mockResolvedValue({
-          ok: true,
-          json: () => Promise.resolve(mockResponse),
-        });
+        mockFetch.mockResolvedValue(new Response(JSON.stringify(mockResponse), { status: 200 }));
 
         const facilitatorClient = new HTTPFacilitatorClient({
           url: "https://x402.org/facilitator",
@@ -422,12 +405,9 @@ describe("Bazaar Client Extension - facilitatorClient", () => {
       });
 
       it("should throw error on non-ok search response", async () => {
-        mockFetch.mockResolvedValue({
-          ok: false,
-          status: 400,
-          statusText: "Bad Request",
-          text: () => Promise.resolve("query is required"),
-        });
+        mockFetch.mockResolvedValue(
+          new Response("query is required", { status: 400, statusText: "Bad Request" }),
+        );
 
         const facilitatorClient = new HTTPFacilitatorClient({
           url: "https://x402.org/facilitator",
@@ -454,10 +434,7 @@ describe("Bazaar Client Extension - facilitatorClient", () => {
           pagination: { limit: 10, cursor: "nextPageToken" },
         };
 
-        mockFetch.mockResolvedValue({
-          ok: true,
-          json: () => Promise.resolve(mockResponse),
-        });
+        mockFetch.mockResolvedValue(new Response(JSON.stringify(mockResponse), { status: 200 }));
 
         const facilitatorClient = new HTTPFacilitatorClient({
           url: "https://x402.org/facilitator",
@@ -470,6 +447,49 @@ describe("Bazaar Client Extension - facilitatorClient", () => {
         expect(result.pagination?.limit).toBe(10);
         expect(result.pagination?.cursor).toBe("nextPageToken");
       });
+    });
+
+    it("rejects oversized discovery responses", async () => {
+      const cases: Array<{
+        name: string;
+        status: number;
+        call: (client: ReturnType<typeof withBazaar<HTTPFacilitatorClient>>) => Promise<unknown>;
+      }> = [
+        {
+          name: "list success",
+          status: 200,
+          call: client => client.extensions.bazaar.listResources(),
+        },
+        {
+          name: "search error",
+          status: 500,
+          call: client => client.extensions.bazaar.search({ query: "test" }),
+        },
+      ];
+
+      for (const testCase of cases) {
+        const closed = { value: false };
+        const stream = new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.enqueue(new Uint8Array(64 * 1024));
+          },
+          cancel() {
+            closed.value = true;
+          },
+        });
+        mockFetch.mockResolvedValueOnce(new Response(stream, { status: testCase.status }));
+
+        const client = withBazaar(
+          new HTTPFacilitatorClient({ url: "https://facilitator.example.com" }),
+        );
+        const error = await testCase.call(client).catch(caught => caught as Error);
+
+        expect(error, testCase.name).toBeInstanceOf(ResponseBodyTooLargeError);
+        expect((error as ResponseBodyTooLargeError).limitBytes, testCase.name).toBe(
+          MAX_DISCOVERY_RESPONSE_BYTES,
+        );
+        expect(closed.value, testCase.name).toBe(true);
+      }
     });
   });
 });

@@ -114,6 +114,9 @@ export {
   HTTPFacilitatorClient,
   FacilitatorClient,
   FacilitatorConfig,
+  ResponseBodyTooLargeError,
+  MAX_CONTROL_PLANE_RESPONSE_BYTES,
+  readLimitedBody,
 } from "./httpFacilitatorClient";
 export {
   FacilitatorResponseError,

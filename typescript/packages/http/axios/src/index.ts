@@ -1,4 +1,5 @@
 import { x402Client, x402ClientConfig, x402HTTPClient } from "@x402/core/client";
+import { readLimitedBody } from "@x402/core/http";
 import { type PaymentRequired } from "@x402/core/types";
 import { type AxiosInstance, type AxiosError, type InternalAxiosRequestConfig } from "axios";
 
@@ -67,6 +68,32 @@ function cloneAxiosHeaders(headers: InternalAxiosRequestConfig["headers"]): Axio
  */
 function setAxiosHeader(headers: AxiosHeaderRecord, key: string, value: string): void {
   headers[key] = value;
+}
+
+/**
+ * Converts an Axios response body into a fetch BodyInit so {@link readLimitedBody}
+ * can apply the same control-plane cap used by the fetch client.
+ *
+ * @param data - Axios `response.data` for a 402 payment-required response
+ * @returns A BodyInit that {@link readLimitedBody} can stream, or null when empty
+ */
+function toAxiosBodyInit(data: unknown): BodyInit | null {
+  if (data == null) {
+    return null;
+  }
+  if (typeof data === "string") {
+    return data;
+  }
+  if (data instanceof Uint8Array || data instanceof ArrayBuffer) {
+    return data;
+  }
+  if (typeof Blob !== "undefined" && data instanceof Blob) {
+    return data;
+  }
+  if (typeof ReadableStream !== "undefined" && data instanceof ReadableStream) {
+    return data;
+  }
+  return JSON.stringify(data);
 }
 
 /**
@@ -154,11 +181,12 @@ export function wrapAxiosWithPayment(
       }
 
       try {
+        const response = error.response!; // Already validated above
+        await readLimitedBody(new Response(toAxiosBodyInit(response.data)));
+
         // Parse payment requirements from response
         let paymentRequired: PaymentRequired;
         try {
-          const response = error.response!; // Already validated above
-
           // Create getHeader function for case-insensitive header lookup
           const getHeader = (name: string) => {
             const value = response.headers[name] ?? response.headers[name.toLowerCase()];
@@ -189,6 +217,7 @@ export function wrapAxiosWithPayment(
           if (hookResponse.status !== 402) {
             return hookResponse; // Hook succeeded
           }
+          await readLimitedBody(new Response(toAxiosBodyInit(hookResponse.data)));
           // Hook's retry got 402, fall through to payment
         }
 
@@ -311,7 +340,7 @@ export type {
   SelectPaymentRequirements,
   x402ClientConfig,
 } from "@x402/core/client";
-export { decodePaymentResponseHeader } from "@x402/core/http";
+export { decodePaymentResponseHeader, ResponseBodyTooLargeError } from "@x402/core/http";
 export type {
   Network,
   PaymentPayload,
