@@ -40,29 +40,28 @@ client.register("eip155:*", scheme);
 
 ### Deposit Policy
 
-Controls how much the client deposits when the channel needs funding or top-up:
+When the channel needs funding or top-up, the client deposits:
+
+1. `extra.minDeposit` when the server announced a valid hint (`>= amount`)
+2. otherwise `amount × depositMultiplier` (default 5, minimum 3)
+
+`x402Client` spend controls still apply per request to `PaymentRequirements.amount`. The same resolved atomic cap is reused as the escrow ceiling:
+
+`maxDeposit = spendControls.maxAmountPerPayment × depositMultiplier`
+
+A default `$1` USDC cap and multiplier `5` therefore locks at most `$5`. Raise `maxAmountPerPayment` or `depositMultiplier` for a larger lock.
+
+Uncapped payments leave deposits uncapped too: `spendControls: false`, `maxAmountPerPayment: false`, or an `allowedAssets` entry without a per-asset cap. Use `depositStrategy` only when you need a decision the multiplier cannot express.
 
 | Field | Description |
 |-------|-------------|
-| `depositMultiplier` | Per-request `amount × multiplier` is deposited (default 5, minimum 3) |
+| `depositMultiplier` | Sizes the deposit target when `extra.minDeposit` is absent, and the lock ceiling when a spend cap is set. Default 5, minimum 3. |
 
-Use `depositStrategy` for app-specific deposit decisions. The strategy can:
+The strategy can:
 
 - Return `undefined` to use the SDK default deposit amount.
 - Return `false` to skip this deposit attempt.
-- Return a base-unit string or bigint to choose a custom amount. The amount must cover the next voucher.
-
-```typescript
-const maxDeposit = 1_000_000n;
-
-const scheme = new BatchSettlementEvmScheme(signer, {
-  depositPolicy: { depositMultiplier: 5 },
-  depositStrategy: ({ depositAmount }) => {
-    const amount = BigInt(depositAmount);
-    return amount > maxDeposit ? maxDeposit : undefined;
-  },
-});
-```
+- Return a base-unit string or bigint to choose a custom amount. The amount must cover the next voucher and still respects `maxDeposit` when a spend cap is set.
 
 ### Voucher Signer Delegation
 
@@ -114,6 +113,7 @@ import { RedisChannelStorage } from "@x402/evm/batch-settlement/server/redis-sto
 const scheme = new BatchSettlementEvmScheme(receiverAddress, {
   receiverAuthorizerSigner,        // optional: self-managed authorizer (recommended)
   withdrawDelay: 900,              // 15 min – 30 days
+  enforceMinDeposit: false,        // hint only; set true to reject smaller deposits
   storage: new FileChannelStorage({ directory: "./channels" }),
 });
 
@@ -134,6 +134,7 @@ For serverless deployments or multi-instance servers, use Redis/Valkey-backed st
 
 ```typescript
 const scheme = new BatchSettlementEvmScheme(receiverAddress, {
+  enforceMinDeposit: false,
   storage: new RedisChannelStorage({ client: redisClient }),
 });
 ```
@@ -172,6 +173,42 @@ app.get("/api/generate", (req, res) => {
 ```
 
 `amount` accepts raw atomic units, percentages (`"50%"`), or dollar prices (`"$0.001"`).
+
+### Minimum deposit hint
+
+Every 402 includes `extra.minDeposit` (atomic string). By default the SDK sets it to `10 × amount`.
+
+Override per route in `accepts.extra.minDeposit`:
+
+```typescript
+const httpServer = new x402HTTPResourceServer(resourceServer, {
+  "GET /weather": {
+    accepts: {
+      scheme: "batch-settlement",
+      price: "$0.01",
+      network: "eip155:84532",
+      payTo: receiverAddress,
+      extra: { minDeposit: "$0.10" }, // optional; default-asset routes only for Money strings
+    },
+  },
+});
+```
+
+| Route value | When |
+|-------------|------|
+| omitted | `10 × amount` |
+| `"$0.10"` | Default asset only — converted with that asset's decimals |
+| `"5000000"` | Any asset — integer atomic base units |
+
+The reference server only announces the hint; it does not reject smaller deposits. Opt in to SDK enforcement:
+
+```typescript
+const scheme = new BatchSettlementEvmScheme(receiverAddress, {
+  enforceMinDeposit: true, // default false
+});
+```
+
+When enabled, deposits below the resolved hint abort verify with `invalid_batch_settlement_evm_deposit_below_min_deposit`. The facilitator never enforces this — it remains server-local policy.
 
 ## Facilitator Usage
 

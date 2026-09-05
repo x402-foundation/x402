@@ -21,11 +21,19 @@ Use this when:
 
 ## Deposit policy
 
-Use `depositStrategy` for app-specific deposit decisions. The strategy can:
+The client deposits `extra.minDeposit` when the server announced a valid hint, otherwise `amount × DEPOSIT_MULTIPLIER` (default `5`, minimum `3`).
+
+`x402Client` spend controls still cap each request's `amount` (default `$1` on USDC). That same atomic cap is the escrow ceiling:
+
+`maxDeposit = maxAmountPerPayment × depositMultiplier`
+
+So the default `$1` cap and multiplier `5` lock at most `$5`. `spendControls: false` (or any uncapped asset) leaves the deposit uncapped too.
+
+Use `depositStrategy` only for app-specific decisions:
 
 - **`undefined`** — use the SDK default (`depositAmount` in context).
 - **`false`** — skip this deposit attempt.
-- **Base-unit string or `bigint`** — custom amount; must be **≥ `minimumDepositAmount`** or the scheme throws.
+- **Base-unit string or `bigint`** — custom amount; must be **≥ `minimumDepositAmount`**, and still respects `maxDeposit` when a spend cap is set.
 
 ```typescript
 const maxDeposit = 1_000_000n;
@@ -75,7 +83,7 @@ CONCURRENCY=3 NUMBER_OF_ROUNDS=3 pnpm dev:concurrent
 | `RESOURCE_SERVER_URL` | no | Server base URL (default `http://localhost:4021`) |
 | `ENDPOINT_PATH` | no | Path on the server (default `/weather`) |
 | `CHANNEL_SALT` | no | `bytes32` salt for channel id; change to open a fresh channel |
-| `DEPOSIT_MULTIPLIER` | no | Per-request deposit is payment amount × this multiplier (must be integer **≥ 3**; default `5`) |
+| `DEPOSIT_MULTIPLIER` | no | Deposit target is `amount ×` this multiplier when `extra.minDeposit` is absent; lock ceiling is `spendCap ×` this multiplier (integer **≥ 3**; default `5`) |
 | `STORAGE_DIR` | no | Persist client session state (defaults to in-memory) |
 | `NUMBER_OF_REQUESTS` | no | How many paid requests to issue (default 3) |
 | `CONCURRENCY` | no | How many channels to run in parallel in `pnpm dev:concurrent` (default 3) |

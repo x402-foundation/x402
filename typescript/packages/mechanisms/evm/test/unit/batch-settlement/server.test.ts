@@ -277,11 +277,17 @@ describe("BatchSettlementEvmScheme — construction", () => {
   it("uses an in-memory channel storage by default", () => {
     const server = new BatchSettlementEvmScheme(RECEIVER);
     expect(server.scheme).toBe("batch-settlement");
+    expect(server.getEnforceMinDeposit()).toBe(false);
     expect(server.getStorage()).toBeInstanceOf(InMemoryChannelStorage);
     expect(server.getReceiverAddress()).toBe(RECEIVER);
     expect(server.getWithdrawDelay()).toBe(900);
     expect(server.getOnchainStateTtlMs()).toBe(300_000);
     expect(server.getReceiverAuthorizerSigner()).toBeUndefined();
+  });
+
+  it("allows enforceMinDeposit to be enabled", () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER, { enforceMinDeposit: true });
+    expect(server.getEnforceMinDeposit()).toBe(true);
   });
 
   it("allows custom storage, withdrawDelay, and onchain state TTL", () => {
@@ -404,6 +410,7 @@ describe("BatchSettlementEvmScheme — enhancePaymentRequirements", () => {
 
     expect(enhanced.extra?.withdrawDelay).toBe(1800);
     expect(enhanced.extra?.receiverAuthorizer).toBe(RECEIVER_AUTHORIZER);
+    expect(enhanced.extra?.minDeposit).toBe("10000");
     expect(enhanced.extra?.name).toBe("USDC");
     expect(enhanced.extra?.version).toBe("2");
   });
@@ -501,6 +508,103 @@ describe("BatchSettlementEvmScheme — enhancePaymentRequirements", () => {
 
     expect(enhanced.extra?.assetTransferMethod).toBe("permit2");
   });
+
+  it("defaults extra.minDeposit to 10x amount", async () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER);
+    const enhanced = await server.enhancePaymentRequirements(
+      makeRequirements({ amount: "2500" }),
+      {
+        x402Version: 2,
+        scheme: "batch-settlement",
+        network: NETWORK,
+        extra: { receiverAuthorizer: RECEIVER_AUTHORIZER },
+      },
+      [],
+    );
+
+    expect(enhanced.extra?.minDeposit).toBe("25000");
+  });
+
+  it("converts route extra.minDeposit Money on default assets", async () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER);
+    const enhanced = await server.enhancePaymentRequirements(
+      makeRequirements({
+        amount: "1000",
+        extra: { receiverAuthorizer: RECEIVER_AUTHORIZER, minDeposit: "$1" },
+      }),
+      {
+        x402Version: 2,
+        scheme: "batch-settlement",
+        network: NETWORK,
+        extra: { receiverAuthorizer: RECEIVER_AUTHORIZER },
+      },
+      [],
+    );
+
+    expect(enhanced.extra?.minDeposit).toBe("1000000");
+  });
+
+  it("uses request amount when it exceeds route extra.minDeposit Money", async () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER);
+    const enhanced = await server.enhancePaymentRequirements(
+      makeRequirements({
+        amount: "2000000",
+        extra: { receiverAuthorizer: RECEIVER_AUTHORIZER, minDeposit: "$1" },
+      }),
+      {
+        x402Version: 2,
+        scheme: "batch-settlement",
+        network: NETWORK,
+        extra: { receiverAuthorizer: RECEIVER_AUTHORIZER },
+      },
+      [],
+    );
+
+    expect(enhanced.extra?.minDeposit).toBe("2000000");
+  });
+
+  it("accepts route extra.minDeposit atomic strings for any asset", async () => {
+    const customAsset = "0x00000000000000000000000000000000000000aa" as `0x${string}`;
+    const server = new BatchSettlementEvmScheme(RECEIVER);
+    const enhanced = await server.enhancePaymentRequirements(
+      makeRequirements({
+        amount: "1000",
+        asset: customAsset,
+        extra: { receiverAuthorizer: RECEIVER_AUTHORIZER, minDeposit: "5000000" },
+      }),
+      {
+        x402Version: 2,
+        scheme: "batch-settlement",
+        network: NETWORK,
+        extra: { receiverAuthorizer: RECEIVER_AUTHORIZER },
+      },
+      [],
+    );
+
+    expect(enhanced.extra?.minDeposit).toBe("5000000");
+  });
+
+  it("rejects route extra.minDeposit Money for non-default assets", async () => {
+    const customAsset = "0x00000000000000000000000000000000000000aa" as `0x${string}`;
+    const server = new BatchSettlementEvmScheme(RECEIVER);
+
+    await expect(
+      server.enhancePaymentRequirements(
+        makeRequirements({
+          amount: "1000",
+          asset: customAsset,
+          extra: { receiverAuthorizer: RECEIVER_AUTHORIZER, minDeposit: "$1" },
+        }),
+        {
+          x402Version: 2,
+          scheme: "batch-settlement",
+          network: NETWORK,
+          extra: { receiverAuthorizer: RECEIVER_AUTHORIZER },
+        },
+        [],
+      ),
+    ).rejects.toThrow(/only supported for default assets/);
+  });
 });
 
 describe("BatchSettlementEvmScheme — createChannelManager", () => {
@@ -589,6 +693,67 @@ describe("BatchSettlementEvmScheme — onBeforeVerify", () => {
       requirements: makeRequirements(),
     } as never);
     expect(result).toBeUndefined();
+  });
+
+  it("does not reject deposits below minDeposit when enforcement is disabled", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const requirements = makeRequirements({
+      amount: "1000",
+      extra: { receiverAuthorizer: RECEIVER_AUTHORIZER, minDeposit: "10000" },
+    });
+    const result = await server.schemeHooks.onBeforeVerify!({
+      paymentPayload: buildDepositPayload(channelId, config, "5000", "1000"),
+      requirements,
+    } as never);
+    expect(result).toBeUndefined();
+  });
+
+  it("rejects deposits below minDeposit when enforcement is enabled", async () => {
+    const enforcingServer = new BatchSettlementEvmScheme(RECEIVER, {
+      storage,
+      enforceMinDeposit: true,
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const requirements = makeRequirements({
+      amount: "1000",
+      extra: { receiverAuthorizer: RECEIVER_AUTHORIZER, minDeposit: "10000" },
+    });
+
+    const belowMin = await enforcingServer.schemeHooks.onBeforeVerify!({
+      paymentPayload: buildDepositPayload(channelId, config, "5000", "1000"),
+      requirements,
+    } as never);
+    expect(belowMin).toMatchObject({
+      abort: true,
+      reason: Errors.ErrDepositBelowMinDeposit,
+    });
+
+    const atMin = await enforcingServer.schemeHooks.onBeforeVerify!({
+      paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
+      requirements,
+    } as never);
+    expect(atMin).toBeUndefined();
+  });
+
+  it("enforces the default 10x minDeposit hint when extra.minDeposit is omitted", async () => {
+    const enforcingServer = new BatchSettlementEvmScheme(RECEIVER, {
+      storage,
+      enforceMinDeposit: true,
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const requirements = makeRequirements({ amount: "1000" });
+
+    const belowDefault = await enforcingServer.schemeHooks.onBeforeVerify!({
+      paymentPayload: buildDepositPayload(channelId, config, "5000", "1000"),
+      requirements,
+    } as never);
+    expect(belowDefault).toMatchObject({
+      abort: true,
+      reason: Errors.ErrDepositBelowMinDeposit,
+    });
   });
 
   it("does nothing when no channel record is stored yet", async () => {

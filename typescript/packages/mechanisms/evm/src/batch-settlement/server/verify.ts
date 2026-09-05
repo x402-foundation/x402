@@ -106,6 +106,17 @@ export async function handleBeforeVerify(
     return;
   }
 
+  if (scheme.getEnforceMinDeposit() && isBatchSettlementDepositPayload(raw)) {
+    const minDeposit = BigInt(await scheme.resolveMinDepositHint(requirements));
+    if (BigInt(raw.deposit.amount) < minDeposit) {
+      return {
+        abort: true,
+        reason: Errors.ErrDepositBelowMinDeposit,
+        message: "Deposit amount is below the server minimum",
+      };
+    }
+  }
+
   try {
     const bindErr = channelIdBindingError(
       raw.channelConfig,

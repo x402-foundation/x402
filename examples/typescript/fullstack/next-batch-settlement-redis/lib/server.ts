@@ -43,6 +43,7 @@ const redisAdapter = createLazyRedisChannelStorageClient(redisUrl);
 export const batchedScheme = new BatchSettlementEvmScheme(evmAddress, {
   ...(receiverAuthorizerSigner ? { receiverAuthorizerSigner } : {}),
   withdrawDelay,
+  enforceMinDeposit: false,
   storage: new RedisChannelStorage({ client: redisAdapter }),
 });
 
