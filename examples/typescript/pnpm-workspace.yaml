@@ -18,9 +18,11 @@ packageExtensions:
 minimumReleaseAge: 4320 # Only install package versions that have been published for at least 3 days.
 minimumReleaseAgeStrict: false
 allowBuilds:
+  '@parcel/watcher': true
   bufferutil: true
   esbuild: true
   keccak: true
+  msgpackr-extract: true
   protobufjs: true
   secp256k1: true
   sharp: true

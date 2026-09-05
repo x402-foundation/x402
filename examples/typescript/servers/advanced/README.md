@@ -69,6 +69,7 @@ and fill required environment variables:
 - `FACILITATOR_URL` - Facilitator endpoint URL
 - `AVM_ADDRESS` - Algorand address to receive payments (optional for `all-networks`)
 - `AVM_NETWORK` - Algorand network CAIP-2 (optional; defaults to canonical Algorand Testnet)
+- `CARDANO_ADDRESS` - Cardano `addr_test1...` address to receive payments (optional for `all-networks`)
 - `APTOS_ADDRESS` - Aptos account address to receive payments (optional for `all-networks`)
 - `CCD_ADDRESS` - Concordium account address to receive payments (optional for `all-networks`)
 - `EVM_ADDRESS` - Ethereum address to receive payments
@@ -81,6 +82,8 @@ and fill required environment variables:
 - `XRPL_AMOUNT` - XRPL price in drops (optional, defaults to `1000` = 0.001 XRP)
 
 > **Hedera Testnet:** Get testnet HBAR from the [Hedera Faucet](https://portal.hedera.com/faucet).
+>
+> **Cardano Testnet:** Get test ADA (tADA) for preprod/preview from the [Cardano testnets faucet](https://docs.cardano.org/cardano-testnets/tools/faucet/).
 
 2. Install and build all packages from the typescript examples root:
 

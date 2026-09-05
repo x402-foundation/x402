@@ -27,6 +27,7 @@ This folder contains Typescript packages to help developers implement the x402 p
 | **EVM** - [`@x402/evm`](./packages/mechanisms/evm) | EVM implementation of x402 using the Exact payment scheme. | [![npm version](https://img.shields.io/npm/v/%40x402%2Fevm.svg)](https://www.npmjs.com/package/@x402/evm) |
 | **Algorand** - [`@x402/avm`](./packages/mechanisms/avm) | AVM implementation of x402 using ASA transfers. | [![npm version](https://img.shields.io/npm/v/%40x402%2Favm.svg)](https://www.npmjs.com/package/@x402/avm) |
 | **Aptos** - [`@x402/aptos`](./packages/mechanisms/aptos) | Aptos implementation of the x402 payment protocol. | [![npm version](https://img.shields.io/npm/v/%40x402%2Faptos.svg)](https://www.npmjs.com/package/@x402/aptos) |
+| **Cardano** - [`@x402/cardano`](./packages/mechanisms/cardano) | Cardano implementation of x402 using the Exact scheme with lovelace and native-token (USDM) transfers. | [![npm version](https://img.shields.io/npm/v/%40x402%2Fcardano.svg)](https://www.npmjs.com/package/@x402/cardano) |
 | **Stellar** - [`@x402/stellar`](./packages/mechanisms/stellar) | Stellar implementation of x402 using Soroban token transfers. | [![npm version](https://img.shields.io/npm/v/%40x402%2Fstellar.svg)](https://www.npmjs.com/package/@x402/stellar) |
 | **Solana** - [`@x402/svm`](./packages/mechanisms/svm) | SVM implementation of x402 using SPL token transfers. | [![npm version](https://img.shields.io/npm/v/%40x402%2Fsvm.svg)](https://www.npmjs.com/package/@x402/svm) |
 

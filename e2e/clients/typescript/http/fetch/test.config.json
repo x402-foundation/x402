@@ -1,0 +1,8 @@
+{
+  "name": "typescript/http/fetch",
+  "type": "client",
+  "language": "typescript",
+  "transport": "http",
+  "x402Versions": [1, 2],
+  "excludeNetworks": ["cardano"]
+}

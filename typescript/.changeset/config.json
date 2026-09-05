@@ -11,6 +11,7 @@
       "@x402/evm",
       "@x402/avm",
       "@x402/aptos",
+      "@x402/cardano",
       "@x402/stellar",
       "@x402/svm",
       "@x402/tvm",

@@ -38,6 +38,9 @@ cp .env-local .env
 
 and fill required environment variables:
 
+- `CARDANO_MNEMONIC` - Cardano wallet seed phrase for signing payments (optional)
+- `CARDANO_NETWORK` - Cardano network (optional, defaults to `cardano:preprod`)
+- `BLOCKFROST_PREPROD_URL` / `BLOCKFROST_PROJECT_ID` - Blockfrost endpoint + project id (required when `CARDANO_MNEMONIC` is set)
 - `APTOS_PRIVATE_KEY` - Aptos Ed25519 private key for Aptos payments (optional; `all-networks`)
 - `CCD_PRIVATE_KEY` - Concordium Ed25519 private key for Concordium payments (optional; `all-networks`)
 - `CCD_ADDRESS` - Concordium account address for Concordium payments (optional; `all-networks`)
@@ -67,6 +70,10 @@ pnpm dev
 ```
 
 ### Account Setup Instructions
+
+#### Cardano Testnet
+
+The client wallet must hold the asset it pays with. Get test ADA (tADA) for `cardano:preprod` (or `cardano:preview`) from the [Cardano testnets faucet](https://docs.cardano.org/cardano-testnets/tools/faucet/), and supply a Blockfrost project id via `BLOCKFROST_PROJECT_ID` + `BLOCKFROST_PREPROD_URL`. Use `asset: "lovelace"` for quick testing (fundable directly from the faucet); preprod USDM must be sourced separately.
 
 #### Stellar Testnet
 

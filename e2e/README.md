@@ -68,6 +68,7 @@ These keep local `test.config.json` overlays and/or special orchestration — no
 | Batch-settlement multi-phase | Catalog `routes` entries + orchestration in [`test.ts`](test.ts) + shared scheme registration |
 | Gas sponsoring / Permit2 coldstart | Route `schemeOptions.coldstart` + declared gas `extensions` + fund/revoke/drain in `test.ts` + facilitator extension registration |
 | Swig smart wallet | Client overlay [`clients/typescript/http/svm-smart-wallet/test.config.json`](clients/typescript/http/svm-smart-wallet/test.config.json) (`protocolFamilies`, `facilitators`, Swig env) + [`scripts/swig-setup.ts`](scripts/swig-setup.ts); uses catalog route `/exact/svm` |
+| Cardano one-shot Masumi offer | Catalog `routes."/exact/cardano/masumi".schemeOptions.masumi` + per-request issuance in [`servers/typescript/config.ts`](servers/typescript/config.ts). Cardano is excluded from MCP (`excludeNetworks` overlay on the MCP server): a Masumi 402 is a one-shot seller-signed quote that must be issued per request, which needs the HTTP dynamic `payTo`/`price` path; the MCP server builds its requirements once at startup via `buildPaymentRequirements`, which does not resolve dynamic values. |
 | Legacy (v1) | `legacy/` trees only — separate configs; do not extend the mechanisms catalog for v1 |
 
 If an SDK implements a route end-to-end (client + server + facilitator), list it in that route’s `sdks`. Omit only when the mechanism package is missing (e.g. Go has no TVM; Python/Go have no AVM/NEAR/XRPL; Python has no SVM upto).
@@ -209,6 +210,7 @@ CLIENT_HEDERA_ACCOUNT_ID=0.0....    # Hedera account id for client payments
 CLIENT_HEDERA_PRIVATE_KEY=0x...     # Hedera ECDSA private key for client payments
 CLIENT_KEETA_MNEMONIC=...           # Keeta mnemonic for client payments
 CLIENT_STELLAR_PRIVATE_KEY=...      # Stellar private key for client payments
+CLIENT_CARDANO_MNEMONIC=...         # Cardano wallet mnemonic (24 words) for client payments
 CLIENT_TVM_PRIVATE_KEY=...          # TVM private key for client payments
 CLIENT_NEAR_ACCOUNT_ID=...          # NEAR payer account id that owns the access key
 CLIENT_NEAR_PRIVATE_KEY=ed25519:... # NEAR private key for that payer account
@@ -241,7 +243,12 @@ FACILITATOR_STELLAR_PRIVATE_KEY=... # Stellar private key for facilitator
 FACILITATOR_TVM_PRIVATE_KEY=...     # TVM private key for facilitator
 FACILITATOR_NEAR_ACCOUNT_ID=...     # NEAR relayer account id (submits meta-tx, sponsors gas)
 FACILITATOR_NEAR_PRIVATE_KEY=ed25519:... # NEAR relayer private key
+FACILITATOR_CARDANO_MNEMONIC=...    # Optional: the Cardano facilitator only broadcasts, so it runs provider-only without a mnemonic
 # XRPL needs no facilitator wallet — the facilitator is keyless (payer signs and pays fees)
+
+# Cardano support (client UTXO lookup + facilitator submission via Blockfrost)
+BLOCKFROST_PROJECT_ID=preprod...    # Blockfrost preprod project id (get one at blockfrost.io)
+CARDANO_TESTNET_RPC_URL=...         # Optional Blockfrost base URL override (default https://cardano-preprod.blockfrost.io/api/v0)
 
 # Concordium network override
 CCD_NETWORK=ccd:4221332d34e1694168c2a0c0b3fd0f27  # Optional; defaults to testnet
@@ -348,6 +355,16 @@ You need **three separate NEAR testnet accounts** for e2e tests — client (paye
 1. Create three testnet accounts (e.g. via [MyNearWallet testnet](https://testnet.mynearwallet.com/) or `near create-account`); export each account's private key (`ed25519:...`) — e.g. from `~/.near-credentials/testnet/<account>.json`.
 2. Fund the **facilitator (relayer)** account with testnet NEAR for gas from the [NEAR faucet](https://near-faucet.io/). The relayer submits the NEP-366 `SignedDelegate` and sponsors gas, so the payer spends zero gas.
 3. Give the **client (payer)** the payment token. The default asset is **wNEAR** (`wrap.testnet`, a NEP-141): wrap NEAR via `wrap.testnet` `near_deposit`. Both payer and merchant must be `storage_deposit`-registered on the token contract.
+
+#### Cardano Preprod
+
+The Cardano e2e routes are paid in **lovelace** (native tADA) by default, so you only need test ADA — no stablecoin sourcing. The routes cover the three `assetTransferMethod`s: `/exact/cardano/default`, `/exact/cardano/masumi` (vested_pay escrow) and `/exact/cardano/script` (Plutus V3 script address with inline datum).
+
+1. Create a preprod wallet to obtain a **24-word mnemonic** and an `addr_test1...` address — either with a CIP-30 wallet (Eternl / Lace in **preprod** mode) or programmatically via `PrivateKey.generateMnemonic()` from `@evolution-sdk/evolution`. You only need a **client** mnemonic (`CLIENT_CARDANO_MNEMONIC`); the server just needs an address (`SERVER_CARDANO_ADDRESS`) — the client's `addr_test1...` works. `FACILITATOR_CARDANO_MNEMONIC` is **optional**: the facilitator only broadcasts the client's signed transaction, so it runs provider-only when no mnemonic is set.
+2. Fund the **client** wallet with test ADA from the [Cardano testnets faucet](https://docs.cardano.org/cardano-testnets/tools/faucet/) (select **Preprod**); ~10 tADA is plenty. Only the client needs funds — it builds, signs, and pays the fee.
+3. Get a free **Blockfrost** preprod project id at [blockfrost.io](https://blockfrost.io/) and set `BLOCKFROST_PROJECT_ID`.
+
+> **Note:** The asset is a config axis, not a separate route: the same three methods run against a native token when `SERVER_CARDANO_ASSET` is set to a `policyId.assetNameHex` unit (`SERVER_CARDANO_AMOUNT` is in the asset's smallest unit). This is the only place the token paths are exercised end to end, so run it whenever the Masumi or signer funding logic changes, e.g. `SERVER_CARDANO_ASSET=e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d SERVER_CARDANO_AMOUNT=1000000 pnpm test --testnet --families=cardano`. The Masumi seller signs the terms with `SERVER_CARDANO_SELLER_MNEMONIC` (a well-known test phrase when unset — it needs no funds).
 
 > **Note:** payer key = `CLIENT_NEAR_*`, relayer key = `FACILITATOR_NEAR_*`, merchant = `SERVER_NEAR_ADDRESS`. `CLIENT_NEAR_ACCOUNT_ID` is required because a NEAR private key identifies a public key, but the signer must also know which account owns that access key to read its nonce and set the delegated action `senderId`. Override the token with `SERVER_NEAR_ASSET` / `SERVER_NEAR_AMOUNT` (defaults: `wrap.testnet` / `1000000000000000000000` = 0.001 wNEAR; set them to a NEP-141 like Circle USDC for stablecoin runs).
 
