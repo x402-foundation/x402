@@ -1,0 +1,21 @@
+{
+  "accept": {
+    "file": "mainnet-accept-eventlog-0.1.21.b64",
+    "party": "agent::12206150abdc15b4593cd68a1f7b7fb3fdaac7334b7823e1e5d9029a794b4a695cfc",
+    "amount": "0.2700000000",
+    "sender": "FTP-validator-1::1220c065ad977ae4e480b6ea5bcd96d6d73025a91ad27fa60d1385010ca01cdd39f9",
+    "capturedAt": "2026-08-02T09:46:11.396Z",
+    "bytes": 35560
+  },
+  "transfer": {
+    "file": "mainnet-transfer-preapproval-0.1.21.b64",
+    "sender": "agent::122028b084b415befd2fc4b82de4caed3dc71c588d861d4d79df8955e1f6964de00a",
+    "receiver": "Cantex::122090c527c437b93a66a7aa6d44fb641ff7a8386ef95430aed57e59e8e1bba45f53",
+    "amount": "0.0100000000",
+    "instrumentId": {
+      "admin": "DSO::1220b1431ef217342db44d516bb9befde802be7d8899637d290895fa58880f19accc",
+      "id": "Amulet"
+    },
+    "bytes": 34700
+  }
+}
