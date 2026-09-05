@@ -288,6 +288,26 @@ export function sanitizeResourceServiceMetadata(
 export interface ValidationResult {
   valid: boolean;
   errors?: string[];
+  /**
+   * True when validation could not run because the current JS runtime forbids
+   * dynamic code generation (e.g. Cloudflare Workers), rather than because the
+   * schema itself is invalid. Callers should not treat this the same as an
+   * actually-invalid extension.
+   */
+  unavailable?: boolean;
+}
+
+/**
+ * Detects Ajv's "code generation from strings disallowed" failure, which occurs
+ * when `ajv.compile()` runs in a JS runtime that forbids `new Function()` (e.g.
+ * Cloudflare Workers). This is an environment limitation, not a schema problem.
+ *
+ * @param error - The error thrown by `ajv.compile()`
+ * @returns True if the error indicates dynamic code generation is unavailable
+ */
+function isCodeGenerationDisallowedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /code generation from strings disallowed|unsafe-eval/i.test(message);
 }
 
 /**
@@ -372,6 +392,15 @@ export function validateDiscoveryExtension(extension: DiscoveryExtension): Valid
 
     return { valid: false, errors };
   } catch (error) {
+    if (isCodeGenerationDisallowedError(error)) {
+      return {
+        valid: false,
+        unavailable: true,
+        errors: [
+          "Schema validation is unavailable in this runtime (dynamic code generation is disallowed)",
+        ],
+      };
+    }
     return {
       valid: false,
       errors: [
