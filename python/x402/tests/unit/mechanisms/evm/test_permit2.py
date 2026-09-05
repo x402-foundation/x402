@@ -6,6 +6,7 @@ import time
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+from x402.mechanisms.evm.asset_cache import reset_asset_contract_cache
 from x402.mechanisms.evm.constants import (
     ERR_ASSET_NOT_DEPLOYED_CONTRACT,
     ERR_ERC20_APPROVAL_BROADCAST_FAILED,
@@ -187,6 +188,19 @@ class MockFacilitatorSigner:
         return b""
 
 
+class _CountingAssetCodeSigner(MockFacilitatorSigner):
+    """Counts get_code calls for the payment token."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.asset_get_code_calls = 0
+
+    def get_code(self, address: str) -> bytes:
+        if address.lower() == TOKEN_ADDRESS.lower():
+            self.asset_get_code_calls += 1
+        return super().get_code(address)
+
+
 class _ReceiptTimeoutSigner(MockFacilitatorSigner):
     """Signer whose broadcast never confirms in time (settlement_pending)."""
 
@@ -302,6 +316,17 @@ class TestVerifyPermit2:
         assert result.is_valid is False
         assert result.invalid_reason == ERR_PERMIT2_INVALID_SPENDER
 
+    def test_verify_invalid_spender_does_not_check_asset_contract(self):
+        reset_asset_contract_cache()
+        signer = _CountingAssetCodeSigner()
+        facilitator = ExactEvmFacilitatorScheme(signer)
+        auth = make_permit2_authorization(spender="0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+        payload = make_payment_payload(payload_dict=make_permit2_payload_dict(auth))
+        result = facilitator.verify(payload, make_requirements())
+        assert result.is_valid is False
+        assert result.invalid_reason == ERR_PERMIT2_INVALID_SPENDER
+        assert signer.asset_get_code_calls == 0
+
     def test_verify_rejects_recipient_mismatch(self):
         facilitator = self._make_facilitator()
         wrong_recipient = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
@@ -390,14 +415,22 @@ class TestVerifyPermit2:
         assert result.invalid_reason == ERR_INSUFFICIENT_BALANCE
 
     def test_verify_rejects_eoa_asset(self):
-        # Asset address with no bytecode must be rejected before signature checks.
+        # Asset address with no bytecode must be rejected after signature work.
         # The mock returns non-empty code for TOKEN_ADDRESS by default; override to EOA.
+        # Other tests share TOKEN_ADDRESS but model it as deployed, and positive asset checks are
+        # cached process-wide, so drop those entries to force a real get_code here.
+        reset_asset_contract_cache()
+
         class _EOAAssetSigner(MockFacilitatorSigner):
             def get_code(self, address: str) -> bytes:
                 return b""  # all addresses, including token, are EOAs
 
         facilitator = ExactEvmFacilitatorScheme(_EOAAssetSigner())
-        result = self._verify(facilitator)
+        with patch(
+            "x402.mechanisms.evm.exact.permit2_utils._verify_permit2_signature",
+            return_value=True,
+        ):
+            result = self._verify(facilitator)
         assert result.is_valid is False
         assert result.invalid_reason == ERR_ASSET_NOT_DEPLOYED_CONTRACT
 

@@ -13,8 +13,8 @@ from ....schemas import (
     SettleResponse,
     VerifyResponse,
 )
+from ..asset_cache import start_asset_contract_check
 from ..constants import (
-    ERR_ASSET_NOT_DEPLOYED_CONTRACT,
     ERR_AUTHORIZATION_VALUE_MISMATCH,
     ERR_FACTORY_NOT_ALLOWED,
     ERR_FAILED_TO_GET_NETWORK_CONFIG,
@@ -326,12 +326,12 @@ class ExactEvmScheme:
                     None,
                 )
 
-        code = self._signer.get_code(token_address)
-        if len(code) == 0:
+        asset_reason = start_asset_contract_check(
+            self._signer, str(requirements.network), requirements.asset
+        ).await_result()
+        if asset_reason:
             return (
-                VerifyResponse(
-                    is_valid=False, invalid_reason=ERR_ASSET_NOT_DEPLOYED_CONTRACT, payer=payer
-                ),
+                VerifyResponse(is_valid=False, invalid_reason=asset_reason, payer=payer),
                 None,
             )
 

@@ -13,6 +13,7 @@ except ImportError:
     pytest.skip("eth-abi not available", allow_module_level=True)
 
 from x402.mechanisms.evm import ERC6492_MAGIC_VALUE, get_default_asset
+from x402.mechanisms.evm.asset_cache import reset_asset_contract_cache
 from x402.mechanisms.evm.constants import (
     ERR_ASSET_NOT_DEPLOYED_CONTRACT,
     ERR_AUTHORIZATION_VALUE_MISMATCH,
@@ -562,6 +563,9 @@ class TestVerify:
 
     def test_rejects_eoa_asset(self):
         # When the asset address has no bytecode (EOA), verify must reject before signature checks.
+        # Other tests share TOKEN_ADDRESS but model it as deployed, and positive asset checks are
+        # cached process-wide, so drop those entries to force a real get_code here.
+        reset_asset_contract_cache()
         signer = MockFacilitatorSigner(
             code_by_address={
                 TOKEN_ADDRESS.lower(): b"",  # token = EOA
@@ -579,6 +583,8 @@ class TestVerify:
         # An RPC error on get_code must propagate as an exception (internal error), not a 400.
         # Payer returns code so verify_typed_data_strict can complete via EIP-1271;
         # the RPC error fires on the asset-contract check (outside the sig try/except).
+        reset_asset_contract_cache()
+
         class _RPCErrorSigner(MockFacilitatorSigner):
             def get_code(self, address: str) -> bytes:
                 if address.lower() == PAYER.lower():
@@ -589,6 +595,51 @@ class TestVerify:
 
         with pytest.raises(RuntimeError, match="rpc: connection refused"):
             facilitator.verify(make_payment_payload(), make_requirements())
+
+    def test_asset_contract_check_is_cached_but_payer_code_is_not(self):
+        # The asset check is cached across payments; the payer's code is not, being mutable under
+        # ERC-6492.
+        reset_asset_contract_cache()
+
+        signer = MockFacilitatorSigner(code_by_address={PAYER.lower(): b"\x01"})
+        facilitator = ExactEvmFacilitatorScheme(signer)
+
+        for attempt in range(1, 4):
+            result = facilitator.verify(make_payment_payload(), make_requirements())
+            assert result.is_valid is True, f"verify {attempt} failed: {result.invalid_reason}"
+
+        assert signer.get_code_calls.get(TOKEN_ADDRESS.lower(), 0) == 1, (
+            "expected the asset eth_getCode to be cached after the first verify"
+        )
+        assert signer.get_code_calls.get(PAYER.lower(), 0) == 3, (
+            "expected one payer eth_getCode per verify (never cached)"
+        )
+
+    def test_asset_contract_cache_is_scoped_per_network(self):
+        # The same address can hold bytecode on one chain and nothing on another, so a hit on one
+        # network must not answer for another.
+        reset_asset_contract_cache()
+
+        signer = MockFacilitatorSigner(code_by_address={PAYER.lower(): b"\x01"})
+        facilitator = ExactEvmFacilitatorScheme(signer)
+
+        result = facilitator.verify(make_payment_payload(), make_requirements())
+        assert result.is_valid is True, (
+            f"verify on the first network failed: {result.invalid_reason}"
+        )
+
+        other_network = "eip155:84532"
+        result = facilitator.verify(
+            make_payment_payload(accepted_network=other_network),
+            make_requirements(network=other_network),
+        )
+        assert result.is_valid is True, (
+            f"verify on the second network failed: {result.invalid_reason}"
+        )
+
+        assert signer.get_code_calls.get(TOKEN_ADDRESS.lower(), 0) == 2, (
+            "expected the asset to be re-checked on a different network"
+        )
 
 
 class TestSettle:
