@@ -1,0 +1,17 @@
+{
+  "id": "X4-025",
+  "title": "Forged Attestation Injection (OATR)",
+  "category": "identity_verification",
+  "requirement": "HC-18: Forged attestations with unknown issuers must be rejected",
+  "method": "GET",
+  "request": {
+    "forged_jwt_iss": "fake-issuer",
+    "forged_jwt_alg": "EdDSA"
+  },
+  "owasp_asi": "ASI04",
+  "severity": "critical",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-025"
+}

@@ -1,0 +1,16 @@
+{
+  "id": "X4-037",
+  "title": "Facilitator Impersonation",
+  "category": "trust_abuse",
+  "requirement": "HC-27: Facilitator identity must be cryptographically verified, not header-based",
+  "method": "GET",
+  "request": {
+    "impersonation_variants": 3
+  },
+  "owasp_asi": "ASI04",
+  "severity": "critical",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-037"
+}

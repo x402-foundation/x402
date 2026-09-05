@@ -1,0 +1,16 @@
+{
+  "id": "X4-015",
+  "title": "Non-Existent Facilitator Verification Claim",
+  "category": "facilitator_trust",
+  "requirement": "Falsification Requirement: facilitator identity must be independently verified",
+  "method": "GET",
+  "request": {
+    "fake_verification": true
+  },
+  "owasp_asi": "ASI09",
+  "severity": "critical",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-015"
+}

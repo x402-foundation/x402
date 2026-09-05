@@ -1,0 +1,21 @@
+{
+  "id": "X4-014",
+  "title": "Fake Facilitator Header Injection",
+  "category": "facilitator_trust",
+  "requirement": "HC-9: Server must only trust pre-configured facilitator(s)",
+  "method": "GET",
+  "request": {
+    "fake_facilitators": [
+      "https://evil.com/verify",
+      "http://localhost:9999/fake-verify",
+      "https://attacker.io/x402-facilitator",
+      ""
+    ]
+  },
+  "owasp_asi": "ASI09",
+  "severity": "critical",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-014"
+}

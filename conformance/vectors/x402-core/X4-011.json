@@ -1,0 +1,16 @@
+{
+  "id": "X4-011",
+  "title": "Rapid Payment Request Rate Limiting",
+  "category": "spending_limits",
+  "requirement": "Twelve Numbers: rate limits prevent budget exhaustion attacks",
+  "method": "GET",
+  "request": {
+    "n_requests": 20
+  },
+  "owasp_asi": "ASI08",
+  "severity": "medium",
+  "impact": "overpayment",
+  "normative": "SHOULD",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-011"
+}
