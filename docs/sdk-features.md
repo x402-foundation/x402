@@ -73,6 +73,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | sign-in-with-x | ✅ | ✅ | ✅ |
 | payment-identifier | ✅ | ✅ | ✅ |
 | offer-receipt | ✅ | ❌ | ❌ |
+| authorization-evidence | ✅ | ❌ | ❌ |
 | eip2612-gas-sponsoring | ✅ | ✅ | ✅ |
 | erc20-approval-gas-sponsoring | ✅ | ✅ | ✅ |
 

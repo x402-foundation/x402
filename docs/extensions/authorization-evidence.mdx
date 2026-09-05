@@ -1,0 +1,115 @@
+---
+title: "Authorization Evidence"
+description: "Verify an operator-signed spend mandate through a pluggable external verifier before a payment runs, so a funded, signed payment is still denied when the agent was never authorized to spend that amount with that payee."
+---
+
+The Authorization Evidence extension adds a pre-payment authorization gate for agent-originated payments. When enabled on a route, every payment attempt must carry evidence — an operator-signed spend mandate — that a configured external verifier allows for the selected amount and payee. The gate fails closed: missing, invalid, replayed, or unverifiable evidence denies the payment before facilitator verification runs.
+
+The verifier is a pluggable subprocess speaking the [External Verifier Contract v1](https://github.com/bolyra/bolyra/blob/main/spec/external-verifier-contract-v1.md) (EVC): one JSON request on stdin, one fail-closed verdict on stdout. Any conformant verifier works — the reference implementation is `bolyra verify`, and this extension's host boundary passes the contract's published 28-vector conformance suite (`npx @bolyra/evc-conformance --host "<command>"`). EVC is an independent third-party contract and is not part of x402.
+
+## Use Cases
+
+- **Seller-side acceptance**: A paid endpoint can verify a payment is funded and signed, but not that the agent presenting it was *authorized* to spend that amount with that payee. The mandate gate answers exactly that, before execution.
+- **Bounded agent delegation**: Operators sign mandates with a spend tier, an audience, and an expiry; agents cannot exceed them no matter what they are asked to do.
+- **Composability**: `sign-in-with-x` proves who the caller is; `offer-receipt` proves what the server committed and delivered; authorization evidence proves what the caller's agent was allowed to spend. The three compose.
+
+## How It Works
+
+| Step | Actor | What happens |
+|------|-------|--------------|
+| 1 | Server | The 402 response advertises the extension with a fresh HMAC-signed challenge (`nonce`, `expiresAt`) |
+| 2 | Client | Echoes the advertised info and attaches `evidence` — the opaque mandate presentation |
+| 3 | Server | Before facilitator verification: validates the challenge, checks payee coverage, reserves the nonce (replay protection), and spawns the verifier with one request carrying the x402 context |
+| 4 | Verifier | Returns one closed verdict: allow, or a deny with a registry code |
+| 5 | Server | Allow → the normal payment flow proceeds. Anything else → the payment is denied with a machine-readable reason |
+
+## Quickstart for Sellers (Servers)
+
+<Tabs>
+<Tab title="TypeScript">
+
+### Step 1: Register the extension
+
+```typescript
+import {
+  createAuthorizationEvidenceResourceServerExtension,
+  createCommandVerifier,
+} from "@x402/extensions/authorization-evidence";
+
+server.registerExtension(
+  createAuthorizationEvidenceResourceServerExtension({
+    audience: "api.merchant.example",
+    verifier: createCommandVerifier({ command: ["bolyra", "verify"] }),
+  }),
+);
+```
+
+### Step 2: Declare it on routes that require evidence
+
+```typescript
+import { declareAuthorizationEvidenceExtension } from "@x402/extensions/authorization-evidence";
+
+const routes = {
+  "GET /api/report": {
+    accepts: [/* payment requirements */],
+    extensions: {
+      ...declareAuthorizationEvidenceExtension(),
+    },
+  },
+};
+```
+
+Declaring the extension on a route makes evidence mandatory there. Routes without the declaration are unaffected.
+
+</Tab>
+</Tabs>
+
+## Quickstart for Buyers (Clients)
+
+<Tabs>
+<Tab title="TypeScript">
+
+```typescript
+import { AuthorizationEvidenceClientExtension } from "@x402/extensions/authorization-evidence";
+
+const client = createClient().registerExtension(
+  new AuthorizationEvidenceClientExtension(async info => {
+    // Return the operator-signed mandate presentation for this attempt.
+    return loadMandatePresentation();
+  }),
+);
+```
+
+</Tab>
+</Tabs>
+
+## API Reference
+
+### Server Functions
+
+- `createAuthorizationEvidenceResourceServerExtension(options)` — the extension factory. Options: `audience` (required), `verifier` (required), `program`, `model`, `capabilitiesFor`, `payeeMatches`, `nonceStore`, `challengeSecret`, `now`.
+- `createCommandVerifier({ command, timeoutMs, maxStdoutBytes })` — the bundled EVC subprocess adapter.
+- `declareAuthorizationEvidenceExtension({ challengeTtlSeconds })` — per-route declaration helper.
+
+### Client Functions
+
+- `new AuthorizationEvidenceClientExtension(provider)` — echoes the challenge and attaches the provider's presentation.
+
+### Constants
+
+- `AUTHORIZATION_EVIDENCE` = `"authorization-evidence"`
+- `AUTHORIZATION_EVIDENCE_PROFILE` = `"authorization-evidence/0"`
+
+## FAQ
+
+**What produces the mandate presentation?** Operator tooling outside x402. The extension treats it as opaque bytes; the verifier owns its structure. With the reference stack, `bolyra mandate issue` mints one and `bolyra verify` validates it, but any EVC-conformant issuer/verifier pair works.
+
+**Does an allow skip payment?** No. Evidence authorizes the spend; payment still proceeds normally. The extension only ever *denies*.
+
+**What about v1 clients?** v1 payloads cannot carry extensions, so declared routes always deny them (`authorization_evidence_required`). Fail-closed by design.
+
+**Multi-instance servers?** Set `challengeSecret` to a shared value and inject a shared `nonceStore`; the bundled store is per-process.
+
+<Note>
+The verifier subprocess is spawned per decision with a host-enforced timeout and output bound, and every abnormal verifier behavior — timeout, overflow, crash, malformed or out-of-registry verdict — denies the payment. The extension never fails open.
+</Note>
