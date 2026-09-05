@@ -8,6 +8,7 @@ import {
   findMatchingRoute,
   processPriceToAtomicAmount,
   toJsonSafe,
+  warnLegacyDeprecation,
 } from "x402/shared";
 import { getPaywallHtml } from "x402/paywall";
 import {
@@ -78,6 +79,8 @@ export function paymentMiddleware(
   facilitator?: FacilitatorConfig,
   paywall?: PaywallConfig,
 ) {
+  warnLegacyDeprecation("x402-hono", "@x402/hono", "server");
+
   const { verify, settle, supported } = useFacilitator(facilitator);
   const x402Version = 1;
 
