@@ -10,6 +10,7 @@ import {
 import { x402ExactPermit2ProxyAddress } from "../../../src/constants";
 import { ERC20_APPROVAL_GAS_SPONSORING_KEY } from "../../../src/exact/extensions";
 import * as Errors from "../../../src/exact/facilitator/errors";
+import { resetAssetContractCache } from "../../../src/assetCache";
 
 const MOCK_TX_HASH = ("0x" + "a1".repeat(32)) as `0x${string}`;
 
@@ -77,6 +78,8 @@ describe("ExactEvmScheme pending-settlement store integration", () => {
   let store: PendingSettlementStore;
 
   beforeEach(() => {
+    resetAssetContractCache();
+
     mockClientSigner = {
       address: "0x1234567890123456789012345678901234567890",
       signTypedData: vi.fn().mockResolvedValue("0xmocksignature"),

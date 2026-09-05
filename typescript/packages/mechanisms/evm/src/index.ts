@@ -78,6 +78,13 @@ export {
   claimBatchTypes,
 } from "./batch-settlement/constants";
 
+export {
+  DEFAULT_ASSET_CONTRACT_CACHE_TTL_MS,
+  resetAssetContractCache,
+  startAssetContractCheck,
+  validateAssetIsContract,
+} from "./assetCache";
+
 export { getDefaultAsset, findDefaultAsset } from "./defaultAssets";
 export type { DefaultAssetInfo, ExactDefaultAssetInfo } from "./defaultAssets";
 

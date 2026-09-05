@@ -8,6 +8,7 @@ import { ERC20_APPROVAL_GAS_SPONSORING_KEY } from "../../../src/exact/extensions
 import { MULTICALL3_ADDRESS } from "../../../src/multicall";
 import { concat, encodeAbiParameters } from "viem";
 import * as Errors from "../../../src/exact/facilitator/errors";
+import { resetAssetContractCache } from "../../../src/assetCache";
 
 // Mock viem's transaction parsing utilities for ERC-20 approval tests
 // Uses importOriginal to preserve all other viem exports (getAddress, etc.)
@@ -62,6 +63,8 @@ describe("ExactEvmScheme (Facilitator)", () => {
   let mockClientSigner: ClientEvmSigner;
 
   beforeEach(() => {
+    resetAssetContractCache();
+
     // Create mock client signer
     mockClientSigner = {
       address: "0x1234567890123456789012345678901234567890",
@@ -2447,6 +2450,115 @@ describe("ExactEvmScheme (Facilitator)", () => {
 
       // Regardless of the signature outcome, we never deploy a factory for an EOA.
       expect(mockFacilitatorSigner.sendTransaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("asset contract cache", () => {
+    async function deployedPayment(): Promise<{
+      payload: PaymentPayload;
+      requirements: PaymentRequirements;
+    }> {
+      const requirements: PaymentRequirements = {
+        scheme: "exact",
+        network: "eip155:84532",
+        amount: "1000000",
+        asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        payTo: "0x742D35CC6634c0532925A3b844BC9E7595F0BEb0",
+        maxTimeoutSeconds: 300,
+        extra: { name: "USDC", version: "2" },
+      };
+      const paymentPayload = await client.createPaymentPayload(2, requirements);
+      return {
+        payload: {
+          ...paymentPayload,
+          accepted: requirements,
+          resource: { url: "test", description: "", mimeType: "" },
+        },
+        requirements,
+      };
+    }
+
+    function getCodeCount(address: string): number {
+      return vi
+        .mocked(mockFacilitatorSigner.getCode)
+        .mock.calls.filter(([args]) => args.address.toLowerCase() === address.toLowerCase()).length;
+    }
+
+    it("caches the asset contract check but not the payer code lookup", async () => {
+      const { payload, requirements } = await deployedPayment();
+      const payer = mockClientSigner.address;
+
+      const first = await facilitator.verify(payload, requirements);
+      expect(first.isValid).toBe(true);
+      const payerCallsAfterFirst = getCodeCount(payer);
+      expect(payerCallsAfterFirst).toBeGreaterThan(0);
+
+      for (let attempt = 2; attempt <= 3; attempt++) {
+        const result = await facilitator.verify(payload, requirements);
+        expect(result.isValid).toBe(true);
+      }
+
+      expect(getCodeCount(requirements.asset)).toBe(1);
+      expect(getCodeCount(payer)).toBe(payerCallsAfterFirst * 3);
+    });
+
+    it("does not cache a positive asset check when Permit2 fails a cheap pre-check", async () => {
+      const requirements: PaymentRequirements = {
+        scheme: "exact",
+        network: "eip155:84532",
+        amount: "1000000",
+        asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        payTo: "0x742D35CC6634c0532925A3b844BC9E7595F0BEb0",
+        maxTimeoutSeconds: 300,
+        extra: { name: "USDC", version: "2", assetTransferMethod: "permit2" },
+      };
+      const permit2Payload: PaymentPayload = {
+        x402Version: 2,
+        payload: {
+          signature: "0xmocksignature",
+          permit2Authorization: {
+            from: mockClientSigner.address,
+            permitted: {
+              token: requirements.asset,
+              amount: requirements.amount,
+            },
+            spender: "0x0000000000000000000000000000000000000001",
+            nonce: "12345",
+            deadline: "999999999999",
+            witness: {
+              to: requirements.payTo,
+              validAfter: "0",
+            },
+          },
+        },
+        accepted: requirements,
+        resource: { url: "", description: "", mimeType: "" },
+      };
+
+      const rejected = await facilitator.verify(permit2Payload, requirements);
+      expect(rejected.invalidReason).toBe("invalid_permit2_spender");
+
+      await vi.waitFor(() => expect(getCodeCount(requirements.asset)).toBeGreaterThanOrEqual(1));
+      const assetCallsAfterReject = getCodeCount(requirements.asset);
+
+      const { payload, requirements: eip3009Req } = await deployedPayment();
+      const accepted = await facilitator.verify(payload, eip3009Req);
+      expect(accepted.isValid).toBe(true);
+      expect(getCodeCount(eip3009Req.asset)).toBe(assetCallsAfterReject + 1);
+    });
+
+    it("scopes the cache per network so a hit on one chain does not answer for another", async () => {
+      const { payload, requirements } = await deployedPayment();
+      const first = await facilitator.verify(payload, requirements);
+      expect(first.isValid).toBe(true);
+
+      const otherNetwork = "eip155:8453";
+      requirements.network = otherNetwork;
+      payload.accepted.network = otherNetwork;
+      const second = await facilitator.verify(payload, requirements);
+      expect(second.isValid).toBe(true);
+
+      expect(getCodeCount(requirements.asset)).toBe(2);
     });
   });
 });

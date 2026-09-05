@@ -10,6 +10,7 @@ import { x402UptoPermit2ProxyAddress } from "../../../src/constants";
 import { ErrSettlementPending } from "../../../src/exact/facilitator/errors";
 import { ERC20_APPROVAL_GAS_SPONSORING_KEY } from "../../../src/exact/extensions";
 import type { UptoPermit2Payload } from "../../../src/types";
+import { resetAssetContractCache } from "../../../src/assetCache";
 
 vi.mock("viem", async importOriginal => {
   const actual = await importOriginal<typeof import("viem")>();
@@ -88,6 +89,8 @@ describe("UptoEvmScheme pending-settlement store integration", () => {
   let store: PendingSettlementStore;
 
   beforeEach(() => {
+    resetAssetContractCache();
+
     mockSigner = {
       getAddresses: () => [FACILITATOR_ADDRESS],
       readContract: rcWithSig(BigInt("999999999999999999")),
