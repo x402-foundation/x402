@@ -19,6 +19,7 @@ If you are evaluating a mainnet EVM route, decide on your production facilitator
 
 | Name | Description |
 | ---- | ----------- | 
+| [AlgoVoi](https://pay.algovoi.co.uk) | Chain-agnostic x402 facilitator across 7 mainnet chains (Algorand, Base, Solana, Stellar, Hedera, Voi, Tempo), hosted or self-hosted. Tenant-free pay-per-call rail at pay.algovoi.co.uk (no account, no API key) with signed, offline-verifiable Ed25519 receipts; post-quantum receipts where the self-hosted estate is deployed. |
 | [Built on Stellar](https://developers.stellar.org/docs/build/apps/x402/built-on-stellar) | Free, public x402 facilitator for Stellar |
 | [CDP Facilitator](https://docs.cdp.coinbase.com/x402/docs/quickstart-sellers) | Coinbase-hosted facilitator with KYT/OFAC checks on every transaction |
 | [Celo Facilitator](https://docs.celo.org/build-on-celo/build-with-ai/x402) | Gasless x402 facilitator for Celo Mainnet, accepting USDC and USD₮ via EIP-3009 |
