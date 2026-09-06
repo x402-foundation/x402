@@ -337,6 +337,36 @@ The Delegation Manager validates the delegation authority and calls the delegato
 
 ---
 
+## Settlement Status Declarations (per core spec §5.3.3.1)
+
+Declarations for two of the three AssetTransferMethods of `exact` on EVM. The `erc7710` declaration is deferred to a follow-up; per core spec §5.3.3.1, a binding without a declaration does not emit `status`. Both entries below are `version: 1` of their respective lists. Consensus time source for both: the timestamp of the block containing the anchoring transaction — `ledgerTime` is therefore REQUIRED on `settled` for both bindings.
+
+### `eip3009`
+
+| State | Reachability | Anchor / enforcement |
+| ----- | ------------ | -------------------- |
+| `settled` | `reachable` | `composite`: `AuthorizationUsed(address indexed authorizer, bytes32 indexed nonce)` joined to an ERC-20 `Transfer` in the same transaction with `from == authorizer`. Join rule: per `(transaction, authorizer)` — a transaction MAY contain more than one qualifying `Transfer`, so the event alone attributes the authorization and the join attributes the movement. `about`: `{authorizer, nonce}`. |
+| `pending` | `reachable` | broadcast transaction hash. |
+| `deferred_until` | `reachable`, **enforced** | enforcer: request-derived — the token named by `PaymentRequirements.asset`, which MUST implement EIP-3009 and reject settlement at or before the bound · field: `authorization.validAfter` · comparator: `>` (strict — settlement at exactly `validAfter` still refuses) · unit: unix-seconds. Failure signal observed on Circle FiatTokenV2 deployments: revert reason `FiatTokenV2: authorization is not yet valid`; other conformant assets MAY signal differently, so verifiers MUST validate against the predicate, not the string. A facilitator MUST NOT emit `basis: "enforced"` for an asset it has not confirmed satisfies the predicate. `effectiveFrom` for a request-derived enforcer is per-asset (the asset contract's deployment or upgrade height). |
+| `blocked` | `reachable` | `read` of balance/allowance against the token, with block height as the ordering coordinate. |
+| `canceled` | `reachable` | `AuthorizationCanceled(address indexed authorizer, bytes32 indexed nonce)` — emitted only by a successful cancellation of an unused nonce, so conclusive alone. `authorizationState()` MUST NOT be used to attribute: `true` means used **or** canceled. |
+| `expired` | `reachable` | `none`; `absentReason`: "validBefore lapsed; EIP-3009 expiry writes no ledger artifact". |
+
+### `permit2`
+
+| State | Reachability | Anchor / enforcement |
+| ----- | ------------ | -------------------- |
+| `settled` | `reachable` | **calldata-authoritative.** The deployed proxy's `Settled()` / `SettledWithPermit()` events carry no parameters (one topic, empty data), so no log binds a settlement to an authorization — the annex source's parameterized `x402PermitTransfer(...)` event is NOT what the deployed contract emits, parallel to the `"Too early"` note below. `about`: `{owner, nonce}` derives only from settlement calldata (either entry point). The marker + same-transaction ERC-20 `Transfer` composite is best-effort *economic* attribution and MUST NOT be read as authorization-level proof. Absence of a marker log is NOT evidence of non-settlement. |
+| `pending` | `reachable` | broadcast transaction hash. |
+| `deferred_until` | `reachable`, **enforced** | enforcer: fixed — `x402ExactPermit2Proxy` at `0x402085c248EeA27D92E8b30b2C58ed07f9E20001` · field: `witness.validAfter` (signature-committed via `WITNESS_TYPEHASH`) · comparator: `>=` (inclusive — settlement at exactly `validAfter` succeeds) · unit: unix-seconds. Failure signal: custom error `PaymentTooEarly()` (`0xa65539fa`), on both settlement entry points (`settle` `0x13cd3b53`, `settleWithPermit` `0xfa340378`); the annex source's `"Too early"` reason string is NOT what the deployed contract reverts, so implementations MUST match the 4-byte selector. `effectiveFrom`: `eip155:8453`, block `43202150` (the proxy's deployment height, confirmable via `eth_getCode`); other networks declare their own heights as the proxy is deployed there. |
+| `blocked` | `reachable` | `read` of balance and Permit2 allowance, with block height as the ordering coordinate. |
+| `canceled` | `reachable` | `composite`: `UnorderedNonceInvalidation` **plus** ordering evidence that the nonce bit went 0→1 by invalidation before any successful use. The event alone is NOT conclusive — the bitmap write is unconditional and the event fires even when settlement already consumed the bit; `InvalidNonce` means "used or invalidated". Without the ordering half, omit `status` per the core spec's failure-to-resolve rule; a facilitator MUST NOT emit `canceled`. |
+| `expired` | `reachable` | `none`; `absentReason`: "Permit2 `SignatureExpired` on a lapsed deadline leaves no artifact unless a settle was attempted". |
+
+Note the two enforcement objects disagree by one second at the boundary — `eip3009` is strict where `permit2` is inclusive — so a cross-binding reader validating a declared `enforced` against the chain gets a false mismatch at exactly `t` unless the comparator travels with the declaration.
+
+---
+
 ## Annex
 
 ### ERC-7710 Delegation Managers

@@ -250,6 +250,57 @@ The `SettleResponse` schema contains the following fields:
 | `network`     | `string`  | Required | Blockchain network identifier in CAIP-2 format                        |
 | `amount`      | `string`  | Optional | The actual amount settled in atomic units (omitted if not applicable) |
 | `extensions`  | `object`  | Optional | Protocol extensions data                                              |
+| `status`      | `string`  | Optional | Settlement status per §5.3.3: one of `settled`, `pending`, `deferred_until`, `blocked`, `canceled`, `expired`. When omitted, §5.3.3 does not apply and the response carries the semantics above unchanged. |
+| `statusAnchor` | `object` | Optional | REQUIRED when `status` is present. The evidence object backing `status`; shape in §5.3.4. |
+| `statusDetail` | `object` | Optional | REQUIRED when the state takes parameters: `deferred_until` → `t` (in the declared unit) and `basis`; `canceled` → `by`. No other state takes parameters. |
+
+**5.3.3 Settlement Status**
+
+`status` refines the binary `success`/`errorReason` for the **collect** settle only — the settle that records the final charge (`authorization`, `upfront`, and the final settle of `escrow`). Facilitators MUST omit `status` on other lifecycle settles. Absence of `status` carries no status information: a response without it keeps today's semantics, and this section imposes nothing on it. Readers MUST treat an unknown `status` value as unsupported rather than mapping it to the nearest known state.
+
+`Subject` is what the state is terminal *about*. A terminal state MUST NOT be followed by a different `status` with the same subject; an attempt- or observation-scoped state never closes the authorization.
+
+| `status`         | Subject       | Terminal | REQUIRED anchor                                                                                                                    | A reader MUST NOT conclude                                                                                                            |
+| ---------------- | ------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `settled`        | authorization | Yes      | `kind` `event`, `transaction` or `composite` — the scheme-defined settlement object; plus `ledgerTime` where the binding declares a consensus time source | that the settlement matched the intent beyond the fields the anchor commits to; *which* purchase it discharges is scheme-defined |
+| `pending`        | attempt       | No       | `kind` `transaction` — the broadcast reference (`transaction` non-empty per §5.3.2). Post-broadcast only                             | that the transaction will confirm, or that it will not; nor, from `pending` alone, that no receipt exists — read `finality`             |
+| `deferred_until` | observation   | No       | `kind` `predicate`, naming the enforcement object the binding declares (§5.3.3.1). `statusDetail.basis` MUST be `"enforced"`         | that the payer cannot settle later by another route; over a binding with no matching declaration — anything at all (malformed)          |
+| `blocked`        | observation   | No       | `kind` `read` (or `composite` where the binding's ordering coordinate is a separate part)                                            | that the condition persists past `observedAt`, or that it will clear; a mutable read is true only at the point it names                 |
+| `canceled`       | authorization | Yes      | `kind` `event`, or `composite` where the binding requires ordering evidence alongside the revocation artifact. `statusDetail.by` names the party | cancellation from a consumed nonce, an invalidated bitmap bit, a bumped sequence, or any supersession or displacement artifact (a superseded frontier, a spent output) alone — those prove unexecutability, not intent, on any binding |
+| `expired`        | authorization | Yes      | `kind` `none`, with `absentReason` stating the binding's expiry rule                                                                 | that the payer refused, or that the authorization was ever presented — expiry is silence and is indistinguishable from both             |
+
+`success` and `errorReason` take these values alongside `status`:
+
+- `settled` → `success: true`, `errorReason` omitted.
+- `pending` → `success: false`, `errorReason: settlement_pending`, non-empty `transaction` (per §9). This covers both sub-cases — broadcast with confirmation not established, and confirmed but not yet final under the binding's finality rule — with `statusAnchor.finality` discriminating them, so a status-unaware reader still receives the reconcile-on-chain instruction §9 attaches to the code.
+- `blocked`, `deferred_until`, `expired` → `success: false`. Each MAY carry the binding's existing §9 code for the same fact (e.g. `insufficient_funds`; `invalid_exact_evm_payload_authorization_valid_after`; `invalid_exact_evm_payload_authorization_valid_before`). Terminality comes from `status`, never from the code.
+- `canceled` → `success: false`, `errorReason` omitted. §9 has no code for cancellation, and a facilitator MUST NOT substitute a nonce-consumed code, which asserts the opposite fact.
+
+`statusDetail.basis` takes exactly one value in this amendment, `"enforced"`; the field exists so a future basis can ship without reshaping the wire.
+
+**Failure to resolve.** An emitter that cannot establish which state holds — a null read, a dropped request, an anchor that cannot be ordered — MUST omit `status` entirely and fall back to `success`/`errorReason`. It MUST NOT emit any of the six states for that case.
+
+**Finality.** `settled` and `canceled` are terminal *with respect to the binding's named finality rule*. A facilitator MUST NOT emit a terminal status for an anchor observed at a depth the binding does not treat as irreversible; before that depth it emits `pending`, and `statusAnchor.finality` discriminates "broadcast, confirmation not established" from "confirmed, not yet final".
+
+**5.3.3.1 Capability declarations.** A scheme/network binding that emits `status` declares, in its own scheme specification: per-state reachability — `reachable` (the binding can emit the state and meet its evidence requirement), `unreachable` (the condition cannot arise on this rail), or `unclaimable` (the condition arises and is anchorable, but the state's semantic requirement cannot be met, so the binding will not emit it) — and, for `deferred_until`, the enforcement object: the contract and field that enforce `t`, with their comparator and unit. A cell declared `unreachable` or `unclaimable` MUST carry a one-line reason. Declarations are an append-only versioned list; each entry carries `version` (monotonic per binding) and `effectiveFrom` (a CAIP-2 network plus a chain-verifiable height at which the named enforcement object took effect — a deployment or upgrade height a reader can confirm, not an asserted number; for a request-derived enforcer, `effectiveFrom` resolves per-asset to the named asset contract's deployment or upgrade height, under the predicate the declaration states). A reader validating a settlement at height `H` uses the entry whose `[effectiveFrom, next.effectiveFrom)` covers `H`.
+
+A reader encountering a `status` the binding's declaration marks `unreachable` or `unclaimable`, or a `deferred_until` whose declared enforcement object does not match its anchor, MUST treat the status object as malformed and fall back to the response's `success`/`errorReason`. It MUST NOT downgrade the claim to a weaker reading. For an `unclaimable` state, a reader MUST NOT infer absence of the condition from absence of the state — the evidence is on-chain and the reader's to check.
+
+**5.3.4 Status Anchor Object**
+
+| Field Name     | Type     | Required | Description                                                                                                                              |
+| -------------- | -------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `about`        | `object` | Required | Scheme-defined identity of the authorization this status describes. The binding MUST name its members. A status object whose `about` cannot be resolved MUST be treated as malformed. |
+| `kind`         | `string` | Required | `transaction` \| `event` \| `read` \| `predicate` \| `composite` \| `none`                                                                |
+| `network`      | `string` | Optional | CAIP-2. REQUIRED when `kind` is not `none`.                                                                                               |
+| `ref`          | `string` | Optional | Scheme-defined reference the anchor lives in. Bindings MUST define its shape.                                                             |
+| `locator`      | `object` | Optional | Scheme-defined narrowing inside `ref`. The binding MUST name its members.                                                                 |
+| `observation`  | `object` | Optional | REQUIRED when `kind` is `read`: the contract or account read, the key, the returned values, and the binding's ordering coordinate where it declares one. |
+| `parts`        | `array`  | Optional | REQUIRED when `kind` is `composite`: two or more anchor objects. ALL parts MUST resolve for the state to hold, and the binding MUST state the join rule relating them. |
+| `observedAt`   | `string` | Optional | RFC 3339 UTC. REQUIRED on every non-terminal state.                                                                                       |
+| `ledgerTime`   | `string` | Optional | RFC 3339 UTC, derived from the named object by a consensus rule the binding names. REQUIRED on `settled` where the binding declares a consensus time source; MUST be absent otherwise. A node-reported or facilitator wall-clock value MUST NOT be emitted in this field. |
+| `finality`     | `string` | Optional | REQUIRED on `pending` and on terminal states whose `kind` is not `none`: the binding-defined basis on which the anchor is treated as irreversible (e.g. `finalized`, `confirmations:<n>`), or `unconfirmed` on `pending` where no receipt has been observed. |
+| `absentReason` | `string` | Required | A non-empty line stating why no anchor exists when `kind` is `none`; explicit `null` otherwise.                                           |
 
 **5.4 VerifyResponse Schema**
 
@@ -606,6 +657,8 @@ The x402 protocol defines standard error codes that may be returned by facilitat
 - **`unexpected_verify_error`**: Unexpected error occurred during payment verification
 - **`unexpected_settle_error`**: Unexpected error occurred during payment settlement
 - **`settlement_pending`**: The settlement transaction was broadcast but its confirmation could not be established (e.g. a node/RPC error or timeout while waiting for the receipt). Facilitators MAY return this **non-terminal** code — the transaction may still confirm on chain. A `SettleResponse` with this `errorReason` MUST carry a non-empty `transaction` (the broadcast hash) and `network` so the caller can reconcile on chain before deciding whether to retry.
+
+Where a code accompanies a `status` (§5.3.3), terminality comes from the `status`, not from the code: `insufficient_funds` alongside `status: "blocked"`, or `invalid_exact_evm_payload_authorization_valid_after` alongside `status: "deferred_until"`, records the same fact without closing the payment. Responses without `status` are unaffected.
 
 **10. Security Considerations**
 
