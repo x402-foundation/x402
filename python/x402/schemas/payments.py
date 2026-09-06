@@ -66,7 +66,8 @@ class PaymentRequired(BaseX402Model):
     Attributes:
         x402_version: Protocol version (always 2 for V2).
         error: Optional error message.
-        resource: Optional resource information.
+        resource: Resource being accessed. Required on the wire (spec 5.1.2);
+            construction may leave it unset until serialize/validate.
         accepts: List of accepted payment requirements.
         extensions: Optional extension data.
     """
@@ -76,6 +77,10 @@ class PaymentRequired(BaseX402Model):
     resource: ResourceInfo | None = None
     accepts: list[PaymentRequirements]
     extensions: dict[str, Any] | None = None
+
+    def validate_resource(self) -> None:
+        if self.resource is None or not (self.resource.url or "").strip():
+            raise ValueError("PaymentRequired.resource.url is required")
 
 
 class PaymentPayload(BaseX402Model):

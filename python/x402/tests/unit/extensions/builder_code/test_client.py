@@ -9,7 +9,7 @@ from x402.extensions.builder_code import (
     BuilderCodeClientExtension,
     declare_builder_code_extension,
 )
-from x402.schemas import PaymentPayload, PaymentRequired, PaymentRequirements
+from x402.schemas import PaymentPayload, PaymentRequired, PaymentRequirements, ResourceInfo
 from x402.server_base import ERR_EXTENSION_ECHO_MISMATCH
 
 APP = "bc_my_app"
@@ -33,7 +33,9 @@ def _base_payload(extensions: dict | None = None) -> PaymentPayload:
 
 def _payment_required(app_code: str | None = None) -> PaymentRequired:
     extensions = {BUILDER_CODE: declare_builder_code_extension(app_code)} if app_code else None
-    return PaymentRequired(accepts=[], extensions=extensions)
+    return PaymentRequired(
+        resource=ResourceInfo(url="https://example.com/resource"), accepts=[], extensions=extensions
+    )
 
 
 class TestConstructorValidation:
@@ -97,6 +99,7 @@ class TestBuilderCodeClientIntegration:
         client.register_extension(BuilderCodeClientExtension(SERVICE))
 
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[
                 PaymentRequirements(
@@ -120,6 +123,7 @@ class TestBuilderCodeClientIntegration:
         client.register_extension(BuilderCodeClientExtension(SERVICE))
 
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[
                 PaymentRequirements(
@@ -150,6 +154,7 @@ class TestBuilderCodeClientIntegration:
         server = x402ResourceServer()
 
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[
                 PaymentRequirements(

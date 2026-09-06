@@ -957,6 +957,7 @@ func alwaysStaleRefundHandler(t *testing.T, pipe *batchedPipeline, price string)
 
 		paymentRequired := x402.PaymentRequired{
 			X402Version: 2,
+			Resource:    &x402.ResourceInfo{URL: "https://example.com/resource"},
 			Accepts:     []types.PaymentRequirements{req},
 		}
 		if r.Header.Get("PAYMENT-SIGNATURE") != "" {

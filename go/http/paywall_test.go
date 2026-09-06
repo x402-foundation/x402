@@ -33,6 +33,7 @@ func (m *mockNetworkHandler) GenerateHTML(_ types.PaymentRequirements, _ types.P
 func makePaymentRequired(network string) types.PaymentRequired {
 	return types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Accepts: []types.PaymentRequirements{
 			{
 				Scheme:  "exact",

@@ -21,6 +21,7 @@ from x402.schemas import (
     PaymentPayload,
     PaymentRequired,
     PaymentRequirements,
+    ResourceInfo,
     SettleResponse,
 )
 from x402.schemas.v1 import PaymentPayloadV1, PaymentRequiredV1
@@ -72,6 +73,7 @@ class TestCamelCaseSerialization:
         """PaymentRequired should serialize as camelCase."""
         payment_required = PaymentRequired(
             x402_version=2,
+            resource=ResourceInfo(url="https://example.com/paid"),
             accepts=[make_payment_requirements()],
         )
         data = json.loads(payment_required.model_dump_json())
@@ -174,6 +176,7 @@ class TestPaymentRequiredHeader:
         requirements = make_payment_requirements()
         payment_required = PaymentRequired(
             x402_version=2,
+            resource=ResourceInfo(url="https://example.com/paid"),
             accepts=[requirements],
             error=None,
         )
@@ -190,6 +193,7 @@ class TestPaymentRequiredHeader:
         requirements = make_payment_requirements()
         payment_required = PaymentRequired(
             x402_version=2,
+            resource=ResourceInfo(url="https://example.com/paid"),
             accepts=[requirements],
         )
         encoded = encode_payment_required_header(payment_required)
@@ -406,3 +410,13 @@ class TestHtmlsafeJsonDumps:
         result = htmlsafe_json_dumps(data)
         decoded = json.loads(result)
         assert decoded == data
+
+
+class TestPaymentRequiredResourceRequired:
+    def test_encode_rejects_missing_resource(self):
+        payment_required = PaymentRequired(
+            x402_version=2,
+            accepts=[make_payment_requirements()],
+        )
+        with pytest.raises(ValueError, match="resource.url"):
+            encode_payment_required_header(payment_required)

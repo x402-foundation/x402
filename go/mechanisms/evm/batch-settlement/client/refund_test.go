@@ -78,6 +78,7 @@ func TestEncodePaymentSignatureHeader_RoundTrip(t *testing.T) {
 func TestDecodePaymentRequiredHeader(t *testing.T) {
 	pr := x402.PaymentRequired{
 		X402Version: 2,
+		Resource:    &x402.ResourceInfo{URL: "https://example.com/resource"},
 		Error:       "boom",
 		Accepts:     []types.PaymentRequirements{{Scheme: "batch-settlement"}},
 	}
@@ -211,7 +212,7 @@ func TestProbeRefundRequirements_MissingHeader(t *testing.T) {
 }
 
 func TestProbeRefundRequirements_NoBatchedScheme(t *testing.T) {
-	pr := x402.PaymentRequired{Accepts: []types.PaymentRequirements{{Scheme: "exact"}}}
+	pr := x402.PaymentRequired{X402Version: 2, Resource: &x402.ResourceInfo{URL: "https://example.com/resource"}, Accepts: []types.PaymentRequirements{{Scheme: "exact"}}}
 	raw, _ := json.Marshal(pr)
 	header := base64.StdEncoding.EncodeToString(raw)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -225,7 +226,7 @@ func TestProbeRefundRequirements_NoBatchedScheme(t *testing.T) {
 }
 
 func TestProbeRefundRequirements_MissingReceiverAuthorizer(t *testing.T) {
-	pr := x402.PaymentRequired{Accepts: []types.PaymentRequirements{{Scheme: batchsettlement.SchemeBatched}}}
+	pr := x402.PaymentRequired{X402Version: 2, Resource: &x402.ResourceInfo{URL: "https://example.com/resource"}, Accepts: []types.PaymentRequirements{{Scheme: batchsettlement.SchemeBatched}}}
 	raw, _ := json.Marshal(pr)
 	header := base64.StdEncoding.EncodeToString(raw)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -240,6 +241,8 @@ func TestProbeRefundRequirements_MissingReceiverAuthorizer(t *testing.T) {
 
 func TestProbeRefundRequirements_OK(t *testing.T) {
 	pr := x402.PaymentRequired{
+		X402Version: 2,
+		Resource:    &x402.ResourceInfo{URL: "https://example.com/resource"},
 		Accepts: []types.PaymentRequirements{{
 			Scheme: batchsettlement.SchemeBatched,
 			Extra:  map[string]interface{}{"receiverAuthorizer": "0x1"},
@@ -615,7 +618,7 @@ func TestExecuteRefund_402WithBadPaymentResponseHeader(t *testing.T) {
 
 func TestExecuteRefund_NonRecoverableErrorFailsFast(t *testing.T) {
 	// Verify-side abort with a known non-recoverable error code: don't retry.
-	pr := x402.PaymentRequired{Error: batchsettlement.ErrRefundAmountInvalid}
+	pr := x402.PaymentRequired{X402Version: 2, Resource: &x402.ResourceInfo{URL: "https://example.com/resource"}, Error: batchsettlement.ErrRefundAmountInvalid}
 	prBytes, _ := json.Marshal(pr)
 	prHeader := base64.StdEncoding.EncodeToString(prBytes)
 
@@ -641,7 +644,7 @@ func TestExecuteRefund_NonRecoverableErrorFailsFast(t *testing.T) {
 
 func TestExecuteRefund_RecoverableErrorRetriesAndExhausts(t *testing.T) {
 	// Recoverable error code (not in non-recoverable set) but recovery returns false → fail with reason.
-	pr := x402.PaymentRequired{Error: "some_recoverable_thing"}
+	pr := x402.PaymentRequired{X402Version: 2, Resource: &x402.ResourceInfo{URL: "https://example.com/resource"}, Error: "some_recoverable_thing"}
 	prBytes, _ := json.Marshal(pr)
 	prHeader := base64.StdEncoding.EncodeToString(prBytes)
 
