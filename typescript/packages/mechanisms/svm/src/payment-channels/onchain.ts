@@ -6,13 +6,11 @@
  */
 
 import {
-  AccountRole,
   type AccountMeta,
   type Address,
   address,
   getBase58Decoder,
   getBase58Encoder,
-  getU8Encoder,
   type Instruction,
   type InstructionWithAccounts,
   type InstructionWithData,
@@ -23,20 +21,15 @@ import { findAssociatedTokenPda } from "@solana-program/token-2022";
 
 import { SOLANA_DEVNET_CAIP2 } from "../constants";
 import { getDistributeInstruction } from "./generated/instructions/distribute";
+import { getReclaimInstruction, RECLAIM_DISCRIMINATOR } from "./generated/instructions/reclaim";
+import { getSealInstruction } from "./generated/instructions/seal";
+import { getSettleInstruction } from "./generated/instructions/settle";
 import { getSettleAndSealInstruction } from "./generated/instructions/settleAndSeal";
 import { findEventAuthorityPda } from "./generated/pdas/eventAuthority";
+import { ChannelStatus } from "./generated/types/channelStatus";
 import { encodeVoucherMessageBytes } from "./voucher";
 
-/** Onchain `Channel.status` values (payment-channels program). */
-export enum ChannelStatus {
-  Open = 0,
-  Closing = 1,
-  Sealed = 2,
-  Distributed = 3,
-}
-
-/** Instruction discriminator for permissionless `reclaim`. */
-export const RECLAIM_DISCRIMINATOR = 9;
+export { RECLAIM_DISCRIMINATOR, ChannelStatus };
 
 /**
  * Concrete instruction shape returned by every builder here: program address,
@@ -241,6 +234,73 @@ export function buildSettleAndSealInstructions(args: SettleAndSealBuildArgs): Se
   return instructions;
 }
 
+/**
+ * Build the permissionless seal instruction for a Closing channel whose grace
+ * period has elapsed.
+ *
+ * @param channelId - Payment-channel address
+ * @returns The seal instruction
+ */
+export function buildSealInstruction(channelId: string): ServerInstruction {
+  return getSealInstruction({ channel: address(channelId) }) as unknown as ServerInstruction;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// settle (watermark-only, batched redemption)
+// ─────────────────────────────────────────────────────────────────────
+
+/** Arguments to {@link buildSettleInstructions}. */
+export interface SettleBuildArgs {
+  /** Payment-channel address being settled (base58). */
+  channelId: string;
+  /** The cumulative voucher to redeem (signed by the channel's authorized signer). */
+  voucher: SettleVoucher;
+  /** Payment-channels program id override. */
+  programId?: Address | undefined;
+}
+
+/**
+ * Build the instruction pair for an on-chain `settle`: an Ed25519 precompile
+ * verifying the voucher, followed by the `settle` instruction that advances the
+ * channel's `settled` watermark to the voucher's cumulative amount. Unlike
+ * {@link buildSettleAndSealInstructions}, this neither seals the channel
+ * nor moves tokens — it is the batched redemption step. `settle` is
+ * permissionless; the precompile signature is the authority, so the operator
+ * only fee-pays.
+ *
+ * @param args - Build inputs
+ * @returns `[ed25519_verify, settle]` in submit order
+ */
+export function buildSettleInstructions(args: SettleBuildArgs): ServerInstruction[] {
+  const programId = args.programId ?? PAYMENT_CHANNELS_PROGRAM_ID;
+  const channel = address(args.channelId);
+
+  const signerBytes = getBase58Bytes(args.voucher.authorizedSigner);
+  if (signerBytes.byteLength !== 32) {
+    throw new Error(`authorizedSigner must decode to 32 bytes; got ${signerBytes.byteLength}`);
+  }
+  const signatureBytes = getBase58Bytes(args.voucher.signatureBase58);
+  if (signatureBytes.byteLength !== 64) {
+    throw new Error(`voucher signature must decode to 64 bytes; got ${signatureBytes.byteLength}`);
+  }
+  const message = encodeVoucherMessageBytes({
+    channelId: args.channelId,
+    cumulativeAmount: args.voucher.cumulativeAmount,
+    expiresAt: args.voucher.expiresAt,
+  });
+
+  const verify = buildEd25519VerifyInstruction({
+    message,
+    signature: signatureBytes,
+    signer: signerBytes,
+  });
+  const settle = getSettleInstruction(
+    { channel, instructionsSysvar: INSTRUCTIONS_SYSVAR_ADDRESS },
+    { programAddress: programId },
+  );
+  return [verify, settle as unknown as ServerInstruction];
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // distribute
 // ─────────────────────────────────────────────────────────────────────
@@ -344,14 +404,13 @@ export interface ReclaimBuildArgs {
  */
 export function buildReclaimInstruction(args: ReclaimBuildArgs): ServerInstruction {
   const programId = args.programId ?? PAYMENT_CHANNELS_PROGRAM_ID;
-  return {
-    accounts: [
-      { address: address(args.channelId), role: AccountRole.WRITABLE },
-      { address: address(args.rentPayer), role: AccountRole.WRITABLE },
-    ],
-    data: getU8Encoder().encode(RECLAIM_DISCRIMINATOR),
-    programAddress: programId,
-  } as ServerInstruction;
+  return getReclaimInstruction(
+    {
+      channel: address(args.channelId),
+      rentPayer: address(args.rentPayer),
+    },
+    { programAddress: programId },
+  ) as unknown as ServerInstruction;
 }
 
 // ─────────────────────────────────────────────────────────────────────

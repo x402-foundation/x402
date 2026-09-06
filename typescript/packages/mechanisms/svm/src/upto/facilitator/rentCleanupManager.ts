@@ -470,6 +470,7 @@ export class UptoSvmRentCleanupManager {
 
         if (status === ChannelStatus.Open || status === ChannelStatus.Sealed) {
           if (status === ChannelStatus.Open) {
+            if (record.expiresAt === 0) continue;
             const readyAt = record.expiresAt + abandonGraceSecs;
             if (nowSecs < readyAt) continue;
           }

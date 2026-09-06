@@ -231,6 +231,18 @@ describe("UptoSvmRentCleanupManager — cleanup", () => {
     expect(await storage.get(record.channelId)).toBeDefined();
   });
 
+  it("does not abandon-close non-expiring Open batch channels", async () => {
+    const record = await seed({ expiresAt: 0 });
+    fetchMaybeChannelMock.mockResolvedValue(channelAccount({ status: ChannelStatus.Open }));
+
+    const onClose = vi.fn();
+    await manager.cleanup({ abandonGraceSecs: 120, onClose });
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(submitSettleMock).not.toHaveBeenCalled();
+    expect(await storage.get(record.channelId)).toBeDefined();
+  });
+
   it("abandon-closes Open channels after expiry plus grace", async () => {
     const nowSecs = Math.floor(Date.now() / 1_000);
     const record = await seed({

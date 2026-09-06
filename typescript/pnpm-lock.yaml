@@ -1651,6 +1651,9 @@ importers:
       '@solana/kit':
         specifier: '>=5.1.0'
         version: 6.1.0(bufferutil@4.0.9)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.2)(utf-8-validate@5.0.10)
+      '@solana/program-client-core':
+        specifier: ^6.1.0
+        version: 6.1.0(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.2)
       '@x402/core':
         specifier: workspace:~
         version: link:../../core

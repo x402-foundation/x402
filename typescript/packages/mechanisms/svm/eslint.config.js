@@ -7,7 +7,7 @@ import importPlugin from "eslint-plugin-import";
 
 export default [
   {
-    ignores: ["dist/**", "node_modules/**"],
+    ignores: ["dist/**", "node_modules/**", "src/payment-channels/generated/**"],
   },
   {
     files: ["**/*.ts", "**/*.tsx"],

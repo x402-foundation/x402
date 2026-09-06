@@ -14,7 +14,11 @@
     "format": "prettier -c .prettierrc --write \"**/*.{ts,js,cjs,json,md}\"",
     "format:check": "prettier -c .prettierrc --check \"**/*.{ts,js,cjs,json,md}\"",
     "lint": "eslint . --ext .ts --fix",
-    "lint:check": "eslint . --ext .ts"
+    "lint:check": "eslint . --ext .ts",
+    "payment-channels:pull-idl": "pnpm --dir ../../../../scripts/payment-channels-codegen pull-idl",
+    "payment-channels:generate": "pnpm --dir ../../../../scripts/payment-channels-codegen generate",
+    "payment-channels:sync": "pnpm payment-channels:pull-idl && pnpm payment-channels:generate",
+    "payment-channels:check": "pnpm payment-channels:generate && git diff --exit-code -- src/payment-channels/generated"
   },
   "keywords": [
     "x402",
@@ -50,7 +54,8 @@
     "@noble/hashes": "^1.8.0",
     "@solana-program/compute-budget": "^0.11.0",
     "@solana-program/token": "^0.9.0",
-    "@solana-program/token-2022": "^0.6.1"
+    "@solana-program/token-2022": "^0.6.1",
+    "@solana/program-client-core": "^6.1.0"
   },
   "peerDependencies": {
     "@solana/kit": ">=5.1.0"
@@ -154,6 +159,36 @@
       "require": {
         "types": "./dist/cjs/upto/facilitator/index.d.ts",
         "default": "./dist/cjs/upto/facilitator/index.js"
+      }
+    },
+    "./batch-settlement/client": {
+      "import": {
+        "types": "./dist/esm/batch-settlement/client/index.d.mts",
+        "default": "./dist/esm/batch-settlement/client/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/batch-settlement/client/index.d.ts",
+        "default": "./dist/cjs/batch-settlement/client/index.js"
+      }
+    },
+    "./batch-settlement/server": {
+      "import": {
+        "types": "./dist/esm/batch-settlement/server/index.d.mts",
+        "default": "./dist/esm/batch-settlement/server/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/batch-settlement/server/index.d.ts",
+        "default": "./dist/cjs/batch-settlement/server/index.js"
+      }
+    },
+    "./batch-settlement/facilitator": {
+      "import": {
+        "types": "./dist/esm/batch-settlement/facilitator/index.d.mts",
+        "default": "./dist/esm/batch-settlement/facilitator/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/batch-settlement/facilitator/index.d.ts",
+        "default": "./dist/cjs/batch-settlement/facilitator/index.js"
       }
     }
   },

@@ -2,7 +2,7 @@
 
 Express server that protects a resource with the **batch-settlement** EVM scheme. Each request is paid by an off-chain voucher; the server batches voucher claims and onchain settlements via a `ChannelManager` running in the background.
 
-The route demonstrates **dynamic pricing**: the client authorizes up to `$0.01` per request, and the handler bills a random fraction of that via `setSettlementOverrides`.
+The route demonstrates **dynamic pricing on EVM**: the client authorizes up to `$0.01` per request, and the handler bills a random fraction of that via `setSettlementOverrides`. SVM `batch-settlement` is fixed-price, so Solana payments settle at the advertised amount.
 
 See the [scheme specification](../../../../specs/schemes/batch-settlement/scheme_batch_settlement_evm.md) and the [scheme README](../../../../typescript/packages/mechanisms/evm/src/batch-settlement/README.md) for protocol details.
 
