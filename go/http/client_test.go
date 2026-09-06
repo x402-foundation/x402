@@ -169,6 +169,7 @@ func TestPaymentRoundTripper_RejectsOversizedInitial402(t *testing.T) {
 func TestPaymentRoundTripper_RejectsOversizedAuthRetry402(t *testing.T) {
 	required := types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Extensions: map[string]interface{}{
 			"sign-in-with-x": map[string]interface{}{"info": map[string]interface{}{"nonce": "abc"}},
 		},
