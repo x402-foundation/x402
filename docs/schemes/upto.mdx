@@ -340,6 +340,12 @@ For custom facilitator implementations, use `UptoSvmScheme` from the facilitator
       // Requires resolveCallerIdentity — construction throws without it.
       // authorizerSigner,
       // resolveCallerIdentity: ctx => authenticateSettleCaller(ctx),
+      // Optional: tune channel re-read behavior after a confirmed open.
+      // Re-reads use linear backoff: attempt N waits N * channelReadBackoffStepMs.
+      // Defaults: 6 attempts, 200ms step (200/400/600/800/1000ms, totalling 3.0s).
+      // Raise these on RPC providers with slower replica convergence.
+      // channelReadMaxAttempts: 6,
+      // channelReadBackoffStepMs: 200,
     });
 
     facilitator.register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", svmUptoScheme);

@@ -63,8 +63,18 @@ const MAX_TRANSACTION_COMPUTE_UNITS = 1_400_000;
  *  per-transaction max because the composite (open + settle + distribute) can
  *  exceed the client open's 400k ceiling. */
 const SIM_COMPUTE_UNIT_LIMIT = MAX_TRANSACTION_COMPUTE_UNITS;
-const CHANNEL_READ_MAX_ATTEMPTS = 5;
-const CHANNEL_READ_INITIAL_BACKOFF_MS = 200;
+
+/**
+ * Channel reads can briefly lag a confirmed open when an RPC provider
+ * serves transaction status and account state from different replicas.
+ *
+ * The backoff is linear, not exponential: replica lag is a small multiple of
+ * Solana's ~400ms slot time, so doubling spends the budget on single waits
+ * far longer than the lag being absorbed. The defaults sleep
+ * 200/400/600/800/1000ms across 6 reads, totalling 3.0s.
+ */
+export const DEFAULT_CHANNEL_READ_MAX_ATTEMPTS = 6;
+export const DEFAULT_CHANNEL_READ_BACKOFF_STEP_MS = 200;
 
 /**
  * Default `SetComputeUnitLimit` for facilitator-submitted settlement
@@ -156,6 +166,44 @@ export async function channelExists(
   return info !== null;
 }
 
+/**
+ * Bounds how long {@link fetchAndVerifyOpenChannel} waits for a confirmed open
+ * to become visible. Unset / non-positive fields resolve to the package defaults.
+ */
+export interface ChannelReadPolicy {
+  backoffStepMs?: number;
+  maxAttempts?: number;
+}
+
+/**
+ * Fill unset channel-read fields with the package defaults, so callers can
+ * pass a zero value.
+ *
+ * @param policy - Optional attempt/backoff overrides
+ * @returns Policy with positive defaults applied
+ */
+export function resolveChannelReadPolicy(
+  policy: ChannelReadPolicy = {},
+): Required<ChannelReadPolicy> {
+  const maxAttempts = policy.maxAttempts ?? 0;
+  const backoffStepMs = policy.backoffStepMs ?? 0;
+  return {
+    maxAttempts: maxAttempts > 0 ? maxAttempts : DEFAULT_CHANNEL_READ_MAX_ATTEMPTS,
+    backoffStepMs: backoffStepMs > 0 ? backoffStepMs : DEFAULT_CHANNEL_READ_BACKOFF_STEP_MS,
+  };
+}
+
+/**
+ * How long to wait before the read following the given 1-based attempt.
+ *
+ * @param policy - Resolved channel-read policy
+ * @param attempt - 1-based attempt that just observed a missing account
+ * @returns Linear delay in milliseconds (`backoffStepMs * attempt`)
+ */
+export function delayAfterAttempt(policy: Required<ChannelReadPolicy>, attempt: number): number {
+  return policy.backoffStepMs * attempt;
+}
+
 /** Challenge-bound terms that must match the confirmed channel account. */
 export interface ExpectedOpenChannel {
   authorizedSigner: string;
@@ -188,6 +236,7 @@ export interface VerifiedOpenChannel {
  * @param network - CAIP-2 network identifier
  * @param channelId - Channel PDA
  * @param expected - Challenge-bound channel terms
+ * @param policy - Optional re-read attempt/backoff overrides
  * @returns Verified channel facts for settlement
  */
 export async function fetchAndVerifyOpenChannel(
@@ -195,9 +244,11 @@ export async function fetchAndVerifyOpenChannel(
   network: string,
   channelId: string,
   expected: ExpectedOpenChannel,
+  policy: ChannelReadPolicy = {},
 ): Promise<VerifiedOpenChannel> {
+  const resolved = resolveChannelReadPolicy(policy);
   const rpc = accountFetchRpc(signer, network);
-  for (let attempt = 1; attempt <= CHANNEL_READ_MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 1; attempt <= resolved.maxAttempts; attempt++) {
     const account = await fetchMaybeChannel(rpc, address(channelId), {
       commitment: STATE_COMMITMENT,
     });
@@ -206,11 +257,11 @@ export async function fetchAndVerifyOpenChannel(
       // caused by replica visibility lag.
       return verifyOpenChannelAccount(channelId, account.data, expected);
     }
-    if (attempt === CHANNEL_READ_MAX_ATTEMPTS) {
+    if (attempt === resolved.maxAttempts) {
       break;
     }
 
-    const delayMs = CHANNEL_READ_INITIAL_BACKOFF_MS * 2 ** (attempt - 1);
+    const delayMs = delayAfterAttempt(resolved, attempt);
     await new Promise(resolve => setTimeout(resolve, delayMs));
   }
 

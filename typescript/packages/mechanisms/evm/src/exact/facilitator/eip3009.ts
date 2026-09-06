@@ -6,14 +6,18 @@ import {
   VerifyResponse,
 } from "@x402/core/types";
 import { InMemoryPendingSettlementStore, PendingSettlementStore } from "@x402/core/facilitator";
-import { getAddress, Hex, isAddressEqual, parseErc6492Signature } from "viem";
+import { getAddress, Hex } from "viem";
 import { authorizationTypes } from "../../constants";
 import { FacilitatorEvmSigner } from "../../signer";
 import { getEvmChainId } from "../../utils";
 import { ExactEIP3009Payload } from "../../types";
 import * as Errors from "./errors";
 import { resolveDataSuffix } from "../../shared/extensions";
-import { verifyTypedDataSignature, classifyErc6492Payer } from "../../shared/verifySignature";
+import {
+  verifyTypedDataSignature,
+  classifyErc6492Payer,
+  Erc6492Classification,
+} from "../../shared/verifySignature";
 import {
   diagnoseEip3009SimulationFailure,
   executeTransferWithAuthorization,
@@ -62,7 +66,9 @@ export interface EIP3009FacilitatorConfig {
  * @param options - Optional verification options
  * @param allowedFactories - Allowlisted ERC-6492 factory addresses; a counterfactual payment whose
  *   factory is not in this list is rejected here so verify mirrors settle's policy gate.
- * @returns Promise resolving to verification response
+ * @returns Promise resolving to the verification response. On success it also returns the ERC-6492
+ *   classification, so settle can reuse the payer code lookup instead of issuing a second
+ *   eth_getCode for the same address.
  */
 export async function verifyEIP3009(
   signer: FacilitatorEvmSigner,
@@ -71,7 +77,7 @@ export async function verifyEIP3009(
   eip3009Payload: ExactEIP3009Payload,
   options?: VerifyEIP3009Options,
   allowedFactories: string[] = [],
-): Promise<VerifyResponse> {
+): Promise<{ response: VerifyResponse; classification?: Erc6492Classification }> {
   const payer = eip3009Payload.authorization.from;
   let eip6492Deployment:
     | { factoryAddress: `0x${string}`; factoryCalldata: `0x${string}` }
@@ -80,18 +86,22 @@ export async function verifyEIP3009(
   // Verify scheme matches
   if (payload.accepted.scheme !== "exact" || requirements.scheme !== "exact") {
     return {
-      isValid: false,
-      invalidReason: Errors.ErrInvalidScheme,
-      payer,
+      response: {
+        isValid: false,
+        invalidReason: Errors.ErrInvalidScheme,
+        payer,
+      },
     };
   }
 
   // Get chain configuration
   if (!requirements.extra?.name || !requirements.extra?.version) {
     return {
-      isValid: false,
-      invalidReason: Errors.ErrMissingEip712Domain,
-      payer,
+      response: {
+        isValid: false,
+        invalidReason: Errors.ErrMissingEip712Domain,
+        payer,
+      },
     };
   }
 
@@ -101,9 +111,11 @@ export async function verifyEIP3009(
   // Verify network matches
   if (payload.accepted.network !== requirements.network) {
     return {
-      isValid: false,
-      invalidReason: Errors.ErrNetworkMismatch,
-      payer,
+      response: {
+        isValid: false,
+        invalidReason: Errors.ErrNetworkMismatch,
+        payer,
+      },
     };
   }
 
@@ -131,11 +143,12 @@ export async function verifyEIP3009(
 
   // Classify the payer: fetch code once, parse ERC-6492 wrapper, determine counterfactual.
   // Using classifyErc6492Payer avoids duplicating this block across eip3009.ts / v1/scheme.ts.
+  const classification = await classifyErc6492Payer(signer, signature, payer);
   const {
     isCounterfactual,
     innerSignature,
     eip6492Deployment: classification6492,
-  } = await classifyErc6492Payer(signer, signature, payer);
+  } = classification;
 
   if (classification6492) {
     eip6492Deployment = classification6492;
@@ -150,9 +163,12 @@ export async function verifyEIP3009(
       !!factory && allowedFactories.some(a => a.trim().toLowerCase() === factory.toLowerCase());
     if (!factoryAllowed) {
       return {
-        isValid: false,
-        invalidReason: Errors.ErrFactoryNotAllowed,
-        payer,
+        response: {
+          isValid: false,
+          invalidReason: Errors.ErrFactoryNotAllowed,
+          payer,
+        },
+        classification,
       };
     }
   }
@@ -170,9 +186,12 @@ export async function verifyEIP3009(
     });
     if (!isValid) {
       return {
-        isValid: false,
-        invalidReason: Errors.ErrInvalidSignature,
-        payer,
+        response: {
+          isValid: false,
+          invalidReason: Errors.ErrInvalidSignature,
+          payer,
+        },
+        classification,
       };
     }
   }
@@ -182,9 +201,12 @@ export async function verifyEIP3009(
   // Verify payment recipient matches
   if (getAddress(eip3009Payload.authorization.to) !== getAddress(requirements.payTo)) {
     return {
-      isValid: false,
-      invalidReason: Errors.ErrRecipientMismatch,
-      payer,
+      response: {
+        isValid: false,
+        invalidReason: Errors.ErrRecipientMismatch,
+        payer,
+      },
+      classification,
     };
   }
 
@@ -192,27 +214,36 @@ export async function verifyEIP3009(
   const now = Math.floor(Date.now() / 1000);
   if (BigInt(eip3009Payload.authorization.validBefore) < BigInt(now + 6)) {
     return {
-      isValid: false,
-      invalidReason: Errors.ErrValidBeforeExpired,
-      payer,
+      response: {
+        isValid: false,
+        invalidReason: Errors.ErrValidBeforeExpired,
+        payer,
+      },
+      classification,
     };
   }
 
   // Verify validAfter is not in the future
   if (BigInt(eip3009Payload.authorization.validAfter) > BigInt(now)) {
     return {
-      isValid: false,
-      invalidReason: Errors.ErrValidAfterInFuture,
-      payer,
+      response: {
+        isValid: false,
+        invalidReason: Errors.ErrValidAfterInFuture,
+        payer,
+      },
+      classification,
     };
   }
 
   // Verify amount exactly matches requirements
   if (BigInt(eip3009Payload.authorization.value) !== BigInt(requirements.amount)) {
     return {
-      isValid: false,
-      invalidReason: Errors.ErrAuthorizationValueMismatch,
-      payer,
+      response: {
+        isValid: false,
+        invalidReason: Errors.ErrAuthorizationValueMismatch,
+        payer,
+      },
+      classification,
     };
   }
 
@@ -221,7 +252,10 @@ export async function verifyEIP3009(
   // would be emitted, producing a silent no-op settlement.
   const assetBytecode = await signer.getCode({ address: erc20Address });
   if (!assetBytecode || assetBytecode === "0x") {
-    return { isValid: false, invalidReason: Errors.ErrAssetNotDeployedContract, payer };
+    return {
+      response: { isValid: false, invalidReason: Errors.ErrAssetNotDeployedContract, payer },
+      classification,
+    };
   }
 
   // Transaction simulation
@@ -243,14 +277,20 @@ export async function verifyEIP3009(
       // Carry the raw revert text so the concrete reason survives the mapping to a code.
       const rawMessage =
         simError instanceof Error ? simError.message : simError ? String(simError) : undefined;
-      return rawMessage ? { ...diagnosis, invalidMessage: rawMessage } : diagnosis;
+      return {
+        response: rawMessage ? { ...diagnosis, invalidMessage: rawMessage } : diagnosis,
+        classification,
+      };
     }
   }
 
   return {
-    isValid: true,
-    invalidReason: undefined,
-    payer,
+    response: {
+      isValid: true,
+      invalidReason: undefined,
+      payer,
+    },
+    classification,
   };
 }
 
@@ -372,7 +412,7 @@ export async function settleEIP3009(
   }
 
   // Re-verify before settling
-  const valid = await verifyEIP3009(
+  const { response: valid, classification } = await verifyEIP3009(
     signer,
     payload,
     requirements,
@@ -390,27 +430,24 @@ export async function settleEIP3009(
     };
   }
 
+  if (!classification) {
+    return {
+      success: false,
+      errorReason: Errors.ErrFailedToParseSignature,
+      transaction: "",
+      network: payload.accepted.network,
+      payer,
+    };
+  }
+
   try {
-    // Parse ERC-6492 signature if applicable (for optional deployment).
-    // Keep the full result so we can access the inner signature later for
-    // the post-deploy transfer simulation.
-    const settleErc6492Data = parseErc6492Signature(signature!);
-    const {
-      address: factoryAddress,
-      data: factoryCalldata,
-      signature: erc6492InnerSig,
-    } = settleErc6492Data;
-
-    // Deploy ERC-4337 smart wallet via EIP-6492 if factory is in the allowlist
-    if (
-      factoryAddress &&
-      factoryCalldata &&
-      !isAddressEqual(factoryAddress, "0x0000000000000000000000000000000000000000")
-    ) {
-      // Check if smart wallet is already deployed
-      const bytecode = await signer.getCode({ address: payer });
-
-      if (!bytecode || bytecode === "0x") {
+    const deployment = classification.eip6492Deployment;
+    if (deployment) {
+      // isDeployedAtPayer comes from the eth_getCode the verify above already issued for this payer.
+      // Both reads happen before any deploy transaction, so reusing it does not reintroduce the
+      // post-deploy re-read that races RPC state propagation across replicas.
+      if (!classification.isDeployedAtPayer) {
+        const { factoryAddress, factoryCalldata } = deployment;
         const normalizedFactory = factoryAddress.toLowerCase();
         const isAllowed = (config.eip6492AllowedFactories ?? []).some(
           allowed => allowed.toLowerCase() === normalizedFactory,
@@ -466,8 +503,8 @@ export async function settleEIP3009(
     // extracted inner signature for the on-chain transferWithAuthorization call.
     // FiatTokenV2_2's isValidSignature on the deployed contract expects the compact inner signature
     const settlePayload =
-      erc6492InnerSig && erc6492InnerSig !== signature
-        ? { ...eip3009Payload, signature: erc6492InnerSig }
+      classification.innerSignature && classification.innerSignature !== signature
+        ? { ...eip3009Payload, signature: classification.innerSignature }
         : eip3009Payload;
 
     const asset = getAddress(requirements.asset);

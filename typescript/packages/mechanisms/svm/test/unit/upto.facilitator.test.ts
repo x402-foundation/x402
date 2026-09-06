@@ -215,6 +215,37 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
     );
   });
 
+  it("passes the configured channel-read policy through to fetchAndVerifyOpenChannel", async () => {
+    const { facilitator, payload, requirements, receiverAuthorizer, uptoPayload } =
+      await buildFixture({
+        channelReadMaxAttempts: 8,
+        channelReadBackoffStepMs: 50,
+      });
+
+    const voucherSignature = await signVoucher(receiverAuthorizer, {
+      channelId: uptoPayload.channelId,
+      cumulativeAmount: 0n,
+      expiresAt: BigInt(uptoPayload.expiresAt),
+    });
+    await expect(
+      facilitator.settle(
+        {
+          ...payload,
+          payload: { ...uptoPayload, voucherSignature },
+        },
+        { ...requirements, amount: "0" },
+      ),
+    ).resolves.toMatchObject({ success: true });
+
+    expect(channelMocks.fetchAndVerifyOpenChannel).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      { maxAttempts: 8, backoffStepMs: 50 },
+    );
+  });
+
   it("rejects settlement that exceeds the signed ceiling without touching the chain", async () => {
     const { facilitator, payload, requirements } = await buildFixture();
 

@@ -2330,6 +2330,28 @@ describe("ExactEvmScheme (Facilitator)", () => {
       expect(mockFacilitatorSigner.writeContract).toHaveBeenCalled();
     });
 
+    // Settle's ERC-6492 branch must decide whether to deploy from the code lookup verify already
+    // performed, not a second eth_getCode for the same payer.
+    it("should reuse verify payer code on ERC-6492 path", async () => {
+      mockFacilitatorSigner.getCode = vi
+        .fn()
+        .mockImplementation(mockGetCodeEOAPayer("0x036CbD53842c5426634e7929541eC2318f3dCF7e"));
+      const scheme = new ExactEvmScheme(mockFacilitatorSigner, {
+        eip6492AllowedFactories: [SETTLE_FACTORY],
+      });
+
+      const result = await scheme.settle(
+        makeSettlePayload(makeSettleErc6492Sig(SETTLE_FACTORY)),
+        settleRequirements,
+      );
+
+      expect(result.success).toBe(true);
+      const payerGetCodeCalls = vi
+        .mocked(mockFacilitatorSigner.getCode)
+        .mock.calls.filter(([args]) => args.address.toLowerCase() === SETTLE_PAYER.toLowerCase());
+      expect(payerGetCodeCalls).toHaveLength(1);
+    });
+
     it("should match factory address case-insensitively", async () => {
       let deployed = false;
       mockFacilitatorSigner.sendTransaction = vi.fn().mockImplementation(async () => {

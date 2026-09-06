@@ -213,6 +213,7 @@ class MockFacilitatorSigner:
         self.transfer_simulation_calls = 0
         self.write_calls = 0
         self.send_calls = 0
+        self.get_code_calls: dict[str, int] = {}
 
     def get_addresses(self) -> list[str]:
         return self._addresses
@@ -271,7 +272,9 @@ class MockFacilitatorSigner:
         return 8453
 
     def get_code(self, address: str) -> bytes:
-        explicit = self._code_by_address.get(address.lower())
+        key = address.lower()
+        self.get_code_calls[key] = self.get_code_calls.get(key, 0) + 1
+        explicit = self._code_by_address.get(key)
         if explicit is not None:
             return explicit
         # After a factory deployment (send_transaction called), simulate that the
@@ -870,6 +873,34 @@ class TestSettleFactoryAllowlist:
 
         assert result.success is True
         assert signer.send_calls == 0
+
+
+class TestSettleReusesVerifyPayerCode:
+    """Settle's ERC-6492 branch must decide whether to deploy from the code lookup
+    verify already performed, not a second eth_getCode for the same payer.
+    """
+
+    def test_settle_eip3009_reuses_verify_payer_code_on_erc6492_path(self):
+        signer = MockFacilitatorSigner(
+            typed_data_valid=True,
+            code=b"",
+            code_by_address={
+                TOKEN_ADDRESS.lower(): b"\x60\x60",
+                PAYER.lower(): b"",
+            },
+        )
+        facilitator = ExactEvmFacilitatorScheme(
+            signer,
+            ExactEvmSchemeConfig(eip6492_allowed_factories=[FACTORY]),
+        )
+
+        result = facilitator.settle(
+            make_payment_payload(signature=make_erc6492_signature(b"\x33" * 66)),
+            make_requirements(),
+        )
+
+        assert result.success is True
+        assert signer.get_code_calls.get(PAYER.lower(), 0) == 1
 
 
 class TestVerifyV1:

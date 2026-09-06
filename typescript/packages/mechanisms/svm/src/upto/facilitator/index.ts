@@ -19,6 +19,8 @@ export type {
 export { ErrSettlementPending } from "../../exact/facilitator/errors";
 export {
   ChannelOpenConfirmationError,
+  DEFAULT_CHANNEL_READ_BACKOFF_STEP_MS,
+  DEFAULT_CHANNEL_READ_MAX_ATTEMPTS,
   SettlementConfirmationTimeoutError,
   SettlementSimulationError,
 } from "./channel";

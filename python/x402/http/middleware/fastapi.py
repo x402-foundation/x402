@@ -21,6 +21,7 @@ except ImportError as e:
     ) from e
 
 from ...schemas import SettleResponse, VerifiedPaymentCancelOptions
+from ..background_init import handle_background_init_error
 from ..constants import SETTLEMENT_OVERRIDES_HEADER
 from ..facilitator_client_base import FacilitatorResponseError
 from ..types import (
@@ -178,7 +179,7 @@ def payment_middleware(
         server: Pre-configured x402ResourceServer.
         paywall_config: Optional paywall UI configuration.
         paywall_provider: Optional custom paywall provider.
-        sync_facilitator_on_start: Fetch facilitator support on first request.
+        sync_facilitator_on_start: Fetch facilitator support when the middleware is created.
 
     Returns:
         FastAPI middleware function.
@@ -226,9 +227,19 @@ def payment_middleware(
     if paywall_provider:
         http_server.register_paywall_provider(paywall_provider)
 
-    # Lazy initialization state with async lock for concurrency safety
+    # Initialization state with async lock for concurrency safety
     init_done = False
     init_lock = asyncio.Lock()
+
+    # Initialize if requested - queries facilitator /supported to populate
+    # facilitator clients. Fatal capability / route mismatches exit the process
+    # so a misconfigured server does not stay up until the first paid request.
+    if sync_facilitator_on_start:
+        try:
+            http_server.initialize()
+            init_done = True
+        except Exception as error:
+            handle_background_init_error(error)
 
     async def middleware(
         request: Request,
@@ -478,7 +489,7 @@ def payment_middleware_from_config(
         schemes: Scheme registrations for server-side processing.
         paywall_config: Optional paywall UI configuration.
         paywall_provider: Optional custom paywall provider.
-        sync_facilitator_on_start: Fetch facilitator support on first request.
+        sync_facilitator_on_start: Fetch facilitator support when the middleware is created.
 
     Returns:
         FastAPI middleware function.

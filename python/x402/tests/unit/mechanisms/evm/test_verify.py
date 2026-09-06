@@ -69,6 +69,7 @@ class TestVerifyUniversalSignature:
 
         assert valid is False  # deferred, not rejected
         assert sig_data.factory == FACTORY_ADDR  # factory info preserved for settle
+        assert sig_data.code_deployed is False
 
     def test_allow_undeployed_false_raises(self):
         erc6492_sig = make_erc6492_sig(FACTORY_ADDR, FACTORY_CALLDATA, GARBAGE_INNER_SIG)

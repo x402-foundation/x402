@@ -38,6 +38,7 @@ from .pending_settlement_store import ERR_SETTLEMENT_PENDING
 from .schemas import (
     X402_VERSION,
     AbortResult,
+    FacilitatorCapabilityError,
     Network,
     PaymentCancellationDispatcher,
     PaymentPayload,
@@ -616,6 +617,14 @@ class x402ResourceServerBase:
                 if scheme not in self._supported_responses[network]:
                     self._supported_responses[network][scheme] = supported
 
+        # Empty /supported is transient (timeout, deploy blip) and must stay
+        # retryable. Route validation would otherwise raise RouteConfigurationError
+        # (missing_facilitator) and HTTP adapters would treat that as fatal.
+        if not self._supported_responses:
+            raise RuntimeError(
+                "Failed to initialize: no supported payment kinds loaded from any facilitator."
+            )
+
         self._validate_facilitator_capabilities()
         self._initialized = True
 
@@ -627,7 +636,7 @@ class x402ResourceServerBase:
         schemes exposing a `validate_facilitator_support` hook participate.
 
         Raises:
-            ValueError: Listing every capability problem when one or more are reported.
+            FacilitatorCapabilityError: Listing every capability problem when one or more are reported.
         """
         problems: list[str] = []
 
@@ -647,8 +656,7 @@ class x402ResourceServerBase:
                     problems.append(f"{scheme} on {network}: {problem}")
 
         if problems:
-            details = "\n".join(f"  - {p}" for p in problems)
-            raise ValueError(f"x402 facilitator capability errors:\n{details}")
+            raise FacilitatorCapabilityError(problems)
 
     def _facilitator_extensions(self, network: Network, scheme: str) -> list[str]:
         """Return the extensions a facilitator advertises for a scheme/network."""

@@ -73,6 +73,7 @@ export const ErrEip2612SpenderNotPermit2 = "eip2612_spender_not_permit2";
 export const ErrEip2612DeadlineExpired = "eip2612_deadline_expired";
 
 // Shared settle errors
+export const ErrFailedToParseSignature = "invalid_exact_evm_failed_to_parse_signature";
 export const ErrUnsupportedPayloadType = "unsupported_payload_type";
 export const ErrInvalidTransactionState = "invalid_transaction_state";
 export const ErrFactoryNotAllowed = "eip6492_factory_not_allowed";
