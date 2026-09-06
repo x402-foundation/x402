@@ -25,6 +25,9 @@ and fill required environment variables:
 
 - `APTOS_PRIVATE_KEY` - Aptos Ed25519 private key for fee payer (optional; `all-networks`)
 - `APTOS_RPC_URL` - Aptos RPC URL (optional; `all-networks`)
+- `BSV_SERVER_PRIVATE_KEY` - private key for the BSV server wallet that receives payments (optional; `all-networks`; settlement internalizes into this wallet)
+- `BSV_WALLET_STORAGE_URL` - BSV wallet storage endpoint (optional; defaults to `https://store-us-1.bsvb.tech`)
+- `BSV_NETWORK` - BSV network CAIP-2 (optional; defaults to `bsv:mainnet`; also `bsv:testnet`, `bsv:ttn`, `bsv:tstn`)
 - `CCD_FACILITATOR_PRIVATE_KEY` - Concordium Ed25519 private key for sponsor signing (optional; `all-networks`)
 - `CCD_FACILITATOR_ADDRESS` - Concordium sponsor account address (optional; `all-networks`)
 - `CCD_NETWORK` - Concordium network CAIP-2 (optional; defaults to `ccd:4221332d34e1694168c2a0c0b3fd0f27`)
@@ -278,6 +281,10 @@ Networks use [CAIP-2](https://github.com/ChainAgnostic/CAIPs/blob/main/CAIPs/cai
 - `eip155:8453` — Base Mainnet
 - `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` — Solana Devnet
 - `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` — Solana Mainnet
+- `bsv:mainnet` — BSV Mainnet
+- `bsv:testnet` — BSV Testnet
+- `bsv:ttn` — BSV Teranode Test Net (Teratestnet)
+- `bsv:tstn` — BSV Teranode Scaling Test Net
 - `stellar:testnet` — Stellar Testnet
 - `stellar:pubnet` — Stellar Mainnet
 - `hedera:testnet` — Hedera Testnet

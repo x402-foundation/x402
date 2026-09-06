@@ -70,6 +70,8 @@ and fill required environment variables:
 - `AVM_ADDRESS` - Algorand address to receive payments (optional for `all-networks`)
 - `AVM_NETWORK` - Algorand network CAIP-2 (optional; defaults to canonical Algorand Testnet)
 - `APTOS_ADDRESS` - Aptos account address to receive payments (optional for `all-networks`)
+- `BSV_IDENTITY_KEY` - BSV recipient wallet identity public key (compressed hex; optional for `all-networks`; payments settle into the wallet holding this key)
+- `BSV_NETWORK` - BSV network CAIP-2 (optional; defaults to `bsv:mainnet`; also `bsv:testnet`, `bsv:ttn`, `bsv:tstn`)
 - `CCD_ADDRESS` - Concordium account address to receive payments (optional for `all-networks`)
 - `EVM_ADDRESS` - Ethereum address to receive payments
 - `SVM_ADDRESS` - Solana address to receive payments (optional for `all-networks`)

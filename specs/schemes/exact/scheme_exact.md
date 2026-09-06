@@ -72,6 +72,15 @@ While implementation details vary by network, facilitators MUST enforce security
 - Transfer correctness: `to` MUST equal `payTo` and `amount` MUST equal `requirements.amount` exactly.
 - Simulation verification: MUST emit events showing only the expected balance changes (recipient increase, payer decrease) for `requirements.amount`—no other balance changes allowed.
 
+### BSV
+
+- Payee custody: `payTo` is the recipient's BRC-100 identity public key; the facilitator MUST hold the corresponding wallet and MUST reject payments where `payTo` is not its own identity key (third parties cannot take custody of BRC-42-derived outputs, nor verify them without a voluntary BRC-69/BRC-94 key-linkage disclosure from a counterparty).
+- Destination correctness: the P2PKH payment output MUST pay the BRC-42-derived child key for this payment (derived from `senderIdentityKey` and the payload's derivation prefix/suffix).
+- Amount exactness: the payment output MUST carry exactly `requirements.amount` satoshis (stricter than plain BRC-121, which accepts overpayment).
+- Freshness: the timestamp encoded in `derivationSuffix` MUST be within the payment window (default ±30 s) of the facilitator's clock at verify time; at settle time the past-facing window is extended by `maxTimeoutSeconds`.
+- Replay protection: settlement MUST reject already-settled txids (facilitator dedup record, plus the wallet's `isMerge` transaction-uniqueness signal where available), and the facilitator MUST re-verify at settlement time.
+- Wallet-chain agreement: the facilitator MUST NOT verify or settle payments for a network its wallet does not operate on; SPV validity is enforced by the wallet during `internalizeAction`, making settlement the authoritative acceptance step.
+
 ### TON
 
 - Transfer correctness: exactly 1 `jetton_transfer` with destination equal to `payTo` and amount equal to `requirements.amount` exactly.
@@ -89,4 +98,4 @@ While implementation details vary by network, facilitators MUST enforce security
 - Replay protection: the SNIP-9 nonce MUST be unused at verification; it is consumed on-chain at execution.
 - Simulation verification: MUST simulate the settlement and fail closed unless it shows exactly one asset `Transfer` from payer to `payTo` for the exact amount.
 
-Network-specific rules are in per-network documents: `scheme_exact_svm.md` (Solana), `scheme_exact_stellar.md` (Stellar), `scheme_exact_evm.md` (EVM), `scheme_exact_sui.md` (SUI), `scheme_exact_ton.md` (TON), `scheme_exact_starknet.md` (Starknet).
+Network-specific rules are in per-network documents: `scheme_exact_svm.md` (Solana), `scheme_exact_stellar.md` (Stellar), `scheme_exact_evm.md` (EVM), `scheme_exact_sui.md` (SUI), `scheme_exact_ton.md` (TON), `scheme_exact_bsv.md` (BSV), `scheme_exact_starknet.md` (Starknet).
