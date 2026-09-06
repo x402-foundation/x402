@@ -1726,7 +1726,7 @@ describe("x402ResourceServer", () => {
       const requirements = buildPaymentRequirements({
         scheme: "exact",
         network: "eip155:8453" as Network,
-        amount: "1000000",
+        amount: "10000000",
       });
 
       await server.settlePayment(payload, requirements, undefined, undefined, { amount: "$0.05" });
@@ -3355,36 +3355,70 @@ describe("resolveSettlementOverrideAmount", () => {
   });
 
   describe("dollar price format", () => {
+    // Dollar amounts resolve independently of requirements.amount, so this
+    // block uses its own, larger fixture to stay under the authorized-maximum
+    // check below regardless of decimals (unlike raw/percent, whose values
+    // are inherently derived from — or smaller than — baseRequirements.amount).
+    const dollarRequirements = buildPaymentRequirements({ amount: "10000000" });
+
     it("converts '$1.00' using provided 6 decimals", () => {
-      expect(resolveSettlementOverrideAmount("$1.00", baseRequirements, 6)).toBe("1000000");
+      expect(resolveSettlementOverrideAmount("$1.00", dollarRequirements, 6)).toBe("1000000");
     });
 
     it("converts '$0.05' using provided 6 decimals", () => {
-      expect(resolveSettlementOverrideAmount("$0.05", baseRequirements, 6)).toBe("50000");
+      expect(resolveSettlementOverrideAmount("$0.05", dollarRequirements, 6)).toBe("50000");
     });
 
     it("converts '$0.05' using 8 decimals when provided", () => {
-      expect(resolveSettlementOverrideAmount("$0.05", baseRequirements, 8)).toBe("5000000");
+      expect(resolveSettlementOverrideAmount("$0.05", dollarRequirements, 8)).toBe("5000000");
     });
 
     it("converts '$0.001' using provided 6 decimals", () => {
-      expect(resolveSettlementOverrideAmount("$0.001", baseRequirements, 6)).toBe("1000");
+      expect(resolveSettlementOverrideAmount("$0.001", dollarRequirements, 6)).toBe("1000");
     });
 
     it("converts '$0' to '0'", () => {
-      expect(resolveSettlementOverrideAmount("$0", baseRequirements, 6)).toBe("0");
+      expect(resolveSettlementOverrideAmount("$0", dollarRequirements, 6)).toBe("0");
     });
 
     it("pads and truncates toward zero without rounding", () => {
-      expect(resolveSettlementOverrideAmount("$1.0000005", baseRequirements, 6)).toBe("1000000");
-      expect(resolveSettlementOverrideAmount("$0.0000005", baseRequirements, 6)).toBe("0");
-      expect(resolveSettlementOverrideAmount("$0.0000009", baseRequirements, 6)).toBe("0");
+      expect(resolveSettlementOverrideAmount("$1.0000005", dollarRequirements, 6)).toBe("1000000");
+      expect(resolveSettlementOverrideAmount("$0.0000005", dollarRequirements, 6)).toBe("0");
+      expect(resolveSettlementOverrideAmount("$0.0000009", dollarRequirements, 6)).toBe("0");
     });
 
     it("throws when decimals are unknown", () => {
-      expect(() => resolveSettlementOverrideAmount("$1.00", baseRequirements)).toThrow(
+      expect(() => resolveSettlementOverrideAmount("$1.00", dollarRequirements)).toThrow(
         /asset decimals are unknown/,
       );
+    });
+  });
+
+  describe("authorized maximum enforcement", () => {
+    it("throws when a raw atomic-unit override exceeds requirements.amount", () => {
+      expect(() => resolveSettlementOverrideAmount("2001", baseRequirements)).toThrow(
+        /exceeds the authorized maximum/,
+      );
+    });
+
+    it("throws when a percent override resolves above 100% of requirements.amount", () => {
+      expect(() => resolveSettlementOverrideAmount("500%", baseRequirements)).toThrow(
+        /exceeds the authorized maximum/,
+      );
+    });
+
+    it("throws when a dollar override resolves above requirements.amount", () => {
+      const reqs = buildPaymentRequirements({ amount: "999999" });
+      expect(() => resolveSettlementOverrideAmount("$1.00", reqs, 6)).toThrow(
+        /exceeds the authorized maximum/,
+      );
+    });
+
+    it("does not throw when the resolved amount equals requirements.amount exactly", () => {
+      expect(() => resolveSettlementOverrideAmount("100%", baseRequirements)).not.toThrow();
+      expect(() =>
+        resolveSettlementOverrideAmount(baseRequirements.amount, baseRequirements),
+      ).not.toThrow();
     });
   });
 });
