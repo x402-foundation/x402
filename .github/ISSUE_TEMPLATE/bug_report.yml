@@ -1,0 +1,32 @@
+name: Bug Report
+description: Report a reproducible bug in x402 SDKs, specs, or tooling
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        GitHub issues are for **bug reports** and **concrete feature proposals** only.
+        For questions, discussions, or project showcases, use the [x402 Slack community](http://slack.x402.org/) instead.
+        **Service not showing in a Bazaar catalog?** Check the [Bazaar troubleshooting guide](https://docs.x402.org/extensions/bazaar#troubleshooting-catalog-visibility) and contact your facilitator service provider directly. Please do not file an issue for this here.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps to reproduce the issue.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: SDK/language version, OS, network, etc.
+    validations:
+      required: true

@@ -1,0 +1,1029 @@
+package x402
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"math/big"
+	"reflect"
+	"regexp"
+	"strings"
+	"sync"
+
+	"github.com/x402-foundation/x402/go/v2/types"
+)
+
+// x402Client manages payment mechanisms and creates payment payloads
+// This is used by applications that need to make payments (have wallets/signers)
+type x402Client struct {
+	mu sync.RWMutex
+
+	// Separate maps for V1 and V2 (V2 uses default name, no suffix)
+	schemesV1 map[Network]map[string]SchemeNetworkClientV1
+	schemes   map[Network]map[string]SchemeNetworkClient // V2 (default)
+
+	// Single selector/policies - work with unified view
+	requirementsSelector PaymentRequirementsSelector
+	policies             []PaymentPolicy
+
+	// Registered client extensions (keyed by extension key)
+	extensions     map[string]ClientExtension
+	extensionOrder []string
+
+	// Lifecycle hooks
+	beforePaymentCreationHooks    []BeforePaymentCreationHook
+	afterPaymentCreationHooks     []AfterPaymentCreationHook
+	onPaymentCreationFailureHooks []OnPaymentCreationFailureHook
+	onPaymentResponseHooks        []OnPaymentResponseHook
+
+	spendControlsEnabled bool
+	spendControls        SpendControls
+}
+
+// ClientOption configures the client
+type ClientOption func(*x402Client)
+
+// WithPaymentSelector sets a custom payment requirements selector
+func WithPaymentSelector(selector PaymentRequirementsSelector) ClientOption {
+	return func(c *x402Client) {
+		c.requirementsSelector = selector
+	}
+}
+
+// WithPolicy registers a payment policy at creation time
+func WithPolicy(policy PaymentPolicy) ClientOption {
+	return func(c *x402Client) {
+		c.policies = append(c.policies, policy)
+	}
+}
+
+// WithSpendControls sets spend controls at creation time.
+func WithSpendControls(controls SpendControls) ClientOption {
+	return func(c *x402Client) {
+		c.spendControlsEnabled = true
+		c.spendControls = controls
+	}
+}
+
+// WithSpendControlsDisabled disables spend controls at creation time.
+func WithSpendControlsDisabled() ClientOption {
+	return func(c *x402Client) {
+		c.spendControlsEnabled = false
+	}
+}
+
+// Newx402Client creates a new x402 client
+func Newx402Client(opts ...ClientOption) *x402Client {
+	c := &x402Client{
+		schemesV1:            make(map[Network]map[string]SchemeNetworkClientV1),
+		schemes:              make(map[Network]map[string]SchemeNetworkClient),
+		requirementsSelector: DefaultPaymentSelector,
+		policies:             []PaymentPolicy{},
+		extensions:           make(map[string]ClientExtension),
+		spendControlsEnabled: true,
+	}
+
+	for _, opt := range opts {
+		opt(c)
+	}
+
+	return c
+}
+
+// RegisterV1 registers a V1 payment mechanism
+func (c *x402Client) RegisterV1(network Network, client SchemeNetworkClientV1) *x402Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.schemesV1[network] == nil {
+		c.schemesV1[network] = make(map[string]SchemeNetworkClientV1)
+	}
+	c.schemesV1[network][client.Scheme()] = client
+	return c
+}
+
+// Register registers a payment mechanism (V2, default)
+func (c *x402Client) Register(network Network, client SchemeNetworkClient) *x402Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.schemes[network] == nil {
+		c.schemes[network] = make(map[string]SchemeNetworkClient)
+	}
+	c.schemes[network][client.Scheme()] = client
+	return c
+}
+
+// RegisterPolicy registers a policy to filter or transform payment requirements
+func (c *x402Client) RegisterPolicy(policy PaymentPolicy) *x402Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.policies = append(c.policies, policy)
+	return c
+}
+
+// RegisterExtension registers a client extension that can enrich payment payloads.
+// Extensions are invoked after the scheme creates the base payload and the payload
+// is wrapped with extensions/resource/accepted data. Every registered extension's
+// EnrichPaymentPayload hook is called to modify the payload. Server-declared fields
+// are preserved via merge after enrichment.
+func (c *x402Client) RegisterExtension(ext ClientExtension) *x402Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, exists := c.extensions[ext.Key()]; !exists {
+		c.extensionOrder = append(c.extensionOrder, ext.Key())
+	}
+	c.extensions[ext.Key()] = ext
+	return c
+}
+
+// GetExtensions returns the client extensions registered on this client.
+func (c *x402Client) GetExtensions() []ClientExtension {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	extensions := make([]ClientExtension, 0, len(c.extensionOrder))
+	for _, key := range c.extensionOrder {
+		if ext, ok := c.extensions[key]; ok {
+			extensions = append(extensions, ext)
+		}
+	}
+	return extensions
+}
+
+// OnBeforePaymentCreation registers a hook to execute before payment payload creation
+func (c *x402Client) OnBeforePaymentCreation(hook BeforePaymentCreationHook) *x402Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.beforePaymentCreationHooks = append(c.beforePaymentCreationHooks, hook)
+	return c
+}
+
+// OnAfterPaymentCreation registers a hook to execute after successful payment payload creation
+func (c *x402Client) OnAfterPaymentCreation(hook AfterPaymentCreationHook) *x402Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.afterPaymentCreationHooks = append(c.afterPaymentCreationHooks, hook)
+	return c
+}
+
+// OnPaymentCreationFailure registers a hook to execute when payment payload creation fails
+func (c *x402Client) OnPaymentCreationFailure(hook OnPaymentCreationFailureHook) *x402Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.onPaymentCreationFailureHooks = append(c.onPaymentCreationFailureHooks, hook)
+	return c
+}
+
+// OnPaymentResponse registers a hook fired by the transport after each paid
+// response. Returning Recovered=true on a corrective 402 instructs the transport
+// to retry once with a freshly built payment payload.
+func (c *x402Client) OnPaymentResponse(hook OnPaymentResponseHook) *x402Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.onPaymentResponseHooks = append(c.onPaymentResponseHooks, hook)
+	return c
+}
+
+// SetSpendControls enables spend controls with the given configuration.
+func (c *x402Client) SetSpendControls(controls SpendControls) *x402Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.spendControlsEnabled = true
+	c.spendControls = controls
+	return c
+}
+
+// DisableSpendControls disables all spend controls (any asset, no caps).
+func (c *x402Client) DisableSpendControls() *x402Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.spendControlsEnabled = false
+	return c
+}
+
+// HandlePaymentResponse dispatches the OnPaymentResponse lifecycle for a paid
+// response: invokes the scheme's PaymentResponseHandler (if implemented) followed
+// by every user-registered OnPaymentResponseHook. Returns Recovered=true if any
+// hook recovered (first wins; subsequent hooks still run for instrumentation).
+func (c *x402Client) HandlePaymentResponse(
+	ctx context.Context,
+	prCtx PaymentResponseContext,
+) (PaymentResponseResult, error) {
+	c.mu.RLock()
+	schemes := findSchemesByNetwork(c.schemes, Network(prCtx.Requirements.Network))
+	var schemeImpl SchemeNetworkClient
+	if schemes != nil {
+		schemeImpl = schemes[prCtx.Requirements.Scheme]
+	}
+	userHooks := append([]OnPaymentResponseHook(nil), c.onPaymentResponseHooks...)
+	c.mu.RUnlock()
+
+	combined := PaymentResponseResult{}
+	if handler, ok := schemeImpl.(PaymentResponseHandler); ok {
+		res, err := handler.OnPaymentResponse(ctx, prCtx)
+		if err != nil {
+			return PaymentResponseResult{}, fmt.Errorf("scheme OnPaymentResponse: %w", err)
+		}
+		if res.Recovered {
+			combined.Recovered = true
+		}
+	}
+	for _, hook := range userHooks {
+		res, err := hook(ctx, prCtx)
+		if err != nil {
+			return combined, fmt.Errorf("user OnPaymentResponse hook: %w", err)
+		}
+		if res.Recovered {
+			combined.Recovered = true
+		}
+	}
+	return combined, nil
+}
+
+// SelectPaymentRequirementsV1 selects a V1 payment requirement
+func (c *x402Client) SelectPaymentRequirementsV1(requirements []types.PaymentRequirementsV1) (types.PaymentRequirementsV1, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	// Filter to supported (use wildcard matching helper)
+	var supported []types.PaymentRequirementsV1
+	for _, req := range requirements {
+		network := Network(req.Network)
+		schemes := findSchemesByNetwork(c.schemesV1, network)
+		if schemes != nil {
+			if _, ok := schemes[req.Scheme]; ok {
+				supported = append(supported, req)
+			}
+		}
+	}
+
+	if len(supported) == 0 {
+		return types.PaymentRequirementsV1{}, &PaymentError{
+			Code:    ErrCodeUnsupportedScheme,
+			Message: "no supported payment schemes available",
+		}
+	}
+
+	// Convert to views for selector/policies
+	views := toViews(supported)
+
+	// Apply spend controls before policies
+	filtered, err := c.applySpendControls(1, views)
+	if err != nil {
+		return types.PaymentRequirementsV1{}, err
+	}
+
+	// Apply policies
+	for _, policy := range c.policies {
+		filtered = policy(filtered)
+		if len(filtered) == 0 {
+			return types.PaymentRequirementsV1{}, &PaymentError{
+				Code:    ErrCodeUnsupportedScheme,
+				Message: "all payment requirements were filtered out by policies",
+			}
+		}
+	}
+
+	// Select final and convert back
+	selected := c.requirementsSelector(filtered)
+	return fromView[types.PaymentRequirementsV1](selected), nil
+}
+
+// SelectPaymentRequirements selects a payment requirement (V2, default).
+//
+// Selection process:
+//  1. Filter by registered schemes (network + scheme support)
+//  2. Drop accepts with unrecognized extra.paymentFlow
+//  3. Apply spend controls (default-asset allowlist and USD cap)
+//  4. Apply all registered policies in order
+//  5. Prefer authorization (omit or explicit) over upfront/escrow when both remain
+//  6. Use selector to choose final requirement
+func (c *x402Client) SelectPaymentRequirements(requirements []types.PaymentRequirements) (types.PaymentRequirements, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	// Step 1: Filter to supported (use wildcard matching helper)
+	var supported []types.PaymentRequirements
+	for _, req := range requirements {
+		network := Network(req.Network)
+		schemes := findSchemesByNetwork(c.schemes, network)
+		if schemes != nil {
+			if _, ok := schemes[req.Scheme]; ok {
+				supported = append(supported, req)
+			}
+		}
+	}
+
+	if len(supported) == 0 {
+		return types.PaymentRequirements{}, &PaymentError{
+			Code:    ErrCodeUnsupportedScheme,
+			Message: "no supported payment schemes available",
+		}
+	}
+
+	// Step 2: Drop unrecognized paymentFlow values
+	var recognized []types.PaymentRequirements
+	for _, req := range supported {
+		var flow interface{}
+		if req.Extra != nil {
+			flow = req.Extra["paymentFlow"]
+		}
+		if IsRecognizedPaymentFlow(flow) {
+			recognized = append(recognized, req)
+		}
+	}
+	if len(recognized) == 0 {
+		return types.PaymentRequirements{}, &PaymentError{
+			Code:    ErrCodeUnsupportedScheme,
+			Message: "no payment requirements with a recognized paymentFlow",
+		}
+	}
+
+	// Convert to views for selector/policies
+	views := toViews(recognized)
+
+	// Step 3: Apply spend controls
+	filtered, err := c.applySpendControls(2, views)
+	if err != nil {
+		return types.PaymentRequirements{}, err
+	}
+
+	// Step 4: Apply policies
+	for _, policy := range c.policies {
+		filtered = policy(filtered)
+		if len(filtered) == 0 {
+			return types.PaymentRequirements{}, &PaymentError{
+				Code:    ErrCodeUnsupportedScheme,
+				Message: "all payment requirements were filtered out by policies",
+			}
+		}
+	}
+
+	// Step 5: Prefer authorization when both post- and pre-handler flows remain
+	var authorizationViews []PaymentRequirementsView
+	for _, req := range filtered {
+		extra := req.GetExtra()
+		var flow interface{}
+		if extra != nil {
+			flow = extra["paymentFlow"]
+		}
+		if flow == nil || flow == string(PaymentFlowAuthorization) {
+			authorizationViews = append(authorizationViews, req)
+		}
+	}
+	if len(authorizationViews) > 0 {
+		filtered = authorizationViews
+	}
+
+	// Step 6: Select final and convert back
+	selected := c.requirementsSelector(filtered)
+	return fromView[types.PaymentRequirements](selected), nil
+}
+
+var atomicAmountPattern = regexp.MustCompile(`^\d+$`)
+
+// applySpendControls filters by spend controls (default-asset allowlist → opt-in assets → caps).
+// Keeps any accept that fits so a mixed offer can still pay the affordable option.
+func (c *x402Client) applySpendControls(x402Version int, requirements []PaymentRequirementsView) ([]PaymentRequirementsView, error) {
+	if !c.spendControlsEnabled {
+		return requirements, nil
+	}
+	controls := c.spendControls
+
+	rawAmountOf := func(requirement PaymentRequirementsView) string {
+		return requirement.GetAmount()
+	}
+	amountOf := func(requirement PaymentRequirementsView) *big.Int {
+		n, ok := new(big.Int).SetString(rawAmountOf(requirement), 10)
+		if !ok {
+			return big.NewInt(0)
+		}
+		return n
+	}
+	schemeFor := func(requirement PaymentRequirementsView) any {
+		network := Network(requirement.GetNetwork())
+		scheme := requirement.GetScheme()
+		if x402Version == 1 {
+			return any(findByNetworkAndScheme(c.schemesV1, scheme, network))
+		}
+		return any(findByNetworkAndScheme(c.schemes, scheme, network))
+	}
+	defaultAssetFor := func(requirement PaymentRequirementsView) *DefaultAsset {
+		finder, ok := schemeFor(requirement).(DefaultAssetFinder)
+		if !ok {
+			return nil
+		}
+		return finder.FindDefaultAsset(requirement.GetAsset(), Network(requirement.GetNetwork()))
+	}
+	matchesAssetEntry := func(entry SpendControlAsset, requirement PaymentRequirementsView) bool {
+		if !MatchesNetwork(entry.Network, Network(requirement.GetNetwork())) {
+			return false
+		}
+		if strings.EqualFold(entry.Asset, requirement.GetAsset()) {
+			return true
+		}
+		defaultAsset := defaultAssetFor(requirement)
+		return defaultAsset != nil && strings.EqualFold(defaultAsset.Symbol, entry.Asset)
+	}
+	var assetEntries []SpendControlAsset
+	if !controls.AllowAnyAsset {
+		assetEntries = controls.AllowedAssets
+	}
+	findAssetEntry := func(requirement PaymentRequirementsView) *SpendControlAsset {
+		for i := range assetEntries {
+			if matchesAssetEntry(assetEntries[i], requirement) {
+				return &assetEntries[i]
+			}
+		}
+		return nil
+	}
+
+	filtered := requirements
+	if !controls.AllowAnyAsset {
+		filtered = filtered[:0]
+		for _, requirement := range requirements {
+			if defaultAssetFor(requirement) != nil || findAssetEntry(requirement) != nil {
+				filtered = append(filtered, requirement)
+			}
+		}
+	}
+	if len(filtered) == 0 {
+		return nil, fmt.Errorf(
+			"all payment requirements were rejected by spendControls: only default assets " +
+				"or entries in spendControls.allowedAssets are allowed. Add an allowedAssets " +
+				"entry for non-default tokens, set allowedAssets: true, or set spendControls: false",
+		)
+	}
+
+	usdLimit := DefaultMaxAmountPerPayment
+	usdLimitDisabled := controls.DisableMaxAmountPerPayment
+	if !usdLimitDisabled && controls.MaxAmountPerPayment != "" {
+		usdLimit = controls.MaxAmountPerPayment
+	}
+
+	beforeAmountCaps := filtered
+	rejectedByAssetCap := false
+	var rejectedUsdSymbol string
+
+	capped := beforeAmountCaps[:0]
+	for _, requirement := range beforeAmountCaps {
+		assetEntry := findAssetEntry(requirement)
+		if assetEntry != nil && assetEntry.MaxAmountPerPayment != "" {
+			if !atomicAmountPattern.MatchString(assetEntry.MaxAmountPerPayment) {
+				return nil, fmt.Errorf(
+					"spendControls.allowedAssets[].maxAmountPerPayment must be an integer atomic amount, not a dollar value; got %q",
+					assetEntry.MaxAmountPerPayment,
+				)
+			}
+			if !atomicAmountPattern.MatchString(rawAmountOf(requirement)) {
+				rejectedByAssetCap = true
+				continue
+			}
+			capN, _ := new(big.Int).SetString(assetEntry.MaxAmountPerPayment, 10)
+			if amountOf(requirement).Cmp(capN) <= 0 {
+				capped = append(capped, requirement)
+			} else {
+				rejectedByAssetCap = true
+			}
+			continue
+		}
+
+		defaultAsset := defaultAssetFor(requirement)
+		if defaultAsset == nil {
+			capped = append(capped, requirement)
+			continue
+		}
+
+		if usdLimitDisabled {
+			capped = append(capped, requirement)
+			continue
+		}
+
+		rawAmount := rawAmountOf(requirement)
+		if !atomicAmountPattern.MatchString(rawAmount) {
+			valueScaled, err := ConvertToTokenAmount(rawAmount, 18)
+			if err != nil {
+				return nil, err
+			}
+			parsed, err := ParseMoneyString(usdLimit)
+			if err != nil {
+				return nil, err
+			}
+			capScaled, err := ConvertToTokenAmount(parsed, 18)
+			if err != nil {
+				return nil, err
+			}
+			valueN, _ := new(big.Int).SetString(valueScaled, 10)
+			capN, _ := new(big.Int).SetString(capScaled, 10)
+			if valueN.Cmp(capN) <= 0 {
+				capped = append(capped, requirement)
+			} else {
+				rejectedUsdSymbol = defaultAsset.Symbol
+			}
+			continue
+		}
+
+		parsed, err := ParseMoneyString(usdLimit)
+		if err != nil {
+			return nil, err
+		}
+		maxAtomic, err := ConvertToTokenAmount(parsed, defaultAsset.Decimals)
+		if err != nil {
+			return nil, err
+		}
+		maxN, _ := new(big.Int).SetString(maxAtomic, 10)
+		if amountOf(requirement).Cmp(maxN) <= 0 {
+			capped = append(capped, requirement)
+		} else {
+			rejectedUsdSymbol = defaultAsset.Symbol
+		}
+	}
+	filtered = capped
+
+	if len(filtered) == 0 {
+		allAssetCapped := rejectedByAssetCap
+		if allAssetCapped {
+			for _, requirement := range beforeAmountCaps {
+				entry := findAssetEntry(requirement)
+				if entry == nil || entry.MaxAmountPerPayment == "" {
+					allAssetCapped = false
+					break
+				}
+			}
+		}
+		if allAssetCapped {
+			return nil, fmt.Errorf(
+				"all payment requirements were rejected by spendControls.allowedAssets maxAmountPerPayment. " +
+					"Raise the per-asset cap, or omit maxAmountPerPayment to allow uncapped " +
+					"(default assets then fall back to the top-level USD cap)",
+			)
+		}
+		symbolNote := ""
+		if rejectedUsdSymbol != "" {
+			symbolNote = ", including " + rejectedUsdSymbol
+		}
+		return nil, fmt.Errorf(
+			"all payment requirements were rejected by spendControls.maxAmountPerPayment "+
+				"(%s%s). Raise maxAmountPerPayment, set it to false to disable, "+
+				"set allowedAssets[].maxAmountPerPayment for a per-asset atomic cap, "+
+				"or set spendControls: false to disable all spend controls",
+			usdLimit, symbolNote,
+		)
+	}
+
+	return filtered, nil
+}
+
+// CreatePaymentPayloadV1 creates a V1 payment payload
+func (c *x402Client) CreatePaymentPayloadV1(
+	ctx context.Context,
+	requirements types.PaymentRequirementsV1,
+) (types.PaymentPayloadV1, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	// Direct field access for routing
+	scheme := requirements.Scheme
+	network := Network(requirements.Network)
+
+	// Use wildcard matching helper
+	schemes := findSchemesByNetwork(c.schemesV1, network)
+	if schemes == nil {
+		return types.PaymentPayloadV1{}, &PaymentError{
+			Code:    ErrCodeUnsupportedScheme,
+			Message: fmt.Sprintf("no client registered for network %s", network),
+		}
+	}
+
+	client := schemes[scheme]
+	if client == nil {
+		return types.PaymentPayloadV1{}, &PaymentError{
+			Code:    ErrCodeUnsupportedScheme,
+			Message: fmt.Sprintf("no client registered for scheme %s on network %s", scheme, network),
+		}
+	}
+
+	// Before hooks
+	creationCtxV1 := PaymentCreationContext{
+		Ctx:                  ctx,
+		Version:              1,
+		SelectedRequirements: requirements,
+	}
+	for _, hook := range c.beforePaymentCreationHooks {
+		result, err := hook(creationCtxV1)
+		if err != nil {
+			return types.PaymentPayloadV1{}, err
+		}
+		if result != nil && result.Abort {
+			return types.PaymentPayloadV1{}, &PaymentError{
+				Code:    ErrCodeUnsupportedScheme,
+				Message: result.Reason,
+			}
+		}
+	}
+
+	payload, err := client.CreatePaymentPayload(ctx, requirements)
+	if err != nil {
+		for _, hook := range c.onPaymentCreationFailureHooks {
+			result, hookErr := hook(PaymentCreationFailureContext{
+				PaymentCreationContext: creationCtxV1,
+				Error:                  err,
+			})
+			if hookErr != nil {
+				return types.PaymentPayloadV1{}, hookErr
+			}
+			if result != nil && result.Recovered {
+				if recovered, ok := result.Payload.(types.PaymentPayloadV1); ok {
+					return recovered, nil
+				}
+			}
+		}
+		return types.PaymentPayloadV1{}, err
+	}
+
+	for _, hook := range c.afterPaymentCreationHooks {
+		_ = hook(PaymentCreatedContext{
+			PaymentCreationContext: creationCtxV1,
+			Payload:                payload,
+		})
+	}
+	return payload, nil
+}
+
+// CreatePaymentPayload creates a payment payload (V2, default)
+func (c *x402Client) CreatePaymentPayload(
+	ctx context.Context,
+	requirements types.PaymentRequirements,
+	resource *types.ResourceInfo,
+	extensions map[string]interface{},
+) (types.PaymentPayload, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	scheme := requirements.Scheme
+	network := Network(requirements.Network)
+
+	// Use wildcard matching helper
+	schemes := findSchemesByNetwork(c.schemes, network)
+	if schemes == nil {
+		return types.PaymentPayload{}, &PaymentError{
+			Code:    ErrCodeUnsupportedScheme,
+			Message: fmt.Sprintf("no client registered for network %s", network),
+		}
+	}
+
+	client := schemes[scheme]
+	if client == nil {
+		return types.PaymentPayload{}, &PaymentError{
+			Code:    ErrCodeUnsupportedScheme,
+			Message: fmt.Sprintf("no client registered for scheme %s on network %s", scheme, network),
+		}
+	}
+
+	// Before hooks
+	creationCtxV2 := PaymentCreationContext{
+		Ctx:                  ctx,
+		Version:              2,
+		SelectedRequirements: requirements,
+	}
+	for _, hook := range c.beforePaymentCreationHooks {
+		result, err := hook(creationCtxV2)
+		if err != nil {
+			return types.PaymentPayload{}, err
+		}
+		if result != nil && result.Abort {
+			return types.PaymentPayload{}, &PaymentError{
+				Code:    ErrCodeUnsupportedScheme,
+				Message: result.Reason,
+			}
+		}
+	}
+
+	// Get partial payload from mechanism.
+	// If the scheme supports extensions (e.g., EIP-2612), pass them for enrichment.
+	var partial types.PaymentPayload
+	var err error
+	if extAware, ok := client.(ExtensionAwareClient); ok && extensions != nil {
+		partial, err = extAware.CreatePaymentPayloadWithExtensions(ctx, requirements, extensions)
+	} else {
+		partial, err = client.CreatePaymentPayload(ctx, requirements)
+	}
+	if err != nil {
+		for _, hook := range c.onPaymentCreationFailureHooks {
+			result, hookErr := hook(PaymentCreationFailureContext{
+				PaymentCreationContext: creationCtxV2,
+				Error:                  err,
+			})
+			if hookErr != nil {
+				return types.PaymentPayload{}, hookErr
+			}
+			if result != nil && result.Recovered {
+				if recovered, ok := result.Payload.(types.PaymentPayload); ok {
+					return recovered, nil
+				}
+			}
+		}
+		return types.PaymentPayload{}, err
+	}
+
+	// Wrap with accepted/resource/extensions
+	partial.Accepted = requirements
+	partial.Resource = resource
+	// Merge server extensions with any scheme-provided extensions
+	partial.Extensions = mergeExtensions(extensions, partial.Extensions)
+
+	// Enrich payload via registered client extensions (for non-scheme extensions)
+	partial, err = c.enrichPaymentPayloadWithExtensions(ctx, partial, types.PaymentRequired{
+		X402Version: 2,
+		Accepts:     []types.PaymentRequirements{requirements},
+		Extensions:  extensions,
+		Resource:    resource,
+	})
+	if err != nil {
+		for _, hook := range c.onPaymentCreationFailureHooks {
+			result, hookErr := hook(PaymentCreationFailureContext{
+				PaymentCreationContext: creationCtxV2,
+				Error:                  err,
+			})
+			if hookErr != nil {
+				return types.PaymentPayload{}, hookErr
+			}
+			if result != nil && result.Recovered {
+				if recovered, ok := result.Payload.(types.PaymentPayload); ok {
+					return recovered, nil
+				}
+			}
+		}
+		return types.PaymentPayload{}, err
+	}
+
+	for _, hook := range c.afterPaymentCreationHooks {
+		_ = hook(PaymentCreatedContext{
+			PaymentCreationContext: creationCtxV2,
+			Payload:                partial,
+		})
+	}
+	return partial, nil
+}
+
+// GetRegisteredSchemes returns a list of registered schemes for debugging
+func (c *x402Client) GetRegisteredSchemes() map[int][]struct {
+	Network Network
+	Scheme  string
+} {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	result := make(map[int][]struct {
+		Network Network
+		Scheme  string
+	})
+
+	// V1 schemes
+	for network, schemes := range c.schemesV1 {
+		for scheme := range schemes {
+			result[1] = append(result[1], struct {
+				Network Network
+				Scheme  string
+			}{
+				Network: network,
+				Scheme:  scheme,
+			})
+		}
+	}
+
+	// V2 schemes
+	for network, schemeMap := range c.schemes {
+		for scheme := range schemeMap {
+			result[2] = append(result[2], struct {
+				Network Network
+				Scheme  string
+			}{
+				Network: network,
+				Scheme:  scheme,
+			})
+		}
+	}
+
+	return result
+}
+
+// enrichPaymentPayloadWithExtensions invokes EnrichPaymentPayload for every
+// registered extension, then merges server-declared extension fields back into
+// the result.
+func (c *x402Client) enrichPaymentPayloadWithExtensions(
+	ctx context.Context,
+	payload types.PaymentPayload,
+	required types.PaymentRequired,
+) (types.PaymentPayload, error) {
+	if len(c.extensions) == 0 {
+		return payload, nil
+	}
+
+	enriched := payload
+	for key, ext := range c.extensions {
+		var err error
+		enriched, err = ext.EnrichPaymentPayload(ctx, enriched, required)
+		if err != nil {
+			return types.PaymentPayload{}, fmt.Errorf("extension %s enrichment failed: %w", key, err)
+		}
+	}
+
+	// Re-merge server extensions over the enriched payload
+	enriched.Extensions = mergeExtensions(required.Extensions, enriched.Extensions)
+
+	return enriched, nil
+}
+
+// asStringMap returns v as a map[string]interface{} so it can participate in the
+// extension deep-merge. Values that are already maps are returned directly; typed
+// structs/pointers attached by scheme clients (e.g. gas-sponsoring info structs) are
+// coerced via a JSON round-trip, mirroring the payload's eventual serialization. Non-object
+// values (strings, numbers, slices, nil) return ok=false so the caller treats them atomically.
+func asStringMap(v interface{}) (map[string]interface{}, bool) {
+	if v == nil {
+		return nil, false
+	}
+	if m, ok := v.(map[string]interface{}); ok {
+		return m, true
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, false
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(data, &m); err != nil || m == nil {
+		return nil, false
+	}
+	return m, true
+}
+
+// mergeExtensions merges server-declared extensions with client/scheme-provided
+// extensions, always preserving server-declared fields. For keys present on
+// both sides whose values are objects, server fields win and only client
+// fields the server did not declare are added (recursing into nested objects).
+// For fields listed in additiveArrayInfoFields (e.g. builder-code `s`), a
+// conflicting array is concatenated with client entries first (so a downstream
+// length cap trims server entries rather than the client's) and duplicates
+// removed; a scalar on either side is treated as a single-element array. Every
+// other conflicting array keeps the server's value, same as any other scalar.
+// For any other key the client value is used.
+func mergeExtensions(server, client map[string]interface{}) map[string]interface{} {
+	if client == nil {
+		return server
+	}
+	if server == nil {
+		return client
+	}
+
+	merged := make(map[string]interface{}, len(server))
+	for k, v := range server {
+		merged[k] = v
+	}
+
+	for key, clientVal := range client {
+		serverMap, sOk := asStringMap(merged[key])
+		clientMap, cOk := asStringMap(clientVal)
+		if !sOk || !cOk {
+			merged[key] = clientVal
+			continue
+		}
+
+		// Deep-merge into a copy of the server object, preserving server fields and
+		// only adding client fields the server did not declare. Conflicting arrays
+		// in an additive field (see additiveArrayInfoFields) are concatenated
+		// (client first) with duplicates removed; every other conflicting array
+		// keeps the server's value.
+		additiveFields := additiveArrayInfoFields[key]
+		extensionValue := make(map[string]interface{}, len(serverMap))
+		for k, v := range serverMap {
+			extensionValue[k] = v
+		}
+		type mergePair struct{ target, source map[string]interface{} }
+		pending := []mergePair{{target: extensionValue, source: clientMap}}
+		for i := 0; i < len(pending); i++ {
+			target, source := pending[i].target, pending[i].source
+			for fieldKey, clientFieldVal := range source {
+				serverFieldMap, sfOk := asStringMap(target[fieldKey])
+				clientFieldMap, cfOk := asStringMap(clientFieldVal)
+				if sfOk && cfOk {
+					nested := make(map[string]interface{}, len(serverFieldMap))
+					for k, v := range serverFieldMap {
+						nested[k] = v
+					}
+					target[fieldKey] = nested
+					pending = append(pending, mergePair{target: nested, source: clientFieldMap})
+					continue
+				}
+				if additiveFields[fieldKey] {
+					serverSlice, ssOk := asSlice(target[fieldKey])
+					clientSlice, csOk := asSlice(clientFieldVal)
+					// A scalar on one side (e.g. builder-code `s` sent as a bare string)
+					// merges as a single-element array against an array on the other side.
+					if !ssOk && csOk {
+						serverSlice, ssOk = asScalarSingleton(target[fieldKey])
+					}
+					if !csOk && ssOk {
+						clientSlice, csOk = asScalarSingleton(clientFieldVal)
+					}
+					if ssOk && csOk {
+						target[fieldKey] = mergeSlicesUnique(clientSlice, serverSlice)
+						continue
+					}
+				}
+				if _, exists := target[fieldKey]; !exists {
+					target[fieldKey] = clientFieldVal
+				}
+			}
+		}
+
+		merged[key] = extensionValue
+	}
+	return merged
+}
+
+// asSlice returns v as a []interface{} so array fields can participate in merge
+// and echo subset checks. []interface{} is returned directly; any other slice or
+// array type (e.g. []string, []map[string]interface{} built directly by Go scheme
+// code) is coerced via a JSON round-trip, mirroring the payload's eventual
+// serialization. Non-slice values return ok=false so the caller treats them
+// atomically or as a scalar (see asScalarSingleton).
+func asSlice(v interface{}) ([]interface{}, bool) {
+	if s, ok := v.([]interface{}); ok {
+		return s, true
+	}
+	if v == nil {
+		return nil, false
+	}
+	switch reflect.ValueOf(v).Kind() {
+	case reflect.Slice, reflect.Array:
+	default:
+		return nil, false
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, false
+	}
+	var s []interface{}
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, false
+	}
+	return s, true
+}
+
+// asScalarSingleton wraps a non-nil, non-array, non-map value in a single-element
+// slice so a scalar declaration (e.g. builder-code `s` sent as a bare string) can
+// merge or compare against an array declared on the other side.
+func asScalarSingleton(v interface{}) ([]interface{}, bool) {
+	if v == nil {
+		return nil, false
+	}
+	switch reflect.ValueOf(v).Kind() {
+	case reflect.Slice, reflect.Array, reflect.Map:
+		return nil, false
+	default:
+		return []interface{}{v}, true
+	}
+}
+
+// mergeSlicesUnique concatenates client then server, dropping duplicate items
+// (DeepEqual) wherever they occur, including within either input slice. Client
+// entries lead so a downstream cap on array length (e.g. builder-code's
+// MAX_SERVICE_CODES) truncates excess server entries rather than the client's.
+func mergeSlicesUnique(client, server []interface{}) []interface{} {
+	merged := make([]interface{}, 0, len(client)+len(server))
+	appendUnique := func(item interface{}) {
+		for _, existing := range merged {
+			if DeepEqual(existing, item) {
+				return
+			}
+		}
+		merged = append(merged, item)
+	}
+	for _, item := range client {
+		appendUnique(item)
+	}
+	for _, item := range server {
+		appendUnique(item)
+	}
+	return merged
+}
+
+// arrayContainsSubset reports whether every element of expected appears in
+// actual (DeepEqual membership). Extra actual elements are allowed.
+func arrayContainsSubset(expected, actual []interface{}) bool {
+	for _, exp := range expected {
+		found := false
+		for _, act := range actual {
+			if DeepEqual(exp, act) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FindBugsFilter>
+  <!-- Ignore field access warnings for model classes -->
+  <Match>
+    <Class name="~com\.coinbase\.x402\.model\.[A-Za-z0-9_]+"/>
+    <Bug pattern="UUF_UNUSED_PUBLIC_OR_PROTECTED_FIELD,URF_UNREAD_PUBLIC_OR_PROTECTED_FIELD"/>
+  </Match>
+  
+  <!-- Ignore field assignments in PaymentFilter -->
+  <Match>
+    <Class name="org.x402.server.PaymentFilter"/>
+    <Bug pattern="URF_UNREAD_PUBLIC_OR_PROTECTED_FIELD,EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+  </Match>
+  
+  <!-- Ignore field warnings in X402HttpClient -->
+  <Match>
+    <Class name="org.x402.client.X402HttpClient"/>
+    <Bug pattern="SS_SHOULD_BE_STATIC"/>
+  </Match>
+  
+  <!-- Ignore ignoring exceptions in payment filter -->
+  <Match>
+    <Class name="org.x402.server.PaymentFilter"/>
+    <Method name="doFilter"/>
+    <Bug pattern="DE_MIGHT_IGNORE"/>
+  </Match>
+</FindBugsFilter>

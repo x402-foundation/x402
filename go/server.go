@@ -1,0 +1,1770 @@
+package x402
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"math/big"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/x402-foundation/x402/go/v2/types"
+)
+
+var (
+	percentRegex = regexp.MustCompile(`^(\d+(?:\.\d{0,2})?)%$`)
+	dollarRegex  = regexp.MustCompile(`^\$(\d+(?:\.\d+)?)$`)
+)
+
+// ResolveSettlementOverrideAmount resolves a settlement override amount string
+// to a final atomic-unit string. Supports three formats:
+//   - Raw atomic units: "1000"
+//   - Percent of requirements.Amount: "50%"  (up to 2 decimal places, floored)
+//   - Dollar price: "$0.05" (converted using the provided decimals)
+func ResolveSettlementOverrideAmount(rawAmount string, requirements types.PaymentRequirements, decimals int) (string, error) {
+	if m := percentRegex.FindStringSubmatch(rawAmount); m != nil {
+		parts := strings.SplitN(m[1], ".", 2)
+		integerPart, ok := new(big.Int).SetString(parts[0], 10)
+		if !ok {
+			return "", fmt.Errorf("invalid percent amount: %s", rawAmount)
+		}
+		fractionalPart := new(big.Int)
+		if len(parts) == 2 {
+			padded := (parts[1] + "00")[:2]
+			if _, ok := fractionalPart.SetString(padded, 10); !ok {
+				return "", fmt.Errorf("invalid percent amount: %s", rawAmount)
+			}
+		}
+		scaledPercent := new(big.Int).Mul(integerPart, big.NewInt(100))
+		scaledPercent.Add(scaledPercent, fractionalPart)
+		base, ok := new(big.Int).SetString(requirements.Amount, 10)
+		if !ok {
+			return "", fmt.Errorf("invalid requirements amount: %s", requirements.Amount)
+		}
+		result := new(big.Int).Mul(base, scaledPercent)
+		result.Div(result, big.NewInt(10000))
+		return result.String(), nil
+	}
+
+	if m := dollarRegex.FindStringSubmatch(rawAmount); m != nil {
+		return ConvertToTokenAmount(m[1], decimals)
+	}
+
+	return rawAmount, nil
+}
+
+// x402ResourceServer manages payment requirements and verification for protected resources
+// V2 ONLY - This server only produces and accepts V2 payments
+type x402ResourceServer struct {
+	mu sync.RWMutex
+
+	// V2 only - server only produces/accepts V2 (default, no suffix)
+	schemes map[Network]map[string]SchemeNetworkServer
+
+	// Facilitator clients by network/scheme (can handle both V1 and V2)
+	facilitatorClients     map[Network]map[string]FacilitatorClient
+	tempFacilitatorClients []FacilitatorClient // Temp storage until Initialize
+
+	registeredExtensions map[string]types.ResourceServerExtension
+	supportedCache       *SupportedCache
+
+	// Manual lifecycle hooks registered via OnBeforeVerify / OnAfterVerify / etc.
+	// These fire for every request regardless of scheme/network. Mirrors TS
+	// `beforeVerifyHooks: BeforeVerifyHook[]` arrays.
+	beforeVerifyHooks              []BeforeVerifyHook
+	afterVerifyHooks               []AfterVerifyHook
+	onVerifyFailureHooks           []OnVerifyFailureHook
+	beforeSettleHooks              []BeforeSettleHook
+	afterSettleHooks               []AfterSettleHook
+	onSettleFailureHooks           []OnSettleFailureHook
+	onVerifiedPaymentCanceledHooks []OnVerifiedPaymentCanceledHook
+
+	// Per-scheme hook adapters: only the matched (network, scheme) entry
+	// fires for a given request. Mirrors TS `schemeHookAdapters: Map<Network,
+	// Map<scheme, SchemeAdapterHandles>>`. Replaces the previous behavior of
+	// appending scheme hooks into the global lists, which leaked hooks across
+	// unrelated schemes registered on the same server.
+	schemeHookAdapters map[Network]map[string]*hookAdapterHandles
+
+	// Per-extension hook adapters: only fire when the extension key is
+	// declared on the route via `declaredExtensions`. Mirrors TS
+	// `extensionHookAdapters: Map<string, ExtensionAdapterHandles>`.
+	extensionHookAdapters map[string]*hookAdapterHandles
+}
+
+// hookAdapterHandles bundles the optional per-phase hook funcs contributed
+// by a scheme or extension. Phases left nil are skipped at invocation time.
+// Mirrors TS `HookAdapterHandles`.
+type hookAdapterHandles struct {
+	BeforeVerify              BeforeVerifyHook
+	AfterVerify               AfterVerifyHook
+	OnVerifyFailure           OnVerifyFailureHook
+	BeforeSettle              BeforeSettleHook
+	AfterSettle               AfterSettleHook
+	OnSettleFailure           OnSettleFailureHook
+	OnVerifiedPaymentCanceled OnVerifiedPaymentCanceledHook
+}
+
+// labeledHook tags a hook function with its source for diagnostics. The
+// source string is one of "manual #N", `scheme "X"`, or `extension "Y"`.
+type labeledHook[F any] struct {
+	Label string
+	Hook  F
+}
+
+// SupportedCache caches facilitator capabilities
+type SupportedCache struct {
+	mu     sync.RWMutex
+	data   map[string]SupportedResponse // key is facilitator identifier
+	expiry map[string]time.Time
+	ttl    time.Duration
+}
+
+// Set stores a supported response in the cache
+func (c *SupportedCache) Set(key string, response SupportedResponse) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.data[key] = response
+	c.expiry[key] = time.Now().Add(c.ttl)
+}
+
+// Get retrieves a supported response from the cache
+func (c *SupportedCache) Get(key string) (SupportedResponse, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	response, exists := c.data[key]
+	if !exists {
+		return SupportedResponse{}, false
+	}
+
+	// Check if expired
+	if time.Now().After(c.expiry[key]) {
+		return SupportedResponse{}, false
+	}
+
+	return response, true
+}
+
+// Clear removes all cached supported responses and expiry entries
+func (c *SupportedCache) Clear() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	clear(c.data)
+	clear(c.expiry)
+}
+
+// ResourceServerOption configures the server
+type ResourceServerOption func(*x402ResourceServer)
+
+// WithFacilitatorClient adds a facilitator client
+func WithFacilitatorClient(client FacilitatorClient) ResourceServerOption {
+	return func(s *x402ResourceServer) {
+		// Store temporarily - will populate map in Initialize
+		if s.tempFacilitatorClients == nil {
+			s.tempFacilitatorClients = []FacilitatorClient{}
+		}
+		s.tempFacilitatorClients = append(s.tempFacilitatorClients, client)
+	}
+}
+
+// WithSchemeServer registers a scheme server implementation (V2, default)
+func WithSchemeServer(network Network, schemeServer SchemeNetworkServer) ResourceServerOption {
+	return func(s *x402ResourceServer) {
+		s.Register(network, schemeServer)
+	}
+}
+
+// WithCacheTTL sets the cache TTL for supported kinds
+func WithCacheTTL(ttl time.Duration) ResourceServerOption {
+	return func(s *x402ResourceServer) {
+		s.supportedCache.ttl = ttl
+	}
+}
+
+func Newx402ResourceServer(opts ...ResourceServerOption) *x402ResourceServer {
+	s := &x402ResourceServer{
+		schemes:               make(map[Network]map[string]SchemeNetworkServer),
+		facilitatorClients:    make(map[Network]map[string]FacilitatorClient),
+		registeredExtensions:  make(map[string]types.ResourceServerExtension),
+		schemeHookAdapters:    make(map[Network]map[string]*hookAdapterHandles),
+		extensionHookAdapters: make(map[string]*hookAdapterHandles),
+		supportedCache: &SupportedCache{
+			data:   make(map[string]SupportedResponse),
+			expiry: make(map[string]time.Time),
+			ttl:    5 * time.Minute,
+		},
+	}
+
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	return s
+}
+
+// Initialize populates facilitator clients by querying GetSupported
+func (s *x402ResourceServer) Initialize(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, client := range s.tempFacilitatorClients {
+		// Get supported kinds
+		supported, err := client.GetSupported(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get supported from facilitator: %w", err)
+		}
+
+		// Populate facilitatorClients map from kinds (now flat array with version in each element)
+		for _, kind := range supported.Kinds {
+			network := Network(kind.Network)
+			scheme := kind.Scheme
+
+			if s.facilitatorClients[network] == nil {
+				s.facilitatorClients[network] = make(map[string]FacilitatorClient)
+			}
+
+			// Only set if not already present (precedence to earlier clients)
+			if s.facilitatorClients[network][scheme] == nil {
+				s.facilitatorClients[network][scheme] = client
+			}
+		}
+
+		// Cache the supported response
+		s.supportedCache.Set(fmt.Sprintf("facilitator_%p", client), supported)
+	}
+
+	return s.validateFacilitatorCapabilities(ctx)
+}
+
+// validateFacilitatorCapabilities fails fast when a registered scheme's config is
+// incompatible with the facilitator capabilities advertised for the scheme/network
+// it supports. Only schemes the facilitator actually supports are validated, and
+// only schemes implementing FacilitatorSupportValidator participate.
+func (s *x402ResourceServer) validateFacilitatorCapabilities(_ context.Context) error {
+	var problems []string
+
+	for network, schemeMap := range s.schemes {
+		for scheme, server := range schemeMap {
+			validator, ok := server.(FacilitatorSupportValidator)
+			if !ok {
+				continue
+			}
+
+			supportedKind, extensions, found := s.findSupportedKind(network, scheme)
+			if !found {
+				continue
+			}
+
+			if err := validator.ValidateFacilitatorSupport(network, supportedKind, extensions); err != nil {
+				problems = append(problems, fmt.Sprintf("%s on %s: %s", scheme, network, err.Error()))
+			}
+		}
+	}
+
+	if len(problems) == 0 {
+		return nil
+	}
+	return NewFacilitatorCapabilityError(problems)
+}
+
+// findSupportedKind scans the cached facilitator responses for the V2 kind matching
+// the scheme/network and returns it alongside the facilitator's advertised extensions.
+// The bool reports whether the facilitator supports the scheme/network at all.
+func (s *x402ResourceServer) findSupportedKind(network Network, scheme string) (types.SupportedKind, []string, bool) {
+	s.supportedCache.mu.RLock()
+	defer s.supportedCache.mu.RUnlock()
+
+	for _, cachedResponse := range s.supportedCache.data {
+		for _, kind := range cachedResponse.Kinds {
+			if kind.X402Version != 2 || kind.Scheme != scheme || string(kind.Network) != string(network) {
+				continue
+			}
+			supportedKind := types.SupportedKind{
+				X402Version: kind.X402Version,
+				Scheme:      kind.Scheme,
+				Network:     string(kind.Network),
+				Extra:       kind.Extra,
+			}
+			return supportedKind, cachedResponse.Extensions, true
+		}
+	}
+	return types.SupportedKind{}, nil, false
+}
+
+// HasRegisteredScheme checks if a scheme is registered for a given network
+func (s *x402ResourceServer) HasRegisteredScheme(network Network, scheme string) bool {
+	return s.GetRegisteredScheme(network, scheme) != nil
+}
+
+// GetRegisteredScheme returns the scheme server registered for network/scheme, or nil.
+func (s *x402ResourceServer) GetRegisteredScheme(network Network, scheme string) SchemeNetworkServer {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	networkSchemes, ok := s.schemes[network]
+	if !ok {
+		return nil
+	}
+	return networkSchemes[scheme]
+}
+
+// GetPaymentFlow resolves the payment flow name for requirements from the
+// scheme's ATM-keyed PaymentFlows table.
+//
+// When no scheme is registered for the pair, returns an error. Route
+// construction and MCP wrappers also require registered schemes so unsupported
+// ATM/flow combinations fail fast.
+func (s *x402ResourceServer) GetPaymentFlow(requirements types.PaymentRequirements) (PaymentFlowName, error) {
+	scheme := s.GetRegisteredScheme(Network(requirements.Network), requirements.Scheme)
+	if scheme == nil {
+		return "", fmt.Errorf(
+			`[x402] No scheme implementation registered for %q on network %q`,
+			requirements.Scheme, requirements.Network,
+		)
+	}
+	_, flow, err := ResolvePaymentFlow(scheme, requirements)
+	return flow, err
+}
+
+// HasFacilitatorSupport checks if a facilitator client supports a given network/scheme combination
+func (s *x402ResourceServer) HasFacilitatorSupport(network Network, scheme string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	networkClients, ok := s.facilitatorClients[network]
+	if !ok {
+		return false
+	}
+	_, exists := networkClients[scheme]
+	return exists
+}
+
+// Register registers a payment mechanism (V2, default).
+//
+// Auto-wires lifecycle hooks contributed by the scheme via the optional
+// BeforeVerifyHookProvider / AfterVerifyHookProvider / BeforeSettleHookProvider
+// / AfterSettleHookProvider / OnVerifyFailureHookProvider / OnSettleFailureHookProvider
+// / OnVerifiedPaymentCanceledHookProvider interfaces (mirrors the TS schemeHooks field).
+//
+// Scheme hooks are stored per (network, scheme) and fire ONLY when the
+// matched requirements use that scheme/network — they do NOT leak across
+// other registered schemes. Manual hooks registered via OnBeforeVerify etc.
+// run for every request and execute BEFORE the matched scheme's hooks
+// (mirrors TS hook ordering: manual → matched scheme → declared extensions).
+func (s *x402ResourceServer) Register(network Network, schemeServer SchemeNetworkServer) *x402ResourceServer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.schemes[network] == nil {
+		s.schemes[network] = make(map[string]SchemeNetworkServer)
+	}
+	s.schemes[network][schemeServer.Scheme()] = schemeServer
+
+	handles := &hookAdapterHandles{}
+	if h, ok := schemeServer.(BeforeVerifyHookProvider); ok {
+		if hook := h.BeforeVerifyHook(); hook != nil {
+			handles.BeforeVerify = hook
+		}
+	}
+	if h, ok := schemeServer.(AfterVerifyHookProvider); ok {
+		if hook := h.AfterVerifyHook(); hook != nil {
+			handles.AfterVerify = hook
+		}
+	}
+	if h, ok := schemeServer.(OnVerifyFailureHookProvider); ok {
+		if hook := h.OnVerifyFailureHook(); hook != nil {
+			handles.OnVerifyFailure = hook
+		}
+	}
+	if h, ok := schemeServer.(BeforeSettleHookProvider); ok {
+		if hook := h.BeforeSettleHook(); hook != nil {
+			handles.BeforeSettle = hook
+		}
+	}
+	if h, ok := schemeServer.(AfterSettleHookProvider); ok {
+		if hook := h.AfterSettleHook(); hook != nil {
+			handles.AfterSettle = hook
+		}
+	}
+	if h, ok := schemeServer.(OnSettleFailureHookProvider); ok {
+		if hook := h.OnSettleFailureHook(); hook != nil {
+			handles.OnSettleFailure = hook
+		}
+	}
+	if h, ok := schemeServer.(OnVerifiedPaymentCanceledHookProvider); ok {
+		if hook := h.OnVerifiedPaymentCanceledHook(); hook != nil {
+			handles.OnVerifiedPaymentCanceled = hook
+		}
+	}
+
+	if handles.isEmpty() {
+		// No scheme hooks; clear any prior registration for this slot so
+		// re-registering a scheme without hooks doesn't keep stale entries.
+		if byScheme, ok := s.schemeHookAdapters[network]; ok {
+			delete(byScheme, schemeServer.Scheme())
+			if len(byScheme) == 0 {
+				delete(s.schemeHookAdapters, network)
+			}
+		}
+	} else {
+		if s.schemeHookAdapters[network] == nil {
+			s.schemeHookAdapters[network] = make(map[string]*hookAdapterHandles)
+		}
+		s.schemeHookAdapters[network][schemeServer.Scheme()] = handles
+	}
+
+	return s
+}
+
+// isEmpty reports whether no hook phases are populated.
+func (h *hookAdapterHandles) isEmpty() bool {
+	return h.BeforeVerify == nil && h.AfterVerify == nil && h.OnVerifyFailure == nil &&
+		h.BeforeSettle == nil && h.AfterSettle == nil && h.OnSettleFailure == nil &&
+		h.OnVerifiedPaymentCanceled == nil
+}
+
+func (s *x402ResourceServer) RegisterExtension(extension types.ResourceServerExtension) *x402ResourceServer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := extension.Key()
+	s.registeredExtensions[key] = extension
+
+	hp, ok := extension.(ResourceServerExtensionHookProvider)
+	if !ok {
+		delete(s.extensionHookAdapters, key)
+		return s
+	}
+
+	// Wire optional per-extension lifecycle hooks. Each phase is wrapped so it
+	// only fires when `ctx.DeclaredExtensions[key]` is set — mirrors TS
+	// `bindExtensionHookAdapter`.
+	hooks := hp.ResourceServerExtensionHooks()
+	handles := &hookAdapterHandles{
+		BeforeVerify:              gateExtensionHook(key, hooks.OnBeforeVerify, func(c VerifyContext) map[string]interface{} { return c.DeclaredExtensions }),
+		AfterVerify:               gateExtensionHook(key, hooks.OnAfterVerify, func(c VerifyResultContext) map[string]interface{} { return c.DeclaredExtensions }),
+		OnVerifyFailure:           gateExtensionHook(key, hooks.OnVerifyFailure, func(c VerifyFailureContext) map[string]interface{} { return c.DeclaredExtensions }),
+		BeforeSettle:              gateExtensionHook(key, hooks.OnBeforeSettle, func(c SettleContext) map[string]interface{} { return c.DeclaredExtensions }),
+		AfterSettle:               gateExtensionVoidHook(key, hooks.OnAfterSettle, func(c SettleResultContext) map[string]interface{} { return c.DeclaredExtensions }),
+		OnSettleFailure:           gateExtensionHook(key, hooks.OnSettleFailure, func(c SettleFailureContext) map[string]interface{} { return c.DeclaredExtensions }),
+		OnVerifiedPaymentCanceled: gateExtensionVoidHook(key, hooks.OnVerifiedPaymentCanceled, func(c VerifiedPaymentCanceledContext) map[string]interface{} { return c.DeclaredExtensions }),
+	}
+	if handles.isEmpty() {
+		delete(s.extensionHookAdapters, key)
+	} else {
+		s.extensionHookAdapters[key] = handles
+	}
+	return s
+}
+
+// gateExtensionHook returns a wrapper that invokes `impl` only when the
+// declared-extension map carries `key`. Mirrors TS `bindExtensionHookAdapter`'s
+// `if (ctx.declaredExtensions[extensionKey] === undefined) return;` guard.
+// Returns nil when `impl` is nil so RegisterExtension can drop the phase.
+func gateExtensionHook[Ctx any, Result any](
+	key string,
+	impl func(Ctx) (*Result, error),
+	declared func(Ctx) map[string]interface{},
+) func(Ctx) (*Result, error) {
+	if impl == nil {
+		return nil
+	}
+	return func(ctx Ctx) (*Result, error) {
+		ext := declared(ctx)
+		if ext == nil {
+			return nil, nil
+		}
+		if _, ok := ext[key]; !ok {
+			return nil, nil
+		}
+		return impl(ctx)
+	}
+}
+
+// gateExtensionVoidHook is the error-only variant of gateExtensionHook for
+// hooks that don't return a result struct (AfterSettle, OnVerifiedPaymentCanceled).
+func gateExtensionVoidHook[Ctx any](
+	key string,
+	impl func(Ctx) error,
+	declared func(Ctx) map[string]interface{},
+) func(Ctx) error {
+	if impl == nil {
+		return nil
+	}
+	return func(ctx Ctx) error {
+		ext := declared(ctx)
+		if ext == nil {
+			return nil
+		}
+		if _, ok := ext[key]; !ok {
+			return nil
+		}
+		return impl(ctx)
+	}
+}
+
+// ============================================================================
+// Hook Registration Methods (Chainable)
+// ============================================================================
+
+func (s *x402ResourceServer) OnBeforeVerify(hook BeforeVerifyHook) *x402ResourceServer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.beforeVerifyHooks = append(s.beforeVerifyHooks, hook)
+	return s
+}
+
+func (s *x402ResourceServer) OnAfterVerify(hook AfterVerifyHook) *x402ResourceServer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.afterVerifyHooks = append(s.afterVerifyHooks, hook)
+	return s
+}
+
+func (s *x402ResourceServer) OnVerifyFailure(hook OnVerifyFailureHook) *x402ResourceServer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onVerifyFailureHooks = append(s.onVerifyFailureHooks, hook)
+	return s
+}
+
+func (s *x402ResourceServer) OnBeforeSettle(hook BeforeSettleHook) *x402ResourceServer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.beforeSettleHooks = append(s.beforeSettleHooks, hook)
+	return s
+}
+
+func (s *x402ResourceServer) OnAfterSettle(hook AfterSettleHook) *x402ResourceServer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.afterSettleHooks = append(s.afterSettleHooks, hook)
+	return s
+}
+
+func (s *x402ResourceServer) OnSettleFailure(hook OnSettleFailureHook) *x402ResourceServer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onSettleFailureHooks = append(s.onSettleFailureHooks, hook)
+	return s
+}
+
+func (s *x402ResourceServer) OnVerifiedPaymentCanceled(hook OnVerifiedPaymentCanceledHook) *x402ResourceServer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onVerifiedPaymentCanceledHooks = append(s.onVerifiedPaymentCanceledHooks, hook)
+	return s
+}
+
+// matchedSchemeHooks returns the per-(network, scheme) hook handles for the
+// scheme that matched the current request, or nil when no scheme is registered
+// for that pair. Caller must hold s.mu (read).
+func (s *x402ResourceServer) matchedSchemeHooks(network Network, scheme string) *hookAdapterHandles {
+	if byScheme, ok := s.schemeHookAdapters[network]; ok {
+		if h, ok := byScheme[scheme]; ok {
+			return h
+		}
+	}
+	return nil
+}
+
+// orderedHooks returns the hooks for `phase` in the canonical execution order:
+// manual → matched scheme → declared extensions. Mirrors TS `getLabeledHooks`.
+//
+// `pickPhase` extracts the per-phase hook from a `*hookAdapterHandles` (passing
+// nil-safe). Caller must hold s.mu (read).
+func orderedHooks[F any](
+	s *x402ResourceServer,
+	phase string,
+	manual []F,
+	scheme *hookAdapterHandles,
+	declaredExtensions map[string]interface{},
+	pickPhase func(*hookAdapterHandles) F,
+	isNil func(F) bool,
+) []labeledHook[F] {
+	out := make([]labeledHook[F], 0, len(manual)+1+len(declaredExtensions))
+	for i, h := range manual {
+		out = append(out, labeledHook[F]{Label: fmt.Sprintf("manual %s hook #%d", phase, i), Hook: h})
+	}
+	if scheme != nil {
+		if h := pickPhase(scheme); !isNil(h) {
+			out = append(out, labeledHook[F]{Label: fmt.Sprintf("scheme %s", phase), Hook: h})
+		}
+	}
+	for key := range declaredExtensions {
+		if handles, ok := s.extensionHookAdapters[key]; ok {
+			if h := pickPhase(handles); !isNil(h) {
+				out = append(out, labeledHook[F]{Label: fmt.Sprintf("extension %q %s", key, phase), Hook: h})
+			}
+		}
+	}
+	return out
+}
+
+// CreatePaymentCancellationDispatcher returns a dispatcher with no declared
+// extensions. Equivalent to CreatePaymentCancellationDispatcherWithExtensions(...,
+// nil, nil). Kept for callers that don't track route extension declarations.
+func (s *x402ResourceServer) CreatePaymentCancellationDispatcher(
+	ctx context.Context,
+	payload types.PaymentPayload,
+	requirements types.PaymentRequirements,
+) *PaymentCancellationDispatcher {
+	return s.CreatePaymentCancellationDispatcherWithExtensions(ctx, payload, requirements, nil, nil)
+}
+
+// CreatePaymentCancellationDispatcherWithExtensions returns a dispatcher
+// that, when Cancel'd, invokes onVerifiedPaymentCanceled hooks exactly once,
+// then asks the matched scheme for SettleOnCancel requirements and settles
+// once when provided. Settlement errors are warned, not thrown, so transports
+// can preserve the original application failure.
+//
+// The HTTP transport calls this after a successful Verify but before/instead
+// of Settle when the resource handler errors or returns a non-2xx response.
+//
+// settledPhases lists settle phases already completed before the handler (for
+// settleOnCancel). Pass nil when none have completed.
+//
+// Hook execution order (mirrors verify/settle): manual → matched scheme →
+// declared extensions. Extension hooks gate on `declaredExtensions[key]`
+// being set on the route.
+func (s *x402ResourceServer) CreatePaymentCancellationDispatcherWithExtensions(
+	ctx context.Context,
+	payload types.PaymentPayload,
+	requirements types.PaymentRequirements,
+	declaredExtensions map[string]interface{},
+	settledPhases []SettlePhase,
+) *PaymentCancellationDispatcher {
+	payloadBytes, _ := json.Marshal(payload)
+	requirementsBytes, _ := json.Marshal(requirements)
+	settleCtx := SettleContext{
+		Ctx:                ctx,
+		Payload:            payload,
+		Requirements:       requirements,
+		DeclaredExtensions: declaredExtensions,
+		Phase:              SettlePhaseCancel,
+		PayloadBytes:       payloadBytes,
+		RequirementsBytes:  requirementsBytes,
+	}
+	resolvedSettledPhases := settledPhases
+	return &PaymentCancellationDispatcher{
+		fire: func(opts VerifiedPaymentCancelOptions) *SettleResponse {
+			cancelCtx := VerifiedPaymentCanceledContext{
+				SettleContext:  settleCtx,
+				Reason:         opts.Reason,
+				Err:            opts.Err,
+				ResponseStatus: opts.ResponseStatus,
+				SettledPhases:  resolvedSettledPhases,
+			}
+			s.mu.RLock()
+			matchedScheme := s.matchedSchemeHooks(Network(requirements.Network), requirements.Scheme)
+			hooks := orderedHooks(s, "onVerifiedPaymentCanceled", s.onVerifiedPaymentCanceledHooks, matchedScheme,
+				declaredExtensions, func(h *hookAdapterHandles) OnVerifiedPaymentCanceledHook { return h.OnVerifiedPaymentCanceled },
+				func(f OnVerifiedPaymentCanceledHook) bool { return f == nil })
+			scheme := findByNetworkAndScheme(s.schemes, requirements.Scheme, Network(requirements.Network))
+			s.mu.RUnlock()
+			for _, lh := range hooks {
+				_ = lh.Hook(cancelCtx)
+			}
+
+			return s.settleOnCancelAfterHooks(ctx, payload, requirements, declaredExtensions, resolvedSettledPhases, cancelCtx, scheme)
+		},
+	}
+}
+
+// settleOnCancelAfterHooks asks the matched scheme for cancel settle requirements
+// when before-handler settle completed. Settlement errors become a failed receipt.
+func (s *x402ResourceServer) settleOnCancelAfterHooks(
+	ctx context.Context,
+	payload types.PaymentPayload,
+	requirements types.PaymentRequirements,
+	declaredExtensions map[string]interface{},
+	settledPhases []SettlePhase,
+	cancelCtx VerifiedPaymentCanceledContext,
+	scheme SchemeNetworkServer,
+) *SettleResponse {
+	provider, ok := scheme.(SettleOnCancelProvider)
+	if !ok || !settledPhasesContain(settledPhases, SettlePhaseBeforeHandler) {
+		return nil
+	}
+
+	label := fmt.Sprintf(`scheme %q settleOnCancel`, scheme.Scheme())
+	cancelRequirements, err := provider.SettleOnCancel(cancelCtx)
+	if err != nil {
+		log.Printf("[x402] Resource server settleOnCancel failed (%s): %v", label, err)
+		return failedCancelSettleResponse(requirements, err)
+	}
+	if cancelRequirements == nil {
+		return nil
+	}
+
+	settleResp, settleErr := s.SettlePaymentWithExtensions(
+		ctx, payload, *cancelRequirements, nil, declaredExtensions, SettlePhaseCancel,
+	)
+	if settleErr != nil {
+		log.Printf("[x402] Resource server settleOnCancel failed (%s): %v", label, settleErr)
+		return failedCancelSettleResponse(requirements, settleErr)
+	}
+	return settleResp
+}
+
+func settledPhasesContain(phases []SettlePhase, want SettlePhase) bool {
+	for _, p := range phases {
+		if p == want {
+			return true
+		}
+	}
+	return false
+}
+
+func failedCancelSettleResponse(requirements types.PaymentRequirements, err error) *SettleResponse {
+	resp := &SettleResponse{
+		Success:     false,
+		Transaction: "",
+		Network:     Network(requirements.Network),
+	}
+	var se *SettleError
+	if errors.As(err, &se) {
+		resp.ErrorReason = se.ErrorReason
+		if resp.ErrorReason == "" {
+			resp.ErrorReason = se.Error()
+		}
+		resp.ErrorMessage = se.ErrorMessage
+		if se.Payer != "" {
+			resp.Payer = se.Payer
+		}
+		if se.Network != "" {
+			resp.Network = se.Network
+		}
+	} else {
+		resp.ErrorReason = err.Error()
+	}
+	return resp
+}
+
+// ============================================================================
+// Core Payment Methods (V2 Only)
+// ============================================================================
+
+func mergeExtraFields(parsedExtra map[string]interface{}, configExtra map[string]interface{}) map[string]interface{} {
+	if len(parsedExtra) == 0 && len(configExtra) == 0 {
+		return nil
+	}
+
+	merged := make(map[string]interface{}, len(parsedExtra)+len(configExtra))
+	for key, value := range parsedExtra {
+		merged[key] = value
+	}
+	for key, value := range configExtra {
+		merged[key] = value
+	}
+
+	return merged
+}
+
+// BuildPaymentRequirements creates payment requirements for a resource
+func (s *x402ResourceServer) BuildPaymentRequirements(
+	ctx context.Context,
+	config ResourceConfig,
+	supportedKind types.SupportedKind,
+	extensions []string,
+) (types.PaymentRequirements, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Find the scheme server
+	scheme := config.Scheme
+	network := config.Network
+
+	schemeServer := s.schemes[network][scheme]
+	if schemeServer == nil {
+		return types.PaymentRequirements{}, &PaymentError{
+			Code:    ErrCodeUnsupportedScheme,
+			Message: fmt.Sprintf("no scheme server for %s on %s", scheme, network),
+		}
+	}
+
+	// Parse price to get asset/amount
+	assetAmount, err := schemeServer.ParsePrice(config.Price, network)
+	if err != nil {
+		return types.PaymentRequirements{}, err
+	}
+
+	// Apply default timeout if not specified
+	maxTimeout := config.MaxTimeoutSeconds
+	if maxTimeout == 0 {
+		maxTimeout = 300 // Default to 5 minutes
+	}
+
+	// Build base requirements
+	requirements := types.PaymentRequirements{
+		Scheme:            scheme,
+		Network:           string(network),
+		Asset:             assetAmount.Asset,
+		Amount:            assetAmount.Amount,
+		PayTo:             config.PayTo,
+		MaxTimeoutSeconds: maxTimeout,
+		Extra:             mergeExtraFields(assetAmount.Extra, config.Extra),
+	}
+
+	// Enhance with scheme-specific details
+	enhanced, err := schemeServer.EnhancePaymentRequirements(ctx, requirements, supportedKind, extensions)
+	if err != nil {
+		return types.PaymentRequirements{}, err
+	}
+
+	atm, flow, err := ResolvePaymentFlow(schemeServer, enhanced)
+	if err != nil {
+		return types.PaymentRequirements{}, err
+	}
+	enhanced.Extra = ApplyPaymentFlowWireExtra(enhanced.Extra, atm, flow)
+
+	return enhanced, nil
+}
+
+// FindMatchingRequirements finds requirements that match a payment payload.
+// For v2, core payment terms must match and server-declared extra must be a
+// subset of accepted.extra. Scheme-declared DynamicExtraFields are omitted from
+// the extra comparison.
+func (s *x402ResourceServer) FindMatchingRequirements(available []types.PaymentRequirements, payload types.PaymentPayload) *types.PaymentRequirements {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for i := range available {
+		req := &available[i]
+		var dynamicFields []string
+		if scheme := findByNetworkAndScheme(s.schemes, req.Scheme, Network(req.Network)); scheme != nil {
+			if dp, ok := scheme.(DynamicExtraFieldsProvider); ok {
+				dynamicFields = dp.DynamicExtraFields()
+			}
+		}
+		if paymentRequirementsMatchAccepted(*req, payload.Accepted, dynamicFields) {
+			return req
+		}
+	}
+	return nil
+}
+
+// paymentRequirementsMatchAccepted reports whether accepted preserves every
+// server-declared requirement.
+func paymentRequirementsMatchAccepted(
+	required types.PaymentRequirements,
+	accepted types.PaymentRequirements,
+	dynamicExtraFields []string,
+) bool {
+	requiredCore := required
+	requiredCore.Extra = nil
+	acceptedCore := accepted
+	acceptedCore.Extra = nil
+	if !DeepEqual(requiredCore, acceptedCore) {
+		return false
+	}
+	if required.Extra == nil {
+		return true
+	}
+	return objectContainsSubset(
+		omitFields(required.Extra, dynamicExtraFields),
+		omitFields(accepted.Extra, dynamicExtraFields),
+	)
+}
+
+// objectContainsSubset recursively checks that actual contains every field and
+// value from expected. Object values may contain additional fields; primitives
+// and arrays must match exactly via DeepEqual. Used for payment-requirements
+// extra matching (no additive-array path).
+func objectContainsSubset(expected, actual interface{}) bool {
+	expectedMap, expectedIsMap := asStringAnyMap(expected)
+	if !expectedIsMap {
+		return DeepEqual(expected, actual)
+	}
+	actualMap, actualIsMap := asStringAnyMap(actual)
+	if !actualIsMap {
+		return false
+	}
+	for key, value := range expectedMap {
+		actVal, has := actualMap[key]
+		if !has {
+			if value == nil {
+				continue
+			}
+			return false
+		}
+		if !objectContainsSubset(value, actVal) {
+			return false
+		}
+	}
+	return true
+}
+
+func asStringAnyMap(v interface{}) (map[string]interface{}, bool) {
+	if m, ok := v.(map[string]interface{}); ok {
+		return m, true
+	}
+	return nil, false
+}
+
+// normalizeJSONValue converts typed Go values to their generic wire shape.
+func normalizeJSONValue(v interface{}) interface{} {
+	encoded, err := json.Marshal(v)
+	if err != nil {
+		return v
+	}
+	var decoded interface{}
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		return v
+	}
+	return decoded
+}
+
+// extensionInfo returns the normalized info envelope when present, otherwise
+// the normalized extension value itself.
+func extensionInfo(v interface{}) interface{} {
+	normalized := normalizeJSONValue(v)
+	if extension, ok := asStringAnyMap(normalized); ok {
+		if info, has := extension["info"]; has {
+			return info
+		}
+	}
+	return normalized
+}
+
+// serverOwnedInfoFieldsMatch reports whether every server-owned field supplied
+// by the client was independently declared by the resource server with the same
+// value. Undeclared extensions are treated as having no server-owned fields.
+func serverOwnedInfoFieldsMatch(advertised, echoed interface{}, fields map[string]struct{}) bool {
+	echoedMap, ok := asStringAnyMap(echoed)
+	if !ok {
+		return true
+	}
+	advertisedMap, _ := asStringAnyMap(advertised)
+	for field := range fields {
+		echoedValue, present := echoedMap[field]
+		if !present {
+			continue
+		}
+		advertisedValue, declared := advertisedMap[field]
+		if !declared || !DeepEqual(advertisedValue, echoedValue) {
+			return false
+		}
+	}
+	return true
+}
+
+// ExtensionValidationResult is returned by ValidateExtensions. Valid is true
+// when the client either omitted extensions or echoed every server-advertised
+// field; otherwise InvalidReason/ExtensionKey describe the mismatch.
+type ExtensionValidationResult struct {
+	Valid         bool
+	InvalidReason string
+	ExtensionKey  string
+}
+
+// ValidateExtensions checks that the client-echoed extension info preserves the
+// server-advertised subset for every key the server declared. Clients may add
+// fields and may omit extension keys entirely, but may not drop or change a
+// server-advertised value. Fields listed in serverOwnedInfoFields may not be
+// added without a matching declaration.
+func (s *x402ResourceServer) ValidateExtensions(
+	serverExtensions map[string]interface{},
+	payload types.PaymentPayload,
+) ExtensionValidationResult {
+	if payload.X402Version != 2 {
+		return ExtensionValidationResult{Valid: true}
+	}
+	if len(payload.Extensions) == 0 {
+		return ExtensionValidationResult{Valid: true}
+	}
+
+	// pair carries an advertised value and its client echo while a worklist walks
+	// nested objects: the echo must contain every advertised field (objects may
+	// add fields; primitives must match exactly via DeepEqual). additive marks
+	// pairs whose array values may be extended by the echo (see
+	// additiveArrayInfoFields); all other array fields must match exactly.
+	// field names the object field this pair was read from, used to look up a
+	// combined-length cap for additive array fields (see
+	// additiveArrayMaxLengths); empty for the root pair.
+	type pair struct {
+		advertised, echoed interface{}
+		additive           bool
+		field              string
+	}
+
+	for key, echoedValue := range payload.Extensions {
+		serverValue, declared := serverExtensions[key]
+		advertisedInfo := extensionInfo(serverValue)
+		echoedInfo := extensionInfo(echoedValue)
+		fields := serverOwnedInfoFields[key]
+		if !declared {
+			if len(fields) > 0 && !serverOwnedInfoFieldsMatch(advertisedInfo, echoedInfo, fields) {
+				return ExtensionValidationResult{
+					Valid:         false,
+					InvalidReason: "extension_echo_mismatch",
+					ExtensionKey:  key,
+				}
+			}
+			continue
+		}
+
+		advertised := advertisedInfo
+		echoed := echoedInfo
+
+		// Exclude fields the extension regenerates per response (e.g. nonces)
+		// so a fresh server value is not flagged against the client's echo.
+		if dynamicFields := s.dynamicInfoFields(key); len(dynamicFields) > 0 {
+			advertised = omitFields(advertised, dynamicFields)
+			echoed = omitFields(echoed, dynamicFields)
+		}
+
+		additiveFields := additiveArrayInfoFields[key]
+		maxLengths := additiveArrayMaxLengths[key]
+		mismatch := false
+		pending := []pair{{advertised, echoed, false, ""}}
+		for i := 0; i < len(pending) && !mismatch; i++ {
+			if pending[i].additive {
+				advSlice, advIsSlice := asSlice(pending[i].advertised)
+				echoSlice, echoIsSlice := asSlice(pending[i].echoed)
+				// A scalar on either side (e.g. builder-code `s` sent as a bare string)
+				// is treated as a single-element array so it compares against an array
+				// on the other side. Two scalars fall through to the plain DeepEqual
+				// comparison below unchanged.
+				if advIsSlice || echoIsSlice {
+					if !advIsSlice {
+						advSlice, advIsSlice = asScalarSingleton(pending[i].advertised)
+					}
+					if !echoIsSlice {
+						echoSlice, echoIsSlice = asScalarSingleton(pending[i].echoed)
+					}
+					if !advIsSlice || !echoIsSlice || !arrayContainsSubset(advSlice, echoSlice) {
+						mismatch = true
+					} else if maxLen := maxLengths[pending[i].field]; maxLen > 0 && len(echoSlice) > maxLen {
+						// A hand-crafted echo may pad an additive field past the
+						// combined reservation of the parties allowed to contribute
+						// to it; reject outright rather than let it through only to
+						// be silently truncated further downstream.
+						mismatch = true
+					}
+					continue
+				}
+			}
+			advertisedMap, isObject := pending[i].advertised.(map[string]interface{})
+			if !isObject {
+				mismatch = !DeepEqual(pending[i].advertised, pending[i].echoed)
+				continue
+			}
+			echoedMap, ok := pending[i].echoed.(map[string]interface{})
+			if !ok {
+				mismatch = true
+				continue
+			}
+			for field, advValue := range advertisedMap {
+				echoValue, exists := echoedMap[field]
+				if !exists && advValue != nil {
+					mismatch = true
+					break
+				}
+				if exists {
+					pending = append(pending, pair{advValue, echoValue, additiveFields[field], field})
+				}
+			}
+		}
+
+		if mismatch || (len(fields) > 0 && !serverOwnedInfoFieldsMatch(advertisedInfo, echoedInfo, fields)) {
+			return ExtensionValidationResult{
+				Valid:         false,
+				InvalidReason: "extension_echo_mismatch",
+				ExtensionKey:  key,
+			}
+		}
+	}
+
+	return ExtensionValidationResult{Valid: true}
+}
+
+// additiveArrayInfoFields lists extension info fields, keyed by extension key,
+// where a conflicting array value declared by both server and client is
+// additive rather than exclusive: mergeExtensions concatenates both sides
+// (client first, deduped) and ValidateExtensions accepts any echo that is a
+// superset of the advertised value. Scoped narrowly per extension + field so
+// unrelated extensions (e.g. sign-in-with-x's "resources") keep exact array
+// matching in both directions.
+var additiveArrayInfoFields = map[string]map[string]bool{
+	"builder-code": {"s": true},
+}
+
+// additiveArrayMaxLengths caps the combined echoed length of an additive array
+// field (see additiveArrayInfoFields) so a hand-crafted payload cannot pad the
+// field past the sum of every party's own reservation and later crowd out a
+// legitimately declared entry once truncated further downstream (e.g. by a
+// facilitator extension). A missing or zero entry means no cap is enforced
+// here. Core has no dependency on extension packages, so this value (builder-
+// code's MAX_CLIENT_SERVICE_CODES + MAX_SERVER_SERVICE_CODES) is duplicated
+// from go/extensions/buildercode/types.go and must be kept in sync by hand.
+var additiveArrayMaxLengths = map[string]map[string]int{
+	"builder-code": {"s": 10},
+}
+
+// serverOwnedInfoFields lists extension info fields, keyed by extension key,
+// that clients may echo only when the resource server independently declared
+// the same value. Core cannot import extension packages, so these identifiers
+// are duplicated here alongside additiveArrayInfoFields.
+var serverOwnedInfoFields = map[string]map[string]struct{}{
+	"builder-code": {"a": {}},
+}
+
+// dynamicInfoFields returns the dynamic `info` field names declared by the
+// registered extension for `key`, or nil when the extension is unknown or does
+// not opt into dynamic-field handling.
+func (s *x402ResourceServer) dynamicInfoFields(key string) []string {
+	s.mu.RLock()
+	ext, ok := s.registeredExtensions[key]
+	s.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+	provider, ok := ext.(ResourceServerExtensionDynamicInfoFieldsProvider)
+	if !ok {
+		return nil
+	}
+	return provider.DynamicInfoFields()
+}
+
+// omitFields returns a copy of an object without the named dynamic fields.
+// The value is returned unchanged when no fields apply or when it is not a
+// JSON object. Used for extension info and payment-requirements extra.
+func omitFields(value interface{}, fields []string) interface{} {
+	if len(fields) == 0 {
+		return value
+	}
+	original, ok := value.(map[string]interface{})
+	if !ok {
+		return value
+	}
+	copied := make(map[string]interface{}, len(original))
+	for k, v := range original {
+		copied[k] = v
+	}
+	for _, field := range fields {
+		delete(copied, field)
+	}
+	return copied
+}
+
+// VerifyPayment verifies a V2 payment with no declared extensions.
+// Equivalent to VerifyPaymentWithExtensions(ctx, payload, requirements, nil).
+func (s *x402ResourceServer) VerifyPayment(ctx context.Context, payload types.PaymentPayload, requirements types.PaymentRequirements) (*VerifyResponse, error) {
+	return s.VerifyPaymentWithExtensions(ctx, payload, requirements, nil)
+}
+
+// VerifyPaymentWithExtensions verifies a V2 payment, gating extension hooks
+// on the supplied `declaredExtensions` map (keys must be present for the
+// extension's hook to fire). Hook execution order: manual → matched scheme →
+// declared extensions.
+func (s *x402ResourceServer) VerifyPaymentWithExtensions(
+	ctx context.Context,
+	payload types.PaymentPayload,
+	requirements types.PaymentRequirements,
+	declaredExtensions map[string]interface{},
+) (*VerifyResponse, error) {
+	// Reject client extension echoes that drop or alter server-advertised
+	// extension info before doing any verification work.
+	if result := s.ValidateExtensions(declaredExtensions, payload); !result.Valid {
+		return &VerifyResponse{IsValid: false, InvalidReason: result.InvalidReason},
+			NewVerifyError(result.InvalidReason, "", fmt.Sprintf("extension %q echo does not preserve server-advertised info", result.ExtensionKey))
+	}
+
+	// Marshal to bytes early for hooks (escape hatch for extensions)
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, NewVerifyError(ErrFailedToMarshalPayload, "", err.Error())
+	}
+
+	requirementsBytes, err := json.Marshal(requirements)
+	if err != nil {
+		return nil, NewVerifyError(ErrFailedToMarshalRequirements, "", err.Error())
+	}
+
+	hookCtx := VerifyContext{
+		Ctx:                ctx,
+		Payload:            payload,
+		Requirements:       requirements,
+		DeclaredExtensions: declaredExtensions,
+		PayloadBytes:       payloadBytes,
+		RequirementsBytes:  requirementsBytes,
+	}
+
+	s.mu.RLock()
+	scheme := requirements.Scheme
+	network := Network(requirements.Network)
+	matchedScheme := s.matchedSchemeHooks(network, scheme)
+	beforeVerifyHooks := orderedHooks(s, "beforeVerify", s.beforeVerifyHooks, matchedScheme,
+		declaredExtensions, func(h *hookAdapterHandles) BeforeVerifyHook { return h.BeforeVerify },
+		func(f BeforeVerifyHook) bool { return f == nil })
+	afterVerifyHooks := orderedHooks(s, "afterVerify", s.afterVerifyHooks, matchedScheme,
+		declaredExtensions, func(h *hookAdapterHandles) AfterVerifyHook { return h.AfterVerify },
+		func(f AfterVerifyHook) bool { return f == nil })
+	verifyFailureHooks := orderedHooks(s, "onVerifyFailure", s.onVerifyFailureHooks, matchedScheme,
+		declaredExtensions, func(h *hookAdapterHandles) OnVerifyFailureHook { return h.OnVerifyFailure },
+		func(f OnVerifyFailureHook) bool { return f == nil })
+	facilitator := s.facilitatorClients[network][scheme]
+	s.mu.RUnlock()
+
+	var skipVerifyResult *VerifyResponse
+	for _, lh := range beforeVerifyHooks {
+		result, err := lh.Hook(hookCtx)
+		if err != nil {
+			return nil, err
+		}
+		if result == nil {
+			continue
+		}
+		if result.Abort {
+			return nil, NewVerifyError(result.Reason, "", result.Message)
+		}
+		if result.Skip && result.SkipVerifyResult != nil {
+			// Last skip wins, like SettleResponse for after-hooks
+			skipVerifyResult = result.SkipVerifyResult
+		}
+	}
+
+	// Short-circuit: a BeforeVerify hook produced a local verify result. Still run
+	// AfterVerify hooks so cooperative-refund SkipHandler signaling and abort work.
+	if skipVerifyResult != nil {
+		return s.runAfterVerifyHooks(payload, requirements, declaredExtensions, hookCtx, afterVerifyHooks, skipVerifyResult)
+	}
+
+	flow, err := s.GetPaymentFlow(requirements)
+	if err != nil {
+		return nil, NewVerifyError(ErrCodeInvalidPayment, "", err.Error())
+	}
+	phases, err := ResolvePaymentFlowPhases(flow)
+	if err != nil {
+		return nil, NewVerifyError(ErrCodeInvalidPayment, "", err.Error())
+	}
+	if !phases.VerifyBeforeHandler {
+		return &VerifyResponse{IsValid: true}, nil
+	}
+
+	if facilitator == nil {
+		return nil, NewVerifyError(ErrNoFacilitatorForNetwork, "", fmt.Sprintf("no facilitator for scheme=%q network=%q", scheme, network))
+	}
+
+	// Use already marshaled bytes for network call
+	verifyResult, verifyErr := facilitator.Verify(ctx, payloadBytes, requirementsBytes)
+
+	// Handle failure (network/protocol error from facilitator)
+	if verifyErr != nil {
+		failureCtx := VerifyFailureContext{VerifyContext: hookCtx, Error: verifyErr}
+		for _, lh := range verifyFailureHooks {
+			result, _ := lh.Hook(failureCtx)
+			if result != nil && result.Recovered {
+				return s.runAfterVerifyHooks(payload, requirements, declaredExtensions, hookCtx, afterVerifyHooks, result.Result)
+			}
+		}
+		return verifyResult, verifyErr
+	}
+
+	// Handle IsValid: false — facilitator reachable but explicitly rejected the payment.
+	// Conflating "no network error" with "payment valid" is a security bug: an HTTP-200
+	// response carrying {"isValid":false} must be treated as a hard gate failure.
+	if verifyResult == nil || !verifyResult.IsValid {
+		reason := ErrCodeInvalidPayment
+		var payer, message string
+		if verifyResult != nil {
+			if verifyResult.InvalidReason != "" {
+				reason = verifyResult.InvalidReason
+			}
+			payer = verifyResult.Payer
+			message = verifyResult.InvalidMessage
+		}
+		ve := NewVerifyError(reason, payer, message)
+		failureCtx := VerifyFailureContext{VerifyContext: hookCtx, Error: ve}
+		for _, lh := range verifyFailureHooks {
+			result, _ := lh.Hook(failureCtx)
+			if result != nil && result.Recovered {
+				return s.runAfterVerifyHooks(payload, requirements, declaredExtensions, hookCtx, afterVerifyHooks, result.Result)
+			}
+		}
+		return verifyResult, ve
+	}
+
+	return s.runAfterVerifyHooks(payload, requirements, declaredExtensions, hookCtx, afterVerifyHooks, verifyResult)
+}
+
+// runAfterVerifyHooks runs after-verify hooks against a verify result.
+// On Abort, remaining hooks stop, after_verify_aborted cancellation fires, and
+// verification fails closed. Otherwise the last SkipHandler directive wins.
+func (s *x402ResourceServer) runAfterVerifyHooks(
+	payload types.PaymentPayload,
+	requirements types.PaymentRequirements,
+	declaredExtensions map[string]interface{},
+	hookCtx VerifyContext,
+	afterVerifyHooks []labeledHook[AfterVerifyHook],
+	verifyResult *VerifyResponse,
+) (*VerifyResponse, error) {
+	if verifyResult == nil {
+		return nil, NewVerifyError(ErrCodeInvalidPayment, "", "missing verify result")
+	}
+
+	resultCtx := VerifyResultContext{VerifyContext: hookCtx, Result: verifyResult}
+	for _, lh := range afterVerifyHooks {
+		directive, _ := lh.Hook(resultCtx) // Log errors but don't fail
+		if directive == nil {
+			continue
+		}
+		if directive.Abort {
+			dispatcher := s.CreatePaymentCancellationDispatcherWithExtensions(
+				hookCtx.Ctx, payload, requirements, declaredExtensions, nil,
+			)
+			dispatcher.Cancel(VerifiedPaymentCancelOptions{
+				Reason: CancellationReasonAfterVerifyAborted,
+			})
+			return &VerifyResponse{
+					IsValid:        false,
+					InvalidReason:  directive.Reason,
+					InvalidMessage: directive.Message,
+				},
+				NewVerifyError(directive.Reason, "", directive.Message)
+		}
+		if directive.SkipHandler {
+			resp := directive.Response
+			if resp == nil {
+				resp = &SkipHandlerDirective{}
+			}
+			verifyResult.SkipHandler = resp
+		}
+	}
+
+	return verifyResult, nil
+}
+
+// settleWithPendingRetry calls facilitator.Settle once, then retries exactly
+// once with the identical payload/requirements bytes when the outcome is a
+// non-terminal settlement_pending failure carrying a broadcast transaction
+// hash. This sits above all scheme/network dispatch — the mechanism that
+// actually handles the retry (via its own PendingSettlementStore check, see
+// go/pending_settlement_store.go) reconciles against the already-broadcast
+// transaction instead of verifying and broadcasting a second one. No
+// mutation, backoff, or sleep: the mechanism layer owns any bounded waiting.
+// Any other outcome (success, or a different failure reason) short-circuits
+// after the first call. Capped at exactly one retry regardless of the second
+// outcome, so this can never loop.
+func settleWithPendingRetry(
+	ctx context.Context,
+	facilitator FacilitatorClient,
+	payloadBytes []byte,
+	requirementsBytes []byte,
+) (*SettleResponse, error) {
+	settleResult, settleErr := facilitator.Settle(ctx, payloadBytes, requirementsBytes)
+	if !isRetryableSettlementPending(settleResult, settleErr) {
+		return settleResult, settleErr
+	}
+	return facilitator.Settle(ctx, payloadBytes, requirementsBytes)
+}
+
+// isRetryableSettlementPending reports whether a settle outcome is a
+// retryable settlement_pending: either a thrown *SettleError (the local/
+// in-process FacilitatorClient path) or a returned SettleResponse with
+// success:false (the HTTP/remote FacilitatorClient path), in both cases with
+// errorReason=="settlement_pending" and a non-empty transaction hash.
+func isRetryableSettlementPending(result *SettleResponse, err error) bool {
+	if err != nil {
+		var se *SettleError
+		if errors.As(err, &se) {
+			return se.ErrorReason == ErrSettlementPending && se.Transaction != ""
+		}
+		return false
+	}
+	return result != nil && !result.Success &&
+		result.ErrorReason == ErrSettlementPending && result.Transaction != ""
+}
+
+// settleResponseToError synthesizes an error from a returned success:false
+// SettleResponse so it can flow through the same SettleFailureContext/
+// OnSettleFailureHook path as a thrown *SettleError. Mirrors Python's
+// `Exception(settle_result.error_reason or "Settlement failed")` fallback
+// (python/x402/server_base.py).
+func settleResponseToError(result *SettleResponse) error {
+	reason := result.ErrorReason
+	if reason == "" {
+		reason = "Settlement failed"
+	}
+	return NewSettleError(reason, result.Payer, result.Network, result.Transaction, result.ErrorMessage)
+}
+
+// SettlePayment settles a V2 payment with no declared extensions.
+// Equivalent to SettlePaymentWithExtensions(ctx, payload, requirements, overrides, nil, SettlePhaseAfterHandler).
+func (s *x402ResourceServer) SettlePayment(ctx context.Context, payload types.PaymentPayload, requirements types.PaymentRequirements, overrides *SettlementOverrides) (*SettleResponse, error) {
+	return s.SettlePaymentWithExtensions(ctx, payload, requirements, overrides, nil, SettlePhaseAfterHandler)
+}
+
+// SettlePaymentWithExtensions settles a V2 payment, gating extension hooks on
+// the supplied `declaredExtensions` map (keys must be present for the
+// extension's hook to fire). Hook execution order: manual → matched scheme →
+// declared extensions. Mirrors TS `settlePayment(payload, requirements,
+// overrides, declaredExtensions, phase)`.
+//
+// If overrides is non-nil and overrides.Amount is set, the effective
+// requirements amount is replaced before settlement (partial settlement for
+// upto scheme).
+//
+// phase identifies which settle invocation this is (before-handler,
+// after-handler, or cancel).
+func (s *x402ResourceServer) SettlePaymentWithExtensions(
+	ctx context.Context,
+	payload types.PaymentPayload,
+	requirements types.PaymentRequirements,
+	overrides *SettlementOverrides,
+	declaredExtensions map[string]interface{},
+	phase SettlePhase,
+) (*SettleResponse, error) {
+	effectiveRequirements := requirements
+	if overrides != nil && overrides.Amount != "" {
+		// Only `$…` overrides need asset decimals. Atomic and percent formats must
+		// not force a decimals lookup (unknown custom mints would otherwise fail).
+		decimals := 6
+		decimalsKnown := false
+		if dollarRegex.MatchString(overrides.Amount) {
+			s.mu.RLock()
+			network := Network(requirements.Network)
+			if scheme := findByNetworkAndScheme(s.schemes, requirements.Scheme, network); scheme != nil {
+				if dp, ok := scheme.(AssetDecimalsProvider); ok {
+					if d, found := dp.GetAssetDecimals(requirements.Asset, network); found {
+						decimals = d
+						decimalsKnown = true
+					}
+				}
+			}
+			s.mu.RUnlock()
+			if !decimalsKnown {
+				return nil, NewSettleError(
+					"invalid_settlement_override",
+					"",
+					Network(requirements.Network),
+					"",
+					fmt.Sprintf("cannot convert dollar settlement override %q to atomic units: asset decimals are unknown. Pass an atomic amount or register the asset", overrides.Amount),
+				)
+			}
+		}
+		resolved, err := ResolveSettlementOverrideAmount(overrides.Amount, requirements, decimals)
+		if err != nil {
+			return nil, NewSettleError("invalid_settlement_override", "", Network(requirements.Network), "", err.Error())
+		}
+		effectiveRequirements.Amount = resolved
+	}
+
+	// Marshal to bytes early for hooks (escape hatch for extensions)
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, NewSettleError("failed_to_marshal_payload", "", Network(effectiveRequirements.Network), "", err.Error())
+	}
+
+	requirementsBytes, err := json.Marshal(effectiveRequirements)
+	if err != nil {
+		return nil, NewSettleError("failed_to_marshal_requirements", "", Network(effectiveRequirements.Network), "", err.Error())
+	}
+
+	hookCtx := SettleContext{
+		Ctx:                ctx,
+		Payload:            payload,
+		Requirements:       effectiveRequirements,
+		DeclaredExtensions: declaredExtensions,
+		Phase:              phase,
+		PayloadBytes:       payloadBytes,
+		RequirementsBytes:  requirementsBytes,
+	}
+
+	s.mu.RLock()
+	scheme := effectiveRequirements.Scheme
+	network := Network(effectiveRequirements.Network)
+	matchedScheme := s.matchedSchemeHooks(network, scheme)
+	beforeSettleHooks := orderedHooks(s, "beforeSettle", s.beforeSettleHooks, matchedScheme,
+		declaredExtensions, func(h *hookAdapterHandles) BeforeSettleHook { return h.BeforeSettle },
+		func(f BeforeSettleHook) bool { return f == nil })
+	afterSettleHooks := orderedHooks(s, "afterSettle", s.afterSettleHooks, matchedScheme,
+		declaredExtensions, func(h *hookAdapterHandles) AfterSettleHook { return h.AfterSettle },
+		func(f AfterSettleHook) bool { return f == nil })
+	settleFailureHooks := orderedHooks(s, "onSettleFailure", s.onSettleFailureHooks, matchedScheme,
+		declaredExtensions, func(h *hookAdapterHandles) OnSettleFailureHook { return h.OnSettleFailure },
+		func(f OnSettleFailureHook) bool { return f == nil })
+	facilitator := s.facilitatorClients[network][scheme]
+	s.mu.RUnlock()
+
+	for _, lh := range beforeSettleHooks {
+		result, err := lh.Hook(hookCtx)
+		if err != nil {
+			return nil, err
+		}
+		if result != nil {
+			if result.Abort {
+				return nil, NewSettleError(result.Reason, "", Network(effectiveRequirements.Network), "", result.Message)
+			}
+			if result.Skip && result.SkipResult != nil {
+				// Execute afterSettle hooks even when skipping
+				skipResultCtx := SettleResultContext{SettleContext: hookCtx, Result: result.SkipResult}
+				for _, ah := range afterSettleHooks {
+					_ = ah.Hook(skipResultCtx)
+				}
+				return result.SkipResult, nil
+			}
+		}
+	}
+
+	// Scheme-level settlement-payload enrichment. Mirrors TS
+	// `enrichSettlementPayload`: schemes return additive fields that the
+	// framework merges into a settle-local payload copy after the additive
+	// policy has rejected any attempt to overwrite existing keys. Copying
+	// avoids mutating the caller's object so a second settle (escrow) can
+	// re-enrich the same keys.
+	s.mu.RLock()
+	matchedSchemeServer := s.schemes[network][scheme]
+	s.mu.RUnlock()
+	settlePayload := payload
+	if enricher, ok := matchedSchemeServer.(EnrichSettlementPayloadProvider); ok {
+		enrichment, err := enricher.EnrichSettlementPayload(hookCtx)
+		if err != nil {
+			return nil, NewSettleError("scheme_enrich_settlement_payload_failed", "", network, "", err.Error())
+		}
+		if len(enrichment) > 0 {
+			rawPayload := payload.GetPayload()
+			if err := AssertAdditivePayloadEnrichment(rawPayload, enrichment, fmt.Sprintf(`scheme %q`, scheme)); err != nil {
+				return nil, NewSettleError("scheme_enrich_settlement_payload_policy_violation", "", network, "", err.Error())
+			}
+			cloned := cloneStringAnyMap(rawPayload)
+			if cloned == nil {
+				cloned = make(map[string]interface{}, len(enrichment))
+			}
+			for k, v := range enrichment {
+				cloned[k] = v
+			}
+			settlePayload.Payload = cloned
+		}
+	}
+
+	if facilitator == nil {
+		return nil, NewSettleError("no_facilitator", "", network, "", fmt.Sprintf("no facilitator for scheme=%q network=%q", scheme, network))
+	}
+
+	// Re-marshal settle-local payload after hooks: BeforeSettle hooks AND
+	// scheme enrichment may have contributed fields (e.g., the batch-settlement
+	// refund enrich path adds the refund authorizer signatures). The pre-hook
+	// bytes would carry the original shape and the facilitator would reject it.
+	payloadBytes, err = json.Marshal(settlePayload)
+	if err != nil {
+		return nil, NewSettleError("failed_to_marshal_payload", "", Network(effectiveRequirements.Network), "", err.Error())
+	}
+
+	settleResult, settleErr := settleWithPendingRetry(ctx, facilitator, payloadBytes, requirementsBytes)
+
+	// Handle failure (thrown error from a local/in-process facilitator).
+	if settleErr != nil {
+		failureCtx := SettleFailureContext{SettleContext: hookCtx, Error: settleErr}
+		for _, lh := range settleFailureHooks {
+			result, _ := lh.Hook(failureCtx)
+			if result != nil && result.Recovered {
+				return result.Result, nil
+			}
+		}
+		return settleResult, settleErr
+	}
+
+	// A returned (non-thrown) settleResult with success:false — e.g. from a
+	// remote/HTTP facilitator — silently looked like a success before this
+	// check: afterSettle hooks would run and callers would treat the response
+	// as settled. Route it through onSettleFailure like a thrown error so
+	// hooks get a chance to recover, matching the Python SDK.
+	if settleResult != nil && !settleResult.Success {
+		failureCtx := SettleFailureContext{SettleContext: hookCtx, Error: settleResponseToError(settleResult)}
+		for _, lh := range settleFailureHooks {
+			result, _ := lh.Hook(failureCtx)
+			if result != nil && result.Recovered {
+				return result.Result, nil
+			}
+		}
+		return settleResult, nil
+	}
+
+	// Execute afterSettle hooks
+	resultCtx := SettleResultContext{SettleContext: hookCtx, Result: settleResult}
+	for _, lh := range afterSettleHooks {
+		_ = lh.Hook(resultCtx) // Log errors but don't fail
+	}
+
+	// Scheme-level settlement-response enrichment. Mirrors TS
+	// `enrichSettlementResponse`: returned fields are deep-merged into
+	// settleResult.Extra after the additive policy has rejected any attempt
+	// to overwrite existing extras (recursively for nested maps).
+	if enricher, ok := matchedSchemeServer.(EnrichSettlementResponseProvider); ok {
+		enrichment, err := enricher.EnrichSettlementResponse(resultCtx)
+		if err != nil {
+			return settleResult, NewSettleError("scheme_enrich_settlement_response_failed", "", network, "", err.Error())
+		}
+		if len(enrichment) > 0 {
+			extra := settleResult.Extra
+			if extra == nil {
+				extra = map[string]interface{}{}
+			}
+			if err := AssertAdditiveSettlementExtra(extra, enrichment, fmt.Sprintf(`scheme %q`, scheme)); err != nil {
+				return settleResult, NewSettleError("scheme_enrich_settlement_response_policy_violation", "", network, "", err.Error())
+			}
+			settleResult.Extra = MergeAdditiveSettlementExtra(extra, enrichment)
+		}
+	}
+
+	return settleResult, nil
+}
+
+// EnrichExtensions enriches declared extensions using registered extension hooks.
+func (s *x402ResourceServer) EnrichExtensions(
+	declaredExtensions map[string]interface{},
+	transportContext interface{},
+) map[string]interface{} {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	enriched := make(map[string]interface{})
+	for key, declaration := range declaredExtensions {
+		ext, ok := s.registeredExtensions[key]
+		if ok {
+			enriched[key] = ext.EnrichDeclaration(declaration, transportContext)
+		} else {
+			enriched[key] = declaration
+		}
+	}
+	return enriched
+}
+
+// CreatePaymentRequiredResponse creates a V2 PaymentRequired response.
+// Equivalent to CreatePaymentRequiredResponseWithPayload with a nil payload —
+// scheme enrichers that depend on the failed payload (e.g. batched corrective
+// ChannelState) become no-ops.
+func (s *x402ResourceServer) CreatePaymentRequiredResponse(
+	requirements []types.PaymentRequirements,
+	resourceInfo *types.ResourceInfo,
+	errorMsg string,
+	extensions map[string]interface{},
+) types.PaymentRequired {
+	return s.CreatePaymentRequiredResponseWithPayload(requirements, resourceInfo, errorMsg, extensions, nil)
+}
+
+// CreatePaymentRequiredResponseWithPayload creates a V2 PaymentRequired response
+// and runs each registered scheme's PaymentRequiredEnricher (when implemented).
+// Pass the failing payment payload on the verify-failure branch so per-scheme
+// enrichers can attach corrective recovery state (e.g. batched ChannelState)
+// to matching requirements; pass nil otherwise.
+func (s *x402ResourceServer) CreatePaymentRequiredResponseWithPayload(
+	requirements []types.PaymentRequirements,
+	resourceInfo *types.ResourceInfo,
+	errorMsg string,
+	extensions map[string]interface{},
+	paymentPayload *types.PaymentPayload,
+) types.PaymentRequired {
+	response := types.PaymentRequired{
+		X402Version: 2,
+		Error:       errorMsg,
+		Resource:    resourceInfo,
+		Accepts:     requirements,
+		Extensions:  extensions,
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for i := range requirements {
+		networkSchemes, ok := s.schemes[Network(requirements[i].Network)]
+		if !ok {
+			continue
+		}
+		scheme, ok := networkSchemes[requirements[i].Scheme]
+		if !ok {
+			continue
+		}
+		enricher, ok := scheme.(PaymentRequiredEnricher)
+		if !ok {
+			continue
+		}
+		enricher.EnrichPaymentRequiredResponse(PaymentRequiredContext{
+			Requirements:            requirements,
+			PaymentPayload:          paymentPayload,
+			ResourceInfo:            resourceInfo,
+			Error:                   errorMsg,
+			PaymentRequiredResponse: &response,
+		})
+	}
+
+	return response
+}
+
+// ProcessPaymentRequest processes a payment request end-to-end
+func (s *x402ResourceServer) ProcessPaymentRequest(
+	ctx context.Context,
+	config ResourceConfig,
+	payload *types.PaymentPayload,
+) (*types.PaymentRequirements, *VerifyResponse, error) {
+	// This is a stub - needs full implementation
+	// For now, return error
+	return nil, nil, fmt.Errorf("not implemented")
+}
+
+// BuildPaymentRequirementsFromConfig builds payment requirements from config
+// This wraps the single requirement builder with facilitator data
+func (s *x402ResourceServer) BuildPaymentRequirementsFromConfig(ctx context.Context, config ResourceConfig) ([]types.PaymentRequirements, error) {
+	// Find supported kind for this scheme/network
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	schemeServer := s.schemes[config.Network][config.Scheme]
+	if schemeServer == nil {
+		return nil, fmt.Errorf("no scheme server for %s on %s", config.Scheme, config.Network)
+	}
+
+	// Look up cached supported kinds from facilitator
+	// This was populated during Initialize() by querying facilitator's /supported endpoint
+	var supportedKind types.SupportedKind
+	foundKind := false
+
+	// Check each cached facilitator response for matching supported kind
+	s.supportedCache.mu.RLock()
+	for _, cachedResponse := range s.supportedCache.data {
+		// Iterate through flat kinds array (version is in each element)
+		for _, kind := range cachedResponse.Kinds {
+			// Match on scheme and network (only check V2 kinds)
+			if kind.X402Version == 2 && kind.Scheme == config.Scheme && string(kind.Network) == string(config.Network) {
+				supportedKind = types.SupportedKind{
+					X402Version: kind.X402Version,
+					Scheme:      kind.Scheme,
+					Network:     string(kind.Network),
+					Extra:       kind.Extra, // This includes feePayer for SVM!
+				}
+				foundKind = true
+				break
+			}
+		}
+		if foundKind {
+			break
+		}
+	}
+	s.supportedCache.mu.RUnlock()
+
+	// If no cached kind found, create a basic one (fallback for cases without facilitator)
+	if !foundKind {
+		supportedKind = types.SupportedKind{
+			Scheme:  config.Scheme,
+			Network: string(config.Network),
+			Extra:   make(map[string]interface{}),
+		}
+	}
+
+	requirement, err := s.BuildPaymentRequirements(ctx, config, supportedKind, []string{})
+	if err != nil {
+		return nil, err
+	}
+
+	return []types.PaymentRequirements{requirement}, nil
+}
+
+// Helper functions use the generic findSchemesByNetwork from utils.go

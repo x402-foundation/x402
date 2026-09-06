@@ -1,0 +1,155 @@
+---
+title: "Wallet Compatibility"
+description: "Which wallet types work with which x402 schemes, and why, based on how signatures are verified on-chain."
+---
+
+x402 pre-verifies a payment signature before settling it on-chain. Pre-verification has to match what the on-chain contract does, so whether a payment succeeds depends on the wallet type and the scheme it is used with. This page lists the supported combinations and explains the ones that do not work.
+
+## Why wallet type matters
+
+### Code routing
+
+Ethereum signatures originally assumed externally owned accounts (EOAs): a private key signs, `ecrecover` recovers the address, done. Smart contract wallets do not fit that model, because their address comes from factory deployment parameters rather than a key. EIP-1271 fills the gap with `isValidSignature(bytes32 hash, bytes signature)`, which a contract implements to define its own verification rules.
+
+To handle both account types, most on-chain verifiers branch on whether the address has code:
+
+```solidity
+// Code-routing pattern (Permit2, modern ERC-3009 tokens)
+if (signer.code.length == 0) {
+    // EOA: recover the key
+    require(ecrecover(hash, sig) == signer);
+} else {
+    // Contract account: ask it to verify
+    require(IERC1271(signer).isValidSignature(hash, sig) == 0x1626ba7e);
+}
+```
+
+x402's facilitator mirrors whichever rule the target contract uses, so a wallet that would fail on-chain also fails pre-verification. There is no path that reports a payment as valid and then reverts at settlement.
+
+### How tokens implement it
+
+**Permit2** (`permitWitnessTransferFrom`) code-routes through its internal `SignatureVerification` library, so any Permit2 payment from an address with code calls `isValidSignature` on that address.
+
+**ERC-3009 tokens** vary by version. Circle's USDC v2.2 added a `SignatureChecker` that code-routes for `transferWithAuthorization`. Earlier USDC versions (v1 and the v2.0/2.1 deployments from before 2023) use `ecrecover` only and never call `isValidSignature`.
+
+**Older or simpler ERC-3009 tokens** predate smart wallet support and also use `ecrecover` only. They treat every address as an EOA regardless of code, so smart accounts and 7702-delegated EOAs that need EIP-1271 fail on-chain even when x402 would pass pre-verification.
+
+<Warning>
+This page assumes the token code-routes. Before using a token in production, check how its `transferWithAuthorization` validates signatures: look for a call to `isValidSignature` or a `SignatureChecker`. If it only calls `ecrecover`, wallet types B through E fail on-chain for EIP-3009 flows no matter how x402 is configured.
+</Warning>
+
+To confirm a token's behavior, read its `transferWithAuthorization` source, call `isValidSignature` on the token through `eth_call` with a test signature, or trace a known smart-wallet payment on a block explorer and check for an internal `isValidSignature` call.
+
+## Wallet types
+
+| Type | Has code? | Signing mechanism |
+|---|---|---|
+| **A** Plain EOA | No | Raw ECDSA from the private key |
+| **B** Deployed smart account (ERC-4337) | Yes | EIP-1271 `isValidSignature` on the contract |
+| **C** Counterfactual smart account (ERC-6492) | Not yet deployed | EIP-1271 after the factory deploys it |
+| **D** ERC-7702 EOA, permissive delegate | Yes (delegation) | EIP-1271 on the delegate, which accepts raw owner ECDSA |
+| **E** ERC-7702 EOA, strict delegate | Yes (delegation) | EIP-1271 on the delegate, which requires a wrapped or prefixed format |
+
+- **Type B.** Permissive means the account's `isValidSignature` accepts a raw 65-byte ECDSA signature from the controlling key, which is common for wallets with a default ECDSA validator. An account that requires multisig or non-ECDSA authentication behaves like Type E.
+- **Type C.** ERC-6492 wraps a signature with factory deployment data so a wallet can authorize a payment before it exists on-chain. x402 deploys the wallet during settlement for the supported flows.
+- **Types D and E.** ERC-7702 lets an EOA delegate execution to a contract, and that delegate's `isValidSignature` decides what counts as valid. A delegate that forwards owner ECDSA through a default validator is permissive; one that requires a validator-prefixed format (as many ERC-7579 accounts do without a fallback) is strict. Which one applies depends on the delegate and its installed validators.
+
+## Schemes and asset transfer methods
+
+For batch-settlement, this table covers the deposit that funds a channel. Voucher signing is a separate concern, described after the matrix.
+
+| Scheme | Asset transfer method | On-chain verifier |
+|---|---|---|
+| `exact` | EIP-3009 (`transferWithAuthorization`) | Token's `SignatureChecker`, typically code-routing |
+| `exact` | Permit2 (`permitWitnessTransferFrom`) | Permit2's `SignatureVerification`, code-routing |
+| `upto` | Permit2 (`permitWitnessTransferFrom`) | Permit2's `SignatureVerification`, code-routing |
+| `batch-settlement` | ERC-3009 deposit | Token's `SignatureChecker` via `ERC3009DepositCollector` |
+| `batch-settlement` | Permit2 deposit | Permit2 via `Permit2DepositCollector` |
+
+## Support matrix
+
+The batch-settlement columns describe which wallet can sign the deposit that opens or funds a channel.
+
+✅ Supported. ❌ Not supported (see footnote).
+
+| Wallet type | `exact` EIP-3009 | `exact` Permit2 | `upto` Permit2 | `batch` deposit (ERC-3009) | `batch` deposit (Permit2) |
+|---|:---:|:---:|:---:|:---:|:---:|
+| **A** Plain EOA | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **B** Deployed smart account | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **C** ERC-6492 counterfactual | ✅ ¹ | ❌ ² | ❌ ² | ✅ ³ | ❌ ² |
+| **D** 7702 + permissive delegate | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **E** 7702 + strict delegate | ❌ ⁴ | ❌ ⁴ | ❌ ⁴ | ❌ ⁴ | ❌ ⁴ |
+
+The three Permit2 columns (`exact` Permit2, `upto`, `batch` deposit Permit2) require the payer to hold a Permit2 allowance for the token. The EIP-3009 columns do not. See [Permit2 allowance](#permit2-allowance) for how each wallet type establishes that allowance.
+
+### Footnotes
+
+**¹ ERC-6492 counterfactual with `exact` EIP-3009**
+
+Supported with configuration. During `verify`, x402 validates the inner signature with a single Multicall3 `eth_call` that deploys the wallet and runs `transferWithAuthorization` against it in one shot. Settle then deploys the wallet for real and submits `transferWithAuthorization`, which is itself the definitive check, so there is no second simulation after the deploy.
+
+This requires the facilitator to set an allowlist of permitted factory addresses (`eip6492AllowedFactories`). Arbitrary factory calls are blocked by default to prevent attacker-controlled transaction injection.
+
+If a wallet installs its verifying validator lazily rather than in the factory call (some ERC-7579 and Kernel session-key setups deploy with only a root validator), the deployed wallet can reject the inner signature and the on-chain transfer reverts. The wallet now exists, so retrying the payment usually settles, because a deployed wallet can produce a standard ERC-1271 signature. Wallets that install their full validator set during deployment settle on the first attempt.
+
+**² ERC-6492 counterfactual with Permit2 (`exact`, `upto`, or `batch` deposit)**
+
+Not supported. Permit2's `permitWitnessTransferFrom` calls `isValidSignature` on the payer at settlement, and the Permit2 path does not deploy the wallet first. With no code at the address, the call reverts and Permit2 rejects the payment. Permit2 has no counterfactual mechanism, so deploy the wallet before using any Permit2 flow.
+
+**³ ERC-6492 counterfactual with `batch-settlement` ERC-3009 deposit**
+
+Supported with configuration, the same way as footnote ¹. When the deposit's ERC-3009 authorization is ERC-6492-wrapped and the payer has no code, the facilitator deploys the wallet through the wrapped factory before submitting `deposit`. The `ERC3009DepositCollector` then calls `receiveWithAuthorization`, which routes to `isValidSignature` on the deployed wallet. The inner signature is validated during `verify` by the atomic factory-deploy-plus-`deposit` Multicall3 `eth_call`, and the real `deposit` is the definitive check at settle. This requires an allowlist of factory addresses (`eip6492AllowedFactories` on Go's `BatchSettlementEvmSchemeConfig`, or the `eip6492_allowed_factories` / `eip6492AllowedFactories` constructor argument in Python and TypeScript).
+
+A deposit payload also carries a voucher, which is verified before the deposit runs. See [Batch-settlement vouchers](#batch-settlement-vouchers) for how the counterfactual case constrains `payerAuthorizer`.
+
+**⁴ ERC-7702 strict delegate with any code-routed scheme**
+
+Not supported by the default client. When an address has code, the verifier routes to `isValidSignature` on the delegate, and a strict delegate requires a specific format such as the validator-prefixed bytes used by ERC-7579 accounts with session-key validators. x402 signs with `signTypedData`, which produces a raw 65-byte ECDSA signature that a strict delegate rejects, so the payment fails on-chain even though signing succeeded. This is the verifier behaving correctly, not an x402 limitation. If you control the delegate, enabling a default ECDSA validator that accepts raw owner signatures turns the wallet into Type D and restores compatibility.
+
+## Permit2 allowance
+
+Every Permit2 flow (`exact` Permit2, `upto`, and `batch-settlement` Permit2 deposits) moves funds through the canonical Permit2 contract, which first requires the payer to have approved Permit2 to spend the token. EIP-3009 flows do not, because the token transfer is authorized directly by the signature. A Permit2 payment from a payer with no allowance fails verification with `permit2_allowance_required` until the allowance exists.
+
+There are three ways to establish it:
+
+- A one-time on-chain `approve(Permit2, max)` from the payer. An EOA sends the transaction; a smart account does it through its `execute()`. After this, every later payment skips the step and no extension is needed.
+- The ERC-20 approval gas sponsoring extension. The payer signs an `approve` transaction and the facilitator broadcasts it, so the payer spends no gas.
+- The EIP-2612 gas sponsoring extension. The payer signs an EIP-2612 `permit` and the facilitator submits it before pulling funds.
+
+Both gas-sponsoring extensions work only for EOAs and 7702-delegated EOAs. Each signs from the payer's key: the ERC-20 extension signs a raw approval transaction sent from the payer address, and the EIP-2612 extension signs a permit that `permit()` recovers with `ecrecover`. A deployed smart account (ERC-1271) has no key for its own address, so it can use neither extension and must approve Permit2 itself with an on-chain `approve` through `execute()`.
+
+## Batch-settlement vouchers
+
+The matrix covers who can sign the deposit that funds a channel. Authorizing individual charges against that channel is separate: each charge is carried by a voucher that the facilitator verifies on a hot path, so voucher verification is built for speed rather than generality. The channel config's `payerAuthorizer` chooses how a voucher is checked.
+
+**`payerAuthorizer` set.** The contract recovers the signer with `ECDSA.recoverCalldata` and requires it to equal `payerAuthorizer`. This is raw ECDSA over the digest and ignores account code, so `payerAuthorizer` must be an EOA address. A smart account or counterfactual address can never satisfy it, because its address is not recoverable from a signature.
+
+**`payerAuthorizer` is `address(0)`.** The contract verifies the voucher against `payer` with `SignatureChecker.isValidSignatureNow`, which code-routes: EIP-1271 for an address with code, ECDSA otherwise.
+
+Choosing a path:
+
+- Plain EOA payer: either path works.
+- Smart account or 7702 payer: leave `payerAuthorizer` unset (`address(0)`) so the voucher routes to the payer's `isValidSignature`. A 7702 EOA can instead set `payerAuthorizer` to its own EOA address, since ECDSA recovery returns the underlying key regardless of the delegation.
+- Counterfactual payer: not supported on either path, because voucher verification never deploys the wallet. With `payerAuthorizer` set, ECDSA recovers a key that does not match the smart-account address; with `address(0)`, the code-routed check falls back to `ecrecover` against an address with no code and also fails. Deploy the wallet before opening a channel.
+- A smart-account address as `payerAuthorizer` never works.
+
+For the counterfactual ERC-3009 deposit in footnote ³, set `payerAuthorizer` to an EOA you control so the voucher verifies via ECDSA, while the deposit authorization is still signed by (and deploys) the smart wallet.
+
+## Determining a wallet's type
+
+1. Call `eth_getCode(address)`.
+   - Empty or `0x`: Type A (plain EOA).
+   - Exactly 23 bytes starting with `0xef0100`: Type D or E (7702 delegation).
+   - Any other non-empty bytecode: Type B (deployed smart account).
+2. For a 7702 address, call `isValidSignature(digest, rawECDSASig)`. A return of `0x1626ba7e` means a permissive delegate (Type D); `0xffffffff` or a revert means a strict delegate (Type E).
+3. A counterfactual address (Type C) returns empty code, but its signing produces an ERC-6492-wrapped signature, recognizable by the `0x6492...6492` suffix.
+
+## Summary
+
+| Question | Why it matters |
+|---|---|
+| Does the address have code? | Decides whether the verifier calls `isValidSignature` (with code) or `ecrecover` (without). |
+| What does the delegate's `isValidSignature` accept? | Decides 7702 compatibility for code-routed schemes. |
+| Which scheme is in use? | Permit2 never supports counterfactual wallets; the code-routed EIP-3009 flows (`exact` EIP-3009 and `batch-settlement` ERC-3009 deposit) do, with an allowlisted factory. |
+| Is it a Permit2 flow? | If so, the payer needs a Permit2 allowance. Smart accounts must approve Permit2 themselves; EOAs and 7702 EOAs can use a gas-sponsoring extension. |
+| Is `payerAuthorizer` set? | If so, batch-settlement vouchers use ECDSA only, so the authorizer must be an EOA. |

@@ -1,0 +1,12 @@
+auth-capture scheme:
+
+The auth-capture payment scheme and the client portion of its TypeScript
+implementation in @x402/evm were contributed by the x402r team. See
+proposal issue #1011 and specification PR #1425. The implementation was
+developed in https://github.com/BackTrackCo/x402r-scheme prior to
+upstreaming.
+
+The implementation originated from the "x402-escrow" proposal by
+Agentokratia in issue #834, published as @agentokratia/x402-escrow
+on npm under the MIT License, and incorporates code from that
+package.

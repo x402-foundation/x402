@@ -1,0 +1,1152 @@
+package x402
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+	"github.com/x402-foundation/x402/go/v2/types"
+)
+
+// Mock V1 client for testing
+type mockSchemeNetworkClientV1 struct {
+	scheme             string
+	findDefaultAsset   func(asset string, network Network) *DefaultAsset
+	noFindDefaultAsset bool
+}
+
+func (m *mockSchemeNetworkClientV1) Scheme() string {
+	return m.scheme
+}
+
+func (m *mockSchemeNetworkClientV1) FindDefaultAsset(asset string, network Network) *DefaultAsset {
+	if m.noFindDefaultAsset {
+		return nil
+	}
+	if m.findDefaultAsset != nil {
+		return m.findDefaultAsset(asset, network)
+	}
+	return &DefaultAsset{Asset: asset, Decimals: 6, Symbol: "MOCK"}
+}
+
+func (m *mockSchemeNetworkClientV1) CreatePaymentPayload(ctx context.Context, requirements types.PaymentRequirementsV1) (types.PaymentPayloadV1, error) {
+	return types.PaymentPayloadV1{
+		X402Version: 1,
+		Scheme:      m.scheme,
+		Network:     "eip155:1",
+		Payload: map[string]interface{}{
+			"signature": "mock_signature",
+			"from":      "0xmock",
+		},
+	}, nil
+}
+
+// Mock V2 client for testing
+type mockSchemeNetworkClientV2 struct {
+	scheme             string
+	findDefaultAsset   func(asset string, network Network) *DefaultAsset
+	noFindDefaultAsset bool
+}
+
+func (m *mockSchemeNetworkClientV2) Scheme() string {
+	return m.scheme
+}
+
+func (m *mockSchemeNetworkClientV2) FindDefaultAsset(asset string, network Network) *DefaultAsset {
+	if m.noFindDefaultAsset {
+		return nil
+	}
+	if m.findDefaultAsset != nil {
+		return m.findDefaultAsset(asset, network)
+	}
+	return &DefaultAsset{Asset: asset, Decimals: 6, Symbol: "MOCK"}
+}
+
+func (m *mockSchemeNetworkClientV2) CreatePaymentPayload(ctx context.Context, requirements types.PaymentRequirements) (types.PaymentPayload, error) {
+	return types.PaymentPayload{
+		X402Version: 2,
+		Payload: map[string]interface{}{
+			"signature": "mock_signature",
+			"from":      "0xmock",
+		},
+	}, nil
+}
+
+func TestNewx402Client(t *testing.T) {
+	client := Newx402Client()
+	if client == nil {
+		t.Fatal("Expected client to be created")
+	}
+	// Schemes are now split into schemesV1 and schemesV2 (private)
+	if client.requirementsSelector == nil {
+		t.Fatal("Expected default selector to be set")
+	}
+}
+
+func TestClientRegister(t *testing.T) {
+	client := Newx402Client()
+	mockClientV1 := &mockSchemeNetworkClientV1{scheme: "exact"}
+	mockClientV2 := &mockSchemeNetworkClientV2{scheme: "exact"}
+
+	// Test v2 registration
+	client.Register("eip155:1", mockClientV2)
+
+	// Verify registration using GetRegisteredSchemes
+	schemes := client.GetRegisteredSchemes()
+	if len(schemes[2]) != 1 {
+		t.Fatal("Expected 1 scheme for v2")
+	}
+	if schemes[2][0].Scheme != "exact" {
+		t.Fatal("Expected exact scheme to be registered")
+	}
+
+	// Test v1 registration
+	client.RegisterV1("eip155:1", mockClientV1)
+	schemes = client.GetRegisteredSchemes()
+	if len(schemes[1]) != 1 {
+		t.Fatal("Expected 1 scheme for v1")
+	}
+}
+
+func TestClientGetExtensions(t *testing.T) {
+	client := Newx402Client()
+	first := mockClientExtension{key: "first"}
+	second := mockClientExtension{key: "second"}
+	replacement := mockClientExtension{key: "first", label: "replacement"}
+
+	client.RegisterExtension(first).RegisterExtension(second).RegisterExtension(replacement)
+
+	extensions := client.GetExtensions()
+	if len(extensions) != 2 {
+		t.Fatalf("extensions length = %d, want 2", len(extensions))
+	}
+	if extensions[0].Key() != "first" || extensions[1].Key() != "second" {
+		t.Fatalf("extension order = [%s, %s], want [first, second]", extensions[0].Key(), extensions[1].Key())
+	}
+	gotFirst, ok := extensions[0].(mockClientExtension)
+	if !ok {
+		t.Fatalf("first extension type = %T, want mockClientExtension", extensions[0])
+	}
+	if gotFirst.label != "replacement" {
+		t.Fatalf("first extension label = %q, want replacement", gotFirst.label)
+	}
+}
+
+func TestClientWithScheme(t *testing.T) {
+	mockClientV2 := &mockSchemeNetworkClientV2{scheme: "exact"}
+
+	client := Newx402Client()
+	client.Register("eip155:1", mockClientV2)
+
+	schemes := client.GetRegisteredSchemes()
+	if len(schemes[2]) != 1 || schemes[2][0].Scheme != "exact" {
+		t.Fatal("Expected mock client to be registered")
+	}
+}
+
+type mockClientExtension struct {
+	key   string
+	label string
+}
+
+func (e mockClientExtension) Key() string {
+	return e.key
+}
+
+func (e mockClientExtension) EnrichPaymentPayload(_ context.Context, payload types.PaymentPayload, _ types.PaymentRequired) (types.PaymentPayload, error) {
+	return payload, nil
+}
+
+type enrichingClientExtension struct {
+	key      string
+	enrichFn func(types.PaymentPayload, types.PaymentRequired) (types.PaymentPayload, error)
+}
+
+func (e enrichingClientExtension) Key() string {
+	return e.key
+}
+
+func (e enrichingClientExtension) EnrichPaymentPayload(_ context.Context, payload types.PaymentPayload, required types.PaymentRequired) (types.PaymentPayload, error) {
+	if e.enrichFn != nil {
+		return e.enrichFn(payload, required)
+	}
+	return payload, nil
+}
+
+func TestClientSelectPaymentRequirements(t *testing.T) {
+	client := Newx402Client()
+	mockClient := &mockSchemeNetworkClientV2{scheme: "exact"}
+	client.Register("eip155:1", mockClient)
+
+	requirements := []types.PaymentRequirements{
+		{
+			Scheme:  "exact",
+			Network: "eip155:1",
+			Asset:   "USDC",
+			Amount:  "1000000",
+			PayTo:   "0xrecipient",
+		},
+		{
+			Scheme:  "unsupported",
+			Network: "eip155:1",
+			Asset:   "USDC",
+			Amount:  "2000000",
+			PayTo:   "0xrecipient",
+		},
+	}
+
+	// Should select the first supported requirement
+	selected, err := client.SelectPaymentRequirements(requirements)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if selected.Scheme != "exact" {
+		t.Fatalf("Expected 'exact' scheme, got %s", selected.Scheme)
+	}
+	if selected.Amount != "1000000" {
+		t.Fatalf("Expected amount '1000000', got %s", selected.Amount)
+	}
+
+	// Test with no supported requirements
+	unsupportedReqs := []types.PaymentRequirements{
+		{
+			Scheme:  "unsupported",
+			Network: "eip155:1",
+			Asset:   "USDC",
+			Amount:  "1000000",
+			PayTo:   "0xrecipient",
+		},
+	}
+
+	_, err = client.SelectPaymentRequirements(unsupportedReqs)
+	if err == nil {
+		t.Fatal("Expected error for unsupported requirements")
+	}
+
+	var paymentErr *PaymentError
+	if !errors.As(err, &paymentErr) || paymentErr.Code != ErrCodeUnsupportedScheme {
+		t.Fatal("Expected UnsupportedScheme error")
+	}
+}
+
+func TestClientSelectPaymentRequirementsWithCustomSelector(t *testing.T) {
+	// Custom selector that chooses the highest amount (uses view interface)
+	customSelector := func(requirements []PaymentRequirementsView) PaymentRequirementsView {
+		if len(requirements) == 0 {
+			panic("no requirements")
+		}
+		highest := requirements[0]
+		for _, req := range requirements[1:] {
+			if req.GetAmount() > highest.GetAmount() {
+				highest = req
+			}
+		}
+		return highest
+	}
+
+	client := Newx402Client(WithPaymentSelector(customSelector)).DisableSpendControls()
+	mockClient := &mockSchemeNetworkClientV2{scheme: "exact"}
+	client.Register("eip155:1", mockClient)
+
+	requirements := []types.PaymentRequirements{
+		{
+			Scheme:  "exact",
+			Network: "eip155:1",
+			Asset:   "USDC",
+			Amount:  "1000000",
+			PayTo:   "0xrecipient",
+		},
+		{
+			Scheme:  "exact",
+			Network: "eip155:1",
+			Asset:   "USDC",
+			Amount:  "2000000",
+			PayTo:   "0xrecipient",
+		},
+	}
+
+	selected, err := client.SelectPaymentRequirements(requirements)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if selected.Amount != "2000000" {
+		t.Fatalf("Expected amount '2000000', got %s", selected.Amount)
+	}
+}
+
+func TestClientCreatePaymentPayload(t *testing.T) {
+	ctx := context.Background()
+	client := Newx402Client()
+
+	mockClient := &mockSchemeNetworkClientV2{scheme: "exact"}
+	client.Register("eip155:1", mockClient)
+
+	requirements := types.PaymentRequirements{
+		Scheme:  "exact",
+		Network: "eip155:1",
+		Asset:   "USDC",
+		Amount:  "1000000",
+		PayTo:   "0xrecipient",
+	}
+
+	resourceV2 := &types.ResourceInfo{
+		URL:         "https://example.com/api",
+		Description: "Test API",
+		MimeType:    "application/json",
+	}
+
+	extensions := map[string]interface{}{
+		"test": "value",
+	}
+
+	// Call typed API (no marshaling needed)
+	payload, err := client.CreatePaymentPayload(ctx, requirements, resourceV2, extensions)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Check fields directly (already typed!)
+	if payload.X402Version != 2 {
+		t.Fatalf("Expected version 2, got %d", payload.X402Version)
+	}
+	if payload.Accepted.Scheme != "exact" {
+		t.Fatalf("Expected accepted scheme 'exact', got %s", payload.Accepted.Scheme)
+	}
+	if payload.Accepted.Network != "eip155:1" {
+		t.Fatalf("Expected accepted network 'eip155:1', got %s", payload.Accepted.Network)
+	}
+	if payload.Payload == nil {
+		t.Fatal("Expected payload to be set")
+	}
+	if payload.Resource == nil {
+		t.Fatal("Expected resource to be set")
+	}
+	if payload.Extensions == nil {
+		t.Fatal("Expected extensions to be set")
+	}
+}
+
+func TestClientCreatePaymentPayloadEchoesRegisteredExtensions(t *testing.T) {
+	ctx := context.Background()
+	client := Newx402Client()
+	client.Register("eip155:1", &mockSchemeNetworkClientV2{scheme: "exact"})
+	client.RegisterExtension(mockClientExtension{key: "auth"})
+
+	payload, err := client.CreatePaymentPayload(ctx, types.PaymentRequirements{
+		Scheme:  "exact",
+		Network: "eip155:1",
+		Asset:   "USDC",
+		Amount:  "1000",
+		PayTo:   "0xrecipient",
+	}, nil, map[string]interface{}{
+		"auth": map[string]interface{}{"info": map[string]interface{}{"nonce": "dynamic"}},
+		"keep": map[string]interface{}{"info": map[string]interface{}{"value": "stable"}},
+	})
+	require.NoError(t, err)
+
+	require.Contains(t, payload.Extensions, "auth")
+	require.Contains(t, payload.Extensions, "keep")
+}
+
+func TestClientCreatePaymentPayloadEnrichesRegisteredExtensionWithoutServerDeclaration(t *testing.T) {
+	ctx := context.Background()
+	client := Newx402Client()
+	client.Register("eip155:1", &mockSchemeNetworkClientV2{scheme: "exact"})
+
+	var enrichCalled bool
+	client.RegisterExtension(enrichingClientExtension{
+		key: "clientOwnedExtension",
+		enrichFn: func(payload types.PaymentPayload, _ types.PaymentRequired) (types.PaymentPayload, error) {
+			enrichCalled = true
+			if payload.Extensions == nil {
+				payload.Extensions = map[string]interface{}{}
+			}
+			payload.Extensions["clientOwnedExtension"] = map[string]interface{}{
+				"info": map[string]interface{}{"s": "client_data"},
+			}
+			return payload, nil
+		},
+	})
+
+	payload, err := client.CreatePaymentPayload(ctx, types.PaymentRequirements{
+		Scheme:  "exact",
+		Network: "eip155:1",
+		Asset:   "USDC",
+		Amount:  "1000",
+		PayTo:   "0xrecipient",
+	}, nil, nil)
+	require.NoError(t, err)
+	require.True(t, enrichCalled)
+	require.Equal(t, map[string]interface{}{
+		"info": map[string]interface{}{"s": "client_data"},
+	}, payload.Extensions["clientOwnedExtension"])
+}
+
+func TestClientCreatePaymentPayloadServerGatedExtensionNoOpsWithoutDeclaration(t *testing.T) {
+	ctx := context.Background()
+	client := Newx402Client()
+	client.Register("eip155:1", &mockSchemeNetworkClientV2{scheme: "exact"})
+
+	var enrichCalled bool
+	client.RegisterExtension(enrichingClientExtension{
+		key: "testGasSponsoring",
+		enrichFn: func(payload types.PaymentPayload, required types.PaymentRequired) (types.PaymentPayload, error) {
+			if required.Extensions == nil || required.Extensions["testGasSponsoring"] == nil {
+				return payload, nil
+			}
+			enrichCalled = true
+			return payload, nil
+		},
+	})
+
+	_, err := client.CreatePaymentPayload(ctx, types.PaymentRequirements{
+		Scheme:  "exact",
+		Network: "eip155:1",
+		Asset:   "USDC",
+		Amount:  "1000",
+		PayTo:   "0xrecipient",
+	}, nil, map[string]interface{}{
+		"other-extension": map[string]interface{}{},
+	})
+	require.NoError(t, err)
+	require.False(t, enrichCalled)
+}
+
+func TestClientCreatePaymentPayloadValidation(t *testing.T) {
+	ctx := context.Background()
+	client := Newx402Client()
+
+	// Try to create payload with invalid requirements (typed, missing scheme)
+	invalidReqsV2 := types.PaymentRequirements{
+		Network: "eip155:1",
+		Asset:   "USDC",
+		Amount:  "1000000",
+		PayTo:   "0xrecipient",
+		// Missing Scheme - should error
+	}
+	_, err := client.CreatePaymentPayload(ctx, invalidReqsV2, nil, nil)
+	if err == nil {
+		t.Fatal("Expected error for invalid requirements")
+	}
+}
+
+func TestClientCreatePaymentPayloadNoScheme(t *testing.T) {
+	ctx := context.Background()
+	client := Newx402Client()
+
+	// Register a different scheme
+	mockClient := &mockSchemeNetworkClientV2{scheme: "different"}
+	client.Register("eip155:1", mockClient)
+
+	requirements := types.PaymentRequirements{
+		Scheme:  "unregistered",
+		Network: "eip155:1",
+		Asset:   "USDC",
+		Amount:  "1000000",
+		PayTo:   "0xrecipient",
+	}
+
+	_, err := client.CreatePaymentPayload(ctx, requirements, nil, nil)
+	if err == nil {
+		t.Fatal("Expected error for unregistered scheme")
+	}
+
+	var paymentErr *PaymentError
+	if !errors.As(err, &paymentErr) {
+		t.Fatalf("Expected PaymentError, got: %v (%T)", err, err)
+	}
+	if paymentErr.Code != ErrCodeUnsupportedScheme {
+		t.Fatalf("Expected UnsupportedScheme error code, got: %s", paymentErr.Code)
+	}
+}
+
+func TestClientGetRegisteredSchemes(t *testing.T) {
+	client := Newx402Client()
+	mockClientV2_1 := &mockSchemeNetworkClientV2{scheme: "exact"}
+	mockClientV2_2 := &mockSchemeNetworkClientV2{scheme: "transfer"}
+	mockClientV1_1 := &mockSchemeNetworkClientV1{scheme: "exact"}
+
+	client.Register("eip155:1", mockClientV2_1)
+	client.Register("eip155:8453", mockClientV2_2)
+	client.RegisterV1("eip155:1", mockClientV1_1)
+
+	schemes := client.GetRegisteredSchemes()
+	if len(schemes) != 2 {
+		t.Fatalf("Expected 2 versions, got %d", len(schemes))
+	}
+	if len(schemes[2]) != 2 {
+		t.Fatalf("Expected 2 schemes for v2, got %d", len(schemes[2]))
+	}
+	if len(schemes[1]) != 1 {
+		t.Fatalf("Expected 1 scheme for v1, got %d", len(schemes[1]))
+	}
+}
+
+// TestClientCanPay - SKIPPED: CanPay method removed in refactoring
+// func TestClientCanPay(t *testing.T) { ... }
+
+// TestClientCreatePaymentForRequired - SKIPPED: CreatePaymentForRequired method removed in refactoring
+// func TestClientCreatePaymentForRequired(t *testing.T) { ... }
+
+func TestClientNetworkPatternMatching(t *testing.T) {
+	client := Newx402Client()
+	mockClient := &mockSchemeNetworkClientV2{scheme: "exact"}
+
+	// Register with wildcard
+	client.Register("eip155:*", mockClient)
+
+	requirements := types.PaymentRequirements{
+		Scheme:  "exact",
+		Network: "eip155:8453", // Specific network
+		Asset:   "USDC",
+		Amount:  "1000000",
+		PayTo:   "0xrecipient",
+	}
+
+	// Should match the wildcard pattern
+	ctx := context.Background()
+	payload, err := client.CreatePaymentPayload(ctx, requirements, nil, nil)
+	if err != nil {
+		t.Fatalf("Expected pattern match to work: %v", err)
+	}
+
+	// Check fields directly (typed)
+	if payload.Accepted.Scheme != "exact" {
+		t.Fatal("Expected payload to be created with pattern match")
+	}
+}
+
+// mockFailableV1 and mockFailableV2 support failure simulation for hook tests
+
+type mockFailableV1 struct{ fail bool }
+
+func (m *mockFailableV1) Scheme() string { return "mock" }
+func (m *mockFailableV1) CreatePaymentPayload(
+	_ context.Context,
+	_ types.PaymentRequirementsV1,
+) (types.PaymentPayloadV1, error) {
+	if m.fail {
+		return types.PaymentPayloadV1{}, fmt.Errorf("fail")
+	}
+	return types.PaymentPayloadV1{}, nil
+}
+
+type mockFailableV2 struct{ fail bool }
+
+func (m *mockFailableV2) Scheme() string { return "mock" }
+func (m *mockFailableV2) CreatePaymentPayload(
+	_ context.Context,
+	_ types.PaymentRequirements,
+) (types.PaymentPayload, error) {
+	if m.fail {
+		return types.PaymentPayload{}, fmt.Errorf("fail")
+	}
+	return types.PaymentPayload{}, nil
+}
+
+func TestPaymentHooksOrder_V1_vs_V2(t *testing.T) {
+	ctx := context.Background()
+
+	makeClient := func(fail bool) *x402Client {
+		c := Newx402Client()
+		c.RegisterV1(Network("test"), &mockFailableV1{fail: fail})
+		c.Register(Network("test"), &mockFailableV2{fail: fail})
+		return c
+	}
+
+	run := func(c *x402Client, useV1 bool, expectErr bool) []string {
+		var calls []string
+		// СТАЛО:
+		c.OnBeforePaymentCreation(func(pcc PaymentCreationContext) (*BeforePaymentCreationHookResult, error) {
+			calls = append(calls, "before")
+			return nil, nil
+		})
+		c.OnAfterPaymentCreation(func(pcc PaymentCreatedContext) error {
+			calls = append(calls, "after")
+			return nil
+		})
+		c.OnPaymentCreationFailure(func(pcc PaymentCreationFailureContext) (*PaymentCreationFailureHookResult, error) {
+			calls = append(calls, "failure")
+			return nil, nil
+		})
+
+		if useV1 {
+			_, err := c.CreatePaymentPayloadV1(ctx, types.PaymentRequirementsV1{
+				Scheme:  "mock",
+				Network: "test",
+			})
+			if expectErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		} else {
+			_, err := c.CreatePaymentPayload(ctx, types.PaymentRequirements{
+				Scheme:  "mock",
+				Network: "test",
+			}, nil, nil)
+			if expectErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		}
+		return calls
+	}
+
+	t.Run("success", func(t *testing.T) {
+		v1 := run(makeClient(false), true, false)
+		v2 := run(makeClient(false), false, false)
+		require.Equal(t, []string{"before", "after"}, v1)
+		require.Equal(t, []string{"before", "after"}, v2)
+		require.Equal(t, v1, v2)
+	})
+
+	t.Run("failure", func(t *testing.T) {
+		v1 := run(makeClient(true), true, true)
+		v2 := run(makeClient(true), false, true)
+		require.Equal(t, []string{"before", "failure"}, v1)
+		require.Equal(t, []string{"before", "failure"}, v2)
+		require.Equal(t, v1, v2)
+	})
+}
+
+// mergeExtensions must preserve server-declared fields while letting clients add
+// their own fields, mirroring the TS client deep merge.
+func TestMergeExtensions(t *testing.T) {
+	t.Run("returns client when server is nil", func(t *testing.T) {
+		client := map[string]interface{}{"ext": map[string]interface{}{}}
+		if got := mergeExtensions(nil, client); got["ext"] == nil {
+			t.Fatalf("expected client value preserved, got %+v", got)
+		}
+	})
+
+	t.Run("returns server when client is nil", func(t *testing.T) {
+		server := map[string]interface{}{"ext": map[string]interface{}{}}
+		if got := mergeExtensions(server, nil); got["ext"] == nil {
+			t.Fatalf("expected server value preserved, got %+v", got)
+		}
+	})
+
+	t.Run("preserves server fields and adds client fields", func(t *testing.T) {
+		server := map[string]interface{}{
+			"ext": map[string]interface{}{
+				"info":   map[string]interface{}{"a": "servervalue"},
+				"schema": map[string]interface{}{"type": "object"},
+			},
+		}
+		client := map[string]interface{}{
+			"ext": map[string]interface{}{
+				"info": map[string]interface{}{"a": "client-clobber", "b": "clientvalue"},
+			},
+		}
+
+		merged := mergeExtensions(server, client)
+		ext := merged["ext"].(map[string]interface{})
+		info := ext["info"].(map[string]interface{})
+
+		if info["a"] != "servervalue" {
+			t.Fatalf("server field a should win, got %v", info["a"])
+		}
+		if info["b"] != "clientvalue" {
+			t.Fatalf("client field b should be added, got %v", info["b"])
+		}
+		if ext["schema"] == nil {
+			t.Fatalf("server schema should be preserved")
+		}
+	})
+
+	t.Run("uses client value when types differ", func(t *testing.T) {
+		server := map[string]interface{}{"k": "string-value"}
+		client := map[string]interface{}{"k": map[string]interface{}{"nested": true}}
+
+		merged := mergeExtensions(server, client)
+		if _, ok := merged["k"].(map[string]interface{}); !ok {
+			t.Fatalf("client object should replace non-object server value, got %T", merged["k"])
+		}
+	})
+
+	t.Run("merges conflicting array fields instead of replacing", func(t *testing.T) {
+		server := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{
+					"a": "bc_app",
+					"s": []interface{}{"bc_server", "bc_shared"},
+				},
+				"schema": map[string]interface{}{"type": "object"},
+			},
+		}
+		client := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{
+					"s": []interface{}{"bc_shared", "bc_client"},
+				},
+			},
+		}
+
+		merged := mergeExtensions(server, client)
+		info := merged["builder-code"].(map[string]interface{})["info"].(map[string]interface{})
+		got, ok := asSlice(info["s"])
+		if !ok {
+			t.Fatalf("expected merged s array, got %T", info["s"])
+		}
+		want := []interface{}{"bc_shared", "bc_client", "bc_server"}
+		if !DeepEqual(got, want) {
+			t.Fatalf("expected s=%v, got %v", want, got)
+		}
+		if info["a"] != "bc_app" {
+			t.Fatalf("server a should be preserved, got %v", info["a"])
+		}
+	})
+
+	t.Run("merges []string array fields from typed Go maps", func(t *testing.T) {
+		server := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"s": []string{"bc_server"}},
+			},
+		}
+		client := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"s": []string{"bc_client"}},
+			},
+		}
+
+		merged := mergeExtensions(server, client)
+		info := merged["builder-code"].(map[string]interface{})["info"].(map[string]interface{})
+		got, ok := asSlice(info["s"])
+		if !ok || !DeepEqual(got, []interface{}{"bc_client", "bc_server"}) {
+			t.Fatalf("expected [bc_client bc_server], got %v", info["s"])
+		}
+	})
+
+	t.Run("merges []map[string]interface{} array fields via JSON round-trip", func(t *testing.T) {
+		server := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{
+					"s": []interface{}{map[string]interface{}{"a": 1.0}},
+				},
+			},
+		}
+		client := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{
+					"s": []map[string]interface{}{{"a": 1.0}, {"b": 2.0}},
+				},
+			},
+		}
+
+		merged := mergeExtensions(server, client)
+		info := merged["builder-code"].(map[string]interface{})["info"].(map[string]interface{})
+		got, ok := asSlice(info["s"])
+		want := []interface{}{
+			map[string]interface{}{"a": 1.0},
+			map[string]interface{}{"b": 2.0},
+		}
+		if !ok || !DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v (ok=%v)", want, got, ok)
+		}
+	})
+
+	t.Run("merges a scalar against an array on the other side", func(t *testing.T) {
+		server := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"s": "bc_server"},
+			},
+		}
+		client := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"s": []interface{}{"bc_client"}},
+			},
+		}
+
+		merged := mergeExtensions(server, client)
+		info := merged["builder-code"].(map[string]interface{})["info"].(map[string]interface{})
+		got, ok := asSlice(info["s"])
+		if !ok || !DeepEqual(got, []interface{}{"bc_client", "bc_server"}) {
+			t.Fatalf("expected [bc_client bc_server], got %v", info["s"])
+		}
+	})
+
+	t.Run("dedupes repeated entries within a single side of a merged array field", func(t *testing.T) {
+		server := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"s": []interface{}{"bc_server", "bc_server"}},
+			},
+		}
+		client := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"s": []interface{}{"bc_client", "bc_client"}},
+			},
+		}
+
+		merged := mergeExtensions(server, client)
+		info := merged["builder-code"].(map[string]interface{})["info"].(map[string]interface{})
+		got, ok := asSlice(info["s"])
+		if !ok || !DeepEqual(got, []interface{}{"bc_client", "bc_server"}) {
+			t.Fatalf("expected [bc_client bc_server], got %v", info["s"])
+		}
+	})
+
+	t.Run("keeps the server array for a non-additive extension field instead of concatenating", func(t *testing.T) {
+		// Array concatenation is scoped to additiveArrayInfoFields (builder-code's
+		// "s"); other extensions' conflicting array fields must keep the server's
+		// value, matching ValidateExtensions' exact-match requirement for them.
+		server := map[string]interface{}{
+			"sign-in-with-x": map[string]interface{}{
+				"info": map[string]interface{}{"resources": []interface{}{"https://api.example.com/data"}},
+			},
+		}
+		client := map[string]interface{}{
+			"sign-in-with-x": map[string]interface{}{
+				"info": map[string]interface{}{"resources": []interface{}{"https://evil.example.com"}},
+			},
+		}
+
+		merged := mergeExtensions(server, client)
+		info := merged["sign-in-with-x"].(map[string]interface{})["info"].(map[string]interface{})
+		if !DeepEqual(info["resources"], []interface{}{"https://api.example.com/data"}) {
+			t.Fatalf("expected server resources to be preserved, got %v", info["resources"])
+		}
+	})
+}
+
+func TestSpendControls(t *testing.T) {
+	network := Network("eip155:8453")
+	usdc := DefaultAsset{
+		Asset:    "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+		Decimals: 6,
+		Symbol:   "USDC",
+	}
+	usdt := DefaultAsset{
+		Asset:    "0xUsdTSecondaryAsset0000000000000000000001",
+		Decimals: 6,
+		Symbol:   "USDT",
+	}
+	mUsd := DefaultAsset{
+		Asset:    "0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503",
+		Decimals: 18,
+		Symbol:   "mUSD",
+	}
+
+	clientWithDefaultAsset := func(entry DefaultAsset, controls *SpendControls, disabled bool) *x402Client {
+		mockClient := &mockSchemeNetworkClientV2{scheme: "exact"}
+		mockClient.findDefaultAsset = func(asset string, _ Network) *DefaultAsset {
+			if strings.EqualFold(asset, entry.Asset) {
+				copied := entry
+				return &copied
+			}
+			return nil
+		}
+		client := Newx402Client()
+		client.Register(network, mockClient)
+		if disabled {
+			client.DisableSpendControls()
+		} else if controls != nil {
+			client.SetSpendControls(*controls)
+		}
+		return client
+	}
+
+	req := func(asset, amount string, net Network) types.PaymentRequirements {
+		if net == "" {
+			net = network
+		}
+		return types.PaymentRequirements{
+			Scheme:  "exact",
+			Network: string(net),
+			Asset:   asset,
+			Amount:  amount,
+			PayTo:   "0xpay",
+		}
+	}
+
+	t.Run("allows a payment at or below the default $1 USD cap", func(t *testing.T) {
+		client := clientWithDefaultAsset(usdc, nil, false)
+		selected, err := client.SelectPaymentRequirements([]types.PaymentRequirements{req(usdc.Asset, "1000000", "")})
+		require.NoError(t, err)
+		require.Equal(t, "1000000", selected.Amount)
+	})
+
+	t.Run("rejects a payment above the default $1 USD cap", func(t *testing.T) {
+		client := clientWithDefaultAsset(usdc, nil, false)
+		_, err := client.SelectPaymentRequirements([]types.PaymentRequirements{req(usdc.Asset, "1000001", "")})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "maxAmountPerPayment")
+	})
+
+	t.Run("picks the affordable accept when both under and over the cap are offered", func(t *testing.T) {
+		client := clientWithDefaultAsset(usdc, nil, false)
+		selected, err := client.SelectPaymentRequirements([]types.PaymentRequirements{
+			req(usdc.Asset, "50000000", ""),
+			req(usdc.Asset, "500000", ""),
+		})
+		require.NoError(t, err)
+		require.Equal(t, "500000", selected.Amount)
+	})
+
+	t.Run("caps a second USD asset on the same network identically to the default", func(t *testing.T) {
+		mockClient := &mockSchemeNetworkClientV2{scheme: "exact"}
+		mockClient.findDefaultAsset = func(asset string, _ Network) *DefaultAsset {
+			switch strings.ToLower(asset) {
+			case strings.ToLower(usdc.Asset):
+				copied := usdc
+				return &copied
+			case strings.ToLower(usdt.Asset):
+				copied := usdt
+				return &copied
+			}
+			return nil
+		}
+		client := Newx402Client()
+		client.Register(network, mockClient)
+		_, err := client.SelectPaymentRequirements([]types.PaymentRequirements{req(usdt.Asset, "2000000", "")})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "maxAmountPerPayment")
+	})
+
+	t.Run("rejects unrecognized assets by default and schemes without findDefaultAsset", func(t *testing.T) {
+		client := clientWithDefaultAsset(usdc, nil, false)
+		_, err := client.SelectPaymentRequirements([]types.PaymentRequirements{req("0xCustomUnknownToken", "1", "")})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "spendControls.allowedAssets")
+
+		bare := &mockSchemeNetworkClientV2{scheme: "exact", noFindDefaultAsset: true}
+		bareClient := Newx402Client()
+		bareClient.Register(network, bare)
+		_, err = bareClient.SelectPaymentRequirements([]types.PaymentRequirements{req(usdc.Asset, "1", "")})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "spendControls.allowedAssets")
+	})
+
+	t.Run("DisableSpendControls disables allowlist and USD cap", func(t *testing.T) {
+		client := clientWithDefaultAsset(usdc, nil, true)
+		_, err := client.SelectPaymentRequirements([]types.PaymentRequirements{req("0xCustomUnknownToken", "999999999999", "")})
+		require.NoError(t, err)
+		_, err = client.SelectPaymentRequirements([]types.PaymentRequirements{req(usdc.Asset, "5000000", "")})
+		require.NoError(t, err)
+	})
+
+	t.Run("AllowAnyAsset allows any asset while still applying the USD cap to defaults", func(t *testing.T) {
+		client := clientWithDefaultAsset(usdc, &SpendControls{AllowAnyAsset: true}, false)
+		_, err := client.SelectPaymentRequirements([]types.PaymentRequirements{req("0xCustomUnknownToken", "999999999999", "")})
+		require.NoError(t, err)
+		_, err = client.SelectPaymentRequirements([]types.PaymentRequirements{req(usdc.Asset, "1000001", "")})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "maxAmountPerPayment")
+	})
+
+	t.Run("scales the USD cap for an 18-decimal default asset", func(t *testing.T) {
+		mockClient := &mockSchemeNetworkClientV2{scheme: "exact"}
+		mockClient.findDefaultAsset = func(asset string, _ Network) *DefaultAsset {
+			if strings.EqualFold(asset, mUsd.Asset) {
+				copied := mUsd
+				return &copied
+			}
+			return nil
+		}
+		mezo := Network("eip155:31611")
+		client := Newx402Client()
+		client.Register(mezo, mockClient)
+
+		_, err := client.SelectPaymentRequirements([]types.PaymentRequirements{req(mUsd.Asset, "1000000000000000001", mezo)})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "maxAmountPerPayment")
+
+		selected, err := client.SelectPaymentRequirements([]types.PaymentRequirements{req(mUsd.Asset, "1000000000000000000", mezo)})
+		require.NoError(t, err)
+		require.Equal(t, "1000000000000000000", selected.Amount)
+	})
+
+	t.Run("honours DisableMaxAmountPerPayment, custom Money, and SetSpendControls", func(t *testing.T) {
+		client := clientWithDefaultAsset(usdc, &SpendControls{DisableMaxAmountPerPayment: true}, false)
+		_, err := client.SelectPaymentRequirements([]types.PaymentRequirements{req(usdc.Asset, "5000000", "")})
+		require.NoError(t, err)
+
+		mock5 := &mockSchemeNetworkClientV2{scheme: "exact"}
+		mock5.findDefaultAsset = func(asset string, _ Network) *DefaultAsset {
+			if strings.EqualFold(asset, usdc.Asset) {
+				copied := usdc
+				return &copied
+			}
+			return nil
+		}
+		client5 := Newx402Client(WithSpendControls(SpendControls{MaxAmountPerPayment: "$5"}))
+		client5.Register(network, mock5)
+		_, err = client5.SelectPaymentRequirements([]types.PaymentRequirements{req(usdc.Asset, "5000000", "")})
+		require.NoError(t, err)
+	})
+
+	t.Run("allows opt-in assets uncapped or with an atomic maxAmountPerPayment", func(t *testing.T) {
+		customAsset := "0xCustomToken"
+		cappedClient := clientWithDefaultAsset(usdc, &SpendControls{
+			AllowedAssets: []SpendControlAsset{{Asset: customAsset, Network: network, MaxAmountPerPayment: "10000"}},
+		}, false)
+		_, err := cappedClient.SelectPaymentRequirements([]types.PaymentRequirements{req(customAsset, "10001", "")})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "allowedAssets maxAmountPerPayment")
+
+		uncappedClient := clientWithDefaultAsset(usdc, &SpendControls{
+			AllowedAssets: []SpendControlAsset{{Asset: strings.ToLower(customAsset), Network: "eip155:*"}},
+		}, false)
+		_, err = uncappedClient.SelectPaymentRequirements([]types.PaymentRequirements{req(customAsset, "999999999999", "")})
+		require.NoError(t, err)
+	})
+
+	t.Run("rejects a non-integer 402 amount on a per-asset atomic cap", func(t *testing.T) {
+		customAsset := "0xCustomToken"
+		client := clientWithDefaultAsset(usdc, &SpendControls{
+			AllowedAssets: []SpendControlAsset{{Asset: customAsset, Network: network, MaxAmountPerPayment: "10000"}},
+		}, false)
+		_, err := client.SelectPaymentRequirements([]types.PaymentRequirements{req(customAsset, "1.5", "")})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "allowedAssets maxAmountPerPayment")
+	})
+
+	t.Run("keeps a sibling atomic accept when a per-asset amount is not an integer", func(t *testing.T) {
+		customAsset := "0xCustomToken"
+		client := clientWithDefaultAsset(usdc, &SpendControls{
+			AllowedAssets: []SpendControlAsset{{Asset: customAsset, Network: network, MaxAmountPerPayment: "10000"}},
+		}, false)
+		selected, err := client.SelectPaymentRequirements([]types.PaymentRequirements{
+			req(customAsset, "1.5", ""),
+			req(customAsset, "100", ""),
+		})
+		require.NoError(t, err)
+		require.Equal(t, "100", selected.Amount)
+	})
+
+	t.Run("errors when a per-asset cap is not an integer atomic amount", func(t *testing.T) {
+		customAsset := "0xCustomToken"
+		for _, cap := range []string{"$1", "1.5"} {
+			client := clientWithDefaultAsset(usdc, &SpendControls{
+				AllowedAssets: []SpendControlAsset{{Asset: customAsset, Network: network, MaxAmountPerPayment: cap}},
+			}, false)
+			_, err := client.SelectPaymentRequirements([]types.PaymentRequirements{req(customAsset, "100", "")})
+			require.Error(t, err, "cap %q", cap)
+			require.Contains(t, err.Error(), "maxAmountPerPayment")
+			require.Contains(t, err.Error(), "integer atomic")
+			require.NotContains(t, err.Error(), "Raise the per-asset cap")
+		}
+	})
+
+	t.Run("overrides the USD cap for default assets by id or symbol", func(t *testing.T) {
+		byID := clientWithDefaultAsset(usdc, &SpendControls{
+			AllowedAssets: []SpendControlAsset{{Asset: usdc.Asset, Network: network, MaxAmountPerPayment: "500000"}},
+		}, false)
+		_, err := byID.SelectPaymentRequirements([]types.PaymentRequirements{req(usdc.Asset, "600000", "")})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "allowedAssets maxAmountPerPayment")
+		_, err = byID.SelectPaymentRequirements([]types.PaymentRequirements{req(usdc.Asset, "400000", "")})
+		require.NoError(t, err)
+
+		pyusd := DefaultAsset{Asset: "0xPayPalUsdAsset000000000000000000000001", Decimals: 6, Symbol: "PYUSD"}
+		mockPyusd := &mockSchemeNetworkClientV2{scheme: "exact"}
+		mockPyusd.findDefaultAsset = func(asset string, _ Network) *DefaultAsset {
+			if strings.EqualFold(asset, pyusd.Asset) {
+				copied := pyusd
+				return &copied
+			}
+			return nil
+		}
+		clientBySymbol := Newx402Client()
+		clientBySymbol.Register(network, mockPyusd)
+		clientBySymbol.SetSpendControls(SpendControls{
+			AllowedAssets: []SpendControlAsset{{Asset: "pyusd", Network: network, MaxAmountPerPayment: "500000"}},
+		})
+		_, err = clientBySymbol.SelectPaymentRequirements([]types.PaymentRequirements{req(pyusd.Asset, "600000", "")})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "allowedAssets maxAmountPerPayment")
+		_, err = clientBySymbol.SelectPaymentRequirements([]types.PaymentRequirements{req(pyusd.Asset, "400000", "")})
+		require.NoError(t, err)
+	})
+
+	t.Run("keeps the USD cap when a default asset is listed without a per-entry cap", func(t *testing.T) {
+		client := clientWithDefaultAsset(usdc, &SpendControls{
+			AllowedAssets: []SpendControlAsset{{Asset: usdc.Symbol, Network: network}},
+		}, false)
+		_, err := client.SelectPaymentRequirements([]types.PaymentRequirements{req(usdc.Asset, "1000001", "")})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "maxAmountPerPayment")
+	})
+
+	t.Run("allows defaults plus listed custom assets", func(t *testing.T) {
+		custom := "0xCustomToken"
+		client := clientWithDefaultAsset(usdc, &SpendControls{
+			DisableMaxAmountPerPayment: true,
+			AllowedAssets:              []SpendControlAsset{{Asset: custom, Network: network}},
+		}, false)
+		_, err := client.SelectPaymentRequirements([]types.PaymentRequirements{req(usdc.Asset, "1", "")})
+		require.NoError(t, err)
+		_, err = client.SelectPaymentRequirements([]types.PaymentRequirements{req(custom, "1", "")})
+		require.NoError(t, err)
+	})
+
+	t.Run("caps v1 accepts via maxAmountRequired", func(t *testing.T) {
+		mockClient := &mockSchemeNetworkClientV1{scheme: "exact"}
+		mockClient.findDefaultAsset = func(asset string, _ Network) *DefaultAsset {
+			if strings.EqualFold(asset, usdc.Asset) {
+				copied := usdc
+				return &copied
+			}
+			return nil
+		}
+		client := Newx402Client()
+		client.RegisterV1("base", mockClient)
+		_, err := client.SelectPaymentRequirementsV1([]types.PaymentRequirementsV1{{
+			Scheme:            "exact",
+			Network:           "base",
+			Asset:             usdc.Asset,
+			MaxAmountRequired: "2000000",
+			PayTo:             "0xpay",
+			MaxTimeoutSeconds: 60,
+		}})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "maxAmountPerPayment")
+	})
+
+	t.Run("only exposes requirements that passed spend controls to user policies", func(t *testing.T) {
+		var seen []string
+		client := clientWithDefaultAsset(usdc, nil, false)
+		client.RegisterPolicy(func(reqs []PaymentRequirementsView) []PaymentRequirementsView {
+			for _, r := range reqs {
+				seen = append(seen, r.GetAmount())
+			}
+			return reqs
+		})
+		selected, err := client.SelectPaymentRequirements([]types.PaymentRequirements{
+			req(usdc.Asset, "50000000", ""),
+			req(usdc.Asset, "250000", ""),
+		})
+		require.NoError(t, err)
+		require.Equal(t, []string{"250000"}, seen)
+		require.Equal(t, "250000", selected.Amount)
+	})
+
+	t.Run("compares non-integer decimal amounts to the USD cap directly", func(t *testing.T) {
+		rlusd := DefaultAsset{
+			Asset:    "524C555344000000000000000000000000000000",
+			Decimals: 15,
+			Symbol:   "RLUSD",
+		}
+		mockClient := &mockSchemeNetworkClientV2{scheme: "exact"}
+		mockClient.findDefaultAsset = func(asset string, _ Network) *DefaultAsset {
+			if asset == rlusd.Asset {
+				copied := rlusd
+				return &copied
+			}
+			return nil
+		}
+		xrpl := Network("xrpl:1")
+		client := Newx402Client()
+		client.Register(xrpl, mockClient)
+
+		_, err := client.SelectPaymentRequirements([]types.PaymentRequirements{req(rlusd.Asset, "1.0", xrpl)})
+		require.NoError(t, err)
+		_, err = client.SelectPaymentRequirements([]types.PaymentRequirements{req(rlusd.Asset, "1.01", xrpl)})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "maxAmountPerPayment")
+	})
+}

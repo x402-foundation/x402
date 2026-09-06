@@ -1,0 +1,8 @@
+{
+  "targetURL": "https://httpbin.org",
+  "amount": 0.01,
+  "payTo": "<your address>",
+  "headers": {
+    "x-example-header": "example value"
+  }
+}

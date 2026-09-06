@@ -1,0 +1,569 @@
+"""FastAPI/Starlette middleware for x402 payment handling.
+
+Provides payment-gated route protection for FastAPI applications.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
+
+try:
+    from fastapi import Request, Response
+    from fastapi.responses import HTMLResponse, JSONResponse
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.types import ASGIApp
+except ImportError as e:
+    raise ImportError(
+        "FastAPI middleware requires fastapi and starlette. Install with: uv add x402[fastapi]"
+    ) from e
+
+from ...schemas import SettleResponse, VerifiedPaymentCancelOptions
+from ..background_init import handle_background_init_error
+from ..constants import SETTLEMENT_OVERRIDES_HEADER
+from ..facilitator_client_base import FacilitatorResponseError
+from ..types import (
+    HTTPAdapter,
+    HTTPRequestContext,
+    HTTPTransportContext,
+    PaywallConfig,
+    RoutesConfig,
+)
+from ..x402_http_server import PaywallProvider, x402HTTPResourceServer
+from ..x402_http_server_base import PAYMENT_REQUIRED_CACHE_CONTROL, with_private_cache_control
+
+if TYPE_CHECKING:
+    from ...server import x402ResourceServer
+
+
+# ============================================================================
+# Extension Auto-Registration
+# ============================================================================
+
+from ._bazaar_utils import (
+    check_if_bazaar_needed as _check_if_bazaar_needed,
+)
+from ._bazaar_utils import (
+    register_bazaar_extension as _register_bazaar_extension,
+)
+from ._bazaar_utils import (
+    validate_bazaar_extensions as _validate_bazaar_extensions,
+)
+
+logger = logging.getLogger(__name__)
+
+# ============================================================================
+# FastAPI Adapter
+# ============================================================================
+
+
+class FastAPIAdapter(HTTPAdapter):
+    """Adapter for FastAPI/Starlette Request.
+
+    Implements HTTPAdapter protocol for FastAPI framework.
+    """
+
+    def __init__(self, request: Request) -> None:
+        """Create adapter from FastAPI request.
+
+        Args:
+            request: FastAPI/Starlette request object.
+        """
+        self._request = request
+
+    def get_header(self, name: str) -> str | None:
+        """Get header value (case-insensitive).
+
+        Args:
+            name: Header name.
+
+        Returns:
+            Header value or None.
+        """
+        return self._request.headers.get(name)
+
+    def get_method(self) -> str:
+        """Get HTTP method.
+
+        Returns:
+            HTTP method (GET, POST, etc.).
+        """
+        return self._request.method
+
+    def get_path(self) -> str:
+        """Get request path.
+
+        Returns:
+            Request path.
+        """
+        return self._request.url.path
+
+    def get_url(self) -> str:
+        """Get full request URL.
+
+        Returns:
+            Full URL string.
+        """
+        return str(self._request.url)
+
+    def get_accept_header(self) -> str:
+        """Get Accept header.
+
+        Returns:
+            Accept header value.
+        """
+        return self._request.headers.get("accept", "")
+
+    def get_user_agent(self) -> str:
+        """Get User-Agent header.
+
+        Returns:
+            User-Agent header value.
+        """
+        return self._request.headers.get("user-agent", "")
+
+    def get_query_params(self) -> dict[str, str | list[str]]:
+        """Get query parameters.
+
+        Returns:
+            Dict of query parameters.
+        """
+        return dict(self._request.query_params)
+
+    def get_query_param(self, name: str) -> str | None:
+        """Get single query parameter.
+
+        Args:
+            name: Parameter name.
+
+        Returns:
+            Parameter value or None.
+        """
+        return self._request.query_params.get(name)
+
+    def get_body(self) -> Any:
+        """Get request body (requires async read in actual impl).
+
+        Returns:
+            None (body requires async access).
+        """
+        return None  # Body requires async access
+
+
+# ============================================================================
+# Middleware Implementation
+# ============================================================================
+
+
+def _facilitator_error_response(error: FacilitatorResponseError) -> JSONResponse:
+    """Map invalid facilitator responses to a stable HTTP error."""
+    return JSONResponse(
+        content={"error": str(error)},
+        status_code=502,
+    )
+
+
+def payment_middleware(
+    routes: RoutesConfig,
+    server: x402ResourceServer,
+    paywall_config: PaywallConfig | None = None,
+    paywall_provider: PaywallProvider | None = None,
+    sync_facilitator_on_start: bool = True,
+) -> Callable[[Request, Callable[[Request], Awaitable[Response]]], Awaitable[Response]]:
+    """Create FastAPI payment middleware with pre-configured server.
+
+    Args:
+        routes: Route configuration for protected endpoints.
+        server: Pre-configured x402ResourceServer.
+        paywall_config: Optional paywall UI configuration.
+        paywall_provider: Optional custom paywall provider.
+        sync_facilitator_on_start: Fetch facilitator support when the middleware is created.
+
+    Returns:
+        FastAPI middleware function.
+
+    Example:
+        ```python
+        from fastapi import FastAPI
+        from x402 import x402ResourceServer
+        from x402.http import HTTPFacilitatorClient
+        from x402.http.middleware import fastapi_payment_middleware
+
+        app = FastAPI()
+
+        # Configure server
+        facilitator = HTTPFacilitatorClient()
+        server = x402ResourceServer(facilitator)
+        # ... register schemes ...
+
+        # Define routes
+        routes = {
+            "GET /api/weather/*": {
+                "accepts": {
+                    "scheme": "exact",
+                    "payTo": "0x...",
+                    "price": "$0.01",
+                    "network": "eip155:84532",
+                }
+            }
+        }
+
+        # Add middleware
+        @app.middleware("http")
+        async def x402_middleware(request, call_next):
+            return await fastapi_payment_middleware(routes, server)(request, call_next)
+        ```
+    """
+    # Auto-register bazaar extension if routes declare it
+    if _check_if_bazaar_needed(routes):
+        _register_bazaar_extension(server)
+        _validate_bazaar_extensions(routes)
+
+    # Create HTTP server wrapper
+    http_server = x402HTTPResourceServer(server, routes)
+
+    if paywall_provider:
+        http_server.register_paywall_provider(paywall_provider)
+
+    # Initialization state with async lock for concurrency safety
+    init_done = False
+    init_lock = asyncio.Lock()
+
+    # Initialize if requested - queries facilitator /supported to populate
+    # facilitator clients. Fatal capability / route mismatches exit the process
+    # so a misconfigured server does not stay up until the first paid request.
+    if sync_facilitator_on_start:
+        try:
+            http_server.initialize()
+            init_done = True
+        except Exception as error:
+            handle_background_init_error(error)
+
+    async def middleware(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        nonlocal init_done
+
+        # Create adapter and context
+        adapter = FastAPIAdapter(request)
+        # Routers dispatch on the escaped path, so route matching must use the
+        # raw request path rather than the decoded URL path.
+        raw_path = request.scope["raw_path"].decode("ascii").split("?")[0]
+        context = HTTPRequestContext(
+            adapter=adapter,
+            path=raw_path,
+            method=request.method,
+            payment_header=(
+                adapter.get_header("payment-signature") or adapter.get_header("x-payment")
+            ),
+        )
+
+        # Check if route requires payment (before initialization)
+        if not http_server.requires_payment(context):
+            return await call_next(request)
+
+        # Initialize on first protected request (double-checked locking)
+        if sync_facilitator_on_start and not init_done:
+            async with init_lock:
+                if not init_done:
+                    try:
+                        http_server.initialize()
+                    except FacilitatorResponseError as error:
+                        return _facilitator_error_response(error)
+                    init_done = True
+
+        # Process payment request
+        try:
+            result = await http_server.process_http_request(context, paywall_config)
+        except FacilitatorResponseError as error:
+            return _facilitator_error_response(error)
+        except Exception:
+            logger.exception("x402: unexpected error while processing an HTTP payment request")
+            return JSONResponse(
+                content={"error": "Internal Server Error"},
+                status_code=500,
+            )
+
+        if result.type == "no-payment-required":
+            return await call_next(request)
+
+        if result.type == "payment-error":
+            # Return 402 response
+            response = result.response
+            if response is None:
+                return JSONResponse(
+                    content={"error": "Payment required"},
+                    status_code=402,
+                )
+
+            if response.is_html:
+                return HTMLResponse(
+                    content=response.body,
+                    status_code=response.status,
+                    headers=response.headers,
+                )
+            else:
+                return JSONResponse(
+                    content=response.body or {},
+                    status_code=response.status,
+                    headers=response.headers,
+                )
+
+        if result.type == "payment-verified":
+            # Store payment info in request state
+            request.state.payment_payload = result.payment_payload
+            request.state.payment_requirements = result.payment_requirements
+            dispatcher = result.cancellation_dispatcher
+            transport_context = HTTPTransportContext(request=context)
+
+            try:
+                response = await call_next(request)
+            except Exception as error:
+                cancel_settlement = None
+                if dispatcher is not None:
+                    cancel_settlement = await dispatcher.cancel(
+                        VerifiedPaymentCancelOptions(reason="handler_threw", error=error)
+                    )
+                failure_headers = http_server.create_failure_path_settlement_headers(
+                    cancel_settlement,
+                    result.before_handler_settlement,
+                    result.payment_payload,
+                )
+                if not isinstance(failure_headers, dict) or not failure_headers:
+                    raise
+                return JSONResponse(
+                    content={"error": "Internal Server Error"},
+                    status_code=500,
+                    headers=failure_headers,
+                )
+
+            # Don't settle on error responses
+            if response.status_code >= 400:
+                cancel_settlement = None
+                if dispatcher is not None:
+                    cancel_settlement = await dispatcher.cancel(
+                        VerifiedPaymentCancelOptions(
+                            reason="handler_failed",
+                            response_status=response.status_code,
+                        )
+                    )
+                failure_headers = http_server.create_failure_path_settlement_headers(
+                    cancel_settlement,
+                    result.before_handler_settlement,
+                    result.payment_payload,
+                    response.headers.get("Cache-Control"),
+                )
+                if isinstance(failure_headers, dict):
+                    for key, value in failure_headers.items():
+                        response.headers[key] = value
+                return response
+
+            # Read response body for potential buffering
+            body = b""
+            async for chunk in response.body_iterator:
+                body += chunk
+
+            # Extract and strip settlement overrides from the upstream response
+            overrides = http_server._extract_settlement_overrides(
+                dict(response.headers),
+            )
+            if overrides is not None:
+                for k in list(response.headers.keys()):
+                    if k.lower() == SETTLEMENT_OVERRIDES_HEADER.lower():
+                        del response.headers[k]
+
+            transport_context.response_headers = dict(response.headers)
+
+            # Process settlement (await async method)
+            try:
+                settle_result = await http_server.process_settlement(
+                    result.payment_payload,
+                    result.payment_requirements,
+                    context=context,
+                    settlement_overrides=overrides,
+                    declared_extensions=result.declared_extensions,
+                    transport_context=transport_context,
+                    before_handler_settlement=result.before_handler_settlement,
+                )
+
+                if not settle_result.success:
+                    # Use response from process_settlement (includes PAYMENT-RESPONSE
+                    # header and empty body by default)
+                    resp = settle_result.response
+                    if resp is None:
+                        return JSONResponse(content={}, status_code=402)
+                    if resp.is_html:
+                        return Response(
+                            content=resp.body,
+                            status_code=resp.status,
+                            headers=resp.headers,
+                            media_type="text/html",
+                        )
+                    return JSONResponse(
+                        content=resp.body or {},
+                        status_code=resp.status,
+                        headers=resp.headers,
+                    )
+
+                # Add settlement headers
+                headers = dict(response.headers)
+                headers.update(settle_result.headers)
+                headers["Cache-Control"] = with_private_cache_control(headers.get("Cache-Control"))
+
+                return Response(
+                    content=body,
+                    status_code=response.status_code,
+                    headers=headers,
+                    media_type=response.media_type,
+                )
+
+            except FacilitatorResponseError as error:
+                return _facilitator_error_response(error)
+            except Exception:
+                # An unexpected error here (RPC failure, bug, ...) is a
+                # server-side failure, not a payment problem. Log it so
+                # operators get a signal (the module otherwise logs nothing),
+                # and surface it as a settle failure (402 + PAYMENT-RESPONSE,
+                # success=False) - consistent with the not-settle_result.success
+                # path and distinguishable from a genuine "payment required".
+                logger.exception("x402: unexpected error while settling a verified payment")
+                settle_response = SettleResponse(
+                    success=False,
+                    error_reason="unexpected_settle_error",
+                    error_message="unexpected error while settling the verified payment",
+                    transaction="",
+                    network=result.payment_requirements.network,
+                )
+                settle_headers = http_server._create_settlement_headers(
+                    settle_response, result.payment_requirements
+                )
+                return JSONResponse(
+                    content={},
+                    status_code=402,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Cache-Control": PAYMENT_REQUIRED_CACHE_CONTROL,
+                        **settle_headers,
+                    },
+                )
+
+        # Fallthrough - should not happen
+        return await call_next(request)
+
+    return middleware
+
+
+def set_settlement_overrides(response: Response, overrides: dict[str, Any]) -> None:
+    """Set settlement overrides on a FastAPI/Starlette response for partial settlement.
+
+    The middleware extracts these before settlement and strips the header
+    from the client response.
+
+    Args:
+        response: FastAPI ``Response`` object.
+        overrides: Settlement overrides, e.g. ``{"amount": "500"}``.
+    """
+    import json
+
+    response.headers[SETTLEMENT_OVERRIDES_HEADER] = json.dumps(overrides)
+
+
+def payment_middleware_from_config(
+    routes: RoutesConfig,
+    facilitator_client: Any = None,
+    schemes: list[dict[str, Any]] | None = None,
+    paywall_config: PaywallConfig | None = None,
+    paywall_provider: PaywallProvider | None = None,
+    sync_facilitator_on_start: bool = True,
+) -> Callable[[Request, Callable[[Request], Awaitable[Response]]], Awaitable[Response]]:
+    """Create FastAPI payment middleware from configuration.
+
+    Convenience function that creates x402ResourceServer internally.
+
+    Args:
+        routes: Route configuration for protected endpoints.
+        facilitator_client: Facilitator client(s) for payment processing.
+        schemes: Scheme registrations for server-side processing.
+        paywall_config: Optional paywall UI configuration.
+        paywall_provider: Optional custom paywall provider.
+        sync_facilitator_on_start: Fetch facilitator support when the middleware is created.
+
+    Returns:
+        FastAPI middleware function.
+    """
+    from ...server import x402ResourceServer
+
+    server = x402ResourceServer(facilitator_client)
+
+    if schemes:
+        for registration in schemes:
+            server.register(registration["network"], registration["server"])
+
+    return payment_middleware(
+        routes,
+        server,
+        paywall_config,
+        paywall_provider,
+        sync_facilitator_on_start,
+    )
+
+
+# ============================================================================
+# Alternative: Starlette Middleware Class
+# ============================================================================
+
+
+class PaymentMiddlewareASGI(BaseHTTPMiddleware):
+    """ASGI middleware class for payment handling.
+
+    Alternative to the function-based middleware for use with
+    app.add_middleware().
+
+    Example:
+        ```python
+        app.add_middleware(
+            PaymentMiddlewareASGI,
+            routes=routes,
+            server=server,
+        )
+        ```
+    """
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        routes: RoutesConfig,
+        server: x402ResourceServer,
+        paywall_config: PaywallConfig | None = None,
+        paywall_provider: PaywallProvider | None = None,
+    ) -> None:
+        """Initialize ASGI middleware.
+
+        Args:
+            app: ASGI application.
+            routes: Route configuration.
+            server: x402ResourceServer instance.
+            paywall_config: Optional paywall config.
+            paywall_provider: Optional custom paywall provider.
+        """
+        super().__init__(app)
+        self._middleware = payment_middleware(routes, server, paywall_config, paywall_provider)
+
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        """Dispatch request through payment middleware.
+
+        Args:
+            request: Incoming request.
+            call_next: Next handler in chain.
+
+        Returns:
+            Response.
+        """
+        return await self._middleware(request, call_next)

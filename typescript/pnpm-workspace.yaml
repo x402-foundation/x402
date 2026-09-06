@@ -1,0 +1,28 @@
+packages:
+  - packages/core
+  - packages/extensions
+  - packages/mcp
+  - packages/http/*
+  - packages/mechanisms/*
+  - packages/legacy/*
+  - examples/**/*
+  - site
+overrides:
+  cssstyle: 5.3.6
+packageExtensions:
+  # @keetanetwork/anchor imports tslib at runtime but does not declare it.
+  "@keetanetwork/anchor@*":
+    dependencies:
+      tslib: "^2.8.1"
+minimumReleaseAge: 4320 # Only install package versions that have been published for at least 3 days.
+minimumReleaseAgeStrict: true
+allowBuilds:
+  bigint-buffer: true
+  bufferutil: true
+  esbuild: true
+  keccak: true
+  protobufjs: true
+  secp256k1: true
+  sharp: true
+  unrs-resolver: true
+  utf-8-validate: true

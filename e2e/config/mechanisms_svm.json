@@ -1,0 +1,47 @@
+{
+  "env": {
+    "SERVER_SVM_ADDRESS": { "required": true, "roles": ["server"] },
+    "SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY": {
+      "required": false,
+      "roles": ["server"]
+    },
+    "CLIENT_SVM_PRIVATE_KEY": { "required": true, "roles": ["client"] },
+    "FACILITATOR_SVM_PRIVATE_KEY": { "required": true, "roles": ["facilitator"] },
+    "SWIG_ACCOUNT_ADDRESS": { "required": false, "roles": ["client"] },
+    "SWIG_ID_BASE58": { "required": false, "roles": ["client"] }
+  },
+  "testnet": {
+    "name": "Solana Devnet",
+    "caip2": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+    "rpcUrlDefault": "https://api.devnet.solana.com"
+  },
+  "mainnet": {
+    "name": "Solana",
+    "caip2": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+    "rpcUrlDefault": "https://api.mainnet-beta.solana.com"
+  },
+  "routes": {
+    "/exact/svm": {
+      "scheme": "exact",
+      "sdks": ["typescript", "go", "python"],
+      "price": { "usd": "$0.001" },
+      "extensions": ["bazaar"]
+    },
+    "/exact/svm/upfront": {
+      "scheme": "exact",
+      "sdks": ["typescript", "go", "python"],
+      "paymentFlow": "upfront",
+      "price": { "usd": "$0.001" },
+      "extensions": ["bazaar"]
+    },
+    "/upto/svm": {
+      "scheme": "upto",
+      "requiresEnv": "SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY",
+      "sdks": ["typescript", "go"],
+      "paymentFlow": "escrow",
+      "price": { "usd": "$0.002" },
+      "extensions": ["bazaar"],
+      "settlementOverride": { "amount": "1000" }
+    }
+  }
+}

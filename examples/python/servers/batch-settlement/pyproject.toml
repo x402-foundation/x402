@@ -1,0 +1,20 @@
+[project]
+name = "x402-batch-settlement-server-example"
+version = "0.1.0"
+description = "Example FastAPI server using the x402 batch-settlement EVM scheme"
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["x402", "payment", "batch-settlement", "evm"]
+dependencies = [
+    "x402[fastapi,evm]",
+    "python-dotenv>=1.0.0",
+    "uvicorn[standard]>=0.40.0",
+]
+
+[tool.uv]
+required-version = ">=0.11.0"
+exclude-newer = "3 days"
+package = false
+
+[tool.uv.sources]
+x402 = { path = "../../../../python/x402", editable = true }

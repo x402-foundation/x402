@@ -1,0 +1,247 @@
+@import "@coinbase/onchainkit/styles.css";
+/* Reset */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+img,
+picture,
+video,
+canvas,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+input,
+button,
+textarea,
+select {
+  font: inherit;
+}
+
+p,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  overflow-wrap: break-word;
+}
+
+/* Custom Styles */
+:root {
+  --background-color: #f9fafb;
+  --container-background-color: white;
+  --text-color: #111827;
+  --secondary-text-color: #4b5563;
+  --details-background-color: #f9fafb;
+  --details-background-color-hover: #f3f4f6;
+  --button-primary-color: #2563eb;
+  --button-primary-hover-color: #1d4ed8;
+  --button-secondary-color: #eef0f3;
+  --button-secondary-hover-color: #e9ebee;
+  --button-positive-color: #059669;
+  --button-positive-hover-color: #047857;
+  --button-error-color: #ef4444;
+  --button-error-hover-color: #dc2626;
+}
+
+.ock-font-family {
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+}
+
+.ock-bg-secondary, .ock-bg-default {
+  background-color: var(--details-background-color);
+  transition: background-color 150ms;
+}
+
+.ock-bg-secondary:hover {
+  background-color: var(--details-background-color-hover);
+}
+
+.opacity-80 {
+  opacity: 0.8;
+}
+
+[data-testid="ockWalletDropdown"] {
+  z-index: 10;
+}
+
+body {
+  min-height: 100vh;
+  background-color: var(--background-color);
+  font-family:
+    "Inter",
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+.container {
+  max-width: 32rem;
+  margin: 4rem auto;
+  padding: 1.5rem;
+  background-color: var(--container-background-color);
+  border-radius: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  box-shadow:
+    0 4px 6px -1px rgba(0, 0, 0, 0.1),
+    0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-color);
+  margin-bottom: 0.5rem;
+}
+
+.subtitle {
+  color: var(--secondary-text-color);
+}
+
+.instructions {
+  font-size: 0.9rem;
+  color: var(--secondary-text-color);
+  font-style: italic;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.input {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  border: 1px solid #d1d5db;
+  background-color: white;
+  transition: border-color 150ms, box-shadow 150ms;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--button-primary-color);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+}
+
+.button {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: background-color 150ms;
+}
+
+.button-primary {
+  background-color: var(--button-primary-color);
+  color: white;
+}
+
+.button-primary:hover {
+  background-color: var(--button-primary-hover-color);
+}
+
+.button-secondary {
+  background-color: var(--button-secondary-color);
+  color: var(--text-color);
+}
+
+.button-secondary:hover {
+  background-color: var(--button-secondary-hover-color);
+}
+
+.button-positive {
+  background-color: var(--button-positive-color);
+  color: white;
+}
+
+.button-positive:hover {
+  background-color: var(--button-positive-hover-color);
+}
+
+.button-error {
+  background-color: var(--button-error-color);
+  color: white;
+}
+
+.button-error:hover {
+  background-color: var(--button-error-hover-color);
+}
+
+.payment-details {
+  padding: 1rem;
+  margin-bottom: 1rem;
+  background-color: var(--details-background-color);
+  border-radius: 0.5rem;
+}
+
+.payment-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.875rem;
+  margin-bottom: 0.5rem;
+}
+
+.payment-row:last-child {
+  margin-bottom: 0;
+}
+
+.payment-label {
+  color: var(--text-color);
+}
+
+.payment-value {
+  font-weight: 500;
+}
+
+.hidden {
+  display: none;
+}
+
+.status {
+  text-align: center;
+  font-size: 0.875rem;
+}
+
+.cta-container {
+  display: flex;
+  flex-basis: 50%;
+  flex-direction: row;
+  gap: 0.5rem;
+}
+
+.balance-button {
+  background-color: transparent;
+  border: none;
+  cursor: pointer;
+  min-height: 1rem;
+  min-width: 150px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+}

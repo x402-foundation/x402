@@ -1,0 +1,19 @@
+[project]
+name = "x402-builder-code-facilitator-example"
+version = "0.1.0"
+description = "Example FastAPI facilitator for x402 builder-code ERC-8021 attribution"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "x402[fastapi,evm,extensions]",
+    "python-dotenv>=1.0.0",
+    "uvicorn[standard]>=0.40.0",
+]
+
+[tool.uv]
+required-version = ">=0.11.0"
+exclude-newer = "3 days"
+package = false
+
+[tool.uv.sources]
+x402 = { path = "../../../../python/x402", editable = true }

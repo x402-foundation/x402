@@ -1,0 +1,161 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #ffffff;
+  --color-foreground: #171717;
+}
+
+@media (prefers-color-scheme: dark) {
+  @theme {
+    --color-background: #0f172a;
+    --color-foreground: #ededed;
+  }
+}
+
+/* Mini app theme for OnchainKit */
+.mini-app-theme {
+  --ock-font-family: inherit;
+  --ock-border-radius: 0.75rem;
+  --ock-border-radius-inner: 0.5rem;
+
+  /* Text colors */
+  --ock-text-inverse: var(--color-background);
+  --ock-text-foreground: var(--color-foreground);
+  --ock-text-foreground-muted: #71717a;
+  --ock-text-error: #ef4444;
+  --ock-text-primary: #3b82f6;
+  --ock-text-success: #22c55e;
+  --ock-text-warning: #f59e0b;
+  --ock-text-disabled: #a1a1aa;
+
+  /* Background colors */
+  --ock-bg-default: var(--color-background);
+  --ock-bg-default-hover: #f5f5f5;
+  --ock-bg-default-active: #e5e5e5;
+  --ock-bg-alternate: #f5f5f5;
+  --ock-bg-alternate-hover: #e5e5e5;
+  --ock-bg-alternate-active: #d4d4d4;
+  --ock-bg-inverse: var(--color-foreground);
+  --ock-bg-inverse-hover: #2a2a2a;
+  --ock-bg-inverse-active: #3a3a3a;
+  --ock-bg-primary: #3b82f6;
+  --ock-bg-primary-hover: #2563eb;
+  --ock-bg-primary-active: #1d4ed8;
+  --ock-bg-primary-washed: #e6edff;
+  --ock-bg-primary-disabled: #80a8ff;
+  --ock-bg-secondary: #f5f5f5;
+  --ock-bg-secondary-hover: #e5e5e5;
+  --ock-bg-secondary-active: #d1d1d1;
+  --ock-bg-error: #fee2e2;
+  --ock-bg-warning: #fef3c7;
+  --ock-bg-success: #dcfce7;
+  --ock-bg-default-reverse: var(--color-foreground);
+
+  /* Icon colors */
+  --ock-icon-color-primary: #3b82f6;
+  --ock-icon-color-foreground: var(--color-foreground);
+  --ock-icon-color-foreground-muted: #71717a;
+  --ock-icon-color-inverse: var(--color-background);
+  --ock-icon-color-error: #ef4444;
+  --ock-icon-color-success: #22c55e;
+  --ock-icon-color-warning: #f59e0b;
+
+  /* Line colors */
+  --ock-line-primary: #3b82f6;
+  --ock-line-default: #e5e5e5;
+  --ock-line-heavy: #a1a1aa;
+  --ock-line-inverse: #d4d4d8;
+}
+
+@media (prefers-color-scheme: dark) {
+  .mini-app-theme {
+    --ock-bg-default-hover: #1e293b;
+    --ock-bg-default-active: #334155;
+    --ock-bg-alternate: #1e293b;
+    --ock-bg-alternate-hover: #334155;
+    --ock-bg-alternate-active: #475569;
+    --ock-bg-primary-washed: #1e3a5f;
+    --ock-bg-secondary: #1e293b;
+    --ock-bg-secondary-hover: #334155;
+    --ock-bg-secondary-active: #475569;
+    --ock-line-default: #334155;
+  }
+}
+
+body {
+  color: var(--color-foreground);
+  background: var(--color-background);
+  font-family: inherit;
+}
+
+/* Base styles */
+html {
+  scroll-behavior: smooth;
+}
+
+* {
+  touch-action: manipulation;
+}
+
+/* Mini app optimizations */
+@media (max-width: 768px) {
+
+  button,
+  [role="button"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
+}
+
+/* Focus styles */
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Utility for full bleed sections */
+@utility full-bleed {
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+}
+
+@utility unset-full-bleed {
+  width: unset;
+  margin-left: unset;
+}

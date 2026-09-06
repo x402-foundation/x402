@@ -1,0 +1,889 @@
+// Package integration_test contains integration tests for the x402 Go SDK.
+// This file specifically tests the SVM (Solana) mechanism integration with both V1 and V2 implementations.
+// These tests make REAL on-chain transactions using private keys from environment variables.
+package integration_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	solana "github.com/gagliardetto/solana-go"
+	"github.com/gagliardetto/solana-go/rpc"
+
+	x402 "github.com/x402-foundation/x402/go/v2"
+	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+	svmclient "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
+	svmfacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
+	svmserver "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
+	svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
+	"github.com/x402-foundation/x402/go/v2/types"
+)
+
+// newRealClientSvmSigner creates a client signer using the helper
+func newRealClientSvmSigner(privateKeyBase58 string) (svm.ClientSvmSigner, error) {
+	return svmsigners.NewClientSignerFromPrivateKey(privateKeyBase58)
+}
+
+// Real Solana facilitator signer
+type realFacilitatorSvmSigner struct {
+	privateKey solana.PrivateKey
+	rpcClients map[string]*rpc.Client
+	rpcURL     string
+}
+
+func newRealFacilitatorSvmSigner(privateKeyBase58 string, rpcURL string) (*realFacilitatorSvmSigner, error) {
+	privateKey, err := solana.PrivateKeyFromBase58(privateKeyBase58)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse private key: %w", err)
+	}
+
+	return &realFacilitatorSvmSigner{
+		privateKey: privateKey,
+		rpcClients: make(map[string]*rpc.Client),
+		rpcURL:     rpcURL,
+	}, nil
+}
+
+// getRPC is a private helper method to get RPC client for a network
+func (s *realFacilitatorSvmSigner) getRPC(_ context.Context, network string) (*rpc.Client, error) {
+	// Return cached RPC client if exists
+	if client, ok := s.rpcClients[network]; ok {
+		return client, nil
+	}
+
+	// Create new RPC client
+	// Use custom RPC URL if provided, otherwise use network default
+	rpcURL := s.rpcURL
+	if rpcURL == "" {
+		config, err := svm.GetNetworkConfig(network)
+		if err != nil {
+			return nil, err
+		}
+		rpcURL = config.RPCURL
+	}
+
+	client := rpc.New(rpcURL)
+	s.rpcClients[network] = client
+	return client, nil
+}
+
+func (s *realFacilitatorSvmSigner) SignTransaction(ctx context.Context, tx *solana.Transaction, feePayer solana.PublicKey, network string) error {
+	// Verify feePayer matches our key
+	if feePayer != s.privateKey.PublicKey() {
+		return fmt.Errorf("no signer for feePayer %s. Available: %s", feePayer, s.privateKey.PublicKey())
+	}
+
+	// Partially sign - only sign for facilitator key, client has already signed
+
+	// Get the message bytes to sign
+	messageBytes, err := tx.Message.MarshalBinary()
+	if err != nil {
+		return fmt.Errorf("failed to marshal message: %w", err)
+	}
+
+	// Sign the message
+	signature, err := s.privateKey.Sign(messageBytes)
+	if err != nil {
+		return fmt.Errorf("failed to sign: %w", err)
+	}
+
+	// Find the index of facilitator's public key in the account keys
+	accountIndex, err := tx.GetAccountIndex(s.privateKey.PublicKey())
+	if err != nil {
+		return fmt.Errorf("failed to get account index: %w", err)
+	}
+
+	// Ensure signatures array is large enough
+	if len(tx.Signatures) <= int(accountIndex) {
+		newSignatures := make([]solana.Signature, accountIndex+1)
+		copy(newSignatures, tx.Signatures)
+		tx.Signatures = newSignatures
+	}
+
+	// Add facilitator signature at the correct index
+	tx.Signatures[accountIndex] = signature
+
+	return nil
+}
+
+func (s *realFacilitatorSvmSigner) SimulateTransaction(ctx context.Context, tx *solana.Transaction, network string) error {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return err
+	}
+
+	opts := rpc.SimulateTransactionOpts{
+		SigVerify:              false,
+		ReplaceRecentBlockhash: false,
+		Commitment:             svm.DefaultCommitment,
+	}
+
+	simResult, err := rpcClient.SimulateTransactionWithOpts(ctx, tx, &opts)
+	if err != nil {
+		return fmt.Errorf("simulation failed: %w", err)
+	}
+
+	if simResult != nil && simResult.Value != nil && simResult.Value.Err != nil {
+		return fmt.Errorf("simulation failed: transaction would fail on-chain")
+	}
+
+	return nil
+}
+
+func (s *realFacilitatorSvmSigner) SendTransaction(ctx context.Context, tx *solana.Transaction, network string) (solana.Signature, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return solana.Signature{}, err
+	}
+
+	// Send transaction with skip preflight (we already simulated)
+	sig, err := rpcClient.SendTransactionWithOpts(ctx, tx, rpc.TransactionOpts{
+		SkipPreflight:       true,
+		PreflightCommitment: svm.DefaultCommitment,
+	})
+	if err != nil {
+		return solana.Signature{}, fmt.Errorf("failed to send transaction: %w", err)
+	}
+
+	return sig, nil
+}
+
+func (s *realFacilitatorSvmSigner) ConfirmTransaction(ctx context.Context, signature solana.Signature, network string) error {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return err
+	}
+
+	// Wait for confirmation with retries
+	for attempt := 0; attempt < svm.MaxConfirmAttempts; attempt++ {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// Try getSignatureStatuses first (faster)
+		statuses, err := rpcClient.GetSignatureStatuses(ctx, true, signature)
+		if err == nil && statuses != nil && statuses.Value != nil && len(statuses.Value) > 0 {
+			status := statuses.Value[0]
+			if status != nil {
+				if status.Err != nil {
+					return fmt.Errorf("transaction failed on-chain")
+				}
+				if status.ConfirmationStatus == rpc.ConfirmationStatusConfirmed ||
+					status.ConfirmationStatus == rpc.ConfirmationStatusFinalized {
+					return nil
+				}
+			}
+		}
+
+		// Fallback to getTransaction
+		if err != nil {
+			txResult, txErr := rpcClient.GetTransaction(ctx, signature, &rpc.GetTransactionOpts{
+				Encoding:   solana.EncodingBase58,
+				Commitment: svm.DefaultCommitment,
+			})
+
+			if txErr == nil && txResult != nil && txResult.Meta != nil {
+				if txResult.Meta.Err != nil {
+					return fmt.Errorf("transaction failed on-chain")
+				}
+				return nil
+			}
+		}
+
+		// Wait before retrying
+		delay := svm.ConfirmRetryDelay
+		if attempt < svm.ConfirmInitialAttempts {
+			delay = svm.ConfirmInitialRetryDelay
+		}
+		time.Sleep(delay)
+	}
+
+	return fmt.Errorf("transaction confirmation timed out after %d attempts", svm.MaxConfirmAttempts)
+}
+
+func (s *realFacilitatorSvmSigner) GetAccountInfo(
+	ctx context.Context,
+	account solana.PublicKey,
+	network string,
+	opts *rpc.GetAccountInfoOpts,
+) (*rpc.GetAccountInfoResult, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, err
+	}
+	return rpcClient.GetAccountInfoWithOpts(ctx, account, opts)
+}
+
+func (s *realFacilitatorSvmSigner) GetLatestBlockhash(ctx context.Context, network string) (solana.Hash, uint64, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return solana.Hash{}, 0, err
+	}
+	latest, err := rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
+	if err != nil {
+		return solana.Hash{}, 0, err
+	}
+	return latest.Value.Blockhash, latest.Value.LastValidBlockHeight, nil
+}
+
+func (s *realFacilitatorSvmSigner) GetSlot(ctx context.Context, network string, commitment rpc.CommitmentType) (uint64, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return 0, err
+	}
+	return rpcClient.GetSlot(ctx, commitment)
+}
+
+func (s *realFacilitatorSvmSigner) SimulateTransactionWithOpts(
+	ctx context.Context,
+	tx *solana.Transaction,
+	network string,
+	opts *rpc.SimulateTransactionOpts,
+) error {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return err
+	}
+	result, err := rpcClient.SimulateTransactionWithOpts(ctx, tx, opts)
+	if err != nil {
+		return fmt.Errorf("simulation failed: %w", err)
+	}
+	if result != nil && result.Value != nil && result.Value.Err != nil {
+		return fmt.Errorf("simulation failed: transaction would fail on-chain")
+	}
+	return nil
+}
+
+func (s *realFacilitatorSvmSigner) GetProgramAccounts(
+	ctx context.Context,
+	network string,
+	programID solana.PublicKey,
+	opts *rpc.GetProgramAccountsOpts,
+) (rpc.GetProgramAccountsResult, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, err
+	}
+	return rpcClient.GetProgramAccountsWithOpts(ctx, programID, opts)
+}
+
+func (s *realFacilitatorSvmSigner) SimulateTransactionWithInnerInstructions(ctx context.Context, tx *solana.Transaction, network string) ([]rpc.InnerInstruction, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, err
+	}
+	return svm.SimulateWithInnerInstructions(ctx, rpcClient, tx)
+}
+
+func (s *realFacilitatorSvmSigner) GetConfirmedTransactionInnerInstructions(ctx context.Context, signature solana.Signature, network string) ([]rpc.InnerInstruction, solana.PublicKeySlice, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, nil, err
+	}
+	return svm.ConfirmedTransactionInnerInstructions(ctx, rpcClient, signature)
+}
+
+func (s *realFacilitatorSvmSigner) GetTokenAccountBalance(ctx context.Context, tokenAccount solana.PublicKey, network string) (uint64, bool, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return 0, false, err
+	}
+	return svm.TokenAccountBalance(ctx, rpcClient, tokenAccount)
+}
+
+func (s *realFacilitatorSvmSigner) FetchAddressLookupTables(ctx context.Context, tables []solana.PublicKey, network string) (map[solana.PublicKey]solana.PublicKeySlice, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, err
+	}
+	return svm.AddressLookupTables(ctx, rpcClient, tables)
+}
+
+func (s *realFacilitatorSvmSigner) GetAddresses(ctx context.Context, network string) []solana.PublicKey {
+	return []solana.PublicKey{s.privateKey.PublicKey()}
+}
+
+// Local facilitator client for testing with extra fields support
+type localSvmFacilitatorClient struct {
+	facilitator *x402.X402Facilitator
+	signer      *realFacilitatorSvmSigner
+}
+
+func (l *localSvmFacilitatorClient) Verify(
+	ctx context.Context,
+	payloadBytes []byte,
+	requirementsBytes []byte,
+) (*x402.VerifyResponse, error) {
+	// Pass bytes directly to facilitator (it handles unmarshaling internally)
+	return l.facilitator.Verify(ctx, payloadBytes, requirementsBytes)
+}
+
+func (l *localSvmFacilitatorClient) Settle(
+	ctx context.Context,
+	payloadBytes []byte,
+	requirementsBytes []byte,
+) (*x402.SettleResponse, error) {
+	// Pass bytes directly to facilitator (it handles unmarshaling internally)
+	return l.facilitator.Settle(ctx, payloadBytes, requirementsBytes)
+}
+
+func (l *localSvmFacilitatorClient) GetSupported(ctx context.Context) (x402.SupportedResponse, error) {
+	// Networks already registered - no parameters needed
+	// GetExtra() on the SVM facilitator will automatically add feePayer
+	return l.facilitator.GetSupported(), nil
+}
+
+// TestSVMIntegrationV2 tests the full V2 SVM payment flow with real on-chain transactions
+func TestSVMIntegrationV2(t *testing.T) {
+	// Skip if environment variables not set
+	clientPrivateKey := os.Getenv("SVM_CLIENT_PRIVATE_KEY")
+	facilitatorPrivateKey := os.Getenv("SVM_FACILITATOR_PRIVATE_KEY")
+	facilitatorAddress := os.Getenv("SVM_FACILITATOR_ADDRESS")
+	resourceServerAddress := os.Getenv("SVM_RESOURCE_SERVER_ADDRESS")
+
+	if clientPrivateKey == "" || facilitatorPrivateKey == "" || facilitatorAddress == "" || resourceServerAddress == "" {
+		t.Skip("Skipping SVM integration test: SVM_CLIENT_PRIVATE_KEY, SVM_FACILITATOR_PRIVATE_KEY, SVM_FACILITATOR_ADDRESS, and SVM_RESOURCE_SERVER_ADDRESS must be set")
+	}
+
+	t.Run("SVM V2 Flow - x402Client / x402ResourceServer / x402Facilitator", func(t *testing.T) {
+		ctx := context.Background()
+
+		// Create real client signer
+		clientSigner, err := newRealClientSvmSigner(clientPrivateKey)
+		if err != nil {
+			t.Fatalf("Failed to create client signer: %v", err)
+		}
+
+		// Setup client with SVM v2 scheme
+		client := x402.Newx402Client()
+		svmClient := svmclient.NewExactSvmScheme(clientSigner, &svm.ClientConfig{
+			RPCURL: "https://api.devnet.solana.com",
+		})
+		// Register for Solana Devnet
+		client.Register(svm.SolanaDevnetCAIP2, svmClient)
+
+		// Create real facilitator signer
+		facilitatorSigner, err := newRealFacilitatorSvmSigner(facilitatorPrivateKey, "https://api.devnet.solana.com")
+		if err != nil {
+			t.Fatalf("Failed to create facilitator signer: %v", err)
+		}
+
+		// Setup facilitator with SVM v2 scheme
+		facilitator := x402.Newx402Facilitator()
+		svmFacilitator := svmfacilitator.NewExactSvmScheme(facilitatorSigner)
+		// Register for Solana Devnet
+		facilitator.Register([]x402.Network{svm.SolanaDevnetCAIP2}, svmFacilitator)
+
+		// Create facilitator client wrapper (adds feePayer via GetSupported override)
+		facilitatorClient := &localSvmFacilitatorClient{
+			facilitator: facilitator,
+			signer:      facilitatorSigner,
+		}
+
+		// Setup resource server with SVM v2
+		svmServer := svmserver.NewExactSvmScheme()
+		server := x402.Newx402ResourceServer(
+			x402.WithFacilitatorClient(facilitatorClient),
+		)
+		server.Register(svm.SolanaDevnetCAIP2, svmServer)
+
+		// Initialize server to fetch supported kinds
+		err = server.Initialize(ctx)
+		if err != nil {
+			t.Fatalf("Failed to initialize server: %v", err)
+		}
+
+		// Server - builds PaymentRequired response for 0.001 USDC (V2 typed)
+		accepts := []types.PaymentRequirements{
+			{
+				Scheme:  svm.SchemeExact,
+				Network: svm.SolanaDevnetCAIP2,
+				Asset:   svm.USDCDevnetAddress,
+				Amount:  "1000", // 0.001 USDC in smallest unit (6 decimals)
+				PayTo:   resourceServerAddress,
+				Extra: map[string]interface{}{
+					"feePayer": facilitatorAddress,
+				},
+			},
+		}
+		resource := &types.ResourceInfo{
+			URL:         "https://api.example.com/premium",
+			Description: "Premium API Access",
+			MimeType:    "application/json",
+		}
+		paymentRequiredResponse := server.CreatePaymentRequiredResponse(accepts, resource, "", nil)
+
+		// Verify it's V2
+		if paymentRequiredResponse.X402Version != 2 {
+			t.Errorf("Expected X402Version 2, got %d", paymentRequiredResponse.X402Version)
+		}
+
+		// Verify feePayer is in requirements
+		if len(paymentRequiredResponse.Accepts) == 0 {
+			t.Fatal("Expected at least one payment requirement")
+		}
+
+		firstAccept := paymentRequiredResponse.Accepts[0]
+		if firstAccept.Extra == nil || firstAccept.Extra["feePayer"] == nil {
+			t.Fatal("Expected feePayer in payment requirements extra")
+		}
+
+		// Client - selects payment requirement (V2 typed)
+		selected, err := client.SelectPaymentRequirements(paymentRequiredResponse.Accepts)
+		if err != nil {
+			t.Fatalf("Failed to select payment requirements: %v", err)
+		}
+
+		// Client - creates payment payload (V2 typed)
+		paymentPayload, err := client.CreatePaymentPayload(ctx, selected, paymentRequiredResponse.Resource, paymentRequiredResponse.Extensions)
+		if err != nil {
+			t.Fatalf("Failed to create payment payload: %v", err)
+		}
+
+		// Verify payload is V2
+		if paymentPayload.X402Version != 2 {
+			t.Errorf("Expected payload X402Version 2, got %d", paymentPayload.X402Version)
+		}
+
+		// Verify payload structure
+		if paymentPayload.Accepted.Scheme != svm.SchemeExact {
+			t.Errorf("Expected scheme %s, got %s", svm.SchemeExact, paymentPayload.Accepted.Scheme)
+		}
+
+		svmPayload, err := svm.PayloadFromMap(paymentPayload.Payload)
+		if err != nil {
+			t.Fatalf("Failed to parse SVM payload: %v", err)
+		}
+
+		if svmPayload.Transaction == "" {
+			t.Error("Expected transaction in payload")
+		}
+
+		// Server - finds matching requirements (typed)
+		accepted := server.FindMatchingRequirements(accepts, paymentPayload)
+		if accepted == nil {
+			t.Fatal("No matching payment requirements found")
+		}
+
+		// Server - verifies payment (typed)
+		verifyResponse, err := server.VerifyPayment(ctx, paymentPayload, *accepted)
+		if err != nil {
+			t.Fatalf("Failed to verify payment: %v", err)
+		}
+
+		if !verifyResponse.IsValid {
+			t.Fatalf("Payment verification failed: %s", verifyResponse.InvalidReason)
+		}
+
+		if verifyResponse.Payer != clientSigner.Address().String() {
+			t.Errorf("Expected payer %s, got %s", clientSigner.Address().String(), verifyResponse.Payer)
+		}
+
+		// Server does work here...
+
+		// Server - settles payment (REAL ON-CHAIN TRANSACTION, typed)
+		settleResponse, err := server.SettlePayment(ctx, paymentPayload, *accepted, nil)
+		if err != nil {
+			t.Fatalf("Failed to settle payment: %v", err)
+		}
+
+		if !settleResponse.Success {
+			t.Fatalf("Payment settlement failed: %s", settleResponse.ErrorReason)
+		}
+
+		// Verify the transaction signature
+		if settleResponse.Transaction == "" {
+			t.Error("Expected transaction signature in settlement response")
+		}
+
+		if settleResponse.Network != svm.SolanaDevnetCAIP2 {
+			t.Errorf("Expected network %s, got %s", svm.SolanaDevnetCAIP2, settleResponse.Network)
+		}
+
+		if settleResponse.Payer != clientSigner.Address().String() {
+			t.Errorf("Expected payer %s, got %s", clientSigner.Address().String(), settleResponse.Payer)
+		}
+	})
+}
+
+// TestSVMIntegrationV1 tests the full V1 SVM payment flow with real on-chain transactions (legacy)
+// TestSVMIntegrationV1 - SKIPPED: V1 flow not supported in V2-only server
+/*
+func TestSVMIntegrationV1(t *testing.T) {
+	// Skip if environment variables not set
+	clientPrivateKey := os.Getenv("SVM_CLIENT_PRIVATE_KEY")
+	facilitatorPrivateKey := os.Getenv("SVM_FACILITATOR_PRIVATE_KEY")
+	facilitatorAddress := os.Getenv("SVM_FACILITATOR_ADDRESS")
+	resourceServerAddress := os.Getenv("SVM_RESOURCE_SERVER_ADDRESS")
+
+	if clientPrivateKey == "" || facilitatorPrivateKey == "" || facilitatorAddress == "" || resourceServerAddress == "" {
+		t.Skip("Skipping SVM V1 integration test: SVM_CLIENT_PRIVATE_KEY, SVM_FACILITATOR_PRIVATE_KEY, SVM_FACILITATOR_ADDRESS, and SVM_RESOURCE_SERVER_ADDRESS must be set")
+	}
+
+	t.Run("SVM V1 Flow (Legacy) - x402Client / x402ResourceServer / x402Facilitator", func(t *testing.T) {
+		ctx := context.Background()
+
+		// Create real client signer
+		clientSigner, err := newRealClientSvmSigner(clientPrivateKey)
+		if err != nil {
+			t.Fatalf("Failed to create client signer: %v", err)
+		}
+
+		// Setup client with SVM v1 scheme
+		client := x402.Newx402Client()
+		svmClient := svmv1client.NewExactSvmSchemeV1(clientSigner, &svm.ClientConfig{
+			RPCURL: "https://api.devnet.solana.com",
+		})
+		// Register for Solana Devnet (V1 uses simple name)
+		client.RegisterV1(svm.SolanaDevnetV1, svmClient)
+
+		// Create real facilitator signer
+		facilitatorSigner, err := newRealFacilitatorSvmSigner(facilitatorPrivateKey, "https://api.devnet.solana.com")
+		if err != nil {
+			t.Fatalf("Failed to create facilitator signer: %v", err)
+		}
+
+		// Setup facilitator with SVM v1 scheme
+		facilitator := x402.Newx402Facilitator()
+		svmFacilitator := svmv1facilitator.NewExactSvmSchemeV1(facilitatorSigner)
+		// Register for Solana Devnet
+		facilitator.RegisterV1([]x402.Network{svm.SolanaDevnetV1}, svmFacilitator)
+
+		// Create facilitator client wrapper (adds feePayer via GetSupported override)
+		facilitatorClient := &localSvmFacilitatorClient{
+			facilitator: facilitator,
+			signer:      facilitatorSigner,
+		}
+
+		// Setup resource server with SVM v2 (server is V2 only)
+		svmServer := svmserver.NewExactSvmScheme()
+		server := x402.Newx402ResourceServer(
+			x402.WithFacilitatorClient(facilitatorClient),
+		)
+		// Register for CAIP-2 network (server uses V2 format)
+		server.Register(svm.SolanaDevnetCAIP2, svmServer)
+
+		// Initialize server to fetch supported kinds
+		err = server.Initialize(ctx)
+		if err != nil {
+			t.Fatalf("Failed to initialize server: %v", err)
+		}
+
+		// Server - builds PaymentRequired response for 0.001 USDC (V1 uses version 1)
+		accepts := []x402.PaymentRequirements{
+			{
+				Scheme:            svm.SchemeExact,
+				Network:           svm.SolanaDevnetV1, // V1 network name
+				Asset:             svm.USDCDevnetAddress,
+				MaxAmountRequired: "1000", // V1 uses MaxAmountRequired, not Amount
+				PayTo:             resourceServerAddress,
+				Extra: map[string]interface{}{
+					"feePayer": facilitatorAddress,
+				},
+			},
+		}
+		resource := x402.ResourceInfo{
+			URL:         "https://legacy.example.com/api",
+			Description: "Legacy API Access",
+			MimeType:    "application/json",
+		}
+
+		// For V1, we need to explicitly set the version to 1
+		paymentRequiredResponse := x402.PaymentRequired{
+			X402Version: 1, // V1 uses version 1
+			Accepts:     accepts,
+			Resource:    &resource,
+		}
+
+		// Client - responds with PaymentPayload response
+		selected, err := client.SelectPaymentRequirements(paymentRequiredResponse.X402Version, accepts)
+		if err != nil {
+			t.Fatalf("Failed to select payment requirements: %v", err)
+		}
+
+		// Marshal selected requirements to bytes
+		selectedBytes, err := json.Marshal(selected)
+		if err != nil {
+			t.Fatalf("Failed to marshal requirements: %v", err)
+		}
+
+		// V1 doesn't use resource/extensions from PaymentRequired
+		payloadBytes, err := client.CreatePaymentPayload(ctx, paymentRequiredResponse.X402Version, selectedBytes, nil, nil)
+		if err != nil {
+			t.Fatalf("Failed to create payment payload: %v", err)
+		}
+
+		// Unmarshal to v1 payload for verification
+		paymentPayload, err := types.ToPaymentPayloadV1(payloadBytes)
+		if err != nil {
+			t.Fatalf("Failed to unmarshal payment payload: %v", err)
+		}
+
+		// Verify payload is V1
+		if paymentPayload.X402Version != 1 {
+			t.Errorf("Expected payload X402Version 1, got %d", paymentPayload.X402Version)
+		}
+
+		// Server - maps payment payload to payment requirements
+		accepted := server.FindMatchingRequirements(accepts, payloadBytes)
+		if accepted == nil {
+			t.Fatal("No matching payment requirements found")
+		}
+
+		// Marshal accepted requirements to bytes
+		acceptedBytes, err := json.Marshal(accepted)
+		if err != nil {
+			t.Fatalf("Failed to marshal accepted requirements: %v", err)
+		}
+
+		// Server - verifies payment
+		verifyResponse, err := server.VerifyPayment(ctx, payloadBytes, acceptedBytes)
+		if err != nil {
+			t.Fatalf("Failed to verify payment: %v", err)
+		}
+
+		if !verifyResponse.IsValid {
+			t.Fatalf("Payment verification failed: %s", verifyResponse.InvalidReason)
+		}
+
+		if verifyResponse.Payer != clientSigner.Address().String() {
+			t.Errorf("Expected payer %s, got %s", clientSigner.Address().String(), verifyResponse.Payer)
+		}
+
+		// Server does work here...
+
+		// Server - settles payment (REAL ON-CHAIN TRANSACTION)
+		settleResponse, err := server.SettlePayment(ctx, payloadBytes, acceptedBytes)
+		if err != nil {
+			t.Fatalf("Failed to settle payment: %v", err)
+		}
+
+		if !settleResponse.Success {
+			t.Fatalf("Payment settlement failed: %s", settleResponse.ErrorReason)
+		}
+
+		// Verify the transaction signature
+		if settleResponse.Transaction == "" {
+			t.Error("Expected transaction signature in settlement response")
+		}
+	})
+}
+*/
+
+// forcedPendingConfirmSigner wraps a real FacilitatorSvmSigner and, while
+// forcePending is true, makes ConfirmTransaction fail immediately instead of
+// delegating to the real (network-speed-dependent) confirmation polling.
+// SignTransaction and SendTransaction are always delegated unmodified via
+// interface embedding, so every broadcast is a real on-chain transaction;
+// only the confirmation wait is deterministically forced to fail so the
+// settlement_pending path can be exercised without racing devnet's real
+// confirmation latency.
+type forcedPendingConfirmSigner struct {
+	svm.FacilitatorSvmSigner
+	forcePending atomic.Bool
+}
+
+func (s *forcedPendingConfirmSigner) ConfirmTransaction(ctx context.Context, signature solana.Signature, network string) error {
+	if s.forcePending.Load() {
+		return fmt.Errorf("forced confirmation failure for settlement_pending integration test")
+	}
+	return s.FacilitatorSvmSigner.ConfirmTransaction(ctx, signature, network)
+}
+
+// buildSvmSettlementPendingFixture creates a real, signed, but not-yet-settled
+// SVM exact payment payload/requirements pair shared by the settlement-pending
+// integration tests below.
+func buildSvmSettlementPendingFixture(t *testing.T, ctx context.Context, clientPrivateKey, facilitatorAddress, resourceServerAddress string) (types.PaymentPayload, types.PaymentRequirements) {
+	t.Helper()
+
+	clientSigner, err := newRealClientSvmSigner(clientPrivateKey)
+	if err != nil {
+		t.Fatalf("Failed to create client signer: %v", err)
+	}
+	client := x402.Newx402Client()
+	client.Register(svm.SolanaDevnetCAIP2, svmclient.NewExactSvmScheme(clientSigner, &svm.ClientConfig{
+		RPCURL: "https://api.devnet.solana.com",
+	}))
+
+	accepts := []types.PaymentRequirements{
+		{
+			Scheme:  svm.SchemeExact,
+			Network: svm.SolanaDevnetCAIP2,
+			Asset:   svm.USDCDevnetAddress,
+			Amount:  "1000",
+			PayTo:   resourceServerAddress,
+			Extra: map[string]interface{}{
+				"feePayer": facilitatorAddress,
+			},
+		},
+	}
+	resource := &types.ResourceInfo{URL: "https://api.example.com/premium"}
+
+	selected, err := client.SelectPaymentRequirements(accepts)
+	if err != nil {
+		t.Fatalf("Failed to select payment requirements: %v", err)
+	}
+	paymentPayload, err := client.CreatePaymentPayload(ctx, selected, resource, nil)
+	if err != nil {
+		t.Fatalf("Failed to create payment payload: %v", err)
+	}
+	return paymentPayload, accepts[0]
+}
+
+// TestSVMIntegrationV2_SettlementPendingReconciliation exercises the
+// settlement-pending-auto-recovery mechanism layer against a real on-chain
+// SVM exact settlement: the first Settle call broadcasts for real but is
+// forced (via forcedPendingConfirmSigner) to fail ConfirmTransaction,
+// producing a settlement_pending SettleError with the broadcast signature
+// attached and a PendingSettlementStore entry populated. A second Settle
+// call with the same payload, now with confirmation no longer forced to
+// fail, must hit the pending-store fast path (skip verify/re-send) and
+// reconcile against that already-broadcast transaction, returning success
+// once it actually confirms on-chain — with the SAME signature as the first
+// attempt, proving no second transaction was ever broadcast.
+func TestSVMIntegrationV2_SettlementPendingReconciliation(t *testing.T) {
+	clientPrivateKey := os.Getenv("SVM_CLIENT_PRIVATE_KEY")
+	facilitatorPrivateKey := os.Getenv("SVM_FACILITATOR_PRIVATE_KEY")
+	facilitatorAddress := os.Getenv("SVM_FACILITATOR_ADDRESS")
+	resourceServerAddress := os.Getenv("SVM_RESOURCE_SERVER_ADDRESS")
+
+	if clientPrivateKey == "" || facilitatorPrivateKey == "" || facilitatorAddress == "" || resourceServerAddress == "" {
+		t.Skip("Skipping SVM settlement_pending reconciliation test: SVM_CLIENT_PRIVATE_KEY, SVM_FACILITATOR_PRIVATE_KEY, SVM_FACILITATOR_ADDRESS, and SVM_RESOURCE_SERVER_ADDRESS must be set")
+	}
+
+	ctx := context.Background()
+
+	realFacilitatorSigner, err := newRealFacilitatorSvmSigner(facilitatorPrivateKey, "https://api.devnet.solana.com")
+	if err != nil {
+		t.Fatalf("Failed to create facilitator signer: %v", err)
+	}
+	facilitatorSigner := &forcedPendingConfirmSigner{FacilitatorSvmSigner: realFacilitatorSigner}
+	svmFacilitatorScheme := svmfacilitator.NewExactSvmScheme(facilitatorSigner)
+
+	paymentPayload, requirements := buildSvmSettlementPendingFixture(t, ctx, clientPrivateKey, facilitatorAddress, resourceServerAddress)
+
+	// Attempt 1: broadcast is real; confirmation is forced to fail regardless
+	// of real devnet confirmation speed.
+	facilitatorSigner.forcePending.Store(true)
+
+	_, settleErr := svmFacilitatorScheme.Settle(ctx, paymentPayload, requirements, nil)
+	if settleErr == nil {
+		t.Fatal("Expected settlement_pending error from a deliberately forced confirmation failure, got nil error")
+	}
+	var se *x402.SettleError
+	if !errors.As(settleErr, &se) {
+		t.Fatalf("Expected a *x402.SettleError, got %T: %v", settleErr, settleErr)
+	}
+	if se.ErrorReason != svmfacilitator.ErrSettlementPending {
+		t.Fatalf("Expected errorReason %q, got %q (%v)", svmfacilitator.ErrSettlementPending, se.ErrorReason, se)
+	}
+	if se.Transaction == "" {
+		t.Fatal("Expected a broadcast transaction signature on the settlement_pending error")
+	}
+	firstSignature := se.Transaction
+
+	// Attempt 2: identical payload/requirements, confirmation no longer
+	// forced to fail. Must reconcile against firstSignature (pending-store
+	// hit) rather than re-verifying and re-sending.
+	facilitatorSigner.forcePending.Store(false)
+
+	settleResponse, settleErr := svmFacilitatorScheme.Settle(ctx, paymentPayload, requirements, nil)
+	if settleErr != nil {
+		t.Fatalf("Expected the reconciliation settle to succeed once the original tx confirms, got error: %v", settleErr)
+	}
+	if !settleResponse.Success {
+		t.Fatalf("Expected reconciled settlement to succeed, got: %+v", settleResponse)
+	}
+	if settleResponse.Transaction != firstSignature {
+		t.Fatalf("Reconciliation must reuse the already-broadcast transaction (no second broadcast): first=%s second=%s",
+			firstSignature, settleResponse.Transaction)
+	}
+}
+
+// TestSVMIntegrationV2_ResourceServerSettlementPendingRetry exercises the
+// generic x402ResourceServer.SettlePayment single-retry-on-settlement_pending
+// path against a real SVM broadcast. While
+// forcedPendingConfirmSigner.forcePending is true for the whole call, both
+// the initial attempt and the SDK's automatic single retry are forced to
+// fail confirmation, so both are expected to observe settlement_pending. The
+// key assertion is that the retry's reported transaction signature is
+// identical to the first attempt's, proving the resource-server retry drove
+// the mechanism's pending-cache fast path (reconciling against the one
+// broadcast transaction) rather than causing a second on-chain broadcast.
+func TestSVMIntegrationV2_ResourceServerSettlementPendingRetry(t *testing.T) {
+	clientPrivateKey := os.Getenv("SVM_CLIENT_PRIVATE_KEY")
+	facilitatorPrivateKey := os.Getenv("SVM_FACILITATOR_PRIVATE_KEY")
+	facilitatorAddress := os.Getenv("SVM_FACILITATOR_ADDRESS")
+	resourceServerAddress := os.Getenv("SVM_RESOURCE_SERVER_ADDRESS")
+
+	if clientPrivateKey == "" || facilitatorPrivateKey == "" || facilitatorAddress == "" || resourceServerAddress == "" {
+		t.Skip("Skipping SVM resource-server settlement_pending retry test: SVM_CLIENT_PRIVATE_KEY, SVM_FACILITATOR_PRIVATE_KEY, SVM_FACILITATOR_ADDRESS, and SVM_RESOURCE_SERVER_ADDRESS must be set")
+	}
+
+	ctx := context.Background()
+
+	realFacilitatorSigner, err := newRealFacilitatorSvmSigner(facilitatorPrivateKey, "https://api.devnet.solana.com")
+	if err != nil {
+		t.Fatalf("Failed to create facilitator signer: %v", err)
+	}
+	facilitatorSigner := &forcedPendingConfirmSigner{FacilitatorSvmSigner: realFacilitatorSigner}
+	facilitator := x402.Newx402Facilitator()
+	facilitator.Register([]x402.Network{svm.SolanaDevnetCAIP2}, svmfacilitator.NewExactSvmScheme(facilitatorSigner))
+	facilitatorClient := &localSvmFacilitatorClient{facilitator: facilitator, signer: realFacilitatorSigner}
+
+	server := x402.Newx402ResourceServer(x402.WithFacilitatorClient(facilitatorClient))
+	server.Register(svm.SolanaDevnetCAIP2, svmserver.NewExactSvmScheme())
+	if err := server.Initialize(ctx); err != nil {
+		t.Fatalf("Failed to initialize server: %v", err)
+	}
+
+	paymentPayload, requirements := buildSvmSettlementPendingFixture(t, ctx, clientPrivateKey, facilitatorAddress, resourceServerAddress)
+	accepted := server.FindMatchingRequirements([]types.PaymentRequirements{requirements}, paymentPayload)
+	if accepted == nil {
+		t.Fatal("No matching payment requirements found")
+	}
+
+	facilitatorSigner.forcePending.Store(true)
+
+	_, settleErr := server.SettlePayment(ctx, paymentPayload, *accepted, nil)
+	if settleErr == nil {
+		t.Fatal("Expected the resource server's (retried) settle to still return settlement_pending while confirmation is forced to fail, got nil error")
+	}
+	var se *x402.SettleError
+	if !errors.As(settleErr, &se) {
+		t.Fatalf("Expected a *x402.SettleError, got %T: %v", settleErr, settleErr)
+	}
+	if se.ErrorReason != svmfacilitator.ErrSettlementPending {
+		t.Fatalf("Expected errorReason %q after the single automatic retry, got %q (%v)", svmfacilitator.ErrSettlementPending, se.ErrorReason, se)
+	}
+	if se.Transaction == "" {
+		t.Fatal("Expected a broadcast transaction signature after the retried settlement_pending")
+	}
+	firstAttemptSignature := se.Transaction
+
+	// Reconcile with confirmation no longer forced to fail, directly against
+	// the resource server (its facilitator client shares the same in-process
+	// mechanism/pending-store instance) to confirm exactly one transaction
+	// was ever broadcast across every attempt so far.
+	facilitatorSigner.forcePending.Store(false)
+
+	settleResponse, settleErr := server.SettlePayment(ctx, paymentPayload, *accepted, nil)
+	if settleErr != nil {
+		t.Fatalf("Expected final reconciliation to succeed once the original tx confirms, got error: %v", settleErr)
+	}
+	if !settleResponse.Success {
+		t.Fatalf("Expected final reconciled settlement to succeed, got: %+v", settleResponse)
+	}
+	if settleResponse.Transaction != firstAttemptSignature {
+		t.Fatalf("Resource-server retry must not cause a second broadcast: first-attempt tx=%s final tx=%s",
+			firstAttemptSignature, settleResponse.Transaction)
+	}
+}

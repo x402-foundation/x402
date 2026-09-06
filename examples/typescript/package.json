@@ -1,0 +1,24 @@
+{
+  "name": "x402_examples",
+  "private": "true",
+  "version": "0.0.2",
+  "description": "x402 Payment Protocol Monorepo",
+  "main": "index.js",
+  "scripts": {
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "lint:check": "turbo run lint:check",
+    "format": "turbo run format",
+    "format:check": "turbo run format:check"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@11.1.1",
+  "devDependencies": {
+    "prettier-linter-helpers": "^1.0.1",
+    "tsup": "^8.4.0",
+    "turbo": "^2.5.0",
+    "typescript": "^5.7.3"
+  }
+}

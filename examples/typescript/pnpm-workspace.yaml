@@ -1,0 +1,28 @@
+packages:
+  - "clients/*"
+  - "servers/*"
+  - "servers/*/lambda"
+  - "servers/*/cdk"
+  - "fullstack/*"
+  - "facilitator/*"
+  - "../../typescript/packages/core"
+  - "../../typescript/packages/extensions"
+  - "../../typescript/packages/mcp"
+  - "../../typescript/packages/http/*"
+  - "../../typescript/packages/mechanisms/*"
+packageExtensions:
+  # @keetanetwork/anchor imports tslib at runtime but does not declare it.
+  "@keetanetwork/anchor@*":
+    dependencies:
+      tslib: "^2.8.1"
+minimumReleaseAge: 4320 # Only install package versions that have been published for at least 3 days.
+minimumReleaseAgeStrict: false
+allowBuilds:
+  bufferutil: true
+  esbuild: true
+  keccak: true
+  protobufjs: true
+  secp256k1: true
+  sharp: true
+  unrs-resolver: true
+  utf-8-validate: true

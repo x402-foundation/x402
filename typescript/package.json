@@ -1,0 +1,34 @@
+{
+  "name": "x402_monorepo",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=11.1.1"
+  },
+  "packageManager": "pnpm@11.1.1",
+  "private": "true",
+  "version": "0.0.2",
+  "description": "x402 Payment Protocol Monorepo",
+  "main": "index.js",
+  "scripts": {
+    "build": "turbo run build",
+    "build:paywall-deps": "turbo run build --filter='@x402/paywall^...'",
+    "lint": "turbo run lint",
+    "format": "turbo run format",
+    "lint:check": "turbo run lint:check",
+    "format:check": "turbo run format:check",
+    "test": "turbo run test",
+    "test:integration": "pnpm --filter @x402/core --filter @x402/evm --filter @x402/svm --filter @x402/avm --filter @x402/aptos --filter @x402/hedera --filter @x402/keeta --filter @x402/near --filter @x402/stellar --filter @x402/xrpl test:integration",
+    "test:all": "pnpm test && pnpm test:integration"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@changesets/changelog-github": "^0.5.1",
+    "@changesets/cli": "^2.28.1",
+    "tsup": "^8.4.0",
+    "tsx": "^4.21.0",
+    "turbo": "^2.5.0",
+    "typescript": "^5.7.3"
+  }
+}
