@@ -10,3 +10,4 @@ description: "Packages built by ecosystem partners that extend x402 beyond the c
 | [PEAC Protocol](https://x402.peacprotocol.org) | Verifiable receipts for x402 payments | TypeScript | [GitHub](https://github.com/peacprotocol/peac) · [npm](https://www.npmjs.com/package/@peac/adapter-x402) |
 | [x402r](https://x402r.org) | Non-custodial refund and arbitration protocol | Typescript | [GitHub](https://github.com/BackTrackCo/x402r-sdk) · [npm](https://www.npmjs.com/package/@x402r/sdk ) |
 | [zauth](https://zauthx402.com) | Monitoring, verification, and refund SDK | TypeScript | [GitHub](https://github.com/zauthofficial/zauthSDK) · [npm](https://www.npmjs.com/package/@zauthx402/sdk) |
+| [x402aff](https://github.com/MiroShark/x402aff) | Affiliate builder-code revenue splits | Python, TypeScript | [GitHub](https://github.com/MiroShark/x402aff) · [PyPI](https://pypi.org/project/x402aff/) · [npm](https://www.npmjs.com/package/x402aff) |
