@@ -30,6 +30,11 @@ from .facilitator_client_base import (
     FacilitatorResponseError,
     HTTPFacilitatorClientBase,
 )
+from .utils import (
+    ResponseBodyTooLargeError,
+    aread_limited_body,
+    read_limited_body,
+)
 
 if TYPE_CHECKING:
     import httpx
@@ -56,9 +61,9 @@ _ResponseModelT = TypeVar(
 _ResponseWithSidechannelT = TypeVar("_ResponseWithSidechannelT", VerifyResponse, SettleResponse)
 
 
-def _response_excerpt(response: Any, limit: int = 200) -> str:
+def _response_excerpt(body: bytes, limit: int = 200) -> str:
     """Build a compact response preview for parse errors."""
-    text = str(getattr(response, "text", "") or "").strip()
+    text = body.decode("utf-8", errors="replace").strip()
     if not text:
         return "<empty response>"
 
@@ -69,24 +74,50 @@ def _response_excerpt(response: Any, limit: int = 200) -> str:
 
 
 def _parse_facilitator_response(
-    response: Any,
+    body: bytes,
     model_cls: type[_ResponseModelT],
     operation: str,
 ) -> _ResponseModelT:
     """Parse facilitator JSON into a validated response model."""
     try:
-        response_data = response.json()
+        response_data = json.loads(body)
     except (json.JSONDecodeError, ValueError, TypeError) as exc:
         raise FacilitatorResponseError(
-            f"Facilitator {operation} returned invalid JSON: {_response_excerpt(response)}"
+            f"Facilitator {operation} returned invalid JSON: {_response_excerpt(body)}"
         ) from exc
 
     try:
         return model_cls.model_validate(response_data)
     except (ValidationError, ValueError, TypeError) as exc:
         raise FacilitatorResponseError(
-            f"Facilitator {operation} returned invalid data: {_response_excerpt(response)}"
+            f"Facilitator {operation} returned invalid data: {_response_excerpt(body)}"
         ) from exc
+
+
+def _decode_error_body(body: bytes) -> str:
+    return body.decode("utf-8", errors="replace")
+
+
+def _read_sync_response_body(response: Any) -> bytes:
+    try:
+        return read_limited_body(response.iter_bytes())
+    except ResponseBodyTooLargeError:
+        raise
+    except Exception as err:
+        raise ValueError("failed to read response body") from err
+    finally:
+        response.close()
+
+
+async def _read_async_response_body(response: Any) -> bytes:
+    try:
+        return await aread_limited_body(response.aiter_bytes())
+    except ResponseBodyTooLargeError:
+        raise
+    except Exception as err:
+        raise ValueError("failed to read response body") from err
+    finally:
+        await response.aclose()
 
 
 def _attach_extension_responses(
@@ -213,17 +244,20 @@ class HTTPFacilitatorClient(HTTPFacilitatorClientBase):
         """
         # Use sync client for initialization (called from sync initialize())
         with self._get_sync_client() as client:
-            response = client.get(
+            request = client.build_request(
+                "GET",
                 f"{self._url}/supported",
                 headers=self._get_supported_headers(),
             )
+            response = client.send(request, stream=True)
+            body = _read_sync_response_body(response)
 
             if response.status_code != 200:
                 raise ValueError(
-                    f"Facilitator get_supported failed ({response.status_code}): {response.text}"
+                    f"Facilitator get_supported failed ({response.status_code}): {_decode_error_body(body)}"
                 )
 
-            return _parse_facilitator_response(response, SupportedResponse, "supported")
+            return _parse_facilitator_response(body, SupportedResponse, "supported")
 
     # =========================================================================
     # Bytes-Based Methods (Network Boundary)
@@ -290,17 +324,21 @@ class HTTPFacilitatorClient(HTTPFacilitatorClientBase):
         """Internal verify via HTTP (async)."""
         client = self._get_async_client()
         request_body = self._build_request_body(version, payload_dict, requirements_dict)
-
-        response = await client.post(
+        request = client.build_request(
+            "POST",
             f"{self._url}/verify",
             headers=self._get_verify_headers(),
             json=request_body,
         )
+        response = await client.send(request, stream=True)
+        body = await _read_async_response_body(response)
 
         if response.status_code != 200:
-            raise ValueError(f"Facilitator verify failed ({response.status_code}): {response.text}")
+            raise ValueError(
+                f"Facilitator verify failed ({response.status_code}): {_decode_error_body(body)}"
+            )
 
-        result = _parse_facilitator_response(response, VerifyResponse, "verify")
+        result = _parse_facilitator_response(body, VerifyResponse, "verify")
         return _attach_extension_responses(result, response)
 
     async def _settle_http(
@@ -312,17 +350,21 @@ class HTTPFacilitatorClient(HTTPFacilitatorClientBase):
         """Internal settle via HTTP (async)."""
         client = self._get_async_client()
         request_body = self._build_request_body(version, payload_dict, requirements_dict)
-
-        response = await client.post(
+        request = client.build_request(
+            "POST",
             f"{self._url}/settle",
             headers=self._get_settle_headers(),
             json=request_body,
         )
+        response = await client.send(request, stream=True)
+        body = await _read_async_response_body(response)
 
         if response.status_code != 200:
-            raise ValueError(f"Facilitator settle failed ({response.status_code}): {response.text}")
+            raise ValueError(
+                f"Facilitator settle failed ({response.status_code}): {_decode_error_body(body)}"
+            )
 
-        result = _parse_facilitator_response(response, SettleResponse, "settle")
+        result = _parse_facilitator_response(body, SettleResponse, "settle")
         return _attach_extension_responses(result, response)
 
 
@@ -430,18 +472,20 @@ class HTTPFacilitatorClientSync(HTTPFacilitatorClientBase):
             httpx.HTTPError: If request fails.
         """
         client = self._get_client()
-
-        response = client.get(
+        request = client.build_request(
+            "GET",
             f"{self._url}/supported",
             headers=self._get_supported_headers(),
         )
+        response = client.send(request, stream=True)
+        body = _read_sync_response_body(response)
 
         if response.status_code != 200:
             raise ValueError(
-                f"Facilitator get_supported failed ({response.status_code}): {response.text}"
+                f"Facilitator get_supported failed ({response.status_code}): {_decode_error_body(body)}"
             )
 
-        return _parse_facilitator_response(response, SupportedResponse, "supported")
+        return _parse_facilitator_response(body, SupportedResponse, "supported")
 
     # =========================================================================
     # Bytes-Based Methods (Network Boundary)
@@ -508,17 +552,21 @@ class HTTPFacilitatorClientSync(HTTPFacilitatorClientBase):
         """Internal verify via HTTP."""
         client = self._get_client()
         request_body = self._build_request_body(version, payload_dict, requirements_dict)
-
-        response = client.post(
+        request = client.build_request(
+            "POST",
             f"{self._url}/verify",
             headers=self._get_verify_headers(),
             json=request_body,
         )
+        response = client.send(request, stream=True)
+        body = _read_sync_response_body(response)
 
         if response.status_code != 200:
-            raise ValueError(f"Facilitator verify failed ({response.status_code}): {response.text}")
+            raise ValueError(
+                f"Facilitator verify failed ({response.status_code}): {_decode_error_body(body)}"
+            )
 
-        result = _parse_facilitator_response(response, VerifyResponse, "verify")
+        result = _parse_facilitator_response(body, VerifyResponse, "verify")
         return _attach_extension_responses(result, response)
 
     def _settle_http(
@@ -530,15 +578,19 @@ class HTTPFacilitatorClientSync(HTTPFacilitatorClientBase):
         """Internal settle via HTTP."""
         client = self._get_client()
         request_body = self._build_request_body(version, payload_dict, requirements_dict)
-
-        response = client.post(
+        request = client.build_request(
+            "POST",
             f"{self._url}/settle",
             headers=self._get_settle_headers(),
             json=request_body,
         )
+        response = client.send(request, stream=True)
+        body = _read_sync_response_body(response)
 
         if response.status_code != 200:
-            raise ValueError(f"Facilitator settle failed ({response.status_code}): {response.text}")
+            raise ValueError(
+                f"Facilitator settle failed ({response.status_code}): {_decode_error_body(body)}"
+            )
 
-        result = _parse_facilitator_response(response, SettleResponse, "settle")
+        result = _parse_facilitator_response(body, SettleResponse, "settle")
         return _attach_extension_responses(result, response)

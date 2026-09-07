@@ -1,11 +1,14 @@
 """Unit tests for x402.http.utils - header encoding/decoding utilities."""
 
 import base64
+import io
 import json
 
 import pytest
 
 from x402.http.utils import (
+    MAX_CONTROL_PLANE_RESPONSE_BYTES,
+    ResponseBodyTooLargeError,
     decode_payment_required_header,
     decode_payment_response_header,
     decode_payment_signature_header,
@@ -14,6 +17,7 @@ from x402.http.utils import (
     encode_payment_response_header,
     encode_payment_signature_header,
     htmlsafe_json_dumps,
+    read_limited_body,
     safe_base64_decode,
     safe_base64_encode,
 )
@@ -406,3 +410,47 @@ class TestHtmlsafeJsonDumps:
         result = htmlsafe_json_dumps(data)
         decoded = json.loads(result)
         assert decoded == data
+
+
+class _ZeroReader:
+    def __init__(self, size: int) -> None:
+        self._remaining = size
+
+    def read(self, n: int = -1) -> bytes:
+        if self._remaining <= 0:
+            return b""
+        if n < 0 or n > self._remaining:
+            n = self._remaining
+        self._remaining -= n
+        return b"\x00" * n
+
+
+class _ErrorReader:
+    def __init__(self, err: Exception) -> None:
+        self._err = err
+
+    def read(self, n: int = -1) -> bytes:
+        raise self._err
+
+
+class TestReadLimitedBody:
+    def test_short_body(self) -> None:
+        body = read_limited_body(io.BytesIO(b"response"))
+        assert body == b"response"
+
+    def test_exact_limit(self) -> None:
+        body = read_limited_body(_ZeroReader(MAX_CONTROL_PLANE_RESPONSE_BYTES))
+        assert len(body) == MAX_CONTROL_PLANE_RESPONSE_BYTES
+
+    def test_over_limit(self) -> None:
+        with pytest.raises(ResponseBodyTooLargeError) as excinfo:
+            read_limited_body(_ZeroReader(MAX_CONTROL_PLANE_RESPONSE_BYTES + 1))
+        assert excinfo.value.args == (
+            f"http response body too large: limit {MAX_CONTROL_PLANE_RESPONSE_BYTES} bytes",
+        )
+
+    def test_reader_error(self) -> None:
+        read_err = OSError("read failed")
+        with pytest.raises(OSError) as excinfo:
+            read_limited_body(_ErrorReader(read_err))
+        assert excinfo.value is read_err
