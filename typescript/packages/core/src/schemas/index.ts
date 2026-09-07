@@ -38,14 +38,11 @@ export type NetworkV1 = z.infer<typeof NetworkSchemaV1>;
 
 /**
  * Network identifier schema for V2 - CAIP-2 format validation.
- * V2 requires minimum length of 3 and a colon separator (e.g., "eip155:84532", "solana:devnet").
+ * V2 requires a CAIP-2 namespace and reference (e.g., "eip155:84532", "solana:devnet").
  */
-export const NetworkSchemaV2 = z
-  .string()
-  .min(3)
-  .refine(val => val.includes(":"), {
-    message: "Network must be in CAIP-2 format (e.g., 'eip155:84532')",
-  });
+export const NetworkSchemaV2 = z.string().regex(/^[-a-z0-9]{3,8}:[-_a-zA-Z0-9]{1,32}$/, {
+  message: "Network must be in CAIP-2 format (e.g., 'eip155:84532')",
+});
 export type NetworkV2 = z.infer<typeof NetworkSchemaV2>;
 
 /**
