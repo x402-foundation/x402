@@ -311,6 +311,10 @@ To set a per-route `minDeposit` override on the server:
   </Tab>
 </Tabs>
 
+#### Custom deposit strategy
+
+Use `depositStrategy` for fine-grained control: cap deposits, skip top-ups, or return a custom amount. The callback receives the computed deposit amount (already incorporating the `minDeposit` hint) and can return a capped value, `false` to skip the deposit, or `undefined` to accept the computed amount.
+
 <Tabs>
   <Tab title="TypeScript">
     ```typescript
