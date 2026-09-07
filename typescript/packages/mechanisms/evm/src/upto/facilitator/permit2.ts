@@ -24,7 +24,6 @@ import {
   x402UptoPermit2ProxyAddress,
 } from "../../constants";
 import {
-  ErrAssetNotDeployedContract,
   ErrErc20ApprovalTxFailed,
   ErrPermit2AmountMismatch,
   ErrUptoSettlementExceedsAmount,
@@ -35,6 +34,7 @@ import {
 } from "./errors";
 import { FacilitatorEvmSigner } from "../../signer";
 import { UptoPermit2Payload } from "../../types";
+import { startAssetContractCheck } from "../../assetCache";
 import { finalHashFromTwoRequestSend, getEvmChainId, isValidTxHash } from "../../utils";
 import { validateErc20ApprovalForPayment } from "../../shared/erc20approval";
 import { verifyTypedDataSignature } from "../../shared/verifySignature";
@@ -112,10 +112,8 @@ export async function verifyUptoPermit2(
   const chainId = getEvmChainId(requirements.network);
   const tokenAddress = getAddress(requirements.asset);
 
-  const assetBytecode = await signer.getCode({ address: tokenAddress });
-  if (!assetBytecode || assetBytecode === "0x") {
-    return { isValid: false, invalidReason: ErrAssetNotDeployedContract, payer };
-  }
+  // Run the asset-contract check concurrently with the signature check below.
+  const assetCheck = startAssetContractCheck(signer, requirements.network, requirements.asset);
 
   if (
     getAddress(permit2Payload.permit2Authorization.spender) !==
@@ -221,6 +219,12 @@ export async function verifyUptoPermit2(
     ...permit2TypedData,
     signature: permit2Payload.signature,
   });
+
+  const assetReason = await assetCheck.await();
+  if (assetReason) {
+    return { isValid: false, invalidReason: assetReason, payer };
+  }
+
   if (!signatureValid) {
     return {
       isValid: false,
