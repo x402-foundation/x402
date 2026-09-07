@@ -8,6 +8,7 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { wrapAxiosWithPayment, wrapAxiosWithPaymentFromConfig } from "./index";
 import type { x402Client, x402ClientConfig } from "@x402/core/client";
+import { ResponseBodyTooLargeError } from "@x402/core/http";
 import type { PaymentPayload, PaymentRequired, PaymentRequirements } from "@x402/core/types";
 
 // Mock the @x402/core/client module
@@ -73,7 +74,7 @@ describe("wrapAxiosWithPayment()", () => {
   const createAxiosError = (
     status: number,
     config?: InternalAxiosRequestConfig,
-    data?: PaymentRequired,
+    data?: PaymentRequired | ReadableStream<Uint8Array> | Uint8Array | string,
     headers?: Record<string, string>,
   ): AxiosError => {
     return new AxiosError(
@@ -490,6 +491,58 @@ describe("wrapAxiosWithPayment()", () => {
     expect(hookConfig.headers["X-HOOK"]).toBe("handled");
     expect(paidConfig.headers["PAYMENT-SIGNATURE"]).toBe("encoded-payment-header");
     expect(mockClient.createPaymentPayload).toHaveBeenCalledWith(validPaymentRequired);
+  });
+
+  it("rejects an oversized initial 402 response", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const closed = { value: false };
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(64 * 1024));
+      },
+      cancel() {
+        closed.value = true;
+      },
+    });
+
+    const error = await interceptor(createAxiosError(402, createErrorConfig(), stream)).catch(
+      caught => caught as Error,
+    );
+
+    expect(error).toBeInstanceOf(ResponseBodyTooLargeError);
+    expect(closed.value).toBe(true);
+    expect(mockAxiosClient.request).not.toHaveBeenCalled();
+    expect(MockX402HTTPClient.prototype.getPaymentRequiredResponse).not.toHaveBeenCalled();
+    expect(mockClient.createPaymentPayload).not.toHaveBeenCalled();
+  });
+
+  it("rejects an oversized auth-retry 402 response", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const closed = { value: false };
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(64 * 1024));
+      },
+      cancel() {
+        closed.value = true;
+      },
+    });
+
+    (
+      MockX402HTTPClient.prototype.handlePaymentRequired as ReturnType<typeof vi.fn>
+    ).mockResolvedValue({ "X-HOOK": "handled" });
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      createAxiosResponse(402, stream),
+    );
+
+    const error = await interceptor(
+      createAxiosError(402, createErrorConfig(), validPaymentRequired),
+    ).catch(caught => caught as Error);
+
+    expect(error).toBeInstanceOf(ResponseBodyTooLargeError);
+    expect(closed.value).toBe(true);
+    expect(mockAxiosClient.request).toHaveBeenCalledTimes(1);
+    expect(mockClient.createPaymentPayload).not.toHaveBeenCalled();
   });
 });
 

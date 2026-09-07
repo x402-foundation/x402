@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { wrapFetchWithPayment, wrapFetchWithPaymentFromConfig } from "./index";
 import type { x402Client, x402HTTPClient, x402ClientConfig } from "@x402/core/client";
 import type { PaymentPayload, PaymentRequired, PaymentRequirements } from "@x402/core/types";
+import { ResponseBodyTooLargeError } from "@x402/core/http";
 
 // Mock the @x402/core/client module
 vi.mock("@x402/core/client", () => {
@@ -464,6 +465,61 @@ describe("wrapFetchWithPayment()", () => {
     expect(retryRequest.headers.get("Custom-Header")).toBe("custom-value");
     expect(retryRequest.headers.get("Authorization")).toBe("Bearer token");
     expect(retryRequest.headers.get("PAYMENT-SIGNATURE")).toBe("encoded-payment-header");
+  });
+
+  it("rejects an oversized initial 402 response", async () => {
+    const closed = { value: false };
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(64 * 1024));
+      },
+      cancel() {
+        closed.value = true;
+      },
+    });
+    mockFetch.mockResolvedValueOnce(
+      new Response(stream, { status: 402, statusText: "Payment Required" }),
+    );
+
+    const error = await wrappedFetch("https://api.example.com/data", { method: "GET" }).catch(
+      caught => caught as Error,
+    );
+
+    expect(error).toBeInstanceOf(ResponseBodyTooLargeError);
+    expect(closed.value).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an oversized auth-retry 402 response", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    (
+      MockX402HTTPClient.prototype.handlePaymentRequired as ReturnType<typeof vi.fn>
+    ).mockResolvedValue({
+      "SIGN-IN-WITH-X": "signed",
+    });
+
+    const closed = { value: false };
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(64 * 1024));
+      },
+      cancel() {
+        closed.value = true;
+      },
+    });
+    mockFetch
+      .mockResolvedValueOnce(
+        createResponse(402, validPaymentRequired, { "PAYMENT-REQUIRED": "encoded-header" }),
+      )
+      .mockResolvedValueOnce(new Response(stream, { status: 402, statusText: "Payment Required" }));
+
+    const error = await wrappedFetch("https://api.example.com/profile", { method: "GET" }).catch(
+      caught => caught as Error,
+    );
+
+    expect(error).toBeInstanceOf(ResponseBodyTooLargeError);
+    expect(closed.value).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 });
 
