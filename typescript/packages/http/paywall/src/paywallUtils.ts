@@ -133,6 +133,16 @@ export function isAvmNetwork(network: string): boolean {
 }
 
 /**
+ * Determines if the provided network is a Stellar network.
+ *
+ * @param network - The network to check (CAIP-2 format: stellar:pubnet or stellar:testnet).
+ * @returns True if the network is Stellar based.
+ */
+export function isStellarNetwork(network: string): boolean {
+  return network.startsWith("stellar:");
+}
+
+/**
  * Provides a human-readable display name for a network.
  * Uses viem/chains for EVM chain metadata (based on ethereum-lists/chains).
  * See: https://github.com/ethereum-lists/chains
@@ -164,6 +174,11 @@ export function getNetworkDisplayName(network: string): string {
     return ref === ALGORAND_NETWORK_REFS.TESTNET ? "Algorand Testnet" : "Algorand Mainnet";
   }
 
+  if (network.startsWith("stellar:")) {
+    const ref = network.split(":")[1];
+    return ref === "testnet" ? "Stellar Testnet" : "Stellar Mainnet";
+  }
+
   return network;
 }
 
@@ -189,6 +204,10 @@ export function isTestnetNetwork(network: string): boolean {
   if (network.startsWith("algorand:")) {
     const ref = resolveAlgorandGenesisRef(network);
     return ref === ALGORAND_NETWORK_REFS.TESTNET;
+  }
+
+  if (network.startsWith("stellar:")) {
+    return network.split(":")[1] === "testnet";
   }
 
   return false;

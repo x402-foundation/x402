@@ -1,0 +1,94 @@
+@import "../styles.css";
+
+
+/* Utility classes (Stellar paywall) */
+.gap-8 {
+  gap: 1.25rem;
+}
+
+.w-full {
+  width: 100%;
+}
+
+.button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.status-info {
+  color: var(--secondary-text-color);
+}
+
+.status-success {
+  color: var(--button-positive-color);
+}
+
+.status-error {
+  color: var(--button-error-hover-color);
+}
+
+.balance-button {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.trustline-banner {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  margin-top: 0.5rem;
+  padding: 0.75rem 0.875rem;
+  background-color: #fef3dd;
+  border: 1px solid #ffb224;
+  border-radius: 0.5rem;
+  text-align: left;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.trustline-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-top: 0.125rem;
+  border-radius: 50%;
+  background-color: #ad5700;
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.trustline-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.trustline-title {
+  font-weight: 600;
+  color: #4e2009;
+  margin-bottom: 0.125rem;
+  font-size: 0.8125rem;
+}
+
+.trustline-text {
+  color: #4e2009;
+}
+
+.trustline-text a {
+  color: #ad5700;
+  text-decoration: underline;
+  font-weight: 500;
+}
+
+.trustline-text a:hover {
+  color: #4e2009;
+}

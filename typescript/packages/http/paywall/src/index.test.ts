@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { avmPaywall, createPaywall, evmPaywall, PaywallBuilder, svmPaywall } from "./index";
+import {
+  avmPaywall,
+  createPaywall,
+  evmPaywall,
+  PaywallBuilder,
+  stellarPaywall,
+  svmPaywall,
+} from "./index";
 import type { PaywallNetworkHandler, PaymentRequired, PaymentRequirements } from "./index";
 
 describe("@x402/paywall entrypoint", () => {
@@ -12,6 +19,7 @@ describe("@x402/paywall entrypoint", () => {
     const evmRequirement = createRequirement("eip155:8453");
     const svmRequirement = createRequirement("solana:mainnet");
     const avmRequirement = createRequirement("algorand:mainnet");
+    const stellarRequirement = createRequirement("stellar:pubnet");
 
     expect(evmPaywall.supports(evmRequirement)).toBe(true);
     expect(evmPaywall.supports(svmRequirement)).toBe(false);
@@ -21,6 +29,9 @@ describe("@x402/paywall entrypoint", () => {
 
     expect(avmPaywall.supports(avmRequirement)).toBe(true);
     expect(avmPaywall.supports(evmRequirement)).toBe(false);
+
+    expect(stellarPaywall.supports(stellarRequirement)).toBe(true);
+    expect(stellarPaywall.supports(avmRequirement)).toBe(false);
   });
 
   it("builds a provider from the exported factory", () => {

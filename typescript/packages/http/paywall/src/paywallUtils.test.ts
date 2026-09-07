@@ -4,6 +4,7 @@ import {
   choosePaymentRequirement,
   getNetworkDisplayName,
   isEvmNetwork,
+  isStellarNetwork,
   isSvmNetwork,
   normalizePaymentRequirements,
   isTestnetNetwork,
@@ -154,5 +155,24 @@ describe("paywallUtils", () => {
       expect(isTestnetNetwork("eip155:1")).toBe(false);
       expect(isTestnetNetwork("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp")).toBe(false);
     });
+  });
+});
+
+describe("stellar network helpers", () => {
+  it("isStellarNetwork recognizes CAIP-2 Stellar ids only", () => {
+    expect(isStellarNetwork("stellar:pubnet")).toBe(true);
+    expect(isStellarNetwork("stellar:testnet")).toBe(true);
+    expect(isStellarNetwork("eip155:8453")).toBe(false);
+    expect(isStellarNetwork("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp")).toBe(false);
+  });
+
+  it("getNetworkDisplayName maps Stellar ids", () => {
+    expect(getNetworkDisplayName("stellar:pubnet")).toBe("Stellar Mainnet");
+    expect(getNetworkDisplayName("stellar:testnet")).toBe("Stellar Testnet");
+  });
+
+  it("isTestnetNetwork treats stellar:testnet as testnet and stellar:pubnet as mainnet", () => {
+    expect(isTestnetNetwork("stellar:testnet")).toBe(true);
+    expect(isTestnetNetwork("stellar:pubnet")).toBe(false);
   });
 });

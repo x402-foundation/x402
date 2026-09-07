@@ -20,10 +20,24 @@ const MOCK_SVM_TEMPLATE = `<!DOCTYPE html>
 </body>
 </html>`;
 
+const MOCK_STELLAR_TEMPLATE = `<!DOCTYPE html>
+<html>
+<head>
+  <title>Stellar Paywall</title>
+</head>
+<body>
+  <div id="root"></div>
+</body>
+</html>`;
+
 vi.mock("./evm/template-loader", () => ({
   getEvmTemplate: () => MOCK_EVM_TEMPLATE,
 }));
 
 vi.mock("./svm/template-loader", () => ({
   getSvmTemplate: () => MOCK_SVM_TEMPLATE,
+}));
+
+vi.mock("./stellar/template-loader", () => ({
+  getStellarTemplate: () => MOCK_STELLAR_TEMPLATE,
 }));
