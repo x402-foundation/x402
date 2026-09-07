@@ -89,7 +89,7 @@ buyer (the `X-Payment-Response` header in v1):
 ```jsonc
 {
   "v": 1,
-  "paymentId": "0x…",              // keccak256(caip2 ‖ txHash without 0x)
+  "paymentId": "0x…",              // keccak256(caip2 ‖ txHash without 0x), as 0x + 64 lowercase hex
   "pointer": "ipfs+https://…",     // where the ciphertext is
   "backend": "ipfs",
   "contentHash": "0x…",            // keccak256 of the PLAINTEXT body
@@ -116,6 +116,11 @@ the payment or alter the delivered body.**
 
 `contentHash` is over the plaintext: it lets the buyer prove the anchored
 ciphertext decrypts to exactly the bytes served.
+
+`paymentId` is rendered as `0x` followed by 64 lowercase hexadecimal digits.
+Facilitators MUST accept it in any casing, with or without the prefix, and
+MUST key records on the canonical rendering: a reader that recomputes the id
+from the formula above must find the record whatever its library's case.
 
 ## Encryption
 
