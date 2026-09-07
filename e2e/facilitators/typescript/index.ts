@@ -23,6 +23,8 @@ import { toFacilitatorAptosSigner } from "@x402/aptos";
 import { ExactAptosScheme } from "@x402/aptos/exact/facilitator";
 import { toFacilitatorAvmSigner } from "@x402/avm";
 import { ExactAvmScheme } from "@x402/avm/exact/facilitator";
+import { toFacilitatorCantonSigner } from "@x402/canton";
+import { ExactCantonScheme } from "@x402/canton/exact/facilitator";
 import { x402Facilitator } from "@x402/core/facilitator";
 import {
   Network,
@@ -109,6 +111,7 @@ const EVM_NETWORK = resolveNetworkCaip2("evm");
 const SVM_NETWORK = resolveNetworkCaip2("svm");
 const APTOS_NETWORK = resolveNetworkCaip2("aptos");
 const AVM_NETWORK = resolveNetworkCaip2("avm");
+const CANTON_NETWORK = resolveNetworkCaip2("canton");
 const HEDERA_NETWORK = resolveNetworkCaip2("hedera");
 const KEETA_NETWORK = resolveNetworkCaip2("keeta");
 const STELLAR_NETWORK = resolveNetworkCaip2("stellar");
@@ -169,6 +172,9 @@ const hasFacilitatorCredential = [
   process.env.FACILITATOR_NEAR_ACCOUNT_ID && process.env.FACILITATOR_NEAR_PRIVATE_KEY,
   process.env.FACILITATOR_CCD_PRIVATE_KEY && process.env.FACILITATOR_CCD_ADDRESS,
   process.env.XRPL_NETWORK, // keyless XRPL facilitator
+  process.env.FACILITATOR_CANTON_PARTY &&
+    process.env.CANTON_PARTICIPANT_URL &&
+    process.env.CANTON_SCAN_URL,
 ].some(Boolean);
 
 if (!hasFacilitatorCredential) {
@@ -230,6 +236,30 @@ let avmSigner: ReturnType<typeof toFacilitatorAvmSigner> | undefined;
 if (process.env.FACILITATOR_AVM_PRIVATE_KEY) {
   avmSigner = toFacilitatorAvmSigner(process.env.FACILITATOR_AVM_PRIVATE_KEY as string);
   console.info(`AVM Facilitator account: ${avmSigner.getAddresses()[0]}`);
+}
+
+// Initialize the Canton signer from a participant + Scan + facilitator party (optional)
+let cantonSigner: ReturnType<typeof toFacilitatorCantonSigner> | undefined;
+if (
+  process.env.FACILITATOR_CANTON_PARTY &&
+  process.env.CANTON_PARTICIPANT_URL &&
+  process.env.CANTON_TOKEN &&
+  process.env.CANTON_USER_ID &&
+  process.env.CANTON_SYNCHRONIZER_ID &&
+  process.env.CANTON_SCAN_URL
+) {
+  cantonSigner = toFacilitatorCantonSigner({
+    participantUrl: process.env.CANTON_PARTICIPANT_URL,
+    token: process.env.CANTON_TOKEN,
+    userId: process.env.CANTON_USER_ID,
+    synchronizerId: process.env.CANTON_SYNCHRONIZER_ID,
+    scanUrl: process.env.CANTON_SCAN_URL,
+    facilitatorParties: [process.env.FACILITATOR_CANTON_PARTY],
+    ...(process.env.CANTON_TOKEN_REGISTRIES
+      ? { tokenRegistries: JSON.parse(process.env.CANTON_TOKEN_REGISTRIES) }
+      : {}),
+  });
+  console.info(`Canton Facilitator party: ${cantonSigner.getAddresses()[0]}`);
 }
 
 // Initialize the Hedera signer from account + private key (optional)
@@ -569,6 +599,20 @@ if (svmSigner) {
 }
 if (avmSigner) {
   facilitator.register(AVM_NETWORK as Network, new ExactAvmScheme(avmSigner));
+}
+if (cantonSigner) {
+  facilitator.register(
+    CANTON_NETWORK as Network,
+    new ExactCantonScheme(cantonSigner, {
+      synchronizerId: process.env.CANTON_SYNCHRONIZER_ID as string,
+      ...(process.env.CANTON_TOKEN_REGISTRIES
+        ? { tokenRegistries: JSON.parse(process.env.CANTON_TOKEN_REGISTRIES) }
+        : {}),
+      ...(process.env.CANTON_REGISTRY_TRUSTED_PARTIES
+        ? { registryTrustedParties: JSON.parse(process.env.CANTON_REGISTRY_TRUSTED_PARTIES) }
+        : {}),
+    }),
+  );
 }
 if (aptosSigner) {
   facilitator.register(

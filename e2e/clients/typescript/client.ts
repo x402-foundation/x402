@@ -30,6 +30,8 @@ import { Wallet } from "xrpl";
 import { ExactAvmScheme as ExactAvmClientScheme } from "@x402/avm/exact/client";
 import { toClientAvmSigner } from "@x402/avm";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/client";
+import { toClientCantonSigner } from "@x402/canton";
+import { ExactCantonScheme as ExactCantonClientScheme } from "@x402/canton/exact/client";
 import { AccountAddress, buildBasicAccountSigner } from "@concordium/web-sdk";
 import * as KeetaNet from "@keetanetwork/keetanet-client";
 import { base58 } from "@scure/base";
@@ -280,6 +282,36 @@ export async function createE2EClient(): Promise<E2EClientContext> {
     schemes.push({
       network: networkCaip2Pattern("near"),
       client: new ExactNearClientScheme(nearSigner),
+    });
+  }
+  if (
+    process.env.CLIENT_CANTON_PARTY &&
+    process.env.CLIENT_CANTON_PRIVATE_KEY &&
+    process.env.CANTON_PARTICIPANT_URL &&
+    process.env.CANTON_TOKEN &&
+    process.env.CANTON_USER_ID &&
+    process.env.CANTON_SYNCHRONIZER_ID &&
+    process.env.CANTON_SCAN_URL
+  ) {
+    const cantonSigner = toClientCantonSigner({
+      participantUrl: process.env.CANTON_PARTICIPANT_URL,
+      token: process.env.CANTON_TOKEN,
+      userId: process.env.CANTON_USER_ID,
+      synchronizerId: process.env.CANTON_SYNCHRONIZER_ID,
+      scanUrl: process.env.CANTON_SCAN_URL,
+      party: process.env.CLIENT_CANTON_PARTY,
+      privateKeyPem: process.env.CLIENT_CANTON_PRIVATE_KEY,
+      ...(process.env.CANTON_TOKEN_REGISTRIES
+        ? { tokenRegistries: JSON.parse(process.env.CANTON_TOKEN_REGISTRIES) }
+        : {}),
+    });
+    schemes.push({
+      network: networkCaip2Pattern("canton"),
+      client: new ExactCantonClientScheme(cantonSigner, {
+        ...(process.env.CANTON_REGISTRY_TRUSTED_PARTIES
+          ? { registryTrustedParties: JSON.parse(process.env.CANTON_REGISTRY_TRUSTED_PARTIES) }
+          : {}),
+      }),
     });
   }
   if (process.env.CLIENT_XRPL_SEED) {

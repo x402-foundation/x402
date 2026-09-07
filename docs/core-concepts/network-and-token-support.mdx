@@ -16,17 +16,19 @@ x402 uses [CAIP-2](https://chainagnostic.org/CAIPs/caip-2) standard network iden
 - **Hedera**: `hedera:<network>` (`mainnet` or `testnet`)
 - **Keeta**: `keeta:<networkId>` (e.g., `keeta:21378` for mainnet)
 - **NEAR**: `near:<network>` (`mainnet` or `testnet`)
+- **Canton**: `canton:mainnet`, `canton:testnet`, `canton:devnet` (the Global Synchronizer id travels in `extra.synchronizerId`)
 - **Concordium**: `ccd:<genesisHash>` (e.g., `ccd:9dd9ca4d19e9393877d2c44b70f89acb` for mainnet)
 - **XRPL**: `xrpl:<networkId>` (e.g., `xrpl:0` for mainnet, `xrpl:1` for testnet)
 
 ## Token Support
 
-x402 supports tokens on EVM, Solana, TON, Algorand (AVM), Stellar, Aptos, Hedera, Keeta, NEAR, Concordium, and XRPL networks:
+x402 supports tokens on EVM, Solana, TON, Algorand (AVM), Stellar, Aptos, Hedera, Keeta, NEAR, Canton, Concordium, and XRPL networks:
 
 | Ecosystem | Supported Tokens | Transfer Method |
 |-----------|------------------|-----------------|
 | **EVM** | Any ERC-20 token | EIP-3009 or Permit2 |
 | **Solana** | Any SPL or Token-2022 token | SPL Transfer |
+| **Canton** | Canton Coin + any CIP-56 registry token | CIP-56 TransferFactory (inline) |
 | **TON (TVM)** | Any TEP-74 jetton (e.g., USDT) | Signed W5R1 internal message |
 | **Algorand (AVM)** | Any ASA (e.g., USDC) | ASA transfer (`axfer`) in atomic group |
 | **Stellar** | Any Soroban token implementing SEP-41 | `transfer(from, to, amount)` |
@@ -339,7 +341,7 @@ Video Guide: [Adding EVM Chains to x402](https://x.com/jaycoolh/status/192085155
 
 Key takeaways:
 
-* **Any EVM chain** is supported via `eip155:<chainId>` — plus Solana, TON (TVM), Algorand (AVM), Stellar, Aptos, Hedera, Keeta, NEAR, Concordium, and XRPL
+* **Any EVM chain** is supported via `eip155:<chainId>` — plus Solana, TON (TVM), Algorand (AVM), Stellar, Aptos, Hedera, Keeta, NEAR, Canton, Concordium, and XRPL
 * [Default assets](#default-assets-for-dollar-string-pricing) are a convenience for `"$0.01"` dollar-string pricing; explicit `TokenAmount` works on any chain
 * Any ERC-20 token works on any EVM facilitator (via EIP-3009 or Permit2)
 * CAIP-2 identifiers provide unambiguous cross-chain support
