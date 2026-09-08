@@ -871,13 +871,11 @@ describe("paymentMiddleware", () => {
     );
     const context = createMockContext();
     const next = vi.fn().mockImplementation(async () => {
-      context.res = {
-        status: 200,
-        headers: new Headers(),
-        clone: () => ({
-          arrayBuffer: async () => new ArrayBuffer(0),
-        }),
-      } as unknown as Response;
+      // A real Response: the middleware buffers it via res.arrayBuffer()
+      // (settlement-reply buffering, #3392), so a hand-rolled object without
+      // that method throws and falls into the generic JSON-402 catch instead
+      // of exercising the settlement-failure path under test.
+      context.res = new Response(null, { status: 200 });
     });
 
     await middleware(context, next);
@@ -906,13 +904,11 @@ describe("paymentMiddleware", () => {
     );
     const context = createMockContext();
     const next = vi.fn().mockImplementation(async () => {
-      context.res = {
-        status: 200,
-        headers: new Headers(),
-        clone: () => ({
-          arrayBuffer: async () => new ArrayBuffer(0),
-        }),
-      } as unknown as Response;
+      // A real Response: the middleware buffers it via res.arrayBuffer()
+      // (settlement-reply buffering, #3392), so a hand-rolled object without
+      // that method throws and falls into the generic JSON-402 catch instead
+      // of exercising the settlement-failure path under test.
+      context.res = new Response(null, { status: 200 });
     });
 
     await middleware(context, next);
