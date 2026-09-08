@@ -32,6 +32,7 @@ from x402.http.types import (
     RouteConfig,
 )
 from x402.schemas import PaymentPayload, PaymentRequirements
+from x402.schemas.errors import FacilitatorCapabilityError
 from x402.schemas.hooks import (
     CompletedSettlement,
     PaymentCancellationDispatcher,
@@ -472,16 +473,100 @@ class TestFlaskMiddlewareConcurrency:
             mock_http_server.return_value = mock_http_server_instance
 
             PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=True)
+            assert call_count == 1
 
             with app.test_client() as client:
-                # First request fails
+                # First request retries after the eager attempt failed
                 response1 = client.get("/api/protected")
                 assert response1.status_code == 502
 
                 # Second request retries init since first failed
                 response2 = client.get("/api/protected")
                 assert response2.status_code == 502
-                assert call_count == 2
+                assert call_count == 3
+
+
+class TestFlaskBackgroundInit:
+    """Fatal capability errors at eager initialize must exit the process."""
+
+    def test_eager_init_exits_on_capability_mismatch(self):
+        app = Flask(__name__)
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+        exit_codes: list[int] = []
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            instance = MagicMock()
+            instance.initialize.side_effect = FacilitatorCapabilityError(
+                ["upto on solana:devnet: missing"]
+            )
+            mock_http_server.return_value = instance
+            with patch(
+                "x402.http.background_init._process_exit",
+                lambda code: exit_codes.append(code),
+            ):
+                PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=True)
+        assert exit_codes == [1]
+
+    def test_eager_init_does_not_exit_on_retryable_timeout(self):
+        app = Flask(__name__)
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+        exit_codes: list[int] = []
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            instance = MagicMock()
+            instance.initialize.side_effect = Exception("facilitator request timed out")
+            mock_http_server.return_value = instance
+            with patch(
+                "x402.http.background_init._process_exit",
+                lambda code: exit_codes.append(code),
+            ):
+                PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=True)
+        assert exit_codes == []
+
+    def test_eager_init_does_not_exit_on_empty_supported(self):
+        app = Flask(__name__)
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+        exit_codes: list[int] = []
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            instance = MagicMock()
+            instance.initialize.side_effect = RuntimeError(
+                "Failed to initialize: no supported payment kinds loaded from any facilitator."
+            )
+            mock_http_server.return_value = instance
+            with patch(
+                "x402.http.background_init._process_exit",
+                lambda code: exit_codes.append(code),
+            ):
+                PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=True)
+        assert exit_codes == []
 
 
 class TestPaymentMiddlewareFunction:
@@ -1196,6 +1281,7 @@ def test_payment_middleware_from_config_builds_with_sync_server():
         app,
         {"/api/protected": {"price": "$0.01", "pay_to": "0x" + "1" * 40}},
         facilitator_client=facilitator,
+        sync_facilitator_on_start=False,
     )
 
     assert middleware is not None

@@ -42,6 +42,7 @@ const facilitatorClient = new HTTPFacilitatorClient({ url: facilitatorUrl });
 const batchedScheme = new BatchSettlementEvmScheme(evmAddress, {
   ...(receiverAuthorizerSigner ? { receiverAuthorizerSigner } : {}),
   withdrawDelay,
+  enforceMinDeposit: false,
   ...(storageDir ? { storage: new FileChannelStorage({ directory: storageDir }) } : {}),
 });
 
@@ -86,6 +87,8 @@ const httpServer = new x402HTTPResourceServer(resourceServer, {
       price: maxPrice,
       network: NETWORK,
       payTo: evmAddress,
+      // Optional: override the default 10× deposit hint (Money strings require the network default asset).
+      // extra: { minDeposit: "$0.10" },
     },
     description: "Weather data",
     mimeType: "application/json",

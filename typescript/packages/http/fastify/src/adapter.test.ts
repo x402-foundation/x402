@@ -94,6 +94,17 @@ describe("FastifyAdapter", () => {
       const adapter = new FastifyAdapter(req);
       expect(adapter.getUrl()).toBe("https://example.com:3000/api/test?foo=bar");
     });
+
+    it("falls back to hostname when host is missing", () => {
+      const req = createMockRequest({
+        url: "/api/test",
+        protocol: "https",
+        hostname: "example.com",
+      });
+      (req as { host?: string }).host = undefined;
+      const adapter = new FastifyAdapter(req);
+      expect(adapter.getUrl()).toBe("https://example.com/api/test");
+    });
   });
 
   describe("getAcceptHeader", () => {
@@ -133,6 +144,13 @@ describe("FastifyAdapter", () => {
 
     it("returns empty object when no query params", () => {
       const req = createMockRequest({ query: {} });
+      const adapter = new FastifyAdapter(req);
+      expect(adapter.getQueryParams()).toEqual({});
+    });
+
+    it("returns empty object when query is missing", () => {
+      const req = createMockRequest();
+      (req as { query?: Record<string, string> }).query = undefined;
       const adapter = new FastifyAdapter(req);
       expect(adapter.getQueryParams()).toEqual({});
     });

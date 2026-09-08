@@ -54,9 +54,9 @@ This example registers `UptoSvmScheme` with a **fee payer only** — no `authori
 
 To let resource servers delegate voucher signing to your facilitator, extend the SVM registration with a separate Ed25519 key and a `resolveCallerIdentity` hook. Delegation is not negotiated in x402 — it requires an out-of-band agreement with each resource server, and authenticated settle requests so claim vouchers are signed only for that server.
 
-| Signer | Role | Onchain effect |
-| ------ | ---- | -------------- |
-| `SVM_PRIVATE_KEY` | **Fee payer** — co-signs channel `open`, submits claim/cleanup txs | Pays SOL for opens, settlement, and rent cleanup |
+| Signer                        | Role                                                                 | Onchain effect                                                      |
+| ----------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `SVM_PRIVATE_KEY`             | **Fee payer** — co-signs channel `open`, submits claim/cleanup txs   | Pays SOL for opens, settlement, and rent cleanup                    |
 | `authorizerSigner` (optional) | **Receiver authorizer** — signs claim vouchers when servers delegate | Committed as the channel `authorized_signer` for delegating servers |
 
 When `authorizerSigner` is set, `GET /supported` includes both `feePayer` and `receiverAuthorizer`:

@@ -260,3 +260,40 @@ describe("ExactSvmScheme maxRequiredSignatures", () => {
     expect(result.invalidReason).toBe(Errors.ErrFeePayerMismatch);
   });
 });
+
+describe("verifyRequiredSignatures", () => {
+  it("rejects when a required signer account is missing from static accounts", async () => {
+    const { verifyRequiredSignatures } = await import(
+      "../../src/exact/facilitator/signatureVerification"
+    );
+    const feePayer = "FeePayer1111111111111111111111111111";
+    const result = await verifyRequiredSignatures(
+      { messageBytes: new Uint8Array([1]), signatures: {} } as never,
+      {
+        header: { numSignerAccounts: 2 },
+        staticAccounts: [{ toString: () => feePayer }],
+      },
+      feePayer,
+    );
+    expect(result).toEqual({ ok: false, invalidReason: Errors.ErrSignatureInvalid });
+  });
+
+  it("treats an unimportable signer public key as an invalid signature", async () => {
+    const { verifyRequiredSignatures } = await import(
+      "../../src/exact/facilitator/signatureVerification"
+    );
+    const feePayer = "FeePayer1111111111111111111111111111";
+    const result = await verifyRequiredSignatures(
+      {
+        messageBytes: new Uint8Array([1, 2, 3]),
+        signatures: { "not-a-valid-address": new Uint8Array(64) },
+      } as never,
+      {
+        header: { numSignerAccounts: 2 },
+        staticAccounts: [{ toString: () => feePayer }, { toString: () => "not-a-valid-address" }],
+      },
+      feePayer,
+    );
+    expect(result).toEqual({ ok: false, invalidReason: Errors.ErrSignatureInvalid });
+  });
+});

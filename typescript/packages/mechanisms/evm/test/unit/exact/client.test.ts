@@ -209,6 +209,23 @@ describe("ExactEvmScheme (Client)", () => {
       expect(result.payload.authorization).toBeDefined();
     });
 
+    it("should reject EIP-3009 payload creation when EIP-712 domain fields are missing", async () => {
+      const requirements: PaymentRequirements = {
+        scheme: "exact",
+        network: "eip155:8453",
+        amount: "1000000",
+        asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        payTo: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0",
+        maxTimeoutSeconds: 300,
+        extra: {},
+      };
+
+      await expect(client.createPaymentPayload(2, requirements)).rejects.toThrow(
+        /EIP-712 domain parameters/,
+      );
+      expect(mockSigner.signTypedData).not.toHaveBeenCalled();
+    });
+
     it("should pass correct EIP-712 domain to signTypedData", async () => {
       const requirements: PaymentRequirements = {
         scheme: "exact",
@@ -868,6 +885,32 @@ describe("Permit2 Approval Flow", () => {
       expect(result.extensions!.erc20ApprovalGasSponsoring).toBeUndefined();
       // signTransaction should NOT have been called
       expect(signer.signTransaction).not.toHaveBeenCalled();
+    });
+
+    it("falls back to default gas fees when estimateFeesPerGas is missing or empty", async () => {
+      const mockSignedTx = "0x02f8ab" as `0x${string}`;
+      const signer: ClientEvmSigner = {
+        address: "0x1234567890123456789012345678901234567890",
+        signTypedData: vi.fn().mockResolvedValue("0xmocksig"),
+        readContract: vi.fn().mockResolvedValue(BigInt(0)),
+        signTransaction: vi.fn().mockResolvedValue(mockSignedTx),
+        getTransactionCount: vi.fn().mockResolvedValue(1),
+        estimateFeesPerGas: vi.fn().mockResolvedValue(undefined),
+      };
+      const scheme = new ExactEvmScheme(signer);
+      const result = await scheme.createPaymentPayload(2, erc20Requirements, {
+        extensions: {
+          erc20ApprovalGasSponsoring: { info: { description: "test", version: "1" }, schema: {} },
+        },
+      });
+
+      expect(result.extensions!.erc20ApprovalGasSponsoring).toBeDefined();
+      expect(signer.signTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          maxFeePerGas: expect.any(BigInt),
+          maxPriorityFeePerGas: expect.any(BigInt),
+        }),
+      );
     });
 
     it("should use ERC-20 approval when EIP-2612 not advertised but ERC-20 is", async () => {

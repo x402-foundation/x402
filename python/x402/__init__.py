@@ -104,11 +104,12 @@ from .schemas import (
     AbortResult,
     AssetAmount,
     CompletedSettlement,
+    # Errors
+    FacilitatorCapabilityError,
     # Config
     FacilitatorConfig,
     Money,
     Network,
-    # Errors
     NoMatchingRequirementsError,
     PaymentAbortedError,
     PaymentCreatedContext,
@@ -275,6 +276,7 @@ __all__ = [
     "SchemeNotFoundError",
     "NoMatchingRequirementsError",
     "PaymentAbortedError",
+    "FacilitatorCapabilityError",
     # Types - Helpers
     "detect_version",
     "match_payload_to_requirements",

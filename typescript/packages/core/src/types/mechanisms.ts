@@ -48,12 +48,12 @@ export type PaymentPayloadResult = Pick<PaymentPayload, "x402Version" | "payload
 };
 
 /**
- * Context passed to scheme's createPaymentPayload for extensions awareness.
- * Contains the server-declared extensions from PaymentRequired so the scheme
- * can check which extensions are advertised and respond accordingly.
+ * Context passed to scheme `createPaymentPayload`.
+ * `maxAmountPerPayment` is the resolved atomic spend cap; omitted when uncapped.
  */
 export interface PaymentPayloadContext {
   extensions?: Record<string, unknown>;
+  maxAmountPerPayment?: string;
 }
 
 export interface SchemeClientHooks {

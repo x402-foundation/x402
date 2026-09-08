@@ -17,8 +17,11 @@ export { createBatchSettlementClientHooks } from "./hooks";
 export { computeChannelId } from "../utils";
 
 export {
+  applyMaxDeposit,
   depositAmountForRequest,
   isBatchSettlementEvmSchemeOptions,
+  maxDepositFromSpendCap,
+  parseAnnouncedMinDeposit,
   resolveClientOptions,
   validateDepositPolicy,
 } from "./config";

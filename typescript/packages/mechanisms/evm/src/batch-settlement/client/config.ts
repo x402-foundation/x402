@@ -33,6 +33,7 @@ export interface BatchSettlementDepositStrategyContext {
   currentBalance: string;
   minimumDepositAmount: string;
   depositAmount: string;
+  maxDeposit?: string;
 }
 
 /**
@@ -140,16 +141,90 @@ export function validateDepositPolicy(policy: BatchSettlementDepositPolicy | und
 }
 
 /**
- * Computes the deposit amount based on the deposit multiplier.
+ * Parses a server-announced `extra.minDeposit` when it is a valid deposit target.
  *
- * @param policy - Deposit policy controlling multiplier (may be undefined).
+ * @param value - Wire value from payment requirement `extra`.
+ * @param requestAmount - Per-request voucher amount in token base units.
+ * @returns Parsed minimum deposit target, or `undefined` when invalid or below `requestAmount`.
+ */
+export function parseAnnouncedMinDeposit(
+  value: unknown,
+  requestAmount: bigint,
+): bigint | undefined {
+  if (typeof value !== "string" || !/^\d+$/.test(value)) {
+    return undefined;
+  }
+
+  const parsed = BigInt(value);
+  if (parsed <= 0n || parsed < requestAmount) {
+    return undefined;
+  }
+
+  return parsed;
+}
+
+/**
+ * Derives the deposit ceiling as `depositMultiplier ×` the resolved spend cap.
+ *
+ * @param maxAmountPerPayment - Atomic spend cap from payment payload context.
+ * @param depositMultiplier - Policy multiplier (default 5).
+ * @returns Atomic deposit ceiling, or `undefined` when the payment is uncapped.
+ */
+export function maxDepositFromSpendCap(
+  maxAmountPerPayment: unknown,
+  depositMultiplier = 5,
+): bigint | undefined {
+  if (
+    typeof maxAmountPerPayment !== "string" ||
+    !/^\d+$/.test(maxAmountPerPayment) ||
+    BigInt(maxAmountPerPayment) <= 0n
+  ) {
+    return undefined;
+  }
+  return BigInt(maxAmountPerPayment) * BigInt(depositMultiplier);
+}
+
+/**
+ * Clamps a computed deposit to `maxDeposit`. Throws when the voucher gap exceeds the cap.
+ *
+ * @param deposit - Proposed deposit in token base units.
+ * @param needed - Minimum deposit to cover the next voucher.
+ * @param maxDeposit - Atomic ceiling (`depositMultiplier ×` spend cap). Omitted when uncapped.
+ * @returns Deposit amount string in token base units.
+ */
+export function applyMaxDeposit(deposit: bigint, needed: bigint, maxDeposit?: bigint): string {
+  if (maxDeposit === undefined) {
+    return deposit.toString();
+  }
+  if (needed > maxDeposit) {
+    throw new Error(
+      `Required deposit ${needed.toString()} exceeds depositMultiplier × spendControls.maxAmountPerPayment (${maxDeposit.toString()}). ` +
+        `Raise maxAmountPerPayment or depositMultiplier.`,
+    );
+  }
+  return (deposit > maxDeposit ? maxDeposit : deposit).toString();
+}
+
+/**
+ * Computes the deposit amount from the voucher gap, server hint, or deposit multiplier.
+ *
+ * @param policy - Deposit policy controlling multiplier.
  * @param requestAmount - Amount requested for this operation, in token base units.
+ * @param needed - Minimum deposit to cover the next voucher (`maxClaimableAmount - balance`).
+ * @param extra - Payment requirement `extra` (may contain `minDeposit`).
+ * @param maxDeposit - Atomic ceiling (`depositMultiplier ×` spend cap). Omitted when uncapped.
  * @returns Deposit amount string in token base units.
  */
 export function depositAmountForRequest(
   policy: BatchSettlementDepositPolicy | undefined,
   requestAmount: bigint,
+  needed: bigint,
+  extra: Record<string, unknown> | undefined,
+  maxDeposit?: bigint,
 ): string {
-  const mult = BigInt(policy?.depositMultiplier ?? 5);
-  return (mult * requestAmount).toString();
+  const announced = parseAnnouncedMinDeposit(extra?.minDeposit, requestAmount);
+  const multiplier = BigInt(policy?.depositMultiplier ?? 5);
+  const target = announced ?? multiplier * requestAmount;
+  const deposit = needed > target ? needed : target;
+  return applyMaxDeposit(deposit, needed, maxDeposit);
 }

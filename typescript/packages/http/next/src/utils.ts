@@ -214,7 +214,7 @@ export async function handleSettlement(
 
   try {
     // Get response body for extensions
-    const responseBody = Buffer.from(await response.clone().arrayBuffer());
+    const responseBody = Buffer.from(await response.arrayBuffer());
 
     const responseHeaders: Record<string, string> = {};
     response.headers.forEach((value, key) => {
@@ -240,19 +240,24 @@ export async function handleSettlement(
       });
     }
 
-    // Settlement succeeded - add headers and return original response.
-    Object.entries(result.headers).forEach(([key, value]) => {
-      response.headers.set(key, value);
+    // Settlement succeeded - add headers and return the buffered response.
+    const settled = new NextResponse(responseBody, {
+      status: response.status,
+      headers: response.headers,
     });
-    response.headers.set(
+    settled.headers.delete("transfer-encoding");
+    Object.entries(result.headers).forEach(([key, value]) => {
+      settled.headers.set(key, value);
+    });
+    settled.headers.set(
       "Cache-Control",
-      withPrivateCacheControl(response.headers.get("Cache-Control")),
+      withPrivateCacheControl(settled.headers.get("Cache-Control")),
     );
 
     // Strip internal settlement override header before sending to client.
-    response.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
+    settled.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
 
-    return response;
+    return settled;
   } catch (error) {
     if (error instanceof FacilitatorResponseError) {
       return createFacilitatorErrorResponse(error);

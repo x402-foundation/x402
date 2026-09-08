@@ -51,6 +51,7 @@ import {
   SettlementSimulationError,
   simulateOpenSettleDistribute,
   submitSettle,
+  type ChannelReadPolicy,
   type UptoSvmSigner,
 } from "./channel";
 import {
@@ -232,6 +233,20 @@ export interface UptoSvmFacilitatorConfig {
    * Inject a shared implementation for a multi-replica facilitator.
    */
   delegatedAuthStore?: UptoDelegatedAuthStore;
+  /**
+   * Caps how many times settle re-reads a channel account that a confirmed
+   * open has not made visible yet. Unset defaults to
+   * `DEFAULT_CHANNEL_READ_MAX_ATTEMPTS` (6).
+   */
+  channelReadMaxAttempts?: number;
+  /**
+   * Linear backoff step in milliseconds between those re-reads: attempt N
+   * waits `N * step`, totalling `step * (attempts-1) * attempts / 2`.
+   * Unset defaults to `DEFAULT_CHANNEL_READ_BACKOFF_STEP_MS` (200). Raise
+   * either field to widen the budget on a provider with slower replica
+   * convergence.
+   */
+  channelReadBackoffStepMs?: number;
 }
 
 type OpenAuthFailure = {
@@ -544,6 +559,18 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
   }
 
   /**
+   * Builds the channel-account re-read policy from configured overrides.
+   *
+   * @returns Unresolved policy; {@link fetchAndVerifyOpenChannel} fills defaults
+   */
+  private resolveChannelReadPolicy(): ChannelReadPolicy {
+    return {
+      maxAttempts: this.config.channelReadMaxAttempts,
+      backoffStepMs: this.config.channelReadBackoffStepMs,
+    };
+  }
+
+  /**
    * Deposit path: validate open authorization, then sim → broadcast → bind.
    * Rejects when the channel already exists (one request, one open).
    *
@@ -765,16 +792,22 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
     }
 
     try {
-      await fetchAndVerifyOpenChannel(this.signer, network, p.channelId, {
-        authorizedSigner: channelConfig.receiverAuthorizer,
-        deposit: maxAmount,
-        gracePeriod: channelConfig.withdrawDelay,
-        mint: requirements.asset,
-        payee: feePayer,
-        payer: p.from,
-        rentPayer: feePayer,
-        splits: channelConfig.splits,
-      });
+      await fetchAndVerifyOpenChannel(
+        this.signer,
+        network,
+        p.channelId,
+        {
+          authorizedSigner: channelConfig.receiverAuthorizer,
+          deposit: maxAmount,
+          gracePeriod: channelConfig.withdrawDelay,
+          mint: requirements.asset,
+          payee: feePayer,
+          payer: p.from,
+          rentPayer: feePayer,
+          splits: channelConfig.splits,
+        },
+        this.resolveChannelReadPolicy(),
+      );
     } catch (error) {
       this.settlementCache.delete(depositChannelKey);
       return {
@@ -934,16 +967,22 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
     }
     const network = requirements.network;
 
-    const channelPromise = fetchAndVerifyOpenChannel(this.signer, network, p.channelId, {
-      authorizedSigner: channelConfig.receiverAuthorizer,
-      deposit: payloadMaxAmount,
-      gracePeriod: channelConfig.withdrawDelay,
-      mint: requirements.asset,
-      payee: channelConfig.feePayer,
-      payer: p.from,
-      rentPayer: channelConfig.feePayer,
-      splits: channelConfig.splits,
-    });
+    const channelPromise = fetchAndVerifyOpenChannel(
+      this.signer,
+      network,
+      p.channelId,
+      {
+        authorizedSigner: channelConfig.receiverAuthorizer,
+        deposit: payloadMaxAmount,
+        gracePeriod: channelConfig.withdrawDelay,
+        mint: requirements.asset,
+        payee: channelConfig.feePayer,
+        payer: p.from,
+        rentPayer: channelConfig.feePayer,
+        splits: channelConfig.splits,
+      },
+      this.resolveChannelReadPolicy(),
+    );
     const blockhashPromise = this.signer.getLatestBlockhash(network);
 
     let channel: Awaited<ReturnType<typeof fetchAndVerifyOpenChannel>>;

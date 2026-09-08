@@ -13,7 +13,7 @@ import { safeBase64Decode } from "../utils";
 
 const DEFAULT_FACILITATOR_URL = "https://x402.org/facilitator";
 /** Default per-request timeout for facilitator HTTP calls, in milliseconds */
-const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_TIMEOUT_MS = 90_000;
 /**
  * Upper bound for timeoutMs (2^31 - 1). AbortSignal.timeout() requires an
  * integer, and larger values overflow Node's 32-bit timers, which would
@@ -28,7 +28,7 @@ export interface FacilitatorConfig {
    * `verify()`, `settle()`, and every `getSupported()` attempt — covering both
    * response headers and body consumption. Must be a positive integer no
    * greater than 2_147_483_647 (2^31 - 1, about 24.8 days).
-   * Defaults to 30_000 (30 seconds), matching the Go and Python facilitator clients.
+   * Defaults to 90_000 (90 seconds).
    *
    * On expiry the operation rejects with {@link FacilitatorTimeoutError}. For
    * `settle()` a timeout is an indeterminate outcome: the facilitator may still

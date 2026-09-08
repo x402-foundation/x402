@@ -26,10 +26,14 @@ describe("defaultAssets (AVM)", () => {
       expect(getDefaultAsset(ALGORAND_MAINNET_CAIP2)).toEqual(MAINNET_USDC);
     });
 
-    it("throws for an unsupported network identifier", () => {
-      expect(() => getDefaultAsset("algorand:unknown" as never)).toThrow(
-        /Unsupported Algorand network: algorand:unknown/,
+    it("throws for an unknown ticker symbol", () => {
+      expect(() => getDefaultAsset(ALGORAND_MAINNET_CAIP2, "EURC")).toThrow(
+        /No EURC default asset configured/,
       );
+    });
+
+    it("returns asset entry when symbol matches", () => {
+      expect(getDefaultAsset(ALGORAND_MAINNET_CAIP2, "usdc")).toEqual(MAINNET_USDC);
     });
   });
 });

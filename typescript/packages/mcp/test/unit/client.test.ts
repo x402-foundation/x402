@@ -2,7 +2,12 @@
  * Unit tests for x402MCPClient
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { x402MCPClient, createx402MCPClient, wrapMCPClientWithPayment } from "../../src/client";
+import {
+  x402MCPClient,
+  createx402MCPClient,
+  wrapMCPClientWithPayment,
+  wrapMCPClientWithPaymentFromConfig,
+} from "../../src";
 import {
   MCP_PAYMENT_REQUIRED_CODE,
   MCP_PAYMENT_META_KEY,
@@ -21,6 +26,18 @@ interface MockMCPClient {
   listTools: ReturnType<typeof vi.fn>;
   listResources: ReturnType<typeof vi.fn>;
   listPrompts: ReturnType<typeof vi.fn>;
+  getPrompt: ReturnType<typeof vi.fn>;
+  readResource: ReturnType<typeof vi.fn>;
+  listResourceTemplates: ReturnType<typeof vi.fn>;
+  subscribeResource: ReturnType<typeof vi.fn>;
+  unsubscribeResource: ReturnType<typeof vi.fn>;
+  ping: ReturnType<typeof vi.fn>;
+  complete: ReturnType<typeof vi.fn>;
+  setLoggingLevel: ReturnType<typeof vi.fn>;
+  getServerCapabilities: ReturnType<typeof vi.fn>;
+  getServerVersion: ReturnType<typeof vi.fn>;
+  getInstructions: ReturnType<typeof vi.fn>;
+  sendRootsListChanged: ReturnType<typeof vi.fn>;
   callTool: ReturnType<typeof vi.fn>;
 }
 
@@ -175,6 +192,18 @@ function createMockMCPClient(): MockMCPClient {
     listTools: vi.fn().mockResolvedValue({ tools: [] }),
     listResources: vi.fn().mockResolvedValue({ resources: [] }),
     listPrompts: vi.fn().mockResolvedValue({ prompts: [] }),
+    getPrompt: vi.fn().mockResolvedValue({ messages: [] }),
+    readResource: vi.fn().mockResolvedValue({ contents: [] }),
+    listResourceTemplates: vi.fn().mockResolvedValue({ resourceTemplates: [] }),
+    subscribeResource: vi.fn().mockResolvedValue({}),
+    unsubscribeResource: vi.fn().mockResolvedValue({}),
+    ping: vi.fn().mockResolvedValue({}),
+    complete: vi.fn().mockResolvedValue({ completion: { values: [] } }),
+    setLoggingLevel: vi.fn().mockResolvedValue({}),
+    getServerCapabilities: vi.fn().mockReturnValue({ tools: {} }),
+    getServerVersion: vi.fn().mockReturnValue({ name: "server", version: "1.0.0" }),
+    getInstructions: vi.fn().mockReturnValue("use paid tools carefully"),
+    sendRootsListChanged: vi.fn().mockResolvedValue(undefined),
     callTool: vi.fn(),
   };
 }
@@ -264,6 +293,97 @@ describe("x402MCPClient", () => {
       await client.listPrompts();
       expect(mockMcpClient.listPrompts).toHaveBeenCalled();
     });
+
+    it("forwards args and return values for parameterized MCP methods", async () => {
+      const promptArgs = { name: "code-review", arguments: { path: "src/" } };
+      const promptResult = { description: "review", messages: [] };
+      mockMcpClient.getPrompt.mockResolvedValue(promptResult);
+
+      const resourceArgs = { uri: "file://notes.md" };
+      const resourceResult = { contents: [{ uri: "file://notes.md", text: "hello" }] };
+      mockMcpClient.readResource.mockResolvedValue(resourceResult);
+
+      const templateArgs = { cursor: "page-2" };
+      const templateResult = {
+        resourceTemplates: [{ uriTemplate: "file://{name}", name: "files" }],
+      };
+      mockMcpClient.listResourceTemplates.mockResolvedValue(templateResult);
+
+      const subscribeResult = { ok: true };
+      mockMcpClient.subscribeResource.mockResolvedValue(subscribeResult);
+      mockMcpClient.unsubscribeResource.mockResolvedValue({ unsubscribed: true });
+
+      const pingOptions = { timeout: 1500 };
+      const pingResult = { pong: true };
+      mockMcpClient.ping.mockResolvedValue(pingResult);
+
+      const completeArgs = {
+        ref: { type: "ref/prompt" as const, name: "code-review" },
+        argument: { name: "path", value: "src/" },
+      };
+      const completeResult = { completion: { values: ["src/index.ts"] } };
+      mockMcpClient.complete.mockResolvedValue(completeResult);
+
+      mockMcpClient.setLoggingLevel.mockResolvedValue({ level: "debug" });
+
+      await expect(client.getPrompt(promptArgs)).resolves.toEqual(promptResult);
+      expect(mockMcpClient.getPrompt).toHaveBeenCalledWith(promptArgs);
+
+      await expect(client.readResource(resourceArgs)).resolves.toEqual(resourceResult);
+      expect(mockMcpClient.readResource).toHaveBeenCalledWith(resourceArgs);
+
+      await expect(client.listResourceTemplates(templateArgs)).resolves.toEqual(templateResult);
+      expect(mockMcpClient.listResourceTemplates).toHaveBeenCalledWith(templateArgs);
+
+      await expect(client.subscribeResource(resourceArgs)).resolves.toEqual(subscribeResult);
+      expect(mockMcpClient.subscribeResource).toHaveBeenCalledWith(resourceArgs);
+
+      await expect(client.unsubscribeResource(resourceArgs)).resolves.toEqual({
+        unsubscribed: true,
+      });
+      expect(mockMcpClient.unsubscribeResource).toHaveBeenCalledWith(resourceArgs);
+
+      await expect(client.ping(pingOptions)).resolves.toEqual(pingResult);
+      expect(mockMcpClient.ping).toHaveBeenCalledWith(pingOptions);
+
+      await expect(client.complete(completeArgs)).resolves.toEqual(completeResult);
+      expect(mockMcpClient.complete).toHaveBeenCalledWith(completeArgs);
+
+      await expect(client.setLoggingLevel("debug")).resolves.toEqual({ level: "debug" });
+      expect(mockMcpClient.setLoggingLevel).toHaveBeenCalledWith("debug");
+    });
+
+    it("forwards server info getters and roots-changed notifications", async () => {
+      const capabilities = { tools: { listChanged: true } };
+      const version = { name: "paid-server", version: "2.0.0" };
+      mockMcpClient.getServerCapabilities.mockReturnValue(capabilities);
+      mockMcpClient.getServerVersion.mockReturnValue(version);
+      mockMcpClient.getInstructions.mockReturnValue("prefer paid tools");
+      mockMcpClient.sendRootsListChanged.mockResolvedValue(undefined);
+
+      expect(client.getServerCapabilities()).toEqual(capabilities);
+      expect(client.getServerVersion()).toEqual(version);
+      expect(client.getInstructions()).toBe("prefer paid tools");
+      await expect(client.sendRootsListChanged()).resolves.toBeUndefined();
+
+      expect(mockMcpClient.getServerCapabilities).toHaveBeenCalledTimes(1);
+      expect(mockMcpClient.getServerVersion).toHaveBeenCalledTimes(1);
+      expect(mockMcpClient.getInstructions).toHaveBeenCalledTimes(1);
+      expect(mockMcpClient.sendRootsListChanged).toHaveBeenCalledTimes(1);
+    });
+
+    it("propagates underlying MCP client errors", async () => {
+      const transportError = new Error("transport closed");
+      mockMcpClient.connect.mockRejectedValueOnce(transportError);
+      mockMcpClient.listTools.mockRejectedValueOnce(new Error("tools unavailable"));
+      mockMcpClient.readResource.mockRejectedValueOnce(new Error("not found"));
+
+      await expect(client.connect({} as Parameters<typeof client.connect>[0])).rejects.toThrow(
+        "transport closed",
+      );
+      await expect(client.listTools()).rejects.toThrow("tools unavailable");
+      await expect(client.readResource({ uri: "file://missing" })).rejects.toThrow("not found");
+    });
   });
 
   describe("callTool - free tools", () => {
@@ -278,6 +398,37 @@ describe("x402MCPClient", () => {
       expect(result.paymentMade).toBe(false);
       expect(result.content[0]?.text).toBe("pong");
       expect(mockMcpClient.callTool).toHaveBeenCalledTimes(1);
+    });
+
+    it("should throw when the MCP result is missing a content array", async () => {
+      mockMcpClient.callTool.mockResolvedValue({ isError: false });
+
+      await expect(client.callTool("broken_tool")).rejects.toThrow(
+        "Invalid MCP tool result: missing content array",
+      );
+    });
+
+    it("should not treat malformed error results as payment challenges", async () => {
+      const malformedResults = [
+        { content: [], isError: true },
+        { content: [{ type: "image", data: "abc" }], isError: true },
+        { content: [{ type: "text", text: "not-json" }], isError: true },
+        { content: [{ type: "text", text: "42" }], isError: true },
+        {
+          content: [{ type: "text", text: JSON.stringify({ error: "tool failed" }) }],
+          isError: true,
+        },
+      ];
+
+      for (const malformed of malformedResults) {
+        mockMcpClient.callTool.mockResolvedValueOnce(malformed);
+        const result = await client.callTool("broken_tool");
+        expect(result.paymentMade).toBe(false);
+        expect(result.isError).toBe(true);
+        expect(result.content).toEqual(malformed.content);
+      }
+
+      expect(mockPaymentClient.createPaymentPayload).not.toHaveBeenCalled();
     });
   });
 
@@ -478,6 +629,66 @@ describe("x402MCPClient", () => {
       expect(retryCall._meta?.[MCP_PAYMENT_META_KEY]).toEqual(freshPayload);
     });
 
+    it("should abort a corrective retry when onPaymentRequired returns abort", async () => {
+      client.onPaymentRequired(() => ({ abort: true }));
+      mockPaymentClient.handlePaymentResponse.mockResolvedValueOnce({ recovered: true });
+      mockMcpClient.callTool.mockResolvedValueOnce(createEmbeddedPaymentError(mockPaymentRequired));
+
+      await expect(
+        client.callToolWithPayment("paid_tool", { arg: "value" }, mockPaymentPayload),
+      ).rejects.toThrow("Payment aborted by hook");
+      expect(mockPaymentClient.createPaymentPayload).not.toHaveBeenCalled();
+    });
+
+    it("should use a hook-provided payload for the corrective retry", async () => {
+      const hookPayment: PaymentPayload = {
+        ...mockPaymentPayload,
+        payload: { ...mockPaymentPayload.payload, signature: "0xhook" },
+      };
+      const afterHook = vi.fn();
+      client.onPaymentRequired(() => ({ payment: hookPayment })).onAfterPayment(afterHook);
+      mockPaymentClient.handlePaymentResponse.mockResolvedValueOnce({ recovered: true });
+      mockMcpClient.callTool
+        .mockResolvedValueOnce(createEmbeddedPaymentError(mockPaymentRequired))
+        .mockResolvedValueOnce({
+          content: [{ type: "text", text: "hook paid" }],
+          _meta: { "x402/payment-response": mockSettleResponse },
+        });
+
+      const result = await client.callToolWithPayment("paid_tool", {}, mockPaymentPayload);
+
+      expect(result.content[0]?.text).toBe("hook paid");
+      expect(mockPaymentClient.createPaymentPayload).not.toHaveBeenCalled();
+      const retryCall = mockMcpClient.callTool.mock.calls[1][0];
+      expect(retryCall._meta?.[MCP_PAYMENT_META_KEY]).toEqual(hookPayment);
+      expect(afterHook).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paymentPayload: hookPayment,
+          settleResponse: mockSettleResponse,
+        }),
+      );
+    });
+
+    it("should deny a corrective retry when onPaymentRequested returns false", async () => {
+      const approvalHook = vi.fn().mockResolvedValue(false);
+      client = new x402MCPClient(
+        mockMcpClient as unknown as Parameters<typeof wrapMCPClientWithPayment>[0],
+        mockPaymentClient as unknown as Parameters<typeof wrapMCPClientWithPayment>[1],
+        { autoPayment: true, onPaymentRequested: approvalHook },
+      );
+      mockPaymentClient.handlePaymentResponse.mockResolvedValueOnce({ recovered: true });
+      mockMcpClient.callTool.mockResolvedValueOnce(createEmbeddedPaymentError(mockPaymentRequired));
+
+      await expect(
+        client.callToolWithPayment("paid_tool", { arg: "value" }, mockPaymentPayload),
+      ).rejects.toThrow("Payment request denied");
+      expect(approvalHook).toHaveBeenCalledWith({
+        toolName: "paid_tool",
+        arguments: { arg: "value" },
+        paymentRequired: mockPaymentRequired,
+      });
+    });
+
     it("should support chaining hooks", () => {
       const result = client.onBeforePayment(() => {}).onAfterPayment(() => {});
       expect(result).toBe(client);
@@ -498,6 +709,14 @@ describe("x402MCPClient", () => {
 
       const callArgs = mockMcpClient.callTool.mock.calls[0][0];
       expect(callArgs._meta?.[MCP_PAYMENT_META_KEY]).toEqual(mockPaymentPayload);
+    });
+
+    it("should throw when a paid call returns an invalid MCP result", async () => {
+      mockMcpClient.callTool.mockResolvedValue({ ok: true });
+
+      await expect(client.callToolWithPayment("tool", {}, mockPaymentPayload)).rejects.toThrow(
+        "Invalid MCP tool result: missing content array",
+      );
     });
   });
 
@@ -520,6 +739,17 @@ describe("x402MCPClient", () => {
 
       expect(result).toBeNull();
     });
+
+    it("should return null for malformed or non-payment error results", async () => {
+      mockMcpClient.callTool.mockResolvedValueOnce({ ok: true });
+      await expect(client.getToolPaymentRequirements("broken_tool")).resolves.toBeNull();
+
+      mockMcpClient.callTool.mockResolvedValueOnce({
+        content: [{ type: "text", text: "tool exploded" }],
+        isError: true,
+      });
+      await expect(client.getToolPaymentRequirements("errored_tool")).resolves.toBeNull();
+    });
   });
 });
 
@@ -538,6 +768,64 @@ describe("wrapMCPClientWithPayment", () => {
     );
 
     expect(client).toBeInstanceOf(x402MCPClient);
+  });
+
+  it("forwards autoPayment: false so paid tools throw instead of paying", async () => {
+    const mockMcpClient = createMockMCPClient();
+    const mockPaymentClient = createMockPaymentClient();
+    mockMcpClient.callTool.mockResolvedValue(createEmbeddedPaymentError(mockPaymentRequired));
+
+    const client = wrapMCPClientWithPayment(
+      mockMcpClient as unknown as Parameters<typeof wrapMCPClientWithPayment>[0],
+      mockPaymentClient as unknown as Parameters<typeof wrapMCPClientWithPayment>[1],
+      { autoPayment: false },
+    );
+
+    await expect(client.callTool("paid_tool")).rejects.toMatchObject({
+      message: "Payment required",
+      code: MCP_PAYMENT_REQUIRED_CODE,
+      paymentRequired: mockPaymentRequired,
+    });
+    expect(mockPaymentClient.createPaymentPayload).not.toHaveBeenCalled();
+  });
+});
+
+describe("wrapMCPClientWithPaymentFromConfig", () => {
+  it("builds a payment client from config and honors wrapper options", async () => {
+    const mockMcpClient = createMockMCPClient();
+    const mockSchemeClient = { createPaymentPayload: vi.fn() };
+    const config = {
+      schemes: [
+        {
+          network: "eip155:84532" as const,
+          client: mockSchemeClient as unknown as Parameters<
+            typeof wrapMCPClientWithPaymentFromConfig
+          >[1]["schemes"][0]["client"],
+        },
+      ],
+      spendControls: false as const,
+    };
+    const spy = vi.spyOn(x402Client, "fromConfig");
+
+    try {
+      const client = wrapMCPClientWithPaymentFromConfig(
+        mockMcpClient as unknown as Parameters<typeof wrapMCPClientWithPaymentFromConfig>[0],
+        config,
+        { autoPayment: false },
+      );
+
+      expect(client).toBeInstanceOf(x402MCPClient);
+      expect(spy).toHaveBeenCalledWith(config);
+
+      mockMcpClient.callTool.mockResolvedValue(createEmbeddedPaymentError(mockPaymentRequired));
+      await expect(client.callTool("paid_tool")).rejects.toMatchObject({
+        message: "Payment required",
+        code: MCP_PAYMENT_REQUIRED_CODE,
+        paymentRequired: mockPaymentRequired,
+      });
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
@@ -588,6 +876,37 @@ describe("createx402MCPClient", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("forwards onPaymentRequested onto the wrapper", async () => {
+    const onPaymentRequested = vi.fn().mockResolvedValue(false);
+    const client = createx402MCPClient({
+      name: "test-client",
+      version: "1.0.0",
+      schemes: [
+        {
+          network: "eip155:84532",
+          client: { createPaymentPayload: vi.fn() } as unknown as Parameters<
+            typeof createx402MCPClient
+          >[0]["schemes"][0]["client"],
+        },
+      ],
+      autoPayment: true,
+      onPaymentRequested,
+    });
+
+    vi.spyOn(client.client, "callTool").mockResolvedValue(
+      createEmbeddedPaymentError(mockPaymentRequired) as never,
+    );
+
+    await expect(client.callTool("paid_tool", { arg: "value" })).rejects.toThrow(
+      "Payment request denied",
+    );
+    expect(onPaymentRequested).toHaveBeenCalledWith({
+      toolName: "paid_tool",
+      arguments: { arg: "value" },
+      paymentRequired: mockPaymentRequired,
+    });
   });
 });
 
@@ -940,6 +1259,39 @@ describe("x402MCPClient McpError(-32042) handling", () => {
       mockMcpClient.callTool.mockRejectedValueOnce(err);
 
       await expect(client.callTool("tool")).rejects.toBe(err);
+    });
+
+    it("should handle thrown legacy 402 with PaymentRequired in error.data", async () => {
+      const err = Object.assign(new Error("Payment required"), {
+        code: MCP_PAYMENT_REQUIRED_CODE,
+        data: mockPaymentRequired,
+      });
+      mockMcpClient.callTool.mockRejectedValueOnce(err).mockResolvedValueOnce({
+        content: [{ type: "text", text: "paid result" }],
+        _meta: { "x402/payment-response": mockSettleResponse },
+      });
+
+      const result = await client.callTool("paid_tool");
+
+      expect(result.paymentMade).toBe(true);
+      expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledWith(mockPaymentRequired);
+    });
+
+    it("should re-throw legacy 402 errors that are not payment challenges", async () => {
+      const missingData = Object.assign(new Error("Payment required"), {
+        code: MCP_PAYMENT_REQUIRED_CODE,
+        data: "not-an-object",
+      });
+      mockMcpClient.callTool.mockRejectedValueOnce(missingData);
+      await expect(client.callTool("tool")).rejects.toBe(missingData);
+
+      const badMessage = {
+        code: MCP_PAYMENT_REQUIRED_CODE,
+        message: 402,
+        data: mockPaymentRequired,
+      };
+      mockMcpClient.callTool.mockRejectedValueOnce(badMessage);
+      await expect(client.callTool("tool")).rejects.toBe(badMessage);
     });
 
     it("should include payment in _meta on retry after -32042", async () => {

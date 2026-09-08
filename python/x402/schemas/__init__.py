@@ -33,6 +33,7 @@ from .config import (
 
 # Error types
 from .errors import (
+    FacilitatorCapabilityError,
     NoMatchingRequirementsError,
     PaymentAbortedError,
     PaymentError,
@@ -216,4 +217,5 @@ __all__ = [
     "SchemeNotFoundError",
     "NoMatchingRequirementsError",
     "PaymentAbortedError",
+    "FacilitatorCapabilityError",
 ]

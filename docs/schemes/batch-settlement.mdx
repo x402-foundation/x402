@@ -275,8 +275,45 @@ The deposit policy controls how much the client deposits when a channel needs fu
 
 | Field | Description |
 |-------|-------------|
-| `depositMultiplier` / `DepositMultiplier` | Deposits `amount x multiplier` for the advertised per-request maximum. The default is `5`; the minimum is `3`. |
+| `depositMultiplier` / `DepositMultiplier` | Deposits `amount x multiplier` for the advertised per-request maximum. The default is `5`; the minimum is `3`. Used as a fallback when no `minDeposit` hint is present. |
 | `depositStrategy` / `DepositStrategy` | Optional callback for caps, dynamic deposits, or opting out of automatic top-up. |
+
+#### Server-announced `minDeposit` hint
+
+Servers always include `extra.minDeposit` in their 402 response. The default is `10 × amount`; servers can override it per route via `accepts.extra.minDeposit` (an atomic integer string or a money string like `"$1.00"` for default assets).
+
+When the client receives a valid `minDeposit` hint (a positive integer `>= amount`), it uses that as the deposit target instead of `depositMultiplier × amount`. This lets servers guide clients toward a deposit size that reduces top-up frequency without requiring clients to configure a multiplier.
+
+If a spend cap is set via `spendControls.maxAmountPerPayment`, the deposit is clamped to `maxAmountPerPayment × depositMultiplier`. Payments without a spend cap leave deposits uncapped.
+
+Servers can opt in to rejecting deposits below the announced hint by setting `enforceMinDeposit: true` (default `false`). The facilitator never enforces this limit. When a deposit is rejected for being below the hint, the server returns `invalid_batch_settlement_evm_deposit_below_min_deposit`.
+
+To set a per-route `minDeposit` override on the server:
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    app.use(paymentMiddleware({
+      "GET /weather": {
+        accepts: {
+          scheme: "batch-settlement",
+          price: "$0.01",
+          network,
+          payTo: receiverAddress,
+          extra: {
+            minDeposit: "$1.00",  // money string for default assets
+            // or: minDeposit: "1000000",  // atomic integer string
+          },
+        },
+      },
+    }, resourceServer));
+    ```
+  </Tab>
+</Tabs>
+
+#### Custom deposit strategy
+
+Use `depositStrategy` for fine-grained control: cap deposits, skip top-ups, or return a custom amount. The callback receives the computed deposit amount (already incorporating the `minDeposit` hint) and can return a capped value, `false` to skip the deposit, or `undefined` to accept the computed amount.
 
 <Tabs>
   <Tab title="TypeScript">

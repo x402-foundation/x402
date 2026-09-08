@@ -2,11 +2,13 @@ import { describe, it, expect } from "vitest";
 import {
   getEvmChainId,
   createNonce,
+  finalHashFromTwoRequestSend,
   isValidTxHash,
   truncateErrorMessage,
   MAX_ERROR_MESSAGE_LENGTH,
 } from "../../src/utils";
 import { getEvmChainIdV1 } from "../../src/v1";
+import { appendDataSuffix, resolveDataSuffix } from "../../src/shared/extensions/builderCode";
 
 describe("EVM Utils", () => {
   describe("getEvmChainId (CAIP-2 only)", () => {
@@ -143,5 +145,87 @@ describe("EVM Utils", () => {
       expect(isValidTxHash("0x" + "zz".repeat(32))).toBe(false);
       expect(isValidTxHash("")).toBe(false);
     });
+  });
+
+  describe("finalHashFromTwoRequestSend", () => {
+    it("returns the only hash from an atomic bundle", () => {
+      expect(finalHashFromTwoRequestSend(["0xaa"])).toBe("0xaa");
+    });
+
+    it("returns the second hash from a sequential approve+settle send", () => {
+      expect(finalHashFromTwoRequestSend(["0xapprove", "0xsettle"])).toBe("0xsettle");
+    });
+
+    it("returns undefined when the signer reports an unexpected hash count", () => {
+      expect(finalHashFromTwoRequestSend([])).toBeUndefined();
+      expect(finalHashFromTwoRequestSend(["0x1", "0x2", "0x3"])).toBeUndefined();
+    });
+  });
+});
+
+describe("builder-code data suffix", () => {
+  it("returns undefined without a context or when the extension emits an empty suffix", async () => {
+    const ctx = {
+      paymentPayload: {
+        x402Version: 2,
+        accepted: { scheme: "exact", network: "eip155:84532" },
+        payload: {},
+      },
+      paymentRequirements: {
+        scheme: "exact",
+        network: "eip155:84532",
+        amount: "1",
+        asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        payTo: "0x1234567890123456789012345678901234567890",
+        maxTimeoutSeconds: 1,
+      },
+    };
+
+    expect(await resolveDataSuffix(undefined, ctx)).toBeUndefined();
+    expect(await resolveDataSuffix({ getExtension: () => undefined }, ctx)).toBeUndefined();
+    expect(
+      await resolveDataSuffix(
+        {
+          getExtension: () => ({
+            key: "builder-code",
+            buildDataSuffix: () => "0x",
+          }),
+        },
+        ctx,
+      ),
+    ).toBeUndefined();
+
+    expect(appendDataSuffix("0xabcd")).toBe("0xabcd");
+    expect(appendDataSuffix("0xabcd", "0x")).toBe("0xabcd");
+    expect(appendDataSuffix("0xabcd", "0xef")).toBe("0xabcdef");
+  });
+
+  it("returns a single suffix unchanged", async () => {
+    const ctx = {
+      paymentPayload: {
+        x402Version: 2,
+        accepted: { scheme: "exact", network: "eip155:84532" },
+        payload: {},
+      },
+      paymentRequirements: {
+        scheme: "exact",
+        network: "eip155:84532",
+        amount: "1",
+        asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        payTo: "0x1234567890123456789012345678901234567890",
+        maxTimeoutSeconds: 1,
+      },
+    };
+    expect(
+      await resolveDataSuffix(
+        {
+          getExtension: () => ({
+            key: "builder-code",
+            buildDataSuffix: () => "0xdead",
+          }),
+        },
+        ctx,
+      ),
+    ).toBe("0xdead");
   });
 });

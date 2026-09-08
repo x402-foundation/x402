@@ -276,18 +276,18 @@ export function paymentMiddlewareFromHTTPServer(
           return;
         }
 
-        // Get response body for extensions
-        const responseBody = Buffer.from(await res.clone().arrayBuffer());
-
-        const responseHeaders: Record<string, string> = {};
-        res.headers.forEach((value, key) => {
-          responseHeaders[key] = value;
-        });
-
         // Clear the response so we can modify headers
         c.res = undefined;
 
         try {
+          // Get response body for extensions
+          const responseBody = Buffer.from(await res.arrayBuffer());
+
+          const responseHeaders: Record<string, string> = {};
+          res.headers.forEach((value, key) => {
+            responseHeaders[key] = value;
+          });
+
           const settleResult = await httpServer.processSettlement(
             paymentPayload,
             paymentRequirements,
@@ -308,6 +308,8 @@ export function paymentMiddlewareFromHTTPServer(
               headers: response.headers,
             });
           } else {
+            res = new Response(responseBody, { status: res.status, headers: res.headers });
+            res.headers.delete("transfer-encoding");
             // Settlement succeeded - add headers to response
             Object.entries(settleResult.headers).forEach(([key, value]) => {
               res.headers.set(key, value);

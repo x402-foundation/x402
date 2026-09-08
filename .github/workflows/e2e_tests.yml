@@ -183,6 +183,12 @@ jobs:
         run: |
           pnpm test --testnet --min --parallel -v --log=e2e-run.log --output-json=e2e-results.json --families=${{ steps.families.outputs.families }} --versions=${{ steps.families.outputs.versions }} --transport=http
 
+      # Always render the JSON breakdown into the job summary so pass/fail
+      # tables are visible at the top of the GitHub job page
+      - name: Write e2e job summary
+        if: always() && steps.families.outputs.configured == 'true'
+        run: pnpm results:summary e2e-results.json
+
       - name: Upload test results
         if: always() && steps.families.outputs.configured == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

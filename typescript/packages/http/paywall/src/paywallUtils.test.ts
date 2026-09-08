@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { PaymentRequirements } from "@x402/core/types";
 import {
+  ALGORAND_NETWORK_REFS,
   choosePaymentRequirement,
   getNetworkDisplayName,
+  getPreferredNetworks,
+  isAvmNetwork,
   isEvmNetwork,
   isSvmNetwork,
   normalizePaymentRequirements,
   isTestnetNetwork,
+  resolveAlgorandGenesisRef,
 } from "./paywallUtils";
 
 const baseRequirement: PaymentRequirements = {
@@ -109,6 +113,49 @@ describe("paywallUtils", () => {
     it("returns network as-is for unknown formats", () => {
       expect(getNetworkDisplayName("unknown")).toBe("unknown");
     });
+
+    it("returns display names for Algorand networks", () => {
+      expect(getNetworkDisplayName(`algorand:${ALGORAND_NETWORK_REFS.MAINNET}`)).toBe(
+        "Algorand Mainnet",
+      );
+      expect(getNetworkDisplayName(`algorand:${ALGORAND_NETWORK_REFS.TESTNET}`)).toBe(
+        "Algorand Testnet",
+      );
+      expect(getNetworkDisplayName("algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k")).toBe(
+        "Algorand Mainnet",
+      );
+    });
+  });
+
+  describe("getPreferredNetworks", () => {
+    it("prefers Base and Solana mainnets when not on testnet", () => {
+      expect(getPreferredNetworks(false)).toEqual([
+        "eip155:8453",
+        "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+      ]);
+    });
+
+    it("prefers Base Sepolia and Solana Devnet on testnet", () => {
+      expect(getPreferredNetworks(true)).toEqual([
+        "eip155:84532",
+        "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+      ]);
+    });
+  });
+
+  describe("resolveAlgorandGenesisRef", () => {
+    it("returns full genesis hashes for canonical and legacy refs", () => {
+      expect(resolveAlgorandGenesisRef(`algorand:${ALGORAND_NETWORK_REFS.MAINNET}`)).toBe(
+        ALGORAND_NETWORK_REFS.MAINNET,
+      );
+      expect(resolveAlgorandGenesisRef("algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k")).toBe(
+        ALGORAND_NETWORK_REFS.MAINNET,
+      );
+      expect(resolveAlgorandGenesisRef("algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe")).toBe(
+        ALGORAND_NETWORK_REFS.TESTNET,
+      );
+      expect(resolveAlgorandGenesisRef("algorand:unknown-ref")).toBe("unknown-ref");
+    });
   });
 
   describe("isEvmNetwork", () => {
@@ -139,6 +186,19 @@ describe("paywallUtils", () => {
     });
   });
 
+  describe("isAvmNetwork", () => {
+    it("identifies CAIP-2 Algorand networks", () => {
+      expect(isAvmNetwork(`algorand:${ALGORAND_NETWORK_REFS.MAINNET}`)).toBe(true);
+      expect(isAvmNetwork(`algorand:${ALGORAND_NETWORK_REFS.TESTNET}`)).toBe(true);
+    });
+
+    it("rejects non-Algorand networks", () => {
+      expect(isAvmNetwork("eip155:8453")).toBe(false);
+      expect(isAvmNetwork("solana:5eykt")).toBe(false);
+      expect(isAvmNetwork("unknown")).toBe(false);
+    });
+  });
+
   describe("isTestnetNetwork", () => {
     it("identifies EVM testnets using viem metadata", () => {
       expect(isTestnetNetwork("eip155:84532")).toBe(true);
@@ -153,6 +213,19 @@ describe("paywallUtils", () => {
       expect(isTestnetNetwork("eip155:8453")).toBe(false);
       expect(isTestnetNetwork("eip155:1")).toBe(false);
       expect(isTestnetNetwork("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp")).toBe(false);
+    });
+
+    it("identifies Algorand testnet and rejects Algorand mainnet", () => {
+      expect(isTestnetNetwork(`algorand:${ALGORAND_NETWORK_REFS.TESTNET}`)).toBe(true);
+      expect(isTestnetNetwork(`algorand:${ALGORAND_NETWORK_REFS.MAINNET}`)).toBe(false);
+    });
+
+    it("rejects unknown network formats", () => {
+      expect(isTestnetNetwork("unknown")).toBe(false);
+    });
+
+    it("treats unknown EVM chain IDs as non-testnet", () => {
+      expect(isTestnetNetwork("eip155:999999")).toBe(false);
     });
   });
 });

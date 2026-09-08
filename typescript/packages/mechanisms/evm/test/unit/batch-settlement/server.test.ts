@@ -277,11 +277,17 @@ describe("BatchSettlementEvmScheme — construction", () => {
   it("uses an in-memory channel storage by default", () => {
     const server = new BatchSettlementEvmScheme(RECEIVER);
     expect(server.scheme).toBe("batch-settlement");
+    expect(server.getEnforceMinDeposit()).toBe(false);
     expect(server.getStorage()).toBeInstanceOf(InMemoryChannelStorage);
     expect(server.getReceiverAddress()).toBe(RECEIVER);
     expect(server.getWithdrawDelay()).toBe(900);
     expect(server.getOnchainStateTtlMs()).toBe(300_000);
     expect(server.getReceiverAuthorizerSigner()).toBeUndefined();
+  });
+
+  it("allows enforceMinDeposit to be enabled", () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER, { enforceMinDeposit: true });
+    expect(server.getEnforceMinDeposit()).toBe(true);
   });
 
   it("allows custom storage, withdrawDelay, and onchain state TTL", () => {
@@ -404,6 +410,7 @@ describe("BatchSettlementEvmScheme — enhancePaymentRequirements", () => {
 
     expect(enhanced.extra?.withdrawDelay).toBe(1800);
     expect(enhanced.extra?.receiverAuthorizer).toBe(RECEIVER_AUTHORIZER);
+    expect(enhanced.extra?.minDeposit).toBe("10000");
     expect(enhanced.extra?.name).toBe("USDC");
     expect(enhanced.extra?.version).toBe("2");
   });
@@ -501,6 +508,103 @@ describe("BatchSettlementEvmScheme — enhancePaymentRequirements", () => {
 
     expect(enhanced.extra?.assetTransferMethod).toBe("permit2");
   });
+
+  it("defaults extra.minDeposit to 10x amount", async () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER);
+    const enhanced = await server.enhancePaymentRequirements(
+      makeRequirements({ amount: "2500" }),
+      {
+        x402Version: 2,
+        scheme: "batch-settlement",
+        network: NETWORK,
+        extra: { receiverAuthorizer: RECEIVER_AUTHORIZER },
+      },
+      [],
+    );
+
+    expect(enhanced.extra?.minDeposit).toBe("25000");
+  });
+
+  it("converts route extra.minDeposit Money on default assets", async () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER);
+    const enhanced = await server.enhancePaymentRequirements(
+      makeRequirements({
+        amount: "1000",
+        extra: { receiverAuthorizer: RECEIVER_AUTHORIZER, minDeposit: "$1" },
+      }),
+      {
+        x402Version: 2,
+        scheme: "batch-settlement",
+        network: NETWORK,
+        extra: { receiverAuthorizer: RECEIVER_AUTHORIZER },
+      },
+      [],
+    );
+
+    expect(enhanced.extra?.minDeposit).toBe("1000000");
+  });
+
+  it("uses request amount when it exceeds route extra.minDeposit Money", async () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER);
+    const enhanced = await server.enhancePaymentRequirements(
+      makeRequirements({
+        amount: "2000000",
+        extra: { receiverAuthorizer: RECEIVER_AUTHORIZER, minDeposit: "$1" },
+      }),
+      {
+        x402Version: 2,
+        scheme: "batch-settlement",
+        network: NETWORK,
+        extra: { receiverAuthorizer: RECEIVER_AUTHORIZER },
+      },
+      [],
+    );
+
+    expect(enhanced.extra?.minDeposit).toBe("2000000");
+  });
+
+  it("accepts route extra.minDeposit atomic strings for any asset", async () => {
+    const customAsset = "0x00000000000000000000000000000000000000aa" as `0x${string}`;
+    const server = new BatchSettlementEvmScheme(RECEIVER);
+    const enhanced = await server.enhancePaymentRequirements(
+      makeRequirements({
+        amount: "1000",
+        asset: customAsset,
+        extra: { receiverAuthorizer: RECEIVER_AUTHORIZER, minDeposit: "5000000" },
+      }),
+      {
+        x402Version: 2,
+        scheme: "batch-settlement",
+        network: NETWORK,
+        extra: { receiverAuthorizer: RECEIVER_AUTHORIZER },
+      },
+      [],
+    );
+
+    expect(enhanced.extra?.minDeposit).toBe("5000000");
+  });
+
+  it("rejects route extra.minDeposit Money for non-default assets", async () => {
+    const customAsset = "0x00000000000000000000000000000000000000aa" as `0x${string}`;
+    const server = new BatchSettlementEvmScheme(RECEIVER);
+
+    await expect(
+      server.enhancePaymentRequirements(
+        makeRequirements({
+          amount: "1000",
+          asset: customAsset,
+          extra: { receiverAuthorizer: RECEIVER_AUTHORIZER, minDeposit: "$1" },
+        }),
+        {
+          x402Version: 2,
+          scheme: "batch-settlement",
+          network: NETWORK,
+          extra: { receiverAuthorizer: RECEIVER_AUTHORIZER },
+        },
+        [],
+      ),
+    ).rejects.toThrow(/only supported for default assets/);
+  });
 });
 
 describe("BatchSettlementEvmScheme — createChannelManager", () => {
@@ -589,6 +693,67 @@ describe("BatchSettlementEvmScheme — onBeforeVerify", () => {
       requirements: makeRequirements(),
     } as never);
     expect(result).toBeUndefined();
+  });
+
+  it("does not reject deposits below minDeposit when enforcement is disabled", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const requirements = makeRequirements({
+      amount: "1000",
+      extra: { receiverAuthorizer: RECEIVER_AUTHORIZER, minDeposit: "10000" },
+    });
+    const result = await server.schemeHooks.onBeforeVerify!({
+      paymentPayload: buildDepositPayload(channelId, config, "5000", "1000"),
+      requirements,
+    } as never);
+    expect(result).toBeUndefined();
+  });
+
+  it("rejects deposits below minDeposit when enforcement is enabled", async () => {
+    const enforcingServer = new BatchSettlementEvmScheme(RECEIVER, {
+      storage,
+      enforceMinDeposit: true,
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const requirements = makeRequirements({
+      amount: "1000",
+      extra: { receiverAuthorizer: RECEIVER_AUTHORIZER, minDeposit: "10000" },
+    });
+
+    const belowMin = await enforcingServer.schemeHooks.onBeforeVerify!({
+      paymentPayload: buildDepositPayload(channelId, config, "5000", "1000"),
+      requirements,
+    } as never);
+    expect(belowMin).toMatchObject({
+      abort: true,
+      reason: Errors.ErrDepositBelowMinDeposit,
+    });
+
+    const atMin = await enforcingServer.schemeHooks.onBeforeVerify!({
+      paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
+      requirements,
+    } as never);
+    expect(atMin).toBeUndefined();
+  });
+
+  it("enforces the default 10x minDeposit hint when extra.minDeposit is omitted", async () => {
+    const enforcingServer = new BatchSettlementEvmScheme(RECEIVER, {
+      storage,
+      enforceMinDeposit: true,
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const requirements = makeRequirements({ amount: "1000" });
+
+    const belowDefault = await enforcingServer.schemeHooks.onBeforeVerify!({
+      paymentPayload: buildDepositPayload(channelId, config, "5000", "1000"),
+      requirements,
+    } as never);
+    expect(belowDefault).toMatchObject({
+      abort: true,
+      reason: Errors.ErrDepositBelowMinDeposit,
+    });
   });
 
   it("does nothing when no channel record is stored yet", async () => {
@@ -1979,6 +2144,54 @@ describe("BatchSettlementEvmScheme — onBeforeSettle", () => {
     expect(enrichment?.amount).toBeUndefined();
     expect(enrichment?.refundNonce).toBe("0");
   });
+
+  it("rejects a refund whose channelId does not match channelConfig", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const payload = buildRefundPayload(("0x" + "11".repeat(32)) as `0x${string}`, "500", config);
+    await reservePending(server, payload, makeRequirements({ amount: "0" }));
+    await expect(
+      server.enrichSettlementPayload({
+        paymentPayload: payload,
+        requirements: makeRequirements({ amount: "0" }),
+      } as never),
+    ).rejects.toThrow(/refund channelId does not match/);
+    expect(channelId).toMatch(/^0x/);
+  });
+
+  it("rejects a non-integer or zero refund amount", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "500",
+      signedMaxClaimable: "500",
+      signature: "0xdeadbeef",
+      balance: "10000",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: 0,
+    });
+    const invalid = buildRefundPayload(channelId, "500", config, "1.5");
+    await reservePending(server, invalid, makeRequirements({ amount: "0" }));
+    await expect(
+      server.enrichSettlementPayload({
+        paymentPayload: invalid,
+        requirements: makeRequirements({ amount: "0" }),
+      } as never),
+    ).rejects.toThrow(Errors.ErrRefundAmountInvalid);
+
+    const zero = buildRefundPayload(channelId, "500", config, "0");
+    await reservePending(server, zero, makeRequirements({ amount: "0" }));
+    await expect(
+      server.enrichSettlementPayload({
+        paymentPayload: zero,
+        requirements: makeRequirements({ amount: "0" }),
+      } as never),
+    ).rejects.toThrow(Errors.ErrRefundAmountInvalid);
+  });
 });
 
 describe("BatchSettlementEvmScheme — onAfterSettle", () => {
@@ -2210,6 +2423,164 @@ describe("BatchSettlementEvmScheme — onAfterSettle", () => {
       result: { success: false } as SettleResponse,
     } as never);
     expect(await storage.get(channelId)).toBeUndefined();
+  });
+
+  it("throws ChannelBusy when a successful deposit settle has no matching pending reservation", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "0",
+      signedMaxClaimable: "0",
+      signature: "0x",
+      balance: "0",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: 0,
+    });
+    await expect(
+      server.schemeHooks.onAfterSettle!({
+        paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
+        requirements: makeRequirements({ amount: "1000" }),
+        result: {
+          success: true,
+          transaction: "0xtx",
+          network: NETWORK,
+          payer: PAYER,
+          extra: {
+            channelState: {
+              channelId,
+              balance: "10000",
+              totalClaimed: "0",
+              withdrawRequestedAt: 0,
+              refundNonce: "0",
+            },
+          },
+        } as SettleResponse,
+      } as never),
+    ).rejects.toThrow(Errors.ErrChannelBusy);
+  });
+
+  it("throws ChannelBusy when a refund settle's pending reservation no longer matches", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "1000",
+      signedMaxClaimable: "1000",
+      signature: "0xabcd",
+      balance: "10000",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: 0,
+    });
+    const refundPayload = {
+      x402Version: 2,
+      scheme: "batch-settlement",
+      network: NETWORK,
+      payload: {
+        type: "refund",
+        channelConfig: config,
+        voucher: {
+          channelId: channelId as `0x${string}`,
+          maxClaimableAmount: "1000",
+          signature: "0xabcd",
+        },
+        amount: "2000",
+        refundNonce: "0",
+        claims: [],
+      } as unknown as Record<string, unknown>,
+    } as unknown as PaymentPayload;
+
+    await expect(
+      server.schemeHooks.onAfterSettle!({
+        paymentPayload: refundPayload,
+        requirements: makeRequirements(),
+        result: {
+          success: true,
+          transaction: "0xref",
+          network: NETWORK,
+          payer: PAYER,
+          extra: {
+            channelState: {
+              channelId,
+              balance: "8000",
+              totalClaimed: "1000",
+              withdrawRequestedAt: 0,
+              refundNonce: "1",
+            },
+          },
+        } as SettleResponse,
+      } as never),
+    ).rejects.toThrow(Errors.ErrChannelBusy);
+  });
+
+  it("returns no enrichment for a voucher payload", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const enrichment = await server.enrichSettlementResponse({
+      paymentPayload: buildVoucherPayload(channelId, "1000", config),
+      requirements: makeRequirements({ amount: "1000" }),
+      result: { success: true, transaction: "", network: NETWORK, payer: PAYER } as SettleResponse,
+    } as never);
+    expect(enrichment).toBeUndefined();
+  });
+
+  it("returns no enrichment when there is no channel snapshot", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const enrichment = await server.enrichSettlementResponse({
+      paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
+      requirements: makeRequirements({ amount: "1000" }),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+      } as SettleResponse,
+    } as never);
+    expect(enrichment).toBeUndefined();
+  });
+
+  it("returns only chargedCumulativeAmount for an unrecognized payload that still has a snapshot", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const paymentPayload = {
+      x402Version: 2,
+      scheme: "batch-settlement",
+      network: NETWORK,
+      payload: { type: "claim", claims: [] } as unknown as Record<string, unknown>,
+    } as unknown as PaymentPayload;
+    server.rememberChannelSnapshot(paymentPayload, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "2500",
+      signedMaxClaimable: "2500",
+      signature: "0xabcd",
+      balance: "10000",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: 0,
+    });
+
+    const enrichment = await server.enrichSettlementResponse({
+      paymentPayload,
+      requirements: makeRequirements(),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+      } as SettleResponse,
+    } as never);
+    expect(enrichment).toEqual({
+      channelState: { chargedCumulativeAmount: "2500" },
+    });
   });
 });
 

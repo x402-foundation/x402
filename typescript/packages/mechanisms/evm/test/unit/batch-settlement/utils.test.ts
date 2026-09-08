@@ -1,10 +1,17 @@
 import { describe, it, expect } from "vitest";
+import { decodeAbiParameters } from "viem";
 import {
   channelIdBindingError,
   computeChannelId as computeChannelIdForNetwork,
   isCanonicalChannelId,
   normalizeChannelId,
 } from "../../../src/batch-settlement/utils";
+import {
+  buildEip2612PermitData,
+  buildErc3009CollectorData,
+  buildErc3009DepositNonce,
+  buildPermit2CollectorData,
+} from "../../../src/batch-settlement/encoding";
 import {
   channelIdsEqual,
   validateChannelConfig,
@@ -15,12 +22,19 @@ import {
   ErrInvalidChannelId,
   ErrReceiverMismatch,
   ErrReceiverAuthorizerMismatch,
+  ErrRefundPayload,
   ErrTokenMismatch,
   ErrWithdrawDelayMismatch,
   ErrWithdrawDelayOutOfRange,
   ErrValidAfterInFuture,
   ErrValidBeforeExpired,
 } from "../../../src/batch-settlement/errors";
+import {
+  parseRefundSettlementSnapshot,
+  readChannelStateExtra,
+  readExtraNumber,
+  readExtraString,
+} from "../../../src/batch-settlement/server/utils";
 import { MIN_WITHDRAW_DELAY, MAX_WITHDRAW_DELAY } from "../../../src/batch-settlement/constants";
 import type { ChannelConfig } from "../../../src/batch-settlement/types";
 import type { PaymentRequirements } from "@x402/core/types";
@@ -337,5 +351,146 @@ describe("erc3009AuthorizationTimeInvalidReason", () => {
     const va = now() - 60n;
     const vb = now() + 1n;
     expect(erc3009AuthorizationTimeInvalidReason(va, vb)).toBe(ErrValidBeforeExpired);
+  });
+});
+
+describe("batch-settlement encoding", () => {
+  const channelId =
+    "0x1111111111111111111111111111111111111111111111111111111111111111" as `0x${string}`;
+  const salt =
+    "0x0000000000000000000000000000000000000000000000000000000000000002" as `0x${string}`;
+
+  it("binds ERC-3009 deposit nonce to channelId and salt", () => {
+    const a = buildErc3009DepositNonce(channelId, salt);
+    const b = buildErc3009DepositNonce(channelId, salt);
+    expect(a).toBe(b);
+    expect(a).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(
+      buildErc3009DepositNonce(
+        channelId,
+        "0x0000000000000000000000000000000000000000000000000000000000000003",
+      ),
+    ).not.toBe(a);
+  });
+
+  it("round-trips ERC-3009 collector data", () => {
+    const encoded = buildErc3009CollectorData("0", "999", salt, "0xabcd");
+    const [validAfter, validBefore, encodedSalt, signature] = decodeAbiParameters(
+      [{ type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "bytes" }],
+      encoded,
+    );
+    expect(validAfter).toBe(0n);
+    expect(validBefore).toBe(999n);
+    expect(encodedSalt).toBe(BigInt(salt));
+    expect(signature).toBe("0xabcd");
+  });
+
+  it("encodes EIP-2612 permit data and nests it in Permit2 collector data", () => {
+    const r = ("0x" + "11".repeat(32)) as `0x${string}`;
+    const s = ("0x" + "22".repeat(32)) as `0x${string}`;
+    const permit = buildEip2612PermitData({
+      value: "1000",
+      deadline: "9",
+      v: 27,
+      r,
+      s,
+    });
+    const [value, deadline, v, encR, encS] = decodeAbiParameters(
+      [
+        { type: "uint256" },
+        { type: "uint256" },
+        { type: "uint8" },
+        { type: "bytes32" },
+        { type: "bytes32" },
+      ],
+      permit,
+    );
+    expect(value).toBe(1000n);
+    expect(deadline).toBe(9n);
+    expect(v).toBe(27);
+    expect(encR).toBe(r);
+    expect(encS).toBe(s);
+
+    const collector = buildPermit2CollectorData("3", "8", "0xeeee", permit);
+    const [nonce, permitDeadline, sig, nested] = decodeAbiParameters(
+      [{ type: "uint256" }, { type: "uint256" }, { type: "bytes" }, { type: "bytes" }],
+      collector,
+    );
+    expect(nonce).toBe(3n);
+    expect(permitDeadline).toBe(8n);
+    expect(sig).toBe("0xeeee");
+    expect(nested).toBe(permit);
+  });
+
+  it("defaults the EIP-2612 segment to empty bytes", () => {
+    const collector = buildPermit2CollectorData("1", "2", "0xaa");
+    const [, , , nested] = decodeAbiParameters(
+      [{ type: "uint256" }, { type: "uint256" }, { type: "bytes" }, { type: "bytes" }],
+      collector,
+    );
+    expect(nested).toBe("0x");
+  });
+});
+
+describe("server extra parsers", () => {
+  it("reads nested channelState and coerces mixed extra types", () => {
+    expect(readChannelStateExtra(undefined)).toBeUndefined();
+    expect(readChannelStateExtra({ channelState: "nope" })).toBeUndefined();
+    expect(readChannelStateExtra({ channelState: null })).toBeUndefined();
+    expect(readChannelStateExtra({ channelState: { balance: "1" } })).toEqual({ balance: "1" });
+
+    expect(readExtraString({ balance: "9" }, "balance", "0")).toBe("9");
+    expect(readExtraString({ balance: 12 }, "balance", "0")).toBe("12");
+    expect(readExtraString({ balance: true }, "balance", "0")).toBe("0");
+    expect(readExtraString(undefined, "balance", "0")).toBe("0");
+
+    expect(readExtraNumber({ refundNonce: 3 }, "refundNonce", 0)).toBe(3);
+    expect(readExtraNumber({ refundNonce: "8" }, "refundNonce", 0)).toBe(8);
+    expect(readExtraNumber({ refundNonce: "nope" }, "refundNonce", 4)).toBe(4);
+    expect(readExtraNumber({ refundNonce: true }, "refundNonce", 1)).toBe(1);
+  });
+
+  it("parses a refund snapshot from string or numeric extra fields", () => {
+    expect(
+      parseRefundSettlementSnapshot({
+        channelState: {
+          balance: 1000,
+          totalClaimed: "200",
+          withdrawRequestedAt: 0,
+          refundNonce: "3",
+        },
+      }),
+    ).toEqual({
+      balance: "1000",
+      totalClaimed: "200",
+      withdrawRequestedAt: 0,
+      refundNonce: 3,
+    });
+  });
+
+  it("rejects a refund snapshot that omits required uint fields", () => {
+    expect(() => parseRefundSettlementSnapshot({ channelState: { balance: "1" } })).toThrow(
+      ErrRefundPayload,
+    );
+    expect(() =>
+      parseRefundSettlementSnapshot({
+        channelState: {
+          balance: "1",
+          totalClaimed: "2",
+          withdrawRequestedAt: -1,
+          refundNonce: 0,
+        },
+      }),
+    ).toThrow(ErrRefundPayload);
+    expect(() =>
+      parseRefundSettlementSnapshot({
+        channelState: {
+          balance: 1.5,
+          totalClaimed: "2",
+          withdrawRequestedAt: 0,
+          refundNonce: 0,
+        },
+      }),
+    ).toThrow(ErrRefundPayload);
   });
 });

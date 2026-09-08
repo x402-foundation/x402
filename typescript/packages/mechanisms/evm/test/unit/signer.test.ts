@@ -41,6 +41,59 @@ describe("EVM Signer Converters", () => {
       expect(result.address).toBe(mockAccount.address);
       expect(result.readContract).toBeUndefined();
     });
+
+    it("forwards optional gas-sponsoring capabilities from the signer", async () => {
+      const mockAccount = {
+        address: "0x1234567890123456789012345678901234567890" as `0x${string}`,
+        signTypedData: async () => "0xsignature" as `0x${string}`,
+        signTransaction: vi.fn().mockResolvedValue("0xsignedtx" as `0x${string}`),
+        getTransactionCount: vi.fn().mockResolvedValue(7),
+        estimateFeesPerGas: vi.fn().mockResolvedValue({
+          maxFeePerGas: 10n,
+          maxPriorityFeePerGas: 1n,
+        }),
+      };
+
+      const result = toClientEvmSigner(mockAccount);
+      expect(
+        await result.signTransaction?.({
+          to: mockAccount.address,
+          data: "0x",
+          nonce: 0,
+          gas: 1n,
+          maxFeePerGas: 1n,
+          maxPriorityFeePerGas: 1n,
+          chainId: 84532,
+        }),
+      ).toBe("0xsignedtx");
+      expect(await result.getTransactionCount?.({ address: mockAccount.address })).toBe(7);
+      expect(await result.estimateFeesPerGas?.()).toEqual({
+        maxFeePerGas: 10n,
+        maxPriorityFeePerGas: 1n,
+      });
+    });
+
+    it("falls back to publicClient nonce and fee helpers when the account lacks them", async () => {
+      const mockAccount = {
+        address: "0x1234567890123456789012345678901234567890" as `0x${string}`,
+        signTypedData: async () => "0xsignature" as `0x${string}`,
+      };
+      const mockPublicClient = {
+        readContract: async () => 0n,
+        getTransactionCount: vi.fn().mockResolvedValue(3),
+        estimateFeesPerGas: vi.fn().mockResolvedValue({
+          maxFeePerGas: 2n,
+          maxPriorityFeePerGas: 1n,
+        }),
+      };
+
+      const result = toClientEvmSigner(mockAccount, mockPublicClient);
+      expect(await result.getTransactionCount?.({ address: mockAccount.address })).toBe(3);
+      expect(await result.estimateFeesPerGas?.()).toEqual({
+        maxFeePerGas: 2n,
+        maxPriorityFeePerGas: 1n,
+      });
+    });
   });
 
   describe("toFacilitatorEvmSigner", () => {
