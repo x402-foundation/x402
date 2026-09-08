@@ -37,7 +37,7 @@ const data = response.data;
 
 ## API
 
-### `wrapAxiosWithPayment(axiosInstance, client)`
+### `wrapAxiosWithPayment(axiosInstance, client, options?)`
 
 Wraps an Axios instance to handle 402 Payment Required responses automatically.
 
@@ -45,10 +45,21 @@ Wraps an Axios instance to handle 402 Payment Required responses automatically.
 
 - `axiosInstance`: The Axios instance to wrap (typically from `axios.create()`)
 - `client`: An x402Client instance with registered payment schemes
+- `options.validatePaidResponse`: Optional caller-owned check of a successful paid application response. It runs after `processPaymentResult` on both the ordinary paid response and the one bounded recovery response, before the body is returned. The callback receives a detached view of status, headers, and body; the original Axios response is preserved for return or `PaidResponseValidationError`. `PAYMENT-RESPONSE` is optional because output validity and settlement evidence are separate: a post-payment success is still validated when the header is absent. A terminal 402 remains protocol evidence and is not passed to the validator. Non-cloneable or stream-like bodies fail closed without consuming the original body. On failure the SDK throws `PaidResponseValidationError` bound to the original Axios response and the pre-validator `PAYMENT-RESPONSE` value when present; it does not retry or create another payment. Omit the option to keep existing behavior.
 
-### `wrapAxiosWithPaymentFromConfig(axiosInstance, config)`
+```typescript
+const api = wrapAxiosWithPayment(axios.create(), client, {
+  validatePaidResponse: response => {
+    if (!response.data?.report?.weather) {
+      throw new Error("paid body missing report.weather");
+    }
+  },
+});
+```
 
-Convenience wrapper that creates an x402Client from a configuration object.
+### `wrapAxiosWithPaymentFromConfig(axiosInstance, config, options?)`
+
+Convenience wrapper that creates an x402Client from a configuration object. `options` is the same optional `validatePaidResponse` hook as `wrapAxiosWithPayment`.
 
 #### Parameters
 
@@ -59,6 +70,7 @@ Convenience wrapper that creates an x402Client from a configuration object.
     - `client`: The scheme client implementation (e.g., `ExactEvmScheme`, `ExactSvmScheme`)
     - `x402Version`: Optional protocol version (defaults to 2, set to 1 for legacy support)
   - `paymentRequirementsSelector`: Optional function to select payment requirements from multiple options
+- `options.validatePaidResponse`: Optional. Same caller-owned paid-response validator as `wrapAxiosWithPayment`.
 
 #### Returns
 
@@ -194,4 +206,3 @@ const api = wrapAxiosWithPaymentFromConfig(axios.create(), {
   paymentRequirementsSelector: selectCheapestOption,
 });
 ```
-
