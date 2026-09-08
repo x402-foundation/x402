@@ -874,6 +874,11 @@ export function blockfrostQueries(provider: CardanoProviderConfig): {
   enabled: boolean;
   evidence(txHash: string): Promise<CardanoSettlementEvidence>;
   spentUtxoAddress(txHash: string, index: number): Promise<{ address?: string }>;
+  /**
+   * Whether Blockfrost records the output as consumed (`consumed_by_tx`).
+   * `undefined` when the transaction or output is unknown to the provider.
+   */
+  outputConsumed(txHash: string, index: number): Promise<boolean | undefined>;
 } {
   const timeoutMs = providerTimeoutMs(provider);
   const config = provider.blockfrost;
@@ -882,6 +887,7 @@ export function blockfrostQueries(provider: CardanoProviderConfig): {
       enabled: false,
       evidence: () => Promise.resolve({ status: "unknown", confirmations: -2 }),
       spentUtxoAddress: () => Promise.resolve({}),
+      outputConsumed: () => Promise.resolve(undefined),
     };
   }
   const baseUrl = config.baseUrl.replace(/\/$/, "");
@@ -938,6 +944,17 @@ export function blockfrostQueries(provider: CardanoProviderConfig): {
       }>;
       const output = outputs.find(o => o.output_index === index);
       return output?.address ? { address: output.address } : {};
+    },
+
+    async outputConsumed(txHash: string, index: number): Promise<boolean | undefined> {
+      const utxos = await get(`/txs/${txHash}/utxos`);
+      const outputs = (utxos?.outputs ?? []) as Array<{
+        output_index?: number;
+        consumed_by_tx?: string | null;
+      }>;
+      const output = outputs.find(o => o.output_index === index);
+      if (!output || output.consumed_by_tx === undefined) return undefined;
+      return typeof output.consumed_by_tx === "string" && output.consumed_by_tx.length > 0;
     },
   };
 }
@@ -998,6 +1015,37 @@ export function toFacilitatorCardanoSigner(
   // long-lived facilitator picks up a governance change within minutes.
   let protocolParameters: { value: CardanoProtocolParameters; fetchedAt: number } | undefined;
 
+  /**
+   * Whether an output the provider resolved by out-ref has since been spent.
+   * Blockfrost reports it directly (`consumed_by_tx`); otherwise the owner's
+   * unspent set, which every provider serves, decides.
+   *
+   * @param txHash - Producing transaction id.
+   * @param index - Output index.
+   * @param address - The output's address.
+   * @returns True when the output is no longer in the UTXO set.
+   */
+  const outputSpent = async (
+    txHash: string,
+    index: number,
+    address: Address.Address,
+  ): Promise<boolean> => {
+    if (blockfrost.enabled) {
+      const consumed = await blockfrost.outputConsumed(txHash, index);
+      if (consumed !== undefined) return consumed;
+    }
+    const unspent = await withCardanoProviderTimeout(
+      client.getUtxos(address),
+      timeoutMs,
+      "getUtxos",
+    );
+    return !unspent.some(
+      candidate =>
+        Buffer.from(candidate.transactionId.hash).toString("hex").toLowerCase() === txHash &&
+        Number(candidate.index) === index,
+    );
+  };
+
   return {
     getAddresses(): readonly string[] {
       return addresses;
@@ -1041,15 +1089,20 @@ export function toFacilitatorCardanoSigner(
         }
         const address = Address.toBech32(utxo.address);
         const paymentCredential = Address.getPaymentCredential(Address.toHex(utxo.address));
-        return {
-          exists: true,
+        const owner = {
           address,
-          coin: utxo.assets.lovelace,
-          assets,
           ...(paymentCredential?._tag === "KeyHash"
             ? { paymentKeyHash: Credential.toHex(paymentCredential).toLowerCase() }
             : {}),
         };
+        // Both Evolution providers resolve an out-ref from the producing
+        // transaction's outputs, which still lists an output after it has been
+        // spent. Ask the provider whether it was consumed before reporting it
+        // unspent, or rule 5 (inputs unspent) would never fire.
+        if (await outputSpent(txHash, index, utxo.address)) {
+          return { exists: false, ...owner };
+        }
+        return { exists: true, ...owner, coin: utxo.assets.lovelace, assets };
       }
       // Spent (or unknown). A settlement retry still needs the owner address to
       // resolve the payer, so read it from the producing transaction when the

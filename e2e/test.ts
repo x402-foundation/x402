@@ -345,6 +345,12 @@ function getScenarioResourceKeys(
   scenario: TestScenario,
   ctx: EvmResourceKeyContext,
 ): string[] {
+  // Every Cardano scenario spends from the single CLIENT_CARDANO_MNEMONIC wallet
+  // and pins its first UTXO as the nonce input, so two scenarios running at the
+  // same time would double-spend it: serialize them in --parallel mode.
+  if (scenario.protocolFamily === 'cardano') {
+    return ['cardano:client-wallet'];
+  }
   if (scenario.protocolFamily !== 'evm') {
     return [];
   }

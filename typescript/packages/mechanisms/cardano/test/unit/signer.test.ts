@@ -118,6 +118,37 @@ describe("toFacilitatorCardanoSigner", () => {
     }
   });
 
+  // Blockfrost resolves an out-ref from the producing transaction, which still
+  // lists a spent output; `consumed_by_tx` is what tells the two apart.
+  it("reports a Blockfrost output as consumed only when consumed_by_tx is set", async () => {
+    const body = (consumed: string | null | undefined) =>
+      new Response(
+        JSON.stringify({
+          outputs: [{ output_index: 0, address: "addr_test1owner", consumed_by_tx: consumed }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(body("b".repeat(64)))
+      .mockResolvedValueOnce(body(null))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const queries = blockfrostQueries({
+        blockfrost: { baseUrl: "https://cardano-preprod.blockfrost.io/api/v0" },
+      });
+      await expect(queries.outputConsumed("a".repeat(64), 0)).resolves.toBe(true);
+      await expect(queries.outputConsumed("a".repeat(64), 0)).resolves.toBe(false);
+      await expect(queries.outputConsumed("a".repeat(64), 0)).resolves.toBeUndefined();
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        `https://cardano-preprod.blockfrost.io/api/v0/txs/${"a".repeat(64)}/utxos`,
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("propagates provider failures while resolving a spent UTxO", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 503 }));
     vi.stubGlobal("fetch", fetchMock);

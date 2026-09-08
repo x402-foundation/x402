@@ -885,7 +885,7 @@ A protected operation that runs before settlement reaches the required evidence 
 
 The **client** constructs and signs the complete transaction (Protocol Flow step 3). The Cardano network fee is a field of the transaction body, balanced against the client's own inputs — so the **client pays the fee**, alongside the asset being transferred.
 
-The selected client, resource server, or facilitator broadcasts the already-signed transaction. Broadcasting consumes none of the submitter's funds. A facilitator does **not** require a funded wallet, only a provider connection for UTXO/slot queries and transaction submission. A facilitator MAY expose an address in `/supported` for observability, but it is not used to pay or sign.
+The resource server or facilitator broadcasts the already-signed transaction. Broadcasting consumes none of the submitter's funds. A facilitator does **not** require a funded wallet, only a provider connection for UTXO/slot queries and transaction submission. A facilitator MAY expose an address in `/supported` for observability, but it is not used to pay or sign.
 
 The facilitator advertises this as `areFeesSponsored: false` in its `/supported` entry and the resource server restates it in `PaymentRequirements.extra`. It is structural rather than negotiated, so it is `false` for every Cardano `assetTransferMethod`.
 
