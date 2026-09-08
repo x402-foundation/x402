@@ -19,8 +19,12 @@ import { createRpcClient, getStablecoinTokenProgram, validateSvmAddress } from "
 
 /** Options for the server-side {@link UptoSvmScheme}. */
 export interface UptoSvmServerOptions {
-  /** Server hot key set as the channel `authorized_signer`; signs settlement vouchers. */
-  receiverAuthorizerSigner: MessagePartialSigner;
+  /**
+   * Server hot key set as the channel `authorized_signer`; signs settlement
+   * vouchers. Omit to delegate to the facilitator's advertised
+   * `receiverAuthorizer`.
+   */
+  receiverAuthorizerSigner?: MessagePartialSigner;
   /**
    * Channel `grace_period`; defaults to
    * `max(DEFAULT_GRACE_PERIOD_SECONDS, maxTimeoutSeconds)`.
@@ -40,11 +44,11 @@ export interface UptoSvmServerOptions {
  * Declares the `escrow` payment flow: deposit settle before the handler, claim
  * (or zero-amount cancel) settle after. Price parsing matches the exact scheme
  * (stablecoin → 6-decimal atomic units); `enhancePaymentRequirements` folds the
- * facilitator's `feePayer`, declares the server-owned `receiverAuthorizer` /
- * `withdrawDelay`, and — when an `rpcUrl` is configured — embeds a fresh
- * `recentBlockhash`/`recentSlot` pair. `enrichSettlementPayload` attaches the
- * receiver-authorizer voucher only on claim/cancel settle (`after-handler` /
- * `cancel`); deposit settle (`before-handler`) leaves the payload unchanged.
+ * facilitator's `feePayer`, declares `receiverAuthorizer` (server-owned or
+ * facilitator-delegated) / `withdrawDelay`, and — when an `rpcUrl` is
+ * configured — embeds a fresh `recentBlockhash`/`recentSlot` pair.
+ * `enrichSettlementPayload` stamps `type` on every settle and attaches the
+ * receiver-authorizer voucher on claim/cancel only when the server owns the key.
  */
 export class UptoSvmScheme implements SchemeNetworkServer {
   readonly scheme = "upto";
@@ -55,16 +59,17 @@ export class UptoSvmScheme implements SchemeNetworkServer {
   /** Blockhash/slot hints regenerated per PaymentRequired; omitted from accepted-echo matching. */
   readonly dynamicExtraFields = ["recentBlockhash", "lastValidBlockHeight", "recentSlot"];
   private moneyParsers: MoneyParser[] = [];
-  private readonly receiverAuthorizerSigner: MessagePartialSigner;
+  private readonly receiverAuthorizerSigner: MessagePartialSigner | undefined;
   private readonly withdrawDelay: number | undefined;
   private readonly rpcUrl: string | undefined;
 
   /**
    * Construct the server-side upto scheme.
    *
-   * @param options - Server configuration including the voucher-signing key
+   * @param options - Server configuration; omit `receiverAuthorizerSigner` to
+   *   delegate voucher signing to the facilitator
    */
-  constructor(options: UptoSvmServerOptions) {
+  constructor(options: UptoSvmServerOptions = {}) {
     this.receiverAuthorizerSigner = options.receiverAuthorizerSigner;
     this.withdrawDelay = options.withdrawDelay;
     this.rpcUrl = options.rpcUrl;
@@ -120,7 +125,9 @@ export class UptoSvmScheme implements SchemeNetworkServer {
   }
 
   /**
-   * Fail server startup when the facilitator does not advertise a usable `feePayer`.
+   * Fail server startup when the facilitator does not advertise a usable `feePayer`,
+   * or when this server delegates and the facilitator does not advertise a
+   * `receiverAuthorizer`.
    *
    * @param network - The network identifier being validated
    * @param supportedKind - The facilitator's advertised kind for this scheme/network
@@ -137,6 +144,16 @@ export class UptoSvmScheme implements SchemeNetworkServer {
       return (
         `facilitator does not advertise a valid feePayer for upto on ${network}; ` +
         `a base58 Solana address is required`
+      );
+    }
+    if (this.receiverAuthorizerSigner) return;
+
+    const advertised = supportedKind.extra?.receiverAuthorizer;
+    if (typeof advertised !== "string" || !validateSvmAddress(advertised)) {
+      return (
+        `no receiverAuthorizerSigner is configured and the facilitator does not advertise a ` +
+        `receiverAuthorizer on ${network}. Configure a receiverAuthorizerSigner or use a ` +
+        `facilitator that advertises one.`
       );
     }
   }
@@ -175,16 +192,17 @@ export class UptoSvmScheme implements SchemeNetworkServer {
   }
 
   /**
-   * Fold the facilitator's `feePayer` into the requirement, declare the
-   * server-owned `receiverAuthorizer` / `withdrawDelay`, and optionally embed
-   * a fresh blockhash/slot pair for the client open.
+   * Fold the facilitator's `feePayer` into the requirement, declare
+   * `receiverAuthorizer` (local signer, else the facilitator's advertised key)
+   * / `withdrawDelay`, and optionally embed a fresh blockhash/slot pair for
+   * the client open.
    *
    * @param paymentRequirements - The base payment requirements
    * @param supportedKind - The supported kind from the facilitator's /supported endpoint
    * @param supportedKind.x402Version - The x402 version
    * @param supportedKind.scheme - The payment scheme
    * @param supportedKind.network - The network identifier
-   * @param supportedKind.extra - Facilitator extra (`feePayer` only)
+   * @param supportedKind.extra - Facilitator extra (`feePayer`, optional `receiverAuthorizer`)
    * @param extensionKeys - Extension keys supported by the facilitator (unused)
    * @returns Enhanced payment requirements
    */
@@ -202,10 +220,18 @@ export class UptoSvmScheme implements SchemeNetworkServer {
     const withdrawDelay =
       this.withdrawDelay ??
       Math.max(DEFAULT_GRACE_PERIOD_SECONDS, paymentRequirements.maxTimeoutSeconds);
+    const advertised = supportedKind.extra?.receiverAuthorizer;
+    const receiverAuthorizer =
+      this.receiverAuthorizerSigner?.address ??
+      (typeof advertised === "string" ? advertised : undefined);
+    if (!receiverAuthorizer || !validateSvmAddress(receiverAuthorizer)) {
+      throw new Error("Payment requirements must include a valid extra.receiverAuthorizer");
+    }
+
     const extra: Record<string, unknown> = {
       ...paymentRequirements.extra,
       ...supportedKind.extra,
-      receiverAuthorizer: this.receiverAuthorizerSigner.address,
+      receiverAuthorizer,
       withdrawDelay,
     };
     extra.tokenProgram ??= getStablecoinTokenProgram(
@@ -233,17 +259,19 @@ export class UptoSvmScheme implements SchemeNetworkServer {
   }
 
   /**
-   * Attach the receiver-authorizer voucher signature on claim/cancel settle.
-   * Deposit settle (`before-handler`) must not add `voucherSignature`.
+   * Stamp `type` on every settle. Attach the receiver-authorizer voucher on
+   * claim/cancel only when this server owns the key.
    *
    * @param ctx - Settlement context (`requirements.amount` is the charge or `0`)
-   * @returns Additive `voucherSignature` field, or void for deposit settle
+   * @returns Additive settle fields
    */
   enrichSettlementPayload = async (ctx: SettleContext): Promise<Record<string, unknown> | void> => {
-    if (ctx.phase === "before-handler") return;
+    if (ctx.phase === "before-handler") return { type: "deposit" };
 
     const raw = ctx.paymentPayload.payload as Record<string, unknown>;
-    if (!isUptoSvmPayload(raw)) return;
+    if (!isUptoSvmPayload(raw)) return { type: "claim" };
+
+    if (!this.receiverAuthorizerSigner) return { type: "claim" };
 
     if (raw.authorizedSigner !== this.receiverAuthorizerSigner.address) {
       throw new Error(
@@ -257,7 +285,7 @@ export class UptoSvmScheme implements SchemeNetworkServer {
       cumulativeAmount: BigInt(ctx.requirements.amount),
       expiresAt: BigInt(raw.expiresAt),
     });
-    return { voucherSignature };
+    return { type: "claim", voucherSignature };
   };
 
   /**

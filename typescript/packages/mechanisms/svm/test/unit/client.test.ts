@@ -1,13 +1,24 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { fetchMint } from "@solana-program/token-2022";
+import { generateKeyPairSigner } from "@solana/kit";
 import { x402Client } from "@x402/core/client";
 import { ExactSvmScheme } from "../../src/exact";
 import { registerExactSvmScheme } from "../../src/exact/client/register";
 import { NETWORKS } from "../../src/v1";
 import type { ClientSvmSigner } from "../../src/signer";
 import type { Network, PaymentRequirements } from "@x402/core/types";
-import { SOLANA_DEVNET_CAIP2 } from "../../src/constants";
+import { MAX_MEMO_BYTES, SOLANA_DEVNET_CAIP2, TOKEN_PROGRAM_ADDRESS } from "../../src/constants";
 import { USDC_DEVNET_ADDRESS } from "../../src/defaultAssets";
+import { getCachedMintMetadata } from "../../src/mint-cache";
 import { resolveBlockhash } from "../../src/utils";
+
+vi.mock("@solana-program/token-2022", async importOriginal => {
+  const actual = await importOriginal<typeof import("@solana-program/token-2022")>();
+  return {
+    ...actual,
+    fetchMint: vi.fn(),
+  };
+});
 
 type ClientInternals = {
   registeredClientSchemes: Map<number, Map<string, Map<string, unknown>>>;
@@ -143,6 +154,90 @@ describe("ExactSvmScheme", () => {
       }
       expect(client.scheme).toBe("exact");
     });
+
+    it("rejects a mint owned by an unknown program", async () => {
+      vi.mocked(fetchMint).mockResolvedValue({
+        data: { decimals: 6 },
+        programAddress: "11111111111111111111111111111111",
+      } as never);
+      const payer = await generateKeyPairSigner();
+      const client = new ExactSvmScheme(payer);
+      await expect(
+        client.createPaymentPayload(2, {
+          scheme: "exact",
+          network: SOLANA_DEVNET_CAIP2,
+          asset: USDC_DEVNET_ADDRESS,
+          amount: "100000",
+          payTo: payer.address,
+          maxTimeoutSeconds: 3600,
+          extra: { feePayer: payer.address, recentBlockhash: PROVIDED_BLOCKHASH },
+        }),
+      ).rejects.toThrow("Asset was not created by a known token program");
+    });
+
+    it("forwards a configured rpcUrl before rejecting an unknown mint program", async () => {
+      vi.mocked(fetchMint).mockResolvedValue({
+        data: { decimals: 6 },
+        programAddress: "11111111111111111111111111111111",
+      } as never);
+      const payer = await generateKeyPairSigner();
+      const client = new ExactSvmScheme(payer, { rpcUrl: "https://custom-rpc.example" });
+      await expect(
+        client.createPaymentPayload(2, {
+          scheme: "exact",
+          network: SOLANA_DEVNET_CAIP2,
+          asset: USDC_DEVNET_ADDRESS,
+          amount: "100000",
+          payTo: payer.address,
+          maxTimeoutSeconds: 3600,
+          extra: { feePayer: payer.address, recentBlockhash: PROVIDED_BLOCKHASH },
+        }),
+      ).rejects.toThrow("Asset was not created by a known token program");
+    });
+
+    it("rejects when extra.feePayer is missing after mint resolution", async () => {
+      vi.mocked(fetchMint).mockResolvedValue({
+        data: { decimals: 6 },
+        programAddress: TOKEN_PROGRAM_ADDRESS,
+      } as never);
+      const payer = await generateKeyPairSigner();
+      const client = new ExactSvmScheme(payer);
+      await expect(
+        client.createPaymentPayload(2, {
+          scheme: "exact",
+          network: SOLANA_DEVNET_CAIP2,
+          asset: USDC_DEVNET_ADDRESS,
+          amount: "100000",
+          payTo: payer.address,
+          maxTimeoutSeconds: 3600,
+          extra: { recentBlockhash: PROVIDED_BLOCKHASH },
+        }),
+      ).rejects.toThrow("feePayer is required");
+    });
+
+    it("rejects extra.memo that exceeds MAX_MEMO_BYTES", async () => {
+      vi.mocked(fetchMint).mockResolvedValue({
+        data: { decimals: 6 },
+        programAddress: TOKEN_PROGRAM_ADDRESS,
+      } as never);
+      const payer = await generateKeyPairSigner();
+      const client = new ExactSvmScheme(payer);
+      await expect(
+        client.createPaymentPayload(2, {
+          scheme: "exact",
+          network: SOLANA_DEVNET_CAIP2,
+          asset: USDC_DEVNET_ADDRESS,
+          amount: "100000",
+          payTo: payer.address,
+          maxTimeoutSeconds: 3600,
+          extra: {
+            feePayer: payer.address,
+            memo: "m".repeat(MAX_MEMO_BYTES + 1),
+            recentBlockhash: PROVIDED_BLOCKHASH,
+          },
+        }),
+      ).rejects.toThrow(`extra.memo exceeds maximum ${MAX_MEMO_BYTES} bytes`);
+    });
   });
 });
 
@@ -176,6 +271,21 @@ describe("resolveBlockhash", () => {
 
     expect(missingHeight.lastValidBlockHeight).toBe(0n);
     expect(malformedHeight.lastValidBlockHeight).toBe(0n);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("accepts a safe-integer lastValidBlockHeight", async () => {
+    const { rpc, send } = createBlockhashRpc();
+
+    const result = await resolveBlockhash(
+      rpc as never,
+      requirementsWithRecentBlockhash(PROVIDED_BLOCKHASH, 12345) as never,
+    );
+
+    expect(result).toEqual({
+      blockhash: PROVIDED_BLOCKHASH,
+      lastValidBlockHeight: 12345n,
+    });
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -233,5 +343,64 @@ describe("registerExactSvmScheme", () => {
 
     expect(getRegisteredNetworks(client, 2)).toEqual(["solana:*"]);
     expect(getRegisteredNetworks(client, 1).sort()).toEqual([...NETWORKS].sort());
+  });
+
+  it("registers caller-supplied policies", () => {
+    const client = new x402Client();
+    const policy = vi.fn((version: number, requirements: PaymentRequirements[]) => requirements);
+    registerExactSvmScheme(client, { signer: mockSigner, policies: [policy] });
+
+    const internals = client as unknown as { policies: Array<(...args: never[]) => unknown> };
+    expect(internals.policies).toContain(policy);
+  });
+});
+
+describe("getCachedMintMetadata", () => {
+  beforeEach(() => {
+    vi.mocked(fetchMint).mockReset();
+  });
+
+  it("evicts a failed fetch so the next caller retries", async () => {
+    const cache = new Map<string, Promise<{ decimals: number; programAddress: string }>>();
+    vi.mocked(fetchMint)
+      .mockRejectedValueOnce(new Error("rpc down"))
+      .mockResolvedValueOnce({
+        data: { decimals: 6 },
+        programAddress: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      } as never);
+
+    await expect(
+      getCachedMintMetadata({} as never, SOLANA_DEVNET_CAIP2, USDC_DEVNET_ADDRESS as never, cache),
+    ).rejects.toThrow("rpc down");
+    expect(cache.size).toBe(0);
+
+    const metadata = await getCachedMintMetadata(
+      {} as never,
+      SOLANA_DEVNET_CAIP2,
+      USDC_DEVNET_ADDRESS as never,
+      cache,
+    );
+    expect(metadata.decimals).toBe(6);
+    expect(fetchMint).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not evict a newer in-flight fetch when an older one fails", async () => {
+    const cache = new Map<string, Promise<{ decimals: number; programAddress: string }>>();
+    const newer = Promise.resolve({
+      decimals: 6,
+      programAddress: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    });
+    vi.mocked(fetchMint).mockRejectedValueOnce(new Error("stale"));
+
+    const first = getCachedMintMetadata(
+      {} as never,
+      SOLANA_DEVNET_CAIP2,
+      USDC_DEVNET_ADDRESS as never,
+      cache,
+    );
+    cache.set(`${SOLANA_DEVNET_CAIP2}:${USDC_DEVNET_ADDRESS}`, newer);
+
+    await expect(first).rejects.toThrow("stale");
+    expect(cache.get(`${SOLANA_DEVNET_CAIP2}:${USDC_DEVNET_ADDRESS}`)).toBe(newer);
   });
 });

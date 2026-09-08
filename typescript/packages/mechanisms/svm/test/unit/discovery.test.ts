@@ -7,6 +7,7 @@ import { getChannelEncoder } from "../../src/payment-channels/generated/accounts
 import { PAYMENT_CHANNELS_PROGRAM_ID } from "../../src/payment-channels/onchain";
 import { findPaymentChannelPda } from "../../src/payment-channels/open";
 import { SOLANA_DEVNET_CAIP2 } from "../../src/constants";
+import { USDC_MAINNET_ADDRESS } from "../../src/defaultAssets";
 import type { FacilitatorSvmSigner } from "../../src/signer";
 
 /**
@@ -77,6 +78,27 @@ function stubSigner(
 }
 
 describe("discoverChannelsByRentPayer", () => {
+  it("rejects a signer that cannot list program accounts", async () => {
+    await expect(
+      discoverChannelsByRentPayer({} as never, SOLANA_DEVNET_CAIP2, USDC_MAINNET_ADDRESS),
+    ).rejects.toThrow(/requires getProgramAccounts/);
+  });
+
+  it("skips an account whose bytes cannot be decoded as a channel", async () => {
+    const rentPayer = (await generateKeyPairSigner()).address;
+    const pda = (await generateKeyPairSigner()).address;
+    const signer = stubSigner([
+      {
+        data: Buffer.alloc(256, 0xff).toString("base64"),
+        owner: PAYMENT_CHANNELS_PROGRAM_ID,
+        pubkey: pda,
+      },
+    ]);
+
+    const discovered = await discoverChannelsByRentPayer(signer, SOLANA_DEVNET_CAIP2, rentPayer);
+    expect(discovered).toHaveLength(0);
+  });
+
   it("accepts a validated account", async () => {
     const rentPayer = (await generateKeyPairSigner()).address;
     const { pda, data } = await validDiscoveryChannel(rentPayer);

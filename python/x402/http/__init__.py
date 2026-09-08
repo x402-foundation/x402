@@ -4,6 +4,7 @@ Provides HTTP-specific components for client-side payment handling,
 server-side resource protection, and facilitator communication.
 """
 
+from .background_init import handle_background_init_error, is_fatal_startup_init_error
 from .constants import (
     DEFAULT_FACILITATOR_URL,
     HTTP_STATUS_PAYMENT_REQUIRED,
@@ -121,6 +122,9 @@ __all__ = [
     "UnpaidResponseBody",
     "RouteValidationError",
     "RouteConfigurationError",
+    # Background init
+    "handle_background_init_error",
+    "is_fatal_startup_init_error",
     # Utils
     "safe_base64_encode",
     "safe_base64_decode",

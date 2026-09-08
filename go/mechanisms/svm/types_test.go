@@ -54,6 +54,16 @@ func TestIsUptoSvmPayload(t *testing.T) {
 		t.Fatal("expected valid upto payload")
 	}
 
+	valid["type"] = UptoPayloadTypeDeposit
+	if !IsUptoSvmPayload(valid) {
+		t.Fatal("expected deposit type to pass the guard")
+	}
+	valid["type"] = "refund"
+	if IsUptoSvmPayload(valid) {
+		t.Fatal("expected invalid type to fail the guard")
+	}
+	delete(valid, "type")
+
 	missingExpires := map[string]interface{}{}
 	for k, v := range valid {
 		missingExpires[k] = v

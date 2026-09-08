@@ -47,7 +47,7 @@
     "viem": "^2.48.11",
     "vite": "^6.2.6",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^3.0.5"
+    "vitest": "^3.2.7"
   },
   "dependencies": {
     "@scure/base": "^1.2.6",

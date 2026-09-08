@@ -25,16 +25,16 @@ const (
 	OperatorRefundCollectorV1_0Address = "0x934907bffd0901b6A21e398B9C53A4A38F02fa5d"
 
 	// AuthCaptureEscrowV1_1Address is the commerce-payments v1.1 AuthCaptureEscrow deployment (default).
-	AuthCaptureEscrowV1_1Address = "0x13AC3b34322D12FE27D5e192D0c2b2266d4F29CB"
+	AuthCaptureEscrowV1_1Address = "0xf96815976523E00e65Be8f34cA5e64b4f41EB19c"
 
 	// EIP3009TokenCollectorV1_1Address is the commerce-payments v1.1 EIP-3009 token collector.
-	EIP3009TokenCollectorV1_1Address = "0xEA902B37036bcb4944577ec2101ABdEDF56EbD28"
+	EIP3009TokenCollectorV1_1Address = "0x8612dfdc421f80336cd14E8EF9cb1E765dB5ab88"
 
 	// Permit2TokenCollectorV1_1Address is the commerce-payments v1.1 Permit2 token collector.
-	Permit2TokenCollectorV1_1Address = "0x1aacb38b16a1a8709e80746825E53A0C9Cae9b70"
+	Permit2TokenCollectorV1_1Address = "0xD69831Aed5bfe262067ec4c751f4F830EcdD446e"
 
 	// OperatorRefundCollectorV1_1Address is the commerce-payments v1.1 operator refund collector.
-	OperatorRefundCollectorV1_1Address = "0x6a1ADdEEb4bD9c5811a613e20c172b6CE61A4aaB"
+	OperatorRefundCollectorV1_1Address = "0x7a03443724d14798c4AB4622F1DAAcA761Fea486"
 
 	// AuthCaptureEscrowAddress is the default AuthCaptureEscrow deployment (v1.1).
 	AuthCaptureEscrowAddress = AuthCaptureEscrowV1_1Address

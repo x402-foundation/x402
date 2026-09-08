@@ -28,7 +28,9 @@ import {
   type BatchSettlementDepositStrategyContext,
   type BatchSettlementDepositPolicy,
   type BatchSettlementEvmSchemeOptions,
+  applyMaxDeposit,
   depositAmountForRequest,
+  maxDepositFromSpendCap,
   resolveClientOptions,
   validateDepositPolicy,
 } from "./config";
@@ -120,7 +122,7 @@ export class BatchSettlementEvmScheme implements SchemeNetworkClient {
    *
    * @param x402Version - Protocol version for the payload envelope.
    * @param paymentRequirements - Server payment requirements (scheme, network, asset, amount).
-   * @param context - Optional payment payload context with extension hints.
+   * @param context - Optional extensions and the resolved atomic spend cap.
    * @returns A {@link PaymentPayloadResult} ready to be sent as the `X-PAYMENT` header.
    */
   async createPaymentPayload(
@@ -149,8 +151,18 @@ export class BatchSettlementEvmScheme implements SchemeNetworkClient {
     const needsTopUp = !needsInitialDeposit && BigInt(maxClaimableAmount) > currentBalance;
 
     if (needsInitialDeposit || needsTopUp) {
-      const computedDeposit = depositAmountForRequest(this.depositPolicy, requestAmount);
       const minimumDepositAmount = BigInt(maxClaimableAmount) - currentBalance;
+      const maxDeposit = maxDepositFromSpendCap(
+        context?.maxAmountPerPayment,
+        this.depositPolicy?.depositMultiplier ?? 5,
+      );
+      const computedDeposit = depositAmountForRequest(
+        this.depositPolicy,
+        requestAmount,
+        minimumDepositAmount,
+        paymentRequirements.extra,
+        maxDeposit,
+      );
       const depositAmount = await this.resolveDepositAmount({
         paymentRequirements,
         channelConfig: config,
@@ -161,6 +173,7 @@ export class BatchSettlementEvmScheme implements SchemeNetworkClient {
         currentBalance: currentBalance.toString(),
         minimumDepositAmount: minimumDepositAmount.toString(),
         depositAmount: computedDeposit,
+        ...(maxDeposit !== undefined ? { maxDeposit: maxDeposit.toString() } : {}),
       });
       if (depositAmount === false) {
         return this.createVoucherPayload(
@@ -288,7 +301,11 @@ export class BatchSettlementEvmScheme implements SchemeNetworkClient {
         `depositStrategy returned ${depositAmount}, below required top-up ${context.minimumDepositAmount}`,
       );
     }
-    return depositAmount;
+    return applyMaxDeposit(
+      BigInt(depositAmount),
+      BigInt(context.minimumDepositAmount),
+      context.maxDeposit === undefined ? undefined : BigInt(context.maxDeposit),
+    );
   }
 
   /**

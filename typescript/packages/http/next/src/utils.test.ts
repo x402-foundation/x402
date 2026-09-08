@@ -1,13 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
-import type {
-  x402HTTPResourceServer,
-  x402ResourceServer,
-  PaywallProvider,
-  PaymentCancellationDispatcher,
+import {
+  FacilitatorResponseError,
+  type x402HTTPResourceServer,
+  type x402ResourceServer,
+  type PaywallProvider,
+  type PaymentCancellationDispatcher,
 } from "@x402/core/server";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import {
+  createFacilitatorErrorResponse,
   createHttpServer,
   createRequestContext,
   handlePaymentError,
@@ -426,6 +428,7 @@ describe("handleSettlement", () => {
     expect(result.status).toBe(200);
     expect(result.headers.get("PAYMENT-RESPONSE")).toBe("settled");
     expect(result.headers.get("Cache-Control")).toBe("private");
+    expect(await result.text()).toBe("OK");
     expect(mockHttpServer.processSettlement).toHaveBeenCalledWith(
       mockPaymentPayload,
       mockRequirements,
@@ -438,6 +441,63 @@ describe("handleSettlement", () => {
       undefined,
       undefined,
     );
+  });
+
+  it("returns the protected body after a delayed settlement", async () => {
+    vi.mocked(mockHttpServer.processSettlement).mockImplementation(
+      async () =>
+        new Promise(resolve => {
+          setTimeout(() => {
+            resolve({ success: true, headers: { "PAYMENT-RESPONSE": "settled" } });
+          }, 25);
+        }),
+    );
+    const original = new NextResponse("protected-body", { status: 200 });
+
+    const result = await handleSettlement(
+      mockHttpServer,
+      original,
+      mockPaymentPayload,
+      mockRequirements,
+      mockDeclaredExtensions,
+      mockPaymentCancellationDispatcher,
+      mockHttpContext,
+    );
+
+    expect(result).not.toBe(original);
+    expect(await result.text()).toBe("protected-body");
+    expect(result.headers.get("PAYMENT-RESPONSE")).toBe("settled");
+  });
+
+  it("fully buffers a streaming handler body before settlement", async () => {
+    const original = new NextResponse(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("chunk-1-"));
+          controller.enqueue(new TextEncoder().encode("chunk-2"));
+          controller.close();
+        },
+      }),
+      { status: 200 },
+    );
+    vi.mocked(mockHttpServer.processSettlement).mockImplementation(async () => {
+      expect(original.bodyUsed).toBe(true);
+      return { success: true, headers: { "PAYMENT-RESPONSE": "settled" } };
+    });
+
+    const result = await handleSettlement(
+      mockHttpServer,
+      original,
+      mockPaymentPayload,
+      mockRequirements,
+      mockDeclaredExtensions,
+      mockPaymentCancellationDispatcher,
+      mockHttpContext,
+    );
+
+    expect(result).not.toBe(original);
+    expect(await result.text()).toBe("chunk-1-chunk-2");
+    expect(result.headers.get("PAYMENT-RESPONSE")).toBe("settled");
   });
 
   it("merges private into existing Cache-Control on successful settlement", async () => {
@@ -578,5 +638,72 @@ describe("handleSettlement", () => {
     expect(result.status).toBe(402);
     const body = await result.json();
     expect(body).toEqual({});
+  });
+
+  it("returns 502 when settlement surfaces FacilitatorResponseError", async () => {
+    vi.mocked(mockHttpServer.processSettlement).mockRejectedValue(
+      new FacilitatorResponseError('Facilitator settle returned invalid data: {"success":true}'),
+    );
+    const response = new NextResponse("OK", { status: 200 });
+
+    const result = await handleSettlement(
+      mockHttpServer,
+      response,
+      mockPaymentPayload,
+      mockRequirements,
+      mockDeclaredExtensions,
+      mockPaymentCancellationDispatcher,
+      mockHttpContext,
+    );
+
+    expect(result.status).toBe(502);
+    await expect(result.json()).resolves.toEqual({
+      error: 'Facilitator settle returned invalid data: {"success":true}',
+    });
+  });
+
+  it("returns HTML when settlement fails with isHtml", async () => {
+    vi.mocked(mockHttpServer.processSettlement).mockResolvedValue({
+      success: false,
+      errorReason: "Insufficient funds",
+      transaction: "",
+      network: "eip155:84532",
+      headers: {},
+      response: {
+        status: 402,
+        headers: { "Content-Type": "text/html" },
+        body: "<html>Settlement failed</html>",
+        isHtml: true,
+      },
+    });
+    const response = new NextResponse("OK", { status: 200 });
+
+    const result = await handleSettlement(
+      mockHttpServer,
+      response,
+      mockPaymentPayload,
+      mockRequirements,
+      mockDeclaredExtensions,
+      mockPaymentCancellationDispatcher,
+      mockHttpContext,
+    );
+
+    expect(result.status).toBe(402);
+    expect(result.headers.get("Content-Type")).toBe("text/html");
+    await expect(result.text()).resolves.toBe("<html>Settlement failed</html>");
+  });
+});
+
+describe("createFacilitatorErrorResponse", () => {
+  it("returns a JSON 502 without leaking internals", async () => {
+    const response = createFacilitatorErrorResponse(
+      new FacilitatorResponseError("Facilitator verify returned invalid JSON: not-json"),
+    );
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get("Content-Type")).toBe("application/json");
+    await expect(response.json()).resolves.toEqual({
+      error: "Facilitator verify returned invalid JSON: not-json",
+    });
   });
 });

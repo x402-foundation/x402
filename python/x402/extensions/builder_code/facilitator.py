@@ -91,10 +91,12 @@ class BuilderCodeFacilitatorExtension(FacilitatorExtension):
     ) -> str | None:
         """Build the ERC-8021 Schema 2 calldata suffix for a settlement transaction.
 
-        ``a`` and ``s`` are read from the client's payment payload extensions; ``w`` is
-        the facilitator's own code when configured. The facilitator's own ``s`` entry
-        (``service_code``) is appended after the echoed client/server codes, within
-        its own ``MAX_FACILITATOR_SERVICE_CODES`` reservation.
+        On v2 payloads, ``a`` is read from the client's payment payload extensions.
+        On v1 payloads, client ``a`` is omitted (no resource-server echo gate); ``s``
+        is still read. ``w`` is the facilitator's own code when configured. The
+        facilitator's own ``s`` entry (``service_code``) is appended after the echoed
+        client/server codes, within its own ``MAX_FACILITATOR_SERVICE_CODES``
+        reservation.
 
         Args:
             payload: The payment payload being settled.
@@ -107,7 +109,14 @@ class BuilderCodeFacilitatorExtension(FacilitatorExtension):
         """
         info = _extract_client_info(payload.extensions)
         raw_a = info.get("a") if info else None
-        a = raw_a if isinstance(raw_a, str) and BUILDER_CODE_PATTERN.match(raw_a) else None
+        # v1 payloads omit `a`: the resource-server echo gate does not run on v1.
+        a = (
+            raw_a
+            if getattr(payload, "x402_version", None) == 2
+            and isinstance(raw_a, str)
+            and BUILDER_CODE_PATTERN.match(raw_a)
+            else None
+        )
         echoed_service_codes = _resolve_service_codes(info.get("s") if info else None)
         s = (
             [*echoed_service_codes, self.service_code]

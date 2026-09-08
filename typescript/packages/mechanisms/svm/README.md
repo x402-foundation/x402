@@ -51,7 +51,7 @@ Usage-based payments: authorize a ceiling, settle actual usage. See [Upto SVM Sc
 | Role | Import |
 |------|--------|
 | Client | `@x402/svm/upto/client` → `UptoSvmScheme` |
-| Server | `@x402/svm/upto/server` → `UptoSvmScheme` (requires `receiverAuthorizerSigner`) |
+| Server | `@x402/svm/upto/server` → `UptoSvmScheme` (requires `receiverAuthorizerSigner` unless the facilitator's `receiverAuthorizer` is delegated to) |
 | Facilitator | `@x402/svm/upto/facilitator` → `UptoSvmScheme` (requires `getSigner` on the facilitator signer) |
 
 ### V1 Package (`@x402/svm/v1`)

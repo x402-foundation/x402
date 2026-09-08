@@ -223,7 +223,7 @@ func (t *PaymentRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 	}
 
 	// Read response body for V1 support
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body)
 	resp.Body.Close()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
@@ -387,7 +387,7 @@ func (t *PaymentRoundTripper) tryPaymentRequiredHooks(
 		}
 
 		authHeaders := responseHeaders(authResp)
-		authBody, err := io.ReadAll(authResp.Body)
+		authBody, err := readLimitedBody(authResp.Body)
 		authResp.Body.Close()
 		if err != nil {
 			return nil, headers, body, false, fmt.Errorf("failed to read auth retry body: %w", err)

@@ -79,3 +79,14 @@ class PaymentAbortedError(PaymentError):
     def __init__(self, reason: str):
         self.reason = reason
         super().__init__(f"Payment aborted: {reason}")
+
+
+class FacilitatorCapabilityError(Exception):
+    """Raised when a registered scheme's configuration is incompatible with
+    the capabilities the facilitator advertised for that scheme and network.
+    """
+
+    def __init__(self, problems: list[str]) -> None:
+        details = "\n".join(f"  - {p}" for p in problems)
+        super().__init__(f"x402 facilitator capability errors:\n{details}")
+        self.problems = problems

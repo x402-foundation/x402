@@ -68,6 +68,58 @@ def test_passes_when_no_server_extensions() -> None:
     assert server.validate_extensions(required, payload).valid
 
 
+def test_fails_when_client_forges_builder_code_app_code_without_server_declaration() -> None:
+    server = x402ResourceServer()
+    required = _payment_required(None)
+    payload = _payment_payload({BUILDER_CODE: {"info": {"a": "forged_app"}}})
+
+    result = server.validate_extensions(required, payload)
+    assert result.valid is False
+    assert result.invalid_reason == ERR_EXTENSION_ECHO_MISMATCH
+    assert result.extension_key == BUILDER_CODE
+
+
+def test_fails_when_client_forges_builder_code_app_code_while_server_declares_other_extensions() -> (
+    None
+):
+    server = x402ResourceServer()
+    required = _payment_required(
+        {
+            "bazaar": {"info": {"tool": "search", "version": 1}},
+            "builder": {"info": {"code": "abc"}},
+        }
+    )
+    payload = _payment_payload({BUILDER_CODE: {"info": {"a": "forged_app"}}})
+
+    result = server.validate_extensions(required, payload)
+    assert result.valid is False
+    assert result.invalid_reason == ERR_EXTENSION_ECHO_MISMATCH
+    assert result.extension_key == BUILDER_CODE
+
+
+def test_passes_when_client_sends_only_builder_code_service_codes_without_server_declaration() -> (
+    None
+):
+    server = x402ResourceServer()
+    required = _payment_required(None)
+    payload = _payment_payload({BUILDER_CODE: {"info": {"s": ["bc_client"]}}})
+
+    assert server.validate_extensions(required, payload).valid
+
+
+def test_fails_when_client_forges_builder_code_app_code_that_mismatches_server_declaration() -> (
+    None
+):
+    server = x402ResourceServer()
+    required = _payment_required({BUILDER_CODE: {"info": {"a": "bc_app"}}})
+    payload = _payment_payload({BUILDER_CODE: {"info": {"a": "forged_app"}}})
+
+    result = server.validate_extensions(required, payload)
+    assert result.valid is False
+    assert result.invalid_reason == ERR_EXTENSION_ECHO_MISMATCH
+    assert result.extension_key == BUILDER_CODE
+
+
 def test_passes_when_builder_code_echo_is_additive() -> None:
     server = x402ResourceServer()
     required = _payment_required({BUILDER_CODE: {"info": {"a": "bc_myapp"}, "schema": 2}})
@@ -277,6 +329,19 @@ def test_skips_v1_payloads() -> None:
         scheme="exact",
         network="eip155:84532",
         payload={},
+    )
+
+    assert server.validate_extensions(required, payload).valid
+
+
+def test_passes_for_v1_payloads_with_forged_builder_code_app_code() -> None:
+    server = x402ResourceServer()
+    required = _payment_required(None)
+    payload = PaymentPayload(
+        x402_version=1,
+        payload={"authorization": {}, "signature": "0x"},
+        accepted=_requirements(),
+        extensions={BUILDER_CODE: {"info": {"a": "forged_app"}}},
     )
 
     assert server.validate_extensions(required, payload).valid

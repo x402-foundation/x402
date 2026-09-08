@@ -23,13 +23,13 @@ from ..constants import (
     TRANSFER_WITH_AUTHORIZATION_VRS_ABI,
     VERSION_ABI,
 )
-from ..eip712 import build_typed_data_for_signing
-from ..erc6492 import has_deployment_info, parse_erc6492_signature
+from ..eip712 import hash_eip3009_authorization
+from ..erc6492 import has_deployment_info
 from ..multicall import MulticallCall, encode_contract_call, multicall
 from ..signer import FacilitatorEvmSigner
 from ..types import ERC6492SignatureData, ExactEIP3009Authorization
 from ..utils import bytes_to_hex, hex_to_bytes, normalize_address
-from ..verify import verify_typed_data_strict
+from ..verify import verify_universal_signature
 
 # keccak256("Transfer(address,address,uint256)")
 ERC20_TRANSFER_EVENT_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
@@ -85,26 +85,22 @@ def classify_eip3009_signature(
     token_version: str,
 ) -> EIP3009SignatureClassification:
     """Classify the signature before deciding whether simulation may rescue it."""
-    sig_data = parse_erc6492_signature(signature)
-    domain, types, primary_type, message = build_typed_data_for_signing(
+    digest = hash_eip3009_authorization(
         authorization,
         chain_id,
         token_address,
         token_name,
         token_version,
     )
-
-    is_smart_wallet = has_deployment_info(sig_data) or len(sig_data.inner_signature) != 65
-    # Uses the strict primitive that mirrors on-chain SignatureChecker (code-routed, no ECDSA fallback).
-    valid = verify_typed_data_strict(
+    valid, sig_data = verify_universal_signature(
         signer,
         authorization.from_address,
-        domain,
-        types,
-        primary_type,
-        message,
-        sig_data.inner_signature,
+        digest,
+        signature,
+        allow_undeployed=True,
     )
+
+    is_smart_wallet = has_deployment_info(sig_data) or len(sig_data.inner_signature) != 65
     if valid:
         return EIP3009SignatureClassification(
             valid=True,
@@ -113,8 +109,8 @@ def classify_eip3009_signature(
             sig_data=sig_data,
         )
 
-    code = signer.get_code(authorization.from_address)
-    if len(code) > 0:
+    # Reuse the get_code result verify_universal_signature already fetched.
+    if sig_data.code_deployed:
         return EIP3009SignatureClassification(
             valid=False,
             is_smart_wallet=True,

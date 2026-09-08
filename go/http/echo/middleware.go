@@ -194,7 +194,7 @@ func PaymentMiddleware(routes x402http.RoutesConfig, server *x402.X402ResourceSe
 		ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
 		defer cancel()
 		if err := httpServer.Initialize(ctx); err != nil {
-			fmt.Printf("Warning: failed to initialize x402 server: %v\n", err)
+			x402http.HandleBackgroundInitError(err)
 		}
 	}
 
@@ -234,7 +234,7 @@ func PaymentMiddlewareFromHTTPServer(httpServer *x402http.HTTPServer, opts ...Mi
 		ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
 		defer cancel()
 		if err := httpServer.Initialize(ctx); err != nil {
-			fmt.Printf("Warning: failed to initialize x402 server: %v\n", err)
+			x402http.HandleBackgroundInitError(err)
 		}
 	}
 
@@ -278,7 +278,7 @@ func PaymentMiddlewareFromConfig(routes x402http.RoutesConfig, opts ...Middlewar
 		ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
 		defer cancel()
 		if err := httpServer.Initialize(ctx); err != nil {
-			fmt.Printf("Warning: failed to initialize x402 server: %v\n", err)
+			x402http.HandleBackgroundInitError(err)
 		}
 	}
 

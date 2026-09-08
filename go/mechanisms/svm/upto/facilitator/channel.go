@@ -27,8 +27,13 @@ const (
 
 	// Channel reads can briefly lag a confirmed open when an RPC provider
 	// serves transaction status and account state from different replicas.
-	channelReadMaxAttempts    = 5
-	channelReadInitialBackoff = 200 * time.Millisecond
+	//
+	// The backoff is linear, not exponential: replica lag is a small multiple of
+	// Solana's ~400ms slot time, so doubling spends the budget on single waits
+	// far longer than the lag being absorbed. The defaults sleep
+	// 200/400/600/800/1000ms across 6 reads, totalling 3.0s.
+	DefaultChannelReadMaxAttempts = 6
+	DefaultChannelReadBackoffStep = 200 * time.Millisecond
 
 	// DefaultSettleComputeUnitLimit is the default SetComputeUnitLimit for
 	// facilitator-submitted settlement transactions: claim (settle_and_seal +
@@ -167,6 +172,41 @@ func channelExists(
 	return account != nil && account.Value != nil, nil
 }
 
+// channelReadPolicy bounds how long fetchAndVerifyOpenChannel waits for a confirmed open to
+// become visible. The zero value resolves to the package defaults.
+type channelReadPolicy struct {
+	maxAttempts int
+	backoffStep time.Duration
+}
+
+// resolveChannelReadPolicy builds the policy from the scheme's configured overrides.
+func (f *UptoSvmScheme) resolveChannelReadPolicy() channelReadPolicy {
+	policy := channelReadPolicy{}
+	if f.config.ChannelReadMaxAttempts != nil {
+		policy.maxAttempts = *f.config.ChannelReadMaxAttempts
+	}
+	if f.config.ChannelReadBackoffStep != nil {
+		policy.backoffStep = *f.config.ChannelReadBackoffStep
+	}
+	return policy
+}
+
+// resolve fills unset fields with the package defaults, so callers can pass a zero value.
+func (p channelReadPolicy) resolve() channelReadPolicy {
+	if p.maxAttempts <= 0 {
+		p.maxAttempts = DefaultChannelReadMaxAttempts
+	}
+	if p.backoffStep <= 0 {
+		p.backoffStep = DefaultChannelReadBackoffStep
+	}
+	return p
+}
+
+// delayAfterAttempt returns how long to wait before the read following the given 1-based attempt.
+func (p channelReadPolicy) delayAfterAttempt(attempt int) time.Duration {
+	return p.backoffStep * time.Duration(attempt)
+}
+
 // fetchAndVerifyOpenChannel refetches the confirmed channel and rebinds it to
 // the challenge terms before the facilitator settles against it.
 func fetchAndVerifyOpenChannel(
@@ -175,8 +215,11 @@ func fetchAndVerifyOpenChannel(
 	network string,
 	channelID solana.PublicKey,
 	expected expectedOpenChannel,
+	policy channelReadPolicy,
 ) (*verifiedOpenChannel, error) {
-	for attempt := 1; attempt <= channelReadMaxAttempts; attempt++ {
+	policy = policy.resolve()
+
+	for attempt := 1; attempt <= policy.maxAttempts; attempt++ {
 		channel, exists, err := fetchChannelAccount(ctx, signer, network, channelID)
 		if err != nil {
 			return nil, err
@@ -186,12 +229,11 @@ func fetchAndVerifyOpenChannel(
 			// be caused by replica visibility lag.
 			return verifyOpenChannelAccount(channelID, channel, expected)
 		}
-		if attempt == channelReadMaxAttempts {
+		if attempt == policy.maxAttempts {
 			break
 		}
 
-		delay := channelReadInitialBackoff << (attempt - 1)
-		timer := time.NewTimer(delay)
+		timer := time.NewTimer(policy.delayAfterAttempt(attempt))
 		select {
 		case <-ctx.Done():
 			timer.Stop()

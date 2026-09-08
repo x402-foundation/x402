@@ -1,3 +1,0 @@
-kind: fixed
-body: Reject undeclared or mismatched builder-code app attribution in Go resource servers and ignore payload app attribution outside v2 facilitator contexts.
-time: 2026-08-30T15:04:11.5749+09:00

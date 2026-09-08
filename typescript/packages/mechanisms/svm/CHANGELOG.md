@@ -1,5 +1,19 @@
 # @x402/svm Changelog
 
+## 2.25.0
+
+### Minor Changes
+
+- [299b9bc](https://github.com/x402-foundation/x402/commit/299b9bc): Add an optional facilitator-delegated receiver-authorizer mode to SVM `upto`. The facilitator may advertise `receiverAuthorizer` in `/supported`; a server that omits `receiverAuthorizerSigner` delegates voucher signing, and the facilitator signs after correlating the claim settle to the same authenticated caller that opened the channel. ([#3346](https://github.com/x402-foundation/x402/pull/3346)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Updated dependencies [1bc2ae8](https://github.com/x402-foundation/x402/commit/1bc2ae8)
+- Updated dependencies [299b9bc](https://github.com/x402-foundation/x402/commit/299b9bc)
+- Updated dependencies [bbcb974](https://github.com/x402-foundation/x402/commit/bbcb974)
+  - @x402/core@2.25.0
+
+### Patch Changes
+
+- [fed6a04](https://github.com/x402-foundation/x402/commit/fed6a04): Replace `node:crypto`/`Buffer` usage in `transactionMessageHash`, `getChannelDistributionHash`, and payment-channel account discovery with `@noble/hashes/sha256` and `@solana/kit`'s base64 codec. These SHA-256 call sites were only ever needed by facilitator-side code, but lived in modules also imported by `exact/client`/`upto/client`, pulling Node's `crypto` module (and `Buffer`) into browser bundles of any consumer that imports the SVM client and forcing a `crypto`/`buffer` polyfill (e.g. `vite-plugin-node-polyfills`). `@noble/hashes` is a pure-JS, dependency-free SHA-256 implementation that produces byte-identical digests and needs no platform crypto API or polyfill on any target (browser, Node, React Native). ([#3335](https://github.com/x402-foundation/x402/pull/3335)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe)!
+
 ## 2.24.0
 
 ### Minor Changes

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { x402Facilitator } from "../../../src/facilitator/x402Facilitator";
 import {
   PaymentPayload,
@@ -189,6 +189,57 @@ describe("x402Facilitator - Lifecycle Hooks", () => {
   });
 
   describe("onVerifyFailure", () => {
+    it("should run failure hooks when verification returns isValid false", async () => {
+      const facilitator = new x402Facilitator();
+      facilitator.register(
+        "eip155:8453",
+        new MockSchemeFacilitator(async () => ({
+          isValid: false,
+          invalidReason: "invalid_signature",
+          invalidMessage: "bad secp256k1 signature",
+        })),
+      );
+
+      let capturedError: Error | undefined;
+      facilitator.onVerifyFailure(async context => {
+        capturedError = context.error;
+      });
+
+      const result = await facilitator.verify(buildPaymentPayload(), buildPaymentRequirements());
+
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe("invalid_signature");
+      expect(capturedError?.message).toBe("invalid_signature: bad secp256k1 signature");
+    });
+
+    it("should recover from isValid false and run afterVerify with the recovered result", async () => {
+      const facilitator = new x402Facilitator();
+      facilitator.register(
+        "eip155:8453",
+        new MockSchemeFacilitator(async () => ({
+          isValid: false,
+          invalidReason: "stale_nonce",
+        })),
+      );
+
+      const afterVerify = vi.fn();
+      facilitator
+        .onVerifyFailure(async () => ({
+          recovered: true,
+          result: { isValid: true, payer: "0xRecoveredFromInvalid" },
+        }))
+        .onAfterVerify(afterVerify);
+
+      const result = await facilitator.verify(buildPaymentPayload(), buildPaymentRequirements());
+
+      expect(result).toEqual({ isValid: true, payer: "0xRecoveredFromInvalid" });
+      expect(afterVerify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          result: { isValid: true, payer: "0xRecoveredFromInvalid" },
+        }),
+      );
+    });
+
     it("should execute hook when verification fails", async () => {
       const facilitator = new x402Facilitator();
 

@@ -17,7 +17,8 @@
     "permit2:revoke": "tsx scripts/permit2-approval.ts revoke",
     "swig:setup": "tsx scripts/swig-setup.ts",
     "xrpl:iou:setup": "tsx scripts/xrpl-iou-setup.ts",
-    "wallet:status": "tsx scripts/print-wallet-status.ts"
+    "wallet:status": "tsx scripts/print-wallet-status.ts",
+    "results:summary": "tsx scripts/print-e2e-summary.ts"
   },
   "dependencies": {
     "@aptos-labs/ts-sdk": "^5.2.1",
@@ -50,7 +51,7 @@
     "@types/node": "^22.13.4",
     "@types/prompts": "^2.4.9",
     "typescript": "^5.7.3",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.7"
   },
   "engines": {
     "node": ">=22.0.0"

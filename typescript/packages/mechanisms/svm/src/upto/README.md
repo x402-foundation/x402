@@ -34,14 +34,22 @@ client.register("solana:*", new UptoSvmScheme(signer));  // usage-based services
 
 ### Key Difference from Exact
 
-The upto client requires `paymentRequirements.extra.feePayer` and `extra.receiverAuthorizer` (provided via facilitator `getExtra()` and server enhancement). The client signs only the channel `open`; the facilitator co-signs as fee/rent payer and later submits settlement carrying the server's voucher.
+The upto client requires `paymentRequirements.extra.feePayer` and `extra.receiverAuthorizer` (provided via facilitator `getExtra()` and server enhancement). The client signs only the channel `open`; the facilitator co-signs as fee/rent payer and later submits settlement carrying a `receiverAuthorizer` voucher (server-signed, or facilitator-signed when delegated).
 
 ## Server Usage
 
-Register `UptoSvmScheme` with an `x402ResourceServer` and use `setSettlementOverrides` in your handler to specify the actual charge. The server must supply a hot `receiverAuthorizerSigner` that signs settlement vouchers (it does not need SOL or tokens).
+Register `UptoSvmScheme` with an `x402ResourceServer` and use `setSettlementOverrides` in your handler to specify the actual charge.
+
+### Receiver Authorizer
+
+The `receiverAuthorizer` signs settlement vouchers and is committed as the channel `authorized_signer` at deposit:
+
+- **Self-managed** (recommended): pass a `receiverAuthorizerSigner` (a hot Ed25519 key; it does not need SOL or tokens). Channels survive facilitator changes — any facilitator can relay your signed vouchers.
+- **Facilitator-delegated**: omit `receiverAuthorizerSigner`. The scheme picks up `extra.receiverAuthorizer` advertised by the facilitator's `/supported`. The server needs no voucher-signing key; the facilitator signs after authenticating that the claim settle comes from the same service that opened the channel. Delegation requires an out-of-band agreement with the facilitator plus authenticated server→facilitator settle calls — it is not part of the client payment flow.
+
+Self-managed:
 
 ```typescript
-import { paymentMiddleware, setSettlementOverrides, x402ResourceServer } from "@x402/express";
 import { UptoSvmScheme } from "@x402/svm/upto/server";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { base58 } from "@scure/base";
@@ -50,15 +58,33 @@ const receiverAuthorizerSigner = await createKeyPairSignerFromBytes(
   base58.decode(process.env.SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY!),
 );
 
+new UptoSvmScheme({
+  receiverAuthorizerSigner,
+  rpcUrl: process.env.SVM_RPC_URL, // optional: embeds recentBlockhash/recentSlot in 402
+});
+```
+
+Facilitator-delegated (omit `receiverAuthorizerSigner` only; `rpcUrl` unchanged):
+
+```typescript
+new UptoSvmScheme({
+  rpcUrl: process.env.SVM_RPC_URL, // optional: same as self-managed
+});
+```
+
+Full server wiring:
+
+```typescript
+import { paymentMiddleware, setSettlementOverrides, x402ResourceServer } from "@x402/express";
+import { UptoSvmScheme } from "@x402/svm/upto/server";
+
 const server = new x402ResourceServer(facilitatorClient).register(
   "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
   new UptoSvmScheme({
-    receiverAuthorizerSigner,
-    rpcUrl: process.env.SVM_RPC_URL, // optional: embeds recentBlockhash/recentSlot in 402
+    receiverAuthorizerSigner, // omit for facilitator-delegated mode
+    rpcUrl: process.env.SVM_RPC_URL,
   }),
 );
-
-// In your route config, `price` is the maximum authorized amount:
 const routes = {
   "GET /api/generate": {
     accepts: {
@@ -99,10 +125,18 @@ For custom facilitator implementations:
 import { toFacilitatorSvmSigner } from "@x402/svm";
 import { UptoSvmScheme } from "@x402/svm/upto/facilitator";
 
-const svmSigner = toFacilitatorSvmSigner(keypair);
+// Pass the RPC URL to the signer, not to UptoSvmScheme
+const svmSigner = toFacilitatorSvmSigner(
+  keypair,
+  process.env.SVM_RPC_URL ? { defaultRpcUrl: process.env.SVM_RPC_URL } : undefined,
+);
 const scheme = new UptoSvmScheme(svmSigner, {
-  rpcUrl: process.env.SVM_RPC_URL,
   maxChannelLifetimeSecs: 3600,
+  // Optional: advertise a receiverAuthorizer so servers can delegate.
+  // Requires resolveCallerIdentity — construction throws without it.
+  authorizerSigner,
+  resolveCallerIdentity: ctx => currentRequestAuth(ctx).subject,
+  // Optional: shared store for multi-replica facilitators. Default is in-memory.
 });
 
 // Optional: reclaim PDA rent from sealed/distributed channels
@@ -121,7 +155,11 @@ the cleanup interval. Omit it to leave discovery off.
 pass, so await it during shutdown rather than exiting underneath a broadcast
 settle.
 
-The upto facilitator's `getExtra()` returns a `feePayer` address. That key is set as channel `payee` (zero distribution share) and `rent_payer`: it co-signs `open`, sponsors fees/rent, and signs `settle_and_seal`. Nonzero settlement still requires the server's `receiverAuthorizer` voucher.
+The upto facilitator's `getExtra()` returns a `feePayer` address and, when `authorizerSigner` is set, a `receiverAuthorizer`. `feePayer` is set as channel `payee` (zero distribution share) and `rent_payer`: it co-signs `open`, sponsors fees/rent, and signs `settle_and_seal`.
+
+A facilitator that advertises a `receiverAuthorizer` (so servers can delegate to it) must authenticate that each claim settle originates from the service whose deposit settle opened the channel (e.g. SIWX, JWT, or an API credential correlated across the two settles). The scheme records that identity at deposit and requires an exact match at claim. If the facilitator has no such authentication mechanism, omit `authorizerSigner` so no `receiverAuthorizer` is advertised; servers then supply their own voucher signatures.
+
+The default identity store is in-memory. A multi-replica facilitator must inject a shared `delegatedAuthStore`; a lost binding fails closed and the server cannot settle (the client still has `request_close`).
 
 ## Supported Networks
 
@@ -140,7 +178,7 @@ Canonical program id: `CHNLxYvVA28MJP9PrFuDXccuoGXAx7jBacfLEkahyGsX`
 2. Facilitator advertises `extra.feePayer`
 3. Client signs a payment-channel `open` that escrows the max amount
 4. Facilitator deposits by broadcasting `open` (escrow settle, before handler)
-5. Server performs work, calculates actual cost, and attaches a voucher via `setSettlementOverrides`
+5. Server performs work, calculates actual cost, and attaches `type` plus a voucher when it owns the key
 6. Facilitator claims with `settle_and_seal` + `distribute` for the actual amount (≤ max)
 7. If actual amount is `0`, the channel closes with a full refund to the client
 

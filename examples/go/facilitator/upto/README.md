@@ -58,6 +58,68 @@ scheme := uptosvm.NewUptoSvmScheme(signer, &uptosvm.Config{
 })
 ```
 
+## SVM receiver authorizer (optional delegation)
+
+This example registers `UptoSvmScheme` with a **fee payer only** — no
+`AuthorizerSigner` is configured, so `/supported` advertises `extra.feePayer`
+but not `extra.receiverAuthorizer`. Servers must sign their own claim vouchers
+(self-managed mode).
+
+To let resource servers delegate voucher signing to your facilitator, extend
+the SVM registration with a separate Ed25519 key and a `ResolveCallerIdentity`
+hook. Delegation is not negotiated in x402 — it requires an out-of-band
+agreement with each resource server, and authenticated settle requests so
+claim vouchers are signed only for that server.
+
+| Signer | Role | Onchain effect |
+| ------ | ---- | -------------- |
+| `SVM_PRIVATE_KEY` | **Fee payer** — co-signs channel `open`, submits claim/cleanup txs | Pays SOL for opens, settlement, and rent cleanup |
+| `AuthorizerSigner` (optional) | **Receiver authorizer** — signs claim vouchers when servers delegate | Committed as the channel `authorized_signer` for delegating servers |
+
+When `AuthorizerSigner` is set, `GET /supported` includes both `feePayer` and
+`receiverAuthorizer`:
+
+```json
+{
+  "kinds": [
+    {
+      "x402Version": 2,
+      "scheme": "upto",
+      "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+      "extra": {
+        "feePayer": "...",
+        "receiverAuthorizer": "..."
+      }
+    }
+  ]
+}
+```
+
+Wire it in your facilitator:
+
+```go
+authorizer, err := svmsigners.NewReceiverAuthorizerSignerFromPrivateKey(
+    os.Getenv("SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"),
+)
+
+scheme := uptosvm.NewUptoSvmScheme(signer, &uptosvm.Config{
+    ChannelStorage:            channelStorage,
+    MaxChannelLifetimeSecs:    &maxChannelLifetimeSecs,
+    AuthorizerSigner:          authorizer,
+    ResolveCallerIdentity:     resolveCallerIdentity, // JWT / SIWX / mTLS subject
+    // Optional for multi-replica facilitators; default is in-memory.
+    // DelegatedAuthStore: sharedRedisDelegatedAuthStore,
+})
+```
+
+> ⚠️ A facilitator that advertises `receiverAuthorizer` **must** authenticate
+> that each claim settle comes from the same service whose deposit settle
+> opened the channel (SIWX, JWT, mTLS, or an API credential correlated across
+> both settles). The scheme records that identity at deposit and requires an
+> exact match at claim. **Do not advertise `receiverAuthorizer` without real
+> authentication.** The default identity binding store is in-memory; inject a
+> shared `DelegatedAuthStore` for multi-replica facilitators.
+
 ## API endpoints
 
 The standard x402 facilitator surface: `POST /verify`, `POST /settle`,

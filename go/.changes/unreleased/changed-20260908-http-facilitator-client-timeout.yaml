@@ -1,0 +1,3 @@
+kind: changed
+body: Raise HTTPFacilitatorClient default per-request timeout from 30s to 90s so long settle() calls can finish.
+time: 2026-09-08T07:00:00Z

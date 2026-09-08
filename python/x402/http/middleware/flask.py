@@ -20,6 +20,7 @@ except ImportError as e:
     ) from e
 
 from ...schemas import SettleResponse, VerifiedPaymentCancelOptions
+from ..background_init import handle_background_init_error
 from ..constants import SETTLEMENT_OVERRIDES_HEADER
 from ..facilitator_client_base import FacilitatorResponseError
 from ..types import (
@@ -313,7 +314,7 @@ class PaymentMiddleware:
             server: x402ResourceServerSync instance (must be sync variant).
             paywall_config: Optional paywall configuration.
             paywall_provider: Optional custom paywall provider.
-            sync_facilitator_on_start: Initialize on first protected request.
+            sync_facilitator_on_start: Initialize when the middleware is created.
         """
         # Auto-register bazaar extension if routes declare it
         if _check_if_bazaar_needed(routes):
@@ -330,6 +331,16 @@ class PaymentMiddleware:
 
         if paywall_provider:
             self._http_server.register_paywall_provider(paywall_provider)
+
+        # Initialize if requested - queries facilitator /supported to populate
+        # facilitator clients. Fatal capability / route mismatches exit the process
+        # so a misconfigured server does not stay up until the first paid request.
+        if self._sync_on_start:
+            try:
+                self._http_server.initialize()
+                self._init_done = True
+            except Exception as error:
+                handle_background_init_error(error)
 
         # Replace WSGI app
         app.wsgi_app = self._wsgi_middleware  # type: ignore
@@ -623,7 +634,7 @@ def payment_middleware(
         server: Pre-configured x402ResourceServerSync (must be sync variant).
         paywall_config: Optional paywall UI configuration.
         paywall_provider: Optional custom paywall provider.
-        sync_facilitator_on_start: Fetch facilitator support on first request.
+        sync_facilitator_on_start: Fetch facilitator support when the middleware is created.
 
     Returns:
         PaymentMiddleware instance.
@@ -651,7 +662,7 @@ def payment_middleware_from_config(
         schemes: Scheme registrations for server-side processing.
         paywall_config: Optional paywall UI configuration.
         paywall_provider: Optional custom paywall provider.
-        sync_facilitator_on_start: Fetch facilitator support on first request.
+        sync_facilitator_on_start: Fetch facilitator support when the middleware is created.
 
     Returns:
         PaymentMiddleware instance.

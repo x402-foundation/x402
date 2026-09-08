@@ -4,6 +4,7 @@ import {
   VerifyResponse,
   SupportedResponse,
   SupportedKind,
+  FacilitatorCapabilityError,
 } from "../types/facilitator";
 import {
   PaymentPayload,
@@ -1626,9 +1627,7 @@ export class x402ResourceServer {
     }
 
     if (configErrors.length > 0) {
-      throw new Error(
-        `x402 facilitator capability errors:\n${configErrors.map(e => `  - ${e}`).join("\n")}`,
-      );
+      throw new FacilitatorCapabilityError(configErrors);
     }
   }
 

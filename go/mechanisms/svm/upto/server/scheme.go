@@ -27,7 +27,8 @@ const AssetTransferMethodChannel = "channel"
 // Config configures the server-side SVM `upto` scheme.
 type Config struct {
 	// ReceiverAuthorizerSigner is the server hot key set as the channel
-	// authorized_signer. It signs settlement vouchers and is required.
+	// authorized_signer. It signs settlement vouchers. Omit to delegate to
+	// the facilitator's advertised receiverAuthorizer.
 	ReceiverAuthorizerSigner svm.ReceiverAuthorizerSigner
 
 	// WithdrawDelay is the channel grace period in seconds. Defaults to
@@ -43,19 +44,19 @@ type Config struct {
 // payments.
 //
 // It declares the escrow payment flow: a deposit settle before the handler and
-// a claim (or zero-amount cancel) settle after. The voucher for the metered
-// amount is attached only on the claim/cancel settle; the deposit settle must
-// not carry one.
+// a claim (or zero-amount cancel) settle after. enrichSettlementPayload stamps
+// type on every settle and attaches the receiver-authorizer voucher on
+// claim/cancel only when the server owns the key.
 type UptoSvmScheme struct {
 	moneyParsers []x402.MoneyParser
 	config       *Config
 }
 
-// NewUptoSvmScheme creates a new UptoSvmScheme. The receiver authorizer signer
-// is required: without it the server cannot authorize any settlement.
+// NewUptoSvmScheme creates a new UptoSvmScheme. Omit ReceiverAuthorizerSigner
+// to delegate voucher signing to the facilitator.
 func NewUptoSvmScheme(config *Config) *UptoSvmScheme {
-	if config == nil || config.ReceiverAuthorizerSigner == nil {
-		panic("upto svm server: ReceiverAuthorizerSigner is required")
+	if config == nil {
+		config = &Config{}
 	}
 	return &UptoSvmScheme{
 		moneyParsers: []x402.MoneyParser{},
@@ -100,7 +101,8 @@ func (s *UptoSvmScheme) GetAssetDecimals(_ string, _ x402.Network) int {
 }
 
 // ValidateFacilitatorSupport fails server startup when the facilitator does not
-// advertise a usable feePayer: without one, no client can build an open.
+// advertise a usable feePayer: without one, no client can build an open. When
+// this server delegates, the facilitator must also advertise a receiverAuthorizer.
 func (s *UptoSvmScheme) ValidateFacilitatorSupport(
 	network x402.Network,
 	supportedKind types.SupportedKind,
@@ -113,7 +115,20 @@ func (s *UptoSvmScheme) ValidateFacilitatorSupport(
 			network,
 		)
 	}
-	return nil
+	if s.config.ReceiverAuthorizerSigner != nil {
+		return nil
+	}
+
+	advertised, _ := supportedKind.Extra[upto.ExtraReceiverAuthorizer].(string)
+	if svm.ValidateSolanaAddress(advertised) {
+		return nil
+	}
+	return fmt.Errorf(
+		"no receiverAuthorizerSigner is configured and the facilitator does not advertise a "+
+			"receiverAuthorizer on %s. Configure a receiverAuthorizerSigner or use a "+
+			"facilitator that advertises one",
+		network,
+	)
 }
 
 // SettleOnCancel settles canceled verified payments as a zero-amount refund so
@@ -133,17 +148,19 @@ func (s *UptoSvmScheme) SettleOnCancel(ctx x402.VerifiedPaymentCanceledContext) 
 	return &requirements, nil
 }
 
-// EnrichSettlementPayload attaches the receiver-authorizer voucher on the
-// claim and cancel settles. The deposit settle (before-handler) must not carry
-// a voucher: the facilitator rejects one there because no usage has occurred.
+// EnrichSettlementPayload stamps type on every settle. It attaches the
+// receiver-authorizer voucher on claim/cancel only when this server owns the key.
 func (s *UptoSvmScheme) EnrichSettlementPayload(ctx x402.SettleContext) (map[string]interface{}, error) {
 	if ctx.Phase == x402.SettlePhaseBeforeHandler {
-		return nil, nil
+		return map[string]interface{}{svm.UptoPayloadTypeField: svm.UptoPayloadTypeDeposit}, nil
 	}
 
-	// A payload from another mechanism has no voucher to sign.
+	claimFields := map[string]interface{}{svm.UptoPayloadTypeField: svm.UptoPayloadTypeClaim}
 	if !svm.IsUptoSvmPayload(ctx.Payload.GetPayload()) {
-		return nil, nil
+		return claimFields, nil
+	}
+	if s.config.ReceiverAuthorizerSigner == nil {
+		return claimFields, nil
 	}
 	payload, err := svm.UptoPayloadFromMap(ctx.Payload.GetPayload())
 	if err != nil {
@@ -177,6 +194,7 @@ func (s *UptoSvmScheme) EnrichSettlementPayload(ctx x402.SettleContext) (map[str
 	}
 
 	return map[string]interface{}{
+		svm.UptoPayloadTypeField:      svm.UptoPayloadTypeClaim,
 		svm.UptoVoucherSignatureField: solana.SignatureFromBytes(signature).String(),
 	}, nil
 }
@@ -242,8 +260,9 @@ func (s *UptoSvmScheme) ParsePrice(price x402.Price, network x402.Network) (x402
 }
 
 // EnhancePaymentRequirements folds the facilitator's feePayer into the
-// requirement, declares the server-owned receiverAuthorizer and withdrawDelay,
-// and embeds a fresh blockhash/slot pair for the client open when configured.
+// requirement, declares receiverAuthorizer (local signer, else the
+// facilitator's advertised key) and withdrawDelay, and embeds a fresh
+// blockhash/slot pair for the client open when configured.
 func (s *UptoSvmScheme) EnhancePaymentRequirements(
 	ctx context.Context,
 	requirements types.PaymentRequirements,
@@ -293,7 +312,15 @@ func (s *UptoSvmScheme) EnhancePaymentRequirements(
 			withdrawDelay = uint32(requirements.MaxTimeoutSeconds)
 		}
 	}
-	extra[upto.ExtraReceiverAuthorizer] = s.config.ReceiverAuthorizerSigner.Address().String()
+	advertised, _ := supportedKind.Extra[upto.ExtraReceiverAuthorizer].(string)
+	receiverAuthorizer := advertised
+	if s.config.ReceiverAuthorizerSigner != nil {
+		receiverAuthorizer = s.config.ReceiverAuthorizerSigner.Address().String()
+	}
+	if !svm.ValidateSolanaAddress(receiverAuthorizer) {
+		return requirements, errors.New("payment requirements must include a valid extra.receiverAuthorizer")
+	}
+	extra[upto.ExtraReceiverAuthorizer] = receiverAuthorizer
 	extra[upto.ExtraWithdrawDelay] = withdrawDelay
 
 	// Token-2022 mints (USDG, PYUSD, CASH) need their own program on the open, and

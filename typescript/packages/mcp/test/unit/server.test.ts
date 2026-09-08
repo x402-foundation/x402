@@ -1103,6 +1103,46 @@ describe("createPaymentWrapper", () => {
     });
   });
 
+  describe("resource metadata", () => {
+    it("should forward discovery fields into PaymentRequired resource info", async () => {
+      const paid = createPaymentWrapper(
+        mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+        {
+          accepts: [mockPaymentRequirements],
+          resource: {
+            url: "mcp://tool/discoverable",
+            description: "Discoverable tool",
+            mimeType: "application/json",
+            serviceName: "weather-service",
+            tags: ["weather", "paid"],
+            iconUrl: "https://example.com/icon.png",
+          },
+        },
+      );
+
+      const handler = vi.fn();
+      const result = await paid(handler)({ city: "NYC" }, {});
+
+      expect(result.isError).toBe(true);
+      expect(handler).not.toHaveBeenCalled();
+      expect(mockResourceServer.createPaymentRequiredResponse).toHaveBeenCalledWith(
+        [mockPaymentRequirements],
+        {
+          url: "mcp://tool/discoverable",
+          description: "Discoverable tool",
+          mimeType: "application/json",
+          serviceName: "weather-service",
+          tags: ["weather", "paid"],
+          iconUrl: "https://example.com/icon.png",
+        },
+        "Payment required to access this tool",
+        undefined,
+        expect.any(Object),
+        undefined,
+      );
+    });
+  });
+
   describe("extensions", () => {
     it("should include extensions in 402 response when configured", async () => {
       const extensions = {

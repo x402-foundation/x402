@@ -7,6 +7,7 @@ import {
   SDK_DEFAULT_ASSET_TRANSFER_METHOD,
   applyPaymentFlowWireExtra,
   resolvePaymentFlow,
+  resolvePaymentFlowPhases,
   resolveFailurePathSettlement,
 } from "../../../src/server";
 import { x402HTTPResourceServer } from "../../../src/http/x402HTTPResourceServer";
@@ -166,6 +167,36 @@ describe("payment flows", () => {
         ),
       ).toThrow(/does not support paymentFlow "escrow"/);
     });
+
+    it("throws when table default is not in supported", () => {
+      expect(() =>
+        resolvePaymentFlow(
+          {
+            scheme: "exact",
+            defaultAssetTransferMethod: "eip3009",
+            paymentFlows: {
+              eip3009: {
+                supported: ["authorization"],
+                default: "upfront" as PaymentFlowName,
+              },
+            },
+          },
+          buildPaymentRequirements({ extra: {} }),
+        ),
+      ).toThrow(/default is not in supported/);
+    });
+  });
+
+  describe("resolvePaymentFlowPhases", () => {
+    it("returns phase flags for known flows", () => {
+      expect(resolvePaymentFlowPhases("authorization")).toEqual(PAYMENT_FLOWS.authorization);
+    });
+
+    it("throws for unknown payment flow names", () => {
+      expect(() => resolvePaymentFlowPhases("future-flow" as PaymentFlowName)).toThrow(
+        /Unknown payment flow "future-flow"/,
+      );
+    });
   });
 
   describe("resolveFailurePathSettlement", () => {
@@ -231,6 +262,28 @@ describe("payment flows", () => {
           channelId: "channel-123",
         },
       });
+    });
+
+    it("omits channelId from failed cancel receipt when payload has no usable channelId", () => {
+      const cancelSettlement = buildSettleResponse({
+        success: false,
+        errorReason: "refund_failed",
+        transaction: "",
+        network,
+      });
+
+      expect(
+        resolveFailurePathSettlement(
+          cancelSettlement,
+          undefined,
+          buildPaymentPayload({ payload: { channelId: "" } }),
+        ),
+      ).toEqual(
+        expect.objectContaining({
+          success: false,
+          extra: {},
+        }),
+      );
     });
 
     it("echoes before-handler deposit when cancel returns undefined", () => {

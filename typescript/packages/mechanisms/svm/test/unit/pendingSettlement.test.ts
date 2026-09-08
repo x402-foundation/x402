@@ -282,6 +282,38 @@ describe("ExactSvmScheme pending-settlement store integration", () => {
     expect(await store.get(txKey)).toBeUndefined();
   });
 
+  it("returns a terminal failure when the pending store cannot persist a confirm-timeout signature", async () => {
+    store.set = vi.fn().mockRejectedValue(new Error("redis down"));
+    mockSigner.confirmTransaction = vi
+      .fn()
+      .mockRejectedValue(new Error("rpc: confirmation timeout")) as never;
+    const facilitator = setupFacilitator();
+    const payload = makePayload("storePersistFailTx==");
+
+    const result = await facilitator.settle(payload, requirements);
+
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrTransactionFailed);
+    expect(result.errorMessage).toContain("failed to persist for retry");
+    expect(result.errorMessage).toContain("redis down");
+    expect(result.transaction).toBe("txSignature123");
+  });
+
+  it("stringifies a non-Error store failure when persisting pending settlement", async () => {
+    store.set = vi.fn().mockRejectedValue("disk full");
+    mockSigner.confirmTransaction = vi
+      .fn()
+      .mockRejectedValue(new Error("rpc: confirmation timeout")) as never;
+    const facilitator = setupFacilitator();
+    const payload = makePayload("storePersistNonErrorTx==");
+
+    const result = await facilitator.settle(payload, requirements);
+
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrTransactionFailed);
+    expect(result.errorMessage).toContain("disk full");
+  });
+
   it("uses a fresh in-memory store by default when none is provided", async () => {
     const facilitator = new ExactSvmScheme(mockSigner);
     vi.spyOn(

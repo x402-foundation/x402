@@ -1,5 +1,15 @@
 # @x402/extensions Changelog
 
+## 2.25.0
+
+### Minor Changes
+
+- [a140d2b](https://github.com/x402-foundation/x402/commit/a140d2b): Bazaar discovery no longer emits a `routeTemplate` for bare wildcard (`*`) route patterns. Previously the auto-generated `:var1` template failed facilitator's required `matches_resource` check, so Next.js resources using the default `withX402()` wildcard registration were never indexed. ([#3309](https://github.com/x402-foundation/x402/pull/3309)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Updated dependencies [1bc2ae8](https://github.com/x402-foundation/x402/commit/1bc2ae8)
+- Updated dependencies [299b9bc](https://github.com/x402-foundation/x402/commit/299b9bc)
+- Updated dependencies [bbcb974](https://github.com/x402-foundation/x402/commit/bbcb974)
+  - @x402/core@2.25.0
+
 ## 2.24.0
 
 ### Minor Changes

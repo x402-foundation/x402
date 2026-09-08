@@ -125,6 +125,21 @@ class TestBuildDataSuffix:
         payload = _payload({BUILDER_CODE: {"info": {"a": "Bad-App"}, "schema": {}}})
         assert _parse(ext, payload) == BuilderCodeExtensionData(w=WALLET)
 
+    def test_drops_client_app_code_on_v1_payloads_but_still_encodes_service_codes(self) -> None:
+        ext = BuilderCodeFacilitatorExtension(builder_code=WALLET, service_code="bc_fac")
+        payload = PaymentPayload(
+            x402_version=1,
+            payload={},
+            accepted=_REQUIREMENTS,
+            extensions={BUILDER_CODE: {"info": {"a": APP, "s": SERVICE}, "schema": {}}},
+        )
+        assert _parse(ext, payload) == BuilderCodeExtensionData(w=WALLET, s=[SERVICE, "bc_fac"])
+
+    def test_encodes_service_codes_on_v2_payloads_when_app_code_is_absent(self) -> None:
+        ext = BuilderCodeFacilitatorExtension(builder_code=WALLET)
+        payload = _payload({BUILDER_CODE: {"info": {"s": SERVICE}, "schema": {}}})
+        assert _parse(ext, payload) == BuilderCodeExtensionData(w=WALLET, s=[SERVICE])
+
 
 class TestFacilitatorServiceCode:
     def test_appends_facilitator_service_code_after_echoed_codes(self) -> None:

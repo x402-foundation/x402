@@ -483,6 +483,55 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
         expect(result.invalidReason).toBe("invalid_exact_stellar_payload_facilitator_is_payer");
       });
 
+      it("should reject when a configured feeBumpSigner is the payer (from address)", async () => {
+        const feeBumpSigner = createEd25519Signer(
+          "SCKTFQJ2ASXITWPDKJ2KMQB7WOBNFV23OOTT6ZVO6AXVNAA3IJ7TRZFP",
+          STELLAR_TESTNET_CAIP2,
+        );
+        const facilitatorWithFeeBump = new ExactStellarScheme(facilitatorSigners, {
+          areFeesSponsored: true,
+          maxTransactionFeeStroops: 1_000_000,
+          feeBumpSigner,
+        });
+
+        if (!baseSorobanData || !baseOperation.auth?.length) {
+          throw new Error("Missing sorobanData or auth in test transaction");
+        }
+
+        const originalArgs = baseInvokeContractArgs.args();
+        const feeBumpKeypair = Keypair.fromPublicKey(feeBumpSigner.address);
+        const feeBumpScAddress = xdr.ScVal.scvAddress(
+          xdr.ScAddress.scAddressTypeAccount(
+            xdr.PublicKey.publicKeyTypeEd25519(feeBumpKeypair.rawPublicKey()),
+          ),
+        );
+
+        const modifiedInvokeContractArgs = new xdr.InvokeContractArgs({
+          contractAddress: baseInvokeContractArgs.contractAddress(),
+          functionName: baseInvokeContractArgs.functionName(),
+          args: [
+            feeBumpScAddress, // ❌ feeBumpSigner is facilitator-controlled too and must not be the payer
+            originalArgs[1],
+            originalArgs[2],
+          ],
+        });
+        const modifiedFunc = xdr.HostFunction.hostFunctionTypeInvokeContract(
+          modifiedInvokeContractArgs,
+        );
+        const modifiedOperation = Operation.invokeHostFunction({
+          ...baseOperation,
+          func: modifiedFunc,
+        });
+        const modifiedStellarPayload = buildStellarPayloadFromOp(modifiedOperation);
+
+        const result = await facilitatorWithFeeBump.verify(
+          modifiedStellarPayload,
+          validRequirements,
+        );
+        expect(result.isValid).toBe(false);
+        expect(result.invalidReason).toBe("invalid_exact_stellar_payload_facilitator_is_payer");
+      });
+
       it("should reject empty auth entries array", async () => {
         const modifiedOperation = Operation.invokeHostFunction({
           ...baseOperation,

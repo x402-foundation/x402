@@ -8,6 +8,7 @@ import {
   FacilitatorClient,
   FacilitatorResponseError,
   getFacilitatorResponseError,
+  attachBackgroundInitHandler,
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
   checkIfBazaarNeeded,
@@ -104,11 +105,11 @@ export function paymentMiddlewareFromHTTPServer(
   // Store initialization promise (not the result)
   // httpServer.initialize() fetches facilitator support and validates routes
   let initPromise: Promise<void> | null = syncFacilitatorOnStart ? httpServer.initialize() : null;
-  // Attach a no-op rejection handler so an early failure (e.g. a facilitator
-  // request timeout) cannot become an unhandled rejection before the first
-  // protected request awaits initPromise. The original promise is kept, so that
-  // request still observes the failure and triggers the retry path.
-  void initPromise?.catch(() => {});
+  // Retryable failures (e.g. a facilitator timeout) must not become unhandled
+  // rejections; the original promise is still awaited on the first protected
+  // request. Fatal capability / route mismatches exit the process so a
+  // misconfigured server does not stay up until that request.
+  attachBackgroundInitHandler(initPromise);
   let isInitialized = false;
 
   /**
@@ -275,18 +276,18 @@ export function paymentMiddlewareFromHTTPServer(
           return;
         }
 
-        // Get response body for extensions
-        const responseBody = Buffer.from(await res.clone().arrayBuffer());
-
-        const responseHeaders: Record<string, string> = {};
-        res.headers.forEach((value, key) => {
-          responseHeaders[key] = value;
-        });
-
         // Clear the response so we can modify headers
         c.res = undefined;
 
         try {
+          // Get response body for extensions
+          const responseBody = Buffer.from(await res.arrayBuffer());
+
+          const responseHeaders: Record<string, string> = {};
+          res.headers.forEach((value, key) => {
+            responseHeaders[key] = value;
+          });
+
           const settleResult = await httpServer.processSettlement(
             paymentPayload,
             paymentRequirements,
@@ -307,6 +308,8 @@ export function paymentMiddlewareFromHTTPServer(
               headers: response.headers,
             });
           } else {
+            res = new Response(responseBody, { status: res.status, headers: res.headers });
+            res.headers.delete("transfer-encoding");
             // Settlement succeeded - add headers to response
             Object.entries(settleResult.headers).forEach(([key, value]) => {
               res.headers.set(key, value);

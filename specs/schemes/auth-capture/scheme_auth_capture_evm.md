@@ -88,7 +88,7 @@ Every other `extra` field means the same thing in all three, as its [`extra` ent
       "extra": {
         "name": "USDC",
         "version": "2",
-        "authCaptureEscrow": "0x13AC3b34322D12FE27D5e192D0c2b2266d4F29CB",
+        "authCaptureEscrow": "0xf96815976523E00e65Be8f34cA5e64b4f41EB19c",
         "captureAuthorizer": "0xOperatorAddress",
         "operatorType": "custom",
         "receiverAuthorizer": "0xReceiverAuthorizerAddress",
@@ -139,10 +139,10 @@ Treat an omitted `extra.authCaptureEscrow` as the v1.1 escrow. A facilitator MUS
 
 | Constant                            | v1.1 (default)                                 | v1.0                                               |
 | ----------------------------------- | ---------------------------------------------- | -------------------------------------------------- |
-| `AUTH_CAPTURE_ESCROW_ADDRESS`       | `0x13AC3b34322D12FE27D5e192D0c2b2266d4F29CB`   | `0xBdEA0D1bcC5966192B070Fdf62aB4EF5b4420cff`       |
-| `EIP3009_TOKEN_COLLECTOR_ADDRESS`   | `0xEA902B37036bcb4944577ec2101ABdEDF56EbD28`   | `0x0E3dF9510de65469C4518D7843919c0b8C7A7757`       |
-| `PERMIT2_TOKEN_COLLECTOR_ADDRESS`   | `0x1aacb38b16a1a8709e80746825E53A0C9Cae9b70`   | `0x992476B9Ee81d52a5BdA0622C333938D0Af0aB26`       |
-| `OPERATOR_REFUND_COLLECTOR_ADDRESS` | `0x6a1ADdEEb4bD9c5811a613e20c172b6CE61A4aaB`   | `0x934907bffd0901b6A21e398B9C53A4A38F02fa5d`       |
+| `AUTH_CAPTURE_ESCROW_ADDRESS`       | `0xf96815976523E00e65Be8f34cA5e64b4f41EB19c`   | `0xBdEA0D1bcC5966192B070Fdf62aB4EF5b4420cff`       |
+| `EIP3009_TOKEN_COLLECTOR_ADDRESS`   | `0x8612dfdc421f80336cd14E8EF9cb1E765dB5ab88`   | `0x0E3dF9510de65469C4518D7843919c0b8C7A7757`       |
+| `PERMIT2_TOKEN_COLLECTOR_ADDRESS`   | `0xD69831Aed5bfe262067ec4c751f4F830EcdD446e`   | `0x992476B9Ee81d52a5BdA0622C333938D0Af0aB26`       |
+| `OPERATOR_REFUND_COLLECTOR_ADDRESS` | `0x7a03443724d14798c4AB4622F1DAAcA761Fea486`   | `0x934907bffd0901b6A21e398B9C53A4A38F02fa5d`       |
 
 
 The client's `signatureNonce` commits to the resolved escrow, and `authorization.to` / `permit2Authorization.spender` MUST be the matching collector. `PaymentInfo` is the same struct in both deployments, including `minFeeBps` / `maxFeeBps`. What differs is the submitted fee on `charge` and `capture`: v1.1 takes an absolute `feeAmount` in atomic units; v1.0 takes `feeBps`. See [Fee system](#fee-system). `PERMIT2_ADDRESS` is the canonical [Uniswap Permit2 contract](https://docs.uniswap.org/contracts/v4/deployments) in both cases.
