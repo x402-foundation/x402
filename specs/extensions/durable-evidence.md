@@ -117,6 +117,14 @@ the payment or alter the delivered body.**
 `contentHash` is over the plaintext: it lets the buyer prove the anchored
 ciphertext decrypts to exactly the bytes served.
 
+A pointer MAY carry a second commitment over the *stored* bytes (an IPFS CID,
+an object checksum). The two bind different byte populations: `contentHash`
+binds the plaintext and only a holder of the key can derive it; the pointer's
+commitment binds the ciphertext and anyone can derive it from what the store
+serves. A verifier MUST NOT treat one as evidence of the other; the relation
+between them is established only by decrypting, or by the party that holds
+both publishing the plaintext.
+
 `paymentId` is rendered as `0x` followed by 64 lowercase hexadecimal digits.
 Facilitators MUST accept it in any casing, with or without the prefix, and
 MUST key records on the canonical rendering: a reader that recomputes the id
@@ -223,7 +231,11 @@ addresses already visible on-chain — and never a body. Storage learns
 ciphertext only. A cached or intercepted paid response is unreadable to the
 intermediary. Retention is a privacy promise: an implementation MUST honour
 `retentionUntil` where the backend allows deletion and MUST disclose where it
-does not (`revocable: false`).
+does not (`revocable: false`). A lookup after `retentionUntil` MUST be
+answered with a machine-readable reason distinct from "unknown payment"
+(the reference implementation answers `410` with `dx402_evidence_expired`
+against `404` for an id it never recorded), so a verifier reports expiry as
+an observed fact rather than inferring it from a missing record.
 
 ## Relationship to other extensions and proposals
 
