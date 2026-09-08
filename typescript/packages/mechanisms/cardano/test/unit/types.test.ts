@@ -12,18 +12,16 @@ describe("Cardano Types", () => {
     expect(extra).toBeDefined();
   });
 
-  it("accepts the shared submission and confirmation policies", () => {
+  it("accepts the shared confirmation policy", () => {
     const extra: CardanoExtraDefault = {
-      submissionPolicy: "either",
       confirmationPolicy: { l1Confirmations: 3 },
     };
-    expect(extra.submissionPolicy).toBe("either");
+    expect(extra.confirmationPolicy?.l1Confirmations).toBe(3);
   });
 
   it("accepts a Masumi extra with all required fields", () => {
     const extra: CardanoExtraMasumi = {
       assetTransferMethod: "masumi",
-      submissionPolicy: "server",
       confirmationPolicy: { l1Confirmations: 1 },
       inputCommitment: {
         version: "1",
@@ -50,7 +48,6 @@ describe("Cardano Types", () => {
         submitResultTime: "1713636260000",
         unlockTime: "1713640260000",
         externalDisputeUnlockTime: "1713644260000",
-        settlementPolicy: "auto",
       },
       referenceKey: "a10101",
       referenceSignature: "55".repeat(16),
@@ -84,16 +81,5 @@ describe("Cardano Types", () => {
     };
     expect(payload.transaction).toBe("AAA=");
     expect(payload.nonce.endsWith("#0")).toBe(true);
-  });
-
-  it("accepts the optional settlement fields on a payload", () => {
-    const payload: ExactCardanoPayload = {
-      transaction: "AAA=",
-      nonce: `${"a".repeat(64)}#0`,
-      submissionMode: "client",
-      settlementLayer: "hydra",
-      headId: "a".repeat(56),
-    };
-    expect(payload.settlementLayer).toBe("hydra");
   });
 });

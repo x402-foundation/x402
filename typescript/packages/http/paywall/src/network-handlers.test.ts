@@ -1,8 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_ASSETS } from "@x402/evm";
 import { evmPaywall, getDefaultTokenDecimals } from "./evm";
 import { NETWORK_DECIMALS } from "./evm/gen/decimals";
+import { getEvmTemplate } from "./evm/template-loader";
 import { svmPaywall } from "./svm";
+import { getSvmTemplate } from "./svm/template-loader";
+import { avmPaywall } from "./avm";
+import { getAvmTemplate } from "./avm/template-loader";
 import { FAUCET_URLS, resolveFaucetUrl } from "./faucetUrls";
 import { isTestnetNetwork, SOLANA_NETWORK_REFS } from "./paywallUtils";
 import type { PaymentRequired, PaymentRequirements } from "./types";
@@ -245,6 +249,140 @@ describe("Network Handlers", () => {
 
       expect(html).toContain("<!DOCTYPE html>");
       expect(html).toMatch(/Solana Test|SVM Paywall/);
+    });
+
+    it("formats amount from maxAmountRequired when amount is missing", () => {
+      const req: PaymentRequirements = {
+        ...svmRequirement,
+        amount: undefined,
+        maxAmountRequired: "2500000",
+      };
+      const html = svmPaywall.generateHtml(
+        req,
+        { ...mockPaymentRequired, accepts: [req] },
+        { testnet: false },
+      );
+      expect(html).toContain("amount: 2.5,");
+      expect(html).not.toContain("console.log('SVM Payment required initialized:'");
+    });
+
+    it("renders zero when neither amount nor maxAmountRequired is set", () => {
+      const req: PaymentRequirements = {
+        ...svmRequirement,
+        amount: undefined,
+        maxAmountRequired: undefined,
+      };
+      const html = svmPaywall.generateHtml(req, { ...mockPaymentRequired, accepts: [req] }, {});
+      expect(html).toContain("amount: 0,");
+    });
+
+    it("uses config.currentUrl when the payment required has no resource URL", () => {
+      const html = svmPaywall.generateHtml(
+        svmRequirement,
+        { x402Version: 2, error: "Payment required", accepts: [svmRequirement] },
+        { currentUrl: "https://fallback.example/path", appName: 'App "Name"' },
+      );
+      expect(html).toContain("https://fallback.example/path");
+      expect(html).toContain('appName: "App \\"Name\\""');
+    });
+  });
+
+  describe("avmPaywall", () => {
+    const avmRequirement: PaymentRequirements = {
+      scheme: "exact",
+      network: "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe",
+      asset: "0",
+      amount: "1000000",
+      payTo: "TESTNETADDRESS",
+      maxTimeoutSeconds: 60,
+    };
+
+    it("supports CAIP-2 Algorand networks", () => {
+      expect(avmPaywall.supports(avmRequirement)).toBe(true);
+      expect(avmPaywall.supports({ ...avmRequirement, network: "eip155:8453" })).toBe(false);
+    });
+
+    it("generates HTML for Algorand networks", () => {
+      const html = avmPaywall.generateHtml(avmRequirement, mockPaymentRequired, {
+        appName: "Algorand Test",
+        testnet: true,
+      });
+      expect(html).toContain("<!DOCTYPE html>");
+      expect(html).toMatch(/Algorand Test|AVM Paywall/);
+      expect(html).toContain("amount: 1,");
+    });
+
+    it("formats amount from maxAmountRequired when amount is missing", () => {
+      const req: PaymentRequirements = {
+        ...avmRequirement,
+        amount: undefined,
+        maxAmountRequired: "3000000",
+      };
+      const html = avmPaywall.generateHtml(req, { ...mockPaymentRequired, accepts: [req] }, {});
+      expect(html).toContain("amount: 3,");
+    });
+
+    it("renders zero when neither amount nor maxAmountRequired is set", () => {
+      const req: PaymentRequirements = {
+        ...avmRequirement,
+        amount: undefined,
+        maxAmountRequired: undefined,
+      };
+      const html = avmPaywall.generateHtml(req, { ...mockPaymentRequired, accepts: [req] }, {});
+      expect(html).toContain("amount: 0,");
+    });
+  });
+
+  describe("template fallbacks", () => {
+    it("renders a build hint when the EVM template is missing", () => {
+      vi.mocked(getEvmTemplate).mockReturnValueOnce("");
+      const html = evmPaywall.generateHtml(evmRequirement, mockPaymentRequired, {});
+      expect(html).toContain("run pnpm build:paywall");
+    });
+
+    it("renders a build hint when the SVM template is missing", () => {
+      vi.mocked(getSvmTemplate).mockReturnValueOnce("");
+      const html = svmPaywall.generateHtml(svmRequirement, mockPaymentRequired, {});
+      expect(html).toContain("run pnpm build:paywall");
+    });
+
+    it("renders a build hint when the AVM template is missing", () => {
+      vi.mocked(getAvmTemplate).mockReturnValueOnce("");
+      const avmRequirement: PaymentRequirements = {
+        ...svmRequirement,
+        network: "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe",
+      };
+      const html = avmPaywall.generateHtml(avmRequirement, mockPaymentRequired, {});
+      expect(html).toContain("run pnpm build:paywall");
+    });
+  });
+
+  describe("evm currentUrl and amount fallbacks", () => {
+    it("uses config.currentUrl and escapes quotes in app metadata", () => {
+      const html = evmPaywall.generateHtml(
+        evmRequirement,
+        { x402Version: 2, error: "Payment required", accepts: [evmRequirement] },
+        {
+          currentUrl: 'https://example.com/path?q="x"',
+          appName: "App\nName",
+          appLogo: "https://cdn.example/logo.png",
+          testnet: false,
+        },
+      );
+      expect(html).toContain('https://example.com/path?q=\\"x\\"');
+      expect(html).toContain("App\\nName");
+      expect(html).toContain("https://cdn.example/logo.png");
+      expect(html).not.toContain("console.log('EVM Payment required initialized:'");
+    });
+
+    it("renders zero when the EVM requirement has no atomic amount", () => {
+      const req: PaymentRequirements = {
+        ...evmRequirement,
+        amount: undefined,
+        maxAmountRequired: undefined,
+      };
+      const html = evmPaywall.generateHtml(req, { ...mockPaymentRequired, accepts: [req] }, {});
+      expect(html).toContain("amount: 0,");
     });
   });
 });

@@ -61,8 +61,10 @@ export type { FacilitatorClient, FacilitatorConfig } from "../http/httpFacilitat
 export {
   FacilitatorResponseError,
   FacilitatorTimeoutError,
+  FacilitatorCapabilityError,
   getFacilitatorResponseError,
 } from "../types";
+export { attachBackgroundInitHandler, isFatalStartupInitError } from "../http/backgroundInit";
 
 export {
   x402HTTPResourceServer,

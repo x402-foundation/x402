@@ -11,19 +11,19 @@ import {
   isCardanoNetwork,
   SCHEME_EXACT,
   POSITIVE_CANONICAL_AMOUNT_REGEX,
-  SUBMISSION_POLICY_EITHER,
 } from "../../constants";
 import { findDefaultAsset } from "../../defaultAssets";
 import { resolveCardanoPolicies } from "../../policy";
 import type { ClientCardanoSigner } from "../../signer";
-import type { CardanoSubmissionMode, ExactCardanoPayload } from "../../types";
+import type { ExactCardanoPayload } from "../../types";
 
 /**
  * Cardano client implementation for the Exact payment scheme.
  *
  * The signer is responsible for choosing a UTXO that backs the payment and
  * including it as both an input and as the `nonce` field returned alongside
- * the signed transaction.
+ * the signed transaction. The transaction is never broadcast by the client:
+ * the facilitator verifies and submits it during `settle()`.
  */
 export class ExactCardanoScheme implements SchemeNetworkClient {
   readonly scheme = SCHEME_EXACT;
@@ -33,14 +33,8 @@ export class ExactCardanoScheme implements SchemeNetworkClient {
    * Creates a new Cardano client scheme.
    *
    * @param signer - The Cardano client signer.
-   * @param preferredSubmissionMode - Which mode to pick when the server's
-   *   `submissionPolicy` is `either`. Defaults to `server`, matching the
-   *   normalization of an absent policy.
    */
-  constructor(
-    private readonly signer: ClientCardanoSigner,
-    private readonly preferredSubmissionMode: CardanoSubmissionMode = "server",
-  ) {}
+  constructor(private readonly signer: ClientCardanoSigner) {}
 
   /**
    * Builds a Cardano payment payload by delegating signing to the configured
@@ -84,19 +78,10 @@ export class ExactCardanoScheme implements SchemeNetworkClient {
         `Amount must be a positive canonical integer, got: ${paymentRequirements.amount}`,
       );
     }
-
-    // The server's policy selects the submitter; `either` leaves the choice to
-    // the client. A client MUST NOT infer the policy from `/supported`.
-    const policies = resolveCardanoPolicies(paymentRequirements.extra);
-    if (!policies) {
-      throw new Error(
-        "Cardano payment requirements carry an invalid submission/confirmation policy",
-      );
+    // Refuse a 402 the facilitator would reject anyway, before touching the wallet.
+    if (!resolveCardanoPolicies(paymentRequirements.extra)) {
+      throw new Error("Cardano payment requirements carry an invalid confirmation policy");
     }
-    const submissionMode: CardanoSubmissionMode =
-      policies.submissionPolicy === SUBMISSION_POLICY_EITHER
-        ? this.preferredSubmissionMode
-        : policies.submissionPolicy;
 
     const result = await this.signer.buildAndSignPaymentTransaction({
       network: paymentRequirements.network,
@@ -105,7 +90,6 @@ export class ExactCardanoScheme implements SchemeNetworkClient {
       amount: paymentRequirements.amount,
       maxTimeoutSeconds: paymentRequirements.maxTimeoutSeconds,
       extra: paymentRequirements.extra,
-      submissionMode,
     });
 
     if (!result || typeof result.transaction !== "string" || result.transaction.length === 0) {
@@ -114,32 +98,10 @@ export class ExactCardanoScheme implements SchemeNetworkClient {
     if (!result.nonce || !CARDANO_UTXO_REF_REGEX.test(result.nonce)) {
       throw new Error(`Cardano signer returned an invalid nonce: ${result.nonce}`);
     }
-    // A signer that ignored client mode would leave the transaction
-    // unbroadcast, and the facilitator — which must not submit it — would find
-    // no evidence for it.
-    if (
-      (submissionMode === "client" && result.submissionMode !== "client") ||
-      (result.submissionMode !== undefined && result.submissionMode !== submissionMode)
-    ) {
-      throw new Error(
-        `Cardano signer honoured submissionMode ${String(result.submissionMode)}, expected ${submissionMode}`,
-      );
-    }
-
-    const method = paymentRequirements.extra?.assetTransferMethod ?? "default";
-    if (
-      method !== "masumi" &&
-      (result.settlementLayer !== undefined || result.headId !== undefined)
-    ) {
-      throw new Error("Cardano signer returned Masumi settlement fields for a non-Masumi payment");
-    }
 
     const payload: ExactCardanoPayload = {
       transaction: result.transaction,
       nonce: result.nonce,
-      submissionMode,
-      ...(result.settlementLayer ? { settlementLayer: result.settlementLayer } : {}),
-      ...(result.headId ? { headId: result.headId } : {}),
     };
 
     return {

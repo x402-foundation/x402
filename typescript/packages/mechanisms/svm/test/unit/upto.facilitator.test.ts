@@ -53,13 +53,21 @@ import { signVoucher } from "../../src/payment-channels/voucher";
 import { toFacilitatorSvmSigner } from "../../src/signer";
 import type { FacilitatorSvmSigner } from "../../src/signer";
 import {
+  ERR_AUTHORIZER_ADDRESS_MISMATCH,
+  ERR_AUTHORIZER_NOT_CONFIGURED,
   ERR_CHANNEL_ALREADY_OPEN,
   ERR_CHANNEL_BROADCAST,
+  ERR_DELEGATED_SETTLE_UNAUTHENTICATED,
   ERR_EXPIRES_AT_MISMATCH,
   ERR_CHANNEL_LIFETIME_EXCEEDED,
+  ERR_PAYLOAD_TYPE,
   ERR_UNEXPECTED_VOUCHER,
   UptoSvmScheme,
 } from "../../src/upto/facilitator/scheme";
+import {
+  InMemoryUptoDelegatedAuthStore,
+  UptoDelegatedAuthIdentityConflictError,
+} from "../../src/upto/facilitator/delegatedAuthStore";
 import { ErrSettlementPending } from "../../src/exact/facilitator/errors";
 import {
   SettlementConfirmationTimeoutError,
@@ -82,10 +90,13 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
     channelMocks.submitSettle.mockResolvedValue(USDC_MAINNET_ADDRESS);
   });
 
-  async function buildFixture(config: ConstructorParameters<typeof UptoSvmScheme>[1] = {}) {
+  async function buildFixture(
+    config: ConstructorParameters<typeof UptoSvmScheme>[1] = {},
+    keys?: { receiverAuthorizer?: Awaited<ReturnType<typeof generateKeyPairSigner>> },
+  ) {
     const payer = await generateKeyPairSigner();
     const feePayer = await generateKeyPairSigner();
-    const receiverAuthorizer = await generateKeyPairSigner();
+    const receiverAuthorizer = keys?.receiverAuthorizer ?? (await generateKeyPairSigner());
     const open = await buildOpenPaymentChannelTransaction({
       authorizedSigner: receiverAuthorizer.address,
       blockhash: { blockhash: USDC_MAINNET_ADDRESS, lastValidBlockHeight: 0n },
@@ -201,6 +212,37 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
         computeUnitLimit: 123_456,
         computeUnitPriceMicroLamports: 7,
       }),
+    );
+  });
+
+  it("passes the configured channel-read policy through to fetchAndVerifyOpenChannel", async () => {
+    const { facilitator, payload, requirements, receiverAuthorizer, uptoPayload } =
+      await buildFixture({
+        channelReadMaxAttempts: 8,
+        channelReadBackoffStepMs: 50,
+      });
+
+    const voucherSignature = await signVoucher(receiverAuthorizer, {
+      channelId: uptoPayload.channelId,
+      cumulativeAmount: 0n,
+      expiresAt: BigInt(uptoPayload.expiresAt),
+    });
+    await expect(
+      facilitator.settle(
+        {
+          ...payload,
+          payload: { ...uptoPayload, voucherSignature },
+        },
+        { ...requirements, amount: "0" },
+      ),
+    ).resolves.toMatchObject({ success: true });
+
+    expect(channelMocks.fetchAndVerifyOpenChannel).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      { maxAttempts: 8, backoffStepMs: 50 },
     );
   });
 
@@ -819,6 +861,115 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
       );
     });
 
+    it("warns when channel storage upsert fails and no onStorageError is configured", async () => {
+      const settleSignature = "SettleSig2222222222222222222222222222222222";
+      channelMocks.submitSettle.mockResolvedValue(settleSignature);
+      const failingStorage: UptoChannelStorage = {
+        upsert: vi.fn().mockRejectedValue(new Error("storage unavailable")),
+        get: vi.fn(),
+        list: vi.fn().mockResolvedValue([]),
+        delete: vi.fn(),
+      };
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const feePayer = await generateKeyPairSigner();
+      const fixture = await (async () => {
+        const payer = await generateKeyPairSigner();
+        const receiverAuthorizer = await generateKeyPairSigner();
+        const open = await buildOpenPaymentChannelTransaction({
+          authorizedSigner: receiverAuthorizer.address,
+          blockhash: { blockhash: USDC_MAINNET_ADDRESS, lastValidBlockHeight: 0n },
+          deposit: 1_000_000n,
+          feePayer: feePayer.address,
+          gracePeriod: WITHDRAW_DELAY,
+          mint: USDC_DEVNET_ADDRESS,
+          openSlot: OPEN_SLOT,
+          payee: feePayer.address,
+          payer,
+          recipients: [{ bps: 10_000, recipient: receiverAuthorizer.address }],
+          tokenProgram: TOKEN_PROGRAM_ADDRESS,
+        });
+        const requirements: PaymentRequirements = {
+          scheme: "upto",
+          network: SOLANA_DEVNET_CAIP2,
+          asset: USDC_DEVNET_ADDRESS,
+          amount: "1000000",
+          payTo: receiverAuthorizer.address,
+          maxTimeoutSeconds: 300,
+          extra: {
+            feePayer: feePayer.address,
+            recentSlot: OPEN_SLOT.toString(),
+            receiverAuthorizer: receiverAuthorizer.address,
+            tokenProgram: TOKEN_PROGRAM_ADDRESS,
+            withdrawDelay: WITHDRAW_DELAY,
+          },
+        };
+        const uptoPayload: UptoSvmPayloadV2 = {
+          authorizedSigner: receiverAuthorizer.address,
+          channelId: open.channelId,
+          deposit: "1000000",
+          expiresAt: challengeExpiresAt(),
+          from: payer.address,
+          maxAmount: "1000000",
+          nonce: open.salt.toString(),
+          openSlot: OPEN_SLOT.toString(),
+          openTransaction: open.transaction,
+          validAfter: 0,
+        };
+        channelMocks.fetchAndVerifyOpenChannel.mockResolvedValue({
+          authorizedSigner: receiverAuthorizer.address,
+          channelId: open.channelId,
+          deposit: 1_000_000n,
+          mint: requirements.asset,
+          openSlot: OPEN_SLOT,
+          payee: feePayer.address,
+          payer: payer.address,
+          rentPayer: feePayer.address,
+          splits: [{ bps: 10_000, recipient: receiverAuthorizer.address }],
+        });
+        const facilitator = new UptoSvmScheme(toFacilitatorSvmSigner(feePayer), {
+          channelStorage: failingStorage,
+        });
+        return {
+          facilitator,
+          payload: {
+            x402Version: 2,
+            accepted: requirements,
+            payload: uptoPayload as unknown as Record<string, unknown>,
+          },
+          requirements,
+          receiverAuthorizer,
+          uptoPayload,
+        };
+      })();
+      const voucherSignature = await signVoucher(fixture.receiverAuthorizer, {
+        channelId: fixture.uptoPayload.channelId,
+        cumulativeAmount: 0n,
+        expiresAt: BigInt(fixture.uptoPayload.expiresAt),
+      });
+
+      try {
+        await expect(
+          fixture.facilitator.settle(
+            {
+              ...fixture.payload,
+              payload: { ...fixture.uptoPayload, voucherSignature },
+            },
+            { ...fixture.requirements, amount: "0" },
+          ),
+        ).resolves.toMatchObject({
+          success: true,
+          transaction: settleSignature,
+        });
+        expect(failingStorage.upsert).toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining("channel storage upsert failed after settle"),
+          expect.objectContaining({ channelId: fixture.uptoPayload.channelId }),
+        );
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
     it("returns transaction_failed when submitSettle fails before confirmation", async () => {
       const { facilitator, payload, requirements, receiverAuthorizer, uptoPayload } =
         await buildFixture();
@@ -1109,6 +1260,50 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
       );
     });
 
+    it("throws when the signer is missing getSigner", () => {
+      const signer: FacilitatorSvmSigner = {
+        getAddresses: () => ["11111111111111111111111111111111" as never],
+        signTransaction: vi.fn(),
+        simulateTransaction: vi.fn(),
+        sendTransaction: vi.fn(),
+        confirmTransaction: vi.fn(),
+      };
+      expect(() => new UptoSvmScheme(signer as never)).toThrow(
+        "UptoSvmScheme requires getSigner on the signer",
+      );
+    });
+
+    it("throws when the signer is missing getLatestBlockhash", () => {
+      const signer: FacilitatorSvmSigner = {
+        getAddresses: () => ["11111111111111111111111111111111" as never],
+        getSigner: vi.fn(),
+        getAccountInfo: vi.fn(),
+        signTransaction: vi.fn(),
+        simulateTransaction: vi.fn(),
+        sendTransaction: vi.fn(),
+        confirmTransaction: vi.fn(),
+      };
+      expect(() => new UptoSvmScheme(signer as never)).toThrow(
+        "UptoSvmScheme requires getLatestBlockhash on the signer",
+      );
+    });
+
+    it("throws when the signer is missing getSlot", () => {
+      const signer: FacilitatorSvmSigner = {
+        getAddresses: () => ["11111111111111111111111111111111" as never],
+        getSigner: vi.fn(),
+        getAccountInfo: vi.fn(),
+        getLatestBlockhash: vi.fn(),
+        signTransaction: vi.fn(),
+        simulateTransaction: vi.fn(),
+        sendTransaction: vi.fn(),
+        confirmTransaction: vi.fn(),
+      };
+      expect(() => new UptoSvmScheme(signer as never)).toThrow(
+        "UptoSvmScheme requires getSlot on the signer",
+      );
+    });
+
     it("throws when UptoSvmRentCleanupManager is constructed with a signer lacking upto read RPC", () => {
       const exactOnlySigner: FacilitatorSvmSigner = {
         getAddresses: () => ["11111111111111111111111111111111" as never],
@@ -1147,6 +1342,359 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
       ).resolves.toMatchObject({
         success: false,
         errorReason: "invalid_upto_svm_settlement_simulation",
+      });
+    });
+  });
+
+  describe("delegated receiver authorizer", () => {
+    async function buildDelegatedFixture(
+      resolveCallerIdentity: (ctx: {
+        step: string;
+      }) => Promise<string | undefined> | string | undefined = async (): Promise<string> => "svc-1",
+    ): Promise<
+      Awaited<ReturnType<typeof buildFixture>> & {
+        authorizerSigner: Awaited<ReturnType<typeof generateKeyPairSigner>>;
+        store: InMemoryUptoDelegatedAuthStore;
+      }
+    > {
+      const store = new InMemoryUptoDelegatedAuthStore();
+      const authorizerSigner = await generateKeyPairSigner();
+      const fixture = await buildFixture(
+        {
+          authorizerSigner,
+          resolveCallerIdentity,
+          delegatedAuthStore: store,
+        },
+        { receiverAuthorizer: authorizerSigner },
+      );
+      return { ...fixture, authorizerSigner, store };
+    }
+
+    it("getExtra includes receiverAuthorizer only when authorizerSigner is set", async () => {
+      const { facilitator } = await buildFixture();
+      expect(facilitator.getExtra(SOLANA_DEVNET_CAIP2)).toEqual({
+        feePayer: expect.any(String),
+      });
+      expect(facilitator.getExtra(SOLANA_DEVNET_CAIP2)).not.toHaveProperty("receiverAuthorizer");
+
+      const authorizerSigner = await generateKeyPairSigner();
+      const delegated = new UptoSvmScheme(toFacilitatorSvmSigner(await generateKeyPairSigner()), {
+        authorizerSigner,
+        resolveCallerIdentity: () => "svc-1",
+      });
+      expect(delegated.getExtra(SOLANA_DEVNET_CAIP2)).toEqual({
+        feePayer: expect.any(String),
+        receiverAuthorizer: authorizerSigner.address,
+      });
+    });
+
+    it("constructor throws without resolveCallerIdentity", async () => {
+      const feePayer = await generateKeyPairSigner();
+      const authorizerSigner = await generateKeyPairSigner();
+      expect(
+        () => new UptoSvmScheme(toFacilitatorSvmSigner(feePayer), { authorizerSigner }),
+      ).toThrow(/resolveCallerIdentity/);
+    });
+
+    it("InMemoryUptoDelegatedAuthStore bind is first-writer-wins", async () => {
+      const store = new InMemoryUptoDelegatedAuthStore();
+      const expiresAt = Math.floor(Date.now() / 1000) + 3_600;
+      const binding = {
+        channelId: "ch-1",
+        network: SOLANA_DEVNET_CAIP2,
+        callerIdentity: "svc-1",
+        expiresAt,
+      };
+
+      await store.bind(binding);
+      await store.bind(binding);
+
+      await expect(store.bind({ ...binding, callerIdentity: "svc-2" })).rejects.toBeInstanceOf(
+        UptoDelegatedAuthIdentityConflictError,
+      );
+
+      expect(await store.get("ch-1", SOLANA_DEVNET_CAIP2)).toMatchObject({
+        callerIdentity: "svc-1",
+      });
+    });
+
+    it("InMemoryUptoDelegatedAuthStore get drops an expired binding", async () => {
+      const store = new InMemoryUptoDelegatedAuthStore();
+      await store.bind({
+        channelId: "ch-expired",
+        network: SOLANA_DEVNET_CAIP2,
+        callerIdentity: "svc-1",
+        expiresAt: Math.floor(Date.now() / 1000) - 1,
+      });
+      await expect(store.get("ch-expired", SOLANA_DEVNET_CAIP2)).resolves.toBeUndefined();
+      await expect(store.get("ch-expired", SOLANA_DEVNET_CAIP2)).resolves.toBeUndefined();
+    });
+
+    it("InMemoryUptoDelegatedAuthStore bind replaces expired bindings", async () => {
+      const store = new InMemoryUptoDelegatedAuthStore();
+      const expiredAt = Math.floor(Date.now() / 1000) - 1;
+      const expiresAt = Math.floor(Date.now() / 1000) + 3_600;
+
+      await store.bind({
+        channelId: "ch-1",
+        network: SOLANA_DEVNET_CAIP2,
+        callerIdentity: "svc-1",
+        expiresAt: expiredAt,
+      });
+      await store.bind({
+        channelId: "ch-1",
+        network: SOLANA_DEVNET_CAIP2,
+        callerIdentity: "svc-2",
+        expiresAt,
+      });
+
+      expect(await store.get("ch-1", SOLANA_DEVNET_CAIP2)).toMatchObject({
+        callerIdentity: "svc-2",
+      });
+    });
+
+    it("routes a full-charge type=claim as a claim, not a deposit", async () => {
+      const resolveCallerIdentity = vi.fn().mockResolvedValue("svc-1");
+      const { facilitator, payload, requirements, uptoPayload, store, authorizerSigner } =
+        await buildDelegatedFixture(resolveCallerIdentity);
+
+      // Deposit first so the binding exists.
+      await expect(
+        facilitator.settle(
+          { ...payload, payload: { ...uptoPayload, type: "deposit" } },
+          requirements,
+        ),
+      ).resolves.toMatchObject({ success: true });
+      expect(channelMocks.broadcastOpen).toHaveBeenCalledTimes(1);
+
+      channelMocks.broadcastOpen.mockClear();
+      channelMocks.fetchAndVerifyOpenChannel.mockResolvedValue({
+        authorizedSigner: authorizerSigner.address,
+        channelId: uptoPayload.channelId,
+        deposit: 1_000_000n,
+        mint: requirements.asset,
+        openSlot: OPEN_SLOT,
+        payee: requirements.extra!.feePayer,
+        payer: uptoPayload.from,
+        rentPayer: requirements.extra!.feePayer,
+        splits: [{ bps: 10_000, recipient: authorizerSigner.address }],
+      });
+
+      await expect(
+        facilitator.settle(
+          { ...payload, payload: { ...uptoPayload, type: "claim" } },
+          requirements, // amount === maxAmount; old inference would treat this as a deposit
+        ),
+      ).resolves.toMatchObject({ success: true, amount: "1000000" });
+      expect(channelMocks.broadcastOpen).not.toHaveBeenCalled();
+      expect(channelMocks.submitSettle).toHaveBeenCalledTimes(1);
+      expect(await store.get(uptoPayload.channelId, requirements.network)).toBeUndefined();
+    });
+
+    it("rejects a delegated settle missing type", async () => {
+      const { facilitator, payload, requirements } = await buildDelegatedFixture();
+      await expect(facilitator.settle(payload, requirements)).resolves.toMatchObject({
+        success: false,
+        errorReason: ERR_PAYLOAD_TYPE,
+      });
+      expect(channelMocks.broadcastOpen).not.toHaveBeenCalled();
+    });
+
+    it("rejects client-supplied type at verify", async () => {
+      const { facilitator, payload, requirements, uptoPayload } = await buildDelegatedFixture();
+      await expect(
+        facilitator.verify(
+          { ...payload, payload: { ...uptoPayload, type: "deposit" } },
+          requirements,
+        ),
+      ).resolves.toMatchObject({
+        isValid: false,
+        invalidReason: ERR_PAYLOAD_TYPE,
+      });
+    });
+
+    it("signs and settles a delegated claim after a matching deposit identity", async () => {
+      const resolveCallerIdentity = vi.fn().mockResolvedValue("svc-1");
+      const { facilitator, payload, requirements, uptoPayload, store, authorizerSigner } =
+        await buildDelegatedFixture(resolveCallerIdentity);
+
+      await expect(
+        facilitator.settle(
+          { ...payload, payload: { ...uptoPayload, type: "deposit" } },
+          requirements,
+        ),
+      ).resolves.toMatchObject({ success: true });
+      expect(await store.get(uptoPayload.channelId, requirements.network)).toMatchObject({
+        callerIdentity: "svc-1",
+      });
+
+      channelMocks.fetchAndVerifyOpenChannel.mockResolvedValue({
+        authorizedSigner: authorizerSigner.address,
+        channelId: uptoPayload.channelId,
+        deposit: 1_000_000n,
+        mint: requirements.asset,
+        openSlot: OPEN_SLOT,
+        payee: requirements.extra!.feePayer,
+        payer: uptoPayload.from,
+        rentPayer: requirements.extra!.feePayer,
+        splits: [{ bps: 10_000, recipient: authorizerSigner.address }],
+      });
+
+      await expect(
+        facilitator.settle(
+          { ...payload, payload: { ...uptoPayload, type: "claim" } },
+          { ...requirements, amount: "1858" },
+        ),
+      ).resolves.toMatchObject({ success: true, amount: "1858" });
+      expect(channelMocks.submitSettle).toHaveBeenCalledTimes(1);
+      expect(resolveCallerIdentity).toHaveBeenCalledWith(
+        expect.objectContaining({ step: "deposit", channelId: uptoPayload.channelId }),
+      );
+      expect(resolveCallerIdentity).toHaveBeenCalledWith(
+        expect.objectContaining({ step: "claim", channelId: uptoPayload.channelId }),
+      );
+      expect(await store.get(uptoPayload.channelId, requirements.network)).toBeUndefined();
+    });
+
+    it("rejects a claim from a different identity without broadcasting", async () => {
+      const resolveCallerIdentity = vi
+        .fn()
+        .mockResolvedValueOnce("svc-1")
+        .mockResolvedValueOnce("svc-2");
+      const { facilitator, payload, requirements, uptoPayload } =
+        await buildDelegatedFixture(resolveCallerIdentity);
+
+      await expect(
+        facilitator.settle(
+          { ...payload, payload: { ...uptoPayload, type: "deposit" } },
+          requirements,
+        ),
+      ).resolves.toMatchObject({ success: true });
+      channelMocks.fetchAndVerifyOpenChannel.mockClear();
+      channelMocks.submitSettle.mockClear();
+
+      await expect(
+        facilitator.settle(
+          { ...payload, payload: { ...uptoPayload, type: "claim" } },
+          { ...requirements, amount: "1858" },
+        ),
+      ).resolves.toMatchObject({
+        success: false,
+        errorReason: ERR_DELEGATED_SETTLE_UNAUTHENTICATED,
+      });
+      expect(channelMocks.submitSettle).not.toHaveBeenCalled();
+      expect(channelMocks.fetchAndVerifyOpenChannel).not.toHaveBeenCalled();
+    });
+
+    it("rejects a claim when the delegated auth store throws", async () => {
+      const authorizerSigner = await generateKeyPairSigner();
+      const throwingStore = {
+        bind: vi.fn().mockResolvedValue(undefined),
+        get: vi.fn().mockRejectedValue(new Error("store down")),
+        delete: vi.fn().mockResolvedValue(undefined),
+      };
+      const fixture = await buildFixture(
+        {
+          authorizerSigner,
+          resolveCallerIdentity: () => "svc-1",
+          delegatedAuthStore: throwingStore,
+        },
+        { receiverAuthorizer: authorizerSigner },
+      );
+      await expect(
+        fixture.facilitator.settle(
+          { ...fixture.payload, payload: { ...fixture.uptoPayload, type: "claim" } },
+          { ...fixture.requirements, amount: "1858" },
+        ),
+      ).resolves.toMatchObject({
+        success: false,
+        errorReason: ERR_DELEGATED_SETTLE_UNAUTHENTICATED,
+      });
+      expect(channelMocks.submitSettle).not.toHaveBeenCalled();
+    });
+
+    it("rejects a claim with no stored binding", async () => {
+      const { facilitator, payload, requirements, uptoPayload } = await buildDelegatedFixture();
+      await expect(
+        facilitator.settle(
+          { ...payload, payload: { ...uptoPayload, type: "claim" } },
+          { ...requirements, amount: "1858" },
+        ),
+      ).resolves.toMatchObject({
+        success: false,
+        errorReason: ERR_DELEGATED_SETTLE_UNAUTHENTICATED,
+      });
+      expect(channelMocks.submitSettle).not.toHaveBeenCalled();
+      expect(channelMocks.fetchAndVerifyOpenChannel).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["undefined", async (): Promise<undefined> => undefined],
+      [
+        "throwing",
+        async (): Promise<undefined> => {
+          throw new Error("no creds");
+        },
+      ],
+    ] as const)(
+      "rejects when resolveCallerIdentity is %s at deposit and claim",
+      async (_label, resolver) => {
+        const { facilitator, payload, requirements, uptoPayload } =
+          await buildDelegatedFixture(resolver);
+
+        await expect(
+          facilitator.settle(
+            { ...payload, payload: { ...uptoPayload, type: "deposit" } },
+            requirements,
+          ),
+        ).resolves.toMatchObject({
+          success: false,
+          errorReason: ERR_DELEGATED_SETTLE_UNAUTHENTICATED,
+        });
+        expect(channelMocks.broadcastOpen).not.toHaveBeenCalled();
+        expect(channelMocks.simulateOpenSettleDistribute).not.toHaveBeenCalled();
+
+        await expect(
+          facilitator.settle(
+            { ...payload, payload: { ...uptoPayload, type: "claim" } },
+            { ...requirements, amount: "1858" },
+          ),
+        ).resolves.toMatchObject({
+          success: false,
+          errorReason: ERR_DELEGATED_SETTLE_UNAUTHENTICATED,
+        });
+        expect(channelMocks.submitSettle).not.toHaveBeenCalled();
+      },
+    );
+
+    it("rejects a delegated claim when authorizerSigner is not configured", async () => {
+      const { facilitator, payload, requirements, uptoPayload } = await buildFixture();
+      await expect(
+        facilitator.settle(
+          { ...payload, payload: { ...uptoPayload, type: "claim" } },
+          { ...requirements, amount: "1858" },
+        ),
+      ).resolves.toMatchObject({
+        success: false,
+        errorReason: ERR_AUTHORIZER_NOT_CONFIGURED,
+      });
+    });
+
+    it("rejects a delegated claim whose authorizer is not this facilitator", async () => {
+      const authorizerSigner = await generateKeyPairSigner();
+      const { facilitator, payload, requirements, uptoPayload } = await buildFixture({
+        authorizerSigner,
+        resolveCallerIdentity: () => "svc-1",
+      });
+      // extra.receiverAuthorizer is still the fixture's server key, not authorizerSigner
+      await expect(
+        facilitator.settle(
+          { ...payload, payload: { ...uptoPayload, type: "claim" } },
+          { ...requirements, amount: "1858" },
+        ),
+      ).resolves.toMatchObject({
+        success: false,
+        errorReason: ERR_AUTHORIZER_ADDRESS_MISMATCH,
       });
     });
   });

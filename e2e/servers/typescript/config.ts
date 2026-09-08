@@ -15,21 +15,13 @@ import { ExactNearScheme } from "@x402/near/exact/server";
 import { ExactXrplScheme } from "@x402/xrpl/exact/server";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/server";
 import { ExactCardanoScheme } from "@x402/cardano/exact/server";
-import {
-  buildSignedTerms,
-  computeTermsDigest,
-  InMemoryMasumiTermsStorage,
-  issueMasumiRequirements,
-  toMasumiSellerSigner,
-} from "@x402/cardano";
+import { masumiEscrowAddress, toMasumiSellerSigner } from "@x402/cardano";
 import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import {
   declareEip2612GasSponsoringExtension,
   declareErc20ApprovalGasSponsoringExtension,
 } from "@x402/extensions";
 import { HTTPFacilitatorClient, type RoutesConfig, type x402ResourceServer } from "@x402/core/server";
-import { decodePaymentSignatureHeader, type HTTPRequestContext } from "@x402/core/http";
-import type { PaymentRequirements } from "@x402/core/types";
 import { privateKeyToAccount } from "viem/accounts";
 import type { Caip2Network, ServerEnvConfig } from "../../src/server-env";
 import {
@@ -52,23 +44,13 @@ export type { Caip2Network, ServerEnvConfig } from "../../src/server-env";
 export { loadServerEnv } from "../../src/server-env";
 
 /**
- * Cardano settles on ~20-second blocks, so its `settle()` cannot finish inside
- * the 30s facilitator-client default. Fast chains still return as soon as done.
- */
-const FACILITATOR_TIMEOUT_MS = 180_000;
-
-/**
  * Builds facilitator clients from FACILITATOR_URL (+ optional MOCK_FACILITATOR_URL).
  */
 export function createFacilitatorClients(facilitatorUrl: string): HTTPFacilitatorClient[] {
-  const facilitatorClients = [
-    new HTTPFacilitatorClient({ url: facilitatorUrl, timeoutMs: FACILITATOR_TIMEOUT_MS }),
-  ];
+  const facilitatorClients = [new HTTPFacilitatorClient({ url: facilitatorUrl })];
   const mockFacilitatorUrl = process.env.MOCK_FACILITATOR_URL;
   if (mockFacilitatorUrl) {
-    facilitatorClients.push(
-      new HTTPFacilitatorClient({ url: mockFacilitatorUrl, timeoutMs: FACILITATOR_TIMEOUT_MS }),
-    );
+    facilitatorClients.push(new HTTPFacilitatorClient({ url: mockFacilitatorUrl }));
   }
   return facilitatorClients;
 }
@@ -89,7 +71,12 @@ async function registerFamilySchemes(
       server.register(pattern, new ExactConcordiumScheme());
       return;
     case "cardano":
-      server.register(pattern, new ExactCardanoScheme({ masumiStorage: cardanoMasumiStorage }));
+      // The scheme issues Masumi quotes itself: the route only declares the
+      // method and the escrow address, and the seller signs per request.
+      server.register(
+        pattern,
+        new ExactCardanoScheme({ masumi: { seller: network => cardanoMasumiSeller(network) } }),
+      );
       return;
     case "evm": {
       server.register(pattern, new ExactEvmScheme());
@@ -198,11 +185,6 @@ function declareExtension(
 // How long a Cardano Masumi payment stays valid. The client anchors the tx TTL to
 // pay_by_time and the facilitator refuses a TTL further ahead than maxTimeoutSeconds.
 const CARDANO_MASUMI_MAX_TIMEOUT_SECONDS = 600;
-// Settle on the facilitator's own broadcast acceptance (-1). Waiting for block
-// inclusion would hold the HTTP response open for a whole ~20s Cardano block;
-// the harness still waits for real inclusion between scenarios, so the payment
-// is on chain before the next one reuses the payer wallet.
-const CARDANO_MASUMI_CONFIRMATION_POLICY = { l1Confirmations: -1 };
 // The seller signs the Masumi terms with its selling wallet; the escrow pays that
 // address. A real deployment MUST set SERVER_CARDANO_SELLER_MNEMONIC — the
 // well-known test phrase only keeps the e2e self-contained. It needs no funds.
@@ -218,32 +200,74 @@ const CARDANO_SCRIPT_ROUTE = "/exact/cardano/script";
  */
 const CARDANO_SCRIPT_CODE = "4d01000033222220051200120011";
 const CARDANO_SCRIPT_ADDRESS = "addr_test1wp8l7eylksmjas7ypzm0q35dwnjdxxvsfn0z0lflqzgs55stpd682";
+
+/**
+ * Confirmation policy for every Cardano route. Unset, the routes carry no
+ * policy and get the spec default (one confirmation past inclusion) — what a
+ * real deployment gets out of the box, at ~40s per payment on preprod. Set
+ * `CARDANO_L1_CONFIRMATIONS` (an integer from -1 to 20; `-1` settles on the
+ * facilitator's own broadcast acceptance, and the facilitator only accepts it
+ * when the same variable is set) to trade evidence for speed.
+ */
+function cardanoConfirmationPolicy(): { confirmationPolicy: { l1Confirmations: number } } | undefined {
+  const raw = process.env.CARDANO_L1_CONFIRMATIONS?.trim();
+  if (!raw) return undefined;
+  // Strict decimal form only, so the facilitator's own read of this variable
+  // (`=== "-1"` for acceptMempool) agrees with the policy served here.
+  if (!/^-?(0|[1-9]\d?)$/.test(raw)) {
+    throw new Error(`CARDANO_L1_CONFIRMATIONS must be a plain integer from -1 to 20, got "${raw}"`);
+  }
+  const l1Confirmations = Number(raw);
+  if (l1Confirmations < -1 || l1Confirmations > 20) {
+    throw new Error(`CARDANO_L1_CONFIRMATIONS must be an integer from -1 to 20, got "${raw}"`);
+  }
+  return { confirmationPolicy: { l1Confirmations } };
+}
+
 /**
  * Scheme-specific `extra` per Cardano route. These are Cardano payload
  * semantics rather than catalog data, so they live with the scheme
- * registration instead of widening the shared mechanisms catalog.
+ * registration instead of widening the shared mechanisms catalog. The Masumi
+ * route is a *template*: `ExactCardanoScheme` issues the seller-signed quote per
+ * 402 and answers the paid retry with the quote it issued.
  */
-const CARDANO_ROUTE_EXTRA: Record<string, Record<string, unknown>> = {
-  [CARDANO_DEFAULT_ROUTE]: { confirmationPolicy: CARDANO_MASUMI_CONFIRMATION_POLICY },
-  [CARDANO_SCRIPT_ROUTE]: {
-    assetTransferMethod: "script",
-    confirmationPolicy: CARDANO_MASUMI_CONFIRMATION_POLICY,
-    script: { type: "plutusV3", code: CARDANO_SCRIPT_CODE },
-    // Optional inline datum (CBOR hex) attached to the payTo output; the
-    // always-succeeds validator ignores it. `d8799f182aff` = Constr 0 [42].
-    datum: "d8799f182aff",
-  },
-};
+function cardanoRouteExtra(path: string): Record<string, unknown> | undefined {
+  const policy = cardanoConfirmationPolicy();
+  switch (path) {
+    case CARDANO_DEFAULT_ROUTE:
+      return policy;
+    case CARDANO_MASUMI_ROUTE:
+      return { assetTransferMethod: "masumi", ...policy };
+    case CARDANO_SCRIPT_ROUTE:
+      return {
+        assetTransferMethod: "script",
+        ...policy,
+        script: { type: "plutusV3", code: CARDANO_SCRIPT_CODE },
+        // Optional inline datum (CBOR hex) attached to the payTo output; the
+        // always-succeeds validator ignores it. `d8799f182aff` = Constr 0 [42].
+        datum: "d8799f182aff",
+      };
+    default:
+      return undefined;
+  }
+}
 
 /**
- * Quote store shared by the Cardano scheme and the Masumi route below.
- *
- * `ExactCardanoScheme` persists every Masumi 402 it serves here, keyed by
- * `termsDigest`, and refuses a paid retry that does not present that exact
- * quote. The route reads the same store so a buyer's retry is answered with the
- * offer it was issued, even when another buyer was quoted in between.
+ * Where a Cardano route pays. The script method pays the script address the
+ * facilitator reconstructs from the descriptor, and the Masumi method pays the
+ * escrow the scheme derives for the network — the seller signs it into the
+ * quote, so it cannot come from the catalog payee.
  */
-const cardanoMasumiStorage = new InMemoryMasumiTermsStorage();
+function cardanoRoutePayTo(route: ResolvedRoute): string {
+  switch (route.path) {
+    case CARDANO_SCRIPT_ROUTE:
+      return CARDANO_SCRIPT_ADDRESS;
+    case CARDANO_MASUMI_ROUTE:
+      return masumiEscrowAddress(route.network);
+    default:
+      return route.payTo;
+  }
+}
 
 const cardanoMasumiSellers = new Map<string, ReturnType<typeof toMasumiSellerSigner>>();
 
@@ -260,92 +284,6 @@ function cardanoMasumiSeller(network: string): ReturnType<typeof toMasumiSellerS
   return seller;
 }
 
-/** The quote a paid request presents, when this server still remembers issuing it. */
-async function quotedMasumiOffer(paymentHeader: string): Promise<PaymentRequirements | undefined> {
-  try {
-    const accepted = decodePaymentSignatureHeader(paymentHeader).accepted as PaymentRequirements;
-    const digest = computeTermsDigest(
-      buildSignedTerms(accepted.extra as never, accepted),
-    );
-    return (await cardanoMasumiStorage.get(digest))?.requirements;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Route `accepts` for the Cardano Masumi escrow route.
- *
- * A spec-conformant Masumi 402 carries a request commitment and a seller
- * signature over `termsDigest`, so it must be issued rather than hand-written,
- * and every unpaid request gets a fresh one. A paid retry is answered with the
- * quote the scheme recorded for it, so concurrent buyers never swap offers.
- */
-function cardanoMasumiAccepts(route: ResolvedRoute): Record<string, unknown> {
-  if (typeof route.price === "string") {
-    throw new Error(`Route ${route.path}: Masumi requires an amount/asset price`);
-  }
-  const { amount, asset } = route.price;
-
-  const issue = (): Promise<PaymentRequirements> => {
-    const seller = cardanoMasumiSeller(route.network);
-    const payByMs = Date.now() + CARDANO_MASUMI_MAX_TIMEOUT_SECONDS * 1000;
-    return issueMasumiRequirements({
-      network: route.network,
-      asset,
-      amount,
-      maxTimeoutSeconds: CARDANO_MASUMI_MAX_TIMEOUT_SECONDS,
-      sellerAddress: seller.sellerAddress,
-      signTerms: seller.signTerms,
-      commitment: [
-        {
-          name: "parameters",
-          canonicalization: "jcs",
-          mediaType: "application/json",
-          content: { endpoint: route.path },
-        },
-      ],
-      // Each deadline clears its spec minimum by 5 minutes rather than landing
-      // exactly on it (pay_by + 5min <= submit_result, +15min <= unlock, +15min <= dispute).
-      payByTime: payByMs.toString(),
-      submitResultTime: (payByMs + 10 * 60_000).toString(),
-      unlockTime: (payByMs + 30 * 60_000).toString(),
-      externalDisputeUnlockTime: (payByMs + 50 * 60_000).toString(),
-      settlementPolicy: "l1",
-      confirmationPolicy: CARDANO_MASUMI_CONFIRMATION_POLICY,
-    });
-  };
-
-  // payTo and price resolve from the same request context object, so the first
-  // resolver decides the offer for that request and the second reuses it.
-  const perRequest = new WeakMap<object, Promise<PaymentRequirements>>();
-  const current = (context?: HTTPRequestContext): Promise<PaymentRequirements> => {
-    const resolve = async (): Promise<PaymentRequirements> =>
-      (context?.paymentHeader ? await quotedMasumiOffer(context.paymentHeader) : undefined) ??
-      (await issue());
-    if (typeof context !== "object" || context === null) {
-      return resolve();
-    }
-    let offer = perRequest.get(context);
-    if (!offer) {
-      offer = resolve();
-      perRequest.set(context, offer);
-    }
-    return offer;
-  };
-
-  return {
-    scheme: route.scheme,
-    network: route.network as Caip2Network,
-    maxTimeoutSeconds: CARDANO_MASUMI_MAX_TIMEOUT_SECONDS,
-    payTo: async (context?: HTTPRequestContext) => (await current(context)).payTo,
-    price: async (context?: HTTPRequestContext) => {
-      const issued = await current(context);
-      return { amount: issued.amount, asset: issued.asset, extra: issued.extra };
-    },
-  };
-}
-
 /** Single-route payment config shared by HTTP frameworks, the Next e2e server, and MCP tools. */
 export function buildResolvedRouteConfig(
   route: ResolvedRoute,
@@ -353,21 +291,17 @@ export function buildResolvedRouteConfig(
 ): Record<string, unknown> {
   const extensions = Object.assign({}, ...route.extensions.map(id => declareExtension(id, route, transport)));
 
-  const cardanoExtra = CARDANO_ROUTE_EXTRA[route.path];
-  const accepts =
-    route.path === CARDANO_MASUMI_ROUTE
-      ? cardanoMasumiAccepts(route)
-      : {
-          // The script method pays the script address the facilitator
-          // reconstructs from the descriptor below, not the server wallet.
-          payTo: route.path === CARDANO_SCRIPT_ROUTE ? CARDANO_SCRIPT_ADDRESS : route.payTo,
-          scheme: route.scheme,
-          network: route.network as Caip2Network,
-          price: route.price,
-          ...(route.extra || cardanoExtra
-            ? { extra: { ...route.extra, ...cardanoExtra } }
-            : {}),
-        };
+  const cardanoExtra = cardanoRouteExtra(route.path);
+  const accepts = {
+    payTo: cardanoRoutePayTo(route),
+    scheme: route.scheme,
+    network: route.network as Caip2Network,
+    price: route.price,
+    ...(route.path === CARDANO_MASUMI_ROUTE
+      ? { maxTimeoutSeconds: CARDANO_MASUMI_MAX_TIMEOUT_SECONDS }
+      : {}),
+    ...(route.extra || cardanoExtra ? { extra: { ...route.extra, ...cardanoExtra } } : {}),
+  };
 
   return {
     accepts,

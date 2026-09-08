@@ -484,8 +484,8 @@ describe("request timeout", () => {
     vi.unstubAllGlobals();
   });
 
-  it("defaults timeoutMs to 30 seconds", () => {
-    expect(new HTTPFacilitatorClient().timeoutMs).toBe(30_000);
+  it("defaults timeoutMs to 90 seconds", () => {
+    expect(new HTTPFacilitatorClient().timeoutMs).toBe(90_000);
     expect(new HTTPFacilitatorClient({ timeoutMs: 5_000 }).timeoutMs).toBe(5_000);
   });
 
@@ -697,6 +697,14 @@ describe("request timeout", () => {
     expect(
       getFacilitatorResponseError(new Error("initialization failed", { cause: timeoutError })),
     ).toBe(timeoutError);
+  });
+
+  it("returns null from getFacilitatorResponseError when no facilitator error is present", () => {
+    expect(getFacilitatorResponseError("not an error")).toBeNull();
+    expect(getFacilitatorResponseError(new Error("plain error"))).toBeNull();
+    expect(
+      getFacilitatorResponseError(new Error("wrapped", { cause: new Error("inner") })),
+    ).toBeNull();
   });
 });
 

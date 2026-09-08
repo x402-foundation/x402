@@ -30,8 +30,10 @@ const (
 	ErrEip3009SimulationFailed     = "invalid_exact_evm_transaction_simulation_failed"
 
 	// EIP-3009 Settle errors
-	ErrVerificationFailed      = "invalid_exact_evm_verification_failed"
-	ErrFailedToParseSignature  = "invalid_exact_evm_failed_to_parse_signature"
+	ErrVerificationFailed     = "invalid_exact_evm_verification_failed"
+	ErrFailedToParseSignature = "invalid_exact_evm_failed_to_parse_signature"
+	// Reserved wire value: settle now reads deployment from the verify it already awaited, so
+	// it no longer performs the eth_getCode this reported on. Do not reassign.
 	ErrFailedToCheckDeployment = "invalid_exact_evm_failed_to_check_deployment"
 	ErrFailedToExecuteTransfer = "invalid_exact_evm_failed_to_execute_transfer"
 	// Reserved wire value (exact/v1); do not reassign.

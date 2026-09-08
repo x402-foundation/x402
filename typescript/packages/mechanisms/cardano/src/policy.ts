@@ -1,64 +1,31 @@
-import {
-  DEFAULT_L1_CONFIRMATIONS,
-  MAX_L1_CONFIRMATIONS,
-  MIN_L1_CONFIRMATIONS,
-  SUBMISSION_POLICY_CLIENT,
-  SUBMISSION_POLICY_EITHER,
-  SUBMISSION_POLICY_SERVER,
-} from "./constants";
-import type {
-  CardanoConfirmationPolicy,
-  CardanoSubmissionMode,
-  CardanoSubmissionPolicy,
-} from "./types";
+import { DEFAULT_L1_CONFIRMATIONS, MAX_L1_CONFIRMATIONS, MIN_L1_CONFIRMATIONS } from "./constants";
+import type { CardanoConfirmationPolicy } from "./types";
 
 /**
- * The shared submission and confirmation policies, resolved from a
- * requirements `extra` block. Every assetTransferMethod carries these at the
- * top level of `extra`; they are bound by exact `accepted` matching and are
- * never part of the Masumi `termsDigest`.
+ * The shared confirmation policy, resolved from a requirements `extra` block.
+ * Every assetTransferMethod carries it at the top level of `extra`; it is bound
+ * by exact `accepted` matching and is never part of the Masumi `termsDigest`.
  */
 export interface ResolvedCardanoPolicies {
-  submissionPolicy: CardanoSubmissionPolicy;
   confirmationPolicy: CardanoConfirmationPolicy;
 }
 
 /**
- * Reads the submission and confirmation policy out of a requirements `extra`
- * block, applying the spec defaults (`server`, one confirmation).
+ * Reads the confirmation policy out of a requirements `extra` block, applying
+ * the spec default (one confirmation).
  *
  * Total: an unparseable policy yields `null` rather than throwing, so callers
  * can turn it into a rejection reason.
  *
  * @param extra - The requirements' `extra` block, if any.
- * @returns The resolved policies, or `null` when either field is malformed.
+ * @returns The resolved policies, or `null` when the policy is malformed.
  */
 export function resolveCardanoPolicies(
   extra: Record<string, unknown> | undefined,
 ): ResolvedCardanoPolicies | null {
-  const submissionPolicy = normalizeSubmissionPolicy(extra?.submissionPolicy);
-  if (submissionPolicy === null) return null;
   const confirmationPolicy = normalizeConfirmationPolicy(extra?.confirmationPolicy);
   if (confirmationPolicy === null) return null;
-  return { submissionPolicy, confirmationPolicy };
-}
-
-/**
- * Normalizes `extra.submissionPolicy`. An absent value is `server`.
- *
- * @param value - The raw declared value.
- * @returns The policy, or `null` when the value is not one of the three literals.
- */
-export function normalizeSubmissionPolicy(value: unknown): CardanoSubmissionPolicy | null {
-  if (value === undefined) return SUBMISSION_POLICY_SERVER;
-  if (
-    value === SUBMISSION_POLICY_SERVER ||
-    value === SUBMISSION_POLICY_CLIENT ||
-    value === SUBMISSION_POLICY_EITHER
-  ) {
-    return value;
-  }
-  return null;
+  return { confirmationPolicy };
 }
 
 /**
@@ -84,33 +51,6 @@ export function normalizeConfirmationPolicy(value: unknown): CardanoConfirmation
     return null;
   }
   return { l1Confirmations };
-}
-
-/**
- * Normalizes `payload.submissionMode`. An absent value is `server`; `either` is
- * a policy and is never a valid payload mode.
- *
- * @param value - The raw payload value.
- * @returns The mode, or `null` when the value is neither literal.
- */
-export function normalizeSubmissionMode(value: unknown): CardanoSubmissionMode | null {
-  if (value === undefined) return SUBMISSION_POLICY_SERVER;
-  if (value === SUBMISSION_POLICY_SERVER || value === SUBMISSION_POLICY_CLIENT) return value;
-  return null;
-}
-
-/**
- * Whether a policy admits a normalized payload submission mode.
- *
- * @param policy - The declared requirements policy.
- * @param mode - The normalized payload mode.
- * @returns True when the mode is selectable under the policy.
- */
-export function submissionModeAllowed(
-  policy: CardanoSubmissionPolicy,
-  mode: CardanoSubmissionMode,
-): boolean {
-  return policy === SUBMISSION_POLICY_EITHER || policy === mode;
 }
 
 /**

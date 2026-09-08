@@ -50,8 +50,16 @@ export type UptoSvmPayloadV2 = {
   /**
    * Base58 Ed25519 voucher signature by `authorizedSigner`. Settle-only;
    * verify rejects any client-supplied value (including empty string).
+   * Omitted when the channel delegates receiver authorization to the facilitator.
    */
   voucherSignature?: string;
+  /**
+   * Per-settle phase stamped by the resource server. Not part of the client
+   * authorization (that payload is reused for deposit and claim). Verify
+   * rejects it if present. Required when the channel delegates receiver
+   * authorization.
+   */
+  type?: "deposit" | "claim";
 };
 
 /**
@@ -72,6 +80,7 @@ export function isUptoSvmPayload(payload: Record<string, unknown>): payload is U
     Number.isSafeInteger(payload.expiresAt) &&
     Number.isSafeInteger(payload.validAfter) &&
     typeof payload.nonce === "string" &&
-    (payload.voucherSignature === undefined || typeof payload.voucherSignature === "string")
+    (payload.voucherSignature === undefined || typeof payload.voucherSignature === "string") &&
+    (payload.type === undefined || payload.type === "deposit" || payload.type === "claim")
   );
 }

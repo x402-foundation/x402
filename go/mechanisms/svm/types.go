@@ -48,11 +48,26 @@ type UptoSvmPayload struct {
 	OpenTransaction string `json:"openTransaction"`
 	// VoucherSignature is the base58 Ed25519 voucher signature by AuthorizedSigner.
 	// Claim-only and server-owned: verify and deposit settle reject any client-supplied value.
+	// Omitted when the channel delegates receiver authorization to the facilitator.
 	VoucherSignature string `json:"voucherSignature,omitempty"`
+	// Type is the per-settle phase stamped by the resource server. Not part of
+	// the client authorization (that payload is reused for deposit and claim).
+	// Verify rejects it if present. Required when the channel delegates
+	// receiver authorization.
+	Type string `json:"type,omitempty"`
 }
 
 // UptoVoucherSignatureField is the payload key carrying the settle-time voucher.
 const UptoVoucherSignatureField = "voucherSignature"
+
+// UptoPayloadTypeField is the payload key carrying the server-stamped settle phase.
+const UptoPayloadTypeField = "type"
+
+// Server-stamped settle phases for SVM `upto`.
+const (
+	UptoPayloadTypeDeposit = "deposit"
+	UptoPayloadTypeClaim   = "claim"
+)
 
 // ToMap converts an UptoSvmPayload to a map for JSON marshaling.
 func (p *UptoSvmPayload) ToMap() map[string]interface{} {
@@ -70,6 +85,9 @@ func (p *UptoSvmPayload) ToMap() map[string]interface{} {
 	}
 	if p.VoucherSignature != "" {
 		out[UptoVoucherSignatureField] = p.VoucherSignature
+	}
+	if p.Type != "" {
+		out[UptoPayloadTypeField] = p.Type
 	}
 	return out
 }
@@ -102,6 +120,9 @@ func UptoPayloadFromMap(data map[string]interface{}) (*UptoSvmPayload, error) {
 			return nil, fmt.Errorf("missing %s field in payload", field)
 		}
 	}
+	if payload.Type != "" && payload.Type != UptoPayloadTypeDeposit && payload.Type != UptoPayloadTypeClaim {
+		return nil, fmt.Errorf("invalid type field in payload")
+	}
 
 	return &payload, nil
 }
@@ -131,6 +152,12 @@ func IsUptoSvmPayload(payload map[string]interface{}) bool {
 			return false
 		}
 	}
+	if payloadType, present := payload[UptoPayloadTypeField]; present {
+		typed, ok := payloadType.(string)
+		if !ok || (typed != UptoPayloadTypeDeposit && typed != UptoPayloadTypeClaim) {
+			return false
+		}
+	}
 	return true
 }
 
@@ -153,6 +180,14 @@ func jsonNumberIsInt64(value interface{}) bool {
 // deposit settle, so an empty client-supplied value is still a rejection.
 func HasUptoVoucherSignature(payload map[string]interface{}) bool {
 	_, present := payload[UptoVoucherSignatureField]
+	return present
+}
+
+// HasUptoPayloadType reports whether the payload carries the server-stamped
+// settle-phase key. Presence is rejected at verify: the client authorization
+// must not include it.
+func HasUptoPayloadType(payload map[string]interface{}) bool {
+	_, present := payload[UptoPayloadTypeField]
 	return present
 }
 

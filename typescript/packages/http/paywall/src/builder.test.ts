@@ -74,6 +74,13 @@ describe("PaywallBuilder", () => {
       expect(typeof provider.generateHtml).toBe("function");
     });
 
+    it("throws when no network handlers are registered", () => {
+      const provider = createPaywall().build();
+      expect(() => provider.generateHtml(mockPaymentRequired)).toThrow(
+        "No paywall handlers registered. Use .withNetwork(evmPaywall) or .withNetwork(svmPaywall)",
+      );
+    });
+
     it("generates HTML with builder config", () => {
       const paywall = createPaywall()
         .withNetwork(evmPaywall)

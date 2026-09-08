@@ -164,6 +164,97 @@ func TestServerInitialize(t *testing.T) {
 	}
 }
 
+// mockValidatingScheme implements FacilitatorSupportValidator so Initialize
+// capability checks can be unit-tested.
+type mockValidatingScheme struct {
+	mockSchemeNetworkServer
+	problem       string
+	validateCalls int
+}
+
+func (m *mockValidatingScheme) ValidateFacilitatorSupport(_ Network, _ types.SupportedKind, _ []string) error {
+	m.validateCalls++
+	if m.problem == "" {
+		return nil
+	}
+	return errors.New(m.problem)
+}
+
+func TestServerInitializeRejectsCapabilityProblems(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &mockServerFacilitatorClient{
+		kinds: []SupportedKind{
+			{X402Version: 2, Scheme: "exact", Network: "eip155:8453"},
+		},
+	}
+	server := Newx402ResourceServer(
+		WithFacilitatorClient(mockClient),
+		WithSchemeServer("eip155:8453", &mockValidatingScheme{
+			mockSchemeNetworkServer: mockSchemeNetworkServer{scheme: "exact"},
+			problem:                 "needs a signer",
+		}),
+	)
+
+	err := server.Initialize(ctx)
+	if err == nil {
+		t.Fatal("Expected capability error")
+	}
+	if !strings.Contains(err.Error(), "exact on eip155:8453: needs a signer") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var capErr *FacilitatorCapabilityError
+	if !errors.As(err, &capErr) {
+		t.Fatalf("Expected FacilitatorCapabilityError, got %T: %v", err, err)
+	}
+}
+
+func TestServerInitializeAcceptsValidCapabilityHook(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &mockServerFacilitatorClient{
+		kinds: []SupportedKind{
+			{X402Version: 2, Scheme: "exact", Network: "eip155:8453"},
+		},
+	}
+	scheme := &mockValidatingScheme{
+		mockSchemeNetworkServer: mockSchemeNetworkServer{scheme: "exact"},
+	}
+	server := Newx402ResourceServer(
+		WithFacilitatorClient(mockClient),
+		WithSchemeServer("eip155:8453", scheme),
+	)
+
+	if err := server.Initialize(ctx); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if scheme.validateCalls != 1 {
+		t.Fatalf("expected 1 validate call, got %d", scheme.validateCalls)
+	}
+}
+
+func TestServerInitializeSkipsUnsupportedSchemeCapabilityHook(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &mockServerFacilitatorClient{
+		kinds: []SupportedKind{
+			{X402Version: 2, Scheme: "exact", Network: "eip155:8453"},
+		},
+	}
+	scheme := &mockValidatingScheme{
+		mockSchemeNetworkServer: mockSchemeNetworkServer{scheme: "unsupported"},
+		problem:                 "should not be reported",
+	}
+	server := Newx402ResourceServer(
+		WithFacilitatorClient(mockClient),
+		WithSchemeServer("eip155:8453", scheme),
+	)
+
+	if err := server.Initialize(ctx); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if scheme.validateCalls != 0 {
+		t.Fatalf("expected 0 validate calls, got %d", scheme.validateCalls)
+	}
+}
+
 func TestServerInitializeWithMultipleFacilitators(t *testing.T) {
 	ctx := context.Background()
 

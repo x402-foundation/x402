@@ -1,7 +1,24 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
+
+const mockTransactionApis = vi.hoisted(() => ({
+  verifySignature: vi.fn(),
+  sign: vi.fn(),
+  toJSON: vi.fn(),
+}));
+
+vi.mock("@concordium/web-sdk/transactions", async importOriginal => {
+  const actual = await importOriginal<typeof import("@concordium/web-sdk/transactions")>();
+  return {
+    Transaction: Object.assign({}, actual.Transaction, mockTransactionApis),
+  };
+});
+
 import { ExactConcordiumScheme as ExactConcordiumServer } from "../../src/exact/server/scheme";
 import { ExactConcordiumScheme as ExactConcordiumFacilitator } from "../../src/exact/facilitator/scheme";
 import { ExactConcordiumScheme as ExactConcordiumClient } from "../../src/exact/client/scheme";
+import { ExactConcordiumScheme as ExactConcordiumClientFromIndex } from "../../src/exact/client";
+import { ExactConcordiumScheme as ExactConcordiumFacilitatorFromIndex } from "../../src/exact/facilitator";
+import { ExactConcordiumScheme as ExactConcordiumServerFromIndex } from "../../src/exact/server";
 import {
   CONCORDIUM_MAINNET_CAIP2,
   CONCORDIUM_TESTNET_CAIP2,
@@ -37,6 +54,9 @@ describe("@x402/concordium", () => {
     it("should export scheme classes", () => {
       expect(ExactConcordiumServer).toBeDefined();
       expect(ExactConcordiumFacilitator).toBeDefined();
+      expect(ExactConcordiumClientFromIndex).toBe(ExactConcordiumClient);
+      expect(ExactConcordiumFacilitatorFromIndex).toBe(ExactConcordiumFacilitator);
+      expect(ExactConcordiumServerFromIndex).toBe(ExactConcordiumServer);
     });
 
     it("should export constants", () => {
@@ -1898,6 +1918,100 @@ describe("@x402/concordium", () => {
         const grpcClient = (client as any).createGrpcClient(CONCORDIUM_TESTNET_CAIP2);
 
         expect(grpcClient).toBeDefined();
+      });
+    });
+
+    describe("createPaymentPayload", () => {
+      afterEach(() => {
+        vi.restoreAllMocks();
+      });
+
+      function mockGrpcForClient(client: ExactConcordiumClient, options?: { decimals?: number }) {
+        const mockGrpcClient = {
+          getNextAccountNonce: vi.fn().mockResolvedValue({ nonce: 7n }),
+          getTokenInfo: vi.fn().mockResolvedValue({ state: { decimals: options?.decimals ?? 6 } }),
+        };
+        vi.spyOn(client as any, "createGrpcClient").mockReturnValue(mockGrpcClient);
+        return mockGrpcClient;
+      }
+
+      it("should reject maxTimeoutSeconds <= 5", async () => {
+        const client = new ExactConcordiumClient(createMockClientSigner());
+        mockGrpcForClient(client);
+        await expect(
+          client.createPaymentPayload(2, {
+            scheme: "exact",
+            network: CONCORDIUM_TESTNET_CAIP2,
+            asset: "CCD",
+            amount: "1000",
+            payTo: validAddress,
+            maxTimeoutSeconds: 5,
+            extra: { feePayer: validAddress },
+          }),
+        ).rejects.toThrow("requirements.maxTimeoutSeconds must be an integer greater than 5");
+      });
+
+      it("should build and sign a native CCD payment payload", async () => {
+        const client = new ExactConcordiumClient(createMockClientSigner());
+        mockGrpcForClient(client);
+        mockTransactionApis.sign.mockResolvedValue({ signed: true } as any);
+        mockTransactionApis.toJSON.mockReturnValue({
+          version: 1,
+          header: { nonce: 7n, numSignatures: 1, executionEnergyAmount: 1000n },
+          payload: { type: "transfer" },
+          signatures: { sender: { "0": { "0": "sig" } } },
+        } as any);
+
+        const result = await client.createPaymentPayload(2, {
+          scheme: "exact",
+          network: CONCORDIUM_TESTNET_CAIP2,
+          asset: "CCD",
+          amount: "1000000",
+          payTo: validAddress,
+          maxTimeoutSeconds: 60,
+          extra: { feePayer: validAddress },
+        });
+
+        expect(result.x402Version).toBe(2);
+        expect(result.payload).toEqual({
+          signedTransaction: {
+            version: 1,
+            header: { nonce: 7, numSignatures: 1, executionEnergyAmount: 1000 },
+            payload: { type: "transfer" },
+            signatures: { sender: { "0": { "0": "sig" } } },
+          },
+        });
+      });
+
+      it("should fetch token decimals from chain for PLT payments", async () => {
+        const client = new ExactConcordiumClient(createMockClientSigner());
+        const mockGrpcClient = mockGrpcForClient(client, { decimals: 8 });
+        const buildPltSpy = vi.spyOn(client as any, "buildPltTransfer").mockReturnValue({
+          addMetadata: vi.fn().mockReturnThis(),
+          addSponsor: vi.fn().mockReturnThis(),
+          build: vi.fn().mockReturnValue({ built: true }),
+        });
+        mockTransactionApis.sign.mockResolvedValue({ signed: true } as any);
+        mockTransactionApis.toJSON.mockReturnValue({
+          version: 1,
+          header: { nonce: 7n },
+          payload: { type: "tokenUpdate", tokenId: "USDR" },
+          signatures: { sender: { "0": { "0": "sig" } } },
+        } as any);
+
+        const result = await client.createPaymentPayload(2, {
+          scheme: "exact",
+          network: CONCORDIUM_TESTNET_CAIP2,
+          asset: "USDR",
+          amount: "2500000",
+          payTo: validAddress,
+          maxTimeoutSeconds: 60,
+          extra: { feePayer: validAddress },
+        });
+
+        expect(mockGrpcClient.getTokenInfo).toHaveBeenCalled();
+        expect(buildPltSpy).toHaveBeenCalledWith(validAddress, "2500000", "USDR", 8);
+        expect(result.payload).toBeDefined();
       });
     });
   });

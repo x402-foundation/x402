@@ -15,81 +15,94 @@ import (
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
-// verifyEIP3009 verifies an EIP-3009 payment payload.
+// verifyEIP3009 verifies an EIP-3009 payment payload. On success it also returns the signature
+// classification, so settle can reuse the payer code lookup instead of issuing a second
+// eth_getCode for the same address.
 func (f *ExactEvmScheme) verifyEIP3009(
 	ctx context.Context,
 	payload types.PaymentPayload,
 	requirements types.PaymentRequirements,
 	simulate bool,
-) (*x402.VerifyResponse, error) {
+) (*x402.VerifyResponse, *EIP3009SignatureClassification, error) {
 	if payload.Accepted.Scheme != evm.SchemeExact {
-		return nil, x402.NewVerifyError(ErrInvalidScheme, "", fmt.Sprintf("invalid scheme: %s", payload.Accepted.Scheme))
+		return nil, nil, x402.NewVerifyError(ErrInvalidScheme, "", fmt.Sprintf("invalid scheme: %s", payload.Accepted.Scheme))
 	}
 
 	if payload.Accepted.Network != requirements.Network {
-		return nil, x402.NewVerifyError(ErrNetworkMismatch, "", fmt.Sprintf("network mismatch: %s != %s", payload.Accepted.Network, requirements.Network))
+		return nil, nil, x402.NewVerifyError(ErrNetworkMismatch, "", fmt.Sprintf("network mismatch: %s != %s", payload.Accepted.Network, requirements.Network))
 	}
 
 	evmPayload, err := evm.PayloadFromMap(payload.Payload)
 	if err != nil {
-		return nil, x402.NewVerifyError(ErrInvalidPayload, "", fmt.Sprintf("failed to parse EVM payload: %s", err.Error()))
+		return nil, nil, x402.NewVerifyError(ErrInvalidPayload, "", fmt.Sprintf("failed to parse EVM payload: %s", err.Error()))
 	}
 
 	if evmPayload.Signature == "" {
-		return nil, x402.NewVerifyError(ErrMissingSignature, "", "missing signature")
+		return nil, nil, x402.NewVerifyError(ErrMissingSignature, "", "missing signature")
 	}
 
 	chainID, err := evm.GetEvmChainId(string(requirements.Network))
 	if err != nil {
-		return nil, x402.NewVerifyError(ErrFailedToGetNetworkConfig, "", err.Error())
+		return nil, nil, x402.NewVerifyError(ErrFailedToGetNetworkConfig, "", err.Error())
 	}
 
 	tokenAddress := evm.NormalizeAddress(requirements.Asset)
 
 	if !strings.EqualFold(evmPayload.Authorization.To, requirements.PayTo) {
-		return nil, x402.NewVerifyError(ErrRecipientMismatch, "", fmt.Sprintf("recipient mismatch: %s != %s", evmPayload.Authorization.To, requirements.PayTo))
+		return nil, nil, x402.NewVerifyError(ErrRecipientMismatch, "", fmt.Sprintf("recipient mismatch: %s != %s", evmPayload.Authorization.To, requirements.PayTo))
 	}
 
 	parsedAuthorization, err := ParseEIP3009Authorization(evmPayload.Authorization)
 	if err != nil {
-		return nil, x402.NewVerifyError(ErrInvalidPayload, evmPayload.Authorization.From, err.Error())
+		return nil, nil, x402.NewVerifyError(ErrInvalidPayload, evmPayload.Authorization.From, err.Error())
 	}
 
 	requiredValue, ok := new(big.Int).SetString(requirements.Amount, 10)
 	if !ok {
-		return nil, x402.NewVerifyError(ErrInvalidRequiredAmount, "", fmt.Sprintf("invalid required amount: %s", requirements.Amount))
+		return nil, nil, x402.NewVerifyError(ErrInvalidRequiredAmount, "", fmt.Sprintf("invalid required amount: %s", requirements.Amount))
 	}
 
 	if parsedAuthorization.Value.Cmp(requiredValue) != 0 {
-		return nil, x402.NewVerifyError(ErrAuthorizationValueMismatch, evmPayload.Authorization.From, fmt.Sprintf("authorization value mismatch: %s != %s", parsedAuthorization.Value.String(), requiredValue.String()))
+		return nil, nil, x402.NewVerifyError(ErrAuthorizationValueMismatch, evmPayload.Authorization.From, fmt.Sprintf("authorization value mismatch: %s != %s", parsedAuthorization.Value.String(), requiredValue.String()))
 	}
 
 	now := time.Now().Unix()
 	if parsedAuthorization.ValidBefore.Cmp(big.NewInt(now+6)) < 0 {
-		return nil, x402.NewVerifyError(ErrValidBeforeExpired, evmPayload.Authorization.From, fmt.Sprintf("valid before expired: %s", parsedAuthorization.ValidBefore.String()))
+		return nil, nil, x402.NewVerifyError(ErrValidBeforeExpired, evmPayload.Authorization.From, fmt.Sprintf("valid before expired: %s", parsedAuthorization.ValidBefore.String()))
 	}
 
 	if parsedAuthorization.ValidAfter.Cmp(big.NewInt(now)) > 0 {
-		return nil, x402.NewVerifyError(ErrValidAfterInFuture, evmPayload.Authorization.From, fmt.Sprintf("valid after in future: %s", parsedAuthorization.ValidAfter.String()))
+		return nil, nil, x402.NewVerifyError(ErrValidAfterInFuture, evmPayload.Authorization.From, fmt.Sprintf("valid after in future: %s", parsedAuthorization.ValidAfter.String()))
 	}
 
 	tokenName, _ := requirements.Extra["name"].(string)
 	tokenVersion, _ := requirements.Extra["version"].(string)
 	if tokenName == "" || tokenVersion == "" {
-		return nil, x402.NewVerifyError(ErrMissingEip712Domain, evmPayload.Authorization.From, "missing EIP-712 domain name/version in requirements.extra")
+		return nil, nil, x402.NewVerifyError(ErrMissingEip712Domain, evmPayload.Authorization.From, "missing EIP-712 domain name/version in requirements.extra")
 	}
 
 	signatureBytes, err := evm.HexToBytes(evmPayload.Signature)
 	if err != nil {
-		return nil, x402.NewVerifyError(ErrInvalidSignatureFormat, evmPayload.Authorization.From, err.Error())
+		return nil, nil, x402.NewVerifyError(ErrInvalidSignatureFormat, evmPayload.Authorization.From, err.Error())
 	}
 
 	// Run the asset-contract check concurrently with signature classification.
-	assetCheckCh := make(chan assetContractCheck, 1)
-	go func() {
-		reason, err := evm.ValidateAssetIsContract(ctx, f.signer, requirements.Asset)
-		assetCheckCh <- assetContractCheck{reason: reason, err: err}
-	}()
+	assetCheck := evm.StartAssetContractCheck(ctx, f.signer, string(requirements.Network), requirements.Asset)
+
+	// SimulateEIP3009Transfer branches only on Factory/FactoryCalldata and the inner signature
+	// length, never on SigData.CodeDeployed, so it does not need the eth_getCode classification
+	// issues and can start concurrently. Its result is still read after the classification and
+	// asset checks below, leaving error precedence unchanged.
+	var simulationCh chan simulationResult
+	if simulate && f.config.EnableParallelVerifySimulation {
+		if parsedSigData, parseErr := evm.ParseERC6492Signature(signatureBytes); parseErr == nil {
+			var cancelSimulation context.CancelFunc
+			simulationCh, cancelSimulation = startSimulation(ctx, func(ctx context.Context) (bool, error) {
+				return SimulateEIP3009Transfer(ctx, f.signer, tokenAddress, parsedAuthorization, parsedSigData)
+			})
+			defer cancelSimulation()
+		}
+	}
 
 	classification, err := ClassifyEIP3009Signature(
 		ctx,
@@ -102,15 +115,15 @@ func (f *ExactEvmScheme) verifyEIP3009(
 		tokenVersion,
 	)
 	if err != nil {
-		return nil, x402.NewVerifyError(ErrFailedToVerifySignature, evmPayload.Authorization.From, err.Error())
+		return nil, nil, x402.NewVerifyError(ErrFailedToVerifySignature, evmPayload.Authorization.From, err.Error())
 	}
 
 	if !classification.Valid && classification.IsUndeployed && !HasEIP6492Deployment(classification.SigData) {
-		return nil, x402.NewVerifyError(ErrUndeployedSmartWallet, evmPayload.Authorization.From, "")
+		return nil, nil, x402.NewVerifyError(ErrUndeployedSmartWallet, evmPayload.Authorization.From, "")
 	}
 
 	if !classification.Valid && !classification.IsSmartWallet {
-		return nil, x402.NewVerifyError(ErrInvalidSignature, evmPayload.Authorization.From, fmt.Sprintf("invalid signature: %s", evmPayload.Signature))
+		return nil, nil, x402.NewVerifyError(ErrInvalidSignature, evmPayload.Authorization.From, fmt.Sprintf("invalid signature: %s", evmPayload.Signature))
 	}
 
 	// Counterfactual ERC-6492 wallet: settle deploys via the factory, gated by the
@@ -118,28 +131,24 @@ func (f *ExactEvmScheme) verifyEIP3009(
 	// settle rejects with ErrFactoryNotAllowed must not verify as valid).
 	if !classification.Valid && classification.IsUndeployed && HasEIP6492Deployment(classification.SigData) {
 		if !evm.IsFactoryAllowed(classification.SigData.Factory, f.config.EIP6492AllowedFactories) {
-			return nil, x402.NewVerifyError(ErrFactoryNotAllowed, evmPayload.Authorization.From, "factory not in EIP6492AllowedFactories allowlist")
+			return nil, nil, x402.NewVerifyError(ErrFactoryNotAllowed, evmPayload.Authorization.From, "factory not in EIP6492AllowedFactories allowlist")
 		}
 	}
 
-	assetResult := <-assetCheckCh
-	if assetResult.err != nil {
-		return nil, fmt.Errorf("asset contract check failed: %w", assetResult.err)
+	assetReason, assetErr := assetCheck.Await()
+	if assetErr != nil {
+		return nil, nil, fmt.Errorf("asset contract check failed: %w", assetErr)
 	}
-	if assetResult.reason != "" {
-		return nil, x402.NewVerifyError(assetResult.reason, evmPayload.Authorization.From, fmt.Sprintf("asset %s is not a deployed contract", requirements.Asset))
+	if assetReason != "" {
+		return nil, nil, x402.NewVerifyError(assetReason, evmPayload.Authorization.From, fmt.Sprintf("asset %s is not a deployed contract", requirements.Asset))
 	}
 
 	if simulate {
-		simulationSucceeded, err := SimulateEIP3009Transfer(
-			ctx,
-			f.signer,
-			tokenAddress,
-			parsedAuthorization,
-			classification.SigData,
-		)
+		simulationSucceeded, err := awaitSimulation(simulationCh, func() (bool, error) {
+			return SimulateEIP3009Transfer(ctx, f.signer, tokenAddress, parsedAuthorization, classification.SigData)
+		})
 		if err != nil {
-			return nil, x402.NewVerifyError(ErrEip3009SimulationFailed, evmPayload.Authorization.From, err.Error())
+			return nil, nil, x402.NewVerifyError(ErrEip3009SimulationFailed, evmPayload.Authorization.From, err.Error())
 		}
 		if !simulationSucceeded {
 			reason := DiagnoseEIP3009SimulationFailure(
@@ -151,14 +160,14 @@ func (f *ExactEvmScheme) verifyEIP3009(
 				tokenName,
 				tokenVersion,
 			)
-			return nil, x402.NewVerifyError(reason, evmPayload.Authorization.From, "")
+			return nil, nil, x402.NewVerifyError(reason, evmPayload.Authorization.From, "")
 		}
 	}
 
 	return &x402.VerifyResponse{
 		IsValid: true,
 		Payer:   evmPayload.Authorization.From,
-	}, nil
+	}, classification, nil
 }
 
 // settleEIP3009 settles an EIP-3009 payment on-chain.
@@ -186,7 +195,7 @@ func (f *ExactEvmScheme) settleEIP3009(
 		}
 	}
 
-	verifyResp, err := f.verifyEIP3009(ctx, payload, requirements, f.config.SimulateInSettle)
+	verifyResp, classification, err := f.verifyEIP3009(ctx, payload, requirements, f.config.SimulateInSettle)
 	if err != nil {
 		ve := &x402.VerifyError{}
 		if errors.As(err, &ve) {
@@ -202,23 +211,16 @@ func (f *ExactEvmScheme) settleEIP3009(
 
 	tokenAddress := evm.NormalizeAddress(requirements.Asset)
 
-	signatureBytes, err := evm.HexToBytes(evmPayload.Signature)
-	if err != nil {
-		return nil, x402.NewSettleError(ErrInvalidSignatureFormat, verifyResp.Payer, network, "", err.Error())
+	if classification == nil {
+		return nil, x402.NewSettleError(ErrFailedToParseSignature, verifyResp.Payer, network, "", "verify returned no signature classification")
 	}
-
-	sigData, err := evm.ParseERC6492Signature(signatureBytes)
-	if err != nil {
-		return nil, x402.NewSettleError(ErrFailedToParseSignature, verifyResp.Payer, network, "", err.Error())
-	}
+	sigData := classification.SigData
 
 	if HasEIP6492Deployment(sigData) {
-		code, err := f.signer.GetCode(ctx, evmPayload.Authorization.From)
-		if err != nil {
-			return nil, x402.NewSettleError(ErrFailedToCheckDeployment, verifyResp.Payer, network, "", err.Error())
-		}
-
-		if len(code) == 0 {
+		// CodeDeployed comes from the eth_getCode the verify above already issued for this payer.
+		// Both reads happen before any deploy transaction, so reusing it does not reintroduce the
+		// post-deploy re-read that races RPC state propagation across replicas.
+		if !sigData.CodeDeployed {
 			if !evm.IsFactoryAllowed(sigData.Factory, f.config.EIP6492AllowedFactories) {
 				return nil, x402.NewSettleError(ErrFactoryNotAllowed, verifyResp.Payer, network, "", "")
 			}

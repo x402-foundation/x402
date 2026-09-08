@@ -83,27 +83,84 @@ type Config struct {
 	// distributions. Reclaim batches size themselves per channel and are
 	// mint-independent, so they are unaffected by this cap.
 	SettleComputeUnitLimit *uint32
+
+	// AuthorizerSigner enables facilitator-delegated receiver authorization.
+	// Advertised as /supported extra.receiverAuthorizer and used to sign claim
+	// vouchers when the server omits voucherSignature. Requires
+	// ResolveCallerIdentity.
+	AuthorizerSigner svm.ReceiverAuthorizerSigner
+
+	// ResolveCallerIdentity resolves a stable caller identity for a delegated
+	// settle. Returning an empty string or an error rejects the settle.
+	// Required when AuthorizerSigner is set.
+	ResolveCallerIdentity ResolveCallerIdentity
+
+	// DelegatedAuthStore stores channelId → caller identity bindings written
+	// at deposit and checked at claim. Defaults to InMemoryDelegatedAuthStore.
+	// Inject a shared implementation for a multi-replica facilitator.
+	DelegatedAuthStore DelegatedAuthStore
+
+	// ChannelReadMaxAttempts caps how many times settle re-reads a channel
+	// account that a confirmed open has not made visible yet. Unset defaults to
+	// DefaultChannelReadMaxAttempts.
+	ChannelReadMaxAttempts *int
+
+	// ChannelReadBackoffStep is the linear backoff step between those re-reads:
+	// attempt N waits N * step, totalling step * (attempts-1) * attempts / 2.
+	// Unset defaults to DefaultChannelReadBackoffStep. Raise either field to
+	// widen the budget on a provider with slower replica convergence.
+	ChannelReadBackoffStep *time.Duration
 }
+
+// DelegatedSettleStep is the settle phase passed to ResolveCallerIdentity.
+type DelegatedSettleStep string
+
+const (
+	DelegatedSettleStepDeposit DelegatedSettleStep = "deposit"
+	DelegatedSettleStepClaim   DelegatedSettleStep = "claim"
+)
+
+// DelegatedSettleContext is passed to Config.ResolveCallerIdentity.
+type DelegatedSettleContext struct {
+	Ctx                context.Context
+	Step               DelegatedSettleStep
+	ChannelID          string
+	Network            x402.Network
+	Payer              string
+	Amount             string
+	ExpiresAt          int64
+	Payload            types.PaymentPayload
+	Requirements       types.PaymentRequirements
+	FacilitatorContext *x402.FacilitatorContext
+}
+
+// ResolveCallerIdentity resolves a stable caller identity for a delegated settle.
+type ResolveCallerIdentity func(ctx DelegatedSettleContext) (string, error)
 
 // UptoSvmScheme implements the SchemeNetworkFacilitator interface for SVM
 // `upto` payments.
 //
-// Escrow flow: a settle without `voucherSignature` whose amount equals
-// `payload.maxAmount` deposits (co-signs and broadcasts `open`); a settle
-// carrying a server voucher claims (`settle_and_seal` + `distribute`).
-// Verify is an optional read-only preflight of the same static checks and
-// never broadcasts.
+// Escrow flow: a settle with payload.type == "deposit" (or, when type is
+// absent, no voucherSignature and amount equal to payload.maxAmount) deposits
+// (co-signs and broadcasts open); a settle with type == "claim" or a server
+// voucher claims (settle_and_seal + distribute). Verify is an optional
+// read-only preflight of the same static checks and never broadcasts.
 //
 // The fee payer holds the channel payee seat with a zero distribution share:
-// it signs `settle_and_seal` as the lifecycle authority and can always seal an
-// abandoned channel to recover its rent, while any nonzero settlement still
-// requires the server's receiver-authorizer voucher.
+// it signs settle_and_seal as the lifecycle authority and can always seal an
+// abandoned channel to recover its rent. Nonzero settlement requires a
+// receiver-authorizer voucher — signed by the server, or by this facilitator
+// when the server delegates and the caller identity matches the deposit-time
+// binding.
 type UptoSvmScheme struct {
-	signer          UptoFacilitatorSigner
-	config          Config
-	channelStorage  ChannelStorage
-	settlementCache *svm.SettlementCache
-	pendingStore    x402.PendingSettlementStore
+	signer                UptoFacilitatorSigner
+	config                Config
+	channelStorage        ChannelStorage
+	settlementCache       *svm.SettlementCache
+	pendingStore          x402.PendingSettlementStore
+	authorizerSigner      svm.ReceiverAuthorizerSigner
+	resolveCallerIdentity ResolveCallerIdentity
+	delegatedAuthStore    DelegatedAuthStore
 }
 
 // NewUptoSvmScheme creates a new UptoSvmScheme. The signer supplies the fee
@@ -132,16 +189,26 @@ func NewUptoSvmScheme(signer svm.FacilitatorSvmSigner, config *Config) *UptoSvmS
 	if cfg.SettleComputeUnitLimit != nil {
 		assertPositive("settleComputeUnitLimit", int64(*cfg.SettleComputeUnitLimit))
 	}
+	if cfg.AuthorizerSigner != nil && cfg.ResolveCallerIdentity == nil {
+		panic("upto svm facilitator: authorizerSigner requires resolveCallerIdentity")
+	}
 	storage := cfg.ChannelStorage
 	if storage == nil {
 		storage = NewInMemoryChannelStorage()
 	}
+	delegatedAuthStore := cfg.DelegatedAuthStore
+	if delegatedAuthStore == nil {
+		delegatedAuthStore = NewInMemoryDelegatedAuthStore()
+	}
 	return &UptoSvmScheme{
-		signer:          assertUptoFacilitatorSigner(signer, "UptoSvmScheme"),
-		config:          cfg,
-		channelStorage:  storage,
-		settlementCache: svm.NewSettlementCache(),
-		pendingStore:    x402.NewInMemoryPendingSettlementStore(),
+		signer:                assertUptoFacilitatorSigner(signer, "UptoSvmScheme"),
+		config:                cfg,
+		channelStorage:        storage,
+		settlementCache:       svm.NewSettlementCache(),
+		pendingStore:          x402.NewInMemoryPendingSettlementStore(),
+		authorizerSigner:      cfg.AuthorizerSigner,
+		resolveCallerIdentity: cfg.ResolveCallerIdentity,
+		delegatedAuthStore:    delegatedAuthStore,
 	}
 }
 
@@ -200,9 +267,13 @@ func (f *UptoSvmScheme) GetExtra(network x402.Network) map[string]interface{} {
 	if len(addresses) == 0 {
 		return nil
 	}
-	return map[string]interface{}{
+	extra := map[string]interface{}{
 		upto.ExtraFeePayer: addresses[rand.IntN(len(addresses))].String(),
 	}
+	if f.authorizerSigner != nil {
+		extra[upto.ExtraReceiverAuthorizer] = f.authorizerSigner.Address().String()
+	}
+	return extra
 }
 
 // GetSigners returns the fee-payer addresses managed by this facilitator.
@@ -223,7 +294,7 @@ func (f *UptoSvmScheme) Verify(
 	requirements types.PaymentRequirements,
 	_ *x402.FacilitatorContext,
 ) (*x402.VerifyResponse, error) {
-	auth, err := f.validateOpenAuthorization(ctx, payload, requirements)
+	auth, err := f.validateOpenAuthorization(ctx, payload, requirements, true)
 	if err != nil {
 		return nil, err
 	}
@@ -232,15 +303,15 @@ func (f *UptoSvmScheme) Verify(
 
 // Settle deposits (opens the channel) or claims (settle_and_seal + distribute).
 //
-// The settle phase is not on the wire, so the path is discriminated by the
-// payload: a present `voucherSignature` key claims; otherwise an amount equal
-// to the signed ceiling deposits. Anything else is a partial charge with no
-// authorization and is rejected.
+// Prefers payload.type when present. When absent (older servers):
+// a present voucherSignature key claims; otherwise an amount equal to the
+// signed ceiling deposits. type is required when the settle is delegated to
+// this facilitator.
 func (f *UptoSvmScheme) Settle(
 	ctx context.Context,
 	payload types.PaymentPayload,
 	requirements types.PaymentRequirements,
-	_ *x402.FacilitatorContext,
+	fctx *x402.FacilitatorContext,
 ) (*x402.SettleResponse, error) {
 	network := x402.Network(payload.Accepted.Network)
 
@@ -272,11 +343,23 @@ func (f *UptoSvmScheme) Settle(
 			fmt.Sprintf("settlement amount %d exceeds the authorized ceiling %d", actual, maxAmount))
 	}
 
+	delegated := f.isDelegatedSettle(requirements)
+	if uptoPayload.Type == svm.UptoPayloadTypeDeposit {
+		return f.settleDeposit(ctx, payload, requirements, fctx)
+	}
+	if uptoPayload.Type == svm.UptoPayloadTypeClaim {
+		return f.settleClaim(ctx, payload, requirements, uptoPayload, actual, maxAmount, fctx)
+	}
+	if delegated {
+		return nil, x402.NewSettleError(ErrPayloadType, uptoPayload.From, network, "",
+			"a delegated settle requires payload.type")
+	}
+
 	if svm.HasUptoVoucherSignature(payload.Payload) {
-		return f.settleClaim(ctx, payload, requirements, uptoPayload, actual, maxAmount)
+		return f.settleClaim(ctx, payload, requirements, uptoPayload, actual, maxAmount, fctx)
 	}
 	if actual == maxAmount {
-		return f.settleDeposit(ctx, payload, requirements)
+		return f.settleDeposit(ctx, payload, requirements, fctx)
 	}
 	return nil, x402.NewSettleError(ErrMissingVoucher, uptoPayload.From, network, "",
 		"a partial settlement requires a receiver-authorizer voucher")
@@ -371,22 +454,45 @@ func (f *UptoSvmScheme) settleDeposit(
 	ctx context.Context,
 	payload types.PaymentPayload,
 	requirements types.PaymentRequirements,
+	fctx *x402.FacilitatorContext,
 ) (*x402.SettleResponse, error) {
 	network := x402.Network(payload.Accepted.Network)
+
+	uptoPayload, parseErr := svm.UptoPayloadFromMap(payload.Payload)
+	delegated := f.isDelegatedSettle(requirements)
+	var depositIdentity string
+	if parseErr == nil && delegated {
+		depositIdentity = f.resolveDelegatedCallerIdentity(DelegatedSettleContext{
+			Ctx:                ctx,
+			Step:               DelegatedSettleStepDeposit,
+			ChannelID:          uptoPayload.ChannelId,
+			Network:            x402.Network(requirements.Network),
+			Payer:              uptoPayload.From,
+			Amount:             requirements.Amount,
+			ExpiresAt:          uptoPayload.ExpiresAt,
+			Payload:            payload,
+			Requirements:       requirements,
+			FacilitatorContext: fctx,
+		})
+		if depositIdentity == "" {
+			return nil, x402.NewSettleError(ErrDelegatedSettleUnauthenticated, uptoPayload.From, network, "",
+				"delegated deposit settle is unauthenticated")
+		}
+	}
 
 	// Pending-settlement fast path: a prior deposit settle for this exact
 	// channel broadcast the open successfully but couldn't confirm it in
 	// time. Reconcile against that signature instead of re-validating and
 	// re-broadcasting — a second open attempt would hit ErrChannelAlreadyOpen
 	// even though the original payment is (or will be) fine.
-	if uptoPayload, parseErr := svm.UptoPayloadFromMap(payload.Payload); parseErr == nil {
+	if parseErr == nil {
 		depositKey := uptoDepositCacheKey(string(requirements.Network), uptoPayload.ChannelId)
 		if resp, hit, err := f.reconcilePendingUpto(ctx, depositKey, uptoPayload.From, uptoPayload.MaxAmount, network, string(requirements.Network)); hit {
 			return resp, err
 		}
 	}
 
-	auth, err := f.validateOpenAuthorization(ctx, payload, requirements)
+	auth, err := f.validateOpenAuthorization(ctx, payload, requirements, false)
 	if err != nil {
 		verifyErr := &x402.VerifyError{}
 		if !errors.As(err, &verifyErr) {
@@ -395,7 +501,7 @@ func (f *UptoSvmScheme) settleDeposit(
 		return nil, x402.NewSettleError(verifyErr.InvalidReason, verifyErr.Payer, network, "", verifyErr.InvalidMessage)
 	}
 
-	uptoPayload := auth.payload
+	uptoPayload = auth.payload
 	networkStr := string(requirements.Network)
 
 	// One authorization opens one channel. An existing PDA is a replay or a
@@ -450,7 +556,19 @@ func (f *UptoSvmScheme) settleDeposit(
 	}); err != nil {
 		f.settlementCache.Delete(depositKey)
 		return nil, x402.NewSettleError(ErrChannelBroadcast, uptoPayload.From, network, "",
-			fmt.Sprintf("failed to durably index the channel before broadcast: %s", err.Error()))
+			fmt.Sprintf("failed to durably record the channel before broadcast: %s", err.Error()))
+	}
+	if delegated && depositIdentity != "" {
+		if err := f.delegatedAuthStore.Bind(ctx, DelegatedAuthBinding{
+			ChannelID:      uptoPayload.ChannelId,
+			Network:        x402.Network(requirements.Network),
+			CallerIdentity: depositIdentity,
+			ExpiresAt:      uptoPayload.ExpiresAt,
+		}); err != nil {
+			f.settlementCache.Delete(depositKey)
+			return nil, x402.NewSettleError(ErrChannelBroadcast, uptoPayload.From, network, "",
+				fmt.Sprintf("failed to durably record the channel before broadcast: %s", err.Error()))
+		}
 	}
 
 	openSignature, err := broadcastOpen(
@@ -478,7 +596,7 @@ func (f *UptoSvmScheme) settleDeposit(
 		Deposit:          auth.maxAmount,
 		GracePeriod:      auth.channelConfig.WithdrawDelay,
 		Splits:           auth.channelConfig.Splits,
-	}); err != nil {
+	}, f.resolveChannelReadPolicy()); err != nil {
 		f.settlementCache.Delete(depositKey)
 		return nil, x402.NewSettleError(ErrChannelState, uptoPayload.From, network, openSignature, err.Error())
 	}
@@ -501,8 +619,16 @@ func (f *UptoSvmScheme) settleClaim(
 	uptoPayload *svm.UptoSvmPayload,
 	actual uint64,
 	maxAmount uint64,
+	fctx *x402.FacilitatorContext,
 ) (*x402.SettleResponse, error) {
 	network := x402.Network(payload.Accepted.Network)
+
+	hasVoucher := uptoPayload.VoucherSignature != ""
+	if !hasVoucher {
+		if err := f.authenticateDelegatedClaim(ctx, payload, requirements, uptoPayload, fctx); err != nil {
+			return nil, err
+		}
+	}
 
 	// Pending-settlement fast path: a prior claim settle for this exact
 	// channel broadcast settle_and_seal + distribute successfully but
@@ -513,12 +639,10 @@ func (f *UptoSvmScheme) settleClaim(
 	// original payment succeeded.
 	settlementKey := uptoClaimCacheKey(string(requirements.Network), uptoPayload.ChannelId)
 	if resp, hit, err := f.reconcilePendingUpto(ctx, settlementKey, uptoPayload.From, strconv.FormatUint(actual, 10), network, string(requirements.Network)); hit {
+		if err == nil {
+			_ = f.delegatedAuthStore.Delete(ctx, uptoPayload.ChannelId, x402.Network(requirements.Network))
+		}
 		return resp, err
-	}
-
-	if uptoPayload.VoucherSignature == "" {
-		return nil, x402.NewSettleError(ErrMissingVoucher, uptoPayload.From, network, "",
-			"voucherSignature is present but empty")
 	}
 
 	channelConfig, err := upto.ResolvePaymentChannelConfig(requirements)
@@ -550,11 +674,14 @@ func (f *UptoSvmScheme) settleClaim(
 	if err != nil {
 		return nil, x402.NewSettleError(ErrChannelID, uptoPayload.From, network, "", err.Error())
 	}
-	voucherMessage := paymentchannels.EncodeVoucherMessage(channelID, actual, uptoPayload.ExpiresAt)
-	if err := paymentchannels.VerifyVoucherSignature(
-		uptoPayload.VoucherSignature, uptoPayload.AuthorizedSigner, voucherMessage,
-	); err != nil {
-		return nil, x402.NewSettleError(ErrVoucherSignature, uptoPayload.From, network, "", err.Error())
+	voucherSignature := uptoPayload.VoucherSignature
+	if hasVoucher {
+		voucherMessage := paymentchannels.EncodeVoucherMessage(channelID, actual, uptoPayload.ExpiresAt)
+		if err := paymentchannels.VerifyVoucherSignature(
+			uptoPayload.VoucherSignature, uptoPayload.AuthorizedSigner, voucherMessage,
+		); err != nil {
+			return nil, x402.NewSettleError(ErrVoucherSignature, uptoPayload.From, network, "", err.Error())
+		}
 	}
 
 	tokenProgram, err := upto.ResolveTokenProgram(requirements)
@@ -584,7 +711,7 @@ func (f *UptoSvmScheme) settleClaim(
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		channel, channelErr = fetchAndVerifyOpenChannel(ctx, f.signer, networkStr, channelID, expected)
+		channel, channelErr = fetchAndVerifyOpenChannel(ctx, f.signer, networkStr, channelID, expected, f.resolveChannelReadPolicy())
 	}()
 	go func() {
 		defer wg.Done()
@@ -596,6 +723,23 @@ func (f *UptoSvmScheme) settleClaim(
 	}
 	if blockhashErr != nil {
 		return nil, x402.NewSettleError(ErrPaymentRequirements, uptoPayload.From, network, "", blockhashErr.Error())
+	}
+
+	if !hasVoucher {
+		if f.authorizerSigner == nil || channel.AuthorizedSigner.String() != f.authorizerSigner.Address().String() {
+			return nil, x402.NewSettleError(ErrAuthorizerAddressMismatch, uptoPayload.From, network, "",
+				"delegated claim authorizer is not this facilitator")
+		}
+		message := paymentchannels.EncodeVoucherMessage(channelID, actual, uptoPayload.ExpiresAt)
+		signatureBytes, err := f.authorizerSigner.SignMessage(ctx, message)
+		if err != nil {
+			return nil, x402.NewSettleError(ErrVoucherSignature, uptoPayload.From, network, "", err.Error())
+		}
+		if len(signatureBytes) != 64 {
+			return nil, x402.NewSettleError(ErrVoucherSignature, uptoPayload.From, network, "",
+				fmt.Sprintf("voucher signature must be 64 bytes, got %d", len(signatureBytes)))
+		}
+		voucherSignature = solana.SignatureFromBytes(signatureBytes).String()
 	}
 
 	// Deduplicate only once the channel is rebound, so replays and concurrent
@@ -611,7 +755,7 @@ func (f *UptoSvmScheme) settleClaim(
 		TokenProgram:     tokenProgram,
 		Actual:           actual,
 		ExpiresAt:        uptoPayload.ExpiresAt,
-		VoucherSignature: uptoPayload.VoucherSignature,
+		VoucherSignature: voucherSignature,
 	}, &prefetchedHash)
 	if err != nil {
 		var simErr *SettlementSimulationError
@@ -643,6 +787,7 @@ func (f *UptoSvmScheme) settleClaim(
 		ExpiresAt:    uptoPayload.ExpiresAt,
 		Network:      string(requirements.Network),
 	})
+	_ = f.delegatedAuthStore.Delete(ctx, channel.ChannelID.String(), x402.Network(requirements.Network))
 
 	return &x402.SettleResponse{
 		Success:     true,
@@ -723,6 +868,7 @@ func (f *UptoSvmScheme) validateOpenAuthorization(
 	ctx context.Context,
 	payload types.PaymentPayload,
 	requirements types.PaymentRequirements,
+	rejectType bool,
 ) (*openAuthorization, error) {
 	uptoPayload, err := svm.UptoPayloadFromMap(payload.Payload)
 	if err != nil {
@@ -741,6 +887,10 @@ func (f *UptoSvmScheme) validateOpenAuthorization(
 	if svm.HasUptoVoucherSignature(payload.Payload) {
 		return nil, x402.NewVerifyError(ErrUnexpectedVoucher, payer,
 			"voucherSignature is server-owned and only valid on a claim settlement")
+	}
+	if rejectType && svm.HasUptoPayloadType(payload.Payload) {
+		return nil, x402.NewVerifyError(ErrPayloadType, payer,
+			"type is server-owned and only valid on a settlement")
 	}
 
 	channelConfig, err := upto.ResolvePaymentChannelConfig(requirements)
@@ -936,6 +1086,75 @@ func (f *UptoSvmScheme) resolveRecentSlot(
 		return 0, fmt.Errorf("failed to fetch the current slot: %w", err)
 	}
 	return slot, nil
+}
+
+// isDelegatedSettle reports whether this settle's extra.receiverAuthorizer is
+// this facilitator's advertised authorizer.
+func (f *UptoSvmScheme) isDelegatedSettle(requirements types.PaymentRequirements) bool {
+	if f.authorizerSigner == nil || requirements.Extra == nil {
+		return false
+	}
+	advertised, _ := requirements.Extra[upto.ExtraReceiverAuthorizer].(string)
+	return advertised != "" && advertised == f.authorizerSigner.Address().String()
+}
+
+// resolveDelegatedCallerIdentity resolves a delegated settle's caller identity.
+// Errors and empty/missing results are treated as unauthenticated.
+func (f *UptoSvmScheme) resolveDelegatedCallerIdentity(ctx DelegatedSettleContext) string {
+	if f.resolveCallerIdentity == nil {
+		return ""
+	}
+	identity, err := f.resolveCallerIdentity(ctx)
+	if err != nil || identity == "" {
+		return ""
+	}
+	return identity
+}
+
+// authenticateDelegatedClaim authenticates a delegated claim that omitted
+// voucherSignature. Runs before the pending-settlement fast path and any RPC.
+func (f *UptoSvmScheme) authenticateDelegatedClaim(
+	ctx context.Context,
+	payload types.PaymentPayload,
+	requirements types.PaymentRequirements,
+	uptoPayload *svm.UptoSvmPayload,
+	fctx *x402.FacilitatorContext,
+) error {
+	network := x402.Network(payload.Accepted.Network)
+	if f.authorizerSigner == nil {
+		return x402.NewSettleError(ErrAuthorizerNotConfigured, uptoPayload.From, network, "",
+			"claim omitted voucherSignature and no authorizer is configured")
+	}
+	extraAuthorizer, _ := requirements.Extra[upto.ExtraReceiverAuthorizer].(string)
+	if extraAuthorizer == "" ||
+		uptoPayload.AuthorizedSigner != extraAuthorizer ||
+		extraAuthorizer != f.authorizerSigner.Address().String() {
+		return x402.NewSettleError(ErrAuthorizerAddressMismatch, uptoPayload.From, network, "",
+			"delegated claim authorizer is not this facilitator")
+	}
+
+	identity := f.resolveDelegatedCallerIdentity(DelegatedSettleContext{
+		Ctx:                ctx,
+		Step:               DelegatedSettleStepClaim,
+		ChannelID:          uptoPayload.ChannelId,
+		Network:            x402.Network(requirements.Network),
+		Payer:              uptoPayload.From,
+		Amount:             requirements.Amount,
+		ExpiresAt:          uptoPayload.ExpiresAt,
+		Payload:            payload,
+		Requirements:       requirements,
+		FacilitatorContext: fctx,
+	})
+	if identity == "" {
+		return x402.NewSettleError(ErrDelegatedSettleUnauthenticated, uptoPayload.From, network, "",
+			"delegated claim settle is unauthenticated")
+	}
+	binding, err := f.delegatedAuthStore.Get(ctx, uptoPayload.ChannelId, x402.Network(requirements.Network))
+	if err != nil || binding == nil || binding.CallerIdentity != identity {
+		return x402.NewSettleError(ErrDelegatedSettleUnauthenticated, uptoPayload.From, network, "",
+			"delegated claim settle is unauthenticated")
+	}
+	return nil
 }
 
 func (f *UptoSvmScheme) resolveFeePayer(

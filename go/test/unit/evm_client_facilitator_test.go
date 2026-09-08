@@ -894,6 +894,11 @@ func TestAssetContractValidation(t *testing.T) {
 	}
 
 	t.Run("EIP-3009: rejects EOA asset", func(t *testing.T) {
+		// eoaAsset is the Base Sepolia USDC address that other tests model as deployed, and
+		// positive asset checks are cached process-wide, so drop those entries to force a real
+		// GetCode here.
+		evm.ResetAssetContractCache()
+
 		signer := makeEIP3009SignerWithEOAAsset()
 		scheme := evmfacilitator.NewExactEvmScheme(signer, nil)
 
@@ -907,6 +912,8 @@ func TestAssetContractValidation(t *testing.T) {
 	})
 
 	t.Run("EIP-3009: GetCode RPC failure propagates as internal error", func(t *testing.T) {
+		evm.ResetAssetContractCache()
+
 		signer := makeEIP3009SignerWithEOAAsset()
 		signer.getCodeError = fmt.Errorf("rpc: connection refused")
 		// getCodeError overrides codeByAddress in the mock, so both payer and asset
@@ -924,6 +931,8 @@ func TestAssetContractValidation(t *testing.T) {
 	})
 
 	t.Run("Permit2 exact: rejects EOA asset", func(t *testing.T) {
+		evm.ResetAssetContractCache()
+
 		permit2Payload, _ := signedPermit2TestData(t)
 		signer := &mockFacilitatorSigner{
 			verifyTypedDataResult: true,

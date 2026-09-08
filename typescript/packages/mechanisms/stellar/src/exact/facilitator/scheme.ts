@@ -93,6 +93,14 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
   public readonly feeBumpSigner?: FacilitatorStellarSigner;
   private readonly signerMap: Map<string, FacilitatorStellarSigner>;
   private readonly selectSigner: (addresses: readonly string[]) => string;
+  /**
+   * Addresses the facilitator-safety checks must treat as facilitator-controlled.
+   * Deliberately a separate set from `signingAddresses`: that set also backs
+   * signer *selection* (`signerMap.get(...)` in `settle()`), and `feeBumpSigner`
+   * has no entry in `signerMap`, so merging it into `signingAddresses` directly
+   * would let round-robin selection pick an address `settle()` can't sign with.
+   */
+  private readonly facilitatorSafetyAddresses: ReadonlySet<string>;
 
   /**
    * Creates a new ExactStellarScheme instance.
@@ -142,6 +150,9 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
     this.maxTransactionFeeStroops = maxTransactionFeeStroops ?? DEFAULT_MAX_TRANSACTION_FEE_STROOPS;
     this.selectSigner = selectSigner ?? roundRobinSelectSigner();
     this.feeBumpSigner = feeBumpSigner;
+    this.facilitatorSafetyAddresses = this.feeBumpSigner
+      ? new Set([...this.signingAddresses, this.feeBumpSigner.address])
+      : this.signingAddresses;
   }
 
   /**
@@ -426,8 +437,8 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
       }
 
       if (
-        this.signingAddresses.has(operation.source ?? "") ||
-        this.signingAddresses.has(transaction.source)
+        this.facilitatorSafetyAddresses.has(operation.source ?? "") ||
+        this.facilitatorSafetyAddresses.has(transaction.source)
       ) {
         return {
           response: invalidVerifyResponse("invalid_exact_stellar_payload_unsafe_tx_or_op_source"),
@@ -465,7 +476,7 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
       const toAddress = scValToNative(args[1]) as string;
       const amount = scValToNative(args[2]) as bigint;
 
-      if (this.signingAddresses.has(fromAddress)) {
+      if (this.facilitatorSafetyAddresses.has(fromAddress)) {
         return {
           response: invalidVerifyResponse("invalid_exact_stellar_payload_facilitator_is_payer"),
         };
@@ -538,7 +549,7 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
       // Step 10: Validate auth entries (structure, credential type, expiration, facilitator safety, and signature status).
       const authValidation = this.validateAuthEntries(
         invokeOp,
-        this.signingAddresses,
+        this.facilitatorSafetyAddresses,
         fromAddress,
         maxLedger,
         transaction,

@@ -1,7 +1,30 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import type { MockedFunction } from "vitest";
 import { encodeAbiParameters, keccak256, padHex, toBytes, toHex } from "viem";
 import type { TransactionReceipt } from "viem";
-import { verifyEip3009TransferEvent } from "../../../src/exact/facilitator/eip3009-utils";
+
+vi.mock("../../../src/multicall", async importOriginal => {
+  const actual = await importOriginal<typeof import("../../../src/multicall")>();
+  return { ...actual, multicall: vi.fn() };
+});
+
+import { multicall } from "../../../src/multicall";
+import {
+  diagnoseEip3009SimulationFailure,
+  parseEip3009TransferError,
+  verifyEip3009TransferEvent,
+} from "../../../src/exact/facilitator/eip3009-utils";
+import {
+  checkPermit2Prerequisites,
+  diagnosePermit2SimulationFailure,
+} from "../../../src/shared/permit2";
+import { PERMIT2_ADDRESS, x402ExactPermit2ProxyAddress } from "../../../src/constants";
+import * as Errors from "../../../src/exact/facilitator/errors";
+import type { FacilitatorEvmSigner } from "../../../src/signer";
+import type { ExactEIP3009Payload } from "../../../src/types";
+import type { PaymentRequirements } from "@x402/core/types";
+
+const mockedMulticall = multicall as unknown as MockedFunction<typeof multicall>;
 
 const TRANSFER_TOPIC = keccak256(toBytes("Transfer(address,address,uint256)"));
 
@@ -160,5 +183,189 @@ describe("verifyEip3009TransferEvent", () => {
         value: 1000n,
       }),
     ).toBe(true);
+  });
+});
+
+describe("parseEip3009TransferError", () => {
+  it("maps known revert substrings to specific facilitator error codes", () => {
+    expect(parseEip3009TransferError(new Error("authorization expired"))).toBe(
+      Errors.ErrValidBeforeExpired,
+    );
+    expect(parseEip3009TransferError(new Error("AuthorizationExpired()"))).toBe(
+      Errors.ErrValidBeforeExpired,
+    );
+    expect(parseEip3009TransferError(new Error("authorization is not yet valid"))).toBe(
+      Errors.ErrValidAfterInFuture,
+    );
+    expect(parseEip3009TransferError(new Error("AuthorizationAlreadyUsed"))).toBe(
+      Errors.ErrEip3009NonceAlreadyUsed,
+    );
+    expect(parseEip3009TransferError(new Error("ERC20InsufficientBalance"))).toBe(
+      Errors.ErrEip3009InsufficientBalance,
+    );
+    expect(parseEip3009TransferError(new Error("transfer amount exceeds balance"))).toBe(
+      Errors.ErrEip3009InsufficientBalance,
+    );
+    expect(parseEip3009TransferError(new Error("invalid signature"))).toBe(
+      Errors.ErrInvalidSignature,
+    );
+    expect(parseEip3009TransferError(new Error("SignerMismatch"))).toBe(Errors.ErrInvalidSignature);
+    expect(parseEip3009TransferError("unknown boom")).toBe(Errors.ErrTransactionFailed);
+  });
+});
+
+describe("diagnoseEip3009SimulationFailure", () => {
+  const payload: ExactEIP3009Payload = {
+    authorization: {
+      from: PAYER,
+      to: RECEIVER,
+      value: "1000",
+      validAfter: "0",
+      validBefore: "9999999999",
+      nonce: ("0x" + "aa".repeat(32)) as `0x${string}`,
+    },
+    signature: "0xsig",
+  };
+  const requirements: PaymentRequirements = {
+    scheme: "exact",
+    network: "eip155:84532",
+    amount: "1000",
+    asset: TOKEN,
+    payTo: RECEIVER,
+    maxTimeoutSeconds: 3600,
+    extra: { name: "USDC", version: "2" },
+  };
+  const signer = { readContract: vi.fn() } as unknown as FacilitatorEvmSigner;
+
+  it("reports nonce already used, name/version mismatch, and insufficient balance", async () => {
+    mockedMulticall.mockResolvedValueOnce([
+      { status: "success", result: 1000n },
+      { status: "success", result: "USDC" },
+      { status: "success", result: "2" },
+      { status: "success", result: true },
+    ]);
+    expect(
+      (await diagnoseEip3009SimulationFailure(signer, TOKEN, payload, requirements, "1000"))
+        .invalidReason,
+    ).toBe(Errors.ErrEip3009NonceAlreadyUsed);
+
+    mockedMulticall.mockResolvedValueOnce([
+      { status: "success", result: 1000n },
+      { status: "success", result: "USD Coin" },
+      { status: "success", result: "2" },
+      { status: "success", result: false },
+    ]);
+    expect(
+      (await diagnoseEip3009SimulationFailure(signer, TOKEN, payload, requirements, "1000"))
+        .invalidReason,
+    ).toBe(Errors.ErrEip3009TokenNameMismatch);
+
+    mockedMulticall.mockResolvedValueOnce([
+      { status: "success", result: 1000n },
+      { status: "success", result: "USDC" },
+      { status: "success", result: "1" },
+      { status: "success", result: false },
+    ]);
+    expect(
+      (await diagnoseEip3009SimulationFailure(signer, TOKEN, payload, requirements, "1000"))
+        .invalidReason,
+    ).toBe(Errors.ErrEip3009TokenVersionMismatch);
+
+    mockedMulticall.mockResolvedValueOnce([
+      { status: "success", result: 1n },
+      { status: "success", result: "USDC" },
+      { status: "success", result: "2" },
+      { status: "success", result: false },
+    ]);
+    expect(
+      (await diagnoseEip3009SimulationFailure(signer, TOKEN, payload, requirements, "1000"))
+        .invalidReason,
+    ).toBe(Errors.ErrEip3009InsufficientBalance);
+  });
+
+  it("reports EIP-3009 unsupported when authorizationState cannot be read", async () => {
+    mockedMulticall.mockResolvedValueOnce([
+      { status: "success", result: 1000n },
+      { status: "success", result: "USDC" },
+      { status: "success", result: "2" },
+      { status: "failure", error: new Error("missing") },
+    ]);
+    expect(
+      (await diagnoseEip3009SimulationFailure(signer, TOKEN, payload, requirements, "1000"))
+        .invalidReason,
+    ).toBe(Errors.ErrEip3009NotSupported);
+  });
+
+  it("falls back to simulation_failed when the diagnostic multicall itself throws", async () => {
+    mockedMulticall.mockRejectedValueOnce(new Error("rpc down"));
+    expect(
+      (await diagnoseEip3009SimulationFailure(signer, TOKEN, payload, requirements, "1000"))
+        .invalidReason,
+    ).toBe(Errors.ErrEip3009SimulationFailed);
+  });
+});
+
+describe("diagnosePermit2SimulationFailure / checkPermit2Prerequisites", () => {
+  const payer = PAYER;
+  const permit2Payload = {
+    signature: "0xsig" as `0x${string}`,
+    permit2Authorization: {
+      from: payer,
+      permitted: { token: TOKEN, amount: "1000" },
+      spender: x402ExactPermit2ProxyAddress,
+      nonce: "1",
+      deadline: "9",
+      witness: { to: RECEIVER, validAfter: "0" },
+    },
+  };
+  const config = { proxyAddress: x402ExactPermit2ProxyAddress, proxyABI: [] };
+  const signer = { readContract: vi.fn() } as unknown as FacilitatorEvmSigner;
+
+  it("maps proxy, balance, and allowance failures", async () => {
+    mockedMulticall.mockResolvedValueOnce([
+      { status: "failure", error: new Error("missing") },
+      { status: "success", result: 1000n },
+      { status: "success", result: 1000n },
+    ]);
+    expect(
+      (await diagnosePermit2SimulationFailure(config, signer, TOKEN, permit2Payload, "1000"))
+        .invalidReason,
+    ).toBe(Errors.ErrPermit2ProxyNotDeployed);
+
+    mockedMulticall.mockResolvedValueOnce([
+      { status: "success", result: PERMIT2_ADDRESS },
+      { status: "success", result: 1n },
+      { status: "success", result: 1000n },
+    ]);
+    expect(
+      (await diagnosePermit2SimulationFailure(config, signer, TOKEN, permit2Payload, "1000"))
+        .invalidReason,
+    ).toBe(Errors.ErrPermit2InsufficientBalance);
+
+    mockedMulticall.mockResolvedValueOnce([
+      { status: "success", result: PERMIT2_ADDRESS },
+      { status: "success", result: 1000n },
+      { status: "success", result: 1n },
+    ]);
+    expect(
+      (await diagnosePermit2SimulationFailure(config, signer, TOKEN, permit2Payload, "1000"))
+        .invalidReason,
+    ).toBe(Errors.ErrPermit2AllowanceRequired);
+
+    mockedMulticall.mockResolvedValueOnce([
+      { status: "failure", error: new Error("missing") },
+      { status: "success", result: 1000n },
+    ]);
+    expect(
+      (await checkPermit2Prerequisites(config, signer, TOKEN, payer, "1000")).invalidReason,
+    ).toBe(Errors.ErrPermit2ProxyNotDeployed);
+
+    mockedMulticall.mockResolvedValueOnce([
+      { status: "success", result: PERMIT2_ADDRESS },
+      { status: "success", result: 1n },
+    ]);
+    expect(
+      (await checkPermit2Prerequisites(config, signer, TOKEN, payer, "1000")).invalidReason,
+    ).toBe(Errors.ErrPermit2InsufficientBalance);
   });
 });

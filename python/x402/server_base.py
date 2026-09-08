@@ -38,6 +38,7 @@ from .pending_settlement_store import ERR_SETTLEMENT_PENDING
 from .schemas import (
     X402_VERSION,
     AbortResult,
+    FacilitatorCapabilityError,
     Network,
     PaymentCancellationDispatcher,
     PaymentPayload,
@@ -115,6 +116,31 @@ def _get_extension_info(value: Any) -> Any:
     return value
 
 
+def _server_owned_info_fields_match(
+    advertised: Any,
+    echoed: Any,
+    server_owned_fields: set[str],
+) -> bool:
+    """Return whether client-echoed server-owned fields match the advertisement.
+
+    When the server did not declare the extension, ``advertised`` is treated as
+    empty so clients cannot invent fields such as builder-code ``a``.
+    """
+    if not isinstance(echoed, dict):
+        return True
+
+    advertised_record = advertised if isinstance(advertised, dict) else {}
+
+    for field in server_owned_fields:
+        if field not in echoed:
+            continue
+        echoed_value = echoed[field]
+        if field not in advertised_record or advertised_record[field] != echoed_value:
+            return False
+
+    return True
+
+
 def _omit_fields(value: Any, fields: list[str] | None) -> Any:
     """Return a copy of ``value`` without the named dynamic fields."""
     if not fields or not isinstance(value, dict):
@@ -145,6 +171,14 @@ def _to_comparable_list(value: Any) -> list[Any] | None:
 # sign-in-with-x's "resources") keep exact list matching in both directions.
 _ADDITIVE_LIST_INFO_FIELDS: dict[str, set[str]] = {
     "builder-code": {"s"},
+}
+
+# Extension info fields, keyed by extension key, that only the resource server
+# may declare. Clients MUST NOT invent these on echo; this package has no
+# dependency on extension packages, so the key/field list is duplicated here
+# (same as _ADDITIVE_LIST_INFO_FIELDS).
+_SERVER_OWNED_INFO_FIELDS: dict[str, set[str]] = {
+    "builder-code": {"a"},
 }
 
 # Caps the combined echoed length of an additive list field (see
@@ -583,6 +617,14 @@ class x402ResourceServerBase:
                 if scheme not in self._supported_responses[network]:
                     self._supported_responses[network][scheme] = supported
 
+        # Empty /supported is transient (timeout, deploy blip) and must stay
+        # retryable. Route validation would otherwise raise RouteConfigurationError
+        # (missing_facilitator) and HTTP adapters would treat that as fatal.
+        if not self._supported_responses:
+            raise RuntimeError(
+                "Failed to initialize: no supported payment kinds loaded from any facilitator."
+            )
+
         self._validate_facilitator_capabilities()
         self._initialized = True
 
@@ -594,7 +636,7 @@ class x402ResourceServerBase:
         schemes exposing a `validate_facilitator_support` hook participate.
 
         Raises:
-            ValueError: Listing every capability problem when one or more are reported.
+            FacilitatorCapabilityError: Listing every capability problem when one or more are reported.
         """
         problems: list[str] = []
 
@@ -614,8 +656,7 @@ class x402ResourceServerBase:
                     problems.append(f"{scheme} on {network}: {problem}")
 
         if problems:
-            details = "\n".join(f"  - {p}" for p in problems)
-            raise ValueError(f"x402 facilitator capability errors:\n{details}")
+            raise FacilitatorCapabilityError(problems)
 
     def _facilitator_extensions(self, network: Network, scheme: str) -> list[str]:
         """Return the extensions a facilitator advertises for a scheme/network."""
@@ -1055,9 +1096,11 @@ class x402ResourceServerBase:
     ) -> ExtensionValidationResult:
         """Validate optional client extension echoes against server declarations.
 
-        Skips v1, and passes when either extension map is empty. For each key the
+        Skips v1, and passes when the client omits extensions. For each key the
         server declared, the echoed ``info`` must contain every advertised field
-        (clients may add their own). Fields listed by a registered extension's
+        (clients may add their own). Server-owned fields (e.g. builder-code ``a``)
+        must also match the advertisement when present, including when the server
+        did not declare the extension. Fields listed by a registered extension's
         ``dynamic_info_fields`` are regenerated per response and dropped before
         comparison; every other advertised field stays strict.
         """
@@ -1065,32 +1108,39 @@ class x402ResourceServerBase:
             return ExtensionValidationResult(valid=True)
 
         server_extensions = payment_required.extensions
-        if not server_extensions:
-            return ExtensionValidationResult(valid=True)
-
         client_extensions = getattr(payment_payload, "extensions", None)
         if not client_extensions:
             return ExtensionValidationResult(valid=True)
 
         for key, echoed_value in client_extensions.items():
-            if key not in server_extensions:
-                continue
-
             advertised_info = _get_extension_info(
-                _normalize_extension_value(server_extensions[key])
+                _normalize_extension_value(
+                    server_extensions.get(key) if server_extensions else None
+                )
             )
             echoed_info = _get_extension_info(_normalize_extension_value(echoed_value))
 
-            extension = self._extensions.get(key)
-            dynamic_fields = getattr(extension, "dynamic_info_fields", None)
-            additive_fields = _ADDITIVE_LIST_INFO_FIELDS.get(key)
-            max_lengths = _ADDITIVE_LIST_MAX_LENGTHS.get(key)
+            if server_extensions and key in server_extensions:
+                extension = self._extensions.get(key)
+                dynamic_fields = getattr(extension, "dynamic_info_fields", None)
+                additive_fields = _ADDITIVE_LIST_INFO_FIELDS.get(key)
+                max_lengths = _ADDITIVE_LIST_MAX_LENGTHS.get(key)
 
-            if not _object_contains_subset(
-                _omit_fields(advertised_info, dynamic_fields),
-                _omit_fields(echoed_info, dynamic_fields),
-                additive_fields,
-                max_lengths,
+                if not _object_contains_subset(
+                    _omit_fields(advertised_info, dynamic_fields),
+                    _omit_fields(echoed_info, dynamic_fields),
+                    additive_fields,
+                    max_lengths,
+                ):
+                    return ExtensionValidationResult(
+                        valid=False,
+                        invalid_reason=ERR_EXTENSION_ECHO_MISMATCH,
+                        extension_key=key,
+                    )
+
+            server_owned_fields = _SERVER_OWNED_INFO_FIELDS.get(key)
+            if server_owned_fields and not _server_owned_info_fields_match(
+                advertised_info, echoed_info, server_owned_fields
             ):
                 return ExtensionValidationResult(
                     valid=False,

@@ -1,21 +1,4 @@
 /**
- * Who broadcasts the signed transaction. Declared by the server in
- * `PaymentRequirements.extra.submissionPolicy`; `either` lets the client pick.
- */
-export type CardanoSubmissionPolicy = "server" | "client" | "either";
-
-/**
- * The mode a paid payload actually selected. An absent `payload.submissionMode`
- * normalizes to `server`; `either` is a policy and never a payload mode.
- */
-export type CardanoSubmissionMode = "server" | "client";
-
-/**
- * Ledger a Masumi payment settles on. Carried by `payload.settlementLayer`.
- */
-export type CardanoSettlementLayer = "l1" | "hydra";
-
-/**
  * Minimum L1 evidence required before the resource is released.
  *
  * `-1` is authenticated mempool acceptance, `0` is inclusion in a canonical
@@ -29,10 +12,11 @@ export interface CardanoConfirmationPolicy {
 /**
  * Payload structure carried inside a Cardano `exact` PaymentPayload.
  *
- * The `transaction` field is a base64-encoded, fully signed Cardano CBOR
- * transaction. The `nonce` field is a UTXO reference (`txHashHex#index`) that
- * MUST also appear as one of the transaction inputs. The facilitator uses the
- * nonce to enforce uniqueness and replay protection (rule 5 in the spec).
+ * The `transaction` field is a base64-encoded, fully signed but unbroadcast
+ * Cardano CBOR transaction; the facilitator broadcasts it during `settle()`.
+ * The `nonce` field is a UTXO reference (`txHashHex#index`) that MUST also
+ * appear as one of the transaction inputs. The facilitator uses the nonce to
+ * enforce uniqueness and replay protection (rule 5 in the spec).
  */
 export type ExactCardanoPayload = {
   /**
@@ -43,31 +27,12 @@ export type ExactCardanoPayload = {
    * UTXO reference (`txHash#index`) used as nonce, must be present as a tx input.
    */
   nonce: string;
-  /**
-   * Who broadcasts. Absent normalizes to `server`; the normalized value MUST be
-   * allowed by the selected `extra.submissionPolicy`.
-   */
-  submissionMode?: CardanoSubmissionMode;
-  /**
-   * Masumi only: the ledger this payment settles on. `terms.settlementPolicy`
-   * MUST allow the selected value.
-   */
-  settlementLayer?: CardanoSettlementLayer;
-  /**
-   * Masumi + Hydra only: the canonical lowercase 56-character hexadecimal Hydra
-   * protocol head id from the on-chain Init transaction. MUST be absent for L1.
-   */
-  headId?: string;
 };
 
 /**
  * Fields every Cardano `extra` block may carry, whatever the transfer method.
  */
 export interface CardanoExtraPolicies {
-  /**
-   * Who broadcasts the signed transaction. Defaults to `server` when absent.
-   */
-  submissionPolicy?: CardanoSubmissionPolicy;
   /**
    * Minimum L1 evidence. Defaults to `{ l1Confirmations: 1 }` when absent.
    */
@@ -172,8 +137,6 @@ export interface MasumiTerms {
   submitResultTime: string;
   unlockTime: string;
   externalDisputeUnlockTime: string;
-  /** Which ledger the payment may settle on. */
-  settlementPolicy: "auto" | "l1" | "hydra";
 }
 
 /**
@@ -377,12 +340,15 @@ export interface DecodedCardanoTransaction {
   inputs: string[];
   /** Transaction fee in lovelace. */
   fee: bigint;
+  /** Byte length of the complete serialized transaction, the size the fee floor is computed over. */
+  sizeBytes: number;
   /**
-   * Balance-changing operations outside a plain payment. The reference
-   * facilitator rejects these before server submission because it cannot
-   * prove value conservation from payment inputs and outputs alone.
+   * Body fields that move value the inputs and outputs alone do not show
+   * (`mint`, `withdrawals`, `certificates`, `proposalProcedures`, `donation`).
+   * The facilitator cannot prove value conservation for such a transaction, so
+   * without a complete phase-1 validator it rejects it before broadcast.
    */
-  unsupportedPhase1Operations: string[];
+  balanceChangingOperations: string[];
   /**
    * Decoded outputs in declaration order.
    */

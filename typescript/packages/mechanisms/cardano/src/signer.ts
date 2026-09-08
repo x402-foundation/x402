@@ -38,13 +38,7 @@ import {
 import { isKeyCredentialAddressOn, validateMasumiExtra } from "./exact/masumi/schema";
 import { buildScriptDatumInline } from "./exact/script/datum";
 import { DEFAULT_CARDANO_PROVIDER_TIMEOUT_MS } from "./limits";
-import type {
-  CardanoExtra,
-  CardanoExtraMasumi,
-  CardanoExtraScript,
-  CardanoSettlementLayer,
-  CardanoSubmissionMode,
-} from "./types";
+import type { CardanoExtra, CardanoExtraMasumi, CardanoExtraScript } from "./types";
 import { decodeCardanoTransactionBytes, parseAssetUnit, parseUtxoRef } from "./utils";
 
 /**
@@ -233,18 +227,13 @@ export interface ClientCardanoSignInput {
    * assetTransferMethod and any method-specific metadata).
    */
   extra?: Record<string, unknown>;
-  /**
-   * The submission mode resolved from `extra.submissionPolicy`. In `client`
-   * mode the signer MUST broadcast the transaction before returning, because
-   * the facilitator will authenticate it instead of submitting it.
-   */
-  submissionMode: CardanoSubmissionMode;
   /** Protected resource, used to validate registered Masumi agent endpoints. */
   resource?: ResourceInfo;
 }
 
 /**
- * Result returned by a client signer.
+ * Result returned by a client signer. The transaction MUST NOT have been
+ * broadcast: the facilitator submits it during `settle()`.
  */
 export interface ClientCardanoSignResult {
   /**
@@ -255,19 +244,6 @@ export interface ClientCardanoSignResult {
    * UTXO reference (`txHashHex#index`) used as nonce. MUST appear as a tx input.
    */
   nonce: string;
-  /**
-   * The mode the signer actually honoured. In `client` mode the signer MUST
-   * have broadcast the transaction before returning.
-   */
-  submissionMode?: CardanoSubmissionMode;
-  /**
-   * Masumi only: the ledger the payment settles on.
-   */
-  settlementLayer?: CardanoSettlementLayer;
-  /**
-   * Masumi + Hydra only: the canonical protocol head id.
-   */
-  headId?: string;
 }
 
 /**
@@ -304,6 +280,18 @@ export interface CardanoSubmissionResult {
 }
 
 /**
+ * The live protocol parameters the facilitator's built-in phase-1 checks need.
+ */
+export interface CardanoProtocolParameters {
+  /** `coinsPerUtxoByte` (`utxoCostPerByte`): min-UTXO lovelace per output byte. */
+  coinsPerUtxoByte: bigint;
+  /** `minFeeA`: lovelace per transaction byte. */
+  minFeeCoefficient: bigint;
+  /** `minFeeB`: constant lovelace per transaction. */
+  minFeeConstant: bigint;
+}
+
+/**
  * Lightweight UTXO summary returned by the facilitator's chain query layer.
  */
 export interface CardanoUtxoSnapshot {
@@ -313,12 +301,15 @@ export interface CardanoUtxoSnapshot {
   exists: boolean;
   /**
    * The bech32 address that controls the UTXO. Implementations SHOULD report it
-   * even when `exists` is false: in client-submission mode the payment
-   * transaction has already consumed the nonce, and this address is how the
-   * facilitator resolves the payer (and, for Masumi, the datum's `buyer`).
+   * even when `exists` is false: on a settlement retry the broadcast payment has
+   * already consumed the nonce, and this address is how the facilitator
+   * resolves the payer (and, for Masumi, the datum's `buyer`).
    */
   address?: string;
-  /** Lovelace held by the UTXO, required for pre-submit phase-1 validation. */
+  /**
+   * Lovelace held by the UTXO. Required for an unspent input: the facilitator
+   * checks value conservation from it before broadcasting.
+   */
   coin?: bigint;
   /** Native assets held by the UTXO, keyed by canonical asset unit. */
   assets?: Record<string, bigint>;
@@ -362,13 +353,15 @@ export interface FacilitatorCardanoSigner {
   getUtxo(ref: string, network: string): Promise<CardanoUtxoSnapshot>;
 
   /**
-   * Optional full ledger phase-1 validator for server-submitted transactions.
-   * Use this to support script-controlled funding inputs or balance-changing
-   * operations outside the reference payment-only shape. It MUST throw unless
-   * the exact signed transaction passes all phase-1 ledger rules against the
-   * authenticated current UTXO set and protocol parameters. Transaction
-   * evaluation alone is insufficient because it permits unbalanced and
-   * unauthenticated transactions.
+   * Optional complete ledger phase-1 validator, for facilitators that can run
+   * one (e.g. against their own node). `verify()` already checks that the
+   * inputs are unspent, the validity interval, value conservation, the fee
+   * floor and min-UTXO from provider data; this hook adds the remaining
+   * ledger rules and is the only way to accept balance-changing operations
+   * (`mint`, `withdrawals`, `certificates`, ...) or script-controlled funding
+   * inputs. It MUST throw unless the exact signed transaction passes all
+   * phase-1 rules against the authenticated current UTXO set and protocol
+   * parameters.
    *
    * @param signedTransactionBase64 - Exact signed transaction CBOR.
    * @param network - The x402 network identifier.
@@ -437,11 +430,11 @@ export interface FacilitatorCardanoSigner {
   /**
    * Optional: reads authenticated settlement evidence for one transaction.
    *
-   * Required for client-submission mode (the facilitator must authenticate the
-   * transaction the client already broadcast instead of submitting it) and for
-   * any `confirmationPolicy.l1Confirmations` above `0`, which needs the real
-   * canonical depth. Without this hook, the facilitator cannot advertise
-   * `client` submission or confirmation depths above canonical inclusion.
+   * Required for any `confirmationPolicy.l1Confirmations` above `0`, which
+   * needs the real canonical depth, and for the `settlement_pending` retry to
+   * resume observing a transaction this facilitator already broadcast.
+   * Without this hook, the facilitator cannot advertise confirmation depths
+   * above canonical inclusion.
    *
    * Implementations MUST return `status: "unknown"` when the ledger has no
    * record of the transaction, and SHOULD throw only on lookup failure. A
@@ -457,16 +450,16 @@ export interface FacilitatorCardanoSigner {
   getTransactionEvidence?(txHash: string, network: string): Promise<CardanoSettlementEvidence>;
 
   /**
-   * Optional: reads the live `coinsPerUtxoByte` protocol parameter. When
-   * implemented, the facilitator's `verify()` uses it to reject payments whose
-   * recipient output carries less than the protocol minimum lovelace (a tx the
-   * chain would refuse at submission). The value is governance-settable, so the
-   * spec requires reading it live rather than hardcoding.
+   * Optional: reads the live protocol parameters. When implemented, the
+   * facilitator's `verify()` rejects a recipient output below the protocol
+   * min-UTXO and a fee below the protocol floor — both transactions the chain
+   * would refuse at submission. The values are governance-settable, so the spec
+   * requires reading them live rather than hardcoding.
    *
    * @param network - The x402 network identifier.
-   * @returns The current `coinsPerUtxoByte`.
+   * @returns The current protocol parameters.
    */
-  getCoinsPerUtxoByte?(network: string): Promise<bigint>;
+  getProtocolParameters?(network: string): Promise<CardanoProtocolParameters>;
 }
 
 /**
@@ -581,12 +574,10 @@ export function toClientCardanoSigner(config: ClientCardanoSignerConfig): Client
       }
 
       // Validate the 402 before touching the wallet: a malicious or malformed
-      // Masumi 402 must be refused before any funds are selected, and in client
-      // mode before anything is broadcast.
+      // Masumi 402 must be refused before any funds are selected.
       const extra = input.extra as CardanoExtra | undefined;
       let masumiExtra: CardanoExtraMasumi | undefined;
       let masumiBuyerInput: MasumiBuyerInput = {};
-      let settlementLayer: CardanoSettlementLayer | undefined;
       if (extra?.assetTransferMethod === ASSET_TRANSFER_METHOD_MASUMI) {
         const schema = validateMasumiExtra(extra, input.network);
         if (!schema.ok) {
@@ -594,10 +585,9 @@ export function toClientCardanoSigner(config: ClientCardanoSignerConfig): Client
         }
         masumiExtra = schema.extra;
         // The client MUST verify the seller authorization itself — it is about
-        // to move real value, and in client-submission mode it broadcasts before
-        // any facilitator sees the payment. Skipping this would let a malicious
-        // 402 send funds to a non-escrow address or bind them to terms no seller
-        // ever signed.
+        // to sign away real value on the strength of this 402. Skipping this
+        // would let a malicious 402 send funds to a non-escrow address or bind
+        // them to terms no seller ever signed.
         const authorization = await verifyMasumiAuthorization(
           masumiExtra,
           {
@@ -638,7 +628,6 @@ export function toClientCardanoSigner(config: ClientCardanoSignerConfig): Client
           );
         }
         assertMasumiPaymentWindow(masumiExtra, input.maxTimeoutSeconds);
-        settlementLayer = resolveSettlementLayer(masumiExtra);
         masumiBuyerInput = (await config.masumiBuyerInput?.(masumiExtra)) ?? {};
         if (
           masumiBuyerInput.buyerReturnAddress !== undefined &&
@@ -780,33 +769,11 @@ export function toClientCardanoSigner(config: ClientCardanoSignerConfig): Client
         assertMasumiPayByTimeNotExpired(masumiExtra);
       }
 
-      // Client mode: the client broadcasts before the paid retry, and the
-      // facilitator authenticates that exact transaction instead of submitting
-      // it. Try to wait until the chain shows it because most providers expose
-      // no mempool read. A wait failure is still ambiguous after broadcast and
-      // must not cause the wallet to build a second payment.
-      if (input.submissionMode === "client") {
-        const hash = await withCardanoProviderTimeout(
-          client.submitTx(signed),
-          timeoutMs,
-          "submitTx",
-        );
-        // Broadcast already succeeded. Observation failure is ambiguous: the
-        // transaction can still land, so return the exact signed payload and let
-        // the paid retry/facilitator report pending evidence instead of forcing
-        // the caller to build another transaction.
-        try {
-          await withCardanoProviderTimeout(client.awaitTx(hash), timeoutMs, "awaitTx");
-        } catch {
-          // Intentionally continue with the original signed transaction.
-        }
-      }
-
+      // Never broadcast here: the facilitator verifies and submits the exact
+      // signed bytes during `settle()`.
       return {
         transaction: Buffer.from(Transaction.toCBORBytes(signed)).toString("base64"),
         nonce,
-        submissionMode: input.submissionMode,
-        ...(settlementLayer ? { settlementLayer } : {}),
       };
     },
   };
@@ -847,23 +814,8 @@ function assertMasumiPayByTimeNotExpired(extra: CardanoExtraMasumi): void {
   }
 }
 
-/**
- * Resolves the settlement layer a Masumi payment will use.
- *
- * A suitable Hydra head has to be open, verified against its on-chain Init
- * state, and bound to the seller's participant key — none of which this signer
- * can establish. `auto` therefore resolves to L1 and a policy of `hydra` is
- * refused rather than settled on a head that cannot be closed.
- *
- * @param extra - The validated masumi `extra` block.
- * @returns The selected settlement layer.
- */
-function resolveSettlementLayer(extra: CardanoExtraMasumi): CardanoSettlementLayer {
-  if (extra.terms.settlementPolicy === "hydra") {
-    throw new Error("Masumi terms require Hydra settlement, which this signer cannot provide");
-  }
-  return "l1";
-}
+/** How long the reference facilitator signer caches protocol parameters. */
+const PROTOCOL_PARAMETERS_CACHE_MS = 10 * 60_000;
 
 /**
  * Configuration for the reference {@link toFacilitatorCardanoSigner} factory.
@@ -892,15 +844,16 @@ export interface FacilitatorCardanoSignerConfig {
   /**
    * When `true` (default), `submitTransaction` awaits on-chain confirmation
    * before reporting `status: "confirmed"`. Set to `false` to return
-   * `status: "mempool"` immediately after broadcast — note the facilitator
-   * scheme rejects mempool-only settlements unless `acceptMempool` is enabled.
+   * `status: "mempool"` immediately after broadcast and let the facilitator
+   * scheme poll for the confirmation policy's evidence instead; that needs a
+   * Blockfrost provider, which is the only one with transaction evidence.
    */
   awaitConfirmation?: boolean;
   /**
-   * Complete Cardano ledger phase-1 validation used before server submission.
-   * The Evolution provider's `evaluateTx` only evaluates Plutus execution and
-   * is not sufficient. Without this callback, the reference signer does not
-   * advertise or accept server submission.
+   * Optional complete Cardano ledger phase-1 validator, for operators that can
+   * run one (e.g. against their own node). Without it the facilitator relies on
+   * its built-in checks (inputs unspent, validity interval, value conservation,
+   * fee floor, min-UTXO), which is what every standard provider setup can do.
    */
   validatePhase1Transaction?: (signedTransactionBase64: string, network: string) => Promise<void>;
 }
@@ -911,8 +864,8 @@ export interface FacilitatorCardanoSignerConfig {
  * transaction's canonical depth) and the owner of an already-spent UTXO.
  *
  * Returns a disabled shim when the signer is configured with another provider;
- * the facilitator then cannot authenticate client submission or confirmation
- * depths above canonical inclusion.
+ * the facilitator then cannot settle confirmation depths above canonical
+ * inclusion or resume a pending settlement.
  *
  * @param provider - The signer's provider connection config.
  * @returns The Blockfrost query helpers.
@@ -921,6 +874,11 @@ export function blockfrostQueries(provider: CardanoProviderConfig): {
   enabled: boolean;
   evidence(txHash: string): Promise<CardanoSettlementEvidence>;
   spentUtxoAddress(txHash: string, index: number): Promise<{ address?: string }>;
+  /**
+   * Whether Blockfrost records the output as consumed (`consumed_by_tx`).
+   * `undefined` when the transaction or output is unknown to the provider.
+   */
+  outputConsumed(txHash: string, index: number): Promise<boolean | undefined>;
 } {
   const timeoutMs = providerTimeoutMs(provider);
   const config = provider.blockfrost;
@@ -929,6 +887,7 @@ export function blockfrostQueries(provider: CardanoProviderConfig): {
       enabled: false,
       evidence: () => Promise.resolve({ status: "unknown", confirmations: -2 }),
       spentUtxoAddress: () => Promise.resolve({}),
+      outputConsumed: () => Promise.resolve(undefined),
     };
   }
   const baseUrl = config.baseUrl.replace(/\/$/, "");
@@ -986,6 +945,17 @@ export function blockfrostQueries(provider: CardanoProviderConfig): {
       const output = outputs.find(o => o.output_index === index);
       return output?.address ? { address: output.address } : {};
     },
+
+    async outputConsumed(txHash: string, index: number): Promise<boolean | undefined> {
+      const utxos = await get(`/txs/${txHash}/utxos`);
+      const outputs = (utxos?.outputs ?? []) as Array<{
+        output_index?: number;
+        consumed_by_tx?: string | null;
+      }>;
+      const output = outputs.find(o => o.output_index === index);
+      if (!output || output.consumed_by_tx === undefined) return undefined;
+      return typeof output.consumed_by_tx === "string" && output.consumed_by_tx.length > 0;
+    },
   };
 }
 
@@ -1009,6 +979,16 @@ export function toFacilitatorCardanoSigner(
   // queries the chain — both are provider operations. A mnemonic is optional and
   // used solely to expose an address via getAddresses() for the /supported
   // response; without it the facilitator runs provider-only (no funds, no signer).
+  // Without Blockfrost the signer cannot read settlement evidence, so the only
+  // way it can ever report inclusion is to await it inside submitTransaction. A
+  // Koios signer that returns on broadcast would leave every payment above
+  // mempool level unsettleable, so refuse that combination up front.
+  if (!blockfrost.enabled && config.awaitConfirmation === false) {
+    throw new Error(
+      "awaitConfirmation: false requires a Blockfrost provider; a signer without transaction evidence must await confirmation itself",
+    );
+  }
+
   const mnemonic = config.mnemonic ? normalizeMnemonic(config.mnemonic) : undefined;
   const client = mnemonic
     ? providerClient.withSeed({ mnemonic, accountIndex: config.accountIndex })
@@ -1030,9 +1010,41 @@ export function toFacilitatorCardanoSigner(
     }
   };
 
-  // coinsPerUtxoByte changes only at an epoch/governance boundary, so caching the
-  // first read avoids a provider round-trip on every verify().
-  let coinsPerUtxoByte: bigint | undefined;
+  // Protocol parameters change only at an epoch/governance boundary, so caching
+  // them avoids a provider round-trip on every verify(); the cache expires so a
+  // long-lived facilitator picks up a governance change within minutes.
+  let protocolParameters: { value: CardanoProtocolParameters; fetchedAt: number } | undefined;
+
+  /**
+   * Whether an output the provider resolved by out-ref has since been spent.
+   * Blockfrost reports it directly (`consumed_by_tx`); otherwise the owner's
+   * unspent set, which every provider serves, decides.
+   *
+   * @param txHash - Producing transaction id.
+   * @param index - Output index.
+   * @param address - The output's address.
+   * @returns True when the output is no longer in the UTXO set.
+   */
+  const outputSpent = async (
+    txHash: string,
+    index: number,
+    address: Address.Address,
+  ): Promise<boolean> => {
+    if (blockfrost.enabled) {
+      const consumed = await blockfrost.outputConsumed(txHash, index);
+      if (consumed !== undefined) return consumed;
+    }
+    const unspent = await withCardanoProviderTimeout(
+      client.getUtxos(address),
+      timeoutMs,
+      "getUtxos",
+    );
+    return !unspent.some(
+      candidate =>
+        Buffer.from(candidate.transactionId.hash).toString("hex").toLowerCase() === txHash &&
+        Number(candidate.index) === index,
+    );
+  };
 
   return {
     getAddresses(): readonly string[] {
@@ -1077,19 +1089,24 @@ export function toFacilitatorCardanoSigner(
         }
         const address = Address.toBech32(utxo.address);
         const paymentCredential = Address.getPaymentCredential(Address.toHex(utxo.address));
-        return {
-          exists: true,
+        const owner = {
           address,
-          coin: utxo.assets.lovelace,
-          assets,
           ...(paymentCredential?._tag === "KeyHash"
             ? { paymentKeyHash: Credential.toHex(paymentCredential).toLowerCase() }
             : {}),
         };
+        // Both Evolution providers resolve an out-ref from the producing
+        // transaction's outputs, which still lists an output after it has been
+        // spent. Ask the provider whether it was consumed before reporting it
+        // unspent, or rule 5 (inputs unspent) would never fire.
+        if (await outputSpent(txHash, index, utxo.address)) {
+          return { exists: false, ...owner };
+        }
+        return { exists: true, ...owner, coin: utxo.assets.lovelace, assets };
       }
-      // Spent (or unknown). Client-submission mode still needs the owner
-      // address to resolve the payer, so read it from the producing transaction
-      // when the provider can serve it.
+      // Spent (or unknown). A settlement retry still needs the owner address to
+      // resolve the payer, so read it from the producing transaction when the
+      // provider can serve it.
       return { exists: false, ...(await blockfrost.spentUtxoAddress(txHash, index)) };
     },
 
@@ -1153,17 +1170,27 @@ export function toFacilitatorCardanoSigner(
       await withCardanoProviderTimeout(client.evaluateTx(tx), timeoutMs, "evaluateTx");
     },
 
-    async getCoinsPerUtxoByte(network: string): Promise<bigint> {
+    async getProtocolParameters(network: string): Promise<CardanoProtocolParameters> {
       assertNetwork(network);
-      if (coinsPerUtxoByte === undefined) {
+      if (
+        protocolParameters === undefined ||
+        Date.now() - protocolParameters.fetchedAt > PROTOCOL_PARAMETERS_CACHE_MS
+      ) {
         const params = await withCardanoProviderTimeout(
           client.getProtocolParameters(),
           timeoutMs,
           "getProtocolParameters",
         );
-        coinsPerUtxoByte = params.coinsPerUtxoByte;
+        protocolParameters = {
+          value: {
+            coinsPerUtxoByte: params.coinsPerUtxoByte,
+            minFeeCoefficient: BigInt(params.minFeeA),
+            minFeeConstant: BigInt(params.minFeeB),
+          },
+          fetchedAt: Date.now(),
+        };
       }
-      return coinsPerUtxoByte;
+      return protocolParameters.value;
     },
   };
 }

@@ -51,6 +51,18 @@ const (
 	ErrReceiverAuthorizer = "invalid_upto_svm_payload_receiver_authorizer"
 	// ErrVoucherSignature is returned when the voucher is not signed by the authorizer.
 	ErrVoucherSignature = "invalid_upto_svm_payload_voucher_signature"
+	// ErrAuthorizerNotConfigured is returned when a claim settle omitted
+	// voucherSignature and this facilitator has no authorizer.
+	ErrAuthorizerNotConfigured = "invalid_upto_svm_authorizer_not_configured"
+	// ErrAuthorizerAddressMismatch is returned when a delegated claim
+	// authorizedSigner / extra.receiverAuthorizer is not this facilitator.
+	ErrAuthorizerAddressMismatch = "invalid_upto_svm_authorizer_address_mismatch"
+	// ErrDelegatedSettleUnauthenticated is returned when a delegated settle
+	// identity is missing, unresolved, or not the deposit-time binding.
+	ErrDelegatedSettleUnauthenticated = "invalid_upto_svm_delegated_settle_unauthenticated"
+	// ErrPayloadType is returned when the client supplied type, or a delegated
+	// settle is missing type.
+	ErrPayloadType = "invalid_upto_svm_payload_type"
 
 	// Channel and settlement codes.
 

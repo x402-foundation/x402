@@ -1,5 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { x402ResourceServer } from "@x402/core/server";
 import { ExactSvmScheme } from "../../src/exact/server/scheme";
+import { registerExactSvmScheme } from "../../src/exact/server/register";
 import {
   SOLANA_MAINNET_CAIP2,
   SOLANA_DEVNET_CAIP2,
@@ -10,6 +12,7 @@ import {
   USDC_MAINNET_ADDRESS,
   getDefaultAsset,
 } from "../../src/defaultAssets";
+import * as svmUtils from "../../src/utils";
 
 describe("ExactSvmScheme", () => {
   const server = new ExactSvmScheme();
@@ -209,5 +212,88 @@ describe("ExactSvmScheme", () => {
         feePayer: "FeePayer1111111111111111111111111111",
       });
     });
+  });
+
+  describe("getAssetDecimals", () => {
+    it("returns decimals for a known mint and undefined for an unknown one", () => {
+      expect(server.getAssetDecimals(USDC_MAINNET_ADDRESS, SOLANA_MAINNET_CAIP2)).toBe(6);
+      expect(
+        server.getAssetDecimals("UnknownMint1111111111111111111111111111111", SOLANA_MAINNET_CAIP2),
+      ).toBeUndefined();
+    });
+  });
+
+  describe("enhancePaymentRequirements rpcUrl", () => {
+    it("omits the blockhash hint when the RPC fetch fails", async () => {
+      const rpcServer = new ExactSvmScheme({ rpcUrl: "https://example.invalid" });
+      vi.spyOn(svmUtils, "createRpcClient").mockImplementation(() => {
+        throw new Error("rpc unavailable");
+      });
+      try {
+        const result = await rpcServer.enhancePaymentRequirements(
+          {
+            scheme: "exact",
+            network: SOLANA_DEVNET_CAIP2,
+            asset: USDC_DEVNET_ADDRESS,
+            amount: "100000",
+            payTo: "PayToAddress11111111111111111111111111",
+            maxTimeoutSeconds: 3600,
+          } as never,
+          {
+            x402Version: 2,
+            scheme: "exact",
+            network: SOLANA_DEVNET_CAIP2,
+            extra: { feePayer: "FeePayer1111111111111111111111111111" },
+          },
+          [],
+        );
+        expect(result.extra?.recentBlockhash).toBeUndefined();
+        expect(result.extra?.feePayer).toBe("FeePayer1111111111111111111111111111");
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+  });
+});
+
+describe("registerExactSvmScheme", () => {
+  it("registers the wildcard scheme when networks are omitted", () => {
+    const resourceServer = new x402ResourceServer({
+      verify: async () => ({ isValid: true }),
+      settle: async () => ({ success: true, transaction: "", network: "solana:*", payer: "" }),
+      getSupported: async () => ({ kinds: [] }),
+    } as never);
+    const returned = registerExactSvmScheme(resourceServer);
+    expect(returned).toBe(resourceServer);
+
+    const internals = resourceServer as unknown as {
+      registeredServerSchemes: Map<string, Map<string, { scheme: string }>>;
+    };
+    expect([...internals.registeredServerSchemes.keys()]).toEqual(["solana:*"]);
+    expect(internals.registeredServerSchemes.get("solana:*")?.get("exact")?.scheme).toBe("exact");
+  });
+
+  it("registers each explicit network", () => {
+    const resourceServer = new x402ResourceServer({
+      verify: async () => ({ isValid: true }),
+      settle: async () => ({
+        success: true,
+        transaction: "",
+        network: SOLANA_DEVNET_CAIP2,
+        payer: "",
+      }),
+      getSupported: async () => ({ kinds: [] }),
+    } as never);
+    registerExactSvmScheme(resourceServer, {
+      networks: [SOLANA_DEVNET_CAIP2, SOLANA_MAINNET_CAIP2],
+      rpcUrl: "https://example.invalid",
+    });
+
+    const internals = resourceServer as unknown as {
+      registeredServerSchemes: Map<string, Map<string, { scheme: string }>>;
+    };
+    expect([...internals.registeredServerSchemes.keys()].sort()).toEqual(
+      [SOLANA_DEVNET_CAIP2, SOLANA_MAINNET_CAIP2].sort(),
+    );
   });
 });

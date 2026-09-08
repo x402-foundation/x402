@@ -352,8 +352,22 @@ func BytesToHex(data []byte) string {
 // ValidateAssetIsContract checks whether the payment asset is a deployed contract.
 // Returns (ErrAssetNotDeployedContract, nil) for an EOA/empty address,
 // ("", nil) for a deployed contract, or ("", err) if eth_getCode itself fails.
-func ValidateAssetIsContract(ctx context.Context, signer FacilitatorEvmSigner, asset string) (string, error) {
-	code, err := signer.GetCode(ctx, NormalizeAddress(asset))
+//
+// network identifies the chain the signer is bound to. It must be accurate, since it scopes the
+// cache that serves positive results; an empty network disables caching for the call. Only
+// StartAssetContractCheck populates that cache, so calling this directly always hits the RPC.
+func ValidateAssetIsContract(
+	ctx context.Context,
+	signer FacilitatorEvmSigner,
+	network string,
+	asset string,
+) (string, error) {
+	normalizedAsset := NormalizeAddress(asset)
+	if globalAssetContractCache.isFresh(assetContractCacheKey{network: network, asset: normalizedAsset}, time.Now()) {
+		return "", nil
+	}
+
+	code, err := signer.GetCode(ctx, normalizedAsset)
 	if err != nil {
 		return "", fmt.Errorf("failed to check whether asset is a contract: %w", err)
 	}

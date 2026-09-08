@@ -18,12 +18,7 @@ import type { PaymentRequirements } from "@x402/core/types";
 
 import { getCardanoNetworkId } from "../../src/constants";
 import { issueMasumiRequirements as issue } from "../../src/exact/masumi/issue";
-import type {
-  CardanoExtraMasumi,
-  MasumiCommitmentPart,
-  MasumiDeployment,
-  MasumiTerms,
-} from "../../src/types";
+import type { CardanoExtraMasumi, MasumiCommitmentPart, MasumiDeployment } from "../../src/types";
 
 /** Options for {@link issueMasumiRequirements}. */
 export interface IssueMasumiOptions {
@@ -40,9 +35,7 @@ export interface IssueMasumiOptions {
   parts?: Array<Pick<MasumiCommitmentPart, "name" | "canonicalization" | "mediaType" | "content">>;
   buyerNonce?: string;
   agentIdentifier?: string | null;
-  settlementPolicy?: MasumiTerms["settlementPolicy"];
   sellerReturnAddress?: string;
-  submissionPolicy?: CardanoExtraMasumi["submissionPolicy"];
   confirmationPolicy?: CardanoExtraMasumi["confirmationPolicy"];
   deployment?: MasumiDeployment;
 }
@@ -122,8 +115,6 @@ export async function issueMasumiRequirements(
     ...(options.sellerReturnAddress !== undefined
       ? { sellerReturnAddress: options.sellerReturnAddress }
       : {}),
-    ...(options.settlementPolicy ? { settlementPolicy: options.settlementPolicy } : {}),
-    ...(options.submissionPolicy ? { submissionPolicy: options.submissionPolicy } : {}),
     ...(options.confirmationPolicy ? { confirmationPolicy: options.confirmationPolicy } : {}),
     ...(options.deployment ? { deployment: options.deployment } : {}),
     signTerms: (address, termsDigestHex) => {

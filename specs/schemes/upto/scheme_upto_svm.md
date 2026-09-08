@@ -27,7 +27,8 @@ The x402 roles map to the payment-channel program as follows:
   stablecoin deposit.
 - **Server**: resource provider; receives funds at `payTo`; determines the
   actual metered charge after serving the resource.
-- **Receiver authorizer**: server-controlled hot key advertised as
+- **Receiver authorizer**: server-controlled hot key, or the facilitator's
+  advertised `receiverAuthorizer` when the server delegates; advertised as
   `extra.receiverAuthorizer`; set as channel `authorized_signer`; signs the
   settlement voucher that authorizes any nonzero charge. It does not need to
   hold SOL or token funds, and it never signs a transaction: the voucher
@@ -59,6 +60,11 @@ a facilitator that seals early (`has_voucher = 0`) freezes the watermark, and
 the unsettled remainder is refunded to the client. The server MUST therefore
 treat unsettled voucher value as facilitator credit risk and settle promptly.
 See [Security Properties](#8-security-properties).
+
+When the server delegates `receiverAuthorizer` to the facilitator, the
+lifecycle and payment authorities collapse into one party. The server
+additionally trusts the facilitator to settle the amount it asked for and no
+more.
 
 ## 2. Mapping the five core requirements to SVM
 
@@ -151,7 +157,7 @@ from `exact`.
 |---|---|---|---|
 | `paymentFlow` | string | no | Only supported value is `"escrow"`; omit to use that default. |
 | `feePayer` | string | yes | Base58 sponsor key from facilitator `/supported`. Set as channel `payee` (zero share) and `rent_payer`. Co-signs `open` as transaction fee payer, and signs settlement transactions as both fee payer and channel `payee`. MAY equal `receiverAuthorizer` for self-facilitation. |
-| `receiverAuthorizer` | string | yes | Server-defined Base58 key set as channel `authorized_signer`; signs settlement vouchers. |
+| `receiverAuthorizer` | string | yes | Server-defined Base58 key, or the facilitator's `/supported` `receiverAuthorizer` when the server delegates. Set as channel `authorized_signer`; signs settlement vouchers. |
 | `withdrawDelay` | number | yes | Server-defined `grace_period` in seconds. The client MUST encode this exact value in `open`; the facilitator MUST reject any other value. MUST be an integer greater than zero. SHOULD be `>= maxTimeoutSeconds`. |
 | `tokenProgram` | string | yes | `Tokenkeg...` or `TokenzQ...` (Token-2022); the client SHOULD verify it against the onchain mint owner. |
 | `memo` | string | no | Seller-defined UTF-8 string for the transaction's Memo instruction. When present, the client MUST use this value as the Memo instruction data instead of a random nonce. Maximum 256 bytes. Enables payment references (e.g. invoice IDs) without unique deposit addresses. |
@@ -241,6 +247,7 @@ Example: server uses an external facilitator for fee/rent sponsorship:
 | `deposit` | string | Onchain escrow amount. MUST equal `maxAmount`. |
 | `authorizedSigner` | string | MUST equal `extra.receiverAuthorizer`; included for explicit payload validation. Maps to the onchain `authorized_signer` account. |
 | `openTransaction` | string | Base64 partially signed `open` transaction. The client signature is present; the `feePayer`/`rent_payer` signature is still required before broadcast. |
+| `type` | string | Settle-only. `"deposit"` or `"claim"`. Set by the resource server on each `/settle`; not part of the client authorization, which is reused for both settles. REQUIRED when delegating. |
 
 `channelId` is the program-derived address:
 
@@ -279,7 +286,10 @@ The `open` instruction MUST encode:
 The voucher is not carried in the client's `PAYMENT-SIGNATURE` payload — the
 client signs only `open`. After metering, the server signs an Ed25519 voucher
 with `receiverAuthorizer` and transmits it to the facilitator in the settlement
-request (`payload.voucherSignature`; see Phase 4). The signed message is:
+request (`payload.voucherSignature`; see Phase 4). `voucherSignature` is
+included when the server owns the receiver-authorizer key; omitted when the
+channel delegates receiver authorization to the facilitator, which signs
+before submitting. The signed message is:
 
 ```text
 0x56 0x01 || channelId || u64(cumulativeAmount).le || i64(expiresAt).le
@@ -312,8 +322,9 @@ settled funds, refunds the client, and closes the escrow token account.
 
 ### Phase 1 - Setup
 
-The facilitator's `/supported` `extra` advertises `feePayer`. The server
-returns that `feePayer` together with its own `receiverAuthorizer` and
+The facilitator's `/supported` `extra` advertises `feePayer` and MAY advertise
+`receiverAuthorizer`. The server returns that `feePayer` together with its own
+`receiverAuthorizer` (or the facilitator's advertised key when delegating) and
 `withdrawDelay` in the 402 response. The client builds an `open` transaction
 against the canonical payment-channels program, deposits `maxAmount`, sets
 `payee` and `rent_payer` to `extra.feePayer`, sets `authorized_signer` to
@@ -342,7 +353,10 @@ unauthenticated, every claim settle (Phase 4) — including a zero-amount refund
 settlement amount, and `expiresAt`. That voucher is the facilitator's only proof
 that the claim came from the server and not an arbitrary caller, so the
 facilitator MUST reject any claim settle whose voucher is missing or not signed
-by `receiverAuthorizer`. The facilitator then constructs the `settle_and_seal`
+by `receiverAuthorizer`. When the channel delegates receiver authorization to
+the facilitator, the server omits `voucherSignature` and the facilitator
+authenticates the claim settle out of band (see Phase 4) before signing the
+voucher itself. The facilitator then constructs the `settle_and_seal`
 transaction itself and signs it as channel `payee` and transaction fee payer.
 Onchain, a nonzero amount applies the voucher (`has_voucher = 1`); a zero amount
 uses `has_voucher = 0` — the program requires `settled < cumulative_amount`, so
@@ -364,11 +378,15 @@ SVM `upto` uses the core `escrow` flow
 is not part of this ordering; it MAY be offered as a read-only preflight of the
 same static checks below without co-signing or broadcasting `open`.
 
-The facilitator distinguishes deposit vs claim settles from payload and channel
-state ([x402 v2 §7.2](../../x402-specification-v2.md)): no
+The facilitator distinguishes deposit vs claim settles from `payload.type` when
+present (`"deposit"` or `"claim"`). When `type` is absent, it falls back to
+payload and channel state
+([x402 v2 §7.2](../../x402-specification-v2.md)): no
 `payload.voucherSignature` and `paymentRequirements.amount == payload.maxAmount`
 → deposit (broadcast a fresh `open`; reject if the channel already exists);
-voucher present → claim (Phase 4); otherwise reject.
+voucher present → claim (Phase 4); otherwise reject. `type` is REQUIRED when
+delegating. The resource server stamps it per settle; it is not part of the
+client authorization.
 
 #### Client-supplied `openTransaction` acceptance policy
 
@@ -481,16 +499,19 @@ distribution, and rederived channel PDA.
 
 The server/facilitator MUST, in order:
 
-0. Reject any client-supplied `payload.voucherSignature`. The field is
-   claim-only and server-owned; presence on deposit settle
-   (including an empty string or `undefined` value) MUST fail with
-   `invalid_upto_svm_payload_unexpected_voucher`.
+0. Reject any client-supplied `payload.voucherSignature` or `payload.type`.
+   `voucherSignature` is claim-only and server-owned; presence on the client
+   payload (including an empty string or `undefined` value) MUST fail with
+   `invalid_upto_svm_payload_unexpected_voucher`. `type` is per-settle and
+   not part of the client authorization; presence on the client payload MUST
+   fail with `invalid_upto_svm_payload_type`.
 1. Confirm `payload.maxAmount` equals deposit-phase `requirements.amount`.
 2. Confirm `network`, `asset` (mint), `tokenProgram`, and `payTo` match the
    selected requirements.
 3. Confirm `extra.feePayer` is the sponsor key that will co-sign the
    transaction, `extra.receiverAuthorizer` is the server's configured receiver
-   authorizer, and `extra.withdrawDelay` is an integer greater than zero.
+   authorizer or the facilitator's advertised authorizer, and
+   `extra.withdrawDelay` is an integer greater than zero.
 4. Confirm the channel account does not already exist. If it does, reject with
    `invalid_upto_svm_channel_already_open`. Deposit settle MUST open the
    channel itself for this authorization; out-of-band opens, prior deposits,
@@ -546,14 +567,15 @@ The resource server initiates the claim settle by sending the facilitator a
 `settle` request. It reuses the same x402 settle envelope. Relative to the
 deposit settle: `paymentRequirements.amount` carries the actual metered charge,
 and the resource server attaches a `receiverAuthorizer` voucher signature to
-`paymentPayload.payload`. Because `settle` is unauthenticated, that voucher is
-REQUIRED on every claim settle — including a zero-amount settlement or refund —
-and is what proves the request came from the server.
+`paymentPayload.payload` when it owns the key. Because `settle` is
+unauthenticated, that voucher is REQUIRED on every self-managed claim settle —
+including a zero-amount settlement or refund — and is what proves the request
+came from the server.
 
 | Field | Value |
 |---|---|
 | `x402Version` | `2`. |
-| `paymentPayload` | The client authorization from `PAYMENT-SIGNATURE` (see section 4.2), carrying the signed ceiling (`maxAmount`, `deposit`), `channelId`, `expiresAt`, and the `open` transaction, plus the settle-time `payload.voucherSignature` the resource server adds (see below). `voucherSignature` is REQUIRED on every settle request, including `actual == 0`. |
+| `paymentPayload` | The client authorization from `PAYMENT-SIGNATURE` (see section 4.2), carrying the signed ceiling (`maxAmount`, `deposit`), `channelId`, `expiresAt`, and the `open` transaction, plus the settle-time `payload.type` and, when the server owns the key, `payload.voucherSignature` (see below). `voucherSignature` is included when the server owns the receiver-authorizer key; omitted when the channel delegates receiver authorization to the facilitator, which signs before submitting. |
 | `paymentRequirements` | The selected requirements with `amount` set to the **actual** metered charge for this request (`actual <= maxAmount`). Every other requirement field (`network`, `asset`, `payTo`, `extra`) is unchanged. |
 
 The actual charge travels on `paymentRequirements.amount`; the signed ceiling
@@ -567,11 +589,14 @@ metering, and the resource server attaches it to the settle-time
   over the voucher message defined in section 4.2
   (`0x56 0x01 || channelId || u64(cumulativeAmount).le || i64(expiresAt).le`),
   with `cumulativeAmount == paymentRequirements.amount` (which MAY be `0`).
-- It is REQUIRED on every settle request. The facilitator holds only `feePayer`
-  / `payee` and cannot produce it; because `settle` is unauthenticated, the
-  voucher is the facilitator's only proof that the request came from the server,
-  and it authorizes both nonzero settlement and zero-amount refunds (see
+- It is REQUIRED on every settle request when the server owns the key. The
+  facilitator holds only `feePayer` / `payee` and cannot produce it; because
+  `settle` is unauthenticated, the voucher is the facilitator's only proof that
+  the request came from the server, and it authorizes both nonzero settlement
+  and zero-amount refunds (see
   [Security Properties](#8-security-properties)).
+  If the channel delegates receiver authorization to the facilitator, the
+  server omits it and the facilitator signs before submitting.
 
 The application result determines the settled amount:
 
@@ -638,15 +663,18 @@ On a `settle` request the facilitator MUST:
    `invalid_upto_svm_payload_settlement_exceeds_amount`.
 3. Authenticate the request. Confirm
    `payload.authorizedSigner == extra.receiverAuthorizer` and that both equal
-   the channel's onchain `authorized_signer` (committed at `open`). Verify
-   `payload.voucherSignature` as a valid Ed25519 signature by that key over the
-   section 4.2 voucher message, reconstructed from `channelId`,
-   `cumulativeAmount == paymentRequirements.amount` (which MAY be `0`), and the
-   payload `expiresAt`. Reject the settle when the authorizer binding fails or
-   when `voucherSignature` is missing or invalid — because `settle` is
-   unauthenticated, this voucher is the only proof the request came from the
-   server, and it is REQUIRED even for a zero-amount refund (where
-   `has_voucher = 0` so the program will not re-check the signer). Then apply
+   the channel's onchain `authorized_signer` (committed at `open`). When
+   `voucherSignature` is present, verify it as a valid Ed25519 signature by
+   that key over the section 4.2 voucher message, reconstructed from
+   `channelId`, `cumulativeAmount == paymentRequirements.amount` (which MAY be
+   `0`), and the payload `expiresAt`. Reject the settle when the authorizer
+   binding fails or when the voucher is invalid. When `voucherSignature` is
+   absent, the channel MUST be delegated to this facilitator; authenticate
+   that the caller matches the identity bound to this `channelId` at deposit
+   and sign the voucher, or reject with
+   `invalid_upto_svm_authorizer_not_configured`,
+   `invalid_upto_svm_authorizer_address_mismatch`, or
+   `invalid_upto_svm_delegated_settle_unauthenticated`. Then apply
    it onchain:
    - For `actual > 0`, carry the verified voucher in the Ed25519 precompile that
      precedes `settle_and_seal` (`has_voucher = 1`).
@@ -655,7 +683,10 @@ On a `settle` request the facilitator MUST:
      because the program requires `settled < cumulative_amount`.
    In both cases, the `settle_and_seal` transaction MUST be signed by
    `extra.feePayer` as channel `payee`; the server's only signature is the
-   voucher, never a transaction.
+   voucher, never a transaction. In delegated mode the facilitator MUST bind
+   the authenticated caller identity to the `channelId` at the deposit settle,
+   before broadcasting `open`, and MUST reject a claim settle whose
+   authenticated caller does not match that binding.
 4. Sign as transaction `feePayer` and channel `payee`, broadcast the final
    transaction, and confirm a successful `distribute`. The usual bundle is
    Ed25519 precompile (for nonzero actual), `settle_and_seal`, then
@@ -785,7 +816,9 @@ restart, MUST perform the following flow:
 3. For an `Open` channel, the server may resume settlement only when it has
    recovered the application metering result and can produce the required
    `receiverAuthorizer` voucher. Otherwise it MUST NOT invent a nonzero
-   charge. The facilitator, as payee, may perform the no-voucher, zero-charge
+   charge. A facilitator that has lost the deposit-time binding MUST NOT
+   sign a delegated voucher and takes the zero-charge close path instead.
+   The facilitator, as payee, may perform the no-voucher, zero-charge
    close path (`settle_and_seal` with `has_voucher = 0`, then `distribute`,
    then `reclaim`) on its own; before doing so it SHOULD wait until
    `expiresAt` (plus optional grace). Abandon MUST NOT run before the
@@ -836,6 +869,16 @@ Standard x402 codes apply. Scheme-specific:
 - `duplicate_settlement` - the settlement cache already holds this settle phase
   for the channel; a concurrent or replayed deposit or claim settle MUST NOT
   broadcast.
+- `invalid_upto_svm_payload_type` - client supplied `type` on the
+  `PAYMENT-SIGNATURE` payload, or a delegated settle is missing `type`.
+- `invalid_upto_svm_authorizer_not_configured` - claim settle omitted
+  `voucherSignature` but this facilitator has no advertised `receiverAuthorizer`.
+- `invalid_upto_svm_authorizer_address_mismatch` - delegated claim settle
+  `authorizedSigner` / `extra.receiverAuthorizer` does not equal the
+  facilitator's advertised authorizer.
+- `invalid_upto_svm_delegated_settle_unauthenticated` - delegated deposit or
+  claim settle could not resolve a caller identity, or the claim identity does
+  not match the identity bound at deposit.
 - `CHANNEL_REQUIRED` (with `412`) - no open channel and no valid
   `openTransaction` that can be co-signed, broadcast, and confirmed before
   serving the resource.
@@ -850,12 +893,17 @@ Standard x402 codes apply. Scheme-specific:
   `rent_payer` / zero-share `payee`. It cannot sign vouchers, so it cannot
   settle any nonzero amount; that requires the server-controlled
   `receiverAuthorizer`. Because the `settle` endpoint is unauthenticated, every
-  server-initiated settle — including a zero-amount refund — MUST carry a
-  `receiverAuthorizer` voucher over its `channelId`, amount, and `expiresAt`;
-  the facilitator rejects a settle with a missing or invalid voucher, so an
-  arbitrary caller cannot force a premature seal or refund on a channel. The
-  facilitator's `settle_and_seal` authority only freezes the watermark and
-  triggers the program-fixed payout to `payTo` and refund to the client.
+  self-managed server-initiated settle — including a zero-amount refund — MUST
+  carry a `receiverAuthorizer` voucher over its `channelId`, amount, and
+  `expiresAt`; the facilitator rejects a settle with a missing or invalid
+  voucher, so an arbitrary caller cannot force a premature seal or refund on a
+  channel. The facilitator's `settle_and_seal` authority only freezes the
+  watermark and triggers the program-fixed payout to `payTo` and refund to the
+  client. When the server owns the key the voucher is the consent; when it
+  delegates, the facilitator MUST authenticate that each claim settle
+  originates from the service whose deposit settle opened the channel (SIWX,
+  JWT, or an API credential correlated across the two settles) and MUST NOT
+  advertise a `receiverAuthorizer` otherwise.
 - **Facilitator rent recovery.** Because the facilitator is the channel
   `payee`, it can always run `settle_and_seal` (`has_voucher = 0`), then
   `distribute`, then `reclaim` on its own. A colluding client/server pair

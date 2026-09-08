@@ -73,7 +73,7 @@ pnpm dev
 
 #### Cardano Testnet
 
-The client wallet must hold the asset it pays with. Get test ADA (tADA) for `cardano:preprod` (or `cardano:preview`) from the [Cardano testnets faucet](https://docs.cardano.org/cardano-testnets/tools/faucet/), and supply a Blockfrost project id via `BLOCKFROST_PROJECT_ID` + `BLOCKFROST_PREPROD_URL`. Use `asset: "lovelace"` for quick testing (fundable directly from the faucet); preprod USDM must be sourced separately.
+The client wallet must hold the asset it pays with. Get test ADA (tADA) for `cardano:preprod` (or `cardano:preview`) from the [Cardano testnets faucet](https://docs.cardano.org/cardano-testnets/tools/faucet/), and supply a Blockfrost project id via `BLOCKFROST_PROJECT_ID` + `BLOCKFROST_PREPROD_URL`. Use `asset: "lovelace"` for quick testing (fundable directly from the faucet); preprod **tUSDM** comes from the [tUSDM faucet](https://tusdm.moneta.global).
 
 #### Stellar Testnet
 

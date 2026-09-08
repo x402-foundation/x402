@@ -1,5 +1,6 @@
-import type { Address } from "@solana/kit";
+import type { Address, MessagePartialSigner } from "@solana/kit";
 import type {
+  FacilitatorContext,
   Network,
   PaymentPayload,
   PaymentRequirements,
@@ -18,7 +19,11 @@ import {
   type ServerInstruction,
 } from "../../payment-channels/onchain";
 import { parseU64, verifyOpenTransaction } from "../../payment-channels/open";
-import { encodeVoucherMessageBytes, verifyVoucherSignature } from "../../payment-channels/voucher";
+import {
+  encodeVoucherMessageBytes,
+  signVoucher,
+  verifyVoucherSignature,
+} from "../../payment-channels/voucher";
 import { SettlementCache } from "../../settlement-cache";
 import type { FacilitatorSigningCapabilities, FacilitatorSvmSigner } from "../../signer";
 import { isUptoSvmPayload, type UptoSvmPayloadV2 } from "../../types";
@@ -46,6 +51,7 @@ import {
   SettlementSimulationError,
   simulateOpenSettleDistribute,
   submitSettle,
+  type ChannelReadPolicy,
   type UptoSvmSigner,
 } from "./channel";
 import {
@@ -53,6 +59,7 @@ import {
   type UptoChannelRecord,
   type UptoChannelStorage,
 } from "./channelStorage";
+import { InMemoryUptoDelegatedAuthStore, type UptoDelegatedAuthStore } from "./delegatedAuthStore";
 import { assertUptoFacilitatorSigner, type UptoFacilitatorSigner } from "./signer";
 import { UptoSvmRentCleanupManager } from "./rentCleanupManager";
 
@@ -78,6 +85,19 @@ export const ERR_CHANNEL_LIFETIME_EXCEEDED = "invalid_upto_svm_payload_channel_l
 /** Payload `expiresAt` later than `now + maxTimeoutSeconds` (+ skew). */
 export const ERR_EXPIRES_AT_MISMATCH = "invalid_upto_svm_payload_expires_at_mismatch";
 
+/** Claim settle omitted `voucherSignature` and this facilitator has no authorizer. */
+export const ERR_AUTHORIZER_NOT_CONFIGURED = "invalid_upto_svm_authorizer_not_configured";
+
+/** Delegated claim `authorizedSigner` / `extra.receiverAuthorizer` is not this facilitator. */
+export const ERR_AUTHORIZER_ADDRESS_MISMATCH = "invalid_upto_svm_authorizer_address_mismatch";
+
+/** Delegated settle identity missing, unresolved, or not the deposit-time binding. */
+export const ERR_DELEGATED_SETTLE_UNAUTHENTICATED =
+  "invalid_upto_svm_delegated_settle_unauthenticated";
+
+/** Client supplied `type`, or a delegated settle is missing `type`. */
+export const ERR_PAYLOAD_TYPE = "invalid_upto_svm_payload_type";
+
 /** Default facilitator `maxChannelLifetimeSecs` (1 hour). */
 export const DEFAULT_MAX_CHANNEL_LIFETIME_SECS = 3_600;
 
@@ -88,6 +108,20 @@ const EXPIRES_AT_CLOCK_SKEW_SECS = 60;
 export type UptoChannelStorageErrorContext = {
   channelId: string;
   phase: "verify" | "settle";
+};
+
+/** Context passed to {@link UptoSvmFacilitatorConfig.resolveCallerIdentity}. */
+export type UptoDelegatedSettleContext = {
+  abortSignal?: AbortSignal;
+  step: "deposit" | "claim";
+  channelId: string;
+  network: Network;
+  payer: string;
+  amount: string;
+  expiresAt: number;
+  payload: PaymentPayload;
+  requirements: PaymentRequirements;
+  facilitatorContext?: FacilitatorContext;
 };
 
 /**
@@ -178,6 +212,41 @@ export interface UptoSvmFacilitatorConfig {
    * on a different replica still reconciles correctly.
    */
   pendingSettlementStore?: PendingSettlementStore;
+  /**
+   * Enables facilitator-delegated receiver authorization. Advertised as
+   * `/supported` `extra.receiverAuthorizer` and used to sign claim vouchers
+   * when the server omits `voucherSignature`. Requires
+   * {@link resolveCallerIdentity}.
+   */
+  authorizerSigner?: MessagePartialSigner;
+  /**
+   * Resolves a stable caller identity for a delegated settle. Returning
+   * `undefined` (or throwing) rejects the settle. Required when
+   * {@link authorizerSigner} is set.
+   */
+  resolveCallerIdentity?: (
+    ctx: UptoDelegatedSettleContext,
+  ) => Promise<string | undefined> | string | undefined;
+  /**
+   * Stores `channelId → caller identity` bindings written at deposit and
+   * checked at claim. Defaults to {@link InMemoryUptoDelegatedAuthStore}.
+   * Inject a shared implementation for a multi-replica facilitator.
+   */
+  delegatedAuthStore?: UptoDelegatedAuthStore;
+  /**
+   * Caps how many times settle re-reads a channel account that a confirmed
+   * open has not made visible yet. Unset defaults to
+   * `DEFAULT_CHANNEL_READ_MAX_ATTEMPTS` (6).
+   */
+  channelReadMaxAttempts?: number;
+  /**
+   * Linear backoff step in milliseconds between those re-reads: attempt N
+   * waits `N * step`, totalling `step * (attempts-1) * attempts / 2`.
+   * Unset defaults to `DEFAULT_CHANNEL_READ_BACKOFF_STEP_MS` (200). Raise
+   * either field to widen the budget on a provider with slower replica
+   * convergence.
+   */
+  channelReadBackoffStepMs?: number;
 }
 
 type OpenAuthFailure = {
@@ -197,17 +266,18 @@ type OpenAuthContext = {
 /**
  * SVM facilitator for the `upto` payment scheme.
  *
- * Escrow flow: `/settle` without `voucherSignature` and with
- * `requirements.amount === payload.maxAmount` deposits (broadcasts `open`);
- * `/settle` with a server voucher claims (`settle_and_seal` + `distribute`).
- * `/verify` is an optional read-only preflight of the same static checks —
- * it never broadcasts.
+ * Escrow flow: `/settle` with `payload.type === "deposit"` (or, when `type` is
+ * absent, no `voucherSignature` and `requirements.amount === payload.maxAmount`)
+ * deposits (broadcasts `open`); `/settle` with `type === "claim"` or a server
+ * voucher claims (`settle_and_seal` + `distribute`). `/verify` is an optional
+ * read-only preflight of the same static checks — it never broadcasts.
  *
  * The fee payer holds the channel `payee` seat with a zero distribution share:
  * it signs `settle_and_seal` (lifecycle authority) and can always seal an
- * abandoned channel with `has_voucher = 0` to recover its rent, while any
- * nonzero settlement still requires the server's receiver-authorizer voucher
- * (payment authority).
+ * abandoned channel with `has_voucher = 0` to recover its rent. Nonzero
+ * settlement requires a receiver-authorizer voucher — signed by the server, or
+ * by this facilitator when the server delegates and the caller identity
+ * matches the deposit-time binding.
  *
  * Fee-payer selection matches the exact SVM facilitator: `getExtra` randomly
  * picks one of the configured signers so load is distributed across keys.
@@ -220,6 +290,9 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
   private readonly channelStorage: UptoChannelStorage;
   private readonly settlementCache = new SettlementCache();
   private readonly pendingStore: PendingSettlementStore;
+  private readonly authorizerSigner: MessagePartialSigner | undefined;
+  private readonly resolveCallerIdentity: UptoSvmFacilitatorConfig["resolveCallerIdentity"];
+  private readonly delegatedAuthStore: UptoDelegatedAuthStore;
   private readonly signer: UptoFacilitatorSigner;
 
   private readonly getKitSigner: (feePayer: Address) => FacilitatorSigningCapabilities;
@@ -247,9 +320,15 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
     if (this.signer.getAddresses().length === 0) {
       throw new Error("UptoSvmScheme requires at least one fee payer signer");
     }
+    if (config.authorizerSigner && !config.resolveCallerIdentity) {
+      throw new Error("authorizerSigner requires resolveCallerIdentity");
+    }
     this.config = config;
     this.channelStorage = config.channelStorage ?? new InMemoryUptoChannelStorage();
     this.pendingStore = config.pendingSettlementStore ?? new InMemoryPendingSettlementStore();
+    this.authorizerSigner = config.authorizerSigner;
+    this.resolveCallerIdentity = config.resolveCallerIdentity;
+    this.delegatedAuthStore = config.delegatedAuthStore ?? new InMemoryUptoDelegatedAuthStore();
   }
 
   /**
@@ -299,7 +378,11 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
   getExtra(_: Network): Record<string, unknown> | undefined {
     const addresses = this.signer.getAddresses();
     const randomIndex = Math.floor(Math.random() * addresses.length);
-    return { feePayer: addresses[randomIndex] };
+    const extra: Record<string, unknown> = { feePayer: addresses[randomIndex] };
+    if (this.authorizerSigner) {
+      extra.receiverAuthorizer = this.authorizerSigner.address;
+    }
+    return extra;
   }
 
   /**
@@ -325,6 +408,7 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
   ): Promise<VerifyResponse> {
     const auth = await this.validateOpenAuthorization(payload, requirements, {
       rejectVoucher: true,
+      rejectType: true,
     });
     if (!auth.ok) {
       return {
@@ -340,17 +424,20 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
   /**
    * Deposit (open channel) or claim (settle_and_seal + distribute).
    *
-   * Discrimination (no settle phase on the wire):
+   * Prefers `payload.type` when present. When absent (older servers):
    * - no `voucherSignature` and `requirements.amount === payload.maxAmount` → deposit
    * - `voucherSignature` present → claim against the open channel
+   * `type` is required when the settle is delegated to this facilitator.
    *
    * @param payload - The payment payload
    * @param requirements - Deposit: amount = ceiling; claim: amount = actual charge
+   * @param context - Facilitator extensions (used by `resolveCallerIdentity`)
    * @returns The settlement response
    */
   async settle(
     payload: PaymentPayload,
     requirements: PaymentRequirements,
+    context?: FacilitatorContext,
   ): Promise<SettleResponse> {
     const raw = payload.payload as Record<string, unknown>;
     if (!isUptoSvmPayload(raw)) {
@@ -380,12 +467,23 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
       return this.settleFailure(payload, ERR_SETTLEMENT_EXCEEDS_AMOUNT, p.from);
     }
 
+    const delegated = this.isDelegatedSettle(requirements);
+    if (p.type === "deposit") {
+      return this.settleDeposit(payload, requirements, p, context);
+    }
+    if (p.type === "claim") {
+      return this.settleClaim(payload, requirements, p, actual, payloadMaxAmount, context);
+    }
+    if (delegated) {
+      return this.settleFailure(payload, ERR_PAYLOAD_TYPE, p.from);
+    }
+
     const hasVoucher = Object.prototype.hasOwnProperty.call(raw, "voucherSignature");
     if (hasVoucher) {
-      return this.settleClaim(payload, requirements, p, actual, payloadMaxAmount);
+      return this.settleClaim(payload, requirements, p, actual, payloadMaxAmount, context);
     }
     if (actual === payloadMaxAmount) {
-      return this.settleDeposit(payload, requirements, p);
+      return this.settleDeposit(payload, requirements, p, context);
     }
     return this.settleFailure(payload, "invalid_upto_svm_payload_missing_voucher", p.from);
   }
@@ -461,19 +559,52 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
   }
 
   /**
+   * Builds the channel-account re-read policy from configured overrides.
+   *
+   * @returns Unresolved policy; {@link fetchAndVerifyOpenChannel} fills defaults
+   */
+  private resolveChannelReadPolicy(): ChannelReadPolicy {
+    return {
+      maxAttempts: this.config.channelReadMaxAttempts,
+      backoffStepMs: this.config.channelReadBackoffStepMs,
+    };
+  }
+
+  /**
    * Deposit path: validate open authorization, then sim → broadcast → bind.
    * Rejects when the channel already exists (one request, one open).
    *
    * @param payload - The payment payload
    * @param requirements - Requirements with amount = authorized ceiling
    * @param p - Typed upto payload (channelId is needed before open validation)
+   * @param context - Facilitator extensions (used by `resolveCallerIdentity`)
    * @returns Deposit settlement response
    */
   private async settleDeposit(
     payload: PaymentPayload,
     requirements: PaymentRequirements,
     p: UptoSvmPayloadV2,
+    context?: FacilitatorContext,
   ): Promise<SettleResponse> {
+    const delegated = this.isDelegatedSettle(requirements);
+    let depositIdentity: string | undefined;
+    if (delegated) {
+      depositIdentity = await this.resolveDelegatedCallerIdentity({
+        step: "deposit",
+        channelId: p.channelId,
+        network: requirements.network,
+        payer: p.from,
+        amount: requirements.amount,
+        expiresAt: p.expiresAt,
+        payload,
+        requirements,
+        facilitatorContext: context,
+      });
+      if (!depositIdentity) {
+        return this.settleFailure(payload, ERR_DELEGATED_SETTLE_UNAUTHENTICATED, p.from);
+      }
+    }
+
     // settlementCache dedup key: channel-scoped (not tied to exact transaction
     // bytes) so concurrent settles for the same channel with differently-signed
     // opens are still caught (see the race comment below).
@@ -601,6 +732,14 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
         tokenProgram,
         expiresAt: p.expiresAt,
       });
+      if (delegated && depositIdentity) {
+        await this.delegatedAuthStore.bind({
+          channelId: p.channelId,
+          network: requirements.network,
+          callerIdentity: depositIdentity,
+          expiresAt: p.expiresAt,
+        });
+      }
     } catch (error) {
       this.settlementCache.delete(depositChannelKey);
       return {
@@ -608,7 +747,7 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
         network: payload.accepted.network,
         transaction: "",
         errorReason: ERR_CHANNEL_BROADCAST,
-        errorMessage: `failed to durably index the channel before broadcast: ${
+        errorMessage: `failed to durably record the channel before broadcast: ${
           error instanceof Error ? error.message : String(error)
         }`,
         payer: p.from,
@@ -653,16 +792,22 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
     }
 
     try {
-      await fetchAndVerifyOpenChannel(this.signer, network, p.channelId, {
-        authorizedSigner: channelConfig.receiverAuthorizer,
-        deposit: maxAmount,
-        gracePeriod: channelConfig.withdrawDelay,
-        mint: requirements.asset,
-        payee: feePayer,
-        payer: p.from,
-        rentPayer: feePayer,
-        splits: channelConfig.splits,
-      });
+      await fetchAndVerifyOpenChannel(
+        this.signer,
+        network,
+        p.channelId,
+        {
+          authorizedSigner: channelConfig.receiverAuthorizer,
+          deposit: maxAmount,
+          gracePeriod: channelConfig.withdrawDelay,
+          mint: requirements.asset,
+          payee: feePayer,
+          payer: p.from,
+          rentPayer: feePayer,
+          splits: channelConfig.splits,
+        },
+        this.resolveChannelReadPolicy(),
+      );
     } catch (error) {
       this.settlementCache.delete(depositChannelKey);
       return {
@@ -691,7 +836,7 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
   }
 
   /**
-   * Claim path: re-bind the open channel, verify the voucher, then
+   * Claim path: re-bind the open channel, verify or produce the voucher, then
    * settle_and_seal + distribute.
    *
    * @param payload - The payment payload
@@ -699,6 +844,7 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
    * @param p - Typed upto payload
    * @param actual - Actual charge in atomic units
    * @param payloadMaxAmount - Signed ceiling from the payload
+   * @param context - Facilitator extensions (used by `resolveCallerIdentity`)
    * @returns Claim settlement response
    */
   private async settleClaim(
@@ -707,7 +853,19 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
     p: UptoSvmPayloadV2,
     actual: bigint,
     payloadMaxAmount: bigint,
+    context?: FacilitatorContext,
   ): Promise<SettleResponse> {
+    const hasVoucher = typeof p.voucherSignature === "string" && p.voucherSignature.length > 0;
+    if (!hasVoucher) {
+      const unauthenticated = await this.authenticateDelegatedClaim(
+        payload,
+        requirements,
+        p,
+        context,
+      );
+      if (unauthenticated) return unauthenticated;
+    }
+
     // Pending-settlement fast path: a prior claim settle for this exact
     // channel broadcast settle_and_seal + distribute successfully but
     // couldn't confirm it in time. Reconcile against that signature instead
@@ -733,6 +891,11 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
       if (!pending.ok) {
         return pending.response;
       }
+      try {
+        await this.delegatedAuthStore.delete(p.channelId, requirements.network);
+      } catch {
+        // Best-effort; settlement is already confirmed.
+      }
       return {
         success: true,
         transaction: cachedClaimSignature,
@@ -740,10 +903,6 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
         amount: actual.toString(),
         payer: p.from,
       };
-    }
-
-    if (typeof p.voucherSignature !== "string" || p.voucherSignature.length === 0) {
-      return this.settleFailure(payload, "invalid_upto_svm_payload_missing_voucher", p.from);
     }
 
     let channelConfig: UptoSvmPaymentChannelConfig;
@@ -778,23 +937,26 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
     }
 
     const expiresAt = BigInt(p.expiresAt);
-    const voucherMessage = encodeVoucherMessageBytes({
-      channelId: p.channelId,
-      cumulativeAmount: actual,
-      expiresAt,
-    });
-    let voucherOk: boolean;
-    try {
-      voucherOk = await verifyVoucherSignature({
-        message: voucherMessage,
-        signatureBase58: p.voucherSignature,
-        signerBase58: p.authorizedSigner,
+    let voucherSignature = p.voucherSignature;
+    if (hasVoucher) {
+      const voucherMessage = encodeVoucherMessageBytes({
+        channelId: p.channelId,
+        cumulativeAmount: actual,
+        expiresAt,
       });
-    } catch {
-      return this.settleFailure(payload, "invalid_upto_svm_payload_voucher_signature", p.from);
-    }
-    if (!voucherOk) {
-      return this.settleFailure(payload, "invalid_upto_svm_payload_voucher_signature", p.from);
+      let voucherOk: boolean;
+      try {
+        voucherOk = await verifyVoucherSignature({
+          message: voucherMessage,
+          signatureBase58: p.voucherSignature as string,
+          signerBase58: p.authorizedSigner,
+        });
+      } catch {
+        return this.settleFailure(payload, "invalid_upto_svm_payload_voucher_signature", p.from);
+      }
+      if (!voucherOk) {
+        return this.settleFailure(payload, "invalid_upto_svm_payload_voucher_signature", p.from);
+      }
     }
 
     let tokenProgram: string;
@@ -805,16 +967,22 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
     }
     const network = requirements.network;
 
-    const channelPromise = fetchAndVerifyOpenChannel(this.signer, network, p.channelId, {
-      authorizedSigner: channelConfig.receiverAuthorizer,
-      deposit: payloadMaxAmount,
-      gracePeriod: channelConfig.withdrawDelay,
-      mint: requirements.asset,
-      payee: channelConfig.feePayer,
-      payer: p.from,
-      rentPayer: channelConfig.feePayer,
-      splits: channelConfig.splits,
-    });
+    const channelPromise = fetchAndVerifyOpenChannel(
+      this.signer,
+      network,
+      p.channelId,
+      {
+        authorizedSigner: channelConfig.receiverAuthorizer,
+        deposit: payloadMaxAmount,
+        gracePeriod: channelConfig.withdrawDelay,
+        mint: requirements.asset,
+        payee: channelConfig.feePayer,
+        payer: p.from,
+        rentPayer: channelConfig.feePayer,
+        splits: channelConfig.splits,
+      },
+      this.resolveChannelReadPolicy(),
+    );
     const blockhashPromise = this.signer.getLatestBlockhash(network);
 
     let channel: Awaited<ReturnType<typeof fetchAndVerifyOpenChannel>>;
@@ -830,6 +998,18 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
         errorMessage: error instanceof Error ? error.message : String(error),
         payer: p.from,
       };
+    }
+
+    if (!hasVoucher) {
+      const authorizerSigner = this.authorizerSigner;
+      if (!authorizerSigner || channel.authorizedSigner !== authorizerSigner.address) {
+        return this.settleFailure(payload, ERR_AUTHORIZER_ADDRESS_MISMATCH, p.from);
+      }
+      voucherSignature = await signVoucher(authorizerSigner, {
+        channelId: p.channelId,
+        cumulativeAmount: actual,
+        expiresAt,
+      });
     }
 
     // Claim only after the open channel is rebound. Concurrent or replayed
@@ -853,7 +1033,7 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
                 authorizedSigner: channel.authorizedSigner,
                 cumulativeAmount: actual,
                 expiresAt,
-                signatureBase58: p.voucherSignature,
+                signatureBase58: voucherSignature as string,
               }
             : undefined,
       });
@@ -891,6 +1071,11 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
       } catch {
         // Best-effort cleanup, per the comment above: settlement is already
         // confirmed onchain and must not be masked by a storage hiccup.
+      }
+      try {
+        await this.delegatedAuthStore.delete(channel.channelId, network);
+      } catch {
+        // Best-effort; settlement is already confirmed.
       }
       return {
         success: true,
@@ -949,12 +1134,13 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
    * @param requirements - Payment requirements (amount must equal ceiling)
    * @param options - Validation options
    * @param options.rejectVoucher - Reject payloads that include `voucherSignature`
+   * @param options.rejectType - Reject payloads that include `type` (client-owned verify)
    * @returns Open auth context or a structured failure
    */
   private async validateOpenAuthorization(
     payload: PaymentPayload,
     requirements: PaymentRequirements,
-    options: { rejectVoucher: boolean },
+    options: { rejectVoucher: boolean; rejectType?: boolean },
   ): Promise<{ ok: true; ctx: OpenAuthContext } | { ok: false; failure: OpenAuthFailure }> {
     const raw = payload.payload as Record<string, unknown>;
     if (!isUptoSvmPayload(raw)) {
@@ -977,6 +1163,9 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
     // client-set key (even "" or undefined) blocks the real voucher at claim.
     if (options.rejectVoucher && Object.prototype.hasOwnProperty.call(raw, "voucherSignature")) {
       return { ok: false, failure: { reason: ERR_UNEXPECTED_VOUCHER, payer: p.from } };
+    }
+    if (options.rejectType && Object.prototype.hasOwnProperty.call(raw, "type")) {
+      return { ok: false, failure: { reason: ERR_PAYLOAD_TYPE, payer: p.from } };
     }
 
     let channelConfig: UptoSvmPaymentChannelConfig;
@@ -1261,6 +1450,96 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
       errorReason,
       payer,
     };
+  }
+
+  /**
+   * Whether this settle's `extra.receiverAuthorizer` is this facilitator's
+   * advertised authorizer.
+   *
+   * @param requirements - Payment requirements for the settle
+   * @returns True when this facilitator is the delegated receiver authorizer
+   */
+  private isDelegatedSettle(requirements: PaymentRequirements): boolean {
+    const advertised = requirements.extra?.receiverAuthorizer;
+    return (
+      this.authorizerSigner !== undefined &&
+      typeof advertised === "string" &&
+      advertised === this.authorizerSigner.address
+    );
+  }
+
+  /**
+   * Resolve a delegated settle's caller identity. Throws and empty/missing
+   * results are treated as unauthenticated.
+   *
+   * @param ctx - Settle context passed to the operator resolver
+   * @returns Stable identity, or undefined when the caller is unauthenticated
+   */
+  private async resolveDelegatedCallerIdentity(
+    ctx: UptoDelegatedSettleContext,
+  ): Promise<string | undefined> {
+    if (!this.resolveCallerIdentity) return undefined;
+    try {
+      const identity = await this.resolveCallerIdentity(ctx);
+      if (typeof identity !== "string" || identity.length === 0) return undefined;
+      return identity;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Authenticate a delegated claim that omitted `voucherSignature`.
+   * Runs before the pending-settlement fast path and any RPC.
+   *
+   * @param payload - The payment payload
+   * @param requirements - Claim requirements
+   * @param p - Typed upto payload
+   * @param context - Facilitator extensions
+   * @returns A failure response, or undefined when the caller matches the binding
+   */
+  private async authenticateDelegatedClaim(
+    payload: PaymentPayload,
+    requirements: PaymentRequirements,
+    p: UptoSvmPayloadV2,
+    context?: FacilitatorContext,
+  ): Promise<SettleResponse | undefined> {
+    const authorizerSigner = this.authorizerSigner;
+    if (!authorizerSigner) {
+      return this.settleFailure(payload, ERR_AUTHORIZER_NOT_CONFIGURED, p.from);
+    }
+    const extraAuthorizer = requirements.extra?.receiverAuthorizer;
+    if (
+      typeof extraAuthorizer !== "string" ||
+      p.authorizedSigner !== extraAuthorizer ||
+      extraAuthorizer !== authorizerSigner.address
+    ) {
+      return this.settleFailure(payload, ERR_AUTHORIZER_ADDRESS_MISMATCH, p.from);
+    }
+
+    const identity = await this.resolveDelegatedCallerIdentity({
+      step: "claim",
+      channelId: p.channelId,
+      network: requirements.network,
+      payer: p.from,
+      amount: requirements.amount,
+      expiresAt: p.expiresAt,
+      payload,
+      requirements,
+      facilitatorContext: context,
+    });
+    if (!identity) {
+      return this.settleFailure(payload, ERR_DELEGATED_SETTLE_UNAUTHENTICATED, p.from);
+    }
+    let binding: Awaited<ReturnType<UptoDelegatedAuthStore["get"]>>;
+    try {
+      binding = await this.delegatedAuthStore.get(p.channelId, requirements.network);
+    } catch {
+      return this.settleFailure(payload, ERR_DELEGATED_SETTLE_UNAUTHENTICATED, p.from);
+    }
+    if (!binding || binding.callerIdentity !== identity) {
+      return this.settleFailure(payload, ERR_DELEGATED_SETTLE_UNAUTHENTICATED, p.from);
+    }
   }
 
   /**

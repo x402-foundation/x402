@@ -138,6 +138,13 @@ func TestVerifyRejections(t *testing.T) {
 			wantReason: ErrUnexpectedVoucher,
 		},
 		{
+			name: "client-supplied type",
+			payload: func(_ *testing.T, f *paymentFixture) types.PaymentPayload {
+				return f.withPayload(map[string]interface{}{svm.UptoPayloadTypeField: svm.UptoPayloadTypeDeposit})
+			},
+			wantReason: ErrPayloadType,
+		},
+		{
 			name: "missing receiver authorizer in the challenge",
 			require: func(_ *testing.T, f *paymentFixture) types.PaymentRequirements {
 				return f.withRequirements(func(requirements *types.PaymentRequirements) {
@@ -518,7 +525,7 @@ func TestSettleRejectsAnEmptyVoucher(t *testing.T) {
 
 	_, err := scheme.Settle(context.Background(), payload, fixture.claimRequirements(500), nil)
 
-	assert.Equal(t, ErrMissingVoucher, settleErrorReason(t, err))
+	assert.Equal(t, ErrAuthorizerNotConfigured, settleErrorReason(t, err))
 }
 
 func TestDepositSettleSimulatesThenBroadcasts(t *testing.T) {
@@ -1305,4 +1312,290 @@ func instructionPrograms(t *testing.T, tx *solana.Transaction) []solana.PublicKe
 		programs = append(programs, program)
 	}
 	return programs
+}
+
+type testAuthorizerSigner struct {
+	key solana.PrivateKey
+}
+
+func (a *testAuthorizerSigner) Address() solana.PublicKey {
+	return a.key.PublicKey()
+}
+
+func (a *testAuthorizerSigner) SignMessage(_ context.Context, message []byte) ([]byte, error) {
+	signature, err := a.key.Sign(message)
+	if err != nil {
+		return nil, err
+	}
+	return signature[:], nil
+}
+
+func identityResolver(identity string) ResolveCallerIdentity {
+	return func(DelegatedSettleContext) (string, error) {
+		return identity, nil
+	}
+}
+
+type delegatedFixture struct {
+	signer     *mockSigner
+	stub       *stubRPC
+	fixture    *paymentFixture
+	scheme     *UptoSvmScheme
+	authorizer *testAuthorizerSigner
+	store      *InMemoryDelegatedAuthStore
+}
+
+func newDelegatedFixture(t *testing.T, resolve ResolveCallerIdentity) *delegatedFixture {
+	t.Helper()
+	signer := newMockSigner(t, 1)
+	stub := newStubRPC(t)
+	authorizerKey, err := solana.NewRandomPrivateKey()
+	require.NoError(t, err)
+	authorizer := &testAuthorizerSigner{key: authorizerKey}
+	store := NewInMemoryDelegatedAuthStore()
+	scheme := newScheme(signer, stub, &Config{
+		AuthorizerSigner:      authorizer,
+		ResolveCallerIdentity: resolve,
+		DelegatedAuthStore:    store,
+	})
+	fixture := newPaymentFixtureWithAuthorizer(t, signer, authorizerKey)
+	return &delegatedFixture{
+		signer:     signer,
+		stub:       stub,
+		fixture:    fixture,
+		scheme:     scheme,
+		authorizer: authorizer,
+		store:      store,
+	}
+}
+
+func (d *delegatedFixture) depositPayload() types.PaymentPayload {
+	return d.fixture.withPayload(map[string]interface{}{svm.UptoPayloadTypeField: svm.UptoPayloadTypeDeposit})
+}
+
+func (d *delegatedFixture) claimPayload() types.PaymentPayload {
+	return d.fixture.withPayload(map[string]interface{}{svm.UptoPayloadTypeField: svm.UptoPayloadTypeClaim})
+}
+
+func (d *delegatedFixture) openOnSend(t *testing.T) {
+	d.signer.onSend = func(*solana.Transaction) {
+		d.stub.setAccount(d.fixture.channelID.String(), d.fixture.openChannel().encode(t))
+	}
+}
+
+func TestGetExtraIncludesReceiverAuthorizerOnlyWhenAuthorizerSignerIsSet(t *testing.T) {
+	signer := newMockSigner(t, 1)
+	scheme := newScheme(signer, newStubRPC(t), nil)
+	extra := scheme.GetExtra(testNetwork)
+	require.NotNil(t, extra)
+	_, hasAuthorizer := extra[upto.ExtraReceiverAuthorizer]
+	assert.False(t, hasAuthorizer)
+
+	authorizerKey, err := solana.NewRandomPrivateKey()
+	require.NoError(t, err)
+	delegated := NewUptoSvmScheme(signer, &Config{
+		AuthorizerSigner:      &testAuthorizerSigner{key: authorizerKey},
+		ResolveCallerIdentity: identityResolver("svc-1"),
+	})
+	delegatedExtra := delegated.GetExtra(testNetwork)
+	assert.Equal(t, authorizerKey.PublicKey().String(), delegatedExtra[upto.ExtraReceiverAuthorizer])
+	assert.Contains(t, delegatedExtra, upto.ExtraFeePayer)
+}
+
+func TestNewUptoSvmSchemeRequiresResolveCallerIdentityWithAuthorizer(t *testing.T) {
+	signer := newMockSigner(t, 1)
+	authorizerKey, err := solana.NewRandomPrivateKey()
+	require.NoError(t, err)
+	assert.Panics(t, func() {
+		NewUptoSvmScheme(signer, &Config{AuthorizerSigner: &testAuthorizerSigner{key: authorizerKey}})
+	})
+}
+
+func TestInMemoryDelegatedAuthStore_Bind_FirstWriterWins(t *testing.T) {
+	store := NewInMemoryDelegatedAuthStore()
+	ctx := t.Context()
+	expiresAt := time.Now().Add(time.Hour).Unix()
+
+	require.NoError(t, store.Bind(ctx, DelegatedAuthBinding{
+		ChannelID: "ch-1", Network: testNetwork, CallerIdentity: "svc-1", ExpiresAt: expiresAt,
+	}))
+	require.NoError(t, store.Bind(ctx, DelegatedAuthBinding{
+		ChannelID: "ch-1", Network: testNetwork, CallerIdentity: "svc-1", ExpiresAt: expiresAt,
+	}))
+
+	err := store.Bind(ctx, DelegatedAuthBinding{
+		ChannelID: "ch-1", Network: testNetwork, CallerIdentity: "svc-2", ExpiresAt: expiresAt,
+	})
+	require.ErrorIs(t, err, ErrDelegatedAuthIdentityConflict)
+
+	got, err := store.Get(ctx, "ch-1", testNetwork)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "svc-1", got.CallerIdentity)
+}
+
+func TestInMemoryDelegatedAuthStore_Bind_ExpiredIsAbsent(t *testing.T) {
+	store := NewInMemoryDelegatedAuthStore()
+	ctx := t.Context()
+
+	require.NoError(t, store.Bind(ctx, DelegatedAuthBinding{
+		ChannelID: "ch-1", Network: testNetwork, CallerIdentity: "svc-1", ExpiresAt: time.Now().Add(-time.Second).Unix(),
+	}))
+	require.NoError(t, store.Bind(ctx, DelegatedAuthBinding{
+		ChannelID: "ch-1", Network: testNetwork, CallerIdentity: "svc-2", ExpiresAt: time.Now().Add(time.Hour).Unix(),
+	}))
+
+	got, err := store.Get(ctx, "ch-1", testNetwork)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "svc-2", got.CallerIdentity)
+}
+
+func TestDelegatedSettleRoutesFullChargeTypeClaimAsClaim(t *testing.T) {
+	d := newDelegatedFixture(t, identityResolver("svc-1"))
+	d.openOnSend(t)
+
+	_, err := d.scheme.Settle(context.Background(), d.depositPayload(), d.fixture.requirements, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(d.signer.sentTransactions()))
+
+	d.stub.setAccount(d.fixture.channelID.String(), d.fixture.openChannel().encode(t))
+	sentBefore := len(d.signer.sentTransactions())
+
+	response, err := d.scheme.Settle(context.Background(), d.claimPayload(), d.fixture.requirements, nil)
+	require.NoError(t, err)
+	assert.True(t, response.Success)
+	assert.Equal(t, "10000", response.Amount)
+	assert.Equal(t, sentBefore+1, len(d.signer.sentTransactions()), "claim must not re-broadcast open")
+	binding, err := d.store.Get(context.Background(), d.fixture.channelID.String(), testNetwork)
+	require.NoError(t, err)
+	assert.Nil(t, binding)
+}
+
+func TestDelegatedSettleRejectsMissingType(t *testing.T) {
+	d := newDelegatedFixture(t, identityResolver("svc-1"))
+
+	_, err := d.scheme.Settle(context.Background(), d.fixture.payload, d.fixture.requirements, nil)
+	assert.Equal(t, ErrPayloadType, settleErrorReason(t, err))
+	assert.Empty(t, d.signer.sentTransactions())
+}
+
+func TestDelegatedSettleRejectsClientSuppliedTypeAtVerify(t *testing.T) {
+	d := newDelegatedFixture(t, identityResolver("svc-1"))
+
+	_, err := d.scheme.Verify(context.Background(), d.depositPayload(), d.fixture.requirements, nil)
+	assert.Equal(t, ErrPayloadType, verifyErrorReason(t, err))
+}
+
+func TestDelegatedSettleSignsAndSettlesMatchingIdentities(t *testing.T) {
+	var steps []DelegatedSettleStep
+	resolve := func(ctx DelegatedSettleContext) (string, error) {
+		steps = append(steps, ctx.Step)
+		return "svc-1", nil
+	}
+	d := newDelegatedFixture(t, resolve)
+	d.openOnSend(t)
+
+	_, err := d.scheme.Settle(context.Background(), d.depositPayload(), d.fixture.requirements, nil)
+	require.NoError(t, err)
+	binding, err := d.store.Get(context.Background(), d.fixture.channelID.String(), testNetwork)
+	require.NoError(t, err)
+	require.NotNil(t, binding)
+	assert.Equal(t, "svc-1", binding.CallerIdentity)
+
+	d.stub.setAccount(d.fixture.channelID.String(), d.fixture.openChannel().encode(t))
+
+	response, err := d.scheme.Settle(context.Background(), d.claimPayload(), d.fixture.claimRequirements(1858), nil)
+	require.NoError(t, err)
+	assert.True(t, response.Success)
+	assert.Equal(t, "1858", response.Amount)
+	assert.Equal(t, []DelegatedSettleStep{DelegatedSettleStepDeposit, DelegatedSettleStepClaim}, steps)
+	binding, err = d.store.Get(context.Background(), d.fixture.channelID.String(), testNetwork)
+	require.NoError(t, err)
+	assert.Nil(t, binding)
+}
+
+func TestDelegatedSettleRejectsDifferentIdentityWithoutBroadcasting(t *testing.T) {
+	calls := 0
+	resolve := func(DelegatedSettleContext) (string, error) {
+		calls++
+		if calls == 1 {
+			return "svc-1", nil
+		}
+		return "svc-2", nil
+	}
+	d := newDelegatedFixture(t, resolve)
+	d.openOnSend(t)
+
+	_, err := d.scheme.Settle(context.Background(), d.depositPayload(), d.fixture.requirements, nil)
+	require.NoError(t, err)
+	sentBefore := len(d.signer.sentTransactions())
+	accountReadsBefore := len(d.stub.commitmentsFor("getAccountInfo"))
+
+	_, err = d.scheme.Settle(context.Background(), d.claimPayload(), d.fixture.claimRequirements(1858), nil)
+	assert.Equal(t, ErrDelegatedSettleUnauthenticated, settleErrorReason(t, err))
+	assert.Equal(t, sentBefore, len(d.signer.sentTransactions()))
+	assert.Equal(t, accountReadsBefore, len(d.stub.commitmentsFor("getAccountInfo")), "claim must not fetch the channel before identity match")
+}
+
+func TestDelegatedSettleRejectsClaimWithNoStoredBinding(t *testing.T) {
+	d := newDelegatedFixture(t, identityResolver("svc-1"))
+
+	_, err := d.scheme.Settle(context.Background(), d.claimPayload(), d.fixture.claimRequirements(1858), nil)
+	assert.Equal(t, ErrDelegatedSettleUnauthenticated, settleErrorReason(t, err))
+	assert.Empty(t, d.signer.sentTransactions())
+	assert.Empty(t, d.stub.commitmentsFor("getAccountInfo"))
+}
+
+func TestDelegatedSettleRejectsWhenResolveCallerIdentityIsUndefinedOrThrowing(t *testing.T) {
+	tests := []struct {
+		name     string
+		resolver ResolveCallerIdentity
+	}{
+		{name: "undefined", resolver: func(DelegatedSettleContext) (string, error) { return "", nil }},
+		{name: "throwing", resolver: func(DelegatedSettleContext) (string, error) { return "", errors.New("no creds") }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			d := newDelegatedFixture(t, test.resolver)
+
+			_, err := d.scheme.Settle(context.Background(), d.depositPayload(), d.fixture.requirements, nil)
+			assert.Equal(t, ErrDelegatedSettleUnauthenticated, settleErrorReason(t, err))
+			assert.Empty(t, d.signer.sentTransactions())
+			assert.Zero(t, d.stub.simulations())
+
+			_, err = d.scheme.Settle(context.Background(), d.claimPayload(), d.fixture.claimRequirements(1858), nil)
+			assert.Equal(t, ErrDelegatedSettleUnauthenticated, settleErrorReason(t, err))
+			assert.Empty(t, d.signer.sentTransactions())
+		})
+	}
+}
+
+func TestDelegatedSettleRejectsClaimWhenAuthorizerSignerIsNotConfigured(t *testing.T) {
+	signer := newMockSigner(t, 1)
+	stub := newStubRPC(t)
+	fixture := newPaymentFixture(t, signer)
+	scheme := newScheme(signer, stub, nil)
+
+	_, err := scheme.Settle(context.Background(), fixture.withPayload(map[string]interface{}{
+		svm.UptoPayloadTypeField: svm.UptoPayloadTypeClaim,
+	}), fixture.claimRequirements(1858), nil)
+	assert.Equal(t, ErrAuthorizerNotConfigured, settleErrorReason(t, err))
+}
+
+func TestDelegatedSettleRejectsClaimWhoseAuthorizerIsNotThisFacilitator(t *testing.T) {
+	signer := newMockSigner(t, 1)
+	stub := newStubRPC(t)
+	authorizerKey, err := solana.NewRandomPrivateKey()
+	require.NoError(t, err)
+	fixture := newPaymentFixture(t, signer)
+	scheme := newScheme(signer, stub, &Config{
+		AuthorizerSigner:      &testAuthorizerSigner{key: authorizerKey},
+		ResolveCallerIdentity: identityResolver("svc-1"),
+	})
+
+	_, err = scheme.Settle(context.Background(), fixture.withPayload(map[string]interface{}{
+		svm.UptoPayloadTypeField: svm.UptoPayloadTypeClaim,
+	}), fixture.claimRequirements(1858), nil)
+	assert.Equal(t, ErrAuthorizerAddressMismatch, settleErrorReason(t, err))
 }

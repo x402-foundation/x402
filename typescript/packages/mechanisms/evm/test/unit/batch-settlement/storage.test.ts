@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  isNodeEnoent,
+  readJsonFile,
+  resolveWithinDir,
+  writeJsonAtomic,
+} from "../../../src/batch-settlement/storage-utils";
 import { InMemoryChannelStorage, type Channel } from "../../../src/batch-settlement/server/storage";
 import { FileChannelStorage } from "../../../src/batch-settlement/server/fileStorage";
 import { FileClientChannelStorage } from "../../../src/batch-settlement/client/fileStorage";
@@ -516,6 +522,45 @@ describe("FileChannelStorage", () => {
     },
   );
 
+  it("lists nothing when the server directory is missing", async () => {
+    expect(await storage.list()).toEqual([]);
+  });
+
+  it("skips non-json files and reports remaining channels sorted", async () => {
+    const other = "0x2222222222222222222222222222222222222222222222222222222222222222";
+    await storage.updateChannel(CHANNEL_ID, () => buildSession());
+    await storage.updateChannel(other, () => buildSession({ channelId: other }));
+    await writeFile(join(root, "server", "notes.txt"), "ignore me");
+    expect((await storage.list()).map(c => c.channelId)).toEqual([other, CHANNEL_ID]);
+  });
+
+  it("rethrows corrupt JSON while listing instead of silently dropping it", async () => {
+    await storage.updateChannel(CHANNEL_ID, () => buildSession());
+    await writeFile(join(root, "server", `${CHANNEL_ID}.json`), "{not-json");
+    await expect(storage.list()).rejects.toThrow();
+  });
+
+  it("reports unchanged when the updater returns the same object", async () => {
+    const channel = buildSession();
+    await storage.updateChannel(CHANNEL_ID, () => channel);
+    await expect(storage.updateChannel(CHANNEL_ID, current => current)).resolves.toEqual({
+      channel,
+      status: "unchanged",
+    });
+  });
+
+  it("deletes a stored channel and treats a second delete as unchanged", async () => {
+    await storage.updateChannel(CHANNEL_ID, () => buildSession());
+    await expect(storage.updateChannel(CHANNEL_ID, () => undefined)).resolves.toEqual({
+      channel: undefined,
+      status: "deleted",
+    });
+    await expect(storage.updateChannel(CHANNEL_ID, () => undefined)).resolves.toEqual({
+      channel: undefined,
+      status: "unchanged",
+    });
+  });
+
   it("cannot overwrite or delete a sibling channel via a traversal id", async () => {
     const victim = buildSession({ channelId: CHANNEL_ID, chargedCumulativeAmount: "42" });
     await storage.updateChannel(CHANNEL_ID, () => victim);
@@ -569,10 +614,52 @@ describe("FileClientChannelStorage", () => {
     expect(onDisk).toBe(`${JSON.stringify(ctx, null, 2)}\n`);
   });
 
+  it("treats delete of a missing channel file as success", async () => {
+    await expect(storage.delete(MIXED_CASE_ID)).resolves.toBeUndefined();
+  });
+
   it.each(MALFORMED_IDS)("rejects malformed key %j across get/set/delete", async id => {
     await expect(storage.get(id)).rejects.toThrow();
     await expect(storage.set(id, { chargedCumulativeAmount: "1" })).rejects.toThrow();
     await expect(storage.delete(id)).rejects.toThrow();
     expect(await readdir(root)).toEqual([]);
+  });
+});
+
+describe("storage-utils", () => {
+  it("rejects a filename that escapes the storage root", () => {
+    expect(() => resolveWithinDir("/tmp/x402-root", "../etc/passwd")).toThrow(
+      "resolved channel path escapes storage root",
+    );
+  });
+
+  it("recognizes only Node ENOENT errors", () => {
+    expect(isNodeEnoent(Object.assign(new Error("missing"), { code: "ENOENT" }))).toBe(true);
+    expect(isNodeEnoent(Object.assign(new Error("denied"), { code: "EACCES" }))).toBe(false);
+    expect(isNodeEnoent("missing")).toBe(false);
+    expect(isNodeEnoent(null)).toBe(false);
+  });
+
+  it("readJsonFile returns undefined for a missing file and rethrows parse errors", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "x402-json-"));
+    try {
+      expect(await readJsonFile(join(dir, "missing.json"))).toBeUndefined();
+      const bad = join(dir, "bad.json");
+      await writeFile(bad, "{nope");
+      await expect(readJsonFile(bad)).rejects.toThrow();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("writeJsonAtomic creates parent directories and persists formatted JSON", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "x402-atomic-"));
+    try {
+      const path = join(dir, "nested", "file.json");
+      await writeJsonAtomic(path, { ok: true });
+      expect(await readFile(path, "utf8")).toBe(`${JSON.stringify({ ok: true }, null, 2)}\n`);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

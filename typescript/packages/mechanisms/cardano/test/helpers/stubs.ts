@@ -86,10 +86,20 @@ export async function freshPreprodAddress(): Promise<string> {
   return Address.toBech32(await client.address());
 }
 
+/** Live-looking protocol parameters matching the offline fixture builder. */
+export const STUB_PROTOCOL_PARAMETERS = {
+  coinsPerUtxoByte: STUB_COINS_PER_UTXO_BYTE,
+  minFeeCoefficient: 44n,
+  minFeeConstant: 155381n,
+};
+
 /**
- * In-memory facilitator chain layer. Reports the nonce UTXO as unspent, a
- * current slot below the fixture TTL, and confirmed submission. Intentionally
- * omits `evaluateTransaction` so verify() does not attempt a node dry-run.
+ * In-memory facilitator chain layer. Reports fixture inputs as unspent with
+ * their authenticated values, a current slot below the fixture TTL, live-looking
+ * protocol parameters, and confirmed submission. Intentionally omits
+ * `evaluateTransaction` so verify() does not attempt a node dry-run, and has no
+ * `validatePhase1Transaction`: the built-in checks are what a standard provider
+ * setup gets.
  *
  * @param overrides - Per-test overrides (e.g. spent nonce, advanced slot).
  * @returns A facilitator signer stub.
@@ -104,9 +114,7 @@ export function stubFacilitatorSigner(
   return {
     getAddresses: () => [PAYER_ADDRESS],
     getUtxo: async ref => getFixtureInputSnapshot(ref) ?? { exists: true, address: PAYER_ADDRESS },
-    // Fixtures are built by the real transaction builder. Model the complete
-    // ledger preflight that production server-submission signers must provide.
-    validatePhase1Transaction: async () => undefined,
+    getProtocolParameters: async () => STUB_PROTOCOL_PARAMETERS,
     getCurrentSlot: async () => STUB_CURRENT_SLOT,
     submitTransaction: async transaction => {
       const { txHash } = decodeCardanoTransaction(transaction);
@@ -194,7 +202,7 @@ export function stubClientSigner(): ClientCardanoSigner {
           BigInt(input.amount),
           NONCE_REF,
         );
-        return { ...built, submissionMode: input.submissionMode, settlementLayer: "l1" };
+        return built;
       }
 
       const built = await buildSignedTx({
@@ -206,11 +214,7 @@ export function stubClientSigner(): ClientCardanoSigner {
         network: input.network,
         ...(scriptDatum ? { datum: scriptDatum } : {}),
       });
-      return {
-        transaction: built.transaction,
-        nonce: built.nonce,
-        submissionMode: input.submissionMode,
-      };
+      return { transaction: built.transaction, nonce: built.nonce };
     },
   };
 }

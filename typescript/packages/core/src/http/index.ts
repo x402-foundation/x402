@@ -118,8 +118,10 @@ export {
 export {
   FacilitatorResponseError,
   FacilitatorTimeoutError,
+  FacilitatorCapabilityError,
   getFacilitatorResponseError,
 } from "../types";
+export { attachBackgroundInitHandler, isFatalStartupInitError } from "./backgroundInit";
 export {
   x402HTTPClient,
   PaymentRequiredContext,

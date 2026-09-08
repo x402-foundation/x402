@@ -23,6 +23,24 @@ import { UptoSvmScheme } from "../../src/upto/facilitator/scheme";
 import { UptoSvmRentCleanupManager } from "../../src/upto/facilitator/rentCleanupManager";
 import { SOLANA_DEVNET_CAIP2 } from "../../src/constants";
 import { ExactSvmScheme as ServerExactSvmScheme } from "../../src/exact/server/scheme";
+import * as exactClientEntry from "../../src/exact/client";
+import { registerExactSvmScheme as registerExactClient } from "../../src/exact/client/register";
+import * as exactFacilitatorEntry from "../../src/exact/facilitator";
+import { registerExactSvmScheme as registerExactFacilitator } from "../../src/exact/facilitator/register";
+import * as exactServerEntry from "../../src/exact/server";
+import { registerExactSvmScheme as registerExactServer } from "../../src/exact/server/register";
+import * as exactV1ClientEntry from "../../src/exact/v1/client";
+import { ExactSvmSchemeV1 as ExactV1ClientScheme } from "../../src/exact/v1/client/scheme";
+import * as exactV1FacilitatorEntry from "../../src/exact/v1/facilitator";
+import { ExactSvmSchemeV1 as ExactV1FacilitatorScheme } from "../../src/exact/v1/facilitator/scheme";
+import * as uptoClientEntry from "../../src/upto/client";
+import { UptoSvmScheme as UptoClientScheme } from "../../src/upto/client/scheme";
+import * as uptoServerEntry from "../../src/upto/server";
+import { UptoSvmScheme as UptoServerScheme } from "../../src/upto/server/scheme";
+import * as uptoFacilitatorEntry from "../../src/upto/facilitator";
+import { UptoSvmScheme as UptoFacilitatorScheme } from "../../src/upto/facilitator/scheme";
+import * as paymentChannelsEntry from "../../src/payment-channels";
+import { verifyOpenTransaction } from "../../src/payment-channels/open";
 
 describe("@x402/svm", () => {
   it("should export main classes", () => {
@@ -30,6 +48,21 @@ describe("@x402/svm", () => {
     expect(ExactSvmScheme).toBeDefined();
     expect(ExactSvmScheme).toBeDefined();
     expect(assertSmartWalletLimits).toBeDefined();
+  });
+
+  it("re-exports register/scheme entry points callers import from package subpaths", () => {
+    expect(exactClientEntry.registerExactSvmScheme).toBe(registerExactClient);
+    expect(exactFacilitatorEntry.registerExactSvmScheme).toBe(registerExactFacilitator);
+    expect(exactServerEntry.registerExactSvmScheme).toBe(registerExactServer);
+    expect(exactV1ClientEntry.ExactSvmSchemeV1).toBe(ExactV1ClientScheme);
+    expect(exactV1FacilitatorEntry.ExactSvmSchemeV1).toBe(ExactV1FacilitatorScheme);
+    expect(uptoClientEntry.UptoSvmScheme).toBe(UptoClientScheme);
+    expect(uptoServerEntry.UptoSvmScheme).toBe(UptoServerScheme);
+    expect(uptoFacilitatorEntry.UptoSvmScheme).toBe(UptoFacilitatorScheme);
+    expect(uptoFacilitatorEntry.ERR_DELEGATED_SETTLE_UNAUTHENTICATED).toBe(
+      "invalid_upto_svm_delegated_settle_unauthenticated",
+    );
+    expect(paymentChannelsEntry.verifyOpenTransaction).toBe(verifyOpenTransaction);
   });
 
   describe("validateSvmAddress", () => {
@@ -141,6 +174,22 @@ describe("@x402/svm", () => {
       expect(getStablecoinTokenProgram("CASH", SOLANA_MAINNET_CAIP2)).toBe(
         TOKEN_2022_PROGRAM_ADDRESS,
       );
+      expect(getStablecoinTokenProgram("SOL", SOLANA_MAINNET_CAIP2)).toBe(TOKEN_PROGRAM_ADDRESS);
+      expect(
+        getStablecoinTokenProgram(
+          "UnknownMint111111111111111111111111111111",
+          SOLANA_MAINNET_CAIP2,
+        ),
+      ).toBe(TOKEN_PROGRAM_ADDRESS);
+    });
+  });
+
+  describe("createRpcClient", () => {
+    it("creates clients for testnet and mainnet and rejects unsupported networks", async () => {
+      const { createRpcClient } = await import("../../src/utils");
+      expect(createRpcClient(SOLANA_TESTNET_CAIP2)).toBeDefined();
+      expect(createRpcClient(SOLANA_MAINNET_CAIP2)).toBeDefined();
+      expect(() => createRpcClient("solana:unknown" as never)).toThrow("Unsupported SVM network");
     });
   });
 

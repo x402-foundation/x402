@@ -141,6 +141,7 @@ def verify_universal_signature(
     # pre-verify to return valid for 7702 EOAs whose delegate rejects raw ECDSA on-chain.
     code = signer.get_code(signer_address)
     is_deployed = len(code) > 0
+    sig_data.code_deployed = is_deployed
 
     if not is_deployed:
         if has_deployment_info(sig_data):

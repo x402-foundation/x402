@@ -111,8 +111,6 @@ export interface IssueMasumiRequirementsInput {
   agentIdentifier?: string | null;
   /** Optional key-credential payout address for the seller. */
   sellerReturnAddress?: string;
-  settlementPolicy?: MasumiTerms["settlementPolicy"];
-  submissionPolicy?: CardanoExtraMasumi["submissionPolicy"];
   confirmationPolicy?: CardanoExtraMasumi["confirmationPolicy"];
   /** Non-canonical validator parameters. Required on Preview. */
   deployment?: MasumiDeployment;
@@ -320,10 +318,6 @@ export async function issueMasumiRequirements(
     submitResultTime: input.submitResultTime,
     unlockTime: input.unlockTime,
     externalDisputeUnlockTime: input.externalDisputeUnlockTime,
-    // This reference implementation currently has no Hydra client, so its
-    // issuer deliberately selects L1 instead of advertising `auto` and later
-    // being unable to honor a Hydra-capable buyer's choice.
-    settlementPolicy: input.settlementPolicy ?? "l1",
   };
 
   const requirements: PaymentRequirements = {
@@ -370,7 +364,6 @@ export async function issueMasumiRequirements(
 
   const extra: CardanoExtraMasumi = {
     assetTransferMethod: ASSET_TRANSFER_METHOD_MASUMI,
-    ...(input.submissionPolicy !== undefined ? { submissionPolicy: input.submissionPolicy } : {}),
     ...(input.confirmationPolicy !== undefined
       ? { confirmationPolicy: input.confirmationPolicy }
       : {}),

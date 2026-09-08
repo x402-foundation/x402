@@ -1,14 +1,32 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { keccak256, zeroAddress } from "viem";
 import {
+  AUTH_CAPTURE_DEPLOYMENT_V1_0,
+  AUTH_CAPTURE_DEPLOYMENT_V1_1,
   AUTH_CAPTURE_ESCROW_V1_0_ADDRESS,
+  AUTH_CAPTURE_ESCROW_V1_1_ADDRESS,
+  CAPTURE_TYPES_V1_0,
+  CAPTURE_TYPES_V1_1,
+  CHARGE_TYPES_V1_0,
+  CHARGE_TYPES_V1_1,
   SALT_BINDING_TYPEHASH,
+  captureTypesForDeployment,
+  chargeTypesForDeployment,
+  feeAmountFromBps,
+  resolveAuthCaptureDeployment,
 } from "../../../src/auth-capture/constants";
 import {
   computePayerAgnosticPaymentInfoHash,
+  computePaymentInfoHash,
   deriveBoundSalt,
+  extraAddress,
   generateSalt,
+  isNonZeroAddress,
   isSaltBindingOn,
+  normalizeBytes32,
+  signPermit2,
+  verifyERC3009Signature,
+  verifyPermit2Signature,
 } from "../../../src/auth-capture/nonce";
 import type { PaymentInfoStruct } from "../../../src/auth-capture/types";
 
@@ -36,10 +54,10 @@ describe("nonce utilities", () => {
 
     it("should produce fixed hashes for the default and v1.0 escrow domains", () => {
       expect(computePayerAgnosticPaymentInfoHash(84532, mockPaymentInfo)).toBe(
-        "0x341988b065a5131b3a82818eb7aba9010135f326af1af7695fce4d2bbebd0b76",
+        "0x695990db5fd8f3f541f505b117da619dace4d28a039e35646ce7b660e699ff4b",
       );
       expect(computePayerAgnosticPaymentInfoHash(8453, mockPaymentInfo)).toBe(
-        "0xa393f8f76a2327a7678488b2d504bda611b7586bb3f334b255a11bb5a75e79ca",
+        "0x37588eff80093203c128c6622608c6e972e41c2fd79da91ef5294a26e647e4e2",
       );
       expect(
         computePayerAgnosticPaymentInfoHash(
@@ -85,6 +103,18 @@ describe("nonce utilities", () => {
         salt: "0x0000000000000000000000000000000000000000000000000000000000000002",
       });
       expect(nonce1).not.toBe(nonce2);
+    });
+
+    it("computePaymentInfoHash binds the real payer and therefore differs from the nonce", () => {
+      const withPayer: PaymentInfoStruct = {
+        ...mockPaymentInfo,
+        payer: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      };
+      const nonce = computePayerAgnosticPaymentInfoHash(84532, withPayer);
+      const paymentHash = computePaymentInfoHash(84532, withPayer);
+      expect(paymentHash).toMatch(/^0x[a-fA-F0-9]{64}$/);
+      expect(paymentHash).not.toBe(nonce);
+      expect(computePaymentInfoHash(84532, { ...withPayer, payer: zeroAddress })).toBe(nonce);
     });
 
     it("should be payer-agnostic — different payers produce identical nonces", () => {
@@ -176,5 +206,139 @@ describe("nonce utilities", () => {
         ),
       ).not.toBe(base);
     });
+  });
+
+  describe("normalizeBytes32", () => {
+    it("zero-pads a short hex integer and lowercases it", () => {
+      expect(normalizeBytes32("0xAbC")).toBe(
+        "0x0000000000000000000000000000000000000000000000000000000000000abc",
+      );
+    });
+
+    it("accepts a value without a 0x prefix and a 0X prefix", () => {
+      expect(normalizeBytes32("1")).toBe(
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+      );
+      expect(normalizeBytes32("0Xff")).toBe(
+        "0x00000000000000000000000000000000000000000000000000000000000000ff",
+      );
+    });
+
+    it("rejects empty, non-hex, and oversized values", () => {
+      expect(() => normalizeBytes32("0x")).toThrow("Invalid bytes32");
+      expect(() => normalizeBytes32("0xzz")).toThrow("Invalid bytes32");
+      expect(() => normalizeBytes32(`0x${"aa".repeat(33)}`)).toThrow("Invalid bytes32");
+    });
+  });
+
+  describe("extraAddress / isNonZeroAddress", () => {
+    it("treats absent or invalid addresses as the zero address", () => {
+      expect(extraAddress(undefined)).toBe(zeroAddress);
+      expect(extraAddress("")).toBe(zeroAddress);
+      expect(extraAddress("not-an-address")).toBe(zeroAddress);
+      expect(isNonZeroAddress(undefined)).toBe(false);
+      expect(isNonZeroAddress("0x0000000000000000000000000000000000000000")).toBe(false);
+    });
+
+    it("checksums a valid address and treats it as non-zero", () => {
+      expect(extraAddress("0x1111111111111111111111111111111111111111")).toBe(
+        "0x1111111111111111111111111111111111111111",
+      );
+      expect(isNonZeroAddress("0x1111111111111111111111111111111111111111")).toBe(true);
+    });
+  });
+
+  describe("signature helpers", () => {
+    it("verifyPermit2Signature forwards Permit2 typed data to the facilitator signer", async () => {
+      const verifyTypedData = vi.fn().mockResolvedValue(true);
+      const getCode = vi.fn().mockResolvedValue("0x");
+      const signer = {
+        getAddresses: () => [],
+        readContract: vi.fn(),
+        verifyTypedData,
+        writeContract: vi.fn(),
+        sendTransaction: vi.fn(),
+        waitForTransactionReceipt: vi.fn(),
+        getCode,
+      };
+      const permit = {
+        from: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as `0x${string}`,
+        permitted: {
+          token: "0x036CbD53842c5426634e7929541eC2318f3dCF7e" as `0x${string}`,
+          amount: "1000",
+        },
+        spender: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as `0x${string}`,
+        nonce: "1",
+        deadline: "9999999999",
+      };
+
+      await expect(verifyPermit2Signature(signer, permit, "0xdead", 84532)).resolves.toBe(false);
+
+      const signed = await signPermit2(
+        {
+          address: permit.from,
+          signTypedData: vi.fn().mockResolvedValue("0xsigned" as `0x${string}`),
+        },
+        permit,
+        84532,
+      );
+      expect(signed).toBe("0xsigned");
+    });
+
+    it("verifyERC3009Signature rejects an invalid signature", async () => {
+      const signer = {
+        getAddresses: () => [],
+        readContract: vi.fn(),
+        verifyTypedData: vi.fn().mockResolvedValue(false),
+        writeContract: vi.fn(),
+        sendTransaction: vi.fn(),
+        waitForTransactionReceipt: vi.fn(),
+        getCode: vi.fn().mockResolvedValue("0x"),
+      };
+      const ok = await verifyERC3009Signature(
+        signer,
+        {
+          from: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          to: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          value: "1",
+          validAfter: "0",
+          validBefore: "9",
+          nonce: "0x1111111111111111111111111111111111111111111111111111111111111111",
+        },
+        "0x00",
+        { name: "USDC", version: "2", chainId: 84532 },
+        "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      );
+      expect(ok).toBe(false);
+    });
+  });
+});
+
+describe("auth-capture deployment constants", () => {
+  it("resolves v1.1 by default and v1.0 from the known escrow address", () => {
+    expect(resolveAuthCaptureDeployment()).toBe(AUTH_CAPTURE_DEPLOYMENT_V1_1);
+    expect(resolveAuthCaptureDeployment("")).toBe(AUTH_CAPTURE_DEPLOYMENT_V1_1);
+    expect(resolveAuthCaptureDeployment(AUTH_CAPTURE_ESCROW_V1_1_ADDRESS)).toBe(
+      AUTH_CAPTURE_DEPLOYMENT_V1_1,
+    );
+    expect(resolveAuthCaptureDeployment(AUTH_CAPTURE_ESCROW_V1_1_ADDRESS.toLowerCase())).toBe(
+      AUTH_CAPTURE_DEPLOYMENT_V1_1,
+    );
+    expect(resolveAuthCaptureDeployment(AUTH_CAPTURE_ESCROW_V1_0_ADDRESS)).toBe(
+      AUTH_CAPTURE_DEPLOYMENT_V1_0,
+    );
+    expect(resolveAuthCaptureDeployment("not-an-address")).toBeUndefined();
+    expect(
+      resolveAuthCaptureDeployment("0x0000000000000000000000000000000000000001"),
+    ).toBeUndefined();
+  });
+
+  it("selects v1.0 vs v1.1 operator typed-data fields and computes escrow fee amounts", () => {
+    expect(chargeTypesForDeployment(AUTH_CAPTURE_DEPLOYMENT_V1_0)).toBe(CHARGE_TYPES_V1_0);
+    expect(chargeTypesForDeployment(AUTH_CAPTURE_DEPLOYMENT_V1_1)).toBe(CHARGE_TYPES_V1_1);
+    expect(captureTypesForDeployment(AUTH_CAPTURE_DEPLOYMENT_V1_0)).toBe(CAPTURE_TYPES_V1_0);
+    expect(captureTypesForDeployment(AUTH_CAPTURE_DEPLOYMENT_V1_1)).toBe(CAPTURE_TYPES_V1_1);
+    expect(feeAmountFromBps(1_000_000n, 250)).toBe(25_000n);
+    expect(feeAmountFromBps(1n, 1)).toBe(0n);
   });
 });

@@ -1,13 +1,13 @@
 {
   "name": "@x402/aptos",
-  "version": "2.24.0",
+  "version": "2.25.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
   "scripts": {
     "start": "tsx --env-file=.env index.ts",
     "build": "tsup",
-    "test": "vitest run",
+    "test": "vitest run --coverage",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:watch": "vitest",
     "watch": "tsc --watch",
@@ -31,21 +31,23 @@
     "@types/node": "^22.13.4",
     "@typescript-eslint/eslint-plugin": "^8.29.1",
     "@typescript-eslint/parser": "^8.29.1",
+    "@vitest/coverage-v8": "^3.2.7",
     "eslint": "^9.24.0",
     "eslint-plugin-import": "^2.31.0",
     "eslint-plugin-jsdoc": "^50.6.9",
     "eslint-plugin-prettier": "^5.2.6",
+    "eslint-plugin-sonarjs": "^3.0.7",
     "prettier": "3.5.2",
     "tsup": "^8.4.0",
     "tsx": "^4.21.0",
     "typescript": "^5.7.3",
     "vite": "^6.2.6",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^3.0.5"
+    "vitest": "^3.2.7"
   },
   "dependencies": {
-    "@x402/core": "workspace:~",
-    "@aptos-labs/ts-sdk": "^5.2.1"
+    "@aptos-labs/ts-sdk": "^5.2.1",
+    "@x402/core": "workspace:~"
   },
   "exports": {
     ".": {

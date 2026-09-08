@@ -4,6 +4,7 @@
 .env.local~
 node_modules/
 dist/
+coverage/
 .turbo/
 .next/
 next-env.d.ts

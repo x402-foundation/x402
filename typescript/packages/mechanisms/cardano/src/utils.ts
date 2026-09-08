@@ -20,14 +20,8 @@ import {
   CARDANO_UTXO_REF_REGEX,
   normalizeCardanoNetwork,
 } from "./constants";
-import { normalizeSubmissionMode } from "./policy";
 import { MAX_CARDANO_TRANSACTION_BYTES } from "./limits";
-import type {
-  CardanoSettlementLayer,
-  CardanoUtxoOutput,
-  DecodedCardanoTransaction,
-  ExactCardanoPayload,
-} from "./types";
+import type { CardanoUtxoOutput, DecodedCardanoTransaction, ExactCardanoPayload } from "./types";
 
 /**
  * Protocol minimum lovelace for a transaction output of the given CBOR-serialized
@@ -130,15 +124,11 @@ export function parseUtxoRef(ref: string): { txHash: string; index: number } {
   return { txHash: txHash.toLowerCase(), index: parseInt(indexStr, 10) };
 }
 
-/** Canonical Hydra protocol head id: 56 lowercase hex characters. */
-const HYDRA_HEAD_ID_REGEX = /^[0-9a-f]{56}$/;
-
 /**
  * Reads a Cardano payment payload back out of an arbitrary record.
  *
- * `submissionMode` is left un-normalized here so the facilitator can tell an
- * absent value (which normalizes to `server`) from an invalid one; the optional
- * settlement fields are validated structurally.
+ * Only `transaction` and `nonce` are read; any other key is ignored so a
+ * payload carrying vocabulary from another scheme version still decodes.
  *
  * @param raw - The raw payload coming from the x402 envelope.
  * @returns The typed Cardano payload.
@@ -155,33 +145,7 @@ export function decodeCardanoPayload(raw: Record<string, unknown>): ExactCardano
   if (typeof nonce !== "string" || nonce.length === 0) {
     throw new Error("Cardano payload is missing a nonce string");
   }
-  if (raw.submissionMode !== undefined && normalizeSubmissionMode(raw.submissionMode) === null) {
-    throw new Error(`Cardano payload has an invalid submissionMode: ${String(raw.submissionMode)}`);
-  }
-  const settlementLayer = raw.settlementLayer;
-  if (settlementLayer !== undefined && settlementLayer !== "l1" && settlementLayer !== "hydra") {
-    throw new Error(`Cardano payload has an invalid settlementLayer: ${String(settlementLayer)}`);
-  }
-  const headId = raw.headId;
-  if (headId !== undefined && (typeof headId !== "string" || !HYDRA_HEAD_ID_REGEX.test(headId))) {
-    throw new Error("Cardano payload headId must be 56 lowercase hex characters");
-  }
-  // A Hydra head id only has meaning for a Hydra payment; carrying one on an L1
-  // payload signals a client that mixed the two settlement paths.
-  if (headId !== undefined && settlementLayer !== "hydra") {
-    throw new Error("Cardano payload headId is only valid with settlementLayer 'hydra'");
-  }
-  return {
-    transaction,
-    nonce,
-    ...(raw.submissionMode !== undefined
-      ? { submissionMode: raw.submissionMode as ExactCardanoPayload["submissionMode"] }
-      : {}),
-    ...(settlementLayer !== undefined
-      ? { settlementLayer: settlementLayer as CardanoSettlementLayer }
-      : {}),
-    ...(headId !== undefined ? { headId } : {}),
-  };
+  return { transaction, nonce };
 }
 
 /**
@@ -267,20 +231,12 @@ export function decodeCardanoTransaction(transactionBase64: string): DecodedCard
     validityStartSlot: tx.body.validityIntervalStart,
     inputs,
     fee: tx.body.fee,
-    unsupportedPhase1Operations: [
-      ...(tx.body.auxiliaryDataHash ? ["auxiliaryData"] : []),
-      ...(tx.body.certificates ? ["certificates"] : []),
-      ...(tx.body.withdrawals ? ["withdrawals"] : []),
+    sizeBytes: txBytes.length,
+    balanceChangingOperations: [
       ...(tx.body.mint ? ["mint"] : []),
-      ...(tx.body.scriptDataHash ? ["scriptData"] : []),
-      ...(tx.body.collateralInputs ? ["collateralInputs"] : []),
-      ...(tx.body.requiredSigners ? ["requiredSigners"] : []),
-      ...(tx.body.collateralReturn ? ["collateralReturn"] : []),
-      ...(tx.body.totalCollateral !== undefined ? ["totalCollateral"] : []),
-      ...(tx.body.referenceInputs ? ["referenceInputs"] : []),
-      ...(tx.body.votingProcedures ? ["votingProcedures"] : []),
+      ...(tx.body.withdrawals ? ["withdrawals"] : []),
+      ...(tx.body.certificates ? ["certificates"] : []),
       ...(tx.body.proposalProcedures ? ["proposalProcedures"] : []),
-      ...(tx.body.currentTreasuryValue !== undefined ? ["currentTreasuryValue"] : []),
       ...(tx.body.donation !== undefined ? ["donation"] : []),
     ],
     outputs,

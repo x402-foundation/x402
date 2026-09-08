@@ -36,6 +36,13 @@
         "facilitator"
       ]
     },
+    "CARDANO_L1_CONFIRMATIONS": {
+      "required": false,
+      "roles": [
+        "server",
+        "facilitator"
+      ]
+    },
     "BLOCKFROST_PROJECT_ID": {
       "required": true,
       "roles": [

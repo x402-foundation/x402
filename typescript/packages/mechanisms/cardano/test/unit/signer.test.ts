@@ -118,6 +118,37 @@ describe("toFacilitatorCardanoSigner", () => {
     }
   });
 
+  // Blockfrost resolves an out-ref from the producing transaction, which still
+  // lists a spent output; `consumed_by_tx` is what tells the two apart.
+  it("reports a Blockfrost output as consumed only when consumed_by_tx is set", async () => {
+    const body = (consumed: string | null | undefined) =>
+      new Response(
+        JSON.stringify({
+          outputs: [{ output_index: 0, address: "addr_test1owner", consumed_by_tx: consumed }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(body("b".repeat(64)))
+      .mockResolvedValueOnce(body(null))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const queries = blockfrostQueries({
+        blockfrost: { baseUrl: "https://cardano-preprod.blockfrost.io/api/v0" },
+      });
+      await expect(queries.outputConsumed("a".repeat(64), 0)).resolves.toBe(true);
+      await expect(queries.outputConsumed("a".repeat(64), 0)).resolves.toBe(false);
+      await expect(queries.outputConsumed("a".repeat(64), 0)).resolves.toBeUndefined();
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        `https://cardano-preprod.blockfrost.io/api/v0/txs/${"a".repeat(64)}/utxos`,
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("propagates provider failures while resolving a spent UTxO", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 503 }));
     vi.stubGlobal("fetch", fetchMock);
@@ -168,10 +199,28 @@ describe("toFacilitatorCardanoSigner", () => {
   });
 });
 
-// The client is about to move real value, and in client-submission mode it
-// broadcasts before any facilitator sees the payment. It therefore has to verify
-// the seller authorization itself rather than trust the 402 — these all fail
-// before any provider call, so no network is involved.
+describe("facilitator signer construction", () => {
+  it("refuses awaitConfirmation: false without a Blockfrost provider", () => {
+    expect(() =>
+      toFacilitatorCardanoSigner({
+        network: CARDANO_PREPROD_CAIP2,
+        provider: { koios: { baseUrl: "http://offline.invalid" } },
+        awaitConfirmation: false,
+      }),
+    ).toThrow(/requires a Blockfrost provider/);
+    // The default (await inside submitTransaction) is fine for Koios.
+    expect(() =>
+      toFacilitatorCardanoSigner({
+        network: CARDANO_PREPROD_CAIP2,
+        provider: { koios: { baseUrl: "http://offline.invalid" } },
+      }),
+    ).not.toThrow();
+  });
+});
+
+// The client is about to sign away real value on the strength of the 402, so it
+// has to verify the seller authorization itself rather than trust it — these
+// all fail before any provider call, so no network is involved.
 describe("client-side Masumi authorization", () => {
   const PAY_BY_TIME = BigInt(Date.now() + 5 * 60 * 1000);
 
@@ -202,7 +251,6 @@ describe("client-side Masumi authorization", () => {
     amount: requirements.amount,
     maxTimeoutSeconds: requirements.maxTimeoutSeconds,
     extra: requirements.extra,
-    submissionMode: "server" as const,
   });
 
   it("refuses a 402 that redirects payTo away from the derived escrow", async () => {
@@ -450,18 +498,5 @@ describe("client-side Masumi authorization", () => {
         masumiRequestContent: { body: { days: 4, units: "metric" } },
       }).buildAndSignPaymentTransaction(signInput(withheld)),
     ).rejects.toThrow(/masumi_commitment/);
-  });
-
-  it("refuses Hydra terms it cannot settle", async () => {
-    const { requirements } = await issueMasumiRequirements({
-      network: CARDANO_PREPROD_CAIP2,
-      asset: LOVELACE_ASSET,
-      amount: "50000000",
-      payByTimeMs: PAY_BY_TIME,
-      settlementPolicy: "hydra",
-    });
-    await expect(
-      clientSigner().buildAndSignPaymentTransaction(signInput(requirements)),
-    ).rejects.toThrow(/Hydra settlement/);
   });
 });

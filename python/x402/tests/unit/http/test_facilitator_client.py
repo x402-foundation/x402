@@ -216,3 +216,9 @@ def test_sync_settle_raises_facilitator_response_error_for_invalid_schema():
         match="Facilitator settle returned invalid data",
     ):
         client.settle(make_v2_payload(), make_payment_requirements())
+
+
+def test_defaults_timeout_to_90_seconds():
+    assert HTTPFacilitatorClient()._timeout == 90.0
+    assert HTTPFacilitatorClient(FacilitatorConfig(timeout=5.0))._timeout == 5.0
+    assert HTTPFacilitatorClient({})._timeout == 90.0

@@ -102,7 +102,7 @@ class PaymentFilterTest {
 
         filter.doFilter(req, resp, chain);
 
-        verify(chain).doFilter(req, resp);
+        verify(chain).doFilter(eq(req), any(HttpServletResponse.class));
         verify(resp, never()).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
         verify(fac).verify(eq(header), any());
         verify(fac).settle(eq(header), any());
@@ -130,7 +130,7 @@ class PaymentFilterTest {
 
         filter.doFilter(req, resp, chain);
 
-        verify(chain).doFilter(req, resp);
+        verify(chain).doFilter(eq(req), any(HttpServletResponse.class));
         // settle should NOT be called for error responses
         verify(fac, never()).settle(any(), any());
     }
@@ -157,7 +157,7 @@ class PaymentFilterTest {
 
         filter.doFilter(req, resp, chain);
 
-        verify(chain).doFilter(req, resp);
+        verify(chain).doFilter(eq(req), any(HttpServletResponse.class));
         // settle should NOT be called for 4xx responses
         verify(fac, never()).settle(any(), any());
     }
@@ -300,7 +300,7 @@ class PaymentFilterTest {
         filter.doFilter(req, resp, chain);
         
         // Request should be processed, but then settlement failure should return 402
-        verify(chain).doFilter(req, resp);
+        verify(chain).doFilter(eq(req), any(HttpServletResponse.class));
         verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
         
         // Verify and settle were both called
@@ -336,7 +336,7 @@ class PaymentFilterTest {
         filter.doFilter(req, resp, chain);
         
         // Request should be processed, but then settlement failure should return 402
-        verify(chain).doFilter(req, resp);
+        verify(chain).doFilter(eq(req), any(HttpServletResponse.class));
         verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
         
         // Verify and settle were both called
@@ -399,7 +399,7 @@ class PaymentFilterTest {
         filter.doFilter(req, resp, chain);
         
         // Verify request was processed successfully
-        verify(chain).doFilter(req, resp);
+        verify(chain).doFilter(eq(req), any(HttpServletResponse.class));
         verify(resp, never()).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
         
         // Verify X-PAYMENT-RESPONSE header was set
@@ -451,7 +451,7 @@ class PaymentFilterTest {
         filter.doFilter(req, resp, chain);
         
         // Verify request was processed successfully
-        verify(chain).doFilter(req, resp);
+        verify(chain).doFilter(eq(req), any(HttpServletResponse.class));
         verify(resp, never()).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
         
         // Capture the settlement response header
@@ -500,7 +500,7 @@ class PaymentFilterTest {
         filter.doFilter(req, resp, chain);
         
         // Verify request was processed successfully (payer extraction failure should not break processing)
-        verify(chain).doFilter(req, resp);
+        verify(chain).doFilter(eq(req), any(HttpServletResponse.class));
         verify(resp, never()).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
         
         // Capture the settlement response header

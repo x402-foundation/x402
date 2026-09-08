@@ -79,6 +79,32 @@ describe("UptoEvmScheme (Client)", () => {
       );
     });
 
+    it("attaches an ERC-20 approval extension when Permit2 allowance is missing", async () => {
+      const mockSignedTx = "0x02f8ab" as `0x${string}`;
+      const signer: ClientEvmSigner = {
+        address: "0x1234567890123456789012345678901234567890",
+        signTypedData: vi.fn().mockResolvedValue("0xmocksignature123456789"),
+        readContract: vi.fn().mockResolvedValue(BigInt(0)),
+        signTransaction: vi.fn().mockResolvedValue(mockSignedTx),
+        getTransactionCount: vi.fn().mockResolvedValue(0),
+        estimateFeesPerGas: vi
+          .fn()
+          .mockResolvedValue({ maxFeePerGas: 1n, maxPriorityFeePerGas: 1n }),
+      };
+      const scheme = new UptoEvmScheme(signer);
+      const result = await scheme.createPaymentPayload(2, makeRequirements(), {
+        extensions: {
+          erc20ApprovalGasSponsoring: { info: { description: "test", version: "1" }, schema: {} },
+        },
+      });
+
+      expect(result.extensions?.erc20ApprovalGasSponsoring).toBeDefined();
+      const info = (
+        result.extensions!.erc20ApprovalGasSponsoring as { info: { signedTransaction: string } }
+      ).info;
+      expect(info.signedTransaction).toBe(mockSignedTx);
+    });
+
     it("should throw if facilitatorAddress is missing from extra", async () => {
       const requirements = makeRequirements({
         extra: { assetTransferMethod: "permit2" },

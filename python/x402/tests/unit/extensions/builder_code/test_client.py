@@ -2,7 +2,7 @@
 
 import pytest
 
-from x402 import x402Client
+from x402 import x402Client, x402ResourceServer
 from x402.extensions.builder_code import (
     BUILDER_CODE,
     MAX_CLIENT_SERVICE_CODES,
@@ -10,6 +10,7 @@ from x402.extensions.builder_code import (
     declare_builder_code_extension,
 )
 from x402.schemas import PaymentPayload, PaymentRequired, PaymentRequirements
+from x402.server_base import ERR_EXTENSION_ECHO_MISMATCH
 
 APP = "bc_my_app"
 SERVICE = "bc_my_client"
@@ -138,3 +139,38 @@ class TestBuilderCodeClientIntegration:
             "info": {"a": APP, "s": [SERVICE, "bc_server_sdk"]},
             "schema": payment_required.extensions[BUILDER_CODE]["schema"],
         }
+
+    @pytest.mark.asyncio
+    async def test_rejects_forged_builder_code_app_code_when_server_did_not_declare_builder_code(
+        self,
+    ) -> None:
+        client = x402Client()
+        client.register("eip155:8453", _MockSchemeClient())
+        client.register_extension(BuilderCodeClientExtension(SERVICE))
+        server = x402ResourceServer()
+
+        payment_required = PaymentRequired(
+            x402_version=2,
+            accepts=[
+                PaymentRequirements(
+                    scheme="exact",
+                    network="eip155:8453",
+                    asset="0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+                    amount="1000",
+                    pay_to="0x0000000000000000000000000000000000000001",
+                    max_timeout_seconds=300,
+                )
+            ],
+        )
+        payment_payload = await client.create_payment_payload(payment_required)
+        payment_payload.extensions = {
+            **(payment_payload.extensions or {}),
+            BUILDER_CODE: {
+                "info": {"a": "forged_app", "s": [SERVICE]},
+            },
+        }
+
+        result = server.validate_extensions(payment_required, payment_payload)
+        assert result.valid is False
+        assert result.invalid_reason == ERR_EXTENSION_ECHO_MISMATCH
+        assert result.extension_key == BUILDER_CODE

@@ -545,10 +545,15 @@ type paymentFixture struct {
 
 func newPaymentFixture(t *testing.T, signer *mockSigner) *paymentFixture {
 	t.Helper()
+	authorizer, err := solana.NewRandomPrivateKey()
+	require.NoError(t, err)
+	return newPaymentFixtureWithAuthorizer(t, signer, authorizer)
+}
+
+func newPaymentFixtureWithAuthorizer(t *testing.T, signer *mockSigner, authorizer solana.PrivateKey) *paymentFixture {
+	t.Helper()
 
 	payerKey, err := solana.NewRandomPrivateKey()
-	require.NoError(t, err)
-	authorizer, err := solana.NewRandomPrivateKey()
 	require.NoError(t, err)
 	payTo, err := solana.NewRandomPrivateKey()
 	require.NoError(t, err)

@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { x402Client } from "../../../src/client/x402Client";
-import { encodePaymentRequiredHeader, encodePaymentResponseHeader } from "../../../src/http";
+import {
+  decodePaymentRequiredHeader,
+  decodePaymentResponseHeader,
+  encodePaymentRequiredHeader,
+  encodePaymentResponseHeader,
+} from "../../../src/http";
 import { x402HTTPClient } from "../../../src/http/x402HTTPClient";
 import { buildPaymentRequired, buildSettleResponse } from "../../mocks";
 
@@ -133,5 +138,15 @@ describe("x402HTTPClient.parsePaymentResult", () => {
     expect(decoded.extensionResponses).toBeUndefined();
     expect(decoded.success).toBe(true);
     expect(decoded.transaction).toBe("0xabc");
+  });
+
+  it("rejects malformed PAYMENT-REQUIRED headers", () => {
+    expect(() => decodePaymentRequiredHeader("not-base64!!!")).toThrow(
+      "Invalid payment required header",
+    );
+  });
+
+  it("rejects malformed PAYMENT-RESPONSE headers", () => {
+    expect(() => decodePaymentResponseHeader("%%%")).toThrow("Invalid payment response header");
   });
 });

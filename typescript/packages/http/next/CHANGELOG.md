@@ -1,5 +1,22 @@
 # @x402/next Changelog
 
+## 2.25.0
+
+### Minor Changes
+
+- [a140d2b](https://github.com/x402-foundation/x402/commit/a140d2b): `withX402` now accepts a `RoutesConfig`, so the route's path pattern can be given explicitly (e.g. `{ "/api/users/[id]": config }`) instead of always registering a wildcard route. Passing a bare route config remains supported and unchanged. When a pattern-keyed config matches no request path, the handler runs without payment and a warning is logged once per wrapper. ([#3309](https://github.com/x402-foundation/x402/pull/3309)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Updated dependencies [a140d2b](https://github.com/x402-foundation/x402/commit/a140d2b)
+- Updated dependencies [1bc2ae8](https://github.com/x402-foundation/x402/commit/1bc2ae8)
+- Updated dependencies [299b9bc](https://github.com/x402-foundation/x402/commit/299b9bc)
+- Updated dependencies [bbcb974](https://github.com/x402-foundation/x402/commit/bbcb974)
+  - @x402/extensions@2.25.0
+  - @x402/core@2.25.0
+  - @x402/paywall@2.25.0
+
+### Patch Changes
+
+- [299b9bc](https://github.com/x402-foundation/x402/commit/299b9bc): Exit the process when eager facilitator sync fails with a permanent capability or route-configuration error, instead of staying up until the first paid request. Transient facilitator timeouts remain retryable. ([#3346](https://github.com/x402-foundation/x402/pull/3346)) - Thanks [@phdargen](https://github.com/phdargen)!
+
 ## 2.24.0
 
 ### Minor Changes

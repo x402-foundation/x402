@@ -71,7 +71,7 @@ github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/server
 github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/facilitator
 ```
 
-The server role additionally needs a voucher signer from `github.com/x402-foundation/x402/go/v2/signers/svm`:
+The server role additionally needs a voucher signer from `github.com/x402-foundation/x402/go/v2/signers/svm` unless the facilitator's `receiverAuthorizer` is delegated to:
 
 ```go
 authorizer, err := svmsigners.NewReceiverAuthorizerSignerFromPrivateKey(os.Getenv("SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"))

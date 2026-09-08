@@ -48,6 +48,71 @@ Tune policy with:
 
 For production, replace `InMemoryUptoChannelStorage` with a durable store so cleanup survives restarts and works across facilitator replicas.
 
+## SVM receiver authorizer (optional delegation)
+
+This example registers `UptoSvmScheme` with a **fee payer only** — no `authorizerSigner` is configured, so `/supported` advertises `extra.feePayer` but not `extra.receiverAuthorizer`. Servers must sign their own claim vouchers (self-managed mode).
+
+To let resource servers delegate voucher signing to your facilitator, extend the SVM registration with a separate Ed25519 key and a `resolveCallerIdentity` hook. Delegation is not negotiated in x402 — it requires an out-of-band agreement with each resource server, and authenticated settle requests so claim vouchers are signed only for that server.
+
+| Signer                        | Role                                                                 | Onchain effect                                                      |
+| ----------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `SVM_PRIVATE_KEY`             | **Fee payer** — co-signs channel `open`, submits claim/cleanup txs   | Pays SOL for opens, settlement, and rent cleanup                    |
+| `authorizerSigner` (optional) | **Receiver authorizer** — signs claim vouchers when servers delegate | Committed as the channel `authorized_signer` for delegating servers |
+
+When `authorizerSigner` is set, `GET /supported` includes both `feePayer` and `receiverAuthorizer`:
+
+```json
+{
+  "kinds": [
+    {
+      "x402Version": 2,
+      "scheme": "upto",
+      "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+      "extra": {
+        "feePayer": "...",
+        "receiverAuthorizer": "..."
+      }
+    }
+  ]
+}
+```
+
+Wire it in your facilitator:
+
+```typescript
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createKeyPairSignerFromBytes } from "@solana/kit";
+import { base58 } from "@scure/base";
+import { UptoSvmScheme } from "@x402/svm/upto/facilitator";
+
+const authorizerSigner = await createKeyPairSignerFromBytes(
+  base58.decode(process.env.SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY!),
+);
+
+// Request-scoped identity for resolveCallerIdentity (replace with JWT/SIWX/mTLS in production).
+const callerIdentity = new AsyncLocalStorage<string | undefined>();
+
+const scheme = new UptoSvmScheme(svmSigner, {
+  channelStorage,
+  maxChannelLifetimeSecs,
+  authorizerSigner,
+  resolveCallerIdentity: () => callerIdentity.getStore(),
+  // Optional for multi-replica facilitators; default is in-memory.
+  // delegatedAuthStore: sharedRedisDelegatedAuthStore,
+});
+
+// In POST /settle, authenticate the server and run settle inside the store:
+app.post("/settle", async (req, res) => {
+  const identity = authenticateServerSettleRequest(req); // your JWT / API credential check
+  const response = await callerIdentity.run(identity, () =>
+    facilitator.settle(paymentPayload, paymentRequirements),
+  );
+  res.json(response);
+});
+```
+
+> ⚠️ A facilitator that advertises `receiverAuthorizer` **must** authenticate that each claim settle comes from the same service whose deposit settle opened the channel (SIWX, JWT, mTLS, or an API credential correlated across both settles). The scheme records that identity at deposit and requires an exact match at claim. **Do not advertise `receiverAuthorizer` without real authentication.** The default identity binding store is in-memory; inject a shared `delegatedAuthStore` for multi-replica facilitators.
+
 ## API Endpoints
 
 Standard x402 facilitator surface: `POST /verify`, `POST /settle`, `GET /supported`.

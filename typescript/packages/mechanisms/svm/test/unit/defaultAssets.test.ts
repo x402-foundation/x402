@@ -3,6 +3,7 @@ import {
   DEFAULT_ASSETS,
   findDefaultAsset,
   getDefaultAsset,
+  USDC_DEVNET_ADDRESS,
   USDC_MAINNET_ADDRESS,
 } from "../../src/defaultAssets";
 import { SOLANA_DEVNET_CAIP2, SOLANA_MAINNET_CAIP2 } from "../../src/constants";
@@ -36,6 +37,30 @@ describe("defaultAssets (SVM)", () => {
       expect(() => getDefaultAsset(SOLANA_DEVNET_CAIP2, "USDT")).toThrow(
         /No USDT default asset configured for network/,
       );
+    });
+
+    it("throws when a supported network has an empty asset list", () => {
+      const original = DEFAULT_ASSETS[SOLANA_DEVNET_CAIP2];
+      DEFAULT_ASSETS[SOLANA_DEVNET_CAIP2] = [];
+      try {
+        expect(() => getDefaultAsset(SOLANA_DEVNET_CAIP2)).toThrow(
+          /No default asset configured for network/,
+        );
+      } finally {
+        DEFAULT_ASSETS[SOLANA_DEVNET_CAIP2] = original;
+      }
+    });
+  });
+
+  describe("findDefaultAsset empty table", () => {
+    it("returns undefined when the network has no asset list", () => {
+      const original = DEFAULT_ASSETS[SOLANA_DEVNET_CAIP2];
+      delete DEFAULT_ASSETS[SOLANA_DEVNET_CAIP2];
+      try {
+        expect(findDefaultAsset(USDC_DEVNET_ADDRESS, SOLANA_DEVNET_CAIP2)).toBeUndefined();
+      } finally {
+        DEFAULT_ASSETS[SOLANA_DEVNET_CAIP2] = original;
+      }
     });
   });
 });

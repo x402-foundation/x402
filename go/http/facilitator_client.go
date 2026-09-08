@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -54,7 +53,7 @@ type FacilitatorConfig struct {
 	// AuthProvider provides authentication headers (optional)
 	AuthProvider AuthProvider
 
-	// Timeout for requests (optional, defaults to 30s)
+	// Timeout for requests (optional, defaults to 90s)
 	Timeout time.Duration
 
 	// Identifier for this facilitator (optional)
@@ -277,7 +276,7 @@ func NewHTTPFacilitatorClient(config *FacilitatorConfig) *HTTPFacilitatorClient 
 	if httpClient == nil {
 		timeout := config.Timeout
 		if timeout == 0 {
-			timeout = 30 * time.Second
+			timeout = 90 * time.Second
 		}
 		httpClient = &http.Client{
 			Timeout: timeout,
@@ -370,7 +369,7 @@ func (c *HTTPFacilitatorClient) GetSupported(ctx context.Context) (x402.Supporte
 		}
 
 		// Read response body
-		responseBody, err := io.ReadAll(resp.Body)
+		responseBody, err := readLimitedBody(resp.Body)
 		resp.Body.Close()
 		if err != nil {
 			return x402.SupportedResponse{}, fmt.Errorf("failed to read response body: %w", err)
@@ -456,7 +455,7 @@ func (c *HTTPFacilitatorClient) verifyHTTP(ctx context.Context, version int, pay
 	}
 	defer resp.Body.Close()
 
-	responseBody, err := io.ReadAll(resp.Body)
+	responseBody, err := readLimitedBody(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
@@ -530,7 +529,7 @@ func (c *HTTPFacilitatorClient) settleHTTP(ctx context.Context, version int, pay
 	}
 	defer resp.Body.Close()
 
-	responseBody, err := io.ReadAll(resp.Body)
+	responseBody, err := readLimitedBody(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}

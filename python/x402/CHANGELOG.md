@@ -2,6 +2,19 @@
 
 <!-- towncrier release notes start -->
 
+## [2.22.0] - 2026-09-04
+
+### Fixed
+
+- Reject v2 payloads that forge builder-code app attribution (`a`) when the resource server did not declare it or the echo does not match; omit payload `a` on v1 facilitator settlement. ([#3320](https://github.com/x402-foundation/x402/pull/3320)) - Thanks [@PhilBot402](https://github.com/PhilBot402)!
+- Stop false-positive bazaar startup warnings for pre-enrichment HTTP extensions by injecting a synthetic method from the route pattern (or body/query inference) before JSON-schema validation. ([#3308](https://github.com/x402-foundation/x402/pull/3308)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+### Added
+
+- Added optional `extension_responses` on `VerifyResponse` and `SettleResponse`. The HTTP facilitator client populates it from the `EXTENSION-RESPONSES` header. `encode_payment_response_header` excludes the sidechannel from buyer-facing `PAYMENT-RESPONSE` encoding. ([#3306](https://github.com/x402-foundation/x402/pull/3306)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Allow facilitators to configure the EVM transaction gas limit on `FacilitatorWeb3Signer`. ([#3233](https://github.com/x402-foundation/x402/pull/3233)) - Thanks [@nniiovoo](https://github.com/nniiovoo) and [@claude](https://github.com/claude)!
+
+
 ## [2.21.0] - 2026-08-27
 
 ### Fixed

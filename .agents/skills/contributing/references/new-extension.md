@@ -25,7 +25,8 @@ Checklist for adding a new extension. Follow the [general contributing rules](..
 
 ### Unit tests
 
-Pure-logic tests that run offline. Add them under **TS** `typescript/packages/extensions/test/`; **Go** `go/extensions/<extension>/`; or **Py** `python/x402/tests/unit/extensions/<extension>/`. Run them and confirm all pass.
+- Pure-logic tests that run offline. Add them under **TS** `typescript/packages/extensions/test/`; **Go** `go/extensions/<extension>/`; or **Py** `python/x402/tests/unit/extensions/<extension>/`. Run them and confirm all pass.
+- New additions must have **>80%** line coverage.
 
 ```bash
 # from typescript/

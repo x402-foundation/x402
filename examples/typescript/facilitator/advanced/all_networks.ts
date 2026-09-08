@@ -213,9 +213,14 @@ if (cardanoMnemonic) {
     mnemonic: cardanoMnemonic,
     network: CARDANO_NETWORK,
     provider: { blockfrost: { baseUrl: blockfrostBaseUrl, projectId: blockfrostProjectId } },
-    awaitConfirmation: true,
+    // Return on broadcast; the scheme polls Blockfrost for the confirmation
+    // policy's evidence and reports `settlement_pending` in between.
+    awaitConfirmation: false,
   });
   console.info(`Cardano Facilitator account: ${cardanoSigner.getAddresses()[0]}`);
+  // Works out of the box: verify() checks inputs, validity window, value
+  // conservation, fee floor and min-UTXO from Blockfrost data, and the
+  // duplicate-settlement guard defaults to a bounded in-memory store.
   facilitator.register(CARDANO_NETWORK, new ExactCardanoScheme(cardanoSigner));
 }
 

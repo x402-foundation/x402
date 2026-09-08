@@ -50,6 +50,33 @@ describe("near server scheme", () => {
     await expect(scheme.parsePrice("1e-6", "near:testnet")).rejects.toThrow(/Invalid money format/);
   });
 
+  it("rejects explicit amount without asset", async () => {
+    const scheme = new ExactNearScheme();
+    await expect(scheme.parsePrice({ amount: "100" }, "near:testnet")).rejects.toThrow(
+      /Asset is required/,
+    );
+  });
+
+  it("uses a registered money parser before default conversion", async () => {
+    const scheme = new ExactNearScheme();
+    scheme.registerMoneyParser(async () => ({
+      amount: "42",
+      asset: "custom.testnet",
+      extra: {},
+    }));
+
+    const parsed = await scheme.parsePrice("$9.99", "near:testnet");
+    expect(parsed).toEqual({ amount: "42", asset: "custom.testnet", extra: {} });
+  });
+
+  it("returns decimals for known default assets", () => {
+    const scheme = new ExactNearScheme();
+    expect(
+      scheme.getAssetDecimals(getDefaultAsset(NEAR_TESTNET_CAIP2).asset, NEAR_TESTNET_CAIP2),
+    ).toBe(6);
+    expect(scheme.getAssetDecimals("unknown.testnet", NEAR_TESTNET_CAIP2)).toBeUndefined();
+  });
+
   it("does not inject a relayer into client-facing requirements (spec §3)", async () => {
     const scheme = new ExactNearScheme();
     const requirements = {

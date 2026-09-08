@@ -1,5 +1,18 @@
 # @x402/evm Changelog
 
+## 2.25.0
+
+### Minor Changes
+
+- Updated dependencies [1bc2ae8](https://github.com/x402-foundation/x402/commit/1bc2ae8)
+- Updated dependencies [299b9bc](https://github.com/x402-foundation/x402/commit/299b9bc)
+- Updated dependencies [bbcb974](https://github.com/x402-foundation/x402/commit/bbcb974)
+  - @x402/core@2.25.0
+
+### Patch Changes
+
+- Update commerce-payments v1.1 auth-capture deployment addresses (AuthCaptureEscrow, EIP-3009 token collector, Permit2 token collector, and OperatorRefundCollector) to the current canonical CREATE2 set on Base. v1.0 addresses are unchanged; default exports still point at v1.1.
+
 ## 2.24.0
 
 ### Minor Changes

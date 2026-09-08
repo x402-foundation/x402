@@ -1,15 +1,28 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { COMPUTE_BUDGET_PROGRAM_ADDRESS } from "@solana-program/compute-budget";
+import { x402Facilitator } from "@x402/core/facilitator";
+import { generateKeyPairSigner, type Address } from "@solana/kit";
 import { ExactSvmScheme } from "../../src/exact/facilitator/scheme";
+import { registerExactSvmScheme } from "../../src/exact/facilitator/register";
 import * as Errors from "../../src/exact/facilitator/errors";
 import { ExactSvmSchemeV1 } from "../../src/exact/v1/facilitator/scheme";
 import { SettlementCache } from "../../src/settlement-cache";
 import type { FacilitatorSvmSigner } from "../../src/signer";
 import type { PaymentRequirements, PaymentPayload } from "@x402/core/types";
 import type { PaymentPayloadV1, PaymentRequirementsV1 } from "@x402/core/types/v1";
-import { SOLANA_DEVNET_CAIP2, MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS } from "../../src/constants";
+import {
+  LIGHTHOUSE_PROGRAM_ADDRESS,
+  SOLANA_DEVNET_CAIP2,
+  MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
+  TOKEN_2022_PROGRAM_ADDRESS,
+} from "../../src/constants";
 import { USDC_DEVNET_ADDRESS } from "../../src/defaultAssets";
+import { NETWORKS } from "../../src/v1";
 import * as svmUtils from "../../src/utils";
+import {
+  buildExactPaymentTransaction,
+  resignMutatedTransaction,
+} from "./helpers/signedTransaction";
 
 // Encodes a SetComputeUnitPrice instruction: discriminator(3) + microLamports as u64 LE
 function makeComputePriceData(microLamports: bigint): Uint8Array {
@@ -27,6 +40,36 @@ function makeComputeLimitData(units: number): Uint8Array {
   view.setUint8(0, 2);
   view.setUint32(1, units, true);
   return new Uint8Array(buf);
+}
+
+function v2Requirements(overrides: Partial<PaymentRequirements> = {}): PaymentRequirements {
+  return {
+    scheme: "exact",
+    network: SOLANA_DEVNET_CAIP2,
+    asset: USDC_DEVNET_ADDRESS,
+    amount: "100000",
+    payTo: "PayToAddress11111111111111111111111111",
+    maxTimeoutSeconds: 3600,
+    extra: { feePayer: "FeePayer1111111111111111111111111111" },
+    ...overrides,
+  };
+}
+
+function v2Payment(
+  transaction: string,
+  acceptedOverrides: Partial<PaymentRequirements> = {},
+): PaymentPayload {
+  const accepted = v2Requirements(acceptedOverrides);
+  return {
+    x402Version: 2,
+    resource: {
+      url: "http://example.com/protected",
+      description: "Test resource",
+      mimeType: "application/json",
+    },
+    accepted,
+    payload: { transaction },
+  };
 }
 
 describe("ExactSvmScheme", () => {
@@ -72,6 +115,23 @@ describe("ExactSvmScheme", () => {
     it("should create instance with correct scheme", () => {
       const facilitator = new ExactSvmScheme(mockSigner);
       expect(facilitator.scheme).toBe("exact");
+    });
+  });
+
+  describe("getExtra / getSigners", () => {
+    it("returns all managed fee payers from getSigners", () => {
+      const facilitator = new ExactSvmScheme(mockSigner);
+      expect(facilitator.getSigners(SOLANA_DEVNET_CAIP2)).toEqual([
+        "FeePayer1111111111111111111111111111",
+        "FacilitatorAddress1111111111111111111",
+      ]);
+    });
+
+    it("selects a managed feePayer in getExtra", () => {
+      const facilitator = new ExactSvmScheme(mockSigner);
+      const extra = facilitator.getExtra(SOLANA_DEVNET_CAIP2);
+      expect(extra).toBeDefined();
+      expect(mockSigner.getAddresses()).toContain(extra!.feePayer);
     });
   });
 
@@ -197,6 +257,46 @@ describe("ExactSvmScheme", () => {
       expect(result.invalidReason).toBe("invalid_exact_svm_payload_missing_fee_payer");
     });
 
+    it("should reject if feePayer is not managed by this facilitator", async () => {
+      const facilitator = new ExactSvmScheme(mockSigner);
+
+      const payload: PaymentPayload = {
+        x402Version: 2,
+        resource: {
+          url: "http://example.com/protected",
+          description: "Test resource",
+          mimeType: "application/json",
+        },
+        accepted: {
+          scheme: "exact",
+          network: SOLANA_DEVNET_CAIP2,
+          asset: USDC_DEVNET_ADDRESS,
+          amount: "100000",
+          payTo: "PayToAddress11111111111111111111111111",
+          maxTimeoutSeconds: 3600,
+          extra: { feePayer: "UnmanagedFeePayer111111111111111111111" },
+        },
+        payload: {
+          transaction: "base64transaction==",
+        },
+      };
+
+      const requirements: PaymentRequirements = {
+        scheme: "exact",
+        network: SOLANA_DEVNET_CAIP2,
+        asset: USDC_DEVNET_ADDRESS,
+        amount: "100000",
+        payTo: "PayToAddress11111111111111111111111111",
+        maxTimeoutSeconds: 3600,
+        extra: { feePayer: "UnmanagedFeePayer111111111111111111111" },
+      };
+
+      const result = await facilitator.verify(payload, requirements);
+
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe(Errors.ErrFeePayerNotManaged);
+    });
+
     it("should reject if transaction cannot be decoded", async () => {
       const facilitator = new ExactSvmScheme(mockSigner);
 
@@ -236,6 +336,474 @@ describe("ExactSvmScheme", () => {
       expect(result.isValid).toBe(false);
       // Transaction decoding or instruction validation fails
       expect(result.invalidReason).toContain("invalid_exact_svm_payload_transaction");
+    });
+
+    it("should reject a mint mismatch on a well-formed TransferChecked", async () => {
+      const feePayer = await generateKeyPairSigner();
+      const payer = await generateKeyPairSigner();
+      const payTo = await generateKeyPairSigner();
+      const transaction = await buildExactPaymentTransaction({
+        amount: 100000n,
+        feePayer: feePayer.address,
+        mint: USDC_DEVNET_ADDRESS as Address,
+        payTo: payTo.address,
+        payer,
+      });
+      mockSigner.getAddresses = vi.fn().mockReturnValue([feePayer.address]) as never;
+      const facilitator = new ExactSvmScheme(mockSigner);
+      const result = await facilitator.verify(
+        v2Payment(transaction, {
+          asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          extra: { feePayer: feePayer.address },
+          payTo: payTo.address,
+        }),
+        v2Requirements({
+          asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          extra: { feePayer: feePayer.address },
+          payTo: payTo.address,
+        }),
+      );
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe(Errors.ErrMintMismatch);
+    });
+
+    it("should reject an amount mismatch on a well-formed TransferChecked", async () => {
+      const feePayer = await generateKeyPairSigner();
+      const payer = await generateKeyPairSigner();
+      const payTo = await generateKeyPairSigner();
+      const transaction = await buildExactPaymentTransaction({
+        amount: 50n,
+        feePayer: feePayer.address,
+        mint: USDC_DEVNET_ADDRESS as Address,
+        payTo: payTo.address,
+        payer,
+      });
+      mockSigner.getAddresses = vi.fn().mockReturnValue([feePayer.address]) as never;
+      const facilitator = new ExactSvmScheme(mockSigner);
+      const result = await facilitator.verify(
+        v2Payment(transaction, {
+          extra: { feePayer: feePayer.address },
+          payTo: payTo.address,
+        }),
+        v2Requirements({ extra: { feePayer: feePayer.address }, payTo: payTo.address }),
+      );
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe(Errors.ErrAmountMismatch);
+    });
+
+    it("should reject when the facilitator would transfer its own tokens", async () => {
+      const feePayer = await generateKeyPairSigner();
+      const payTo = await generateKeyPairSigner();
+      const transaction = await buildExactPaymentTransaction({
+        amount: 100000n,
+        feePayer: feePayer.address,
+        mint: USDC_DEVNET_ADDRESS as Address,
+        payTo: payTo.address,
+        payer: feePayer,
+      });
+      mockSigner.getAddresses = vi.fn().mockReturnValue([feePayer.address]) as never;
+      const facilitator = new ExactSvmScheme(mockSigner);
+      const result = await facilitator.verify(
+        v2Payment(transaction, {
+          extra: { feePayer: feePayer.address },
+          payTo: payTo.address,
+        }),
+        v2Requirements({ extra: { feePayer: feePayer.address }, payTo: payTo.address }),
+      );
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe(Errors.ErrFeePayerTransferringFunds);
+    });
+
+    it("should reject when instruction 2 is not a token transfer", async () => {
+      const feePayer = await generateKeyPairSigner();
+      const payer = await generateKeyPairSigner();
+      const payTo = await generateKeyPairSigner();
+      const transaction = await resignMutatedTransaction(
+        payer,
+        await buildExactPaymentTransaction({
+          amount: 100000n,
+          feePayer: feePayer.address,
+          mint: USDC_DEVNET_ADDRESS as Address,
+          payTo: payTo.address,
+          payer,
+        }),
+        compiled => {
+          const transfer = compiled.instructions[2];
+          const memo = compiled.instructions[3];
+          if (transfer && memo) {
+            compiled.instructions[2] = memo;
+            compiled.instructions[3] = transfer;
+          }
+        },
+      );
+      mockSigner.getAddresses = vi.fn().mockReturnValue([feePayer.address]) as never;
+      const facilitator = new ExactSvmScheme(mockSigner);
+      const result = await facilitator.verify(
+        v2Payment(transaction, {
+          extra: { feePayer: feePayer.address },
+          payTo: payTo.address,
+        }),
+        v2Requirements({ extra: { feePayer: feePayer.address }, payTo: payTo.address }),
+      );
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe(Errors.ErrNoTransferInstruction);
+    });
+
+    it("should reject a TransferChecked whose accounts cannot be parsed", async () => {
+      const feePayer = await generateKeyPairSigner();
+      const payer = await generateKeyPairSigner();
+      const payTo = await generateKeyPairSigner();
+      const transaction = await resignMutatedTransaction(
+        payer,
+        await buildExactPaymentTransaction({
+          amount: 100000n,
+          feePayer: feePayer.address,
+          mint: USDC_DEVNET_ADDRESS as Address,
+          payTo: payTo.address,
+          payer,
+        }),
+        compiled => {
+          const transfer = compiled.instructions[2];
+          if (!transfer?.accountIndices || transfer.accountIndices.length < 4) {
+            throw new Error("expected TransferChecked with 4 accounts");
+          }
+          // Keep a well-formed TransferChecked elsewhere so getTokenPayer
+          // still finds an owner, but shrink instruction[2] so the kit
+          // parser throws (disc 12 + length ≥ 10, too few accounts).
+          compiled.instructions.push({
+            accountIndices: [...transfer.accountIndices],
+            data: transfer.data ? new Uint8Array(transfer.data) : undefined,
+            programAddressIndex: transfer.programAddressIndex,
+          });
+          transfer.accountIndices = transfer.accountIndices.slice(0, 2);
+        },
+      );
+      mockSigner.getAddresses = vi.fn().mockReturnValue([feePayer.address]) as never;
+      const facilitator = new ExactSvmScheme(mockSigner);
+      const result = await facilitator.verify(
+        v2Payment(transaction, {
+          extra: { feePayer: feePayer.address },
+          payTo: payTo.address,
+        }),
+        v2Requirements({ extra: { feePayer: feePayer.address }, payTo: payTo.address }),
+      );
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe(Errors.ErrNoTransferInstruction);
+    });
+
+    it("should reject when the destination ATA is not the payTo account", async () => {
+      const feePayer = await generateKeyPairSigner();
+      const payer = await generateKeyPairSigner();
+      const payTo = await generateKeyPairSigner();
+      const otherPayTo = await generateKeyPairSigner();
+      const transaction = await buildExactPaymentTransaction({
+        amount: 100000n,
+        feePayer: feePayer.address,
+        mint: USDC_DEVNET_ADDRESS as Address,
+        payTo: payTo.address,
+        payer,
+      });
+      mockSigner.getAddresses = vi.fn().mockReturnValue([feePayer.address]) as never;
+      const facilitator = new ExactSvmScheme(mockSigner);
+      const result = await facilitator.verify(
+        v2Payment(transaction, {
+          extra: { feePayer: feePayer.address },
+          payTo: otherPayTo.address,
+        }),
+        v2Requirements({ extra: { feePayer: feePayer.address }, payTo: otherPayTo.address }),
+      );
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe(Errors.ErrRecipientMismatch);
+    });
+
+    it("should reject when the payTo address cannot be used to derive an ATA", async () => {
+      const feePayer = await generateKeyPairSigner();
+      const payer = await generateKeyPairSigner();
+      const payTo = await generateKeyPairSigner();
+      const transaction = await buildExactPaymentTransaction({
+        amount: 100000n,
+        feePayer: feePayer.address,
+        mint: USDC_DEVNET_ADDRESS as Address,
+        payTo: payTo.address,
+        payer,
+      });
+      mockSigner.getAddresses = vi.fn().mockReturnValue([feePayer.address]) as never;
+      const facilitator = new ExactSvmScheme(mockSigner);
+      const result = await facilitator.verify(
+        v2Payment(transaction, {
+          extra: { feePayer: feePayer.address },
+          payTo: "not-a-solana-address",
+        }),
+        v2Requirements({ extra: { feePayer: feePayer.address }, payTo: "not-a-solana-address" }),
+      );
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe(Errors.ErrRecipientMismatch);
+    });
+
+    it("should reject a required memo that is missing or mismatched", async () => {
+      const feePayer = await generateKeyPairSigner();
+      const payer = await generateKeyPairSigner();
+      const payTo = await generateKeyPairSigner();
+      const transaction = await buildExactPaymentTransaction({
+        amount: 100000n,
+        feePayer: feePayer.address,
+        memo: "actual-memo",
+        mint: USDC_DEVNET_ADDRESS as Address,
+        payTo: payTo.address,
+        payer,
+      });
+      mockSigner.getAddresses = vi.fn().mockReturnValue([feePayer.address]) as never;
+      const facilitator = new ExactSvmScheme(mockSigner);
+      const result = await facilitator.verify(
+        v2Payment(transaction, {
+          extra: { feePayer: feePayer.address, memo: "expected-memo" },
+          payTo: payTo.address,
+        }),
+        v2Requirements({
+          extra: { feePayer: feePayer.address, memo: "expected-memo" },
+          payTo: payTo.address,
+        }),
+      );
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe(Errors.ErrMemoMismatch);
+    });
+
+    it("should reject a required memo when the transfer has no Memo instruction", async () => {
+      const feePayer = await generateKeyPairSigner();
+      const payer = await generateKeyPairSigner();
+      const payTo = await generateKeyPairSigner();
+      const transaction = await buildExactPaymentTransaction({
+        amount: 100000n,
+        feePayer: feePayer.address,
+        includeMemo: false,
+        mint: USDC_DEVNET_ADDRESS as Address,
+        payTo: payTo.address,
+        payer,
+      });
+      mockSigner.getAddresses = vi.fn().mockReturnValue([feePayer.address]) as never;
+      const facilitator = new ExactSvmScheme(mockSigner);
+      const result = await facilitator.verify(
+        v2Payment(transaction, {
+          extra: { feePayer: feePayer.address, memo: "order-1" },
+          payTo: payTo.address,
+        }),
+        v2Requirements({
+          extra: { feePayer: feePayer.address, memo: "order-1" },
+          payTo: payTo.address,
+        }),
+      );
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe(Errors.ErrMemoCount);
+    });
+
+    it("should reject an unknown program after TransferChecked", async () => {
+      const feePayer = await generateKeyPairSigner();
+      const payer = await generateKeyPairSigner();
+      const payTo = await generateKeyPairSigner();
+      const transaction = await buildExactPaymentTransaction({
+        amount: 100000n,
+        extraInstructions: [
+          {
+            programAddress: "11111111111111111111111111111111" as Address,
+            accounts: [] as const,
+            data: new Uint8Array([0]),
+          },
+        ],
+        feePayer: feePayer.address,
+        includeMemo: false,
+        mint: USDC_DEVNET_ADDRESS as Address,
+        payTo: payTo.address,
+        payer,
+      });
+      mockSigner.getAddresses = vi.fn().mockReturnValue([feePayer.address]) as never;
+      const facilitator = new ExactSvmScheme(mockSigner);
+      const result = await facilitator.verify(
+        v2Payment(transaction, {
+          extra: { feePayer: feePayer.address },
+          payTo: payTo.address,
+        }),
+        v2Requirements({ extra: { feePayer: feePayer.address }, payTo: payTo.address }),
+      );
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe(Errors.ErrUnknownFourthInstruction);
+    });
+
+    it("should reject when simulation fails after a structurally valid transfer", async () => {
+      const feePayer = await generateKeyPairSigner();
+      const payer = await generateKeyPairSigner();
+      const payTo = await generateKeyPairSigner();
+      const transaction = await buildExactPaymentTransaction({
+        amount: 100000n,
+        feePayer: feePayer.address,
+        mint: USDC_DEVNET_ADDRESS as Address,
+        payTo: payTo.address,
+        payer,
+      });
+      mockSigner.getAddresses = vi.fn().mockReturnValue([feePayer.address]) as never;
+      mockSigner.simulateTransaction = vi
+        .fn()
+        .mockRejectedValue(new Error("insufficient funds")) as never;
+      const facilitator = new ExactSvmScheme(mockSigner);
+      const result = await facilitator.verify(
+        v2Payment(transaction, {
+          extra: { feePayer: feePayer.address },
+          payTo: payTo.address,
+        }),
+        v2Requirements({ extra: { feePayer: feePayer.address }, payTo: payTo.address }),
+      );
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe(Errors.ErrTransactionSimulationFailed);
+      expect(result.invalidMessage).toContain("insufficient funds");
+    });
+
+    it("should accept a structurally valid transfer once simulation succeeds", async () => {
+      const feePayer = await generateKeyPairSigner();
+      const payer = await generateKeyPairSigner();
+      const payTo = await generateKeyPairSigner();
+      const transaction = await buildExactPaymentTransaction({
+        amount: 100000n,
+        feePayer: feePayer.address,
+        mint: USDC_DEVNET_ADDRESS as Address,
+        payTo: payTo.address,
+        payer,
+      });
+      mockSigner.getAddresses = vi.fn().mockReturnValue([feePayer.address]) as never;
+      mockSigner.simulateTransaction = vi.fn().mockResolvedValue(undefined) as never;
+      const facilitator = new ExactSvmScheme(mockSigner);
+      const result = await facilitator.verify(
+        v2Payment(transaction, {
+          extra: { feePayer: feePayer.address },
+          payTo: payTo.address,
+        }),
+        v2Requirements({ extra: { feePayer: feePayer.address }, payTo: payTo.address }),
+      );
+      expect(result.isValid).toBe(true);
+      expect(result.payer).toBe(payer.address);
+    });
+
+    it("should accept a Token-2022 TransferChecked once simulation succeeds", async () => {
+      const feePayer = await generateKeyPairSigner();
+      const payer = await generateKeyPairSigner();
+      const payTo = await generateKeyPairSigner();
+      const transaction = await buildExactPaymentTransaction({
+        amount: 100000n,
+        feePayer: feePayer.address,
+        mint: USDC_DEVNET_ADDRESS as Address,
+        payTo: payTo.address,
+        payer,
+        tokenProgram: TOKEN_2022_PROGRAM_ADDRESS as Address,
+      });
+      mockSigner.getAddresses = vi.fn().mockReturnValue([feePayer.address]) as never;
+      mockSigner.simulateTransaction = vi.fn().mockResolvedValue(undefined) as never;
+      const facilitator = new ExactSvmScheme(mockSigner);
+      const result = await facilitator.verify(
+        v2Payment(transaction, {
+          extra: { feePayer: feePayer.address },
+          payTo: payTo.address,
+        }),
+        v2Requirements({ extra: { feePayer: feePayer.address }, payTo: payTo.address }),
+      );
+      expect(result.isValid).toBe(true);
+      expect(result.payer).toBe(payer.address);
+    });
+
+    it("should accept an optional Lighthouse instruction after TransferChecked", async () => {
+      const feePayer = await generateKeyPairSigner();
+      const payer = await generateKeyPairSigner();
+      const payTo = await generateKeyPairSigner();
+      const transaction = await buildExactPaymentTransaction({
+        amount: 100000n,
+        extraInstructions: [
+          {
+            programAddress: LIGHTHOUSE_PROGRAM_ADDRESS as Address,
+            accounts: [] as const,
+            data: new Uint8Array([0]),
+          },
+        ],
+        feePayer: feePayer.address,
+        mint: USDC_DEVNET_ADDRESS as Address,
+        payTo: payTo.address,
+        payer,
+      });
+      mockSigner.getAddresses = vi.fn().mockReturnValue([feePayer.address]) as never;
+      mockSigner.simulateTransaction = vi.fn().mockResolvedValue(undefined) as never;
+      const facilitator = new ExactSvmScheme(mockSigner);
+      const result = await facilitator.verify(
+        v2Payment(transaction, {
+          extra: { feePayer: feePayer.address },
+          payTo: payTo.address,
+        }),
+        v2Requirements({ extra: { feePayer: feePayer.address }, payTo: payTo.address }),
+      );
+      expect(result.isValid).toBe(true);
+    });
+
+    it("should reject Path 2 when a recoverable junk instruction is not an allowed wallet program", async () => {
+      const feePayer = await generateKeyPairSigner();
+      const payer = await generateKeyPairSigner();
+      const payTo = await generateKeyPairSigner();
+      const transaction = await buildExactPaymentTransaction({
+        amount: 100000n,
+        extraInstructions: [
+          {
+            programAddress: "11111111111111111111111111111111" as Address,
+            accounts: [] as const,
+            data: new Uint8Array([0]),
+          },
+        ],
+        feePayer: feePayer.address,
+        includeMemo: false,
+        mint: USDC_DEVNET_ADDRESS as Address,
+        payTo: payTo.address,
+        payer,
+      });
+      mockSigner.getAddresses = vi.fn().mockReturnValue([feePayer.address]) as never;
+      mockSigner.simulateTransactionWithInnerInstructions = vi.fn() as never;
+      mockSigner.getConfirmedTransactionInnerInstructions = vi.fn() as never;
+      mockSigner.getTokenAccountBalance = vi.fn() as never;
+      mockSigner.fetchAddressLookupTables = vi.fn() as never;
+      const facilitator = new ExactSvmScheme(mockSigner, undefined, {
+        enableSmartWalletVerification: true,
+        smartWalletAllowedPrograms: ["SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf"],
+      });
+      const result = await facilitator.verify(
+        v2Payment(transaction, {
+          extra: { feePayer: feePayer.address },
+          payTo: payTo.address,
+        }),
+        v2Requirements({ extra: { feePayer: feePayer.address }, payTo: payTo.address }),
+      );
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toContain(Errors.ErrSmartWalletProgramNotAllowed);
+    });
+
+    it("should settle a structurally valid transfer after verify succeeds", async () => {
+      const feePayer = await generateKeyPairSigner();
+      const payer = await generateKeyPairSigner();
+      const payTo = await generateKeyPairSigner();
+      const transaction = await buildExactPaymentTransaction({
+        amount: 100000n,
+        feePayer: feePayer.address,
+        mint: USDC_DEVNET_ADDRESS as Address,
+        payTo: payTo.address,
+        payer,
+      });
+      mockSigner.getAddresses = vi.fn().mockReturnValue([feePayer.address]) as never;
+      mockSigner.simulateTransaction = vi.fn().mockResolvedValue(undefined) as never;
+      mockSigner.signTransaction = vi.fn().mockResolvedValue("signed-wire") as never;
+      mockSigner.sendTransaction = vi.fn().mockResolvedValue("settleSig") as never;
+      mockSigner.confirmTransaction = vi.fn().mockResolvedValue(undefined) as never;
+      const facilitator = new ExactSvmScheme(mockSigner);
+      const result = await facilitator.settle(
+        v2Payment(transaction, {
+          extra: { feePayer: feePayer.address },
+          payTo: payTo.address,
+        }),
+        v2Requirements({ extra: { feePayer: feePayer.address }, payTo: payTo.address }),
+      );
+      expect(result.success).toBe(true);
+      expect(result.transaction).toBe("settleSig");
+      expect(result.payer).toBe(payer.address);
     });
   });
 
@@ -376,6 +944,50 @@ describe("ExactSvmScheme", () => {
             maxRequiredSignatures: 1,
           }),
       ).not.toThrow();
+    });
+
+    it("should reject a compute price instruction that cannot be parsed", () => {
+      const facilitator = new ExactSvmScheme(mockSigner);
+      expect(() =>
+        callPrice(facilitator, {
+          programAddress: COMPUTE_BUDGET_PROGRAM_ADDRESS,
+          data: new Uint8Array([3]),
+        }),
+      ).toThrow("invalid_exact_svm_payload_transaction_instructions_compute_price_instruction");
+    });
+
+    it("should reject a compute limit whose discriminator is not SetComputeUnitLimit", () => {
+      const facilitator = new ExactSvmScheme(mockSigner);
+      expect(() =>
+        (
+          facilitator as unknown as { verifyComputeLimitInstruction: (i: unknown) => void }
+        ).verifyComputeLimitInstruction({
+          programAddress: COMPUTE_BUDGET_PROGRAM_ADDRESS,
+          data: new Uint8Array([3, 0, 0, 0, 0]),
+        }),
+      ).toThrow(Errors.ErrComputeLimitInstruction);
+    });
+
+    it("should reject a compute price whose discriminator is not SetComputeUnitPrice", () => {
+      const facilitator = new ExactSvmScheme(mockSigner);
+      expect(() =>
+        (
+          facilitator as unknown as { verifyComputePriceInstruction: (i: unknown) => void }
+        ).verifyComputePriceInstruction({
+          programAddress: COMPUTE_BUDGET_PROGRAM_ADDRESS,
+          data: new Uint8Array([2, 0, 0, 0, 0, 0, 0, 0, 0]),
+        }),
+      ).toThrow(Errors.ErrComputePriceInstruction);
+    });
+
+    it("should reject a compute limit instruction that cannot be parsed", () => {
+      const facilitator = new ExactSvmScheme(mockSigner);
+      expect(() =>
+        callLimit(facilitator, {
+          programAddress: COMPUTE_BUDGET_PROGRAM_ADDRESS,
+          data: new Uint8Array([2]),
+        }),
+      ).toThrow("invalid_exact_svm_payload_transaction_instructions_compute_limit_instruction");
     });
   });
 
@@ -652,6 +1264,32 @@ describe("ExactSvmScheme", () => {
       expect(v1Result.success).toBe(false);
       expect(v1Result.errorReason).toBe("duplicate_settlement");
     });
+  });
+});
+
+describe("registerExactSvmScheme", () => {
+  it("registers v2 on the configured networks and all v1 networks with a shared cache", () => {
+    const facilitator = new x402Facilitator();
+    const signer: FacilitatorSvmSigner = {
+      getAddresses: () => ["FeePayer1111111111111111111111111111" as never],
+      signTransaction: async () => "tx",
+      simulateTransaction: async () => {},
+      sendTransaction: async () => "sig",
+      confirmTransaction: async () => {},
+    };
+
+    const returned = registerExactSvmScheme(facilitator, {
+      signer,
+      networks: SOLANA_DEVNET_CAIP2,
+    });
+    expect(returned).toBe(facilitator);
+
+    const supported = facilitator.getSupported();
+    const v2 = supported.kinds.filter(k => k.x402Version === 2 && k.scheme === "exact");
+    const v1 = supported.kinds.filter(k => k.x402Version === 1 && k.scheme === "exact");
+    expect(v2.map(k => k.network)).toEqual([SOLANA_DEVNET_CAIP2]);
+    expect(v1.map(k => k.network).sort()).toEqual([...NETWORKS].sort());
+    expect(v2[0]?.extra?.feePayer).toBe("FeePayer1111111111111111111111111111");
   });
 });
 

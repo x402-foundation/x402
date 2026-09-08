@@ -3,6 +3,8 @@ package bazaar
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -696,6 +698,58 @@ func TestSearchDiscoveryResources_ErrorResponse(t *testing.T) {
 	}
 }
 
+func TestDiscoveryClientsRejectOversizedResponses(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		call       func(*BazaarFacilitatorClient) error
+	}{
+		{
+			name:       "list success",
+			statusCode: http.StatusOK,
+			call: func(client *BazaarFacilitatorClient) error {
+				_, err := client.ListDiscoveryResources(context.Background(), nil)
+				return err
+			},
+		},
+		{
+			name:       "search error",
+			statusCode: http.StatusInternalServerError,
+			call: func(client *BazaarFacilitatorClient) error {
+				_, err := client.SearchDiscoveryResources(
+					context.Background(),
+					&SearchDiscoveryResourcesParams{Query: "test"},
+				)
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := &trackingBody{Reader: io.LimitReader(zeroReader{}, maxDiscoveryResponseBytes+1)}
+			client := WithBazaar(x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+				URL: "https://facilitator.example.com",
+				HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					return &http.Response{
+						StatusCode: tt.statusCode,
+						Header:     make(http.Header),
+						Body:       body,
+					}, nil
+				})},
+			}))
+
+			err := tt.call(client)
+			if !errors.Is(err, x402http.ErrResponseBodyTooLarge) {
+				t.Fatalf("call() error = %v, want ErrResponseBodyTooLarge", err)
+			}
+			if !body.closed {
+				t.Fatal("response body was not closed")
+			}
+		})
+	}
+}
+
 func TestSearchDiscoveryResources_WithAuthHeaders(t *testing.T) {
 	ctx := context.Background()
 
@@ -732,4 +786,27 @@ func TestSearchDiscoveryResources_WithAuthHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+type trackingBody struct {
+	io.Reader
+	closed bool
+}
+
+func (b *trackingBody) Close() error {
+	b.closed = true
+	return nil
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
 }

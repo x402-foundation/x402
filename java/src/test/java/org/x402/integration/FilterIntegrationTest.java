@@ -42,7 +42,13 @@ class FilterIntegrationTest {
                 vr.isValid = true;                       // always accept
                 return vr;
             }
-            @Override public org.x402.client.SettlementResponse settle(String h, org.x402.model.PaymentRequirements r) { return new org.x402.client.SettlementResponse(); }
+            @Override public org.x402.client.SettlementResponse settle(String h, org.x402.model.PaymentRequirements r) {
+                org.x402.client.SettlementResponse sr = new org.x402.client.SettlementResponse();
+                sr.success = true;
+                sr.txHash = "0xstub";
+                sr.networkId = "base-sepolia";
+                return sr;
+            }
             @Override public java.util.Set<org.x402.client.Kind> supported() { return java.util.Set.of(); }
         };
 

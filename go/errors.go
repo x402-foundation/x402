@@ -1,6 +1,9 @@
 package x402
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // PaymentError represents a payment-specific error
 type PaymentError struct {
@@ -138,4 +141,27 @@ func NewSettleError(reason string, payer string, network Network, transaction st
 		Transaction:  transaction,
 		ErrorMessage: message,
 	}
+}
+
+// FacilitatorCapabilityError is thrown when a registered scheme's configuration
+// is incompatible with the capabilities the facilitator advertised for that
+// scheme and network.
+type FacilitatorCapabilityError struct {
+	// Problems are human-readable lines, one per scheme/network mismatch.
+	Problems []string
+}
+
+// Error implements the error interface.
+func (e *FacilitatorCapabilityError) Error() string {
+	lines := make([]string, 0, len(e.Problems)+1)
+	lines = append(lines, "x402 facilitator capability errors:")
+	for _, problem := range e.Problems {
+		lines = append(lines, "  - "+problem)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// NewFacilitatorCapabilityError lists every capability problem.
+func NewFacilitatorCapabilityError(problems []string) *FacilitatorCapabilityError {
+	return &FacilitatorCapabilityError{Problems: problems}
 }

@@ -247,7 +247,7 @@ func (s *x402ResourceServer) Initialize(ctx context.Context) error {
 // it supports. Only schemes the facilitator actually supports are validated, and
 // only schemes implementing FacilitatorSupportValidator participate.
 func (s *x402ResourceServer) validateFacilitatorCapabilities(_ context.Context) error {
-	var problems []error
+	var problems []string
 
 	for network, schemeMap := range s.schemes {
 		for scheme, server := range schemeMap {
@@ -262,7 +262,7 @@ func (s *x402ResourceServer) validateFacilitatorCapabilities(_ context.Context) 
 			}
 
 			if err := validator.ValidateFacilitatorSupport(network, supportedKind, extensions); err != nil {
-				problems = append(problems, fmt.Errorf("%s on %s: %w", scheme, network, err))
+				problems = append(problems, fmt.Sprintf("%s on %s: %s", scheme, network, err.Error()))
 			}
 		}
 	}
@@ -270,7 +270,7 @@ func (s *x402ResourceServer) validateFacilitatorCapabilities(_ context.Context) 
 	if len(problems) == 0 {
 		return nil
 	}
-	return fmt.Errorf("x402 facilitator capability errors: %w", errors.Join(problems...))
+	return NewFacilitatorCapabilityError(problems)
 }
 
 // findSupportedKind scans the cached facilitator responses for the V2 kind matching
