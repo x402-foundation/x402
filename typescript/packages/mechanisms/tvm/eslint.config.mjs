@@ -2,6 +2,7 @@ import js from "@eslint/js";
 import ts from "@typescript-eslint/eslint-plugin";
 import tsParser from "@typescript-eslint/parser";
 import prettier from "eslint-plugin-prettier";
+import sonarjs from "eslint-plugin-sonarjs";
 
 export default [
   {
@@ -33,10 +34,14 @@ export default [
     plugins: {
       "@typescript-eslint": ts,
       prettier: prettier,
+      sonarjs,
     },
     rules: {
       ...js.configs.recommended.rules,
       ...ts.configs.recommended.rules,
+      complexity: ["error", 50],
+      "max-lines": ["error", { max: 2000 }],
+      "sonarjs/cognitive-complexity": ["error", 50],
       "prettier/prettier": "error",
       "no-unused-vars": "off",
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
@@ -51,6 +56,11 @@ export default [
       globals: {
         Buffer: "readonly",
         console: "readonly",
+        URL: "readonly",
+        fetch: "readonly",
+        Response: "readonly",
+        RequestInit: "readonly",
+        RequestInfo: "readonly",
       },
     },
     plugins: {

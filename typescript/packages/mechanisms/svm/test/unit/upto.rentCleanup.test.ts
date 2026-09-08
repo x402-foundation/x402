@@ -144,6 +144,22 @@ describe("UptoChannelStorage + scheme wiring", () => {
     expect(manager).toBeInstanceOf(UptoSvmRentCleanupManager);
     expect(scheme.getChannelStorage()).toBeInstanceOf(InMemoryUptoChannelStorage);
   });
+
+  it("createRentCleanupManager rejects an override signer that lacks upto read RPC", async () => {
+    const feePayer = await generateKeyPairSigner();
+    const scheme = new UptoSvmScheme(toFacilitatorSvmSigner(feePayer));
+    const exactOnlySigner = {
+      getAddresses: () => [feePayer.address],
+      getSigner: vi.fn(),
+      signTransaction: vi.fn(),
+      simulateTransaction: vi.fn(),
+      sendTransaction: vi.fn(),
+      confirmTransaction: vi.fn(),
+    };
+    expect(() =>
+      scheme.createRentCleanupManager(NETWORK, { signer: exactOnlySigner as never }),
+    ).toThrow("UptoSvmRentCleanupManager requires getAccountInfo on the signer");
+  });
 });
 
 describe("UptoSvmRentCleanupManager — cleanup", () => {
@@ -615,6 +631,27 @@ describe("UptoSvmRentCleanupManager — cleanup", () => {
     expect(submitSettleMock).not.toHaveBeenCalled();
   });
 
+  it("skips Distributed reclaims whose rent payer is not in the signer set", async () => {
+    const other = await generateKeyPairSigner();
+    const record = await seed();
+    fetchMaybeChannelMock.mockResolvedValue(
+      channelAccount({
+        status: ChannelStatus.Distributed,
+        rentPayer: other.address,
+      }),
+    );
+
+    const onError = vi.fn();
+    await manager.cleanup({ onError });
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining("not in facilitator signer set"),
+      }),
+      { channelId: record.channelId },
+    );
+    expect(submitSettleMock).not.toHaveBeenCalled();
+  });
+
   it("skips channels whose feePayer is not in the signer set", async () => {
     const nowSecs = Math.floor(Date.now() / 1_000);
     const other = await generateKeyPairSigner();
@@ -837,6 +874,44 @@ describe("UptoSvmRentCleanupManager — onchain discovery", () => {
     await manager.stop();
 
     expect(discoverChannelsMock).not.toHaveBeenCalled();
+  });
+
+  it("runs a discovery tick on the discovery interval", async () => {
+    discoverChannelsMock.mockResolvedValue([]);
+
+    manager.start({ intervalSecs: 10, discoveryIntervalSecs: 0.01 });
+    await new Promise(resolve => setTimeout(resolve, 40));
+    await manager.stop();
+
+    expect(discoverChannelsMock).toHaveBeenCalled();
+  });
+
+  it("does not queue a second discovery tick while one is in flight", async () => {
+    let release!: () => void;
+    discoverChannelsMock.mockImplementation(
+      () =>
+        new Promise<never[]>(resolve => {
+          release = () => resolve([]);
+        }),
+    );
+
+    manager.start({ intervalSecs: 10, discoveryIntervalSecs: 0.01 });
+    await new Promise(resolve => setTimeout(resolve, 15));
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect(discoverChannelsMock).toHaveBeenCalledTimes(1);
+    release();
+    await manager.stop();
+  });
+
+  it("reports a discovery-tick failure without stopping the manager", async () => {
+    discoverChannelsMock.mockRejectedValue(new Error("sweep failed"));
+    const onError = vi.fn();
+
+    manager.start({ intervalSecs: 10, discoveryIntervalSecs: 0.01, onError });
+    await new Promise(resolve => setTimeout(resolve, 40));
+    await manager.stop();
+
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "sweep failed" }));
   });
 });
 

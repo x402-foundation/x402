@@ -53,7 +53,7 @@ type FacilitatorConfig struct {
 	// AuthProvider provides authentication headers (optional)
 	AuthProvider AuthProvider
 
-	// Timeout for requests (optional, defaults to 30s)
+	// Timeout for requests (optional, defaults to 90s)
 	Timeout time.Duration
 
 	// Identifier for this facilitator (optional)
@@ -276,7 +276,7 @@ func NewHTTPFacilitatorClient(config *FacilitatorConfig) *HTTPFacilitatorClient 
 	if httpClient == nil {
 		timeout := config.Timeout
 		if timeout == 0 {
-			timeout = 30 * time.Second
+			timeout = 90 * time.Second
 		}
 		httpClient = &http.Client{
 			Timeout: timeout,

@@ -56,6 +56,11 @@ async function main(): Promise<void> {
 
   const client = new x402Client();
   client.register("eip155:*", batchedScheme);
+  // Per-request cap on PaymentRequirements.amount (default "$1" if omitted).
+  // Deposit ceiling is this cap × depositMultiplier ($5 at the defaults).
+  client.setSpendControls({
+    maxAmountPerPayment: "$1",
+  });
 
   const fetchWithPayment = wrapFetchWithPayment(fetch, client);
   const httpClient = new x402HTTPClient(client);

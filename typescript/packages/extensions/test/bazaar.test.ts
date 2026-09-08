@@ -2596,6 +2596,24 @@ describe("Bazaar Discovery Extension", () => {
       expect(spy.mock.calls[0][0]).toContain("invalid bazaar extension");
       spy.mockRestore();
     });
+
+    it("should warn for a malformed bazaar extension object", () => {
+      const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const routes = {
+        "/api": {
+          accepts: [
+            { scheme: "exact", payTo: "0x1", price: "$0.01", network: "eip155:1" as const },
+          ],
+          extensions: {
+            bazaar: { info: { input: { method: "GET" } } },
+          },
+        },
+      };
+      validateBazaarRouteExtensions(routes);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0][0]).toContain("malformed");
+      spy.mockRestore();
+    });
   });
 
   describe("SSRF via external $ref/$id in schema (CWE-918)", () => {

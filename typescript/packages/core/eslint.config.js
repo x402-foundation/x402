@@ -4,6 +4,7 @@ import tsParser from "@typescript-eslint/parser";
 import prettier from "eslint-plugin-prettier";
 import jsdoc from "eslint-plugin-jsdoc";
 import importPlugin from "eslint-plugin-import";
+import sonarjs from "eslint-plugin-sonarjs";
 
 export default [
   {
@@ -34,10 +35,14 @@ export default [
       prettier: prettier,
       jsdoc: jsdoc,
       import: importPlugin,
+      sonarjs,
     },
     rules: {
       ...ts.configs.recommended.rules,
+      complexity: ["error", 50],
       "import/first": "error",
+      "max-lines": ["error", { max: 2500 }],
+      "sonarjs/cognitive-complexity": ["error", 60],
       "prettier/prettier": "error",
       "@typescript-eslint/member-ordering": "error",
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_$" }],

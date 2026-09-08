@@ -7,6 +7,7 @@ import {
   verifyECDSA,
   verifyERC1271,
 } from "../../../src/shared/verifySignature";
+import { isContractRevert } from "../../../src/shared/revert";
 import type { FacilitatorEvmSigner } from "../../../src/signer";
 
 const ECDSA_KEY = "0x4df93dc5e721ad24d04da311f073184b4c6cd036ba08956aeff970a2a43d7401" as const;
@@ -227,5 +228,18 @@ describe("verifyHashSignature", () => {
     const { digest, signature } = await buildSignatureFor(account);
     const ok = await verifyHashSignature(signer, account.address, digest, signature);
     expect(ok).toBe(true);
+  });
+});
+
+describe("isContractRevert", () => {
+  it("treats revert-shaped errors as contract reverts and RPC/transport failures as not", () => {
+    expect(isContractRevert(new Error("execution reverted: InvalidSignature"))).toBe(true);
+    expect(
+      isContractRevert(new Error("Error: VM Exception while processing transaction: revert")),
+    ).toBe(true);
+    expect(isContractRevert("call reverted without a reason string")).toBe(true);
+    expect(isContractRevert(new Error("fetch failed"))).toBe(false);
+    expect(isContractRevert(new Error("HTTP request failed"))).toBe(false);
+    expect(isContractRevert(42)).toBe(false);
   });
 });

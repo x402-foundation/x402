@@ -23,6 +23,9 @@ from .constants import DEFAULT_FACILITATOR_URL
 if TYPE_CHECKING:
     pass
 
+# Default per-request timeout for facilitator HTTP calls, in seconds
+DEFAULT_TIMEOUT = 90.0
+
 
 # ============================================================================
 # Auth Provider Protocol
@@ -135,7 +138,7 @@ class FacilitatorConfig:
     """Configuration for HTTP facilitator client."""
 
     url: str = DEFAULT_FACILITATOR_URL
-    timeout: float = 30.0
+    timeout: float = DEFAULT_TIMEOUT
     http_client: Any = None  # Optional httpx.Client or httpx.AsyncClient
     auth_provider: AuthProvider | None = None
     identifier: str | None = None
@@ -157,7 +160,7 @@ class HTTPFacilitatorClientBase:
             auth_provider = CreateHeadersAuthProvider(create_headers) if create_headers else None
 
             self._url = url.rstrip("/")
-            self._timeout = 30.0
+            self._timeout = DEFAULT_TIMEOUT
             self._auth_provider = auth_provider
             self._identifier = self._url
             self._http_client = None

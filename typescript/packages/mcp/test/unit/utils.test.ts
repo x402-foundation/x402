@@ -12,7 +12,13 @@ import {
   extractPaymentRequiredFromError,
   createToolResourceUrl,
 } from "../../src/utils/encoding";
-import { MCP_PAYMENT_META_KEY, MCP_PAYMENT_RESPONSE_META_KEY } from "../../src/types";
+import {
+  isPaymentRequiredError,
+  MCP_PAYMENT_META_KEY,
+  MCP_PAYMENT_REQUIRED_CODE,
+  MCP_PAYMENT_RESPONSE_META_KEY,
+  JSONRPC_PAYMENT_REQUIRED_CODE,
+} from "../../src/types";
 import type { PaymentPayload, PaymentRequired, SettleResponse } from "@x402/core/types";
 
 // ============================================================================
@@ -223,6 +229,21 @@ describe("extractPaymentResponseFromMeta", () => {
 
     expect(extractPaymentResponseFromMeta(result)).toBeNull();
   });
+
+  it("should return null if payment-response is not an object", () => {
+    expect(
+      extractPaymentResponseFromMeta({
+        content: [],
+        _meta: { [MCP_PAYMENT_RESPONSE_META_KEY]: "settled" },
+      }),
+    ).toBeNull();
+    expect(
+      extractPaymentResponseFromMeta({
+        content: [],
+        _meta: { [MCP_PAYMENT_RESPONSE_META_KEY]: null },
+      }),
+    ).toBeNull();
+  });
 });
 
 // ============================================================================
@@ -325,6 +346,83 @@ describe("extractPaymentRequiredFromError", () => {
     };
 
     expect(extractPaymentRequiredFromError(error)).toBeNull();
+  });
+
+  it("should return null if 402 data is not an object", () => {
+    expect(
+      extractPaymentRequiredFromError({
+        code: 402,
+        message: "Payment required",
+        data: "not-an-object",
+      }),
+    ).toBeNull();
+    expect(
+      extractPaymentRequiredFromError({
+        code: 402,
+        message: "Payment required",
+        data: null,
+      }),
+    ).toBeNull();
+  });
+});
+
+// ============================================================================
+// isPaymentRequiredError Tests
+// ============================================================================
+
+describe("isPaymentRequiredError", () => {
+  it("should accept a legacy 402 error with PaymentRequired data", () => {
+    expect(
+      isPaymentRequiredError({
+        code: MCP_PAYMENT_REQUIRED_CODE,
+        message: "Payment required",
+        data: mockPaymentRequired,
+      }),
+    ).toBe(true);
+  });
+
+  it("should reject objects whose message is not a string", () => {
+    expect(
+      isPaymentRequiredError({
+        code: MCP_PAYMENT_REQUIRED_CODE,
+        message: 402,
+        data: mockPaymentRequired,
+      }),
+    ).toBe(false);
+  });
+
+  it("should reject a 402 error when data is not a PaymentRequired object", () => {
+    expect(
+      isPaymentRequiredError({
+        code: MCP_PAYMENT_REQUIRED_CODE,
+        message: "Payment required",
+        data: "not-an-object",
+      }),
+    ).toBe(false);
+    expect(
+      isPaymentRequiredError({
+        code: MCP_PAYMENT_REQUIRED_CODE,
+        message: "Payment required",
+        data: { reason: "missing funds" },
+      }),
+    ).toBe(false);
+  });
+
+  it("should reject -32042 errors that do not carry PaymentRequired", () => {
+    expect(
+      isPaymentRequiredError({
+        code: JSONRPC_PAYMENT_REQUIRED_CODE,
+        message: "elicitation required",
+        data: { challenges: [] },
+      }),
+    ).toBe(false);
+    expect(
+      isPaymentRequiredError({
+        code: JSONRPC_PAYMENT_REQUIRED_CODE,
+        message: "elicitation required",
+        data: { x402: { accepts: [] } },
+      }),
+    ).toBe(false);
   });
 });
 

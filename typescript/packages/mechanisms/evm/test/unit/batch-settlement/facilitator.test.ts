@@ -1,7 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { MockedFunction } from "vitest";
 import { privateKeyToAccount } from "viem/accounts";
-import { encodeAbiParameters, encodeEventTopics, getAddress, isAddress } from "viem";
+import {
+  concat,
+  encodeAbiParameters,
+  encodeEventTopics,
+  getAddress,
+  isAddress,
+  parseAbiParameters,
+} from "viem";
 import type { Log } from "viem";
 
 vi.mock("../../../src/multicall", async importOriginal => {
@@ -18,7 +25,13 @@ vi.mock("../../../src/batch-settlement/facilitator/deposit-permit2", async impor
 });
 
 import { multicall } from "../../../src/multicall";
-import { resolvePermit2DepositBranch } from "../../../src/batch-settlement/facilitator/deposit-permit2";
+import {
+  buildDepositTransaction,
+  buildPermit2DepositCollectorData,
+  getPermit2DepositCollectorAddress,
+  resolvePermit2DepositBranch,
+  verifyPermit2DepositAuthorization,
+} from "../../../src/batch-settlement/facilitator/deposit-permit2";
 import { BatchSettlementEvmScheme } from "../../../src/batch-settlement/facilitator/scheme";
 import { computeChannelId as computeChannelIdForNetwork } from "../../../src/batch-settlement/utils";
 import {
@@ -28,6 +41,7 @@ import {
 } from "../../../src/batch-settlement/constants";
 import { batchSettlementABI } from "../../../src/batch-settlement/abi";
 import * as Errors from "../../../src/batch-settlement/errors";
+import { ErrErc20ApprovalFromMismatch } from "../../../src/exact/facilitator/errors";
 import type {
   ChannelConfig,
   AuthorizerSigner,
@@ -40,7 +54,9 @@ import type {
 } from "../../../src/batch-settlement/types";
 import type { FacilitatorEvmSigner } from "../../../src/signer";
 import type { Erc20ApprovalGasSponsoringSigner } from "../../../src/exact/extensions";
-import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
+import { ERC20_APPROVAL_GAS_SPONSORING_KEY } from "../../../src/exact/extensions";
+import { signVoucher } from "../../../src/batch-settlement/client/voucher";
+import type { FacilitatorContext, PaymentPayload, PaymentRequirements } from "@x402/core/types";
 
 const mockedMulticall = multicall as unknown as MockedFunction<typeof multicall>;
 const mockedResolvePermit2DepositBranch = resolvePermit2DepositBranch as unknown as MockedFunction<
@@ -811,6 +827,414 @@ describe("BatchSettlementEvmScheme (Facilitator) — verifyDeposit", () => {
     expect(result.isValid).toBe(false);
     expect(result.invalidReason).toBe(Errors.ErrPermit2AllowanceRequired);
   });
+
+  it("rejects Permit2 deposits whose from does not match the channel payer", async () => {
+    const scheme = new BatchSettlementEvmScheme(buildSigner(), authorizer);
+    const { payload } = buildPermit2Deposit({
+      from: "0x0000000000000000000000000000000000000001",
+    });
+    const result = await scheme.verify(
+      payload,
+      makeRequirements({
+        extra: {
+          assetTransferMethod: "permit2",
+          name: "USDC",
+          version: "2",
+          receiverAuthorizer: RECEIVER_AUTHORIZER,
+        },
+      }),
+    );
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe(Errors.ErrPermit2InvalidSignature);
+  });
+
+  it("rejects Permit2 deposits whose token does not match requirements.asset", async () => {
+    const scheme = new BatchSettlementEvmScheme(buildSigner(), authorizer);
+    const { payload } = buildPermit2Deposit({
+      permitted: { token: "0x0000000000000000000000000000000000000001", amount: "10000" },
+    });
+    const result = await scheme.verify(
+      payload,
+      makeRequirements({
+        extra: {
+          assetTransferMethod: "permit2",
+          name: "USDC",
+          version: "2",
+          receiverAuthorizer: RECEIVER_AUTHORIZER,
+        },
+      }),
+    );
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe(Errors.ErrTokenMismatch);
+  });
+
+  it("rejects Permit2 deposits whose witness channelId does not match the voucher", async () => {
+    const scheme = new BatchSettlementEvmScheme(buildSigner(), authorizer);
+    const { payload } = buildPermit2Deposit({
+      witness: { channelId: ("0x" + "11".repeat(32)) as `0x${string}` },
+    });
+    const result = await scheme.verify(
+      payload,
+      makeRequirements({
+        extra: {
+          assetTransferMethod: "permit2",
+          name: "USDC",
+          version: "2",
+          receiverAuthorizer: RECEIVER_AUTHORIZER,
+        },
+      }),
+    );
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe(Errors.ErrChannelIdMismatch);
+  });
+
+  it("rejects Permit2 deposits whose deadline is already expired", async () => {
+    const scheme = new BatchSettlementEvmScheme(buildSigner(), authorizer);
+    const { payload } = buildPermit2Deposit({ deadline: "1" });
+    const result = await scheme.verify(
+      payload,
+      makeRequirements({
+        extra: {
+          assetTransferMethod: "permit2",
+          name: "USDC",
+          version: "2",
+          receiverAuthorizer: RECEIVER_AUTHORIZER,
+        },
+      }),
+    );
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe(Errors.ErrPermit2DeadlineExpired);
+  });
+
+  it("rejects a Permit2 deposit when the typed-data signature is invalid", async () => {
+    const signer = buildSigner({
+      getCode: vi.fn().mockResolvedValue("0x6080604052"),
+      readContract: vi.fn().mockImplementation(args => {
+        if (args.functionName === "isValidSignature") return Promise.resolve("0xffffffff");
+        return Promise.resolve(undefined);
+      }),
+    });
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const { payload } = buildPermit2Deposit();
+    const result = await scheme.verify(
+      payload,
+      makeRequirements({
+        extra: {
+          assetTransferMethod: "permit2",
+          name: "USDC",
+          version: "2",
+          receiverAuthorizer: RECEIVER_AUTHORIZER,
+        },
+      }),
+    );
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe(Errors.ErrPermit2InvalidSignature);
+  });
+
+  it("maps an allowance RPC failure to permit2_allowance_required", async () => {
+    const readContract = vi.fn(async ({ functionName }: { functionName: string }) => {
+      if (functionName === "isValidSignature") return "0x1626ba7e";
+      if (functionName === "allowance") throw new Error("rpc down");
+      return undefined;
+    });
+    const signer = buildSigner({ readContract });
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const { payload } = buildPermit2Deposit();
+    const result = await scheme.verify(
+      payload,
+      makeRequirements({
+        extra: {
+          assetTransferMethod: "permit2",
+          name: "USDC",
+          version: "2",
+          receiverAuthorizer: RECEIVER_AUTHORIZER,
+        },
+      }),
+    );
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe(Errors.ErrPermit2AllowanceRequired);
+  });
+});
+
+describe("deposit-permit2 helpers", () => {
+  it("throws when collector data is requested without a Permit2 authorization", () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const payload: BatchSettlementDepositPayload = {
+      type: "deposit",
+      channelConfig: config,
+      voucher: { channelId, maxClaimableAmount: "1000", signature: "0xcafebabe" },
+      deposit: { amount: "10000", authorization: {} },
+    };
+    expect(() => buildPermit2DepositCollectorData(payload)).toThrow(
+      Errors.ErrPermit2AuthorizationRequired,
+    );
+  });
+
+  it("builds a deposit transaction targeting the batch contract and Permit2 collector", () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const now = Math.floor(Date.now() / 1000);
+    const payload: BatchSettlementDepositPayload = {
+      type: "deposit",
+      channelConfig: config,
+      voucher: { channelId, maxClaimableAmount: "1000", signature: "0xcafebabe" },
+      deposit: {
+        amount: "10000",
+        authorization: {
+          permit2Authorization: {
+            from: PAYER,
+            permitted: { token: ASSET, amount: "10000" },
+            spender: PERMIT2_DEPOSIT_COLLECTOR_ADDRESS,
+            nonce: "123",
+            deadline: String(now + 3600),
+            witness: { channelId },
+            signature: "0xfeedface",
+          },
+        },
+      },
+    };
+    const tx = buildDepositTransaction(payload, "0xabcd", "0xef");
+    expect(tx.to).toBe(getAddress(BATCH_SETTLEMENT_ADDRESS));
+    expect(tx.data.endsWith("ef")).toBe(true);
+    expect(tx.gas).toBe(300_000n);
+    expect(getPermit2DepositCollectorAddress()).toBe(getAddress(PERMIT2_DEPOSIT_COLLECTOR_ADDRESS));
+  });
+
+  it("rejects an EIP-2612 branch whose approved amount does not match the deposit", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const now = Math.floor(Date.now() / 1000);
+    const payload: BatchSettlementDepositPayload = {
+      type: "deposit",
+      channelConfig: config,
+      voucher: { channelId, maxClaimableAmount: "1000", signature: "0xcafebabe" },
+      deposit: {
+        amount: "10000",
+        authorization: {
+          permit2Authorization: {
+            from: PAYER,
+            permitted: { token: ASSET, amount: "10000" },
+            spender: PERMIT2_DEPOSIT_COLLECTOR_ADDRESS,
+            nonce: "123",
+            deadline: String(now + 3600),
+            witness: { channelId },
+            signature: "0xfeedface",
+          },
+        },
+      },
+    };
+    const payment = envelopeDeposit(payload);
+    payment.extensions = {
+      eip2612GasSponsoring: {
+        info: {
+          from: PAYER,
+          asset: ASSET,
+          spender: "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+          amount: "1",
+          nonce: "1",
+          deadline: String(now + 3600),
+          signature: `0x${"aa".repeat(65)}`,
+          version: "1",
+        },
+      },
+    };
+    const result = await resolvePermit2DepositBranch(
+      buildSigner(),
+      payment,
+      payload,
+      makeRequirements(),
+    );
+    expect(result).toMatchObject({
+      isValid: false,
+      invalidReason: Errors.ErrEip2612AmountMismatch,
+      payer: PAYER,
+    });
+  });
+
+  it("rejects an EIP-2612 branch whose owner does not match the payer", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const now = Math.floor(Date.now() / 1000);
+    const payload: BatchSettlementDepositPayload = {
+      type: "deposit",
+      channelConfig: config,
+      voucher: { channelId, maxClaimableAmount: "1000", signature: "0xcafebabe" },
+      deposit: {
+        amount: "10000",
+        authorization: {
+          permit2Authorization: {
+            from: PAYER,
+            permitted: { token: ASSET, amount: "10000" },
+            spender: PERMIT2_DEPOSIT_COLLECTOR_ADDRESS,
+            nonce: "123",
+            deadline: String(now + 3600),
+            witness: { channelId },
+            signature: "0xfeedface",
+          },
+        },
+      },
+    };
+    const payment = envelopeDeposit(payload);
+    payment.extensions = {
+      eip2612GasSponsoring: {
+        info: {
+          from: "0x0000000000000000000000000000000000000001",
+          asset: ASSET,
+          spender: "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+          amount: "10000",
+          nonce: "1",
+          deadline: String(now + 3600),
+          signature: `0x${"aa".repeat(65)}`,
+          version: "1",
+        },
+      },
+    };
+    const result = await resolvePermit2DepositBranch(
+      buildSigner(),
+      payment,
+      payload,
+      makeRequirements(),
+    );
+    expect(result).toMatchObject({ isValid: false, payer: PAYER });
+  });
+
+  it("verifyPermit2DepositAuthorization fails closed when the authorization is missing", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const payload: BatchSettlementDepositPayload = {
+      type: "deposit",
+      channelConfig: config,
+      voucher: { channelId, maxClaimableAmount: "1000", signature: "0xcafebabe" },
+      deposit: { amount: "10000", authorization: {} },
+    };
+    const result = await verifyPermit2DepositAuthorization(
+      buildSigner(),
+      envelopeDeposit(payload),
+      payload,
+      makeRequirements(),
+      84532,
+    );
+    expect(result).toEqual({
+      isValid: false,
+      invalidReason: Errors.ErrPermit2AuthorizationRequired,
+      payer: PAYER,
+    });
+  });
+
+  it("rejects an ERC-20 approval branch when the extension signer is not registered", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const now = Math.floor(Date.now() / 1000);
+    const payload: BatchSettlementDepositPayload = {
+      type: "deposit",
+      channelConfig: config,
+      voucher: { channelId, maxClaimableAmount: "1000", signature: "0xcafebabe" },
+      deposit: {
+        amount: "10000",
+        authorization: {
+          permit2Authorization: {
+            from: PAYER,
+            permitted: { token: ASSET, amount: "10000" },
+            spender: PERMIT2_DEPOSIT_COLLECTOR_ADDRESS,
+            nonce: "123",
+            deadline: String(now + 3600),
+            witness: { channelId },
+            signature: "0xfeedface",
+          },
+        },
+      },
+    };
+    const payment = envelopeDeposit(payload);
+    payment.extensions = {
+      erc20ApprovalGasSponsoring: {
+        info: {
+          from: PAYER,
+          asset: ASSET,
+          spender: "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+          amount: "10000",
+          signedTransaction: "0x01",
+          version: "1",
+        },
+        schema: {},
+      },
+    };
+    const result = await resolvePermit2DepositBranch(
+      buildSigner(),
+      payment,
+      payload,
+      makeRequirements(),
+    );
+    expect(result).toMatchObject({
+      isValid: false,
+      invalidReason: Errors.ErrErc20ApprovalUnavailable,
+      payer: PAYER,
+    });
+  });
+
+  it("rejects an ERC-20 approval branch when the registered signer payload does not match the payer", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const now = Math.floor(Date.now() / 1000);
+    const payload: BatchSettlementDepositPayload = {
+      type: "deposit",
+      channelConfig: config,
+      voucher: { channelId, maxClaimableAmount: "1000", signature: "0xcafebabe" },
+      deposit: {
+        amount: "10000",
+        authorization: {
+          permit2Authorization: {
+            from: PAYER,
+            permitted: { token: ASSET, amount: "10000" },
+            spender: PERMIT2_DEPOSIT_COLLECTOR_ADDRESS,
+            nonce: "123",
+            deadline: String(now + 3600),
+            witness: { channelId },
+            signature: "0xfeedface",
+          },
+        },
+      },
+    };
+    const payment = envelopeDeposit(payload);
+    payment.extensions = {
+      erc20ApprovalGasSponsoring: {
+        info: {
+          from: "0x0000000000000000000000000000000000000001",
+          asset: ASSET,
+          spender: "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+          amount: "10000",
+          signedTransaction: "0x01",
+          version: "1",
+        },
+        schema: {},
+      },
+    };
+    const context = {
+      getExtension: vi.fn().mockImplementation((key: string) => {
+        if (key === ERC20_APPROVAL_GAS_SPONSORING_KEY) {
+          return {
+            signer: {
+              sendTransactions: vi.fn(),
+              waitForTransactionReceipt: vi.fn(),
+            },
+          };
+        }
+        return undefined;
+      }),
+    } as unknown as FacilitatorContext;
+    const result = await resolvePermit2DepositBranch(
+      buildSigner(),
+      payment,
+      payload,
+      makeRequirements(),
+      context,
+    );
+    expect(result).toMatchObject({
+      isValid: false,
+      invalidReason: ErrErc20ApprovalFromMismatch,
+      payer: PAYER,
+    });
+  });
 });
 
 describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
@@ -880,6 +1304,43 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
         functionName: "deposit",
       }),
     );
+  });
+
+  it("maps a deposit broadcast failure after verify succeeds", async () => {
+    mockedMulticall.mockResolvedValue([
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 1_000_000n },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const signer = buildSigner({
+      writeContract: vi.fn().mockRejectedValue(new Error("replacement underpriced")),
+    });
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const now = Math.floor(Date.now() / 1000);
+    const dp: BatchSettlementDepositPayload = {
+      type: "deposit",
+      channelConfig: config,
+      voucher: { channelId, maxClaimableAmount: "1000", signature: "0xcafebabe" },
+      deposit: {
+        amount: "10000",
+        authorization: {
+          erc3009Authorization: {
+            validAfter: String(now - 600),
+            validBefore: String(now + 3600),
+            salt: "0x0000000000000000000000000000000000000000000000000000000000000001",
+            signature: "0xfeedface",
+          },
+        },
+      },
+    };
+
+    const result = await scheme.settle(envelopeDeposit(dp), makeRequirements());
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrDepositTransactionFailed);
+    expect(result.errorMessage).toContain("replacement underpriced");
   });
 
   it("keeps a successful deposit when the post-receipt channel-state read fails", async () => {
@@ -1051,6 +1512,49 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
 
     expect(result.success).toBe(true);
     expect(result.transaction).toBe(bundleTxHash);
+  });
+
+  it("fails settle when deposit execution cannot be resolved after verify succeeded", async () => {
+    mockedMulticall.mockResolvedValue([
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 1_000_000n },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    mockedResolvePermit2DepositBranch
+      .mockResolvedValueOnce({ kind: "standard", collectorData: "0x" })
+      .mockResolvedValueOnce({
+        isValid: false,
+        invalidReason: Errors.ErrPermit2AllowanceRequired,
+        payer: PAYER,
+      });
+    const scheme = new BatchSettlementEvmScheme(buildSigner(), authorizer);
+    const { dp, reqs } = buildErc20ApprovalPermit2Deposit();
+    const result = await scheme.settle(envelopeDeposit(dp), reqs);
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrPermit2AllowanceRequired);
+  });
+
+  it("fails a deposit when the extension signer returns an unexpected hash count", async () => {
+    const signer = buildSigner();
+    mockErc20ApprovalBranch(async () => [
+      ("0x" + "11".repeat(32)) as `0x${string}`,
+      ("0x" + "22".repeat(32)) as `0x${string}`,
+      ("0x" + "33".repeat(32)) as `0x${string}`,
+    ]);
+    mockedMulticall.mockResolvedValue([
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 1_000_000n },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(signer, buildAuthorizerSigner());
+    const { dp, reqs } = buildErc20ApprovalPermit2Deposit();
+
+    const result = await scheme.settle(envelopeDeposit(dp), reqs);
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrDepositTransactionFailed);
+    expect(result.errorMessage).toMatch(/expected 1 \(atomic bundle\) or 2/);
   });
 
   it("fails an erc20-approval deposit bundle when a single extension-signer hash's balance never confirms", async () => {
@@ -1357,6 +1861,61 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
     expect(result.transaction).toBe("0x" + "ab".repeat(32));
   });
 
+  it("returns ErrClaimSimulationFailed when claimWithSignature simulation reverts", async () => {
+    const signer = buildSigner({
+      readContract: vi.fn().mockImplementation(args => {
+        if (args.functionName === "isValidSignature") return Promise.resolve("0x1626ba7e");
+        if (args.functionName === "claimWithSignature") {
+          return Promise.reject(new Error("execution reverted: InvalidClaim"));
+        }
+        return Promise.resolve(undefined);
+      }),
+    });
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const config = buildChannelConfig({ receiverAuthorizer: authorizer.address });
+    const cp: BatchSettlementClaimPayload = {
+      type: "claim",
+      claims: [
+        {
+          voucher: { channel: config, maxClaimableAmount: "1000" },
+          signature: "0xcafe",
+          totalClaimed: "1000",
+        },
+      ],
+    };
+    const result = await scheme.settle(
+      envelopeSettle(cp as unknown as Record<string, unknown>),
+      makeRequirements(),
+    );
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrClaimSimulationFailed);
+    expect(signer.writeContract).not.toHaveBeenCalled();
+  });
+
+  it("returns ErrClaimTransactionFailed when claim broadcast throws", async () => {
+    const signer = buildSigner({
+      writeContract: vi.fn().mockRejectedValue(new Error("nonce too low")),
+    });
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const config = buildChannelConfig({ receiverAuthorizer: authorizer.address });
+    const cp: BatchSettlementClaimPayload = {
+      type: "claim",
+      claims: [
+        {
+          voucher: { channel: config, maxClaimableAmount: "1000" },
+          signature: "0xcafe",
+          totalClaimed: "1000",
+        },
+      ],
+    };
+    const result = await scheme.settle(
+      envelopeSettle(cp as unknown as Record<string, unknown>),
+      makeRequirements(),
+    );
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrClaimTransactionFailed);
+  });
+
   it("returns AuthorizerAddressMismatch when claim authorizer doesn't match config", async () => {
     const signer = buildSigner();
     const scheme = new BatchSettlementEvmScheme(signer, authorizer);
@@ -1457,6 +2016,123 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
     expect(result.transaction).toBe("0x" + "ab".repeat(32));
   });
 
+  it("returns ErrRefundSimulationFailed when refundWithSignature simulation reverts", async () => {
+    const signer = buildSigner({
+      readContract: vi.fn().mockImplementation(args => {
+        if (args.functionName === "isValidSignature") return Promise.resolve("0x1626ba7e");
+        if (args.functionName === "refundWithSignature") {
+          return Promise.reject(new Error("execution reverted: RefundExpired"));
+        }
+        return Promise.resolve(undefined);
+      }),
+    });
+    mockedMulticall.mockResolvedValue([
+      { status: "success", result: [10000n, 0n] },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const config = buildChannelConfig({ receiverAuthorizer: authorizer.address });
+    const channelId = computeChannelId(config);
+    const rp: BatchSettlementEnrichedRefundPayload = {
+      type: "refund",
+      channelConfig: config,
+      voucher: { channelId, maxClaimableAmount: "0", signature: "0xdead" },
+      amount: "9000",
+      refundNonce: "0",
+      claims: [],
+    };
+    const result = await scheme.settle(
+      envelopeSettle(rp as unknown as Record<string, unknown>),
+      makeRequirements(),
+    );
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrRefundSimulationFailed);
+    expect(signer.writeContract).not.toHaveBeenCalled();
+  });
+
+  it("batches claim+refund via multicall and maps a simulation revert", async () => {
+    const signer = buildSigner({
+      readContract: vi.fn().mockImplementation(args => {
+        if (args.functionName === "isValidSignature") return Promise.resolve("0x1626ba7e");
+        if (args.functionName === "multicall") {
+          return Promise.reject(new Error("execution reverted: ClaimFailed"));
+        }
+        return Promise.resolve(undefined);
+      }),
+    });
+    mockedMulticall.mockResolvedValue([
+      { status: "success", result: [10000n, 0n] },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const config = buildChannelConfig({ receiverAuthorizer: authorizer.address });
+    const channelId = computeChannelId(config);
+    const rp: BatchSettlementEnrichedRefundPayload = {
+      type: "refund",
+      channelConfig: config,
+      voucher: { channelId, maxClaimableAmount: "0", signature: "0xdead" },
+      amount: "1000",
+      refundNonce: "0",
+      claims: [
+        {
+          voucher: { channel: config, maxClaimableAmount: "1000" },
+          signature: "0xcafe",
+          totalClaimed: "0",
+        },
+      ],
+    };
+    const failed = await scheme.settle(
+      envelopeSettle(rp as unknown as Record<string, unknown>),
+      makeRequirements(),
+    );
+    expect(failed.success).toBe(false);
+    expect(failed.errorReason).toBe(Errors.ErrRefundSimulationFailed);
+
+    const okSigner = buildSigner();
+    mockedMulticall.mockResolvedValue([
+      { status: "success", result: [10000n, 0n] },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const ok = await new BatchSettlementEvmScheme(okSigner, authorizer).settle(
+      envelopeSettle(rp as unknown as Record<string, unknown>),
+      makeRequirements(),
+    );
+    expect(ok.success).toBe(true);
+    expect(okSigner.writeContract).toHaveBeenCalledWith(
+      expect.objectContaining({ functionName: "multicall" }),
+    );
+  });
+
+  it("returns AuthorizerAddressMismatch when refund authorizer doesn't match config", async () => {
+    mockedMulticall.mockResolvedValue([
+      { status: "success", result: [10000n, 0n] },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(buildSigner(), authorizer);
+    const config = buildChannelConfig({
+      receiverAuthorizer: "0x1111111111111111111111111111111111111111",
+    });
+    const channelId = computeChannelId(config);
+    const rp: BatchSettlementEnrichedRefundPayload = {
+      type: "refund",
+      channelConfig: config,
+      voucher: { channelId, maxClaimableAmount: "0", signature: "0xdead" },
+      amount: "9000",
+      refundNonce: "0",
+      claims: [],
+    };
+    const result = await scheme.settle(
+      envelopeSettle(rp as unknown as Record<string, unknown>),
+      makeRequirements(),
+    );
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrAuthorizerAddressMismatch);
+  });
+
   it("returns RefundNoBalance without submitting when a refund would transfer zero tokens", async () => {
     const signer = buildSigner();
     mockedMulticall.mockResolvedValue([
@@ -1537,6 +2213,19 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
     expect(mockedMulticall).toHaveBeenCalledTimes(2);
   });
 
+  it("returns ErrRpcReadFailed when the receivers() read throws", async () => {
+    const signer = buildSigner({
+      readContract: vi.fn().mockRejectedValue(new Error("rpc timeout")),
+    });
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const result = await scheme.settle(
+      envelopeSettle({ type: "settle", receiver: RECEIVER, token: ASSET }),
+      makeRequirements(),
+    );
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrRpcReadFailed);
+  });
+
   it("returns ErrSettleSimulationFailed when settle simulation reverts", async () => {
     const signer = buildSigner({
       readContract: vi.fn().mockImplementation(args => {
@@ -1556,6 +2245,34 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
     );
     expect(result.success).toBe(false);
     expect(result.errorReason).toBe(Errors.ErrSettleSimulationFailed);
+  });
+
+  it("maps a settle broadcast throw to ErrSettleTransactionFailed", async () => {
+    const signer = buildSigner({
+      writeContract: vi.fn().mockRejectedValue(new Error("replacement underpriced")),
+    });
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const result = await scheme.settle(
+      envelopeSettle({ type: "settle", receiver: RECEIVER, token: ASSET }),
+      makeRequirements(),
+    );
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrSettleTransactionFailed);
+    expect(result.errorMessage).toContain("replacement underpriced");
+  });
+
+  it("stringifies a non-Error settle broadcast rejection", async () => {
+    const signer = buildSigner({
+      writeContract: vi.fn().mockRejectedValue("replacement underpriced"),
+    });
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const result = await scheme.settle(
+      envelopeSettle({ type: "settle", receiver: RECEIVER, token: ASSET }),
+      makeRequirements(),
+    );
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrSettleTransactionFailed);
+    expect(result.errorMessage).toBe("replacement underpriced");
   });
 
   it("returns ErrSettleTransactionFailed when settle receipt is not success", async () => {
@@ -1689,6 +2406,582 @@ describe("BatchSettlementEvmScheme (Facilitator) — no authorizer configured", 
     expect(signer.writeContract).toHaveBeenCalledWith(
       expect.objectContaining({ functionName: "refundWithSignature" }),
     );
+  });
+
+  it("returns AuthorizerNotConfigured when claims are present but no claim authorizer is available", async () => {
+    const signer = buildSigner();
+    mockedMulticall.mockResolvedValue([
+      { status: "success", result: [10000n, 0n] },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(signer);
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const rp: BatchSettlementEnrichedRefundPayload = {
+      type: "refund",
+      channelConfig: config,
+      voucher: { channelId, maxClaimableAmount: "0", signature: "0xdead" },
+      amount: "1000",
+      refundNonce: "0",
+      refundAuthorizerSignature: "0xserversig" as `0x${string}`,
+      claims: [
+        {
+          voucher: { channel: config, maxClaimableAmount: "1000" },
+          signature: "0xcafe",
+          totalClaimed: "0",
+        },
+      ],
+    };
+
+    const result = await scheme.settle(
+      envelopeSettle(rp as unknown as Record<string, unknown>),
+      makeRequirements(),
+    );
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrAuthorizerNotConfigured);
+    expect(signer.writeContract).not.toHaveBeenCalled();
+  });
+
+  it("maps a refund broadcast failure after a successful simulation", async () => {
+    const signer = buildSigner({
+      writeContract: vi.fn().mockRejectedValue(new Error("nonce too low")),
+    });
+    mockedMulticall.mockResolvedValue([
+      { status: "success", result: [10000n, 0n] },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(signer);
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const rp: BatchSettlementEnrichedRefundPayload = {
+      type: "refund",
+      channelConfig: config,
+      voucher: { channelId, maxClaimableAmount: "0", signature: "0xdead" },
+      amount: "9000",
+      refundNonce: "0",
+      refundAuthorizerSignature: "0xserversig" as `0x${string}`,
+      claims: [],
+    };
+
+    const result = await scheme.settle(
+      envelopeSettle(rp as unknown as Record<string, unknown>),
+      makeRequirements(),
+    );
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrRefundTransactionFailed);
+    expect(result.errorMessage).toContain("nonce too low");
+  });
+
+  it("still broadcasts a refund whose requested amount is zero after claims are considered", async () => {
+    const signer = buildSigner();
+    mockedMulticall.mockResolvedValue([
+      { status: "success", result: [10000n, 0n] },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(signer);
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const rp: BatchSettlementEnrichedRefundPayload = {
+      type: "refund",
+      channelConfig: config,
+      voucher: { channelId, maxClaimableAmount: "0", signature: "0xdead" },
+      amount: "0",
+      refundNonce: "0",
+      refundAuthorizerSignature: "0xserversig" as `0x${string}`,
+      claims: [],
+    };
+
+    const result = await scheme.settle(
+      envelopeSettle(rp as unknown as Record<string, unknown>),
+      makeRequirements(),
+    );
+    // getRefundableAmount returns null for a zero request (not 0n), so the
+    // ErrRefundNoBalance short-circuit does not fire and the signed refund is submitted.
+    expect(result.success).toBe(true);
+    expect(signer.writeContract).toHaveBeenCalled();
+  });
+
+  it("ignores claims for a different channel when computing refundable amount", async () => {
+    const signer = buildSigner();
+    mockedMulticall.mockResolvedValue([
+      { status: "success", result: [10000n, 0n] },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(signer);
+    const config = buildChannelConfig();
+    const other = buildChannelConfig({
+      salt: "0x0000000000000000000000000000000000000000000000000000000000000001",
+    });
+    const channelId = computeChannelId(config);
+    const rp: BatchSettlementEnrichedRefundPayload = {
+      type: "refund",
+      channelConfig: config,
+      voucher: { channelId, maxClaimableAmount: "0", signature: "0xdead" },
+      amount: "9000",
+      refundNonce: "0",
+      refundAuthorizerSignature: "0xserversig" as `0x${string}`,
+      claimAuthorizerSignature: "0xclaimsig" as `0x${string}`,
+      claims: [
+        {
+          voucher: { channel: other, maxClaimableAmount: "10000" },
+          signature: "0xcafe",
+          totalClaimed: "10000",
+        },
+      ],
+    };
+
+    const result = await scheme.settle(
+      envelopeSettle(rp as unknown as Record<string, unknown>),
+      makeRequirements(),
+    );
+    expect(result.success).toBe(true);
+    expect(signer.writeContract).toHaveBeenCalled();
+    // Cross-channel claims are ignored for the pre-flight refundable check, so
+    // the refund still broadcasts instead of aborting as RefundNoBalance.
+  });
+
+  it("still broadcasts when bundled claims exceed channel balance so refundable amount is unknown", async () => {
+    const signer = buildSigner();
+    mockedMulticall.mockResolvedValue([
+      { status: "success", result: [10000n, 0n] },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(signer);
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const rp: BatchSettlementEnrichedRefundPayload = {
+      type: "refund",
+      channelConfig: config,
+      voucher: { channelId, maxClaimableAmount: "15000", signature: "0xdead" },
+      amount: "1000",
+      refundNonce: "0",
+      refundAuthorizerSignature: "0xserversig" as `0x${string}`,
+      claimAuthorizerSignature: "0xclaimsig" as `0x${string}`,
+      claims: [
+        {
+          voucher: { channel: config, maxClaimableAmount: "15000" },
+          signature: "0xcafe",
+          totalClaimed: "15000",
+        },
+      ],
+    };
+
+    const result = await scheme.settle(
+      envelopeSettle(rp as unknown as Record<string, unknown>),
+      makeRequirements(),
+    );
+    expect(result.success).toBe(true);
+    expect(signer.writeContract).toHaveBeenCalledWith(
+      expect.objectContaining({ functionName: "multicall" }),
+    );
+  });
+
+  it("refuses a refund whose bundled claims already consume the channel balance", async () => {
+    const signer = buildSigner();
+    mockedMulticall.mockResolvedValue([
+      { status: "success", result: [10000n, 0n] },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(signer);
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const rp: BatchSettlementEnrichedRefundPayload = {
+      type: "refund",
+      channelConfig: config,
+      voucher: { channelId, maxClaimableAmount: "10000", signature: "0xdead" },
+      amount: "1000",
+      refundNonce: "0",
+      refundAuthorizerSignature: "0xserversig" as `0x${string}`,
+      claimAuthorizerSignature: "0xclaimsig" as `0x${string}`,
+      claims: [
+        {
+          voucher: { channel: config, maxClaimableAmount: "10000" },
+          signature: "0xcafe",
+          totalClaimed: "10000",
+        },
+      ],
+    };
+
+    const result = await scheme.settle(
+      envelopeSettle(rp as unknown as Record<string, unknown>),
+      makeRequirements(),
+    );
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrRefundNoBalance);
+    expect(signer.writeContract).not.toHaveBeenCalled();
+  });
+
+  it("reads post-refund channel state when a withdrawal is already pending", async () => {
+    const signer = buildSigner();
+    mockedMulticall
+      .mockResolvedValueOnce([
+        { status: "success", result: [10000n, 0n] },
+        { status: "success", result: [0n, 50n] },
+        { status: "success", result: 0n },
+      ])
+      .mockResolvedValue([
+        { status: "success", result: [1000n, 1000n] },
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 1n },
+      ]);
+    const scheme = new BatchSettlementEvmScheme(signer);
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const rp: BatchSettlementEnrichedRefundPayload = {
+      type: "refund",
+      channelConfig: config,
+      voucher: { channelId, maxClaimableAmount: "0", signature: "0xdead" },
+      amount: "9000",
+      refundNonce: "0",
+      refundAuthorizerSignature: "0xserversig" as `0x${string}`,
+      claims: [],
+    };
+
+    const result = await scheme.settle(
+      envelopeSettle(rp as unknown as Record<string, unknown>),
+      makeRequirements(),
+    );
+    expect(result.success).toBe(true);
+    expect(result.amount).toBe("9000");
+    expect(result.extra).toMatchObject({
+      channelState: {
+        channelId,
+        balance: "1000",
+        totalClaimed: "1000",
+        withdrawRequestedAt: 0,
+        refundNonce: "1",
+      },
+    });
+  });
+
+  it("falls back to the pre-refund snapshot when the post-refund state read fails", async () => {
+    const signer = buildSigner();
+    mockedMulticall
+      .mockResolvedValueOnce([
+        { status: "success", result: [10000n, 0n] },
+        { status: "success", result: [0n, 50n] },
+        { status: "success", result: 0n },
+      ])
+      .mockRejectedValueOnce(new Error("rpc lag"));
+    const scheme = new BatchSettlementEvmScheme(signer);
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const rp: BatchSettlementEnrichedRefundPayload = {
+      type: "refund",
+      channelConfig: config,
+      voucher: { channelId, maxClaimableAmount: "0", signature: "0xdead" },
+      amount: "9000",
+      refundNonce: "0",
+      refundAuthorizerSignature: "0xserversig" as `0x${string}`,
+      claims: [],
+    };
+
+    const result = await scheme.settle(
+      envelopeSettle(rp as unknown as Record<string, unknown>),
+      makeRequirements(),
+    );
+    expect(result.success).toBe(true);
+    expect(result.amount).toBe("9000");
+    expect(result.extra).toMatchObject({
+      channelState: {
+        channelId,
+        balance: "1000",
+        withdrawRequestedAt: 0,
+      },
+    });
+  });
+});
+
+describe("BatchSettlementEvmScheme (Facilitator) — ERC-6492 deposit", () => {
+  const authorizer = buildAuthorizerSigner();
+  const FACTORY = "0xca11bde05977b3631167028862be2a173976ca11" as `0x${string}`;
+  const ERC6492_MAGIC =
+    "0x6492649264926492649264926492649264926492649264926492649264926492" as const;
+
+  function wrapErc6492(
+    factory: `0x${string}`,
+    factoryCalldata: `0x${string}`,
+    inner: `0x${string}`,
+  ): `0x${string}` {
+    const encoded = encodeAbiParameters(parseAbiParameters("address, bytes, bytes"), [
+      factory,
+      factoryCalldata,
+      inner,
+    ]);
+    return concat([encoded, ERC6492_MAGIC]);
+  }
+
+  async function buildCounterfactualDeposit() {
+    const config = buildChannelConfig({ payerAuthorizer: authorizer.address });
+    const channelId = computeChannelId(config);
+    const voucher = await signVoucher(
+      { address: authorizer.address, signTypedData: authorizer.signTypedData },
+      channelId,
+      "1000",
+      NETWORK,
+    );
+    const now = Math.floor(Date.now() / 1000);
+    const payload: BatchSettlementDepositPayload = {
+      type: "deposit",
+      channelConfig: config,
+      voucher,
+      deposit: {
+        amount: "10000",
+        authorization: {
+          erc3009Authorization: {
+            validAfter: String(now - 600),
+            validBefore: String(now + 3600),
+            salt: "0x0000000000000000000000000000000000000000000000000000000000000001",
+            signature: wrapErc6492(
+              FACTORY,
+              "0xdeadbeef",
+              ("0x" + "33".repeat(65)) as `0x${string}`,
+            ),
+          },
+        },
+      },
+    };
+    return { payload: envelopeDeposit(payload), channelId };
+  }
+
+  it("rejects a counterfactual deposit when the deploy+deposit simulation reverts", async () => {
+    mockedMulticall
+      .mockResolvedValueOnce([
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 1_000_000n },
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 0n },
+      ])
+      .mockResolvedValueOnce([
+        { status: "success", result: undefined },
+        { status: "failure", error: new Error("inner signature rejected") },
+      ]);
+    const signer = buildSigner({
+      getCode: vi
+        .fn()
+        .mockImplementation(({ address }: { address: `0x${string}` }) =>
+          Promise.resolve(address.toLowerCase() === PAYER.toLowerCase() ? "0x" : "0x6080604052"),
+        ),
+    });
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer, {
+      eip6492AllowedFactories: [FACTORY],
+    });
+    const { payload } = await buildCounterfactualDeposit();
+    const result = await scheme.verify(payload, makeRequirements());
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe(Errors.ErrDepositSimulationFailed);
+  });
+
+  it("accepts a counterfactual deposit when the deploy+deposit simulation succeeds", async () => {
+    mockedMulticall
+      .mockResolvedValueOnce([
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 1_000_000n },
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 0n },
+      ])
+      .mockResolvedValueOnce([
+        { status: "success", result: undefined },
+        { status: "success", result: undefined },
+      ]);
+    const signer = buildSigner({
+      getCode: vi
+        .fn()
+        .mockImplementation(({ address }: { address: `0x${string}` }) =>
+          Promise.resolve(address.toLowerCase() === PAYER.toLowerCase() ? "0x" : "0x6080604052"),
+        ),
+    });
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer, {
+      eip6492AllowedFactories: [FACTORY],
+    });
+    const { payload, channelId } = await buildCounterfactualDeposit();
+    const result = await scheme.verify(payload, makeRequirements());
+    expect(result.isValid).toBe(true);
+    expect(result.extra?.channelId).toBe(channelId);
+  });
+
+  it("deploys an undeployed ERC-6492 wallet before settling the deposit", async () => {
+    mockedMulticall
+      .mockResolvedValueOnce([
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 1_000_000n },
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 0n },
+      ])
+      .mockResolvedValueOnce([
+        { status: "success", result: undefined },
+        { status: "success", result: undefined },
+      ])
+      .mockResolvedValue([
+        { status: "success", result: [10_000n, 0n] },
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 0n },
+      ]);
+    const signer = buildSigner({
+      getCode: vi
+        .fn()
+        .mockImplementation(({ address }: { address: `0x${string}` }) =>
+          Promise.resolve(address.toLowerCase() === PAYER.toLowerCase() ? "0x" : "0x6080604052"),
+        ),
+      sendTransaction: vi.fn().mockResolvedValue(("0x" + "dd".repeat(32)) as `0x${string}`),
+    });
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer, {
+      eip6492AllowedFactories: [FACTORY],
+    });
+    const { payload } = await buildCounterfactualDeposit();
+    const result = await scheme.settle(payload, makeRequirements());
+    expect(result.success).toBe(true);
+    expect(signer.sendTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ to: getAddress(FACTORY), data: "0xdeadbeef" }),
+    );
+    expect(signer.writeContract).toHaveBeenCalledWith(
+      expect.objectContaining({ functionName: "deposit" }),
+    );
+  });
+
+  it("fails settle when the ERC-6492 factory transaction reverts", async () => {
+    mockedMulticall
+      .mockResolvedValueOnce([
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 1_000_000n },
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 0n },
+      ])
+      .mockResolvedValueOnce([
+        { status: "success", result: undefined },
+        { status: "success", result: undefined },
+      ]);
+    const signer = buildSigner({
+      getCode: vi
+        .fn()
+        .mockImplementation(({ address }: { address: `0x${string}` }) =>
+          Promise.resolve(address.toLowerCase() === PAYER.toLowerCase() ? "0x" : "0x6080604052"),
+        ),
+      sendTransaction: vi.fn().mockResolvedValue(("0x" + "dd".repeat(32)) as `0x${string}`),
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: "reverted" }),
+    });
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer, {
+      eip6492AllowedFactories: [FACTORY],
+    });
+    const { payload } = await buildCounterfactualDeposit();
+    const result = await scheme.settle(payload, makeRequirements());
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrSmartWalletDeploymentFailed);
+    expect(signer.writeContract).not.toHaveBeenCalled();
+  });
+
+  it("skips factory deployment when getCode later reports the wallet is already deployed", async () => {
+    let payerLookups = 0;
+    mockedMulticall
+      .mockResolvedValueOnce([
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 1_000_000n },
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 0n },
+      ])
+      .mockResolvedValueOnce([
+        { status: "success", result: undefined },
+        { status: "success", result: undefined },
+      ])
+      .mockResolvedValue([
+        { status: "success", result: [10_000n, 0n] },
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 0n },
+      ]);
+    const signer = buildSigner({
+      getCode: vi.fn().mockImplementation(({ address }: { address: `0x${string}` }) => {
+        if (address.toLowerCase() !== PAYER.toLowerCase()) {
+          return Promise.resolve("0x6080604052");
+        }
+        payerLookups += 1;
+        // First lookup (verify) is undeployed; settle's deploy check sees code.
+        return Promise.resolve(payerLookups === 1 ? "0x" : "0x6080604052");
+      }),
+    });
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer, {
+      eip6492AllowedFactories: [FACTORY],
+    });
+    const { payload } = await buildCounterfactualDeposit();
+    const result = await scheme.settle(payload, makeRequirements());
+    expect(result.success).toBe(true);
+    expect(signer.sendTransaction).not.toHaveBeenCalled();
+  });
+
+  it("treats a getCode RPC failure as undeployed and still deploys when the factory is allowlisted", async () => {
+    mockedMulticall
+      .mockResolvedValueOnce([
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 1_000_000n },
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 0n },
+      ])
+      .mockResolvedValueOnce([
+        { status: "success", result: undefined },
+        { status: "success", result: undefined },
+      ])
+      .mockResolvedValue([
+        { status: "success", result: [10_000n, 0n] },
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 0n },
+      ]);
+    let payerLookups = 0;
+    const signer = buildSigner({
+      getCode: vi.fn().mockImplementation(({ address }: { address: `0x${string}` }) => {
+        if (address.toLowerCase() !== PAYER.toLowerCase()) {
+          return Promise.resolve("0x6080604052");
+        }
+        payerLookups += 1;
+        if (payerLookups === 1) return Promise.resolve("0x");
+        return Promise.reject(new Error("eth_getCode timeout"));
+      }),
+      sendTransaction: vi.fn().mockResolvedValue(("0x" + "dd".repeat(32)) as `0x${string}`),
+    });
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer, {
+      eip6492AllowedFactories: [FACTORY],
+    });
+    const { payload } = await buildCounterfactualDeposit();
+    const result = await scheme.settle(payload, makeRequirements());
+    expect(result.success).toBe(true);
+    expect(signer.sendTransaction).toHaveBeenCalled();
+  });
+
+  it("rejects settle when verify saw a deployed wallet but settle's getCode reports undeployed and the factory is not allowlisted", async () => {
+    mockedMulticall
+      .mockResolvedValueOnce([
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 1_000_000n },
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 0n },
+      ])
+      .mockResolvedValue([
+        { status: "success", result: [10_000n, 0n] },
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 0n },
+      ]);
+    let payerLookups = 0;
+    const signer = buildSigner({
+      getCode: vi.fn().mockImplementation(({ address }: { address: `0x${string}` }) => {
+        if (address.toLowerCase() !== PAYER.toLowerCase()) {
+          return Promise.resolve("0x6080604052");
+        }
+        payerLookups += 1;
+        // Verify's classify + ERC-1271 lookups see a deployed wallet; settle's
+        // later deploy check sees it undeployed (RPC race) and then gates the factory.
+        return Promise.resolve(payerLookups <= 2 ? "0x6080604052" : "0x");
+      }),
+    });
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const { payload } = await buildCounterfactualDeposit();
+    const result = await scheme.settle(payload, makeRequirements());
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrFactoryNotAllowed);
+    expect(signer.sendTransaction).not.toHaveBeenCalled();
   });
 });
 

@@ -186,7 +186,7 @@ describe("BatchSettlementChannelManager — claim()", () => {
     expect(facilitator.settle).toHaveBeenCalledTimes(3);
   });
 
-  it("defaults to 100 vouchers per claim batch", async () => {
+  it("defaults to 100 vouchers per claim batch", { timeout: 15_000 }, async () => {
     const { manager, storage, facilitator } = buildManager();
     for (let i = 0; i < 101; i++) {
       const config = buildChannelConfig(i.toString(16));

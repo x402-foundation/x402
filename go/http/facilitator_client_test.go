@@ -153,6 +153,18 @@ func TestNewHTTPFacilitatorClient(t *testing.T) {
 	}
 }
 
+func TestHTTPFacilitatorClientDefaultTimeout(t *testing.T) {
+	got := NewHTTPFacilitatorClient(nil).HTTPClient().Timeout
+	if got != 90*time.Second {
+		t.Errorf("expected default timeout 90s, got %v", got)
+	}
+
+	got = NewHTTPFacilitatorClient(&FacilitatorConfig{Timeout: 5 * time.Second}).HTTPClient().Timeout
+	if got != 5*time.Second {
+		t.Errorf("expected custom timeout 5s, got %v", got)
+	}
+}
+
 func TestHTTPFacilitatorClientVerify(t *testing.T) {
 	ctx := context.Background()
 

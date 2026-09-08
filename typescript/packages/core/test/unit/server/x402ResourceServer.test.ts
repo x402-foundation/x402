@@ -16,6 +16,7 @@ import {
 } from "../../mocks";
 import { Network } from "../../../src/types";
 import { FacilitatorCapabilityError, type SettleResponse } from "../../../src/types/facilitator";
+import { HTTPFacilitatorClient } from "../../../src/http/httpFacilitatorClient";
 
 describe("x402ResourceServer", () => {
   describe("Construction", () => {
@@ -61,10 +62,15 @@ describe("x402ResourceServer", () => {
     });
 
     it("should create default client if empty array provided", async () => {
-      const server = new x402ResourceServer([]);
+      const getSupportedSpy = vi
+        .spyOn(HTTPFacilitatorClient.prototype, "getSupported")
+        .mockResolvedValue(buildSupportedResponse());
 
-      // Should not throw - uses default client
+      const server = new x402ResourceServer([]);
       await expect(server.initialize()).resolves.not.toThrow();
+      expect(getSupportedSpy).toHaveBeenCalled();
+
+      getSupportedSpy.mockRestore();
     });
   });
 

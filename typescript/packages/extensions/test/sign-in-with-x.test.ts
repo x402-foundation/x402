@@ -986,6 +986,23 @@ describe("Sign-In-With-X Extension", () => {
         const valid = verifySolanaSignature(message, decoded, keypair.publicKey);
         expect(valid).toBe(true);
       });
+
+      it("should sign via @solana/kit signMessages interface", async () => {
+        const keypair = nacl.sign.keyPair();
+        const signatureBytes = nacl.sign.detached(
+          new TextEncoder().encode("kit signer message"),
+          keypair.secretKey,
+        );
+        const address = encodeBase58(keypair.publicKey);
+        const signer: SolanaSigner = {
+          address,
+          signMessages: async () => [{ [address]: signatureBytes }],
+        };
+
+        const signature = await signSolanaMessage("kit signer message", signer);
+
+        expect(decodeBase58(signature)).toEqual(signatureBytes);
+      });
     });
 
     describe("createSIWxPayload with Solana signer", () => {
@@ -2009,6 +2026,49 @@ describe("SIWX Hooks", () => {
       expect(response.status).toBe(402);
       expect(mockFetch).toHaveBeenCalledTimes(1);
       expect(response.headers.get("sign-in-with-x")).toBeNull();
+    });
+
+    it("wrapFetchWithSIWx should throw when SIWX authentication was already attempted", async () => {
+      const account = privateKeyToAccount(generatePrivateKey());
+      const challenge = createTestChallenge({
+        domain: "api.example.com",
+        resourceUri: "https://api.example.com/resource",
+        network: "eip155:8453",
+      });
+      const paymentRequired = {
+        x402Version: 2 as const,
+        resource: {
+          url: "https://api.example.com/resource",
+          description: "test",
+          mimeType: "text/plain",
+        },
+        accepts: [
+          {
+            scheme: "exact" as const,
+            network: "eip155:8453",
+            amount: "1000",
+            payTo: "0x0" as const,
+          },
+        ],
+        extensions: challenge,
+      };
+      const encodedHeader = safeBase64Encode(JSON.stringify(paymentRequired));
+      const original402 = new Response(JSON.stringify(paymentRequired), {
+        status: 402,
+        headers: { "PAYMENT-REQUIRED": encodedHeader },
+      });
+      Object.defineProperty(original402, "url", {
+        value: "https://api.example.com/resource",
+      });
+
+      const mockFetch = vi.fn().mockResolvedValue(original402);
+      const fetchWithSIWx = wrapFetchWithSIWx(mockFetch, account);
+
+      await expect(
+        fetchWithSIWx("https://api.example.com/resource", {
+          headers: { [SIGN_IN_WITH_X]: "already-set" },
+        }),
+      ).rejects.toThrow("SIWX authentication already attempted");
     });
   });
 

@@ -2,7 +2,7 @@
 
 Express server that protects a resource with the **batch-settlement** EVM scheme. Each request is paid by an off-chain voucher; the server batches voucher claims and onchain settlements via a `ChannelManager` running in the background.
 
-The route demonstrates **dynamic pricing**: the client authorizes up to `$0.01` per request, and the handler bills a random fraction of that via `setSettlementOverrides`.
+The route demonstrates **dynamic pricing**: the client authorizes up to `$0.01` per request, and the handler bills a random fraction of that via `setSettlementOverrides`. Every 402 also includes `extra.minDeposit` (SDK default `10 × amount`) so clients can size the channel deposit. Override per route with `accepts.extra.minDeposit` (`"$0.10"` on the default asset, or an atomic string). The server announces the hint only; it does not reject smaller deposits unless you set `enforceMinDeposit: true`.
 
 See the [scheme specification](../../../../specs/schemes/batch-settlement/scheme_batch_settlement_evm.md) and the [scheme README](../../../../typescript/packages/mechanisms/evm/src/batch-settlement/README.md) for protocol details.
 

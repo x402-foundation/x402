@@ -19,6 +19,8 @@ vi.mock("../../src/payment-channels/generated/accounts/channel", async importOri
 });
 
 import {
+  accountFetchRpc,
+  channelExists,
   DEFAULT_CHANNEL_READ_BACKOFF_STEP_MS,
   DEFAULT_CHANNEL_READ_MAX_ATTEMPTS,
   delayAfterAttempt,
@@ -167,5 +169,65 @@ describe("upto SVM channel reads", () => {
       `channel ${CHANNEL_ID} is not open`,
     );
     expect(channelAccountMocks.fetchMaybeChannel).toHaveBeenCalledTimes(1);
+  });
+
+  it("channelExists follows getAccountInfo presence", async () => {
+    const getAccountInfo = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce({ data: "x" });
+    await expect(channelExists({ getAccountInfo } as never, NETWORK, CHANNEL_ID)).resolves.toBe(
+      false,
+    );
+    await expect(channelExists({ getAccountInfo } as never, NETWORK, CHANNEL_ID)).resolves.toBe(
+      true,
+    );
+    expect(getAccountInfo).toHaveBeenCalledWith(CHANNEL_ID, NETWORK, {
+      commitment: "confirmed",
+      encoding: "base64",
+    });
+  });
+
+  it("accountFetchRpc forwards commitment and encoding to the signer", async () => {
+    const getAccountInfo = vi.fn().mockResolvedValue({ data: "x" });
+    const rpc = accountFetchRpc({ getAccountInfo } as never, NETWORK);
+    const result = await rpc
+      .getAccountInfo(address(CHANNEL_ID), { commitment: "finalized", encoding: "base64" })
+      .send();
+    expect(result.value).toEqual({ data: "x" });
+    expect(getAccountInfo).toHaveBeenCalledWith(CHANNEL_ID, NETWORK, {
+      commitment: "finalized",
+      encoding: "base64",
+    });
+  });
+
+  it("does not retry an existing channel with the wrong discriminator", async () => {
+    channelAccountMocks.fetchMaybeChannel.mockResolvedValue({
+      ...existingAccount,
+      data: { ...channel, discriminator: 99 },
+    });
+
+    await expect(fetchAndVerifyOpenChannel(signer, NETWORK, CHANNEL_ID, expected)).rejects.toThrow(
+      `channel ${CHANNEL_ID} has an invalid account discriminator`,
+    );
+    expect(channelAccountMocks.fetchMaybeChannel).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a confirmed channel whose payee does not match the challenge", async () => {
+    channelAccountMocks.fetchMaybeChannel.mockResolvedValue(existingAccount);
+    await expect(
+      fetchAndVerifyOpenChannel(signer, NETWORK, CHANNEL_ID, { ...expected, payee: PAYER }),
+    ).rejects.toThrow(/channel payee/);
+  });
+
+  it("rejects a confirmed channel whose mint does not match the challenge", async () => {
+    channelAccountMocks.fetchMaybeChannel.mockResolvedValue(existingAccount);
+    await expect(
+      fetchAndVerifyOpenChannel(signer, NETWORK, CHANNEL_ID, { ...expected, mint: PAYEE }),
+    ).rejects.toThrow(/channel mint/);
+  });
+
+  it("rejects a confirmed channel whose grace period does not match", async () => {
+    channelAccountMocks.fetchMaybeChannel.mockResolvedValue(existingAccount);
+    await expect(
+      fetchAndVerifyOpenChannel(signer, NETWORK, CHANNEL_ID, { ...expected, gracePeriod: 1 }),
+    ).rejects.toThrow(/channel grace period/);
   });
 });
