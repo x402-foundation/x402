@@ -417,3 +417,57 @@ describe("payment binding inputs (§19-style carriage)", () => {
     expect("payment" in without.x402_evc).toBe(false);
   });
 });
+
+describe("§19 authority-binding fixture cross-check (pinned, from x402#3220)", () => {
+  // Pinned deterministic fixture supplied by the authority-extension author
+  // (Model A / §7): B = SHA-256("x402-mandate-binding/1\n" || UTF8(mandateDigest
+  // + "\n" + paymentId)), where mandateDigest carries its "sha256:" prefix.
+  // This extension does NOT derive the binding; the derivation here exists
+  // only to prove the fixture is internally consistent and that the carriage
+  // layer transports each scheme's slot value verbatim.
+  const MANDATE_DIGEST = "sha256:445fed871d7c43d2b775e68124103c77646fc0f096fb42c9ea3d9f00c960ca05";
+  const PAYMENT_ID = "pay-001";
+  const RAW_B = "5aa71c23c84e6763bdb31a473f1981fd37ccf93945205b77eb84e0c271c1e74b";
+  const SLOT_EIP3009 = `0x${RAW_B}`;
+  const SLOT_PERMIT2 =
+    "41003414045902520435980278564259620301945597019592807630744813971199613855563";
+  const SLOT_XRPL = RAW_B.toUpperCase();
+
+  it("re-derives the pinned binding value from the §7 formula", async () => {
+    const { createHash } = await import("node:crypto");
+    const preimage = Buffer.concat([
+      Buffer.from("x402-mandate-binding/1\n", "utf8"),
+      Buffer.from(`${MANDATE_DIGEST}\n${PAYMENT_ID}`, "utf8"),
+    ]);
+    const b = createHash("sha256").update(preimage).digest("hex");
+    expect(b).toBe(RAW_B);
+    expect(BigInt(`0x${b}`).toString(10)).toBe(SLOT_PERMIT2);
+    expect(b.toUpperCase()).toBe(SLOT_XRPL);
+  });
+
+  it.each([
+    ["eip3009-style scheme slot", SLOT_EIP3009],
+    ["permit2-style decimal slot", SLOT_PERMIT2],
+    ["xrpl-style uppercase slot", SLOT_XRPL],
+  ])("carries the %s verbatim into x402_evc.payment", (_label, slot) => {
+    const extracted = defaultExtractPaymentBinding({
+      accepted: { scheme: "exact" },
+      payload: { authorization: { nonce: slot } },
+      extensions: { "payment-identifier": { info: { id: PAYMENT_ID } } },
+    });
+    expect(extracted).toEqual({ scheme: "exact", binding_slot: slot, payment_id: PAYMENT_ID });
+    const request = buildEvidenceVerifierRequest(
+      "opaque-evidence",
+      { network: "base-sepolia", asset: "0xAsset", amount: "10000", payTo: "0xPayee" },
+      { nonce: "v0.9999999999.aa.bb", expiresAt: 9999999999 },
+      "https://r.example/x",
+      {
+        audience: "api.merchant.example",
+        verifier: { verify: async () => ({ decision: "allow" }) },
+      },
+      extracted,
+    ) as { x402_evc: { payment?: { binding_slot?: string; payment_id?: string } } };
+    expect(request.x402_evc.payment?.binding_slot).toBe(slot);
+    expect(request.x402_evc.payment?.payment_id).toBe(PAYMENT_ID);
+  });
+});
