@@ -165,6 +165,34 @@ export interface AuthorizationEvidenceServerOptions {
   challengeSecret?: string;
   /** Clock override in unix seconds, for tests. */
   now?: () => number;
+  /**
+   * Override how payment-side binding inputs are extracted from the payment
+   * payload. Default: scheme + `payload.authorization.nonce` +
+   * `extensions["payment-identifier"].info.id`, each included only when it
+   * is a non-empty string. Return undefined to omit the `payment` member.
+   */
+  extractPaymentBinding?: (paymentPayload: unknown) => PaymentBindingInputs | undefined;
+}
+
+/**
+ * Payment-side binding inputs surfaced to binding-aware verifiers in the
+ * `x402_evc` context (the §19-style "carriage" seam: a companion authority
+ * spec derives a preimage over these; this extension never parses, derives,
+ * or validates them — it only carries what the actual payment presented).
+ */
+export interface PaymentBindingInputs {
+  /** The payment payload's scheme, verbatim. */
+  scheme?: string;
+  /**
+   * The payer-chosen scheme slot value as carried by the payment payload
+   * (for example an EIP-3009 / Permit2 authorization `nonce`), verbatim.
+   */
+  binding_slot?: string;
+  /**
+   * A client-presented payment identifier, sourced from the sibling
+   * `payment-identifier` extension's echoed `info.id` when present.
+   */
+  payment_id?: string;
 }
 
 /** The subset of an x402 payment requirement the extension reads. */

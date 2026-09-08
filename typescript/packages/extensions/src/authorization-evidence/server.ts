@@ -15,8 +15,41 @@ import { AUTHORIZATION_EVIDENCE, DEFAULT_CHALLENGE_TTL_SECONDS } from "./types";
 import type {
   AuthorizationEvidenceDeclaration,
   AuthorizationEvidenceServerOptions,
+  PaymentBindingInputs,
   PaymentRequirementLike,
 } from "./types";
+
+/**
+ * Default payment-side binding-input extraction (§19-style carriage seam).
+ * Reads only what the payment actually presented: the payload scheme, the
+ * scheme authorization `nonce` slot, and the sibling `payment-identifier`
+ * extension's echoed `info.id`. Every field is included only when it is a
+ * non-empty string; returns undefined when nothing is present. This
+ * extension never derives or validates a binding — it carries inputs.
+ *
+ * @param paymentPayload - The presented x402 payment payload
+ * @returns The binding inputs, or undefined when the payload carries none
+ */
+export function defaultExtractPaymentBinding(
+  paymentPayload: unknown,
+): PaymentBindingInputs | undefined {
+  const p = paymentPayload as {
+    accepted?: { scheme?: unknown };
+    payload?: { authorization?: { nonce?: unknown } };
+    extensions?: Record<string, { info?: { id?: unknown } } | undefined>;
+  } | null;
+  if (p === null || typeof p !== "object") return undefined;
+  const out: PaymentBindingInputs = {};
+  // v2 payloads carry the scheme on the echoed accepted requirement, not at
+  // the top level; a stray top-level value is deliberately ignored.
+  const scheme = p.accepted?.scheme;
+  if (typeof scheme === "string" && scheme.length > 0) out.scheme = scheme;
+  const slot = p.payload?.authorization?.nonce;
+  if (typeof slot === "string" && slot.length > 0) out.binding_slot = slot;
+  const id = p.extensions?.["payment-identifier"]?.info?.id;
+  if (typeof id === "string" && id.length > 0) out.payment_id = id;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
 
 /**
  * Create the authorization-evidence resource-server extension. Declaring the
@@ -97,6 +130,9 @@ export function createAuthorizationEvidenceResourceServerExtension(
           }
 
           const requirement = context.requirements as unknown as PaymentRequirementLike;
+          const payment = (options.extractPaymentBinding ?? defaultExtractPaymentBinding)(
+            context.paymentPayload,
+          );
           const decision = await decideAuthorizationEvidence(
             evidence,
             requirement,
@@ -104,6 +140,7 @@ export function createAuthorizationEvidenceResourceServerExtension(
             String((context.paymentPayload as { resource?: unknown }).resource ?? ""),
             options,
             nonceStore,
+            payment,
           );
           if (decision.decision === "allow") return;
           return { abort: true, reason: denialReason(decision) };

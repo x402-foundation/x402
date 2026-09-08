@@ -6,7 +6,7 @@
  * mandate through an External Verifier Contract v1 (EVC) verifier and fails
  * closed on every abnormal path. The verifier is a pluggable subprocess; any
  * EVC-conformant implementation works (`npx @bolyra/evc-conformance` runs the
- * published 28-vector host suite against this extension's host boundary).
+ * published host-behavior vector suite against this extension's host boundary).
  *
  * ## Usage
  *
@@ -48,6 +48,7 @@
 
 // Export types
 export type {
+  PaymentBindingInputs,
   AuthorizationEvidenceDeclaration,
   AuthorizationEvidenceExtension,
   AuthorizationEvidenceInfo,
@@ -75,6 +76,7 @@ export { authorizationEvidenceSchema } from "./schema";
 // Export resource server functions
 export { declareAuthorizationEvidenceExtension } from "./declare";
 export {
+  defaultExtractPaymentBinding,
   createAuthorizationEvidenceResourceServerExtension,
   mintChallengeNonce,
   validateChallengeNonce,

@@ -9,6 +9,7 @@ import {
   buildEvidenceVerifierRequest,
   createAuthorizationEvidenceResourceServerExtension,
   createCommandVerifier,
+  defaultExtractPaymentBinding,
   createInMemoryNonceStore,
   decideAuthorizationEvidence,
   declareAuthorizationEvidenceExtension,
@@ -341,5 +342,78 @@ describe("Authorization Evidence Extension", () => {
     it("should reject an empty command", () => {
       expect(() => createCommandVerifier({ command: [] })).toThrow(/verifier command/);
     });
+  });
+});
+
+describe("payment binding inputs (§19-style carriage)", () => {
+  const baseRequirement = {
+    network: "base-sepolia",
+    asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    amount: "10000",
+    payTo: "0xPayee",
+  };
+  const challenge = { nonce: "v0.9999999999.aa.bb", expiresAt: 9999999999 };
+
+  it("extracts scheme from accepted.scheme, the authorization nonce slot, and payment-identifier id", () => {
+    const out = defaultExtractPaymentBinding({
+      accepted: { scheme: "exact" },
+      payload: { authorization: { nonce: "0xdeadbeef" } },
+      extensions: { "payment-identifier": { info: { id: "pay_123" } } },
+    });
+    expect(out).toEqual({ scheme: "exact", binding_slot: "0xdeadbeef", payment_id: "pay_123" });
+  });
+
+  it("ignores a stray top-level scheme (v2 carries it on accepted)", () => {
+    const out = defaultExtractPaymentBinding({
+      scheme: "not-the-real-one",
+      accepted: { scheme: "exact" },
+      payload: { authorization: { nonce: "0xdeadbeef" } },
+    });
+    expect(out).toEqual({ scheme: "exact", binding_slot: "0xdeadbeef" });
+    const topOnly = defaultExtractPaymentBinding({
+      scheme: "top-level-only",
+      payload: { authorization: { nonce: "0xdeadbeef" } },
+    });
+    expect(topOnly).toEqual({ binding_slot: "0xdeadbeef" });
+  });
+
+  it("returns undefined when the payload carries no binding inputs", () => {
+    expect(defaultExtractPaymentBinding({})).toBeUndefined();
+    expect(defaultExtractPaymentBinding(null)).toBeUndefined();
+    expect(defaultExtractPaymentBinding("nope")).toBeUndefined();
+  });
+
+  it("ignores non-string and empty binding fields instead of carrying them", () => {
+    const out = defaultExtractPaymentBinding({
+      accepted: { scheme: 42 },
+      payload: { authorization: { nonce: "" } },
+      extensions: { "payment-identifier": { info: { id: { nested: true } } } },
+    });
+    expect(out).toBeUndefined();
+  });
+
+  it("includes x402_evc.payment only when inputs exist", () => {
+    const options = {
+      audience: "api.merchant.example",
+      verifier: { verify: async () => ({ decision: "allow" }) },
+    };
+    const withPayment = buildEvidenceVerifierRequest(
+      "evidence",
+      baseRequirement,
+      challenge,
+      "https://r.example/x",
+      options,
+      { scheme: "exact", binding_slot: "0xdeadbeef" },
+    ) as { x402_evc: Record<string, unknown> };
+    expect(withPayment.x402_evc.payment).toEqual({ scheme: "exact", binding_slot: "0xdeadbeef" });
+
+    const without = buildEvidenceVerifierRequest(
+      "evidence",
+      baseRequirement,
+      challenge,
+      "https://r.example/x",
+      options,
+    ) as { x402_evc: Record<string, unknown> };
+    expect("payment" in without.x402_evc).toBe(false);
   });
 });

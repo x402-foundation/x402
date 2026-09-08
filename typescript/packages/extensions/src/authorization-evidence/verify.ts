@@ -17,6 +17,7 @@ import type {
   EvcDecision,
   EvidenceNonceStore,
   PaymentRequirementLike,
+  PaymentBindingInputs,
 } from "./types";
 
 /**
@@ -79,6 +80,7 @@ export interface EvidenceChallenge {
  * @param challenge - The challenge context minted with the 402
  * @param resource - Identifier of the protected resource
  * @param options - Server extension options (audience, program, model, mappers)
+ * @param payment - Payment-side binding inputs to carry in `x402_evc.payment`
  * @returns The verifier request object
  */
 export function buildEvidenceVerifierRequest(
@@ -87,6 +89,7 @@ export function buildEvidenceVerifierRequest(
   challenge: EvidenceChallenge,
   resource: string,
   options: AuthorizationEvidenceServerOptions,
+  payment?: PaymentBindingInputs,
 ): unknown {
   const capabilities = (options.capabilitiesFor ?? defaultCapabilitiesFor)(requirement);
   return {
@@ -110,6 +113,9 @@ export function buildEvidenceVerifierRequest(
       nonce: challenge.nonce,
       expires_at: challenge.expiresAt,
       verifier: "command",
+      // §19-style carriage: payment-side binding inputs, present only when
+      // the payment actually carried them. Opaque to this extension.
+      ...(payment !== undefined ? { payment } : {}),
     },
   };
 }
@@ -125,6 +131,7 @@ export function buildEvidenceVerifierRequest(
  * @param resource - Identifier of the protected resource
  * @param options - Server extension options
  * @param nonceStore - Reserve-before-act store for the challenge nonce
+ * @param payment - Payment-side binding inputs surfaced to the verifier context
  * @returns The closed decision
  */
 export async function decideAuthorizationEvidence(
@@ -134,6 +141,7 @@ export async function decideAuthorizationEvidence(
   resource: string,
   options: AuthorizationEvidenceServerOptions,
   nonceStore: EvidenceNonceStore,
+  payment?: PaymentBindingInputs,
 ): Promise<EvcDecision> {
   const payeeMatches = options.payeeMatches ?? ((audience, payTo) => audience === payTo);
   if (!payeeMatches(options.audience, requirement.payTo)) {
@@ -150,7 +158,14 @@ export async function decideAuthorizationEvidence(
     return { decision: "deny", code: "nonce_replayed" };
   }
 
-  const request = buildEvidenceVerifierRequest(evidence, requirement, challenge, resource, options);
+  const request = buildEvidenceVerifierRequest(
+    evidence,
+    requirement,
+    challenge,
+    resource,
+    options,
+    payment,
+  );
   return options.verifier.verify(request);
 }
 
