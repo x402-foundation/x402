@@ -3,48 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   confirmationsSatisfy,
   normalizeConfirmationPolicy,
-  normalizeSubmissionMode,
-  normalizeSubmissionPolicy,
   resolveCardanoPolicies,
-  submissionModeAllowed,
 } from "../../src/policy";
-
-describe("submission policy", () => {
-  it("normalizes an absent policy to server", () => {
-    expect(normalizeSubmissionPolicy(undefined)).toBe("server");
-  });
-
-  it("accepts the three literals and rejects anything else", () => {
-    expect(normalizeSubmissionPolicy("server")).toBe("server");
-    expect(normalizeSubmissionPolicy("client")).toBe("client");
-    expect(normalizeSubmissionPolicy("either")).toBe("either");
-    expect(normalizeSubmissionPolicy("both")).toBeNull();
-    expect(normalizeSubmissionPolicy(null)).toBeNull();
-  });
-
-  it("normalizes an absent payload mode to server and rejects 'either'", () => {
-    expect(normalizeSubmissionMode(undefined)).toBe("server");
-    expect(normalizeSubmissionMode("client")).toBe("client");
-    // `either` is a policy, never a payload mode.
-    expect(normalizeSubmissionMode("either")).toBeNull();
-  });
-
-  it("matches the spec's policy/mode table", () => {
-    const table: Array<
-      [Parameters<typeof submissionModeAllowed>[0], "server" | "client", boolean]
-    > = [
-      ["server", "server", true],
-      ["server", "client", false],
-      ["client", "client", true],
-      ["client", "server", false],
-      ["either", "server", true],
-      ["either", "client", true],
-    ];
-    for (const [policy, mode, expected] of table) {
-      expect(submissionModeAllowed(policy, mode)).toBe(expected);
-    }
-  });
-});
 
 describe("confirmation policy", () => {
   it("normalizes an absent policy to one confirmation", () => {
@@ -84,24 +44,22 @@ describe("confirmation policy", () => {
 });
 
 describe("resolveCardanoPolicies", () => {
-  it("applies both defaults for an absent extra", () => {
+  it("applies the default for an absent extra", () => {
     expect(resolveCardanoPolicies(undefined)).toEqual({
-      submissionPolicy: "server",
       confirmationPolicy: { l1Confirmations: 1 },
     });
   });
 
-  it("reads declared policies", () => {
-    expect(
-      resolveCardanoPolicies({
-        submissionPolicy: "either",
-        confirmationPolicy: { l1Confirmations: 0 },
-      }),
-    ).toEqual({ submissionPolicy: "either", confirmationPolicy: { l1Confirmations: 0 } });
+  it("reads a declared policy", () => {
+    expect(resolveCardanoPolicies({ confirmationPolicy: { l1Confirmations: 0 } })).toEqual({
+      confirmationPolicy: { l1Confirmations: 0 },
+    });
   });
 
-  it("returns null when either policy is malformed", () => {
-    expect(resolveCardanoPolicies({ submissionPolicy: "nobody" })).toBeNull();
+  it("ignores unrelated extra keys and returns null for a malformed policy", () => {
+    expect(resolveCardanoPolicies({ assetTransferMethod: "script" })).toEqual({
+      confirmationPolicy: { l1Confirmations: 1 },
+    });
     expect(resolveCardanoPolicies({ confirmationPolicy: { l1Confirmations: 99 } })).toBeNull();
   });
 });

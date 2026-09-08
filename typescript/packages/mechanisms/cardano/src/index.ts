@@ -27,14 +27,17 @@ export {
   type MasumiRegistryValidator,
 } from "./exact/masumi/verify";
 
+// Resource-server Masumi quote issuance (template detection, per-request quotes)
+export * from "./exact/server/masumiIssuer";
+
 // Script method (generic contract locking with arbitrary datums)
 export { buildScriptDatumInline } from "./exact/script/datum";
 
 // Types
 export * from "./types";
 
-// Facilitator settlement idempotency store
-export * from "./idempotency";
+// Facilitator duplicate-settlement guard
+export * from "./settlementStore";
 
 // Constants
 export * from "./constants";
@@ -42,7 +45,7 @@ export * from "./constants";
 // Default USD-pegged assets (money parsing, client spend controls)
 export * from "./defaultAssets";
 
-// Submission / confirmation policy helpers
+// Confirmation policy helpers
 export * from "./policy";
 
 // Signer protocols

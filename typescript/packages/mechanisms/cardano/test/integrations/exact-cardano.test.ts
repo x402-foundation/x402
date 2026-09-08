@@ -1,4 +1,4 @@
-import { Data, Transaction } from "@evolution-sdk/evolution";
+import { Data, PrivateKey, Transaction } from "@evolution-sdk/evolution";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { x402Client } from "@x402/core/client";
 import { x402Facilitator } from "@x402/core/facilitator";
@@ -27,6 +27,8 @@ import {
   type FacilitatorCardanoSigner,
 } from "../../src/signer";
 import { LOVELACE_ASSET, USDM_PREPROD_ASSET } from "../../src/constants";
+import { masumiEscrowAddress } from "../../src/exact/masumi/blueprint";
+import { toMasumiSellerSigner } from "../../src/exact/masumi/issue";
 import { buildScriptDatumInline } from "../../src/exact/script/datum";
 import { decodeCardanoTransaction, slotToPosixMs } from "../../src/utils";
 import { buildSignedTx, getFixtureInputSnapshot } from "../helpers/buildSignedTx";
@@ -45,17 +47,17 @@ import {
   TTL_SLOT,
 } from "../helpers/stubs";
 
-/** Test-only facilitator with explicit volatile replay storage. */
+/** Test-only alias; the facilitator defaults to a process-local settlement store. */
 class ExactCardanoFacilitator extends ExactCardanoFacilitatorBase {
   constructor(signer: FacilitatorCardanoSigner, config: ExactCardanoFacilitatorConfig = {}) {
-    super(signer, { inMemorySettlementStoreMaxEntries: 4096, ...config });
+    super(signer, config);
   }
 }
 
-/** Test-only resource server with explicit volatile replay storage. */
+/** Test-only alias; the resource server needs no storage configuration. */
 class ExactCardanoServer extends ExactCardanoServerBase {
   constructor(config: ExactCardanoServerConfig = {}) {
-    super({ inMemoryStore: {}, ...config });
+    super(config);
   }
 }
 
@@ -167,11 +169,7 @@ describe("Cardano Integration Tests (deterministic, offline)", () => {
         decodeCardanoTransaction((paymentPayload.payload as { transaction: string }).transaction)
           .txHash,
       );
-      expect(settleResponse.extra).toMatchObject({
-        status: "confirmed",
-        submissionMode: "server",
-        confirmations: 1,
-      });
+      expect(settleResponse.extra).toEqual({ status: "confirmed", confirmations: 1 });
     });
 
     it("verifies and settles a native USDM payment end to end", async () => {
@@ -286,13 +284,8 @@ describe("Cardano Integration Tests (deterministic, offline)", () => {
       });
 
       const paymentPayload = await client.createPaymentPayload(paymentRequired);
-      const payloadFields = paymentPayload.payload as {
-        submissionMode: string;
-        settlementLayer: string;
-        transaction: string;
-      };
-      expect(payloadFields.submissionMode).toBe("server");
-      expect(payloadFields.settlementLayer).toBe("l1");
+      const payloadFields = paymentPayload.payload as { transaction: string; nonce: string };
+      expect(Object.keys(payloadFields).sort()).toEqual(["nonce", "transaction"]);
 
       const accepted = server.findMatchingRequirements([requirements], paymentPayload);
       expect(accepted).toBeDefined();
@@ -314,11 +307,65 @@ describe("Cardano Integration Tests (deterministic, offline)", () => {
 
       const settleResponse = await buyerOwned.settle(paymentPayload, accepted!);
       expect(settleResponse.success).toBe(true);
-      expect(settleResponse.extra).toMatchObject({
-        status: "confirmed",
-        submissionMode: "server",
-        settlementLayer: "l1",
+      expect(settleResponse.extra).toEqual({ status: "confirmed", confirmations: 1 });
+    });
+
+    // The route declares only a template; the scheme issues the quote inside
+    // core's real 402 pipeline (so the additive-enrichment policy is enforced)
+    // and answers the paid retry with the stored quote.
+    it("issues a Masumi quote from a route template and settles the paid retry", async () => {
+      const seller = toMasumiSellerSigner({
+        mnemonic: PrivateKey.generateMnemonic(),
+        network: NETWORK,
       });
+      const facilitator = new x402Facilitator().register(
+        NETWORK,
+        new ExactCardanoFacilitator(stubFacilitatorSigner()),
+      );
+      const issuing = new x402ResourceServer(new CardanoFacilitatorClient(facilitator));
+      issuing.register(NETWORK, new ExactCardanoServer({ masumi: { seller } }));
+      await issuing.initialize();
+
+      const accepts = await issuing.buildPaymentRequirements({
+        scheme: "exact",
+        network: NETWORK,
+        payTo: masumiEscrowAddress(NETWORK),
+        price: { amount: "50000000", asset: LOVELACE_ASSET },
+        maxTimeoutSeconds: 600,
+        extra: { assetTransferMethod: "masumi", confirmationPolicy: { l1Confirmations: 0 } },
+      });
+      expect((accepts[0].extra as { terms?: unknown }).terms).toBeUndefined();
+      const resource = { url: "https://agent.example.com/weather", mimeType: "application/json" };
+
+      // Unpaid request: the served 402 carries a signed quote.
+      const paymentRequired = await issuing.createPaymentRequiredResponse(accepts, resource);
+      const quote = paymentRequired.accepts[0];
+      expect((quote.extra as { terms?: { sellerAddress: string } }).terms?.sellerAddress).toBe(
+        seller.sellerAddress,
+      );
+      const paymentPayload = await client.createPaymentPayload(paymentRequired);
+
+      // Paid retry: the same template resolves to the stored quote, so the
+      // client's echoed `accepted` matches and verification uses the signed terms.
+      const forMatch = await issuing.createPaymentRequiredResponse(
+        accepts,
+        resource,
+        undefined,
+        undefined,
+        {
+          request: {
+            paymentHeader: Buffer.from(JSON.stringify(paymentPayload)).toString("base64"),
+          },
+        },
+      );
+      expect(forMatch.accepts[0]).toEqual(quote);
+      const accepted = issuing.findMatchingRequirements(forMatch.accepts, paymentPayload);
+      expect(accepted).toBeDefined();
+
+      const verifyResponse = await issuing.verifyPayment(paymentPayload, accepted!);
+      expect(verifyResponse.isValid, verifyResponse.invalidReason).toBe(true);
+      const settleResponse = await issuing.settlePayment(paymentPayload, accepted!);
+      expect(settleResponse.success, settleResponse.errorReason).toBe(true);
     });
 
     it("refuses a second, different transaction for the same Masumi terms", async () => {
@@ -349,7 +396,7 @@ describe("Cardano Integration Tests (deterministic, offline)", () => {
       const second: PaymentPayload = {
         x402Version: 2,
         accepted: requirements,
-        payload: { ...otherLock, submissionMode: "server", settlementLayer: "l1" },
+        payload: otherLock,
       };
       const firstTx = decodeCardanoTransaction(
         (first.payload as { transaction: string }).transaction,
@@ -430,7 +477,13 @@ describe("Cardano Integration Tests (deterministic, offline)", () => {
       // An absurdly large coinsPerUtxoByte pushes the min-UTXO far above the
       // output's 1 ADA, exercising the min-UTXO comparison branch.
       const facilitator = new ExactCardanoFacilitator(
-        stubFacilitatorSigner({ getCoinsPerUtxoByte: async () => 100_000n }),
+        stubFacilitatorSigner({
+          getProtocolParameters: async () => ({
+            coinsPerUtxoByte: 100_000n,
+            minFeeCoefficient: 44n,
+            minFeeConstant: 155_381n,
+          }),
+        }),
       );
       const { payload } = await fixturePayload(recipient, 1_000_000n);
       const result = await facilitator.verify(payload, buildRequirements(recipient, "1000000"));
@@ -440,7 +493,13 @@ describe("Cardano Integration Tests (deterministic, offline)", () => {
 
     it("accepts an output that meets the protocol min-UTXO", async () => {
       const facilitator = new ExactCardanoFacilitator(
-        stubFacilitatorSigner({ getCoinsPerUtxoByte: async () => 4310n }),
+        stubFacilitatorSigner({
+          getProtocolParameters: async () => ({
+            coinsPerUtxoByte: 4310n,
+            minFeeCoefficient: 44n,
+            minFeeConstant: 155_381n,
+          }),
+        }),
       );
       const { payload } = await fixturePayload(recipient, 2_000_000n);
       const result = await facilitator.verify(payload, buildRequirements(recipient, "2000000"));
@@ -581,8 +640,7 @@ describe("Cardano Integration Tests (deterministic, offline)", () => {
     // A phase-2-invalid ("failed script") transaction lands under its own id but
     // consumes its collateral instead of its inputs and creates NONE of its
     // declared outputs. Decoding it shows a perfectly good payment output that
-    // the ledger never produced, so accepting it hands over the resource for
-    // free — the more so in client mode, where the client picks what to submit.
+    // the ledger never produced, so accepting it hands over the resource for free.
     it("rejects a phase-2-invalid transaction even though it decodes as paying", async () => {
       const built = await buildSignedTx({
         payTo: recipient,
@@ -619,36 +677,6 @@ describe("Cardano Integration Tests (deterministic, offline)", () => {
       );
       expect(result.isValid).toBe(false);
       expect(result.invalidReason).toBe("invalid_exact_cardano_payload_phase2_invalid");
-    });
-
-    it("accepts a client-submitted payment carrying no Plutus redeemers", async () => {
-      const built = await buildSignedTx({
-        payTo: recipient,
-        asset: LOVELACE_ASSET,
-        amount: 2_000_000n,
-        nonceUtxoRef: NONCE_REF,
-        ttlSlot: TTL_SLOT,
-        network: NETWORK,
-      });
-      expect(decodeCardanoTransaction(built.transaction).redeemerCount).toBe(0);
-
-      const clientReqs = buildRequirements(recipient, "2000000", LOVELACE_ASSET, {
-        submissionPolicy: "client",
-      });
-      const facilitator = new ExactCardanoFacilitator(
-        stubFacilitatorSigner({
-          getTransactionEvidence: async () => ({ status: "confirmed", confirmations: 1 }),
-        }),
-      );
-      const result = await facilitator.verify(
-        {
-          x402Version: 2,
-          accepted: clientReqs,
-          payload: { transaction: built.transaction, nonce: NONCE_REF, submissionMode: "client" },
-        },
-        clientReqs,
-      );
-      expect(result.isValid).toBe(true);
     });
 
     it("rejects a transaction whose vkey signature does not match the body", async () => {
@@ -803,7 +831,8 @@ describe.skipIf(!LIVE_READY)("Cardano Integration Tests (live preprod)", () => {
       ...(LIVE_FACILITATOR_MNEMONIC ? { mnemonic: LIVE_FACILITATOR_MNEMONIC } : {}),
       network: NETWORK,
       provider,
-      awaitConfirmation: true,
+      // Return on broadcast; the scheme polls Blockfrost for the policy's evidence.
+      awaitConfirmation: false,
     });
 
     const client = x402Client.fromConfig({
@@ -888,9 +917,8 @@ describe.skipIf(!LIVE_READY)("Cardano Integration Tests (live preprod)", () => {
     return server.settlePayment(paymentPayload, accepted!);
   }
 
-  // Canonical block inclusion rather than the default one confirmation: a
-  // preprod block is ~20s, and the reference facilitator signer already awaits
-  // inclusion before reporting. The threshold itself is covered offline.
+  // Canonical block inclusion rather than the default one confirmation keeps a
+  // live run to one ~20s preprod block. The threshold itself is covered offline.
   const LIVE_CONFIRMATION_POLICY = { l1Confirmations: 0 };
 
   it("verifies and settles an address-to-address payment", async () => {
@@ -904,7 +932,7 @@ describe.skipIf(!LIVE_READY)("Cardano Integration Tests (live preprod)", () => {
       `${settleResponse.errorReason}: ${settleResponse.errorMessage ?? ""}`,
     ).toBe(true);
     expect(settleResponse.transaction).toMatch(/^[0-9a-f]{64}$/);
-    expect(settleResponse.extra).toMatchObject({ status: "confirmed", submissionMode: "server" });
+    expect(settleResponse.extra).toMatchObject({ status: "confirmed" });
   }, 300_000);
 
   it("verifies and settles a script lock carrying an inline datum", async () => {
@@ -943,10 +971,6 @@ describe.skipIf(!LIVE_READY)("Cardano Integration Tests (live preprod)", () => {
       `${settleResponse.errorReason}: ${settleResponse.errorMessage ?? ""}`,
     ).toBe(true);
     expect(settleResponse.transaction).toMatch(/^[0-9a-f]{64}$/);
-    expect(settleResponse.extra).toMatchObject({
-      status: "confirmed",
-      submissionMode: "server",
-      settlementLayer: "l1",
-    });
+    expect(settleResponse.extra).toMatchObject({ status: "confirmed" });
   }, 300_000);
 });

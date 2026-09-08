@@ -78,7 +78,7 @@ async function buildFixture(options: FixtureOptions = {}): Promise<Fixture> {
     requirements,
     extra,
     decoded: decodeCardanoTransaction(built.transaction),
-    payload: { transaction: built.transaction, nonce: built.nonce, settlementLayer: "l1" },
+    payload: { transaction: built.transaction, nonce: built.nonce },
     buyer,
   };
 }
@@ -327,7 +327,11 @@ describe("masumi lock verification", () => {
     it("rejects terms whose digest the seller never signed", async () => {
       expect(
         await check(fixture, {
-          extra: { ...fixture.extra, terms: { ...fixture.extra.terms, settlementPolicy: "auto" } },
+          // A schema-valid change to a signed field, so only the signature catches it.
+          extra: {
+            ...fixture.extra,
+            terms: { ...fixture.extra.terms, buyerNonce: "ab".repeat(8) },
+          },
         }),
       ).toMatchObject({
         ok: false,
@@ -411,49 +415,6 @@ describe("masumi lock verification", () => {
           validateCustomDeployment: claim => claim.payTo === custom.requirements.payTo,
         }),
       ).toEqual({ ok: true });
-    });
-  });
-
-  describe("settlement layer", () => {
-    it("requires a settlementLayer on the payload", async () => {
-      expect(
-        await check(fixture, { payload: { ...fixture.payload, settlementLayer: undefined } }),
-      ).toMatchObject({
-        ok: false,
-        reason: "invalid_exact_cardano_payload_settlement_layer_mismatch",
-      });
-    });
-
-    it("rejects a layer the signed settlementPolicy forbids", async () => {
-      expect(
-        await check(fixture, { payload: { ...fixture.payload, settlementLayer: "hydra" } }),
-      ).toMatchObject({
-        ok: false,
-        reason: "invalid_exact_cardano_payload_settlement_layer_mismatch",
-      });
-    });
-
-    // Hydra needs verified Init state, head parameters, a seller-participant
-    // binding and SnapshotConfirmed evidence. None of that exists here, and
-    // authenticating a Hydra payment against L1 evidence would be a lie.
-    it("rejects hydra outright, even when the terms allow it", async () => {
-      const hydra = await buildFixture({ settlementPolicy: "hydra" });
-      expect(
-        await check(hydra, { payload: { ...hydra.payload, settlementLayer: "hydra" } }),
-      ).toMatchObject({
-        ok: false,
-        reason: "invalid_exact_cardano_payload_settlement_layer_unsupported",
-      });
-    });
-
-    it("rejects an auto policy resolved to hydra", async () => {
-      const auto = await buildFixture({ settlementPolicy: "auto" });
-      expect(
-        await check(auto, { payload: { ...auto.payload, settlementLayer: "hydra" } }),
-      ).toMatchObject({
-        ok: false,
-        reason: "invalid_exact_cardano_payload_settlement_layer_unsupported",
-      });
     });
   });
 

@@ -4,6 +4,7 @@ import type {
   MoneyParser,
   Network,
   PaymentFlowConfig,
+  PaymentPayload,
   PaymentRequirements,
   Price,
   SchemePaymentRequiredContext,
@@ -22,9 +23,9 @@ import {
   ERR_MASUMI_TERMS_MISMATCH,
   ERR_MASUMI_TERMS_UNKNOWN,
   isCardanoNetwork,
+  normalizeCardanoNetwork,
   POSITIVE_CANONICAL_AMOUNT_REGEX,
   SCHEME_EXACT,
-  SUBMISSION_POLICY_EITHER,
 } from "../../constants";
 import { findDefaultAsset, getDefaultAsset } from "../../defaultAssets";
 import { resolveCardanoPolicies } from "../../policy";
@@ -33,6 +34,12 @@ import { decodeCardanoTransaction } from "../../utils";
 import { buildSignedTerms, computeTermsDigest } from "../masumi/digests";
 import { validateMasumiExtra } from "../masumi/schema";
 import { InMemoryMasumiTermsStorage, type MasumiTermsStorage } from "../masumi/storage";
+import {
+  isMasumiExtra,
+  isMasumiTemplate,
+  MasumiQuoteIssuer,
+  type MasumiIssuerConfig,
+} from "./masumiIssuer";
 
 /** Cardano resource-server configuration. */
 export interface ExactCardanoServerConfig {
@@ -46,21 +53,14 @@ export interface ExactCardanoServerConfig {
    * payments never touch storage.
    */
   masumiStorage?: MasumiTermsStorage;
-}
-
-/**
- * Returns whether a requirements `extra` selects the Masumi transfer method.
- *
- * @param extra - Requirements `extra` block.
- * @returns True when the block selects `masumi`.
- */
-function isMasumiExtra(extra: unknown): boolean {
-  return (
-    typeof extra === "object" &&
-    extra !== null &&
-    (extra as { assetTransferMethod?: unknown }).assetTransferMethod ===
-      ASSET_TRANSFER_METHOD_MASUMI
-  );
+  /**
+   * Lets the scheme issue Masumi quotes itself. A route then declares only
+   * `extra: { assetTransferMethod: "masumi" }` with the escrow address as
+   * `payTo`; every 402 gets a fresh seller-signed quote and a paid retry is
+   * answered with the quote it was issued. Without this block, Masumi routes
+   * must serve fully issued requirements (see `issueMasumiRequirements`).
+   */
+  masumi?: MasumiIssuerConfig;
 }
 
 /**
@@ -85,17 +85,18 @@ function masumiTermsDigest(requirements: PaymentRequirements): string {
  * For `masumi`, each issued 402 is persisted under its `termsDigest` and the
  * paid retry must present that exact quote: the digest binds one buyer to one
  * seller-signed offer, and the first transaction to claim it is the only one
- * that may.
+ * that may. With a `masumi` issuer configured, the scheme also produces those
+ * quotes: a route template gets a fresh seller-signed quote per 402, and the
+ * paid retry is matched against the stored quote its payload names.
  */
 export class ExactCardanoScheme implements SchemeNetworkServer {
   readonly scheme = SCHEME_EXACT;
   readonly defaultAssetTransferMethod = ASSET_TRANSFER_METHOD_DEFAULT;
   /**
-   * Every Cardano asset transfer method is a signed-but-unbroadcast (or
-   * client-broadcast, evidence-checked) transaction: verify is read-only and
-   * settle runs after the handler, i.e. the `authorization` flow. Who
-   * broadcasts (submission policy) and how much L1 evidence is required
-   * (confirmation policy) are orthogonal to flow ordering.
+   * Every Cardano asset transfer method is a signed-but-unbroadcast transaction
+   * the facilitator submits: verify is read-only and settle runs after the
+   * handler, i.e. the `authorization` flow. How much L1 evidence settlement
+   * waits for (confirmation policy) is orthogonal to flow ordering.
    */
   readonly paymentFlows = {
     [ASSET_TRANSFER_METHOD_DEFAULT]: { supported: ["authorization"], default: "authorization" },
@@ -105,41 +106,85 @@ export class ExactCardanoScheme implements SchemeNetworkServer {
   readonly schemeHooks: SchemeServerHooks;
   private readonly moneyParsers: MoneyParser[] = [];
   private readonly masumiStorage: MasumiTermsStorage;
+  private readonly masumiIssuer?: MasumiQuoteIssuer;
 
   /**
    * Creates a server scheme with its Masumi quote-binding hook.
    *
-   * @param config - Masumi quote storage options.
+   * @param config - Masumi quote storage and issuance options.
    */
   constructor(config: ExactCardanoServerConfig = {}) {
     this.masumiStorage = config.masumiStorage ?? new InMemoryMasumiTermsStorage();
+    this.masumiIssuer = config.masumi ? new MasumiQuoteIssuer(config.masumi) : undefined;
     this.schemeHooks = {
       onAfterVerify: async context => this.bindMasumiTerms(context),
     };
   }
 
   /**
-   * Persists every Masumi quote this response serves, keyed by `termsDigest`.
+   * Issues and persists the Masumi quotes this response serves.
    *
-   * The first 402 for a digest wins: a later response carrying the same terms
-   * cannot rotate what the buyer was quoted, and the paid retry is compared
-   * against the stored copy rather than against whatever the route currently
-   * offers.
+   * A Masumi *template* (the method selected, no seller-signed `terms`) is
+   * replaced by a quote: on a paid retry, the stored quote the payload's
+   * `accepted` names, when it is still compatible with the template; otherwise a
+   * freshly issued one. Fully issued Masumi requirements pass through. Core
+   * invokes this hook once per Cardano accept and lets only accepts on the
+   * invoking accept's network gain `extra` keys, so one template is replaced per
+   * call — in accept order, which is the order core invokes it in.
+   *
+   * Every served quote is persisted under its `termsDigest`. The first 402 for a
+   * digest wins: a later response carrying the same terms cannot rotate what
+   * the buyer was quoted, and the paid retry is compared against the stored
+   * copy rather than against whatever the route currently offers.
    *
    * @param context - Payment-required response being built.
+   * @returns The accepts with templates replaced, or nothing when none were.
    */
-  async enrichPaymentRequiredResponse(context: SchemePaymentRequiredContext): Promise<void> {
-    for (const requirement of context.requirements) {
+  async enrichPaymentRequiredResponse(
+    context: SchemePaymentRequiredContext,
+  ): Promise<PaymentRequirements[] | void> {
+    let replaced: PaymentRequirements[] | undefined;
+    let paidPayload: PaymentPayload | undefined | null = null;
+
+    for (const [index, requirement] of context.requirements.entries()) {
       if (requirement.scheme !== this.scheme || !isCardanoNetwork(requirement.network)) continue;
       if (!isMasumiExtra(requirement.extra)) continue;
 
-      const termsDigest = masumiTermsDigest(requirement);
-      const issued = structuredClone(requirement) as PaymentRequirements;
+      let served = requirement;
+      if (isMasumiTemplate(requirement.extra) && replaced === undefined) {
+        if (!this.masumiIssuer) {
+          throw new Error(
+            "Masumi requirements must carry seller-signed terms unless ExactCardanoScheme is configured with a `masumi` issuer",
+          );
+        }
+        if (paidPayload === null) {
+          paidPayload = this.masumiIssuer.paidPayload(
+            context.paymentPayload as PaymentPayload | undefined,
+            context.transportContext,
+          );
+        }
+        served =
+          (await this.storedQuoteFor(paidPayload, requirement)) ??
+          (await this.masumiIssuer.issue(
+            requirement,
+            context.resourceInfo,
+            context.transportContext,
+          ));
+        replaced = [...context.requirements];
+        replaced[index] = served;
+      } else if (isMasumiTemplate(requirement.extra)) {
+        // Left for the next invocation of this hook.
+        continue;
+      }
+
+      const termsDigest = masumiTermsDigest(served);
+      const stored = structuredClone(served) as PaymentRequirements;
       await this.masumiStorage.updateTerms(
         termsDigest,
-        current => current ?? { termsDigest, requirements: issued },
+        current => current ?? { termsDigest, requirements: stored },
       );
     }
+    return replaced;
   }
 
   /**
@@ -217,6 +262,14 @@ export class ExactCardanoScheme implements SchemeNetworkServer {
     if (!isCardanoNetwork(supportedKind.network)) {
       throw new Error(`Unsupported Cardano network: ${supportedKind.network}`);
     }
+    if (isMasumiTemplate(paymentRequirements.extra)) {
+      if (!this.masumiIssuer) {
+        throw new Error(
+          "Masumi requirements must carry seller-signed terms unless ExactCardanoScheme is configured with a `masumi` issuer",
+        );
+      }
+      this.masumiIssuer.assertTemplate(paymentRequirements);
+    }
     this.assertFacilitatorSupportsRequirements(paymentRequirements, supportedKind);
     // The one capability restated in the 402: who pays the network fee. Copied
     // from the facilitator's advertisement, as on the other schemes. Every
@@ -230,6 +283,50 @@ export class ExactCardanoScheme implements SchemeNetworkServer {
         ...(typeof areFeesSponsored === "boolean" && { areFeesSponsored }),
       },
     };
+  }
+
+  /**
+   * Finds the quote a paid retry was issued, when this server still holds it
+   * and it still fits the template the route declares.
+   *
+   * @param payload - The paid payload, if the 402 is a response to one.
+   * @param template - The template requirement being served.
+   * @returns The stored quote, or undefined to issue a fresh one.
+   */
+  private async storedQuoteFor(
+    payload: PaymentPayload | undefined,
+    template: PaymentRequirements,
+  ): Promise<PaymentRequirements | undefined> {
+    const accepted = payload?.accepted as PaymentRequirements | undefined;
+    if (
+      !accepted ||
+      accepted.scheme !== template.scheme ||
+      typeof accepted.network !== "string" ||
+      normalizeCardanoNetwork(accepted.network) !== normalizeCardanoNetwork(template.network) ||
+      !isMasumiExtra(accepted.extra) ||
+      !validateMasumiExtra(accepted.extra, accepted.network).ok
+    ) {
+      return undefined;
+    }
+    const stored = (await this.masumiStorage.get(masumiTermsDigest(accepted)))?.requirements;
+    if (!stored) return undefined;
+    // The quote must still be what the route offers: core keeps the template's
+    // payment terms immutable through enrichment, and every template extra key
+    // must survive unchanged.
+    if (
+      stored.scheme !== template.scheme ||
+      stored.network !== template.network ||
+      stored.payTo !== template.payTo ||
+      stored.amount !== template.amount ||
+      stored.asset !== template.asset ||
+      stored.maxTimeoutSeconds !== template.maxTimeoutSeconds
+    ) {
+      return undefined;
+    }
+    for (const [key, value] of Object.entries(template.extra ?? {})) {
+      if (!deepEqual(stored.extra?.[key], value)) return undefined;
+    }
+    return structuredClone(stored) as PaymentRequirements;
   }
 
   /**
@@ -338,77 +435,31 @@ export class ExactCardanoScheme implements SchemeNetworkServer {
 
     const policies = resolveCardanoPolicies(requirements.extra);
     if (!policies) {
-      throw new Error("Cardano requirements carry an invalid submission/confirmation policy");
+      throw new Error("Cardano requirements carry an invalid confirmation policy");
     }
-    const selectedModes =
-      policies.submissionPolicy === SUBMISSION_POLICY_EITHER
-        ? (["server", "client"] as const)
-        : ([policies.submissionPolicy] as const);
-    const advertisedModes = capabilities.submissionModes;
-    if (!Array.isArray(advertisedModes)) {
-      throw new Error("Cardano facilitator did not advertise submissionModes");
+    const range = capabilities.l1Confirmations;
+    if (!range || typeof range !== "object" || Array.isArray(range)) {
+      throw new Error("Cardano facilitator did not advertise an l1Confirmations range");
     }
-    const confirmationRanges = capabilities.l1Confirmations;
+    const minimum = (range as Record<string, unknown>).minimum;
+    const maximum = (range as Record<string, unknown>).maximum;
     if (
-      !confirmationRanges ||
-      typeof confirmationRanges !== "object" ||
-      Array.isArray(confirmationRanges)
+      typeof minimum !== "number" ||
+      !Number.isInteger(minimum) ||
+      typeof maximum !== "number" ||
+      !Number.isInteger(maximum) ||
+      policies.confirmationPolicy.l1Confirmations < minimum ||
+      policies.confirmationPolicy.l1Confirmations > maximum
     ) {
-      throw new Error("Cardano facilitator did not advertise l1Confirmations");
-    }
-    for (const mode of selectedModes) {
-      if (!advertisedModes.includes(mode)) {
-        throw new Error(`Cardano facilitator does not support ${mode} submission`);
-      }
-      const range = (confirmationRanges as Record<string, unknown>)[mode];
-      if (!range || typeof range !== "object" || Array.isArray(range)) {
-        throw new Error(
-          `Cardano facilitator did not advertise an L1 confirmation range for ${mode}`,
-        );
-      }
-      const minimum = (range as Record<string, unknown>).minimum;
-      const maximum = (range as Record<string, unknown>).maximum;
-      if (
-        typeof minimum !== "number" ||
-        !Number.isInteger(minimum) ||
-        typeof maximum !== "number" ||
-        !Number.isInteger(maximum) ||
-        policies.confirmationPolicy.l1Confirmations < minimum ||
-        policies.confirmationPolicy.l1Confirmations > maximum
-      ) {
-        throw new Error(
-          `Cardano facilitator ${mode} confirmation range does not include ${policies.confirmationPolicy.l1Confirmations}`,
-        );
-      }
+      throw new Error(
+        `Cardano facilitator confirmation range does not include ${policies.confirmationPolicy.l1Confirmations}`,
+      );
     }
 
-    if (method === ASSET_TRANSFER_METHOD_MASUMI) {
-      // `extra` is still the raw wire object here, so `settlementPolicy` comes
-      // from the schema check rather than from an unchecked cast. The schema
-      // requires the field, which is why there is no default to apply.
+    if (method === ASSET_TRANSFER_METHOD_MASUMI && !isMasumiTemplate(requirements.extra)) {
       const schema = validateMasumiExtra(requirements.extra, requirements.network);
       if (!schema.ok) {
         throw new Error(`Cardano Masumi requirements are invalid: ${schema.detail}`);
-      }
-      const settlementPolicy = schema.extra.terms.settlementPolicy;
-      const advertisedLayers = capabilities.settlementLayers;
-      if (!Array.isArray(advertisedLayers)) {
-        throw new Error("Cardano facilitator did not advertise settlementLayers");
-      }
-      // `auto` lets the buyer choose, and the only layer this scheme can
-      // actually authenticate is L1 — a Hydra payload is refused outright in
-      // `verifyMasumiLock`. Accepting `auto` against a Hydra-only facilitator
-      // would serve a 402 whose every payment is rejected at verification.
-      // An explicit `hydra` policy still defers to the advertisement, so a
-      // subclass that does implement Hydra keeps working.
-      const supported =
-        settlementPolicy === "auto"
-          ? advertisedLayers.includes("l1")
-          : advertisedLayers.includes(settlementPolicy);
-      if (!supported) {
-        throw new Error(
-          `Cardano facilitator does not support Masumi ${String(settlementPolicy)} settlement`,
-        );
       }
     }
   }

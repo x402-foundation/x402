@@ -367,10 +367,12 @@ export type ClientScenarioDeps = {
 /**
  * Waits until Blockfrost's address-UTXO index reflects a just-settled Cardano
  * payment before this client exits, so the next scenario's client does not
- * reselect the input this one spent. Settlement returns on the facilitator's
- * broadcast acceptance, so this covers block inclusion (~20s) plus the index
- * lag behind it. Best-effort and Cardano-only: any other network, a missing
- * Blockfrost config, or a timeout simply returns.
+ * reselect the input this one spent. With the default confirmation policy
+ * settlement already implies block inclusion, so this covers the index lag
+ * behind it; with `CARDANO_L1_CONFIRMATIONS=-1` settlement returns on the
+ * facilitator's broadcast acceptance and this also covers inclusion (~20s).
+ * Best-effort and Cardano-only: any other network, a missing Blockfrost
+ * config, or a timeout simply returns.
  *
  * @param result - The completed request result, carrying the settlement receipt.
  */

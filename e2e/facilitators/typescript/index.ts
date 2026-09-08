@@ -325,12 +325,10 @@ if (process.env.BLOCKFROST_PROJECT_ID && CARDANO_RPC_URL) {
     provider: {
       blockfrost: { baseUrl: CARDANO_RPC_URL, projectId: process.env.BLOCKFROST_PROJECT_ID },
     },
-    // Return as soon as the node accepts the broadcast; the routes ask for
-    // mempool-level evidence (l1Confirmations: -1), which `acceptMempool` allows.
+    // Return as soon as the node accepts the broadcast; the scheme polls
+    // Blockfrost for the evidence the route's confirmation policy requires and
+    // reports `settlement_pending` in between.
     awaitConfirmation: false,
-    // The e2e facilitator trusts its own provider's ledger rules; a production
-    // facilitator must supply a real phase-1 validator to advertise server submission.
-    validatePhase1Transaction: async () => undefined,
   });
   console.info(
     `Cardano Facilitator account: ${cardanoSigner.getAddresses()[0] ?? "(provider-only, no wallet)"}`,
@@ -644,8 +642,11 @@ if (cardanoSigner) {
   facilitator.register(
     CARDANO_NETWORK as Network,
     new ExactCardanoFacilitatorScheme(cardanoSigner, {
-      inMemorySettlementStoreMaxEntries: 4096,
-      acceptMempool: true,
+      // Mempool-level settlement is an explicit opt-in shared with the server
+      // routes (the server side accepts only the plain decimal form, so this
+      // string compare sees the same value); the default is the spec's one
+      // confirmation.
+      acceptMempool: process.env.CARDANO_L1_CONFIRMATIONS?.trim() === "-1",
     }),
   );
 }
@@ -791,7 +792,25 @@ facilitator
       };
     }
   })
+  .onVerifyFailure(async (context) => {
+    // Surface the rejection reason: the resource server relays it to the client
+    // only inside the PAYMENT-REQUIRED header, so without this line a failed
+    // paid retry shows up in the harness as a bare "Payment failed (402)".
+    console.log(
+      `⚠️ Verification failed (${context.requirements.scheme} ${context.requirements.network}): ${context.error.message}`,
+    );
+  })
   .onAfterSettle(async (context) => {
+    // A non-terminal `settlement_pending` result is followed by the resource
+    // server's automatic retry with the same payload (core's
+    // settleWithPendingRetry); that retry must still pass Hook 3, so the
+    // verified-payment record is kept until a terminal outcome.
+    if (!context.result.success && context.result.errorReason === "settlement_pending") {
+      console.log(
+        `⏳ Settlement pending: ${context.result.transaction} (${JSON.stringify(context.result.extra ?? {})})`,
+      );
+      return;
+    }
     // Hook 4: Clean up verified payment tracking after settlement
     if (!skipsVerifyBeforeSettle(context.requirements)) {
       cleanupVerifiedPaymentTracking(createPaymentHash(context.paymentPayload));

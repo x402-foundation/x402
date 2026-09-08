@@ -16,8 +16,6 @@ import {
   ERR_MASUMI_REFERENCE_SCRIPT,
   ERR_MASUMI_SCHEMA,
   ERR_MASUMI_SELLER_SIGNATURE,
-  ERR_SETTLEMENT_LAYER_MISMATCH,
-  ERR_SETTLEMENT_LAYER_UNSUPPORTED,
   LOVELACE_ASSET,
 } from "../../constants";
 import type {
@@ -71,7 +69,7 @@ const fail = (reason: string, detail?: string): MasumiLockCheck => ({
  * decoded transaction.
  */
 export interface MasumiVerifyContext {
-  /** The decoded Cardano payload (nonce, settlement layer). */
+  /** The decoded Cardano payload (transaction, nonce). */
   payload: ExactCardanoPayload;
   /** The address that owns the nonce UTXO, i.e. the resolved buyer. */
   payer: string;
@@ -230,8 +228,8 @@ function unsupportedAddressForm(credentials: MasumiAddressCredentials): string |
 
 /**
  * Checks invariants that make a freshly built V2 datum safe to submit. This is
- * shared by the client preflight and facilitator verification so client mode
- * cannot broadcast a lock that the facilitator will reject afterwards.
+ * shared by the client preflight and facilitator verification so the client
+ * never signs a lock that the facilitator will reject afterwards.
  *
  * @param view - Parsed fresh-lock datum.
  * @param escrowAddress - Derived Masumi V2 escrow address.
@@ -561,22 +559,6 @@ export async function verifyMasumiLock(
   });
   if (!authorization.ok) return authorization;
   const escrowAddress = authorization.escrowAddress;
-
-  // Settlement layer: required for masumi, and admitted by the signed policy.
-  const settlementLayer = context.payload.settlementLayer;
-  if (settlementLayer === undefined) {
-    return fail(ERR_SETTLEMENT_LAYER_MISMATCH, "payload.settlementLayer is required for masumi");
-  }
-  if (terms.settlementPolicy !== "auto" && terms.settlementPolicy !== settlementLayer) {
-    return fail(ERR_SETTLEMENT_LAYER_MISMATCH);
-  }
-  // Hydra needs verified Init state, head parameters, a seller-participant
-  // binding and `SnapshotConfirmed` evidence from the selected head. This
-  // implementation has none of that, and authenticating a Hydra payment against
-  // L1 evidence would be a lie, so Hydra is refused outright.
-  if (settlementLayer === "hydra") {
-    return fail(ERR_SETTLEMENT_LAYER_UNSUPPORTED, "Hydra settlement is not implemented");
-  }
 
   // Exactly one escrow output, carrying an inline datum and no reference script.
   const escrowOutputs = decoded.outputs.filter(o => o.address === escrowAddress);

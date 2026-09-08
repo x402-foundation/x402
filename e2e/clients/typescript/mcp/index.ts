@@ -37,6 +37,16 @@ const x402Mcp = createx402MCPClient({
 });
 
 /**
+ * Budget for one paid tool call. The MCP SDK deadlines every request at 60s by
+ * default, which is shorter than a slow-finality settlement: the resource
+ * server's facilitator client waits up to 90s for `settle()` and retries once
+ * on a non-terminal `settlement_pending`, so a payment can legitimately take
+ * twice that before the tool result arrives. HTTP clients have no comparable
+ * deadline, so this only levels the transports.
+ */
+const TOOL_CALL_TIMEOUT_MS = 2 * 90_000;
+
+/**
  * Parses the tool result's first content item into the response body the
  * e2e harness expects (mirrors what the equivalent HTTP route returns).
  */
@@ -56,7 +66,7 @@ function parseToolData(result: Awaited<ReturnType<typeof x402Mcp.callTool>>): un
 }
 
 async function issueRequest(): Promise<RequestResult> {
-  const result = await x402Mcp.callTool(endpointPath, {});
+  const result = await x402Mcp.callTool(endpointPath, {}, { timeout: TOOL_CALL_TIMEOUT_MS });
   return {
     success: result.paymentResponse?.success ?? !result.isError,
     data: parseToolData(result),
@@ -85,7 +95,9 @@ const mcpRefundFetch: typeof fetch = async (_input, init) => {
   }
 
   const paymentPayload = decodePaymentSignatureHeader(paymentHeader);
-  const result = await x402Mcp.callToolWithPayment(endpointPath, {}, paymentPayload);
+  const result = await x402Mcp.callToolWithPayment(endpointPath, {}, paymentPayload, {
+    timeout: TOOL_CALL_TIMEOUT_MS,
+  });
   if (result.paymentResponse) {
     return new Response(JSON.stringify(parseToolData(result)), {
       status: 200,

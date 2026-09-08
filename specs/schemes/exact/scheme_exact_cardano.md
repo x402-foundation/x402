@@ -28,7 +28,9 @@ Clients and facilitators **SHOULD** accept the CIP-34 forms above as **input ali
 
 ## Payment Flow
 
-Every `assetTransferMethod` of this scheme uses the `authorization` payment flow (verify → resource → settle) defined in [Payment Flow Models](../../x402-specification-v2.md) (section 6.1): the facilitator's `verify` is read-only and `settle` (broadcast or evidence check, then confirmation) runs after the resource handler. The submission policy (who broadcasts) and the confirmation policy (how much L1 evidence is required) are orthogonal to this ordering and never change it, so `extra.paymentFlow` is not emitted for this scheme.
+Every `assetTransferMethod` of this scheme is **facilitator-submitted** in the sense of the [`exact` family rules](./scheme_exact.md#asset-transfer-method-families): the client signs a complete transaction but does not broadcast it, and the facilitator submits it during `settle`. All methods use the `authorization` payment flow (verify → resource → settle) defined in [Payment Flow Models](../../x402-specification-v2.md) (section 6.1): the facilitator's `verify` is read-only and `settle` (broadcast, then confirmation) runs after the resource handler. The confirmation policy (how much L1 evidence is required) is orthogonal to this ordering and never changes it, so `extra.paymentFlow` is not emitted for this scheme.
+
+Per the family rules, each method declares: **fee payer** — self-funded by the payer (see [Transaction Fees](#transaction-fees)); **replay primitive** — exclusive to this payment, the UTXO named by `payload.nonce`, which the transaction consumes; **validity window** — bounded by the transaction's TTL slot, itself bounded by `maxTimeoutSeconds` (rule 6), so an unused signed payment expires on its own; **duplicate submission** — a resubmission of the same bytes is indistinguishable at the network interface while the transaction is in flight, so settlements are deduplicated by canonical transaction id (see [Duplicate Settlement Mitigation](#duplicate-settlement-mitigation-recommended)).
 
 ## Protocol Flow
 
@@ -46,46 +48,41 @@ sequenceDiagram
     Server->>Client: 2. HTTP 402 and Payment Details
 
     %% Client Prepares Payment
-    Note over Client: 3. Client selects payment option,<br/>creates and <br/> signs a Transaction
-
-    %% Optional Client Submission
-    opt Client Submission
-        Client->>Cardano: 4a. Submit signed transaction
-        Cardano-->>Client: 4b. Transaction accepted by mempool or block
-    end
+    Note over Client: 3. Client selects payment option,<br/>builds and signs a Transaction<br/>(not broadcast)
 
     %% Request with Payment
-    Client->>Server: 5. HTTP GET /api<br/>Header: PAYMENT-SIGNATURE (signed transaction)
+    Client->>Server: 4. HTTP GET /api<br/>Header: PAYMENT-SIGNATURE (signed transaction)
     Note right of Client: Retries with payment header
 
     %% Server Verification
     alt Server Verification
-        Server->>Server: 6. Verify transaction locally
+        Server->>Server: 5. Verify transaction locally
     else Remote Verification (via Facilitator)
-        Server->>Facilitator: 6. POST /verify<br/>(Payment Payload + Requirements)
-        Note right of Facilitator: Facilitator validates:<br/>- Payment amount<br/>- Correct recipient<br/>- Nonce in Transaction
+        Server->>Facilitator: 5. POST /verify<br/>(Payment Payload + Requirements)
+        Note right of Facilitator: Facilitator validates:<br/>- Payment amount and recipient<br/>- Nonce in inputs and unspent<br/>- Value conserved, fee floor, TTL
     end
 
     %% Settlement
-    alt Client Submission
-        Server->>Cardano: 7a. Query exact submitted transaction
-        Cardano-->>Server: 7b. Transaction hash + confirmation
-    else Server Submission
-        Server->>Cardano: 7a. Submit signed transaction
-        Note right of Cardano: Transaction included in mempool or block
-        Cardano-->>Server: 7b. Transaction hash + confirmation
+    alt Server Submission
+        Server->>Cardano: 6a. Submit signed transaction
+        Cardano-->>Server: 6b. Transaction hash + confirmation
     else Remote Submission (via Facilitator)
-      Server->>Facilitator: 7a. POST /settle<br/>(Payment details)
-      Facilitator->>Cardano: 7b. Submit signed transaction
+      Server->>Facilitator: 6a. POST /settle<br/>(Payment details)
+      Facilitator->>Cardano: 6b. Submit signed transaction
       Note right of Cardano: Transaction included in mempool or block
-      Cardano-->>Facilitator: 7c. Transaction hash + confirmation
-      Facilitator->>Server: 7d. Settlement Response<br/>(transaction, status)
+      Cardano-->>Facilitator: 6c. Transaction hash + evidence
+      Facilitator->>Server: 6d. Settlement Response<br/>(success, or settlement_pending + transaction)
+      opt settlement_pending
+        Server->>Facilitator: 6e. POST /settle (same payload)
+        Note right of Facilitator: Resumes observing the same<br/>transaction, never rebroadcasts
+        Facilitator->>Server: 6f. Settlement Response
+      end
     end
 
-    Note right of Server: 8. Receives transaction hash and status
+    Note right of Server: 7. Receives transaction hash and status
 
     %% Final Response
-    Server->>Client: 9. HTTP 200 OK + Resource<br/>Header: PAYMENT-RESPONSE
+    Server->>Client: 8. HTTP 200 OK + Resource<br/>Header: PAYMENT-RESPONSE
     Note left of Server: Returns requested resource<br/>with transaction confirmation:<br/>- transaction: "2f9a7b3c..."<br/>- network: "cardano:mainnet"<br/>- success: true
 ```
 
@@ -98,7 +95,7 @@ The protocol flow for `exact` on Cardano is client-driven.
     - If using Address-To-Address payments, the `payTo` field will contain the address to which the payment must be sent.
     - If using Script payments, the `extra` field will contain parameters to be applied to scripts during transaction building.
 
-3.  **Client** constructs and signs the transaction. In client mode, it submits the transaction before it sends the paid retry. In server mode, it leaves the transaction unsubmitted.
+3.  **Client** constructs and signs the transaction. It MUST NOT broadcast it: the resource server or facilitator submits it after the resource handler has run.
 
 4.  **Client** returns the signed transaction to the **Resource Server** via the `PAYMENT-SIGNATURE` header.
 
@@ -107,9 +104,8 @@ The protocol flow for `exact` on Cardano is client-driven.
     - **Remote verification**: The server forwards the `PAYMENT-SIGNATURE` header and `paymentRequirements` to a **Facilitator's** `/verify` endpoint to check if the transaction is valid.
 
 6.  After successful verification, the transaction is settled:
-    - **Client submission**: The **Resource Server** or **Facilitator** verifies settlement evidence for the exact transaction that the Client already submitted.
     - **Server submission**: The **Resource Server** submits the transaction directly to the Cardano blockchain.
-    - **Facilitator submission**: The **Resource Server** sends the transaction to the **Facilitator's** `/settle` endpoint, which then submits it to the blockchain.
+    - **Facilitator submission**: The **Resource Server** sends the transaction to the **Facilitator's** `/settle` endpoint, which then submits it to the blockchain and waits, bounded, for the evidence `confirmationPolicy` requires. Below that threshold it returns the non-terminal `settlement_pending` with the transaction id; the **Resource Server** retries `/settle` once with the same payload and the **Facilitator** resumes observing the same transaction without broadcasting it again (see [Pending settlement](#pending-settlement)).
 
 7.  The Cardano blockchain includes the transaction in the mempool or a block and returns the transaction hash and confirmation status.
 
@@ -147,7 +143,6 @@ When the Resource Server responds with a `402 Payment Required`, it returns the 
       "payTo": "addr1...",
       "maxTimeoutSeconds": 600, // Has to be set to a higher amount of time because of the Cardano Network speed
       "extra": {
-        "submissionPolicy": "either", // optional; server, client, or either; defaults to server
         "confirmationPolicy": { "l1Confirmations": 1 }, // optional; defaults to 1
         // In case of default address-to-address payments, this may be empty or contain additional metadata
       }
@@ -156,33 +151,21 @@ When the Resource Server responds with a `402 Payment Required`, it returns the 
 }
 ```
 
-#### Submission and confirmation policy
+#### Confirmation policy
 
-`submissionPolicy` controls who submits the signed transaction. For every method, it is an optional field in `PaymentRequirements.extra`. Its values are `server`, `client`, and `either`; omission normalizes to `server`.
+The client signs the transaction and hands it over unbroadcast; the resource server or facilitator submits it after verification. For every method, `confirmationPolicy` is an optional field in `PaymentRequirements.extra` that sets the minimum L1 evidence required before the resource is released. `confirmationPolicy.l1Confirmations` is an integer from `-1` through `20`:
 
-The paid payload MAY contain `submissionMode: "server"` or `submissionMode: "client"`. An absent value normalizes to `server`. The normalized mode MUST match the selected requirements policy. `either` is a policy, not a payload mode. A retry for the same transaction MUST use the same normalized mode.
-
-| `submissionPolicy` | Allowed normalized `payload.submissionMode` | Submitter |
-|---|---|---|
-| `server` | `server` | resource server or facilitator |
-| `client` | `client` | client |
-| `either` | `server` or `client` | party selected by the client |
-
-In client mode, the client broadcasts before the paid retry. The verifier MUST authenticate settlement evidence for the exact transaction and MUST NOT broadcast it again. In server mode, the resource server or facilitator verifies the transaction before broadcast.
-
-`/supported` MAY advertise `submissionModes`. The selected policy always comes from the 402 requirements; a client MUST NOT infer it from `/supported`.
-
-`confirmationPolicy.l1Confirmations` sets the minimum L1 evidence required before the resource is released. It is an integer from `-1` through `20`:
-
-- `-1` means authenticated mempool acceptance.
+- `-1` means the facilitator's own broadcast acceptance (authenticated mempool acceptance).
 - `0` means inclusion in a canonical block.
 - `1..20` means that at least that many newer canonical blocks exist.
 
 An absent confirmation policy normalizes to `{ "l1Confirmations": 1 }`. Greater evidence satisfies a lower threshold. The response reports the strongest verified evidence, not only the minimum.
 
-"Authenticated" mempool acceptance means the facilitator has first-hand knowledge that a node took the transaction. When the facilitator broadcast it itself, the node's acceptance is that knowledge and it MAY settle a `-1` policy on it directly; it MUST NOT wait for block inclusion, which would settle at a stronger level than the resource server asked for and hold the response open for a full block. A facilitator that did not submit the transaction (client submission) has no such first-hand result and MUST authenticate evidence from the chain instead. Mempool acceptance can be rolled back, so a facilitator MAY refuse `-1` outright unless its operator opted in.
+"Authenticated" mempool acceptance means the facilitator has first-hand knowledge that a node took the transaction: it broadcast the transaction itself, and the node's acceptance is that knowledge. A facilitator MAY settle a `-1` policy on it directly; it MUST NOT wait for block inclusion, which would settle at a stronger level than the resource server asked for and hold the response open for a full block. Mempool acceptance can be rolled back, so a facilitator MAY refuse `-1` outright unless its operator opted in.
 
-For all methods, the policy is a top-level `extra.confirmationPolicy` bound by the selected requirements and exact `accepted` matching. It is not part of Masumi `termsDigest`. Hydra settlement is Masumi-only and uses verified `SnapshotConfirmed` evidence instead of the L1 count.
+`/supported` MAY advertise the range a facilitator can settle as `l1Confirmations: { "minimum", "maximum" }`. The selected policy always comes from the 402 requirements; a client MUST NOT infer it from `/supported`.
+
+For all methods, the policy is a top-level `extra.confirmationPolicy` bound by the selected requirements and exact `accepted` matching. It is not part of Masumi `termsDigest`.
 
 #### Masumi assetTransferMethod Schema
 
@@ -223,7 +206,6 @@ Before it calls a facilitator, the resource server recomputes `termsDigest` from
       "maxTimeoutSeconds": 600, // Has to be set to a higher amount of time because of the Cardano Network speed
       "extra": {
         "assetTransferMethod": "masumi",
-        "submissionPolicy": "server",
         "confirmationPolicy": { "l1Confirmations": 1 },
         "inputCommitment": {
           "version": "1",
@@ -251,8 +233,7 @@ Before it calls a facilitator, the resource server recomputes `termsDigest` from
           "payByTime": "1713626260000",           // POSIX milliseconds
           "submitResultTime": "1713636260000",
           "unlockTime": "1713640260000",
-          "externalDisputeUnlockTime": "1713644260000",
-          "settlementPolicy": "auto"               // auto, l1, or hydra
+          "externalDisputeUnlockTime": "1713644260000"
         },
         "referenceKey": "<complete CBOR COSE_Key lowercase hex>",
         "referenceSignature": "<complete CBOR COSE_Sign1 lowercase hex>",
@@ -278,7 +259,6 @@ Wire constraints for the `extra` fields:
 | `referenceKey` | lowercase even-length hex of one complete CBOR `COSE_Key` |
 | `referenceSignature` | lowercase even-length hex of one complete CBOR `COSE_Sign1` |
 | `blockchainIdentifier` | lowercase even-length hex of the complete LZString-compressed compatibility identifier |
-| `submissionPolicy` | optional `server`, `client`, or `either`; defaults to `server` |
 | `confirmationPolicy.l1Confirmations` | optional JSON integer from `-1` through `20`; defaults to `1` |
 | `areFeesSponsored` | optional boolean; MUST be `false` when present — this scheme has no fee sponsorship yet |
 | `deployment.requiredAdmins` | positive canonical base-10 integer string, no greater than the length of `adminVkeys` |
@@ -298,7 +278,6 @@ Constraints for `terms`:
 | `agentIdentifier` | optional `null`, empty string, or non-empty even-length lowercase hex registry asset identifier |
 | `inputHash` | exactly equal to `inputCommitment.digest` |
 | the four `*Time` fields | positive canonical base-10 POSIX-millisecond strings with no leading zero, satisfying the interval minimums below |
-| `settlementPolicy` | `auto`, `l1`, or `hydra` |
 
 The initial protected-resource request MAY omit a buyer nonce. An API can define one nonce source in the body, parameters, or an application header. The signed `terms.buyerNonce` field is always present and can be empty. The resource server extracts the same source on the paid retry and rejects a mismatch.
 
@@ -318,7 +297,7 @@ Everything the buyer verifies before locking is issuer-derived:
 | `payTo` | derived from `deployment` against the canonical validator, never hand-supplied |
 | `referenceKey`, `referenceSignature` | seller authorization over `termsDigest` (see [Seller-signed terms](#seller-signed-terms)) |
 | `terms.sellerAddress`, `sellerReturnAddress`, `agentIdentifier` | seller configuration |
-| `submissionPolicy`, `confirmationPolicy` | issuer policy |
+| `confirmationPolicy` | issuer policy |
 
 The buyer contributes only datum fields, and none of them appear in `extra`: `buyer` is proven by the payment credential controlling `payload.nonce`, `buyer_return_address` is buyer-chosen and deliberately unmatched against `extra`, and `collateral_return_lovelace` is client-computed (see [Lock invariants](#lock-invariants)). Because `extra` and `terms` are closed objects, a buyer-supplied field in either is a rejection.
 
@@ -588,48 +567,23 @@ Because the `vested_pay` validator only runs on spend (never on the lock itself)
 - The collateral and value rules above hold, and the escrow output carries **exactly** the requested asset set.
 - `seller_return_address` matches the signed terms exactly (declared ⇒ present in the datum with matching credentials; omitted ⇒ `None`). `buyer_return_address` is buyer-chosen and is **not** matched against `extra`.
 
-##### Settlement and confirmation policy
+##### Confirmation policy and facilitator capabilities
 
-> **TL;DR:** Masumi selects L1 or Hydra. Shared optional policies select the submitter and L1 evidence. Defaults are `auto`, `server`, and one confirmation.
+> **TL;DR:** Masumi settles on Cardano L1 and uses the shared confirmation policy. The default is one confirmation.
 
-Masumi supports Cardano L1 and Hydra settlement. `settlementPolicy` is `auto`, `l1`, or `hydra`. `auto` uses a suitable Hydra head when the client supports one and otherwise uses L1. `l1` forces L1. `hydra` requires a suitable head and does not allow fallback.
-
-A **suitable Hydra head** is open and has a verified on-chain Init state on the selected Cardano network. Its contestation period, protocol parameters, and unique participant keys MUST be verified. The participant set MUST match an established binding between the seller and its Hydra participant. The head-opening process can establish this binding; the seller does not need to sign the head ID again in the x402 terms.
-
-The seller or its authorized operator MUST be able to submit later V2 lifecycle transactions and to close, contest, and fan out the head. An unverified `HeadIsOpen` event or client-supplied metadata is not sufficient.
-
-The paid payload contains `settlementLayer: "l1"` or `settlementLayer: "hydra"`. A Hydra payment also contains `headId`, the canonical lowercase 56-character hexadecimal Hydra protocol head ID from the on-chain Init transaction. It MUST NOT be a database ID, service-local name, or connection identifier. `headId` MUST be absent for L1.
-
-Masumi uses the shared [submission and confirmation policy](#submission-and-confirmation-policy). Both fields remain in top-level `extra` and are not seller-signed.
+Masumi uses the shared [confirmation policy](#confirmation-policy). `confirmationPolicy` stays in top-level `extra` and is not seller-signed.
 
 `confirmationPolicy.l1Confirmations` is an integer from `-1` through `20`:
 
-- `-1` means authenticated mempool acceptance.
+- `-1` means the facilitator's own broadcast acceptance.
 - `0` means inclusion in a canonical block.
 - `1..20` means that at least that many newer canonical blocks exist.
 
-The default is `1`. These values are minimum evidence levels: canonical inclusion satisfies `-1`, and any greater canonical depth satisfies a lower L1 threshold. A client-submitted transaction that has left the mempool can therefore settle from canonical block evidence. Hydra requires a verified `SnapshotConfirmed` from the selected head.
+The default is `1`. These values are minimum evidence levels: canonical inclusion satisfies `-1`, and any greater canonical depth satisfies a lower L1 threshold.
 
-The requirements issuer applies the Masumi settlement default before calculating `termsDigest`. It MUST include `settlementPolicy` in `extra.terms`. It normalizes top-level `extra.submissionPolicy` and `extra.confirmationPolicy` separately when it builds the requirements.
+The requirements issuer normalizes top-level `extra.confirmationPolicy` when it builds the requirements; it is not covered by `termsDigest`.
 
-```mermaid
-flowchart TD
-    Quote["Masumi settlement, submission, and confirmation policies"] --> Layer{"Resolve settlement layer"}
-    Layer -->|l1| L1["Cardano L1"]
-    Layer -->|hydra| Hydra["Selected open Hydra head"]
-    Layer -->|auto| Auto{"Suitable supported head?"}
-    Auto -->|yes| Hydra
-    Auto -->|no| L1
-    L1 --> Submit{"Resolve submission mode"}
-    Hydra --> Submit
-    Submit -->|client| Client["Client broadcasts before paid retry"]
-    Submit -->|server| Service["Resource server or facilitator broadcasts"]
-    Client --> Evidence["Verify settlement evidence"]
-    Service --> Evidence
-    Evidence --> Success["Return resource after threshold is met"]
-```
-
-An internal or external facilitator MAY advertise Masumi capabilities in the matching `/supported` entry:
+An internal or external facilitator MAY advertise its Cardano capabilities in the matching `/supported` entry:
 
 ```json
 {
@@ -639,14 +593,9 @@ An internal or external facilitator MAY advertise Masumi capabilities in the mat
       "scheme": "exact",
       "network": "cardano:preprod",
       "extra": {
-        "assetTransferMethods": ["masumi"],
-        "settlementLayers": ["l1", "hydra"],
+        "assetTransferMethods": ["default", "masumi", "script"],
         "areFeesSponsored": false,
-        "submissionModes": ["server", "client"],
-        "l1Confirmations": {
-          "server": { "minimum": -1, "maximum": 20 },
-          "client": { "minimum": 0, "maximum": 20 }
-        }
+        "l1Confirmations": { "minimum": 0, "maximum": 20 }
       }
     }
   ],
@@ -655,7 +604,7 @@ An internal or external facilitator MAY advertise Masumi capabilities in the mat
 }
 ```
 
-`/supported` describes available capabilities. The 402 response carries the selected policies. When `submissionPolicy` is `either`, the service MUST support every selectable submission-mode and settlement-layer combination. For L1, the selected confirmation level MUST be within both mode ranges. Otherwise the issuer MUST return separate requirements for `server` and `client` instead of `either`.
+`/supported` describes available capabilities. The 402 response carries the selected policy, and the selected confirmation level MUST be within the advertised range. A facilitator that cannot read canonical depth advertises `maximum: 0`; one that has not opted into mempool settlement advertises `minimum: 0`.
 
 #### Script assetTransferMethod Schema
 
@@ -680,7 +629,6 @@ When the Resource Server requires payment to a script, the `extra` field in the 
       "maxTimeoutSeconds": 600, // Has to be set to a higher amount of time because of the Cardano Network speed
       "extra": {
         "assetTransferMethod": "script", // optional, can be "default" | "masumi" | "script"
-        "submissionPolicy": "either", // optional; server, client, or either; defaults to server
         "confirmationPolicy": { "l1Confirmations": 1 }, // optional; defaults to 1
         // If the script assetTransferMethod is used, make sure to include all script related fields
         "scriptHash": "script_hash_here", // If the script is already on-chain, provide its hash and the client can resolve the full script
@@ -712,17 +660,15 @@ The PAYMENT-SIGNATURE header is base64-encoded and sent in the client's request 
 
 The payload field of the PAYMENT-SIGNATURE header must contain the following fields:
 
-- `transaction`: The signed Cardano transaction (Base64 encoded).
+- `transaction`: The signed, unbroadcast Cardano transaction (Base64 encoded).
 - `nonce`: A UTXO reference (`txHash#index`) that is also one of the transaction's inputs. This is the replay guard the facilitator enforces (Verification Rule 5), so a payload without it MUST be rejected.
-- `submissionMode`: Optional `server` or `client`. An absent value normalizes to `server`.
 
 Example:
 
 ```js
 {
   "transaction": "AAAIAQDi1HwjSnS6M+WGvD73iEyUY2FRKNj0MlRp7+3SHZM3xCvMdB0AAAAAIFRgPKOstGBLCnbcyGoOXugUYAWwVzNrpMjPCzXK4KQWAQCMoE29VLGwftex8rhIlOuFLFNfxLIJlHqGXoXA8hx6l+LMdB0AAAAAIHbPucTRIEWgO6lzqukswPZ6i72IHEKK5LyM1l9HJNZNAQBthSeHDVK8Xr5/zp3JMZPLtG5uAoVgedTA4pEnp+h8qUlUzRwAAAAAIACH0swYW/QfGCFczGnjAVPHPqZrQE5vfvJr36i6KVEFAQAC7W4K5vCwB+nprjxcNlLiOQ7SIIfyCZjmj2qSis2iTsCuzBwAAAAAIAkSUkXOoeq52GNdhwpbs+jZqqrqPdmiN3oPw5EzDIanAQAIyFNGWD6OxiFIyXSxrNEcFG0npm+nImk6InUssXb1EZgx1hwAAAAAILhsjmMKyM0n75Cd7z6ufH2LNhOMibFOGhNlLgV5RFuEAQC+Mh4kGkLwrw/11729oUQnt3xOmOreE6PcnuN6M68ZBcCuzBwAAAAAIO2PQhSSqSAawCbRr005lfjBgFOqIHo4zb2GcQ/WCxAlAAgA+QKVAAAAAAAgjiAHD0X4HNSdVPpJtf2E6W2uRc8kbvCHYkgEQ1B+w1MDAwEAAAUBAQABAgABAwABBAABBQACAQAAAQEGAAEBAgEAAQcAHrfFfj8r0Pxsudz/0UPqlX5NmPgFw1hzP3be4GZ/4LEB5XXrONxGw0qOUsq3yNKeUhOCOgCIwaa4pswKaer66EKqPGwdAAAAACBrOIN4poutFUmHfB6FbFJu8GgXoPPTGQWREqFpPfvO1B63xX4/K9D8bLnc/9FD6pV+TZj4BcNYcz923uBmf+Cx7gIAAAAAAABg4xYAAAAAAAA=",
-  "nonce": "662cbf645fcd8914eb89115b83970a950493dd2fbaf39dea3b96e8cbdc132939#0",
-  "submissionMode": "server"
+  "nonce": "662cbf645fcd8914eb89115b83970a950493dd2fbaf39dea3b96e8cbdc132939#0"
 }
 ```
 
@@ -744,15 +690,13 @@ Full PAYMENT-SIGNATURE header:
     "payTo": "addr1...",
     "maxTimeoutSeconds": 600,
     "extra": {
-      "submissionPolicy": "either",
       "confirmationPolicy": { "l1Confirmations": 1 },
       // In case of default address-to-address payments, this may be empty or contain additional metadata
     }
   },
   "payload": {
     "transaction": "AAAIAQDi1HwjSnS6M+WGvD73iEyUY2FRKNj0MlRp7+3SHZM3xCvMdB0AAAAAIFRgPKOstGBLCnbcyGoOXugUYAWwVzNrpMjPCzXK4KQWAQCMoE29VLGwftex8rhIlOuFLFNfxLIJlHqGXoXA8hx6l+LMdB0AAAAAIHbPucTRIEWgO6lzqukswPZ6i72IHEKK5LyM1l9HJNZNAQBthSeHDVK8Xr5/zp3JMZPLtG5uAoVgedTA4pEnp+h8qUlUzRwAAAAAIACH0swYW/QfGCFczGnjAVPHPqZrQE5vfvJr36i6KVEFAQAC7W4K5vCwB+nprjxcNlLiOQ7SIIfyCZjmj2qSis2iTsCuzBwAAAAAIAkSUkXOoeq52GNdhwpbs+jZqqrqPdmiN3oPw5EzDIanAQAIyFNGWD6OxiFIyXSxrNEcFG0npm+nImk6InUssXb1EZgx1hwAAAAAILhsjmMKyM0n75Cd7z6ufH2LNhOMibFOGhNlLgV5RFuEAQC+Mh4kGkLwrw/11729oUQnt3xOmOreE6PcnuN6M68ZBcCuzBwAAAAAIO2PQhSSqSAawCbRr005lfjBgFOqIHo4zb2GcQ/WCxAlAAgA+QKVAAAAAAAgjiAHD0X4HNSdVPpJtf2E6W2uRc8kbvCHYkgEQ1B+w1MDAwEAAAUBAQABAgABAwABBAABBQACAQAAAQEGAAEBAgEAAQcAHrfFfj8r0Pxsudz/0UPqlX5NmPgFw1hzP3be4GZ/4LEB5XXrONxGw0qOUsq3yNKeUhOCOgCIwaa4pswKaer66EKqPGwdAAAAACBrOIN4poutFUmHfB6FbFJu8GgXoPPTGQWREqFpPfvO1B63xX4/K9D8bLnc/9FD6pV+TZj4BcNYcz923uBmf+Cx7gIAAAAAAABg4xYAAAAAAAA=",
-    "nonce": "662cbf645fcd8914eb89115b83970a950493dd2fbaf39dea3b96e8cbdc132939#0",
-    "submissionMode": "server"
+    "nonce": "662cbf645fcd8914eb89115b83970a950493dd2fbaf39dea3b96e8cbdc132939#0"
   }
 }
 ```
@@ -778,7 +722,6 @@ Expanded Schema based on assetTransferMethods:
     "maxTimeoutSeconds": 600,
       "extra": {
         "assetTransferMethod": "masumi",
-        "submissionPolicy": "either",
         "confirmationPolicy": { "l1Confirmations": 1 },
         "inputCommitment": {
           "version": "1",
@@ -804,8 +747,7 @@ Expanded Schema based on assetTransferMethods:
           "payByTime": "1713626260000",
           "submitResultTime": "1713636260000",
           "unlockTime": "1713640260000",
-          "externalDisputeUnlockTime": "1713644260000",
-          "settlementPolicy": "auto"
+          "externalDisputeUnlockTime": "1713644260000"
         },
         "referenceKey": "<complete CBOR COSE_Key lowercase hex>",
         "referenceSignature": "<complete CBOR COSE_Sign1 lowercase hex>",
@@ -814,14 +756,10 @@ Expanded Schema based on assetTransferMethods:
   },
   "payload": {
     "transaction": "AAAIAQDi1HwjSnS6M+WGvD73iEyUY2FRKNj0MlRp7+3SHZM3xCvMdB0AAAAAIFRgPKOstGBLCnbcyGoOXugUYAWwVzNrpMjPCzXK4KQWAQCMoE29VLGwftex8rhIlOuFLFNfxLIJlHqGXoXA8hx6l+LMdB0AAAAAIHbPucTRIEWgO6lzqukswPZ6i72IHEKK5LyM1l9HJNZNAQBthSeHDVK8Xr5/zp3JMZPLtG5uAoVgedTA4pEnp+h8qUlUzRwAAAAAIACH0swYW/QfGCFczGnjAVPHPqZrQE5vfvJr36i6KVEFAQAC7W4K5vCwB+nprjxcNlLiOQ7SIIfyCZjmj2qSis2iTsCuzBwAAAAAIAkSUkXOoeq52GNdhwpbs+jZqqrqPdmiN3oPw5EzDIanAQAIyFNGWD6OxiFIyXSxrNEcFG0npm+nImk6InUssXb1EZgx1hwAAAAAILhsjmMKyM0n75Cd7z6ufH2LNhOMibFOGhNlLgV5RFuEAQC+Mh4kGkLwrw/11729oUQnt3xOmOreE6PcnuN6M68ZBcCuzBwAAAAAIO2PQhSSqSAawCbRr005lfjBgFOqIHo4zb2GcQ/WCxAlAAgA+QKVAAAAAAAgjiAHD0X4HNSdVPpJtf2E6W2uRc8kbvCHYkgEQ1B+w1MDAwEAAAUBAQABAgABAwABBAABBQACAQAAAQEGAAEBAgEAAQcAHrfFfj8r0Pxsudz/0UPqlX5NmPgFw1hzP3be4GZ/4LEB5XXrONxGw0qOUsq3yNKeUhOCOgCIwaa4pswKaer66EKqPGwdAAAAACBrOIN4poutFUmHfB6FbFJu8GgXoPPTGQWREqFpPfvO1B63xX4/K9D8bLnc/9FD6pV+TZj4BcNYcz923uBmf+Cx7gIAAAAAAABg4xYAAAAAAAA=",
-    "nonce": "662cbf645fcd8914eb89115b83970a950493dd2fbaf39dea3b96e8cbdc132939#0",
-    "settlementLayer": "l1",
-    "submissionMode": "client"
+    "nonce": "662cbf645fcd8914eb89115b83970a950493dd2fbaf39dea3b96e8cbdc132939#0"
   }
 }
 ```
-
-For `settlementLayer: "hydra"`, `payload.headId` is required. It MUST be absent for L1. `submissionMode` follows the shared submission policy. An absent value normalizes to `server`; it is never `either`.
 
 #### Script assetTransferMethod
 
@@ -842,7 +780,6 @@ For `settlementLayer: "hydra"`, `payload.headId` is required. It MUST be absent 
     "maxTimeoutSeconds": 600,
       "extra": {
         "assetTransferMethod": "script",
-        "submissionPolicy": "either",
         "confirmationPolicy": { "l1Confirmations": 1 },
         "scriptHash": "script_hash_here",
         "script": {
@@ -857,8 +794,7 @@ For `settlementLayer: "hydra"`, `payload.headId` is required. It MUST be absent 
   },
   "payload": {
     "transaction": "AAAIAQDi1HwjSnS6M+WGvD73iEyUY2FRKNj0MlRp7+3SHZM3xCvMdB0AAAAAIFRgPKOstGBLCnbcyGoOXugUYAWwVzNrpMjPCzXK4KQWAQCMoE29VLGwftex8rhIlOuFLFNfxLIJlHqGXoXA8hx6l+LMdB0AAAAAIHbPucTRIEWgO6lzqukswPZ6i72IHEKK5LyM1l9HJNZNAQBthSeHDVK8Xr5/zp3JMZPLtG5uAoVgedTA4pEnp+h8qUlUzRwAAAAAIACH0swYW/QfGCFczGnjAVPHPqZrQE5vfvJr36i6KVEFAQAC7W4K5vCwB+nprjxcNlLiOQ7SIIfyCZjmj2qSis2iTsCuzBwAAAAAIAkSUkXOoeq52GNdhwpbs+jZqqrqPdmiN3oPw5EzDIanAQAIyFNGWD6OxiFIyXSxrNEcFG0npm+nImk6InUssXb1EZgx1hwAAAAAILhsjmMKyM0n75Cd7z6ufH2LNhOMibFOGhNlLgV5RFuEAQC+Mh4kGkLwrw/11729oUQnt3xOmOreE6PcnuN6M68ZBcCuzBwAAAAAIO2PQhSSqSAawCbRr005lfjBgFOqIHo4zb2GcQ/WCxAlAAgA+QKVAAAAAAAgjiAHD0X4HNSdVPpJtf2E6W2uRc8kbvCHYkgEQ1B+w1MDAwEAAAUBAQABAgABAwABBAABBQACAQAAAQEGAAEBAgEAAQcAHrfFfj8r0Pxsudz/0UPqlX5NmPgFw1hzP3be4GZ/4LEB5XXrONxGw0qOUsq3yNKeUhOCOgCIwaa4pswKaer66EKqPGwdAAAAACBrOIN4poutFUmHfB6FbFJu8GgXoPPTGQWREqFpPfvO1B63xX4/K9D8bLnc/9FD6pV+TZj4BcNYcz923uBmf+Cx7gIAAAAAAABg4xYAAAAAAAA=",
-    "nonce": "662cbf645fcd8914eb89115b83970a950493dd2fbaf39dea3b96e8cbdc132939#0",
-    "submissionMode": "client"
+    "nonce": "662cbf645fcd8914eb89115b83970a950493dd2fbaf39dea3b96e8cbdc132939#0"
   }
 }
 ```
@@ -875,15 +811,15 @@ A facilitator MUST enforce all of the following rules before accepting a payment
 
 4. **Asset Verification**: The asset unit in the transaction MUST exactly match `PaymentRequirements.asset` (format: `${policyId}.${assetNameHex}`). The facilitator MUST NOT accept a different asset, even one of equal market value.
 
-5. **Nonce / Replay Prevention**: The `payload.nonce` MUST be a valid UTXO reference (`txHash#index`) included as an input in the transaction. The selected settlement ledger is Cardano L1 unless a Masumi payload selects Hydra. In server mode, before submission, the facilitator MUST verify that the nonce is unspent in the selected ledger: the current L1 UTXO set for L1, or the authenticated current UTXO state of the verified `headId` for Hydra. In client mode, authenticated settlement evidence MUST prove that the exact submitted transaction consumed the nonce in that same ledger. Hydra evidence requires a verified `SnapshotConfirmed` transition for the exact transaction and head; an unauthenticated `GetUTxO`, `HeadIsOpen` event, or snapshot from another head is not sufficient. This ensures uniqueness without requiring a Hydra UTXO to exist on L1.
+5. **Nonce / Replay Prevention**: The `payload.nonce` MUST be a valid UTXO reference (`txHash#index`) included as an input in the transaction. Before submission, the facilitator MUST verify that the nonce — and every other input — is unspent in the current L1 UTXO set; a spent input guarantees the node rejects the transaction. Once authenticated evidence proves the ledger accepted this exact transaction (the pending-settlement retry), its inputs are spent *by it*, and this check no longer applies.
 
-6. **Submission Check**: An absent `payload.submissionMode` normalizes to `server`. The normalized mode MUST match `submissionPolicy`. In server mode, the facilitator submits only after verification, and MUST first run complete ledger **phase-1 validation** of the signed transaction — Plutus script evaluation alone is not sufficient, because it admits unbalanced and unauthenticated transactions. In client mode, it MUST verify authenticated evidence for the exact transaction and MUST NOT submit it again. `/supported` MUST advertise only the submission modes the facilitator can actually perform; a facilitator without a phase-1 validator does not offer `server`.
+6. **Phase-1 Check**: The facilitator submits only after verification, and the protected handler may already have run, so before broadcast it MUST reject every transaction the ledger would refuse that it can detect from provider data: **value conservation** — the lovelace and every native asset the inputs carry MUST equal the outputs plus the fee, computed from the authenticated input values — and the **fee floor** — `fee >= minFeeB + minFeeA * |transaction|` from live protocol parameters (a necessary condition; script execution and reference-script surcharges only raise it). A transaction that moves value the inputs and outputs do not show (`mint`, `withdrawals`, `certificates`, governance deposits or donations) cannot be balanced from provider data and MUST be rejected unless the facilitator runs a **complete ledger phase-1 validator** (e.g. against its own node), which MAY be added on top of these checks. Plutus script evaluation alone is not a substitute: it admits unbalanced and unauthenticated transactions. A facilitator without live protocol parameters MAY skip the fee floor and rely on the node's own rejection at submission.
 
-7. **TTL / Expiry Check**: Before first submission, the transaction's TTL (time-to-live slot) MUST not have passed. The TTL MUST NOT be later than the slot corresponding to the current network time plus `PaymentRequirements.maxTimeoutSeconds`. Both client and facilitator MUST convert wall-clock time to a slot using the current system-start and era summary; they MUST NOT compare seconds against slots as raw values, and MUST NOT assume one slot per second (this holds only from Shelley onward, and is a protocol parameter rather than a constant). After authenticated evidence proves that the selected ledger accepted the transaction within its validity interval, later confirmation checks MAY continue after the TTL.
+7. **TTL / Expiry Check**: Before first submission, the transaction's TTL (time-to-live slot) MUST not have passed. The TTL MUST NOT be later than the slot corresponding to the current network time plus `PaymentRequirements.maxTimeoutSeconds`. Both client and facilitator MUST convert wall-clock time to a slot using the current system-start and era summary; they MUST NOT compare seconds against slots as raw values, and MUST NOT assume one slot per second (this holds only from Shelley onward, and is a protocol parameter rather than a constant). After authenticated evidence proves that the ledger accepted the transaction within its validity interval, later confirmation checks MAY continue after the TTL.
 
 8. **Minimum UTXO Check**: The output paying `payTo` SHOULD carry at least the protocol minimum lovelace for its serialized size, `(160 + |serialized_output|) * coinsPerUtxoByte` (see [Minimum UTXO Value](#minimum-utxo-value-min-ada)). An output below this minimum yields a transaction the node rejects at submission, so the facilitator SHOULD reject it during `verify()` rather than let `settle()` fail. Because `coinsPerUtxoByte` is governance-settable, the facilitator MUST read it from live protocol parameters. A facilitator without access to live protocol parameters MAY skip this check and rely on the node to reject an undersized output at submission.
 
-9. **Confirmation Check**: For L1 settlement, authenticated evidence MUST meet `confirmationPolicy.l1Confirmations`. Canonical inclusion satisfies `-1`; greater canonical depth satisfies a lower threshold. A client-submitted transaction that has left the mempool MAY settle from canonical block evidence. The resource MUST NOT be released before the threshold is met.
+9. **Confirmation Check**: Authenticated evidence MUST meet `confirmationPolicy.l1Confirmations`. Canonical inclusion satisfies `-1`; greater canonical depth satisfies a lower threshold. The resource MUST NOT be released before the threshold is met; below it, settlement reports [pending](#pending-settlement) rather than success.
 
 **Masumi assetTransferMethod — additional rules.** When `requirements.extra.assetTransferMethod` is `masumi`, the facilitator MUST additionally enforce (rule 2's "recipient" is the escrow output paying `payTo`):
 
@@ -898,7 +834,7 @@ A facilitator MUST enforce all of the following rules before accepting a payment
 - `reference_key`, `reference_signature`, `seller_nonce`, `buyer_nonce`, `agent_identifier`, `input_hash` and the four time bounds in the datum match the signed terms exactly, and `reference_signature` is at least 16 bytes. `buyer_return_address` is buyer-chosen and is **not** matched; `seller_return_address` matches the signed terms exactly (declared ⇒ present with matching credentials; omitted ⇒ `None`).
 - **Value.** `lockedLovelace` equals `requestedLovelace + collateral_return_lovelace`, where `requestedLovelace` is `amount` for a lovelace payment and `0` for a native-token payment; a native token MUST match `amount` exactly. The escrow output MUST carry **exactly** the requested asset set — no extra native tokens. `collateral_return_lovelace` MUST be `0` or ≥ **1,435,230**, and MUST be large enough that `lockedLovelace` clears the post-`SubmitResult` min-UTXO.
 - **Deadline.** The transaction MUST carry a validity upper bound (TTL) whose slot time is on/before `pay_by_time`, and the four deadlines MUST clear the minimum intervals in the lock invariants.
-- **Settlement.** `settlementPolicy` MUST allow `payload.settlementLayer`. For L1, the nonce and exact transaction MUST have authenticated evidence at or above `confirmationPolicy`: mempool or stronger canonical evidence for `-1`, and canonical inclusion/depth for `0..20`. For Hydra server submission, the nonce MUST be unspent in the authenticated current UTXO state of the verified head before broadcast. For either submission mode, a verified `SnapshotConfirmed` transition for the canonical protocol `headId` MUST prove that the exact transaction consumed that nonce. The verifier also validates the suitable head and seller-participant binding.
+- **Settlement.** The exact transaction MUST have authenticated evidence at or above `confirmationPolicy`: the facilitator's own broadcast acceptance for `-1`, and canonical inclusion/depth for `0..20`.
 - **Minimum UTXO.** The escrow output MUST hold enough lovelace for the protocol min-UTXO of the datum **after `SubmitResult`** (32-byte `result_hash` + non-zero cooldowns), so the seller's later spend stays above min-UTXO. Rule 8's carve-out applies: a facilitator without live protocol parameters MAY skip this check and rely on the node's own min-UTXO rejection at submission.
 
 A single Masumi payment locks **one** asset — lovelace, or one native token plus its structural lovelace (which covers the collateral and min-UTXO). `PaymentRequirements` carries a single `asset`/`amount`, so a multi-asset basket is out of scope for this scheme.
@@ -928,7 +864,6 @@ Schema:
   "transaction": "2f9a7b3c...", // Transaction hash of the payment if successful
   "extra": {
     "status": "confirmed", // "mempool" when authenticated mempool evidence is strongest
-    "submissionMode": "server",
     "confirmations": 1
   },
   // Optional error field in case of failure
@@ -938,15 +873,13 @@ Schema:
 
 The response reports the strongest verified evidence. Before block inclusion, `status` is `mempool` and `confirmations` is `-1`. After inclusion, `status` is `confirmed` and `confirmations` is the actual number of newer canonical blocks. That number MUST meet the selected policy before `success` is `true`.
 
-For Masumi Hydra settlement, `extra` instead contains `settlementLayer: "hydra"`, the canonical protocol `headId`, `submissionMode`, and `status: "snapshotConfirmed"`. Masumi L1 responses contain `settlementLayer: "l1"` in addition to the shared fields.
+#### Pending settlement
 
-#### Pending confirmation
+Cardano blocks arrive roughly every 20 seconds, so a policy of one or more confirmations routinely outlasts a single `/settle` call. The facilitator MUST NOT hold the connection indefinitely. It broadcasts, waits a bounded time for the required evidence, and if the threshold is still unmet returns the non-terminal x402 outcome `success: false`, `errorReason: "settlement_pending"`, the canonical transaction id in `transaction` (and `extra.transactionId`), `extra.status: "pending"`, and the current `confirmations` once the transaction is included.
 
-If a valid transaction has not reached the required evidence level, the resource server MAY keep the request open or return HTTP 402 with `success: false`, `errorReason: "payment_pending"`, the canonical transaction ID in `extra.transactionId`, and `extra.status: "pending"`. Before block inclusion, `confirmations` is absent; after inclusion, it reports the current depth below the threshold.
+The resource server's settlement retry protocol (`@x402/core` retries `settle` exactly once, with the identical payload and requirements) then resumes the settlement: the facilitator recognizes the transaction id it already claimed, MUST NOT broadcast it again, and continues observing. A client-facing retry is not needed for this; if a resource server nevertheless surfaces the pending outcome as HTTP 402, a paid retry MUST repeat the exact original `PAYMENT-SIGNATURE`, the client MUST NOT build another transaction, and the server resumes observation of the same canonical transaction id. Once the transaction's validity window has closed without the ledger recording it, it can no longer land and the facilitator MUST report a terminal failure instead of `settlement_pending`.
 
-The server MAY include `Retry-After`. A paid retry MUST repeat the exact original `PAYMENT-SIGNATURE`. The client MUST NOT build another transaction. The server resumes observation of the same canonical transaction ID and MUST NOT submit it again. The protected operation MUST be idempotent if it can run before settlement reaches the required evidence.
-
-The protected handler runs once settlement reaches the required evidence, as in the other `exact` schemes. A resource server that chooses to run it earlier is responsible for making that operation idempotent across the paid retries described above.
+A protected operation that runs before settlement reaches the required evidence MUST tolerate being run once per paid retry, as in the other `exact` schemes.
 
 ## Transaction Fees
 
@@ -996,7 +929,7 @@ Merchants and/or Facilitators SHOULD maintain a short-term, in-memory cache of t
 
 The claim SHOULD be released only after it is established that no submission occurred, or after a definitive ledger rejection, so a legitimate retry can re-attempt. A timeout, transport failure, unknown node result or mempool-only result MUST retain the claim; the service then reconciles by transaction ID.
 
-This approach requires no external storage — only an in-process map with time-based eviction. It preserves the facilitator's otherwise stateless design while closing the duplicate settlement attack vector. Note that the cache is per-process: across multiple facilitator instances it does not deduplicate, but the on-chain nonce spend (Rule 5) remains the authoritative cross-instance replay guard.
+This approach requires no external storage — only an in-process map with bounded eviction — and is what a single-instance facilitator SHOULD ship by default. A facilitator running several instances without session affinity SHOULD share the store (a durable, atomically updating backend), because the pending-settlement retry can land on another instance and must still find the claim; the on-chain nonce spend (Rule 5) remains the authoritative replay guard once the transaction is observable.
 
 ### Implementation limits
 
@@ -1008,7 +941,7 @@ Transaction-level deduplication is **not sufficient** for `masumi`. A client can
 
 `masumi` therefore has a logical replay key in addition to the transaction ID: **`termsDigest`**, which by construction covers the price, asset, contract, request commitment, identity and deadlines of exactly one issued 402.
 
-- The requirements issuer MUST bind each `termsDigest` to the **first** durably claimed transaction ID, atomically, in the same record that holds the issued requirements. A retry carrying the same transaction is idempotent; a *different* transaction for the same digest is a conflict and MUST NOT start further work, even if it lands earlier in canonical ledger order. This binding is a property of the payment, not of the HTTP request that carried it.
+- The requirements issuer MUST bind each `termsDigest` to the **first** durably claimed transaction ID, atomically, in the same record that holds the issued requirements. A retry carrying the same transaction resumes that binding; a *different* transaction for the same digest is a conflict and MUST NOT start further work, even if it lands earlier in canonical ledger order. This binding is a property of the payment, not of the HTTP request that carried it.
 - Once claimed, a `termsDigest` SHOULD stay bound to that transaction ID, including after rejection or expiry. A failed payment needs new requirements with a fresh `sellerNonce` — reusing the terms would reuse the signature.
 - The facilitator MAY cache `termsDigest` → transaction ID → outcome as an advisory check, retained through the signed validity window plus the confirmation and rollback grace period.
 - The verified `blockchainIdentifier` is a compatibility lookup key for the same record; it does not replace the `termsDigest` binding.

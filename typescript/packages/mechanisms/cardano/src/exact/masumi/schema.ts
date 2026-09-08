@@ -8,7 +8,7 @@ import {
   MAX_MASUMI_COSE_BYTES,
   MAX_MASUMI_IDENTIFIER_COMPRESSED_BYTES,
 } from "../../limits";
-import { normalizeConfirmationPolicy, normalizeSubmissionPolicy } from "../../policy";
+import { normalizeConfirmationPolicy } from "../../policy";
 import type {
   CardanoExtraMasumi,
   MasumiCommitmentPart,
@@ -35,7 +35,6 @@ export type MasumiSchemaResult =
 
 const EXTRA_KEYS = new Set([
   "assetTransferMethod",
-  "submissionPolicy",
   "confirmationPolicy",
   "areFeesSponsored",
   "inputCommitment",
@@ -63,7 +62,6 @@ const TERMS_KEYS = new Set([
   "submitResultTime",
   "unlockTime",
   "externalDisputeUnlockTime",
-  "settlementPolicy",
 ]);
 
 const DEPLOYMENT_KEYS = new Set(["requiredAdmins", "adminVkeys", "cooldownPeriod"]);
@@ -436,13 +434,6 @@ function validateTerms(
       return { ok: false, detail: `terms.${field} must be a positive POSIX-ms integer string` };
     }
   }
-  if (
-    value.settlementPolicy !== "auto" &&
-    value.settlementPolicy !== "l1" &&
-    value.settlementPolicy !== "hydra"
-  ) {
-    return { ok: false, detail: "terms.settlementPolicy must be auto, l1 or hydra" };
-  }
 
   return {
     ok: true,
@@ -463,7 +454,6 @@ function validateTerms(
       submitResultTime: value.submitResultTime as string,
       unlockTime: value.unlockTime as string,
       externalDisputeUnlockTime: value.externalDisputeUnlockTime as string,
-      settlementPolicy: value.settlementPolicy,
     },
   };
 }
@@ -485,9 +475,6 @@ export function validateMasumiExtra(value: unknown, network: string): MasumiSche
 
   if (value.assetTransferMethod !== "masumi") {
     return { ok: false, detail: "extra.assetTransferMethod must be masumi" };
-  }
-  if (normalizeSubmissionPolicy(value.submissionPolicy) === null) {
-    return { ok: false, detail: "extra.submissionPolicy must be server, client or either" };
   }
   if (normalizeConfirmationPolicy(value.confirmationPolicy) === null) {
     return { ok: false, detail: "extra.confirmationPolicy must be { l1Confirmations: -1..20 }" };
@@ -531,9 +518,6 @@ export function validateMasumiExtra(value: unknown, network: string): MasumiSche
       assetTransferMethod: "masumi",
       ...(value.areFeesSponsored !== undefined
         ? { areFeesSponsored: value.areFeesSponsored as boolean }
-        : {}),
-      ...(value.submissionPolicy !== undefined
-        ? { submissionPolicy: value.submissionPolicy as CardanoExtraMasumi["submissionPolicy"] }
         : {}),
       ...(value.confirmationPolicy !== undefined
         ? {
