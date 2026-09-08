@@ -33,6 +33,7 @@ import { ExactStellarScheme } from "@x402/stellar/exact/facilitator";
 import { toFacilitatorSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/facilitator";
 import { ExactSvmSchemeV1 } from "@x402/svm/exact/v1/facilitator";
+import { InMemoryUptoChannelStorage, UptoSvmScheme } from "@x402/svm/upto/facilitator";
 import { toFacilitatorAvmSigner } from "@x402/avm";
 import { ExactAvmScheme } from "@x402/avm/exact/facilitator";
 import { XRPL_TESTNET } from "@x402/xrpl";
@@ -127,6 +128,14 @@ async function createFacilitator(): Promise<x402Facilitator> {
     "0xBA5ED110eFDBa3D005bfC882d75358ACBbB85842", // CoinbaseSmartWalletFactory v1.1
   ];
 
+  // SVM `upto` channel index. This facilitator is a single, long-running
+  // Node process (not a multi-instance/serverless deployment), so the SDK's
+  // built-in lazy in-memory storage is sufficient: it just needs to survive
+  // for the process's lifetime, which it does.
+  const svmUptoNetwork = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" as Network;
+  const svmUptoChannelStorage = new InMemoryUptoChannelStorage();
+  const svmUptoScheme = new UptoSvmScheme(svmSigner, { channelStorage: svmUptoChannelStorage });
+
   const facilitator = new x402Facilitator()
     .register("eip155:84532", new ExactEvmScheme(evmSigner, { eip6492AllowedFactories }))
     .registerV1(
@@ -139,7 +148,56 @@ async function createFacilitator(): Promise<x402Facilitator> {
       "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
       new ExactSvmScheme(svmSigner, undefined, { enableSmartWalletVerification: true }),
     )
+    .register(svmUptoNetwork, svmUptoScheme)
     .registerV1("solana-devnet" as Network, new ExactSvmSchemeV1(svmSigner));
+
+  // Start async rent cleanup for SVM `upto` payment channels: `cleanup` closes
+  // abandoned/expired channels and reclaims rent for channels this process's
+  // in-memory index already knows about. `discoveryIntervalSecs` additionally
+  // runs a `getProgramAccounts` sweep to find channels missing from that
+  // index (e.g. after a process restart, since the in-memory store doesn't
+  // persist), so both discovery and cleanup keep working across restarts even
+  // though the lazy in-memory index itself does not.
+  const svmUptoRentCleanupManager = svmUptoScheme.createRentCleanupManager(svmUptoNetwork);
+  svmUptoRentCleanupManager.start({
+    intervalSecs: parseInt(process.env.FACILITATOR_SVM_UPTO_RENT_CLEANUP_INTERVAL_SECS ?? "30"),
+    abandonGraceSecs: parseInt(
+      process.env.FACILITATOR_SVM_UPTO_RENT_CLEANUP_ABANDON_GRACE_SECS ?? "120",
+    ),
+    discoveryIntervalSecs: parseInt(
+      process.env.FACILITATOR_SVM_UPTO_RENT_DISCOVERY_INTERVAL_SECS ?? "3600",
+    ),
+    onClose: result => {
+      console.info(
+        `[upto-svm-rent-cleanup] ${result.action} channel=${result.channelId} tx=${result.transaction}`,
+      );
+    },
+    onReclaim: result => {
+      console.info(
+        `[upto-svm-rent-cleanup] reclaim channels=${result.channelIds.join(",")} tx=${result.transaction}`,
+      );
+    },
+    onDiscover: result => {
+      console.info(`[upto-svm-rent-cleanup] discovered channels=${result.channelIds.join(",")}`);
+    },
+    onError: (error, context) => {
+      console.error("[upto-svm-rent-cleanup] error", {
+        channelId: context?.channelId,
+        error: error instanceof Error ? error.message : error,
+      });
+    },
+  });
+
+  // Tear down rent cleanup on shutdown so an in-flight pass finishes (a
+  // settle that's already broadcast is not abandoned before its storage
+  // entry is updated) and the process exits cleanly. createFacilitator() runs
+  // once as a lazy singleton, so this handler only registers once.
+  const stopSvmUptoRentCleanup = async () => {
+    await svmUptoRentCleanupManager.stop();
+    // We don't process.exit here to allow other cleanups to run as well.
+  };
+  process.once("SIGINT", stopSvmUptoRentCleanup);
+  process.once("SIGTERM", stopSvmUptoRentCleanup);
 
   // Optionally register Algorand if configured
   if (avmPrivateKey) {
