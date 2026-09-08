@@ -4,13 +4,14 @@
 
 The `exact` scheme on EVM executes a transfer where the Facilitator (server) pays the gas, but the Client (user) controls the exact flow of funds via cryptographic signatures.
 
-This is implemented via one of three asset transfer methods, depending on the token's capabilities:
+This is implemented via one of four asset transfer methods, depending on the token and account capabilities:
 
 | AssetTransferMethod | Use Case                                                     | Recommendation                                 | Usage Semantics                     |
 | :------------------ | :----------------------------------------------------------- | :--------------------------------------------- | :---------------------------------- |
 | **1. EIP-3009**     | Tokens with native `transferWithAuthorization` (e.g., USDC). | **Recommended** (Simplest, truly gasless).     | One-time use                        |
 | **2. Permit2**      | Tokens without EIP-3009. Uses a Proxy + Permit2.             | **Universal Fallback** (Works for any ERC-20). | One-time use                        |
 | **3. ERC-7710**      | Smart accounts with delegation support.                              | **Smart Account Option** (Paid from ERC-7710 compatible account). | One-time use and multi-use |
+| **4. ERC-8112**     | Smart accounts that support signed wallet-native token transfers. | **Wallet-native Option** (No token allowance or delegation manager required). | One-time use |
 
 If no `assetTransferMethod` is specified in `PaymentRequired.extra`, clients should default to `"eip3009"`. Payment payloads that use a non-default transfer method should echo the selected `assetTransferMethod` in `accepted.extra`.
 
@@ -328,6 +329,151 @@ delegationManager.redeemDelegations(
 ```
 
 The Delegation Manager validates the delegation authority and calls the delegator account to execute the token transfer. The delegator account then performs `token.transfer(payTo, amount)`.
+
+---
+
+## 4. AssetTransferMethod: `ERC-8112`
+
+This asset transfer method uses an ERC-8112-compatible smart account that can
+validate a typed transfer authorization and execute the transfer from the
+account. It is suited for smart accounts that expose a wallet-native
+`tokenTransferWithSig` flow and do not require token allowances, Permit2, or an
+external delegation manager.
+
+### Prerequisites
+
+For ERC-8112 to work, the following must be true:
+
+1. **Payer Account**: The payer's account must be a smart contract account that
+   supports the ERC-8112-compatible transfer interface.
+2. **Signature Validation**: The payer account must validate the signed
+   authorization, typically through ERC-1271-compatible signature validation.
+3. **Nonce Tracking**: The payer account must expose a replay-protection nonce
+   for the authorized transfer scope, for example `(asset, payTo)`.
+4. **Asset Support**: The payer account must be able to transfer the required
+   ERC-20 asset from itself to `payTo`.
+
+### Phase 1: `PAYMENT-SIGNATURE` Header Payload
+
+The `payload` field must contain:
+
+- `signature`: The signature over the ERC-8112 typed transfer authorization.
+- `authorization`: The parameters required to reconstruct the signed message.
+
+**Example PaymentPayload:**
+
+```json
+{
+  "x402Version": 2,
+  "resource": {
+    "url": "https://api.example.com/premium-data",
+    "description": "Access to premium market data",
+    "mimeType": "application/json"
+  },
+  "accepted": {
+    "scheme": "exact",
+    "network": "eip155:84532",
+    "amount": "10000",
+    "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+    "maxTimeoutSeconds": 60,
+    "extra": {
+      "assetTransferMethod": "erc8112",
+      "name": "ERC8112 Token Transfer",
+      "version": "1"
+    }
+  },
+  "payload": {
+    "signature": "0x2d6a7588d6acca505cbf0d9a4a227e0c52c6c34008c8e8986a1283259764173608a2ce6496642e377d6da8dbbf5836e9bd15092f9ecab05ded3d6293af148b571c",
+    "authorization": {
+      "wallet": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
+      "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      "to": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+      "value": "10000",
+      "nonce": "0",
+      "deadline": "1740672154"
+    }
+  }
+}
+```
+
+**`extra` field definitions specific to `erc8112`:**
+
+- `extra.assetTransferMethod` (required): MUST be `"erc8112"`.
+- `extra.name` (required): The EIP-712 domain name used by the payer account
+  for the ERC-8112 transfer authorization.
+- `extra.version` (required): The EIP-712 domain version used by the payer
+  account for the ERC-8112 transfer authorization.
+
+The signed message is:
+
+```text
+TokenTransferWithSig(
+  address wallet,
+  address asset,
+  address to,
+  uint256 value,
+  uint256 nonce,
+  uint256 deadline
+)
+```
+
+The EIP-712 domain MUST use the target chain ID and the payer account as the
+`verifyingContract`.
+
+### Phase 2: Verification Logic
+
+The verifier must execute these checks in order:
+
+1. **Verify** `accepted.extra.assetTransferMethod` is `"erc8112"`.
+2. **Verify** `authorization.wallet` is a smart contract account on the
+   requested network.
+3. **Verify** `authorization.asset` equals `PaymentRequirements.asset`.
+4. **Verify** `authorization.to` equals `PaymentRequirements.payTo`.
+5. **Verify** `authorization.value` equals `PaymentRequirements.amount`.
+6. **Verify** `authorization.deadline` has not expired.
+7. **Verify** `authorization.nonce` equals the wallet's current nonce for the
+   authorized transfer scope.
+8. **Verify** the signed typed data through the payer account's signature
+   validation path, for example `isValidSignature(digest, signature)`.
+9. **Simulate** the settlement call to ensure the payer account has sufficient
+   balance and the transfer will succeed.
+
+### Phase 3: Settlement Logic
+
+Settlement is performed by the facilitator calling the payer account's
+ERC-8112-compatible transfer function with the signed authorization:
+
+```solidity
+wallet.tokenTransferWithSig(
+    authorization.asset,
+    authorization.to,
+    authorization.value,
+    authorization.deadline,
+    signature
+);
+```
+
+The payer account validates the signature and nonce, then transfers the asset
+directly from itself to `PaymentRequirements.payTo`.
+
+### Security Considerations
+
+1. **Replay Protection**: Facilitators MUST verify the account nonce before
+   settlement. Wallet implementations SHOULD bind the nonce to the transfer
+   scope, such as `(asset, payTo)`, or provide equivalent replay protection.
+2. **Destination Integrity**: Facilitators MUST require
+   `authorization.to == PaymentRequirements.payTo`; the facilitator must not be
+   able to redirect funds.
+3. **Amount Integrity**: Facilitators MUST require
+   `authorization.value == PaymentRequirements.amount`; over-authorization is
+   not valid for the `exact` scheme.
+4. **Gas Sponsorship Risk**: As with other gas-sponsored methods, the payer may
+   invalidate the authorization between verification and settlement. Private
+   transaction submission and re-verification immediately before settlement can
+   reduce this risk.
+5. **Interface Detection**: Implementations SHOULD define how ERC-8112 support
+   is detected before relying on this transfer method.
 
 ---
 
