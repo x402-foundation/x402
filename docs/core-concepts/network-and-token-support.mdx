@@ -18,10 +18,11 @@ x402 uses [CAIP-2](https://chainagnostic.org/CAIPs/caip-2) standard network iden
 - **NEAR**: `near:<network>` (`mainnet` or `testnet`)
 - **Concordium**: `ccd:<genesisHash>` (e.g., `ccd:9dd9ca4d19e9393877d2c44b70f89acb` for mainnet)
 - **XRPL**: `xrpl:<networkId>` (e.g., `xrpl:0` for mainnet, `xrpl:1` for testnet)
+- **Starknet**: `starknet:<chainId>` (`starknet:SN_MAIN` or `starknet:SN_SEPOLIA`, the chain id as its Cairo short string; see `specs/schemes/exact/scheme_exact_starknet.md`)
 
 ## Token Support
 
-x402 supports tokens on EVM, Solana, TON, Algorand (AVM), Stellar, Aptos, Hedera, Keeta, NEAR, Concordium, and XRPL networks:
+x402 supports tokens on EVM, Solana, TON, Algorand (AVM), Stellar, Aptos, Hedera, Keeta, NEAR, Concordium, XRPL, and Starknet networks:
 
 | Ecosystem | Supported Tokens | Transfer Method |
 |-----------|------------------|-----------------|
@@ -36,6 +37,7 @@ x402 supports tokens on EVM, Solana, TON, Algorand (AVM), Stellar, Aptos, Hedera
 | **NEAR** | Any NEP-141 token | NEP-366 `SignedDelegate` authorizing `ft_transfer` |
 | **Concordium** | CCD or any PLT token (e.g., EURR) | Sponsored V1 transfer |
 | **XRPL** | XRP or any issued currency (e.g., RLUSD) | Payer-signed `Payment` transaction |
+| **Starknet** | Any ERC-20 token (e.g., STRK) | SNIP-9 outside execution of one `transfer`, signed as SNIP-12 typed data and submitted by the facilitator |
 
 Facilitators support **networks**, not specific tokens — any compatible token works on any facilitator that supports that network.
 
