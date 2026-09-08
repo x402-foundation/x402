@@ -871,13 +871,7 @@ describe("paymentMiddleware", () => {
     );
     const context = createMockContext();
     const next = vi.fn().mockImplementation(async () => {
-      context.res = {
-        status: 200,
-        headers: new Headers(),
-        clone: () => ({
-          arrayBuffer: async () => new ArrayBuffer(0),
-        }),
-      } as unknown as Response;
+      context.res = new Response(null, { status: 200 });
     });
 
     await middleware(context, next);
@@ -906,13 +900,7 @@ describe("paymentMiddleware", () => {
     );
     const context = createMockContext();
     const next = vi.fn().mockImplementation(async () => {
-      context.res = {
-        status: 200,
-        headers: new Headers(),
-        clone: () => ({
-          arrayBuffer: async () => new ArrayBuffer(0),
-        }),
-      } as unknown as Response;
+      context.res = new Response(null, { status: 200 });
     });
 
     await middleware(context, next);
