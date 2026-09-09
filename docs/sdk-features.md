@@ -37,6 +37,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | near | ✅ | ❌ | ❌ |
 | ccd (Concordium) | ✅ | ❌ | ❌ |
 | xrpl | ✅ | ❌ | ❌ |
+| cardano | ✅ | ❌ | ❌ |
 
 ## Mechanisms
 
