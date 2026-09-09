@@ -108,6 +108,59 @@ describe("fetchWithPayment()", () => {
     } as RequestInitWithRetry);
   });
 
+  it("should ignore incompatible payment requirements and use a compatible option", async () => {
+    const paymentHeader = "payment-header-value";
+    const successResponse = createResponse(200, { data: "success" });
+    const incompatiblePaymentRequirement = {
+      ...validPaymentRequirements[0],
+      network: "eip155:480",
+    };
+
+    const { createPaymentHeader, selectPaymentRequirements } = await import("x402/client");
+    (createPaymentHeader as ReturnType<typeof vi.fn>).mockResolvedValue(paymentHeader);
+    mockFetch
+      .mockResolvedValueOnce(
+        createResponse(402, {
+          accepts: [incompatiblePaymentRequirement, validPaymentRequirements[0]],
+          x402Version: 1,
+        }),
+      )
+      .mockResolvedValueOnce(successResponse);
+
+    const result = await wrappedFetch("https://api.example.com");
+
+    expect(result).toBe(successResponse);
+    expect(selectPaymentRequirements).toHaveBeenCalledWith(
+      validPaymentRequirements,
+      undefined,
+      "exact",
+    );
+    expect(createPaymentHeader).toHaveBeenCalledWith(
+      mockWalletClient,
+      1,
+      validPaymentRequirements[0],
+      undefined,
+    );
+  });
+
+  it("should reject with a clear error when no payment requirements are compatible", async () => {
+    const incompatiblePaymentRequirement = {
+      ...validPaymentRequirements[0],
+      network: "eip155:480",
+    };
+
+    mockFetch.mockResolvedValueOnce(
+      createResponse(402, {
+        accepts: [incompatiblePaymentRequirement],
+        x402Version: 1,
+      }),
+    );
+
+    await expect(wrappedFetch("https://api.example.com")).rejects.toThrow(
+      "No compatible payment requirements found",
+    );
+  });
+
   it("should not retry if already retried", async () => {
     const errorResponse = createResponse(402, {
       accepts: validPaymentRequirements,
