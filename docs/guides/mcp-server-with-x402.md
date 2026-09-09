@@ -237,6 +237,19 @@ const client = createx402MCPClient({
 });
 ```
 
+#### Timeout behavior
+
+`callTool` derives its request timeout from the payment requirement's `maxTimeoutSeconds` field (default 300 s) rather than the MCP SDK's built-in 60 s default. This ensures slow-finality networks (such as Cardano) have enough time to settle before the request is aborted.
+
+You can override the timeout per call by passing an explicit `timeout` (in milliseconds):
+
+```typescript
+// Override to 60 seconds for a fast-finality network
+const result = await x402Mcp.callTool("get_weather", { city: "NYC" }, { timeout: 60_000 });
+```
+
+The initial 402 probe (before payment) uses a 300 s ceiling unless you pass an explicit `timeout`.
+
 #### Using the onPaymentRequested hook
 
 For per-call logic (e.g. checking tool name or prompting the user), use `onPaymentRequested`:
