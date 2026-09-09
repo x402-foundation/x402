@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 from x402.mechanisms.evm import get_default_asset
+from x402.mechanisms.evm.asset_cache import reset_asset_contract_cache
 from x402.mechanisms.evm.constants import (
     ERR_ASSET_NOT_DEPLOYED_CONTRACT,
     ERR_ERC20_APPROVAL_BROADCAST_FAILED,
@@ -201,6 +202,19 @@ class MockFacilitatorSigner:
         return self._code_by_address.get(address.lower(), self._code)
 
 
+class _CountingAssetCodeSigner(MockFacilitatorSigner):
+    """Counts get_code calls for the payment token."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.asset_get_code_calls = 0
+
+    def get_code(self, address: str) -> bytes:
+        if address.lower() == TOKEN_ADDRESS.lower():
+            self.asset_get_code_calls += 1
+        return super().get_code(address)
+
+
 class _ReceiptTimeoutSigner(MockFacilitatorSigner):
     """Signer whose broadcast never confirms in time (settlement_pending)."""
 
@@ -295,6 +309,17 @@ class TestVerify:
         result = facilitator.verify(payload, make_requirements())
         assert result.is_valid is False
         assert result.invalid_reason == ERR_PERMIT2_INVALID_SPENDER
+
+    def test_invalid_spender_does_not_check_asset_contract(self):
+        reset_asset_contract_cache()
+        signer = _CountingAssetCodeSigner()
+        facilitator = UptoEvmFacilitatorScheme(signer)
+        auth = make_upto_permit2_authorization(spender="0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+        payload = make_payment_payload(payload_dict=make_upto_payload_dict(auth))
+        result = facilitator.verify(payload, make_requirements())
+        assert result.is_valid is False
+        assert result.invalid_reason == ERR_PERMIT2_INVALID_SPENDER
+        assert signer.asset_get_code_calls == 0
 
     def test_rejects_recipient_mismatch(self):
         facilitator = self._make_facilitator()
@@ -400,25 +425,44 @@ class TestVerify:
 
     def test_rejects_eoa_asset(self):
         # When the token address has no bytecode, verify must reject with asset_not_deployed_contract.
+        # Other tests share TOKEN_ADDRESS but model it as deployed, and positive asset checks are
+        # cached process-wide, so drop those entries to force a real get_code here.
+        reset_asset_contract_cache()
+        from unittest.mock import patch
+
         facilitator = self._make_facilitator(
             code_by_address={TOKEN_ADDRESS.lower(): b""},  # token = EOA
         )
-        result = facilitator.verify(make_payment_payload(), make_requirements())
+        with patch(
+            "x402.mechanisms.evm.upto.permit2_utils._verify_upto_permit2_signature",
+            return_value=True,
+        ):
+            result = facilitator.verify(make_payment_payload(), make_requirements())
         assert result.is_valid is False
         assert result.invalid_reason == ERR_ASSET_NOT_DEPLOYED_CONTRACT
 
     def test_getcode_rpc_error_raises(self):
         # An RPC error on get_code must propagate as an exception, not a 400 response.
+        from unittest.mock import patch
+
         import pytest
+
+        reset_asset_contract_cache()
 
         class _RPCErrorSigner(MockFacilitatorSigner):
             def get_code(self, address: str) -> bytes:
-                raise RuntimeError("rpc: connection refused")
+                if address.lower() == TOKEN_ADDRESS.lower():
+                    raise RuntimeError("rpc: connection refused")
+                return b""
 
         facilitator = UptoEvmFacilitatorScheme(_RPCErrorSigner())
 
-        with pytest.raises(RuntimeError, match="rpc: connection refused"):
-            facilitator.verify(make_payment_payload(), make_requirements())
+        with patch(
+            "x402.mechanisms.evm.upto.permit2_utils._verify_upto_permit2_signature",
+            return_value=True,
+        ):
+            with pytest.raises(RuntimeError, match="rpc: connection refused"):
+                facilitator.verify(make_payment_payload(), make_requirements())
 
 
 class TestSettle:

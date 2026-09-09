@@ -23,10 +23,10 @@ from ....schemas import (  # noqa: E402
     SettleResponse,
     VerifyResponse,
 )
+from ..asset_cache import start_asset_contract_check  # noqa: E402
 from ..constants import (  # noqa: E402
     BALANCE_OF_ABI,
     ERC20_ALLOWANCE_ABI,
-    ERR_ASSET_NOT_DEPLOYED_CONTRACT,
     ERR_ERC20_APPROVAL_BROADCAST_FAILED,
     ERR_ERC20_APPROVAL_TX_FAILED,
     ERR_INSUFFICIENT_BALANCE,
@@ -196,11 +196,9 @@ def verify_permit2(
     chain_id = get_evm_chain_id(str(requirements.network))
     token_address = normalize_address(requirements.asset)
 
-    code = signer.get_code(token_address)
-    if len(code) == 0:
-        return VerifyResponse(
-            is_valid=False, invalid_reason=ERR_ASSET_NOT_DEPLOYED_CONTRACT, payer=payer
-        )
+    # Start after network/asset are known; await after signature work so a failed
+    # pre-check does not RPC or populate the positive cache.
+    asset_check = start_asset_contract_check(signer, str(requirements.network), requirements.asset)
 
     # 3. Spender check
     try:
@@ -304,6 +302,10 @@ def verify_permit2(
         return VerifyResponse(
             is_valid=False, invalid_reason=ERR_PERMIT2_INVALID_SIGNATURE, payer=payer
         )
+
+    asset_reason = asset_check.await_result()
+    if asset_reason:
+        return VerifyResponse(is_valid=False, invalid_reason=asset_reason, payer=payer)
 
     # 10. Allowance check — with extension fallbacks
     allowance_result = _verify_permit2_allowance(
