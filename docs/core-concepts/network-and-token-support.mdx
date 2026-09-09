@@ -196,6 +196,15 @@ HBAR (native token) is also supported using asset ID `0.0.0`, with amounts in ti
 | NEAR Mainnet | `near:mainnet` | `17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1` (USDC) | 6 |
 | NEAR Testnet | `near:testnet` | `3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af` (USDC) | 6 |
 
+### Cardano
+
+| Chain | CAIP-2 | Token | Decimals |
+|-------|--------|-------|----------|
+| Cardano Mainnet | `cardano:mainnet` | `c48cbb3d5e57ed56e276bc45f99ab39abe94e6cd7ac39fb402da47ad.0014df105553444d` (USDM) | 6 |
+| Cardano Preprod | `cardano:preprod` | `e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d` (tUSDM) | 6 |
+
+ADA (lovelace) is also supported natively using asset `lovelace`, with amounts in lovelace (1 ADA = 1,000,000 lovelace). The client pays the Cardano network fee; the facilitator only broadcasts the signed transaction and requires no funded wallet.
+
 ## Adding Support for New Networks
 
 There are two distinct paths, depending on your goal:
