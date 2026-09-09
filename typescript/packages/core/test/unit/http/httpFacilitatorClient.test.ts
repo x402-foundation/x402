@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HTTPFacilitatorClient, computeRetryDelay } from "../../../src/http/httpFacilitatorClient";
+import { ResponseBodyTooLargeError } from "../../../src/http/responseBody";
 import {
   FacilitatorResponseError,
   FacilitatorTimeoutError,
@@ -322,6 +323,26 @@ describe("HTTPFacilitatorClient", () => {
       expect(mockFetch).toHaveBeenCalledWith(
         "https://facilitator.test/supported",
         expect.objectContaining({ redirect: "follow" }),
+      );
+    });
+
+    it("rejects a verify success body over the control-plane limit", async () => {
+      const oversized = JSON.stringify({ isValid: true, pad: "a".repeat(1024 * 1024) });
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(oversized, { status: 200 })));
+
+      const client = new HTTPFacilitatorClient({ url: "https://facilitator.test" });
+      await expect(client.verify(paymentPayload, paymentRequirements)).rejects.toThrow(
+        ResponseBodyTooLargeError,
+      );
+    });
+
+    it("rejects a verify error body over the control-plane limit", async () => {
+      const oversized = JSON.stringify({ isValid: false, pad: "a".repeat(1024 * 1024) });
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(oversized, { status: 400 })));
+
+      const client = new HTTPFacilitatorClient({ url: "https://facilitator.test" });
+      await expect(client.verify(paymentPayload, paymentRequirements)).rejects.toThrow(
+        ResponseBodyTooLargeError,
       );
     });
 
