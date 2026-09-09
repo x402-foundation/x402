@@ -1,0 +1,5 @@
+---
+"@x402/extensions": patch
+---
+
+`isValidRouteTemplate` now decodes a routeTemplate to a fixed point (up to a bounded pass budget) before running its traversal/scheme-injection checks, instead of a single decode pass. A double- or deeper-encoded payload (`%252e%252e`, `%253a%252f%252f`, ...) previously survived one decode still percent-encoded and slipped past the `..`/`://` checks, letting a malicious routeTemplate cause the facilitator to catalog a payment under an arbitrary URL.
