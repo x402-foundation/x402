@@ -630,6 +630,11 @@ Networks in x402 v2 use CAIP-2 (Chain Agnostic Improvement Proposal) format: `na
 
 **Format:** `{namespace}:{reference}` (e.g., `eip155:8453` for Base mainnet)
 
+CAIP-2 constrains both halves: `namespace` matches `[-a-z0-9]{3,8}` and `reference` matches
+`[-_a-zA-Z0-9]{1,32}`. Note that `.` is not permitted in either, so a domain name is not a valid
+reference: `acme:api.example.com` is malformed and a conformant client will reject it. A
+network scoped to a domain has to carry that domain somewhere other than the network identifier.
+
 Non-blockchain networks are encouraged to follow the CAIP-2 format (e.g., `ach:us`, `sepa:eu`).
 
 Both EVM and Solana networks are supported by the reference implementations, e.g.:
