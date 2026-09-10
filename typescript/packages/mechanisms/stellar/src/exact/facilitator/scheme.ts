@@ -108,7 +108,9 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
    * @param signers - One or more Stellar signers managed by the facilitator for settlement
    * @param options - Configuration options
    * @param options.rpcConfig - Optional RPC configuration with custom RPC URL
-   * @param options.areFeesSponsored - Indicates if fees are sponsored (default: true)
+   * @param options.areFeesSponsored - Indicates if fees are sponsored (default: true). The spec
+   *   currently only supports `true`; setting `false` here still constructs successfully, but the
+   *   official client rejects any payment built against the resulting `areFeesSponsored: false`.
    * @param options.maxTransactionFeeStroops - Safety ceiling in stroops; verify rejects if the simulation-derived fee exceeds this (default: 50_000)
    * @param options.selectSigner - Callback to select which signer to use (default: round-robin)
    * @param options.feeBumpSigner - Optional signer used as fee source in a fee bump transaction wrapper.
@@ -127,7 +129,7 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
     }: {
       /** Optional RPC configuration with custom RPC URL */
       rpcConfig?: RpcConfig;
-      /** Indicates if fees are sponsored (default: true) */
+      /** Indicates if fees are sponsored (default: true). See the constructor's own @param doc above: `false` is accepted here but not yet usable end-to-end. */
       areFeesSponsored?: boolean;
       /** Safety ceiling in stroops; verify rejects if the simulation-derived fee exceeds this (default: 50_000) */
       maxTransactionFeeStroops?: number;
