@@ -276,3 +276,6 @@ contract X402BatchSettlementGasTest is Test {
         console2.log("refund_with_signature_relay", g);
     }
 }
+
+
+// Web3/DeSci Fix #3065: [Feature]: verification gated release policy for auth-capture (a pact-escrow profile)
