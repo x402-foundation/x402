@@ -372,6 +372,99 @@ import { createTickets, createXrplWalletSigner } from "@x402/xrpl";
 const ticketSequences = await createTickets(signer, "xrpl:1", 5);
 ```
 
+### Cardano Setup
+
+The Cardano implementation uses a client-signed, facilitator-submitted model: the client builds and signs the complete transaction but never broadcasts it. The facilitator verifies and submits it after the resource handler runs.
+
+Install the Cardano package:
+
+```bash
+npm install @x402/cardano
+```
+
+**Server**
+
+```typescript
+import { x402ResourceServer } from "@x402/core/server";
+import { ExactCardanoScheme } from "@x402/cardano/exact/server";
+import { masumiEscrowAddress, toMasumiSellerSigner } from "@x402/cardano";
+
+const resourceServer = new x402ResourceServer(facilitatorClient)
+  .register("cardano:*", new ExactCardanoScheme());
+
+// Address-to-address payment
+{
+  "GET /data": {
+    accepts: [
+      {
+        scheme: "exact",
+        price: {
+          amount: "1000000", // 1 USDM (6 decimals)
+          asset: "c48cbb3d5e57ed56e276bc45f99ab39abe94e6cd7ac39fb402da47ad.0014df105553444d",
+        },
+        network: "cardano:mainnet",
+        payTo: "addr1YourCardanoAddress",
+        maxTimeoutSeconds: 600,
+      },
+    ],
+  },
+}
+```
+
+**Client**
+
+```typescript
+import { x402Client } from "@x402/core/client";
+import { ExactCardanoScheme } from "@x402/cardano/exact/client";
+import { toClientCardanoSigner } from "@x402/cardano";
+
+const provider = {
+  blockfrost: {
+    baseUrl: process.env.BLOCKFROST_PREPROD_URL!,
+    projectId: process.env.BLOCKFROST_PROJECT_ID!,
+  },
+};
+
+const clientSigner = toClientCardanoSigner({
+  mnemonic: process.env.CARDANO_MNEMONIC!,
+  network: "cardano:preprod",
+  provider,
+});
+
+const client = new x402Client();
+client.register("cardano:*", new ExactCardanoScheme(clientSigner));
+```
+
+**Facilitator**
+
+```typescript
+import { x402Facilitator } from "@x402/core/facilitator";
+import { ExactCardanoScheme } from "@x402/cardano/exact/facilitator";
+import { toFacilitatorCardanoSigner } from "@x402/cardano";
+
+const facilitatorSigner = toFacilitatorCardanoSigner({
+  network: "cardano:preprod",
+  provider,
+});
+
+const facilitator = new x402Facilitator()
+  .register("cardano:preprod", new ExactCardanoScheme(facilitatorSigner));
+```
+
+The facilitator only broadcasts the client's signed transaction — it requires no funded wallet.
+
+#### Cardano asset transfer methods
+
+The Cardano implementation supports three asset transfer methods via `extra.assetTransferMethod`:
+
+| Method | Description |
+|--------|-------------|
+| `default` | Address-to-address payment. Standard x402 flow. |
+| `masumi` | Locks funds into the Masumi `vested_pay` escrow for agent-to-agent payments with refund and dispute mechanics. |
+| `script` | Locks funds into any server-defined contract with an optional arbitrary datum. |
+
+For testnet funds, get test ADA from the [Cardano testnets faucet](https://docs.cardano.org/cardano-testnets/tools/faucet/) and preprod tUSDM from the [tUSDM faucet](https://tusdm.moneta.global).
+
 ### Network Implementations
 
 The `exact` scheme has network specifications for EVM, SVM, AVM, Stellar, Aptos, Hedera, TON, Cardano, Keeta, Sui, Concordium, NEAR, and XRPL.

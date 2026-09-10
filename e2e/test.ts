@@ -345,6 +345,10 @@ function getScenarioResourceKeys(
   scenario: TestScenario,
   ctx: EvmResourceKeyContext,
 ): string[] {
+  // Serialize Cardano scenarios in --parallel mode: shared wallet UTXO contention.
+  if (scenario.protocolFamily === 'cardano') {
+    return ['cardano:client-wallet'];
+  }
   if (scenario.protocolFamily !== 'evm') {
     return [];
   }

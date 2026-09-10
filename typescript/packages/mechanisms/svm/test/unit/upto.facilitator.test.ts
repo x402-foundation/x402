@@ -57,6 +57,7 @@ import {
   ERR_AUTHORIZER_NOT_CONFIGURED,
   ERR_CHANNEL_ALREADY_OPEN,
   ERR_CHANNEL_BROADCAST,
+  ERR_DELEGATED_AUTH_STORE,
   ERR_DELEGATED_SETTLE_UNAUTHENTICATED,
   ERR_EXPIRES_AT_MISMATCH,
   ERR_CHANNEL_LIFETIME_EXCEEDED,
@@ -1608,9 +1609,11 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
         ),
       ).resolves.toMatchObject({
         success: false,
-        errorReason: ERR_DELEGATED_SETTLE_UNAUTHENTICATED,
+        errorReason: ERR_DELEGATED_AUTH_STORE,
+        errorMessage: "failed to read delegated auth binding: store down",
       });
       expect(channelMocks.submitSettle).not.toHaveBeenCalled();
+      expect(channelMocks.fetchAndVerifyOpenChannel).not.toHaveBeenCalled();
     });
 
     it("rejects a claim with no stored binding", async () => {

@@ -1547,6 +1547,46 @@ func TestDelegatedSettleRejectsClaimWithNoStoredBinding(t *testing.T) {
 	assert.Empty(t, d.stub.commitmentsFor("getAccountInfo"))
 }
 
+type throwingDelegatedAuthStore struct {
+	getErr error
+}
+
+func (s *throwingDelegatedAuthStore) Bind(context.Context, DelegatedAuthBinding) error {
+	return nil
+}
+
+func (s *throwingDelegatedAuthStore) Get(context.Context, string, x402.Network) (*DelegatedAuthBinding, error) {
+	return nil, s.getErr
+}
+
+func (s *throwingDelegatedAuthStore) Delete(context.Context, string, x402.Network) error {
+	return nil
+}
+
+func TestDelegatedSettleRejectsClaimWhenAuthStoreGetFails(t *testing.T) {
+	signer := newMockSigner(t, 1)
+	stub := newStubRPC(t)
+	authorizerKey, err := solana.NewRandomPrivateKey()
+	require.NoError(t, err)
+	authorizer := &testAuthorizerSigner{key: authorizerKey}
+	scheme := newScheme(signer, stub, &Config{
+		AuthorizerSigner:      authorizer,
+		ResolveCallerIdentity: identityResolver("svc-1"),
+		DelegatedAuthStore:    &throwingDelegatedAuthStore{getErr: errors.New("store down")},
+	})
+	fixture := newPaymentFixtureWithAuthorizer(t, signer, authorizerKey)
+
+	_, err = scheme.Settle(context.Background(), fixture.withPayload(map[string]interface{}{
+		svm.UptoPayloadTypeField: svm.UptoPayloadTypeClaim,
+	}), fixture.claimRequirements(1858), nil)
+	settleErr := &x402.SettleError{}
+	require.ErrorAs(t, err, &settleErr)
+	assert.Equal(t, ErrDelegatedAuthStore, settleErr.ErrorReason)
+	assert.Contains(t, settleErr.ErrorMessage, "store down")
+	assert.Empty(t, signer.sentTransactions())
+	assert.Empty(t, stub.commitmentsFor("getAccountInfo"))
+}
+
 func TestDelegatedSettleRejectsWhenResolveCallerIdentityIsUndefinedOrThrowing(t *testing.T) {
 	tests := []struct {
 		name     string

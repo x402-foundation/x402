@@ -673,7 +673,8 @@ On a `settle` request the facilitator MUST:
    that the caller matches the identity bound to this `channelId` at deposit
    and sign the voucher, or reject with
    `invalid_upto_svm_authorizer_not_configured`,
-   `invalid_upto_svm_authorizer_address_mismatch`, or
+   `invalid_upto_svm_authorizer_address_mismatch`,
+   `invalid_upto_svm_delegated_auth_store`, or
    `invalid_upto_svm_delegated_settle_unauthenticated`. Then apply
    it onchain:
    - For `actual > 0`, carry the verified voucher in the Ed25519 precompile that
@@ -686,7 +687,9 @@ On a `settle` request the facilitator MUST:
    voucher, never a transaction. In delegated mode the facilitator MUST bind
    the authenticated caller identity to the `channelId` at the deposit settle,
    before broadcasting `open`, and MUST reject a claim settle whose
-   authenticated caller does not match that binding.
+   authenticated caller does not match that binding. A failure to read that
+   binding from the store MUST reject with
+   `invalid_upto_svm_delegated_auth_store` and MUST NOT broadcast.
 4. Sign as transaction `feePayer` and channel `payee`, broadcast the final
    transaction, and confirm a successful `distribute`. The usual bundle is
    Ed25519 precompile (for nonzero actual), `settle_and_seal`, then
@@ -876,6 +879,8 @@ Standard x402 codes apply. Scheme-specific:
 - `invalid_upto_svm_authorizer_address_mismatch` - delegated claim settle
   `authorizedSigner` / `extra.receiverAuthorizer` does not equal the
   facilitator's advertised authorizer.
+- `invalid_upto_svm_delegated_auth_store` - delegated claim settle failed to
+  read the deposit-time identity binding from the facilitator store.
 - `invalid_upto_svm_delegated_settle_unauthenticated` - delegated deposit or
   claim settle could not resolve a caller identity, or the claim identity does
   not match the identity bound at deposit.

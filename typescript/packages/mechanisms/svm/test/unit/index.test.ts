@@ -59,6 +59,9 @@ describe("@x402/svm", () => {
     expect(uptoClientEntry.UptoSvmScheme).toBe(UptoClientScheme);
     expect(uptoServerEntry.UptoSvmScheme).toBe(UptoServerScheme);
     expect(uptoFacilitatorEntry.UptoSvmScheme).toBe(UptoFacilitatorScheme);
+    expect(uptoFacilitatorEntry.ERR_DELEGATED_AUTH_STORE).toBe(
+      "invalid_upto_svm_delegated_auth_store",
+    );
     expect(uptoFacilitatorEntry.ERR_DELEGATED_SETTLE_UNAUTHENTICATED).toBe(
       "invalid_upto_svm_delegated_settle_unauthenticated",
     );

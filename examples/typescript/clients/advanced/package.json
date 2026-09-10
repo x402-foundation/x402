@@ -23,6 +23,7 @@
     "@x402/aptos": "workspace:*",
     "@x402/avm": "workspace:*",
     "@x402/bsv": "workspace:*",
+    "@x402/cardano": "workspace:*",
     "@x402/concordium": "workspace:*",
     "@x402/evm": "workspace:*",
     "@x402/keeta": "workspace:*",

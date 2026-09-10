@@ -17,6 +17,13 @@ import { readFileSync, readdirSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import type { PaymentFlowName } from '@x402/core/types';
+import { masumiEscrowAddress } from '@x402/cardano';
+
+/** always-succeeds Plutus V3 fixture (same bytes as cardano test stubs). */
+const CARDANO_ALWAYS_SUCCEEDS_SCRIPT = '4d01000033222220051200120011';
+const CARDANO_ALWAYS_SUCCEEDS_DATUM = 'd8799f182aff';
+const CARDANO_ALWAYS_SUCCEEDS_ADDRESS =
+  'addr_test1wp8l7eylksmjas7ypzm0q35dwnjdxxvsfn0z0lflqzgs55stpd682';
 
 /** Keep local types here to avoid circular imports with types.ts / networks.ts. */
 export type SdkId = 'typescript' | 'python' | 'go';
@@ -25,7 +32,14 @@ export type ConfigRole = 'server' | 'client' | 'facilitator';
 export type CatalogNetworkId = string;
 
 type PaymentScheme = 'exact' | 'upto' | 'batch-settlement';
-type AssetTransferMethod = 'eip3009' | 'permit2' | 'sequence' | 'ticketSequence';
+type AssetTransferMethod =
+  | 'eip3009'
+  | 'permit2'
+  | 'sequence'
+  | 'ticketSequence'
+  | 'default'
+  | 'masumi'
+  | 'script';
 /** Payment ordering on the accept; mirrors core {@link PaymentFlowName}. */
 export type PaymentFlow = PaymentFlowName;
 export type NetworkMode = 'testnet' | 'mainnet';
@@ -121,6 +135,8 @@ export type RouteDefinition = {
   paymentFlow?: PaymentFlow;
   /** Omit this route unless the named env var is set (optional add-on routes). */
   requiresEnv?: string;
+  /** Payment completion window advertised on this route. */
+  maxTimeoutSeconds?: number;
 };
 
 /** Fixed success body for every paid route (`timestamp` is added by the server). */
@@ -834,7 +850,8 @@ export type ResolvedRoute = {
   payTo: string;
   price: ResolvedPrice;
   /** PaymentOption-level `extra`, used when `price` is a USD string. */
-  extra?: Record<string, string>;
+  extra?: Record<string, unknown>;
+  maxTimeoutSeconds?: number;
   extensions: string[];
   settlementOverride?: { amount: string };
 };
@@ -847,16 +864,69 @@ function serverAddressEnvKey(network: CatalogNetworkId): string {
 /** Merge price-derived `extra` with catalog `paymentFlow` (authorization omitted on wire). */
 function mergeRouteExtra(
   priceExtra: Record<string, string> | undefined,
+  routeExtra: Record<string, unknown> | undefined,
   paymentFlow?: PaymentFlow,
-): Record<string, string> | undefined {
+): Record<string, unknown> | undefined {
   const wireFlow = paymentFlow && paymentFlow !== 'authorization' ? paymentFlow : undefined;
-  if (!wireFlow && !priceExtra) {
+  if (!wireFlow && !priceExtra && !routeExtra) {
     return undefined;
   }
   return {
+    ...routeExtra,
     ...priceExtra,
     ...(wireFlow ? { paymentFlow: wireFlow } : {}),
   };
+}
+
+function cardanoConfirmationPolicy(env: EnvLookup): Record<string, unknown> | undefined {
+  const raw = env('CARDANO_L1_CONFIRMATIONS')?.trim();
+  if (!raw) return undefined;
+  if (!/^-?(0|[1-9]\d?)$/.test(raw)) {
+    throw new Error(`CARDANO_L1_CONFIRMATIONS must be a plain integer from -1 to 20, got "${raw}"`);
+  }
+  const l1Confirmations = Number(raw);
+  if (l1Confirmations < -1 || l1Confirmations > 20) {
+    throw new Error(`CARDANO_L1_CONFIRMATIONS must be an integer from -1 to 20, got "${raw}"`);
+  }
+  return { confirmationPolicy: { l1Confirmations } };
+}
+
+function resolvePayTo(
+  route: SdkRoute,
+  caip2: string,
+  serverPayTo: string | undefined,
+  env: EnvLookup,
+): string | undefined {
+  if (route.network !== 'cardano') {
+    return serverPayTo;
+  }
+  switch (route.assetTransferMethod) {
+    case 'masumi':
+      return masumiEscrowAddress(caip2);
+    case 'script':
+      return env('SERVER_CARDANO_SCRIPT_ADDRESS') ?? CARDANO_ALWAYS_SUCCEEDS_ADDRESS;
+    default:
+      return serverPayTo;
+  }
+}
+
+function cardanoRouteExtra(route: SdkRoute, env: EnvLookup): Record<string, unknown> | undefined {
+  if (route.network !== 'cardano') {
+    return undefined;
+  }
+  const extra: Record<string, unknown> = {};
+  const policy = cardanoConfirmationPolicy(env);
+  if (policy) {
+    Object.assign(extra, policy);
+  }
+  if (route.assetTransferMethod === 'script') {
+    extra.script = {
+      type: 'plutusV3',
+      code: env('SERVER_CARDANO_SCRIPT_CODE') ?? CARDANO_ALWAYS_SUCCEEDS_SCRIPT,
+    };
+    extra.datum = env('SERVER_CARDANO_SCRIPT_DATUM') ?? CARDANO_ALWAYS_SUCCEEDS_DATUM;
+  }
+  return Object.keys(extra).length > 0 ? extra : undefined;
 }
 
 function resolvePrice(
@@ -892,7 +962,7 @@ function resolvePrice(
   const assetOverridden = Boolean(assetDefault) && asset !== assetDefault;
 
   const extra: Record<string, string> = {};
-  if (route.assetTransferMethod) {
+  if (route.assetTransferMethod && route.assetTransferMethod !== 'default') {
     extra.assetTransferMethod = route.assetTransferMethod;
   }
   if (spec.permit2Domain && modeConfig.permit2AssetName) {
@@ -926,12 +996,15 @@ export function resolvePaymentRoutes(
 
   for (const route of availableRoutes(sdkRoutesFor(sdk), env, filter)) {
     const def = getNetworkDefinition(route.network);
-    const payTo = env(serverAddressEnvKey(route.network));
-    if (!payTo) continue;
+    const serverPayTo = env(serverAddressEnvKey(route.network));
+    if (!serverPayTo) continue;
 
     const caip2 = env(derivedNetworkKey(route.network)) ?? def.networks.testnet.caip2;
+    const payTo = resolvePayTo(route, caip2, serverPayTo, env);
+    if (!payTo) continue;
+
     const { price, extra: priceExtra } = resolvePrice(route, caip2, env);
-    const extra = mergeRouteExtra(priceExtra, route.paymentFlow);
+    const extra = mergeRouteExtra(priceExtra, cardanoRouteExtra(route, env), route.paymentFlow);
 
     resolved.push({
       path: route.path,
@@ -941,6 +1014,7 @@ export function resolvePaymentRoutes(
       payTo,
       price,
       ...(extra ? { extra } : {}),
+      ...(route.maxTimeoutSeconds ? { maxTimeoutSeconds: route.maxTimeoutSeconds } : {}),
       extensions: route.extensions ?? [],
       ...(route.settlementOverride ? { settlementOverride: route.settlementOverride } : {}),
     });

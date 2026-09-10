@@ -19,9 +19,11 @@ minimumReleaseAge: 4320 # Only install package versions that have been published
 minimumReleaseAgeStrict: false
 allowBuilds:
   better-sqlite3: true
+  '@parcel/watcher': true
   bufferutil: true
   esbuild: true
   keccak: true
+  msgpackr-extract: true
   protobufjs: true
   secp256k1: true
   sharp: true

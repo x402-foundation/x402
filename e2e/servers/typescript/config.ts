@@ -14,6 +14,8 @@ import { ExactTvmScheme } from "@x402/tvm/exact/server";
 import { ExactNearScheme } from "@x402/near/exact/server";
 import { ExactXrplScheme } from "@x402/xrpl/exact/server";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/server";
+import { ExactCardanoScheme } from "@x402/cardano/exact/server";
+import { toMasumiSellerSigner } from "@x402/cardano";
 import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import {
   declareEip2612GasSponsoringExtension,
@@ -68,6 +70,19 @@ async function registerFamilySchemes(
     case "ccd":
       server.register(pattern, new ExactConcordiumScheme());
       return;
+    case "cardano": {
+      const sellerMnemonic = process.env.SERVER_CARDANO_SELLER_MNEMONIC;
+      if (!sellerMnemonic) break;
+      server.register(
+        pattern,
+        new ExactCardanoScheme({
+          masumi: {
+            seller: network => toMasumiSellerSigner({ mnemonic: sellerMnemonic, network }),
+          },
+        }),
+      );
+      return;
+    }
     case "evm": {
       server.register(pattern, new ExactEvmScheme());
       server.register(pattern, new UptoEvmScheme());
@@ -185,6 +200,7 @@ export function buildResolvedRouteConfig(
       scheme: route.scheme,
       network: route.network as Caip2Network,
       price: route.price,
+      ...(route.maxTimeoutSeconds ? { maxTimeoutSeconds: route.maxTimeoutSeconds } : {}),
       ...(route.extra ? { extra: route.extra } : {}),
     },
     ...(route.extensions.length > 0 ? { extensions } : {}),

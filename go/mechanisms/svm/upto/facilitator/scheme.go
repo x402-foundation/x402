@@ -1150,7 +1150,11 @@ func (f *UptoSvmScheme) authenticateDelegatedClaim(
 			"delegated claim settle is unauthenticated")
 	}
 	binding, err := f.delegatedAuthStore.Get(ctx, uptoPayload.ChannelId, x402.Network(requirements.Network))
-	if err != nil || binding == nil || binding.CallerIdentity != identity {
+	if err != nil {
+		return x402.NewSettleError(ErrDelegatedAuthStore, uptoPayload.From, network, "",
+			fmt.Sprintf("failed to read delegated auth binding: %s", err.Error()))
+	}
+	if binding == nil || binding.CallerIdentity != identity {
 		return x402.NewSettleError(ErrDelegatedSettleUnauthenticated, uptoPayload.From, network, "",
 			"delegated claim settle is unauthenticated")
 	}

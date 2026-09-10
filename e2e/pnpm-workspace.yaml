@@ -20,10 +20,12 @@ minimumReleaseAge: 4320 # Only install package versions that have been published
 minimumReleaseAgeStrict: false
 allowBuilds:
   '@coinbase/x402': true # Required for /external-proxies/* CDP testing due to post-install script that prints TOS
+  '@parcel/watcher': true
   bigint-buffer: true
   bufferutil: true
   esbuild: true
   keccak: true
+  msgpackr-extract: true
   protobufjs: true
   secp256k1: true
   sharp: true

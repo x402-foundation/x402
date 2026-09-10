@@ -95,6 +95,9 @@ export const ERR_AUTHORIZER_ADDRESS_MISMATCH = "invalid_upto_svm_authorizer_addr
 export const ERR_DELEGATED_SETTLE_UNAUTHENTICATED =
   "invalid_upto_svm_delegated_settle_unauthenticated";
 
+/** Delegated claim failed to read the deposit-time identity binding from the store. */
+export const ERR_DELEGATED_AUTH_STORE = "invalid_upto_svm_delegated_auth_store";
+
 /** Client supplied `type`, or a delegated settle is missing `type`. */
 export const ERR_PAYLOAD_TYPE = "invalid_upto_svm_payload_type";
 
@@ -1534,8 +1537,17 @@ export class UptoSvmScheme implements SchemeNetworkFacilitator {
     let binding: Awaited<ReturnType<UptoDelegatedAuthStore["get"]>>;
     try {
       binding = await this.delegatedAuthStore.get(p.channelId, requirements.network);
-    } catch {
-      return this.settleFailure(payload, ERR_DELEGATED_SETTLE_UNAUTHENTICATED, p.from);
+    } catch (error) {
+      return {
+        success: false,
+        network: payload.accepted.network,
+        transaction: "",
+        errorReason: ERR_DELEGATED_AUTH_STORE,
+        errorMessage: `failed to read delegated auth binding: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        payer: p.from,
+      };
     }
     if (!binding || binding.callerIdentity !== identity) {
       return this.settleFailure(payload, ERR_DELEGATED_SETTLE_UNAUTHENTICATED, p.from);

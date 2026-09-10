@@ -60,6 +60,9 @@ const (
 	// ErrDelegatedSettleUnauthenticated is returned when a delegated settle
 	// identity is missing, unresolved, or not the deposit-time binding.
 	ErrDelegatedSettleUnauthenticated = "invalid_upto_svm_delegated_settle_unauthenticated"
+	// ErrDelegatedAuthStore is returned when a delegated claim cannot read
+	// the deposit-time identity binding from the store.
+	ErrDelegatedAuthStore = "invalid_upto_svm_delegated_auth_store"
 	// ErrPayloadType is returned when the client supplied type, or a delegated
 	// settle is missing type.
 	ErrPayloadType = "invalid_upto_svm_payload_type"

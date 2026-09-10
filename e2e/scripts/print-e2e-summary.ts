@@ -122,12 +122,14 @@ function formatMarkdown(data: E2eResultsJson): string {
     lines.push("✅ All combinations passed", "");
   } else {
     lines.push("### Failed combinations", "");
-    lines.push("| # | Client | Server | Endpoint | Facilitator | Network | Error |");
-    lines.push("| ---: | --- | --- | --- | --- | --- | --- |");
+    lines.push(
+      "| # | Client | Server | Endpoint | Facilitator | Network | Scheme | ATM | Error |",
+    );
+    lines.push("| ---: | --- | --- | --- | --- | --- | --- | --- | --- |");
     for (const test of failed) {
       const error = truncate(test.error || "Unknown error");
       lines.push(
-        `| ${test.testNumber} | \`${mdCell(test.client)}\` | \`${mdCell(test.server)}\` | \`${mdCell(test.endpoint)}\` | \`${mdCell(test.facilitator)}\` | ${mdCell(test.network || "—")} | ${mdCell(error)} |`,
+        `| ${test.testNumber} | \`${mdCell(test.client)}\` | \`${mdCell(test.server)}\` | \`${mdCell(test.endpoint)}\` | \`${mdCell(test.facilitator)}\` | ${mdCell(test.network || "—")} | ${mdCell(test.scheme || "—")} | ${mdCell(test.assetTransferMethod || "—")} | ${mdCell(error)} |`,
       );
     }
     lines.push("");

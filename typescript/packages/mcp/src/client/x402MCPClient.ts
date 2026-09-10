@@ -458,7 +458,7 @@ export class x402MCPClient {
    * @param name - The name of the tool to call
    * @param args - Arguments to pass to the tool
    * @param options - Optional MCP request options (timeout, signal, etc.)
-   * @param options.timeout - Request timeout in milliseconds (default: 60000)
+   * @param options.timeout - Request timeout in milliseconds (overrides accept `maxTimeoutSeconds`)
    * @param options.signal - AbortSignal for cancellation
    * @param options.resetTimeoutOnProgress - If true, progress notifications reset the timeout
    * @returns The tool result with payment metadata
@@ -471,6 +471,8 @@ export class x402MCPClient {
     args: Record<string, unknown> = {},
     options?: { timeout?: number; signal?: AbortSignal; resetTimeoutOnProgress?: boolean },
   ): Promise<x402MCPToolCallResult> {
+    const probeOptions = { ...options, timeout: options?.timeout ?? 300_000 };
+
     // First attempt without payment
     let result: MCPCallToolResult;
     let paymentRequired: PaymentRequired | null = null;
@@ -479,7 +481,7 @@ export class x402MCPClient {
       const rawResult = await this.mcpClient.callTool(
         { name, arguments: args },
         undefined,
-        options,
+        probeOptions,
       );
 
       if (!isMCPCallToolResult(rawResult)) {
@@ -525,7 +527,7 @@ export class x402MCPClient {
         }
         if (hookResult.payment) {
           // Use the hook-provided payment
-          return this.callToolWithPayment(name, args, hookResult.payment, options);
+          return this.callToolWithPayment(name, args, hookResult.payment, probeOptions);
         }
       }
     }
@@ -564,7 +566,7 @@ export class x402MCPClient {
     const paymentPayload = await this._paymentClient.createPaymentPayload(paymentRequired);
 
     // Retry with payment
-    return this.callToolWithPayment(name, args, paymentPayload, options);
+    return this.callToolWithPayment(name, args, paymentPayload, probeOptions);
   }
 
   /**
@@ -577,7 +579,7 @@ export class x402MCPClient {
    * @param args - Arguments to pass to the tool
    * @param paymentPayload - The payment payload to include
    * @param options - Optional MCP request options (timeout, signal, etc.)
-   * @param options.timeout - Request timeout in milliseconds (default: 60000)
+   * @param options.timeout - Request timeout in milliseconds (overrides accept `maxTimeoutSeconds`)
    * @param options.signal - AbortSignal for cancellation
    * @param options.resetTimeoutOnProgress - If true, progress notifications reset the timeout
    * @returns The tool result with payment metadata
@@ -588,6 +590,13 @@ export class x402MCPClient {
     paymentPayload: PaymentPayload,
     options?: { timeout?: number; signal?: AbortSignal; resetTimeoutOnProgress?: boolean },
   ): Promise<x402MCPToolCallResult> {
+    const paidOptions = {
+      ...options,
+      timeout:
+        options?.timeout ??
+        (paymentPayload.accepted?.maxTimeoutSeconds ?? 300) * 1000,
+    };
+
     // Build the call parameters with payment metadata
     // Note: The MCP SDK's callTool accepts _meta but the types don't always expose it
     const callParams = {
@@ -599,7 +608,7 @@ export class x402MCPClient {
     };
 
     // Call with payment in _meta
-    const result = await this.mcpClient.callTool(callParams, undefined, options);
+    const result = await this.mcpClient.callTool(callParams, undefined, paidOptions);
 
     // Validate result structure
     if (!isMCPCallToolResult(result)) {
@@ -682,7 +691,12 @@ export class x402MCPClient {
           [MCP_PAYMENT_META_KEY]: freshPayload,
         },
       };
-      const retryResult = await this.mcpClient.callTool(retryCallParams, undefined, options);
+      const retryPaidOptions = {
+        ...options,
+        timeout:
+          options?.timeout ?? (freshPayload.accepted?.maxTimeoutSeconds ?? 300) * 1000,
+      };
+      const retryResult = await this.mcpClient.callTool(retryCallParams, undefined, retryPaidOptions);
 
       if (!isMCPCallToolResult(retryResult)) {
         throw new Error("Invalid MCP tool result: missing content array");

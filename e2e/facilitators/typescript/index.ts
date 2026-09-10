@@ -99,6 +99,8 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia, base } from "viem/chains";
 import { resolveNetworkCaip2 } from "./catalog-network.js";
+import { toFacilitatorCardanoSigner } from "@x402/cardano";
+import { ExactCardanoScheme as ExactCardanoFacilitatorScheme } from "@x402/cardano/exact/facilitator";
 import { BazaarCatalog } from "./bazaar.js";
 
 dotenv.config();
@@ -118,6 +120,8 @@ const NEAR_RPC_URL = process.env.NEAR_RPC_URL;
 const XRPL_NETWORK = resolveNetworkCaip2("xrpl");
 const XRPL_RPC_URL = process.env.XRPL_RPC_URL;
 const CCD_NETWORK = resolveNetworkCaip2("ccd");
+const CARDANO_NETWORK = resolveNetworkCaip2("cardano");
+const CARDANO_RPC_URL = process.env.CARDANO_RPC_URL;
 const CCD_RPC_URL =
   process.env.CCD_RPC_URL || getConcordiumGrpcUrl(CCD_NETWORK as Network);
 const EVM_RPC_URL = process.env.EVM_RPC_URL;
@@ -148,6 +152,7 @@ console.log(`🌐 Keeta Network: ${KEETA_NETWORK}`);
 console.log(`🌐 Stellar Network: ${STELLAR_NETWORK}`);
 console.log(`🌐 TVM Network: ${TVM_NETWORK}`);
 console.log(`🌐 CCD Network: ${CCD_NETWORK}`);
+console.log(`🌐 Cardano Network: ${CARDANO_NETWORK}`);
 console.log(`🌐 CCD gRPC URL: ${CCD_RPC_URL}`);
 if (EVM_RPC_URL) console.log(`🌐 EVM RPC URL: ${EVM_RPC_URL}`);
 if (SVM_RPC_URL) console.log(`🌐 SVM RPC URL: ${SVM_RPC_URL}`);
@@ -169,6 +174,7 @@ const hasFacilitatorCredential = [
   process.env.FACILITATOR_NEAR_ACCOUNT_ID && process.env.FACILITATOR_NEAR_PRIVATE_KEY,
   process.env.FACILITATOR_CCD_PRIVATE_KEY && process.env.FACILITATOR_CCD_ADDRESS,
   process.env.XRPL_NETWORK, // keyless XRPL facilitator
+  process.env.BLOCKFROST_PROJECT_ID, // Cardano runs provider-only without a mnemonic
 ].some(Boolean);
 
 if (!hasFacilitatorCredential) {
@@ -307,6 +313,21 @@ if (process.env.FACILITATOR_NEAR_ACCOUNT_ID && process.env.FACILITATOR_NEAR_PRIV
     rpcUrls: NEAR_RPC_URL ? { [NEAR_NETWORK]: NEAR_RPC_URL } : undefined,
   });
   console.info(`NEAR Facilitator relayer: ${process.env.FACILITATOR_NEAR_ACCOUNT_ID}`);
+}
+
+let cardanoSigner: ReturnType<typeof toFacilitatorCardanoSigner> | undefined;
+if (process.env.BLOCKFROST_PROJECT_ID && CARDANO_RPC_URL) {
+  cardanoSigner = toFacilitatorCardanoSigner({
+    mnemonic: process.env.FACILITATOR_CARDANO_MNEMONIC,
+    network: CARDANO_NETWORK,
+    provider: {
+      blockfrost: { baseUrl: CARDANO_RPC_URL, projectId: process.env.BLOCKFROST_PROJECT_ID },
+    },
+    awaitConfirmation: false,
+  });
+  console.info(
+    `Cardano Facilitator account: ${cardanoSigner.getAddresses()[0] ?? "(provider-only, no wallet)"}`,
+  );
 }
 
 let concordiumSigner: ReturnType<typeof toConcordiumFacilitatorSigner> | undefined;
@@ -612,6 +633,14 @@ if (concordiumSigner) {
     new ExactConcordiumScheme({ signer: concordiumSigner }),
   );
 }
+if (cardanoSigner) {
+  facilitator.register(
+    CARDANO_NETWORK as Network,
+    new ExactCardanoFacilitatorScheme(cardanoSigner, {
+      acceptMempool: process.env.CARDANO_L1_CONFIRMATIONS?.trim() === "-1",
+    }),
+  );
+}
 
 
 facilitator.registerExtension(BAZAAR);
@@ -754,7 +783,25 @@ facilitator
       };
     }
   })
+  .onVerifyFailure(async (context) => {
+    // Surface the rejection reason: the resource server relays it to the client
+    // only inside the PAYMENT-REQUIRED header, so without this line a failed
+    // paid retry shows up in the harness as a bare "Payment failed (402)".
+    console.log(
+      `⚠️ Verification failed (${context.requirements.scheme} ${context.requirements.network}): ${context.error.message}`,
+    );
+  })
   .onAfterSettle(async (context) => {
+    // A non-terminal `settlement_pending` result is followed by the resource
+    // server's automatic retry with the same payload (core's
+    // settleWithPendingRetry); that retry must still pass Hook 3, so the
+    // verified-payment record is kept until a terminal outcome.
+    if (!context.result.success && context.result.errorReason === "settlement_pending") {
+      console.log(
+        `⏳ Settlement pending: ${context.result.transaction} (${JSON.stringify(context.result.extra ?? {})})`,
+      );
+      return;
+    }
     // Hook 4: Clean up verified payment tracking after settlement
     if (!skipsVerifyBeforeSettle(context.requirements)) {
       cleanupVerifiedPaymentTracking(createPaymentHash(context.paymentPayload));
@@ -939,6 +986,7 @@ app.get("/health", (req, res) => {
     nearNetwork: nearSigner ? NEAR_NETWORK : "(not configured)",
     xrplNetwork: process.env.XRPL_NETWORK ? XRPL_NETWORK : "(not configured)",
     ccdNetwork: concordiumSigner ? CCD_NETWORK : "(not configured)",
+    cardanoNetwork: cardanoSigner ? CARDANO_NETWORK : "(not configured)",
     facilitator: "typescript",
     version: "2.0.0",
     extensions: [BAZAAR.key],

@@ -24,6 +24,11 @@ import {
   type Address as SvmAddress,
 } from "@solana/kit";
 import { getDefaultAsset as getAptosDefaultAsset } from "@x402/aptos";
+import {
+  findDefaultAsset as findCardanoDefaultAsset,
+  toClientCardanoSigner,
+  toFacilitatorCardanoSigner,
+} from "@x402/cardano";
 import { getDefaultAsset as getAvmDefaultAsset, toClientAvmSigner } from "@x402/avm";
 import {
   getConcordiumGrpcUrl,
@@ -605,6 +610,104 @@ async function reportTvm(mode: NetworkMode): Promise<FamilyReport> {
   }
 }
 
+async function blockfrostJson(
+  baseUrl: string,
+  projectId: string,
+  path: string,
+): Promise<unknown> {
+  return fetchJson(`${baseUrl.replace(/\/$/, "")}${path}`, {
+    headers: { project_id: projectId },
+  });
+}
+
+function cardanoLovelaceSymbol(mode: NetworkMode): string {
+  return mode === "mainnet" ? "ADA" : "tADA";
+}
+
+async function cardanoAssetBalance(
+  baseUrl: string,
+  projectId: string,
+  address: string,
+  assetUnit: string,
+  decimals: number,
+  symbol: string,
+): Promise<Balance> {
+  return withBalance(symbol, async () => {
+    const body = await blockfrostJson(baseUrl, projectId, `/addresses/${address}`);
+    if (!isRecord(body) || !Array.isArray(body.amount)) {
+      throw new Error("unexpected Blockfrost address response");
+    }
+    for (const entry of body.amount) {
+      if (!isRecord(entry) || entry.unit !== assetUnit) {
+        continue;
+      }
+      return formatAmount(BigInt(String(entry.quantity ?? 0)), decimals);
+    }
+    return "0";
+  });
+}
+
+async function reportCardano(mode: NetworkMode): Promise<FamilyReport> {
+  const net = getNetworkForProtocol(mode, "cardano");
+  const projectId = requireEnv("BLOCKFROST_PROJECT_ID");
+  const baseUrl = net.rpcUrl;
+  const provider = { blockfrost: { baseUrl, projectId } };
+
+  const client = toClientCardanoSigner({
+    mnemonic: requireEnv("CLIENT_CARDANO_MNEMONIC"),
+    network: net.caip2,
+    provider,
+  }).getAddress();
+
+  const facilitatorMnemonic = env("FACILITATOR_CARDANO_MNEMONIC");
+  let facilitatorAddress = "(provider-only)";
+  if (facilitatorMnemonic) {
+    facilitatorAddress =
+      toFacilitatorCardanoSigner({
+        mnemonic: facilitatorMnemonic,
+        network: net.caip2,
+        provider,
+      }).getAddresses()[0] ?? facilitatorAddress;
+  }
+
+  const server = requireEnv(serverAddressKey("cardano"));
+  const paymentAsset = env("SERVER_CARDANO_ASSET") ?? "lovelace";
+  const lovelaceSymbol = cardanoLovelaceSymbol(mode);
+  let paymentSymbol = lovelaceSymbol;
+  let paymentDecimals = 6;
+  if (paymentAsset !== "lovelace") {
+    const known = findCardanoDefaultAsset(paymentAsset, net.caip2);
+    paymentSymbol = known?.symbol ?? paymentAsset.slice(0, 20);
+    paymentDecimals = known?.decimals ?? 0;
+  }
+
+  const payment = await cardanoAssetBalance(
+    baseUrl,
+    projectId,
+    client,
+    paymentAsset,
+    paymentDecimals,
+    paymentSymbol,
+  );
+  const native =
+    facilitatorMnemonic && facilitatorAddress !== "(provider-only)"
+      ? await cardanoAssetBalance(baseUrl, projectId, facilitatorAddress, "lovelace", 6, lovelaceSymbol)
+      : undefined;
+
+  return {
+    family: "cardano",
+    networkName: net.name,
+    caip2: net.caip2,
+    rows: [
+      native
+        ? { role: "facilitator", address: facilitatorAddress, balance: native }
+        : { role: "facilitator", address: facilitatorAddress },
+      { role: "client", address: client, balance: payment },
+      { role: "server", address: server },
+    ],
+  };
+}
+
 async function reportNear(mode: NetworkMode): Promise<FamilyReport> {
   const net = getNetworkForProtocol(mode, "near");
   const facilitator = requireEnv("FACILITATOR_NEAR_ACCOUNT_ID");
@@ -707,6 +810,7 @@ const HANDLERS: Record<string, (mode: NetworkMode) => Promise<FamilyReport>> = {
   tvm: reportTvm,
   near: reportNear,
   xrpl: reportXrpl,
+  cardano: reportCardano,
 };
 
 async function reportFamily(family: ProtocolFamily, mode: NetworkMode): Promise<FamilyReport> {

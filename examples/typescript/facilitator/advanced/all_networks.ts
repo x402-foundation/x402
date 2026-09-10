@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "aptos" before "bsv" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
+ * (e.g., "algorand" before "aptos" before "bsv" before "cardano" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
  */
 
 import {
@@ -21,6 +21,8 @@ import { ExactAptosScheme } from "@x402/aptos/exact/facilitator";
 import { toFacilitatorAvmSigner } from "@x402/avm";
 import { ExactAvmScheme } from "@x402/avm/exact/facilitator";
 import { ExactBsvScheme } from "@x402/bsv/exact/facilitator";
+import { toFacilitatorCardanoSigner } from "@x402/cardano";
+import { ExactCardanoScheme } from "@x402/cardano/exact/facilitator";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/facilitator";
 import {
   CONCORDIUM_TESTNET_CAIP2,
@@ -90,6 +92,10 @@ const PORT = process.env.PORT || "4022";
 
 // Configuration - optional per network (alphabetic order)
 const avmPrivateKey = process.env.AVM_PRIVATE_KEY as string | undefined;
+const cardanoMnemonic = process.env.CARDANO_MNEMONIC as string | undefined;
+const cardanoNetwork = (process.env.CARDANO_NETWORK || "cardano:preprod") as Network;
+const blockfrostBaseUrl = process.env.BLOCKFROST_PREPROD_URL;
+const blockfrostProjectId = process.env.BLOCKFROST_PROJECT_ID;
 const aptosPrivateKey = process.env.APTOS_PRIVATE_KEY as string | undefined;
 const aptosRpcUrl = process.env.APTOS_RPC_URL as string | undefined;
 // BSV settlement internalizes into the recipient's server-side BRC-100 wallet
@@ -126,6 +132,7 @@ const xrplWsUrl = process.env.XRPL_WS_URL as string | undefined;
 // Validate at least one private key is provided
 if (
   !avmPrivateKey &&
+  !cardanoMnemonic &&
   !aptosPrivateKey &&
   !bsvServerPrivateKey &&
   !(ccdFacilitatorPrivateKey && ccdFacilitatorAddress) &&
@@ -138,13 +145,14 @@ if (
   !(hederaAccountId && hederaPrivateKey)
 ) {
   console.error(
-    "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, BSV_SERVER_PRIVATE_KEY, CCD_FACILITATOR_PRIVATE_KEY + CCD_FACILITATOR_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_RELAYER_ACCOUNT_ID + NEAR_RELAYER_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, TVM_PRIVATE_KEY, or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY is required",
+    "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, BSV_SERVER_PRIVATE_KEY, CARDANO_MNEMONIC, CCD_FACILITATOR_PRIVATE_KEY + CCD_FACILITATOR_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_RELAYER_ACCOUNT_ID + NEAR_RELAYER_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, TVM_PRIVATE_KEY, or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY is required",
   );
   process.exit(1);
 }
 
 // Network configuration (alphabetic order)
 const AVM_NETWORK = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe"; // Algorand Testnet
+const CARDANO_NETWORK = cardanoNetwork; // Cardano Preprod Testnet (default)
 const APTOS_NETWORK = (process.env.APTOS_NETWORK || "aptos:2") as Network; // Aptos Testnet
 const BSV_NETWORK = (process.env.BSV_NETWORK || "bsv:mainnet") as Network; // BSV Mainnet
 const CCD_NETWORK = CONCORDIUM_TESTNET_CAIP2; // Concordium Testnet
@@ -233,6 +241,27 @@ if (bsvServerPrivateKey) {
   const bsvScheme = await ExactBsvScheme.create({ wallet: bsvWallet.getClient() });
   console.info(`BSV Facilitator identity: ${bsvScheme.getSigners(BSV_NETWORK)[0]}`);
   facilitator.register(BSV_NETWORK, bsvScheme);
+}
+
+// Register Cardano scheme if a mnemonic and Blockfrost connection are provided
+if (cardanoMnemonic) {
+  if (!blockfrostBaseUrl || !blockfrostProjectId) {
+    console.error("❌ CARDANO_MNEMONIC requires BLOCKFROST_PREPROD_URL and BLOCKFROST_PROJECT_ID");
+    process.exit(1);
+  }
+  const cardanoSigner = toFacilitatorCardanoSigner({
+    mnemonic: cardanoMnemonic,
+    network: CARDANO_NETWORK,
+    provider: { blockfrost: { baseUrl: blockfrostBaseUrl, projectId: blockfrostProjectId } },
+    awaitConfirmation: false,
+  });
+  console.info(`Cardano Facilitator account: ${cardanoSigner.getAddresses()[0]}`);
+  facilitator.register(
+    CARDANO_NETWORK,
+    new ExactCardanoScheme(cardanoSigner, {
+      acceptMempool: process.env.CARDANO_L1_CONFIRMATIONS?.trim() === "-1",
+    }),
+  );
 }
 
 // Register Concordium scheme if private key + address are provided (recommended).

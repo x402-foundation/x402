@@ -1,0 +1,133 @@
+{
+  "env": {
+    "SERVER_CARDANO_ADDRESS": {
+      "required": true,
+      "roles": [
+        "server"
+      ]
+    },
+    "SERVER_CARDANO_SELLER_MNEMONIC": {
+      "required": true,
+      "roles": [
+        "server"
+      ]
+    },
+    "SERVER_CARDANO_ASSET": {
+      "required": false,
+      "roles": [
+        "server"
+      ]
+    },
+    "SERVER_CARDANO_AMOUNT": {
+      "required": false,
+      "roles": [
+        "server"
+      ]
+    },
+    "SERVER_CARDANO_SCRIPT_ADDRESS": {
+      "required": false,
+      "roles": [
+        "server"
+      ]
+    },
+    "SERVER_CARDANO_SCRIPT_CODE": {
+      "required": false,
+      "roles": [
+        "server"
+      ]
+    },
+    "SERVER_CARDANO_SCRIPT_DATUM": {
+      "required": false,
+      "roles": [
+        "server"
+      ]
+    },
+    "CLIENT_CARDANO_MNEMONIC": {
+      "required": true,
+      "roles": [
+        "client"
+      ]
+    },
+    "FACILITATOR_CARDANO_MNEMONIC": {
+      "required": false,
+      "roles": [
+        "facilitator"
+      ]
+    },
+    "CARDANO_L1_CONFIRMATIONS": {
+      "required": false,
+      "roles": [
+        "server",
+        "facilitator"
+      ]
+    },
+    "BLOCKFROST_PROJECT_ID": {
+      "required": true,
+      "roles": [
+        "client",
+        "facilitator"
+      ]
+    }
+  },
+  "testnet": {
+    "name": "Cardano Preprod",
+    "caip2": "cardano:preprod",
+    "rpcUrlDefault": "https://cardano-preprod.blockfrost.io/api/v0"
+  },
+  "mainnet": {
+    "name": "Cardano Mainnet",
+    "caip2": "cardano:mainnet",
+    "rpcUrlDefault": "https://cardano-mainnet.blockfrost.io/api/v0"
+  },
+  "routes": {
+    "/exact/cardano/default": {
+      "scheme": "exact",
+      "assetTransferMethod": "default",
+      "sdks": [
+        "typescript"
+      ],
+      "price": {
+        "amount": "5000000",
+        "amountEnv": "SERVER_CARDANO_AMOUNT",
+        "asset": "lovelace",
+        "assetEnv": "SERVER_CARDANO_ASSET"
+      },
+      "extensions": [
+        "bazaar"
+      ]
+    },
+    "/exact/cardano/masumi": {
+      "scheme": "exact",
+      "assetTransferMethod": "masumi",
+      "maxTimeoutSeconds": 600,
+      "sdks": [
+        "typescript"
+      ],
+      "price": {
+        "amount": "5000000",
+        "amountEnv": "SERVER_CARDANO_AMOUNT",
+        "asset": "lovelace",
+        "assetEnv": "SERVER_CARDANO_ASSET"
+      },
+      "extensions": [
+        "bazaar"
+      ]
+    },
+    "/exact/cardano/script": {
+      "scheme": "exact",
+      "assetTransferMethod": "script",
+      "sdks": [
+        "typescript"
+      ],
+      "price": {
+        "amount": "5000000",
+        "amountEnv": "SERVER_CARDANO_AMOUNT",
+        "asset": "lovelace",
+        "assetEnv": "SERVER_CARDANO_ASSET"
+      },
+      "extensions": [
+        "bazaar"
+      ]
+    }
+  }
+}
