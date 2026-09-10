@@ -37,12 +37,29 @@ c.Register("eip155:*", scheme)
 
 ### Deposit Policy
 
-Controls how much the client deposits when the channel needs funding:
+When the channel needs funding or top-up, the client deposits:
+
+1. `extra.minDeposit` when the server announced a valid hint (`>= amount`)
+2. otherwise `amount × DepositMultiplier` (default 5, minimum 3)
+
+`x402Client` spend controls still apply per request to `PaymentRequirements.amount`. The same resolved atomic cap is reused as the escrow ceiling:
+
+`maxDeposit = spendControls.maxAmountPerPayment × DepositMultiplier`
+
+A default `$1` USDC cap and multiplier `5` therefore locks at most `$5`. Raise `MaxAmountPerPayment` or `DepositMultiplier` for a larger lock.
+
+Uncapped payments leave deposits uncapped too: `DisableSpendControls()`, `DisableMaxAmountPerPayment`, or an `AllowedAssets` entry without a per-asset cap. An uncapped client accepts a server-sized deposit (`extra.minDeposit`), which is fully refundable but time-locked through `withdrawDelay`. Use `DepositStrategy` when you need a decision the multiplier cannot express.
 
 | Field               | Description |
 |---------------------|-------------|
-| `DepositMultiplier` | Per-request `amount × multiplier` is deposited (default 5). |
+| `DepositMultiplier` | Sizes the deposit target when `extra.minDeposit` is absent, and the lock ceiling when a spend cap is set. Default 5, minimum 3. |
 | `DepositStrategy`   | Optional callback that overrides the computed amount or returns `Skip: true` to send a voucher-only payload (verify will fail; the caller is opting out of auto top-up). |
+
+The strategy can:
+
+- Return an empty result to use the SDK default deposit amount.
+- Return `Skip: true` to skip this deposit attempt.
+- Return a base-unit `Amount` to choose a custom amount. The amount must cover the next voucher and still respects `maxDeposit` when a spend cap is set.
 
 ```go
 scheme := client.NewBatchSettlementEvmScheme(signer, &client.BatchSettlementEvmSchemeOptions{
@@ -109,6 +126,7 @@ import (
 scheme := server.NewBatchSettlementEvmScheme(receiverAddress, &server.BatchSettlementEvmSchemeServerConfig{
     ReceiverAuthorizerSigner: receiverAuthorizerSigner, // optional: self-managed authorizer (recommended)
     WithdrawDelay:            900,                       // 15 min – 30 days
+    EnforceMinDeposit:        false,                     // hint only; set true to reject smaller deposits
     Storage: server.NewFileChannelStorage(batchsettlement.FileChannelStorageOptions{
         Directory: "./sessions",
     }),
@@ -156,6 +174,44 @@ The `receiverAuthorizer` signs `ClaimBatch` and `Refund` EIP-712 messages and is
 ### Pricing
 
 Set the route `price` to the per-request maximum. To bill less than the max, use the standard x402 settlement-override mechanism for your HTTP framework — see the framework adapter's documentation.
+
+### Minimum deposit hint
+
+Every 402 includes `extra.minDeposit` (atomic string). By default the SDK sets it to `10 × amount`.
+
+Override per route in `accepts.extra.minDeposit`:
+
+```go
+routes := x402http.RoutesConfig{
+    "GET /weather": {
+        Accepts: x402http.PaymentOptions{
+            {
+                Scheme:  "batch-settlement",
+                Price:   "$0.01",
+                Network: "eip155:84532",
+                PayTo:   receiverAddress,
+                Extra:   map[string]interface{}{"minDeposit": "$0.10"}, // optional; default-asset routes only for Money strings
+            },
+        },
+    },
+}
+```
+
+| Route value | When |
+|-------------|------|
+| omitted | `10 × amount` |
+| `"$0.10"` | Default asset only — converted with that asset's decimals |
+| `"5000000"` | Any asset — integer atomic base units |
+
+The reference server only announces the hint; it does not reject smaller deposits. Opt in to SDK enforcement:
+
+```go
+scheme := server.NewBatchSettlementEvmScheme(receiverAddress, &server.BatchSettlementEvmSchemeServerConfig{
+    EnforceMinDeposit: true, // default false
+})
+```
+
+When enabled, deposits below the resolved hint abort verify with `invalid_batch_settlement_evm_deposit_below_min_deposit`. The facilitator never enforces this — it remains server-local policy.
 
 ## Facilitator Usage
 

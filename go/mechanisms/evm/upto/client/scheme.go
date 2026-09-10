@@ -54,8 +54,9 @@ func (c *UptoEvmScheme) CreatePaymentPayload(
 func (c *UptoEvmScheme) CreatePaymentPayloadWithExtensions(
 	ctx context.Context,
 	requirements types.PaymentRequirements,
-	extensions map[string]interface{},
+	payloadCtx x402.PaymentPayloadContext,
 ) (types.PaymentPayload, error) {
+	extensions := payloadCtx.Extensions
 	result, err := CreateUptoPermit2Payload(ctx, c.signer, requirements)
 	if err != nil {
 		return types.PaymentPayload{}, err

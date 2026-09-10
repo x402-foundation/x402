@@ -85,6 +85,11 @@ func main() {
 
 	x402Client := x402.Newx402Client()
 	x402Client.Register("eip155:*", scheme)
+	// Per-request cap on PaymentRequirements.amount (default "$1" if omitted).
+	// Deposit ceiling is this cap × depositMultiplier ($5 at the defaults).
+	x402Client.SetSpendControls(x402.SpendControls{
+		MaxAmountPerPayment: "$1",
+	})
 
 	httpClient := x402http.WrapHTTPClientWithPayment(http.DefaultClient, x402http.Newx402HTTPClient(x402Client))
 

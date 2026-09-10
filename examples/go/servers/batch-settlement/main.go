@@ -54,7 +54,8 @@ func main() {
 	storageDir := os.Getenv("STORAGE_DIR")
 
 	cfg := &batchedserver.BatchSettlementEvmSchemeServerConfig{
-		WithdrawDelay: withdrawDelay,
+		WithdrawDelay:     withdrawDelay,
+		EnforceMinDeposit: false,
 	}
 	if receiverAuthKey != "" {
 		signer, err := newReceiverAuthorizerSigner(receiverAuthKey)
@@ -125,6 +126,8 @@ func main() {
 					Price:   maxPrice,
 					Network: network,
 					PayTo:   evmAddress,
+					// Optional: override the default 10× deposit hint (Money strings require the network default asset).
+					// Extra: map[string]interface{}{"minDeposit": "$0.10"},
 				},
 			},
 			Description: "Weather data",

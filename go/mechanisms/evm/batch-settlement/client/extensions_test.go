@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"testing"
 
+	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/extensions/eip2612gassponsor"
 	"github.com/x402-foundation/x402/go/v2/extensions/erc20approvalgassponsor"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
@@ -113,6 +114,10 @@ func bothExtensionsDeclared() map[string]interface{} {
 	}
 }
 
+func extCtx(extensions map[string]interface{}) x402.PaymentPayloadContext {
+	return x402.PaymentPayloadContext{Extensions: extensions}
+}
+
 // TestCreatePaymentPayloadWithExtensions_NoExtensionsDeclared confirms that
 // when the server's 402 has no extensions, the path is identical to plain
 // CreatePaymentPayload — no enrichment, no extra RPC.
@@ -126,7 +131,7 @@ func TestCreatePaymentPayloadWithExtensions_NoExtensionsDeclared(t *testing.T) {
 	out, err := scheme.CreatePaymentPayloadWithExtensions(
 		context.Background(),
 		extRequirementsPermit2(),
-		nil,
+		extCtx(nil),
 	)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -152,7 +157,7 @@ func TestCreatePaymentPayloadWithExtensions_AllowanceShortCircuit(t *testing.T) 
 	out, err := scheme.CreatePaymentPayloadWithExtensions(
 		context.Background(),
 		extRequirementsPermit2(),
-		eip2612OnlyDeclared(),
+		extCtx(eip2612OnlyDeclared()),
 	)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -177,7 +182,7 @@ func TestCreatePaymentPayloadWithExtensions_Eip2612SignedWhenAllowanceZero(t *te
 	out, err := scheme.CreatePaymentPayloadWithExtensions(
 		context.Background(),
 		extRequirementsPermit2(),
-		eip2612OnlyDeclared(),
+		extCtx(eip2612OnlyDeclared()),
 	)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -220,7 +225,7 @@ func TestCreatePaymentPayloadWithExtensions_Eip2612TakesPriorityOverErc20(t *tes
 	out, err := scheme.CreatePaymentPayloadWithExtensions(
 		context.Background(),
 		extRequirementsPermit2(),
-		bothExtensionsDeclared(),
+		extCtx(bothExtensionsDeclared()),
 	)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -252,7 +257,7 @@ func TestCreatePaymentPayloadWithExtensions_Eip2612SkippedWithoutNameVersion(t *
 	out, err := scheme.CreatePaymentPayloadWithExtensions(
 		context.Background(),
 		reqs,
-		eip2612OnlyDeclared(),
+		extCtx(eip2612OnlyDeclared()),
 	)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -278,7 +283,7 @@ func TestCreatePaymentPayloadWithExtensions_Eip2612DeadlineFromPermit2(t *testin
 	out, err := scheme.CreatePaymentPayloadWithExtensions(
 		context.Background(),
 		extRequirementsPermit2(),
-		eip2612OnlyDeclared(),
+		extCtx(eip2612OnlyDeclared()),
 	)
 	if err != nil {
 		t.Fatalf("err: %v", err)

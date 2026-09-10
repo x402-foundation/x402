@@ -70,12 +70,16 @@ func refundPayload(channelId, maxClaimable, sig string) map[string]interface{} {
 }
 
 func depositPayloadFor(channelId, maxClaimable, sig string) map[string]interface{} {
+	return depositPayloadWithAmount(channelId, maxClaimable, sig, "1000")
+}
+
+func depositPayloadWithAmount(channelId, maxClaimable, sig, amount string) map[string]interface{} {
 	cfg := testConfig()
 	return map[string]interface{}{
 		"type":          "deposit",
 		"channelConfig": batchsettlement.ChannelConfigToMap(cfg),
 		"deposit": map[string]interface{}{
-			"amount":        "1000",
+			"amount":        amount,
 			"authorization": map[string]interface{}{},
 		},
 		"voucher": map[string]interface{}{
@@ -179,6 +183,88 @@ func TestBeforeVerifyHook_NoSessionNonRefundPasses(t *testing.T) {
 	res := runBeforeVerify(t, s, &stubPayload{data: voucherPayload(id, "10", "0xsig")})
 	if res != nil {
 		t.Fatalf("expected pass-through, got %+v", res)
+	}
+}
+
+func TestBeforeVerifyHook_DoesNotRejectDepositBelowMinWhenEnforcementDisabled(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	id := testChannelId(t)
+	reqs := stubRequirements{
+		scheme:  batchsettlement.SchemeBatched,
+		network: "eip155:8453",
+		amount:  "1000",
+		extra:   map[string]interface{}{"minDeposit": "10000"},
+	}
+	res, err := s.BeforeVerifyHook()(x402.VerifyContext{
+		Payload:      &stubPayload{data: depositPayloadWithAmount(id, "1000", "0xsig", "5000")},
+		Requirements: reqs,
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if res != nil {
+		t.Fatalf("expected pass-through, got %+v", res)
+	}
+}
+
+func TestBeforeVerifyHook_RejectsDepositBelowMinWhenEnforcementEnabled(t *testing.T) {
+	storage := NewInMemoryChannelStorage()
+	s := NewBatchSettlementEvmScheme("0xreceiver", &BatchSettlementEvmSchemeServerConfig{
+		Storage:           storage,
+		EnforceMinDeposit: true,
+	})
+	id := testChannelId(t)
+	reqs := stubRequirements{
+		scheme:  batchsettlement.SchemeBatched,
+		network: "eip155:8453",
+		amount:  "1000",
+		extra:   map[string]interface{}{"minDeposit": "10000"},
+	}
+
+	below, err := s.BeforeVerifyHook()(x402.VerifyContext{
+		Payload:      &stubPayload{data: depositPayloadWithAmount(id, "1000", "0xsig", "5000")},
+		Requirements: reqs,
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if below == nil || !below.Abort || below.Reason != batchsettlement.ErrDepositBelowMinDeposit {
+		t.Fatalf("below min: got %+v", below)
+	}
+
+	atMin, err := s.BeforeVerifyHook()(x402.VerifyContext{
+		Payload:      &stubPayload{data: depositPayloadWithAmount(id, "1000", "0xsig", "10000")},
+		Requirements: reqs,
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if atMin != nil {
+		t.Fatalf("at min expected pass-through, got %+v", atMin)
+	}
+}
+
+func TestBeforeVerifyHook_EnforcesDefault10xMinDepositWhenOmitted(t *testing.T) {
+	storage := NewInMemoryChannelStorage()
+	s := NewBatchSettlementEvmScheme("0xreceiver", &BatchSettlementEvmSchemeServerConfig{
+		Storage:           storage,
+		EnforceMinDeposit: true,
+	})
+	id := testChannelId(t)
+	reqs := stubRequirements{
+		scheme:  batchsettlement.SchemeBatched,
+		network: "eip155:8453",
+		amount:  "1000",
+	}
+	res, err := s.BeforeVerifyHook()(x402.VerifyContext{
+		Payload:      &stubPayload{data: depositPayloadWithAmount(id, "1000", "0xsig", "5000")},
+		Requirements: reqs,
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if res == nil || !res.Abort || res.Reason != batchsettlement.ErrDepositBelowMinDeposit {
+		t.Fatalf("got %+v", res)
 	}
 }
 

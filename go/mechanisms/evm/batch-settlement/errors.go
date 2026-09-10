@@ -82,4 +82,9 @@ const (
 	// larger than the channel's available balance. Non-recoverable; client
 	// should retry with a smaller amount or omit `amount` for a full refund.
 	ErrRefundAmountExceedsBalance = "invalid_batch_settlement_evm_refund_amount_exceeds_balance"
+
+	// ErrDepositBelowMinDeposit signals that the resource server rejected a
+	// deposit below its local extra.minDeposit policy. Opt-in via
+	// EnforceMinDeposit; the facilitator never enforces this field.
+	ErrDepositBelowMinDeposit = "invalid_batch_settlement_evm_deposit_below_min_deposit"
 )

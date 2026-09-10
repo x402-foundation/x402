@@ -37,6 +37,7 @@ type DepositStrategyContext struct {
 	CurrentBalance       string
 	MinimumDepositAmount string
 	DepositAmount        string
+	MaxDeposit           string
 }
 
 // DepositStrategyResult is the return value of a DepositStrategy callback.
@@ -57,10 +58,10 @@ type DepositStrategy func(ctx context.Context, c DepositStrategyContext) (Deposi
 
 // BatchSettlementEvmSchemeOptions configures the batched client scheme.
 //
-// Use `DepositStrategy` for app-specific sizing or skipping.
+// Use DepositStrategy for app-specific sizing or skipping.
 type BatchSettlementEvmSchemeOptions struct {
-	// DepositMultiplier is the multiplier applied to the required amount for deposits.
-	// E.g., 5 means deposit 5× the per-request amount. Defaults to 5.
+	// DepositMultiplier sizes the deposit target when extra.minDeposit is absent,
+	// and the lock ceiling when a spend cap is set. Defaults to 5.
 	DepositMultiplier int
 	// DepositStrategy lets the caller override the computed deposit amount or
 	// skip the deposit entirely (returning Skip=true sends a voucher-only
@@ -139,6 +140,14 @@ func (c *BatchSettlementEvmScheme) CreatePaymentPayload(
 	ctx context.Context,
 	requirements types.PaymentRequirements,
 ) (types.PaymentPayload, error) {
+	return c.createPaymentPayload(ctx, requirements, x402.PaymentPayloadContext{})
+}
+
+func (c *BatchSettlementEvmScheme) createPaymentPayload(
+	ctx context.Context,
+	requirements types.PaymentRequirements,
+	payloadCtx x402.PaymentPayloadContext,
+) (types.PaymentPayload, error) {
 	channelConfig, err := c.BuildChannelConfig(requirements)
 	if err != nil {
 		return types.PaymentPayload{}, err
@@ -197,10 +206,20 @@ func (c *BatchSettlementEvmScheme) CreatePaymentPayload(
 	needsTopUp := !needsInitialDeposit && newCumulative.Cmp(balance) > 0
 
 	if needsInitialDeposit || needsTopUp {
-		computedDeposit := c.calculateDepositAmount(requiredAmount)
 		minimumDeposit := new(big.Int).Sub(newCumulative, balance)
 		if minimumDeposit.Sign() < 0 {
 			minimumDeposit = big.NewInt(0)
+		}
+		maxDeposit := MaxDepositFromSpendCap(payloadCtx.MaxAmountPerPayment, c.config.DepositMultiplier)
+		computedDeposit, err := DepositAmountForRequest(
+			c.config.DepositMultiplier,
+			requiredAmount,
+			minimumDeposit,
+			requirements.Extra,
+			maxDeposit,
+		)
+		if err != nil {
+			return types.PaymentPayload{}, err
 		}
 		strategyCtx := DepositStrategyContext{
 			PaymentRequirements:  requirements,
@@ -211,7 +230,10 @@ func (c *BatchSettlementEvmScheme) CreatePaymentPayload(
 			MaxClaimableAmount:   newCumulative.String(),
 			CurrentBalance:       balance.String(),
 			MinimumDepositAmount: minimumDeposit.String(),
-			DepositAmount:        computedDeposit.String(),
+			DepositAmount:        computedDeposit,
+		}
+		if maxDeposit != nil {
+			strategyCtx.MaxDeposit = maxDeposit.String()
 		}
 		resolved, err := c.resolveDepositAmount(ctx, strategyCtx)
 		if err != nil {
@@ -256,12 +278,23 @@ func (c *BatchSettlementEvmScheme) resolveDepositAmount(
 		return resolveDepositAmountResult{}, fmt.Errorf("depositStrategy must return a positive integer deposit amount, got %q", res.Amount)
 	}
 	minimum, _ := new(big.Int).SetString(strategyCtx.MinimumDepositAmount, 10)
-	if minimum != nil && amount.Cmp(minimum) < 0 {
+	if minimum == nil {
+		minimum = big.NewInt(0)
+	}
+	if amount.Cmp(minimum) < 0 {
 		return resolveDepositAmountResult{}, fmt.Errorf(
 			"depositStrategy returned %s, below required top-up %s",
 			amount.String(), minimum.String())
 	}
-	return resolveDepositAmountResult{amount: amount.String()}, nil
+	var maxDeposit *big.Int
+	if strategyCtx.MaxDeposit != "" {
+		maxDeposit, _ = new(big.Int).SetString(strategyCtx.MaxDeposit, 10)
+	}
+	clamped, err := ApplyMaxDeposit(amount, minimum, maxDeposit)
+	if err != nil {
+		return resolveDepositAmountResult{}, err
+	}
+	return resolveDepositAmountResult{amount: clamped}, nil
 }
 
 // BuildChannelConfig constructs a ChannelConfig from payment requirements and scheme config.
@@ -909,9 +942,89 @@ func (a *refundContextAdapter) ProcessCorrectivePaymentRequired(ctx context.Cont
 	return a.scheme.ProcessCorrectivePaymentRequired(ctx, errorReason, accepts)
 }
 
-// calculateDepositAmount returns `requiredAmount * DepositMultiplier`. Callers
-// wanting a cap should use a DepositStrategy callback.
-func (c *BatchSettlementEvmScheme) calculateDepositAmount(requiredAmount *big.Int) *big.Int {
-	multiplier := big.NewInt(int64(c.config.DepositMultiplier))
-	return new(big.Int).Mul(requiredAmount, multiplier)
+func isAtomicAmountString(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// ParseAnnouncedMinDeposit parses a server-announced extra.minDeposit when it is a
+// valid deposit target (positive integer >= requestAmount).
+func ParseAnnouncedMinDeposit(value interface{}, requestAmount *big.Int) *big.Int {
+	s, ok := value.(string)
+	if !ok || !isAtomicAmountString(s) {
+		return nil
+	}
+	parsed, ok := new(big.Int).SetString(s, 10)
+	if !ok || parsed.Sign() <= 0 || parsed.Cmp(requestAmount) < 0 {
+		return nil
+	}
+	return parsed
+}
+
+// MaxDepositFromSpendCap derives the deposit ceiling as depositMultiplier × the
+// resolved spend cap. Returns nil when the payment is uncapped.
+func MaxDepositFromSpendCap(maxAmountPerPayment string, depositMultiplier int) *big.Int {
+	if !isAtomicAmountString(maxAmountPerPayment) {
+		return nil
+	}
+	cap, ok := new(big.Int).SetString(maxAmountPerPayment, 10)
+	if !ok || cap.Sign() <= 0 {
+		return nil
+	}
+	if depositMultiplier <= 0 {
+		depositMultiplier = DefaultDepositMultiplier
+	}
+	return new(big.Int).Mul(cap, big.NewInt(int64(depositMultiplier)))
+}
+
+// ApplyMaxDeposit clamps a computed deposit to maxDeposit. Errors when the
+// voucher gap exceeds the cap.
+func ApplyMaxDeposit(deposit, needed, maxDeposit *big.Int) (string, error) {
+	if maxDeposit == nil {
+		return deposit.String(), nil
+	}
+	if needed.Cmp(maxDeposit) > 0 {
+		return "", fmt.Errorf(
+			"required deposit %s exceeds depositMultiplier × spendControls.maxAmountPerPayment (%s). Raise maxAmountPerPayment or depositMultiplier",
+			needed.String(), maxDeposit.String(),
+		)
+	}
+	if deposit.Cmp(maxDeposit) > 0 {
+		return maxDeposit.String(), nil
+	}
+	return deposit.String(), nil
+}
+
+// DepositAmountForRequest computes the deposit amount from the voucher gap,
+// server hint, or deposit multiplier.
+func DepositAmountForRequest(
+	multiplier int,
+	requestAmount *big.Int,
+	needed *big.Int,
+	extra map[string]interface{},
+	maxDeposit *big.Int,
+) (string, error) {
+	var announced *big.Int
+	if extra != nil {
+		announced = ParseAnnouncedMinDeposit(extra["minDeposit"], requestAmount)
+	}
+	if multiplier <= 0 {
+		multiplier = DefaultDepositMultiplier
+	}
+	target := new(big.Int).Mul(big.NewInt(int64(multiplier)), requestAmount)
+	if announced != nil {
+		target = announced
+	}
+	deposit := target
+	if needed.Cmp(target) > 0 {
+		deposit = needed
+	}
+	return ApplyMaxDeposit(deposit, needed, maxDeposit)
 }

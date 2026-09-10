@@ -24,7 +24,19 @@ Use this when:
 
 ## Deposit policy
 
-The default per-request deposit is `payment amount × DEPOSIT_MULTIPLIER` (default `5`). For app-specific deposit decisions (caps, dynamic adjustments, opting out), pass a `DepositStrategy` callback to `BatchSettlementEvmSchemeOptions`:
+The client deposits `extra.minDeposit` when the server announced a valid hint, otherwise `amount × DEPOSIT_MULTIPLIER` (default `5`, minimum `3`).
+
+`x402Client` spend controls still cap each request's `amount` (default `$1` on USDC). That same atomic cap is the escrow ceiling:
+
+`maxDeposit = maxAmountPerPayment × depositMultiplier`
+
+So the default `$1` cap and multiplier `5` lock at most `$5`. `DisableSpendControls()` (or any uncapped asset) leaves the deposit uncapped too.
+
+Use `DepositStrategy` only for app-specific decisions:
+
+- **empty result** — use the SDK default (`DepositAmount` in context).
+- **`Skip: true`** — skip this deposit attempt.
+- **base-unit `Amount`** — custom amount; must be **≥ `MinimumDepositAmount`**, and still respects `maxDeposit` when a spend cap is set.
 
 ```go
 cfg := &batchedclient.BatchSettlementEvmSchemeOptions{
@@ -51,7 +63,7 @@ cfg := &batchedclient.BatchSettlementEvmSchemeOptions{
 | `RESOURCE_SERVER_URL`                 | no       | Server base URL (default `http://localhost:4021`) |
 | `ENDPOINT_PATH`                       | no       | Path on the server (default `/weather`) |
 | `CHANNEL_SALT`                        | no       | 32-byte hex salt; change to open a fresh channel (default `0x00…00`) |
-| `DEPOSIT_MULTIPLIER`                  | no       | Per-request deposit is payment amount × this multiplier (must be integer ≥ 3; default `5`) |
+| `DEPOSIT_MULTIPLIER`                  | no       | Deposit target is `amount ×` this multiplier when `extra.minDeposit` is absent; lock ceiling is `spendCap ×` this multiplier (integer **≥ 3**; default `5`) |
 | `STORAGE_DIR`                         | no       | If set, persists session state under `${STORAGE_DIR}/client/` |
 | `NUMBER_OF_REQUESTS`                  | no       | How many paid requests to issue (default `3`) |
 | `REFUND_AFTER_REQUESTS`               | no       | If `"true"`, request a cooperative refund after the request loop completes |

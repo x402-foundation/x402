@@ -70,8 +70,9 @@ func (c *ExactEvmScheme) CreatePaymentPayload(
 func (c *ExactEvmScheme) CreatePaymentPayloadWithExtensions(
 	ctx context.Context,
 	requirements types.PaymentRequirements,
-	extensions map[string]interface{},
+	payloadCtx x402.PaymentPayloadContext,
 ) (types.PaymentPayload, error) {
+	extensions := payloadCtx.Extensions
 	assetTransferMethod := evm.AssetTransferMethodEIP3009
 	if requirements.Extra != nil {
 		if method, ok := requirements.Extra["assetTransferMethod"].(string); ok {

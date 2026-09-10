@@ -89,13 +89,21 @@ type SchemeNetworkClient interface {
 	CreatePaymentPayload(ctx context.Context, requirements types.PaymentRequirements) (types.PaymentPayload, error)
 }
 
+// PaymentPayloadContext is passed to scheme CreatePaymentPayloadWithExtensions.
+// MaxAmountPerPayment is the resolved atomic spend cap; omitted when uncapped.
+type PaymentPayloadContext struct {
+	Extensions          map[string]interface{}
+	MaxAmountPerPayment string
+}
+
 // ExtensionAwareClient is an optional interface for schemes that can handle extensions.
 // When a scheme implements this, x402Client will call CreatePaymentPayloadWithExtensions
-// instead of CreatePaymentPayload, passing the server-declared extensions so the scheme
-// can enrich the payload (e.g., EIP-2612 gas sponsoring).
+// instead of CreatePaymentPayload, passing server-declared extensions and the resolved
+// atomic spend cap so the scheme can enrich the payload (e.g., EIP-2612 gas sponsoring)
+// and size capital-locking deposits.
 type ExtensionAwareClient interface {
 	SchemeNetworkClient
-	CreatePaymentPayloadWithExtensions(ctx context.Context, requirements types.PaymentRequirements, extensions map[string]interface{}) (types.PaymentPayload, error)
+	CreatePaymentPayloadWithExtensions(ctx context.Context, requirements types.PaymentRequirements, payloadCtx PaymentPayloadContext) (types.PaymentPayload, error)
 }
 
 // DefaultAssetFinder is an optional reverse lookup for USD spend caps.

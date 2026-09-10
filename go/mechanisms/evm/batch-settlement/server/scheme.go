@@ -54,6 +54,9 @@ type BatchSettlementEvmSchemeServerConfig struct {
 	// milliseconds, that may be trusted for local voucher verification.
 	// When zero, derived from WithdrawDelay (clamped between 30s and 5min).
 	OnchainStateTtlMs int64
+	// EnforceMinDeposit rejects deposits below the announced extra.minDeposit
+	// hint. Default false (hint only). The facilitator never enforces this.
+	EnforceMinDeposit bool
 }
 
 // BatchSettlementEvmScheme implements SchemeNetworkServer for batched settlement.
@@ -63,6 +66,7 @@ type BatchSettlementEvmScheme struct {
 	receiverAuthorizerSigner AuthorizerSigner
 	withdrawDelay            int
 	onchainStateTtlMs        int64
+	enforceMinDeposit        bool
 	moneyParsers             []x402.MoneyParser
 
 	// requestContexts maps a per-payment key to state carried across verify and
@@ -136,6 +140,7 @@ func NewBatchSettlementEvmScheme(receiverAddress string, config *BatchSettlement
 	var authSigner AuthorizerSigner
 	withdrawDelay := batchsettlement.MinWithdrawDelay
 	var onchainStateTtlMs int64
+	var enforceMinDeposit bool
 
 	if config != nil {
 		storage = config.Storage
@@ -144,6 +149,7 @@ func NewBatchSettlementEvmScheme(receiverAddress string, config *BatchSettlement
 			withdrawDelay = config.WithdrawDelay
 		}
 		onchainStateTtlMs = config.OnchainStateTtlMs
+		enforceMinDeposit = config.EnforceMinDeposit
 	}
 
 	if onchainStateTtlMs <= 0 {
@@ -160,6 +166,7 @@ func NewBatchSettlementEvmScheme(receiverAddress string, config *BatchSettlement
 		receiverAuthorizerSigner: authSigner,
 		withdrawDelay:            withdrawDelay,
 		onchainStateTtlMs:        onchainStateTtlMs,
+		enforceMinDeposit:        enforceMinDeposit,
 		moneyParsers:             []x402.MoneyParser{},
 		requestContexts:          make(map[string]*BatchSettlementRequestContext),
 	}
@@ -441,6 +448,11 @@ func (s *BatchSettlementEvmScheme) GetWithdrawDelay() int {
 	return s.withdrawDelay
 }
 
+// GetEnforceMinDeposit returns whether deposits below extra.minDeposit are rejected.
+func (s *BatchSettlementEvmScheme) GetEnforceMinDeposit() bool {
+	return s.enforceMinDeposit
+}
+
 // GetReceiverAuthorizerAddress returns the receiver authorizer's address.
 func (s *BatchSettlementEvmScheme) GetReceiverAuthorizerAddress() string {
 	if s.receiverAuthorizerSigner != nil {
@@ -598,6 +610,12 @@ func (s *BatchSettlementEvmScheme) EnhancePaymentRequirements(
 		requirements.Extra["withdrawDelay"] = s.withdrawDelay
 	}
 
+	minDeposit, hintErr := s.ResolveMinDepositHint(requirements)
+	if hintErr != nil {
+		return requirements, hintErr
+	}
+	requirements.Extra["minDeposit"] = minDeposit
+
 	// Copy extensions from supportedKind
 	if supportedKind.Extra != nil {
 		for _, key := range extensionKeys {
@@ -743,6 +761,87 @@ func (s *BatchSettlementEvmScheme) GetSession(channelId string) (*ChannelSession
 // DeleteSession removes a session for a channel.
 func (s *BatchSettlementEvmScheme) DeleteSession(channelId string) error {
 	return s.storage.Delete(channelId)
+}
+
+// ResolveMinDepositHint resolves the extra.minDeposit hint written on every 402.
+func (s *BatchSettlementEvmScheme) ResolveMinDepositHint(requirements types.PaymentRequirements) (string, error) {
+	amount, ok := new(big.Int).SetString(requirements.Amount, 10)
+	if !ok {
+		return "", fmt.Errorf("invalid amount: %s", requirements.Amount)
+	}
+
+	var routeOverride interface{}
+	if requirements.Extra != nil {
+		routeOverride = requirements.Extra["minDeposit"]
+	}
+
+	var configuredMin *big.Int
+	if override, isString := routeOverride.(string); isString {
+		if isAtomicMinDeposit(override) {
+			parsed, err := parseAtomicMinDeposit(override)
+			if err != nil {
+				return "", err
+			}
+			configuredMin = parsed
+		} else {
+			parsed, err := s.resolveRouteMoneyMinDeposit(override, requirements)
+			if err != nil {
+				return "", err
+			}
+			configuredMin = parsed
+		}
+	}
+
+	if configuredMin == nil {
+		return new(big.Int).Mul(amount, big.NewInt(int64(batchsettlement.DefaultServerMinDepositMultiplier))).String(), nil
+	}
+
+	if amount.Cmp(configuredMin) > 0 {
+		return amount.String(), nil
+	}
+	return configuredMin.String(), nil
+}
+
+func (s *BatchSettlementEvmScheme) resolveRouteMoneyMinDeposit(money string, requirement types.PaymentRequirements) (*big.Int, error) {
+	defaultAsset := evm.FindDefaultAsset(requirement.Asset, string(requirement.Network))
+	if defaultAsset == nil {
+		return nil, fmt.Errorf(
+			"extra.minDeposit money values are only supported for default assets; use an integer atomic string for %s on %s",
+			requirement.Asset, requirement.Network,
+		)
+	}
+	parsed, _, err := x402.ParseMoney(money)
+	if err != nil {
+		return nil, err
+	}
+	atomic, err := x402.ConvertToTokenAmount(parsed, defaultAsset.Decimals)
+	if err != nil {
+		return nil, err
+	}
+	return parseAtomicMinDeposit(atomic)
+}
+
+func parseAtomicMinDeposit(amount string) (*big.Int, error) {
+	if !isAtomicMinDeposit(amount) {
+		return nil, fmt.Errorf("minDeposit must resolve to a positive integer")
+	}
+	value, ok := new(big.Int).SetString(amount, 10)
+	if !ok || value.Sign() <= 0 {
+		return nil, fmt.Errorf("minDeposit must resolve to a positive integer")
+	}
+	return value, nil
+}
+
+func isAtomicMinDeposit(amount string) bool {
+	if amount == "" {
+		return false
+	}
+	for i := 0; i < len(amount); i++ {
+		if amount[i] < '0' || amount[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // Helper functions

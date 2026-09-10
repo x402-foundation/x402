@@ -24,6 +24,10 @@ const (
 
 	// MaxWithdrawDelay is the maximum withdraw delay in seconds (30 days).
 	MaxWithdrawDelay = 2_592_000
+
+	// DefaultServerMinDepositMultiplier is the default server SDK multiplier for
+	// extra.minDeposit when no floor is configured.
+	DefaultServerMinDepositMultiplier = 10
 )
 
 // ChannelConfigTypeString is the EIP-712 typed-data primary type string used

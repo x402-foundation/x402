@@ -1,0 +1,3 @@
+kind: added
+body: Pass the resolved atomic spendControls cap to every scheme on PaymentPayloadContext.MaxAmountPerPayment (omitted when uncapped) so capital-locking schemes can reuse client policy without re-resolving it. Batch-settlement EVM servers always announce extra.minDeposit (default 10 × amount, optional per-route override via accepts.extra.minDeposit). Clients size deposits from the hint when valid, clamped to that cap × DepositMultiplier when a spend cap is set. Uncapped payments leave deposits uncapped. Older 402s fall back to DepositMultiplier for sizing. Servers may opt in to SDK enforcement via EnforceMinDeposit (default off; facilitator never enforces).
+time: 2026-09-08T09:00:00Z

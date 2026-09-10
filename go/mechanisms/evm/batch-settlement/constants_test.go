@@ -99,6 +99,7 @@ func TestErrorCodes(t *testing.T) {
 		ErrRefundNoBalance,
 		ErrRefundAmountInvalid,
 		ErrRefundAmountExceedsBalance,
+		ErrDepositBelowMinDeposit,
 	} {
 		if !strings.HasPrefix(code, wirePrefix) {
 			t.Fatalf("error reason must start with %q, got %q", wirePrefix, code)

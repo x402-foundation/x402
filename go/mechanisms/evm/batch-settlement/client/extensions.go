@@ -46,9 +46,9 @@ var _ x402.ExtensionAwareClient = (*BatchSettlementEvmScheme)(nil)
 func (c *BatchSettlementEvmScheme) CreatePaymentPayloadWithExtensions(
 	ctx context.Context,
 	requirements types.PaymentRequirements,
-	extensions map[string]interface{},
+	payloadCtx x402.PaymentPayloadContext,
 ) (types.PaymentPayload, error) {
-	result, err := c.CreatePaymentPayload(ctx, requirements)
+	result, err := c.createPaymentPayload(ctx, requirements, payloadCtx)
 	if err != nil {
 		return types.PaymentPayload{}, err
 	}
@@ -85,6 +85,8 @@ func (c *BatchSettlementEvmScheme) CreatePaymentPayloadWithExtensions(
 	if !isPermit2 {
 		return result, nil
 	}
+
+	extensions := payloadCtx.Extensions
 
 	if extData, eipErr := c.trySignEip2612Permit(ctx, requirements, result, extensions); eipErr == nil && extData != nil {
 		result.Extensions = extData

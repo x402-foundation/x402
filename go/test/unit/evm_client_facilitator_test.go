@@ -12,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 
+	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 	evmclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
 	evmfacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
@@ -1415,7 +1416,7 @@ func TestCreatePaymentPayloadWithExtensions_EIP2612(t *testing.T) {
 			},
 		}
 
-		payload, err := client.CreatePaymentPayloadWithExtensions(ctx, requirements, extensions)
+		payload, err := client.CreatePaymentPayloadWithExtensions(ctx, requirements, x402.PaymentPayloadContext{Extensions: extensions})
 		if err != nil {
 			t.Fatalf("Failed to create payload: %v", err)
 		}
@@ -1449,7 +1450,7 @@ func TestCreatePaymentPayloadWithExtensions_EIP2612(t *testing.T) {
 		}
 
 		// No extensions advertised
-		payload, err := client.CreatePaymentPayloadWithExtensions(ctx, requirements, nil)
+		payload, err := client.CreatePaymentPayloadWithExtensions(ctx, requirements, x402.PaymentPayloadContext{})
 		if err != nil {
 			t.Fatalf("Failed to create payload: %v", err)
 		}
@@ -1484,7 +1485,7 @@ func TestCreatePaymentPayloadWithExtensions_EIP2612(t *testing.T) {
 			},
 		}
 
-		payload, err := client.CreatePaymentPayloadWithExtensions(ctx, requirements, extensions)
+		payload, err := client.CreatePaymentPayloadWithExtensions(ctx, requirements, x402.PaymentPayloadContext{Extensions: extensions})
 		if err != nil {
 			t.Fatalf("Failed to create payload: %v", err)
 		}

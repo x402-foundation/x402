@@ -92,6 +92,28 @@ func (s *BatchSettlementEvmScheme) BeforeVerifyHook() x402.BeforeVerifyHook {
 			return nil, nil
 		}
 
+		if s.enforceMinDeposit && batchsettlement.IsDepositPayload(payload) {
+			hintReq := types.PaymentRequirements{
+				Amount:  ctx.Requirements.GetAmount(),
+				Asset:   ctx.Requirements.GetAsset(),
+				Network: ctx.Requirements.GetNetwork(),
+				Extra:   ctx.Requirements.GetExtra(),
+			}
+			minDepositStr, hintErr := s.ResolveMinDepositHint(hintReq)
+			if hintErr != nil {
+				return nil, hintErr
+			}
+			minDeposit, ok := new(big.Int).SetString(minDepositStr, 10)
+			depositAmount := depositAmountFromPayload(payload)
+			if ok && minDeposit != nil && depositAmount != nil && depositAmount.Cmp(minDeposit) < 0 {
+				return &x402.BeforeHookResult{
+					Abort:   true,
+					Reason:  batchsettlement.ErrDepositBelowMinDeposit,
+					Message: "Deposit amount is below the server minimum",
+				}, nil
+			}
+		}
+
 		voucherFields, _ := payload["voucher"].(map[string]interface{})
 		if voucherFields == nil {
 			return nil, nil
@@ -1112,4 +1134,23 @@ func mapIntField(m map[string]interface{}, key string, defaultVal int) int {
 		}
 	}
 	return defaultVal
+}
+
+func depositAmountFromPayload(payload map[string]interface{}) *big.Int {
+	if payload == nil {
+		return nil
+	}
+	dep, ok := payload["deposit"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	s, ok := dep["amount"].(string)
+	if !ok {
+		return nil
+	}
+	n, ok := new(big.Int).SetString(s, 10)
+	if !ok {
+		return nil
+	}
+	return n
 }
