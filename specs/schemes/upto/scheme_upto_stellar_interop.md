@@ -35,7 +35,7 @@ requirement rests on a single implementation, that is stated at the requirement.
 
 | Implementation | Design | Basis for inclusion |
 |---|---|---|
-| [rail402](https://github.com/tolgayayci/rail402) | Stateful — nonce in `temporary()` storage | Source read at pinned commit `ff504b8`; deployed and settled against (see §8) |
+| [rail402](https://github.com/tolgayayci/rail402) | Stateful — nonce in `temporary()` storage | Source read at pinned commit `ff504b8`; previously deployed and settled against by the authors (see §8.1) |
 | [#3134](https://github.com/x402-foundation/x402/pull/3134) (`Iam0TI`) | Stateless — SEP-41 `approve`/`transfer_from`, Soroban auth-entry nonce | Spec read in full |
 | [#3098](https://github.com/x402-foundation/x402/pull/3098) (Periplo, `Eras256`) | Stateful — client-supplied `nonce: BytesN<32>` in `temporary()` with TTL | Spec and thread read in full |
 | [Rialto](https://github.com/0d1026/Rialto) | Stateful, with `auto_revoke` | Source read |
@@ -106,7 +106,7 @@ for what the chain actually moved. **The token's own emitted `transfer` event
 is.** This was found by root-causing a real classifier gap in a deployed
 explorer, which was reporting `upto` settlements as unattributed; the fix was to
 recognize the settlement-contract invocation by shape and read the amount from
-the emitted event. The three settlements in §8 postdate that fix and are its
+the emitted event. The settlements in §8 and §8.1 postdate that fix and are its
 verification.
 
 ## 4. Hook failure isolation (SHOULD)
@@ -286,40 +286,79 @@ an earlier draft.*
 
 ## 8. Deployed reference
 
-The authors operate a deployed instance of the **rail402** contract, vendored
-verbatim at pinned commit `ff504b85ac065369dc985759afe4164a4541d861` (Apache-2.0,
-attribution retained). **The contract design is rail402's, not this document's
-authors'.** What is contributed here is independent verification: a reproducible
-build whose hash matches the deployed wasm, and live settlements exercising the
-partial-settlement path.
+The authors operate a deployed `upto` settlement contract on Stellar testnet.
+It is their own implementation, MIT licensed, written from the `upto` scheme
+description and from the requirements in this document. The design brief was
+committed at **2026-09-09T12:30Z**, before the first line of implementation at
+**13:02Z**, so the ordering is checkable in that repository's history rather
+than asserted.
+
+Source: [`contracts/upto-vellar/`](https://github.com/Vellar-Wallet/vellar-facilitator/tree/main/contracts/upto-vellar)
+in `Vellar-Wallet/vellar-facilitator`.
 
 | | |
 |---|---|
 | Network | `stellar:testnet` |
-| Contract ID | `CDHPA64M73TUTEM4MMHIWIXINBQXH7JJXFGZMGH22VJWFJFROMR6QV2S` |
-| Wasm hash | `c276b905981eab91704ce9b9046ebb4867b164dd7e4ba0e0ecda841527d398a9` |
+| Contract ID | `CCZL7CTRS6GWEYXDYD54DZM3OUHQW2S2A4KSU75SH275P3SFZLL4YQAN` |
+| Wasm hash | `92365d9e5effe046a1db5b959bd2357672aef3f4b2137653c8095a0764d1f6c8` |
+| Licence | MIT |
 | Toolchain | rustc/cargo 1.96.0, `stellar` CLI 26.1.0, target `wasm32v1-none`, soroban-sdk 23 |
 
-The on-chain wasm hash is the sha256 of the wasm, so the chain is verifiable in
-three steps by anyone: `stellar contract build`, `shasum -a 256` the artifact,
-then `stellar contract fetch --id <contract>` and hash the fetched wasm. All
-three MUST agree. (Reproducing the hash requires the same toolchain versions; a
+The on-chain wasm hash is the sha256 of the wasm, so the chain is verifiable by
+anyone. All three of the build artifact, the fetched artifact and the hash above
+MUST agree. (Reproducing the hash requires the same toolchain versions; a
 different rustc can produce a byte-different, still-correct wasm.)
 
-Settlements, each Horizon-confirmed, each settling strictly below its authorized
+```bash
+# 1. Build from source
+cd contracts/upto-vellar
+stellar contract build
+shasum -a 256 target/wasm32v1-none/release/x402_upto_vellar.wasm
+# expect 92365d9e5effe046a1db5b959bd2357672aef3f4b2137653c8095a0764d1f6c8
+
+# 2. Verify against the deployed bytes
+stellar contract fetch \
+  --id CCZL7CTRS6GWEYXDYD54DZM3OUHQW2S2A4KSU75SH275P3SFZLL4YQAN \
+  --network testnet \
+  --rpc-url https://soroban-testnet.stellar.org \
+  --network-passphrase "Test SDF Network ; September 2015" \
+  --out-file fetched.wasm
+shasum -a 256 fetched.wasm
+# must match the hash above
+
+# 3. Verify the first settlement
+curl -s "https://horizon-testnet.stellar.org/transactions/be33bb71b0a2c74c465bf0243c45e081bc7c5b66a337e2d8a5c0bbb82f54ede6" \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print('successful:', d['successful']); print('ledger:', d['ledger'])"
+# successful: True
+# ledger: 4587956
+```
+
+First settlement, Horizon-confirmed, settling strictly below its authorized
 ceiling:
 
-| Tx | Ceiling → actual (atomic USDC) |
-|---|---|
-| [`72c816a6…f3db`](https://stellar.expert/explorer/testnet/tx/72c816a63ab9da21b1403ff5199e4f21b9947c0769c55312a8cf0dc7e6ecf3db) | 1,000,000 → 400,000 |
-| [`be728773…6d9a`](https://stellar.expert/explorer/testnet/tx/be72877332bbd7f8d38511cccf00620fb20869cfedbc7530588ca856ac646d9a) | 1,500,000 → 555,000 |
-| [`f558307e…693e`](https://stellar.expert/explorer/testnet/tx/f558307ef7366be7d70967d1bd2acb65da19f24627a0f91cd62b95cf70c9693e) | 800,000 → 312,000 |
-| [`12f0fa5c…d21a`](https://stellar.expert/explorer/testnet/tx/12f0fa5c720d6791018d30261fa88b5d0934bb8a2dc141cd28b6ded3e432d21a) | 1,200,000 → 417,000 |
+| Tx | Ledger | Ceiling → actual (USDC) |
+|---|---|---|
+| [`be33bb71…ede6`](https://stellar.expert/explorer/testnet/tx/be33bb71b0a2c74c465bf0243c45e081bc7c5b66a337e2d8a5c0bbb82f54ede6) | 4587956 | 0.05 → 0.01 |
 
-The last three postdate the classifier fix described in §3.3 and are independently
-classified as `upto` settlements — with the metered actual, not the ceiling — by a
-separately operated explorer that reads ledger data directly and does not consume
-anything the settling facilitator reports about itself.
+The transfer moved exactly the metered actual and not the ceiling, which is the
+property `upto` exists for and the one §3.3 says an observer must read from the
+token's own emitted event rather than from the envelope arguments.
+
+### 8.1 The previous deployed reference
+
+An earlier revision of this document cited a different deployed contract,
+`CDHPA64M73TUTEM4MMHIWIXINBQXH7JJXFGZMGH22VJWFJFROMR6QV2S`, and four settlements
+through it (`72c816a6…`, `be728773…`, `f558307e…`, `12f0fa5c…`). The authors had
+deployed their own build of an existing Apache-2.0 implementation — the same one
+cited at §1.1, §5.1 and §6 — and what they contributed was verification of it,
+not its design.
+
+Those four transactions remain valid and inspectable on the public ledger. **The
+reproducible-build steps for them no longer work**, because that contract's
+source is not present in any repository the authors control. They are therefore
+no longer offered here as verifiable evidence; §8 above is. The requirements in
+§5.1 and §6 that cite that implementation's specific parameters were derived
+from reading its source and are unaffected.
 
 ## 9. Known limitations of the reference deployment
 
