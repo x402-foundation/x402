@@ -80,6 +80,13 @@ While implementation details vary by network, facilitators MUST enforce security
 - Replay protection: seqno MUST be strictly equal to on-chain value; duplicate `settlementBoc` submissions rejected via BoC hash dedup.
 - Simulation verification: SHOULD simulate via emulation during `/verify` to confirm expected balance changes.
 
+### Radix
+
+- Facilitator safety: the facilitator's fee-paying account MUST NOT appear in any subintent instruction, and the facilitator's own address MUST NOT appear in non-sponsored transactions.
+- Instruction integrity: the manifest MUST contain exactly the mandated instruction sequence (5 for sponsored, 4 for non-sponsored) with no additional instructions.
+- Transfer correctness: `asset` and `amount` MUST match `requirements` exactly; in non-sponsored mode, `try_deposit_or_abort` target MUST equal `payTo`.
+- Preview verification: composed transaction MUST preview as `CommitSuccess` with balance deltas showing only the expected transfer and fees.
+
 ### Starknet
 
 - Facilitator safety: the submitting executor MUST come from facilitator configuration, never client input, and MUST NOT be the payer or the recipient.
@@ -89,4 +96,4 @@ While implementation details vary by network, facilitators MUST enforce security
 - Replay protection: the SNIP-9 nonce MUST be unused at verification; it is consumed on-chain at execution.
 - Simulation verification: MUST simulate the settlement and fail closed unless it shows exactly one asset `Transfer` from payer to `payTo` for the exact amount.
 
-Network-specific rules are in per-network documents: `scheme_exact_svm.md` (Solana), `scheme_exact_stellar.md` (Stellar), `scheme_exact_evm.md` (EVM), `scheme_exact_sui.md` (SUI), `scheme_exact_ton.md` (TON), `scheme_exact_starknet.md` (Starknet).
+Network-specific rules are in per-network documents: `scheme_exact_svm.md` (Solana), `scheme_exact_stellar.md` (Stellar), `scheme_exact_evm.md` (EVM), `scheme_exact_sui.md` (SUI), `scheme_exact_ton.md` (TON), `scheme_exact_starknet.md` (Starknet), `scheme_exact_radix.md` (Radix).
