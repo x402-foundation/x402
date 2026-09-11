@@ -91,6 +91,8 @@ export class ExactStellarScheme implements SchemeNetworkClient {
       address: sourcePublicKey,
       signAuthEntry: this.signer.signAuthEntry,
       expiration: maxLedger,
+      // Only when supplied, so keypair signers keep the SDK default.
+      ...(this.signer.authorizeEntry ? { authorizeEntry: this.signer.authorizeEntry } : {}),
     });
 
     await tx.simulate();
