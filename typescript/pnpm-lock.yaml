@@ -1482,9 +1482,6 @@ importers:
       '@x402/core':
         specifier: workspace:~
         version: link:../../core
-      viem:
-        specifier: ^2.48.11
-        version: 2.48.11(bufferutil@4.0.9)(typescript@5.9.2)(utf-8-validate@5.0.10)(zod@3.25.76)
       zod:
         specifier: ^3.24.2
         version: 3.25.76
@@ -1531,6 +1528,9 @@ importers:
       typescript:
         specifier: ^5.7.3
         version: 5.9.2
+      viem:
+        specifier: ^2.48.11
+        version: 2.48.11(bufferutil@4.0.9)(typescript@5.9.2)(utf-8-validate@5.0.10)(zod@3.25.76)
       vite:
         specifier: ^6.2.6
         version: 6.3.5(@types/node@22.18.0)(terser@5.46.1)(tsx@4.21.0)(yaml@2.8.1)
