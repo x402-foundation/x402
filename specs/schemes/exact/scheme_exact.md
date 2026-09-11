@@ -89,4 +89,4 @@ While implementation details vary by network, facilitators MUST enforce security
 - Replay protection: the SNIP-9 nonce MUST be unused at verification; it is consumed on-chain at execution.
 - Simulation verification: MUST simulate the settlement and fail closed unless it shows exactly one asset `Transfer` from payer to `payTo` for the exact amount.
 
-Network-specific rules are in per-network documents: `scheme_exact_svm.md` (Solana), `scheme_exact_stellar.md` (Stellar), `scheme_exact_evm.md` (EVM), `scheme_exact_sui.md` (SUI), `scheme_exact_ton.md` (TON), `scheme_exact_starknet.md` (Starknet).
+Network-specific rules are in per-network documents: `scheme_exact_svm.md` (Solana), `scheme_exact_stellar.md` (Stellar), `scheme_exact_evm.md` (EVM), `scheme_exact_sui.md` (SUI), `scheme_exact_ton.md` (TON), `scheme_exact_starknet.md` (Starknet), `scheme_exact_bip122.md` (Bitcoin Lightning).
