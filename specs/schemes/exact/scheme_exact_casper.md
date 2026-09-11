@@ -85,7 +85,6 @@ A facilitator verifying an `exact` scheme payment on Casper MUST reject any payl
    - `authorization.to` MUST equal `PaymentRequirements.payTo`.
    - `authorization.value` MUST equal `PaymentRequirements.amount`.
    - Current chain time MUST satisfy `validAfter < now < validBefore` (strict bounds, per CEP-3009).
-   - `validBefore` MUST be equal to or later than `now + PaymentRequirements.maxTimeoutSeconds`.
    - `nonce` MUST NOT have previously been consumed or canceled for `from` on this token contract (CEP-3009 `authorization_state`).
 4. **Verify** the token contract identified by `PaymentRequirements.asset` exists on `PaymentRequirements.network` and supports the CEP-3009 `transfer_with_authorization` entry point.
 5. **Simulate (optional)** the `transfer_with_authorization` call on the token contract via Casper's `speculative_exec` RPC to ensure success. Facilitators MAY skip this step and rely on the targeted state checks above (balance, `authorization_state`, current chain time).

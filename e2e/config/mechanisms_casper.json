@@ -1,0 +1,102 @@
+{
+  "env": {
+    "SERVER_CASPER_ADDRESS": {
+      "required": true,
+      "roles": [
+        "server"
+      ]
+    },
+    "SERVER_CASPER_AMOUNT": {
+      "required": false,
+      "roles": [
+        "server"
+      ]
+    },
+    "SERVER_CASPER_ASSET": {
+      "required": false,
+      "roles": [
+        "server"
+      ]
+    },
+    "SERVER_CASPER_TOKEN_NAME": {
+      "required": false,
+      "roles": [
+        "server"
+      ]
+    },
+    "SERVER_CASPER_TOKEN_DECIMALS": {
+      "required": false,
+      "roles": [
+        "server"
+      ]
+    },
+    "SERVER_CASPER_TOKEN_VERSION": {
+      "required": false,
+      "roles": [
+        "server"
+      ]
+    },
+    "CLIENT_CASPER_PRIVATE_KEY": {
+      "required": true,
+      "roles": [
+        "client"
+      ]
+    },
+    "CLIENT_CASPER_PRIVATE_KEY_ALGORITHM": {
+      "required": false,
+      "roles": [
+        "client"
+      ]
+    },
+    "FACILITATOR_CASPER_PRIVATE_KEY": {
+      "required": true,
+      "roles": [
+        "facilitator"
+      ]
+    },
+    "FACILITATOR_CASPER_PRIVATE_KEY_ALGORITHM": {
+      "required": false,
+      "roles": [
+        "facilitator"
+      ]
+    }
+  },
+  "testnet": {
+    "name": "Casper Testnet",
+    "caip2": "casper:casper-test",
+    "rpcUrlDefault": "https://node.testnet.casper.network/rpc"
+  },
+  "mainnet": {
+    "name": "Casper",
+    "caip2": "casper:casper",
+    "rpcUrlDefault": "https://node.mainnet.casper.network/rpc"
+  },
+  "routes": {
+    "/exact/casper": {
+      "scheme": "exact",
+      "sdks": [
+        "typescript"
+      ],
+      "price": {
+        "amount": "10000000",
+        "amountEnv": "SERVER_CASPER_AMOUNT",
+        "asset": "0cb6f94834c60510d532b0ae077b18b4100874a4c867396d61c2b13c790ead52",
+        "assetEnv": "SERVER_CASPER_ASSET",
+        "extraEnv": {
+          "name": {
+            "env": "SERVER_CASPER_TOKEN_NAME"
+          },
+          "decimals": {
+            "env": "SERVER_CASPER_TOKEN_DECIMALS"
+          },
+          "version": {
+            "env": "SERVER_CASPER_TOKEN_VERSION"
+          }
+        }
+      },
+      "extensions": [
+        "bazaar"
+      ]
+    }
+  }
+}

@@ -21,6 +21,8 @@ import { toFacilitatorAvmSigner } from "@x402/avm";
 import { ExactAvmScheme } from "@x402/avm/exact/facilitator";
 import { toFacilitatorCardanoSigner } from "@x402/cardano";
 import { ExactCardanoScheme } from "@x402/cardano/exact/facilitator";
+import { createFacilitatorCasperSigner } from "@x402/casper";
+import { ExactCasperScheme } from "@x402/casper/exact/facilitator";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/facilitator";
 import {
   CONCORDIUM_TESTNET_CAIP2,
@@ -91,11 +93,14 @@ const PORT = process.env.PORT || "4022";
 // Configuration - optional per network (alphabetic order)
 const avmPrivateKey = process.env.AVM_PRIVATE_KEY as string | undefined;
 const cardanoMnemonic = process.env.CARDANO_MNEMONIC as string | undefined;
-const cardanoNetwork = (process.env.CARDANO_NETWORK || "cardano:preprod") as Network;
+const cardanoNetwork = (process.env.CARDANO_NETWORK ||
+  "cardano:preprod") as Network;
 const blockfrostBaseUrl = process.env.BLOCKFROST_PREPROD_URL;
 const blockfrostProjectId = process.env.BLOCKFROST_PROJECT_ID;
 const aptosPrivateKey = process.env.APTOS_PRIVATE_KEY as string | undefined;
 const aptosRpcUrl = process.env.APTOS_RPC_URL as string | undefined;
+const casperPrivateKey = process.env.CASPER_PRIVATE_KEY as string | undefined;
+const casperRpcUrl = process.env.CASPER_RPC_URL as string | undefined;
 const ccdFacilitatorPrivateKey = process.env.CCD_FACILITATOR_PRIVATE_KEY as
   | string
   | undefined;
@@ -127,6 +132,7 @@ if (
   !avmPrivateKey &&
   !cardanoMnemonic &&
   !aptosPrivateKey &&
+  !casperPrivateKey &&
   !(ccdFacilitatorPrivateKey && ccdFacilitatorAddress) &&
   !evmPrivateKey &&
   !keetaMnemonic &&
@@ -137,7 +143,7 @@ if (
   !(hederaAccountId && hederaPrivateKey)
 ) {
   console.error(
-    "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CARDANO_MNEMONIC, CCD_FACILITATOR_PRIVATE_KEY + CCD_FACILITATOR_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_RELAYER_ACCOUNT_ID + NEAR_RELAYER_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, TVM_PRIVATE_KEY, or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY is required",
+    "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CARDANO_MNEMONIC, CASPER_PRIVATE_KEY, CCD_FACILITATOR_PRIVATE_KEY + CCD_FACILITATOR_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_RELAYER_ACCOUNT_ID + NEAR_RELAYER_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, TVM_PRIVATE_KEY, or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY is required",
   );
   process.exit(1);
 }
@@ -146,6 +152,8 @@ if (
 const AVM_NETWORK = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe"; // Algorand Testnet
 const CARDANO_NETWORK = cardanoNetwork; // Cardano Preprod Testnet (default)
 const APTOS_NETWORK = (process.env.APTOS_NETWORK || "aptos:2") as Network; // Aptos Testnet
+const CASPER_NETWORK = (process.env.CASPER_NETWORK ||
+  "casper:casper-test") as Network; // Casper Testnet
 const CCD_NETWORK = CONCORDIUM_TESTNET_CAIP2; // Concordium Testnet
 const EVM_NETWORK = "eip155:84532"; // Base Sepolia
 const HEDERA_NETWORK = "hedera:testnet"; // Hedera Testnet
@@ -206,21 +214,50 @@ if (aptosPrivateKey) {
 // Register Cardano scheme if a mnemonic and Blockfrost connection are provided
 if (cardanoMnemonic) {
   if (!blockfrostBaseUrl || !blockfrostProjectId) {
-    console.error("❌ CARDANO_MNEMONIC requires BLOCKFROST_PREPROD_URL and BLOCKFROST_PROJECT_ID");
+    console.error(
+      "❌ CARDANO_MNEMONIC requires BLOCKFROST_PREPROD_URL and BLOCKFROST_PROJECT_ID",
+    );
     process.exit(1);
   }
   const cardanoSigner = toFacilitatorCardanoSigner({
     mnemonic: cardanoMnemonic,
     network: CARDANO_NETWORK,
-    provider: { blockfrost: { baseUrl: blockfrostBaseUrl, projectId: blockfrostProjectId } },
+    provider: {
+      blockfrost: {
+        baseUrl: blockfrostBaseUrl,
+        projectId: blockfrostProjectId,
+      },
+    },
     awaitConfirmation: false,
   });
-  console.info(`Cardano Facilitator account: ${cardanoSigner.getAddresses()[0]}`);
+  console.info(
+    `Cardano Facilitator account: ${cardanoSigner.getAddresses()[0]}`,
+  );
   facilitator.register(
     CARDANO_NETWORK,
     new ExactCardanoScheme(cardanoSigner, {
       acceptMempool: process.env.CARDANO_L1_CONFIRMATIONS?.trim() === "-1",
     }),
+  );
+}
+
+// Register Casper scheme if private key is provided.
+if (casperPrivateKey) {
+  const casperSigner = await createFacilitatorCasperSigner(
+    casperPrivateKey,
+    process.env.CASPER_PRIVATE_KEY_ALGORITHM === "secp256k1" ? 2 : 1, // Default to ED25519 if not specified,
+    {
+      rpcUrlConfig: casperRpcUrl
+        ? { [CASPER_NETWORK]: casperRpcUrl }
+        : undefined,
+      speculativeRpcUrlConfig: process.env.CASPER_SPECULATIVE_RPC_URL
+        ? { [`${CASPER_NETWORK}`]: process.env.CASPER_SPECULATIVE_RPC_URL }
+        : undefined,
+    },
+  );
+  facilitator.register(CASPER_NETWORK, new ExactCasperScheme(casperSigner));
+  console.info(
+    `Casper Facilitator account: ${casperSigner.getAddresses(CASPER_NETWORK)[0]}`,
   );
 }
 

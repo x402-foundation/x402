@@ -16,6 +16,7 @@ import { ExactAptosScheme } from "@x402/aptos/exact/server";
 import { ExactAvmScheme } from "@x402/avm/exact/server";
 import { ALGORAND_TESTNET_CAIP2 } from "@x402/avm";
 import { ExactCardanoScheme } from "@x402/cardano/exact/server";
+import { ExactCasperScheme } from "@x402/casper/exact/server";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
@@ -37,6 +38,7 @@ config();
 const avmAddress = process.env.AVM_ADDRESS as string | undefined;
 const cardanoAddress = process.env.CARDANO_ADDRESS as string | undefined;
 const aptosAddress = process.env.APTOS_ADDRESS as string | undefined;
+const casperAddress = process.env.CASPER_ADDRESS as string | undefined;
 const ccdAddress = process.env.CCD_ADDRESS as string | undefined;
 const evmAddress = process.env.EVM_ADDRESS as `0x${string}` | undefined;
 const hederaAddress = process.env.HEDERA_ACCOUNT_ID as string | undefined;
@@ -52,6 +54,7 @@ if (
   !avmAddress &&
   !cardanoAddress &&
   !aptosAddress &&
+  !casperAddress &&
   !ccdAddress &&
   !evmAddress &&
   !svmAddress &&
@@ -63,7 +66,7 @@ if (
   !xrplAddress
 ) {
   console.error(
-    "❌ At least one of AVM_ADDRESS, APTOS_ADDRESS, CARDANO_ADDRESS, CCD_ADDRESS, EVM_ADDRESS, KEETA_ADDRESS, NEAR_ADDRESS, SVM_ADDRESS, STELLAR_ADDRESS, HEDERA_ACCOUNT_ID, TVM_ADDRESS, or XRPL_ADDRESS is required",
+    "❌ At least one of AVM_ADDRESS, APTOS_ADDRESS, CARDANO_ADDRESS, CASPER_ADDRESS, CCD_ADDRESS, EVM_ADDRESS, KEETA_ADDRESS, NEAR_ADDRESS, SVM_ADDRESS, STELLAR_ADDRESS, HEDERA_ACCOUNT_ID, TVM_ADDRESS, or XRPL_ADDRESS is required",
   );
   process.exit(1);
 }
@@ -78,6 +81,12 @@ if (!facilitatorUrl) {
 const AVM_NETWORK = (process.env.AVM_NETWORK || ALGORAND_TESTNET_CAIP2) as Network; // Algorand Testnet
 const CARDANO_NETWORK = "cardano:preprod" as const; // Cardano Preprod Testnet
 const APTOS_NETWORK = (process.env.APTOS_NETWORK || APTOS_TESTNET_CAIP2) as Network; // Aptos Testnet
+const CASPER_NETWORK = (process.env.CASPER_NETWORK || "casper:casper-test") as Network; // Casper Testnet
+const CASPER_AMOUNT = (process.env.CASPER_AMOUNT || "900000") as string; // Casper CEP-18 amount (e.g., "1500000000" for 1.5 WCSPR)
+const CASPER_ASSET = (process.env.CASPER_ASSET ||
+  "0cb6f94834c60510d532b0ae077b18b4100874a4c867396d61c2b13c790ead52") as string; // Defaults to Casper WCSPR CEP-18
+const CASPER_TOKEN_NAME = (process.env.CASPER_TOKEN_NAME || "csprUSD") as string; // Casper CEP-18 token name (e.g., "csprUSD")
+const CASPER_TOKEN_VERSION = (process.env.CASPER_TOKEN_VERSION || "1") as string; // Casper CEP-18 token version
 const CCD_NETWORK = "ccd:4221332d34e1694168c2a0c0b3fd0f27" as const; // Concordium Testnet
 const EVM_NETWORK = "eip155:84532" as const; // Base Sepolia
 const HEDERA_NETWORK = "hedera:testnet" as const; // Hedera Testnet
@@ -129,6 +138,24 @@ if (cardanoAddress) {
     ...(cardanoExtra ? { extra: cardanoExtra } : {}),
   });
 }
+
+if (casperAddress) {
+  accepts.push({
+    scheme: "exact",
+    price: {
+      amount: CASPER_AMOUNT,
+      asset: CASPER_ASSET,
+      extra: {
+        name: CASPER_TOKEN_NAME,
+        version: CASPER_TOKEN_VERSION,
+        decimals: 6,
+      },
+    },
+    network: CASPER_NETWORK,
+    payTo: casperAddress,
+  });
+}
+
 if (ccdAddress) {
   accepts.push({
     scheme: "exact",
@@ -225,6 +252,9 @@ if (aptosAddress) {
 if (cardanoAddress) {
   server.register(CARDANO_NETWORK, new ExactCardanoScheme());
 }
+if (casperAddress) {
+  server.register(CASPER_NETWORK, new ExactCasperScheme());
+}
 if (ccdAddress) {
   server.register(CCD_NETWORK, new ExactConcordiumScheme());
 }
@@ -297,6 +327,9 @@ app.listen(port, () => {
   }
   if (cardanoAddress) {
     console.log(`   Cardano: ${cardanoAddress} on ${CARDANO_NETWORK}`);
+  }
+  if (casperAddress) {
+    console.log(`   Casper: ${casperAddress} on ${CASPER_NETWORK}`);
   }
   if (ccdAddress) {
     console.log(`   CCD: ${ccdAddress} on ${CCD_NETWORK}`);
