@@ -1,9 +1,8 @@
 # Batch-Settlement Client Example
 
-Fetch-based client that pays for a sequence of requests over a single payment channel using the **batch-settlement** EVM scheme. The first request opens the channel with a deposit; subsequent requests pay with a fresh cumulative voucher.
+Fetch-based client that pays for a sequence of requests over a single payment channel using the **batch-settlement** EVM or SVM scheme. The first request opens the channel with a deposit; subsequent requests pay with a fresh cumulative voucher.
 
-
-See the [scheme specification](../../../../specs/schemes/batch-settlement/scheme_batch_settlement_evm.md) and the [scheme README](../../../../typescript/packages/mechanisms/evm/src/batch-settlement/README.md) for protocol details.
+See the [EVM specification](../../../../specs/schemes/batch-settlement/scheme_batch_settlement_evm.md), [SVM specification](../../../../specs/schemes/batch-settlement/scheme_batch_settlement_svm.md), and [EVM scheme README](../../../../typescript/packages/mechanisms/evm/src/batch-settlement/README.md) for protocol details.
 
 ## Voucher Signer Delegation
 
@@ -51,13 +50,13 @@ const scheme = new BatchSettlementEvmScheme(signer, {
 
 - Node.js v20+, pnpm v10
 - A running [batch-settlement server](../../servers/batch-settlement)
-- A funded EVM `EVM_PRIVATE_KEY` holding the deposit token (USDC on Base Sepolia by default)
+- A funded `EVM_PRIVATE_KEY` or `SVM_PRIVATE_KEY` holding the deposit token
 
 ## Setup
 
 ```bash
 cp .env-local .env
-# fill EVM_PRIVATE_KEY (and optionally EVM_VOUCHER_SIGNER_PRIVATE_KEY)
+# fill EVM_PRIVATE_KEY or SVM_PRIVATE_KEY
 
 cd ../../
 pnpm install && pnpm build
@@ -77,9 +76,12 @@ CONCURRENCY=3 NUMBER_OF_ROUNDS=3 pnpm dev:concurrent
 ## Environment
 
 | Variable | Required | Description |
-|----------|----------|-------------|
-| `EVM_PRIVATE_KEY` | yes | Payer key (funds the deposit) |
+| --- | --- | --- |
+| `EVM_PRIVATE_KEY` | one of | EVM payer key (funds the deposit) |
 | `EVM_VOUCHER_SIGNER_PRIVATE_KEY` | no | Dedicated voucher-signing EOA (committed as `payerAuthorizer`) |
+| `SVM_PRIVATE_KEY` | one of | Base58-encoded SVM payer keypair bytes |
+| `SVM_RPC_URL` | no | SVM RPC endpoint override |
+| `SVM_DEPOSIT_AMOUNT` | no | Fixed SVM deposit target in atomic units; overrides `extra.minDeposit` and `DEPOSIT_MULTIPLIER` |
 | `RESOURCE_SERVER_URL` | no | Server base URL (default `http://localhost:4021`) |
 | `ENDPOINT_PATH` | no | Path on the server (default `/weather`) |
 | `CHANNEL_SALT` | no | `bytes32` salt for channel id; change to open a fresh channel |
@@ -89,4 +91,4 @@ CONCURRENCY=3 NUMBER_OF_ROUNDS=3 pnpm dev:concurrent
 | `CONCURRENCY` | no | How many channels to run in parallel in `pnpm dev:concurrent` (default 3) |
 | `NUMBER_OF_ROUNDS` | no | How many concurrent rounds to run in `pnpm dev:concurrent` (default 3) |
 | `REFUND_AFTER_REQUESTS` | no | If `true`, issue a self-contained refund via `scheme.refund(url)` after the request loop |
-| `REFUND_AMOUNT` | no | Partial refund amount in base units; omit for a full refund |
+| `REFUND_AMOUNT` | no | Partial EVM refund amount in base units; omit for a full refund. SVM supports full refund only. |

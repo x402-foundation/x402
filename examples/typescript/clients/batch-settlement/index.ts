@@ -1,7 +1,10 @@
+import { base58 } from "@scure/base";
+import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { toClientEvmSigner } from "@x402/evm";
 import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/client";
 import { FileClientChannelStorage } from "@x402/evm/batch-settlement/client/file-storage";
 import { x402Client, wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
+import { BatchSvmScheme } from "@x402/svm/batch-settlement/client";
 import { config } from "dotenv";
 import { createPublicClient, http } from "viem";
 import { baseSepolia } from "viem/chains";
@@ -10,12 +13,7 @@ import { privateKeyToAccount } from "viem/accounts";
 config();
 
 const evmPrivateKeyRaw = process.env.EVM_PRIVATE_KEY?.trim();
-if (!evmPrivateKeyRaw) {
-  console.error("EVM_PRIVATE_KEY environment variable is required");
-  process.exit(1);
-}
-const evmPrivateKey = evmPrivateKeyRaw as `0x${string}`;
-// Blank `KEY=` in .env is "" not undefined — treat as unset (same as optional Go env).
+const svmPrivateKeyRaw = process.env.SVM_PRIVATE_KEY?.trim();
 const evmVoucherSignerPrivateKey = process.env.EVM_VOUCHER_SIGNER_PRIVATE_KEY?.trim() || undefined;
 const baseURL = process.env.RESOURCE_SERVER_URL || "http://localhost:4021";
 const endpointPath = process.env.ENDPOINT_PATH || "/weather";
@@ -27,6 +25,13 @@ const numberOfRequests = Number(process.env.NUMBER_OF_REQUESTS ?? "3");
 const refundAfterRequests = process.env.REFUND_AFTER_REQUESTS === "true";
 const refundAmount = process.env.REFUND_AMOUNT;
 const depositMultiplier = Number(process.env.DEPOSIT_MULTIPLIER ?? "5");
+const svmRpcUrl = process.env.SVM_RPC_URL;
+const svmDepositAmount = process.env.SVM_DEPOSIT_AMOUNT;
+
+if (!evmPrivateKeyRaw && !svmPrivateKeyRaw) {
+  console.error("At least one of EVM_PRIVATE_KEY or SVM_PRIVATE_KEY is required");
+  process.exit(1);
+}
 
 /**
  * Runs sequential paid requests against the configured resource server endpoint.
@@ -34,40 +39,55 @@ const depositMultiplier = Number(process.env.DEPOSIT_MULTIPLIER ?? "5");
  * @returns Resolves after all configured requests complete.
  */
 async function main(): Promise<void> {
-  const account = privateKeyToAccount(evmPrivateKey);
-  const publicClient = createPublicClient({
-    chain: baseSepolia,
-    transport: http(),
-  });
-  const signer = toClientEvmSigner(account, publicClient);
-
-  const voucherSigner = evmVoucherSignerPrivateKey
-    ? toClientEvmSigner(privateKeyToAccount(evmVoucherSignerPrivateKey as `0x${string}`))
-    : undefined;
-
-  const batchedScheme = new BatchSettlementEvmScheme(signer, {
-    depositPolicy: {
-      depositMultiplier,
-    },
-    salt: channelSalt,
-    ...(voucherSigner ? { voucherSigner } : {}),
-    ...(storageDir ? { storage: new FileClientChannelStorage({ directory: storageDir }) } : {}),
-  });
-
-  const client = new x402Client();
-  client.register("eip155:*", batchedScheme);
-  // Per-request cap on PaymentRequirements.amount (default "$1" if omitted).
-  // Deposit ceiling is this cap × depositMultiplier ($5 at the defaults).
-  client.setSpendControls({
+  const client = new x402Client().setSpendControls({
     maxAmountPerPayment: "$1",
   });
+  let evmScheme: BatchSettlementEvmScheme | undefined;
+  let svmScheme: BatchSvmScheme | undefined;
+
+  if (evmPrivateKeyRaw) {
+    const evmPrivateKey = evmPrivateKeyRaw as `0x${string}`;
+    const account = privateKeyToAccount(evmPrivateKey);
+    const publicClient = createPublicClient({
+      chain: baseSepolia,
+      transport: http(),
+    });
+    const signer = toClientEvmSigner(account, publicClient);
+
+    const voucherSigner = evmVoucherSignerPrivateKey
+      ? toClientEvmSigner(privateKeyToAccount(evmVoucherSignerPrivateKey as `0x${string}`))
+      : undefined;
+
+    evmScheme = new BatchSettlementEvmScheme(signer, {
+      depositPolicy: {
+        depositMultiplier,
+      },
+      salt: channelSalt,
+      ...(voucherSigner ? { voucherSigner } : {}),
+      ...(storageDir ? { storage: new FileClientChannelStorage({ directory: storageDir }) } : {}),
+    });
+    client.register("eip155:*", evmScheme);
+
+    console.log("EVM payer:", signer.address);
+    console.log("EVM payerAuthorizer:", voucherSigner?.address ?? signer.address);
+  }
+
+  if (svmPrivateKeyRaw) {
+    const svmSigner = await createKeyPairSignerFromBytes(base58.decode(svmPrivateKeyRaw));
+    svmScheme = new BatchSvmScheme(svmSigner, {
+      depositPolicy: { depositMultiplier },
+      ...(svmRpcUrl ? { rpcUrl: svmRpcUrl } : {}),
+      ...(svmDepositAmount ? { depositAmount: svmDepositAmount } : {}),
+    });
+    client.register("solana:*", svmScheme);
+
+    console.log("SVM payer:", svmSigner.address);
+  }
 
   const fetchWithPayment = wrapFetchWithPayment(fetch, client);
   const httpClient = new x402HTTPClient(client);
 
-  console.log(`Base URL: ${baseURL}, endpoint: ${endpointPath}`);
-  console.log("payer:", signer.address);
-  console.log("payerAuthorizer:", voucherSigner?.address ?? signer.address, "\n");
+  console.log(`Base URL: ${baseURL}, endpoint: ${endpointPath}\n`);
 
   for (let i = 0; i < numberOfRequests; i++) {
     const requestT0 = performance.now();
@@ -89,15 +109,24 @@ async function main(): Promise<void> {
   }
 
   if (refundAfterRequests) {
+    if (!evmScheme && !svmScheme) {
+      console.warn("No batch-settlement scheme is available to refund");
+      return;
+    }
+    if (refundAmount && !evmScheme) {
+      throw new Error("SVM batch settlement supports only a full refund");
+    }
     console.log(
       refundAmount
         ? `REQUESTING PARTIAL REFUND of ${refundAmount} base units`
         : "REQUESTING FULL REFUND of remaining channel balance",
     );
     const refundT0 = performance.now();
-    const settle = await batchedScheme.refund(url, {
-      ...(refundAmount ? { amount: refundAmount } : {}),
-    });
+    const settle = evmScheme
+      ? await evmScheme.refund(url, {
+          ...(refundAmount ? { amount: refundAmount } : {}),
+        })
+      : await svmScheme!.refund(url);
     console.log(JSON.stringify(settle, null, 2));
     console.log(`Refund completed in ${((performance.now() - refundT0) / 1000).toFixed(3)}s`);
   }
