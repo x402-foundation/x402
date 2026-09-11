@@ -17,7 +17,13 @@ from x402.http.clients.httpx import (
 )
 from x402.http.utils import encode_payment_required_header, encode_payment_response_header
 from x402.http.x402_http_client import x402HTTPClient
-from x402.schemas import PaymentPayload, PaymentRequired, PaymentRequirements, SettleResponse
+from x402.schemas import (
+    PaymentPayload,
+    PaymentRequired,
+    PaymentRequirements,
+    ResourceInfo,
+    SettleResponse,
+)
 from x402.schemas.hooks import PaymentRequiredHeadersResult, RecoveredResponseResult
 
 # Skip tests if httpx not installed
@@ -129,6 +135,7 @@ class TestX402AsyncTransport:
 
         # Create payment required response
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )
@@ -163,6 +170,7 @@ class TestX402AsyncTransport:
         """Streaming request bodies are identical on the initial send and retry."""
         mock_client = MockX402Client()
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )
@@ -202,6 +210,7 @@ class TestX402AsyncTransport:
         mock_client = MockX402Client()
 
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )
@@ -253,6 +262,7 @@ class TestX402AsyncTransport:
         mock_client = MockX402Client()
 
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )
@@ -303,6 +313,7 @@ class TestX402AsyncTransport:
         )
 
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )
@@ -343,6 +354,7 @@ class TestX402AsyncTransport:
         http_client.on_payment_required(capture_url)
 
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )
@@ -371,6 +383,7 @@ class TestX402AsyncTransport:
         """Recovery retry creates a fresh payload after hook signals recovered."""
         mock_client = MockRecoveringClient()
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )
@@ -633,6 +646,7 @@ class TestConsecutivePayments:
         mock_client = MockX402ClientWithCounter()
 
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )
@@ -669,6 +683,7 @@ class TestConsecutivePayments:
         mock_client = MockX402ClientWithCounter()
 
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )
@@ -700,6 +715,7 @@ class TestConsecutivePayments:
         mock_client = MockX402ClientWithCounter()
 
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )
@@ -729,6 +745,7 @@ class TestConsecutivePayments:
         mock_client = MockX402ClientWithCounter()
 
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )
@@ -848,6 +865,7 @@ class TestErrorHandlingTransport:
         mock_client.create_payment_payload = AsyncMock(side_effect=Exception("Client error"))
 
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )
@@ -873,6 +891,7 @@ class TestErrorHandlingTransport:
         )
 
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )

@@ -1331,6 +1331,7 @@ class x402HTTPServerBase:
         if not current_url and payment_required.resource:
             current_url = payment_required.resource.url or ""
 
+        payment_required.validate_resource()
         payment_data = payment_required.model_dump(by_alias=True, exclude_none=True)
 
         x402_config = {
@@ -1366,6 +1367,7 @@ class x402HTTPServerBase:
                 app_logo = f'<img src="{html.escape(config.app_logo)}" alt="{html.escape(config.app_name or "")}" style="max-width: 200px;">'
             app_name = config.app_name or ""
 
+        payment_required.validate_resource()
         payment_data = payment_required.model_dump_json(by_alias=True, exclude_none=True)
 
         title = f"{html.escape(app_name)} - Payment Required" if app_name else "Payment Required"

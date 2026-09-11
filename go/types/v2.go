@@ -2,6 +2,7 @@ package types
 
 import (
 	"encoding/json"
+	"fmt"
 )
 
 // PaymentPayload represents a v2 payment payload structure
@@ -40,13 +41,26 @@ func (r PaymentRequirements) GetPayTo() string                 { return r.PayTo 
 func (r PaymentRequirements) GetMaxTimeoutSeconds() int        { return r.MaxTimeoutSeconds }
 func (r PaymentRequirements) GetExtra() map[string]interface{} { return r.Extra }
 
-// PaymentRequired represents a v2 402 response structure
+// PaymentRequired represents a v2 402 response structure.
+// Spec section 5.1.2 requires resource on the wire. Keep Resource as a pointer
+// so inbound JSON can still be decoded, but MarshalJSON refuses a missing or
+// empty URL so Go servers cannot emit the v1-shaped envelope TypeScript rejects.
 type PaymentRequired struct {
 	X402Version int                    `json:"x402Version"`
 	Error       string                 `json:"error,omitempty"`
 	Resource    *ResourceInfo          `json:"resource,omitempty"`
 	Accepts     []PaymentRequirements  `json:"accepts"`
 	Extensions  map[string]interface{} `json:"extensions,omitempty"`
+}
+
+// MarshalJSON requires a non-empty resource.url (spec 5.1.2 / TS PaymentRequiredV2Schema).
+func (p PaymentRequired) MarshalJSON() ([]byte, error) {
+	// v1 bodies reused this struct in tests/clients and do not require resource.
+	if p.X402Version != 1 && (p.Resource == nil || p.Resource.URL == "") {
+		return nil, fmt.Errorf("PaymentRequired.resource.url is required")
+	}
+	type alias PaymentRequired
+	return json.Marshal(alias(p))
 }
 
 // ResourceInfo describes the resource being accessed.
