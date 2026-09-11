@@ -120,6 +120,7 @@ async function buildStaticTransferPayload(args: {
   authority: { address: Address; signMessages: (messages: never[]) => Promise<unknown[]> };
   amount: bigint;
   discriminator?: number;
+  leading?: IInstruction[];
   trailing?: IInstruction[];
 }) {
   const data = new Uint8Array(10);
@@ -130,6 +131,7 @@ async function buildStaticTransferPayload(args: {
   const tx = await buildTransaction(args.feePayer, [
     { programAddress: COMPUTE_BUDGET_PROGRAM, data: new Uint8Array([2, 160, 134, 1, 0]) },
     { programAddress: COMPUTE_BUDGET_PROGRAM, data: new Uint8Array([3, 16, 39, 0, 0, 0, 0, 0, 0]) },
+    ...(args.leading ?? []),
     {
       programAddress: TOKEN_PROGRAM_ADDRESS,
       accounts: [
@@ -1086,6 +1088,145 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
     // Layout failure is recoverable: Path 2 runs and validates via simulation.
     expect(result.isValid).toBe(true);
     expect(mockSigner.simulateTransactionWithInnerInstructions).toHaveBeenCalled();
+  });
+
+  it("accepts a Phantom transaction that brackets the transfer with Lighthouse guards on Path 1", async () => {
+    const { ExactSvmScheme } = await import("../../src/exact/facilitator/scheme");
+
+    const feePayer = await generateKeyPairSigner();
+    const payTo = await generateKeyPairSigner();
+    const payer = await generateKeyPairSigner();
+    const source = await generateKeyPairSigner();
+
+    const expectedAta = payTo.address;
+    mockAtaMap[payTo.address] = expectedAta;
+
+    // Current Phantom shape (see #2097): three Lighthouse guards inserted
+    // before the TransferChecked and a fourth appended after it.
+    const guard = (size: number): IInstruction => ({
+      programAddress: LIGHTHOUSE_PROGRAM_ADDRESS as Address,
+      data: new Uint8Array(size).fill(1),
+    });
+    const txBase64 = await buildStaticTransferPayload({
+      feePayer: feePayer.address,
+      source: source.address,
+      mint: USDC_DEVNET_ADDRESS as Address,
+      destination: expectedAta,
+      authority: payer,
+      amount: 100000n,
+      leading: [guard(17), guard(52), guard(16)],
+      trailing: [guard(27)],
+    });
+
+    const mockSigner = {
+      getAddresses: vi.fn().mockReturnValue([feePayer.address]),
+      getSigner: vi.fn().mockReturnValue(feePayer),
+      signTransaction: vi.fn().mockResolvedValue(txBase64),
+      simulateTransaction: vi.fn().mockResolvedValue(undefined),
+      sendTransaction: vi.fn(),
+      confirmTransaction: vi.fn(),
+      getConfirmedTransactionInnerInstructions: vi.fn().mockResolvedValue(null),
+      getTokenAccountBalance: vi.fn().mockResolvedValue(null),
+      fetchAddressLookupTables: vi.fn().mockResolvedValue({}),
+      simulateTransactionWithInnerInstructions: vi
+        .fn()
+        .mockResolvedValue({ innerInstructions: [] }),
+    };
+
+    const scheme = new ExactSvmScheme(mockSigner as never, undefined, {
+      enableSmartWalletVerification: true,
+    });
+
+    const accepted = {
+      scheme: "exact",
+      network: SOLANA_DEVNET_CAIP2,
+      asset: USDC_DEVNET_ADDRESS,
+      amount: "100000",
+      payTo: payTo.address,
+      maxTimeoutSeconds: 60,
+      extra: { feePayer: feePayer.address },
+    };
+
+    const result = await scheme.verify(
+      {
+        x402Version: 2,
+        resource: { url: "http://test.com", description: "test", mimeType: "application/json" },
+        accepted,
+        payload: { transaction: txBase64 },
+      } as never,
+      accepted as never,
+    );
+
+    expect(result.isValid).toBe(true);
+    expect(result.payer).toBe(payer.address);
+    // Path 1 accepted the shape; no simulation fallback was needed.
+    expect(mockSigner.simulateTransactionWithInnerInstructions).not.toHaveBeenCalled();
+  });
+
+  it("rejects more Lighthouse guards than Path 1 tolerates", async () => {
+    const { ExactSvmScheme } = await import("../../src/exact/facilitator/scheme");
+
+    const feePayer = await generateKeyPairSigner();
+    const payTo = await generateKeyPairSigner();
+    const payer = await generateKeyPairSigner();
+    const source = await generateKeyPairSigner();
+
+    const expectedAta = payTo.address;
+    mockAtaMap[payTo.address] = expectedAta;
+
+    const guard: IInstruction = {
+      programAddress: LIGHTHOUSE_PROGRAM_ADDRESS as Address,
+      data: new Uint8Array([0]),
+    };
+    const txBase64 = await buildStaticTransferPayload({
+      feePayer: feePayer.address,
+      source: source.address,
+      mint: USDC_DEVNET_ADDRESS as Address,
+      destination: expectedAta,
+      authority: payer,
+      amount: 100000n,
+      leading: [guard, guard, guard],
+      trailing: [guard, guard],
+    });
+
+    const mockSigner = {
+      getAddresses: vi.fn().mockReturnValue([feePayer.address]),
+      getSigner: vi.fn().mockReturnValue(feePayer),
+      signTransaction: vi.fn().mockResolvedValue(txBase64),
+      simulateTransaction: vi.fn().mockResolvedValue(undefined),
+      sendTransaction: vi.fn(),
+      confirmTransaction: vi.fn(),
+      getConfirmedTransactionInnerInstructions: vi.fn().mockResolvedValue(null),
+      getTokenAccountBalance: vi.fn().mockResolvedValue(null),
+      fetchAddressLookupTables: vi.fn().mockResolvedValue({}),
+      simulateTransactionWithInnerInstructions: vi
+        .fn()
+        .mockResolvedValue({ innerInstructions: [] }),
+    };
+
+    const scheme = new ExactSvmScheme(mockSigner as never, undefined, {});
+
+    const accepted = {
+      scheme: "exact",
+      network: SOLANA_DEVNET_CAIP2,
+      asset: USDC_DEVNET_ADDRESS,
+      amount: "100000",
+      payTo: payTo.address,
+      maxTimeoutSeconds: 60,
+      extra: { feePayer: feePayer.address },
+    };
+
+    const result = await scheme.verify(
+      {
+        x402Version: 2,
+        resource: { url: "http://test.com", description: "test", mimeType: "application/json" },
+        accepted,
+        payload: { transaction: txBase64 },
+      } as never,
+      accepted as never,
+    );
+
+    expect(result.isValid).toBe(false);
   });
 
   it("accepts a 7-instruction Phantom transaction (3 Lighthouse) on Path 1 without Path 2", async () => {
