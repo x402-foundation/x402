@@ -8,6 +8,30 @@ MCP (Model Context Protocol) integration for the x402 payment protocol. This pac
 go get github.com/x402-foundation/x402/go/v2/mcp
 ```
 
+This package requires Go 1.25 or newer and uses `modelcontextprotocol/go-sdk`
+v1.7.0, supporting MCP protocol version `2026-07-28` while retaining the SDK's
+backward compatibility with earlier protocol versions.
+
+## MCP 2026-07-28 transport configuration
+
+The `2026-07-28` protocol is sessionless. Streamable HTTP servers must enable
+stateless mode to negotiate it. A stateful Streamable HTTP server remains
+compatible, but the SDK negotiates `2025-11-25` instead.
+
+```go
+handler := mcpsdk.NewStreamableHTTPHandler(
+    func(*http.Request) *mcpsdk.Server { return mcpServer },
+    &mcpsdk.StreamableHTTPOptions{Stateless: true},
+)
+
+transport := &mcpsdk.StreamableClientTransport{Endpoint: serverURL}
+session, err := mcpClient.Connect(ctx, transport, nil)
+```
+
+The official SDK performs `server/discover`, version negotiation, and injection
+of the required per-request MCP metadata. The x402 wrapper adds its payment
+metadata without replacing those protocol fields.
+
 ## Quick Start
 
 ### Server - Using Payment Wrapper
