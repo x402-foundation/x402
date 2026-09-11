@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	x402 "github.com/x402-foundation/x402/go/v2"
@@ -20,9 +21,18 @@ type mockMCPCaller struct {
 	callToolResults []MCPToolResult // For multi-call scenarios
 	callToolErrors  []error         // For multi-call scenarios
 	callCount       int
+	timeouts        []time.Duration // remaining until ctx deadline at each CallTool; 0 if none
+	hasDeadline     []bool
 }
 
 func (m *mockMCPCaller) CallTool(ctx context.Context, params *mcp.CallToolParams) (*mcp.CallToolResult, error) {
+	if d, ok := ctx.Deadline(); ok {
+		m.hasDeadline = append(m.hasDeadline, true)
+		m.timeouts = append(m.timeouts, time.Until(d))
+	} else {
+		m.hasDeadline = append(m.hasDeadline, false)
+		m.timeouts = append(m.timeouts, 0)
+	}
 	var mcpResult MCPToolResult
 	if len(m.callToolResults) > 0 {
 		idx := m.callCount
@@ -1096,4 +1106,142 @@ func (m *mockSchemeNetworkClientV1) FindDefaultAsset(asset string, network x402.
 
 func (m *mockSchemeNetworkClientV1) CreatePaymentPayload(ctx context.Context, requirements types.PaymentRequirementsV1) (types.PaymentPayloadV1, error) {
 	return types.PaymentPayloadV1{X402Version: 1, Scheme: m.scheme, Network: requirements.Network, Payload: map[string]interface{}{"signature": "0xmock"}}, nil
+}
+
+func assertApproxTimeout(t *testing.T, got, want time.Duration) {
+	t.Helper()
+	delta := got - want
+	if delta < 0 {
+		delta = -delta
+	}
+	if delta > 2*time.Second {
+		t.Errorf("timeout remaining %v, want ~%v", got, want)
+	}
+}
+
+func TestX402MCPClient_CallTool_ProbeTimeoutDefault300s(t *testing.T) {
+	mockCaller := &mockMCPCaller{
+		callToolResult: MCPToolResult{
+			Content: []MCPContentItem{{Type: "text", Text: "pong"}},
+		},
+	}
+	client := NewX402MCPClient(mockCaller, x402.Newx402Client(), Options{})
+
+	if _, err := client.CallTool(context.Background(), "ping", map[string]interface{}{}); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if len(mockCaller.hasDeadline) != 1 || !mockCaller.hasDeadline[0] {
+		t.Fatal("expected probe CallTool ctx to have a deadline")
+	}
+	assertApproxTimeout(t, mockCaller.timeouts[0], 300*time.Second)
+}
+
+func TestX402MCPClient_CallTool_PaidTimeoutFromAcceptMaxTimeoutSeconds(t *testing.T) {
+	paymentRequired := types.PaymentRequired{
+		X402Version: 2,
+		Accepts: []types.PaymentRequirements{{
+			Scheme:            "exact",
+			Network:           "eip155:84532",
+			Amount:            "1000",
+			Asset:             "USDC",
+			PayTo:             "0xrecipient",
+			MaxTimeoutSeconds: 120,
+		}},
+	}
+	structuredBytes, _ := json.Marshal(paymentRequired)
+	var structuredContent map[string]interface{}
+	if err := json.Unmarshal(structuredBytes, &structuredContent); err != nil {
+		t.Fatalf("Failed to unmarshal structured content: %v", err)
+	}
+
+	mockCaller := &mockMCPCaller{
+		callToolResults: []MCPToolResult{
+			{IsError: true, StructuredContent: structuredContent},
+			{
+				Content: []MCPContentItem{{Type: "text", Text: "success"}},
+				Meta: map[string]interface{}{
+					MCP_PAYMENT_RESPONSE_META_KEY: map[string]interface{}{
+						"success": true, "transaction": "0xtxhash", "network": "eip155:84532",
+					},
+				},
+			},
+		},
+	}
+	paymentClient := x402.Newx402Client()
+	paymentClient.Register("eip155:84532", &mockSchemeNetworkClient{scheme: "exact"})
+	client := NewX402MCPClient(mockCaller, paymentClient, Options{AutoPayment: BoolPtr(true)})
+
+	if _, err := client.CallTool(context.Background(), "paid_tool", map[string]interface{}{}); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if len(mockCaller.hasDeadline) != 2 {
+		t.Fatalf("expected 2 CallTool ctxs, got %d", len(mockCaller.hasDeadline))
+	}
+	if !mockCaller.hasDeadline[0] || !mockCaller.hasDeadline[1] {
+		t.Fatal("expected probe and paid CallTool ctxs to have deadlines")
+	}
+	assertApproxTimeout(t, mockCaller.timeouts[0], 300*time.Second)
+	assertApproxTimeout(t, mockCaller.timeouts[1], 120*time.Second)
+}
+
+func TestX402MCPClient_CallToolWithPayment_TimeoutFromAccept(t *testing.T) {
+	mockCaller := &mockMCPCaller{
+		callToolResult: MCPToolResult{
+			Content: []MCPContentItem{{Type: "text", Text: "success"}},
+		},
+	}
+	client := NewX402MCPClient(mockCaller, x402.Newx402Client(), Options{})
+	payload := types.PaymentPayload{
+		X402Version: 2,
+		Accepted:    types.PaymentRequirements{MaxTimeoutSeconds: 90},
+		Payload:     map[string]interface{}{"signature": "0x123"},
+	}
+
+	if _, err := client.CallToolWithPayment(context.Background(), "paid_tool", map[string]interface{}{}, payload); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if len(mockCaller.hasDeadline) != 1 || !mockCaller.hasDeadline[0] {
+		t.Fatal("expected paid CallTool ctx to have a deadline")
+	}
+	assertApproxTimeout(t, mockCaller.timeouts[0], 90*time.Second)
+}
+
+func TestX402MCPClient_CallToolWithPayment_DefaultTimeoutWhenAcceptOmitsMaxTimeoutSeconds(t *testing.T) {
+	mockCaller := &mockMCPCaller{
+		callToolResult: MCPToolResult{
+			Content: []MCPContentItem{{Type: "text", Text: "success"}},
+		},
+	}
+	client := NewX402MCPClient(mockCaller, x402.Newx402Client(), Options{})
+	payload := types.PaymentPayload{
+		X402Version: 2,
+		Payload:     map[string]interface{}{"signature": "0x123"},
+	}
+
+	if _, err := client.CallToolWithPayment(context.Background(), "paid_tool", map[string]interface{}{}, payload); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if len(mockCaller.hasDeadline) != 1 || !mockCaller.hasDeadline[0] {
+		t.Fatal("expected paid CallTool ctx to have a deadline")
+	}
+	assertApproxTimeout(t, mockCaller.timeouts[0], 300*time.Second)
+}
+
+func TestX402MCPClient_CallTool_RespectsCallerDeadline(t *testing.T) {
+	mockCaller := &mockMCPCaller{
+		callToolResult: MCPToolResult{
+			Content: []MCPContentItem{{Type: "text", Text: "pong"}},
+		},
+	}
+	client := NewX402MCPClient(mockCaller, x402.Newx402Client(), Options{})
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if _, err := client.CallTool(ctx, "ping", map[string]interface{}{}); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if len(mockCaller.hasDeadline) != 1 || !mockCaller.hasDeadline[0] {
+		t.Fatal("expected CallTool ctx to keep the caller deadline")
+	}
+	assertApproxTimeout(t, mockCaller.timeouts[0], 15*time.Second)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	x402 "github.com/x402-foundation/x402/go/v2"
@@ -83,13 +84,18 @@ func (c *X402MCPClient) OnAfterPayment(hook AfterPaymentHook) *X402MCPClient {
 }
 
 // CallTool calls a tool with automatic payment handling.
+// The initial 402 probe uses a 300s timeout unless ctx already has a deadline.
+// Paid retries size their timeout from the accept's maxTimeoutSeconds (default 300s).
 func (c *X402MCPClient) CallTool(ctx context.Context, name string, args map[string]interface{}) (*MCPToolCallResult, error) {
 	params := &mcp.CallToolParams{
 		Name:      name,
 		Arguments: args,
 	}
 
-	result, err := c.caller.CallTool(ctx, params)
+	probeCtx, probeCancel := withTimeoutIfNone(ctx, 300*time.Second)
+	defer probeCancel()
+
+	result, err := c.caller.CallTool(probeCtx, params)
 	if err != nil {
 		return nil, fmt.Errorf("tool call failed: %w", err)
 	}
@@ -200,7 +206,14 @@ func (c *X402MCPClient) callToolWithPayload(ctx context.Context, name string, ar
 		Meta:      mcp.Meta{MCP_PAYMENT_META_KEY: payload},
 	}
 
-	result, err := c.caller.CallTool(ctx, params)
+	timeoutSeconds := payload.Accepted.MaxTimeoutSeconds
+	if timeoutSeconds == 0 {
+		timeoutSeconds = 300
+	}
+	paidCtx, paidCancel := withTimeoutIfNone(ctx, time.Duration(timeoutSeconds)*time.Second)
+	defer paidCancel()
+
+	result, err := c.caller.CallTool(paidCtx, params)
 	if err != nil {
 		return nil, fmt.Errorf("paid tool call failed: %w", err)
 	}
@@ -655,4 +668,13 @@ func paymentRequiredV1ToView(pr *types.PaymentRequiredV1) types.PaymentRequired 
 		})
 	}
 	return types.PaymentRequired{X402Version: 1, Error: pr.Error, Accepts: accepts}
+}
+
+// withTimeoutIfNone applies timeout when ctx has no deadline. A caller deadline
+// is treated as an explicit timeout override.
+func withTimeoutIfNone(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, timeout)
 }
