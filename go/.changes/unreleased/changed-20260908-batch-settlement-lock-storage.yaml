@@ -1,0 +1,3 @@
+kind: changed
+body: Move batch-settlement admission locks off the durable ChannelSession record onto ChannelLockStorage. pendingRequest is removed from ChannelSession (breaking for custom storage implementors; leftover pendingRequest JSON is ignored, no backfill). InMemory and File implement both roles; pass LockStorage to mix backends.
+time: 2026-09-08T14:00:00Z

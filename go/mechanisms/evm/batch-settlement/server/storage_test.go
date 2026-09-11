@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 )
@@ -183,6 +184,27 @@ func TestInMemoryChannelStorage_MixedCaseCanonicalGet(t *testing.T) {
 	}
 	if got == nil || got.ChargedCumulativeAmount != "7" {
 		t.Fatalf("mixed-case Get missed lowercased key: %+v", got)
+	}
+}
+
+func TestInMemoryChannelStorage_ExpiredAdmissionLockIsFree(t *testing.T) {
+	s := NewInMemoryChannelStorage()
+	ok, err := s.Acquire(testChA, "old", 1)
+	if err != nil || !ok {
+		t.Fatalf("Acquire old: ok=%v err=%v", ok, err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	held, err := s.IsHeld(testChA, "")
+	if err != nil || held {
+		t.Fatalf("expired lock should be free: held=%v err=%v", held, err)
+	}
+	ok, err = s.Acquire(testChA, "new", 60_000)
+	if err != nil || !ok {
+		t.Fatalf("Acquire new: ok=%v err=%v", ok, err)
+	}
+	held, err = s.IsHeld(testChA, "new")
+	if err != nil || !held {
+		t.Fatalf("new lock should be held: held=%v err=%v", held, err)
 	}
 }
 

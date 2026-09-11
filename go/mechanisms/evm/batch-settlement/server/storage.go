@@ -2,19 +2,10 @@ package server
 
 import (
 	"sync"
+	"time"
 
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 )
-
-// PendingRequest reserves a channel against concurrent same-channel requests.
-// A request is allowed when no live (unexpired) pending entry exists. Cleanup
-// hooks clear the reservation; the bounded TTL guarantees release if cleanup
-// never runs.
-type PendingRequest struct {
-	PendingId          string `json:"pendingId"`
-	SignedMaxClaimable string `json:"signedMaxClaimable"`
-	ExpiresAt          int64  `json:"expiresAt"` // unix millis
-}
 
 // ChannelSession holds per-channel session state on the server side.
 type ChannelSession struct {
@@ -32,8 +23,6 @@ type ChannelSession struct {
 	// withdrawRequestedAt/refundNonce were last refreshed from onchain state.
 	// Used by the local voucher verifier to decide whether to skip facilitator verify.
 	OnchainSyncedAt int64 `json:"onchainSyncedAt,omitempty"`
-	// PendingRequest is the in-flight reservation for this channel, if any.
-	PendingRequest *PendingRequest `json:"pendingRequest,omitempty"`
 }
 
 // ChannelUpdateStatus describes the outcome of an UpdateChannel call.
@@ -71,6 +60,24 @@ type SessionStorage interface {
 	UpdateChannel(channelId string, update func(current *ChannelSession) *ChannelSession) (*ChannelUpdateResult, error)
 }
 
+// ChannelLockStorage is a best-effort per-channel admission lock. Loss or
+// unavailability degrades to optimistic mode: the durable charge CAS still
+// serializes commits.
+type ChannelLockStorage interface {
+	// Acquire is SET NX + TTL. Value is pendingId. Expired keys are free.
+	Acquire(channelId string, pendingId string, ttlMs int64) (bool, error)
+	// Release is compare-and-delete: releases only when pendingId still holds.
+	Release(channelId string, pendingId string) error
+	// IsHeld reports any live lock, or this pendingId when provided (empty
+	// pendingId means any live lock).
+	IsHeld(channelId string, pendingId string) (bool, error)
+}
+
+type admissionLock struct {
+	PendingId string `json:"pendingId"`
+	ExpiresAt int64  `json:"expiresAt"`
+}
+
 // InMemoryChannelStorage is a volatile in-memory implementation of SessionStorage.
 //
 // Note on unbounded growth: the per-channel lock map is allocated lazily and
@@ -79,16 +86,18 @@ type SessionStorage interface {
 // Delete, this map will grow over time. Production deployments backed by a
 // persistent store (e.g. FileChannelStorage) should prefer Delete-on-drain.
 type InMemoryChannelStorage struct {
-	mu       sync.Mutex
-	sessions map[string]*ChannelSession
-	locks    map[string]*sync.Mutex // per-channel locks for UpdateChannel
+	mu             sync.Mutex
+	sessions       map[string]*ChannelSession
+	locks          map[string]*sync.Mutex // per-channel locks for UpdateChannel
+	admissionLocks map[string]admissionLock
 }
 
 // NewInMemoryChannelStorage creates a new in-memory server session storage.
 func NewInMemoryChannelStorage() *InMemoryChannelStorage {
 	return &InMemoryChannelStorage{
-		sessions: make(map[string]*ChannelSession),
-		locks:    make(map[string]*sync.Mutex),
+		sessions:       make(map[string]*ChannelSession),
+		locks:          make(map[string]*sync.Mutex),
+		admissionLocks: make(map[string]admissionLock),
 	}
 }
 
@@ -211,4 +220,50 @@ func (s *InMemoryChannelStorage) UpdateChannel(channelId string, update func(cur
 	s.sessions[key] = &cp
 	stored := cp
 	return &ChannelUpdateResult{Channel: &stored, Status: ChannelUpdated}, nil
+}
+
+func (s *InMemoryChannelStorage) Acquire(channelId string, pendingId string, ttlMs int64) (bool, error) {
+	key, err := batchsettlement.NormalizeChannelId(channelId)
+	if err != nil {
+		return false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UnixMilli()
+	if current, ok := s.admissionLocks[key]; ok && current.ExpiresAt > now {
+		return false, nil
+	}
+	s.admissionLocks[key] = admissionLock{PendingId: pendingId, ExpiresAt: now + ttlMs}
+	return true, nil
+}
+
+func (s *InMemoryChannelStorage) Release(channelId string, pendingId string) error {
+	key, err := batchsettlement.NormalizeChannelId(channelId)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if current, ok := s.admissionLocks[key]; ok && current.PendingId == pendingId {
+		delete(s.admissionLocks, key)
+	}
+	return nil
+}
+
+func (s *InMemoryChannelStorage) IsHeld(channelId string, pendingId string) (bool, error) {
+	key, err := batchsettlement.NormalizeChannelId(channelId)
+	if err != nil {
+		return false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, ok := s.admissionLocks[key]
+	if !ok || current.ExpiresAt <= time.Now().UnixMilli() {
+		delete(s.admissionLocks, key)
+		return false, nil
+	}
+	if pendingId == "" {
+		return true, nil
+	}
+	return current.PendingId == pendingId, nil
 }

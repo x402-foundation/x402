@@ -46,6 +46,9 @@ type AuthorizerSigner interface {
 type BatchSettlementEvmSchemeServerConfig struct {
 	// Storage is the session persistence backend. Defaults to in-memory.
 	Storage SessionStorage
+	// LockStorage is the admission-lock backend. Defaults to Storage when it
+	// implements ChannelLockStorage, otherwise a separate in-memory lock store.
+	LockStorage ChannelLockStorage
 	// ReceiverAuthorizerSigner is the server-controlled key for signing refund/claim authorizations.
 	ReceiverAuthorizerSigner AuthorizerSigner
 	// WithdrawDelay is the withdraw delay in seconds. Defaults to 900 (15 min).
@@ -60,6 +63,7 @@ type BatchSettlementEvmSchemeServerConfig struct {
 type BatchSettlementEvmScheme struct {
 	receiverAddress          string
 	storage                  SessionStorage
+	lockStorage              ChannelLockStorage
 	receiverAuthorizerSigner AuthorizerSigner
 	withdrawDelay            int
 	onchainStateTtlMs        int64
@@ -154,9 +158,22 @@ func NewBatchSettlementEvmScheme(receiverAddress string, config *BatchSettlement
 		storage = NewInMemoryChannelStorage()
 	}
 
+	lockStorage := ChannelLockStorage(nil)
+	if config != nil {
+		lockStorage = config.LockStorage
+	}
+	if lockStorage == nil {
+		if ls, ok := storage.(ChannelLockStorage); ok {
+			lockStorage = ls
+		} else {
+			lockStorage = NewInMemoryChannelStorage()
+		}
+	}
+
 	return &BatchSettlementEvmScheme{
 		receiverAddress:          receiverAddress,
 		storage:                  storage,
+		lockStorage:              lockStorage,
 		receiverAuthorizerSigner: authSigner,
 		withdrawDelay:            withdrawDelay,
 		onchainStateTtlMs:        onchainStateTtlMs,
@@ -266,30 +283,16 @@ func (s *BatchSettlementEvmScheme) TakeChannelSnapshot(payload any) *ChannelSess
 	return rc.ChannelSnapshot
 }
 
-// ClearPendingRequest clears this request's pending reservation in storage,
-// without affecting any newer reservation that may have replaced it. If the
-// stored channel only existed for this reservation (no snapshot), the channel
-// record is deleted entirely.
+// ClearPendingRequest releases this request's admission lock without touching
+// a newer holder.
 func (s *BatchSettlementEvmScheme) ClearPendingRequest(payload any) error {
-	rc := s.TakeRequestContext(payload)
+	rc := s.ReadRequestContext(payload)
 	if rc == nil || !rc.ReservationCommitted || rc.ChannelId == "" || rc.PendingId == "" {
 		return nil
 	}
-	_, err := s.storage.UpdateChannel(rc.ChannelId, func(current *ChannelSession) *ChannelSession {
-		if current == nil {
-			return current
-		}
-		if current.PendingRequest == nil || current.PendingRequest.PendingId != rc.PendingId {
-			return current
-		}
-		if rc.ChannelSnapshot == nil {
-			return nil // delete: this reservation is the only reason the row exists
-		}
-		next := *current
-		next.PendingRequest = nil
-		return &next
-	})
-	return err
+	_ = s.lockStorage.Release(rc.ChannelId, rc.PendingId)
+	rc.ReservationCommitted = false
+	return nil
 }
 
 // EnrichPaymentRequiredResponse implements x402.PaymentRequiredEnricher.
@@ -429,6 +432,11 @@ func (s *BatchSettlementEvmScheme) RegisterMoneyParser(parser x402.MoneyParser) 
 // GetStorage returns the underlying session storage.
 func (s *BatchSettlementEvmScheme) GetStorage() SessionStorage {
 	return s.storage
+}
+
+// GetLockStorage returns the admission lock store.
+func (s *BatchSettlementEvmScheme) GetLockStorage() ChannelLockStorage {
+	return s.lockStorage
 }
 
 // GetReceiverAddress returns the receiver address.

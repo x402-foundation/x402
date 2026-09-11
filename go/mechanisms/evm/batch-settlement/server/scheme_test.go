@@ -41,6 +41,10 @@ func TestNewBatchSettlementEvmScheme_NilConfigDefaults(t *testing.T) {
 	if s.GetStorage() == nil {
 		t.Fatal("expected default in-memory storage")
 	}
+	lock, ok := s.GetStorage().(ChannelLockStorage)
+	if !ok || s.GetLockStorage() != lock {
+		t.Fatal("expected default lock store to be the in-memory storage")
+	}
 	if s.Scheme() != batchsettlement.SchemeBatched {
 		t.Fatalf("scheme = %s", s.Scheme())
 	}
@@ -63,6 +67,44 @@ func TestNewBatchSettlementEvmScheme_OverridesApplied(t *testing.T) {
 	if s.GetStorage() != storage {
 		t.Fatalf("expected provided storage")
 	}
+	if s.GetLockStorage() != storage {
+		t.Fatal("expected lock store inferred from storage")
+	}
+}
+
+func TestNewBatchSettlementEvmScheme_SeparateLockStoreWhenStorageHasNoLockMethods(t *testing.T) {
+	inner := NewInMemoryChannelStorage()
+	storage := storageOnly{inner: inner}
+	s := NewBatchSettlementEvmScheme("0xreceiver", &BatchSettlementEvmSchemeServerConfig{Storage: storage})
+	if s.GetStorage() != storage {
+		t.Fatal("expected wrapped storage")
+	}
+	if _, ok := s.GetLockStorage().(*InMemoryChannelStorage); !ok {
+		t.Fatalf("expected a separate in-memory lock store, got %T", s.GetLockStorage())
+	}
+}
+
+type storageOnly struct {
+	inner SessionStorage
+}
+
+func (s storageOnly) Get(channelId string) (*ChannelSession, error) {
+	return s.inner.Get(channelId)
+}
+func (s storageOnly) Set(channelId string, session *ChannelSession) error {
+	return s.inner.Set(channelId, session)
+}
+func (s storageOnly) Delete(channelId string) error {
+	return s.inner.Delete(channelId)
+}
+func (s storageOnly) List() ([]*ChannelSession, error) {
+	return s.inner.List()
+}
+func (s storageOnly) CompareAndSet(channelId string, expectedCharged string, session *ChannelSession) (bool, error) {
+	return s.inner.CompareAndSet(channelId, expectedCharged, session)
+}
+func (s storageOnly) UpdateChannel(channelId string, update func(current *ChannelSession) *ChannelSession) (*ChannelUpdateResult, error) {
+	return s.inner.UpdateChannel(channelId, update)
 }
 
 func TestNewBatchSettlementEvmScheme_ZeroWithdrawDelayFallsBackToMin(t *testing.T) {

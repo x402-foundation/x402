@@ -378,16 +378,15 @@ func TestRefund_WithAuthorizerSignerAttachesSignatures(t *testing.T) {
 	}
 }
 
-func TestRefund_SkipsChannelWithLivePendingRequest(t *testing.T) {
+func TestRefund_SkipsChannelWithLiveAdmissionLock(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
 	sess := sampleSession(testChA, "100")
 	sess.Balance = "1000"
 	sess.ChargedCumulativeAmount = "100"
-	sess.PendingRequest = &PendingRequest{
-		PendingId: "p1",
-		ExpiresAt: time.Now().Add(time.Minute).UnixMilli(),
-	}
 	_ = s.UpdateSession(testChA, sess)
+	if _, err := s.GetLockStorage().Acquire(testChA, "p1", 60_000); err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
@@ -397,6 +396,54 @@ func TestRefund_SkipsChannelWithLivePendingRequest(t *testing.T) {
 	}
 	if len(res) != 0 {
 		t.Fatalf("expected refund to skip in-flight channel, got %+v", res)
+	}
+}
+
+func TestRefund_StillRefundsWhenLockStoreThrows(t *testing.T) {
+	storage := NewInMemoryChannelStorage()
+	s := NewBatchSettlementEvmScheme("0xreceiver", &BatchSettlementEvmSchemeServerConfig{
+		Storage:     storage,
+		LockStorage: throwingLockStorage{},
+	})
+	sess := sampleSession(testChA, "1000")
+	sess.Balance = "10000"
+	sess.ChargedCumulativeAmount = "1000"
+	_ = s.UpdateSession(testChA, sess)
+
+	f := &fakeFacilitator{}
+	m := newManager(s, f)
+	res, err := m.Refund(context.Background(), []string{testChA})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(res) != 1 || res[0].Channel != testChA || res[0].Transaction != "0xtx" {
+		t.Fatalf("got %+v", res)
+	}
+}
+
+func TestClaim_PreservesLiveAdmissionLock(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	sess := sampleSession(testChA, "100")
+	sess.SignedMaxClaimable = "1000"
+	sess.TotalClaimed = "100"
+	sess.ChargedCumulativeAmount = "1000"
+	_ = s.UpdateSession(testChA, sess)
+	if _, err := s.GetLockStorage().Acquire(testChA, "pending", 60_000); err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+
+	f := &fakeFacilitator{}
+	m := newManager(s, f)
+	results, err := m.Claim(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(results) != 1 || results[0].Transaction != "0xtx" {
+		t.Fatalf("got %+v", results)
+	}
+	held, err := s.GetLockStorage().IsHeld(testChA, "pending")
+	if err != nil || !held {
+		t.Fatalf("expected lock held: held=%v err=%v", held, err)
 	}
 }
 

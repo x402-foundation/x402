@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 )
@@ -31,6 +32,14 @@ func (s *FileChannelStorage) filePath(channelId string) (string, error) {
 		return "", err
 	}
 	return batchsettlement.ResolveWithinDir(filepath.Join(s.root, "server"), id+".json")
+}
+
+func (s *FileChannelStorage) holdPath(channelId string) (string, error) {
+	id, err := batchsettlement.NormalizeChannelId(channelId)
+	if err != nil {
+		return "", err
+	}
+	return batchsettlement.ResolveWithinDir(filepath.Join(s.root, "server"), id+".hold")
 }
 
 func (s *FileChannelStorage) Get(channelId string) (*ChannelSession, error) {
@@ -207,4 +216,105 @@ func (s *FileChannelStorage) UpdateChannel(channelId string, update func(current
 		}
 		return &ChannelUpdateResult{Channel: next, Status: ChannelUpdated}, nil
 	}
+}
+
+func (s *FileChannelStorage) Acquire(channelId string, pendingId string, ttlMs int64) (bool, error) {
+	path, err := s.holdPath(channelId)
+	if err != nil {
+		return false, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return false, fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
+	}
+	record, err := json.Marshal(admissionLock{PendingId: pendingId, ExpiresAt: time.Now().UnixMilli() + ttlMs})
+	if err != nil {
+		return false, err
+	}
+
+	for {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if err == nil {
+			_, writeErr := f.Write(record)
+			closeErr := f.Close()
+			if writeErr != nil {
+				_ = os.Remove(path)
+				return false, writeErr
+			}
+			if closeErr != nil {
+				return false, closeErr
+			}
+			return true, nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return false, err
+		}
+
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			if batchsettlement.IsNotExist(readErr) {
+				continue
+			}
+			return false, readErr
+		}
+		var existing admissionLock
+		if unmarshalErr := json.Unmarshal(raw, &existing); unmarshalErr != nil {
+			return false, unmarshalErr
+		}
+		if existing.ExpiresAt > time.Now().UnixMilli() {
+			return false, nil
+		}
+		if rmErr := os.Remove(path); rmErr != nil && !batchsettlement.IsNotExist(rmErr) {
+			return false, rmErr
+		}
+	}
+}
+
+func (s *FileChannelStorage) Release(channelId string, pendingId string) error {
+	path, err := s.holdPath(channelId)
+	if err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if batchsettlement.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	var hold admissionLock
+	if err := json.Unmarshal(raw, &hold); err != nil {
+		return err
+	}
+	if hold.PendingId != pendingId {
+		return nil
+	}
+	if rmErr := os.Remove(path); rmErr != nil && !batchsettlement.IsNotExist(rmErr) {
+		return rmErr
+	}
+	return nil
+}
+
+func (s *FileChannelStorage) IsHeld(channelId string, pendingId string) (bool, error) {
+	path, err := s.holdPath(channelId)
+	if err != nil {
+		return false, err
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if batchsettlement.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	var hold admissionLock
+	if err := json.Unmarshal(raw, &hold); err != nil {
+		return false, err
+	}
+	if hold.ExpiresAt <= time.Now().UnixMilli() {
+		return false, nil
+	}
+	if pendingId == "" {
+		return true, nil
+	}
+	return hold.PendingId == pendingId, nil
 }

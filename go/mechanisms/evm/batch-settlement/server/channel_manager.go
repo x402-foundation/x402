@@ -147,10 +147,14 @@ func NewBatchSettlementChannelManager(config ChannelManagerConfig) *BatchSettlem
 	}
 }
 
-// hasLivePendingRequest returns true when the channel currently has a
-// non-expired payer request reservation.
-func hasLivePendingRequest(s *ChannelSession, nowMs int64) bool {
-	return s != nil && s.PendingRequest != nil && s.PendingRequest.ExpiresAt > nowMs
+// channelIsHeld returns whether a live admission lock is held, treating
+// lock-store errors as not held.
+func channelIsHeld(lock ChannelLockStorage, channelId string) bool {
+	held, err := lock.IsHeld(channelId, "")
+	if err != nil {
+		return false
+	}
+	return held
 }
 
 // formatFacilitatorFailure renders a SettleResponse error consistently across
@@ -245,14 +249,13 @@ func (m *BatchSettlementChannelManager) ClaimAndSettle(ctx context.Context, opts
 	return claims, settle, nil
 }
 
-// Refund refunds the listed channels. Channels with a live in-flight request
-// reservation are skipped. Pass an empty slice to refund every stored channel.
+// Refund refunds the listed channels. Channels with a live admission lock
+// are skipped. Pass an empty slice to refund every stored channel.
 func (m *BatchSettlementChannelManager) Refund(ctx context.Context, channelIds []string) ([]RefundResult, error) {
 	channels, err := m.scheme.storage.List()
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now().UnixMilli()
 	var targets []*ChannelSession
 	if len(channelIds) == 0 {
 		targets = channels
@@ -268,8 +271,9 @@ func (m *BatchSettlementChannelManager) Refund(ctx context.Context, channelIds [
 		}
 	}
 	live := make([]*ChannelSession, 0, len(targets))
+	lock := m.scheme.GetLockStorage()
 	for _, c := range targets {
-		if !hasLivePendingRequest(c, now) {
+		if !channelIsHeld(lock, c.ChannelId) {
 			live = append(live, c)
 		}
 	}
@@ -286,7 +290,7 @@ func (m *BatchSettlementChannelManager) RefundIdleChannels(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	idle := getIdleChannelsForRefund(channels, idleSecs)
+	idle := m.getIdleChannelsForRefund(channels, idleSecs)
 	if len(idle) == 0 {
 		return nil, nil
 	}
@@ -673,9 +677,9 @@ func (m *BatchSettlementChannelManager) submitClaim(ctx context.Context, claims 
 // RefundResult per successful refund.
 func (m *BatchSettlementChannelManager) refundChannels(ctx context.Context, channels []*ChannelSession) ([]RefundResult, error) {
 	results := make([]RefundResult, 0, len(channels))
-	now := time.Now().UnixMilli()
+	lock := m.scheme.GetLockStorage()
 	for _, c := range channels {
-		if hasLivePendingRequest(c, now) {
+		if channelIsHeld(lock, c.ChannelId) {
 			continue
 		}
 		res, err := m.refundChannel(ctx, c)
@@ -760,12 +764,13 @@ func (m *BatchSettlementChannelManager) refundChannel(ctx context.Context, targe
 		return nil, fmt.Errorf("%s", formatFacilitatorFailure("Refund", resp))
 	}
 
+	if channelIsHeld(m.scheme.GetLockStorage(), normalizedId) {
+		return &RefundResult{Channel: normalizedId, Transaction: resp.Transaction}, nil
+	}
+
 	// Drop the session so it doesn't churn through future refund cycles.
 	_, _ = m.scheme.storage.UpdateChannel(normalizedId, func(current *ChannelSession) *ChannelSession {
 		if current == nil {
-			return current
-		}
-		if hasLivePendingRequest(current, time.Now().UnixMilli()) {
 			return current
 		}
 		return nil
@@ -812,23 +817,24 @@ func (m *BatchSettlementChannelManager) updateClaimedSessions(claims []batchsett
 
 // getIdleChannelsForRefund returns channels that have been idle for at least
 // `idleSecs` seconds and still hold a non-zero balance. Skips channels with a
-// live in-flight request reservation.
+// live admission lock.
 //
 // Callers wanting "refund all idle channels" should inline this predicate
 // inside their SelectRefundChannels callback.
-func getIdleChannelsForRefund(channels []*ChannelSession, idleSecs int) []*ChannelSession {
+func (m *BatchSettlementChannelManager) getIdleChannelsForRefund(channels []*ChannelSession, idleSecs int) []*ChannelSession {
 	if idleSecs <= 0 {
 		return nil
 	}
 	now := time.Now().UnixMilli()
 	idleMs := int64(idleSecs) * 1000
+	lock := m.scheme.GetLockStorage()
 	out := make([]*ChannelSession, 0, len(channels))
 	for _, c := range channels {
 		balance, _ := new(big.Int).SetString(c.Balance, 10)
 		if balance == nil || balance.Sign() == 0 {
 			continue
 		}
-		if hasLivePendingRequest(c, now) {
+		if channelIsHeld(lock, c.ChannelId) {
 			continue
 		}
 		if now-c.LastRequestTimestamp < idleMs {

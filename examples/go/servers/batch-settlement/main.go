@@ -68,6 +68,9 @@ func main() {
 		cfg.Storage = batchedserver.NewFileChannelStorage(batchsettlement.FileChannelStorageOptions{
 			Directory: storageDir,
 		})
+		// LockStorage is inferred from FileChannelStorage. Hosts that do not
+		// share STORAGE_DIR need an explicit LockStorage; otherwise each host
+		// admits independently and only the charge CAS protects revenue.
 	}
 
 	scheme := batchedserver.NewBatchSettlementEvmScheme(evmAddress, cfg)
@@ -87,9 +90,6 @@ func main() {
 			out := make([]*batchedserver.ChannelSession, 0, len(channels))
 			for _, c := range channels {
 				if c.Balance == "" || c.Balance == "0" {
-					continue
-				}
-				if c.PendingRequest != nil && c.PendingRequest.ExpiresAt > ctx.Now {
 					continue
 				}
 				if ctx.Now-c.LastRequestTimestamp < 180_000 {
