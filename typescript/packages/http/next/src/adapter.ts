@@ -109,7 +109,7 @@ export class NextAdapter implements HTTPAdapter {
    */
   async getBody(): Promise<unknown> {
     try {
-      return await this.req.json();
+      return await this.req.clone().json();
     } catch {
       return undefined;
     }
