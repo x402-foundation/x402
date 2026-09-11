@@ -5,14 +5,14 @@ import { dirname, join } from "node:path";
 import { isNodeEnoent, readJsonFile, resolveWithinDir, writeJsonAtomic } from "../storage-utils";
 import { normalizeChannelId } from "../utils";
 import type { FileChannelStorageOptions } from "../types";
-import type { ChannelStorage, Channel, ChannelUpdateResult } from "./storage";
+import type { ChannelLockStorage, ChannelStorage, Channel, ChannelUpdateResult } from "./storage";
 
 export type { FileChannelStorageOptions };
 
 /**
  * Node.js file-backed {@link ChannelStorage} for the batched server scheme.
  */
-export class FileChannelStorage implements ChannelStorage {
+export class FileChannelStorage implements ChannelStorage, ChannelLockStorage {
   private readonly root: string;
 
   /**
@@ -114,6 +114,89 @@ export class FileChannelStorage implements ChannelStorage {
   }
 
   /**
+   * Acquires a per-channel admission lock via an exclusive sidecar hold file.
+   *
+   * @param channelId - The channel identifier.
+   * @param pendingId - Request-scoped lock owner.
+   * @param ttlMs - Lock time-to-live in milliseconds.
+   * @returns Whether this request now holds the lock.
+   */
+  async acquire(channelId: string, pendingId: string, ttlMs: number): Promise<boolean> {
+    const path = this.holdPath(channelId);
+    await mkdir(dirname(path), { recursive: true });
+    const record = JSON.stringify({ pendingId, expiresAt: Date.now() + ttlMs });
+
+    while (true) {
+      try {
+        const handle = await open(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY);
+        try {
+          await handle.writeFile(record, "utf8");
+        } finally {
+          await handle.close();
+        }
+        return true;
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      }
+
+      let existing: { pendingId: string; expiresAt: number };
+      try {
+        existing = JSON.parse(await readFile(path, "utf8")) as {
+          pendingId: string;
+          expiresAt: number;
+        };
+      } catch (err: unknown) {
+        if (isNodeEnoent(err)) continue;
+        throw err;
+      }
+      if (existing.expiresAt > Date.now()) return false;
+      try {
+        await unlink(path);
+      } catch (err: unknown) {
+        if (!isNodeEnoent(err)) throw err;
+      }
+    }
+  }
+
+  /**
+   * Releases the admission lock only when `pendingId` still holds it.
+   *
+   * @param channelId - The channel identifier.
+   * @param pendingId - Request-scoped lock owner.
+   */
+  async release(channelId: string, pendingId: string): Promise<void> {
+    const path = this.holdPath(channelId);
+    try {
+      const hold = JSON.parse(await readFile(path, "utf8")) as { pendingId: string };
+      if (hold.pendingId !== pendingId) return;
+      await unlink(path);
+    } catch (err: unknown) {
+      if (!isNodeEnoent(err)) throw err;
+    }
+  }
+
+  /**
+   * Returns whether a live admission lock exists, optionally matching `pendingId`.
+   *
+   * @param channelId - The channel identifier.
+   * @param pendingId - When set, require this request to hold the lock.
+   * @returns Whether a live lock (or this request's lock) is present.
+   */
+  async isHeld(channelId: string, pendingId?: string): Promise<boolean> {
+    try {
+      const hold = JSON.parse(await readFile(this.holdPath(channelId), "utf8")) as {
+        pendingId: string;
+        expiresAt: number;
+      };
+      if (hold.expiresAt <= Date.now()) return false;
+      return pendingId === undefined || hold.pendingId === pendingId;
+    } catch (err: unknown) {
+      if (isNodeEnoent(err)) return false;
+      throw err;
+    }
+  }
+
+  /**
    * Absolute path to the JSON file for a channel.
    *
    * @param channelId - The channel identifier.
@@ -123,6 +206,17 @@ export class FileChannelStorage implements ChannelStorage {
   private filePath(channelId: string): string {
     const id = normalizeChannelId(channelId);
     return resolveWithinDir(join(this.root, "server"), `${id}.json`);
+  }
+
+  /**
+   * Absolute path to the admission hold sidecar for a channel.
+   *
+   * @param channelId - The channel identifier.
+   * @returns Filesystem path under `{root}/server/{id}.hold`.
+   */
+  private holdPath(channelId: string): string {
+    const id = normalizeChannelId(channelId);
+    return resolveWithinDir(join(this.root, "server"), `${id}.hold`);
   }
 
   /**

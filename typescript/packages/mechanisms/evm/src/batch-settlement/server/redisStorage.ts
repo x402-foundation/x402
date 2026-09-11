@@ -1,4 +1,4 @@
-import type { Channel, ChannelStorage, ChannelUpdateResult } from "./storage";
+import type { Channel, ChannelLockStorage, ChannelStorage, ChannelUpdateResult } from "./storage";
 import { normalizeChannelId } from "../utils";
 
 const DEFAULT_KEY_PREFIX = "x402:batch-settlement";
@@ -31,6 +31,13 @@ if operation == "set" then
 end
 
 return {1, current or false}
+`;
+
+const COMPARE_AND_DEL_SCRIPT = `
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("DEL", KEYS[1])
+end
+return 0
 `;
 
 export type RedisEvalOptions = {
@@ -72,11 +79,79 @@ type ParsedRedisUpdateResult = {
 };
 
 /**
+ * Redis-backed {@link ChannelLockStorage} using `SET NX PX` and compare-and-delete.
+ */
+export class RedisChannelLockStorage implements ChannelLockStorage {
+  protected readonly client: RedisChannelStorageClient;
+  protected readonly keyPrefix: string;
+
+  /**
+   * Creates Redis-backed admission locks (no channel JSON).
+   *
+   * @param options - Redis client and optional key prefix.
+   */
+  constructor(options: Pick<RedisChannelStorageOptions, "client" | "keyPrefix">) {
+    this.client = options.client;
+    this.keyPrefix = options.keyPrefix ?? DEFAULT_KEY_PREFIX;
+  }
+
+  /**
+   * Acquires a per-channel admission lock with `SET NX PX`.
+   *
+   * @param channelId - The channel identifier.
+   * @param pendingId - Request-scoped lock owner stored as the key value.
+   * @param ttlMs - Lock TTL passed as `PX`.
+   * @returns Whether this request now holds the lock.
+   */
+  async acquire(channelId: string, pendingId: string, ttlMs: number): Promise<boolean> {
+    const result = await this.client.set(this.lockKey(channelId), pendingId, {
+      NX: true,
+      PX: ttlMs,
+    });
+    return result === "OK";
+  }
+
+  /**
+   * Releases the admission lock only when `pendingId` still holds it.
+   *
+   * @param channelId - The channel identifier.
+   * @param pendingId - Request-scoped lock owner.
+   */
+  async release(channelId: string, pendingId: string): Promise<void> {
+    await this.client.eval(COMPARE_AND_DEL_SCRIPT, {
+      keys: [this.lockKey(channelId)],
+      arguments: [pendingId],
+    });
+  }
+
+  /**
+   * Returns whether a live admission lock exists, optionally matching `pendingId`.
+   *
+   * @param channelId - The channel identifier.
+   * @param pendingId - When set, require this request to hold the lock.
+   * @returns Whether a live lock (or this request's lock) is present.
+   */
+  async isHeld(channelId: string, pendingId?: string): Promise<boolean> {
+    const current = await this.client.get(this.lockKey(channelId));
+    if (!current) return false;
+    return pendingId === undefined || current === pendingId;
+  }
+
+  /**
+   * Builds the Redis key for an admission lock.
+   *
+   * @param channelId - The channel identifier.
+   * @returns Redis key for the lock.
+   */
+  protected lockKey(channelId: string): string {
+    return `${this.keyPrefix}:server:lock:${normalizeChannelId(channelId)}`;
+  }
+}
+
+/**
  * Redis-backed {@link ChannelStorage} with optimistic atomic updates.
  */
-export class RedisChannelStorage implements ChannelStorage {
-  private readonly client: RedisChannelStorageClient;
-  private readonly keyPrefix: string;
+export class RedisChannelStorage extends RedisChannelLockStorage implements ChannelStorage {
   private readonly channelKeyPrefix: string;
   private readonly lockRetryIntervalMs: number;
   private readonly scanCount: number;
@@ -87,8 +162,7 @@ export class RedisChannelStorage implements ChannelStorage {
    * @param options - Redis client and optional key/retry configuration.
    */
   constructor(options: RedisChannelStorageOptions) {
-    this.client = options.client;
-    this.keyPrefix = options.keyPrefix ?? DEFAULT_KEY_PREFIX;
+    super(options);
     this.channelKeyPrefix = `${this.keyPrefix}:server:channel`;
     this.lockRetryIntervalMs = options.lockRetryIntervalMs ?? DEFAULT_LOCK_RETRY_INTERVAL_MS;
     this.scanCount = options.scanCount ?? DEFAULT_SCAN_COUNT;

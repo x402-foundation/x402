@@ -8,7 +8,11 @@ import {
   type RefundResult,
 } from "../../../src/batch-settlement/server/channelManager";
 import { BatchSettlementEvmScheme } from "../../../src/batch-settlement/server/scheme";
-import { InMemoryChannelStorage, type Channel } from "../../../src/batch-settlement/server/storage";
+import {
+  InMemoryChannelStorage,
+  type Channel,
+  type ChannelLockStorage,
+} from "../../../src/batch-settlement/server/storage";
 import { computeChannelId as computeChannelIdForNetwork } from "../../../src/batch-settlement/utils";
 import type { ChannelConfig, AuthorizerSigner } from "../../../src/batch-settlement/types";
 import type { FacilitatorClient } from "@x402/core/server";
@@ -363,6 +367,31 @@ describe("BatchSettlementChannelManager — claimAndSettle()", () => {
 });
 
 describe("BatchSettlementChannelManager — refund()", () => {
+  it("still refunds when the lock store throws", async () => {
+    const storage = new InMemoryChannelStorage();
+    const lockStorage: ChannelLockStorage = {
+      acquire: async () => true,
+      release: async () => undefined,
+      isHeld: async () => {
+        throw new Error("lock down");
+      },
+    };
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, { storage, lockStorage });
+    const facilitator = buildFacilitator();
+    const manager = new BatchSettlementChannelManager({
+      scheme,
+      facilitator,
+      receiver: RECEIVER,
+      token: TOKEN,
+      network: NETWORK,
+    });
+    const session = buildSession({ chargedCumulativeAmount: "1000", balance: "10000" });
+    await storeChannel(storage, session);
+
+    const result = await manager.refund();
+    expect(result).toEqual([{ channel: session.channelId, transaction: "0xtx" }]);
+  });
+
   it("returns no channels when storage is empty", async () => {
     const { manager, facilitator } = buildManager();
     const result = await manager.refund();

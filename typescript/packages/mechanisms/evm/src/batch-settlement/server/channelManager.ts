@@ -10,7 +10,7 @@ import type { BatchSettlementEvmScheme } from "./scheme";
 import { computeChannelId } from "../utils";
 import { BATCH_SETTLEMENT_SCHEME } from "../constants";
 import { signClaimBatch, signRefund } from "../authorizerSigner";
-import type { Channel } from "./storage";
+import type { Channel, ChannelLockStorage } from "./storage";
 
 export interface ChannelManagerConfig {
   scheme: BatchSettlementEvmScheme;
@@ -85,14 +85,18 @@ function formatFacilitatorFailure(operation: string, response: SettleResponse): 
 }
 
 /**
- * Checks whether a channel has a non-expired payer request reservation.
+ * Returns whether a live admission lock is held, treating lock-store errors as not held.
  *
- * @param channel - Channel state to inspect.
- * @param now - Current wall-clock time in milliseconds.
- * @returns Whether the channel is busy with a live pending request.
+ * @param lock - Admission lock store.
+ * @param channelId - Channel to inspect.
+ * @returns Whether a live lock is present.
  */
-function hasLivePendingRequest(channel: Channel, now = Date.now()): boolean {
-  return channel.pendingRequest !== undefined && channel.pendingRequest.expiresAt > now;
+async function channelIsHeld(lock: ChannelLockStorage, channelId: string): Promise<boolean> {
+  try {
+    return await lock.isHeld(channelId);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -194,16 +198,19 @@ export class BatchSettlementChannelManager {
    */
   async refund(channelIds?: string[]): Promise<RefundResult[]> {
     const storage = this.scheme.getStorage();
+    const lock = this.scheme.getLockStorage();
     const channels = await storage.list();
 
-    const now = Date.now();
-    const targets = (
-      channelIds
-        ? channels.filter(s =>
-            channelIds.some(id => id.toLowerCase() === s.channelId.toLowerCase()),
-          )
-        : channels
-    ).filter(channel => !hasLivePendingRequest(channel, now));
+    const selected = channelIds
+      ? channels.filter(s => channelIds.some(id => id.toLowerCase() === s.channelId.toLowerCase()))
+      : channels;
+
+    const targets: Channel[] = [];
+    for (const channel of selected) {
+      if (!(await channelIsHeld(lock, channel.channelId))) {
+        targets.push(channel);
+      }
+    }
 
     if (targets.length === 0) {
       return [];
@@ -349,11 +356,16 @@ export class BatchSettlementChannelManager {
       throw new Error(formatFacilitatorFailure("Refund", response));
     }
 
+    if (await channelIsHeld(this.scheme.getLockStorage(), target.channelId)) {
+      return {
+        channel: target.channelId,
+        transaction: response.transaction,
+      };
+    }
+
     await this.scheme
       .getStorage()
-      .updateChannel(target.channelId, current =>
-        current && !hasLivePendingRequest(current) ? undefined : current,
-      );
+      .updateChannel(target.channelId, current => (current ? undefined : current));
 
     return {
       channel: target.channelId,
@@ -575,9 +587,10 @@ export class BatchSettlementChannelManager {
    * @returns Successful refund results.
    */
   private async refundChannels(channels: Channel[]): Promise<RefundResult[]> {
+    const lock = this.scheme.getLockStorage();
     const results: RefundResult[] = [];
     for (const channel of channels) {
-      if (hasLivePendingRequest(channel)) {
+      if (await channelIsHeld(lock, channel.channelId)) {
         continue;
       }
       results.push(await this.refundChannel(channel));
@@ -668,14 +681,20 @@ export class BatchSettlementChannelManager {
    * @param idleSecs - Minimum seconds since the last request.
    * @returns Idle refundable channels.
    */
-  private getIdleChannelsForRefundFromChannels(channels: Channel[], idleSecs: number): Channel[] {
+  private async getIdleChannelsForRefundFromChannels(
+    channels: Channel[],
+    idleSecs: number,
+  ): Promise<Channel[]> {
     const now = Date.now();
     const idleMs = idleSecs * 1000;
-    return channels.filter(c => {
-      if (BigInt(c.balance) === 0n) return false;
-      if (hasLivePendingRequest(c, now)) return false;
-      return now - c.lastRequestTimestamp >= idleMs;
-    });
+    const lock = this.scheme.getLockStorage();
+    const idle: Channel[] = [];
+    for (const c of channels) {
+      if (BigInt(c.balance) === 0n) continue;
+      if (await channelIsHeld(lock, c.channelId)) continue;
+      if (now - c.lastRequestTimestamp >= idleMs) idle.push(c);
+    }
+    return idle;
   }
 
   /**
