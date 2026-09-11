@@ -1,0 +1,27 @@
+{
+  "env": {
+    "SERVER_STARKNET_ADDRESS": { "required": true, "roles": ["server"] },
+    "CLIENT_STARKNET_ADDRESS": { "required": true, "roles": ["client"] },
+    "CLIENT_STARKNET_PRIVATE_KEY": { "required": true, "roles": ["client"] },
+    "FACILITATOR_STARKNET_ADDRESS": { "required": true, "roles": ["facilitator"] },
+    "FACILITATOR_STARKNET_PRIVATE_KEY": { "required": true, "roles": ["facilitator"] }
+  },
+  "testnet": {
+    "name": "Starknet Sepolia",
+    "caip2": "starknet:SN_SEPOLIA",
+    "rpcUrlDefault": "https://api.cartridge.gg/x/starknet/sepolia"
+  },
+  "mainnet": {
+    "name": "Starknet",
+    "caip2": "starknet:SN_MAIN",
+    "rpcUrlDefault": "https://api.cartridge.gg/x/starknet/mainnet"
+  },
+  "routes": {
+    "/exact/starknet": {
+      "scheme": "exact",
+      "sdks": ["typescript"],
+      "price": { "usd": "$0.001" },
+      "extensions": ["bazaar"]
+    }
+  }
+}

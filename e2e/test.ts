@@ -349,6 +349,13 @@ function getScenarioResourceKeys(
   if (scenario.protocolFamily === 'cardano') {
     return ['cardano:client-wallet'];
   }
+  // Serialize Starknet scenarios in --parallel mode: every settlement is an
+  // INVOKE from the one facilitator executor account, whose transaction nonce
+  // is read at `latest`, so overlapping settles reuse it and all but one are
+  // rejected by the sequencer.
+  if (scenario.protocolFamily === 'starknet') {
+    return ['starknet:facilitator'];
+  }
   if (scenario.protocolFamily !== 'evm') {
     return [];
   }

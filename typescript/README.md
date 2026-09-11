@@ -30,4 +30,5 @@ This folder contains Typescript packages to help developers implement the x402 p
 | **Cardano** - [`@x402/cardano`](./packages/mechanisms/cardano) | Cardano implementation of x402 using the Exact scheme with lovelace and native-token (USDM) transfers. | [![npm version](https://img.shields.io/npm/v/%40x402%2Fcardano.svg)](https://www.npmjs.com/package/@x402/cardano) |
 | **Stellar** - [`@x402/stellar`](./packages/mechanisms/stellar) | Stellar implementation of x402 using Soroban token transfers. | [![npm version](https://img.shields.io/npm/v/%40x402%2Fstellar.svg)](https://www.npmjs.com/package/@x402/stellar) |
 | **Solana** - [`@x402/svm`](./packages/mechanisms/svm) | SVM implementation of x402 using SPL token transfers. | [![npm version](https://img.shields.io/npm/v/%40x402%2Fsvm.svg)](https://www.npmjs.com/package/@x402/svm) |
+| **Starknet** - [`@x402/starknet`](./packages/mechanisms/starknet) | Starknet implementation of x402 using the Exact scheme with SNIP-9 sponsored token transfers. | [![npm version](https://img.shields.io/npm/v/%40x402%2Fstarknet.svg)](https://www.npmjs.com/package/@x402/starknet) |
 
