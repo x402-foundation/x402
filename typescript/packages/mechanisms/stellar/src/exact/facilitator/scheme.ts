@@ -337,12 +337,28 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
       const sendResult = await server.sendTransaction(txToSubmit);
 
       if (sendResult.status !== "PENDING") {
+        // TRY_AGAIN_LATER means nothing reached a ledger and nothing was spent, so
+        // the caller can safely retry. Every other non-PENDING status (e.g. ERROR)
+        // is terminal for this payload and must not be retried as-is.
+        const isRetryable = sendResult.status === "TRY_AGAIN_LATER";
+        const errorResultCode = sendResult.errorResult?.result().switch().name;
         return {
           success: false,
           network: payload.accepted.network,
           transaction: "",
-          errorReason: "settle_exact_stellar_transaction_submission_failed",
+          errorReason: isRetryable
+            ? "settle_exact_stellar_transaction_submission_retryable"
+            : "settle_exact_stellar_transaction_submission_failed",
+          errorMessage: `Soroban RPC sendTransaction returned status ${sendResult.status}${
+            errorResultCode ? ` (${errorResultCode})` : ""
+          }`,
           payer,
+          extra: {
+            rpcStatus: sendResult.status,
+            retryable: isRetryable,
+            latestLedger: sendResult.latestLedger,
+            ...(errorResultCode ? { errorResultCode } : {}),
+          },
         };
       }
 
