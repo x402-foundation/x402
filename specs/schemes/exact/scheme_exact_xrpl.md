@@ -16,9 +16,9 @@ This scheme facilitates payments of a specific amount of XRP or an issued curren
 | **Settlement**            | The facilitator submits the signed transaction to XRPL                       |
 | **Fee payer**             | The payer pays the XRPL transaction fee embedded in the signed transaction   |
 
-XRPL charges the transaction fee to the transaction `Account`. This exact scheme therefore does not support facilitator-sponsored network fees for the signed `Payment` transaction. Supporting fee sponsorship would require a different payment model, not only a facilitator implementation change.
+XRPL charges the transaction fee to the transaction `Account`. This exact scheme therefore does not support facilitator-sponsored network fees for the signed `Payment` transaction. Supporting fee sponsorship would require a different payment model, not only a facilitator implementation change. The [`xrplFeeSponsoring`](../../extensions/xrpl_fee_sponsoring.md) extension defines that payment model via the XLS-68 `Sponsor` amendment, on networks where that amendment is enabled.
 
-`PaymentRequirements.extra.areFeesSponsored` MUST be present and MUST be `false`.
+`PaymentRequirements.extra.areFeesSponsored` MUST be present and MUST be `false`, unless a fee-sponsoring extension (e.g. [`xrplFeeSponsoring`](../../extensions/xrpl_fee_sponsoring.md)) is active, in which case that extension's rules apply.
 
 ## Asset Transfer Methods
 
@@ -150,7 +150,7 @@ The resource server advertises payment requirements in the `accepts` array.
 | `payTo`                  | string  | Yes      | XRPL classic address receiving the payment       |
 | `amount`                 | string  | Yes      | XRP drops string or IOU issued-currency value    |
 | `maxTimeoutSeconds`      | integer | Yes      | Maximum validity window for payment attempt      |
-| `extra.areFeesSponsored` | boolean | Yes      | Must be `false` for XRPL exact payments          |
+| `extra.areFeesSponsored` | boolean | Yes      | `false` unless a fee-sponsoring extension is active |
 | `extra.assetTransferMethod` | string | No     | `"sequence"` (default) or `"ticketSequence"`     |
 | `extra.invoiceId`        | string  | No       | Unique invoice identifier for binding            |
 | `extra.destinationTag`   | integer | No       | DestinationTag for hosted accounts               |
@@ -158,7 +158,7 @@ The resource server advertises payment requirements in the `accepts` array.
 
 `extra.destinationTag` applies to both native XRP and IOU payments. It is used when the receiver is a hosted account or otherwise requires a destination tag for attribution.
 
-`extra.areFeesSponsored` is always `false` because this scheme uses payer-signed XRPL `Payment` transactions whose fee is paid by the payer account.
+`extra.areFeesSponsored` is `false` in the base scheme because payer-signed XRPL `Payment` transactions carry a fee paid by the payer account. A fee-sponsoring extension changes this; see [`xrplFeeSponsoring`](../../extensions/xrpl_fee_sponsoring.md).
 
 `extra.assetTransferMethod` selects how the signed transaction is sequenced. See [Asset Transfer Methods](#asset-transfer-methods) for negotiation rules and tradeoffs.
 
@@ -273,7 +273,7 @@ The facilitator MUST reject if:
 - `paymentPayload.accepted.network` is unsupported
 - `paymentPayload.accepted` does not match `paymentRequirements` on `scheme`, `network`, `asset`, `payTo`, `amount`, or `maxTimeoutSeconds`
 - Required `extra` keys are missing or mismatched:
-  - `areFeesSponsored=false`
+  - `areFeesSponsored=false` (`true` only under an active fee-sponsoring extension, per that extension's rules)
   - `assetTransferMethod` when present in `paymentRequirements.extra` (the payload MUST NOT select a different method; when the requirement omits it, `accepted.extra.assetTransferMethod` MAY declare the selected method, see section 7)
   - `issuer` for IOU payments
   - `invoiceId` when invoice binding is required
@@ -401,10 +401,41 @@ The facilitator MUST reject if `invoiceId` is present and `InvoiceID` is missing
 
 ### 9. Safety Checks (MUST)
 
-The facilitator MUST reject transactions with:
+**Field acceptance is an allowlist, not a denylist.** The facilitator MUST hold
+the decoded `Payment` to an explicit set of permitted fields and reject any
+transaction carrying a field outside it, unless an active extension admits that
+field deliberately.
+
+This is normative because the alternative fails open. A denylist of named
+fields silently widens what a facilitator accepts every time the XRPL adds a
+field, and the field names in any such list are not stable: XLS-68 renamed
+`FeeAmount` to `FeeAmountDelta` between the published draft and the Devnet
+`3.3.0-rc5` implementation, so a list written from the draft would already be
+wrong. The permitted set MUST therefore be a pinned, explicit snapshot chosen
+by the implementation and reviewed when an amendment activates. Deriving the
+set mechanically from rippled's field template is NOT a substitute: the
+template includes the common fields (`Memos`, `Delegate`, and — once the
+amendment is active — the sponsorship fields), so a derived set admits much
+of what this section exists to exclude. A derived set MAY be used to *detect*
+newly added fields and raise an alarm; it MUST NOT be used to admit them —
+derive to detect, pin to admit.
+
+The allowlist is the mechanism. In addition to it, the facilitator MUST
+reject a transaction with any of the following, each with its own reason
+code. These checks bind values and combinations that field presence alone
+cannot express, and implementations legitimately keep several of these
+fields (e.g. `Memos`, `Delegate`) inside their permitted decode set
+precisely so each rejection can carry its own reason rather than a generic
+field-not-permitted error:
 
 - `Fee` above facilitator policy.
 - `Delegate` present.
+- Sponsorship fields — at the time of writing `Sponsor`, `SponsorFlags`, and
+  `SponsorSignature` — unless a fee-sponsoring extension is active.
+  (A `SponsorshipSet` and its budget fields never reach this check in the
+  base scheme: §3 already refuses any `TransactionType` other than
+  `Payment`. They belong to the fee-sponsoring extension's territory and are
+  specified there.)
 - `Memos` present.
 - `SendMax` present for XRP.
 - `Paths` present.
@@ -449,6 +480,8 @@ The payer pays the XRPL transaction fee because:
 - XRPL charges fees to the transaction's `Account` field.
 - `Delegate` is not supported by this scheme.
 
+Under an active fee-sponsoring extension the sponsor pays the fee instead; see [`xrplFeeSponsoring`](../../extensions/xrpl_fee_sponsoring.md).
+
 ### Settlement Timeout
 
 The facilitator SHOULD wait for a validated result before returning success to prevent releasing resources for transactions that never validate.
@@ -465,7 +498,7 @@ Unlike a probabilistic confirmation race, this behavior is deterministic on XRPL
 
 Facilitators MUST deduplicate in-flight settlements across every process that serves `/settle`, keyed on the transaction hash. Before submitting a verified transaction:
 
-1. After verification succeeds, derive the cache key from the signed transaction blob: the canonical XRPL transaction hash (as returned by, e.g., `hashSignedTx`).
+1. After verification succeeds, derive the cache key from the signed transaction blob **as received from the client**: the canonical XRPL transaction hash (as returned by, e.g., `hashSignedTx`). Under an extension that adds fields before submission — e.g. cosigned fee sponsoring — this key remains stable per client submission but is not necessarily the on-ledger txid; such an extension defines which hash `SettlementResponse.transaction` reports.
 2. If the key is already present, reject the settlement with a `"duplicate_settlement"` error.
 3. If the key is not present, record it and proceed with submission.
 4. Retain the key until its transaction can no longer land — that is, until its `LastLedgerSequence` has passed (bounded by `maxTimeoutSeconds`; see [§7. Expiry and Account Sequencing](#7-expiry-and-account-sequencing)). A shorter window reopens the race: while the transaction is still landable, a re-submission passes re-verification because the consumed sequence number — or ticket — is not yet consumed, so the entry MUST outlive that window rather than a fixed interval. (Solana's fixed ~60-90s blockhash lifetime lets its cache use a constant TTL; XRPL's expiry is policy-derived, so the retention window is too.)
@@ -529,3 +562,4 @@ Implementations MAY include additional fields when defined by the SDK or facilit
 - [XRPL Currency Formats](https://xrpl.org/docs/references/protocol/data-types/currency-formats)
 - [CAIP-2 Specification](https://github.com/ChainAgnostic/CAIPs/blob/main/CAIPs/caip-2.md)
 - [x402 Protocol Specification](https://github.com/coinbase/x402/blob/main/specs/x402-specification-v2.md)
+
