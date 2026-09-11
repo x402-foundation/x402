@@ -17,6 +17,7 @@ import type {
   JWSSigner,
   OfferPayload,
   ReceiptPayload,
+  ResponseHashEncoding,
   SignedOffer,
   SignedReceipt,
   OfferInput,
@@ -257,7 +258,7 @@ export const OFFER_TYPES = {
 };
 
 /**
- * EIP-712 types for Receipt (§5.3)
+ * EIP-712 types for Receipt payload version 1 (§5.3)
  */
 export const RECEIPT_TYPES = {
   Receipt: [
@@ -269,6 +270,87 @@ export const RECEIPT_TYPES = {
     { name: "transaction", type: "string" },
   ],
 };
+
+/**
+ * EIP-712 types for Receipt payload version 2 (§5.3)
+ *
+ * Adds the optional delivery-binding fields. Unused fields are the empty
+ * string, mirroring the `transaction` convention (§5.3).
+ */
+export const RECEIPT_TYPES_V2 = {
+  Receipt: [
+    { name: "version", type: "uint256" },
+    { name: "network", type: "string" },
+    { name: "resourceUrl", type: "string" },
+    { name: "payer", type: "string" },
+    { name: "issuedAt", type: "uint256" },
+    { name: "transaction", type: "string" },
+    { name: "responseHash", type: "string" },
+    { name: "responseHashAlg", type: "string" },
+    { name: "responseHashEncoding", type: "string" },
+  ],
+};
+
+/**
+ * Select the canonical EIP-712 Receipt types for a payload version (§5.5).
+ *
+ * @param version - The receipt payload version
+ * @returns The EIP-712 types for that version
+ */
+export function receiptTypesForVersion(version: number): typeof RECEIPT_TYPES {
+  return version >= 2 ? RECEIPT_TYPES_V2 : RECEIPT_TYPES;
+}
+
+// ============================================================================
+// Response Digest (Delivery Binding, §5.6)
+// ============================================================================
+
+/**
+ * Compute the SHA-256 of some bytes as a 0x-prefixed hex string.
+ *
+ * @param data - The bytes to hash
+ * @returns The 0x-prefixed lowercase hex digest
+ */
+async function sha256Hex(data: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  const bytes = new Uint8Array(digest);
+  let hex = "0x";
+  for (let i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, "0");
+  return hex;
+}
+
+/**
+ * Hash a delivered response body for a delivery receipt (§5.6).
+ *
+ * - "raw" hashes the exact bytes (strings are UTF-8 encoded).
+ * - "jcs" hashes the RFC 8785 canonical form of a JSON value, so the receipt
+ *   stays verifiable even after the raw bytes are parsed and re-serialized.
+ *
+ * @param body - The response body (string/bytes for "raw", JSON value for "jcs")
+ * @param encoding - The hash encoding; defaults to "jcs" for JSON values, else "raw"
+ * @returns The 0x-prefixed sha256 digest and the encoding actually used
+ */
+export async function hashResponseBody(
+  body: string | Uint8Array | Record<string, unknown> | unknown[],
+  encoding?: ResponseHashEncoding,
+): Promise<{ hash: string; encoding: ResponseHashEncoding }> {
+  const isBytes = body instanceof Uint8Array;
+  const isString = typeof body === "string";
+  const enc: ResponseHashEncoding = encoding ?? (isBytes || isString ? "raw" : "jcs");
+
+  let bytes: Uint8Array;
+  if (enc === "jcs") {
+    bytes = new TextEncoder().encode(canonicalize(body));
+  } else if (isBytes) {
+    bytes = body;
+  } else if (isString) {
+    bytes = new TextEncoder().encode(body);
+  } else {
+    // raw over a JSON value: hash its canonical bytes so the result is stable
+    bytes = new TextEncoder().encode(canonicalize(body));
+  }
+  return { hash: await sha256Hex(bytes), encoding: enc };
+}
 
 // ============================================================================
 // EIP-712 Payload Preparation
@@ -308,15 +390,8 @@ export function prepareOfferForEIP712(payload: OfferPayload): {
  * @param payload - The receipt payload
  * @returns The prepared message object for EIP-712
  */
-export function prepareReceiptForEIP712(payload: ReceiptPayload): {
-  version: bigint;
-  network: string;
-  resourceUrl: string;
-  payer: string;
-  issuedAt: bigint;
-  transaction: string;
-} {
-  return {
+export function prepareReceiptForEIP712(payload: ReceiptPayload): Record<string, unknown> {
+  const message: Record<string, unknown> = {
     version: BigInt(payload.version),
     network: payload.network,
     resourceUrl: payload.resourceUrl,
@@ -324,6 +399,14 @@ export function prepareReceiptForEIP712(payload: ReceiptPayload): {
     issuedAt: BigInt(payload.issuedAt),
     transaction: payload.transaction,
   };
+  // Version 2 adds the delivery-binding fields. Unused optional fields are the
+  // empty string, mirroring the `transaction` convention (spec §5.3).
+  if (payload.version >= 2) {
+    message.responseHash = payload.responseHash ?? "";
+    message.responseHashAlg = payload.responseHashAlg ?? "";
+    message.responseHashEncoding = payload.responseHashEncoding ?? "";
+  }
+  return message;
 }
 
 // ============================================================================
@@ -354,7 +437,7 @@ export function hashOfferTypedData(payload: OfferPayload): Hex {
 export function hashReceiptTypedData(payload: ReceiptPayload): Hex {
   return hashTypedData({
     domain: createReceiptDomain(),
-    types: RECEIPT_TYPES,
+    types: receiptTypesForVersion(payload.version),
     primaryType: "Receipt",
     message: prepareReceiptForEIP712(payload),
   });
@@ -406,9 +489,9 @@ export async function signReceiptEIP712(
 ): Promise<Hex> {
   return signTypedData({
     domain: createReceiptDomain(),
-    types: RECEIPT_TYPES,
+    types: receiptTypesForVersion(payload.version),
     primaryType: "Receipt",
-    message: prepareReceiptForEIP712(payload) as unknown as Record<string, unknown>,
+    message: prepareReceiptForEIP712(payload),
   });
 }
 
@@ -623,8 +706,8 @@ export function extractOfferPayload(offer: SignedOffer): OfferPayload {
  * @param input - The receipt input parameters
  * @returns The receipt payload with all fields
  */
-function createReceiptPayloadForEIP712(input: ReceiptInput): ReceiptPayload {
-  return {
+async function createReceiptPayloadForEIP712(input: ReceiptInput): Promise<ReceiptPayload> {
+  const payload: ReceiptPayload = {
     version: EXTENSION_VERSION,
     network: input.network,
     resourceUrl: input.resourceUrl,
@@ -632,6 +715,14 @@ function createReceiptPayloadForEIP712(input: ReceiptInput): ReceiptPayload {
     issuedAt: Math.floor(Date.now() / 1000),
     transaction: input.transaction ?? "",
   };
+  if (input.response) {
+    const { hash, encoding } = await hashResponseBody(input.response.body, input.response.encoding);
+    payload.version = 2;
+    payload.responseHash = hash;
+    payload.responseHashAlg = "sha256";
+    payload.responseHashEncoding = encoding;
+  }
+  return payload;
 }
 
 /**
@@ -643,9 +734,9 @@ function createReceiptPayloadForEIP712(input: ReceiptInput): ReceiptPayload {
  * @param input - The receipt input parameters
  * @returns The receipt payload with optional fields omitted if not provided
  */
-function createReceiptPayloadForJWS(
+async function createReceiptPayloadForJWS(
   input: ReceiptInput,
-): Omit<ReceiptPayload, "transaction"> & { transaction?: string } {
+): Promise<Omit<ReceiptPayload, "transaction"> & { transaction?: string }> {
   const payload: Omit<ReceiptPayload, "transaction"> & { transaction?: string } = {
     version: EXTENSION_VERSION,
     network: input.network,
@@ -655,6 +746,13 @@ function createReceiptPayloadForJWS(
   };
   if (input.transaction) {
     payload.transaction = input.transaction;
+  }
+  if (input.response) {
+    const { hash, encoding } = await hashResponseBody(input.response.body, input.response.encoding);
+    payload.version = 2;
+    payload.responseHash = hash;
+    payload.responseHashAlg = "sha256";
+    payload.responseHashEncoding = encoding;
   }
   return payload;
 }
@@ -670,7 +768,7 @@ export async function createReceiptJWS(
   input: ReceiptInput,
   signer: JWSSigner,
 ): Promise<JWSSignedReceipt> {
-  const payload = createReceiptPayloadForJWS(input);
+  const payload = await createReceiptPayloadForJWS(input);
   const jws = await createJWS(payload, signer);
   return { format: "jws", signature: jws };
 }
@@ -686,7 +784,7 @@ export async function createReceiptEIP712(
   input: ReceiptInput,
   signTypedData: SignTypedDataFn,
 ): Promise<EIP712SignedReceipt> {
-  const payload = createReceiptPayloadForEIP712(input);
+  const payload = await createReceiptPayloadForEIP712(input);
   const signature = await signReceiptEIP712(payload, signTypedData);
   return { format: "eip712", payload, signature };
 }
@@ -770,7 +868,7 @@ export async function verifyReceiptSignatureEIP712(
 
   const signer = await recoverTypedDataAddress({
     domain: createReceiptDomain(),
-    types: RECEIPT_TYPES,
+    types: receiptTypesForVersion(receipt.payload.version),
     primaryType: "Receipt",
     message: prepareReceiptForEIP712(receipt.payload),
     signature: receipt.signature as Hex,
