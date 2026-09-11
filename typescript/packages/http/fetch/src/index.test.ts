@@ -230,6 +230,57 @@ describe("wrapFetchWithPayment()", () => {
     );
   });
 
+  it("should preserve the original typed error as `cause` when payment payload creation fails (#2394)", async () => {
+    // A structured, caller-defined error carrying fields beyond `message`.
+    const original = Object.assign(new Error("guardrail blocked payment"), {
+      name: "PolicyError",
+      code: "SPEND_LIMIT_EXCEEDED",
+    });
+    (mockClient.createPaymentPayload as ReturnType<typeof vi.fn>).mockRejectedValue(original);
+
+    mockFetch.mockResolvedValue(createResponse(402, validPaymentRequired));
+
+    const caught = await wrappedFetch("https://api.example.com", { method: "GET" }).catch(e => e);
+
+    // The descriptive wrapper message is retained for existing callers...
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught.message).toBe("Failed to create payment payload: guardrail blocked payment");
+    // ...and the original error, with its structured fields, is reachable via `cause`.
+    expect(caught.cause).toBe(original);
+    expect((caught.cause as { code?: string }).code).toBe("SPEND_LIMIT_EXCEEDED");
+  });
+
+  it("should preserve a non-Error thrown value as `cause` when payment payload creation fails", async () => {
+    (mockClient.createPaymentPayload as ReturnType<typeof vi.fn>).mockRejectedValue("String error");
+
+    mockFetch.mockResolvedValue(createResponse(402, validPaymentRequired));
+
+    const caught = await wrappedFetch("https://api.example.com", { method: "GET" }).catch(e => e);
+
+    expect(caught.message).toBe("Failed to create payment payload: Unknown error");
+    expect(caught.cause).toBe("String error");
+  });
+
+  it("should preserve the original error as `cause` when payment requirements parsing fails", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const original = new TypeError("Invalid payment header format");
+    (
+      MockX402HTTPClient.prototype.getPaymentRequiredResponse as ReturnType<typeof vi.fn>
+    ).mockImplementation(() => {
+      throw original;
+    });
+
+    mockFetch.mockResolvedValue(createResponse(402, undefined));
+
+    const caught = await wrappedFetch("https://api.example.com", { method: "GET" }).catch(e => e);
+
+    expect(caught.message).toBe(
+      "Failed to parse payment requirements: Invalid payment header format",
+    );
+    expect(caught.cause).toBe(original);
+    expect(caught.cause).toBeInstanceOf(TypeError);
+  });
+
   it("should handle v1 payment responses from body", async () => {
     const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
     const successResponse = createResponse(200, { data: "success" });

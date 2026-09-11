@@ -72,8 +72,11 @@ export function wrapFetchWithPayment(
 
       paymentRequired = httpClient.getPaymentRequiredResponse(getHeader, body);
     } catch (error) {
-      throw new Error(
-        `Failed to parse payment requirements: ${error instanceof Error ? error.message : "Unknown error"}`,
+      throw Object.assign(
+        new Error(
+          `Failed to parse payment requirements: ${error instanceof Error ? error.message : "Unknown error"}`,
+        ),
+        { cause: error },
       );
     }
 
@@ -97,8 +100,11 @@ export function wrapFetchWithPayment(
     try {
       paymentPayload = await client.createPaymentPayload(paymentRequired);
     } catch (error) {
-      throw new Error(
-        `Failed to create payment payload: ${error instanceof Error ? error.message : "Unknown error"}`,
+      throw Object.assign(
+        new Error(
+          `Failed to create payment payload: ${error instanceof Error ? error.message : "Unknown error"}`,
+        ),
+        { cause: error },
       );
     }
 
