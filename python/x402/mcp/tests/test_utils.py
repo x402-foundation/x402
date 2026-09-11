@@ -2,10 +2,13 @@
 
 import json
 
+import mcp.types as mt
+
 from x402.mcp.types import MCPToolResult
 from x402.mcp.utils import (
     attach_payment_to_meta,
     build_tool_resource_info,
+    convert_mcp_result,
     create_tool_resource_url,
     extract_payment_from_meta,
     extract_payment_required_from_result,
@@ -357,6 +360,24 @@ def test_attach_payment_response_to_meta_existing_meta():
 
     assert updated.meta["other_key"] == "other_value"
     assert "x402/payment-response" in updated.meta
+
+
+def test_convert_mcp_result_reads_model_meta():
+    """The MCP SDK exposes ``meta``; ``_meta`` is only its wire alias."""
+    response = {
+        "success": True,
+        "transaction": "0xtxhash123",
+        "network": "eip155:84532",
+    }
+    raw = mt.CallToolResult(
+        content=[mt.TextContent(type="text", text="success")],
+        isError=False,
+        _meta={"x402/payment-response": response},
+    )
+
+    converted = convert_mcp_result(raw)
+
+    assert converted.meta["x402/payment-response"] == response
 
 
 def test_attach_payment_response_to_meta_does_not_mutate_original():

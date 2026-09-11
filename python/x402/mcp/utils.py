@@ -383,8 +383,11 @@ def convert_mcp_result(mcp_result: Any) -> "MCPToolResult":
     if is_error is None:
         is_error = getattr(mcp_result, "is_error", False)
 
-    # Extract meta
-    meta = getattr(mcp_result, "_meta", {})
+    # Pydantic MCP models expose ``meta``; ``_meta`` is the wire alias.  Keep
+    # the alias fallback for clients that return plain protocol objects.
+    meta = getattr(mcp_result, "meta", None)
+    if meta is None:
+        meta = getattr(mcp_result, "_meta", {})
     if not isinstance(meta, dict):
         meta = {}
 
