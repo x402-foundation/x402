@@ -3,18 +3,27 @@
 # How this file is read by GitHub:
 #   - Last matching pattern wins. Order matters.
 #   - A trailing slash means "this directory and everything under it".
+#   - `**` matches across path segments; `*` matches within a segment.
 #   - Paths with no rule require no specific reviewer (any maintainer can approve).
 #     We deliberately leave cross-network e2e and most examples unowned.
 #
 # Teams:
-#   @x402-foundation/core    — Core protocol, shared infra, CI, docs/specs
-#   @x402-foundation/site    — x402.org website
-#   @x402-foundation/java    — Java SDK
-#   @x402-foundation/evm     — EVM network maintainers
-#   @x402-foundation/svm     — SVM (Solana) network maintainers
-#   @x402-foundation/stellar — Stellar network maintainers
-#   @x402-foundation/aptos   — Aptos network maintainers
-#   @x402-foundation/avm     — AVM (Avalanche) network maintainers
+#   @x402-foundation/core        — Core protocol, shared infra, CI, docs/specs
+#   @x402-foundation/site        — x402.org facilitator
+#   @x402-foundation/java        — Java SDK
+#   @x402-foundation/evm         — EVM network maintainers
+#   @x402-foundation/svm         — SVM (Solana) network maintainers
+#   @x402-foundation/stellar     — Stellar network maintainers
+#   @x402-foundation/aptos       — Aptos network maintainers
+#   @x402-foundation/avm         — AVM (Avalanche) network maintainers
+#   @x402-foundation/cardano     — Cardano network maintainers
+#   @x402-foundation/casper      — Casper network maintainers
+#   @x402-foundation/concordium  — Concordium network maintainers
+#   @x402-foundation/hedera      — Hedera network maintainers
+#   @x402-foundation/keeta       — Keeta network maintainers
+#   @x402-foundation/near        — NEAR network maintainers
+#   @x402-foundation/tvm         — TVM (TON) network maintainers
+#   @x402-foundation/xrpl        — XRPL network maintainers
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. Repo-wide meta
@@ -71,7 +80,6 @@
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 6. Site (x402.org)
-#    Network partner subdirs overridden in section 12.
 # ─────────────────────────────────────────────────────────────────────────────
 /typescript/site/                          @x402-foundation/site
 
@@ -117,73 +125,100 @@
 # ─────────────────────────────────────────────────────────────────────────────
 /contracts/                                @x402-foundation/core
 
-# Note on e2e: intentionally NOT owned in bulk. Most of e2e (echo, gin, hono,
-# fastapi, fastify, flask, nethttp, mcp-*, axios, fetch, requests, httpx,
-# the facilitators, scripts, templates, mock-facilitator) is cross-network
-# infrastructure — anyone closest to the change reviews. Only the per-network
-# Next.js API routes have owners (section 12).
+# Note on e2e: intentionally NOT owned. e2e is cross-network test infrastructure.
+# Network ownership lives in specs and SDK paths below.
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║ 12. Network overrides — placed last so they win last-match precedence.   ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
 # ── EVM ───────────────────────────────────────────────────────────────────────
-/contracts/evm/                                                    @x402-foundation/evm
-/specs/schemes/exact/scheme_exact_evm.md                           @x402-foundation/evm
-/specs/schemes/upto/scheme_upto_evm.md                             @x402-foundation/evm
-/specs/extensions/eip2612_gas_sponsoring.md                        @x402-foundation/evm
-/specs/extensions/erc20_gas_sponsoring.md                          @x402-foundation/evm
-/typescript/packages/mechanisms/evm/                               @x402-foundation/evm
-/typescript/packages/extensions/src/eip2612-gas-sponsoring/        @x402-foundation/evm
-/typescript/packages/extensions/src/erc20-approval-gas-sponsoring/ @x402-foundation/evm
-/typescript/packages/http/paywall/src/evm/                         @x402-foundation/evm
-/go/mechanisms/evm/                                                @x402-foundation/evm
-/go/signers/evm/                                                   @x402-foundation/evm
-/go/extensions/eip2612gassponsor/                                  @x402-foundation/evm
-/go/extensions/erc20approvalgassponsor/                            @x402-foundation/evm
-/go/http/evm_paywall_template.go                                   @x402-foundation/evm
-/python/x402/mechanisms/evm/                                       @x402-foundation/evm
-/python/x402/extensions/eip2612_gas_sponsoring/                    @x402-foundation/evm
-/python/x402/extensions/erc20_approval_gas_sponsoring/             @x402-foundation/evm
-/python/x402/http/paywall/evm_paywall_template.py                  @x402-foundation/evm
-/python/x402/tests/unit/mechanisms/evm/                            @x402-foundation/evm
-/e2e/servers/next/app/api/exact/evm/                               @x402-foundation/evm
-/e2e/servers/next/app/api/upto/evm/                                @x402-foundation/evm
-/.github/workflows/publish_npm_scoped_x402_evm.yml                 @x402-foundation/evm
+/contracts/evm/                                                            @x402-foundation/evm
+/specs/schemes/**/scheme_*_evm.md                                          @x402-foundation/evm
+/specs/extensions/eip2612_gas_sponsoring.md                               @x402-foundation/evm
+/specs/extensions/erc20_gas_sponsoring.md                                 @x402-foundation/evm
+/typescript/packages/mechanisms/evm/                                      @x402-foundation/evm
+/typescript/packages/extensions/src/eip2612-gas-sponsoring/                 @x402-foundation/evm
+/typescript/packages/extensions/src/erc20-approval-gas-sponsoring/        @x402-foundation/evm
+/typescript/packages/http/paywall/src/evm/                                @x402-foundation/evm
+/go/mechanisms/evm/                                                       @x402-foundation/evm
+/go/signers/evm/                                                          @x402-foundation/evm
+/go/extensions/eip2612gassponsor/                                         @x402-foundation/evm
+/go/extensions/erc20approvalgassponsor/                                   @x402-foundation/evm
+/go/http/evm_paywall_template.go                                          @x402-foundation/evm
+/python/x402/mechanisms/evm/                                              @x402-foundation/evm
+/python/x402/extensions/eip2612_gas_sponsoring/                           @x402-foundation/evm
+/python/x402/extensions/erc20_approval_gas_sponsoring/                    @x402-foundation/evm
+/python/x402/http/paywall/evm_paywall_template.py                         @x402-foundation/evm
+/python/x402/tests/unit/mechanisms/evm/                                   @x402-foundation/evm
+/.github/workflows/publish_npm_scoped_x402_evm.yml                        @x402-foundation/evm
 
 # ── SVM (Solana) ──────────────────────────────────────────────────────────────
-/specs/schemes/exact/scheme_exact_svm.md                           @x402-foundation/svm
-/typescript/packages/mechanisms/svm/                               @x402-foundation/svm
-/typescript/packages/http/paywall/src/svm/                         @x402-foundation/svm
-/typescript/site/app/ecosystem/partners-data/solana-pay-x402/      @x402-foundation/svm
-/go/mechanisms/svm/                                                @x402-foundation/svm
-/go/signers/svm/                                                   @x402-foundation/svm
-/go/http/svm_paywall_template.go                                   @x402-foundation/svm
-/python/x402/mechanisms/svm/                                       @x402-foundation/svm
-/python/x402/http/paywall/svm_paywall_template.py                  @x402-foundation/svm
-/python/x402/tests/unit/mechanisms/svm/                            @x402-foundation/svm
-/e2e/servers/next/app/api/exact/svm/                               @x402-foundation/svm
-/.github/workflows/publish_npm_scoped_x402_svm.yml                 @x402-foundation/svm
+/specs/schemes/**/scheme_*_svm.md                                          @x402-foundation/svm
+/typescript/packages/mechanisms/svm/                                      @x402-foundation/svm
+/typescript/packages/http/paywall/src/svm/                                @x402-foundation/svm
+/go/mechanisms/svm/                                                       @x402-foundation/svm
+/go/signers/svm/                                                          @x402-foundation/svm
+/go/http/svm_paywall_template.go                                          @x402-foundation/svm
+/python/x402/mechanisms/svm/                                              @x402-foundation/svm
+/python/x402/http/paywall/svm_paywall_template.py                         @x402-foundation/svm
+/python/x402/tests/unit/mechanisms/svm/                                   @x402-foundation/svm
+/.github/workflows/publish_npm_scoped_x402_svm.yml                        @x402-foundation/svm
 
 # ── Stellar ───────────────────────────────────────────────────────────────────
-/specs/schemes/exact/scheme_exact_stellar.md                       @x402-foundation/stellar
-/typescript/packages/mechanisms/stellar/                           @x402-foundation/stellar
-/typescript/site/app/ecosystem/partners-data/stellar/              @x402-foundation/stellar
-/typescript/site/app/ecosystem/partners-data/built-on-stellar/     @x402-foundation/stellar
-/e2e/servers/next/app/api/exact/stellar/                           @x402-foundation/stellar
-/.github/workflows/publish_npm_scoped_x402_stellar.yml             @x402-foundation/stellar
+/specs/schemes/**/scheme_*_stellar.md                                     @x402-foundation/stellar
+/typescript/packages/mechanisms/stellar/                                  @x402-foundation/stellar
+/.github/workflows/publish_npm_scoped_x402_stellar.yml                    @x402-foundation/stellar
 
 # ── Aptos ─────────────────────────────────────────────────────────────────────
-/specs/schemes/exact/scheme_exact_aptos.md                         @x402-foundation/aptos
-/typescript/packages/mechanisms/aptos/                             @x402-foundation/aptos
-/e2e/servers/next/app/api/exact/aptos/                             @x402-foundation/aptos
-/.github/workflows/publish_npm_scoped_x402_aptos.yml               @x402-foundation/aptos
+/specs/schemes/**/scheme_*_aptos.md                                       @x402-foundation/aptos
+/typescript/packages/mechanisms/aptos/                                    @x402-foundation/aptos
+/.github/workflows/publish_npm_scoped_x402_aptos.yml                      @x402-foundation/aptos
 
-# ── AVM (Avalanche) — placeholders for upcoming network port ─────────────────
-/typescript/packages/mechanisms/avm/                               @x402-foundation/avm
-/typescript/packages/http/paywall/src/avm/                         @x402-foundation/avm
-/go/mechanisms/avm/                                                @x402-foundation/avm
-/go/signers/avm/                                                   @x402-foundation/avm
-/python/x402/mechanisms/avm/                                       @x402-foundation/avm
-/e2e/servers/next/app/api/exact/avm/                               @x402-foundation/avm
-/.github/workflows/publish_npm_scoped_x402_avm.yml                 @x402-foundation/avm
+# ── AVM (Avalanche) ───────────────────────────────────────────────────────────
+/typescript/packages/mechanisms/avm/                                      @x402-foundation/avm
+/typescript/packages/http/paywall/src/avm/                                 @x402-foundation/avm
+/python/x402/http/paywall/avm_paywall_template.py                         @x402-foundation/avm
+/.github/workflows/publish_npm_scoped_x402_avm.yml                        @x402-foundation/avm
+
+# ── Cardano ───────────────────────────────────────────────────────────────────
+/specs/schemes/**/scheme_*_cardano.md                                     @x402-foundation/cardano
+/typescript/packages/mechanisms/cardano/                                  @x402-foundation/cardano
+/.github/workflows/publish_npm_scoped_x402_cardano.yml                    @x402-foundation/cardano
+
+# ── Casper ────────────────────────────────────────────────────────────────────
+/specs/schemes/**/scheme_*_casper.md                                      @x402-foundation/casper
+/typescript/packages/mechanisms/casper/                                     @x402-foundation/casper
+/.github/workflows/publish_npm_scoped_x402_casper.yml                 @x402-foundation/concordium
+
+# ── Concordium ────────────────────────────────────────────────────────────────
+/specs/schemes/**/scheme_*_concordium.md                                  @x402-foundation/concordium
+/typescript/packages/mechanisms/concordium/                               @x402-foundation/concordium
+/.github/workflows/publish_npm_scoped_x402_concordium.yml                 @x402-foundation/concordium
+
+# ── Hedera ────────────────────────────────────────────────────────────────────
+/specs/schemes/**/scheme_*_hedera.md                                      @x402-foundation/hedera
+/typescript/packages/mechanisms/hedera/                                     @x402-foundation/hedera
+/.github/workflows/publish_npm_scoped_x402_hedera.yml                     @x402-foundation/hedera
+
+# ── Keeta ─────────────────────────────────────────────────────────────────────
+/specs/schemes/**/scheme_*_keeta.md                                       @x402-foundation/keeta
+/typescript/packages/mechanisms/keeta/                                    @x402-foundation/keeta
+/.github/workflows/publish_npm_scoped_x402_keeta.yml                      @x402-foundation/keeta
+
+# ── NEAR ──────────────────────────────────────────────────────────────────────
+/specs/schemes/**/scheme_*_near.md                                        @x402-foundation/near
+/typescript/packages/mechanisms/near/                                       @x402-foundation/near
+/.github/workflows/publish_npm_scoped_x402_near.yml                       @x402-foundation/near
+
+# ── TVM (TON; spec slug is `ton`, package slug is `tvm`) ──────────────────────
+/specs/schemes/**/scheme_*_ton.md                                         @x402-foundation/tvm
+/typescript/packages/mechanisms/tvm/                                      @x402-foundation/tvm
+/python/x402/mechanisms/tvm/                                              @x402-foundation/tvm
+/python/x402/tests/unit/mechanisms/tvm/                                   @x402-foundation/tvm
+/.github/workflows/publish_npm_scoped_x402_tvm.yml                        @x402-foundation/tvm
+
+# ── XRPL ──────────────────────────────────────────────────────────────────────
+/specs/schemes/**/scheme_*_xrpl.md                                        @x402-foundation/xrpl
+/typescript/packages/mechanisms/xrpl/                                       @x402-foundation/xrpl
+/.github/workflows/publish_npm_scoped_x402_xrpl.yml                       @x402-foundation/xrpl
