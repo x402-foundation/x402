@@ -25,6 +25,7 @@ import json
 import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any
 
 from ..client import x402Client, x402ClientSync
@@ -93,6 +94,7 @@ class x402MCPSession:
         self,
         name: str,
         arguments: dict[str, Any] | None = None,
+        read_timeout_seconds: timedelta | None = None,
     ) -> MCPToolCallResult:
         """Call a tool with automatic x402 payment handling.
 
@@ -104,14 +106,20 @@ class x402MCPSession:
         Args:
             name: Tool name to call.
             arguments: Arguments to pass to the tool.
+            read_timeout_seconds: MCP request timeout. Overrides accept
+                ``maxTimeoutSeconds``. The initial 402 probe uses 300s when omitted.
 
         Returns:
             MCPToolCallResult with content, payment info, and error status.
         """
+        probe_timeout = (
+            read_timeout_seconds if read_timeout_seconds is not None else timedelta(seconds=300)
+        )
         # First call without payment
         result = await self._session.call_tool(
             name=name,
             arguments=arguments or {},
+            read_timeout_seconds=probe_timeout,
         )
 
         # If no error, return directly
@@ -132,11 +140,22 @@ class x402MCPSession:
         # Serialize for transmission
         payload_dict = payment_payload.model_dump(by_alias=True)
 
+        accepted = getattr(payment_payload, "accepted", None)
+        max_timeout_seconds = (
+            getattr(accepted, "max_timeout_seconds", None) if accepted is not None else None
+        )
+        paid_timeout = (
+            read_timeout_seconds
+            if read_timeout_seconds is not None
+            else timedelta(seconds=300 if max_timeout_seconds is None else max_timeout_seconds)
+        )
+
         # Retry with payment in _meta
         result = await self._session.call_tool(
             name=name,
             arguments=arguments or {},
             meta={MCP_PAYMENT_META_KEY: payload_dict},
+            read_timeout_seconds=paid_timeout,
         )
 
         return self._build_result(result, payment_made=True)
@@ -241,15 +260,21 @@ class x402MCPClientSync:
         Args:
             name: Tool name
             args: Tool arguments
-            **kwargs: Additional MCP client options
+            **kwargs: Additional MCP client options. ``read_timeout_seconds``
+                overrides accept ``maxTimeoutSeconds``. The initial 402 probe
+                uses 300s when omitted.
 
         Returns:
             MCPToolCallResult with content, payment info, and error status
         """
         args = args or {}
         params = {"name": name, "arguments": args}
+        probe_timeout = kwargs.get("read_timeout_seconds")
+        if probe_timeout is None:
+            probe_timeout = timedelta(seconds=300)
+        probe_kwargs = {**kwargs, "read_timeout_seconds": probe_timeout}
 
-        result = self._mcp_client.call_tool(params, **kwargs)
+        result = self._mcp_client.call_tool(params, **probe_kwargs)
         mcp_result = convert_mcp_result(result)
 
         payment_required = extract_payment_required_from_result(mcp_result)
@@ -274,7 +299,17 @@ class x402MCPClientSync:
             "arguments": args,
             "_meta": {MCP_PAYMENT_META_KEY: payload_dict},
         }
-        result = self._mcp_client.call_tool(params_with_meta, **kwargs)
+        accepted = getattr(payment_payload, "accepted", None)
+        max_timeout_seconds = (
+            getattr(accepted, "max_timeout_seconds", None) if accepted is not None else None
+        )
+        paid_timeout = kwargs.get("read_timeout_seconds")
+        if paid_timeout is None:
+            paid_timeout = timedelta(
+                seconds=300 if max_timeout_seconds is None else max_timeout_seconds
+            )
+        paid_kwargs = {**kwargs, "read_timeout_seconds": paid_timeout}
+        result = self._mcp_client.call_tool(params_with_meta, **paid_kwargs)
         mcp_result = convert_mcp_result(result)
         return self._build_result(mcp_result, payment_made=True)
 

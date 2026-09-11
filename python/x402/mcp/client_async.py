@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from typing import Any
 
 from ..schemas import PaymentPayload, PaymentRequired
@@ -150,7 +151,9 @@ class x402MCPClient:
         Args:
             name: Tool name
             args: Tool arguments
-            **kwargs: Additional MCP client options
+            **kwargs: Additional MCP client options. ``read_timeout_seconds``
+                overrides accept ``maxTimeoutSeconds``. The initial 402 probe
+                uses 300s when omitted.
 
         Returns:
             Tool call result with payment metadata
@@ -160,7 +163,11 @@ class x402MCPClient:
         """
         # First attempt without payment
         call_params = {"name": name, "arguments": args}
-        result = await self._call_mcp_tool(call_params, **kwargs)
+        probe_timeout = kwargs.get("read_timeout_seconds")
+        if probe_timeout is None:
+            probe_timeout = timedelta(seconds=300)
+        probe_kwargs = {**kwargs, "read_timeout_seconds": probe_timeout}
+        result = await self._call_mcp_tool(call_params, **probe_kwargs)
 
         # Check if this is a payment required response
         payment_required = extract_payment_required_from_result(result)
@@ -238,7 +245,8 @@ class x402MCPClient:
             name: Tool name
             args: Tool arguments
             payload: Payment payload
-            **kwargs: Additional MCP client options
+            **kwargs: Additional MCP client options. ``read_timeout_seconds``
+                overrides accept ``maxTimeoutSeconds``.
 
         Returns:
             Tool call result with payment metadata
@@ -246,8 +254,19 @@ class x402MCPClient:
         # Build call params with payment in _meta
         call_params = attach_payment_to_meta({"name": name, "arguments": args}, payload)
 
+        accepted = getattr(payload, "accepted", None)
+        max_timeout_seconds = (
+            getattr(accepted, "max_timeout_seconds", None) if accepted is not None else None
+        )
+        paid_timeout = kwargs.get("read_timeout_seconds")
+        if paid_timeout is None:
+            paid_timeout = timedelta(
+                seconds=300 if max_timeout_seconds is None else max_timeout_seconds
+            )
+        paid_kwargs = {**kwargs, "read_timeout_seconds": paid_timeout}
+
         # Call with payment
-        result = await self._call_mcp_tool(call_params, **kwargs)
+        result = await self._call_mcp_tool(call_params, **paid_kwargs)
 
         # Extract payment response
         settle_response = extract_payment_response_from_meta(result)
