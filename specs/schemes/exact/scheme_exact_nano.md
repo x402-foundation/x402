@@ -120,7 +120,7 @@ No additional `extra` fields are required.
 
 The payload field of the `PAYMENT-SIGNATURE` header must follow the following schema:
 
-- `block`: The full contents of the [send block] which authorizes the transfer of [raw units] on the Nano network. During creation of the [send block], the **`Client`** will use Nano RPC action [account_info] to request the account information it needs to construct the block. Additionally a small Proof-of-Work nonce (for anti-spam purposes on the Nano network) MUST be generated and included in the block.
+- `block`: The full contents of the [send block] which authorizes the transfer of [raw units] on the Nano network. During creation of the [send block], the **`Client`** will use Nano RPC action [account_info] to request the account information it needs to construct the block. Additionally a small Proof-of-Work (for anti-spam purposes on the Nano network) MUST be generated using the `frontier` field returned by Nano RPC action [account_info] as input and included in the block. The `representative` field returned by Nano RPC action [account_info] SHOULD be used during creation of the [send block] to avoid re-delegation of the voting weight for the payer's Nano account.
 
 ## Verification
 
@@ -133,21 +133,23 @@ For the **`Facilitator`** to verify a payment in the `exact` scheme, follow thes
 5. **payTo Check** - `PaymentPayload.payload.block.link_as_account` MUST exactly match `PaymentPayload.accepted.payTo`.
 6. **Frontier Hash Check** - `PaymentPayload.payload.block.previous` MUST exactly match frontier hash for `PaymentPayload.payload.block.account`. Use Nano RPC action [account_info] to query information for `PaymentPayload.payload.block.account` and check that the `frontier` field returned in the query is equal to `PaymentPayload.payload.block.previous`.
 7. **Balance Check** - `PaymentPayload.payload.block.account` MUST have balance to cover payment. Use Nano RPC action [account_info] to query information for `PaymentPayload.payload.block.account` and ensure that the delta between the `balance` field (_previous_balance_) returned in the query and `PaymentPayload.payload.block.balance` (_new_balance_) is equal to `PaymentPayload.accepted.amount` (_payment_amount_). Calculation is _previous_balance_ - _new_balance_ = _payment_amount_.
-8. **Work Difficulty Check** - The `PaymentPayload.payload.block.work` nonce MUST be validated to ensure it meets the network's current minimum difficulty threshold for a send transaction.
+8. **Work Difficulty Check** - `PaymentPayload.payload.block.work` MUST be validated to ensure it meets the network's current minimum difficulty threshold for a send transaction.
 9. **Previous Confirmation Check** - **`Facilitator`** MUST verify that the calculated hash of the send block does not already exist as a confirmed block. Use Nano RPC action [block_info], passing the calculated hash of `PaymentPayload.payload.block` as a parameter, to check for previous confirmation of this hash. This step also provides fork protection (see **Appendix** later in this document).
 
 ## Settlement
 
-The **`Facilitator`** determines settlement using a two-step approach:
+The **`Facilitator`** determines Settlement using a two-step approach:
 
 1. **Processed Step** - **`Facilitator`** broadcasts `PaymentPayload.payload.block` using Nano node RPC action [process] and notes the returned hash of the processed block.
-2. **Confirmed Step** - **`Facilitator`** polls the network for confirmation of the processed block's hash using Nano node RPC action [block_info]. Check for the existence of field `confirmed: "true"` in the response to determine if the block is confirmed. Polling SHOULD occur at one second intervals, up to a maximum of `maxTimeoutSeconds` specified in the initial payment requirement.
+2. **Confirmed Step** - **`Facilitator`** polls the network for confirmation of the processed block's hash using Nano node RPC action [block_info]. Check for the existence of field `confirmed: "true"` in the response to determine if the block is confirmed. Polling SHOULD occur at one second intervals, up to a maximum of `maxTimeoutSeconds` specified in the payment requirement.
 
 `Processed` means that the Nano node has checked the validity of the block and published the block to the network. The block is not yet confirmed.
 
 `Confirmed` means that the block has achieved consensus on the network.
 
 It is recommended that the **`Facilitator`** waits half a second before initial polling for block confirmation using Nano node RPC action [block_info]. As a typical Nano block confirms in half a second, this small wait should reduce the need for additional polling and provides an improved user experience for the payer.
+
+It is possible that the payer adds a block to their Nano account (like an auto-receive block or another concurrent payment) between the Verification and Settlement stages of an ongoing payment attempt. This will result in an unsuccessful Settlement because the payer's Nano account now has a different frontier hash to the one that MUST exactly match `PaymentPayload.payload.block.previous` (see **Frontier Hash Check** in Verification). If this happens the **`Facilitator`** SHOULD return a distinct `errorReason` (e.g. `frontier_changed`) so that the **`Client`** understands that it needs to construct a new [send block] and not attempt to resubmit the now outdated send block.
 
 ### Successful Settlement Response
 
@@ -184,13 +186,17 @@ PAYMENT-RESPONSE: eyJzdWNjZXNzI.....I2NiJ9
 
 ## Fork protection (recommended practice for **`Resource Server`** and **`Facilitator`**)
 
-**`Resource Server`** SHOULD temporarily store the `payload.block.previous` value of any ongoing verification / settlement attempt. If any further payment attempt reaches the **`Resource Server`** with the same `payload.block.previous` field, the **`Resource Server`** should reject it. Once the ongoing payment attempt is verified and settled, the **`Resource Server`** no longer needs to store the `payload.block.previous` value. **`Resource Server`** SHOULD also first check that the block is valid before performing this step (similar to **Valid Block Check** of Verification earlier in this document).
+**`Resource Server`** SHOULD temporarily store the `payload.block.previous` value of any ongoing Verification / Settlement attempt. If any further payment attempt reaches the **`Resource Server`** with the same `payload.block.previous` field, the **`Resource Server`** should reject it. Once the ongoing payment attempt is verified and settled, the **`Resource Server`** no longer needs to store the `payload.block.previous` value. **`Resource Server`** SHOULD also first check that the block is valid before performing this step (similar to **Valid Block Check** of Verification earlier in this document).
 
-Additionally during verification a **`Facilitator`** SHOULD check whether the send block in the payment payload has previously been confirmed on the Nano network (see **Previous Confirmation Check** of Verification earlier in this document).
+Additionally during Verification a **`Facilitator`** SHOULD check whether the send block in the payment payload has previously been confirmed on the Nano network (see **Previous Confirmation Check** of Verification earlier in this document).
 
 Both these practices prevent accidental or malicious fork submission. Forks are blocks with the same `previous` value.
 
 If two blocks with the same `previous` value are broadcast to the Nano network, the first block to achieve consensus will be confirmed onto the network ledger. The other block gets rejected forever.
+
+## Blocks have no expiry
+
+Valid blocks that have been processed by the **`Facilitator`** but not yet confirmed do not expire. They exist on the network until confirmed, which typically takes about half a second. `maxTimeoutSeconds` in a payment requirement bounds the **`Facilitator`**'s polling period for confirmation of the [send block], not expiration. Should `maxTimeoutSeconds` elapse, the **`Facilitator`** SHOULD return a distinct `errorReason` (e.g. `maxTimeoutSeconds_elapsed`). The **`Resource Server`** MUST NOT discard the block hash; instead, any reattempt at Settlement for this specific payment attempt MUST query the network for the status of the original block hash (similar to **Previous Confirmation Check** of Verification mentioned earlier in this document) before attempting to accept a replacement block, preventing unintended double-payments or account forks.
 
 [send block]: https://docs.nano.org/protocol-design/blocks/#state-blocks
 [raw units]: https://docs.nano.org/integration-guides/the-basics/#units
