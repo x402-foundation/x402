@@ -207,9 +207,14 @@ describe("createHederaSignAndSubmitTransaction", () => {
     const builtClient = { close: closeSpy } as unknown as Client;
     const expectedId = "0.0.5001@1700000002.000000000";
     const getReceipt = vi.fn().mockResolvedValue({ status: "SUCCESS" });
+    const getRecord = vi.fn().mockResolvedValue({
+      transfers: [],
+      tokenTransfers: new Map(),
+    });
     vi.spyOn(TransferTransaction.prototype, "execute").mockResolvedValue({
       transactionId: { toString: () => expectedId },
       getReceipt,
+      getRecord,
     } as never);
 
     const submit = createHederaSignAndSubmitTransaction(() => builtClient, feePayerKey);
@@ -219,8 +224,12 @@ describe("createHederaSignAndSubmitTransaction", () => {
       "hedera:testnet",
     );
 
-    expect(result).toEqual({ transactionId: expectedId });
+    expect(result).toEqual({
+      transactionId: expectedId,
+      transfers: { hbarTransfers: [], tokenTransfers: {} },
+    });
     expect(getReceipt).toHaveBeenCalledWith(builtClient);
+    expect(getRecord).toHaveBeenCalledWith(builtClient);
     expect(closeSpy).toHaveBeenCalledTimes(1);
   });
 
