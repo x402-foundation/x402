@@ -16,6 +16,7 @@ import {
   PaymentRequirementsSelector,
   selectPaymentRequirements,
 } from "x402/client";
+import { warnLegacyDeprecation } from "x402/shared";
 
 /**
  * Enables the payment of APIs using the x402 payment protocol.
@@ -63,6 +64,8 @@ export function withPaymentInterceptor(
   paymentRequirementsSelector: PaymentRequirementsSelector = selectPaymentRequirements,
   config?: X402Config,
 ) {
+  warnLegacyDeprecation("x402-axios", "@x402/axios", "client");
+
   axiosClient.interceptors.response.use(
     response => response,
     async (error: AxiosError) => {

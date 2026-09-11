@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { Address } from "viem";
 import type { Address as SolanaAddress } from "@solana/kit";
-import { computeRoutePatterns, findMatchingRoute } from "x402/shared";
+import { computeRoutePatterns, findMatchingRoute, warnLegacyDeprecation } from "x402/shared";
 import { FacilitatorConfig, Resource, RoutesConfig, RouteConfig, PaywallConfig } from "x402/types";
 import { useFacilitator } from "x402/verify";
 
@@ -82,6 +82,8 @@ export function paymentMiddleware(
   facilitator?: FacilitatorConfig,
   paywall?: PaywallConfig,
 ) {
+  warnLegacyDeprecation("x402-next", "@x402/next", "server");
+
   const { verify, settle, supported } = useFacilitator(facilitator);
   const x402Version = 1;
 
@@ -245,6 +247,8 @@ export function withX402<T = unknown>(
   facilitator?: FacilitatorConfig,
   paywall?: PaywallConfig,
 ): (request: NextRequest) => Promise<NextResponse<T | unknown>> {
+  warnLegacyDeprecation("x402-next", "@x402/next", "server");
+
   const { verify, settle, supported } = useFacilitator(facilitator);
   const x402Version = 1;
 
