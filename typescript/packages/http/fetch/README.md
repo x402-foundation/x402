@@ -38,7 +38,7 @@ const data = await response.json();
 
 ## API
 
-### `wrapFetchWithPayment(fetch, client)`
+### `wrapFetchWithPayment(fetch, client, options?)`
 
 Wraps the native fetch API to handle 402 Payment Required responses automatically.
 
@@ -46,8 +46,20 @@ Wraps the native fetch API to handle 402 Payment Required responses automaticall
 
 - `fetch`: The fetch function to wrap (typically `globalThis.fetch`)
 - `client`: An x402Client instance with registered payment schemes
+- `options.validatePaidResponse`: Optional check of a paid response, run after payment processing on both the ordinary and recovery paths. The callback receives a `Response.clone()`, so the returned response body stays unread. Rejecting throws `PaidResponseValidationError` — carrying the original response and its `PAYMENT-RESPONSE` header — without paying again. Omit to keep existing behavior.
 
-### `wrapFetchWithPaymentFromConfig(fetch, config)`
+```typescript
+const fetchWithPayment = wrapFetchWithPayment(fetch, client, {
+  validatePaidResponse: async response => {
+    const body = await response.json();
+    if (!body?.report?.weather) {
+      throw new Error("paid body missing report.weather");
+    }
+  },
+});
+```
+
+### `wrapFetchWithPaymentFromConfig(fetch, config, options?)`
 
 Convenience wrapper that creates an x402Client from a configuration object.
 
@@ -60,6 +72,7 @@ Convenience wrapper that creates an x402Client from a configuration object.
     - `client`: The scheme client implementation (e.g., `ExactEvmScheme`, `ExactSvmScheme`)
     - `x402Version`: Optional protocol version (defaults to 2, set to 1 for legacy support)
   - `paymentRequirementsSelector`: Optional function to select payment requirements from multiple options
+- `options.validatePaidResponse`: Optional. Same validator as `wrapFetchWithPayment`.
 
 #### Returns
 
