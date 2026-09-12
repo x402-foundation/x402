@@ -94,6 +94,16 @@ describe("NextAdapter", () => {
   });
 
   describe("getQueryParams", () => {
+    it.each([
+      ["tag=&tag=b", ["", "b"]],
+      ["tag=&tag=", ["", ""]],
+      ["tag=&tag=b&tag=c", ["", "b", "c"]],
+    ])("preserves empty values in %s", (query, expected) => {
+      const adapter = new NextAdapter(new NextRequest(`https://example.com/api?${query}`));
+      expect(adapter.getQueryParams()).toEqual({ tag: expected });
+      expect(adapter.getQueryParams().tag).toEqual(adapter.getQueryParam("tag"));
+    });
+
     it("returns all query parameters", () => {
       const req = createMockRequest({ url: "https://example.com/api?foo=bar&baz=qux" });
       const adapter = new NextAdapter(req);
