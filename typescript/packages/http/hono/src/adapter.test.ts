@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { Context } from "hono";
+import { Context, Hono } from "hono";
 import { HonoAdapter } from "./adapter";
 
 /**
@@ -32,11 +32,12 @@ function createMockContext(
       method: options.method || "GET",
       path: url.pathname,
       url: url.toString(),
-      query: vi.fn((name?: string) => {
-        if (name === undefined) {
-          return query;
-        }
-        return query[name];
+      query: vi.fn((name?: string) => (name === undefined ? query : query[name])),
+      queries: vi.fn((name?: string) => {
+        const values = Object.fromEntries(
+          Object.entries(query).map(([key, value]) => [key, [value]]),
+        );
+        return name === undefined ? values : values[name];
       }),
       json: vi.fn().mockResolvedValue(options.body),
     },
@@ -113,6 +114,17 @@ describe("HonoAdapter", () => {
   });
 
   describe("getQueryParams", () => {
+    it.each([
+      ["tag=a&tag=b&city=Seoul", { tag: ["a", "b"], city: "Seoul" }],
+      ["tag=&tag=b", { tag: ["", "b"] }],
+      ["tag=a%20b&tag=c%2Bd", { tag: ["a b", "c+d"] }],
+    ])("preserves repeated parameters in %s", async (query, expected) => {
+      const app = new Hono();
+      app.get("/", c => c.json(new HonoAdapter(c).getQueryParams()));
+      const response = await app.request(`http://localhost/?${query}`);
+      expect(await response.json()).toEqual(expected);
+    });
+
     it("returns all query parameters", () => {
       const c = createMockContext({ query: { foo: "bar", baz: "qux" } });
       const adapter = new HonoAdapter(c);
@@ -127,6 +139,13 @@ describe("HonoAdapter", () => {
   });
 
   describe("getQueryParam", () => {
+    it("preserves repeated values when looking up a parameter by name", async () => {
+      const app = new Hono();
+      app.get("/", c => c.json({ tag: new HonoAdapter(c).getQueryParam("tag") }));
+      const response = await app.request("http://localhost/?tag=&tag=b");
+      expect(await response.json()).toEqual({ tag: ["", "b"] });
+    });
+
     it("returns single value for single param", () => {
       const c = createMockContext({ query: { city: "NYC" } });
       const adapter = new HonoAdapter(c);
