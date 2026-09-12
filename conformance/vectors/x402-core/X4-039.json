@@ -1,0 +1,25 @@
+{
+  "id": "X4-039",
+  "title": "Payment Proof Format Injection",
+  "category": "trust_abuse",
+  "requirement": "HC-29: Payment proof must be parsed safely; reject malformed/injected proofs",
+  "method": "GET",
+  "request": {
+    "injection_variants": [
+      "sql_injection",
+      "nosql_injection",
+      "json_nested_bomb",
+      "null_byte",
+      "unicode_rtl",
+      "template_injection",
+      "header_injection",
+      "path_traversal"
+    ]
+  },
+  "owasp_asi": "ASI07",
+  "severity": "high",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-039"
+}

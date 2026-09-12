@@ -1,0 +1,17 @@
+{
+  "id": "X4-043",
+  "title": "Concurrent Payment Race Condition",
+  "category": "network_attacks",
+  "requirement": "HC-33: Payment processing must be atomic; concurrent duplicate nonces must resolve to single acceptance",
+  "method": "GET",
+  "request": {
+    "nonce": "c5660f5652014568acf8d149dfdfcc5b",
+    "concurrent_requests": 5
+  },
+  "owasp_asi": "ASI03",
+  "severity": "critical",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-043"
+}

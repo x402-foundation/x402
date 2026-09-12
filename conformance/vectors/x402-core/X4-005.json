@@ -1,0 +1,16 @@
+{
+  "id": "X4-005",
+  "title": "Payment to Wrong Recipient Address",
+  "category": "recipient_manipulation",
+  "requirement": "HC-4: Server must verify payment recipient matches its own address",
+  "method": "GET",
+  "request": {
+    "attacker_recipient": "0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead"
+  },
+  "owasp_asi": "ASI09",
+  "severity": "critical",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-005"
+}

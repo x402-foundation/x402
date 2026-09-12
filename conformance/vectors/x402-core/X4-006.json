@@ -1,0 +1,23 @@
+{
+  "id": "X4-006",
+  "title": "Invalid Recipient Address Rejection",
+  "category": "recipient_manipulation",
+  "requirement": "HC-5: Server must validate recipient address format",
+  "method": "GET",
+  "request": {
+    "addresses_tested": [
+      "0x0000000000000000000000000000000000000000",
+      "0xffffffffffffffffffffffffffffffffffffffff",
+      "0x1234",
+      "0xgggggggggggggggggggggggggggggggggggggggg",
+      "not_an_address",
+      ""
+    ]
+  },
+  "owasp_asi": "ASI09",
+  "severity": "high",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-006"
+}

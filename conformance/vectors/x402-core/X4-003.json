@@ -1,0 +1,22 @@
+{
+  "id": "X4-003",
+  "title": "Unsupported Currency Rejection",
+  "category": "payment_challenge",
+  "requirement": "HC-3: Server must validate payment currency matches requirement",
+  "method": "GET",
+  "request": {
+    "currencies_tested": [
+      "ETH",
+      "BTC",
+      "EURC",
+      "DAI",
+      "FAKE_TOKEN"
+    ]
+  },
+  "owasp_asi": "ASI03",
+  "severity": "medium",
+  "impact": "overpayment",
+  "normative": "SHOULD",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-003"
+}

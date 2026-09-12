@@ -1,0 +1,21 @@
+{
+  "id": "X4-034",
+  "title": "Zero-Amount Payment Acceptance",
+  "category": "protocol_abuse",
+  "requirement": "HC-24: Servers must reject payments with zero or non-positive amounts",
+  "method": "GET",
+  "request": {
+    "zero_amounts": [
+      "0",
+      "0.0",
+      "0x0",
+      "0e0"
+    ]
+  },
+  "owasp_asi": "ASI03",
+  "severity": "high",
+  "impact": "service_denial",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-034"
+}

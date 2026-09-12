@@ -1,0 +1,16 @@
+{
+  "id": "X4-023",
+  "title": "Attestation Revocation Check (OATR)",
+  "category": "identity_verification",
+  "requirement": "HC-16: Revocation checking must be available to reject compromised operator keys",
+  "method": "GET",
+  "request": {
+    "revocation_url": "http://mock/.well-known/oatr-revocation.json"
+  },
+  "owasp_asi": "ASI04",
+  "severity": "high",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-023"
+}
