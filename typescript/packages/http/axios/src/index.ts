@@ -9,11 +9,13 @@ type AxiosHeaderRecord = Record<string, string>;
  * Resolves the final absolute URL for an Axios 402 response.
  *
  * @param config - Original Axios request configuration
+ * @param axiosInstance - Axios instance used to serialize the request URL
  * @param response - Axios error response, if present
  * @returns Absolute request URL (prefers final URL after redirects)
  */
 function resolveAxiosRequestUrl(
   config: InternalAxiosRequestConfig,
+  axiosInstance: AxiosInstance,
   response?: AxiosError["response"],
 ): string {
   const responseUrl =
@@ -27,13 +29,13 @@ function resolveAxiosRequestUrl(
   const url = config.url ?? "";
   if (config.baseURL) {
     try {
-      return new URL(url, config.baseURL).href;
+      return new URL(axiosInstance.getUri(config)).href;
     } catch {
       return url || config.baseURL;
     }
   }
 
-  return url;
+  return axiosInstance.getUri(config);
 }
 
 /**
@@ -178,7 +180,7 @@ export function wrapAxiosWithPayment(
         }
 
         // Run payment required hooks
-        const requestUrl = resolveAxiosRequestUrl(originalConfig, error.response);
+        const requestUrl = resolveAxiosRequestUrl(originalConfig, axiosInstance, error.response);
         const hookHeaders = await httpClient.handlePaymentRequired(paymentRequired, requestUrl);
         if (hookHeaders) {
           const hookConfig = createX402RetryConfig(originalConfig);

@@ -1,4 +1,4 @@
-import {
+import axios, {
   AxiosError,
   AxiosHeaders,
   AxiosInstance,
@@ -115,6 +115,7 @@ describe("wrapAxiosWithPayment()", () => {
         },
       },
       request: vi.fn(),
+      getUri: axios.getUri,
     } as unknown as AxiosInstance;
 
     // Create mock client
