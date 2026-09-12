@@ -102,6 +102,24 @@ Or use the [MCP Inspector](https://github.com/modelcontextprotocol/inspector) to
 4. Server verifies payment, executes tool, returns result
 5. Payment is settled and receipt included in response
 
+## Extending This Pattern With SIWX
+
+This example is intentionally payment-first: every paid MCP tool call follows the `402 -> pay -> retry` loop above.
+
+If you want a "pay once, then reopen the same paid MCP tool without repaying" flow, the clean shape is:
+
+1. Add an auth-only MCP tool that returns a SIWX challenge
+2. Keep the first call to the paid tool on the normal x402 payment path
+3. Record entitlement for the exact MCP resource, for example `mcp://tool/get_weather`
+4. On later calls, accept wallet-auth plus stored entitlement instead of requiring a second payment
+
+Two important notes:
+
+- `@x402/mcp` `createPaymentWrapper()` currently requires at least one payment requirement, so auth-only MCP tools still need custom wrapper logic today
+- The HTTP [Sign-In-With-X example](../sign-in-with-x/README.md) is the best current reference for the wallet-auth pieces: challenge declaration, payment recording, and later reuse
+
+That makes MCP SIWX reuse a good docs-and-example extension point without changing the core pay-every-call example here.
+
 ## Architecture
 
 ```
