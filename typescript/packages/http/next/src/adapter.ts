@@ -76,7 +76,7 @@ export class NextAdapter implements HTTPAdapter {
     const params: Record<string, string | string[]> = {};
     this.req.nextUrl.searchParams.forEach((value, key) => {
       const existing = params[key];
-      if (existing) {
+      if (existing !== undefined) {
         if (Array.isArray(existing)) {
           existing.push(value);
         } else {
