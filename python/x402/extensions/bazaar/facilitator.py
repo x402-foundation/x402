@@ -102,6 +102,47 @@ _ALL_DIGITS_RE = re.compile(r"^\d+$")
 # of bypasses as the decimal form above.
 _HEX_LITERAL_RE = re.compile(r"^0x[0-9a-f]+$", re.IGNORECASE)
 
+# Maximum number of successive unquote passes applied while canonicalizing a
+# routeTemplate before giving up and rejecting it.
+#
+# A legitimate single-encoded value reaches a fixed point (further decoding
+# changes nothing) after one pass. This allows a few extra passes so
+# multiply-encoded traversal/injection payloads (not just doubly-encoded
+# ones) are still caught, while bounding the work done on adversarial input.
+_MAX_ROUTE_TEMPLATE_DECODE_PASSES = 5
+
+
+def _fully_decode_route_template(value: str) -> str | None:
+    """Repeatedly percent-decode value until a fixed point is reached.
+
+    Further decoding produces no change, or ``_MAX_ROUTE_TEMPLATE_DECODE_PASSES``
+    is exhausted. Returns the fully-canonicalized string.
+
+    A single decode pass only catches a payload encoded exactly once (e.g.
+    ``%2e%2e``); a double- or triple-encoded payload (``%252e%252e``,
+    ``%25252e%25252e``, ...) would still contain literal ``%`` sequences after
+    one pass and slip past a traversal/injection substring check performed on
+    that partially-decoded result. Decoding to a fixed point closes that gap
+    for any encoding depth, not just the double-encoded case.
+
+    Args:
+        value: The string to canonicalize.
+
+    Returns:
+        The fully-decoded string, or None if the pass budget is exhausted
+        without reaching a fixed point.
+    """
+    decoded = value
+    for _ in range(_MAX_ROUTE_TEMPLATE_DECODE_PASSES):
+        next_decoded = unquote(decoded)
+        if next_decoded == decoded:
+            return decoded
+        decoded = next_decoded
+    # Still changing after the pass budget: either pathologically deep
+    # encoding or a `%` that never resolves to a fixed point. Either way,
+    # there's no safe canonical form to validate against. Reject.
+    return None
+
 
 def _is_valid_route_template(value: str | None) -> bool:
     """Check whether a routeTemplate value is structurally valid.
@@ -116,8 +157,8 @@ def _is_valid_route_template(value: str | None) -> bool:
     Enforces:
     - Must be a non-empty string starting with "/"
     - Must match the safe URL path character set (alphanumeric, _, :, /, ., -, ~, %)
-    - Must not contain ".." (path traversal)
-    - Must not contain "://" (URL injection)
+    - Must not contain ".." (path traversal), at any percent-encoding depth
+    - Must not contain "://" (URL injection), at any percent-encoding depth
 
     Args:
         value: The raw routeTemplate string from the client payload.
@@ -129,8 +170,12 @@ def _is_valid_route_template(value: str | None) -> bool:
         return False
     if not _ROUTE_TEMPLATE_RE.match(value):
         return False
-    # Decode percent-encoding before traversal checks so that %2e%2e is caught.
-    decoded = unquote(value)
+    # Decode to a fixed point before traversal checks, so that %2e%2e,
+    # %252e%252e, and deeper encodings are all caught rather than just the
+    # single-encoded case.
+    decoded = _fully_decode_route_template(value)
+    if decoded is None:
+        return False
     if ".." in decoded:
         return False
     if "://" in decoded:

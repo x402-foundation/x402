@@ -2,6 +2,7 @@
 
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import quote
 
 from x402.extensions.bazaar import (
     BAZAAR,
@@ -68,6 +69,40 @@ class TestIsValidRouteTemplate:
     def test_rejects_percent_encoded_traversal_sequences(self) -> None:
         assert _is_valid_route_template("/users/%2e%2e/admin") is False
         assert _is_valid_route_template("/users/%2E%2E/admin") is False
+
+    def test_rejects_double_encoded_traversal_sequences(self) -> None:
+        # %25 decodes to "%", so %252e%252e decodes-once to "%2e%2e" (still
+        # encoded) and only decodes-twice to "..". A single-pass decode
+        # wouldn't see the traversal here.
+        assert _is_valid_route_template("/users/%252e%252e/admin") is False
+        assert _is_valid_route_template("/users/%252E%252E/admin") is False
+
+    def test_rejects_triple_encoded_traversal_sequences(self) -> None:
+        assert _is_valid_route_template("/users/%25252e%25252e/admin") is False
+
+    def test_rejects_double_encoded_scheme_injection(self) -> None:
+        # %3a decodes to ":", %2f decodes to "/" — %253a%252f%252f decodes-once
+        # to "%3a%2f%2f" (still encoded) and decodes-twice to "://".
+        assert _is_valid_route_template("/users/javascript%253a%252f%252fevil") is False
+
+    def test_still_accepts_a_legitimate_single_percent_encoded_segment(self) -> None:
+        # One decode pass resolves this to plain text with no further
+        # encoding, reaching a fixed point immediately — must not be rejected
+        # just for containing a "%".
+        assert _is_valid_route_template("/search/caf%C3%A9") is True
+
+    def test_rejects_a_value_whose_percent_encoding_never_resolves_to_a_fixed_point(
+        self,
+    ) -> None:
+        # Pathologically deep encoding (more than the decode-pass budget) has
+        # no safe canonical form to validate — reject rather than decode
+        # indefinitely. ":" is re-encoded ("%3A" → "%253A" → ...) on every
+        # encodeURIComponent pass, so this compounds correctly (unlike "..",
+        # whose dots encodeURIComponent leaves untouched).
+        value = ":"
+        for _ in range(8):
+            value = quote(value, safe="")
+        assert _is_valid_route_template(f"/users/x{value}/admin") is False
 
 
 class TestValidateDiscoveryExtension:
