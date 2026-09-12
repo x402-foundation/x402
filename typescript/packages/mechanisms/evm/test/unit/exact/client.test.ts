@@ -840,6 +840,34 @@ describe("Permit2 Approval Flow", () => {
       expect(result.extensions).toBeUndefined();
     });
 
+    it("warns when erc20 approval sponsoring is advertised but the signer cannot read the chain", async () => {
+      _resetSponsoringWarnings();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const bareSigner: ClientEvmSigner = {
+          address: "0x1234567890123456789012345678901234567890",
+          signTypedData: vi.fn().mockResolvedValue("0xmocksig"),
+          signTransaction: vi.fn().mockResolvedValue("0x02ab"),
+          getTransactionCount: vi.fn().mockResolvedValue(0),
+          estimateFeesPerGas: vi
+            .fn()
+            .mockResolvedValue({ maxFeePerGas: 1n, maxPriorityFeePerGas: 1n }),
+          // No readContract, no rpcUrl: the allowance cannot be checked.
+        };
+        const scheme = new ExactEvmScheme(bareSigner);
+        const result = await scheme.createPaymentPayload(2, erc20Requirements, {
+          extensions: {
+            erc20ApprovalGasSponsoring: { info: { description: "test", version: "1" }, schema: {} },
+          },
+        });
+        expect(result.extensions).toBeUndefined();
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0]?.[0]).toMatch(/cannot read the chain/);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
     it("should not return extensions when signer lacks signTransaction capability", async () => {
       const signer: ClientEvmSigner = {
         address: "0x1234567890123456789012345678901234567890",
