@@ -88,6 +88,8 @@ var DefaultAssets = map[string][]DefaultAssetInfo{
 	},
 	"eip155:42220": {
 		{Asset: "0xcebA9300f2b948710d2653dD7B07f33A8B32118C", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
+		{Asset: "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e", Name: "Tether USD", Version: "1", Decimals: 6, Symbol: "USDT"},
+		{Asset: "0xD2ab3C9A02DBBAB236BfEC45D1d755DF4267F771", Name: "Tether America USD", Version: "1", Decimals: 6, Symbol: "USAT"},
 	},
 	"eip155:11142220": {
 		{Asset: "0x01C5C0122039549AD1493B8220cABEdD739BC44E", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},

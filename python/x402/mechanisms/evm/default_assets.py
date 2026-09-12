@@ -244,7 +244,21 @@ DEFAULT_ASSETS: dict[str, list[ExactDefaultAssetInfo]] = {
             "decimals": 6,
             "symbol": "USDC",
         },
-    ],  # Celo mainnet USDC (EIP-3009 supported)
+        {
+            "asset": "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e",
+            "name": "Tether USD",
+            "version": "1",
+            "decimals": 6,
+            "symbol": "USDT",
+        },
+        {
+            "asset": "0xD2ab3C9A02DBBAB236BfEC45D1d755DF4267F771",
+            "name": "Tether America USD",
+            "version": "1",
+            "decimals": 6,
+            "symbol": "USAT",
+        },
+    ],  # Celo mainnet USDC, USDT, USAT (EIP-3009 supported)
     "eip155:11142220": [
         {
             "asset": "0x01C5C0122039549AD1493B8220cABEdD739BC44E",
