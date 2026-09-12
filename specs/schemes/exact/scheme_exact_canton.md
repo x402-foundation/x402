@@ -8,8 +8,8 @@ submit it. The client carries the complete signed transaction **inline**
 the client is not bound to, and needs no prior relationship with, a specific
 facilitator. The facilitator relays the payer-signed transaction and pays the
 network traffic fee. Because the merchant holds a standing `TransferPreapproval`,
-the transfer resolves directly — moving Canton Coin to the merchant in a single
-facilitator-submitted transaction. No escrow, no lock step, no facilitator
+the transfer resolves directly — moving Canton Coin, or any CIP-56 registry token,
+to the merchant in a single facilitator-submitted transaction. No escrow, no lock step, no facilitator
 custody.
 
 ## Scheme Name
@@ -74,7 +74,8 @@ participant.
 ## Merchant Onboarding
 
 Before receiving payments, the merchant MUST hold a live `TransferPreapproval`
-for the Canton Coin instrument, with the merchant as receiver. The preapproval is
+for the payment instrument (Canton Coin or the registry token), with the merchant
+as receiver. The preapproval is
 what lets an incoming `TransferFactory_Transfer` resolve **direct** — accepted
 automatically and settled in a single transaction. Without it, the transfer
 resolves to a two-step `TransferInstruction` that the merchant must accept in a
@@ -108,15 +109,17 @@ MUST renew it before expiry to keep the one-transaction path available.
 
 - `amount`: Integer string of atomic units (1 CC = 1e10 units).
   `"1000000000"` = 0.1 CC. Must match exactly what the ledger records.
-- `asset`: `"CC"`. Settles Canton Coin only.
+- `asset`: `"CC"` for Canton Coin, or the registry token's symbol for a CIP-56
+  registry token. The instrument is authoritative via `extra.instrumentId`.
 - `payTo`: Merchant's Canton party id `"<name>::<fingerprint>"`.
 - `extra.assetTransferMethod`: MUST be `"transfer-factory"`.
 - `extra.feePayer`: The facilitator's Canton party id — the party that relays the
   payer-signed transfer and pays its traffic fee. Clients MUST NOT alter this
   value.
 - `extra.synchronizerId`: The Global Synchronizer the transfer settles on.
-- `extra.instrumentId`: The Canton Coin instrument identifier
-  `{ "admin": "<DSO-party>", "id": "Amulet" }`.
+- `extra.instrumentId`: The instrument identifier `{ "admin", "id" }`. For Canton
+  Coin, `{ "admin": "<DSO-party>", "id": "Amulet" }`; for a CIP-56 registry token,
+  `admin` is the token's registrar party and `id` its instrument id.
 - `extra.executeBeforeSeconds`: Relative deadline (seconds from request time) the
   client uses to compute the absolute `executeBefore` timestamp in the transfer;
   after it, the signed transfer is no longer executable.
@@ -251,8 +254,8 @@ On failure:
 5. **Receiver.** The transfer receiver MUST equal `paymentRequirements.payTo`.
    Reject with `invalid_exact_canton_merchant_mismatch`.
 
-6. **Instrument.** The transfer instrument MUST match Canton Coin
-   (`extra.instrumentId`). Reject with
+6. **Instrument.** The transfer instrument MUST match `extra.instrumentId`
+   (Canton Coin or the registry token). Reject with
    `invalid_exact_canton_instrument_id_mismatch`.
 
 7. **Preapproval.** The merchant (`payTo`) MUST hold a live `TransferPreapproval`
@@ -280,8 +283,8 @@ On failure:
     `invalid_exact_canton_memo_mismatch`.
 
 13. **Input sufficiency.** The input holdings embedded in the prepared transaction
-    MUST have distinct contract ids and sum to at least `amount` plus the transfer's
-    Amulet fees. When the facilitator's participant hosts the proven sender with read
+    MUST have distinct contract ids and sum to at least `amount`. When the
+    facilitator's participant hosts the proven sender with read
     access, it SHOULD additionally verify each input holding is active in its ledger
     view. Reject with `invalid_exact_canton_insufficient_inputs`. Absent the
     hosted-payer check, verification does not establish the inputs are unspent; that
@@ -320,8 +323,8 @@ After verification succeeds:
    `TransferPreapproval` for the instrument (resolves `direct`).
 
 2. **Relay.** Submit the payer-signed `TransferFactory_Transfer` exactly as
-   decoded — its execution context (instrument config, amulet rules, active open
-   round) is already embedded as disclosed contracts, so the facilitator resolves
+   decoded — its execution context (the instrument's config and choice context) is
+   already embedded as disclosed contracts, so the facilitator resolves
    nothing further. The facilitator is the sole submitter and pays the traffic
    fee; it signs nothing on the payer's behalf, and the funds move from the
    payer's own holdings.
@@ -342,7 +345,7 @@ After verification succeeds:
 | `invalid_exact_canton_signature_invalid` | `signature` does not verify against the payer over `preparedTxHash`. |
 | `invalid_exact_canton_amount_mismatch` | Transfer amount ≠ `paymentRequirements.amount`. |
 | `invalid_exact_canton_merchant_mismatch` | Transfer receiver ≠ `paymentRequirements.payTo`. |
-| `invalid_exact_canton_instrument_id_mismatch` | Transfer instrument is not Canton Coin. |
+| `invalid_exact_canton_instrument_id_mismatch` | Transfer instrument does not match `extra.instrumentId`. |
 | `invalid_exact_canton_preapproval_missing` | Merchant holds no live `TransferPreapproval`, so the transfer would not settle directly in one transaction. |
 | `invalid_exact_canton_fee_payer_mismatch` | `extra.feePayer` ≠ the facilitator's own (relaying) party. |
 | `invalid_exact_canton_expired` | `executeBefore` is past or within the safety margin. |
