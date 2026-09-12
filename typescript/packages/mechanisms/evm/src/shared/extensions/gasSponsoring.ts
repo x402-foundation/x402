@@ -15,6 +15,40 @@ import { signEip2612Permit } from "../../exact/client/eip2612";
 import { signErc20ApprovalTransaction } from "../../exact/client/erc20approval";
 import { resolveExtensionRpcCapabilities, type EvmSchemeOptions } from "../rpc";
 
+const warnedNetworks = new Set<string>();
+
+/**
+ * Warns, once per network per process, that gas sponsoring was advertised but
+ * cannot be used because the client cannot read the chain.
+ *
+ * Without `readContract` on the signer or an `rpcUrl` in the scheme options the
+ * payload goes out without the sponsored permit/approval, and a fresh wallet
+ * gets `412 permit2_allowance_required` from the facilitator with nothing in
+ * the client to say why. Warned rather than thrown so an existing integration
+ * keeps its current behaviour; the fix is one of the two named in the message.
+ *
+ * @param network - The CAIP-2 network the payment requirements are for
+ */
+function warnCannotReadForSponsoring(network: string): void {
+  if (warnedNetworks.has(network)) return;
+  warnedNetworks.add(network);
+  console.warn(
+    `[x402] gas sponsoring is advertised for ${network} but the client cannot read the chain, ` +
+      "so the sponsored permit/approval will not be signed and a fresh wallet will get " +
+      "412 permit2_allowance_required. Pass { rpcUrl } to ExactEvmScheme, or use a signer " +
+      "with readContract (e.g. toClientEvmSigner(account, publicClient)).",
+  );
+}
+
+/**
+ * Clears the once-per-network warning state. Test hook.
+ *
+ * @internal
+ */
+export function _resetSponsoringWarnings(): void {
+  warnedNetworks.clear();
+}
+
 /**
  * Attempts to sign an EIP-2612 permit for gasless Permit2 approval.
  *
@@ -34,13 +68,19 @@ export async function trySignEip2612PermitExtension(
   context?: PaymentPayloadContext,
   approvalAmount?: string,
 ): Promise<Record<string, unknown> | undefined> {
-  const capabilities = resolveExtensionRpcCapabilities(requirements.network, signer, options);
-
-  if (!capabilities.readContract) {
+  if (!context?.extensions?.[EIP2612_GAS_SPONSORING_KEY]) {
     return undefined;
   }
 
-  if (!context?.extensions?.[EIP2612_GAS_SPONSORING_KEY]) {
+  const capabilities = resolveExtensionRpcCapabilities(requirements.network, signer, options);
+
+  if (!capabilities.readContract) {
+    // The server advertised sponsoring and the client would sign the permit,
+    // but it cannot read `allowance`/`nonces`: the signer has no `readContract`
+    // and no `rpcUrl` was configured. Returning silently here sends a payload
+    // without the permit, and the facilitator answers 412
+    // permit2_allowance_required with nothing to say why.
+    warnCannotReadForSponsoring(requirements.network);
     return undefined;
   }
 
@@ -110,13 +150,14 @@ export async function trySignErc20ApprovalExtension(
   context?: PaymentPayloadContext,
   approvalAmount?: string,
 ): Promise<Record<string, unknown> | undefined> {
-  const capabilities = resolveExtensionRpcCapabilities(requirements.network, signer, options);
-
-  if (!capabilities.readContract) {
+  if (!context?.extensions?.[ERC20_APPROVAL_GAS_SPONSORING_KEY]) {
     return undefined;
   }
 
-  if (!context?.extensions?.[ERC20_APPROVAL_GAS_SPONSORING_KEY]) {
+  const capabilities = resolveExtensionRpcCapabilities(requirements.network, signer, options);
+
+  if (!capabilities.readContract) {
+    warnCannotReadForSponsoring(requirements.network);
     return undefined;
   }
 
