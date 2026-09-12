@@ -1,0 +1,88 @@
+{
+  "scenario": "happy-path",
+  "description": "Stale local cumulative recovered by a single retry against the server's authoritative state.",
+  "channel": {
+    "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "domain": {
+      "name": "x402 Batch Settlement",
+      "version": "1",
+      "chainId": 84532,
+      "verifyingContract": "0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003"
+    }
+  },
+  "initialState": {
+    "onchainTotalClaimed": "0",
+    "serverChargedCumulative": "100",
+    "clientLocalCumulative": "0",
+    "comment": "Client believes the channel is fresh (e.g. restarted from disk and lost local state); server has already charged 100 from prior requests that have not yet been claimed onchain."
+  },
+  "steps": [
+    {
+      "step": 1,
+      "actor": "client",
+      "action": "POST a paid request with a voucher signed against the stale local cumulative.",
+      "request": {
+        "voucher": {
+          "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+          "maxClaimableAmount": "10",
+          "signature": "<placeholder; voucher signing semantics pinned by byte-equivalence fixtures in #2489>"
+        },
+        "requestCharge": "10"
+      }
+    },
+    {
+      "step": 2,
+      "actor": "server",
+      "action": "Reject the voucher (server.chargedCumulativeAmount ≥ voucher.maxClaimableAmount) and return the authoritative channel state.",
+      "response": {
+        "status": 402,
+        "extra": {
+          "channelState": {
+            "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+            "balance": "1000",
+            "totalClaimed": "0",
+            "chargedCumulativeAmount": "100"
+          }
+        }
+      }
+    },
+    {
+      "step": 3,
+      "actor": "client",
+      "action": "Verify totalClaimed against the onchain BatchSettlement.channels(channelId) call. Replace local cumulative with chargedCumulativeAmount (100). Sign a new voucher with maxClaimableAmount = chargedCumulativeAmount + requestCharge = 110. Retry exactly once.",
+      "request": {
+        "voucher": {
+          "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+          "maxClaimableAmount": "110",
+          "signature": "<placeholder>"
+        },
+        "requestCharge": "10"
+      }
+    },
+    {
+      "step": 4,
+      "actor": "server",
+      "action": "Accept the retried voucher. Advance server chargedCumulativeAmount to 110.",
+      "response": {
+        "status": 200,
+        "extra": {
+          "channelState": {
+            "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+            "balance": "1000",
+            "totalClaimed": "0",
+            "chargedCumulativeAmount": "110"
+          }
+        }
+      }
+    }
+  ],
+  "expectedClientBehaviour": {
+    "afterStep2": "Detect corrective 402, parse channelState, verify totalClaimed against onchain BatchSettlement.channels(channelId), replace local cumulative with chargedCumulativeAmount, sign new voucher, retry exactly once. Emit telemetry label recovery.stale_state.",
+    "afterStep4": "Accept response. Effective charge for this request = requestCharge = 10. Update local cumulative to 110."
+  },
+  "invariants": [
+    "onchain.totalClaimed (0) ≤ server.chargedCumulativeAmount (100 → 110) ≤ voucher.maxClaimableAmount (110 after retry).",
+    "The client must verify totalClaimed against the onchain channel state before trusting chargedCumulativeAmount; the server's value is only used to advance the local cumulative ceiling, never to confirm onchain truth.",
+    "Retry happens at most once. A second corrective 402 must escalate to a hard error (see loop-guard.json)."
+  ]
+}

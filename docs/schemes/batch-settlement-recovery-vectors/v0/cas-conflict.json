@@ -1,0 +1,118 @@
+{
+  "scenario": "cas-conflict",
+  "description": "Two clients (or two in-flight requests from the same client) sign vouchers against the same prior cumulative; one wins the race, the other receives corrective 402 and recovers with a single retry. The response is wire-identical to happy-path, so CAS is an optional suspected cause rather than a normative protocol outcome.",
+  "channel": {
+    "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "domain": {
+      "name": "x402 Batch Settlement",
+      "version": "1",
+      "chainId": 84532,
+      "verifyingContract": "0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003"
+    }
+  },
+  "initialState": {
+    "onchainTotalClaimed": "0",
+    "serverChargedCumulative": "100",
+    "clientALocalCumulative": "100",
+    "clientBLocalCumulative": "100",
+    "comment": "Both clients (or workers) start with a consistent and up-to-date view (chargedCumulativeAmount = 100). They independently sign vouchers for the same channel; A's request arrives at the server first."
+  },
+  "steps": [
+    {
+      "step": 1,
+      "actor": "clientA",
+      "action": "POST with voucher maxClaimableAmount = 110 (charge = 10 on top of 100).",
+      "request": {
+        "voucher": {
+          "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+          "maxClaimableAmount": "110",
+          "signature": "<placeholder, signed by client A>"
+        },
+        "requestCharge": "10"
+      }
+    },
+    {
+      "step": 2,
+      "actor": "server",
+      "action": "Accept A's voucher; advance server chargedCumulativeAmount to 110.",
+      "response": {
+        "status": 200,
+        "extra": {
+          "channelState": {
+            "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+            "balance": "1000",
+            "totalClaimed": "0",
+            "chargedCumulativeAmount": "110"
+          }
+        }
+      }
+    },
+    {
+      "step": 3,
+      "actor": "clientB",
+      "action": "POST with voucher maxClaimableAmount = 110 (same numeric charge as A, signed against the same prior cumulative 100). B did not see A's request before signing.",
+      "request": {
+        "voucher": {
+          "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+          "maxClaimableAmount": "110",
+          "signature": "<placeholder, signed by client B>"
+        },
+        "requestCharge": "10"
+      }
+    },
+    {
+      "step": 4,
+      "actor": "server",
+      "action": "Server's chargedCumulativeAmount is now 110 (advanced by A). B's voucher does not strictly exceed it. Return corrective 402.",
+      "response": {
+        "status": 402,
+        "extra": {
+          "channelState": {
+            "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+            "balance": "1000",
+            "totalClaimed": "0",
+            "chargedCumulativeAmount": "110"
+          }
+        }
+      }
+    },
+    {
+      "step": 5,
+      "actor": "clientB",
+      "action": "Recovery: verify totalClaimed onchain, advance local cumulative to 110, sign new voucher with maxClaimableAmount = 120, retry exactly once. Emit the normative recovery.stale_state outcome. An implementation with supporting evidence may additionally record cas_conflict as a suspected diagnostic cause.",
+      "request": {
+        "voucher": {
+          "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+          "maxClaimableAmount": "120",
+          "signature": "<placeholder, signed by client B>"
+        },
+        "requestCharge": "10"
+      }
+    },
+    {
+      "step": 6,
+      "actor": "server",
+      "action": "Accept B's retry; advance server chargedCumulativeAmount to 120.",
+      "response": {
+        "status": 200,
+        "extra": {
+          "channelState": {
+            "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+            "balance": "1000",
+            "totalClaimed": "0",
+            "chargedCumulativeAmount": "120"
+          }
+        }
+      }
+    }
+  ],
+  "expectedClientBehaviour": {
+    "afterStep4ClientB": "Same recovery as happy-path: parse channelState, verify totalClaimed onchain, update local cumulative, sign new voucher, retry exactly once, and emit recovery.stale_state. Because the corrective response does not prove its cause, cas_conflict MAY be recorded only as a suspected diagnostic cause when the implementation has supporting evidence. The optional diagnostic MUST NOT alter recovery behaviour.",
+    "afterStep6ClientB": "Accept response. Update local cumulative to 120. Effective charge for B's request = 10."
+  },
+  "invariants": [
+    "The wire shape of the corrective 402 in step 4 is byte-identical to the corrective 402 in happy-path.json step 2; the client therefore emits the same normative recovery.stale_state outcome.",
+    "Recovery still completes in a single retry, so the loop guard (max 1 retry) is not triggered.",
+    "If supporting evidence indicates frequent CAS conflicts on a single channel, the application should consider serialising requests through that channel rather than relying on recovery as the steady-state path; recovery is for occasional races, not for replacing application-level concurrency control."
+  ]
+}

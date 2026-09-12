@@ -1,0 +1,88 @@
+{
+  "scenario": "loop-guard",
+  "description": "The retry also receives a corrective 402 with a different chargedCumulativeAmount; the client must hard-error and not retry further.",
+  "channel": {
+    "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "domain": {
+      "name": "x402 Batch Settlement",
+      "version": "1",
+      "chainId": 84532,
+      "verifyingContract": "0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003"
+    }
+  },
+  "initialState": {
+    "onchainTotalClaimed": "0",
+    "serverChargedCumulative": "100",
+    "clientLocalCumulative": "0",
+    "comment": "Same starting condition as happy-path, but the server's chargedCumulativeAmount advances again between step 2 and step 4 — either due to genuine concurrent traffic that keeps winning the race, a server-side bug, or a malicious server intentionally driving the client into a retry loop."
+  },
+  "steps": [
+    {
+      "step": 1,
+      "actor": "client",
+      "action": "POST a paid request with a voucher signed against the stale local cumulative.",
+      "request": {
+        "voucher": {
+          "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+          "maxClaimableAmount": "10",
+          "signature": "<placeholder>"
+        },
+        "requestCharge": "10"
+      }
+    },
+    {
+      "step": 2,
+      "actor": "server",
+      "action": "Return corrective 402 with chargedCumulativeAmount = 100.",
+      "response": {
+        "status": 402,
+        "extra": {
+          "channelState": {
+            "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+            "balance": "1000",
+            "totalClaimed": "0",
+            "chargedCumulativeAmount": "100"
+          }
+        }
+      }
+    },
+    {
+      "step": 3,
+      "actor": "client",
+      "action": "Recovery flow as in happy-path: verify totalClaimed onchain, update local cumulative to 100, sign new voucher with maxClaimableAmount = 110, retry.",
+      "request": {
+        "voucher": {
+          "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+          "maxClaimableAmount": "110",
+          "signature": "<placeholder>"
+        },
+        "requestCharge": "10"
+      }
+    },
+    {
+      "step": 4,
+      "actor": "server",
+      "action": "Return ANOTHER corrective 402 with a higher chargedCumulativeAmount (200), indicating the server's cumulative kept advancing between the two requests. Wire shape is identical to step 2; only the numeric value of chargedCumulativeAmount has moved.",
+      "response": {
+        "status": 402,
+        "extra": {
+          "channelState": {
+            "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+            "balance": "1000",
+            "totalClaimed": "0",
+            "chargedCumulativeAmount": "200"
+          }
+        }
+      }
+    }
+  ],
+  "expectedClientBehaviour": {
+    "afterStep2": "Same as happy-path: detect corrective 402, recovery flow, retry exactly once.",
+    "afterStep4": "DO NOT retry again. Emit hard error with code PERSISTENT_STALE, surface to caller, log channelState for operator diagnosis. Telemetry label: recovery.persistent_stale. The original paid request cannot be completed against this server on this channel; the caller should escalate (e.g. settle outstanding claims onchain, open a new channel, or migrate to a different facilitator)."
+  },
+  "invariants": [
+    "Retry must happen at most ONCE. A second corrective 402 implies persistent server-side drift, a server-side bug, or an adversarial server attempting denial-of-service. None of these are recoverable by further retries from the client.",
+    "recovery.persistent_stale is operationally distinct from recovery.stale_state: the former should alert on the dashboard, the latter is part of normal recovery.",
+    "The server cannot extract money via this attack (the client verifies totalClaimed onchain) but can deny service by forcing an unbounded retry loop; the loop guard collapses that surface."
+  ]
+}
