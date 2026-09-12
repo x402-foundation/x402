@@ -23,6 +23,7 @@ If you are evaluating a mainnet EVM route, decide on your production facilitator
 | [CDP Facilitator](https://docs.cdp.coinbase.com/x402/docs/quickstart-sellers) | Coinbase-hosted facilitator with KYT/OFAC checks on every transaction |
 | [Celo Facilitator](https://docs.celo.org/build-on-celo/build-with-ai/x402) | Gasless x402 facilitator for Celo Mainnet, accepting USDC and USD₮ via EIP-3009 |
 | [Corbits](https://corbits.dev) | Production-grade multi-network, multi-token facilitator supporting EVM and Solana |
+| [CryptoAPIs Facilitator](https://cryptoapis.io/products/x402) | Non-custodial facilitator for USDC on Base and Solana, mainnet and testnet, with AML screening on every payment |
 | [Dexter](https://dexter.cash/facilitator) | Free public x402 facilitator across Solana and EVM chains with no fees and no account required |
 | [Fireblocks Facilitator](https://developers.fireblocks.com/docs/x402-facilitator-overview) | Open-source and hosted facilitator with Fireblocks vault settlement; private keys never leave Fireblocks |
 | [FTP Canton Facilitator](https://www.ftptech.xyz/x402) | Production x402 facilitator for Canton Network mainnet, supporting Canton Coin and CIP-56 tokens |
