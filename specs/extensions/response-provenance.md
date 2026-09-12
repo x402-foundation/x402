@@ -89,9 +89,31 @@ Two honest implementations must not disagree on what `inputs` is. The normative 
   value. The body MUST be [I-JSON](https://www.rfc-editor.org/rfc/rfc7493) (see
   [Numbers](#numbers-i-json)).
 - **Request without a body** (typically GET): `inputs` is a JSON object built from the URL query
-  string: each key and value percent-decoded as UTF-8; **values remain strings** (`"42"`, never
-  `42` — no type coercion); a key occurring more than once maps to an array of its values in order
-  of appearance; key order is irrelevant (JCS sorts). An empty query yields `{}`.
+  string. The decode grammar is the `application/x-www-form-urlencoded` parser of the
+  [WHATWG URL Standard](https://url.spec.whatwg.org/#urlencoded-parsing) (§5.1), applied to the
+  query component (after `?`, before any `#`): pairs split on `&`; each pair splits on its first
+  `=` (a pair with no `=` has the value `""`); `+` decodes to U+0020 before percent-decoding; names
+  and values are percent-decoded to bytes and then decoded as UTF-8. Two tightenings apply where
+  that parser is lenient, and a query violating either is **malformed**: a `%` not followed by two
+  hex digits MUST be rejected (the parser would pass it through literally), and a decoded byte
+  sequence that is not valid UTF-8 MUST be rejected (the parser would substitute U+FFFD). An issuer
+  MUST NOT attach the extension to a response to a malformed query (whether the route serves the
+  request without the extension or refuses it is route policy); a verifier that encounters one
+  reports **`unverifiable`**. **Values remain strings** (`"42"`, never `42` — no type coercion); a
+  name occurring more than once maps to an array of its values in order of appearance; name order
+  is irrelevant (JCS sorts). An empty query yields `{}`.
+
+Query-string examples (normative):
+
+| Query | `inputs` |
+|---|---|
+| `?q=a+b` | `{"q":"a b"}` |
+| `?q=a%2Bb` | `{"q":"a+b"}` |
+| `?q=a%20b` | `{"q":"a b"}` |
+| `?flag` | `{"flag":""}` |
+| `?a=1&a=2` | `{"a":["1","2"]}` |
+| `?x=%ZZ` | malformed — no claim issued; `unverifiable` if one is present |
+| `?x=%FF` | malformed — no claim issued; `unverifiable` if one is present |
 
 A seller whose route needs a different mapping MUST use a JSON body instead. No other mapping is
 conformant under this extension.
@@ -209,9 +231,10 @@ Implementations MUST report which state obtained and MUST NOT collapse them:
    absence as a defect pressures sellers of non-closed routes to emit hashes nobody can re-derive —
    manufacturing the false confidence this extension exists to remove.
 3. **`unverifiable`** — the member is present but cannot be evaluated: unparseable, wrong shape, a
-   `fixedPointVersion` the verifier does not implement, a `/2` `dataVintage` failing the grammar, or
-   a fixed point rejected under the canonicalization restrictions (non-finite numbers, duplicate
-   member names, excessive depth).
+   `fixedPointVersion` the verifier does not implement, a `/2` `dataVintage` failing the grammar, a
+   fixed point rejected under the canonicalization restrictions (non-finite numbers, duplicate
+   member names, excessive depth), or a body-less request whose query string is malformed under the
+   [decode grammar](#request--inputs-mapping).
 4. **`contradicted`** — re-derivation ran and the hash does not match. This finding is a
    **three-branch disjunction**: *the artifact was altered, or it was issued in violation of the
    closure rule, or the verifier's own implementation is defective on this input.* Before reporting
