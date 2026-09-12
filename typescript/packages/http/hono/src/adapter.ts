@@ -73,13 +73,12 @@ export class HonoAdapter implements HTTPAdapter {
    * @returns Record of query parameter key-value pairs
    */
   getQueryParams(): Record<string, string | string[]> {
-    const query = this.c.req.query();
-    // Convert single values to match the interface
-    const result: Record<string, string | string[]> = {};
-    for (const [key, value] of Object.entries(query)) {
-      result[key] = value;
-    }
-    return result;
+    return Object.fromEntries(
+      Object.entries(this.c.req.queries()).map(([key, values]) => [
+        key,
+        values.length === 1 ? values[0] : values,
+      ]),
+    );
   }
 
   /**
@@ -89,7 +88,9 @@ export class HonoAdapter implements HTTPAdapter {
    * @returns The query parameter value(s) or undefined
    */
   getQueryParam(name: string): string | string[] | undefined {
-    return this.c.req.query(name);
+    const values = this.c.req.queries(name);
+    if (!values || values.length === 0) return undefined;
+    return values.length === 1 ? values[0] : values;
   }
 
   /**
