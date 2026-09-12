@@ -11,6 +11,7 @@ import {
 import type { ClientEvmSigner } from "../../../src/signer";
 import { PERMIT2_ADDRESS, x402ExactPermit2ProxyAddress } from "../../../src/constants";
 import { isPermit2Payload, isEIP3009Payload } from "../../../src/types";
+import { _resetSponsoringWarnings } from "../../../src/shared/extensions/gasSponsoring";
 
 type ClientInternals = {
   registeredClientSchemes: Map<number, Map<string, Map<string, unknown>>>;
@@ -695,6 +696,42 @@ describe("Permit2 Approval Flow", () => {
       expect(result.extensions).toBeUndefined();
     });
 
+    it("warns once, and skips the permit, when the extension is advertised but the signer cannot read the chain", async () => {
+      _resetSponsoringWarnings();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        // The documented `new ExactEvmScheme(account)` form: no readContract, no rpcUrl.
+        const bareSigner: ClientEvmSigner = {
+          address: "0x1234567890123456789012345678901234567890",
+          signTypedData: vi.fn().mockResolvedValue("0x" + "ab".repeat(32) + "cd".repeat(32) + "1b"),
+        };
+        const scheme = new ExactEvmScheme(bareSigner);
+        const advertised = {
+          extensions: {
+            eip2612GasSponsoring: { info: { description: "test", version: "1" }, schema: {} },
+          },
+        };
+
+        const result = await scheme.createPaymentPayload(2, permit2Requirements, advertised);
+        expect(result.extensions).toBeUndefined();
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0]?.[0]).toMatch(/cannot read the chain/);
+        expect(warn.mock.calls[0]?.[0]).toMatch(/rpcUrl/);
+
+        // Once per network: a second payment does not repeat it.
+        await scheme.createPaymentPayload(2, permit2Requirements, advertised);
+        expect(warn).toHaveBeenCalledTimes(1);
+
+        // Control: not advertised → nothing to warn about, even with a bare signer.
+        _resetSponsoringWarnings();
+        warn.mockClear();
+        await scheme.createPaymentPayload(2, permit2Requirements, { extensions: {} });
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
     it("should return EIP-2612 extensions when allowance insufficient and extension advertised", async () => {
       const signerWithReader: ClientEvmSigner = {
         address: "0x1234567890123456789012345678901234567890",
@@ -801,6 +838,34 @@ describe("Permit2 Approval Flow", () => {
       });
 
       expect(result.extensions).toBeUndefined();
+    });
+
+    it("warns when erc20 approval sponsoring is advertised but the signer cannot read the chain", async () => {
+      _resetSponsoringWarnings();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const bareSigner: ClientEvmSigner = {
+          address: "0x1234567890123456789012345678901234567890",
+          signTypedData: vi.fn().mockResolvedValue("0xmocksig"),
+          signTransaction: vi.fn().mockResolvedValue("0x02ab"),
+          getTransactionCount: vi.fn().mockResolvedValue(0),
+          estimateFeesPerGas: vi
+            .fn()
+            .mockResolvedValue({ maxFeePerGas: 1n, maxPriorityFeePerGas: 1n }),
+          // No readContract, no rpcUrl: the allowance cannot be checked.
+        };
+        const scheme = new ExactEvmScheme(bareSigner);
+        const result = await scheme.createPaymentPayload(2, erc20Requirements, {
+          extensions: {
+            erc20ApprovalGasSponsoring: { info: { description: "test", version: "1" }, schema: {} },
+          },
+        });
+        expect(result.extensions).toBeUndefined();
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0]?.[0]).toMatch(/cannot read the chain/);
+      } finally {
+        warn.mockRestore();
+      }
     });
 
     it("should not return extensions when signer lacks signTransaction capability", async () => {
