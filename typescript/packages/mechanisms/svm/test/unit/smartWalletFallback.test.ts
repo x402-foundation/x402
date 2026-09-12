@@ -11,6 +11,7 @@ import {
   type IInstruction,
 } from "@solana/kit";
 import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
+import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import {
   LIGHTHOUSE_PROGRAM_ADDRESS,
   MEMO_PROGRAM_ADDRESS,
@@ -109,8 +110,9 @@ async function buildSmartWalletPayloadWithMemos(
 /**
  * Build a structurally valid Path-1 transaction (ComputeLimit, ComputePrice,
  * real TransferChecked) so static verification proceeds past layout checks and
- * reaches the semantic amount/mint/recipient checks. Used to prove that a
- * semantic failure (e.g. wrong amount) does NOT fall through to Path 2.
+ * reaches the semantic amount/mint/recipient checks. `omitCompute` and
+ * `discriminator` break that shape on purpose to reproduce each layout
+ * rejection Path 1 owns.
  */
 async function buildStaticTransferPayload(args: {
   feePayer: Address;
@@ -120,6 +122,8 @@ async function buildStaticTransferPayload(args: {
   authority: { address: Address; signMessages: (messages: never[]) => Promise<unknown[]> };
   amount: bigint;
   discriminator?: number;
+  omitCompute?: ("limit" | "price")[];
+  tokenProgram?: Address;
   trailing?: IInstruction[];
 }) {
   const data = new Uint8Array(10);
@@ -127,11 +131,19 @@ async function buildStaticTransferPayload(args: {
   new DataView(data.buffer).setBigUint64(1, args.amount, true);
   data[9] = 6; // decimals
 
+  const computeLimit = {
+    programAddress: COMPUTE_BUDGET_PROGRAM,
+    data: new Uint8Array([2, 160, 134, 1, 0]),
+  };
+  const computePrice = {
+    programAddress: COMPUTE_BUDGET_PROGRAM,
+    data: new Uint8Array([3, 16, 39, 0, 0, 0, 0, 0, 0]),
+  };
   const tx = await buildTransaction(args.feePayer, [
-    { programAddress: COMPUTE_BUDGET_PROGRAM, data: new Uint8Array([2, 160, 134, 1, 0]) },
-    { programAddress: COMPUTE_BUDGET_PROGRAM, data: new Uint8Array([3, 16, 39, 0, 0, 0, 0, 0, 0]) },
+    ...(args.omitCompute?.includes("limit") ? [] : [computeLimit]),
+    ...(args.omitCompute?.includes("price") ? [] : [computePrice]),
     {
-      programAddress: TOKEN_PROGRAM_ADDRESS,
+      programAddress: args.tokenProgram ?? TOKEN_PROGRAM_ADDRESS,
       accounts: [
         { address: args.source, role: 1 },
         { address: args.mint, role: 0 },
@@ -943,7 +955,107 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
     expect(result.invalidReason).toBe("invalid_exact_svm_payload_no_transfer_instruction");
   });
 
-  it("verify does NOT fall through to Path 2 on a semantic (amount mismatch) failure", async () => {
+  const lighthouseInstruction: IInstruction = {
+    programAddress: LIGHTHOUSE_PROGRAM_ADDRESS as Address,
+    data: new Uint8Array([0]),
+  };
+  const memoInstruction: IInstruction = {
+    programAddress: MEMO_PROGRAM_ADDRESS as Address,
+    data: new TextEncoder().encode("0123456789abcdef"),
+  };
+  const token2022Instruction: IInstruction = {
+    programAddress: TOKEN_2022_PROGRAM_ADDRESS as Address,
+    data: new Uint8Array([0]),
+  };
+
+  // What the Path 1 -> Path 2 handoff owes each shape. A transfer with no wrapper
+  // program for Path 2 to simulate keeps its real Path 1 reason instead of the
+  // smart_wallet_program_not_allowed code naming the SPL Token program (#3268);
+  // the last four rows pin the boundaries around it.
+  const staticFallbackCases: {
+    name: string;
+    amount: bigint;
+    expectedReason?: string;
+    discriminator?: number;
+    omitCompute?: ("limit" | "price")[];
+    tokenProgram?: Address;
+    allowedPrograms?: string[];
+    trailing?: IInstruction[];
+  }[] = [
+    {
+      name: "a semantic amount mismatch never reaches Path 2",
+      amount: 1n,
+      expectedReason: Errors.ErrAmountMismatch,
+    },
+    {
+      name: "a missing compute limit keeps its Path 1 reason",
+      amount: 100000n,
+      expectedReason: Errors.ErrComputeLimitInstruction,
+      omitCompute: ["limit"],
+      trailing: [lighthouseInstruction],
+    },
+    {
+      name: "a missing compute price keeps its Path 1 reason",
+      amount: 100000n,
+      expectedReason: Errors.ErrComputePriceInstruction,
+      omitCompute: ["price"],
+      trailing: [memoInstruction],
+    },
+    {
+      name: "missing compute instructions keep the length reason",
+      amount: 100000n,
+      expectedReason: Errors.ErrTransactionInstructionsLength,
+      omitCompute: ["limit", "price"],
+      trailing: [memoInstruction],
+    },
+    {
+      name: "an unchecked Token-2022 transfer keeps its Path 1 reason",
+      amount: 100000n,
+      expectedReason: Errors.ErrNoTransferInstruction,
+      discriminator: 3,
+      tokenProgram: TOKEN_2022_PROGRAM_ADDRESS,
+    },
+    {
+      name: "Lighthouse outside a custom allowlist keeps the allowlist error",
+      amount: 100000n,
+      expectedReason: `${Errors.ErrSmartWalletProgramNotAllowed}: ${LIGHTHOUSE_PROGRAM_ADDRESS}`,
+      omitCompute: ["limit"],
+      allowedPrograms: [TOKEN_PROGRAM],
+      trailing: [lighthouseInstruction],
+    },
+    {
+      // Lighthouse disallowed too: the token program is no longer the only thing
+      // standing between this transaction and Path 2, so the policy signal wins
+      // regardless of which disallowed program comes first in the instruction list.
+      name: "a disallowed Lighthouse companion keeps the allowlist error",
+      amount: 100000n,
+      expectedReason: `${Errors.ErrSmartWalletProgramNotAllowed}: ${TOKEN_PROGRAM}`,
+      omitCompute: ["limit"],
+      allowedPrograms: [],
+      trailing: [lighthouseInstruction],
+    },
+    {
+      // Only Token is rejected, so the count check passes — but Token-2022 beside
+      // it is not a Lighthouse assertion, and two token programs are not one
+      // direct token transaction.
+      name: "a second token program beside the rejected one keeps the allowlist error",
+      amount: 100000n,
+      expectedReason: `${Errors.ErrSmartWalletProgramNotAllowed}: ${TOKEN_PROGRAM}`,
+      omitCompute: ["limit"],
+      allowedPrograms: [TOKEN_2022_PROGRAM_ADDRESS.toString()],
+      trailing: [token2022Instruction],
+    },
+    {
+      // Nine instructions overrun Path 1's cap, and every program the transfer
+      // uses is allowlisted, so simulation is the operator's deliberate choice.
+      name: "a fully allowlisted top-level transfer still reaches Path 2",
+      amount: 100000n,
+      allowedPrograms: [TOKEN_PROGRAM],
+      trailing: Array.from({ length: 6 }, () => memoInstruction),
+    },
+  ];
+
+  it.each(staticFallbackCases)("$name", async testCase => {
     const { ExactSvmScheme } = await import("../../src/exact/facilitator/scheme");
 
     const feePayer = await generateKeyPairSigner();
@@ -954,36 +1066,37 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
     const expectedAta = payTo.address;
     mockAtaMap[payTo.address] = expectedAta;
 
-    // Structurally valid tx, but the on-chain transfer amount (1) does not match
-    // the required amount (100000). Path 1 must reject with amount_mismatch.
     const txBase64 = await buildStaticTransferPayload({
       feePayer: feePayer.address,
       source: source.address,
       mint: USDC_DEVNET_ADDRESS as Address,
       destination: expectedAta,
       authority: payer,
-      amount: 1n,
+      amount: testCase.amount,
+      discriminator: testCase.discriminator,
+      omitCompute: testCase.omitCompute,
+      tokenProgram: testCase.tokenProgram,
+      trailing: testCase.trailing,
     });
 
     const mockSigner = {
       getAddresses: vi.fn().mockReturnValue([feePayer.address]),
       getSigner: vi.fn().mockReturnValue(feePayer),
-      signTransaction: vi.fn().mockResolvedValue(txBase64),
       simulateTransaction: vi.fn().mockResolvedValue(undefined),
       sendTransaction: vi.fn(),
       confirmTransaction: vi.fn(),
       getConfirmedTransactionInnerInstructions: vi.fn().mockResolvedValue(null),
       getTokenAccountBalance: vi.fn().mockResolvedValue(null),
       fetchAddressLookupTables: vi.fn().mockResolvedValue({}),
-      simulateTransactionWithInnerInstructions: vi
-        .fn()
-        .mockResolvedValue({ innerInstructions: [] }),
+      simulateTransactionWithInnerInstructions: vi.fn().mockResolvedValue({
+        innerInstructions: [],
+      }),
     };
 
     const scheme = new ExactSvmScheme(mockSigner as never, undefined, {
       enableSmartWalletVerification: true,
+      smartWalletAllowedPrograms: testCase.allowedPrograms,
     });
-
     const accepted = {
       scheme: "exact",
       network: SOLANA_DEVNET_CAIP2,
@@ -1004,10 +1117,14 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
       accepted as never,
     );
 
-    // Must surface the real Path-1 reason, NOT a misleading smart_wallet_* code.
+    // No expectedReason means the transaction is Path 2's to verify.
+    if (testCase.expectedReason === undefined) {
+      expect(result.isValid).toBe(true);
+      expect(mockSigner.simulateTransactionWithInnerInstructions).toHaveBeenCalled();
+      return;
+    }
     expect(result.isValid).toBe(false);
-    expect(result.invalidReason).toBe("invalid_exact_svm_payload_amount_mismatch");
-    // Path 2 must never have run for a semantic failure.
+    expect(result.invalidReason).toBe(testCase.expectedReason);
     expect(mockSigner.simulateTransactionWithInnerInstructions).not.toHaveBeenCalled();
   });
 
