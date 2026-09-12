@@ -1,0 +1,1 @@
+Added facilitator HTTP server module for hosting x402 facilitator endpoints in Python. Provides `create_facilitator_app()` factory that wraps any `x402Facilitator` or `x402FacilitatorSync` in a FastAPI application with `/supported`, `/verify`, `/settle`, and `/health` endpoints. Brings Python SDK to parity with Go SDK facilitator hosting capabilities.
