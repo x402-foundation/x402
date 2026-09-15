@@ -528,26 +528,60 @@ Register hooks in the `PaymentWrapperConfig.hooks` object when creating a paymen
 * **onAfterExecution** — Runs after the tool handler returns, before settlement.
 * **onAfterSettlement** — Runs after successful payment settlement.
 
-```typescript
-import { createPaymentWrapper } from "@x402/mcp";
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { createPaymentWrapper } from "@x402/mcp";
 
-const paid = createPaymentWrapper(resourceServer, {
-  accepts,
-  hooks: {
-    onBeforeExecution: async ({ toolName, paymentPayload }) => {
-      if (await isRateLimited(paymentPayload.payer)) {
-        return false; // Abort execution
+    const paid = createPaymentWrapper(resourceServer, {
+      accepts,
+      hooks: {
+        onBeforeExecution: async ({ toolName, paymentPayload }) => {
+          if (await isRateLimited(paymentPayload.payer)) {
+            return false; // Abort execution
+          }
+        },
+        onAfterExecution: async ({ toolName, result }) => {
+          console.log(`Tool ${toolName} executed successfully`);
+        },
+        onAfterSettlement: async ({ settlement }) => {
+          await sendReceipt({ transaction: settlement.transaction });
+        },
+      },
+    });
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import x402mcp "github.com/x402-foundation/x402/go/v2/mcp"
+
+    beforeExec := x402mcp.BeforeExecutionHook(func(ctx x402mcp.ServerHookContext) (bool, error) {
+      if isRateLimited(ctx.PaymentPayload.Payer) {
+        return false, nil // Abort execution
       }
-    },
-    onAfterExecution: async ({ toolName, result }) => {
-      console.log(`Tool ${toolName} executed successfully`);
-    },
-    onAfterSettlement: async ({ settlement }) => {
-      await sendReceipt({ transaction: settlement.transaction });
-    },
-  },
-});
-```
+      return true, nil
+    })
+
+    afterExec := x402mcp.AfterExecutionHook(func(ctx x402mcp.AfterExecutionContext) error {
+      log.Printf("Tool %s executed successfully", ctx.ToolName)
+      return nil
+    })
+
+    afterSettle := x402mcp.AfterSettlementHook(func(ctx x402mcp.SettlementContext) error {
+      return sendReceipt(ctx.Settlement.Transaction)
+    })
+
+    wrapper := x402mcp.NewPaymentWrapper(resourceServer, x402mcp.PaymentWrapperConfig{
+      Accepts: accepts,
+      Hooks: &x402mcp.PaymentWrapperHooks{
+        OnBeforeExecution: &beforeExec,
+        OnAfterExecution:  &afterExec,
+        OnAfterSettlement: &afterSettle,
+      },
+    })
+    ```
+  </Tab>
+</Tabs>
 
 ## Hook Chaining
 
