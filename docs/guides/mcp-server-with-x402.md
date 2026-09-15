@@ -237,6 +237,55 @@ const client = createx402MCPClient({
 });
 ```
 
+#### Capping tool-call timeouts
+
+By default, the x402 MCP client caps derived tool-call timeouts at **10 minutes** (600 seconds). The cap applies to both the initial probe call and the paid retry. You can lower or raise this limit using `maxRequestTimeoutSeconds` (TypeScript/Python) or `MaxRequestTimeout` (Go):
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { createx402MCPClient } from "@x402/mcp";
+
+    const client = createx402MCPClient({
+      name: "my-agent",
+      version: "1.0.0",
+      schemes: [{ network: "eip155:84532", client: new ExactEvmScheme(account) }],
+      // Cap tool-call timeouts at 2 minutes (default: 600s)
+      maxRequestTimeoutSeconds: 120,
+    });
+    ```
+
+    Per-call overrides are also supported via `callTool`'s `options.timeout` (milliseconds), which takes precedence over the cap.
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from x402.mcp import wrap_mcp_client_with_payment
+
+    x402_mcp = wrap_mcp_client_with_payment(
+        mcp_client,
+        payment_client,
+        max_request_timeout_seconds=120,  # default: 600
+    )
+    ```
+
+    Pass `read_timeout_seconds` to individual `call_tool` calls to override the cap for a single request.
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        "time"
+        x402mcp "github.com/x402-foundation/x402/go/v2/mcp"
+    )
+
+    client := x402mcp.NewX402MCPClient(session, paymentClient, x402mcp.Options{
+        MaxRequestTimeout: 2 * time.Minute, // default: 10 minutes
+    })
+    ```
+  </Tab>
+</Tabs>
+
+The timeout is derived from the payment requirement's `maxTimeoutSeconds` field, capped by `maxRequestTimeoutSeconds`. If the accept's `maxTimeoutSeconds` exceeds the cap, the cap wins.
+
 #### Using the onPaymentRequested hook
 
 For per-call logic (e.g. checking tool name or prompting the user), use `onPaymentRequested`:
