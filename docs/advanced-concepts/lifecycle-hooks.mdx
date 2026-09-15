@@ -467,28 +467,58 @@ Register hooks on the MCP client for payment lifecycle events specific to tool c
 * **onBeforePayment** — Runs after payment approval but before the payment payload is created.
 * **onAfterPayment** — Runs after the payment payload is submitted and the tool result is received.
 
-```typescript
-import { x402MCPClient } from "@x402/mcp";
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { x402MCPClient } from "@x402/mcp";
 
-const client = new x402MCPClient(mcpClient, paymentClient);
+    const client = new x402MCPClient(mcpClient, paymentClient);
 
-client
-  .onPaymentRequired(async ({ toolName, paymentRequired }) => {
-    if (blocklist.has(toolName)) {
-      return { abort: true };
-    }
-    // Return undefined to proceed with normal payment flow
-  })
-  .onBeforePayment(async ({ toolName, paymentRequired }) => {
-    console.log(`Creating payment for tool: ${toolName}`);
-  })
-  .onAfterPayment(async ({ toolName, paymentPayload, result, settleResponse }) => {
-    await auditLog.record({
-      tool: toolName,
-      transaction: settleResponse?.transaction,
-    });
-  });
-```
+    client
+      .onPaymentRequired(async ({ toolName, paymentRequired }) => {
+        if (blocklist.has(toolName)) {
+          return { abort: true };
+        }
+        // Return undefined to proceed with normal payment flow
+      })
+      .onBeforePayment(async ({ toolName, paymentRequired }) => {
+        console.log(`Creating payment for tool: ${toolName}`);
+      })
+      .onAfterPayment(async ({ toolName, paymentPayload, result, settleResponse }) => {
+        await auditLog.record({
+          tool: toolName,
+          transaction: settleResponse?.transaction,
+        });
+      });
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import x402mcp "github.com/x402-foundation/x402/go/v2/mcp"
+
+    client := x402mcp.NewX402MCPClient(session, paymentClient, x402mcp.Options{})
+
+    client.
+      OnPaymentRequired(func(ctx x402mcp.PaymentRequiredContext) (*x402mcp.PaymentRequiredHookResult, error) {
+        if blocklist[ctx.ToolName] {
+          return &x402mcp.PaymentRequiredHookResult{Abort: true}, nil
+        }
+        // Return nil to proceed with normal payment flow
+        return nil, nil
+      }).
+      OnBeforePayment(func(ctx x402mcp.PaymentRequiredContext) error {
+        log.Printf("Creating payment for tool: %s", ctx.ToolName)
+        return nil
+      }).
+      OnAfterPayment(func(ctx x402mcp.AfterPaymentContext) error {
+        if ctx.SettleResponse != nil {
+          return auditLog.Record(ctx.ToolName, ctx.SettleResponse.Transaction)
+        }
+        return nil
+      })
+    ```
+  </Tab>
+</Tabs>
 
 ### x402MCPServer payment wrapper (MCP server)
 
