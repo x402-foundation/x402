@@ -293,6 +293,83 @@ The `authorization` flow remains the default. Clients prefer `authorization` whe
   </Tab>
 </Tabs>
 
+### Casper Setup
+
+The Casper implementation uses CEP-3009 (`transfer_with_authorization`) — Casper's adaptation of EIP-3009 for CEP-18 tokens. The client signs an off-chain EIP-712 authorization; the facilitator relays it on-chain and pays the gas.
+
+Install the Casper package:
+
+```bash
+npm install @x402/casper
+```
+
+**Server**
+
+```typescript
+import { x402ResourceServer } from "@x402/core/server";
+import { ExactCasperScheme } from "@x402/casper/exact/server";
+
+const resourceServer = new x402ResourceServer(facilitatorClient)
+  .register("casper:casper-test", new ExactCasperScheme());
+
+// In your route config — price must be specified as an explicit asset amount:
+{
+  "GET /data": {
+    accepts: [
+      {
+        scheme: "exact",
+        price: {
+          amount: "1500000000", // atomic units
+          asset: "0cb6f94834c60510d532b0ae077b18b4100874a4c867396d61c2b13c790ead52", // contract_package_hash
+          extra: { name: "csprUSD", version: "1" },
+        },
+        network: "casper:casper-test",
+        payTo: "007a9f9948cb7b258d18f3c5e85780372971b5b40096e724c9e596c284a01445fa",
+      },
+    ],
+    description: "Data endpoint",
+    mimeType: "application/json",
+  },
+}
+```
+
+**Client**
+
+```typescript
+import { createClientCasperSigner } from "@x402/casper";
+import { ExactCasperScheme } from "@x402/casper/exact/client";
+import { x402Client } from "@x402/core/client";
+
+// Default algorithm is ED25519; pass 2 for secp256k1
+const casperSigner = await createClientCasperSigner(process.env.CASPER_PRIVATE_KEY!);
+
+const client = new x402Client()
+  .register("casper:*", new ExactCasperScheme(casperSigner));
+```
+
+**Facilitator**
+
+```typescript
+import { createFacilitatorCasperSigner } from "@x402/casper";
+import { ExactCasperScheme } from "@x402/casper/exact/facilitator";
+import { x402Facilitator } from "@x402/core/facilitator";
+
+const casperSigner = await createFacilitatorCasperSigner(
+  process.env.CASPER_PRIVATE_KEY!,
+  1, // 1 = ED25519, 2 = secp256k1
+  {
+    rpcUrlConfig: { "casper:casper-test": process.env.CASPER_RPC_URL! },
+    // Optional: enable speculative execution for preflight validation
+    // speculativeRpcUrlConfig: { "casper:casper-test": process.env.CASPER_SPECULATIVE_RPC_URL! },
+  },
+);
+
+const facilitator = new x402Facilitator()
+  .register("casper:casper-test", new ExactCasperScheme(casperSigner));
+```
+
+The `asset` field is the 32-byte hex `contract_package_hash` of the CEP-18 token. The `extra.name` and `extra.version` fields are required — they are used to construct the CEP-3009 EIP-712 domain separator.
+
 ### XRPL Setup
 
 The XRPL implementation uses payer-signed `Payment` transactions. The payer pays the XRPL transaction fee; facilitator-sponsored fees are not supported.
