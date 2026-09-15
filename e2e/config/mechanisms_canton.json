@@ -1,0 +1,40 @@
+{
+  "env": {
+    "CANTON_PARTICIPANT_URL": {
+      "required": true,
+      "roles": ["client", "facilitator"]
+    },
+    "CANTON_TOKEN": { "required": true, "roles": ["client", "facilitator"] },
+    "CANTON_USER_ID": { "required": true, "roles": ["client", "facilitator"] },
+    "CANTON_SCAN_URL": { "required": true, "roles": ["client", "facilitator"] },
+    "CANTON_SYNCHRONIZER_ID": {
+      "required": true,
+      "roles": ["client", "server", "facilitator"]
+    },
+    "CLIENT_CANTON_PARTY": { "required": true, "roles": ["client"] },
+    "CLIENT_CANTON_PRIVATE_KEY": { "required": true, "roles": ["client"] },
+    "SERVER_CANTON_PAYTO": { "required": true, "roles": ["server"] },
+    "SERVER_CANTON_INSTRUMENT_ADMIN": {
+      "required": true,
+      "roles": ["server"]
+    },
+    "FACILITATOR_CANTON_PARTY": { "required": true, "roles": ["facilitator"] }
+  },
+  "testnet": {
+    "name": "Canton DevNet",
+    "caip2": "canton:devnet",
+    "rpcUrlRequired": true
+  },
+  "mainnet": {
+    "name": "Canton Network",
+    "caip2": "canton:mainnet",
+    "rpcUrlRequired": true
+  },
+  "routes": {
+    "/exact/canton": {
+      "scheme": "exact",
+      "sdks": ["typescript"],
+      "price": { "amount": "100000000", "asset": "CC" }
+    }
+  }
+}

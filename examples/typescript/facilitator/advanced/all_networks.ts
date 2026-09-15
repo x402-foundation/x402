@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
+ * (e.g., "algorand" before "aptos" before "canton" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
  */
 
 import {
@@ -19,6 +19,8 @@ import { toFacilitatorAptosSigner } from "@x402/aptos";
 import { ExactAptosScheme } from "@x402/aptos/exact/facilitator";
 import { toFacilitatorAvmSigner } from "@x402/avm";
 import { ExactAvmScheme } from "@x402/avm/exact/facilitator";
+import { toFacilitatorCantonSigner } from "@x402/canton";
+import { ExactCantonScheme } from "@x402/canton/exact/facilitator";
 import { toFacilitatorCardanoSigner } from "@x402/cardano";
 import { ExactCardanoScheme } from "@x402/cardano/exact/facilitator";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/facilitator";
@@ -96,6 +98,21 @@ const blockfrostBaseUrl = process.env.BLOCKFROST_PREPROD_URL;
 const blockfrostProjectId = process.env.BLOCKFROST_PROJECT_ID;
 const aptosPrivateKey = process.env.APTOS_PRIVATE_KEY as string | undefined;
 const aptosRpcUrl = process.env.APTOS_RPC_URL as string | undefined;
+// Canton: a hosted participant + SV Scan + the facilitator's own relaying party.
+const cantonParticipantUrl = process.env.CANTON_PARTICIPANT_URL as string | undefined;
+const cantonToken = process.env.CANTON_TOKEN as string | undefined;
+const cantonUserId = process.env.CANTON_USER_ID as string | undefined;
+const cantonSynchronizerId = process.env.CANTON_SYNCHRONIZER_ID as string | undefined;
+const cantonScanUrl = process.env.CANTON_SCAN_URL as string | undefined;
+const cantonFacilitatorParty = process.env.CANTON_FACILITATOR_PARTY as string | undefined;
+const cantonConfigured = Boolean(
+  cantonParticipantUrl &&
+    cantonToken &&
+    cantonUserId &&
+    cantonSynchronizerId &&
+    cantonScanUrl &&
+    cantonFacilitatorParty,
+);
 const ccdFacilitatorPrivateKey = process.env.CCD_FACILITATOR_PRIVATE_KEY as
   | string
   | undefined;
@@ -127,6 +144,7 @@ if (
   !avmPrivateKey &&
   !cardanoMnemonic &&
   !aptosPrivateKey &&
+  !cantonConfigured &&
   !(ccdFacilitatorPrivateKey && ccdFacilitatorAddress) &&
   !evmPrivateKey &&
   !keetaMnemonic &&
@@ -137,6 +155,7 @@ if (
   !(hederaAccountId && hederaPrivateKey)
 ) {
   console.error(
+    "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CANTON_PARTICIPANT_URL + CANTON_TOKEN + CANTON_USER_ID + CANTON_SYNCHRONIZER_ID + CANTON_SCAN_URL + CANTON_FACILITATOR_PARTY, CCD_FACILITATOR_PRIVATE_KEY + CCD_FACILITATOR_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_RELAYER_ACCOUNT_ID + NEAR_RELAYER_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, TVM_PRIVATE_KEY, or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY is required",
     "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CARDANO_MNEMONIC, CCD_FACILITATOR_PRIVATE_KEY + CCD_FACILITATOR_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_RELAYER_ACCOUNT_ID + NEAR_RELAYER_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, TVM_PRIVATE_KEY, or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY is required",
   );
   process.exit(1);
@@ -146,6 +165,9 @@ if (
 const AVM_NETWORK = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe"; // Algorand Testnet
 const CARDANO_NETWORK = cardanoNetwork; // Cardano Preprod Testnet (default)
 const APTOS_NETWORK = (process.env.APTOS_NETWORK || "aptos:2") as Network; // Aptos Testnet
+const CANTON_NETWORK = (
+  cantonSynchronizerId ? `canton:${cantonSynchronizerId}` : "canton:unset"
+) as Network; // Canton (identified by its Global Synchronizer id)
 const CCD_NETWORK = CONCORDIUM_TESTNET_CAIP2; // Concordium Testnet
 const EVM_NETWORK = "eip155:84532"; // Base Sepolia
 const HEDERA_NETWORK = "hedera:testnet"; // Hedera Testnet
@@ -200,6 +222,25 @@ if (aptosPrivateKey) {
   facilitator.register(APTOS_NETWORK, new ExactAptosScheme(aptosSigner));
   console.info(
     `Aptos Facilitator account: ${aptosAccount.accountAddress.toStringLong()} on ${APTOS_NETWORK}`,
+  );
+}
+
+// Register Canton scheme if a participant + Scan + facilitator party are provided.
+if (cantonConfigured) {
+  const cantonSigner = toFacilitatorCantonSigner({
+    participantUrl: cantonParticipantUrl!,
+    token: cantonToken!,
+    userId: cantonUserId!,
+    synchronizerId: cantonSynchronizerId!,
+    scanUrl: cantonScanUrl!,
+    facilitatorParties: [cantonFacilitatorParty!],
+  });
+  facilitator.register(
+    CANTON_NETWORK,
+    new ExactCantonScheme(cantonSigner, { synchronizerId: cantonSynchronizerId! }),
+  );
+  console.info(
+    `Canton Facilitator party: ${cantonFacilitatorParty} on ${CANTON_NETWORK}`,
   );
 }
 

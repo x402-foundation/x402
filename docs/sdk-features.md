@@ -35,6 +35,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | hedera | ✅ | ❌ | ❌ |
 | keeta | ✅ | ❌ | ❌ |
 | near | ✅ | ❌ | ❌ |
+| canton | ✅ | ❌ | ❌ |
 | ccd (Concordium) | ✅ | ❌ | ❌ |
 | xrpl | ✅ | ❌ | ❌ |
 | cardano | ✅ | ❌ | ❌ |
@@ -53,6 +54,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | exact | tvm | - | ✅ | ❌ | ✅ |
 | exact | keeta | - | ✅ | ❌ | ❌ |
 | exact | near | - | ✅ | ❌ | ❌ |
+| exact | canton | `transfer-factory` | ✅ | ❌ | ❌ |
 | exact | ccd (Concordium) | sponsored V1 | ✅ | ❌ | ❌ |
 | exact | xrpl | `sequence` | ✅ | ❌ | ❌ |
 | exact | xrpl | `ticketSequence` | ✅ | ❌ | ❌ |

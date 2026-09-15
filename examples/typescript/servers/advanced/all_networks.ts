@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
+ * (e.g., "algorand" before "aptos" before "canton" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
  */
 
 import { config } from "dotenv";
@@ -15,6 +15,7 @@ import { APTOS_TESTNET_CAIP2 } from "@x402/aptos";
 import { ExactAptosScheme } from "@x402/aptos/exact/server";
 import { ExactAvmScheme } from "@x402/avm/exact/server";
 import { ALGORAND_TESTNET_CAIP2 } from "@x402/avm";
+import { ExactCantonScheme } from "@x402/canton/exact/server";
 import { ExactCardanoScheme } from "@x402/cardano/exact/server";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
@@ -37,6 +38,12 @@ config();
 const avmAddress = process.env.AVM_ADDRESS as string | undefined;
 const cardanoAddress = process.env.CARDANO_ADDRESS as string | undefined;
 const aptosAddress = process.env.APTOS_ADDRESS as string | undefined;
+// Canton: the merchant party to be paid, the instrument admin (DSO for Canton
+// Coin), and the synchronizer the payment settles on.
+const cantonAddress = process.env.CANTON_ADDRESS as string | undefined;
+const cantonInstrumentAdmin = process.env.CANTON_INSTRUMENT_ADMIN as string | undefined;
+const cantonSynchronizerId = process.env.CANTON_SYNCHRONIZER_ID as string | undefined;
+const cantonConfigured = Boolean(cantonAddress && cantonInstrumentAdmin && cantonSynchronizerId);
 const ccdAddress = process.env.CCD_ADDRESS as string | undefined;
 const evmAddress = process.env.EVM_ADDRESS as `0x${string}` | undefined;
 const hederaAddress = process.env.HEDERA_ACCOUNT_ID as string | undefined;
@@ -52,6 +59,7 @@ if (
   !avmAddress &&
   !cardanoAddress &&
   !aptosAddress &&
+  !cantonConfigured &&
   !ccdAddress &&
   !evmAddress &&
   !svmAddress &&
@@ -63,6 +71,7 @@ if (
   !xrplAddress
 ) {
   console.error(
+    "❌ At least one of AVM_ADDRESS, APTOS_ADDRESS, CANTON_ADDRESS + CANTON_INSTRUMENT_ADMIN + CANTON_SYNCHRONIZER_ID, CCD_ADDRESS, EVM_ADDRESS, KEETA_ADDRESS, NEAR_ADDRESS, SVM_ADDRESS, STELLAR_ADDRESS, HEDERA_ACCOUNT_ID, TVM_ADDRESS, or XRPL_ADDRESS is required",
     "❌ At least one of AVM_ADDRESS, APTOS_ADDRESS, CARDANO_ADDRESS, CCD_ADDRESS, EVM_ADDRESS, KEETA_ADDRESS, NEAR_ADDRESS, SVM_ADDRESS, STELLAR_ADDRESS, HEDERA_ACCOUNT_ID, TVM_ADDRESS, or XRPL_ADDRESS is required",
   );
   process.exit(1);
@@ -78,6 +87,9 @@ if (!facilitatorUrl) {
 const AVM_NETWORK = (process.env.AVM_NETWORK || ALGORAND_TESTNET_CAIP2) as Network; // Algorand Testnet
 const CARDANO_NETWORK = "cardano:preprod" as const; // Cardano Preprod Testnet
 const APTOS_NETWORK = (process.env.APTOS_NETWORK || APTOS_TESTNET_CAIP2) as Network; // Aptos Testnet
+const CANTON_NETWORK = (
+  cantonSynchronizerId ? `canton:${cantonSynchronizerId}` : "canton:unset"
+) as Network; // Canton (identified by its Global Synchronizer id)
 const CCD_NETWORK = "ccd:4221332d34e1694168c2a0c0b3fd0f27" as const; // Concordium Testnet
 const EVM_NETWORK = "eip155:84532" as const; // Base Sepolia
 const HEDERA_NETWORK = "hedera:testnet" as const; // Hedera Testnet
@@ -114,6 +126,22 @@ if (aptosAddress) {
     payTo: aptosAddress,
   });
 }
+if (cantonConfigured) {
+  accepts.push({
+    scheme: "exact",
+    // Canton prices are explicit AssetAmounts; the instrument admin (DSO for
+    // Canton Coin) travels in `extra.instrumentId`. feePayer + synchronizerId are
+    // merged from the facilitator's /supported by the server scheme.
+    price: {
+      amount: "100000000", // 0.01 CC (atomic: 1 CC = 1e10)
+      asset: "CC",
+      extra: { instrumentId: { admin: cantonInstrumentAdmin!, id: "Amulet" } },
+    },
+    network: CANTON_NETWORK,
+    payTo: cantonAddress!,
+  });
+}
+
 const cardanoL1Confirmations = process.env.CARDANO_L1_CONFIRMATIONS?.trim();
 const cardanoExtra =
   cardanoL1Confirmations && /^-?(0|[1-9]\d?)$/.test(cardanoL1Confirmations)
@@ -221,6 +249,9 @@ if (avmAddress) {
 }
 if (aptosAddress) {
   server.register(APTOS_NETWORK, new ExactAptosScheme());
+}
+if (cantonConfigured) {
+  server.register(CANTON_NETWORK, new ExactCantonScheme());
 }
 if (cardanoAddress) {
   server.register(CARDANO_NETWORK, new ExactCardanoScheme());
