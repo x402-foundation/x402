@@ -102,6 +102,14 @@ For testnet development and quickstarts, the public x402 facilitator is the easi
 
 Do not assume the public x402.org facilitator is the default production path for mainnet EVM routes. See the [Facilitator docs](https://docs.x402.org/core-concepts/facilitator), [Facilitators directory](https://docs.x402.org/dev-tools/facilitators), and [Networks & Token Support](https://docs.x402.org/core-concepts/network-and-token-support) for operator guidance.
 
+## Specs
+
+- [V1 Protocol](specs/v1.md)
+- Schemes:
+  - [Exact EVM Scheme](specs/schemes/exact/scheme_exact_evm.md)
+- Optional extensions:
+  - [Attestation Binding](specs/extensions/attestation-binding.md)
+
 ## Terms:
 
 - `resource`: Something on the internet. This could be a webpage, file server, RPC service, API, any resource on the internet that accepts HTTP / HTTPS requests.
