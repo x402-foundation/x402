@@ -1,0 +1,7 @@
+# frozen_string_literal: true
+
+source 'https://rubygems.org'
+
+gem 'x402', path: '../../../../ruby/x402'
+gem 'faraday', '~> 2.0'
+gem 'dotenv', '~> 3.0'

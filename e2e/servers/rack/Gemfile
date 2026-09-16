@@ -1,0 +1,9 @@
+# frozen_string_literal: true
+
+source 'https://rubygems.org'
+
+gem 'x402', path: '../../../ruby/x402'
+gem 'rack', '~> 3.0'
+gem 'rackup', '~> 2.0'
+gem 'webrick'
+gem 'dotenv', '~> 3.0'

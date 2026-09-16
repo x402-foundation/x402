@@ -1,0 +1,38 @@
+# frozen_string_literal: true
+
+require 'bundler/gem_tasks'
+require 'rspec/core/rake_task'
+require 'rubocop/rake_task'
+require 'yard'
+
+RSpec::Core::RakeTask.new(:spec)
+RuboCop::RakeTask.new
+YARD::Rake::YardocTask.new
+
+task default: %i[spec rubocop]
+
+desc 'Run all tests'
+task test: :spec
+
+desc 'Run unit tests only'
+task :unit do
+  sh 'rspec spec/unit'
+end
+
+desc 'Run integration tests only'
+task :integration do
+  sh 'rspec spec/integration'
+end
+
+desc 'Generate documentation'
+task :docs do
+  sh 'yard doc'
+end
+
+desc 'Start console with gem loaded'
+task :console do
+  require 'irb'
+  require_relative 'lib/x402'
+  ARGV.clear
+  IRB.start
+end

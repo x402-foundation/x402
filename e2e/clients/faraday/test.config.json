@@ -1,0 +1,20 @@
+{
+  "name": "faraday",
+  "type": "client",
+  "language": "ruby",
+  "protocolFamilies": [
+    "evm"
+  ],
+  "x402Versions": [
+    2
+  ],
+  "description": "Ruby Faraday client with x402 payment middleware",
+  "environment": {
+    "required": [
+      "EVM_PRIVATE_KEY",
+      "RESOURCE_SERVER_URL",
+      "ENDPOINT_PATH"
+    ],
+    "optional": []
+  }
+}
