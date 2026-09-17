@@ -1,0 +1,59 @@
+{
+  "scenario": "invalid-corrective-state",
+  "description": "The server returns a corrective snapshot whose chargedCumulativeAmount is below the authoritative onchain totalClaimed. The client must fail closed without mutating state, signing, or retrying.",
+  "channel": {
+    "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "domain": {
+      "name": "x402 Batch Settlement",
+      "version": "1",
+      "chainId": 84532,
+      "verifyingContract": "0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003"
+    }
+  },
+  "initialState": {
+    "onchainTotalClaimed": "150",
+    "serverChargedCumulative": "100",
+    "clientLocalCumulative": "0",
+    "comment": "The server restored stale cumulative state after an onchain claim had already advanced totalClaimed. No retry voucher constructed from chargedCumulativeAmount = 100 can satisfy the contract's onchain lower bound of 150."
+  },
+  "steps": [
+    {
+      "step": 1,
+      "actor": "client",
+      "action": "POST a paid request with a voucher constructed from local cumulative 0.",
+      "request": {
+        "voucher": {
+          "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+          "maxClaimableAmount": "10",
+          "signature": "<placeholder>"
+        },
+        "requestCharge": "10"
+      }
+    },
+    {
+      "step": 2,
+      "actor": "server",
+      "action": "Return a corrective 402 from stale server state with chargedCumulativeAmount = 100.",
+      "response": {
+        "status": 402,
+        "extra": {
+          "channelState": {
+            "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+            "balance": "1000",
+            "totalClaimed": "150",
+            "chargedCumulativeAmount": "100"
+          }
+        }
+      }
+    }
+  ],
+  "expectedClientBehaviour": {
+    "afterStep2": "Read BatchSettlement.channels(channelId), observe authoritative totalClaimed = 150, and reject the corrective snapshot because 150 > 100. Emit hard error INVALID_CORRECTIVE_STATE and telemetry label recovery.invalid_corrective_state. Do not update local channel state, do not sign a replacement voucher, and do not retry."
+  },
+  "invariants": [
+    "A valid corrective snapshot must satisfy onchain.totalClaimed ≤ server.chargedCumulativeAmount; this snapshot violates that invariant (150 > 100).",
+    "The client local cumulative remains 0 because invalid corrective state is never persisted.",
+    "No replacement voucher is signed and no retry request is sent.",
+    "Recovery requires the server to reconcile its local cumulative state with onchain totalClaimed before issuing another corrective response."
+  ]
+}
