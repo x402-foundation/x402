@@ -1,0 +1,33 @@
+{
+  "vector": "L2.2",
+  "description": "Voucher EIP-712 digest (flat scalar: channelId from L2.1 + maxClaimableAmount).",
+  "domain": {
+    "name": "x402 Batch Settlement",
+    "version": "1",
+    "chainId": 84532,
+    "verifyingContract": "0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003"
+  },
+  "primaryType": "Voucher",
+  "types": {
+    "Voucher": [
+      {
+        "name": "channelId",
+        "type": "bytes32"
+      },
+      {
+        "name": "maxClaimableAmount",
+        "type": "uint128"
+      }
+    ]
+  },
+  "input": {
+    "channelId": "0x5aa0c653042e33ac01a3e944daa7f9a9db4153a203423551757927bca6a8fc93",
+    "maxClaimableAmount": "1000"
+  },
+  "expected_digest": "0xbeff2905f91d80520e5393b1e6aa65c14c4cf4f6e9c36eab64b49a90953873e2",
+  "meta": {
+    "generator": "_generator.ts",
+    "generator_version": "1",
+    "viem_version": "2.48.11"
+  }
+}
