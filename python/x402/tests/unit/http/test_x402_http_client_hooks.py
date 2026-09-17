@@ -6,7 +6,7 @@ import pytest
 
 from x402 import x402Client, x402ClientSync
 from x402.http.x402_http_client import x402HTTPClient, x402HTTPClientSync
-from x402.schemas import PaymentRequired, PaymentRequirements
+from x402.schemas import PaymentRequired, PaymentRequirements, ResourceInfo
 from x402.schemas.hooks import PaymentRequiredContext, PaymentRequiredHeadersResult
 
 
@@ -22,7 +22,11 @@ def make_payment_requirements() -> PaymentRequirements:
 
 
 def make_payment_required() -> PaymentRequired:
-    return PaymentRequired(x402_version=2, accepts=[make_payment_requirements()])
+    return PaymentRequired(
+        resource=ResourceInfo(url="https://example.com/resource"),
+        x402_version=2,
+        accepts=[make_payment_requirements()],
+    )
 
 
 class TestOnPaymentRequiredRegistration:

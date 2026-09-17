@@ -48,6 +48,8 @@ def encode_payment_required_header(
     payment_required: PaymentRequired | PaymentRequiredV1,
 ) -> str:
     """Encode a PaymentRequired object as a base64 header value."""
+    if isinstance(payment_required, PaymentRequired):
+        payment_required.validate_resource()
     return safe_base64_encode(payment_required.model_dump_json(by_alias=True, exclude_none=True))
 
 
