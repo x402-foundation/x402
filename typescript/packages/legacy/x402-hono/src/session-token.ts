@@ -1,5 +1,6 @@
 import { generateJwt } from "@coinbase/cdp-sdk/auth";
 import type { Context } from "hono";
+import { warnLegacyDeprecation } from "x402/shared";
 
 /**
  * Generate a session token for Coinbase Onramp and Offramp using Secure Init
@@ -15,6 +16,8 @@ import type { Context } from "hono";
  * @returns Promise<Response> - The response containing the session token or error
  */
 export async function POST(c: Context) {
+  warnLegacyDeprecation("x402-hono", "@x402/hono", "server");
+
   try {
     // Get CDP API credentials from environment variables
     const apiKeyId = process.env.CDP_API_KEY_ID;
