@@ -60,6 +60,26 @@ Both contracts:
 | Unichain Mainnet | [Deployed](https://uniscan.xyz/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://uniscan.xyz/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://uniscan.xyz/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
 | Monad Mainnet | [Deployed](https://monadscan.com/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://monadscan.com/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://monadscan.com/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
 
+**Hedera deployments (`src/hedera/`, HAPI-deployed, not CREATE2)**
+
+The Hedera binding uses `x402BatchSettlementHedera` (signatures verified through the Hedera Account Service, HIP-632) and `HederaAllowanceDepositCollector` (HTS-allowance deposits). They are deployed per network with the Hiero SDK (`typescript/packages/mechanisms/hedera/scripts/deploy-batch-settlement.ts`), so addresses differ from the CREATE2 vanity addresses above.
+
+| Network                                         | x402BatchSettlementHedera                                                                                                                                                              | HederaAllowanceDepositCollector                                                                                                                                                        |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Hedera Testnet (`hedera:testnet`, chain id 296) | [`0.0.10463847` / `0x…9FaA67`](https://hashscan.io/testnet/contract/0.0.10463847) · [Sourcify](https://sourcify.dev/server/v2/contract/296/0x00000000000000000000000000000000009FaA67) | [`0.0.10463851` / `0x…9FAA6B`](https://hashscan.io/testnet/contract/0.0.10463851) · [Sourcify](https://sourcify.dev/server/v2/contract/296/0x00000000000000000000000000000000009FAA6B) |
+| Hedera Mainnet                                  | not deployed                                                                                                                                                                           | not deployed                                                                                                                                                                           |
+
+Verify with Sourcify (HashScan reads verification from `sourcify.dev`):
+
+```bash
+forge verify-contract --chain-id 296 --verifier sourcify <escrow> src/hedera/x402BatchSettlementHedera.sol:x402BatchSettlementHedera
+forge verify-contract --chain-id 296 --verifier sourcify \
+  --constructor-args $(cast abi-encode "constructor(address)" <escrow>) \
+  <collector> src/hedera/HederaAllowanceDepositCollector.sol:HederaAllowanceDepositCollector
+```
+
+Tests: `forge test --match-path 'test/hedera/*'` (system contracts at `0x16a` / `0x167` are mocked via `vm.etch`).
+
 > \*Older testnet deployments may use prior vanity salts; the canonical **Upto** address for
 > CREATE2 deployments from this tree is `0x4020A4f3…C240002` (see `forge script script/ComputeAddress.s.sol`).
 
