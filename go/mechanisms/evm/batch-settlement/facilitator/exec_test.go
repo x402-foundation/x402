@@ -410,6 +410,75 @@ func TestExecuteSettle_InvalidBroadcastHashIsTerminal(t *testing.T) {
 	}
 }
 
+func TestExecuteSettle_NoTotalSettledAdvanceFailsClosed(t *testing.T) {
+	txHash := "0x" + strings.Repeat("ab", 32)
+	signer := &fakeFacilitatorSigner{
+		addresses: []string{"0xfacilitator"},
+		readContract: func(functionName string, _ ...interface{}) (interface{}, error) {
+			if functionName == "receivers" {
+				return []interface{}{big.NewInt(2500), big.NewInt(0)}, nil
+			}
+			return nil, nil
+		},
+		writeContract: func(functionName string, _ ...interface{}) (string, error) {
+			return txHash, nil
+		},
+		waitForReceipt: func(got string) (*evm.TransactionReceipt, error) {
+			return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: got}, nil
+		},
+	}
+	payload := &batchsettlement.BatchSettlementSettlePayload{
+		Type:     "settle",
+		Receiver: "0x3333333333333333333333333333333333333333",
+		Token:    "0x5555555555555555555555555555555555555555",
+	}
+
+	resp, err := ExecuteSettle(context.Background(), signer, payload, reqsFor(testNetwork), nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if resp.Success || resp.ErrorReason != ErrSettledEventMismatch {
+		t.Fatalf("got %+v", resp)
+	}
+}
+
+func TestExecuteSettle_TotalSettledAdvanceReportsAmount(t *testing.T) {
+	txHash := "0x" + strings.Repeat("ab", 32)
+	reads := 0
+	signer := &fakeFacilitatorSigner{
+		addresses: []string{"0xfacilitator"},
+		readContract: func(functionName string, _ ...interface{}) (interface{}, error) {
+			if functionName != "receivers" {
+				return nil, nil
+			}
+			reads++
+			if reads == 1 {
+				return []interface{}{big.NewInt(2500), big.NewInt(0)}, nil
+			}
+			return []interface{}{big.NewInt(2500), big.NewInt(2500)}, nil
+		},
+		writeContract: func(functionName string, _ ...interface{}) (string, error) {
+			return txHash, nil
+		},
+		waitForReceipt: func(got string) (*evm.TransactionReceipt, error) {
+			return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: got}, nil
+		},
+	}
+	payload := &batchsettlement.BatchSettlementSettlePayload{
+		Type:     "settle",
+		Receiver: "0x3333333333333333333333333333333333333333",
+		Token:    "0x5555555555555555555555555555555555555555",
+	}
+
+	resp, err := ExecuteSettle(context.Background(), signer, payload, reqsFor(testNetwork), nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !resp.Success || resp.Amount != "2500" {
+		t.Fatalf("got %+v", resp)
+	}
+}
+
 // ----- SettleDeposit -----
 
 func TestSettleDeposit_BadAmount(t *testing.T) {
