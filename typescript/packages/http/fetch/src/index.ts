@@ -2,6 +2,112 @@ import { x402Client, x402ClientConfig, x402HTTPClient } from "@x402/core/client"
 import { type PaymentRequired } from "@x402/core/types";
 
 /**
+ * Context passed to a caller-owned paid-response validator.
+ */
+export type ValidatePaidResponseContext = {
+  paymentRequired: PaymentRequired;
+  recovered: boolean;
+};
+
+/**
+ * Optional caller-owned check of a paid response.
+ *
+ * @param response - Clone of the paid response; reading it leaves the returned response unread
+ * @param context - Payment requirements and whether this was the recovery path
+ */
+export type ValidatePaidResponse = (
+  response: Response,
+  context: ValidatePaidResponseContext,
+) => void | Promise<void>;
+
+/**
+ * Optional behavior for wrapFetchWithPayment.
+ */
+export type WrapFetchWithPaymentOptions = {
+  /** Validates paid responses other than a terminal 402. Omit to keep current behavior. */
+  validatePaidResponse?: ValidatePaidResponse;
+};
+
+/**
+ * Evidence retained when paid-response validation fails.
+ */
+export type PaidResponseValidationErrorDetails = {
+  response: Response;
+  paymentRequired: PaymentRequired;
+  recovered: boolean;
+  paymentResponseHeader?: string;
+  cause?: unknown;
+};
+
+/**
+ * Thrown when a paid response fails caller-owned validation or cannot be cloned.
+ *
+ * The transport does not retry or create another payment after this error.
+ */
+export class PaidResponseValidationError extends Error {
+  readonly paymentRequired: PaymentRequired;
+  readonly paymentResponseHeader?: string;
+  readonly recovered: boolean;
+  readonly response: Response;
+
+  /**
+   * Creates an evidence-preserving paid-response validation error.
+   *
+   * @param message - Validation failure message
+   * @param details - Original response, payment requirements, recovery flag, pre-validator PAYMENT-RESPONSE, and cause
+   */
+  constructor(message: string, details: PaidResponseValidationErrorDetails) {
+    super(message, details.cause !== undefined ? { cause: details.cause } : undefined);
+    this.name = "PaidResponseValidationError";
+    this.response = details.response;
+    this.paymentRequired = details.paymentRequired;
+    this.recovered = details.recovered;
+    this.paymentResponseHeader = details.paymentResponseHeader;
+  }
+}
+
+/**
+ * Runs the caller-owned validator against a clone of a paid response.
+ *
+ * @param validator - Caller-supplied validator
+ * @param response - Original paid response about to be returned
+ * @param context - Payment requirements and recovery flag
+ */
+async function applyValidatePaidResponse(
+  validator: ValidatePaidResponse,
+  response: Response,
+  context: ValidatePaidResponseContext,
+): Promise<void> {
+  const evidence = {
+    response,
+    paymentRequired: context.paymentRequired,
+    recovered: context.recovered,
+    paymentResponseHeader:
+      response.headers.get("PAYMENT-RESPONSE") ??
+      response.headers.get("X-PAYMENT-RESPONSE") ??
+      undefined,
+  };
+
+  let detachedResponse: Response;
+  try {
+    detachedResponse = response.clone();
+  } catch (error) {
+    throw new PaidResponseValidationError("Paid response cannot be detached for validation", {
+      ...evidence,
+      cause: error,
+    });
+  }
+
+  try {
+    await validator(detachedResponse, context);
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message ? error.message : "Paid response validation failed";
+    throw new PaidResponseValidationError(message, { ...evidence, cause: error });
+  }
+}
+
+/**
  * Enables the payment of APIs using the x402 payment protocol v2.
  *
  * This function wraps the native fetch API to automatically handle 402 Payment Required responses
@@ -13,6 +119,7 @@ import { type PaymentRequired } from "@x402/core/types";
  *
  * @param fetch - The fetch function to wrap (typically globalThis.fetch)
  * @param client - Configured x402Client or x402HTTPClient instance for handling payments
+ * @param options - Optional paid-response validation; see WrapFetchWithPaymentOptions
  * @returns A wrapped fetch function that handles 402 responses automatically
  *
  * @example
@@ -36,12 +143,15 @@ import { type PaymentRequired } from "@x402/core/types";
  * @throws {Error} If the request configuration is missing
  * @throws {Error} If a payment has already been attempted for this request
  * @throws {Error} If there's an error creating the payment header
+ * @throws {PaidResponseValidationError} If the optional paid-response validator rejects
  */
 export function wrapFetchWithPayment(
   fetch: typeof globalThis.fetch,
   client: x402Client | x402HTTPClient,
+  options?: WrapFetchWithPaymentOptions,
 ) {
   const httpClient = client instanceof x402HTTPClient ? client : new x402HTTPClient(client);
+  const validatePaidResponse = options?.validatePaidResponse;
 
   return async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
@@ -148,9 +258,22 @@ export function wrapFetchWithPayment(
         name => retryResponse.headers.get(name),
         retryResponse.status,
       );
+      // A terminal 402 is protocol evidence, not a paid application result.
+      if (validatePaidResponse && retryResponse.status !== 402) {
+        await applyValidatePaidResponse(validatePaidResponse, retryResponse, {
+          paymentRequired,
+          recovered: true,
+        });
+      }
       return retryResponse;
     }
 
+    if (validatePaidResponse && secondResponse.status !== 402) {
+      await applyValidatePaidResponse(validatePaidResponse, secondResponse, {
+        paymentRequired,
+        recovered: false,
+      });
+    }
     return secondResponse;
   };
 }
@@ -160,14 +283,16 @@ export function wrapFetchWithPayment(
  *
  * @param fetch - The fetch function to wrap (typically globalThis.fetch)
  * @param config - Configuration options including scheme registrations and selectors
+ * @param options - Same options as wrapFetchWithPayment
  * @returns A wrapped fetch function that handles 402 responses automatically
  */
 export function wrapFetchWithPaymentFromConfig(
   fetch: typeof globalThis.fetch,
   config: x402ClientConfig,
+  options?: WrapFetchWithPaymentOptions,
 ) {
   const client = x402Client.fromConfig(config);
-  return wrapFetchWithPayment(fetch, client);
+  return wrapFetchWithPayment(fetch, client, options);
 }
 
 // Re-export types and utilities for convenience
