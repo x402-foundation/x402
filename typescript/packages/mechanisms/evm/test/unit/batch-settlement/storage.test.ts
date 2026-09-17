@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -9,15 +9,20 @@ import {
   writeJsonAtomic,
 } from "../../../src/batch-settlement/storage-utils";
 import { InMemoryChannelStorage, type Channel } from "../../../src/batch-settlement/server/storage";
-import { FileChannelStorage } from "../../../src/batch-settlement/server/fileStorage";
+import {
+  FileChannelStorage,
+  acquireExclusiveFile,
+} from "../../../src/batch-settlement/server/fileStorage";
 import { FileClientChannelStorage } from "../../../src/batch-settlement/client/fileStorage";
 import {
+  RedisChannelLockStorage,
   RedisChannelStorage,
   type RedisChannelStorageClient,
   type RedisEvalOptions,
   type RedisScanOptions,
   type RedisSetOptions,
 } from "../../../src/batch-settlement/server/redisStorage";
+import { BatchSettlementEvmScheme } from "../../../src/batch-settlement/server/scheme";
 import {
   InMemoryClientChannelStorage,
   type BatchSettlementClientContext,
@@ -104,8 +109,10 @@ describe("InMemoryChannelStorage", () => {
 
     it("deletes a session", async () => {
       await storage.updateChannel(CHANNEL_ID, () => buildSession());
+      expect(await storage.acquire(CHANNEL_ID, "pending", 60_000)).toBe(true);
       await storage.updateChannel(CHANNEL_ID, () => undefined);
       expect(await storage.get(CHANNEL_ID)).toBeUndefined();
+      expect(await storage.isHeld(CHANNEL_ID)).toBe(false);
     });
 
     it("delete is a no-op when nothing is stored", async () => {
@@ -183,6 +190,14 @@ describe("InMemoryChannelStorage", () => {
       expect(["100", "200"]).toContain(final?.chargedCumulativeAmount);
     });
   });
+
+  it("treats an expired admission lock as free", async () => {
+    expect(await storage.acquire(CHANNEL_ID, "old", 1)).toBe(true);
+    await new Promise(resolve => setTimeout(resolve, 5));
+    expect(await storage.isHeld(CHANNEL_ID)).toBe(false);
+    expect(await storage.acquire(CHANNEL_ID, "new", 60_000)).toBe(true);
+    expect(await storage.isHeld(CHANNEL_ID, "new")).toBe(true);
+  });
 });
 
 type RedisValue = {
@@ -193,6 +208,7 @@ type RedisValue = {
 class MockRedisClient implements RedisChannelStorageClient {
   readonly store = new Map<string, RedisValue>();
   updateConflicts = 0;
+  forceUpdateConflict = false;
   nextChannelGetDelay: Deferred<void> | undefined;
   nextUpdateEvalDelay: Deferred<void> | undefined;
 
@@ -224,7 +240,12 @@ class MockRedisClient implements RedisChannelStorageClient {
     const [key] = options.keys;
     this.expireKey(key);
     if (!script.includes("expectedExists")) {
-      throw new Error("Unsupported Redis script");
+      const current = this.store.get(key);
+      if (current?.value === options.arguments[0]) {
+        this.store.delete(key);
+        return 1;
+      }
+      return 0;
     }
 
     if (this.nextUpdateEvalDelay) {
@@ -235,7 +256,9 @@ class MockRedisClient implements RedisChannelStorageClient {
 
     const [expectedExists, expected, operation, nextValue] = options.arguments;
     const current = this.store.get(key);
-    const matches = expectedExists === "0" ? current === undefined : current?.value === expected;
+    const matches =
+      !this.forceUpdateConflict &&
+      (expectedExists === "0" ? current === undefined : current?.value === expected);
 
     if (!matches) {
       this.updateConflicts += 1;
@@ -244,6 +267,8 @@ class MockRedisClient implements RedisChannelStorageClient {
 
     if (operation === "delete") {
       this.store.delete(key);
+      const lockKey = options.keys[1];
+      if (lockKey) this.store.delete(lockKey);
       return [1, null];
     }
 
@@ -357,7 +382,7 @@ describe("RedisChannelStorage", () => {
     const id2 = "0x1111111111111111111111111111111111111111111111111111111111111111";
     await storage.updateChannel(id1, () => buildSession({ channelId: id1 }));
     await storage.updateChannel(id2, () => buildSession({ channelId: id2 }));
-    await client.set(`test:x402:server:channel:${id1}:lock`, "other");
+    await client.set(`test:x402:server:lock:${id1}`, "other");
 
     expect((await storage.list()).map(channel => channel.channelId)).toEqual([id2, id1]);
   });
@@ -372,15 +397,18 @@ describe("RedisChannelStorage", () => {
     });
   });
 
-  it("deletes a channel", async () => {
+  it("deletes a channel and drops the admission lock key", async () => {
     const channel = buildSession();
     await storage.updateChannel(CHANNEL_ID, () => channel);
+    expect(await storage.acquire(CHANNEL_ID, "pending", 60_000)).toBe(true);
 
     await expect(storage.updateChannel(CHANNEL_ID, () => undefined)).resolves.toEqual({
       channel: undefined,
       status: "deleted",
     });
     expect(await storage.get(CHANNEL_ID)).toBeUndefined();
+    expect(await storage.isHeld(CHANNEL_ID)).toBe(false);
+    expect(client.store.has(`test:x402:server:lock:${CHANNEL_ID}`)).toBe(false);
   });
 
   it("delete is a no-op when nothing is stored", async () => {
@@ -388,6 +416,24 @@ describe("RedisChannelStorage", () => {
       channel: undefined,
       status: "unchanged",
     });
+  });
+
+  it("throws when Redis compare conflicts exceed maxUpdateWaitMs", async () => {
+    await storage.updateChannel(CHANNEL_ID, () => buildSession({ chargedCumulativeAmount: "0" }));
+    const contended = new RedisChannelStorage({
+      client,
+      keyPrefix: "test:x402",
+      lockRetryIntervalMs: 1,
+      maxUpdateWaitMs: 20,
+    });
+    client.forceUpdateConflict = true;
+
+    await expect(
+      contended.updateChannel(CHANNEL_ID, current =>
+        current ? { ...current, chargedCumulativeAmount: "1" } : current,
+      ),
+    ).rejects.toThrow(/contended/);
+    expect(client.updateConflicts).toBeGreaterThan(0);
   });
 
   it("retries concurrent updateChannel mutations after Redis compare conflicts", async () => {
@@ -420,6 +466,21 @@ describe("RedisChannelStorage", () => {
     expect(results.map(result => result.status)).toEqual(["updated", "updated"]);
     expect(client.updateConflicts).toBe(1);
     expect((await storage.get(CHANNEL_ID))?.chargedCumulativeAmount).toBe("2");
+  });
+
+  it("acquires with SET NX PX and compare-and-deletes only the matching pendingId", async () => {
+    expect(await storage.acquire(CHANNEL_ID, "first", 60_000)).toBe(true);
+    expect(await storage.acquire(CHANNEL_ID, "second", 60_000)).toBe(false);
+    expect(await storage.isHeld(CHANNEL_ID)).toBe(true);
+    expect(await storage.isHeld(CHANNEL_ID, "first")).toBe(true);
+    expect(await storage.isHeld(CHANNEL_ID, "second")).toBe(false);
+
+    await storage.release(CHANNEL_ID, "second");
+    expect(await storage.isHeld(CHANNEL_ID, "first")).toBe(true);
+
+    await storage.release(CHANNEL_ID, "first");
+    expect(await storage.isHeld(CHANNEL_ID)).toBe(false);
+    expect(client.store.has(`test:x402:server:lock:${CHANNEL_ID}`)).toBe(false);
   });
 });
 
@@ -551,10 +612,15 @@ describe("FileChannelStorage", () => {
 
   it("deletes a stored channel and treats a second delete as unchanged", async () => {
     await storage.updateChannel(CHANNEL_ID, () => buildSession());
+    expect(await storage.acquire(CHANNEL_ID, "pending", 60_000)).toBe(true);
     await expect(storage.updateChannel(CHANNEL_ID, () => undefined)).resolves.toEqual({
       channel: undefined,
       status: "deleted",
     });
+    expect(await storage.isHeld(CHANNEL_ID)).toBe(false);
+    expect((await readdir(join(root, "server"))).filter(name => name.endsWith(".hold"))).toEqual(
+      [],
+    );
     await expect(storage.updateChannel(CHANNEL_ID, () => undefined)).resolves.toEqual({
       channel: undefined,
       status: "unchanged",
@@ -577,6 +643,108 @@ describe("FileChannelStorage", () => {
     expect((await readdir(serverDir)).filter(name => name.endsWith(".json"))).toEqual([
       `${CHANNEL_ID}.json`,
     ]);
+  });
+
+  it("uses sidecar hold files and does not write pendingRequest onto channel JSON", async () => {
+    const channel = buildSession();
+    await storage.updateChannel(CHANNEL_ID, () => channel);
+
+    expect(await storage.acquire(CHANNEL_ID, "first", 60_000)).toBe(true);
+    expect(await storage.acquire(CHANNEL_ID, "second", 60_000)).toBe(false);
+    expect(await storage.isHeld(CHANNEL_ID, "first")).toBe(true);
+
+    const serverDir = join(root, "server");
+    const names = await readdir(serverDir);
+    expect(names.filter(name => name.endsWith(".hold"))).toEqual([`${CHANNEL_ID}.hold`]);
+    expect(JSON.parse(await readFile(join(serverDir, `${CHANNEL_ID}.json`), "utf8"))).toEqual(
+      channel,
+    );
+    expect((await storage.list()).map(c => c.channelId)).toEqual([CHANNEL_ID]);
+
+    await storage.release(CHANNEL_ID, "second");
+    expect(await storage.isHeld(CHANNEL_ID, "first")).toBe(true);
+    await storage.release(CHANNEL_ID, "first");
+    expect(await storage.isHeld(CHANNEL_ID)).toBe(false);
+    expect((await readdir(serverDir)).filter(name => name.endsWith(".hold"))).toEqual([]);
+  });
+
+  it("treats an expired hold as free and replaces it", async () => {
+    expect(await storage.acquire(CHANNEL_ID, "expired", 1)).toBe(true);
+    await new Promise(resolve => setTimeout(resolve, 5));
+    expect(await storage.acquire(CHANNEL_ID, "next", 60_000)).toBe(true);
+    expect(await storage.isHeld(CHANNEL_ID, "expired")).toBe(false);
+    expect(await storage.isHeld(CHANNEL_ID, "next")).toBe(true);
+  });
+
+  it("does not drop a newer holder when an expired pendingId is released", async () => {
+    expect(await storage.acquire(CHANNEL_ID, "expired", 1)).toBe(true);
+    await new Promise(resolve => setTimeout(resolve, 5));
+    const [acquired] = await Promise.all([
+      storage.acquire(CHANNEL_ID, "next", 60_000),
+      storage.release(CHANNEL_ID, "expired"),
+    ]);
+    expect(acquired).toBe(true);
+    expect(await storage.isHeld(CHANNEL_ID, "next")).toBe(true);
+  });
+
+  it("treats a missing hold as not held and ignores a matching release", async () => {
+    expect(await storage.isHeld(CHANNEL_ID)).toBe(false);
+    await expect(storage.release(CHANNEL_ID, "missing")).resolves.toBeUndefined();
+  });
+
+  it("rethrows a corrupt hold file instead of treating it as free", async () => {
+    expect(await storage.acquire(CHANNEL_ID, "ok", 60_000)).toBe(true);
+    await writeFile(join(root, "server", `${CHANNEL_ID}.hold`), "{nope");
+    await expect(storage.isHeld(CHANNEL_ID)).rejects.toThrow();
+    await expect(storage.release(CHANNEL_ID, "ok")).rejects.toThrow();
+    await expect(storage.acquire(CHANNEL_ID, "next", 60_000)).rejects.toThrow();
+  });
+
+  it("steals a stale hold.lock marker left after a crash", async () => {
+    const serverDir = join(root, "server");
+    await mkdir(serverDir, { recursive: true });
+    const lockPath = join(serverDir, `${CHANNEL_ID}.hold.lock`);
+    await writeFile(lockPath, "");
+    const stale = new Date(Date.now() - 3_000);
+    await utimes(lockPath, stale, stale);
+
+    expect(await storage.acquire(CHANNEL_ID, "next", 60_000)).toBe(true);
+    expect(await storage.isHeld(CHANNEL_ID, "next")).toBe(true);
+  });
+
+  it("rejects live lock-file contention after bounded attempts", async () => {
+    const serverDir = join(root, "server");
+    await mkdir(serverDir, { recursive: true });
+    const lockPath = join(serverDir, "probe.lock");
+    await writeFile(lockPath, "");
+
+    await expect(
+      acquireExclusiveFile(lockPath, { maxAttempts: 2, retryIntervalMs: 1, staleMs: 60_000 }),
+    ).rejects.toThrow(/contended/);
+  });
+});
+
+describe("File durable + Redis lock", () => {
+  it("wires File storage with an explicit Redis lock store", async () => {
+    const root = await mkdtemp(join(tmpdir(), "x402-bs-mixed-"));
+    try {
+      const file = new FileChannelStorage({ directory: root });
+      const redisLock = new RedisChannelLockStorage({
+        client: new MockRedisClient(),
+        keyPrefix: "test:mixed",
+      });
+      const scheme = new BatchSettlementEvmScheme("0x9876543210987654321098765432109876543210", {
+        storage: file,
+        lockStorage: redisLock,
+      });
+      expect(scheme.getStorage()).toBe(file);
+      expect(scheme.getLockStorage()).toBe(redisLock);
+      expect(await redisLock.acquire(CHANNEL_ID, "pending", 60_000)).toBe(true);
+      expect(await file.isHeld(CHANNEL_ID)).toBe(false);
+      expect(await redisLock.isHeld(CHANNEL_ID, "pending")).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 

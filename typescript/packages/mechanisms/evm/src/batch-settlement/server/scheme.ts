@@ -23,7 +23,14 @@ import {
   DEFAULT_SERVER_MIN_DEPOSIT_MULTIPLIER,
   MIN_WITHDRAW_DELAY,
 } from "../constants";
-import { InMemoryChannelStorage, ChannelStorage, type Channel } from "./storage";
+import {
+  InMemoryChannelStorage,
+  ChannelStorage,
+  ChannelLockStorage,
+  isChannelLockStorage,
+  rethrowLockImplementationError,
+  type Channel,
+} from "./storage";
 import {
   handleAfterVerify,
   handleBeforeVerify,
@@ -41,6 +48,7 @@ import {
 
 export interface BatchSettlementEvmSchemeServerConfig {
   storage?: ChannelStorage;
+  lockStorage?: ChannelLockStorage;
   receiverAuthorizerSigner?: AuthorizerSigner;
   withdrawDelay?: number;
   onchainStateTtlMs?: number;
@@ -73,6 +81,7 @@ export class BatchSettlementEvmScheme implements SchemeNetworkServer {
   >();
   private moneyParsers: MoneyParser[] = [];
   private readonly storage: ChannelStorage;
+  private readonly lockStorage: ChannelLockStorage;
   private readonly receiverAuthorizerSigner: AuthorizerSigner | undefined;
   private readonly receiverAddress: `0x${string}`;
   private readonly withdrawDelay: number;
@@ -88,6 +97,9 @@ export class BatchSettlementEvmScheme implements SchemeNetworkServer {
   constructor(receiverAddress: `0x${string}`, config?: BatchSettlementEvmSchemeServerConfig) {
     this.receiverAddress = receiverAddress;
     this.storage = config?.storage ?? new InMemoryChannelStorage();
+    this.lockStorage =
+      config?.lockStorage ??
+      (isChannelLockStorage(this.storage) ? this.storage : new InMemoryChannelStorage());
     this.receiverAuthorizerSigner = config?.receiverAuthorizerSigner;
     this.withdrawDelay = config?.withdrawDelay ?? MIN_WITHDRAW_DELAY;
     this.onchainStateTtlMs =
@@ -198,30 +210,35 @@ export class BatchSettlementEvmScheme implements SchemeNetworkServer {
   }
 
   /**
-   * Clears this request's pending reservation without touching newer reservations.
+   * Releases this request's admission lock without touching a newer holder or
+   * deleting the request-context entry.
    *
    * @param payload - Request-scoped payment payload object.
    */
-  async clearPendingRequest(payload: DeepReadonly<PaymentPayload>): Promise<void> {
-    const context = this.takeRequestContext(payload);
+  async releasePendingRequest(payload: DeepReadonly<PaymentPayload>): Promise<void> {
+    const context = this.readRequestContext(payload);
     if (!context?.reservationCommitted || !context.channelId || !context.pendingId) {
       return;
     }
 
-    await this.storage.updateChannel(context.channelId, current => {
-      if (!current || current.pendingRequest?.pendingId !== context.pendingId) {
-        return current;
-      }
+    try {
+      await this.lockStorage.release(context.channelId, context.pendingId);
+    } catch (err) {
+      rethrowLockImplementationError(err);
+      // Lock-store I/O loss is optimistic: the charge CAS still serializes commits.
+    }
+    this.mergeRequestContext(payload, { reservationCommitted: false });
+  }
 
-      if (!context.channelSnapshot) {
-        return undefined;
-      }
-
-      return {
-        ...current,
-        pendingRequest: undefined,
-      };
-    });
+  /**
+   * Releases this request's admission lock, then deletes the request-context entry.
+   * Use on terminal paths that no longer need the snapshot.
+   *
+   * @param payload - Request-scoped payment payload object.
+   */
+  async clearPendingRequest(payload: DeepReadonly<PaymentPayload>): Promise<void> {
+    await this.releasePendingRequest(payload);
+    this.takeRequestContext(payload);
   }
 
   /**
@@ -366,6 +383,15 @@ export class BatchSettlementEvmScheme implements SchemeNetworkServer {
    */
   getStorage(): ChannelStorage {
     return this.storage;
+  }
+
+  /**
+   * Returns the admission lock store.
+   *
+   * @returns The configured {@link ChannelLockStorage} backend.
+   */
+  getLockStorage(): ChannelLockStorage {
+    return this.lockStorage;
   }
 
   /**

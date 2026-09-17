@@ -1,18 +1,28 @@
-import { mkdir, open, readdir, readFile, unlink } from "node:fs/promises";
+import { mkdir, open, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { isNodeEnoent, readJsonFile, resolveWithinDir, writeJsonAtomic } from "../storage-utils";
 import { normalizeChannelId } from "../utils";
 import type { FileChannelStorageOptions } from "../types";
-import type { ChannelStorage, Channel, ChannelUpdateResult } from "./storage";
+import type { ChannelLockStorage, ChannelStorage, Channel, ChannelUpdateResult } from "./storage";
 
 export type { FileChannelStorageOptions };
+
+const FILE_LOCK_MAX_ATTEMPTS = 50;
+const FILE_LOCK_RETRY_INTERVAL_MS = 10;
+const FILE_LOCK_STALE_MS = 2_000;
+
+export type AcquireExclusiveFileOptions = {
+  maxAttempts?: number;
+  retryIntervalMs?: number;
+  staleMs?: number;
+};
 
 /**
  * Node.js file-backed {@link ChannelStorage} for the batched server scheme.
  */
-export class FileChannelStorage implements ChannelStorage {
+export class FileChannelStorage implements ChannelStorage, ChannelLockStorage {
   private readonly root: string;
 
   /**
@@ -79,7 +89,7 @@ export class FileChannelStorage implements ChannelStorage {
   ): Promise<ChannelUpdateResult> {
     const lockPath = this.filePath(channelId) + ".lock";
     await mkdir(dirname(lockPath), { recursive: true });
-    const lockHandle = await this.acquireLock(lockPath);
+    const lockHandle = await acquireExclusiveFile(lockPath);
 
     try {
       const path = this.filePath(channelId);
@@ -102,6 +112,7 @@ export class FileChannelStorage implements ChannelStorage {
         } catch (err: unknown) {
           if (!isNodeEnoent(err)) throw err;
         }
+        await this.dropHold(channelId);
         return { channel: undefined, status: current ? "deleted" : "unchanged" };
       }
 
@@ -111,6 +122,77 @@ export class FileChannelStorage implements ChannelStorage {
       await lockHandle.close();
       await unlink(lockPath).catch(() => {});
     }
+  }
+
+  /**
+   * Acquires a per-channel admission lock via a sidecar hold file.
+   *
+   * Serialized with {@link FileChannelStorage.release} and {@link FileChannelStorage.isHeld}
+   * on `{id}.hold.lock` so an expired hold cannot be unlinked out from under a new holder.
+   *
+   * @param channelId - The channel identifier.
+   * @param pendingId - Request-scoped lock owner.
+   * @param ttlMs - Lock time-to-live in milliseconds.
+   * @returns Whether this request now holds the lock.
+   */
+  async acquire(channelId: string, pendingId: string, ttlMs: number): Promise<boolean> {
+    return this.withHoldLock(channelId, async () => {
+      const path = this.holdPath(channelId);
+      await mkdir(dirname(path), { recursive: true });
+      try {
+        const existing = JSON.parse(await readFile(path, "utf8")) as {
+          pendingId: string;
+          expiresAt: number;
+        };
+        if (existing.expiresAt > Date.now()) return false;
+      } catch (err: unknown) {
+        if (!isNodeEnoent(err)) throw err;
+      }
+      await writeFile(path, JSON.stringify({ pendingId, expiresAt: Date.now() + ttlMs }), "utf8");
+      return true;
+    });
+  }
+
+  /**
+   * Releases the admission lock only when `pendingId` still holds it.
+   *
+   * @param channelId - The channel identifier.
+   * @param pendingId - Request-scoped lock owner.
+   */
+  async release(channelId: string, pendingId: string): Promise<void> {
+    await this.withHoldLock(channelId, async () => {
+      const path = this.holdPath(channelId);
+      try {
+        const hold = JSON.parse(await readFile(path, "utf8")) as { pendingId: string };
+        if (hold.pendingId !== pendingId) return;
+        await unlink(path);
+      } catch (err: unknown) {
+        if (!isNodeEnoent(err)) throw err;
+      }
+    });
+  }
+
+  /**
+   * Returns whether a live admission lock exists, optionally matching `pendingId`.
+   *
+   * @param channelId - The channel identifier.
+   * @param pendingId - When set, require this request to hold the lock.
+   * @returns Whether a live lock (or this request's lock) is present.
+   */
+  async isHeld(channelId: string, pendingId?: string): Promise<boolean> {
+    return this.withHoldLock(channelId, async () => {
+      try {
+        const hold = JSON.parse(await readFile(this.holdPath(channelId), "utf8")) as {
+          pendingId: string;
+          expiresAt: number;
+        };
+        if (hold.expiresAt <= Date.now()) return false;
+        return pendingId === undefined || hold.pendingId === pendingId;
+      } catch (err: unknown) {
+        if (isNodeEnoent(err)) return false;
+        throw err;
+      }
+    });
   }
 
   /**
@@ -126,21 +208,97 @@ export class FileChannelStorage implements ChannelStorage {
   }
 
   /**
-   * Creates an exclusive lock file, polling until no other process holds it.
+   * Absolute path to the admission hold sidecar for a channel.
    *
-   * @param lockPath - Absolute path for the lock file (created with `O_EXCL`).
-   * @returns Writable file handle for the lock file; caller must close it to release.
+   * @param channelId - The channel identifier.
+   * @returns Filesystem path under `{root}/server/{id}.hold`.
    */
-  private async acquireLock(lockPath: string) {
-    while (true) {
+  private holdPath(channelId: string): string {
+    const id = normalizeChannelId(channelId);
+    return resolveWithinDir(join(this.root, "server"), `${id}.hold`);
+  }
+
+  /**
+   * Drops the admission hold for a deleted channel row.
+   *
+   * @param channelId - The channel identifier.
+   */
+  private async dropHold(channelId: string): Promise<void> {
+    await this.withHoldLock(channelId, async () => {
       try {
-        return await open(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY);
+        await unlink(this.holdPath(channelId));
       } catch (err: unknown) {
-        if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
-          throw err;
-        }
-        await new Promise(resolve => setTimeout(resolve, 10));
+        if (!isNodeEnoent(err)) throw err;
       }
+    });
+  }
+
+  /**
+   * Serializes acquire, release, and isHeld on the `.hold` sidecar.
+   *
+   * @param channelId - The channel identifier.
+   * @param fn - Work to run while holding `{id}.hold.lock`.
+   * @returns The resolved result of `fn`.
+   */
+  private async withHoldLock<T>(channelId: string, fn: () => Promise<T>): Promise<T> {
+    const lockPath = this.holdPath(channelId) + ".lock";
+    await mkdir(dirname(lockPath), { recursive: true });
+    const lockHandle = await acquireExclusiveFile(lockPath);
+    try {
+      return await fn();
+    } finally {
+      await lockHandle.close();
+      await unlink(lockPath).catch(() => {});
     }
+  }
+}
+
+/**
+ * Creates an exclusive lock file, stealing markers whose mtime is older than `staleMs`.
+ *
+ * @param lockPath - Absolute path for the lock file (created with `O_EXCL`).
+ * @param options - Attempt, retry, and stale-mtime bounds.
+ * @returns Writable file handle for the lock file; caller must close it to release.
+ * @throws When the lock remains contended after `maxAttempts`.
+ */
+export async function acquireExclusiveFile(
+  lockPath: string,
+  options: AcquireExclusiveFileOptions = {},
+) {
+  const maxAttempts = options.maxAttempts ?? FILE_LOCK_MAX_ATTEMPTS;
+  const retryIntervalMs = options.retryIntervalMs ?? FILE_LOCK_RETRY_INTERVAL_MS;
+  const staleMs = options.staleMs ?? FILE_LOCK_STALE_MS;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      return await open(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY);
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw err;
+      }
+      if (await isStaleLock(lockPath, staleMs)) {
+        await unlink(lockPath).catch(() => {});
+        continue;
+      }
+      await new Promise(resolve => setTimeout(resolve, retryIntervalMs));
+    }
+  }
+  throw new Error(`acquire lock ${lockPath}: contended`);
+}
+
+/**
+ * Returns whether `lockPath` is missing or older than `staleMs`.
+ *
+ * @param lockPath - Absolute path for the lock file.
+ * @param staleMs - Age after which a leftover marker is treated as crash debris.
+ * @returns Whether the caller may unlink and retry exclusive create.
+ */
+async function isStaleLock(lockPath: string, staleMs: number): Promise<boolean> {
+  try {
+    const info = await stat(lockPath);
+    return Date.now() - info.mtimeMs >= staleMs;
+  } catch (err: unknown) {
+    if (isNodeEnoent(err)) return true;
+    throw err;
   }
 }

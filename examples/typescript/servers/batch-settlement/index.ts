@@ -44,6 +44,7 @@ const batchedScheme = new BatchSettlementEvmScheme(evmAddress, {
   withdrawDelay,
   enforceMinDeposit: false,
   ...(storageDir ? { storage: new FileChannelStorage({ directory: storageDir }) } : {}),
+  // lockStorage: new RedisChannelLockStorage({ client }) when hosts do not share STORAGE_DIR
 });
 
 const resourceServer = new x402ResourceServer(facilitatorClient).register(NETWORK, batchedScheme);
@@ -58,7 +59,6 @@ channelManager.start({
   selectRefundChannels: (channels, context) =>
     channels.filter(channel => {
       if (BigInt(channel.balance) === 0n) return false;
-      if (channel.pendingRequest && channel.pendingRequest.expiresAt > context.now) return false;
       return context.now - channel.lastRequestTimestamp >= 180_000; // Refund channels after 3 minutes of inactivity
     }),
   onClaim: (r: { vouchers: number; transaction: string }) =>

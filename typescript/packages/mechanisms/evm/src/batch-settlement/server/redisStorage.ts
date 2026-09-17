@@ -1,8 +1,9 @@
-import type { Channel, ChannelStorage, ChannelUpdateResult } from "./storage";
+import type { Channel, ChannelLockStorage, ChannelStorage, ChannelUpdateResult } from "./storage";
 import { normalizeChannelId } from "../utils";
 
 const DEFAULT_KEY_PREFIX = "x402:batch-settlement";
 const DEFAULT_LOCK_RETRY_INTERVAL_MS = 10;
+const DEFAULT_MAX_UPDATE_WAIT_MS = 5_000;
 const DEFAULT_SCAN_COUNT = 100;
 
 const UPDATE_CHANNEL_SCRIPT = `
@@ -22,6 +23,7 @@ end
 
 if operation == "delete" then
   redis.call("DEL", KEYS[1])
+  redis.call("DEL", KEYS[2])
   return {1, false}
 end
 
@@ -31,6 +33,13 @@ if operation == "set" then
 end
 
 return {1, current or false}
+`;
+
+const COMPARE_AND_DEL_SCRIPT = `
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("DEL", KEYS[1])
+end
+return 0
 `;
 
 export type RedisEvalOptions = {
@@ -62,6 +71,7 @@ export type RedisChannelStorageOptions = {
   lockTtlMs?: number;
   lockRetryIntervalMs?: number;
   lockRenewalIntervalMs?: number;
+  maxUpdateWaitMs?: number;
   scanCount?: number;
 };
 
@@ -72,13 +82,85 @@ type ParsedRedisUpdateResult = {
 };
 
 /**
+ * Redis-backed {@link ChannelLockStorage} using `SET NX PX` and compare-and-delete.
+ */
+export class RedisChannelLockStorage implements ChannelLockStorage {
+  protected readonly client: RedisChannelStorageClient;
+  protected readonly keyPrefix: string;
+
+  /**
+   * Creates Redis-backed admission locks (no channel JSON).
+   *
+   * @param options - Redis client and optional key prefix.
+   */
+  constructor(options: Pick<RedisChannelStorageOptions, "client" | "keyPrefix">) {
+    this.client = options.client;
+    this.keyPrefix = options.keyPrefix ?? DEFAULT_KEY_PREFIX;
+  }
+
+  /**
+   * Acquires a per-channel admission lock with a single atomic `SET NX PX`.
+   *
+   * Intentionally not re-entrant: do not add a GET-then-SET PX refresh for the same
+   * `pendingId`; that pattern races and can extend another holder's lock.
+   *
+   * @param channelId - The channel identifier.
+   * @param pendingId - Request-scoped lock owner stored as the key value.
+   * @param ttlMs - Lock TTL passed as `PX`.
+   * @returns Whether this request now holds the lock.
+   */
+  async acquire(channelId: string, pendingId: string, ttlMs: number): Promise<boolean> {
+    const result = await this.client.set(this.lockKey(channelId), pendingId, {
+      NX: true,
+      PX: ttlMs,
+    });
+    return result === "OK";
+  }
+
+  /**
+   * Releases the admission lock only when `pendingId` still holds it.
+   *
+   * @param channelId - The channel identifier.
+   * @param pendingId - Request-scoped lock owner.
+   */
+  async release(channelId: string, pendingId: string): Promise<void> {
+    await this.client.eval(COMPARE_AND_DEL_SCRIPT, {
+      keys: [this.lockKey(channelId)],
+      arguments: [pendingId],
+    });
+  }
+
+  /**
+   * Returns whether a live admission lock exists, optionally matching `pendingId`.
+   *
+   * @param channelId - The channel identifier.
+   * @param pendingId - When set, require this request to hold the lock.
+   * @returns Whether a live lock (or this request's lock) is present.
+   */
+  async isHeld(channelId: string, pendingId?: string): Promise<boolean> {
+    const current = await this.client.get(this.lockKey(channelId));
+    if (!current) return false;
+    return pendingId === undefined || current === pendingId;
+  }
+
+  /**
+   * Builds the Redis key for an admission lock.
+   *
+   * @param channelId - The channel identifier.
+   * @returns Redis key for the lock.
+   */
+  protected lockKey(channelId: string): string {
+    return `${this.keyPrefix}:server:lock:${normalizeChannelId(channelId)}`;
+  }
+}
+
+/**
  * Redis-backed {@link ChannelStorage} with optimistic atomic updates.
  */
-export class RedisChannelStorage implements ChannelStorage {
-  private readonly client: RedisChannelStorageClient;
-  private readonly keyPrefix: string;
+export class RedisChannelStorage extends RedisChannelLockStorage implements ChannelStorage {
   private readonly channelKeyPrefix: string;
   private readonly lockRetryIntervalMs: number;
+  private readonly maxUpdateWaitMs: number;
   private readonly scanCount: number;
 
   /**
@@ -87,10 +169,10 @@ export class RedisChannelStorage implements ChannelStorage {
    * @param options - Redis client and optional key/retry configuration.
    */
   constructor(options: RedisChannelStorageOptions) {
-    this.client = options.client;
-    this.keyPrefix = options.keyPrefix ?? DEFAULT_KEY_PREFIX;
+    super(options);
     this.channelKeyPrefix = `${this.keyPrefix}:server:channel`;
     this.lockRetryIntervalMs = options.lockRetryIntervalMs ?? DEFAULT_LOCK_RETRY_INTERVAL_MS;
+    this.maxUpdateWaitMs = options.maxUpdateWaitMs ?? DEFAULT_MAX_UPDATE_WAIT_MS;
     this.scanCount = options.scanCount ?? DEFAULT_SCAN_COUNT;
   }
 
@@ -119,7 +201,6 @@ export class RedisChannelStorage implements ChannelStorage {
     })) {
       const keys = Array.isArray(keyOrKeys) ? keyOrKeys : [keyOrKeys];
       for (const key of keys) {
-        if (key.endsWith(":lock")) continue;
         const raw = await this.client.get(key);
         if (!raw) continue;
         channels.push(JSON.parse(raw) as Channel);
@@ -131,6 +212,9 @@ export class RedisChannelStorage implements ChannelStorage {
   /**
    * Atomically inspects and mutates a channel record with Redis compare-and-write retries.
    *
+   * Retries contested compare-and-write until `maxUpdateWaitMs` elapses, then throws.
+   * A successful delete also drops the admission lock key.
+   *
    * @param channelId - The channel identifier.
    * @param update - Mutation callback. Return `undefined` to delete, or `current` to leave unchanged.
    * @returns The final stored channel and whether storage updated, stayed unchanged, or deleted.
@@ -140,52 +224,62 @@ export class RedisChannelStorage implements ChannelStorage {
     update: (current: Channel | undefined) => Channel | undefined,
   ): Promise<ChannelUpdateResult> {
     const key = this.channelKey(channelId);
+    const deadline = Date.now() + this.maxUpdateWaitMs;
+    const waitForRetry = async () => {
+      if (Date.now() >= deadline) {
+        throw new Error("channel update contended");
+      }
+      await sleep(this.lockRetryIntervalMs);
+    };
+
     while (true) {
       const currentRaw = await this.client.get(key);
       const current = currentRaw ? (JSON.parse(currentRaw) as Channel) : undefined;
       const next = update(current);
 
       if (next === current) {
-        const result = await this.commitUpdate(key, currentRaw, "keep");
+        const result = await this.commitUpdate(channelId, currentRaw, "keep");
         if (result.applied) return { channel: current, status: "unchanged" };
-        await sleep(this.lockRetryIntervalMs);
+        await waitForRetry();
         continue;
       }
 
       if (!next) {
-        const result = await this.commitUpdate(key, currentRaw, "delete");
+        const result = await this.commitUpdate(channelId, currentRaw, "delete");
         if (result.applied) {
           return { channel: undefined, status: current ? "deleted" : "unchanged" };
         }
-        await sleep(this.lockRetryIntervalMs);
+        await waitForRetry();
         continue;
       }
 
       const nextRaw = JSON.stringify(next);
-      const result = await this.commitUpdate(key, currentRaw, "set", nextRaw);
+      const result = await this.commitUpdate(channelId, currentRaw, "set", nextRaw);
       if (result.applied) return { channel: next, status: "updated" };
-      await sleep(this.lockRetryIntervalMs);
+      await waitForRetry();
     }
   }
 
   /**
    * Applies a channel mutation only if the key still contains the value that was inspected.
    *
-   * @param key - Redis channel key to mutate.
+   * Delete passes the admission lock key as `KEYS[2]` so a removed channel cannot leave a stale hold.
+   *
+   * @param channelId - The channel identifier.
    * @param expectedRaw - Raw JSON value observed before running the update callback.
    * @param operation - Mutation to apply when the observed value is still current.
    * @param nextRaw - Raw JSON value to write for set operations.
    * @returns Whether the mutation was applied.
    */
   private async commitUpdate(
-    key: string,
+    channelId: string,
     expectedRaw: string | null,
     operation: RedisUpdateOperation,
     nextRaw = "",
   ): Promise<ParsedRedisUpdateResult> {
     return parseRedisUpdateResult(
       await this.client.eval(UPDATE_CHANNEL_SCRIPT, {
-        keys: [key],
+        keys: [this.channelKey(channelId), this.lockKey(channelId)],
         arguments: [expectedRaw === null ? "0" : "1", expectedRaw ?? "", operation, nextRaw],
       }),
     );

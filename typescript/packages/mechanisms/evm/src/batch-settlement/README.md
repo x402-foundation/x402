@@ -130,12 +130,20 @@ manager.start({
 });
 ```
 
-For serverless deployments or multi-instance servers, use Redis/Valkey-backed storage so channel updates survive cold starts and are atomic across processes:
+Omit `storage` and `lockStorage` for in-memory durable state and locks. Pass one object as `storage` when the backend implements both roles (`InMemoryChannelStorage`, `FileChannelStorage`, `RedisChannelStorage`); admission locks are inferred. File locks are shared only by processes that use the same `directory`. Hosts that do not share that directory need an explicit `lockStorage` (Redis); otherwise each host admits independently and only the charge CAS protects revenue.
 
 ```typescript
-const scheme = new BatchSettlementEvmScheme(receiverAddress, {
-  enforceMinDeposit: false,
+import { RedisChannelLockStorage } from "@x402/evm/batch-settlement/server/redis-storage";
+
+// Redis for durable state and locks (one object, lock inferred)
+new BatchSettlementEvmScheme(receiverAddress, {
   storage: new RedisChannelStorage({ client: redisClient }),
+});
+
+// File durable, Redis lock (multi-host without a shared filesystem)
+new BatchSettlementEvmScheme(receiverAddress, {
+  storage: new FileChannelStorage({ directory: "./channels" }),
+  lockStorage: new RedisChannelLockStorage({ client: redisClient }),
 });
 ```
 
