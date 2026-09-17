@@ -1,0 +1,3 @@
+kind: added
+body: Add RedisChannelStorage and RedisChannelLockStorage for batch-settlement. Channel JSON uses Lua compare-and-write; admission locks use SET NX PX on a separate :server:lock: key. Inject a RedisChannelStorageClient adapter; the SDK does not depend on a Redis library. Pass RedisChannelLockStorage as LockStorage to mix backends (e.g. File durable + Redis locks).
+time: 2026-09-16T05:00:00Z

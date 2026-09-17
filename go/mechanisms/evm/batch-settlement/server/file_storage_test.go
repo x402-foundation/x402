@@ -1,11 +1,13 @@
 package server
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 )
@@ -61,13 +63,24 @@ func TestServerFileStorage_PathLowercased(t *testing.T) {
 }
 
 func TestServerFileStorage_Delete(t *testing.T) {
-	s, _ := newServerFileStore(t)
+	s, dir := newServerFileStore(t)
 	_ = s.Set(testChA, sampleSession(testChA, "1"))
+	ok, err := s.Acquire(testChA, "pending", 60_000)
+	if err != nil || !ok {
+		t.Fatalf("Acquire: ok=%v err=%v", ok, err)
+	}
 	if err := s.Delete(testChA); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if got, _ := s.Get(testChA); got != nil {
 		t.Fatalf("expected nil after delete")
+	}
+	held, err := s.IsHeld(testChA, "")
+	if err != nil || held {
+		t.Fatalf("Delete must drop hold: held=%v err=%v", held, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "server", testChA+".hold")); !os.IsNotExist(err) {
+		t.Fatalf("hold file should be gone: %v", err)
 	}
 	if err := s.Delete(testChA); err != nil {
 		t.Fatalf("Delete-missing should not error: %v", err)
@@ -229,5 +242,213 @@ func TestServerFileStorage_RejectsPrefixedValidId(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("expected empty storage root, got %v", entries)
+	}
+}
+
+func TestServerFileStorage_HoldSidecarDoesNotWritePendingOntoChannelJSON(t *testing.T) {
+	s, dir := newServerFileStore(t)
+	channel := sampleSession(testChA, "5")
+	if _, err := s.UpdateChannel(testChA, func(*ChannelSession) *ChannelSession { return channel }); err != nil {
+		t.Fatalf("UpdateChannel: %v", err)
+	}
+	ok, err := s.Acquire(testChA, "first", 60_000)
+	if err != nil || !ok {
+		t.Fatalf("Acquire first: ok=%v err=%v", ok, err)
+	}
+	ok, err = s.Acquire(testChA, "second", 60_000)
+	if err != nil || ok {
+		t.Fatalf("second acquire should fail: ok=%v err=%v", ok, err)
+	}
+	held, err := s.IsHeld(testChA, "first")
+	if err != nil || !held {
+		t.Fatalf("first should be held: held=%v err=%v", held, err)
+	}
+
+	serverDir := filepath.Join(dir, "server")
+	entries, err := os.ReadDir(serverDir)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	var holds []string
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".hold") {
+			holds = append(holds, e.Name())
+		}
+	}
+	if len(holds) != 1 || holds[0] != testChA+".hold" {
+		t.Fatalf("holds = %v", holds)
+	}
+	raw, err := os.ReadFile(filepath.Join(serverDir, testChA+".json"))
+	if err != nil {
+		t.Fatalf("read json: %v", err)
+	}
+	var stored ChannelSession
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !reflect.DeepEqual(&stored, channel) {
+		t.Fatalf("channel JSON mutated:\nwant %+v\ngot  %+v", channel, stored)
+	}
+	listed, err := s.List()
+	if err != nil || len(listed) != 1 || listed[0].ChannelId != testChA {
+		t.Fatalf("list = %+v err=%v", listed, err)
+	}
+
+	if err := s.Release(testChA, "second"); err != nil {
+		t.Fatalf("release second: %v", err)
+	}
+	held, err = s.IsHeld(testChA, "first")
+	if err != nil || !held {
+		t.Fatalf("first should still be held: held=%v err=%v", held, err)
+	}
+	if err := s.Release(testChA, "first"); err != nil {
+		t.Fatalf("release first: %v", err)
+	}
+	held, err = s.IsHeld(testChA, "")
+	if err != nil || held {
+		t.Fatalf("lock should be free: held=%v err=%v", held, err)
+	}
+	entries, err = os.ReadDir(serverDir)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".hold") {
+			t.Fatalf("hold file left behind: %s", e.Name())
+		}
+	}
+}
+
+func TestServerFileStorage_ReleaseExpiredPendingIdDoesNotDropNewerHolder(t *testing.T) {
+	s, _ := newServerFileStore(t)
+	ok, err := s.Acquire(testChA, "expired", 1)
+	if err != nil || !ok {
+		t.Fatalf("Acquire expired: ok=%v err=%v", ok, err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	ok, err = s.Acquire(testChA, "next", 60_000)
+	if err != nil || !ok {
+		t.Fatalf("Acquire next: ok=%v err=%v", ok, err)
+	}
+	if err := s.Release(testChA, "expired"); err != nil {
+		t.Fatalf("Release expired: %v", err)
+	}
+	held, err := s.IsHeld(testChA, "next")
+	if err != nil || !held {
+		t.Fatalf("newer holder must remain: held=%v err=%v", held, err)
+	}
+}
+
+func TestServerFileStorage_ExpiredHoldIsFree(t *testing.T) {
+	s, _ := newServerFileStore(t)
+	ok, err := s.Acquire(testChA, "expired", 1)
+	if err != nil || !ok {
+		t.Fatalf("Acquire expired: ok=%v err=%v", ok, err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	ok, err = s.Acquire(testChA, "next", 60_000)
+	if err != nil || !ok {
+		t.Fatalf("Acquire next: ok=%v err=%v", ok, err)
+	}
+	held, err := s.IsHeld(testChA, "expired")
+	if err != nil || held {
+		t.Fatalf("expired should not be held: held=%v err=%v", held, err)
+	}
+	held, err = s.IsHeld(testChA, "next")
+	if err != nil || !held {
+		t.Fatalf("next should be held: held=%v err=%v", held, err)
+	}
+}
+
+func TestServerFileStorage_MissingHoldIsNotHeld(t *testing.T) {
+	s, _ := newServerFileStore(t)
+	held, err := s.IsHeld(testChA, "")
+	if err != nil || held {
+		t.Fatalf("missing hold: held=%v err=%v", held, err)
+	}
+	if err := s.Release(testChA, "missing"); err != nil {
+		t.Fatalf("release missing: %v", err)
+	}
+}
+
+func TestServerFileStorage_CorruptHoldRethrows(t *testing.T) {
+	s, dir := newServerFileStore(t)
+	ok, err := s.Acquire(testChA, "ok", 60_000)
+	if err != nil || !ok {
+		t.Fatalf("Acquire: ok=%v err=%v", ok, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "server", testChA+".hold"), []byte("{nope"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := s.IsHeld(testChA, ""); err == nil {
+		t.Fatal("expected IsHeld error")
+	}
+	if err := s.Release(testChA, "ok"); err == nil {
+		t.Fatal("expected Release error")
+	}
+	if _, err := s.Acquire(testChA, "next", 60_000); err == nil {
+		t.Fatal("expected Acquire error")
+	}
+}
+
+func TestServerFileStorage_StealsStaleHoldLock(t *testing.T) {
+	s, dir := newServerFileStore(t)
+	holdLock := filepath.Join(dir, "server", testChA+".hold.lock")
+	if err := os.MkdirAll(filepath.Dir(holdLock), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(holdLock, []byte("stale"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	stale := time.Now().Add(-3 * time.Second)
+	if err := os.Chtimes(holdLock, stale, stale); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+	ok, err := s.Acquire(testChA, "fresh", 60_000)
+	if err != nil || !ok {
+		t.Fatalf("Acquire after stale steal: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestAcquireExclusiveFile_ContendedWhenLockFresh(t *testing.T) {
+	dir := t.TempDir()
+	lockPath := filepath.Join(dir, "marker.lock")
+	if err := os.WriteFile(lockPath, []byte("held"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, err := acquireExclusiveFile(lockPath, &acquireExclusiveFileOptions{
+		maxAttempts:   2,
+		retryInterval: time.Millisecond,
+		staleAfter:    60 * time.Second,
+	})
+	if err == nil || !strings.Contains(err.Error(), "contended") {
+		t.Fatalf("expected contended, got %v", err)
+	}
+}
+
+func TestFileDurableWithSeparateLockStore(t *testing.T) {
+	file, _ := newServerFileStore(t)
+	memLock := NewInMemoryChannelStorage()
+	scheme := NewBatchSettlementEvmScheme("0x9876543210987654321098765432109876543210", &BatchSettlementEvmSchemeServerConfig{
+		Storage:     file,
+		LockStorage: memLock,
+	})
+	if scheme.GetStorage() != file {
+		t.Fatal("expected file storage")
+	}
+	if scheme.GetLockStorage() != memLock {
+		t.Fatal("expected explicit lock store")
+	}
+	ok, err := memLock.Acquire(testChA, "pending", 60_000)
+	if err != nil || !ok {
+		t.Fatalf("Acquire: ok=%v err=%v", ok, err)
+	}
+	held, err := file.IsHeld(testChA, "")
+	if err != nil || held {
+		t.Fatalf("file should not hold lock: held=%v err=%v", held, err)
+	}
+	held, err = memLock.IsHeld(testChA, "pending")
+	if err != nil || !held {
+		t.Fatalf("mem lock should be held: held=%v err=%v", held, err)
 	}
 }

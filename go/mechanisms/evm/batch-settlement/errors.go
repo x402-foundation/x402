@@ -35,7 +35,7 @@ const (
 
 	// ErrChannelBusy signals that another request is currently holding the
 	// per-channel concurrency lock. Clients should back off briefly and
-	// retry. Emitted by AfterVerifyHook / BeforeSettleHook when a pending
+	// retry. Emitted by BeforeVerifyHook / BeforeSettleHook when a pending
 	// request is in flight.
 	ErrChannelBusy = "invalid_batch_settlement_evm_channel_busy"
 
