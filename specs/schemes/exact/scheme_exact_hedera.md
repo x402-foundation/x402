@@ -25,8 +25,8 @@ the selected `assetTransferMethod` in `accepted.extra`. A facilitator MUST rejec
 implement (`invalid_exact_hedera_unsupported_asset_transfer_method`) and MUST NOT fall back to
 another method.
 
-In all cases, the Facilitator cannot modify the amount or destination. It serves only as the
-transaction broadcaster and fee sponsor.
+In all cases, the Facilitator cannot modify the amount or destination. It only broadcasts the
+transaction and sponsors its fee.
 
 The sections from `Protocol Flow` through `Facilitator Verification Rules` below define the default
 `cryptoTransfer` method (rule 1, "MUST be a `TransferTransaction` directly", applies to that method
@@ -254,10 +254,9 @@ What this method changes relative to `cryptoTransfer`:
   Executors that want submitter binding MAY check `msg.sender` against a value the Client places in
   `authorization`; that is executor-specific and out of scope here.
 
-The Client chooses the executor from those the facilitator admits. Relaying into a contract is a
-trust decision taken per address, which `Executor admission` below defines; the fixed interface, the
-simulation and the settlement checks then bound what an admitted executor can do with the call.
-Resource servers MAY narrow the set further as local policy.
+The Client chooses the executor from those the facilitator admits, as `Executor admission` below
+sets out. The fixed interface, the simulation and the settlement checks bound what an admitted
+executor can do with the call.
 
 ### Executor interface
 
@@ -410,11 +409,10 @@ transfer calldata.
 Unlike `cryptoTransfer`, `transferExecutor` verification rests on admission and simulation. The
 `authorization` is opaque to the facilitator but verifiable by simulating the intended call.
 
-Simulation covers whatever conditions the executor imposes; an enumerated set of state reads cannot,
-because the executor MAY impose any condition. A facilitator that understands a specific
-authorization format MUST define a separate `assetTransferMethod` for it: within `transferExecutor`
-that knowledge MAY narrow what is accepted (caps, per-payer limits) but MUST NOT replace the
-simulation.
+A facilitator that understands a specific authorization format MUST define a separate
+`assetTransferMethod` for it. Within `transferExecutor` that knowledge MAY narrow what is accepted
+(caps, per-payer limits) but MUST NOT replace the simulation, which is the only check that covers
+conditions the facilitator cannot enumerate.
 
 The facilitator:
 
@@ -447,7 +445,7 @@ The facilitator:
    into the HTS system contract; a read-only channel reports reverts that settlement would not
    produce.
 
-If the simulation succeeds, the payment is considered valid. A passing simulation MUST NOT be
+If the simulation succeeds, the payment is valid. A passing simulation MUST NOT be
 reported as settlement and MUST NOT cause the resource server to release the resource; state can
 change between `/verify` and `/settle`, and the settlement checks (Phase 4) are the only evidence of
 payment.
@@ -621,8 +619,6 @@ report a violation that already happened, so prevention and detection are listed
 
 - Client SDKs SHOULD expose a hook on the signer that produces `{ executor, authorization }` from
   `PaymentRequirements`, so the mechanism package stays free of any executor internals.
-- Facilitators SHOULD simulate with the same gas limit they will submit with, and read state that
-  gates the call from a consensus or mirror node.
 - Executor authors SHOULD enforce expiry before consuming any nonce so an expired authorization
   leaves the payer able to re-sign, and SHOULD emit an event carrying `(from, asset, to, amount)` for
   off-chain reconciliation.
