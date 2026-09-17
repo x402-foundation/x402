@@ -61,9 +61,9 @@ While implementation details vary by network, facilitators MUST enforce security
 
 ### SVM
 
-- Fee payer safety: the fee payer MUST NOT appear as an account in sensitive instructions or be the transfer authority/source.
+- Fee payer safety: the fee payer MUST NOT appear as an account in sensitive instructions or be the transfer authority/source. The sole bounded exception is fee-payer-funded ATA creation for authorized split recipients (see Multi-Payee Splits below).
 - Destination correctness: the receiver MUST match the `payTo` derived destination for the specified `asset`.
-- Amount exactness: the transferred amount MUST equal `maxAmountRequired`.
+- Amount exactness: the transferred amount MUST equal `maxAmountRequired`. When splits are present, the amount is distributed across legs and the merchant receives the remainder (see Multi-Payee Splits below).
 
 ### Stellar
 
@@ -90,3 +90,18 @@ While implementation details vary by network, facilitators MUST enforce security
 - Simulation verification: MUST simulate the settlement and fail closed unless it shows exactly one asset `Transfer` from payer to `payTo` for the exact amount.
 
 Network-specific rules are in per-network documents: `scheme_exact_svm.md` (Solana), `scheme_exact_stellar.md` (Stellar), `scheme_exact_evm.md` (EVM), `scheme_exact_sui.md` (SUI), `scheme_exact_ton.md` (TON), `scheme_exact_starknet.md` (Starknet).
+
+## Multi-Payee Splits (Optional Extension)
+
+The `exact` scheme MAY carry an optional `extra.splits` array that distributes a single client payment across the primary recipient (`payTo`) and one or more additional recipients in the same atomic settlement. This enables platform fees, revenue sharing, referral commissions, and fee-payer cost recovery without multiple round-trips or separate transactions.
+
+The extension is network-agnostic in shape but network-specific in encoding and verification. Common rules across networks:
+
+- Each split entry declares an absolute `amount` in base units of the same `asset` (not a percentage or basis points).
+- The primary recipient (`payTo`) receives the remainder: `amount − Σ splits[].amount`. This remainder MUST be greater than zero; requirements that consume the entire amount with splits MUST be rejected.
+- Each payment leg (primary plus each split) MUST be settled to its declared recipient for its declared amount, and a verifier MUST match each leg to a distinct on-chain transfer.
+- Clients MUST verify that `splits` contains only recipients and amounts they agreed to before authorizing payment; a malicious server could otherwise inject splits to divert funds.
+
+When `extra.splits` is absent or empty, the scheme behaves as a single-payee `exact` payment. Networks that do not implement the extension MUST reject requirements that carry a non-empty `splits` array rather than silently ignoring it (which would misdirect the merchant's expected distribution).
+
+Solana defines the full schema, transaction structure, ATA-creation authorization, and verification rules for this extension in `scheme_exact_svm.md` (§5). Other networks MAY specify their own encoding of the same model.
