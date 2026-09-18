@@ -5,7 +5,7 @@
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node ../../../scripts/mirror-cjs-dts.mjs",
     "test": "vitest run --coverage",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:watch": "vitest",

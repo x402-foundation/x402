@@ -33,6 +33,11 @@ import { ExactStellarScheme } from "@x402/stellar/exact/facilitator";
 import { toFacilitatorSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/facilitator";
 import { ExactSvmSchemeV1 } from "@x402/svm/exact/v1/facilitator";
+import {
+  InMemoryUptoChannelStorage,
+  UptoSvmRentCleanupManager,
+  UptoSvmScheme,
+} from "@x402/svm/upto/facilitator";
 import { toFacilitatorAvmSigner } from "@x402/avm";
 import { ExactAvmScheme } from "@x402/avm/exact/facilitator";
 import { XRPL_TESTNET } from "@x402/xrpl";
@@ -119,6 +124,14 @@ async function createFacilitator(): Promise<x402Facilitator> {
   // Initialize SVM signer - handles all Solana networks with automatic RPC creation
   const svmSigner = toFacilitatorSvmSigner(svmAccount);
 
+  // Shared storage of `upto` channels this facilitator sponsors rent for. Passed to both
+  // UptoSvmScheme below (which upserts/deletes channel records here as it opens and
+  // settles them) and the rent cleanup manager (which reads and reclaims them) so the
+  // manager can see every channel the scheme has funded rent for. In-memory is fine here
+  // since this runs as a single process; a persistent UptoChannelStorage implementation
+  // would be needed to share state across multiple facilitator processes/instances.
+  const uptoSvmChannelStorage = new InMemoryUptoChannelStorage();
+
   // Create and configure the facilitator with all networks
   // EIP6492 allowed factory addresses for x402.org testnet facilitator
   // To extend support for new factories, add more factory addresses to the array.
@@ -139,7 +152,49 @@ async function createFacilitator(): Promise<x402Facilitator> {
       "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
       new ExactSvmScheme(svmSigner, undefined, { enableSmartWalletVerification: true }),
     )
-    .registerV1("solana-devnet" as Network, new ExactSvmSchemeV1(svmSigner));
+    .registerV1("solana-devnet" as Network, new ExactSvmSchemeV1(svmSigner))
+    .register(
+      "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+      new UptoSvmScheme(svmSigner, { channelStorage: uptoSvmChannelStorage }),
+    );
+
+  // Without this, the deposit rent UptoSvmScheme fronts for each opened channel is
+  // never returned to the facilitator's SOL balance, which drains it over time. The
+  // manager reads uptoSvmChannelStorage (shared with UptoSvmScheme above) to abandon-close
+  // timed-out/Sealed channels and batch-reclaim rent from ones it has already settled.
+  // `discoveryIntervalSecs` additionally recovers channels opened before a process
+  // restart, since in-memory storage starts empty on every boot.
+  const uptoSvmRentCleanupManager = new UptoSvmRentCleanupManager({
+    signer: svmSigner,
+    storage: uptoSvmChannelStorage,
+    network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" as Network,
+  });
+  uptoSvmRentCleanupManager.start({
+    intervalSecs: 60,
+    discoveryIntervalSecs: 6 * 60 * 60,
+    onClose: result =>
+      console.log(
+        `[upto-svm-rent-cleanup] ${result.action} channel ${result.channelId} (tx ${result.transaction})`,
+      ),
+    onReclaim: result =>
+      console.log(
+        `[upto-svm-rent-cleanup] reclaimed rent for ${result.channelIds.length} channel(s) (tx ${result.transaction})`,
+      ),
+    onError: (error, context) =>
+      console.warn(
+        `[upto-svm-rent-cleanup] error${context?.channelId ? ` (channel ${context.channelId})` : ""}: ` +
+          (error instanceof Error ? error.message : String(error)),
+      ),
+  });
+
+  // Stop the interval loops on shutdown so the in-flight pass unwinds cleanly, mirroring
+  // the Keeta signer teardown below. createFacilitator() runs once as a lazy singleton,
+  // so these handlers only register once.
+  const stopUptoSvmRentCleanup = async () => {
+    await uptoSvmRentCleanupManager.stop();
+  };
+  process.once("SIGINT", stopUptoSvmRentCleanup);
+  process.once("SIGTERM", stopUptoSvmRentCleanup);
 
   // Optionally register Algorand if configured
   if (avmPrivateKey) {

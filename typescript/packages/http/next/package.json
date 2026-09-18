@@ -8,7 +8,7 @@
     "start": "tsx --env-file=.env index.ts",
     "test": "vitest run --coverage",
     "test:watch": "vitest",
-    "build": "tsup",
+    "build": "tsup && node ../../../scripts/mirror-cjs-dts.mjs",
     "watch": "tsc --watch",
     "format": "prettier -c .prettierrc --write \"**/*.{ts,js,cjs,json,md}\"",
     "format:check": "prettier -c .prettierrc --check \"**/*.{ts,js,cjs,json,md}\"",

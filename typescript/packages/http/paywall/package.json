@@ -9,7 +9,7 @@
     "start": "tsx --env-file=.env index.ts",
     "test": "vitest run --coverage",
     "test:watch": "vitest",
-    "build": "tsup",
+    "build": "tsup && node ../../../scripts/mirror-cjs-dts.mjs",
     "build:paywall": "tsx src/evm/build.ts && tsx src/svm/build.ts && tsx src/avm/build.ts",
     "watch": "tsc --watch",
     "format": "prettier -c .prettierrc --write \"**/*.{ts,js,cjs,json,md}\"",
