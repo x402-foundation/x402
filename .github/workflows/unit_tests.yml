@@ -30,4 +30,4 @@ jobs:
         working-directory: ./typescript
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
-          pnpm run test
+          pnpm exec turbo run test --concurrency=50%

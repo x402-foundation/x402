@@ -42,6 +42,12 @@
       "price": { "usd": "$0.002" },
       "extensions": ["bazaar"],
       "settlementOverride": { "amount": "1000" }
+    },
+    "/batch-settlement/svm": {
+      "scheme": "batch-settlement",
+      "sdks": ["typescript"],
+      "price": { "usd": "$0.001" },
+      "extensions": ["bazaar"]
     }
   }
 }

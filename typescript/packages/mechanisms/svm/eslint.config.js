@@ -8,7 +8,7 @@ import sonarjs from "eslint-plugin-sonarjs";
 
 export default [
   {
-    ignores: ["dist/**", "node_modules/**"],
+    ignores: ["dist/**", "node_modules/**", "src/payment-channels/generated/**"],
   },
   {
     files: ["**/*.ts", "**/*.tsx"],

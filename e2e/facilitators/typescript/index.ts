@@ -56,6 +56,7 @@ import {
 } from "@x402/hedera";
 import { ExactHederaScheme } from "@x402/hedera/exact/facilitator";
 import { toFacilitatorSvmSigner } from "@x402/svm";
+import { BatchSvmScheme as BatchSettlementSvmScheme } from "@x402/svm/batch-settlement/facilitator";
 import { ExactSvmScheme } from "@x402/svm/exact/facilitator";
 import { UptoSvmScheme } from "@x402/svm/upto/facilitator";
 import { ExactSvmSchemeV1 } from "@x402/svm/exact/v1/facilitator";
@@ -608,6 +609,10 @@ if (svmSigner) {
       SVM_NETWORK as Network,
       new UptoSvmScheme(svmSigner),
     )
+    .register(
+      SVM_NETWORK as Network,
+      new BatchSettlementSvmScheme(svmSigner, SVM_RPC_URL ? { rpcUrl: SVM_RPC_URL } : {}),
+    )
     .registerV1(SVM_V1_NETWORKS as Network[], new ExactSvmSchemeV1(svmSigner));
 }
 if (avmSigner) {
@@ -839,9 +844,12 @@ facilitator
       console.log(`✅ Settlement completed: ${context.result.transaction}`);
     }
 
-    // For batch-settlement deposits, wait for the deposit to be confirmed onchain
+    // For EVM batch-settlement deposits, wait for the deposit to be confirmed
+    // onchain by reading the BatchSettlement contract. The SVM facilitator
+    // confirms the open before it answers, so no read-back is needed there.
     if (
       isBatchSettlementScheme(context.requirements) &&
+      context.requirements.network.startsWith("eip155:") &&
       context.result.success &&
       extractPayloadAction(context.paymentPayload) === "deposit"
     ) {

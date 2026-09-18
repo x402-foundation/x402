@@ -1,0 +1,9 @@
+---
+"@x402/svm": minor
+---
+
+Added an SVM `batch-settlement` implementation for long-lived payment channels and cumulative offchain vouchers. Reuses the `upto` payment-channel primitives, adds client-signed vouchers and concurrent server-signed metering with itemized receipts, batched claim/distribution operations, payer-forced close and grace-period finalization, and onchain facilitator recovery. Ships dedicated client, server, and facilitator entry points.
+
+Recovery preserves signed transactions before submission, constrains postcondition reads to the confirmation slot, and reconciles actual payouts and merchant paid state without new distribution request fields. Includes replaceable recovery storage and an idempotent payout-recording callback. A broadcast whose blockhash has expired with no record of its signature is reported as `transaction_failed` and released rather than left pending, reads rejected for the confirmation-slot floor are retried, and a payout whose attribution is ambiguous is answered with `invalid_batch_settlement_svm_payout_attribution_ambiguous` and released. The facilitator signer gains an optional `isBlockhashValid` capability.
+
+The facilitator advertises `extra.maxIdleSecs` (default seven days, configurable via `maxIdleSecs`, `0` disables) and its rent cleanup abandon-closes an `Open` channel at the onchain settled watermark once it has seen no facilitator-visible lifecycle activity for that long; channel records now carry `lastActivityAt`. Servers copy the window into the 402 so they know how long they have to claim. The server scheme gains `createChannelManager(facilitator, requirements, options)` for the redemption worker, the worker accepts an injected `rpc`, and the facilitator's open-deposit simulation runs through the signer's RPC like every other read.

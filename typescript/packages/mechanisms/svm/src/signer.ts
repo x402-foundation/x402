@@ -100,7 +100,10 @@ export type FacilitatorRpcCapabilities = {
    * @param signature - Transaction signature
    * @returns Confirmation result
    */
-  confirmTransaction(signature: string): Promise<unknown>;
+  confirmTransaction(
+    signature: string,
+    options?: { searchTransactionHistory?: boolean },
+  ): Promise<unknown>;
 
   /**
    * Fetch token mint information
@@ -205,7 +208,11 @@ export type FacilitatorSvmSigner = {
    * @throws Error for any other confirmation failure, e.g. a wait timeout (non-terminal —
    *   the outcome is unknown, so callers must not treat it as a definite failure)
    */
-  confirmTransaction(signature: string, network: string): Promise<void>;
+  confirmTransaction(
+    signature: string,
+    network: string,
+    options?: { searchTransactionHistory?: boolean },
+  ): Promise<{ slot: bigint | number } | void>;
 
   /**
    * Simulate a transaction and return inner instructions (CPI calls).
@@ -237,6 +244,12 @@ export type FacilitatorSvmSigner = {
    * @param network - CAIP-2 network identifier
    * @returns Inner instructions from the confirmed transaction, or null if not yet indexed
    */
+  /** Confirmed transaction evidence used to attribute batch payouts. */
+  getConfirmedTransaction?(
+    signature: string,
+    network: string,
+  ): Promise<FacilitatorConfirmedTransaction | null>;
+
   getConfirmedTransactionInnerInstructions?(
     signature: string,
     network: string,
@@ -279,7 +292,7 @@ export type FacilitatorSvmSigner = {
   getAccountInfo?(
     accountAddress: string,
     network: string,
-    options?: { commitment?: string; encoding?: string },
+    options?: { commitment?: string; encoding?: string; minContextSlot?: bigint },
   ): Promise<FacilitatorAccountInfo | null>;
 
   /**
@@ -298,6 +311,14 @@ export type FacilitatorSvmSigner = {
   getSlot?(network: string, commitment?: string): Promise<bigint>;
 
   /**
+   * Whether a blockhash can still serve as a transaction lifetime. Optional —
+   * lets batch recovery classify a broadcast that was never confirmed as
+   * expired once its blockhash has left the validity window;
+   * {@link toFacilitatorSvmSigner} provides an implementation.
+   */
+  isBlockhashValid?(blockhash: string, network: string): Promise<boolean>;
+
+  /**
    * Scan program accounts. Optional — required only for `upto` rent-cleanup
    * discovery sweeps; {@link toFacilitatorSvmSigner} provides an implementation.
    */
@@ -310,6 +331,25 @@ export type FacilitatorSvmSigner = {
       filters?: readonly unknown[];
     },
   ): Promise<readonly FacilitatorProgramAccount[]>;
+};
+
+/** Token balances from this transaction, never a later account snapshot. */
+export type FacilitatorTokenBalance = {
+  accountIndex: number;
+  mint: string;
+  owner?: string;
+  uiTokenAmount: { amount: string };
+};
+
+/** Minimal transaction metadata needed by batch payout reconciliation. */
+export type FacilitatorConfirmedTransaction = {
+  slot: bigint | number;
+  meta: {
+    err: unknown;
+    preTokenBalances?: readonly FacilitatorTokenBalance[] | null;
+    postTokenBalances?: readonly FacilitatorTokenBalance[] | null;
+  } | null;
+  transaction: { message: { accountKeys: readonly (string | { pubkey: string })[] } };
 };
 
 /** Account info returned by {@link FacilitatorSvmSigner.getAccountInfo}. */
@@ -401,7 +441,7 @@ export function createRpcCapabilitiesFromRpc(
         })
         .send();
     },
-    confirmTransaction: async signature => {
+    confirmTransaction: async (signature, options) => {
       // Poll at 250ms for the first ~2s (Solana slots are ~400ms), then 1s,
       // keeping the same ~30s confirmation budget as the previous 30×1s loop.
       const initialDelayMs = 250;
@@ -409,9 +449,19 @@ export function createRpcCapabilitiesFromRpc(
       const fallbackDelayMs = 1_000;
       const maxWaitMs = 30_000;
       const startedAt = Date.now();
+      let lookups = 0;
 
       while (Date.now() - startedAt < maxWaitMs) {
-        const status = await rpc.getSignatureStatuses([signature as never]).send();
+        // Only the first lookup needs the history index: a transaction that
+        // landed before this poll started is found there once, and anything
+        // landing while we wait is in the recent-status cache anyway.
+        const searchHistory = options?.searchTransactionHistory === true && lookups === 0;
+        lookups += 1;
+        const status = await (
+          searchHistory
+            ? rpc.getSignatureStatuses([signature as never], { searchTransactionHistory: true })
+            : rpc.getSignatureStatuses([signature as never])
+        ).send();
         const entry = status.value[0];
 
         if (
@@ -598,10 +648,12 @@ export function toFacilitatorSvmSigner(
         .send();
     },
 
-    confirmTransaction: async (signature: string, network: string) => {
+    confirmTransaction: async (signature: string, network: string, options) => {
       const rpc = getRpcForNetwork(network);
       const rpcCapabilities = createRpcCapabilitiesFromRpc(rpc);
-      await rpcCapabilities.confirmTransaction(signature);
+      return (await rpcCapabilities.confirmTransaction(signature, options)) as {
+        slot: bigint | number;
+      };
     },
 
     simulateTransactionWithInnerInstructions: async (transaction: string, network: string) => {
@@ -652,6 +704,20 @@ export function toFacilitatorSvmSigner(
       }
 
       return { innerInstructions: value.innerInstructions ?? null };
+    },
+
+    getConfirmedTransaction: async (signature, network) => {
+      const result = await getRpcForNetwork(network)
+        .getTransaction(
+          signature as never,
+          {
+            commitment: "confirmed",
+            maxSupportedTransactionVersion: 0,
+            encoding: "jsonParsed",
+          } as never,
+        )
+        .send();
+      return result as unknown as FacilitatorConfirmedTransaction | null;
     },
 
     getConfirmedTransactionInnerInstructions: async (
@@ -734,6 +800,9 @@ export function toFacilitatorSvmSigner(
         .getAccountInfo(accountAddress as never, {
           commitment: (options?.commitment ?? "confirmed") as never,
           encoding: (options?.encoding ?? "base64") as never,
+          ...(options?.minContextSlot !== undefined
+            ? { minContextSlot: options.minContextSlot }
+            : {}),
         })
         .send();
       const value = result.value as FacilitatorAccountInfo | null;
@@ -752,6 +821,14 @@ export function toFacilitatorSvmSigner(
     getSlot: async (network: string, commitment = "finalized") => {
       const rpc = getRpcForNetwork(network);
       return await rpc.getSlot({ commitment: commitment as never }).send();
+    },
+
+    isBlockhashValid: async (blockhash: string, network: string) => {
+      const rpc = getRpcForNetwork(network);
+      const result = await rpc
+        .isBlockhashValid(blockhash as never, { commitment: "confirmed" })
+        .send();
+      return result.value;
     },
 
     getProgramAccounts: async (network, programId, config) => {

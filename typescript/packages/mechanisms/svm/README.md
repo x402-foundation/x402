@@ -5,6 +5,7 @@ SVM (Solana Virtual Machine) implementation of the x402 payment protocol.
 **Payment schemes:**
 - **Exact** — fixed-price SPL Token transfers (client pays the advertised amount)
 - **Upto** — usage-based billing via [payment-channels](https://github.com/solana-foundation/payment-channels) (client authorizes a max; server settles actual usage)
+- **Batch settlement** — long-lived payment channels with cumulative vouchers and periodic payouts
 
 ## Installation
 
@@ -53,6 +54,32 @@ Usage-based payments: authorize a ceiling, settle actual usage. See [Upto SVM Sc
 | Client | `@x402/svm/upto/client` → `UptoSvmScheme` |
 | Server | `@x402/svm/upto/server` → `UptoSvmScheme` (requires `receiverAuthorizerSigner` unless the facilitator's `receiverAuthorizer` is delegated to) |
 | Facilitator | `@x402/svm/upto/facilitator` → `UptoSvmScheme` (requires `getSigner` on the facilitator signer) |
+
+### Batch Settlement (`@x402/svm/batch-settlement/*`)
+
+Long-lived channels support cumulative client vouchers or concurrent server-signed metering with receipts. See the [SVM batch-settlement specification](../../../../specs/schemes/batch-settlement/scheme_batch_settlement_svm.md).
+
+| Role | Import |
+|------|--------|
+| Client | `@x402/svm/batch-settlement/client` → `BatchSvmScheme` |
+| Server | `@x402/svm/batch-settlement/server` → `BatchSvmScheme`, `BatchChannelManager` |
+| Facilitator | `@x402/svm/batch-settlement/facilitator` → `BatchSvmScheme` |
+
+#### Recovery and payouts
+
+Distribution keeps its existing request: `type: "settle"` with `channelId` and `channelConfig` for each channel. It sweeps what is currently owed; a later retry may also pay newly claimed earnings. No payout idempotency key or request watermarks are required.
+
+The facilitator records signed bytes and their signature before submission, then reconciles or resends that same transaction after an uncertain outcome. Unresolved operations remain `settlement_pending`; a timeout or unavailable transaction history does not justify building a replacement. The one conclusive expiry signal is the transaction's own blockhash: when the signer reports it invalid (`isBlockhashValid`) and a history lookup (`getConfirmedTransaction`) still finds no record of the signature, the bytes can never land, so the operation is reported as `transaction_failed` and its queue released instead of staying pending. Confirmed account reads use the execution slot as `minContextSlot` when supplied by the signer; a read the backend rejects for that floor is retried before it fails the request.
+
+Distribution `amount` is the receiver's actual token credit in the identified transaction, including on recovery. Deduplicate accounting by network, transaction, asset and recipient rather than summing HTTP responses. The optional facilitator `onDistributionConfirmed` callback runs before recovery completion and may run more than once; it must be idempotent. Recording failures leave the original signature pending.
+
+After distribution, `BatchChannelManager` reads the confirmed channel payout watermark before marking local claims paid. An older recovered payout cannot mark newer earnings paid. Use `rpcUrl` or `readPayoutWatermark` to configure that read; stale or unavailable results leave work for a later pass. Keep redemption outside the metered-request handler when payout latency should not delay responses.
+
+`InMemoryBatchPendingSettlementStore` is the default single-process reference store and does not survive restarts. Persistent stores must retain unresolved records and implement `setIfAbsent` and `deleteIfEquals` atomically across processes. Shared deployments must also serialize overlapping distribution batches; these primitives do not provide a distributed scheduler. Stores without atomic methods provide only local serialization. Completed-result retention is an operator policy; unresolved records must not silently expire.
+
+Custom signers should return the execution slot from `confirmTransaction`, honor `minContextSlot`, and implement `getConfirmedTransaction` with confirmed token-balance metadata. The default adapter supports these capabilities. Missing payout metadata leaves the original transaction pending.
+
+When a sealed channel's receiver is also the refund recipient or protocol treasury, aggregate token balances can combine earnings with other credits. That payout is answered with `invalid_batch_settlement_svm_payout_attribution_ambiguous` and the transaction signature instead of the combined amount, and the sweep queue is released so later sweeps of those channels are not blocked. The transaction has completed onchain: reconcile it by signature, and never repeat it as a replacement payment. The `onDistributionConfirmed` callback is not invoked for it because no amount can be attributed.
 
 ### V1 Package (`@x402/svm/v1`)
 

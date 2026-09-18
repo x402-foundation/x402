@@ -2,6 +2,7 @@ import { ExactAvmScheme } from "@x402/avm/exact/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { UptoEvmScheme } from "@x402/evm/upto/server";
 import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/server";
+import { BatchSvmScheme as BatchSettlementSvmScheme } from "@x402/svm/batch-settlement/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { UptoSvmScheme } from "@x402/svm/upto/server";
 import { base58 } from "@scure/base";
@@ -105,10 +106,10 @@ async function registerFamilySchemes(
     case "svm": {
       server.register(pattern, new ExactSvmScheme());
       const receiverAuthorizerPrivateKey = process.env.SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY;
-      if (receiverAuthorizerPrivateKey) {
-        const receiverAuthorizerSigner = await createKeyPairSignerFromBytes(
-          base58.decode(receiverAuthorizerPrivateKey),
-        );
+      const receiverAuthorizerSigner = receiverAuthorizerPrivateKey
+        ? await createKeyPairSignerFromBytes(base58.decode(receiverAuthorizerPrivateKey))
+        : undefined;
+      if (receiverAuthorizerSigner) {
         console.info(`SVM receiver authorizer: ${receiverAuthorizerSigner.address}`);
         server.register(
           pattern,
@@ -118,6 +119,16 @@ async function registerFamilySchemes(
           }),
         );
       }
+      // Batch-settlement needs no server key: vouchers are client-signed and
+      // the receiver authorizer only adds the optional immediate close.
+      server.register(
+        pattern,
+        new BatchSettlementSvmScheme({
+          ...(receiverAuthorizerSigner
+            ? { receiverAuthorizer: receiverAuthorizerSigner.address }
+            : {}),
+        }),
+      );
       return;
     }
     case "aptos":

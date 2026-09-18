@@ -1,0 +1,1818 @@
+{
+  "additionalPrograms": [],
+  "kind": "rootNode",
+  "program": {
+    "accounts": [
+      {
+        "data": {
+          "fields": [
+            {
+              "kind": "structFieldTypeNode",
+              "name": "discriminator",
+              "type": {
+                "endian": "le",
+                "format": "u8",
+                "kind": "numberTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "version",
+              "type": {
+                "endian": "le",
+                "format": "u8",
+                "kind": "numberTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "bump",
+              "type": {
+                "endian": "le",
+                "format": "u8",
+                "kind": "numberTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "status",
+              "type": {
+                "endian": "le",
+                "format": "u8",
+                "kind": "numberTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "salt",
+              "type": {
+                "endian": "le",
+                "format": "u64",
+                "kind": "numberTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "deposit",
+              "type": {
+                "endian": "le",
+                "format": "u64",
+                "kind": "numberTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "settlement",
+              "type": {
+                "kind": "definedTypeLinkNode",
+                "name": "settlementWatermarks"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "closureStartedAt",
+              "type": {
+                "endian": "le",
+                "format": "i64",
+                "kind": "numberTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "payerWithdrawnAt",
+              "type": {
+                "endian": "le",
+                "format": "i64",
+                "kind": "numberTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "gracePeriod",
+              "type": {
+                "endian": "le",
+                "format": "u32",
+                "kind": "numberTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "distributionHash",
+              "type": {
+                "count": {
+                  "kind": "fixedCountNode",
+                  "value": 32
+                },
+                "item": {
+                  "endian": "le",
+                  "format": "u8",
+                  "kind": "numberTypeNode"
+                },
+                "kind": "arrayTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "payer",
+              "type": {
+                "kind": "publicKeyTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "payee",
+              "type": {
+                "kind": "publicKeyTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "authorizedSigner",
+              "type": {
+                "kind": "publicKeyTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "mint",
+              "type": {
+                "kind": "publicKeyTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "rentPayer",
+              "type": {
+                "kind": "publicKeyTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "openSlot",
+              "type": {
+                "endian": "le",
+                "format": "u64",
+                "kind": "numberTypeNode"
+              }
+            }
+          ],
+          "kind": "structTypeNode"
+        },
+        "kind": "accountNode",
+        "name": "channel"
+      }
+    ],
+    "definedTypes": [
+      {
+        "kind": "definedTypeNode",
+        "name": "distributeArgs",
+        "type": {
+          "fields": [
+            {
+              "kind": "structFieldTypeNode",
+              "name": "recipients",
+              "type": {
+                "count": {
+                  "kind": "prefixedCountNode",
+                  "prefix": {
+                    "endian": "le",
+                    "format": "u32",
+                    "kind": "numberTypeNode"
+                  }
+                },
+                "item": {
+                  "kind": "definedTypeLinkNode",
+                  "name": "distributionEntry"
+                },
+                "kind": "arrayTypeNode"
+              }
+            }
+          ],
+          "kind": "structTypeNode"
+        }
+      },
+      {
+        "kind": "definedTypeNode",
+        "name": "payoutBeneficiary",
+        "type": {
+          "kind": "enumTypeNode",
+          "size": {
+            "endian": "le",
+            "format": "u8",
+            "kind": "numberTypeNode"
+          },
+          "variants": [
+            {
+              "kind": "enumEmptyVariantTypeNode",
+              "name": "recipient"
+            },
+            {
+              "kind": "enumEmptyVariantTypeNode",
+              "name": "payee"
+            },
+            {
+              "kind": "enumEmptyVariantTypeNode",
+              "name": "payer"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "definedTypeNode",
+        "name": "redirectReason",
+        "type": {
+          "kind": "enumTypeNode",
+          "size": {
+            "endian": "le",
+            "format": "u8",
+            "kind": "numberTypeNode"
+          },
+          "variants": [
+            {
+              "kind": "enumEmptyVariantTypeNode",
+              "name": "unsupportedExtension"
+            },
+            {
+              "kind": "enumEmptyVariantTypeNode",
+              "name": "closedOrMalformed"
+            },
+            {
+              "kind": "enumEmptyVariantTypeNode",
+              "name": "notInitialized"
+            },
+            {
+              "kind": "enumEmptyVariantTypeNode",
+              "name": "reassignedAuthority"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "definedTypeNode",
+        "name": "distributionEntry",
+        "type": {
+          "fields": [
+            {
+              "kind": "structFieldTypeNode",
+              "name": "recipient",
+              "type": {
+                "kind": "publicKeyTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "bps",
+              "type": {
+                "endian": "le",
+                "format": "u16",
+                "kind": "numberTypeNode"
+              }
+            }
+          ],
+          "kind": "structTypeNode"
+        }
+      },
+      {
+        "kind": "definedTypeNode",
+        "name": "openArgs",
+        "type": {
+          "fields": [
+            {
+              "kind": "structFieldTypeNode",
+              "name": "salt",
+              "type": {
+                "endian": "le",
+                "format": "u64",
+                "kind": "numberTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "deposit",
+              "type": {
+                "endian": "le",
+                "format": "u64",
+                "kind": "numberTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "gracePeriod",
+              "type": {
+                "endian": "le",
+                "format": "u32",
+                "kind": "numberTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "openSlot",
+              "type": {
+                "endian": "le",
+                "format": "u64",
+                "kind": "numberTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "recipients",
+              "type": {
+                "count": {
+                  "kind": "prefixedCountNode",
+                  "prefix": {
+                    "endian": "le",
+                    "format": "u32",
+                    "kind": "numberTypeNode"
+                  }
+                },
+                "item": {
+                  "kind": "definedTypeLinkNode",
+                  "name": "distributionEntry"
+                },
+                "kind": "arrayTypeNode"
+              }
+            }
+          ],
+          "kind": "structTypeNode"
+        }
+      },
+      {
+        "kind": "definedTypeNode",
+        "name": "settleAndSealArgs",
+        "type": {
+          "fields": [
+            {
+              "kind": "structFieldTypeNode",
+              "name": "hasVoucher",
+              "type": {
+                "endian": "le",
+                "format": "u8",
+                "kind": "numberTypeNode"
+              }
+            }
+          ],
+          "kind": "structTypeNode"
+        }
+      },
+      {
+        "kind": "definedTypeNode",
+        "name": "topUpArgs",
+        "type": {
+          "fields": [
+            {
+              "kind": "structFieldTypeNode",
+              "name": "amount",
+              "type": {
+                "endian": "le",
+                "format": "u64",
+                "kind": "numberTypeNode"
+              }
+            }
+          ],
+          "kind": "structTypeNode"
+        }
+      },
+      {
+        "kind": "definedTypeNode",
+        "name": "voucherArgs",
+        "type": {
+          "fields": [
+            {
+              "kind": "structFieldTypeNode",
+              "name": "magic",
+              "type": {
+                "count": {
+                  "kind": "fixedCountNode",
+                  "value": 2
+                },
+                "item": {
+                  "endian": "le",
+                  "format": "u8",
+                  "kind": "numberTypeNode"
+                },
+                "kind": "arrayTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "channelId",
+              "type": {
+                "kind": "publicKeyTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "cumulativeAmount",
+              "type": {
+                "endian": "le",
+                "format": "u64",
+                "kind": "numberTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "expiresAt",
+              "type": {
+                "endian": "le",
+                "format": "i64",
+                "kind": "numberTypeNode"
+              }
+            }
+          ],
+          "kind": "structTypeNode"
+        }
+      },
+      {
+        "kind": "definedTypeNode",
+        "name": "channelStatus",
+        "type": {
+          "kind": "enumTypeNode",
+          "size": {
+            "endian": "le",
+            "format": "u8",
+            "kind": "numberTypeNode"
+          },
+          "variants": [
+            {
+              "discriminator": 0,
+              "kind": "enumEmptyVariantTypeNode",
+              "name": "open"
+            },
+            {
+              "discriminator": 1,
+              "kind": "enumEmptyVariantTypeNode",
+              "name": "sealed"
+            },
+            {
+              "discriminator": 2,
+              "kind": "enumEmptyVariantTypeNode",
+              "name": "closing"
+            },
+            {
+              "discriminator": 3,
+              "kind": "enumEmptyVariantTypeNode",
+              "name": "distributed"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "definedTypeNode",
+        "name": "settlementWatermarks",
+        "type": {
+          "fields": [
+            {
+              "kind": "structFieldTypeNode",
+              "name": "settled",
+              "type": {
+                "endian": "le",
+                "format": "u64",
+                "kind": "numberTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "payoutWatermark",
+              "type": {
+                "endian": "le",
+                "format": "u64",
+                "kind": "numberTypeNode"
+              }
+            }
+          ],
+          "kind": "structTypeNode"
+        }
+      },
+      {
+        "kind": "definedTypeNode",
+        "name": "accountDiscriminator",
+        "type": {
+          "kind": "enumTypeNode",
+          "size": {
+            "endian": "le",
+            "format": "u8",
+            "kind": "numberTypeNode"
+          },
+          "variants": [
+            {
+              "discriminator": 1,
+              "kind": "enumEmptyVariantTypeNode",
+              "name": "channel"
+            },
+            {
+              "discriminator": 2,
+              "kind": "enumEmptyVariantTypeNode",
+              "name": "closedChannel"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "definedTypeNode",
+        "name": "opened",
+        "type": {
+          "fields": [
+            {
+              "kind": "structFieldTypeNode",
+              "name": "channel",
+              "type": {
+                "kind": "publicKeyTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "openSlot",
+              "type": {
+                "endian": "le",
+                "format": "u64",
+                "kind": "numberTypeNode"
+              }
+            }
+          ],
+          "kind": "structTypeNode"
+        }
+      },
+      {
+        "kind": "definedTypeNode",
+        "name": "payoutRedirected",
+        "type": {
+          "fields": [
+            {
+              "kind": "structFieldTypeNode",
+              "name": "channel",
+              "type": {
+                "kind": "publicKeyTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "owner",
+              "type": {
+                "kind": "publicKeyTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "amount",
+              "type": {
+                "endian": "le",
+                "format": "u64",
+                "kind": "numberTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "beneficiary",
+              "type": {
+                "kind": "definedTypeLinkNode",
+                "name": "payoutBeneficiary"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "reason",
+              "type": {
+                "kind": "definedTypeLinkNode",
+                "name": "redirectReason"
+              }
+            }
+          ],
+          "kind": "structTypeNode"
+        }
+      }
+    ],
+    "errors": [
+      {
+        "code": 0,
+        "kind": "errorNode",
+        "message": "Not implemented",
+        "name": "notImplemented"
+      },
+      {
+        "code": 1,
+        "kind": "errorNode",
+        "message": "A signature was required but not found",
+        "name": "missingRequiredSignature"
+      },
+      {
+        "code": 2,
+        "kind": "errorNode",
+        "message": "Invalid channel status",
+        "name": "invalidChannelStatus"
+      },
+      {
+        "code": 3,
+        "kind": "errorNode",
+        "message": "Invalid account discriminator",
+        "name": "invalidAccountDiscriminator"
+      },
+      {
+        "code": 4,
+        "kind": "errorNode",
+        "message": "Unsupported channel version",
+        "name": "unsupportedChannelVersion"
+      },
+      {
+        "code": 5,
+        "kind": "errorNode",
+        "message": "Account does not match channel payer",
+        "name": "invalidChannelPayer"
+      },
+      {
+        "code": 6,
+        "kind": "errorNode",
+        "message": "Account does not match channel payee",
+        "name": "invalidChannelPayee"
+      },
+      {
+        "code": 7,
+        "kind": "errorNode",
+        "message": "Account does not match channel mint",
+        "name": "invalidChannelMint"
+      },
+      {
+        "code": 8,
+        "kind": "errorNode",
+        "message": "Invalid event authority",
+        "name": "invalidEventAuthority"
+      },
+      {
+        "code": 9,
+        "kind": "errorNode",
+        "message": "Not enough accounts were provided",
+        "name": "notEnoughAccountKeys"
+      },
+      {
+        "code": 10,
+        "kind": "errorNode",
+        "message": "Account does not match channel rent_payer",
+        "name": "invalidChannelRentPayer"
+      },
+      {
+        "code": 50,
+        "kind": "errorNode",
+        "message": "Channel account does not match derived PDA",
+        "name": "channelAccountMismatch"
+      },
+      {
+        "code": 51,
+        "kind": "errorNode",
+        "message": "Channel token account is not ATA(channel, mint, token_program)",
+        "name": "invalidChannelTokenAccount"
+      },
+      {
+        "code": 52,
+        "kind": "errorNode",
+        "message": "Channel token account has invalid extensions",
+        "name": "invalidChannelTokenExtensions"
+      },
+      {
+        "code": 53,
+        "kind": "errorNode",
+        "message": "Mint account does not match channel.mint",
+        "name": "mintAccountMismatch"
+      },
+      {
+        "code": 54,
+        "kind": "errorNode",
+        "message": "Token program must be SPL Token or Token-2022",
+        "name": "invalidMintTokenProgram"
+      },
+      {
+        "code": 55,
+        "kind": "errorNode",
+        "message": "Token account or mint TLV trailer is malformed",
+        "name": "malformedMintTokenAccountData"
+      },
+      {
+        "code": 56,
+        "kind": "errorNode",
+        "message": "Token account or mint TLV trailer is malformed",
+        "name": "malformedMintTokenExtensions"
+      },
+      {
+        "code": 57,
+        "kind": "errorNode",
+        "message": "Payer token account is not ATA(payer, token_program, mint)",
+        "name": "payerAccountMismatch"
+      },
+      {
+        "code": 58,
+        "kind": "errorNode",
+        "message": "Payer token account is invalid",
+        "name": "invalidPayerTokenAccount"
+      },
+      {
+        "code": 59,
+        "kind": "errorNode",
+        "message": "Payer token account has invalid extensions",
+        "name": "invalidPayerTokenExtensions"
+      },
+      {
+        "code": 60,
+        "kind": "errorNode",
+        "message": "Payee token account is not ATA(payee, token_program, mint)",
+        "name": "payeeAccountMismatch"
+      },
+      {
+        "code": 61,
+        "kind": "errorNode",
+        "message": "Payee token account is invalid",
+        "name": "invalidPayeeTokenAccount"
+      },
+      {
+        "code": 62,
+        "kind": "errorNode",
+        "message": "Payee token account has invalid extensions",
+        "name": "invalidPayeeTokenExtensions"
+      },
+      {
+        "code": 200,
+        "kind": "errorNode",
+        "message": "Deposit must be non-zero",
+        "name": "depositMustBeNonZero"
+      },
+      {
+        "code": 201,
+        "kind": "errorNode",
+        "message": "Grace period must be non-zero",
+        "name": "gracePeriodMustBeNonZero"
+      },
+      {
+        "code": 230,
+        "kind": "errorNode",
+        "message": "Missing Ed25519 precompile ix at current-1",
+        "name": "missingEd25519Verification"
+      },
+      {
+        "code": 231,
+        "kind": "errorNode",
+        "message": "Malformed Ed25519 precompile instruction",
+        "name": "malformedEd25519Instruction"
+      },
+      {
+        "code": 232,
+        "kind": "errorNode",
+        "message": "Voucher channel_id does not match channel PDA",
+        "name": "voucherChannelMismatch"
+      },
+      {
+        "code": 233,
+        "kind": "errorNode",
+        "message": "Voucher expired",
+        "name": "voucherExpired"
+      },
+      {
+        "code": 234,
+        "kind": "errorNode",
+        "message": "Voucher watermark not strictly monotonic",
+        "name": "voucherWatermarkNotMonotonic"
+      },
+      {
+        "code": 235,
+        "kind": "errorNode",
+        "message": "Voucher cumulative_amount exceeds channel deposit",
+        "name": "voucherOverDeposit"
+      },
+      {
+        "code": 236,
+        "kind": "errorNode",
+        "message": "Reserved (formerly: Ed25519 message does not match Borsh voucher payload)",
+        "name": "voucherMessageMismatch"
+      },
+      {
+        "code": 237,
+        "kind": "errorNode",
+        "message": "Voucher signer does not match channel authorized_signer",
+        "name": "voucherSignerMismatch"
+      },
+      {
+        "code": 238,
+        "kind": "errorNode",
+        "message": "Voucher payload magic prefix is invalid",
+        "name": "voucherBadMagic"
+      },
+      {
+        "code": 260,
+        "kind": "errorNode",
+        "message": "num_recipients outside [0, 32]",
+        "name": "invalidRecipientCount"
+      },
+      {
+        "code": 261,
+        "kind": "errorNode",
+        "message": "Each shareBps must be non-zero and Σbps must be at most 10_000",
+        "name": "invalidSplitConfig"
+      },
+      {
+        "code": 262,
+        "kind": "errorNode",
+        "message": "num_recipients outside [0, 32]",
+        "name": "distributionPartsOverflow"
+      },
+      {
+        "code": 263,
+        "kind": "errorNode",
+        "message": "Distribution plan contains a duplicate recipient address",
+        "name": "duplicateRecipient"
+      },
+      {
+        "code": 264,
+        "kind": "errorNode",
+        "message": "num_recipients outside [0, 32]",
+        "name": "distributionAmountOverflow"
+      },
+      {
+        "code": 265,
+        "kind": "errorNode",
+        "message": "Distribution preimage length calculation overflow",
+        "name": "distributionPreimageLengthOverflow"
+      },
+      {
+        "code": 2000,
+        "kind": "errorNode",
+        "message": "Derived channel account address does not match the user provided address",
+        "name": "channelAddressMismatch"
+      },
+      {
+        "code": 2001,
+        "kind": "errorNode",
+        "message": "Payer and payee must be different accounts",
+        "name": "payerPayeeMustDiffer"
+      },
+      {
+        "code": 2002,
+        "kind": "errorNode",
+        "message": "authorized_signer must be a valid Ed25519 public key",
+        "name": "invalidAuthorizedSigner"
+      },
+      {
+        "code": 2003,
+        "kind": "errorNode",
+        "message": "open_slot is in the future or older than the allowed slot window",
+        "name": "openSlotOutOfWindow"
+      },
+      {
+        "code": 2100,
+        "kind": "errorNode",
+        "message": "Deposit must be non-zero",
+        "name": "topUpDepositOverflow"
+      },
+      {
+        "code": 2200,
+        "kind": "errorNode",
+        "message": "Deadline overflow on grace period",
+        "name": "sealDeadlineOverflow"
+      },
+      {
+        "code": 2201,
+        "kind": "errorNode",
+        "message": "Grace period has not elapsed yet",
+        "name": "sealGracePeriodNotElapsed"
+      },
+      {
+        "code": 2300,
+        "kind": "errorNode",
+        "message": "Payer refund has already been claimed",
+        "name": "payerAlreadyWithdrawn"
+      },
+      {
+        "code": 2301,
+        "kind": "errorNode",
+        "message": "Payer refund amount calculation underflow",
+        "name": "refundCalculationOverflow"
+      },
+      {
+        "code": 2400,
+        "kind": "errorNode",
+        "message": "Channel is not in OPEN or SEALED",
+        "name": "channelNotDistributable"
+      },
+      {
+        "code": 2401,
+        "kind": "errorNode",
+        "message": "Treasury token account is not ATA(TREASURY_OWNER, mint, token_program)",
+        "name": "treasuryAccountMismatch"
+      },
+      {
+        "code": 2402,
+        "kind": "errorNode",
+        "message": "Treasury token account is invalid",
+        "name": "invalidTreasuryTokenAccount"
+      },
+      {
+        "code": 2403,
+        "kind": "errorNode",
+        "message": "Treasury token account has invalid extensions",
+        "name": "invalidTreasuryTokenExtensions"
+      },
+      {
+        "code": 2404,
+        "kind": "errorNode",
+        "message": "Recipient token account is not ATA(recipient, token_program, mint)",
+        "name": "recipientAccountMismatch"
+      },
+      {
+        "code": 2405,
+        "kind": "errorNode",
+        "message": "Recipient token account is invalid",
+        "name": "invalidRecipientTokenAccount"
+      },
+      {
+        "code": 2406,
+        "kind": "errorNode",
+        "message": "Recipient token account has invalid extensions",
+        "name": "invalidRecipientTokenExtensions"
+      },
+      {
+        "code": 2407,
+        "kind": "errorNode",
+        "message": "Distribution hash mismatch",
+        "name": "invalidDistributionHash"
+      },
+      {
+        "code": 2408,
+        "kind": "errorNode",
+        "message": "No newly settled funds to distribute",
+        "name": "nothingToDistribute"
+      },
+      {
+        "code": 2409,
+        "kind": "errorNode",
+        "message": "Recipient ATA tail length does not match the committed plan's entry count",
+        "name": "recipientAccountCountMismatch"
+      },
+      {
+        "code": 2410,
+        "kind": "errorNode",
+        "message": "Distribution pool calculation underflow",
+        "name": "distributePoolOverflow"
+      },
+      {
+        "code": 2411,
+        "kind": "errorNode",
+        "message": "Channel rent rebalance calculation underflow",
+        "name": "distributeBalanceCalculationOverflow"
+      },
+      {
+        "code": 2412,
+        "kind": "errorNode",
+        "message": "Rent payer lamports overflow on channel deallocation",
+        "name": "rentPayerBalanceOverflow"
+      },
+      {
+        "code": 2413,
+        "kind": "errorNode",
+        "message": "Transfer queue capacity exceeded",
+        "name": "distributeTransferQueueOverflow"
+      },
+      {
+        "code": 2414,
+        "kind": "errorNode",
+        "message": "Channel cannot be fully closed until clock.slot > open_slot + OPEN_SLOT_WINDOW",
+        "name": "channelCloseTooEarly"
+      }
+    ],
+    "events": [
+      {
+        "data": {
+          "kind": "hiddenPrefixTypeNode",
+          "prefix": [
+            {
+              "kind": "constantValueNode",
+              "type": {
+                "kind": "fixedSizeTypeNode",
+                "size": 8,
+                "type": {
+                  "kind": "bytesTypeNode"
+                }
+              },
+              "value": {
+                "data": "a6ac61094d4cbd6d",
+                "encoding": "base16",
+                "kind": "bytesValueNode"
+              }
+            }
+          ],
+          "type": {
+            "fields": [
+              {
+                "kind": "structFieldTypeNode",
+                "name": "channel",
+                "type": {
+                  "kind": "publicKeyTypeNode"
+                }
+              },
+              {
+                "kind": "structFieldTypeNode",
+                "name": "openSlot",
+                "type": {
+                  "endian": "le",
+                  "format": "u64",
+                  "kind": "numberTypeNode"
+                }
+              }
+            ],
+            "kind": "structTypeNode"
+          }
+        },
+        "discriminators": [
+          {
+            "constant": {
+              "kind": "constantValueNode",
+              "type": {
+                "kind": "fixedSizeTypeNode",
+                "size": 8,
+                "type": {
+                  "kind": "bytesTypeNode"
+                }
+              },
+              "value": {
+                "data": "a6ac61094d4cbd6d",
+                "encoding": "base16",
+                "kind": "bytesValueNode"
+              }
+            },
+            "kind": "constantDiscriminatorNode",
+            "offset": 0
+          }
+        ],
+        "kind": "eventNode",
+        "name": "opened"
+      },
+      {
+        "data": {
+          "kind": "hiddenPrefixTypeNode",
+          "prefix": [
+            {
+              "kind": "constantValueNode",
+              "type": {
+                "kind": "fixedSizeTypeNode",
+                "size": 8,
+                "type": {
+                  "kind": "bytesTypeNode"
+                }
+              },
+              "value": {
+                "data": "d116b9d754a75450",
+                "encoding": "base16",
+                "kind": "bytesValueNode"
+              }
+            }
+          ],
+          "type": {
+            "fields": [
+              {
+                "kind": "structFieldTypeNode",
+                "name": "channel",
+                "type": {
+                  "kind": "publicKeyTypeNode"
+                }
+              },
+              {
+                "kind": "structFieldTypeNode",
+                "name": "owner",
+                "type": {
+                  "kind": "publicKeyTypeNode"
+                }
+              },
+              {
+                "kind": "structFieldTypeNode",
+                "name": "amount",
+                "type": {
+                  "endian": "le",
+                  "format": "u64",
+                  "kind": "numberTypeNode"
+                }
+              },
+              {
+                "kind": "structFieldTypeNode",
+                "name": "beneficiary",
+                "type": {
+                  "kind": "definedTypeLinkNode",
+                  "name": "payoutBeneficiary"
+                }
+              },
+              {
+                "kind": "structFieldTypeNode",
+                "name": "reason",
+                "type": {
+                  "kind": "definedTypeLinkNode",
+                  "name": "redirectReason"
+                }
+              }
+            ],
+            "kind": "structTypeNode"
+          }
+        },
+        "discriminators": [
+          {
+            "constant": {
+              "kind": "constantValueNode",
+              "type": {
+                "kind": "fixedSizeTypeNode",
+                "size": 8,
+                "type": {
+                  "kind": "bytesTypeNode"
+                }
+              },
+              "value": {
+                "data": "d116b9d754a75450",
+                "encoding": "base16",
+                "kind": "bytesValueNode"
+              }
+            },
+            "kind": "constantDiscriminatorNode",
+            "offset": 0
+          }
+        ],
+        "kind": "eventNode",
+        "name": "payoutRedirected"
+      }
+    ],
+    "instructions": [
+      {
+        "accounts": [
+          {
+            "isSigner": true,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "payer"
+          },
+          {
+            "isSigner": true,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "rentPayer"
+          },
+          {
+            "isSigner": false,
+            "isWritable": false,
+            "kind": "instructionAccountNode",
+            "name": "payee"
+          },
+          {
+            "isSigner": false,
+            "isWritable": false,
+            "kind": "instructionAccountNode",
+            "name": "mint"
+          },
+          {
+            "isSigner": false,
+            "isWritable": false,
+            "kind": "instructionAccountNode",
+            "name": "authorizedSigner"
+          },
+          {
+            "isSigner": false,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "channel"
+          },
+          {
+            "isSigner": false,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "payerTokenAccount"
+          },
+          {
+            "isSigner": false,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "channelTokenAccount"
+          },
+          {
+            "isSigner": false,
+            "isWritable": false,
+            "kind": "instructionAccountNode",
+            "name": "tokenProgram"
+          },
+          {
+            "defaultValue": {
+              "kind": "publicKeyValueNode",
+              "publicKey": "11111111111111111111111111111111"
+            },
+            "isSigner": false,
+            "isWritable": false,
+            "kind": "instructionAccountNode",
+            "name": "systemProgram"
+          },
+          {
+            "isSigner": false,
+            "isWritable": false,
+            "kind": "instructionAccountNode",
+            "name": "rent"
+          },
+          {
+            "isSigner": false,
+            "isWritable": false,
+            "kind": "instructionAccountNode",
+            "name": "associatedTokenProgram"
+          },
+          {
+            "defaultValue": {
+              "kind": "pdaValueNode",
+              "pda": {
+                "kind": "pdaLinkNode",
+                "name": "eventAuthority"
+              },
+              "seeds": []
+            },
+            "isSigner": false,
+            "isWritable": false,
+            "kind": "instructionAccountNode",
+            "name": "eventAuthority"
+          },
+          {
+            "defaultValue": {
+              "kind": "publicKeyValueNode",
+              "publicKey": "CHNLxYvVA28MJP9PrFuDXccuoGXAx7jBacfLEkahyGsX"
+            },
+            "isSigner": false,
+            "isWritable": false,
+            "kind": "instructionAccountNode",
+            "name": "selfProgram"
+          }
+        ],
+        "arguments": [
+          {
+            "defaultValue": {
+              "kind": "numberValueNode",
+              "number": 1
+            },
+            "defaultValueStrategy": "omitted",
+            "kind": "instructionArgumentNode",
+            "name": "discriminator",
+            "type": {
+              "endian": "le",
+              "format": "u8",
+              "kind": "numberTypeNode"
+            }
+          },
+          {
+            "kind": "instructionArgumentNode",
+            "name": "openArgs",
+            "type": {
+              "kind": "definedTypeLinkNode",
+              "name": "openArgs"
+            }
+          }
+        ],
+        "discriminators": [
+          {
+            "kind": "fieldDiscriminatorNode",
+            "name": "discriminator",
+            "offset": 0
+          }
+        ],
+        "kind": "instructionNode",
+        "name": "open"
+      },
+      {
+        "accounts": [
+          {
+            "isSigner": false,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "channel"
+          },
+          {
+            "isSigner": false,
+            "isWritable": false,
+            "kind": "instructionAccountNode",
+            "name": "instructionsSysvar"
+          }
+        ],
+        "arguments": [
+          {
+            "defaultValue": {
+              "kind": "numberValueNode",
+              "number": 2
+            },
+            "defaultValueStrategy": "omitted",
+            "kind": "instructionArgumentNode",
+            "name": "discriminator",
+            "type": {
+              "endian": "le",
+              "format": "u8",
+              "kind": "numberTypeNode"
+            }
+          }
+        ],
+        "discriminators": [
+          {
+            "kind": "fieldDiscriminatorNode",
+            "name": "discriminator",
+            "offset": 0
+          }
+        ],
+        "kind": "instructionNode",
+        "name": "settle"
+      },
+      {
+        "accounts": [
+          {
+            "isSigner": true,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "payer"
+          },
+          {
+            "isSigner": false,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "channel"
+          },
+          {
+            "isSigner": false,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "payerTokenAccount"
+          },
+          {
+            "isSigner": false,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "channelTokenAccount"
+          },
+          {
+            "isSigner": false,
+            "isWritable": false,
+            "kind": "instructionAccountNode",
+            "name": "mint"
+          },
+          {
+            "isSigner": false,
+            "isWritable": false,
+            "kind": "instructionAccountNode",
+            "name": "tokenProgram"
+          }
+        ],
+        "arguments": [
+          {
+            "defaultValue": {
+              "kind": "numberValueNode",
+              "number": 3
+            },
+            "defaultValueStrategy": "omitted",
+            "kind": "instructionArgumentNode",
+            "name": "discriminator",
+            "type": {
+              "endian": "le",
+              "format": "u8",
+              "kind": "numberTypeNode"
+            }
+          },
+          {
+            "kind": "instructionArgumentNode",
+            "name": "topUpArgs",
+            "type": {
+              "kind": "definedTypeLinkNode",
+              "name": "topUpArgs"
+            }
+          }
+        ],
+        "discriminators": [
+          {
+            "kind": "fieldDiscriminatorNode",
+            "name": "discriminator",
+            "offset": 0
+          }
+        ],
+        "kind": "instructionNode",
+        "name": "topUp"
+      },
+      {
+        "accounts": [
+          {
+            "isSigner": true,
+            "isWritable": false,
+            "kind": "instructionAccountNode",
+            "name": "payee"
+          },
+          {
+            "isSigner": false,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "channel"
+          },
+          {
+            "isSigner": false,
+            "isWritable": false,
+            "kind": "instructionAccountNode",
+            "name": "instructionsSysvar"
+          }
+        ],
+        "arguments": [
+          {
+            "defaultValue": {
+              "kind": "numberValueNode",
+              "number": 4
+            },
+            "defaultValueStrategy": "omitted",
+            "kind": "instructionArgumentNode",
+            "name": "discriminator",
+            "type": {
+              "endian": "le",
+              "format": "u8",
+              "kind": "numberTypeNode"
+            }
+          },
+          {
+            "kind": "instructionArgumentNode",
+            "name": "settleAndSealArgs",
+            "type": {
+              "kind": "definedTypeLinkNode",
+              "name": "settleAndSealArgs"
+            }
+          }
+        ],
+        "discriminators": [
+          {
+            "kind": "fieldDiscriminatorNode",
+            "name": "discriminator",
+            "offset": 0
+          }
+        ],
+        "kind": "instructionNode",
+        "name": "settleAndSeal"
+      },
+      {
+        "accounts": [
+          {
+            "isSigner": true,
+            "isWritable": false,
+            "kind": "instructionAccountNode",
+            "name": "payer"
+          },
+          {
+            "isSigner": false,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "channel"
+          }
+        ],
+        "arguments": [
+          {
+            "defaultValue": {
+              "kind": "numberValueNode",
+              "number": 5
+            },
+            "defaultValueStrategy": "omitted",
+            "kind": "instructionArgumentNode",
+            "name": "discriminator",
+            "type": {
+              "endian": "le",
+              "format": "u8",
+              "kind": "numberTypeNode"
+            }
+          }
+        ],
+        "discriminators": [
+          {
+            "kind": "fieldDiscriminatorNode",
+            "name": "discriminator",
+            "offset": 0
+          }
+        ],
+        "kind": "instructionNode",
+        "name": "requestClose"
+      },
+      {
+        "accounts": [
+          {
+            "isSigner": false,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "channel"
+          }
+        ],
+        "arguments": [
+          {
+            "defaultValue": {
+              "kind": "numberValueNode",
+              "number": 6
+            },
+            "defaultValueStrategy": "omitted",
+            "kind": "instructionArgumentNode",
+            "name": "discriminator",
+            "type": {
+              "endian": "le",
+              "format": "u8",
+              "kind": "numberTypeNode"
+            }
+          }
+        ],
+        "discriminators": [
+          {
+            "kind": "fieldDiscriminatorNode",
+            "name": "discriminator",
+            "offset": 0
+          }
+        ],
+        "kind": "instructionNode",
+        "name": "seal"
+      },
+      {
+        "accounts": [
+          {
+            "isSigner": false,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "channel"
+          },
+          {
+            "isSigner": false,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "payer"
+          },
+          {
+            "isSigner": false,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "rentPayer"
+          },
+          {
+            "isSigner": false,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "channelTokenAccount"
+          },
+          {
+            "isSigner": false,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "payerTokenAccount"
+          },
+          {
+            "isSigner": false,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "payeeTokenAccount"
+          },
+          {
+            "isSigner": false,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "treasuryTokenAccount"
+          },
+          {
+            "isSigner": false,
+            "isWritable": false,
+            "kind": "instructionAccountNode",
+            "name": "mint"
+          },
+          {
+            "isSigner": false,
+            "isWritable": false,
+            "kind": "instructionAccountNode",
+            "name": "tokenProgram"
+          },
+          {
+            "defaultValue": {
+              "kind": "pdaValueNode",
+              "pda": {
+                "kind": "pdaLinkNode",
+                "name": "eventAuthority"
+              },
+              "seeds": []
+            },
+            "isSigner": false,
+            "isWritable": false,
+            "kind": "instructionAccountNode",
+            "name": "eventAuthority"
+          },
+          {
+            "defaultValue": {
+              "kind": "publicKeyValueNode",
+              "publicKey": "CHNLxYvVA28MJP9PrFuDXccuoGXAx7jBacfLEkahyGsX"
+            },
+            "isSigner": false,
+            "isWritable": false,
+            "kind": "instructionAccountNode",
+            "name": "selfProgram"
+          }
+        ],
+        "arguments": [
+          {
+            "defaultValue": {
+              "kind": "numberValueNode",
+              "number": 7
+            },
+            "defaultValueStrategy": "omitted",
+            "kind": "instructionArgumentNode",
+            "name": "discriminator",
+            "type": {
+              "endian": "le",
+              "format": "u8",
+              "kind": "numberTypeNode"
+            }
+          },
+          {
+            "kind": "instructionArgumentNode",
+            "name": "distributeArgs",
+            "type": {
+              "kind": "definedTypeLinkNode",
+              "name": "distributeArgs"
+            }
+          }
+        ],
+        "discriminators": [
+          {
+            "kind": "fieldDiscriminatorNode",
+            "name": "discriminator",
+            "offset": 0
+          }
+        ],
+        "kind": "instructionNode",
+        "name": "distribute",
+        "remainingAccounts": [
+          {
+            "isSigner": false,
+            "isWritable": true,
+            "kind": "instructionRemainingAccountsNode",
+            "value": {
+              "kind": "argumentValueNode",
+              "name": "recipientTokenAccounts"
+            }
+          }
+        ]
+      },
+      {
+        "accounts": [
+          {
+            "isSigner": true,
+            "isWritable": false,
+            "kind": "instructionAccountNode",
+            "name": "payer"
+          },
+          {
+            "isSigner": false,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "channel"
+          },
+          {
+            "isSigner": false,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "channelTokenAccount"
+          },
+          {
+            "isSigner": false,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "payerTokenAccount"
+          },
+          {
+            "isSigner": false,
+            "isWritable": false,
+            "kind": "instructionAccountNode",
+            "name": "mint"
+          },
+          {
+            "isSigner": false,
+            "isWritable": false,
+            "kind": "instructionAccountNode",
+            "name": "tokenProgram"
+          }
+        ],
+        "arguments": [
+          {
+            "defaultValue": {
+              "kind": "numberValueNode",
+              "number": 8
+            },
+            "defaultValueStrategy": "omitted",
+            "kind": "instructionArgumentNode",
+            "name": "discriminator",
+            "type": {
+              "endian": "le",
+              "format": "u8",
+              "kind": "numberTypeNode"
+            }
+          }
+        ],
+        "discriminators": [
+          {
+            "kind": "fieldDiscriminatorNode",
+            "name": "discriminator",
+            "offset": 0
+          }
+        ],
+        "kind": "instructionNode",
+        "name": "withdrawPayer"
+      },
+      {
+        "accounts": [
+          {
+            "isSigner": false,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "channel"
+          },
+          {
+            "isSigner": false,
+            "isWritable": true,
+            "kind": "instructionAccountNode",
+            "name": "rentPayer"
+          }
+        ],
+        "arguments": [
+          {
+            "defaultValue": {
+              "kind": "numberValueNode",
+              "number": 9
+            },
+            "defaultValueStrategy": "omitted",
+            "kind": "instructionArgumentNode",
+            "name": "discriminator",
+            "type": {
+              "endian": "le",
+              "format": "u8",
+              "kind": "numberTypeNode"
+            }
+          }
+        ],
+        "discriminators": [
+          {
+            "kind": "fieldDiscriminatorNode",
+            "name": "discriminator",
+            "offset": 0
+          }
+        ],
+        "kind": "instructionNode",
+        "name": "reclaim"
+      },
+      {
+        "accounts": [
+          {
+            "defaultValue": {
+              "kind": "pdaValueNode",
+              "pda": {
+                "kind": "pdaLinkNode",
+                "name": "eventAuthority"
+              },
+              "seeds": []
+            },
+            "isSigner": true,
+            "isWritable": false,
+            "kind": "instructionAccountNode",
+            "name": "eventAuthority"
+          }
+        ],
+        "arguments": [
+          {
+            "defaultValue": {
+              "kind": "numberValueNode",
+              "number": 228
+            },
+            "defaultValueStrategy": "omitted",
+            "kind": "instructionArgumentNode",
+            "name": "discriminator",
+            "type": {
+              "endian": "le",
+              "format": "u8",
+              "kind": "numberTypeNode"
+            }
+          }
+        ],
+        "discriminators": [
+          {
+            "kind": "fieldDiscriminatorNode",
+            "name": "discriminator",
+            "offset": 0
+          }
+        ],
+        "kind": "instructionNode",
+        "name": "emitEvent"
+      }
+    ],
+    "kind": "programNode",
+    "name": "paymentChannels",
+    "pdas": [
+      {
+        "kind": "pdaNode",
+        "name": "eventAuthority",
+        "seeds": [
+          {
+            "kind": "constantPdaSeedNode",
+            "type": {
+              "encoding": "utf8",
+              "kind": "stringTypeNode"
+            },
+            "value": {
+              "kind": "stringValueNode",
+              "string": "event_authority"
+            }
+          }
+        ]
+      }
+    ],
+    "publicKey": "CHNLxYvVA28MJP9PrFuDXccuoGXAx7jBacfLEkahyGsX",
+    "version": "0.1.0"
+  },
+  "standard": "codama",
+  "version": "1.6.0"
+}

@@ -5,6 +5,9 @@
  */
 
 export * from "./generated/index";
+export * from "./facilitator";
 export * from "./onchain";
 export * from "./open";
+export * from "./rentCleanup";
+export * from "./storage";
 export * from "./voucher";

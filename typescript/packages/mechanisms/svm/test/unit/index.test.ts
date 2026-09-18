@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   ExactSvmScheme,
-  assertSmartWalletLimits,
   validateSvmAddress,
   normalizeNetwork,
   getUsdcAddress,
@@ -20,7 +19,7 @@ import {
 } from "../../src/index";
 import type { FacilitatorSvmSigner } from "../../src/signer";
 import { UptoSvmScheme } from "../../src/upto/facilitator/scheme";
-import { UptoSvmRentCleanupManager } from "../../src/upto/facilitator/rentCleanupManager";
+import { PaymentChannelRentCleanupManager as UptoSvmRentCleanupManager } from "../../src/payment-channels/rentCleanup";
 import { SOLANA_DEVNET_CAIP2 } from "../../src/constants";
 import { ExactSvmScheme as ServerExactSvmScheme } from "../../src/exact/server/scheme";
 import * as exactClientEntry from "../../src/exact/client";
@@ -47,7 +46,6 @@ describe("@x402/svm", () => {
     expect(ExactSvmScheme).toBeDefined();
     expect(ExactSvmScheme).toBeDefined();
     expect(ExactSvmScheme).toBeDefined();
-    expect(assertSmartWalletLimits).toBeDefined();
   });
 
   it("re-exports register/scheme entry points callers import from package subpaths", () => {
@@ -205,11 +203,6 @@ describe("@x402/svm", () => {
       confirmTransaction: async () => {},
     };
 
-    const uptoIncompleteSigner: FacilitatorSvmSigner = {
-      ...exactOnlySigner,
-      getSigner: () => ({ address: "11111111111111111111111111111111" as never }) as never,
-    };
-
     it("allows exact-only signers without getSigner", () => {
       expect(exactOnlySigner.getAddresses()).toHaveLength(1);
       expect(exactOnlySigner.getSigner).toBeUndefined();
@@ -219,9 +212,9 @@ describe("@x402/svm", () => {
       expect(() => new ExactSvmScheme(exactOnlySigner)).not.toThrow();
     });
 
-    it("accepts exact-only signers for UptoSvmScheme at compile time but rejects missing upto read RPC at runtime", () => {
-      expect(() => new UptoSvmScheme(uptoIncompleteSigner as never)).toThrow(
-        "UptoSvmScheme requires getAccountInfo on the signer",
+    it("accepts exact-only signers for UptoSvmScheme at compile time but rejects missing getSigner at runtime", () => {
+      expect(() => new UptoSvmScheme(exactOnlySigner)).toThrow(
+        "UptoSvmScheme requires getSigner on the signer",
       );
     });
 
@@ -229,7 +222,7 @@ describe("@x402/svm", () => {
       expect(
         () =>
           new UptoSvmRentCleanupManager({
-            signer: uptoIncompleteSigner as never,
+            signer: exactOnlySigner,
             storage: {
               upsert: async () => {},
               get: async () => undefined,
@@ -238,7 +231,7 @@ describe("@x402/svm", () => {
             },
             network: SOLANA_DEVNET_CAIP2,
           }),
-      ).toThrow("UptoSvmRentCleanupManager requires getAccountInfo on the signer");
+      ).toThrow("PaymentChannelRentCleanupManager requires getSigner on the signer");
     });
   });
 

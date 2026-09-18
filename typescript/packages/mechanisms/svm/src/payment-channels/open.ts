@@ -50,6 +50,11 @@ import {
   getOpenInstructionDataDecoder,
   OPEN_DISCRIMINATOR,
 } from "./generated/instructions/open";
+import {
+  getTopUpInstruction,
+  getTopUpInstructionDataDecoder,
+  TOP_UP_DISCRIMINATOR,
+} from "./generated/instructions/topUp";
 import { findEventAuthorityPda } from "./generated/pdas/eventAuthority";
 import { ASSOCIATED_TOKEN_PROGRAM_ID, PAYMENT_CHANNELS_PROGRAM_ID } from "./onchain";
 import { verifyEd25519Signature } from "./voucher";
@@ -163,6 +168,131 @@ export interface BuiltOpen {
   salt: bigint;
   /** Slot the open is anchored to (channel PDA seed). */
   openSlot: bigint;
+}
+
+/** Parameters for a canonical payment-channel `top_up` transaction. */
+export interface BuildTopUpArgs {
+  payer: TransactionSigner;
+  channelId: string;
+  mint: string;
+  tokenProgram: string;
+  feePayer: string;
+  amount: bigint;
+  blockhash: { blockhash: string; lastValidBlockHeight: bigint };
+  memo?: string | undefined;
+  computeUnitLimit?: number | undefined;
+  computeUnitPriceMicroLamports?: number | undefined;
+  programId?: string | undefined;
+}
+
+/** Result of {@link buildTopUpPaymentChannelTransaction}. */
+export interface BuiltTopUp {
+  channelId: string;
+  amount: bigint;
+  transaction: string;
+}
+
+/**
+ * Build the payer-signed canonical `top_up` transaction. The fee payer is
+ * deliberately only the transaction fee payer: it is not an instruction
+ * account in the six-account top-up layout.
+ */
+export async function buildTopUpPaymentChannelTransaction(
+  args: BuildTopUpArgs,
+): Promise<BuiltTopUp> {
+  if (args.amount <= 0n) throw new Error("top-up amount must be positive");
+  const programAddress = address(args.programId ?? PAYMENT_CHANNELS_PROGRAM_ID);
+  const mint = address(args.mint);
+  const tokenProgram = address(args.tokenProgram);
+  const [payerTokenAccount] = await findAssociatedTokenPda({
+    mint,
+    owner: args.payer.address,
+    tokenProgram,
+  });
+  const [channelTokenAccount] = await findAssociatedTokenPda({
+    mint,
+    owner: address(args.channelId),
+    tokenProgram,
+  });
+  const instruction = getTopUpInstruction(
+    {
+      channel: address(args.channelId),
+      channelTokenAccount,
+      mint,
+      payer: args.payer,
+      payerTokenAccount,
+      tokenProgram,
+      topUpArgs: { amount: args.amount },
+    },
+    { programAddress },
+  );
+  const computeUnitLimit = args.computeUnitLimit ?? OPEN_DEFAULT_COMPUTE_UNIT_LIMIT;
+  const computeUnitPrice =
+    args.computeUnitPriceMicroLamports ?? DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS;
+  if (
+    !Number.isSafeInteger(computeUnitLimit) ||
+    computeUnitLimit < 0 ||
+    computeUnitLimit > OPEN_MAX_COMPUTE_UNIT_LIMIT
+  ) {
+    throw new Error(`computeUnitLimit must be an integer in [0, ${OPEN_MAX_COMPUTE_UNIT_LIMIT}]`);
+  }
+  if (
+    !Number.isSafeInteger(computeUnitPrice) ||
+    computeUnitPrice < 0 ||
+    computeUnitPrice > MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS
+  ) {
+    throw new Error(
+      `computeUnitPriceMicroLamports must be an integer in [0, ${MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS}]`,
+    );
+  }
+  const memo =
+    args.memo ??
+    Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)))
+      .map(byte => byte.toString(16).padStart(2, "0"))
+      .join("");
+  const memoData = new TextEncoder().encode(memo);
+  if (memoData.byteLength > MAX_MEMO_BYTES)
+    throw new Error(`extra.memo exceeds maximum ${MAX_MEMO_BYTES} bytes`);
+  const computeBudgetIxs = [
+    ...(computeUnitLimit > 0
+      ? [getSetComputeUnitLimitInstruction({ units: computeUnitLimit })]
+      : []),
+    ...(computeUnitPrice > 0
+      ? [getSetComputeUnitPriceInstruction({ microLamports: computeUnitPrice })]
+      : []),
+  ];
+  const message = pipe(
+    createTransactionMessage({ version: 0 }),
+    msg => setTransactionMessageFeePayer(address(args.feePayer), msg),
+    msg =>
+      setTransactionMessageLifetimeUsingBlockhash(
+        {
+          blockhash: args.blockhash.blockhash as Blockhash,
+          lastValidBlockHeight: args.blockhash.lastValidBlockHeight,
+        },
+        msg,
+      ),
+    msg =>
+      appendTransactionMessageInstructions(
+        [
+          ...computeBudgetIxs,
+          instruction,
+          {
+            accounts: [] as const,
+            data: memoData,
+            programAddress: MEMO_PROGRAM_ADDRESS as Address,
+          },
+        ],
+        msg,
+      ),
+  );
+  return {
+    amount: args.amount,
+    channelId: args.channelId,
+    transaction: getBase64EncodedWireTransaction(
+      await partiallySignTransactionMessageWithSigners(message),
+    ),
+  };
 }
 
 /**
@@ -408,6 +538,120 @@ export interface VerifyOpenExpected {
   maxRequiredSignatures?: number | undefined;
 }
 
+/** Expected bindings for a canonical six-account `top_up` transaction. */
+export interface VerifyTopUpExpected {
+  feePayer: string;
+  from: string;
+  channelId: string;
+  mint: string;
+  tokenProgram: string;
+  amount: bigint;
+  memo?: string | undefined;
+  programId?: string | undefined;
+  maxComputeUnits?: number | undefined;
+  maxPriorityFeeMicroLamports?: number | undefined;
+}
+
+/** Decode and validate the canonical top-up transaction layout and bindings. */
+export async function verifyTopUpTransaction(
+  transactionBase64: string,
+  expected: VerifyTopUpExpected,
+): Promise<void> {
+  const decoded = getTransactionDecoder().decode(getBase64Codec().encode(transactionBase64));
+  const message = getCompiledTransactionMessageDecoder().decode(
+    decoded.messageBytes,
+  ) as unknown as CompiledOpenMessage;
+  if (message.addressTableLookups && message.addressTableLookups.length > 0) {
+    throw new Error("verifyTopUpTransaction: address-lookup tables are not permitted");
+  }
+  const ix = findCanonicalOpenInstruction(
+    message,
+    expected.programId ?? PAYMENT_CHANNELS_PROGRAM_ID,
+    expected.feePayer,
+    {
+      maxComputeUnits: Math.min(
+        expected.maxComputeUnits ?? OPEN_MAX_COMPUTE_UNIT_LIMIT,
+        OPEN_MAX_COMPUTE_UNIT_LIMIT,
+      ),
+      maxPriorityFeeMicroLamports: Math.min(
+        expected.maxPriorityFeeMicroLamports ?? MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
+        MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
+      ),
+      expectedMemo: expected.memo,
+    },
+    TOP_UP_DISCRIMINATOR,
+    "top_up",
+  );
+  if (message.staticAccounts[0] !== expected.feePayer)
+    throw new Error("verifyTopUpTransaction: fee payer mismatch");
+  if (message.header.numSignerAccounts !== (expected.feePayer === expected.from ? 1 : 2)) {
+    throw new Error("verifyTopUpTransaction: unexpected required signer set");
+  }
+  const signature = decoded.signatures[expected.from as Address];
+  if (
+    !signature ||
+    !(await verifyEd25519Signature({
+      message: decoded.messageBytes as unknown as Uint8Array,
+      publicKey: getBase58Encoder().encode(expected.from) as Uint8Array,
+      signature: signature as Uint8Array,
+    }))
+  ) {
+    throw new Error("verifyTopUpTransaction: missing or invalid payer signature");
+  }
+  const indices = ix.accountIndices;
+  if (indices.length !== 6)
+    throw new Error(
+      `verifyTopUpTransaction: top_up must have exactly 6 accounts, found ${indices.length}`,
+    );
+  const account = (index: number): string => {
+    const value = message.staticAccounts[indices[index] ?? -1];
+    if (!value) throw new Error(`verifyTopUpTransaction: missing account ${index}`);
+    return value;
+  };
+  const [payer, channel, payerAta, channelAta, mint, tokenProgram] = [
+    account(0),
+    account(1),
+    account(2),
+    account(3),
+    account(4),
+    account(5),
+  ];
+  if (
+    payer !== expected.from ||
+    channel !== expected.channelId ||
+    mint !== expected.mint ||
+    tokenProgram !== expected.tokenProgram
+  )
+    throw new Error("verifyTopUpTransaction: account binding mismatch");
+  if (indices.includes(0))
+    throw new Error("verifyTopUpTransaction: fee payer must not be a top_up account");
+  const role = (i: number) => staticAccountRole(message.header, message.staticAccounts.length, i);
+  for (const [slot, label] of [
+    [0, "payer"],
+    [1, "channel"],
+    [2, "payer token account"],
+    [3, "channel token account"],
+  ] as const) {
+    const accountIndex = indices[slot]!;
+    if (!isWritableRole(role(accountIndex)) || (slot === 0 && !isSignerRole(role(accountIndex))))
+      throw new Error(`verifyTopUpTransaction: ${label} privilege mismatch`);
+  }
+  const [expectedPayerAta] = await findAssociatedTokenPda({
+    mint: address(expected.mint),
+    owner: address(payer),
+    tokenProgram: address(expected.tokenProgram),
+  });
+  const [expectedChannelAta] = await findAssociatedTokenPda({
+    mint: address(expected.mint),
+    owner: address(channel),
+    tokenProgram: address(expected.tokenProgram),
+  });
+  if (payerAta !== expectedPayerAta || channelAta !== expectedChannelAta)
+    throw new Error("verifyTopUpTransaction: ATA binding mismatch");
+  if (getTopUpInstructionDataDecoder().decode(ix.data).topUpArgs.amount !== expected.amount)
+    throw new Error("verifyTopUpTransaction: top-up amount mismatch");
+}
+
 /** Channel facts extracted from a verified open transaction. */
 export interface VerifyOpenResult {
   channelId: string;
@@ -474,7 +718,7 @@ export async function verifyOpenTransaction(
   //      Wallets like Phantom/Solflare inject Lighthouse around the client open.
   if (message.addressTableLookups && message.addressTableLookups.length > 0) {
     throw new Error(
-      "verifyOpenTransaction: address lookup tables are not permitted in an open transaction",
+      "verifyOpenTransaction: address-lookup tables are not permitted in an open transaction — all accounts must be static so the fee-payer guard can validate them",
     );
   }
 
@@ -778,6 +1022,8 @@ function findCanonicalOpenInstruction(
   programIdStr: string,
   feePayer: string,
   limits: OpenLayoutLimits,
+  discriminator = OPEN_DISCRIMINATOR,
+  instructionName = "open",
 ): { accountIndices: readonly number[]; data: Uint8Array } {
   const { instructions, staticAccounts } = message;
   if (instructions.length === 0) {
@@ -857,9 +1103,11 @@ function findCanonicalOpenInstruction(
   if (
     !openInstruction.data ||
     openInstruction.data.length < 1 ||
-    openInstruction.data[0] !== OPEN_DISCRIMINATOR
+    openInstruction.data[0] !== discriminator
   ) {
-    throw new Error("verifyOpenTransaction: payment-channels instruction is not `open`");
+    throw new Error(
+      `verifyOpenTransaction: payment-channels instruction is not \`${instructionName}\``,
+    );
   }
   i += 1;
 

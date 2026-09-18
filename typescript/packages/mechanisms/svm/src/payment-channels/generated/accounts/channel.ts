@@ -43,7 +43,7 @@ import {
   getSettlementWatermarksEncoder,
   type SettlementWatermarks,
   type SettlementWatermarksArgs,
-} from "../types/index.js";
+} from "../types";
 
 export type Channel = {
   discriminator: number;
