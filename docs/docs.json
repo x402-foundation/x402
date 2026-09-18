@@ -67,6 +67,7 @@
         "pages": [
           "schemes/overview",
           "schemes/exact",
+          "schemes/exact-nano-mainnet",
           "schemes/upto",
           "schemes/batch-settlement"
         ]
