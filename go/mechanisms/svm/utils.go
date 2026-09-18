@@ -274,6 +274,91 @@ func DecodeTransaction(base64Tx string) (*solana.Transaction, error) {
 	return tx, nil
 }
 
+// ErrUnsupportedTransactionVersion is the verify/settle reason returned when a
+// client-supplied transaction uses a message version the SVM schemes do not
+// accept. Every scheme shares this code so operators see one reason across
+// exact, upto and payment-channels regardless of which verifier rejected it.
+const ErrUnsupportedTransactionVersion = "unsupported_transaction_version"
+
+// ExtraTransactionVersions is the PaymentRequirements.Extra key (copied by the
+// server from the facilitator's /supported extra) that lists the transaction
+// message versions the facilitator accepts, in the Wallet Standard
+// supportedTransactionVersions vocabulary ("legacy", 0, 1).
+const ExtraTransactionVersions = "transactionVersions"
+
+// AdvertisedTransactionVersions is the value facilitators publish as
+// extra.transactionVersions in /supported. Only version 0 is advertised:
+// legacy messages are still accepted for backward compatibility (see
+// IsAcceptedTransactionVersion) but are deprecated and never offered to
+// clients, and version 1 (SIMD-0385) is not modelled by this SDK yet.
+var AdvertisedTransactionVersions = []int{0}
+
+// IsAcceptedTransactionVersion reports whether a decoded message version is one
+// the SVM verifiers know how to police. This is an allowlist of legacy and v0,
+// not a comparison against a maximum: every acceptance check derives its
+// sponsorship policy from version-specific structure (compute budget arrives as
+// ComputeBudget instructions on legacy and v0, but as an inline message config
+// on transaction v1), so an unmodelled version must be rejected before any
+// instruction-scanning check can pass vacuously.
+func IsAcceptedTransactionVersion(version solana.MessageVersion) bool {
+	return version == solana.MessageVersionLegacy || version == solana.MessageVersionV0
+}
+
+// ResolveTransactionVersion picks the message version a client must build from
+// requirements.Extra["transactionVersions"]. Clients only ever build version 0:
+// an absent field means the facilitator predates advertisement and accepts v0;
+// a list that names 0 selects it; any other value is rejected with
+// ErrUnsupportedTransactionVersion.
+func ResolveTransactionVersion(extra map[string]interface{}) (solana.MessageVersion, error) {
+	if extra == nil {
+		return solana.MessageVersionV0, nil
+	}
+	raw, ok := extra[ExtraTransactionVersions]
+	if !ok {
+		return solana.MessageVersionV0, nil
+	}
+	list, ok := raw.([]interface{})
+	if !ok {
+		// Typed slices appear when the requirements were built in-process
+		// rather than decoded from JSON.
+		switch typed := raw.(type) {
+		case []int:
+			for _, v := range typed {
+				if v == 0 {
+					return solana.MessageVersionV0, nil
+				}
+			}
+			return 0, fmt.Errorf("%s: facilitator accepts none of the transaction versions this client can build: %v", ErrUnsupportedTransactionVersion, typed)
+		case []float64:
+			for _, v := range typed {
+				if v == 0 {
+					return solana.MessageVersionV0, nil
+				}
+			}
+			return 0, fmt.Errorf("%s: facilitator accepts none of the transaction versions this client can build: %v", ErrUnsupportedTransactionVersion, typed)
+		default:
+			return 0, fmt.Errorf("%s: transactionVersions must be an array, got %T", ErrUnsupportedTransactionVersion, raw)
+		}
+	}
+	for _, entry := range list {
+		switch v := entry.(type) {
+		case float64:
+			if v == 0 {
+				return solana.MessageVersionV0, nil
+			}
+		case int:
+			if v == 0 {
+				return solana.MessageVersionV0, nil
+			}
+		case int64:
+			if v == 0 {
+				return solana.MessageVersionV0, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("%s: facilitator accepts none of the transaction versions this client can build: %v", ErrUnsupportedTransactionVersion, list)
+}
+
 // GetTokenPayerFromTransaction extracts the token payer (owner) address from a transaction
 // This looks for the TransferChecked instruction and returns the owner/authority address
 func GetTokenPayerFromTransaction(tx *solana.Transaction) (string, error) {

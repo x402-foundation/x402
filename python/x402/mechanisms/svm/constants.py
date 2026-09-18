@@ -37,6 +37,21 @@ MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS = 5_000_000  # 5 lamports
 DEFAULT_COMPUTE_UNIT_LIMIT = 20000
 MAX_MEMO_BYTES = 256
 
+# Transaction message versions, in the Wallet Standard
+# ``supportedTransactionVersions`` vocabulary ("legacy" | 0 | 1).
+#
+# ADVERTISED_TRANSACTION_VERSIONS is what facilitators publish as
+# ``extra.transactionVersions`` in ``/supported``; servers copy it into
+# ``PaymentRequirements.extra`` and clients build one of the advertised versions.
+# Legacy is deprecated and never advertised.
+ADVERTISED_TRANSACTION_VERSIONS: list[str | int] = [0]
+# ACCEPTED_TRANSACTION_VERSIONS is what verifiers tolerate on the wire. Legacy
+# stays accepted for backward compatibility. Every verifier derives its fee
+# policy from version-specific structure (ComputeBudget instructions on
+# legacy/v0, ``message.config`` on v1), so any version outside this allowlist is
+# rejected before instructions are inspected.
+ACCEPTED_TRANSACTION_VERSIONS: list[str | int] = ["legacy", 0]
+
 # Solana address validation regex (base58, 32-44 characters)
 SVM_ADDRESS_REGEX = r"^[1-9A-HJ-NP-Za-km-z]{32,44}$"
 
@@ -89,6 +104,7 @@ ERR_TRANSACTION_FAILED = "transaction_failed"
 ERR_DUPLICATE_SETTLEMENT = "duplicate_settlement"
 ERR_MEMO_MISMATCH = "invalid_exact_svm_payload_memo_mismatch"
 ERR_MEMO_COUNT = "invalid_exact_svm_payload_memo_count"
+ERR_UNSUPPORTED_TRANSACTION_VERSION = "unsupported_transaction_version"
 
 # Non-terminal settle error reason meaning a transaction was broadcast but
 # ConfirmTransaction could not observe its confirmation in time — mirrors

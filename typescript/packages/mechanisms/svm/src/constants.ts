@@ -37,6 +37,23 @@ export const DEFAULT_COMPUTE_UNIT_LIMIT = 20_000;
 export const MAX_MEMO_BYTES = 256;
 
 /**
+ * Transaction message versions the SVM verifiers accept. Every check in this
+ * package reads its sponsorship policy from version-specific structure (the
+ * ComputeBudget instruction pair on legacy and version 0), so any version this
+ * code does not model is rejected before its instructions are inspected.
+ * Legacy is tolerated for backward compatibility but deprecated and never
+ * advertised; see {@link ADVERTISED_TRANSACTION_VERSIONS}.
+ */
+export const ACCEPTED_TRANSACTION_VERSIONS: readonly (number | string)[] = ["legacy", 0];
+
+/**
+ * Transaction message versions a facilitator advertises as
+ * `extra.transactionVersions` in `/supported` (Wallet Standard
+ * `supportedTransactionVersions` vocabulary). Clients build one of these.
+ */
+export const ADVERTISED_TRANSACTION_VERSIONS: readonly number[] = [0];
+
+/**
  * How long a transaction is held in the duplicate settlement cache (ms).
  * Covers the Solana blockhash lifetime (~60-90s) with margin.
  */
