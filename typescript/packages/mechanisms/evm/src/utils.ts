@@ -1,6 +1,9 @@
 import type { Network, SettleResponse } from "@x402/core/types";
 import { isHash, toHex } from "viem";
 
+/** CAIP-2 `eip155` reference: a bare decimal chain ID, matching the Go and Python SDKs. */
+const EIP155_NETWORK_REGEX = /^eip155:(\d+)$/;
+
 /**
  * Extract chain ID from a CAIP-2 network identifier (eip155:CHAIN_ID).
  *
@@ -9,16 +12,21 @@ import { isHash, toHex } from "viem";
  * @throws Error if the network format is invalid
  */
 export function getEvmChainId(network: string): number {
-  if (network.startsWith("eip155:")) {
-    const idStr = network.split(":")[1];
-    const chainId = parseInt(idStr, 10);
-    if (isNaN(chainId)) {
-      throw new Error(`Invalid CAIP-2 chain ID: ${network}`);
-    }
-    return chainId;
+  if (!network.startsWith("eip155:")) {
+    throw new Error(`Unsupported network format: ${network} (expected eip155:CHAIN_ID)`);
   }
 
-  throw new Error(`Unsupported network format: ${network} (expected eip155:CHAIN_ID)`);
+  const match = EIP155_NETWORK_REGEX.exec(network);
+  if (!match) {
+    throw new Error(`Invalid CAIP-2 chain ID: ${network}`);
+  }
+
+  const chainId = Number(match[1]);
+  if (!Number.isSafeInteger(chainId)) {
+    throw new Error(`Invalid CAIP-2 chain ID: ${network}`);
+  }
+
+  return chainId;
 }
 
 /**
