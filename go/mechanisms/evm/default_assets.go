@@ -49,6 +49,7 @@ var DefaultAssets = map[string][]DefaultAssetInfo{
 	},
 	"eip155:42161": {
 		{Asset: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", Name: "USD Coin", Version: "2", Decimals: 6, Symbol: "USDC"},
+		{Asset: "0xD74f5255D557944cf7Dd0E45FF521520002D5748", Name: "Sperax USD", Version: "1", Decimals: 18, Symbol: "USDs", AssetTransferMethod: AssetTransferMethodPermit2},
 	},
 	"eip155:421614": {
 		{Asset: "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d", Name: "USD Coin", Version: "2", Decimals: 6, Symbol: "USDC"},
