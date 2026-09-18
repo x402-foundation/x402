@@ -5,6 +5,7 @@ description: "Packages built by ecosystem partners that extend x402 beyond the c
 
 | Name | Description | Languages | Links |
 | ---- | ----------- | --------- | ----- |
+| [AffixIO](https://www.affix-io.com/) | Host-side signed ACTION / x402BeforePay attestation before pay (complementary to x402 rails; not KYC) | TypeScript | [npm `affixio`](https://www.npmjs.com/package/affixio) · [`@affixio/mcp@0.1.0`](https://www.npmjs.com/package/@affixio/mcp) · [onboarding](https://hub.affix-io.com/onboarding/) |
 | [World AgentKit](https://docs.world.org/agents/agent-kit/integrate) | Verify human-backed agents | TypeScript | [GitHub](https://github.com/worldcoin/agentkit) · [npm](https://www.npmjs.com/package/@worldcoin/agentkit) |
 | [OMATrust](https://www.omatrust.org/x402) | Key authorizations for Signed Offers and Receipts | TypeScript | [GitHub](https://github.com/oma3dao/omatrust-sdk) · [npm](https://www.npmjs.com/package/@oma3/omatrust) |
 | [PEAC Protocol](https://x402.peacprotocol.org) | Verifiable receipts for x402 payments | TypeScript | [GitHub](https://github.com/peacprotocol/peac) · [npm](https://www.npmjs.com/package/@peac/adapter-x402) |
