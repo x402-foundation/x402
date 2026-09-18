@@ -60,6 +60,30 @@ FACILITATOR_KEETA_MNEMONIC=...
 
 # Optional: builder attribution
 FACILITATOR_BUILDER_CODE=your_builder_code
+
+# Optional: tuning for the SVM `upto` rent-cleanup background worker.
+# The channel index is in-memory (single-process facilitator), so
+# FACILITATOR_SVM_UPTO_RENT_DISCOVERY_INTERVAL_SECS additionally sweeps the
+# chain to pick channels back up after a restart.
+# FACILITATOR_SVM_UPTO_RENT_CLEANUP_INTERVAL_SECS=30
+# FACILITATOR_SVM_UPTO_RENT_CLEANUP_ABANDON_GRACE_SECS=120
+# FACILITATOR_SVM_UPTO_RENT_DISCOVERY_INTERVAL_SECS=3600
+```
+
+### Protected Page (Resource Server)
+
+`proxy.ts` protects `/protected` and needs its own (separate from the
+facilitator's) resource server configuration:
+
+```bash
+RESOURCE_EVM_ADDRESS=your_evm_payout_address
+RESOURCE_SVM_ADDRESS=your_solana_payout_address
+RESOURCE_AVM_ADDRESS=your_algorand_payout_address # optional
+
+# Optional: server hot key that signs `upto` settlement vouchers, enabling
+# the `upto` scheme (in addition to `exact`) for Solana Devnet on
+# /protected. EVM's `upto` scheme needs no equivalent key.
+RESOURCE_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY=your_solana_private_key
 ```
 
 ### Running the Development Server

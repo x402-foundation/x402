@@ -1,17 +1,24 @@
 import { paymentProxyFromConfig } from "@x402/next";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { UptoEvmScheme } from "@x402/evm/upto/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
+import { UptoSvmScheme } from "@x402/svm/upto/server";
 import { ExactAvmScheme } from "@x402/avm/exact/server";
 import { NextRequest, NextResponse } from "next/server";
 import { createPaywall } from "@x402/paywall";
 import { evmPaywall } from "@x402/paywall/evm";
 import { svmPaywall } from "@x402/paywall/svm";
 import { avmPaywall } from "@x402/paywall/avm";
+import { base58 } from "@scure/base";
+import { createKeyPairSignerFromBytes } from "@solana/kit";
 
 const evmPayeeAddress = process.env.RESOURCE_EVM_ADDRESS as `0x${string}`;
 const svmPayeeAddress = process.env.RESOURCE_SVM_ADDRESS as string;
 const avmPayeeAddress = process.env.RESOURCE_AVM_ADDRESS;
+// Server hot key that signs `upto` settlement vouchers for Solana Devnet.
+// EVM's `upto` scheme needs no equivalent key.
+const svmReceiverAuthorizerKey = process.env.RESOURCE_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY;
 const facilitatorUrl = process.env.FACILITATOR_URL as string;
 
 const EVM_NETWORK = "eip155:84532" as const; // Base Sepolia
@@ -51,45 +58,109 @@ const paywall = paywallBuilder
   })
   .build();
 
-const x402PaymentProxy = paymentProxyFromConfig(
-  {
-    "/protected": {
-      accepts: [
-        {
-          payTo: evmPayeeAddress,
-          scheme: "exact",
-          price: "$0.01",
-          network: EVM_NETWORK,
-        },
-        {
-          payTo: svmPayeeAddress,
-          scheme: "exact",
-          price: "$0.01",
-          network: SVM_NETWORK,
-        },
-        ...(avmPayeeAddress
-          ? [
-              {
-                payTo: avmPayeeAddress,
-                scheme: "exact" as const,
-                price: "$0.01",
-                network: AVM_NETWORK,
-              },
-            ]
-          : []),
-      ],
-      description: "Access to protected content",
+/**
+ * Build the `/protected` payment proxy, accepting both `exact` and `upto` on
+ * Base Sepolia and Solana Devnet. This middleware protects a static page, so
+ * no route handler ever runs to call `setSettlementOverrides`: `upto`
+ * payments here always settle at the full authorized `price`, same as
+ * `exact`.
+ *
+ * @returns The configured Next.js payment proxy middleware
+ */
+async function createX402PaymentProxy() {
+  // SVM `upto` needs a server-owned "receiver authorizer" hot key to sign
+  // settlement vouchers; only build it (and only offer the option below)
+  // when a key is configured. EVM `upto` needs no equivalent key.
+  const svmReceiverAuthorizerSigner = svmReceiverAuthorizerKey
+    ? await createKeyPairSignerFromBytes(base58.decode(svmReceiverAuthorizerKey))
+    : undefined;
+  if (svmPayeeAddress && !svmReceiverAuthorizerSigner) {
+    console.warn(
+      "⚠️ RESOURCE_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY is not set; " +
+        "the 'upto' scheme will not be offered for Solana Devnet on /protected",
+    );
+  }
+
+  return paymentProxyFromConfig(
+    {
+      "/protected": {
+        accepts: [
+          {
+            payTo: evmPayeeAddress,
+            scheme: "exact",
+            price: "$0.01",
+            network: EVM_NETWORK,
+          },
+          {
+            payTo: svmPayeeAddress,
+            scheme: "exact",
+            price: "$0.01",
+            network: SVM_NETWORK,
+          },
+          {
+            payTo: evmPayeeAddress,
+            scheme: "upto",
+            price: "$0.01",
+            network: EVM_NETWORK,
+          },
+          ...(svmReceiverAuthorizerSigner
+            ? [
+                {
+                  payTo: svmPayeeAddress,
+                  scheme: "upto" as const,
+                  price: "$0.01",
+                  network: SVM_NETWORK,
+                },
+              ]
+            : []),
+          ...(avmPayeeAddress
+            ? [
+                {
+                  payTo: avmPayeeAddress,
+                  scheme: "exact" as const,
+                  price: "$0.01",
+                  network: AVM_NETWORK,
+                },
+              ]
+            : []),
+        ],
+        description: "Access to protected content",
+      },
     },
-  },
-  facilitatorClient,
-  [
-    { network: EVM_NETWORK, server: new ExactEvmScheme() },
-    { network: SVM_NETWORK, server: new ExactSvmScheme() },
-    ...(avmPayeeAddress ? [{ network: AVM_NETWORK, server: new ExactAvmScheme() }] : []),
-  ],
-  undefined, // paywallConfig
-  paywall, // paywall provider
-);
+    facilitatorClient,
+    [
+      { network: EVM_NETWORK, server: new ExactEvmScheme() },
+      { network: SVM_NETWORK, server: new ExactSvmScheme() },
+      { network: EVM_NETWORK, server: new UptoEvmScheme() },
+      ...(svmReceiverAuthorizerSigner
+        ? [
+            {
+              network: SVM_NETWORK,
+              server: new UptoSvmScheme({ receiverAuthorizerSigner: svmReceiverAuthorizerSigner }),
+            },
+          ]
+        : []),
+      ...(avmPayeeAddress ? [{ network: AVM_NETWORK, server: new ExactAvmScheme() }] : []),
+    ],
+    undefined, // paywallConfig
+    paywall, // paywall provider
+  );
+}
+
+let _x402PaymentProxyPromise: ReturnType<typeof createX402PaymentProxy> | null = null;
+
+/**
+ * Lazily build (and cache) the `/protected` payment proxy on first request,
+ * since building it needs to await the SVM receiver-authorizer signer.
+ *
+ * @returns The configured Next.js payment proxy middleware
+ */
+function getX402PaymentProxy() {
+  if (!_x402PaymentProxyPromise) {
+    _x402PaymentProxyPromise = createX402PaymentProxy();
+  }
+  return _x402PaymentProxyPromise;
+}
 
 const geolocationProxy = async (req: NextRequest) => {
   // Get the country and region from Vercel's headers
@@ -178,6 +249,7 @@ export const proxy = async (req: NextRequest) => {
   if (geolocationResponse) {
     return geolocationResponse;
   }
+  const x402PaymentProxy = await getX402PaymentProxy();
   const delegate = x402PaymentProxy as unknown as (
     request: NextRequest,
   ) => ReturnType<typeof x402PaymentProxy>;
