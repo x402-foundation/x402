@@ -43,6 +43,8 @@ Both contracts:
 |-------|-------|------|
 | Base Mainnet | [Deployed](https://basescan.org/address/0x402085c248EeA27D92E8b30b2C58ed07f9E20001) | [Deployed](https://basescan.org/address/0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002) |
 | Base Sepolia | [Deployed](https://sepolia.basescan.org/address/0x402085c248EeA27D92E8b30b2C58ed07f9E20001) | [Legacy\*](https://sepolia.basescan.org/address/0x402039b3d6E6BEC5A02c2C9fd937ac17A6940002) |
+| Arc Mainnet | — | [Deployed](https://explorer.arc.io/address/0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002) |
+| Arc Testnet | [Deployed](https://explorer.testnet.arc.io/address/0x402085c248EeA27D92E8b30b2C58ed07f9E20001) | [Deployed](https://explorer.testnet.arc.io/address/0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002) |
 
 **Batch settlement deployments**
 
