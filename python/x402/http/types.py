@@ -85,6 +85,9 @@ class HTTPRequestContext:
     method: str
     payment_header: str | None = None
     route_pattern: str | None = None
+    # The framework's own decoded routing view of the path (e.g. Starlette's
+    # ``request.url.path`` or Werkzeug's ``PATH_INFO``), if distinct from ``path``.
+    decoded_path: str | None = None
 
 
 @dataclass

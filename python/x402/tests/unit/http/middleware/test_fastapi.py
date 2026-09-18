@@ -1247,3 +1247,122 @@ class TestEncodedPathBypass:
 
     def test_unrelated_path_is_not_gated(self, client) -> None:
         assert client.get("/health").status_code == 200
+
+
+class TestLiteralRoutePercentEncodedSeparatorBypass:
+    """A literal route must stay gated when a request encodes its path
+    separator, even though Starlette dispatches on the decoded path.
+    """
+
+    @staticmethod
+    def _routes() -> dict[str, RouteConfig]:
+        option = PaymentOption(
+            scheme="cash",
+            pay_to="Alice",
+            price="$0.01",
+            network="x402:cash",
+        )
+        return {"GET /api/premium": RouteConfig(accepts=option)}
+
+    @staticmethod
+    def _cash_server() -> x402ResourceServer:
+        facilitator = x402Facilitator().register(
+            ["x402:cash"],
+            CashSchemeNetworkFacilitator(),
+        )
+        server = x402ResourceServer(CashFacilitatorClient(facilitator))
+        server.register("x402:cash", CashSchemeNetworkServer())
+        server.initialize()
+        return server
+
+    @pytest.fixture()
+    def client(self):
+        app = FastAPI()
+
+        @app.middleware("http")
+        async def x402_middleware(request: Request, call_next):
+            return await payment_middleware(
+                self._routes(),
+                self._cash_server(),
+                sync_facilitator_on_start=False,
+            )(request, call_next)
+
+        @app.get("/api/premium")
+        async def premium() -> dict[str, str]:
+            return {"secret": "paid content"}
+
+        return TestClient(app)
+
+    def test_baseline_literal_route_returns_402(self, client) -> None:
+        assert client.get("/api/premium").status_code == 402
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/api%2Fpremium",
+            "/api%2fpremium",
+            "/%61pi%2Fpremium",
+        ],
+        ids=["encoded-slash", "lowercase-encoded-slash", "encoded-slash-and-letter"],
+    )
+    def test_percent_encoded_separator_still_returns_402(self, client, path: str) -> None:
+        assert client.get(path).status_code == 402
+
+    def test_unrelated_path_is_not_gated(self, client) -> None:
+        assert client.get("/health").status_code == 404
+
+
+class TestLiteralRouteRootPathBypass:
+    """A literal route must stay gated when the ASGI server sets root_path
+    (e.g. uvicorn --root-path), which Starlette strips before matching.
+    """
+
+    @staticmethod
+    def _routes() -> dict[str, RouteConfig]:
+        option = PaymentOption(
+            scheme="cash",
+            pay_to="Alice",
+            price="$0.01",
+            network="x402:cash",
+        )
+        return {"GET /api/premium": RouteConfig(accepts=option)}
+
+    @staticmethod
+    def _cash_server() -> x402ResourceServer:
+        facilitator = x402Facilitator().register(
+            ["x402:cash"],
+            CashSchemeNetworkFacilitator(),
+        )
+        server = x402ResourceServer(CashFacilitatorClient(facilitator))
+        server.register("x402:cash", CashSchemeNetworkServer())
+        server.initialize()
+        return server
+
+    @pytest.fixture()
+    def client(self):
+        app = FastAPI()
+
+        @app.middleware("http")
+        async def x402_middleware(request: Request, call_next):
+            return await payment_middleware(
+                self._routes(),
+                self._cash_server(),
+                sync_facilitator_on_start=False,
+            )(request, call_next)
+
+        @app.get("/api/premium")
+        async def premium() -> dict[str, str]:
+            return {"secret": "paid content"}
+
+        return TestClient(app, root_path="/svc")
+
+    def test_mounted_literal_route_returns_402(self, client) -> None:
+        assert client.get("/svc/api/premium").status_code == 402
+
+    @pytest.mark.parametrize(
+        "path",
+        ["/svc/api%2Fpremium", "/svc/api%2fpremium"],
+        ids=["encoded-slash", "lowercase-encoded-slash"],
+    )
+    def test_mounted_percent_encoded_separator_still_returns_402(self, client, path: str) -> None:
+        assert client.get(path).status_code == 402

@@ -362,9 +362,12 @@ class PaymentMiddleware:
         with self._app.request_context(environ):
             # Create adapter and context
             adapter = FlaskAdapter(request)
+            # Werkzeug dispatches literal routes on decoded PATH_INFO but
+            # wildcard/param routes on the escaped path, so match both.
             context = HTTPRequestContext(
                 adapter=adapter,
                 path=_route_matching_path(environ),
+                decoded_path=str(environ.get("PATH_INFO", "/")),
                 method=request.method,
                 payment_header=(
                     adapter.get_header("payment-signature") or adapter.get_header("x-payment")
