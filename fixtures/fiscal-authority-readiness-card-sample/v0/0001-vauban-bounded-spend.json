@@ -1,0 +1,37 @@
+{
+  "schema": "x402.fiscal_authority.readiness_card_reference.v0",
+  "id": "0001-vauban-bounded-spend",
+  "status": "committed_contributor_owned_reference",
+  "variant": {
+    "cap_enforcement": "cryptographic",
+    "charge_evidence_type": "receipt"
+  },
+  "contributor": {
+    "name": "Vauban Pay",
+    "public_site": "https://pay.vauban.tech"
+  },
+  "expected_reference_fields": {
+    "card_url": "https://github.com/vauban-org/x402-stark-receipts-conformance/blob/main/cards/0001-vauban-bounded-spend.json",
+    "content_hash": "sha256:9b63024da81a7a6ca3a6ae1171d5b3bd1ee47317f4511b24b48855a1e022af7e",
+    "content_hash_algorithm": "sha256 over JCS-canonicalized bytes",
+    "canon_version": "jcs-rfc8785-v1",
+    "approval_source_field": "capabilities.approval_source",
+    "buyer_agent_can_spend_without_human_field": "capabilities.buyer_agent_can_spend_without_human",
+    "preflight_verdict_field": "capabilities.preflight_verdict",
+    "charge_evidence_field": "evidence_anchors.on_chain",
+    "cap_unit_or_currency_field": "capabilities.cap.currency",
+    "revocation_or_dispute_ref_field": "capabilities.cap.revocation.endpoint"
+  },
+  "notes": [
+    "This stub indexes the cryptographic-cap / receipt example slot.",
+    "The filled card remains in a Vauban-owned public repository.",
+    "Vauban reports status PARTIAL while buyer_agent_can_spend_without_human remains false pending revocation endpoint liveness and canon_version normalization.",
+    "The x402 sample references the contributor-owned card by URL and hash rather than copying authoritative bytes."
+  ],
+  "safe_public_boundary": {
+    "requires_secrets": false,
+    "requires_wallet_access": false,
+    "requires_private_dashboard": false,
+    "requires_customer_data": false
+  }
+}
