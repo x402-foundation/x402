@@ -1,6 +1,6 @@
 import { Network, PaymentRequirements } from "../types";
 import { getUsdcChainConfigForChain } from "../shared/evm";
-import { getNetworkId } from "../shared/network";
+import { EvmNetworkToChainId, SvmNetworkToChainId } from "../types/shared";
 
 /**
  * Default selector for payment requirements.
@@ -11,6 +11,7 @@ import { getNetworkId } from "../shared/network";
  * @param network - The network to check against. If not provided, the network will not be checked.
  * @param scheme - The scheme to check against. If not provided, the scheme will not be checked.
  * @returns The payment requirement that is the most appropriate for the user.
+ * @throws Error if no requirement matches an explicitly requested network or scheme.
  */
 export function selectPaymentRequirements(paymentRequirements: PaymentRequirements[], network?: Network | Network[], scheme?: "exact"): PaymentRequirements {
   // Filter down to the scheme/network if provided
@@ -25,8 +26,14 @@ export function selectPaymentRequirements(paymentRequirements: PaymentRequiremen
 
   // Filter down to USDC requirements
   const usdcRequirements = broadlyAcceptedPaymentRequirements.filter(requirement => {
-    // If the address is a USDC address, we return it.
-    return requirement.asset === getUsdcChainConfigForChain(getNetworkId(requirement.network))?.usdcAddress;
+    const networkId =
+      EvmNetworkToChainId.get(requirement.network) ??
+      SvmNetworkToChainId.get(requirement.network);
+
+    return (
+      networkId !== undefined &&
+      requirement.asset === getUsdcChainConfigForChain(networkId)?.usdcAddress
+    );
   });
 
   // Prioritize USDC requirements if available
@@ -37,8 +44,7 @@ export function selectPaymentRequirements(paymentRequirements: PaymentRequiremen
   if (broadlyAcceptedPaymentRequirements.length > 0) {
     return broadlyAcceptedPaymentRequirements[0];
   }
-  // If no matching requirements are found, return the first requirement.
-  return paymentRequirements[0];
+  throw new Error("No payment requirements match the requested network and scheme");
 }
 
 /**
@@ -50,4 +56,3 @@ export function selectPaymentRequirements(paymentRequirements: PaymentRequiremen
  * @returns The payment requirement that is the most appropriate for the user.
  */
 export type PaymentRequirementsSelector = (paymentRequirements: PaymentRequirements[], network?: Network | Network[], scheme?: "exact") => PaymentRequirements;
-
