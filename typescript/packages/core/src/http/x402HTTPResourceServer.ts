@@ -562,7 +562,20 @@ export class x402HTTPResourceServer {
     const paymentOptions = this.normalizePaymentOptions(routeConfig);
 
     // Check for payment header (v1 or v2)
-    const paymentPayload = this.extractPayment(adapter);
+    let paymentPayload: PaymentPayload | null;
+    try {
+      paymentPayload = this.extractPayment(adapter);
+    } catch {
+      // A present-but-undecodable header is a client error, not a missing payment.
+      return {
+        type: "payment-error",
+        response: {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+          body: { error: "invalid_payload" },
+        },
+      };
+    }
 
     // Create resource info, using config override if provided
     const resourceInfo = {
@@ -1252,18 +1265,15 @@ export class x402HTTPResourceServer {
    * Extract payment from HTTP headers (handles v1 and v2)
    *
    * @param adapter - HTTP adapter
-   * @returns Decoded payment payload or null
+   * @returns Decoded payment payload, or null when no payment header is present
+   * @throws If a payment header is present but cannot be decoded
    */
   private extractPayment(adapter: HTTPAdapter): PaymentPayload | null {
     // Check v2 header first (PAYMENT-SIGNATURE)
     const header = adapter.getHeader("payment-signature") || adapter.getHeader("PAYMENT-SIGNATURE");
 
     if (header) {
-      try {
-        return decodePaymentSignatureHeader(header);
-      } catch (error) {
-        console.warn("Failed to decode PAYMENT-SIGNATURE header:", error);
-      }
+      return decodePaymentSignatureHeader(header);
     }
 
     return null;
