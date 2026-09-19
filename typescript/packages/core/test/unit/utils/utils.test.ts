@@ -417,6 +417,11 @@ describe("Utils", () => {
         expect(convertToTokenAmount("0.1000000", 7)).toBe("1000000");
       });
 
+      it("should handle trailing decimal points", () => {
+        expect(convertToTokenAmount("1.", 6)).toBe("1000000");
+        expect(convertToTokenAmount("0.", 6)).toBe("0");
+      });
+
       it("should handle negative numbers", () => {
         expect(convertToTokenAmount("-1.5", 6)).toBe("-1500000");
       });
@@ -480,6 +485,22 @@ describe("Utils", () => {
         expect(() => convertToTokenAmount("abc", 6)).toThrow("Invalid amount");
         expect(() => convertToTokenAmount("", 6)).toThrow("Invalid amount");
         expect(() => convertToTokenAmount("NaN", 6)).toThrow("Invalid amount");
+      });
+
+      it("should throw for malformed decimal strings", () => {
+        expect(() => convertToTokenAmount(".5", 6)).toThrow("Invalid amount");
+        expect(() => convertToTokenAmount("+1", 6)).toThrow("Invalid amount");
+        expect(() => convertToTokenAmount("-", 6)).toThrow("Invalid amount");
+        expect(() => convertToTokenAmount("1.2.3", 6)).toThrow("Invalid amount");
+        expect(() => convertToTokenAmount("1 ", 6)).toThrow("Invalid amount");
+      });
+
+      it("should reject long adversarial invalid strings", () => {
+        const longIntegerWithSuffix = `${"0".repeat(10000)}x`;
+        const longDecimalWithSuffix = `0.${"0".repeat(10000)}x`;
+
+        expect(() => convertToTokenAmount(longIntegerWithSuffix, 6)).toThrow("Invalid amount");
+        expect(() => convertToTokenAmount(longDecimalWithSuffix, 6)).toThrow("Invalid amount");
       });
     });
   });
