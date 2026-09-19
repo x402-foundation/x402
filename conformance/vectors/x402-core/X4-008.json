@@ -1,0 +1,22 @@
+{
+  "id": "X4-008",
+  "title": "Fabricated Session Token Rejection",
+  "category": "session_security",
+  "requirement": "HC-6: Server must cryptographically verify session tokens",
+  "method": "GET",
+  "request": {
+    "variants": [
+      "random_bytes",
+      "fake_jwt",
+      "empty",
+      "sql_injection",
+      "zero_bytes"
+    ]
+  },
+  "owasp_asi": "ASI03",
+  "severity": "high",
+  "impact": "session_hijack",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-008"
+}

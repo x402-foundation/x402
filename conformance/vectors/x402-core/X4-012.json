@@ -1,0 +1,20 @@
+{
+  "id": "X4-012",
+  "title": "Underpayment Attempt Rejection",
+  "category": "spending_limits",
+  "requirement": "HC-8: Server must verify payment amount matches or exceeds requirement",
+  "method": "GET",
+  "request": {
+    "amounts_tried": [
+      "0",
+      "1",
+      "100"
+    ]
+  },
+  "owasp_asi": "ASI09",
+  "severity": "high",
+  "impact": "overpayment",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-012"
+}

@@ -1,0 +1,17 @@
+{
+  "id": "X4-027",
+  "title": "Stale Payment Session Replay",
+  "category": "advanced_payment",
+  "requirement": "HC-20: Payment sessions must be time-bound; stale sessions must be rejected",
+  "method": "GET",
+  "request": {
+    "stale_session_id": "session_7093bd40200b0ba2",
+    "age_seconds": 7200
+  },
+  "owasp_asi": "ASI04",
+  "severity": "critical",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-027"
+}
