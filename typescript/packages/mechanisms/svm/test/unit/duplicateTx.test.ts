@@ -32,6 +32,13 @@ const mockRpc = {
       value: { blockhash: blockhashes[blockhashIndex++] },
     }),
   })),
+  // Destination ATA exists by default so the client's fail-fast check passes
+  // and the classic [compute, compute, transfer, memo] layout is preserved.
+  getAccountInfo: vi.fn(() => ({
+    send: vi.fn().mockResolvedValue({
+      value: { data: ["", "base64"], owner: TOKEN_PROGRAM_ADDRESS.toString() },
+    }),
+  })),
 };
 
 vi.mock("../../src/utils", async () => {

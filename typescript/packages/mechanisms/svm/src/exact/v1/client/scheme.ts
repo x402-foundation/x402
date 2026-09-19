@@ -119,7 +119,38 @@ export class ExactSvmSchemeV1 implements SchemeNetworkClient {
       throw new Error("feePayer is required in paymentRequirements.extra for SVM transactions");
     }
 
-    const { value: latestBlockhash } = await rpc.getLatestBlockhash().send();
+    // Fail fast when the destination ATA does not exist (#2395): TransferChecked
+    // against a missing ATA only fails at settle time with an opaque
+    // InstructionError: [.., InvalidAccountData]. Surfacing it here names the
+    // actual problem and the party who can fix it (the recipient self-provisions
+    // their ATA — facilitator-funded creation is a griefing vector, see #1020).
+    // Fetched in parallel with the blockhash, so no latency is added.
+    const [destinationInfo, { value: latestBlockhash }] = await Promise.all([
+      rpc.getAccountInfo(destinationATA, { encoding: "base64" }).send(),
+      rpc.getLatestBlockhash().send(),
+    ]);
+    if (!destinationInfo.value) {
+      throw new Error(
+        `Destination associated token account ${destinationATA} does not exist for ` +
+          `payTo ${selectedV1.payTo} and mint ${selectedV1.asset} on ` +
+          `${selectedV1.network}; the transfer would fail on-chain with ` +
+          `InvalidAccountData. The recipient must provision their own ATA before they ` +
+          `can accept payments for this asset (see x402-foundation/x402#1020).`,
+      );
+    }
+    // An account merely existing at the ATA address is not enough: a
+    // lamport-only System account can squat the PDA (the known ATA-blocking
+    // vector) and would still fail TransferChecked at settle time. Require the
+    // account to actually be owned by the mint's token program.
+    if (destinationInfo.value.owner.toString() !== tokenProgramAddress.toString()) {
+      throw new Error(
+        `Destination associated token account ${destinationATA} for payTo ` +
+          `${selectedV1.payTo} exists but is owned by ${destinationInfo.value.owner} rather ` +
+          `than the token program ${tokenProgramAddress}; TransferChecked would fail ` +
+          `on-chain. The recipient's own idempotent ATA creation converts a prefunded ` +
+          `system account into a usable token account (see x402-foundation/x402#1020).`,
+      );
+    }
 
     const sellerMemo = selectedV1.extra?.memo as string | undefined;
     let memoData: Uint8Array;
