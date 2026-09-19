@@ -2,14 +2,16 @@
  * Unit tests for createPaymentWrapper
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createPaymentWrapper } from "../../src/server";
-import { MCP_PAYMENT_RESPONSE_META_KEY } from "../../src/types";
+import { x402ResourceServer, type FacilitatorClient } from "@x402/core/server";
 import type {
   PaymentPayload,
   PaymentRequirements,
+  SchemeNetworkServer,
   SettleResponse,
   VerifyResponse,
 } from "@x402/core/types";
+import { createPaymentWrapper } from "../../src/server";
+import { MCP_PAYMENT_META_KEY, MCP_PAYMENT_RESPONSE_META_KEY } from "../../src/types";
 
 // ============================================================================
 // Mock Types
@@ -1314,6 +1316,120 @@ describe("createPaymentWrapper", () => {
       expect(JSON.stringify(result)).not.toContain("does not support paymentFlow");
       expect(consoleError).toHaveBeenCalled();
       consoleError.mockRestore();
+    });
+  });
+
+  describe("corrective 402 accept snapshot", () => {
+    it("does not mutate config accepts when a 402 enricher writes extra in place", async () => {
+      mockResourceServer.createPaymentRequiredResponse.mockImplementation(async accepts => {
+        for (const requirement of accepts) {
+          requirement.extra.channelState = { chargedCumulativeAmount: "2000" };
+        }
+        return mockPaymentRequired;
+      });
+      const accepts: PaymentRequirements[] = [{ ...mockPaymentRequirements, extra: {} }];
+      const paid = createPaymentWrapper(
+        mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+        { accepts },
+      );
+      const handler = vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: "success" }],
+      });
+
+      await paid(handler)({ test: "arg" }, {});
+
+      expect(accepts[0].extra).toEqual({});
+    });
+
+    it("does not mutate wrapper config accepts when building a corrective 402", async () => {
+      const reason = "invalid_batch_settlement_evm_cumulative_amount_mismatch";
+      let verifyCalls = 0;
+      let abortOnce = true;
+      const mockFacilitator: FacilitatorClient = {
+        verify: async () => {
+          verifyCalls += 1;
+          return { isValid: true, payer: "test-payer" };
+        },
+        settle: async () => ({
+          success: true,
+          transaction: "0xtx",
+          network: "x402:cash",
+          payer: "test-payer",
+        }),
+        getSupported: async () => ({
+          kinds: [{ x402Version: 2, scheme: "cash", network: "x402:cash" }],
+          extensions: [],
+          signers: {},
+        }),
+      };
+
+      let enricherCalls = 0;
+      const scheme: SchemeNetworkServer = {
+        scheme: "cash",
+        defaultAssetTransferMethod: "default",
+        paymentFlows: {
+          default: { supported: ["authorization"], default: "authorization" },
+        },
+        parsePrice: async () => ({ amount: "1000", asset: "USD", extra: {} }),
+        enhancePaymentRequirements: async requirements => requirements,
+        enrichPaymentRequiredResponse: async ctx => {
+          if (ctx.error !== reason || !ctx.paymentPayload) {
+            return;
+          }
+          enricherCalls += 1;
+          for (const requirement of ctx.requirements) {
+            if (!requirement.extra) {
+              requirement.extra = {};
+            }
+            requirement.extra.channelState = { chargedCumulativeAmount: "2000" };
+          }
+        },
+      };
+
+      const server = new x402ResourceServer(mockFacilitator);
+      server.register("x402:cash", scheme);
+      await server.initialize();
+      server.onBeforeVerify(async () => {
+        if (!abortOnce) {
+          return;
+        }
+        abortOnce = false;
+        return {
+          abort: true,
+          reason,
+          message: "Client voucher base does not match server state",
+        };
+      });
+
+      const cashRequirements = (): PaymentRequirements => ({
+        scheme: "cash",
+        network: "x402:cash",
+        amount: "1000",
+        payTo: "test-recipient",
+        asset: "",
+        maxTimeoutSeconds: 0,
+        extra: {},
+      });
+      const config = { accepts: [cashRequirements()] };
+      const paid = createPaymentWrapper(server, config);
+      const wrappedHandler = paid(async () => ({
+        content: [{ type: "text", text: "ok" }],
+      }));
+      const payload: PaymentPayload = {
+        x402Version: 2,
+        accepted: cashRequirements(),
+        payload: { signature: "~test-payer" },
+      };
+      const extra = { _meta: { [MCP_PAYMENT_META_KEY]: payload } };
+
+      const first = await wrappedHandler({}, extra);
+      expect(first.isError).toBe(true);
+      expect(enricherCalls).toBe(1);
+      expect(config.accepts[0].extra).toEqual({});
+
+      const second = await wrappedHandler({}, extra);
+      expect(second.isError).toBeFalsy();
+      expect(verifyCalls).toBe(1);
     });
   });
 });
