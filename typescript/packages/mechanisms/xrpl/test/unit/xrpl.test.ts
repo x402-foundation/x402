@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import { Wallet, decode, encode } from "xrpl";
+import { createHash } from "crypto";
+import { Wallet, decode, encode, hashes } from "xrpl";
 import { ExactXrplScheme as ExactXrplClientScheme } from "../../src/exact/client/scheme";
 import { ExactXrplScheme as ExactXrplFacilitatorScheme } from "../../src/exact/facilitator/scheme";
 import { ExactXrplScheme as ExactXrplServerScheme } from "../../src/exact/server/scheme";
 import { createXrplWalletSigner } from "../../src/signer";
 import {
   DEFAULT_MAX_FEE_DROPS,
+  decodeSignedTransactionBlob,
   SETTLEMENT_TTL_MS,
   SettlementCache,
   XRPL_DEVNET,
@@ -1679,6 +1681,139 @@ describe("ExactXrplScheme facilitator verify", () => {
 
     expect(result.isValid).toBe(false);
     expect(result.invalidReason).toContain("multisig_not_supported");
+  });
+});
+
+// Joint cross-implementation vectors: real Devnet transactions, validated
+// on-ledger, published in whawk46/xls68-x402-fee-sponsoring
+// (test-vectors/sponsoring-test-vectors.json) and re-derivable from public
+// Devnet history via the tx method with binary: true. Asserted verbatim, and
+// shared with the Python mechanism's suite so both implementations are
+// checked against the same bytes.
+const SPONSORED_DEVNET_BLOB =
+  "120000240040414E201B0040417A204A0000000161D488E1BC9BF0400000000000000000000000" +
+  "000046434400000000000F8AE3322434A9F800DE6F3F8A3CE4571651C33D68400000000000000C" +
+  "7321EDA1EC51E363E86F50C845611412C6CB8F5736BA25EF9406DA516D5F8A543A394C7440EE1C" +
+  "0CED21D3794FBFBA5E61F4BC44B880BD3A591118138DDCF20075731D355F8EEDF56EAD11F4A662" +
+  "E3B974BF7D3F4665CAEF4EAF61ACB4015B2E7C36CF11018114C226FF9458B8B0D6EEF1C504BC31" +
+  "78F68FD9E1BE83146E7807830BEA4C9D495B091E8CC2FFDB39BD0278801B146C92943ED80CB008" +
+  "FBC02B38EC7D35F74B8A3FE5E0267321EDE870C1A491E87A212D41DBF634476D4A1E50AF3D7CE9" +
+  "4CA9BFB8BD476F4CF9317440BCAA29225213CE6A1B85D85756A55B7C5B6F5FB9213D294190F985" +
+  "1BFA8CAD9BEF43BF1E2E47B0F472E042D986E0CB3B22446F1F8DB6B1E7B06F410CD8B86F07E1";
+const SPONSORED_DEVNET_HASH = "F306E3053CA5317F4464E62EA074B6DBE5F2CD53A7428AB6CC43C3615CDCB32A";
+const PLAIN_DEVNET_BLOB =
+  "120000240040414A201B0040417761D4C38D7EA4C6800000000000000000000000000046434400" +
+  "000000000F8AE3322434A9F800DE6F3F8A3CE4571651C33D68400000000000000C7321ED43DBB3" +
+  "5E73B8FC96EC70B956E76CF4C3B4C9611BA9FDD290A90BD8831FD80D32744009C627784FE8F420" +
+  "E459904E98E3AB7BAA6A216F7352F498848185C8B945861CB772254695A2F1D98C47EB893C1705" +
+  "AC19575CA1D7F1294886F23CE68248730681140F8AE3322434A9F800DE6F3F8A3CE4571651C33D" +
+  "8314C226FF9458B8B0D6EEF1C504BC3178F68FD9E1BE";
+const PLAIN_DEVNET_HASH = "A13433C559E76157BEBF9965328C562F0FA571477760A14E9D6E21FB83870703";
+
+describe("XRPL decode hardening", () => {
+  // The transaction id as the ledger derives it: the first half of SHA-512
+  // over the TXN prefix and the raw bytes. Computed without decoding, since
+  // the sponsored blob is codec-unknown until xrpl.js ships XLS-68.
+  const hashFromBytes = (hex: string): string =>
+    createHash("sha512")
+      .update(Buffer.from(`54584E00${hex}`, "hex"))
+      .digest("hex")
+      .toUpperCase()
+      .slice(0, 64);
+
+  it("refuses the sponsored Devnet payment on the bytes", () => {
+    // The exception is the stable contract; the failing layer migrates from
+    // codec-unknown to the Payment field allowlist when xrpl.js ships the
+    // XLS-68 definitions, with the same outcome.
+    expect(hashFromBytes(SPONSORED_DEVNET_BLOB)).toBe(SPONSORED_DEVNET_HASH);
+    expect(() => decodeSignedTransactionBlob(SPONSORED_DEVNET_BLOB)).toThrow();
+  });
+
+  it("accepts the plain Devnet payment at the same layer", () => {
+    expect(hashFromBytes(PLAIN_DEVNET_BLOB)).toBe(PLAIN_DEVNET_HASH);
+    expect(hashes.hashSignedTx(PLAIN_DEVNET_BLOB)).toBe(PLAIN_DEVNET_HASH);
+    const decoded = decodeSignedTransactionBlob(PLAIN_DEVNET_BLOB);
+    expect(decoded.TransactionType).toBe("Payment");
+  });
+
+  it("refuses a non-signing field appended without the payer's key", () => {
+    // The signature covers only signing fields, so anyone can append another
+    // non-signing field to a validly signed blob and move its hash, the
+    // duplicate-settlement guard's key. The Payment allowlist closes this:
+    // Signature is codec-known but foreign to a Payment.
+    const decoded = decode(PLAIN_DEVNET_BLOB) as unknown as Record<string, unknown>;
+    decoded.Signature = "AB".repeat(32);
+    const variant = encode(decoded as unknown as Transaction);
+    expect(() => decodeSignedTransactionBlob(variant)).toThrow(/foreign to Payment/);
+  });
+
+  it("refuses a re-serialised blob that is not the canonical form", () => {
+    // Swap the adjacent Sequence and LastLedgerSequence fields: the result
+    // decodes to the same transaction with the same valid signature, but its
+    // hash differs, which would let one payment settle once per re-ordering.
+    const sequence = PLAIN_DEVNET_BLOB.slice(6, 16);
+    const lastLedger = PLAIN_DEVNET_BLOB.slice(16, 28);
+    expect(sequence.startsWith("24")).toBe(true);
+    expect(lastLedger.startsWith("201B")).toBe(true);
+    const reordered =
+      PLAIN_DEVNET_BLOB.slice(0, 6) + lastLedger + sequence + PLAIN_DEVNET_BLOB.slice(28);
+    expect(decode(reordered)).toEqual(decode(PLAIN_DEVNET_BLOB));
+    expect(() => decodeSignedTransactionBlob(reordered)).toThrow(/canonical/);
+  });
+
+  it("refuses an oversized blob before decoding it", () => {
+    expect(() => decodeSignedTransactionBlob("24".repeat(3000))).toThrow(/larger/);
+  });
+
+  it("refuses odd-length hex", () => {
+    expect(() => decodeSignedTransactionBlob("ABC")).toThrow(/even-length/);
+  });
+
+  it("refuses a signing field foreign to Payment", () => {
+    // The case the allowlist exists for: a field the payer signed over, which
+    // a future amendment could add to the codec. OfferSequence is codec-known
+    // and signing, so only the allowlist can be what refuses it.
+    const decoded = decode(PLAIN_DEVNET_BLOB) as unknown as Record<string, unknown>;
+    decoded.OfferSequence = 3;
+    const variant = encode(decoded as unknown as Transaction);
+    expect(() => decodeSignedTransactionBlob(variant)).toThrow(/foreign to Payment/);
+  });
+
+  it("still accepts the optional fields the allowlist tolerates", () => {
+    // A typo in a hand-copied allowlist entry would reject legitimate
+    // payments with an otherwise green suite. These are the entries no other
+    // test in the package exercises.
+    const signed = payerWallet.sign({
+      TransactionType: "Payment",
+      Account: payerWallet.classicAddress,
+      Destination: payTo,
+      Amount: "1000",
+      Fee: "12",
+      Sequence: 7,
+      LastLedgerSequence: 100,
+      AccountTxnID: "AB".repeat(32),
+      SourceTag: 42,
+      PreviousTxnID: "CD".repeat(32),
+      OperationLimit: 5,
+      CredentialIDs: ["EF".repeat(32)],
+      DomainID: "12".repeat(32),
+    });
+    const decoded = decodeSignedTransactionBlob(signed.tx_blob);
+    expect(decoded.TransactionType).toBe("Payment");
+  });
+
+  it("reports undecodable bytes as such, not as codec internals", () => {
+    expect(() => decodeSignedTransactionBlob("FF".repeat(64))).toThrow(
+      /not a decodable transaction/,
+    );
+  });
+
+  it("reports a re-encode failure as undecodable rather than leaking the codec", () => {
+    // decode tolerates a drops amount that encode refuses, so the re-encode
+    // has to sit inside the same catch or the codec's own message escapes.
+    const overflowFee = PLAIN_DEVNET_BLOB.replace("68400000000000000C", "684FFFFFFFFFFFFFFF");
+    expect(overflowFee).not.toBe(PLAIN_DEVNET_BLOB);
+    expect(() => decodeSignedTransactionBlob(overflowFee)).toThrow(/not a decodable transaction/);
   });
 });
 
