@@ -1,5 +1,26 @@
 import { x402Client, x402ClientConfig, x402HTTPClient } from "@x402/core/client";
+import { readLimitedBody } from "@x402/core/http";
 import { type PaymentRequired } from "@x402/core/types";
+
+/**
+ * Caps a 402 that will be returned to the caller. Paid resource payloads are left
+ * untouched. The body is re-materialized so callers can still read it.
+ *
+ * @param response - Fetch response from the resource server
+ * @returns The original response, or a 402 with a bounded body
+ */
+async function capReturnedPaymentRequired(response: Response): Promise<Response> {
+  if (response.status !== 402) {
+    return response;
+  }
+
+  const body = await readLimitedBody(response);
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
 
 /**
  * Enables the payment of APIs using the x402 payment protocol v2.
@@ -53,6 +74,8 @@ export function wrapFetchWithPayment(
       return response;
     }
 
+    const responseText = await readLimitedBody(response);
+
     // Parse payment requirements from response
     let paymentRequired: PaymentRequired;
     try {
@@ -62,7 +85,6 @@ export function wrapFetchWithPayment(
       // Try to get from headers first (v2), then from body (v1)
       let body: PaymentRequired | undefined;
       try {
-        const responseText = await response.text();
         if (responseText) {
           body = JSON.parse(responseText) as PaymentRequired;
         }
@@ -89,6 +111,7 @@ export function wrapFetchWithPayment(
       if (hookResponse.status !== 402) {
         return hookResponse; // Hook succeeded
       }
+      await readLimitedBody(hookResponse);
       // Hook's retry got 402, fall through to payment
     }
 
@@ -130,6 +153,9 @@ export function wrapFetchWithPayment(
     );
 
     if (result.recovered) {
+      if (secondResponse.status === 402) {
+        await readLimitedBody(secondResponse);
+      }
       // Hook fixed state — retry with fresh payload (bounded to one recovery)
       const freshPayload = await client.createPaymentPayload(paymentRequired);
       const retryHeaders = httpClient.encodePaymentSignatureHeader(freshPayload);
@@ -148,10 +174,10 @@ export function wrapFetchWithPayment(
         name => retryResponse.headers.get(name),
         retryResponse.status,
       );
-      return retryResponse;
+      return capReturnedPaymentRequired(retryResponse);
     }
 
-    return secondResponse;
+    return capReturnedPaymentRequired(secondResponse);
   };
 }
 
@@ -179,7 +205,7 @@ export type {
   SelectPaymentRequirements,
   x402ClientConfig,
 } from "@x402/core/client";
-export { decodePaymentResponseHeader } from "@x402/core/http";
+export { decodePaymentResponseHeader, ResponseBodyTooLargeError } from "@x402/core/http";
 export type {
   Network,
   PaymentPayload,
