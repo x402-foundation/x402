@@ -17,6 +17,32 @@ except ImportError as e:
         "httpx client requires the httpx package. Install with: uv add x402[httpx]"
     ) from e
 
+from ..utils import ResponseBodyTooLargeError, aread_limited_body
+
+
+async def _cap_returned_payment_required(response: Response, request: Request) -> Response:
+    """Bound a 402 that will be returned to the caller. Paid payloads are unchanged."""
+    if response.status_code != 402:
+        return response
+    try:
+        body = await aread_limited_body(response.aiter_bytes())
+    finally:
+        await response.aclose()
+    req = getattr(response, "request", None)
+    if not isinstance(req, Request):
+        req = request
+    extensions = getattr(response, "extensions", None)
+    if not isinstance(extensions, dict):
+        extensions = dict(request.extensions)
+    return Response(
+        status_code=402,
+        headers=response.headers,
+        content=body,
+        request=req,
+        extensions=extensions,
+    )
+
+
 if TYPE_CHECKING:
     from ...client import x402Client, x402ClientConfig
     from ..x402_http_client import x402HTTPClient
@@ -126,11 +152,14 @@ class x402AsyncTransport(AsyncBaseTransport):
 
         # Check if already a retry (via request extensions)
         if request.extensions.get(self.RETRY_KEY) or request.extensions.get(self.RECOVERY_KEY):
-            return response  # Return 402 without retry
+            return await _cap_returned_payment_required(response, request)
 
         try:
             # Read response body before parsing
-            await response.aread()
+            try:
+                body_bytes = await aread_limited_body(response.aiter_bytes())
+            finally:
+                await response.aclose()
 
             # Parse PaymentRequired (try header first for V2, then body for V1)
             def get_header(name: str) -> str | None:
@@ -138,8 +167,8 @@ class x402AsyncTransport(AsyncBaseTransport):
 
             body = None
             try:
-                body = response.json()
-            except json.JSONDecodeError:
+                body = json.loads(body_bytes)
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
                 pass
 
             payment_required = self._http_client.get_payment_required_response(get_header, body)
@@ -156,6 +185,10 @@ class x402AsyncTransport(AsyncBaseTransport):
                 hook_response = await self._send_retry(request, hook_headers)
                 if hook_response.status_code != 402:
                     return hook_response
+                try:
+                    await aread_limited_body(hook_response.aiter_bytes())
+                finally:
+                    await hook_response.aclose()
 
             # Create payment payload
             payment_payload = await self._client.create_payment_payload(payment_required)
@@ -173,6 +206,11 @@ class x402AsyncTransport(AsyncBaseTransport):
             )
 
             if process_result.recovered:
+                if paid_response.status_code == 402:
+                    try:
+                        await aread_limited_body(paid_response.aiter_bytes())
+                    finally:
+                        await paid_response.aclose()
                 # Retry once with a fresh payload after recovery
                 fresh_payload = await self._client.create_payment_payload(payment_required)
                 fresh_headers = self._http_client.encode_payment_signature_header(fresh_payload)
@@ -185,11 +223,13 @@ class x402AsyncTransport(AsyncBaseTransport):
                     recovery_response.headers.get,
                     recovery_response.status_code,
                 )
-                return recovery_response
+                return await _cap_returned_payment_required(recovery_response, request)
 
-            return paid_response
+            return await _cap_returned_payment_required(paid_response, request)
 
         except PaymentError:
+            raise
+        except ResponseBodyTooLargeError:
             raise
         except Exception as e:
             raise PaymentError(f"Failed to handle payment: {e}") from e
