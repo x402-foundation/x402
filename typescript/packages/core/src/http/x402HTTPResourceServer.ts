@@ -467,6 +467,65 @@ export class x402HTTPResourceServer {
   }
 
   /**
+   * Register a payment-protected route at runtime.
+   *
+   * Use this when the route path is not known at server startup — for example,
+   * in marketplace or auction services where each resource gets its own
+   * payment URL dynamically.
+   *
+   * Safe to call at any point after middleware initialization; takes effect
+   * immediately for subsequent requests. If a route with the same pattern and
+   * HTTP verb is already registered, this call is a no-op.
+   *
+   * @param pattern - Route pattern, e.g. "GET /pay/:id" or "/resource/*"
+   * @param config - Payment requirement config (same shape as static routes)
+   * @returns This server instance for chaining
+   */
+  registerRoute(pattern: string, config: RouteConfig): this {
+    const parsed = this.parseRoutePattern(pattern);
+    const exists = this.compiledRoutes.some(
+      route => route.pattern === parsed.path && route.verb === parsed.verb,
+    );
+    if (!exists) {
+      this.compiledRoutes.push({
+        verb: parsed.verb,
+        regex: parsed.regex,
+        config,
+        pattern: parsed.path,
+      });
+      if (typeof this.routesConfig === "object" && !("accepts" in this.routesConfig)) {
+        (this.routesConfig as Record<string, RouteConfig>)[pattern] = config;
+      }
+    }
+    return this;
+  }
+
+  /**
+   * Remove a previously registered route.
+   *
+   * Call this when a dynamically registered resource should no longer be
+   * payment-protected — for example after its payment has been confirmed, so
+   * subsequent requests to the same URL are not intercepted by the payment
+   * middleware. Unknown patterns are ignored.
+   *
+   * @param pattern - The same pattern string passed to registerRoute (or the constructor)
+   * @returns This server instance for chaining
+   */
+  unregisterRoute(pattern: string): this {
+    const parsed = this.parseRoutePattern(pattern);
+    const idx = this.compiledRoutes.findIndex(
+      route => route.pattern === parsed.path && route.verb === parsed.verb,
+    );
+    if (idx !== -1) {
+      this.compiledRoutes.splice(idx, 1);
+      if (typeof this.routesConfig === "object" && !("accepts" in this.routesConfig)) {
+        delete (this.routesConfig as Record<string, RouteConfig>)[pattern];
+      }
+    }
+    return this;
+  }
+
+  /**
    * Initialize the HTTP resource server.
    *
    * This method initializes the underlying resource server (fetching facilitator support)
