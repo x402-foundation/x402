@@ -1,0 +1,50 @@
+{
+  "name": "@x402/bip122",
+  "version": "0.1.0",
+  "description": "x402 Payment Protocol Bitcoin Lightning (bip122/exact) Implementation",
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/cjs/index.d.ts",
+  "license": "Apache-2.0",
+  "author": "x402 Foundation",
+  "repository": "https://github.com/x402-foundation/x402",
+  "keywords": ["x402", "payment", "protocol", "bitcoin", "lightning", "bip122", "bolt11"],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "format": "prettier -c .prettierrc --write \"**/*.{ts,js,json,md}\"",
+    "lint": "eslint . --ext .ts --fix"
+  },
+  "exports": {
+    ".": {
+      "import": { "types": "./dist/esm/index.d.mts", "default": "./dist/esm/index.mjs" },
+      "require": { "types": "./dist/cjs/index.d.ts", "default": "./dist/cjs/index.js" }
+    },
+    "./exact/client": {
+      "import": { "types": "./dist/esm/exact/client/scheme.d.mts", "default": "./dist/esm/exact/client/scheme.mjs" },
+      "require": { "types": "./dist/cjs/exact/client/scheme.d.ts", "default": "./dist/cjs/exact/client/scheme.js" }
+    },
+    "./exact/server": {
+      "import": { "types": "./dist/esm/exact/server/scheme.d.mts", "default": "./dist/esm/exact/server/scheme.mjs" },
+      "require": { "types": "./dist/cjs/exact/server/scheme.d.ts", "default": "./dist/cjs/exact/server/scheme.js" }
+    },
+    "./exact/facilitator": {
+      "import": { "types": "./dist/esm/exact/facilitator/scheme.d.mts", "default": "./dist/esm/exact/facilitator/scheme.mjs" },
+      "require": { "types": "./dist/cjs/exact/facilitator/scheme.d.ts", "default": "./dist/cjs/exact/facilitator/scheme.js" }
+    }
+  },
+  "files": ["dist", "src"],
+  "dependencies": {
+    "@x402/core": "workspace:~"
+  },
+  "optionalDependencies": {
+    "light-bolt11-decoder": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "tsup": "^8.4.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}
