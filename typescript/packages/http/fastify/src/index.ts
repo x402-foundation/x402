@@ -330,7 +330,9 @@ export function paymentMiddlewareFromHTTPServer(
       });
   }
 
-  app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
+  // preHandler (not onRequest): runs after Fastify parses the request body, so
+  // payment hooks (onProtectedRequest) can inspect it via adapter.getBody().
+  app.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {
     const path = request.url.split("?")[0];
     const adapter = new FastifyAdapter(request);
     const context: HTTPRequestContext = {
