@@ -38,7 +38,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | near | ✅ | ❌ | ❌ |
 | ccd (Concordium) | ✅ | ❌ | ❌ |
 | xrpl | ✅ | ❌ | ❌ |
-| cardano | ✅ | ❌ | ❌ |
+| cardano | ✅ | ❌ | ✅ |
 
 ## Mechanisms
 
@@ -58,9 +58,9 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | exact | ccd (Concordium) | sponsored V1 | ✅ | ❌ | ❌ |
 | exact | xrpl | `sequence` | ✅ | ❌ | ❌ |
 | exact | xrpl | `ticketSequence` | ✅ | ❌ | ❌ |
-| exact | cardano | `default` | ✅ | ❌ | ❌ |
-| exact | cardano | `masumi` | ✅ | ❌ | ❌ |
-| exact | cardano | `script` | ✅ | ❌ | ❌ |
+| exact | cardano | `default` | ✅ | ❌ | ✅ |
+| exact | cardano | `masumi` | ✅ | ❌ | ✅ |
+| exact | cardano | `script` | ✅ | ❌ | ✅ |
 | upto | evm | `permit2` | ✅ | ✅ | ✅ |
 | upto | svm | - | ✅ | ✅ | ❌ |
 | batch-settlement | evm | `eip3009` | ✅ | ✅ | ✅ |

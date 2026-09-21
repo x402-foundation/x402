@@ -4,9 +4,10 @@ Demonstrates how to create a facilitator that supports all available networks wi
 optional chain configuration via environment variables.
 
 New chain support should be added here in alphabetic order by network prefix
-(e.g., "eip155" before "solana" before "tvm").
+(e.g., "cardano" before "eip155" before "solana" before "tvm").
 """
 
+import asyncio
 import os
 import sys
 
@@ -16,6 +17,13 @@ from pydantic import BaseModel
 from solders.keypair import Keypair
 
 from x402 import x402Facilitator
+from x402.mechanisms.cardano import (
+    BlockfrostConfig,
+    CardanoProviderConfig,
+    FacilitatorCardanoSignerConfig,
+    to_facilitator_cardano_signer,
+)
+from x402.mechanisms.cardano.exact import ExactCardanoFacilitatorScheme
 from x402.mechanisms.evm import FacilitatorWeb3Signer
 from x402.mechanisms.evm.exact.facilitator import ExactEvmScheme, ExactEvmSchemeConfig
 from x402.mechanisms.svm import FacilitatorKeypairSigner
@@ -35,24 +43,43 @@ load_dotenv()
 PORT = int(os.environ.get("PORT", "4022"))
 
 # Configuration - optional per network
+cardano_project_id = os.getenv("BLOCKFROST_PROJECT_ID")
 evm_private_key = os.environ.get("EVM_PRIVATE_KEY")
 svm_private_key = os.environ.get("SVM_PRIVATE_KEY")
 tvm_private_key = os.environ.get("TVM_PRIVATE_KEY")
 
 # Validate at least one private key is provided
-if not evm_private_key and not svm_private_key and not tvm_private_key:
-    print("❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or TVM_PRIVATE_KEY is required")
+if not cardano_project_id and not evm_private_key and not svm_private_key and not tvm_private_key:
+    print(
+        "❌ Configure BLOCKFROST_PROJECT_ID, EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or TVM_PRIVATE_KEY"
+    )
     sys.exit(1)
 
 # Network configuration
+CARDANO_NETWORK = os.getenv("CARDANO_NETWORK", "cardano:preprod")
 EVM_NETWORK = os.environ.get("EVM_NETWORK", "eip155:84532")  # Base Sepolia
 SVM_NETWORK = os.environ.get("SVM_NETWORK", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1")
 TVM_NETWORK = os.environ.get("TVM_NETWORK", TVM_TESTNET)
 
 # Initialize signers based on available keys
+cardano_signer = None
 evm_signer = None
 svm_signer = None
 tvm_signer = None
+
+if cardano_project_id:
+    cardano_signer = to_facilitator_cardano_signer(
+        FacilitatorCardanoSignerConfig(
+            CARDANO_NETWORK,
+            CardanoProviderConfig(
+                blockfrost=BlockfrostConfig(
+                    os.getenv("CARDANO_RPC_URL", "https://cardano-preprod.blockfrost.io/api/v0"),
+                    cardano_project_id,
+                )
+            ),
+            await_confirmation=False,
+        )
+    )
 
 if evm_private_key:
     evm_signer = FacilitatorWeb3Signer(
@@ -121,6 +148,9 @@ facilitator = (
 )
 
 # Register schemes based on available signers
+if cardano_signer is not None:
+    facilitator.register([CARDANO_NETWORK], ExactCardanoFacilitatorScheme(cardano_signer))
+
 if evm_signer:
     config = ExactEvmSchemeConfig(
         # Add trusted ERC-6492 factory addresses here (e.g. your chosen ERC-4337 smart wallet factory).
@@ -179,7 +209,13 @@ async def verify(request: VerifyRequest):
         requirements = PaymentRequirements.model_validate(request.paymentRequirements)
 
         # Verify payment (await async method)
-        response = await facilitator.verify(payload, requirements)
+        if requirements.network.split(":", 1)[0] in ("cardano", "cip34"):
+            # Cardano's synchronous RPC calls must not block the request loop.
+            response = await asyncio.to_thread(
+                lambda: asyncio.run(facilitator.verify(payload, requirements))
+            )
+        else:
+            response = await facilitator.verify(payload, requirements)
 
         return response.model_dump(by_alias=True, exclude_none=True)
     except Exception as e:
@@ -205,7 +241,13 @@ async def settle(request: SettleRequest):
         requirements = PaymentRequirements.model_validate(request.paymentRequirements)
 
         # Settle payment (await async method)
-        response = await facilitator.settle(payload, requirements)
+        if requirements.network.split(":", 1)[0] in ("cardano", "cip34"):
+            # These hooks and the Cardano signer run entirely in the worker loop.
+            response = await asyncio.to_thread(
+                lambda: asyncio.run(facilitator.settle(payload, requirements))
+            )
+        else:
+            response = await facilitator.settle(payload, requirements)
 
         return response.model_dump(by_alias=True, exclude_none=True)
     except Exception as e:

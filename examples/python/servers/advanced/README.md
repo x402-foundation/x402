@@ -367,3 +367,17 @@ server.register(EVM_NETWORK, evm_scheme)
 ```
 
 **Use case:** When you want to accept payments in tokens other than USDC, or use different tokens based on conditions (e.g., DAI for large amounts, custom tokens for specific networks).
+
+### Cardano
+
+`all_networks.py` also supports Cardano Preprod. Install the example dependencies
+with `uv sync`, then set `CARDANO_NETWORK=cardano:preprod`. Clients use
+`CARDANO_MNEMONIC` and `BLOCKFROST_PROJECT_ID`; servers use `CARDANO_ADDRESS`;
+facilitators need only `BLOCKFROST_PROJECT_ID`. Set `FACILITATOR_URL` to your
+Cardano-enabled facilitator. The default USD price uses Preprod USDM, so the
+buyer needs that token and ADA for fees and minimum UTxO deposits.
+
+`CARDANO_RPC_URL` overrides the Preprod Blockfrost URL. When selecting another
+network, supply its matching provider URL and project ID. See the
+[Cardano mechanism guide](../../../../python/x402/mechanisms/cardano/README.md)
+for explicit ADA prices, script payments, Masumi quotes and confirmation policy.

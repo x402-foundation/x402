@@ -20,7 +20,7 @@ import httpx
 
 async def main():
     ctx = create_e2e_client()
-    timeout = httpx.Timeout(30.0, connect=10.0)
+    timeout = httpx.Timeout(120.0 if "cardano" in ctx.endpoint_path else 30.0, connect=10.0)
     async with httpx.AsyncClient(
         base_url=ctx.base_url,
         timeout=timeout,

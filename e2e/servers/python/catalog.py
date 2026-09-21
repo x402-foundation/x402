@@ -104,6 +104,7 @@ class CatalogRoute:
     extensions: list[str]
     settlement_override: dict[str, str] | None
     payment_flow: str | None
+    max_timeout_seconds: int | None = None
 
 
 @dataclass(frozen=True)
@@ -116,9 +117,10 @@ class ResolvedRoute:
     network: str
     pay_to: str
     price: Any
-    extra: dict[str, str] | None
+    extra: dict[str, Any] | None
     extensions: list[str] = field(default_factory=list)
     settlement_override: dict[str, str] | None = None
+    max_timeout_seconds: int | None = None
 
 
 def _network_definition(network_id: str) -> dict[str, Any]:
@@ -168,6 +170,7 @@ def catalog_routes() -> list[CatalogRoute]:
                 extensions=list(definition.get("extensions", [])),
                 settlement_override=definition.get("settlementOverride"),
                 payment_flow=definition.get("paymentFlow"),
+                max_timeout_seconds=definition.get("maxTimeoutSeconds"),
             )
         )
 
@@ -277,6 +280,31 @@ def _merge_route_extra(
     return extra
 
 
+def _cardano_route(
+    route: CatalogRoute, network: str, pay_to: str, env: Callable[[str], str | None]
+) -> tuple[str, dict[str, Any]]:
+    from x402.mechanisms.cardano import masumi_escrow_address
+
+    extra: dict[str, Any] = {}
+    depth = (env("CARDANO_L1_CONFIRMATIONS") or "").strip()
+    if depth:
+        if not re.fullmatch(r"-?(0|[1-9]\d?)", depth) or not -1 <= int(depth) <= 20:
+            raise ValueError("CARDANO_L1_CONFIRMATIONS must be a plain integer from -1 to 20")
+        extra["confirmationPolicy"] = {"l1Confirmations": int(depth)}
+    if route.asset_transfer_method == "masumi":
+        pay_to = masumi_escrow_address(network)
+    elif route.asset_transfer_method == "script":
+        pay_to = env("SERVER_CARDANO_SCRIPT_ADDRESS") or (
+            "addr_test1wp8l7eylksmjas7ypzm0q35dwnjdxxvsfn0z0lflqzgs55stpd682"
+        )
+        extra["script"] = {
+            "type": "plutusV3",
+            "code": env("SERVER_CARDANO_SCRIPT_CODE") or "4d01000033222220051200120011",
+        }
+        extra["datum"] = env("SERVER_CARDANO_SCRIPT_DATUM") or "d8799f182aff"
+    return pay_to, extra
+
+
 def resolve_routes(env: Callable[[str], str | None] = os.getenv) -> list[ResolvedRoute]:
     """Resolve catalog routes for one server process.
 
@@ -294,6 +322,9 @@ def resolve_routes(env: Callable[[str], str | None] = os.getenv) -> list[Resolve
         caip2 = network_caip2(route.network, env)
         price, extra = _resolve_price(route, caip2, env)
         extra = _merge_route_extra(extra, route.payment_flow)
+        if route.network == "cardano":
+            pay_to, cardano_extra = _cardano_route(route, caip2, pay_to, env)
+            extra = {**(extra or {}), **cardano_extra} or None
 
         resolved.append(
             ResolvedRoute(
@@ -306,6 +337,7 @@ def resolve_routes(env: Callable[[str], str | None] = os.getenv) -> list[Resolve
                 extra=extra,
                 extensions=route.extensions,
                 settlement_override=route.settlement_override,
+                max_timeout_seconds=route.max_timeout_seconds,
             )
         )
 
