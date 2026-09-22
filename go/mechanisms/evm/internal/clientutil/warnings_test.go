@@ -20,11 +20,11 @@ func TestWarningSetWarnsOncePerKeyConcurrently(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			warnings.Warn("network|extension", "first warning")
+			warnings.WarnMissingCapability("scheme", "network", "extension", "first warning")
 		}()
 	}
 	wg.Wait()
-	warnings.Warn("other-network|extension", "second warning")
+	warnings.WarnMissingCapability("scheme", "other-network", "extension", "second warning")
 
 	output := logs.String()
 	if count := strings.Count(output, "first warning"); count != 1 {

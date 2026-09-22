@@ -120,12 +120,11 @@ func (c *ExactEvmScheme) trySignEip2612Permit(
 		return nil, err
 	}
 	if readSigner == nil {
-		c.warnings.Warn(
-			string(requirements.Network)+"|"+eip2612gassponsor.EIP2612GasSponsoring.Key(),
-			fmt.Sprintf(
-				"[x402 exact] %s was advertised for %s, but the client cannot read contracts; configure ExactEvmSchemeConfig.RPCURL or RPCByChainID, or provide a signer implementing evm.ClientEvmSignerWithReadContract; continuing without the extension",
-				eip2612gassponsor.EIP2612GasSponsoring.Key(), requirements.Network,
-			),
+		c.warnings.WarnMissingCapability(
+			"exact",
+			string(requirements.Network),
+			eip2612gassponsor.EIP2612GasSponsoring.Key(),
+			"the client cannot read contracts; configure ExactEvmSchemeConfig.RPCURL or RPCByChainID, or use an RPC-backed signer such as one created with signers/evm.NewClientSignerFromPrivateKeyWithClient",
 		)
 		return nil, nil
 	}
@@ -190,26 +189,6 @@ func (c *ExactEvmScheme) trySignErc20Approval(
 		return nil, nil
 	}
 
-	txSigner, err := c.resolveTxSigner(ctx, requirements.Network)
-	if err != nil {
-		return nil, err
-	}
-	if txSigner == nil {
-		c.warnings.Warn(
-			string(requirements.Network)+"|"+erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key(),
-			fmt.Sprintf(
-				"[x402 exact] %s was advertised for %s, but the client cannot sign an ERC-20 approval transaction; provide a signer implementing evm.ClientEvmSignerWithSignTransaction and configure ExactEvmSchemeConfig.RPCURL or RPCByChainID for nonce and fee estimation, or provide a signer implementing evm.ClientEvmSignerWithTxSigning; continuing without the extension",
-				erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key(), requirements.Network,
-			),
-		)
-		return nil, nil
-	}
-
-	chainID, err := evm.GetEvmChainId(string(requirements.Network))
-	if err != nil {
-		return nil, err
-	}
-
 	tokenAddress := evm.NormalizeAddress(requirements.Asset)
 
 	// If read capability exists, skip signing when Permit2 allowance is already sufficient.
@@ -230,6 +209,25 @@ func (c *ExactEvmScheme) trySignErc20Approval(
 				}
 			}
 		}
+	}
+
+	txSigner, err := c.resolveTxSigner(ctx, requirements.Network)
+	if err != nil {
+		return nil, err
+	}
+	if txSigner == nil {
+		c.warnings.WarnMissingCapability(
+			"exact",
+			string(requirements.Network),
+			erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key(),
+			"the client cannot sign an ERC-20 approval transaction; configure ExactEvmSchemeConfig.RPCURL or RPCByChainID for RPC access and provide transaction-signing support, or use an RPC-backed signer such as one created with signers/evm.NewClientSignerFromPrivateKeyWithClient",
+		)
+		return nil, nil
+	}
+
+	chainID, err := evm.GetEvmChainId(string(requirements.Network))
+	if err != nil {
+		return nil, err
 	}
 
 	// Sign the approve transaction

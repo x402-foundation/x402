@@ -151,7 +151,7 @@ routes := x402http.RoutesConfig{
 }
 ```
 
-**Client:** The scheme must be able to read token contracts. Provide a signer that implements `evm.ClientEvmSignerWithReadContract`, or configure an RPC endpoint:
+**Client:** The scheme must be able to read token contracts. Configure an RPC endpoint, or provide a functional RPC-backed signer such as one created with `evmsigners.NewClientSignerFromPrivateKeyWithClient`:
 
 ```go
 scheme := uptoevm.NewUptoEvmScheme(signer, &uptoevm.UptoEvmSchemeConfig{
@@ -190,7 +190,7 @@ routes := x402http.RoutesConfig{
 }
 ```
 
-**Client:** The signer must support transaction signing. An RPC-configured scheme can supply nonce resolution and fee estimation, but the signer must still implement `evm.ClientEvmSignerWithSignTransaction`; alternatively, provide a signer implementing the full `evm.ClientEvmSignerWithTxSigning` interface. `UptoEvmScheme` falls back to this when EIP-2612 is unavailable.
+**Client:** The signer must support transaction signing. An RPC-configured scheme can supply nonce resolution and fee estimation, but the signer must still implement `evm.ClientEvmSignerWithSignTransaction`; alternatively, provide a functional RPC-backed signer implementing `evm.ClientEvmSignerWithTxSigning`. `UptoEvmScheme` falls back to this when EIP-2612 is unavailable.
 
 **Facilitator:** Register with a signer that can broadcast transactions:
 

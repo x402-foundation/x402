@@ -10,10 +10,17 @@ type WarningSet struct {
 	seen sync.Map
 }
 
-// Warn logs message unless key has already been seen.
-func (w *WarningSet) Warn(key string, message string) {
+// WarnMissingCapability logs a capability warning once per network and extension.
+func (w *WarningSet) WarnMissingCapability(scheme string, network string, extension string, detail string) {
+	key := network + "|" + extension
 	if _, loaded := w.seen.LoadOrStore(key, struct{}{}); loaded {
 		return
 	}
-	log.Print(message)
+	log.Printf(
+		"[x402 %s] %s was advertised for %s, but %s; continuing without the extension",
+		scheme,
+		extension,
+		network,
+		detail,
+	)
 }

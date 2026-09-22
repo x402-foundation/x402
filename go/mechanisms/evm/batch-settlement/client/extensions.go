@@ -118,25 +118,6 @@ func (c *BatchSettlementEvmScheme) trySignEip2612Permit(
 		return nil, nil
 	}
 
-	readSigner, ok := c.signer.(evm.ClientEvmSignerWithReadContract)
-	if !ok {
-		c.warnings.Warn(
-			string(requirements.Network)+"|"+eip2612gassponsor.EIP2612GasSponsoring.Key(),
-			fmt.Sprintf(
-				"[x402 batch-settlement] %s was advertised for %s, but the signer cannot read contracts; provide a signer implementing evm.ClientEvmSignerWithReadContract; continuing without the extension",
-				eip2612gassponsor.EIP2612GasSponsoring.Key(), requirements.Network,
-			),
-		)
-		return nil, nil
-	}
-
-	chainID, err := evm.GetEvmChainId(string(requirements.Network))
-	if err != nil {
-		return nil, err
-	}
-
-	tokenAddress := evm.NormalizeAddress(requirements.Asset)
-
 	// Pull `payload.deposit.amount` from the freshly-built batched deposit
 	// payload. The signed EIP-2612 `info.amount` must equal the BATCH
 	// deposit (what the facilitator's `validateBatchEip2612Permit` checks),
@@ -152,6 +133,27 @@ func (c *BatchSettlementEvmScheme) trySignEip2612Permit(
 	if depositAmount == "" {
 		return nil, nil
 	}
+
+	readSigner, err := evm.ResolveReadSigner(ctx, c.signer, "")
+	if err != nil {
+		return nil, err
+	}
+	if readSigner == nil {
+		c.warnings.WarnMissingCapability(
+			"batch-settlement",
+			string(requirements.Network),
+			eip2612gassponsor.EIP2612GasSponsoring.Key(),
+			"the signer cannot read contracts; provide an RPC-backed signer implementing evm.ClientEvmSignerWithReadContract, such as one created with signers/evm.NewClientSignerFromPrivateKeyWithClient",
+		)
+		return nil, nil
+	}
+
+	chainID, err := evm.GetEvmChainId(string(requirements.Network))
+	if err != nil {
+		return nil, err
+	}
+
+	tokenAddress := evm.NormalizeAddress(requirements.Asset)
 
 	// Allowance short-circuit: if the user has already approved Permit2 for
 	// at least the deposit amount, no permit is needed. The downstream
@@ -217,26 +219,9 @@ func (c *BatchSettlementEvmScheme) trySignErc20Approval(
 		return nil, nil
 	}
 
-	txSigner, ok := c.signer.(evm.ClientEvmSignerWithTxSigning)
-	if !ok {
-		c.warnings.Warn(
-			string(requirements.Network)+"|"+erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key(),
-			fmt.Sprintf(
-				"[x402 batch-settlement] %s was advertised for %s, but the signer cannot sign an ERC-20 approval transaction; provide a signer implementing evm.ClientEvmSignerWithTxSigning; continuing without the extension",
-				erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key(), requirements.Network,
-			),
-		)
-		return nil, nil
-	}
-
-	chainID, err := evm.GetEvmChainId(string(requirements.Network))
-	if err != nil {
-		return nil, err
-	}
-
 	tokenAddress := evm.NormalizeAddress(requirements.Asset)
 
-	if readSigner, hasRead := c.signer.(evm.ClientEvmSignerWithReadContract); hasRead {
+	if readSigner, _ := evm.ResolveReadSigner(ctx, c.signer, ""); readSigner != nil {
 		// Approximate the deposit amount with the per-request amount —
 		// sufficient for the allowance short-circuit since `deposit ≥
 		// requirements.Amount` always holds for batched flows. Skip the
@@ -245,6 +230,25 @@ func (c *BatchSettlementEvmScheme) trySignErc20Approval(
 			hasSufficientPermit2Allowance(ctx, readSigner, tokenAddress, c.signer.Address(), requirements.Amount) {
 			return nil, nil
 		}
+	}
+
+	txSigner, err := evm.ResolveTxSigner(ctx, c.signer, "")
+	if err != nil {
+		return nil, err
+	}
+	if txSigner == nil {
+		c.warnings.WarnMissingCapability(
+			"batch-settlement",
+			string(requirements.Network),
+			erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key(),
+			"the signer cannot sign an ERC-20 approval transaction; provide an RPC-backed signer implementing evm.ClientEvmSignerWithTxSigning, such as one created with signers/evm.NewClientSignerFromPrivateKeyWithClient",
+		)
+		return nil, nil
+	}
+
+	chainID, err := evm.GetEvmChainId(string(requirements.Network))
+	if err != nil {
+		return nil, err
 	}
 
 	info, err := exactclient.SignErc20ApprovalTransaction(ctx, txSigner, tokenAddress, chainID)
