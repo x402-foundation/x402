@@ -21,9 +21,7 @@ from x402 import x402ResourceServerSync
 from x402.http import FacilitatorConfig, HTTPFacilitatorClientSync
 from x402.mechanisms.cardano.exact import ExactCardanoServerScheme
 
-facilitator = HTTPFacilitatorClientSync(
-    FacilitatorConfig(url="http://localhost:4022")
-)
+facilitator = HTTPFacilitatorClientSync(FacilitatorConfig(url="http://localhost:4022"))
 server = x402ResourceServerSync(facilitator)
 server.register("cardano:*", ExactCardanoServerScheme())
 server.initialize()
@@ -148,9 +146,7 @@ from x402.mechanisms.cardano import (
     to_masumi_seller_signer,
 )
 
-seller = to_masumi_seller_signer(
-    os.environ["SERVER_CARDANO_SELLER_MNEMONIC"], "cardano:preprod"
-)
+seller = to_masumi_seller_signer(os.environ["SERVER_CARDANO_SELLER_MNEMONIC"], "cardano:preprod")
 server_scheme = ExactCardanoServerScheme(masumi=MasumiIssuerConfig(seller))
 escrow = masumi_escrow_address("cardano:preprod")
 ```
