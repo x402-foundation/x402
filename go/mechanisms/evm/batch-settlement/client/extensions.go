@@ -120,6 +120,13 @@ func (c *BatchSettlementEvmScheme) trySignEip2612Permit(
 
 	readSigner, ok := c.signer.(evm.ClientEvmSignerWithReadContract)
 	if !ok {
+		c.warnings.Warn(
+			string(requirements.Network)+"|"+eip2612gassponsor.EIP2612GasSponsoring.Key(),
+			fmt.Sprintf(
+				"[x402 batch-settlement] %s was advertised for %s, but the signer cannot read contracts; provide a signer implementing evm.ClientEvmSignerWithReadContract; continuing without the extension",
+				eip2612gassponsor.EIP2612GasSponsoring.Key(), requirements.Network,
+			),
+		)
 		return nil, nil
 	}
 
@@ -212,6 +219,13 @@ func (c *BatchSettlementEvmScheme) trySignErc20Approval(
 
 	txSigner, ok := c.signer.(evm.ClientEvmSignerWithTxSigning)
 	if !ok {
+		c.warnings.Warn(
+			string(requirements.Network)+"|"+erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key(),
+			fmt.Sprintf(
+				"[x402 batch-settlement] %s was advertised for %s, but the signer cannot sign an ERC-20 approval transaction; provide a signer implementing evm.ClientEvmSignerWithTxSigning; continuing without the extension",
+				erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key(), requirements.Network,
+			),
+		)
 		return nil, nil
 	}
 

@@ -12,13 +12,15 @@ import (
 	"github.com/x402-foundation/x402/go/v2/extensions/eip2612gassponsor"
 	"github.com/x402-foundation/x402/go/v2/extensions/erc20approvalgassponsor"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/internal/clientutil"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // ExactEvmScheme implements the SchemeNetworkClient interface for EVM exact payments (V2)
 type ExactEvmScheme struct {
-	signer evm.ClientEvmSigner
-	config *ExactEvmSchemeConfig
+	signer   evm.ClientEvmSigner
+	config   *ExactEvmSchemeConfig
+	warnings *clientutil.WarningSet
 }
 
 // NewExactEvmScheme creates a new ExactEvmScheme.
@@ -26,8 +28,9 @@ type ExactEvmScheme struct {
 // Extension enrichment paths use optional runtime capabilities.
 func NewExactEvmScheme(signer evm.ClientEvmSigner, config *ExactEvmSchemeConfig) *ExactEvmScheme {
 	return &ExactEvmScheme{
-		signer: signer,
-		config: config,
+		signer:   signer,
+		config:   config,
+		warnings: &clientutil.WarningSet{},
 	}
 }
 
@@ -117,6 +120,13 @@ func (c *ExactEvmScheme) trySignEip2612Permit(
 		return nil, err
 	}
 	if readSigner == nil {
+		c.warnings.Warn(
+			string(requirements.Network)+"|"+eip2612gassponsor.EIP2612GasSponsoring.Key(),
+			fmt.Sprintf(
+				"[x402 exact] %s was advertised for %s, but the client cannot read contracts; configure ExactEvmSchemeConfig.RPCURL or RPCByChainID, or provide a signer implementing evm.ClientEvmSignerWithReadContract; continuing without the extension",
+				eip2612gassponsor.EIP2612GasSponsoring.Key(), requirements.Network,
+			),
+		)
 		return nil, nil
 	}
 
@@ -185,6 +195,13 @@ func (c *ExactEvmScheme) trySignErc20Approval(
 		return nil, err
 	}
 	if txSigner == nil {
+		c.warnings.Warn(
+			string(requirements.Network)+"|"+erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key(),
+			fmt.Sprintf(
+				"[x402 exact] %s was advertised for %s, but the client cannot sign an ERC-20 approval transaction; provide a signer implementing evm.ClientEvmSignerWithSignTransaction and configure ExactEvmSchemeConfig.RPCURL or RPCByChainID for nonce and fee estimation, or provide a signer implementing evm.ClientEvmSignerWithTxSigning; continuing without the extension",
+				erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key(), requirements.Network,
+			),
+		)
 		return nil, nil
 	}
 

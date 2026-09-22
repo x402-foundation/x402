@@ -1,8 +1,11 @@
 package client
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"math/big"
+	"strings"
 	"testing"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
@@ -116,6 +119,66 @@ func bothExtensionsDeclared() map[string]interface{} {
 
 func extCtx(extensions map[string]interface{}) x402.PaymentPayloadContext {
 	return x402.PaymentPayloadContext{Extensions: extensions}
+}
+
+func captureBatchExtensionLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var logs bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previous) })
+	return &logs
+}
+
+func TestCreatePaymentPayloadWarnsOnceWhenEip2612CapabilityIsMissing(t *testing.T) {
+	logs := captureBatchExtensionLogs(t)
+	scheme := batchedExtSchemeWith(&mockSigner{address: extTestSigner, sig: []byte{0xab}})
+
+	for range 2 {
+		payload, err := scheme.CreatePaymentPayload(
+			context.Background(),
+			extRequirementsPermit2(),
+			extCtx(eip2612OnlyDeclared()),
+		)
+		if err != nil {
+			t.Fatalf("CreatePaymentPayload failed: %v", err)
+		}
+		if payload.Extensions != nil {
+			t.Fatalf("expected no extension without read capability, got %+v", payload.Extensions)
+		}
+	}
+
+	output := logs.String()
+	if count := strings.Count(output, "[x402 batch-settlement] eip2612GasSponsoring"); count != 1 {
+		t.Fatalf("expected one warning, got %d: %q", count, output)
+	}
+	if !strings.Contains(output, "ClientEvmSignerWithReadContract") {
+		t.Fatalf("expected actionable read-capability warning, got %q", output)
+	}
+}
+
+func TestCreatePaymentPayloadWarnsWhenErc20ApprovalCapabilityIsMissing(t *testing.T) {
+	logs := captureBatchExtensionLogs(t)
+	scheme := batchedExtSchemeWith(&mockSigner{address: extTestSigner, sig: []byte{0xab}})
+
+	payload, err := scheme.CreatePaymentPayload(
+		context.Background(),
+		extRequirementsPermit2(),
+		extCtx(map[string]interface{}{
+			erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key(): map[string]interface{}{},
+		}),
+	)
+	if err != nil {
+		t.Fatalf("CreatePaymentPayload failed: %v", err)
+	}
+	if payload.Extensions != nil {
+		t.Fatalf("expected no extension without transaction-signing capability, got %+v", payload.Extensions)
+	}
+	output := logs.String()
+	if !strings.Contains(output, "[x402 batch-settlement] erc20ApprovalGasSponsoring") ||
+		!strings.Contains(output, "ClientEvmSignerWithTxSigning") {
+		t.Fatalf("expected actionable transaction-signing warning, got %q", output)
+	}
 }
 
 // TestCreatePaymentPayload_NoExtensionsDeclared confirms that

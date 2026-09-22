@@ -13,20 +13,23 @@ import (
 	"github.com/x402-foundation/x402/go/v2/extensions/erc20approvalgassponsor"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 	exactclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/internal/clientutil"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // UptoEvmScheme implements SchemeNetworkClient for EVM upto payments.
 // Always uses Permit2 (no EIP-3009 path).
 type UptoEvmScheme struct {
-	signer evm.ClientEvmSigner
-	config *UptoEvmSchemeConfig
+	signer   evm.ClientEvmSigner
+	config   *UptoEvmSchemeConfig
+	warnings *clientutil.WarningSet
 }
 
 func NewUptoEvmScheme(signer evm.ClientEvmSigner, config *UptoEvmSchemeConfig) *UptoEvmScheme {
 	return &UptoEvmScheme{
-		signer: signer,
-		config: config,
+		signer:   signer,
+		config:   config,
+		warnings: &clientutil.WarningSet{},
 	}
 }
 
@@ -100,6 +103,13 @@ func (c *UptoEvmScheme) trySignEip2612Permit(
 		return nil, err
 	}
 	if readSigner == nil {
+		c.warnings.Warn(
+			string(requirements.Network)+"|"+eip2612gassponsor.EIP2612GasSponsoring.Key(),
+			fmt.Sprintf(
+				"[x402 upto] %s was advertised for %s, but the client cannot read contracts; configure UptoEvmSchemeConfig.RPCURL or RPCByChainID, or provide a signer implementing evm.ClientEvmSignerWithReadContract; continuing without the extension",
+				eip2612gassponsor.EIP2612GasSponsoring.Key(), requirements.Network,
+			),
+		)
 		return nil, nil
 	}
 
@@ -161,6 +171,13 @@ func (c *UptoEvmScheme) trySignErc20Approval(
 		return nil, err
 	}
 	if txSigner == nil {
+		c.warnings.Warn(
+			string(requirements.Network)+"|"+erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key(),
+			fmt.Sprintf(
+				"[x402 upto] %s was advertised for %s, but the client cannot sign an ERC-20 approval transaction; provide a signer implementing evm.ClientEvmSignerWithSignTransaction and configure UptoEvmSchemeConfig.RPCURL or RPCByChainID for nonce and fee estimation, or provide a signer implementing evm.ClientEvmSignerWithTxSigning; continuing without the extension",
+				erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key(), requirements.Network,
+			),
+		)
 		return nil, nil
 	}
 
