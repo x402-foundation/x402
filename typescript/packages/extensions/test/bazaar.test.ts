@@ -1408,6 +1408,38 @@ describe("Bazaar Discovery Extension", () => {
       expect(postResult.valid).toBe(true);
     });
 
+    // Issue #3511: a route registered without a verb returns 402 for any method,
+    // so the probe method can disagree with the declared input shape.
+    it.each([
+      {
+        name: "body declaration probed with GET",
+        config: { input: { prompt: "hi" }, bodyType: "json" as const },
+        probe: "GET",
+        expected: "POST",
+      },
+      {
+        name: "query declaration probed with POST",
+        config: { input: { q: "hi" } },
+        probe: "POST",
+        expected: "GET",
+      },
+    ])("should not advertise the probe method for a $name", ({ config, probe, expected }) => {
+      const declared = declareDiscoveryExtension(config);
+
+      const enriched = bazaarResourceServerExtension.enrichDeclaration!(declared.bazaar, {
+        method: probe,
+        path: "/test",
+        adapter: createMockAdapter(),
+      }) as DiscoveryExtension;
+
+      expect((enriched.info as BodyDiscoveryInfo).input.method).toBe(expected);
+      expect(extractMethodEnum(enriched.schema as Record<string, unknown>)).toEqual([expected]);
+      expect(
+        validateDiscoveryExtensionSpec(enriched as unknown as Record<string, unknown>),
+      ).toEqual({ valid: true });
+      expect(validateDiscoveryExtension(enriched)).toEqual({ valid: true });
+    });
+
     it("should return unchanged declaration for non-HTTP context", () => {
       const declared = declareDiscoveryExtension({
         input: { data: "test" },
