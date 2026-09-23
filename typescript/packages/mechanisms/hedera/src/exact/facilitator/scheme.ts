@@ -255,6 +255,30 @@ export class ExactHederaScheme implements SchemeNetworkFacilitator {
         requirements.network,
       );
 
+      // Consensus success only proves the transfer executed. When the signer
+      // returns the record's effective balance changes, confirm the payee's
+      // net credit equals the required amount — HTS tokens with custom fees
+      // (fractional fees are deducted from the receiver; fixed fees with
+      // net-of-transfers likewise) can otherwise settle SUCCESS while the
+      // payee received less than required.
+      if (settled.transfers != null) {
+        const assetLegs = isHbarAsset(requirements.asset)
+          ? settled.transfers.hbarTransfers
+          : (settled.transfers.tokenTransfers[requirements.asset] ?? []);
+        const netToPayTo = assetLegs
+          .filter(entry => hederaAccountIdsEqual(entry.accountId, requirements.payTo))
+          .reduce((sum, entry) => sum + BigInt(entry.amount), 0n);
+        if (netToPayTo !== BigInt(requirements.amount)) {
+          return {
+            success: false,
+            network: requirements.network,
+            payer: valid.payer || feePayer,
+            transaction: settled.transactionId,
+            errorReason: "settlement_transfer_amount_mismatch",
+          };
+        }
+      }
+
       return {
         success: true,
         network: requirements.network,
