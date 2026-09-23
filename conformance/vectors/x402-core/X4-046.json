@@ -1,0 +1,20 @@
+{
+  "id": "X4-046",
+  "title": "Duplicate Settlement Claim",
+  "category": "replay_double_spend",
+  "requirement": "HC-36: Only one settlement claim per payment nonce must be accepted",
+  "method": "GET",
+  "request": {
+    "nonce": "3efe0badd6164597879bdb34a25918b3",
+    "tx_hashes": [
+      "0x709b55bd3da0f5a838125bd0ee20c5bfdd7caba173912d4281cae816b79a201b",
+      "0x27ca64c092a959c7edc525ed45e845b1de6a7590d173fd2fad9133c8a779a1e3"
+    ]
+  },
+  "owasp_asi": "ASI03",
+  "severity": "critical",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-046"
+}
