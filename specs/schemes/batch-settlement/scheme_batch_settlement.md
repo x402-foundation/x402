@@ -75,3 +75,7 @@ Network bindings may use optional extensions to communicate additional requireme
 [`exact`](../exact/scheme_exact.md) — value is transferred immediately per request.
 
 [`upto`](../upto/scheme_upto.md) — value is transferred immediately, variable amount up to a client-authorized maximum.
+
+### Network-specific bindings
+
+- TRON: See [`scheme_batch_settlement_tron.md`](./scheme_batch_settlement_tron.md)
