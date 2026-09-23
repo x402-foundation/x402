@@ -1616,6 +1616,9 @@ importers:
       '@x402/core':
         specifier: workspace:~
         version: link:../../core
+      viem:
+        specifier: ^2.48.11
+        version: 2.48.11(bufferutil@4.0.9)(typescript@5.9.2)(utf-8-validate@5.0.10)(zod@4.1.13)
     devDependencies:
       '@eslint/js':
         specifier: ^9.24.0

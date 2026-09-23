@@ -144,7 +144,11 @@ export function mirrorNodeUrlForNetwork(network: string): string {
  * @param asset - HTS token id
  * @returns True when a transfer of `asset` to `payTo` will not fail association
  */
-async function isPayToAssociated(baseUrl: string, payTo: string, asset: string): Promise<boolean> {
+export async function isPayToAssociated(
+  baseUrl: string,
+  payTo: string,
+  asset: string,
+): Promise<boolean> {
   const direct = await fetchJson<MirrorTokensResponse>(
     `${baseUrl}/api/v1/accounts/${encodeURIComponent(payTo)}/tokens?token.id=${encodeURIComponent(asset)}`,
   );

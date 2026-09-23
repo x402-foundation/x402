@@ -1,6 +1,6 @@
 # @x402/hedera
 
-Hedera implementation of the x402 `exact` payment scheme (v2).
+Hedera implementation of the x402 `exact` and `batch-settlement` payment schemes (v2).
 
 ## Installation
 
@@ -11,6 +11,7 @@ pnpm add @x402/hedera
 ## Features
 
 - x402 v2 exact scheme support for Hedera (`hedera:mainnet`, `hedera:testnet`)
+- x402 v2 `batch-settlement` scheme (payment channels with HTS USDC escrow, ED25519/ECDSA vouchers, HTS-allowance deposits) — see [`src/batch-settlement/README.md`](./src/batch-settlement/README.md)
 - HBAR (`asset: 0.0.0`) and HTS fungible token payment validation
 - Facilitator fee payer model via `paymentRequirements.extra.feePayer`
 - Configurable alias handling policy (`allow` or `reject`, default `reject`)
@@ -86,44 +87,24 @@ Implementations should document and monitor this policy because alias-based auto
 
 ## Hedera SDK primitives
 
-This package re-exports a curated subset of `@hiero-ledger/sdk` primitives
-(`AccountBalanceQuery`, `AccountId`, `AccountInfoQuery`, `Client`, `Hbar`,
-`PrivateKey`, `TokenAssociateTransaction`, `TokenId`, `Transaction`,
-`TransactionId`, `TransferTransaction`) so that a consuming application
-always resolves a single SDK instance through `@x402/hedera`, even when it
-lives in a sibling workspace from the one where `@x402/hedera` itself was
-installed. Importing `@hiero-ledger/sdk` directly alongside `@x402/hedera`
-in such setups yields duplicate on-disk installs — the SDK's internal
-string-brand / `instanceof` checks then throw `t.startsWith is not a
-function` at runtime.
+This package re-exports a curated subset of `@hiero-ledger/sdk` primitives (`AccountBalanceQuery`, `AccountId`, `AccountInfoQuery`, `Client`, `Hbar`, `PrivateKey`, `TokenAssociateTransaction`, `TokenId`, `Transaction`, `TransactionId`, `TransferTransaction`) so that a consuming application always resolves a single SDK instance through `@x402/hedera`, even when it lives in a sibling workspace from the one where `@x402/hedera` itself was installed. Importing `@hiero-ledger/sdk` directly alongside `@x402/hedera` in such setups yields duplicate on-disk installs — the SDK's internal string-brand / `instanceof` checks then throw `t.startsWith is not a function` at runtime.
 
-The re-exports are pinned to the `@hiero-ledger/sdk` version declared in
-this package's `dependencies`. Consuming the re-exported symbols couples
-your application to that version until `@x402/hedera` bumps its pin; a
-major SDK bump is treated as a breaking change in this package.
+The re-exports are pinned to the `@hiero-ledger/sdk` version declared in this package's `dependencies`. Consuming the re-exported symbols couples your application to that version until `@x402/hedera` bumps its pin; a major SDK bump is treated as a breaking change in this package.
 
 ## Testnet Faucet
 
-To run on `hedera:testnet` you need funded client and facilitator accounts plus
-testnet HBAR for fees.
+To run on `hedera:testnet` you need funded client and facilitator accounts plus testnet HBAR for fees.
 
 - **Hedera Portal (faucet + account creation):** https://portal.hedera.com/
   - Sign up, create a testnet account, and claim testnet HBAR.
-  - The portal also exposes your account id and ECDSA/ED25519 keys to plug into
-    `HEDERA_CLIENT_PRIVATE_KEY` / `HEDERA_FACILITATOR_PRIVATE_KEY`.
-- **Circle USDC testnet faucet:** https://faucet.circle.com/ — select
-  "Hedera Testnet" to mint test USDC (`0.0.429274`) to an already-associated
-  account.
+  - The portal also exposes your account id and ECDSA/ED25519 keys to plug into `HEDERA_CLIENT_PRIVATE_KEY` / `HEDERA_FACILITATOR_PRIVATE_KEY`.
+- **Circle USDC testnet faucet:** https://faucet.circle.com/ — select "Hedera Testnet" to mint test USDC (`0.0.429274`) to an already-associated account.
 
 ## Token Association
 
-Hedera requires every HTS token to be explicitly associated with each account
-before the account can receive it. Both the payer and the recipient must be
-associated with the token used by the payment before settlement, otherwise the
-transfer fails on chain with `TOKEN_NOT_ASSOCIATED_TO_ACCOUNT`.
+Hedera requires every HTS token to be explicitly associated with each account before the account can receive it. Both the payer and the recipient must be associated with the token used by the payment before settlement, otherwise the transfer fails on chain with `TOKEN_NOT_ASSOCIATED_TO_ACCOUNT`.
 
-The Hedera portal does not expose token association, so use the Hiero SDK
-directly:
+The Hedera portal does not expose token association, so use the Hiero SDK directly:
 
 ```ts
 import { AccountId, Client, PrivateKey, TokenAssociateTransaction, TokenId } from "@x402/hedera";
@@ -140,14 +121,11 @@ await new TokenAssociateTransaction()
 client.close();
 ```
 
-Alternatively, configure `maxAutomaticTokenAssociations` on the recipient
-account (see the Hiero SDK `AccountUpdateTransaction`) to opt into automatic
-associations for future HTS tokens.
+Alternatively, configure `maxAutomaticTokenAssociations` on the recipient account (see the Hiero SDK `AccountUpdateTransaction`) to opt into automatic associations for future HTS tokens.
 
 ## Live Integration Testing
 
-The integration suite supports an env-gated live Hedera test in
-`test/integrations/exact-hedera.test.ts`.
+The integration suite supports an env-gated live Hedera test in `test/integrations/exact-hedera.test.ts`.
 
 - Create or update `typescript/packages/mechanisms/hedera/.env.test`.
 - This live suite currently assumes **ECDSA** private keys for both client and facilitator.
@@ -161,3 +139,12 @@ Run:
 ```bash
 pnpm test:integration
 ```
+
+## Batch-settlement deployments
+
+| Network | Escrow (`x402BatchSettlementHedera`) | Collector (`HederaAllowanceDepositCollector`) |
+| --- | --- | --- |
+| `hedera:testnet` | [`0.0.10463847`](https://hashscan.io/testnet/contract/0.0.10463847) (Sourcify verified) | [`0.0.10463851`](https://hashscan.io/testnet/contract/0.0.10463851) (Sourcify verified) |
+| `hedera:mainnet` | not deployed | not deployed |
+
+Configured in `BATCH_SETTLEMENT_DEPLOYMENTS`; see [`src/batch-settlement/README.md`](./src/batch-settlement/README.md) for usage and `scripts/deploy-batch-settlement.ts` for deploying your own.
