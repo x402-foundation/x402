@@ -15,6 +15,7 @@ import {
 } from "../../../src/batch-settlement/client/channel";
 import { processCorrectivePaymentRequired } from "../../../src/batch-settlement/client/recovery";
 import { InMemoryClientChannelStorage } from "../../../src/batch-settlement/client/storage";
+import { _resetSponsoringWarnings } from "../../../src/shared/extensions/gasSponsoring";
 import { computeChannelId as computeChannelIdForNetwork } from "../../../src/batch-settlement/utils";
 import { PERMIT2_ADDRESS } from "../../../src/constants";
 import { PERMIT2_DEPOSIT_COLLECTOR_ADDRESS } from "../../../src/batch-settlement/constants";
@@ -734,6 +735,39 @@ describe("BatchSettlementEvmScheme — createPaymentPayload", () => {
     expect(auth.permitted.amount).toBe(payload.deposit.amount);
     expect(auth.spender).toBe(getAddress(PERMIT2_DEPOSIT_COLLECTOR_ADDRESS));
     expect(auth.witness.channelId).toBe(payload.voucher.channelId);
+  });
+
+  it("warns once, and skips the sponsored permit, when the signer cannot read the chain (#3458)", async () => {
+    _resetSponsoringWarnings();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const storage = new InMemoryClientChannelStorage();
+      const baseSigner = buildSigner(PAYER_PRIVATE_KEY); // no readContract, no rpcUrl
+      const config = buildChannelConfig(
+        makeDeps({ signer: baseSigner, storage }),
+        makeRequirements(),
+      );
+      await storage.set(computeChannelId(config).toLowerCase(), {});
+      const client = new BatchSettlementEvmScheme(baseSigner, { storage });
+      const result = await client.createPaymentPayload(
+        2,
+        makeRequirements({
+          extra: {
+            name: "USDC",
+            version: "2",
+            receiverAuthorizer: RECEIVER_AUTHORIZER,
+            assetTransferMethod: "permit2",
+          },
+        }),
+        { extensions: { eip2612GasSponsoring: {} }, maxAmountPerPayment: "1000000" } as never,
+      );
+      const extensions = result.extensions as Record<string, unknown> | undefined;
+      expect(extensions?.eip2612GasSponsoring).toBeUndefined();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toMatch(/cannot read the chain/);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("signs EIP-2612 Permit2 approval for deposit.amount", async () => {
