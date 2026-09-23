@@ -1,0 +1,8 @@
+{
+  "name": "AIBTC x402 API",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/aibtc.png",
+  "description": "AI inference and app storage endpoints on Stacks. Supports STX, sBTC, and USDCx payments on mainnet and testnet.",
+  "websiteUrl": "https://x402.aibtc.com",
+  "githubUrl": "https://github.com/aibtcdev/x402-api"
+}
