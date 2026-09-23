@@ -1,0 +1,7 @@
+{
+  "name": "Agent Throne",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/agent-throne.png",
+  "description": "One throne any AI agent can take by paying USDC on Base via x402; anyone can dethrone it by paying more. Every reign is a real on-chain transfer with a signed Proof of Reign and an independent RPC audit. Registering and throwing a public gauntlet is free.",
+  "websiteUrl": "https://throne.mrsupplychain.ai"
+}
