@@ -7,10 +7,12 @@ networks using the `lnbtc` namespace defined here, in CAIP-2 format. The client
 pays a fresh BOLT11 invoice from the resource server and returns its 32-byte
 payment preimage. The facilitator verifies `SHA-256(preimage) == payment_hash`
 and requires the invoice signing key to match `payTo`. This check does not require
-access to the receiver's Lightning node. A client MUST NOT select this scheme
+access to the receiver's Lightning node. A client MUST NOT select this method
 unless its payer Lightning node returns the preimage after payment.
 
-The scheme supports only the `bolt11` asset transfer method and the `upfront`
+This is the default `bolt11` asset transfer method. Under the `invoice` method,
+for payers that cannot return the preimage, the client presents the payment hash
+and the facilitator queries the receiver. Both methods use the `upfront`
 payment flow. The resource server processes the request only after the facilitator
 validates the proof and records the payment hash.
 
@@ -34,11 +36,25 @@ The supported networks are listed below.
   `lnbtc:000000000933ea01ad0ee984209779ba` and BOLT11 currency `tb`.
 - Messages on the wire MUST use one of these concrete network identifiers.
 
-## Asset Transfer Method and Payment Flow
+## Asset Transfer Methods and Payment Flow
 
-`"bolt11"` is the only supported asset transfer method.
+Both asset transfer methods belong to the
+[client-submitted (payment proof)](./scheme_exact.md#client-submitted-payment-proof)
+family: the client pays the invoice, then presents a proof of payment.
+
+| Method | Proof in `payload` | Settle checks | Facilitator needs receiver access |
+|---|---|---|---|
+| `bolt11` (default) | `preimage` | `SHA-256(preimage) == payment_hash` | No |
+| `invoice` | `paymentHash` | The receiver reports the invoice as settled | Yes |
+
 `extra.assetTransferMethod` MAY be omitted, in which case it defaults to
-`"bolt11"`. Any explicit value MUST be `"bolt11"`.
+`"bolt11"`. Any explicit value MUST be `"bolt11"` or `"invoice"`. `bolt11` is
+RECOMMENDED because its proof is self-verifying, which `scheme_exact.md` prefers,
+and a client that can obtain the preimage SHOULD select it. `invoice` is a
+fallback for payers that cannot return the preimage, such as a wallet on a second
+device paying a QR code, some custodial wallets, and LNURL-based payers. A
+resource server MAY offer both through `accepts[]` entries that differ only in
+`extra.assetTransferMethod` and `extra.invoice`.
 
 `"upfront"` is the only supported payment flow because a Lightning payment settles
 before its preimage is available. The resource server MUST set
@@ -56,7 +72,7 @@ The protocol sequence is:
 1. The resource server computes the request hash and returns a fresh BOLT11
    invoice that commits to it in a payment requirement.
 2. The client validates and pays the invoice, then constructs a payment payload
-   containing the preimage.
+   containing the preimage (`bolt11`) or the payment hash (`invoice`).
 3. The resource server sends the payload to the facilitator's `/settle` endpoint.
    It MUST NOT call `/verify` for this flow.
 4. The facilitator validates the proof and atomically records the payment hash as
@@ -72,14 +88,19 @@ The protocol sequence is:
 - **Preimage**: The 32-byte secret whose SHA-256 digest is the payment hash.
 - **Replay store**: Storage that atomically records settled network and payment-hash
   pairs and persists across facilitator restarts.
+- **Invoice state**: The receiver's state for an invoice: open (unpaid, possibly
+  with HTLCs held for part of the amount), accepted (HTLCs held but not settled),
+  settled, or canceled (including expired unpaid).
 
-A payer adapter MUST return the payment preimage when it reports a payment as
-paid. A client MUST NOT use an adapter that cannot return the preimage.
+Under `bolt11`, a payer adapter MUST return the payment preimage when it reports a
+payment as paid, and a client MUST NOT use an adapter that cannot.
 
 A receiver adapter MUST be able to create a fresh invoice for an exact
 millisatoshi amount with a caller-supplied BOLT11 description hash. The resource
 server MUST have exclusive invoice-issuance authority for the receiver key in
 `payTo`; an untrusted party MUST NOT be able to create invoices signed by that key.
+Under `invoice`, the facilitator's receiver adapter MUST report, for a payment
+hash, the invoice state and the amount received.
 
 ## Amounts
 
@@ -105,9 +126,11 @@ other forms, such as `$1`, `1 USD`, or `0.0001 BTC`, MUST be rejected unless the
 application has registered a conversion parser. The error SHOULD direct the
 caller to use an explicit atomic `AssetAmount`.
 
-For this method, the x402 settled amount is the invoice amount, which MUST equal
+For both methods, the x402 settled amount is the invoice amount, which MUST equal
 `PaymentRequirements.amount`. The preimage does not reveal the amount actually
-received. Lightning can settle a payment above the invoice amount, as described
+received. Under `invoice`, the receiver reports it; the facilitator MUST require
+it to be at least the invoice amount and otherwise applies the same semantics as
+`bolt11`. Lightning can settle a payment above the invoice amount, as described
 in [BOLT11](https://github.com/lightning/bolts/blob/master/11-payment-encoding.md#payer--payee-interactions).
 The facilitator MUST accept an otherwise valid proof at the invoice amount even
 if Lightning overpayment occurred. Overpayment grants no additional resource or
@@ -160,7 +183,7 @@ The `extra` fields are:
 
 | Field | Required | Meaning |
 |---|---|---|
-| `extra.assetTransferMethod` | No | If present, MUST be `"bolt11"`; defaults to `"bolt11"`. |
+| `extra.assetTransferMethod` | No | `"bolt11"` (default) or `"invoice"`. |
 | `extra.paymentFlow` | Yes | MUST be `"upfront"`. |
 | `extra.invoice` | Yes | Fresh, signed BOLT11 invoice for `amount` on `network` that passes the checks below. |
 | `extra.requestHash` | Yes | Expected request hash, encoded as 64 lowercase hexadecimal characters. |
@@ -218,7 +241,7 @@ calls MUST use `mcp:1`, including when MCP uses an HTTP transport. Other HTTP
 requests use `http:1`. Clients, servers, and facilitators MUST reject missing,
 unknown, or unsupported profiles and malformed profile parameters; they MUST NOT
 fall back to another profile. Other transports require a separately defined
-profile before they can use this method.
+profile before they can use this scheme.
 
 The domain tag MUST be `"x402:exact:lnbtc:bolt11:"` concatenated with
 `extra.requestBindingProfile`. Clients and servers MUST construct the profile's
@@ -251,7 +274,9 @@ the validated profile parameters without another server lookup.
 
 The invoice signature also commits to its amount, currency, expiry, and payment
 hash; the signer identifies the receiver. The domain tag fixes the x402 version-2
-`exact`/`bolt11`/`upfront` interpretation. The existing payment-term checks remain
+`exact`/`bolt11`/`upfront` interpretation, where `bolt11` names the invoice
+encoding. Both asset transfer methods use the same tag, so the request hash does
+not depend on the method. The existing payment-term checks remain
 mandatory. Neither the invoice nor `extra.requestHash` is part of the hash input.
 
 On a paid retry, the server MUST recompute the digest from the request that will
@@ -367,7 +392,7 @@ tool name, arguments, and relevant metadata together identify what is purchased.
 
 ## `PaymentPayload`
 
-After paying the invoice, the client sends the preimage in the scheme-specific
+Under `bolt11`, after paying, the client sends the preimage in the scheme-specific
 `payload` object. The invoice remains in `accepted.extra.invoice`:
 
 ```json
@@ -401,12 +426,29 @@ After paying the invoice, the client sends the preimage in the scheme-specific
 |---|---|---|
 | `preimage` | string | MUST be exactly 64 lowercase hexadecimal characters encoding 32 bytes. |
 
+Under `invoice`, with `accepted.extra.assetTransferMethod` set to `"invoice"`,
+the client sends the payment hash of the paid invoice instead:
+
+```json
+{ "paymentHash": "a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e" }
+```
+
+`payload.paymentHash` is required and MUST be exactly 64 lowercase hexadecimal
+characters equal to the accepted invoice's payment hash. It is redundant with
+`accepted.extra.invoice`, but is sent rather than an empty `payload` because
+`scheme_exact.md` requires the proof artifact in `PaymentPayload.payload`, and it
+names the consumption key the client claims. A mismatch fails validation.
+
 `accepted.extra.invoice` MUST be byte-identical to the invoice that the client
 paid. It MAY differ from a newly generated `requirements.extra.invoice` on the
 retry. Its signing key, request binding, and payment terms MUST pass the checks
 below. No additional challenge identifier or request copy is required.
 
 ## Request Binding Test Vectors
+
+Every settlement case below applies to both asset transfer methods. Under
+`invoice`, `payload.paymentHash` replaces the preimage, and the receiver reports
+the invoice as settled unless stated otherwise.
 
 ### HTTP
 
@@ -445,6 +487,8 @@ from the actual request before calling `/settle`.
 | Issue two concurrent challenges for the same request and terms. Pay only the first invoice, then present its proof against the second challenge. | Settlement succeeds using the first invoice; no record linking it to the second challenge is needed. |
 | Present the same paid proof concurrently against both challenges for the same request and terms. | Exactly one settlement succeeds; the other returns `duplicate_settlement`. |
 | Pay both invoices for concurrent challenges with the same request and terms, then present each invoice's own proof. | Both settlements succeed; each payment has a distinct consumption key. |
+| Settle the examples under `bolt11`, then present the same invoice's payment hash under `invoice`, or the reverse. | The second settlement returns `duplicate_settlement`. |
+| Under `invoice`, present the proof while the receiver reports the invoice as accepted, then again after it settles. | `exact_lnbtc_invoice_not_settled`, then settlement succeeds. |
 | Present article A's proof with an actual request for article B at the same price. | `invalid_exact_lnbtc_request_mismatch`. |
 | Also change the accepted `requestHash` to article B's digest. | `invalid_exact_lnbtc_invoice_request_mismatch`; the invoice still commits to article A. |
 | Change the actual method to `POST`, or body to the single byte `78` (hexadecimal), and echo the new digest. | `invalid_exact_lnbtc_invoice_request_mismatch`. |
@@ -515,7 +559,8 @@ Before paying, a client MUST:
    positive integral `amount`, a positive integral `maxTimeoutSeconds`, and a valid
    compressed secp256k1 `payTo` encoded as 66 lowercase hexadecimal characters.
 2. Require `extra.paymentFlow == "upfront"` and a non-empty `extra.invoice`. Treat
-   a missing `extra.assetTransferMethod` as `"bolt11"` and reject any other value.
+   a missing `extra.assetTransferMethod` as `"bolt11"` and reject any value other
+   than `"bolt11"` or `"invoice"`.
 3. Strictly decode and verify the BOLT11 invoice and its signature.
 4. Validate `extra.requestHash`, `extra.requestBindingProfile`, and
    `extra.requestBindingParams`. Require the profile to match the actual
@@ -533,12 +578,17 @@ Before paying, a client MUST:
 9. Require the invoice to be unexpired at the client's validation time.
 10. Ask its payer adapter to pay the invoice on the selected network.
 
-The payer result MUST report `paid` and identify the same invoice, payment hash,
+A `bolt11` payer result MUST report `paid` and identify the same invoice, payment hash,
 and invoice amount. Any separately reported routing fee MUST NOT be included in
 the amount comparison. The client SHOULD report `in_flight` as a distinct result
 so the caller can retry without starting a second payment. For a paid result,
 the client MUST validate the preimage format and SHA-256 digest. It MUST NOT
 construct a `PaymentPayload` if a check fails.
+
+Under `invoice`, the client takes `paymentHash` from the decoded invoice and MAY
+send the payload without a payer result, for example when a second device pays.
+A payer result that it does receive MUST identify the same invoice, payment hash,
+and amount. After `exact_lnbtc_invoice_not_settled`, it MAY retry the same payload.
 
 ## Facilitator Validation
 
@@ -552,7 +602,8 @@ perform the following checks in order before it records the payment hash:
    integral `amount` and `maxTimeoutSeconds` values, and a valid compressed
    secp256k1 `payTo` encoded as 66 lowercase hexadecimal characters.
 3. Resolve a missing `extra.assetTransferMethod` to `bolt11` on both sides and
-   require `bolt11`. Require `extra.paymentFlow == "upfront"` on both sides.
+   require equal methods: `bolt11`, or `invoice` if the facilitator can query the
+   receiver for `payTo`. Require `extra.paymentFlow == "upfront"` on both sides.
    Require both request hashes to be 64 lowercase hexadecimal characters.
    Require supported profiles and validate the syntax of both parameter objects
    using the Request Binding rules. Require the hashes, profiles, and parameters
@@ -576,11 +627,18 @@ perform the following checks in order before it records the payment hash:
    configured clock-skew allowance.
 6. Require the preimage to contain exactly 64 lowercase hexadecimal characters.
    Decode it as exactly 32 bytes and require
-   `SHA-256(preimage_bytes) == payment_hash_bytes`.
+   `SHA-256(preimage_bytes) == payment_hash_bytes`. Under `invoice`, instead
+   require `payload.paymentHash` to be 64 lowercase hexadecimal characters equal
+   to the invoice's payment hash.
 7. Apply the expiry policy below.
+8. Under `invoice`, query the receiver as described in [Finality](#finality).
 
-The facilitator MUST verify the preimage locally and MUST NOT require receiver
-access.
+Under `bolt11`, the facilitator MUST verify the preimage locally and MUST NOT
+require receiver access. Under `invoice`, it MUST read the invoice state from the
+receiver and so needs credentials for the resource server's Lightning node. Such
+a facilitator is in practice hosted by or for the resource server, which trusts
+its report instead of a proof that anyone can check. This is the main cost of
+`invoice`.
 
 ### Paid-but-expired Policy
 
@@ -597,12 +655,36 @@ MUST fail the check after this boundary. Equality at the boundary is valid.
 
 This grace period permits a retry when payment completed shortly before expiry.
 
+### Finality
+
+A payment is final when the receiver settles the invoice, releasing the preimage
+and claiming the HTLCs; held HTLCs are not final. Lightning has no confirmation
+depth: the receiver's invoice state is authoritative, and the resource server
+that operates the receiver owns it. Under `bolt11`, a valid preimage shows that
+the receiver settled. Under `invoice`, the facilitator MUST query the receiver
+whose node key is `payTo`. If the invoice is settled, the facilitator requires
+the amount received to be at least the invoice amount and records the payment
+hash. Otherwise it MUST NOT record the payment hash and MUST return:
+
+- `exact_lnbtc_invoice_not_settled` if the invoice is open or accepted and can
+  still settle. The facilitator MAY re-query within the attempt first.
+- `exact_lnbtc_receiver_unavailable` if the query fails or times out.
+- `invalid_exact_lnbtc_invoice_canceled` if the invoice can no longer settle.
+  Held HTLCs then fail back to the payer through Lightning's own failure or
+  timeout handling; x402 adds no return path.
+
+A client MAY retry a non-final result with the same payload while the invoice
+passes the expiry policy. Receivers SHOULD settle a complete HTLC set at once
+rather than hold it. Once the payment hash is recorded, a handler failure leaves
+the client charged under either method; as `scheme_exact.md` states for
+`upfront`, any remedy is the resource server's own arrangement.
+
 ## Settlement and Replay Protection
 
-Settlement does not move funds. The Lightning payment completed before the client
-received the preimage. Cryptographic proof verification is stateless, but enforcing
-single-use settlement requires a replay store. The canonical consumption key MUST
-be the ASCII string:
+Settlement does not move funds. Under `bolt11`, the Lightning payment completed
+before the client received the preimage; under `invoice`, settle only reads the
+receiver's state. Neither check records state, so enforcing single-use settlement
+requires a replay store. The canonical consumption key MUST be the ASCII string:
 
 ```text
 network + ":" + payment_hash
@@ -617,6 +699,15 @@ restart-durable replay store. The insert MUST fail if the key already exists. In
 that case, the facilitator MUST return `duplicate_settlement`. The resource server
 MUST NOT process the protected request until the insert succeeds. The same hash
 on different networks produces different keys.
+
+Both methods share this key and store, so a payment hash recorded under one
+method is a duplicate under the other. Under `bolt11`, the insert follows local
+validation and is final. Under `invoice`, the facilitator MUST NOT insert the key
+before the receiver reports the invoice as settled, and SHOULD query the receiver
+before claiming the key, so a non-final attempt holds no claim. A claim held
+while querying MUST be released before any result other than success is
+returned, and MUST be bounded by a lease so that an abnormally terminated attempt
+cannot hold it indefinitely; lease expiry MUST NOT let two attempts both succeed.
 
 The replay entry MUST remain until at least one hour after
 `invoice_end + skew`. It MUST NOT be removed while the invoice can still pass
@@ -653,7 +744,7 @@ MUST preserve the validation reason when validation fails.
 | `invalid_exact_lnbtc_extra_mismatch` | A server-declared `extra` field other than `invoice`, `requestHash`, `requestBindingProfile`, or `requestBindingParams` differs. |
 | `invalid_exact_lnbtc_request_binding` | A request hash, profile, or parameter object is missing or malformed, or a profile is unsupported. |
 | `invalid_exact_lnbtc_request_mismatch` | The accepted request hash, profile, or parameters differ from the requirement. |
-| `invalid_exact_lnbtc_asset_transfer_method` | Either explicit asset transfer method is not `bolt11`. |
+| `invalid_exact_lnbtc_asset_transfer_method` | The resolved asset transfer methods differ, or the facilitator does not support the method. |
 | `invalid_exact_lnbtc_payment_flow` | Either payment flow is missing or not `upfront`. |
 | `invalid_exact_lnbtc_invoice_missing` | Either required invoice field is absent. |
 | `invalid_exact_lnbtc_invoice_decode_failed` | Strict BOLT11 decoding, signature validation, or integral-msat validation failed. |
@@ -661,7 +752,7 @@ MUST preserve the validation reason when validation fails.
 | `invalid_exact_lnbtc_invoice_request_mismatch` | The signed description hash differs from the expected request hash. |
 | `invalid_exact_lnbtc_invoice_payee_mismatch` | The invoice signing key differs from `payTo`. |
 | `invalid_exact_lnbtc_invoice_currency_mismatch` | BOLT11 currency does not match the network. |
-| `invalid_exact_lnbtc_invoice_amount_mismatch` | BOLT11 amount differs from the required millisatoshis. |
+| `invalid_exact_lnbtc_invoice_amount_mismatch` | BOLT11 amount differs from the required millisatoshis, or under `invoice` the receiver reports less received. |
 | `invalid_exact_lnbtc_max_timeout` | `maxTimeoutSeconds` is not a positive integer. |
 | `invalid_exact_lnbtc_invoice_expiry_mismatch` | BOLT11 expiry does not equal `maxTimeoutSeconds`. |
 | `invalid_exact_lnbtc_invoice_created_in_future` | BOLT11 creation time exceeds validation time plus the clock-skew allowance. |
@@ -670,7 +761,16 @@ MUST preserve the validation reason when validation fails.
 | `invalid_exact_lnbtc_preimage_malformed` | Preimage contains non-lowercase-hex characters. |
 | `invalid_exact_lnbtc_preimage_length` | Decoded preimage is not exactly 32 bytes. |
 | `invalid_exact_lnbtc_preimage_hash_mismatch` | SHA-256 of the preimage does not equal the payment hash. |
+| `invalid_exact_lnbtc_payment_hash_missing` | Under `invoice`, `payload.paymentHash` is absent. |
+| `invalid_exact_lnbtc_payment_hash_malformed` | `payload.paymentHash` is not 64 lowercase hexadecimal characters. |
+| `invalid_exact_lnbtc_payment_hash_mismatch` | `payload.paymentHash` differs from the accepted invoice's payment hash. |
 | `invalid_exact_lnbtc_invoice_expired` | The paid-but-expired settlement-time window was exceeded. |
+| `exact_lnbtc_invoice_not_settled` | Under `invoice`, the receiver reports the invoice as open or accepted; it can still settle. |
+| `exact_lnbtc_receiver_unavailable` | Under `invoice`, the facilitator could not obtain the invoice state from the receiver. |
+| `invalid_exact_lnbtc_invoice_canceled` | Under `invoice`, the receiver reports the invoice as canceled; it can no longer settle. |
+
+`exact_lnbtc_invoice_not_settled` and `exact_lnbtc_receiver_unavailable` are not
+final; the payment hash was not recorded, and the same payload MAY be retried.
 
 Client and server implementations SHOULD use these stable local failure reasons.
 They are not facilitator response reasons unless a transport explicitly maps a local
@@ -690,12 +790,31 @@ failure into one:
 
 ## Security Considerations
 
-### Mandatory Cryptographic Proof
+### Mandatory Cryptographic Proof (`bolt11`)
 
 The preimage is bearer proof of payment. Implementations MUST avoid logging or
 otherwise disclosing it. A client MUST send it only to the resource server for the
 invoice it paid. The facilitator can verify the invoice and preimage without
 receiver credentials.
+
+### Receiver-Attested Proof (`invoice`)
+
+The `invoice` proof is not self-verifying: settle depends on the receiver's
+liveness and on the facilitator's report of its state. `scheme_exact.md` prefers
+self-verifying proofs, so `bolt11` is recommended and `invoice` is a fallback.
+
+The payment hash is not secret, because it is part of the invoice. Anyone who
+obtains the invoice, for example from a displayed QR code, can present it once
+the invoice settles; request binding only restricts it to the bound request. Where
+a bound input carries the payer's credentials, such as an `authorization` header,
+an observer cannot reproduce the request. Otherwise the first presentation after
+settlement receives the resource, so clients SHOULD NOT disclose the invoice
+beyond the payer.
+
+The facilitator's receiver credentials SHOULD only read invoice state. Ones that
+can also create invoices extend to the facilitator the issuance authority that
+[Receiver Key Isolation](#receiver-key-isolation) reserves to the resource server.
+Facilitators SHOULD limit repeated receiver queries for the same payment hash.
 
 ### Invoice Substitution
 
@@ -710,13 +829,13 @@ the receiver node key.
 
 Request binding does not identify the payer. A disclosed preimage and invoice
 remain bearer proof for the bound request; replay protection permits at most one
-successful claim. No server challenge store or receiver lookup is required.
+successful claim. No server challenge store is required.
 
 ### Receiver Key Isolation
 
 `payTo` binds the invoice to the receiver node. A shared custodial node is not
 compatible if an untrusted tenant can create invoices under the same node key. The
-tenant could pay its own invoice and use the preimage against another tenant's
+tenant could pay its own invoice and use its proof against another tenant's
 payment requirement. A compliant deployment MUST give the resource server
 exclusive invoice-issuance authority for the receiver key.
 
@@ -738,7 +857,8 @@ invoice MUST NOT appear under the mainnet identifier.
 
 An in-memory replay store is not compliant because a restart loses consumed keys.
 All facilitator instances that settle for the same receiver MUST share a
-restart-durable replay store with an atomic insert. A resource server MUST NOT send
+restart-durable replay store with an atomic insert. This includes facilitators
+serving different asset transfer methods. A resource server MUST NOT send
 invoices for one receiver to independent replay stores. A database can enforce
 this rule with a unique canonical consumption key. Persistent state is required
 because Lightning has no public spent marker for the bearer proof.
