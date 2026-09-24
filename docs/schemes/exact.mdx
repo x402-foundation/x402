@@ -542,6 +542,62 @@ The Cardano implementation supports three asset transfer methods via `extra.asse
 
 For testnet funds, get test ADA from the [Cardano testnets faucet](https://docs.cardano.org/cardano-testnets/tools/faucet/) and preprod tUSDM from the [tUSDM faucet](https://tusdm.moneta.global).
 
+### Hedera asset transfer methods
+
+The Hedera implementation supports two asset transfer methods via `extra.assetTransferMethod`:
+
+| Method | Description |
+|--------|-------------|
+| `cryptoTransfer` | Client signs a `TransferTransaction`; facilitator co-signs as fee payer. Default. Recommended for key-controlled accounts. |
+| `transferExecutor` | Client supplies an authorization for a contract implementing `ITransferExecutor`; facilitator calls `executeTransfer` as fee payer. For contract-controlled funds (smart accounts, multisig/vault contracts, HIP-336 allowance delegation). |
+
+If no `assetTransferMethod` is specified in `PaymentRequirements.extra`, clients and facilitators use `cryptoTransfer`. Facilitators advertise which methods they support per network in `/supported`:
+
+```json
+{
+  "kinds": [
+    {
+      "x402Version": 2,
+      "scheme": "exact",
+      "network": "hedera:testnet",
+      "extra": {
+        "feePayer": "0.0.9000",
+        "assetTransferMethods": ["cryptoTransfer", "transferExecutor"],
+        "executors": ["0.0.7000"]
+      }
+    }
+  ]
+}
+```
+
+For `transferExecutor`, the executor contract must implement the `ITransferExecutor` interface:
+
+```solidity
+interface ITransferExecutor {
+    function executeTransfer(
+        address from,
+        address asset,
+        address to,
+        uint256 amount,
+        bytes calldata authorization
+    ) external;
+}
+```
+
+The client's `PaymentPayload` for `transferExecutor` carries `payer`, `executor`, and `authorization` instead of a serialized transaction:
+
+```json
+{
+  "payload": {
+    "payer": "0.0.5001",
+    "executor": "0.0.7000",
+    "authorization": "0x0f2c9d1a..."
+  }
+}
+```
+
+Executor admission is default-deny: a facilitator must reject any executor not in its advertised `extra.executors` list. See the [`exact` Hedera spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_hedera.md) for full verification and settlement rules.
+
 ### Network Implementations
 
 The `exact` scheme has network specifications for EVM, SVM, AVM, Stellar, Aptos, Casper, Hedera, TON, Cardano, Keeta, Sui, Concordium, NEAR, and XRPL.
