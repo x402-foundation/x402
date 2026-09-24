@@ -1,6 +1,11 @@
 import { x402Client, x402ClientConfig, x402HTTPClient } from "@x402/core/client";
 import { type PaymentRequired } from "@x402/core/types";
-import { type AxiosInstance, type AxiosError, type InternalAxiosRequestConfig } from "axios";
+import {
+  AxiosError,
+  type AxiosInstance,
+  type AxiosResponse,
+  type InternalAxiosRequestConfig,
+} from "axios";
 
 type X402RetryConfig = InternalAxiosRequestConfig & { __is402Retry?: boolean };
 type AxiosHeaderRecord = Record<string, string>;
@@ -94,6 +99,61 @@ function createX402RetryConfig(config: InternalAxiosRequestConfig): X402RetryCon
         : status >= 200 && status < 300;
     },
   };
+}
+
+/**
+ * Returns whether Axios should resolve (rather than reject) a paid follow-up response
+ * after payment-response hooks have run.
+ *
+ * @param status - HTTP status from the paid follow-up response
+ * @param config - Original caller request configuration
+ * @returns True when the response should be returned to the caller
+ */
+function shouldResolveAxiosResponse(
+  status: number,
+  config: InternalAxiosRequestConfig,
+): boolean {
+  if (status === 402) {
+    return true;
+  }
+
+  const validateStatus = config.validateStatus;
+  return validateStatus ? validateStatus(status) : status >= 200 && status < 300;
+}
+
+/**
+ * Clones request config for a paid follow-up retry and accepts any HTTP status so
+ * PAYMENT-RESPONSE headers can be decoded before caller status validation is applied.
+ *
+ * @param config - Original Axios request configuration
+ * @returns Retry config that resolves all HTTP statuses to the interceptor
+ */
+function createX402PaidFollowUpConfig(config: InternalAxiosRequestConfig): X402RetryConfig {
+  return {
+    ...createX402RetryConfig(config),
+    validateStatus: () => true,
+  };
+}
+
+/**
+ * Rejects a paid follow-up response using Axios status validation semantics.
+ *
+ * @param response - Paid follow-up response that failed caller validation
+ * @param requestConfig - Request configuration used for the paid follow-up
+ * @returns Rejected promise with an Axios error carrying the response
+ */
+function rejectPaidFollowUpResponse(
+  response: AxiosResponse,
+  requestConfig: InternalAxiosRequestConfig,
+): Promise<never> {
+  const error = new AxiosError(
+    `Request failed with status code ${response.status}`,
+    AxiosError.ERR_BAD_RESPONSE,
+    requestConfig,
+    response.request,
+    response,
+  );
+  return Promise.reject(error);
 }
 
 /**
@@ -209,7 +269,7 @@ export function wrapAxiosWithPayment(
         // Encode payment header
         const paymentHeaders = httpClient.encodePaymentSignatureHeader(paymentPayload);
 
-        const paidConfig = createX402RetryConfig(originalConfig);
+        const paidConfig = createX402PaidFollowUpConfig(originalConfig);
         paidConfig.__is402Retry = true;
 
         // Add payment headers to the request
@@ -242,7 +302,7 @@ export function wrapAxiosWithPayment(
           // Retry once with a fresh payload after recovery.
           const freshPayload = await client.createPaymentPayload(paymentRequired);
           const retryHeaders = httpClient.encodePaymentSignatureHeader(freshPayload);
-          const retryConfig = createX402RetryConfig(originalConfig);
+          const retryConfig = createX402PaidFollowUpConfig(originalConfig);
           Object.entries(retryHeaders).forEach(([key, value]) => {
             setAxiosHeader(retryConfig.headers, key, value);
           });
@@ -258,7 +318,14 @@ export function wrapAxiosWithPayment(
             return typeof value === "string" ? value : undefined;
           };
           await httpClient.processPaymentResult(freshPayload, getRetryHeader, retryResponse.status);
+          if (!shouldResolveAxiosResponse(retryResponse.status, originalConfig)) {
+            return rejectPaidFollowUpResponse(retryResponse, retryConfig);
+          }
           return retryResponse;
+        }
+
+        if (!shouldResolveAxiosResponse(secondResponse.status, originalConfig)) {
+          return rejectPaidFollowUpResponse(secondResponse, paidConfig);
         }
 
         return secondResponse;
