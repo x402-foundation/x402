@@ -566,6 +566,9 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 		reqCtx.Method = reqCtx.Adapter.GetMethod()
 	}
 
+	ctx = context.WithValue(ctx, x402.RequestPathKey, reqCtx.Path)
+	ctx = context.WithValue(ctx, x402.RequestURLKey, reqCtx.Adapter.GetURL())
+
 	// Find matching route
 	routeConfig, routePattern := s.getRouteConfig(reqCtx.Path, reqCtx.Method, reqCtx.DecodedPath)
 	if routeConfig == nil {
@@ -1296,6 +1299,7 @@ func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.Paym
 			Headers: map[string]string{
 				"Content-Type":     "text/html",
 				"PAYMENT-REQUIRED": encodedHeader,
+				"payment-required": encodedHeader,
 				"Cache-Control":    PaymentRequiredCacheControl,
 			},
 			Body:   html,
@@ -1303,13 +1307,15 @@ func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.Paym
 		}, nil
 	}
 
-	// Use custom unpaid response if provided, otherwise default to JSON with no body
+	// Use custom unpaid response if provided, otherwise default to JSON mirroring the requirements
 	contentType := "application/json"
 	var body interface{}
 
 	if unpaidResponse != nil {
 		contentType = unpaidResponse.ContentType
 		body = unpaidResponse.Body
+	} else {
+		body = paymentRequired
 	}
 
 	return &HTTPResponseInstructions{
@@ -1317,6 +1323,7 @@ func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.Paym
 		Headers: map[string]string{
 			"Content-Type":     contentType,
 			"PAYMENT-REQUIRED": encodedHeader,
+			"payment-required": encodedHeader,
 			"Cache-Control":    PaymentRequiredCacheControl,
 		},
 		Body: body,
@@ -1331,6 +1338,7 @@ func (s *x402HTTPResourceServer) CreateSettlementHeaders(response *x402.SettleRe
 	}
 	return map[string]string{
 		"PAYMENT-RESPONSE": encodedHeader,
+		"payment-response": encodedHeader,
 	}, nil
 }
 
