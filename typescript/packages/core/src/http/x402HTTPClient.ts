@@ -36,6 +36,40 @@ type HTTPClientTransportExtension = {
   };
 };
 
+function parsePaymentRequiredBody(body?: unknown): PaymentRequired | undefined {
+  if (!body || typeof body !== "object" || !("x402Version" in body)) {
+    return undefined;
+  }
+
+  const version = (body as PaymentRequired).x402Version;
+  if (version === 1 || version === 2) {
+    return body as PaymentRequired;
+  }
+
+  return undefined;
+}
+
+function mergePaymentRequiredFromBody(
+  primary: PaymentRequired,
+  secondary?: PaymentRequired,
+): PaymentRequired {
+  if (!secondary || secondary.x402Version !== primary.x402Version || primary.x402Version !== 2) {
+    return primary;
+  }
+
+  const mergedExtensions = {
+    ...(secondary.extensions ?? {}),
+    ...(primary.extensions ?? {}),
+  };
+  const extensions = Object.keys(mergedExtensions).length > 0 ? mergedExtensions : undefined;
+
+  if (extensions === primary.extensions) {
+    return primary;
+  }
+
+  return { ...primary, extensions };
+}
+
 /**
  * HTTP-specific client for handling x402 payment protocol over HTTP.
  *
@@ -111,27 +145,23 @@ export class x402HTTPClient {
    * Extracts payment required information from HTTP response.
    *
    * @param getHeader - Function to retrieve header value by name (case-insensitive)
-   * @param body - Optional response body for v1 compatibility
+   * @param body - Optional JSON body (v1/v2) when headers are unavailable or omit fields
    * @returns The payment required object
    */
   getPaymentRequiredResponse(
     getHeader: (name: string) => string | null | undefined,
     body?: unknown,
   ): PaymentRequired {
-    // v2
-    const paymentRequired = getHeader("PAYMENT-REQUIRED");
-    if (paymentRequired) {
-      return decodePaymentRequiredHeader(paymentRequired);
+    const bodyPaymentRequired = parsePaymentRequiredBody(body);
+
+    const paymentRequiredHeader = getHeader("PAYMENT-REQUIRED");
+    if (paymentRequiredHeader) {
+      const fromHeader = decodePaymentRequiredHeader(paymentRequiredHeader);
+      return mergePaymentRequiredFromBody(fromHeader, bodyPaymentRequired);
     }
 
-    // v1
-    if (
-      body &&
-      body instanceof Object &&
-      "x402Version" in body &&
-      (body as PaymentRequired).x402Version === 1
-    ) {
-      return body as PaymentRequired;
+    if (bodyPaymentRequired) {
+      return bodyPaymentRequired;
     }
 
     throw new Error("Invalid payment required response");
