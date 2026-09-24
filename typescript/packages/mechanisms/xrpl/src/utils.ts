@@ -2,6 +2,7 @@ import { createHash } from "crypto";
 import {
   Client,
   decode,
+  encode,
   hashes,
   isValidClassicAddress,
   type SubmittableTransaction,
@@ -153,16 +154,107 @@ export function invoiceIdToInvoiceIdField(invoiceId: string): string {
 }
 
 /**
- * Decodes a signed XRPL transaction blob.
+ * Decoding is super-linear in field count, so an unbounded blob is free CPU
+ * for an unauthenticated caller. A conforming Payment is a few hundred bytes;
+ * the ceiling sits well above any Payment this scheme accepts. Matches the
+ * Python mechanism.
+ */
+const MAX_SIGNED_TX_BLOB_HEX = 4096;
+
+/**
+ * Every field rippled's Payment template accepts today. The codec decodes any
+ * field it knows onto any transaction and learns new fields with every
+ * release, so acceptance gated on codec knowledge widens on upgrade (XLS-68's
+ * Sponsor and SponsorFlags are already signing fields on xrpl-py's main branch
+ * and rippled's develop; xrpl.js has not shipped them yet). Acceptance is
+ * therefore pinned to this list, not to the installed codec. Memos, Paths,
+ * DeliverMin, Delegate and Signers stay in the list although the facilitator
+ * refuses them: each has its own reason code, which must remain reachable.
+ * Matches ALLOWED_PAYMENT_FIELDS in the Python mechanism.
+ */
+const ALLOWED_PAYMENT_FIELDS = new Set([
+  // Common transaction fields, including the legacy optional pair
+  // (PreviousTxnID, OperationLimit) that rippled's template still admits.
+  "TransactionType",
+  "Account",
+  "Fee",
+  "Sequence",
+  "AccountTxnID",
+  "PreviousTxnID",
+  "OperationLimit",
+  "Flags",
+  "LastLedgerSequence",
+  "Memos",
+  "NetworkID",
+  "Signers",
+  "SourceTag",
+  "SigningPubKey",
+  "TicketSequence",
+  "TxnSignature",
+  "Delegate",
+  // Payment fields. DeliverMax is a JSON-API alias with no binary field, so
+  // a decoded blob can only spell the amount as Amount.
+  "Amount",
+  "Destination",
+  "DestinationTag",
+  "InvoiceID",
+  "Paths",
+  "SendMax",
+  "DeliverMin",
+  "CredentialIDs",
+  "DomainID",
+]);
+
+/**
+ * Decodes a signed XRPL transaction blob, holding it to the wire form the
+ * ledger itself would accept.
+ *
+ * The blob must be the canonical serialisation of the transaction it decodes
+ * to: the deserialiser accepts fields in any order, so one signed transaction
+ * otherwise has many encodings, each with a valid signature and a different
+ * hash, and the duplicate-settlement guard is keyed on that hash. A Payment
+ * is additionally held to rippled's own field template, so a field added by a
+ * future amendment (or a non-signing field appended without the payer's key)
+ * is refused until admitted deliberately. Other transaction types pass
+ * through so the facilitator can reject them under its transaction-type
+ * reason code.
  *
  * @param signedTxBlob - Hex-encoded signed transaction blob
  * @returns Decoded transaction
  */
 export function decodeSignedTransactionBlob(signedTxBlob: string): Transaction {
-  if (!/^[A-Fa-f0-9]+$/.test(signedTxBlob)) {
-    throw new Error("signedTxBlob must be hex");
+  if (signedTxBlob.length > MAX_SIGNED_TX_BLOB_HEX) {
+    throw new Error("signedTxBlob is larger than any valid XRPL transaction");
   }
-  return decode(signedTxBlob) as Transaction;
+  if (!/^(?:[A-Fa-f0-9]{2})+$/.test(signedTxBlob)) {
+    throw new Error("signedTxBlob must be an even-length hex string");
+  }
+  let decoded: Transaction;
+  let canonical: string;
+  try {
+    decoded = decode(signedTxBlob) as unknown as Transaction;
+    // Re-encoding is inside the try because the codec validates on the way out
+    // as well as in: a drops amount the deserialiser tolerates can still be
+    // refused here. Matches the Python mechanism's message either way.
+    canonical = encode(decoded);
+  } catch (error) {
+    // The codec's own exception narrates its internals; callers get the
+    // stated contract instead.
+    throw new Error(
+      `signedTxBlob is not a decodable transaction: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (canonical.toUpperCase() !== signedTxBlob.toUpperCase()) {
+    throw new Error("signedTxBlob is not the canonical serialisation of its transaction");
+  }
+  if (decoded.TransactionType === "Payment") {
+    for (const field of Object.keys(decoded)) {
+      if (!ALLOWED_PAYMENT_FIELDS.has(field)) {
+        throw new Error(`signedTxBlob carries a field foreign to Payment: ${field}`);
+      }
+    }
+  }
+  return decoded;
 }
 
 /**
