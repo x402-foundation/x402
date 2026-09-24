@@ -51,7 +51,8 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | exact | stellar | - | ✅ | ❌ | ❌ |
 | exact | aptos | - | ✅ | ❌ | ❌ |
 | exact | casper | CEP-3009 | ✅ | ❌  | ❌ |
-| exact | hedera | - | ✅ | ❌ | ❌ |
+| exact | hedera | `cryptoTransfer` | ✅ | ❌ | ❌ |
+| exact | hedera | `transferExecutor` | ❌ | ❌ | ❌ |
 | exact | tvm | - | ✅ | ❌ | ✅ |
 | exact | keeta | - | ✅ | ❌ | ❌ |
 | exact | near | - | ✅ | ❌ | ❌ |
