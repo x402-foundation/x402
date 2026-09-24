@@ -71,6 +71,20 @@ export const CANONICAL_SIGNING_PUB_KEY_PATTERN = /^(02|03|ED)[0-9A-F]{64}$/i;
 export const MAX_DESTINATION_TAG = 0xffffffff;
 
 /**
+ * Canonical XRPL MemoType for x402 facilitator attribution.
+ * UTF-8 `urn:x402:xrpl:facilitator`, encoded as uppercase hex.
+ */
+export const FACILITATOR_ATTRIBUTION_MEMO_TYPE =
+  "75726E3A783430323A7872706C3A666163696C697461746F72";
+
+/**
+ * Canonical XRPL MemoFormat for x402 facilitator attribution.
+ * UTF-8 `application/octet-stream`, encoded as uppercase hex.
+ */
+export const FACILITATOR_ATTRIBUTION_MEMO_FORMAT =
+  "6170706C69636174696F6E2F6F637465742D73747265616D";
+
+/**
  * Maximum number of outstanding tickets an XRPL account can hold.
  */
 export const MAX_ACCOUNT_TICKETS = 250;

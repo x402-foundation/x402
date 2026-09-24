@@ -49,6 +49,15 @@ export type XrplPaymentRequirementsExtra = {
    */
   destinationTag?: number;
   /**
+   * Optional facilitator attribution tag selected by the resource server.
+   */
+  sourceTag?: number;
+  /**
+   * Optional 32-byte facilitator proof commitment encoded as 64 hex characters.
+   * Requires sourceTag.
+   */
+  facilitatorProof?: string;
+  /**
    * Required IOU issuer address for issued-currency payments.
    */
   issuer?: string;
