@@ -65,7 +65,7 @@ go/
 
 ### Prerequisites
 
-- Go 1.24+
+- Go 1.25+
 - golangci-lint (installed via `make deps-dev`)
 - goimports (for formatting)
 
@@ -367,4 +367,3 @@ Releases are handled by maintainers.
 - Open an issue on GitHub
 - Check the [examples](../examples/go/) for usage patterns
 - Reference the role-specific docs (CLIENT.md, SERVER.md, FACILITATOR.md)
-

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -62,6 +64,76 @@ var integrationAccepts = []types.PaymentRequirements{
 		Amount:  "1000",
 		PayTo:   "test-recipient",
 	},
+}
+
+func TestIntegration_StreamableHTTP20260728PaymentFlow(t *testing.T) {
+	const latestProtocolVersion = "2026-07-28"
+
+	ctx := context.Background()
+	resourceServer := setupIntegrationServer(t, nil)
+	wrapper := NewPaymentWrapper(resourceServer, PaymentWrapperConfig{
+		Accepts: integrationAccepts,
+		Resource: &ResourceInfo{
+			URL:         "mcp://tool/get_weather",
+			Description: "Get weather",
+			MimeType:    "application/json",
+		},
+	})
+
+	var handlerProtocolVersion string
+	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "x402-test-server", Version: "1.0.0"}, nil)
+	mcpServer.AddTool(&mcp.Tool{
+		Name:        "get_weather",
+		Description: "Get weather for a city",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`),
+	}, wrapper.Wrap(func(_ context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		handlerProtocolVersion = request.ProtocolVersion()
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: `{"city":"SF","weather":"sunny"}`}},
+		}, nil
+	}))
+
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
+		return mcpServer
+	}, &mcp.StreamableHTTPOptions{
+		JSONResponse: true,
+		Stateless:    true,
+	})
+	httpServer := httptest.NewServer(handler)
+	defer httpServer.Close()
+
+	mcpClient := mcp.NewClient(&mcp.Implementation{Name: "x402-test-client", Version: "1.0.0"}, nil)
+	session, err := mcpClient.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: httpServer.URL}, nil)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer func() {
+		if err := session.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
+
+	if result := session.InitializeResult(); result == nil || result.ProtocolVersion != latestProtocolVersion {
+		t.Fatalf("negotiated protocol version = %v, want %q", result, latestProtocolVersion)
+	}
+
+	paymentClient := x402.Newx402Client()
+	paymentClient.Register("x402:cash", &mockSchemeNetworkClient{scheme: "cash"})
+	x402Client := NewX402MCPClient(session, paymentClient, Options{})
+
+	result, err := x402Client.CallTool(ctx, "get_weather", map[string]interface{}{"city": "SF"})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if !result.PaymentMade || result.PaymentResponse == nil {
+		t.Fatalf("payment result = %+v, want completed payment", result)
+	}
+	if result.PaymentResponse.Transaction != "tx123" {
+		t.Errorf("payment transaction = %q, want %q", result.PaymentResponse.Transaction, "tx123")
+	}
+	if handlerProtocolVersion != latestProtocolVersion {
+		t.Errorf("handler protocol version = %q, want %q", handlerProtocolVersion, latestProtocolVersion)
+	}
 }
 
 // TestIntegration_FreeToolWithoutPayment verifies that free (unwrapped) tools
