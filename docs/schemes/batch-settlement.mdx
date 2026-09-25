@@ -561,6 +561,159 @@ Set `withdrawDelay` greater than your claim cadence plus an operational safety m
 * [Python server](https://github.com/x402-foundation/x402/tree/main/examples/python/servers/batch-settlement)
 * [Python facilitator](https://github.com/x402-foundation/x402/tree/main/examples/python/facilitator/batch-settlement)
 
+### SVM Implementation
+
+`batch-settlement` on Solana uses the same [payment-channels program](https://github.com/solana-foundation/payment-channels) as `upto`. Unlike `upto`, which closes after one metered charge, `batch-settlement` keeps the channel open across many requests and advances a cumulative watermark. The client deposits once, then signs off-chain cumulative vouchers per request; the server verifies offchain, serves immediately, and redeems accumulated vouchers later through the facilitator.
+
+Two voucher modes are supported:
+
+| Mode | Who signs vouchers | Per-request payload | Typical use |
+|------|--------------------|---------------------|-------------|
+| **Client-signed** (default) | Client (`payerAuthorizer`) | Cumulative Ed25519 voucher | Fixed price per request; client retains full voucher authority |
+| **Server-signed** | Resource `operator` | Expiring payer proof + request id; operator signs the metered cumulative charge after serving | Usage-based billing without a client signature on every request |
+
+In server mode the channel's onchain `authorized_signer` is the operator, who could claim the full unspent deposit. Clients enter that mode only for operator keys they have explicitly trusted out of band.
+
+#### Server Setup (SVM)
+
+Every channel is bound at open to a `receiverAuthorizer` key that signs cooperative close authorizations. Pass `receiverAuthorizer` to self-manage closes (recommended), or omit it to delegate to the facilitator's advertised key.
+
+```typescript
+import { BatchSvmScheme, MemoryChannelStore } from "@x402/svm/batch-settlement/server";
+import { createKeyPairSignerFromBytes } from "@solana/kit";
+import { base58 } from "@scure/base";
+
+const receiverAuthorizer = await createKeyPairSignerFromBytes(
+  base58.decode(process.env.SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY!),
+);
+
+const batchSvmScheme = new BatchSvmScheme({
+  receiverAuthorizer,
+  withdrawDelay: 86_400,
+  store: new MemoryChannelStore(),
+});
+
+const resourceServer = new x402ResourceServer(facilitatorClient)
+  .register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", batchSvmScheme);
+
+app.use(paymentMiddleware({
+  "GET /api/data": {
+    accepts: {
+      scheme: "batch-settlement",
+      price: "$0.01",
+      network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+      payTo: "YourSolanaAddress",
+    },
+    description: "Data API",
+  },
+}, resourceServer));
+```
+
+For server-signed (metered) routes, configure an `operator` signer and use `setSettlementOverrides` to charge actual usage:
+
+```typescript
+const operator = await createKeyPairSignerFromBytes(
+  base58.decode(process.env.SVM_OPERATOR_PRIVATE_KEY!),
+);
+
+const batchSvmScheme = new BatchSvmScheme({
+  receiverAuthorizer,
+  operator,
+  store: new MemoryChannelStore(),
+});
+
+// In your handler:
+app.get("/api/generate", (req, res) => {
+  setSettlementOverrides(res, { amount: "50%" }); // or raw atomic units / dollar price
+  res.json({ result: "..." });
+});
+```
+
+#### Redemption Worker (SVM)
+
+Start `BatchChannelManager` outside the request path to claim batches and distribute payouts:
+
+```typescript
+const manager = batchSvmScheme.createChannelManager(facilitatorClient, requirements, {
+  rpcUrl: process.env.SVM_RPC_URL,
+  onClaim: r => console.log(`Claimed ${r.vouchers} vouchers (tx: ${r.transaction})`),
+  onSettle: r => console.log(`Distributed to payTo (tx: ${r.transaction})`),
+  onSeal: r => console.log(`Sealed channel ${r.channel} (tx: ${r.transaction})`),
+  onError: e => console.error(e),
+});
+manager.start(60); // seconds between passes
+```
+
+Claim promptly: if the facilitator or payer forces a close before your latest voucher is claimed, unclaimed value returns to the payer. Set `withdrawDelay` comfortably above your claim cadence.
+
+#### Client Setup (SVM)
+
+Register `BatchSvmScheme` for `solana:*`. The SDK opens or tops up the channel on first use and attaches the correct payload per mode:
+
+```typescript
+import { x402Client } from "@x402/core/client";
+import { ExactSvmScheme } from "@x402/svm/exact/client";
+import { BatchSvmScheme } from "@x402/svm/batch-settlement/client";
+import { createKeyPairSignerFromBytes } from "@solana/kit";
+import { base58 } from "@scure/base";
+
+const signer = await createKeyPairSignerFromBytes(
+  base58.decode(process.env.SVM_PRIVATE_KEY!),
+);
+
+const client = new x402Client();
+client.register("solana:*", new ExactSvmScheme(signer));
+client.register("solana:*", new BatchSvmScheme(signer, {
+  depositPolicy: { depositMultiplier: 5 },
+  rpcUrl: process.env.SVM_RPC_URL,
+}));
+```
+
+To opt into server-signed channels for a trusted operator:
+
+```typescript
+const batch = new BatchSvmScheme(signer, {
+  serverSignedChannelsPolicy: {
+    allowedOperators: ["OperatorBase58Pubkey"],
+    maxDeposit: "$1", // USD cap for default assets
+  },
+});
+client.register("solana:*", batch);
+```
+
+#### Facilitator Setup (SVM)
+
+```typescript
+import { toFacilitatorSvmSigner } from "@x402/svm";
+import {
+  BatchSvmScheme,
+  InMemoryBatchChannelStorage,
+  InMemoryBatchReceiverAuthorizerStore,
+} from "@x402/svm/batch-settlement/facilitator";
+
+const svmSigner = toFacilitatorSvmSigner(
+  keypair,
+  process.env.SVM_RPC_URL ? { defaultRpcUrl: process.env.SVM_RPC_URL } : undefined,
+);
+
+const scheme = new BatchSvmScheme(svmSigner, {
+  channelStorage: new InMemoryBatchChannelStorage(),
+  receiverAuthorizerStore: new InMemoryBatchReceiverAuthorizerStore(),
+});
+
+facilitator.register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", scheme);
+
+// Reclaim PDA rent from abandoned channels
+const rentCleanup = scheme.createRentCleanupManager("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1");
+rentCleanup.start({ intervalSecs: 60, abandonGraceSecs: 120 });
+```
+
+#### SVM Examples
+
+* [TypeScript batch-settlement server (EVM + SVM)](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/batch-settlement)
+* [TypeScript batch-settlement client](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/batch-settlement)
+* [TypeScript batch-settlement facilitator](https://github.com/x402-foundation/x402/tree/main/examples/typescript/facilitator/batch-settlement)
+
 ### Specs
 
 * [`batch-settlement` spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/batch-settlement/scheme_batch_settlement.md)
