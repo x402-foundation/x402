@@ -12,6 +12,7 @@ import (
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/internal/clientutil"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
@@ -81,9 +82,10 @@ type BatchSettlementEvmSchemeOptions struct {
 
 // BatchSettlementEvmScheme implements SchemeNetworkClient for batched EVM payments.
 type BatchSettlementEvmScheme struct {
-	signer  evm.ClientEvmSigner
-	config  BatchSettlementEvmSchemeOptions
-	storage ClientChannelStorage
+	signer   evm.ClientEvmSigner
+	config   BatchSettlementEvmSchemeOptions
+	storage  ClientChannelStorage
+	warnings *clientutil.WarningSet
 }
 
 // NewBatchSettlementEvmScheme creates a new batched client scheme.
@@ -113,9 +115,10 @@ func NewBatchSettlementEvmScheme(signer evm.ClientEvmSigner, config *BatchSettle
 	}
 
 	return &BatchSettlementEvmScheme{
-		signer:  signer,
-		config:  cfg,
-		storage: storage,
+		signer:   signer,
+		config:   cfg,
+		storage:  storage,
+		warnings: &clientutil.WarningSet{},
 	}
 }
 
