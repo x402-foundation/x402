@@ -118,7 +118,15 @@ DEFAULT_ASSETS: dict[str, list[ExactDefaultAssetInfo]] = {
             "decimals": 6,
             "symbol": "USDC",
         },
-    ],  # Arbitrum One USDC
+        {
+            "asset": "0xD74f5255D557944cf7Dd0E45FF521520002D5748",
+            "name": "Sperax USD",
+            "version": "1",
+            "decimals": 18,
+            "symbol": "USDs",
+            "asset_transfer_method": "permit2",
+        },
+    ],  # Arbitrum One USDC, Sperax USD (Permit2; no EIP-3009 or working EIP-2612)
     "eip155:421614": [
         {
             "asset": "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
