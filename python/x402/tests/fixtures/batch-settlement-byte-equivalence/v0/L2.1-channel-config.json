@@ -1,0 +1,58 @@
+{
+  "vector": "L2.1",
+  "description": "ChannelConfig EIP-712 digest (baseline flat scalar struct; also serves as channelId).",
+  "domain": {
+    "name": "x402 Batch Settlement",
+    "version": "1",
+    "chainId": 84532,
+    "verifyingContract": "0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003"
+  },
+  "primaryType": "ChannelConfig",
+  "types": {
+    "ChannelConfig": [
+      {
+        "name": "payer",
+        "type": "address"
+      },
+      {
+        "name": "payerAuthorizer",
+        "type": "address"
+      },
+      {
+        "name": "receiver",
+        "type": "address"
+      },
+      {
+        "name": "receiverAuthorizer",
+        "type": "address"
+      },
+      {
+        "name": "token",
+        "type": "address"
+      },
+      {
+        "name": "withdrawDelay",
+        "type": "uint40"
+      },
+      {
+        "name": "salt",
+        "type": "bytes32"
+      }
+    ]
+  },
+  "input": {
+    "payer": "0x1111111111111111111111111111111111111111",
+    "payerAuthorizer": "0x1111111111111111111111111111111111111111",
+    "receiver": "0x3333333333333333333333333333333333333333",
+    "receiverAuthorizer": "0x4444444444444444444444444444444444444444",
+    "token": "0x5555555555555555555555555555555555555555",
+    "withdrawDelay": 900,
+    "salt": "0x0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "expected_digest": "0x5aa0c653042e33ac01a3e944daa7f9a9db4153a203423551757927bca6a8fc93",
+  "meta": {
+    "generator": "_generator.ts",
+    "generator_version": "1",
+    "viem_version": "2.48.11"
+  }
+}
