@@ -1,0 +1,15 @@
+{
+  "vector": "L2.5",
+  "description": "ERC-3009 deposit nonce: keccak256(abi.encode(channelId, salt)). Binds the ERC-3009 ReceiveWithAuthorization to a specific batch-settlement channel without extending the ERC-3009 spec itself.",
+  "function": "build_erc3009_deposit_nonce",
+  "input": {
+    "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "salt": "0x0000000000000000000000000000000000000000000000000000000000000001"
+  },
+  "expected_bytes": "0x7deb3b60ec0f1bf56dbdd0ffedbadafddeaa08947884ff0f215ce93ee1826102",
+  "meta": {
+    "generator": "_generator.ts",
+    "generator_version": "1",
+    "viem_version": "2.48.11"
+  }
+}
