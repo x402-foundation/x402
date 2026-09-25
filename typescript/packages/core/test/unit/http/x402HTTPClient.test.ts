@@ -66,6 +66,37 @@ describe("x402HTTPClient", () => {
       );
     });
 
+    it("falls back to a v2 JSON body when no PAYMENT-REQUIRED header is present", () => {
+      const httpClient = new x402HTTPClient(new x402Client());
+      const paymentRequired = buildPaymentRequired({
+        x402Version: 2,
+        extensions: { bazaar: { info: { input: { method: "GET" } } } },
+      });
+
+      expect(httpClient.getPaymentRequiredResponse(() => null, paymentRequired)).toEqual(
+        paymentRequired,
+      );
+    });
+
+    it("merges extensions from the v2 JSON body when the header omits them", () => {
+      const httpClient = new x402HTTPClient(new x402Client());
+      const body = buildPaymentRequired({
+        x402Version: 2,
+        extensions: { bazaar: { info: { input: { method: "GET" } } } },
+      });
+      const headerOnly = buildPaymentRequired({ x402Version: 2, error: "payment_required" });
+      const headers = {
+        "PAYMENT-REQUIRED": encodePaymentRequiredHeader(headerOnly),
+      };
+
+      expect(
+        httpClient.getPaymentRequiredResponse(
+          name => headers[name as keyof typeof headers] ?? null,
+          body,
+        ).extensions,
+      ).toEqual(body.extensions);
+    });
+
     it("throws when neither a v2 header nor a v1 body is available", () => {
       const httpClient = new x402HTTPClient(new x402Client());
 
