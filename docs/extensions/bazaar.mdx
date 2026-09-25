@@ -919,6 +919,16 @@ Common protocol-level mistakes include:
    the declaration was accepted but indexing may happen later. Allow for delay
    before concluding failure with your facilitator.
 
+5. **Middleware ordering can hide the payment gate from a bare probe.** Some
+   facilitators or catalogs probe with an unpaid, bodyless request and expect
+   `402` back — check that specific facilitator's policy, since this isn't
+   an x402 protocol requirement. If schema/body validation or auth middleware
+   runs ahead of the payment gate, that probe can get a `400`/`401`/`500`
+   instead. Real traffic still succeeds because real clients send valid
+   bodies, so the test suite passes silently with no assertion on what a
+   bodyless request actually returns. Add a CI test asserting the payment
+   gate runs first, ahead of body-dependent middleware.
+
 If your facilitator exposes optional discovery endpoints,
 `GET /discovery/resources?payTo=<address>` can confirm what that facilitator
 has cataloged for a given payee.
