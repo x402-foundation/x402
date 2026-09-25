@@ -2,7 +2,7 @@
  * Client extensions for querying Bazaar discovery resources
  */
 
-import { HTTPFacilitatorClient } from "@x402/core/http";
+import { HTTPFacilitatorClient, readLimitedBody, ResponseBodyTooLargeError } from "@x402/core/http";
 import type { PaymentRequirements } from "@x402/core/types";
 import { WithExtensions } from "../types";
 
@@ -185,6 +185,12 @@ export interface BazaarClientExtension {
 }
 
 /**
+ * Catalog pages carry resource extensions and MCP JSON schemas, so they need
+ * more room than control-plane JSON.
+ */
+export const MAX_DISCOVERY_RESPONSE_BYTES = 4 << 20;
+
+/**
  * Extends a facilitator client with Bazaar discovery query functionality.
  * Preserves and merges with any existing extensions from prior chaining.
  *
@@ -260,13 +266,22 @@ export function withBazaar<T extends HTTPFacilitatorClient>(
         });
 
         if (!response.ok) {
-          const errorText = await response.text().catch(() => response.statusText);
+          const errorText = await readLimitedBody(response, MAX_DISCOVERY_RESPONSE_BYTES).catch(
+            (cause: unknown) => {
+              if (cause instanceof ResponseBodyTooLargeError) {
+                throw cause;
+              }
+              return response.statusText;
+            },
+          );
           throw new Error(
             `Facilitator listDiscoveryResources failed (${response.status}): ${errorText}`,
           );
         }
 
-        return (await response.json()) as DiscoveryResourcesResponse;
+        return JSON.parse(
+          await readLimitedBody(response, MAX_DISCOVERY_RESPONSE_BYTES),
+        ) as DiscoveryResourcesResponse;
       },
 
       async search(
@@ -311,13 +326,22 @@ export function withBazaar<T extends HTTPFacilitatorClient>(
         });
 
         if (!response.ok) {
-          const errorText = await response.text().catch(() => response.statusText);
+          const errorText = await readLimitedBody(response, MAX_DISCOVERY_RESPONSE_BYTES).catch(
+            (cause: unknown) => {
+              if (cause instanceof ResponseBodyTooLargeError) {
+                throw cause;
+              }
+              return response.statusText;
+            },
+          );
           throw new Error(
             `Facilitator searchDiscoveryResources failed (${response.status}): ${errorText}`,
           );
         }
 
-        return (await response.json()) as SearchDiscoveryResourcesResponse;
+        return JSON.parse(
+          await readLimitedBody(response, MAX_DISCOVERY_RESPONSE_BYTES),
+        ) as SearchDiscoveryResourcesResponse;
       },
     },
   } as WithExtensions<T, BazaarClientExtension>["extensions"];
