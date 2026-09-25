@@ -14,6 +14,7 @@ import {
   PaymentRequirementsSelector,
   selectPaymentRequirements,
 } from "x402/client";
+import { warnLegacyDeprecation } from "x402/shared";
 
 /**
  * Enables the payment of APIs using the x402 payment protocol.
@@ -59,6 +60,8 @@ export function wrapFetchWithPayment(
   paymentRequirementsSelector: PaymentRequirementsSelector = selectPaymentRequirements,
   config?: X402Config,
 ) {
+  warnLegacyDeprecation("x402-fetch", "@x402/fetch", "client");
+
   return async (input: RequestInfo, init?: RequestInit) => {
     const response = await fetch(input, init);
 

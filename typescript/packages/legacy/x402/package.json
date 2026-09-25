@@ -65,6 +65,16 @@
     "zod": "^3.24.2"
   },
   "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/esm/index.d.mts",
+        "default": "./dist/esm/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/index.d.ts",
+        "default": "./dist/cjs/index.js"
+      }
+    },
     "./shared": {
       "import": {
         "types": "./dist/esm/shared/index.d.mts",
