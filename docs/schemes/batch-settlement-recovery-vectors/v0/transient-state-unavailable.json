@@ -1,0 +1,61 @@
+{
+  "scenario": "transient-state-unavailable",
+  "description": "A corrective 402 arrives carrying a snapshot the client cannot verify, because the onchain read of BatchSettlement.channels(channelId) is unavailable. The snapshot may be perfectly valid; the client simply cannot establish that. The client must not mutate state, sign, or retry, and must surface the condition as non-terminal rather than blaming the server.",
+  "channel": {
+    "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "domain": {
+      "name": "x402 Batch Settlement",
+      "version": "1",
+      "chainId": 84532,
+      "verifyingContract": "0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003"
+    }
+  },
+  "initialState": {
+    "onchainTotalClaimed": "40",
+    "serverChargedCumulative": "50",
+    "clientLocalCumulative": "0",
+    "onchainReadAvailable": false,
+    "comment": "The corrective snapshot satisfies the invariant (40 ≤ 50), so a client that could read the chain would recover on a single retry. This vector holds the chain read unavailable — an RPC transport failure, a node error, or a timeout — so the trust-but-verify step cannot complete."
+  },
+  "steps": [
+    {
+      "step": 1,
+      "actor": "client",
+      "action": "POST a paid request with a voucher constructed from local cumulative 0.",
+      "request": {
+        "voucher": {
+          "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+          "maxClaimableAmount": "10",
+          "signature": "<placeholder>"
+        },
+        "requestCharge": "10"
+      }
+    },
+    {
+      "step": 2,
+      "actor": "server",
+      "action": "Return a corrective 402 with chargedCumulativeAmount = 50.",
+      "response": {
+        "status": 402,
+        "extra": {
+          "channelState": {
+            "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+            "balance": "1000",
+            "totalClaimed": "40",
+            "chargedCumulativeAmount": "50"
+          }
+        }
+      }
+    }
+  ],
+  "expectedClientBehaviour": {
+    "afterStep2": "Attempt to read BatchSettlement.channels(channelId) and fail to obtain an answer. Surface the non-terminal error TRANSIENT_STATE_UNAVAILABLE with the underlying cause preserved, and emit telemetry label recovery.transient_state_unavailable. Do not update local channel state from the unverified snapshot, do not sign a replacement voucher, and do not retry. Do not emit INVALID_CORRECTIVE_STATE: the invariant was never evaluated, so the snapshot has not been shown to be invalid. The loop-guard attempt count is unchanged, because no replacement voucher was signed."
+  },
+  "invariants": [
+    "The corrective snapshot itself is valid (onchain.totalClaimed 40 ≤ server.chargedCumulativeAmount 50); the failure is in the client's ability to establish that, not in the server's state.",
+    "The client local cumulative remains 0 because an unverified snapshot is never persisted.",
+    "No replacement voucher is signed and no retry request is sent.",
+    "The outcome is non-terminal: the same logical request may be attempted again once the chain read is available, and that attempt starts with a fresh loop-guard budget.",
+    "TRANSIENT_STATE_UNAVAILABLE and INVALID_CORRECTIVE_STATE are mutually exclusive. The first means the invariant could not be evaluated; the second means it was evaluated and violated."
+  ]
+}
