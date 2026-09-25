@@ -315,7 +315,7 @@ describe("wrapAxiosWithPayment()", () => {
     await expect(interceptor(error)).rejects.toBe(retryError);
   });
 
-  it("should set Access-Control-Expose-Headers on retry request", async () => {
+  it("should not inject Access-Control-Expose-Headers into retry requests", async () => {
     const successResponse = { data: "success" } as AxiosResponse;
     (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(successResponse);
 
@@ -324,9 +324,7 @@ describe("wrapAxiosWithPayment()", () => {
     await interceptor(error);
 
     const retryConfig = (mockAxiosClient.request as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(retryConfig.headers["Access-Control-Expose-Headers"]).toBe(
-      "PAYMENT-RESPONSE,X-PAYMENT-RESPONSE",
-    );
+    expect(retryConfig.headers["Access-Control-Expose-Headers"]).toBeUndefined();
   });
 
   it("should clone retry headers into a serializable record", async () => {
@@ -412,6 +410,10 @@ describe("wrapAxiosWithPayment()", () => {
 
     expect(result).toBe(successResponse);
     expect(mockAxiosClient.request).toHaveBeenCalledTimes(2);
+    for (const [config] of (mockAxiosClient.request as ReturnType<typeof vi.fn>).mock.calls) {
+      expect(config.headers["Access-Control-Expose-Headers"]).toBeUndefined();
+      expect(config.headers["PAYMENT-SIGNATURE"]).toBeDefined();
+    }
     expect(mockClient.createPaymentPayload).toHaveBeenCalledTimes(2);
     expect(MockX402HTTPClient.prototype.processPaymentResult).toHaveBeenCalledTimes(2);
     expect(MockX402HTTPClient.prototype.processPaymentResult).toHaveBeenNthCalledWith(
