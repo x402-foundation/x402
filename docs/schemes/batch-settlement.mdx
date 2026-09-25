@@ -1,6 +1,6 @@
 ---
 title: "Batch Settlement"
-description: "High-throughput EVM payments with escrow, off-chain vouchers, and batched onchain redemption."
+description: "High-throughput payments with escrow, off-chain vouchers, and batched onchain redemption. Available on EVM and Solana (SVM)."
 ---
 
 The `batch-settlement` scheme is for high-throughput payments where many requests are authorized individually and redeemed later in batches. The EVM implementation uses stateless unidirectional payment channels: a buyer deposits funds into onchain escrow once, then signs off-chain cumulative vouchers for each request. The seller verifies vouchers quickly and redeems them onchain later in batches.
