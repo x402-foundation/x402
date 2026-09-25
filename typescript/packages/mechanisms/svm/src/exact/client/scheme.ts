@@ -28,7 +28,7 @@ import {
 } from "../../constants";
 import type { ClientSvmConfig, ClientSvmSigner } from "../../signer";
 import type { ExactSvmPayloadV2 } from "../../types";
-import { createRpcClient, resolveBlockhash } from "../../utils";
+import { createRpcClient, resolveBlockhash, resolveTransactionVersion } from "../../utils";
 import { getCachedMintMetadata, type MintMetadataCache } from "../../mint-cache";
 import { findDefaultAsset } from "../../defaultAssets";
 
@@ -63,6 +63,7 @@ export class ExactSvmScheme implements SchemeNetworkClient {
     x402Version: number,
     paymentRequirements: PaymentRequirements,
   ): Promise<Pick<PaymentPayload, "x402Version" | "payload">> {
+    const transactionVersion = resolveTransactionVersion(paymentRequirements.extra);
     const rpc = createRpcClient(paymentRequirements.network, this.config?.rpcUrl);
 
     const mintMetadata = await getCachedMintMetadata(
@@ -134,7 +135,7 @@ export class ExactSvmScheme implements SchemeNetworkClient {
     };
 
     const tx = pipe(
-      createTransactionMessage({ version: 0 }),
+      createTransactionMessage({ version: transactionVersion }),
       tx => setTransactionMessageComputeUnitPrice(DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS, tx),
       tx => setTransactionMessageFeePayer(feePayer, tx),
       tx =>

@@ -1,8 +1,12 @@
 package svm
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"strings"
 	"testing"
 
+	solana "github.com/gagliardetto/solana-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -112,4 +116,87 @@ func TestStablecoinRegistryIsInternallyConsistent(t *testing.T) {
 			"%s must use a supported token program", symbol,
 		)
 	}
+}
+
+func TestIsAcceptedTransactionVersion(t *testing.T) {
+	assert.True(t, IsAcceptedTransactionVersion(solana.MessageVersionLegacy), "legacy stays accepted for backward compatibility")
+	assert.True(t, IsAcceptedTransactionVersion(solana.MessageVersionV0))
+	// Anything the verifiers do not model is rejected, whatever its number.
+	assert.False(t, IsAcceptedTransactionVersion(solana.MessageVersion(2)))
+	assert.False(t, IsAcceptedTransactionVersion(solana.MessageVersion(-1)))
+	assert.False(t, IsAcceptedTransactionVersion(solana.MessageVersion(127)))
+}
+
+func TestAdvertisedTransactionVersionsMarshalsToVersionZeroOnly(t *testing.T) {
+	encoded, err := json.Marshal(map[string]interface{}{ExtraTransactionVersions: AdvertisedTransactionVersions})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"transactionVersions":[0]}`, string(encoded), "legacy is accepted but never advertised")
+}
+
+func TestResolveTransactionVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		extra   map[string]interface{}
+		wantErr bool
+	}{
+		{name: "nil extra selects v0", extra: nil},
+		{name: "absent field selects v0", extra: map[string]interface{}{"feePayer": "x"}},
+		{name: "malformed field is unsupported", extra: map[string]interface{}{ExtraTransactionVersions: "0"}, wantErr: true},
+		{name: "JSON-decoded [0] selects v0", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{float64(0)}}},
+		{name: "JSON-decoded [\"legacy\",0] selects v0", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{"legacy", float64(0)}}},
+		{name: "JSON-decoded [1,0] selects v0", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{float64(1), float64(0)}}},
+		{name: "in-process []int{0} selects v0", extra: map[string]interface{}{ExtraTransactionVersions: []int{0}}},
+		{name: "in-process []interface{}{0} selects v0", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{0}}},
+		{name: "advertised value selects v0", extra: map[string]interface{}{ExtraTransactionVersions: AdvertisedTransactionVersions}},
+		{name: "[\"legacy\"] alone is unsupported: clients never build legacy", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{"legacy"}}, wantErr: true},
+		{name: "[1] alone is unsupported", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{float64(1)}}, wantErr: true},
+		{name: "[] is unsupported", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{}}, wantErr: true},
+		{name: "in-process []int{1} is unsupported", extra: map[string]interface{}{ExtraTransactionVersions: []int{1}}, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			version, err := ResolveTransactionVersion(test.extra)
+			if test.wantErr {
+				require.Error(t, err)
+				assert.True(t, strings.HasPrefix(err.Error(), ErrUnsupportedTransactionVersion), err.Error())
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, solana.MessageVersionV0, version)
+		})
+	}
+}
+
+// solana-go 1.14 reads any first message byte >= 0x7f as a versioned prefix and
+// stores `byte - 127` as the version without validating it, so a message tagged
+// 0x81 decodes with version 2. The verifiers must refuse it rather than run
+// their v0-shaped checks against it.
+func TestDecodeTransactionSurfacesUnknownMessageVersions(t *testing.T) {
+	payer := solana.NewWallet()
+	tx, err := solana.NewTransactionBuilder().
+		SetRecentBlockHash(solana.Hash(solana.SystemProgramID)).
+		SetFeePayer(payer.PublicKey()).
+		AddInstruction(solana.NewInstruction(solana.MemoProgramID, solana.AccountMetaSlice{}, []byte("x"))).
+		Build()
+	require.NoError(t, err)
+	tx.Message.SetVersion(solana.MessageVersionV0)
+	_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
+		if key.Equals(payer.PublicKey()) {
+			return &payer.PrivateKey
+		}
+		return nil
+	})
+	require.NoError(t, err)
+
+	raw, err := tx.MarshalBinary()
+	require.NoError(t, err)
+	// Wire layout: compact signature count (1 byte here), signatures, message.
+	versionOffset := 1 + 64*len(tx.Signatures)
+	require.Equal(t, byte(0x80), raw[versionOffset], "v0 prefix expected before tampering")
+	raw[versionOffset] = 0x81
+
+	decoded, err := DecodeTransaction(base64.StdEncoding.EncodeToString(raw))
+	require.NoError(t, err)
+	assert.Equal(t, solana.MessageVersion(2), decoded.Message.GetVersion())
+	assert.False(t, IsAcceptedTransactionVersion(decoded.Message.GetVersion()))
 }

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 try:
     from solders.hash import Hash, ParseHashError
+    from solders.message import Message, MessageV0, to_bytes_versioned
     from solders.pubkey import Pubkey
     from solders.transaction import VersionedTransaction
 except ImportError as e:
@@ -17,6 +18,8 @@ except ImportError as e:
 
 from ...schemas.helpers import convert_to_token_amount
 from .constants import (
+    ACCEPTED_TRANSACTION_VERSIONS,
+    ERR_UNSUPPORTED_TRANSACTION_VERSION,
     NETWORK_CONFIGS,
     SOLANA_DEVNET_CAIP2,
     SOLANA_MAINNET_CAIP2,
@@ -215,6 +218,79 @@ def decode_transaction_from_payload(payload: ExactSvmPayload) -> VersionedTransa
         return VersionedTransaction.from_bytes(tx_bytes)
     except Exception as e:
         raise ValueError("invalid_exact_svm_payload_transaction") from e
+
+
+def get_transaction_version(message: object) -> int | str:
+    """Return the version of a decoded transaction message.
+
+    Legacy messages have no version prefix; versioned messages are serialized
+    behind a single byte of ``0x80 | version``.
+
+    Args:
+        message: Decoded transaction message (``tx.message``).
+
+    Returns:
+        ``"legacy"`` for an unversioned message, ``0`` for a v0 message,
+        otherwise the version number read from the serialized prefix, or ``-1``
+        when it cannot be determined.
+    """
+    if isinstance(message, Message):
+        return "legacy"
+    if isinstance(message, MessageV0):
+        return 0
+    try:
+        return to_bytes_versioned(message)[0] & 0x7F  # type: ignore[arg-type]
+    except Exception:
+        return -1
+
+
+def is_accepted_transaction_version(version: int | str) -> bool:
+    """Return whether a transaction version is one the SVM verifiers police.
+
+    This is an allowlist (see ``ACCEPTED_TRANSACTION_VERSIONS``), not a denylist:
+    the fee-policy checks read ComputeBudget instructions, which a newer message
+    version may relocate, so anything unmodelled must be rejected outright.
+
+    Args:
+        version: Version reported by ``get_transaction_version``.
+
+    Returns:
+        True if the version is accepted, False otherwise.
+    """
+    if isinstance(version, bool):
+        return False
+    return version in ACCEPTED_TRANSACTION_VERSIONS
+
+
+def resolve_transaction_version(extra: dict | None) -> int:
+    """Pick the transaction message version a client should build.
+
+    Reads ``extra.transactionVersions`` (copied by the server from the
+    facilitator's ``/supported`` extra). This client builds version ``0`` only;
+    legacy is deprecated and never built.
+
+    Args:
+        extra: ``PaymentRequirements.extra`` (may be None).
+
+    Returns:
+        ``0``.
+
+    Raises:
+        ValueError: If the advertised set does not include version 0.
+    """
+    if extra is None or "transactionVersions" not in extra:
+        return 0
+    advertised = extra["transactionVersions"]
+    if not isinstance(advertised, list):
+        raise ValueError(
+            f"{ERR_UNSUPPORTED_TRANSACTION_VERSION}: transactionVersions must be a list"
+        )
+    if any(isinstance(v, int) and not isinstance(v, bool) and v == 0 for v in advertised):
+        return 0
+    raise ValueError(
+        f"{ERR_UNSUPPORTED_TRANSACTION_VERSION}: facilitator accepts {advertised!r}, "
+        "but this client only builds transaction version 0"
+    )
 
 
 def get_token_payer_from_transaction(tx: VersionedTransaction) -> str:

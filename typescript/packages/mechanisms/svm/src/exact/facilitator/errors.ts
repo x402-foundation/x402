@@ -14,6 +14,7 @@ export const ErrFeePayerNotManaged = "invalid_exact_svm_fee_payer_not_managed_by
 export const ErrInvalidPayloadTransaction = "invalid_exact_svm_payload_transaction";
 export const ErrTransactionCouldNotBeDecoded =
   "invalid_exact_svm_payload_transaction_could_not_be_decoded";
+export const ErrUnsupportedTransactionVersion = "unsupported_transaction_version";
 export const ErrSignatureInvalid = "invalid_exact_svm_payload_signature_invalid";
 export const ErrExcessiveSigners = "invalid_exact_svm_payload_excessive_signers";
 export const ErrTransactionInstructionsLength =
