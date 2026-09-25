@@ -99,6 +99,16 @@ This protection is enabled by default when using the standard SVM facilitator re
 
 **If you are a merchant settling payments directly (without a facilitator), you must implement equivalent duplicate detection yourself.** See the [Exact SVM Scheme Specification](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_svm.md) for the full specification.
 
+### Self-Testing a Paid Route (`self_send_not_allowed`)
+
+Some facilitators, including the [CDP Facilitator](https://docs.cdp.coinbase.com/x402/docs/quickstart-sellers), reject a payment when the payer address is the same as the route's `payTo` address. When this happens, `/verify` or `/settle` returns an `invalidReason` (or `errorReason`) of `self_send_not_allowed`. Note that `self_send_not_allowed` is not a spec-defined error reason — it is specific to facilitators that implement this check.
+
+This is easy to trip over when writing a seller-side health check: the most natural way to test "does my paid route actually work" is to pay your own route from a wallet you control. If that wallet is the same address configured as `payTo`, the facilitator refuses the payment, and the resource server returns `402` again on the paid retry — indistinguishable at a glance from a misconfigured route. The reason is only visible by decoding the `PAYMENT-REQUIRED` header on that retry and reading its `error` string, which such facilitators populate with the underlying `invalidReason` / `errorReason` from their `/verify` or `/settle` response.
+
+It is also easy to draw the wrong conclusion from the *absence* of this error. A resource server returning a well-formed `402` with correct `accepts` requirements only proves that a **challenge** was issued — it does not mean `/verify` or `/settle` has actually run. A seller-side check that only inspects the initial `402` (without completing a real paid request) can report healthy indefinitely even if the payment path itself is broken.
+
+To self-test the full payment path without hitting `self_send_not_allowed`, pay from an address other than `payTo` — for example, a second address derived from the same wallet seed at a different derivation index (`m/44'/60'/0'/0/1`), or a separate funded wallet.
+
 ### Summary
 
 The facilitator acts as an independent verification and settlement layer within the x402 protocol. It helps servers confirm payments and submit transactions onchain without requiring direct blockchain infrastructure.
