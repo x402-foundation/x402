@@ -251,6 +251,60 @@ The `SettleResponse` schema contains the following fields:
 | `amount`      | `string`  | Optional | The actual amount settled in atomic units (omitted if not applicable) |
 | `extensions`  | `object`  | Optional | Protocol extensions data                                              |
 
+**5.3.5 Receiver Obligation on an Unresolved Settlement**
+
+A **receiver** — a resource server, or any party that dispatched a settle and is
+deciding whether to issue a new payment challenge — holds, for an authorization
+`A`, one of three things: a terminal answer, a non-terminal answer, or nothing.
+The rules in this section govern the last two.
+
+`A` is **unresolved** for a receiver when any of the following holds:
+
+- the `SettleResponse` for `A` carries `errorReason: settlement_pending` (see
+  [§9 Error Handling](#9-error-handling)), which is non-terminal by definition;
+- no `SettleResponse` was received at all — a timeout, a dropped connection, or
+  any other transport failure; or
+- a `SettleResponse` was received but cannot be interpreted under this
+  specification.
+
+While `A` is unresolved, a receiver:
+
+- **MUST NOT** issue a new payment challenge for the request `A` was presented
+  against;
+- **MUST NOT** present the outcome to the payer as a failed payment;
+- **MUST**, on a subsequent request for the same intent, re-present `A` itself
+  to the facilitator rather than requiring the payer to authorize again.
+
+**Failure to resolve, receiver side.** A receiver that cannot establish the
+outcome of `A` MUST treat it as unresolved. Neither the absence of a
+`SettleResponse`, nor a transport failure, nor `success: false` accompanied by
+an empty `transaction`, is evidence that `A` did not settle.
+
+**Leaving the unresolved state.** A receiver MAY issue a new payment challenge
+for that request only once one of the following holds:
+
+1. it has reconciled `A` against its `transaction` on `network` and established,
+   under that network's finality rule, that `A` did not settle and can no longer
+   settle; or
+2. it has **withdrawn or invalidated `A` by an action it performed** — for
+   example cancelling the authorization on-chain, or a facilitator-side
+   cancellation whose confirmation it holds — so that `A` can no longer settle.
+
+A receiver MUST NOT infer either condition from elapsed time alone, from the
+absence of a response, or from the repetition of a non-terminal answer. Clause 2
+exists so that a payer whose authorization cannot presently complete is not left
+permanently unaskable: the receiver's remedy is to end `A` explicitly and
+challenge afresh, never to assume `A` has died.
+
+**This obligation does not depend on client behaviour.** It is not conditioned
+on the client re-presenting the same authorization. A conforming client will
+re-present; a non-conforming one will authorize again; the receiver's duty is
+identical in both cases, because the receiver is the party that holds the prior
+authorization and can therefore act on it. Stating the rule conditionally would
+invite the reading that a client-side idempotency key discharges it, and for the
+case where the client's process does not survive the lost reply — which is
+frequently the same event that lost it — that reading does not hold.
+
 **5.4 VerifyResponse Schema**
 
 
