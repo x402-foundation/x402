@@ -84,7 +84,8 @@
       "scheme": "exact",
       "assetTransferMethod": "default",
       "sdks": [
-        "typescript"
+        "typescript",
+        "python"
       ],
       "price": {
         "amount": "5000000",
@@ -101,7 +102,8 @@
       "assetTransferMethod": "masumi",
       "maxTimeoutSeconds": 600,
       "sdks": [
-        "typescript"
+        "typescript",
+        "python"
       ],
       "price": {
         "amount": "5000000",
@@ -117,7 +119,8 @@
       "scheme": "exact",
       "assetTransferMethod": "script",
       "sdks": [
-        "typescript"
+        "typescript",
+        "python"
       ],
       "price": {
         "amount": "5000000",

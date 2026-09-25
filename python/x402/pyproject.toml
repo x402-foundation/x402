@@ -35,6 +35,15 @@ flask = ["flask>=3.0.0"]
 fastapi = ["fastapi[standard]>=0.115.0", "starlette>=0.27.0"]
 
 # Blockchain mechanisms - install based on which chains you need
+cardano = [
+    "pycardano>=0.19.2,<0.20",
+    # PyCardano's cbor2pure backend imports exception classes removed in cbor2 6.
+    "cbor2>=5.6.5,<6",
+    "lzstring>=1.0.4,<2",
+    "rfc8785>=0.1.4,<1",
+    "httpx>=0.28.1",
+    "PyNaCl>=1.5.0",
+]
 evm = [
     "eth-abi>=5.0.0",
     "eth-keys>=0.5.0",
@@ -67,8 +76,8 @@ extensions = [
 # Convenience bundles
 clients = ["x402[httpx,requests]"]
 servers = ["x402[flask,fastapi]"]
-mechanisms = ["x402[evm,svm,tvm]"]
-all = ["x402[httpx,requests,flask,fastapi,evm,svm,tvm,mcp,extensions]"]
+mechanisms = ["x402[cardano,evm,svm,tvm]"]
+all = ["x402[httpx,requests,flask,fastapi,cardano,evm,svm,tvm,mcp,extensions]"]
 
 [dependency-groups]
 dev = [
@@ -84,6 +93,11 @@ dev = [
     "flask>=3.0.0",
     "fastapi[standard]>=0.115.0",
     "starlette>=0.27.0",
+    # Cardano dependencies
+    "pycardano>=0.19.2,<0.20",
+    "cbor2>=5.6.5,<6",
+    "lzstring>=1.0.4,<2",
+    "rfc8785>=0.1.4,<1",
     # EVM dependencies
     "eth-abi>=5.0.0",
     "eth-keys>=0.5.0",
@@ -187,6 +201,10 @@ python_version = "3.10"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = ["pycardano.*", "lzstring"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

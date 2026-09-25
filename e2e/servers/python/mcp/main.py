@@ -1,8 +1,7 @@
 """MCP E2E Test Server with x402 Payment-Wrapped Tools.
 
 Thin MCP adapter over the same mechanisms catalog the HTTP frameworks use: one
-tool per resolved route, each wrapped with ``create_payment_wrapper`` using
-payment requirements built from the same ``accepts`` config
+tool per resolved route, with payment requirements built from the same ``accepts`` config
 ``build_payment_routes`` feeds the HTTP middleware. Tools take no arguments
 and return the fixed ``{message, timestamp}`` body every HTTP route returns.
 """
@@ -11,7 +10,11 @@ from __future__ import annotations
 
 import os
 import threading
+from contextlib import asynccontextmanager
 from typing import Any
+
+from mcp.server.fastmcp import Context
+from mcp.types import CallToolResult
 
 
 def main() -> None:
@@ -25,16 +28,33 @@ def main() -> None:
     from x402 import ResourceConfig, ResourceInfo, x402ResourceServer
     from x402.http import FacilitatorConfig, HTTPFacilitatorClient
     from x402.mcp import create_payment_wrapper
+    from x402.mcp.server_async import (
+        PaymentWrapperConfig,
+        create_payment_wrapper as create_async_payment_wrapper,
+    )
+    from x402.mcp.types import MCPToolContext, MCPToolResult
 
-    from catalog import PROTECTED_ROUTE_MESSAGE, catalog_routes, mcp_tool_name, resolve_routes, route_description
-    from config import build_resolved_route_config, configure_resource_server, load_server_config
-    from handlers import CLOSE_PATH, HEALTH_PATH, close_body, health_body, route_body
+    from catalog import (
+        PROTECTED_ROUTE_MESSAGE,
+        catalog_routes,
+        mcp_tool_name,
+        resolve_routes,
+        route_description,
+    )
+    from config import (
+        build_resolved_route_config,
+        configure_resource_server,
+        load_server_config,
+    )
+    from handlers import CLOSE_PATH, HEALTH_PATH, close_body, health_body
 
     cfg = load_server_config()
 
     mcp = FastMCP("x402 MCP E2E Server")
 
-    facilitator_client = HTTPFacilitatorClient(FacilitatorConfig(url=cfg.facilitator_url))
+    facilitator_client = HTTPFacilitatorClient(
+        FacilitatorConfig(url=cfg.facilitator_url)
+    )
     resource_server = x402ResourceServer(facilitator_client)
     configure_resource_server(resource_server, cfg)
     resource_server.initialize()
@@ -44,14 +64,20 @@ def main() -> None:
     # descriptions too even though they never register a tool below.
     tool_descriptions = {
         route.path: route_description(
-            route.network, route.scheme, route.asset_transfer_method, route.extensions, route.payment_flow
+            route.network,
+            route.scheme,
+            route.asset_transfer_method,
+            route.extensions,
+            route.payment_flow,
         )
         for route in catalog_routes()
     }
 
     def register_route_tool(route: Any) -> None:
         tool_name = mcp_tool_name(route.path)
-        description = tool_descriptions.get(route.path, f"Paid MCP tool for {route.path}")
+        description = tool_descriptions.get(
+            route.path, f"Paid MCP tool for {route.path}"
+        )
         route_config = build_resolved_route_config(route, "mcp")
         accepts_cfg = route_config["accepts"]
         accepts = resource_server.build_payment_requirements(
@@ -63,19 +89,12 @@ def main() -> None:
                 extra=accepts_cfg.get("extra"),
             )
         )
-        wrapper = create_payment_wrapper(
-            resource_server,
-            accepts=accepts,
-            resource=ResourceInfo(
-                url=f"mcp://tool/{tool_name}",
-                description=description,
-                mime_type="application/json",
-            ),
-            extensions=route_config.get("extensions"),
+        resource = ResourceInfo(
+            url=f"mcp://tool/{tool_name}",
+            description=description,
+            mime_type="application/json",
         )
 
-        @mcp.tool(name=tool_name, description=description)
-        @wrapper
         async def _tool() -> str:
             import json
             from datetime import datetime, timezone
@@ -86,6 +105,46 @@ def main() -> None:
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
             )
+
+        if route.network_id == "cardano":
+            # The async adapter enriches quotes and carries payment metadata into
+            # request binding when the client retries with a signed quote.
+            async def handler(
+                args: dict[str, Any], context: MCPToolContext
+            ) -> MCPToolResult:
+                return MCPToolResult(content=[{"type": "text", "text": await _tool()}])
+
+            wrapped = create_async_payment_wrapper(
+                resource_server,
+                PaymentWrapperConfig(
+                    accepts=accepts,
+                    resource=resource,
+                    extensions=route_config.get("extensions"),
+                ),
+            )(handler)
+
+            async def paid_tool(ctx: Context) -> CallToolResult:
+                request_meta = ctx.request_context.meta
+                meta = (
+                    (request_meta.model_extra or {}) if request_meta is not None else {}
+                )
+                result = await wrapped({}, {"_meta": meta, "toolName": tool_name})
+                return CallToolResult(
+                    content=result.content,
+                    isError=result.is_error,
+                    structuredContent=result.structured_content,
+                    _meta=result.meta,
+                )
+
+            mcp.tool(name=tool_name, description=description)(paid_tool)
+        else:
+            wrapper = create_payment_wrapper(
+                resource_server,
+                accepts=accepts,
+                resource=resource,
+                extensions=route_config.get("extensions"),
+            )
+            mcp.tool(name=tool_name, description=description)(wrapper(_tool))
 
     for route in resolve_routes():
         register_route_tool(route)
@@ -109,22 +168,23 @@ def main() -> None:
         threading.Thread(target=shutdown, daemon=True).start()
         return response
 
-    async def on_startup() -> None:
-        # Emitted from the ASGI startup hook (not before uvicorn.run()) so the
-        # "Server listening" log only appears once the socket is actually
-        # bound and the app is ready to accept requests.
-        print(f"Server listening on port {cfg.port}", flush=True)
-        print(f"SSE endpoint: http://localhost:{cfg.port}/sse", flush=True)
-        print(f"Health: http://localhost:{cfg.port}{HEALTH_PATH}", flush=True)
-
     mcp_app = mcp.sse_app()
+
+    @asynccontextmanager
+    async def lifespan(app):
+        # Enter the mounted transport's lifecycle alongside the parent app.
+        async with mcp_app.router.lifespan_context(mcp_app):
+            print(f"Server listening on port {cfg.port}", flush=True)
+            print(f"SSE endpoint: http://localhost:{cfg.port}/sse", flush=True)
+            print(f"Health: http://localhost:{cfg.port}{HEALTH_PATH}", flush=True)
+            yield
 
     app = Starlette(
         routes=[
             Route(HEALTH_PATH, health, methods=["GET"]),
             Route(CLOSE_PATH, close, methods=["POST"]),
         ],
-        on_startup=[on_startup],
+        lifespan=lifespan,
     )
 
     # Mount MCP SSE app at root so /sse and /messages work
