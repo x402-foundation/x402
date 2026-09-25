@@ -95,6 +95,7 @@ func TestAttachPaymentToMeta(t *testing.T) {
 func TestExtractPaymentRequiredFromResult(t *testing.T) {
 	paymentRequired := types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Accepts: []types.PaymentRequirements{
 			{
 				Scheme:  "exact",
@@ -152,6 +153,7 @@ func TestExtractPaymentRequiredFromResult(t *testing.T) {
 func TestCreatePaymentRequiredError(t *testing.T) {
 	paymentRequired := &types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Accepts: []types.PaymentRequirements{
 			{Scheme: "exact", Network: "eip155:84532", Amount: "1000"},
 		},
@@ -179,6 +181,7 @@ func TestCreatePaymentRequiredError(t *testing.T) {
 func TestIsPaymentRequiredError(t *testing.T) {
 	paymentRequired := &types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Accepts: []types.PaymentRequirements{
 			{Scheme: "exact", Network: "eip155:84532", Amount: "1000"},
 		},
@@ -204,6 +207,7 @@ func TestIsPaymentRequiredError(t *testing.T) {
 func TestExtractPaymentRequiredFromError(t *testing.T) {
 	_ = types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Accepts: []types.PaymentRequirements{
 			{Scheme: "exact", Network: "eip155:84532", Amount: "1000"},
 		},

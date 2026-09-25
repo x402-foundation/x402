@@ -278,6 +278,7 @@ func TestCreateClientHookReturnsSIWXHeader(t *testing.T) {
 	hook := CreateClientHook(signer)
 	result, err := hook(context.Background(), types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Extensions: map[string]interface{}{
 			ExtensionKey: Extension{
 				Info: Info{
@@ -321,6 +322,7 @@ func TestCreateClientHookWithSignersReturnsSolanaHeader(t *testing.T) {
 	hook := CreateClientHookWithSigners(NewSolanaSIWXSigner(signer))
 	result, err := hook(context.Background(), types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Extensions: map[string]interface{}{
 			ExtensionKey: Extension{
 				Info: Info{
@@ -540,6 +542,7 @@ func TestCreateClientHookDoesNotSignWhenOriginMismatched(t *testing.T) {
 	hook := CreateClientHook(signer)
 	result, err := hook(context.Background(), types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Accepts:     []types.PaymentRequirements{{Network: "eip155:1"}},
 		Extensions: map[string]interface{}{
 			ExtensionKey: Extension{

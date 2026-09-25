@@ -11,6 +11,7 @@ from x402.schemas import (
     PaymentPayloadV1,
     PaymentRequired,
     PaymentRequirements,
+    ResourceInfo,
 )
 from x402.server_base import ERR_EXTENSION_ECHO_MISMATCH
 
@@ -30,7 +31,11 @@ def _requirements() -> PaymentRequirements:
 
 
 def _payment_required(extensions: dict | None) -> PaymentRequired:
-    return PaymentRequired(accepts=[_requirements()], extensions=extensions)
+    return PaymentRequired(
+        resource=ResourceInfo(url="https://example.com/resource"),
+        accepts=[_requirements()],
+        extensions=extensions,
+    )
 
 
 def _payment_payload(extensions: dict | None) -> PaymentPayload:
