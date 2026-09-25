@@ -25,6 +25,7 @@ var NetworkChainIDs = map[string]*big.Int{
 	"skale-base-sepolia": big.NewInt(324705682),
 	"megaeth":            big.NewInt(4326),
 	"monad":              big.NewInt(143),
+	"monad-testnet":      big.NewInt(10143),
 	"stable":             big.NewInt(988),
 	"stable-testnet":     big.NewInt(2201),
 	"celo":               big.NewInt(42220),
