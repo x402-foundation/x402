@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
+ * (e.g., "algorand" before "aptos" before "bsv" before "cardano" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
  */
 
 import { config } from "dotenv";
@@ -15,6 +15,8 @@ import { APTOS_TESTNET_CAIP2 } from "@x402/aptos";
 import { ExactAptosScheme } from "@x402/aptos/exact/server";
 import { ExactAvmScheme } from "@x402/avm/exact/server";
 import { ALGORAND_TESTNET_CAIP2 } from "@x402/avm";
+import { ExactBsvScheme } from "@x402/bsv/exact/server";
+import { createWhatsOnChainMoneyParser } from "@x402/bsv";
 import { ExactCardanoScheme } from "@x402/cardano/exact/server";
 import { ExactCasperScheme } from "@x402/casper/exact/server";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/server";
@@ -38,6 +40,8 @@ config();
 const avmAddress = process.env.AVM_ADDRESS as string | undefined;
 const cardanoAddress = process.env.CARDANO_ADDRESS as string | undefined;
 const aptosAddress = process.env.APTOS_ADDRESS as string | undefined;
+// BSV payTo is the recipient wallet's identity public key, not an address.
+const bsvIdentityKey = process.env.BSV_IDENTITY_KEY as string | undefined;
 const casperAddress = process.env.CASPER_ADDRESS as string | undefined;
 const ccdAddress = process.env.CCD_ADDRESS as string | undefined;
 const evmAddress = process.env.EVM_ADDRESS as `0x${string}` | undefined;
@@ -54,6 +58,7 @@ if (
   !avmAddress &&
   !cardanoAddress &&
   !aptosAddress &&
+  !bsvIdentityKey &&
   !casperAddress &&
   !ccdAddress &&
   !evmAddress &&
@@ -66,7 +71,7 @@ if (
   !xrplAddress
 ) {
   console.error(
-    "❌ At least one of AVM_ADDRESS, APTOS_ADDRESS, CARDANO_ADDRESS, CASPER_ADDRESS, CCD_ADDRESS, EVM_ADDRESS, KEETA_ADDRESS, NEAR_ADDRESS, SVM_ADDRESS, STELLAR_ADDRESS, HEDERA_ACCOUNT_ID, TVM_ADDRESS, or XRPL_ADDRESS is required",
+    "❌ At least one of AVM_ADDRESS, APTOS_ADDRESS, BSV_IDENTITY_KEY, CARDANO_ADDRESS, CASPER_ADDRESS, CCD_ADDRESS, EVM_ADDRESS, KEETA_ADDRESS, NEAR_ADDRESS, SVM_ADDRESS, STELLAR_ADDRESS, HEDERA_ACCOUNT_ID, TVM_ADDRESS, or XRPL_ADDRESS is required",
   );
   process.exit(1);
 }
@@ -81,6 +86,7 @@ if (!facilitatorUrl) {
 const AVM_NETWORK = (process.env.AVM_NETWORK || ALGORAND_TESTNET_CAIP2) as Network; // Algorand Testnet
 const CARDANO_NETWORK = "cardano:preprod" as const; // Cardano Preprod Testnet
 const APTOS_NETWORK = (process.env.APTOS_NETWORK || APTOS_TESTNET_CAIP2) as Network; // Aptos Testnet
+const BSV_NETWORK = (process.env.BSV_NETWORK || "bsv:mainnet") as Network; // BSV Mainnet
 const CASPER_NETWORK = (process.env.CASPER_NETWORK || "casper:casper-test") as Network; // Casper Testnet
 const CASPER_AMOUNT = (process.env.CASPER_AMOUNT || "900000") as string; // Casper CEP-18 amount (e.g., "1500000000" for 1.5 WCSPR)
 const CASPER_ASSET = (process.env.CASPER_ASSET ||
@@ -121,6 +127,14 @@ if (aptosAddress) {
     price: "$0.001",
     network: APTOS_NETWORK,
     payTo: aptosAddress,
+  });
+}
+if (bsvIdentityKey) {
+  accepts.push({
+    scheme: "exact",
+    price: "$0.001", // converted to satoshis via the WhatsOnChain rate feed
+    network: BSV_NETWORK,
+    payTo: bsvIdentityKey,
   });
 }
 const cardanoL1Confirmations = process.env.CARDANO_L1_CONFIRMATIONS?.trim();
@@ -248,6 +262,12 @@ if (avmAddress) {
 }
 if (aptosAddress) {
   server.register(APTOS_NETWORK, new ExactAptosScheme());
+}
+if (bsvIdentityKey) {
+  server.register(
+    BSV_NETWORK,
+    new ExactBsvScheme().registerMoneyParser(createWhatsOnChainMoneyParser()),
+  );
 }
 if (cardanoAddress) {
   server.register(CARDANO_NETWORK, new ExactCardanoScheme());
