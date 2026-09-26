@@ -19,6 +19,7 @@ If you are evaluating a mainnet EVM route, decide on your production facilitator
 
 | Name | Description |
 | ---- | ----------- | 
+| [Accrue](https://x402.accrue.fund) | Public x402 facilitator settling USDC across Solana, Base and other EVM chains |
 | [Built on Stellar](https://developers.stellar.org/docs/build/apps/x402/built-on-stellar) | Free, public x402 facilitator for Stellar |
 | [CDP Facilitator](https://docs.cdp.coinbase.com/x402/docs/quickstart-sellers) | Coinbase-hosted facilitator with KYT/OFAC checks on every transaction |
 | [Celo Facilitator](https://x402.celo.org) | Gasless x402 facilitator for Celo Mainnet (API: `https://api.x402.celo.org`), accepting USDC, USD₮ and USA₮ via EIP-3009 |
