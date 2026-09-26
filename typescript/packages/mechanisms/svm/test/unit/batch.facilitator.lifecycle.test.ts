@@ -125,7 +125,9 @@ function signer(overrides: Record<string, unknown> = {}) {
     getAccountInfo: vi.fn().mockResolvedValue({ owner: TOKEN_PROGRAM_ADDRESS }),
     getConfirmedTransaction: vi.fn(() => payoutEvidence()),
     getAddresses: vi.fn(() => [feePayer.address]),
+    getLatestBlockhash: vi.fn(),
     getSigner: vi.fn(() => feePayer),
+    getSlot: vi.fn(),
     sendTransaction: vi.fn().mockResolvedValue(SIGNATURE),
     signTransaction: vi.fn().mockResolvedValue("signed"),
     simulateTransaction: vi.fn().mockResolvedValue(undefined),
@@ -215,9 +217,18 @@ describe("batch facilitator lifecycle", () => {
     ).toThrow(/requires getSigner/);
     expect(
       () =>
-        new BatchSvmScheme({ getAddresses: () => [], getSigner: vi.fn() } as never, {
-          receiverAuthorizerStore: new InMemoryBatchReceiverAuthorizerStore(),
-        }),
+        new BatchSvmScheme(
+          {
+            getAccountInfo: vi.fn(),
+            getAddresses: () => [],
+            getLatestBlockhash: vi.fn(),
+            getSigner: vi.fn(),
+            getSlot: vi.fn(),
+          } as never,
+          {
+            receiverAuthorizerStore: new InMemoryBatchReceiverAuthorizerStore(),
+          },
+        ),
     ).toThrow(/at least one fee payer/);
   });
 
@@ -260,15 +271,12 @@ describe("batch facilitator lifecycle", () => {
   });
 
   it("requires account reads for settlement-path preflight", async () => {
-    const api = internals(
-      new BatchSvmScheme(signer({ getAccountInfo: undefined }) as never, {
-        receiverAuthorizerStore: new InMemoryBatchReceiverAuthorizerStore(),
-      }),
-    );
-
-    await expect(
-      api.assertSettlementAccounts(requirements(), payer.address, TOKEN_PROGRAM_ADDRESS),
-    ).rejects.toThrow("requires getAccountInfo");
+    expect(
+      () =>
+        new BatchSvmScheme(signer({ getAccountInfo: undefined }) as never, {
+          receiverAuthorizerStore: new InMemoryBatchReceiverAuthorizerStore(),
+        }),
+    ).toThrow("requires getAccountInfo");
   });
 
   it("rejects a deposit during verify when its settlement path is unavailable", async () => {
@@ -397,10 +405,12 @@ describe("batch facilitator lifecycle", () => {
     ];
     for (const [config, req] of cases) await expect(resolve(valid, config, req)).rejects.toThrow();
 
-    const noAccountRead = new BatchSvmScheme(signer({ getAccountInfo: undefined }) as never, {
-      receiverAuthorizerStore: new InMemoryBatchReceiverAuthorizerStore(),
-    });
-    await expect(resolve(noAccountRead)).rejects.toThrow(/requires getAccountInfo/);
+    expect(
+      () =>
+        new BatchSvmScheme(signer({ getAccountInfo: undefined }) as never, {
+          receiverAuthorizerStore: new InMemoryBatchReceiverAuthorizerStore(),
+        }),
+    ).toThrow(/requires getAccountInfo/);
     const missingMint = new BatchSvmScheme(
       signer({ getAccountInfo: vi.fn().mockResolvedValue(undefined) }) as never,
       { receiverAuthorizerStore: new InMemoryBatchReceiverAuthorizerStore() },

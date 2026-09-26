@@ -100,14 +100,7 @@ describe("batch-settlement pending settlement", () => {
         confirm.mockClear();
         transport.signTransaction = vi.fn().mockImplementation(async () => wire);
         await internals.broadcastDurably("open", NETWORK, payer, (onPrepared: any) =>
-          broadcastOpen(
-            internals.submissionSigner(),
-            wallet.address,
-            NETWORK,
-            wire,
-            undefined,
-            onPrepared,
-          ),
+          broadcastOpen(internals.signer, wallet.address, NETWORK, wire, undefined, onPrepared),
         );
       }
       expect(confirm).toHaveBeenCalledTimes(1);

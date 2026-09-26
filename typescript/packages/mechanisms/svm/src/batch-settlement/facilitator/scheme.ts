@@ -34,6 +34,10 @@ import {
 import { requireTokenProgramHint } from "../../payment-channels/requirements";
 import { encodeVoucherMessageBytes, verifyVoucherSignature } from "../../payment-channels/voucher";
 import { SettlementCache } from "../../settlement-cache";
+import {
+  assertPaymentChannelFacilitatorSigner,
+  type PaymentChannelFacilitatorSigner,
+} from "../../payment-channels/signer";
 import type {
   FacilitatorAccountInfo,
   FacilitatorConfirmedTransaction,
@@ -168,6 +172,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
   private readonly settlementCache = new SettlementCache();
   private readonly pendingStore: BatchPendingSettlementStore;
   private readonly confirmationSlots = new Map<string, bigint>();
+  private readonly signer: PaymentChannelFacilitatorSigner;
   private readonly distributionPasses: Map<string, Promise<SettleResponse>>;
   private readonly maxIdleSecs: number;
   private readonly receiverAuthorizers: BatchReceiverAuthorizerStore | undefined;
@@ -175,15 +180,14 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
   private readonly delegatedReceiverAuth: BatchDelegatedReceiverAuth | undefined;
 
   constructor(
-    private readonly signer: FacilitatorSvmSigner,
+    signer: FacilitatorSvmSigner,
     private readonly config: BatchSvmFacilitatorConfig = {},
   ) {
-    if (typeof signer.getSigner !== "function") {
-      throw new Error("BatchSvmScheme requires getSigner on the facilitator signer");
-    }
+    assertPaymentChannelFacilitatorSigner(signer, "BatchSvmScheme");
     if (signer.getAddresses().length === 0) {
       throw new Error("BatchSvmScheme requires at least one fee payer signer");
     }
+    this.signer = this.withConfirmationSlot(signer);
     this.channelStorage = config.channelStorage ?? new InMemoryPaymentChannelStorage();
     this.pendingStore = config.pendingSettlementStore ?? new InMemoryBatchPendingSettlementStore();
     this.distributionPasses = distributionsForStore(this.pendingStore);
@@ -1030,7 +1034,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       send: async onBroadcast => {
         try {
           return await broadcastOpen(
-            this.submissionSigner(),
+            this.signer,
             address(terms.feePayer),
             requirements.network,
             payload.deposit.transaction,
@@ -1065,12 +1069,6 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     payer: string,
     tokenProgram: string,
   ): Promise<void> {
-    if (typeof this.signer.getAccountInfo !== "function") {
-      throw new Error(
-        "BatchSvmScheme requires getAccountInfo on the facilitator signer. " +
-          "Use toFacilitatorSvmSigner() which provides all required methods.",
-      );
-    }
     const mint = address(requirements.asset);
     const tokenProgramAddress = address(tokenProgram);
     const required = [
@@ -1197,7 +1195,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
           // across signer backends that will not sign twice.
           await this.signer.simulateTransaction(requestClose, requirements.network);
           return await broadcastOpen(
-            this.submissionSigner(),
+            this.signer,
             address(terms.feePayer),
             requirements.network,
             requestClose,
@@ -1281,12 +1279,6 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     const tokenProgram = requireTokenProgramHint(extra, BatchError.TOKEN_PROGRAM);
     // A mint's owner is its token program, so the declared one is checked
     // with an account read rather than a decode.
-    if (typeof this.signer.getAccountInfo !== "function") {
-      throw new Error(
-        "BatchSvmScheme requires getAccountInfo on the facilitator signer. " +
-          "Use toFacilitatorSvmSigner() which provides all required methods.",
-      );
-    }
     const mint = await this.signer.getAccountInfo(requirements.asset, requirements.network, {
       commitment: "confirmed",
       encoding: "base64",
@@ -1474,27 +1466,6 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
   }
 
   /**
-   * Wrap submission confirmation so its existing RPC also supplies the read floor.
-   *
-   * @returns Submission transport with slot capture and no extra confirmation lookup
-   */
-  private submissionSigner() {
-    return {
-      signTransaction: this.signer.signTransaction.bind(this.signer),
-      ...(this.signer.getLatestBlockhash
-        ? { getLatestBlockhash: this.signer.getLatestBlockhash.bind(this.signer) }
-        : {}),
-      simulateTransaction: this.signer.simulateTransaction.bind(this.signer),
-      sendTransaction: this.signer.sendTransaction.bind(this.signer),
-      confirmTransaction: async (signature: string, network: string) => {
-        const status = await this.signer.confirmTransaction(signature, network);
-        if (status?.slot !== undefined) this.rememberSlot(network, BigInt(status.slot));
-        return status;
-      },
-    };
-  }
-
-  /**
    * Wait on a signature this facilitator already broadcast.
    *
    * @param key - The pending record's key
@@ -1524,14 +1495,9 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
           /* confirm by identity */
         }
       }
-      const status = await this.signer.confirmTransaction(signature, network, {
+      await this.signer.confirmTransaction(signature, network, {
         searchTransactionHistory: true,
       });
-      if (status && status.slot !== undefined) {
-        const slot = BigInt(status.slot);
-        if (slot > (this.confirmationSlots.get(network) ?? 0n))
-          this.confirmationSlots.set(network, slot);
-      }
     } catch (error) {
       if (error instanceof TransactionOnchainFailureError) {
         // A definite onchain rejection: nothing landed, so the record is
@@ -1672,7 +1638,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       try {
         return await submitChannelTransactionWithSigner(
           this.resolveFeePayer(feePayer),
-          this.submissionSigner(),
+          this.signer,
           network,
           instructions,
           { onPrepared: onBroadcast },
@@ -1697,7 +1663,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     if (!this.signer.getAddresses().some(value => value === feePayer)) {
       throw new Error(BatchError.FEE_PAYER_MISMATCH);
     }
-    return this.signer.getSigner!(address(feePayer));
+    return this.signer.getSigner(address(feePayer));
   }
 
   /**
@@ -1712,12 +1678,6 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
    * @returns The decoded channel, or undefined when the account is absent
    */
   private async readChannel(network: string, channelId: string): Promise<Channel | undefined> {
-    if (typeof this.signer.getAccountInfo !== "function") {
-      throw new Error(
-        "BatchSvmScheme requires getAccountInfo on the facilitator signer. " +
-          "Use toFacilitatorSvmSigner() which provides all required methods.",
-      );
-    }
     const minContextSlot = this.confirmationSlots.get(network);
     let account: FacilitatorAccountInfo | null;
     for (let attempt = 0; ; attempt += 1) {
@@ -1808,6 +1768,43 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       if (attempt + 1 < CHANNEL_READ_ATTEMPTS) await this.waitForChannelRead(attempt);
     }
     return undefined;
+  }
+
+  /**
+   * Forward the facilitator signer and keep the slot from each confirmation.
+   *
+   * Shared submit helpers confirm and discard the status. The next account
+   * read uses that slot as `minContextSlot` without a second status RPC.
+   *
+   * @param signer - Facilitator signer supplied to the scheme
+   * @returns The same signer, with confirmation slots recorded on this scheme
+   */
+  private withConfirmationSlot(
+    signer: PaymentChannelFacilitatorSigner,
+  ): PaymentChannelFacilitatorSigner {
+    return new Proxy(signer, {
+      get: (target, property) => {
+        if (property === "confirmTransaction") {
+          return (
+            signature: string,
+            network: string,
+            options?: { searchTransactionHistory?: boolean },
+          ) => {
+            const confirm = target.confirmTransaction.bind(target);
+            const confirmation =
+              options === undefined
+                ? confirm(signature, network)
+                : confirm(signature, network, options);
+            return confirmation.then(status => {
+              if (status?.slot !== undefined) this.rememberSlot(network, BigInt(status.slot));
+              return status;
+            });
+          };
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
   }
 
   private rememberSlot(network: string, slot: bigint): void {
