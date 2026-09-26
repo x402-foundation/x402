@@ -49,6 +49,22 @@ app.listen({ port: 3000 });
 
 ## Configuration
 
+### Raw responses
+
+On protected routes, `reply.raw.write()` and `reply.raw.end()` are buffered until
+the payment middleware completes the response lifecycle. Async handlers must
+return or await `reply` after ending a raw response to prevent Fastify from
+automatically sending another response while settlement is pending:
+
+```typescript
+app.get("/protected-route", async (_request, reply) => {
+  reply.raw.end("Premium content");
+  return reply;
+});
+```
+
+### Middleware configuration
+
 The `paymentMiddleware` function accepts the following parameters:
 
 ```typescript
