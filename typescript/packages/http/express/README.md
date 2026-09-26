@@ -108,7 +108,7 @@ Creates Express middleware that:
 3. Validates payment headers if required
 4. Returns payment instructions (402 status) if payment is missing or invalid
 5. Processes the request if payment is valid
-6. Handles settlement after successful response
+6. Handles settlement according to the selected payment flow
 
 ### Route Configuration
 
@@ -130,6 +130,49 @@ const routes: RoutesConfig = {
 
 app.use(paymentMiddleware(routes, resourceServer));
 ```
+
+### Dynamic Routes and Server-Side Operations
+
+`paymentMiddleware` can protect parameterized routes like `GET /api/:id` and handlers that perform server-side work.
+
+For the `authorization` flow used by the default EVM `exact` configuration below, the middleware verifies the payment before your route handler runs. It buffers the response and attempts settlement after the handler finishes with a successful status (`status < 400`). Verification does not guarantee that settlement will succeed.
+
+```typescript
+app.use(
+  paymentMiddleware(
+    {
+      "GET /api/:id": {
+        accepts: {
+          scheme: "exact",
+          price: "$0.10",
+          network: "eip155:84532",
+          payTo: "0xYourAddress",
+        },
+        description: "Execute a paid operation by ID",
+      },
+    },
+    resourceServer,
+  ),
+);
+
+app.get("/api/:id", async (req, res, next) => {
+  try {
+    const record = await loadRecord(req.params.id);
+    if (!record) {
+      return res.status(404).json({ error: "Not found" });
+    }
+
+    const result = await performOperation(record);
+    return res.json({ result });
+  } catch (error) {
+    next(error);
+  }
+});
+```
+
+With `authorization`, a handler error skips settlement even if irreversible work already happened. Validate prerequisites first, make the action safe to retry, and account for possible settlement failure after a successful handler response.
+
+Other flows have different timing. `upfront` settles before the handler without a separate verification call; a later handler error does not automatically refund the payment. `escrow` settles a deposit before the handler and captures after success, with scheme-specific cancellation and recovery. Select a supported flow through the scheme's payment requirements; changing the flow name alone does not add support to a scheme.
 
 ### Paywall Configuration
 

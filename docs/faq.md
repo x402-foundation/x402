@@ -28,6 +28,26 @@ Typescript, Python, and Go are reference implementations, but x402 is an **open 
 
 Nothing prevents you from implementing the spec in Rust, Java, or other languages. If you're interested in building support for your favorite language, please [open an issue](https://github.com/x402-foundation/x402/issues) and let us know, we'd be happy to help!
 
+#### Can I use x402 to protect dynamic routes?
+
+Yes. Parameterized routes like `GET /api/:id` are supported.
+
+Configure the route in your framework's payment middleware. Payment checks and settlement timing depend on the selected scheme and payment flow.
+
+#### How does settlement work when a handler performs server-side work?
+
+Settlement timing depends on the payment flow:
+
+| Flow | Before the handler | After a successful response |
+| --- | --- | --- |
+| `authorization` | Verify the payment authorization | Attempt settlement |
+| `upfront` | Settle the payment | No second settlement |
+| `escrow` | Settle the deposit | Settle the capture |
+
+For `authorization`, including the default EVM `exact` flow, an HTTP error response (`status >= 400`) skips settlement. Verification alone does not guarantee that a later settlement will succeed. For `upfront`, payment has already settled when the handler runs; a handler error does not automatically refund it. Escrow cancellation and recovery depend on the scheme.
+
+Validate inputs and prerequisites before irreversible work, and make operations safe to retry. Choose a scheme with payment and recovery semantics appropriate for the operation.
+
 ### Facilitators
 
 #### Who runs facilitators today?
