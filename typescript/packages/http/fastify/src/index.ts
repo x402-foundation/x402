@@ -24,7 +24,7 @@ import {
   PaymentRequirements,
 } from "@x402/core/types";
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import { FastifyAdapter } from "./adapter";
+import { FastifyAdapter, getRequestPath } from "./adapter";
 
 /**
  * Sets settlement overrides on a Fastify reply for partial settlement (upto scheme).
@@ -345,7 +345,7 @@ export function paymentMiddlewareFromHTTPServer(
   }
 
   app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
-    const path = request.url.split("?")[0];
+    const path = getRequestPath(request.url);
     const adapter = new FastifyAdapter(request);
     const context: HTTPRequestContext = {
       adapter,

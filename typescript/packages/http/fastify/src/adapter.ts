@@ -2,6 +2,36 @@ import { HTTPAdapter } from "@x402/core/server";
 import { FastifyRequest } from "fastify";
 
 /**
+ * Matches an absolute-form request-target's scheme + authority prefix (e.g.
+ * "https://example.com/"), mirroring find-my-way's own `FULL_PATH_REGEXP`.
+ * See https://github.com/delvedor/find-my-way/blob/master/index.js.
+ */
+const ABSOLUTE_FORM_PREFIX = /^https?:\/\/.*?\//;
+
+/**
+ * Extracts the routable path from a Fastify request's raw `url`.
+ *
+ * `request.url` is the unparsed request-target from the HTTP request line,
+ * which per RFC 7230 5.3.2 may be in absolute-form, e.g.
+ * `https://attacker.com/protected-route`, instead of the usual origin-form
+ * `/protected-route`. Fastify's router (find-my-way) strips the
+ * scheme+authority before dispatching such a request-target, so the payment
+ * gate must strip it the same way — otherwise the gate and the router
+ * disagree on the path and payment verification can be skipped for a route
+ * the router still serves.
+ *
+ * @param url - The raw `request.url` from Fastify.
+ * @returns The path component, without the query string.
+ */
+export function getRequestPath(url: string): string {
+  const withoutQuery = url.split("?")[0];
+  if (withoutQuery.charCodeAt(0) === 47 /* "/" */) {
+    return withoutQuery;
+  }
+  return withoutQuery.replace(ABSOLUTE_FORM_PREFIX, "/");
+}
+
+/**
  * Fastify adapter implementation for the x402 HTTP protocol.
  */
 export class FastifyAdapter implements HTTPAdapter {
@@ -38,7 +68,7 @@ export class FastifyAdapter implements HTTPAdapter {
    * @returns The request path without query string
    */
   getPath(): string {
-    return this.request.url.split("?")[0];
+    return getRequestPath(this.request.url);
   }
 
   /**

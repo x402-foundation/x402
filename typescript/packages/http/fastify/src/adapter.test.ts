@@ -81,6 +81,18 @@ describe("FastifyAdapter", () => {
       const adapter = new FastifyAdapter(req);
       expect(adapter.getPath()).toBe("/api/test");
     });
+
+    it("strips scheme+authority from an absolute-form request-target", () => {
+      const req = createMockRequest({ url: "https://attacker.com/protected-route" });
+      const adapter = new FastifyAdapter(req);
+      expect(adapter.getPath()).toBe("/protected-route");
+    });
+
+    it("strips scheme+authority+port from an absolute-form request-target with a query string", () => {
+      const req = createMockRequest({ url: "http://attacker.com:1337/protected-route?x=1" });
+      const adapter = new FastifyAdapter(req);
+      expect(adapter.getPath()).toBe("/protected-route");
+    });
   });
 
   describe("getUrl", () => {
