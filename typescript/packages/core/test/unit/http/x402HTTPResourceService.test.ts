@@ -905,6 +905,71 @@ describe("x402HTTPResourceServer", () => {
       }
     });
 
+    it("should return 400 when PAYMENT-SIGNATURE is present but cannot be decoded", async () => {
+      const routes = {
+        "/api/test": {
+          accepts: {
+            scheme: "exact",
+            payTo: "0xabc",
+            price: "$1.00" as Price,
+            network: "eip155:8453" as Network,
+          },
+        },
+      };
+
+      const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+
+      const adapter = new MockHTTPAdapter({ "payment-signature": "not-base64!!" });
+      const context: HTTPRequestContext = {
+        adapter,
+        path: "/api/test",
+        method: "GET",
+      };
+
+      const result = await httpServer.processHTTPRequest(context);
+
+      expect(result.type).toBe("payment-error");
+      if (result.type === "payment-error") {
+        expect(result.response.status).toBe(400);
+        expect(result.response.body).toEqual({ error: "invalid_payload" });
+        expect(result.response.headers["PAYMENT-REQUIRED"]).toBeUndefined();
+      }
+      expect(mockFacilitator.verifyCalls.length).toBe(0);
+    });
+
+    it("should return 400 when PAYMENT-SIGNATURE is base64 but not valid JSON", async () => {
+      const routes = {
+        "/api/test": {
+          accepts: {
+            scheme: "exact",
+            payTo: "0xabc",
+            price: "$1.00" as Price,
+            network: "eip155:8453" as Network,
+          },
+        },
+      };
+
+      const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+
+      const adapter = new MockHTTPAdapter({
+        "payment-signature": Buffer.from("{not json").toString("base64"),
+      });
+      const context: HTTPRequestContext = {
+        adapter,
+        path: "/api/test",
+        method: "GET",
+      };
+
+      const result = await httpServer.processHTTPRequest(context);
+
+      expect(result.type).toBe("payment-error");
+      if (result.type === "payment-error") {
+        expect(result.response.status).toBe(400);
+        expect(result.response.body).toEqual({ error: "invalid_payload" });
+      }
+      expect(mockFacilitator.verifyCalls.length).toBe(0);
+    });
+
     it("should include bazaar service metadata on PaymentRequired.resource", async () => {
       const routes = {
         "/api/weather": {
