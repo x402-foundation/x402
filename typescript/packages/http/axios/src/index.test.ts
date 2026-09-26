@@ -179,7 +179,7 @@ describe("wrapAxiosWithPayment()", () => {
 
   it("should handle 402 errors and retry with payment header", async () => {
     const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
-    const successResponse = { data: "success" } as AxiosResponse;
+    const successResponse = createAxiosResponse(200, { data: "success" });
 
     (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(successResponse);
 
@@ -271,7 +271,7 @@ describe("wrapAxiosWithPayment()", () => {
 
   it("should handle v1 payment responses from body", async () => {
     const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
-    const successResponse = { data: "success" } as AxiosResponse;
+    const successResponse = createAxiosResponse(200, { data: "success" });
 
     const v1PaymentRequired: PaymentRequired = {
       ...validPaymentRequired,
@@ -316,7 +316,7 @@ describe("wrapAxiosWithPayment()", () => {
   });
 
   it("should set Access-Control-Expose-Headers on retry request", async () => {
-    const successResponse = { data: "success" } as AxiosResponse;
+    const successResponse = createAxiosResponse(200, { data: "success" });
     (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(successResponse);
 
     const error = createAxiosError(402, createErrorConfig(), validPaymentRequired);
@@ -356,7 +356,7 @@ describe("wrapAxiosWithPayment()", () => {
       }
     }
 
-    const successResponse = { data: "success" } as AxiosResponse;
+    const successResponse = createAxiosResponse(200, { data: "success" });
     const config = createErrorConfig();
     const callerHeaders = new CallerAxiosHeaders();
     callerHeaders.set("Accept", "application/json");
@@ -450,20 +450,21 @@ describe("wrapAxiosWithPayment()", () => {
     );
   });
 
-  it("should preserve caller validateStatus for non-402 retry statuses", async () => {
-    const successResponse = createAxiosResponse(200, { data: "success" });
+  it("should accept any status on paid follow-up config so payment-response hooks can run", async () => {
+    const conflictResponse = createAxiosResponse(409, { data: "conflict" });
     const config = createErrorConfig();
     config.validateStatus = status => status === 409;
-    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(successResponse);
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(conflictResponse);
 
     const error = createAxiosError(402, config, validPaymentRequired);
-    await interceptor(error);
+    const result = await interceptor(error);
 
+    expect(result).toBe(conflictResponse);
     const retryConfig = (mockAxiosClient.request as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(retryConfig.validateStatus(402)).toBe(true);
     expect(retryConfig.validateStatus(409)).toBe(true);
-    expect(retryConfig.validateStatus(200)).toBe(false);
-    expect(retryConfig.validateStatus(500)).toBe(false);
+    expect(retryConfig.validateStatus(200)).toBe(true);
+    expect(retryConfig.validateStatus(500)).toBe(true);
   });
 
   it("should fall through to paid retry when hook retry returns 402", async () => {
@@ -628,7 +629,7 @@ describe("wrapAxiosWithPayment()", () => {
     expect(retryConfig.headers.compute).toBeUndefined();
   });
 
-  it("should treat 200-299 as success and reject others when no validateStatus is set", async () => {
+  it("should accept any status on paid follow-up when no validateStatus is set", async () => {
     const successResponse = createAxiosResponse(200, { data: "success" });
     (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(successResponse);
 
@@ -638,10 +639,38 @@ describe("wrapAxiosWithPayment()", () => {
     const retryConfig = (mockAxiosClient.request as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(retryConfig.validateStatus(200)).toBe(true);
     expect(retryConfig.validateStatus(299)).toBe(true);
-    expect(retryConfig.validateStatus(300)).toBe(false);
+    expect(retryConfig.validateStatus(300)).toBe(true);
     expect(retryConfig.validateStatus(402)).toBe(true);
-    expect(retryConfig.validateStatus(500)).toBe(false);
+    expect(retryConfig.validateStatus(500)).toBe(true);
   });
+
+  it.each([400, 500])(
+    "should invoke processPaymentResult then reject when paid follow-up returns %i",
+    async status => {
+      const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+      const errorResponse = createAxiosResponse(
+        status,
+        { error: "failed" },
+        {
+          "PAYMENT-RESPONSE": "settled",
+        },
+      );
+      (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(errorResponse);
+
+      const error = createAxiosError(402, createErrorConfig(), validPaymentRequired);
+      await expect(interceptor(error)).rejects.toMatchObject({
+        response: { status },
+        message: `Request failed with status code ${status}`,
+      });
+
+      expect(MockX402HTTPClient.prototype.processPaymentResult).toHaveBeenCalledTimes(1);
+      expect(MockX402HTTPClient.prototype.processPaymentResult).toHaveBeenCalledWith(
+        validPaymentPayload,
+        expect.any(Function),
+        status,
+      );
+    },
+  );
 
   it("should look up payment-required headers case-insensitively and ignore non-strings", async () => {
     const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
