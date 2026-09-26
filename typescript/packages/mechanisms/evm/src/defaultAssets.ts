@@ -297,6 +297,24 @@ export const DEFAULT_ASSETS: DefaultAssetTable<ExactDefaultAssetInfo> = {
       symbol: "USDC",
     },
   ], // Sei testnet USDC (EIP-3009 supported)
+  "eip155:5042": [
+    {
+      asset: "0x3600000000000000000000000000000000000000",
+      name: "USDC",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  ], // Arc mainnet USDC (EIP-3009 supported)
+  "eip155:5042002": [
+    {
+      asset: "0x3600000000000000000000000000000000000000",
+      name: "USDC",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  ], // Arc Testnet USDC (EIP-3009 supported)
 };
 
 /**
