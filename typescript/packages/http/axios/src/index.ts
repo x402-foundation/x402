@@ -157,10 +157,7 @@ function createX402RetryConfig(config: InternalAxiosRequestConfig): X402RetryCon
  * @param config - Original caller request configuration
  * @returns True when the response should be returned to the caller
  */
-function shouldResolveAxiosResponse(
-  status: number,
-  config: InternalAxiosRequestConfig,
-): boolean {
+function shouldResolveAxiosResponse(status: number, config: InternalAxiosRequestConfig): boolean {
   if (status === 402) {
     return true;
   }
@@ -186,6 +183,9 @@ function createX402PaidFollowUpConfig(config: InternalAxiosRequestConfig): X402R
 /**
  * Rejects a paid follow-up response using Axios status validation semantics.
  *
+ * Axios settle maps the status class to an error code: 4xx is ERR_BAD_REQUEST
+ * and 5xx is ERR_BAD_RESPONSE. Other classes are left without a code.
+ *
  * @param response - Paid follow-up response that failed caller validation
  * @param requestConfig - Request configuration used for the paid follow-up
  * @returns Rejected promise with an Axios error carrying the response
@@ -194,9 +194,16 @@ function rejectPaidFollowUpResponse(
   response: AxiosResponse,
   requestConfig: InternalAxiosRequestConfig,
 ): Promise<never> {
+  const statusClass = Math.floor(response.status / 100);
+  const code =
+    statusClass === 4
+      ? AxiosError.ERR_BAD_REQUEST
+      : statusClass === 5
+        ? AxiosError.ERR_BAD_RESPONSE
+        : undefined;
   const error = new AxiosError(
     `Request failed with status code ${response.status}`,
-    AxiosError.ERR_BAD_RESPONSE,
+    code,
     requestConfig,
     response.request,
     response,

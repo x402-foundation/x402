@@ -775,10 +775,14 @@ describe("wrapAxiosWithPayment()", () => {
     expect(retryConfig.validateStatus(500)).toBe(true);
   });
 
-  it.each([400, 500])(
-    "should invoke processPaymentResult then reject when paid follow-up returns %i",
-    async status => {
+  it.each([
+    [400, AxiosError.ERR_BAD_REQUEST],
+    [500, AxiosError.ERR_BAD_RESPONSE],
+  ] as const)(
+    "should invoke processPaymentResult then reject paid follow-up HTTP %i as %s",
+    async (status, code) => {
       const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+      const request = { responseURL: "https://api.example.com/paid" };
       const errorResponse = createAxiosResponse(
         status,
         { error: "failed" },
@@ -786,13 +790,27 @@ describe("wrapAxiosWithPayment()", () => {
           "PAYMENT-RESPONSE": "settled",
         },
       );
+      errorResponse.request = request;
       (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(errorResponse);
 
       const error = createAxiosError(402, createErrorConfig(), validPaymentRequired);
-      await expect(interceptor(error)).rejects.toMatchObject({
-        response: { status },
-        message: `Request failed with status code ${status}`,
-      });
+      const thrown = await interceptor(error).then(
+        () => {
+          throw new Error("expected paid follow-up to reject");
+        },
+        (rejection: unknown) => rejection,
+      );
+
+      expect(axios.isAxiosError(thrown)).toBe(true);
+      if (!axios.isAxiosError(thrown)) {
+        return;
+      }
+      expect(thrown.code).toBe(code);
+      expect(thrown.message).toBe(`Request failed with status code ${status}`);
+      expect(thrown.response).toBe(errorResponse);
+      expect(thrown.response?.status).toBe(status);
+      expect(thrown.request).toBe(request);
+      expect(thrown.config).toMatchObject({ __is402Retry: true });
 
       expect(MockX402HTTPClient.prototype.processPaymentResult).toHaveBeenCalledTimes(1);
       expect(MockX402HTTPClient.prototype.processPaymentResult).toHaveBeenCalledWith(

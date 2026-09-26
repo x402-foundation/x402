@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { AddressInfo } from "node:net";
-import axios from "axios";
+import axios, { AxiosError } from "axios";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { x402Client } from "@x402/core/client";
 import { wrapAxiosWithPayment } from "./index";
@@ -70,7 +70,9 @@ describe("onPaymentResponse for paid HTTP error responses", () => {
         }),
       });
       client.setSpendControls({
-        allowedAssets: [{ network: requirements.network, asset: requirements.asset, maxAmountPerPayment: "1" }],
+        allowedAssets: [
+          { network: requirements.network, asset: requirements.asset, maxAmountPerPayment: "1" },
+        ],
       });
       client.onPaymentResponse(async ctx => {
         observed.push(ctx.settleResponse?.errorReason);
@@ -78,11 +80,13 @@ describe("onPaymentResponse for paid HTTP error responses", () => {
 
       const api = wrapAxiosWithPayment(axios.create({ proxy: false }), client);
       let actualStatus: number | undefined;
+      let thrown: unknown;
 
       try {
         const response = await api.get(`${baseUrl}/${status}`);
         actualStatus = response.status;
       } catch (error) {
+        thrown = error;
         if (axios.isAxiosError(error)) {
           actualStatus = error.response?.status;
         } else {
@@ -92,6 +96,24 @@ describe("onPaymentResponse for paid HTTP error responses", () => {
 
       expect(actualStatus).toBe(status);
       expect(observed).toEqual(["local_test_failure"]);
+
+      const expectedCode =
+        status === 400
+          ? AxiosError.ERR_BAD_REQUEST
+          : status === 500
+            ? AxiosError.ERR_BAD_RESPONSE
+            : undefined;
+      if (expectedCode !== undefined) {
+        expect(axios.isAxiosError(thrown)).toBe(true);
+        if (!axios.isAxiosError(thrown)) {
+          return;
+        }
+        expect(thrown.code).toBe(expectedCode);
+        expect(thrown.response?.status).toBe(status);
+        expect(thrown.response).toBeDefined();
+        expect(thrown.config).toBeDefined();
+        expect(thrown.request).toBeDefined();
+      }
     },
   );
 });
