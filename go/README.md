@@ -50,6 +50,7 @@ Helper packages to simplify client implementation:
 
 - **`signers/evm`** - EVM signer helpers (creates signers from private keys)
 - **`signers/svm`** - SVM signer helpers (creates signers from private keys)
+- **`signers/casper`** - Casper signer helpers (client and facilitator signers from ed25519 or secp256k1 keys)
 
 These eliminate 95-99% of boilerplate code for creating signers.
 
@@ -71,6 +72,11 @@ Payment scheme implementations that can be registered by clients, servers, and f
   - `client/` - Client-side channel authorization
   - `server/` - Server-side verification and settlement vouchers
   - `facilitator/` - Facilitator-side channel opening, settlement, and rent cleanup
+
+- **`mechanisms/casper/exact`** - Casper exact payment using CEP-3009 transfer with authorization
+  - `client/` - Client-side payment creation
+  - `server/` - Server-side payment verification
+  - `facilitator/` - Facilitator-side payment settlement
 
 Each role (client, server, facilitator) has its own mechanism implementation with appropriate functionality for that role.
 
@@ -117,6 +123,7 @@ The package is designed with extreme modularity:
 │         Mechanisms (Pluggable)          │
 │  - EVM exact (client/server/facil.)    │
 │  - SVM exact (client/server/facil.)    │
+│  - Casper exact (client/server/facil.) │
 └─────────────────────────────────────────┘
                   │
                   ▼
@@ -124,6 +131,7 @@ The package is designed with extreme modularity:
 │         Signers (Helpers)               │
 │  - EVM client signers                   │
 │  - SVM client signers                   │
+│  - Casper client/facilitator signers    │
 └─────────────────────────────────────────┘
 ```
 
@@ -216,14 +224,19 @@ github.com/x402-foundation/x402/go/v2
 │   │   ├── client/            - SVM client mechanism
 │   │   ├── server/            - SVM server mechanism
 │   │   └── facilitator/       - SVM facilitator mechanism
-│   └── svm/upto/
-│       ├── client/            - SVM upto client mechanism
-│       ├── server/            - SVM upto server mechanism
-│       └── facilitator/       - SVM upto facilitator mechanism
+│   ├── svm/upto/
+│   │   ├── client/            - SVM upto client mechanism
+│   │   ├── server/            - SVM upto server mechanism
+│   │   └── facilitator/       - SVM upto facilitator mechanism
+│   └── casper/exact/
+│       ├── client/            - Casper client mechanism
+│       ├── server/            - Casper server mechanism
+│       └── facilitator/       - Casper facilitator mechanism
 │
 ├── signers/                   - Signer helpers
 │   ├── evm/                   - EVM client signers
-│   └── svm/                   - SVM client signers
+│   ├── svm/                   - SVM client signers
+│   └── casper/                - Casper client and facilitator signers
 │
 ├── extensions/                - Protocol extensions
 │   └── bazaar/                - API discovery
@@ -257,6 +270,14 @@ All Solana networks using CAIP-2 identifiers:
 
 Use `solana:*` wildcard to support all Solana networks.
 
+### Casper
+
+Casper networks using CAIP-2 identifiers:
+- Casper Mainnet (`casper:casper`)
+- Casper Testnet (`casper:casper-test`)
+
+Use `casper:*` wildcard to support all Casper networks. Casper supports the exact scheme on x402 v2 only.
+
 ## Supported Schemes
 
 ### Exact Payment
@@ -264,11 +285,12 @@ Use `solana:*` wildcard to support all Solana networks.
 Transfer an exact amount to access a resource:
 - **EVM**: Uses EIP-3009 `transferWithAuthorization` (USDC compatible tokens)
 - **SVM**: Uses Solana token transfers (USDC SPL token)
+- **Casper**: Uses CEP-3009 `transfer_with_authorization` (csprUSD and other CEP-18 tokens)
 
 ## Features
 
 - ✅ Protocol v2 with v1 backward compatibility
-- ✅ Multi-chain support (EVM and SVM)
+- ✅ Multi-chain support (EVM, SVM and Casper)
 - ✅ Modular architecture - use core primitives directly or with helpers
 - ✅ Type safe with strong typing throughout
 - ✅ Framework agnostic core
@@ -290,6 +312,7 @@ Transfer an exact amount to access a resource:
 - **[signers/](signers/README.md)** - Signer helper utilities
 - **[mechanisms/evm/](mechanisms/evm/README.md)** - EVM payment mechanisms
 - **[mechanisms/svm/](mechanisms/svm/README.md)** - SVM payment mechanisms
+- **[mechanisms/casper/](mechanisms/casper/README.md)** - Casper payment mechanisms
 - **[extensions/](extensions/)** - Protocol extensions
 
 ### Examples
