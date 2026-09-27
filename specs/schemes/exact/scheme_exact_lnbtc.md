@@ -7,7 +7,7 @@ networks using the `lnbtc` namespace defined here, in CAIP-2 format. The client
 pays a fresh BOLT11 invoice from the resource server and returns its 32-byte
 payment preimage. The facilitator verifies `SHA-256(preimage) == payment_hash`
 and requires the invoice signing key to match `payTo`. This check does not require
-access to the receiver's Lightning node. A client MUST NOT select this method
+access to the receiver's Lightning node. A client MUST NOT select `bolt11`
 unless its payer Lightning node returns the preimage after payment.
 
 This is the default `bolt11` asset transfer method. Under the `invoice` method,
@@ -54,7 +54,8 @@ and a client that can obtain the preimage SHOULD select it. `invoice` is a
 fallback for payers that cannot return the preimage, such as a wallet on a second
 device paying a QR code, some custodial wallets, and LNURL-based payers. A
 resource server MAY offer both through `accepts[]` entries that differ only in
-`extra.assetTransferMethod` and `extra.invoice`.
+`extra.assetTransferMethod` and `extra.invoice`. In that case, the `bolt11` entry
+MUST set `extra.assetTransferMethod` to `"bolt11"`.
 
 `"upfront"` is the only supported payment flow because a Lightning payment settles
 before its preimage is available. The resource server MUST set
@@ -662,7 +663,8 @@ payment hash and MUST return:
 
 - `exact_lnbtc_invoice_not_settled` if the invoice is open or accepted and can
   still settle.
-- `exact_lnbtc_receiver_unavailable` if the query fails or times out.
+- `exact_lnbtc_receiver_unavailable` if the receiver reports no invoice state,
+  for example because the query fails or times out, or the payment hash is unknown.
 - `invalid_exact_lnbtc_invoice_canceled` if the invoice can no longer settle.
   Held HTLCs then fail back to the payer through Lightning's own failure or
   timeout handling; x402 adds no return path.
@@ -698,6 +700,8 @@ receiver before claiming the key, so a non-final attempt holds no claim. A claim
 held while querying MUST be released before any result other than success is
 returned, and MUST be bounded by a lease so that an abnormally terminated attempt
 cannot hold it indefinitely; lease expiry MUST NOT let two attempts both succeed.
+Each replay entry SHOULD record the asset transfer method that settled it,
+because only a `bolt11` entry is backed by a self-verifying proof.
 
 The replay entry MUST remain until at least one hour after
 `invoice_end + skew`. It MUST NOT be removed while the invoice can still pass
