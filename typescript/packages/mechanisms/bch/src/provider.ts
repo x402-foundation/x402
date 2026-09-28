@@ -1,8 +1,9 @@
 import { sha256 } from '@noble/hashes/sha256';
-import { decodeCashAddr, hexToBytes, p2pkhScript, bytesToHex } from './crypto';
+import { decodeCashAddr, hexToBytes, isP2pkhScript, p2pkhScript, bytesToHex } from './crypto';
 import type {
   BchNetwork,
   BchOutPoint,
+  BchOutpointStatus,
   BchProvider,
   BchSourceOutput,
   BchTransactionStatus,
@@ -99,6 +100,28 @@ export class FulcrumProvider implements BchProvider {
           ...(height > 0 ? { height } : {}),
         };
       });
+  }
+
+  async getOutpointStatus(
+    outpoint: BchOutPoint,
+    source: BchSourceOutput,
+  ): Promise<BchOutpointStatus> {
+    if (!isP2pkhScript(source.scriptPubKey)) return 'unknown';
+    const scriptHash = sha256(source.scriptPubKey).slice().reverse();
+    const result = await this.transport.request('blockchain.scripthash.listunspent', [
+      bytesToHex(scriptHash),
+      'exclude_tokens',
+    ]);
+    if (!Array.isArray(result)) throw new Error('Fulcrum listunspent response is not an array');
+    const unspent = result.some((value) => {
+      const entry = getObject(value);
+      if (entry.tokenData != null || entry.token_data != null) return false;
+      return (
+        String(entry.tx_hash ?? entry.txid ?? '').toLowerCase() === outpoint.txid.toLowerCase() &&
+        getNumber(entry.tx_pos ?? entry.vout) === outpoint.vout
+      );
+    });
+    return unspent ? 'unspent' : 'spent';
   }
 
   async broadcast(rawTransaction: Uint8Array): Promise<string> {

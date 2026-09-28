@@ -275,7 +275,11 @@ export function verifyPayment(
   let payerHash: Uint8Array | undefined;
   for (let index = 0; index < sources.length; index += 1) {
     inputValue += sources[index].value;
-    payerHash ??= verifyP2pkhInput(transaction, index, sources[index]);
+    const inputPayerHash = verifyP2pkhInput(transaction, index, sources[index]);
+    if (payerHash !== undefined && !equalBytes(payerHash, inputPayerHash)) {
+      throw new Error('all BCH inputs must belong to the same payer');
+    }
+    payerHash ??= inputPayerHash;
   }
   const merchantMatches = transaction.outputs.filter(
     (output) => output.value === merchantAmount && equalBytes(output.scriptPubKey, merchantScript),

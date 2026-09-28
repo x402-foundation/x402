@@ -2,6 +2,8 @@
 
 Bitcoin Cash native exact payments for x402 v2.
 
+The normative wire contract is documented in
+[`scheme_exact_bch.md`](../../../../specs/schemes/exact/scheme_exact_bch.md).
 The initial scheme uses `bch:bitcoincash` and `bch:bchtest`, native BCH in
 satoshi units, fully prefixed CashAddr P2PKH recipients, and a finalized raw
 transaction payload. Client transactions use `SIGHASH_ALL | SIGHASH_FORKID`
@@ -21,8 +23,8 @@ client.register('bch:*', new ExactBchScheme(signer, provider));
 
 `BchSigner` signs BCH sighash digests and reports its P2PKH address. `BchProvider`
 supplies UTXOs and authoritative source outputs. `FulcrumProvider` implements
-the Electrum Cash JSON-RPC boundary; the reference Fulcrum checkout is
-`/home/lightswarm/projects/fulcrum`.
+the Electrum Cash JSON-RPC boundary. Facilitators should inject a shared
+`BchSettlementStore` when running more than one process.
 
 The adapter accounts for Fulcrum's two amount encodings: verbose transaction
 outputs are BCH decimal values, while blockchain.scripthash.listunspent returns
@@ -63,12 +65,9 @@ Availability redundancy is not chain verification. A failover transport may
 retry a request against another server, but applications should compare chain
 tip/header data across independent servers when making operational decisions.
 
-In the 2026-09-25 live smoke test, `bch.imaginary.cash` and
-`blackie.c3-soft.com` both passed the TypeScript provider over TLS and returned
-the same mainnet tip; `chipnet.bch.ninja` passed the same check for chipnet.
-`electroncash.dk` was reachable, but its TLS certificate was not trusted by a
-standard Node.js trust store. Do not disable certificate validation to include
-it in a failover set; use it only with an explicitly reviewed trust policy.
+Endpoint availability and chain consistency are deployment concerns and should
+be revalidated by each operator. Do not disable certificate validation for a
+failover endpoint.
 
 ## Facilitator
 

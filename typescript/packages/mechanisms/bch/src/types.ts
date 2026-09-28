@@ -43,9 +43,12 @@ export type BchTransactionStatus =
   | { kind: 'confirmed'; height: number }
   | { kind: 'unknown' };
 
+export type BchOutpointStatus = 'unspent' | 'spent' | 'unknown';
+
 export interface BchProvider {
   readonly network: BchNetwork;
   getSourceOutput(outpoint: BchOutPoint): Promise<BchSourceOutput>;
+  getOutpointStatus(outpoint: BchOutPoint, source: BchSourceOutput): Promise<BchOutpointStatus>;
   listUtxos(address: string): Promise<BchUtxo[]>;
   broadcast(rawTransaction: Uint8Array): Promise<string>;
   getTransactionStatus(txid: string): Promise<BchTransactionStatus>;
@@ -61,6 +64,7 @@ export interface BchSigner {
 
 export interface BchFacilitatorConfig {
   settlementStrategy?: BchConfirmationStrategy;
+  settlementStore?: import('./settlementStore').BchSettlementStore;
   feeRateSatPerByte?: bigint;
   dustThreshold?: bigint;
   maxTransactionSize?: number;

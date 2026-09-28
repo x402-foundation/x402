@@ -11,6 +11,7 @@ import {
   decodeCashAddr,
   parseTransaction,
   p2pkhScript,
+  transactionId,
   verifyPayment,
   type BchPolicy,
 } from '../../crypto';
@@ -21,12 +22,14 @@ import type {
   ExactBchPayload,
   ExactBchRequirements,
 } from '../../types';
+import { InMemoryBchSettlementStore, type BchSettlementStore } from '../../settlementStore';
 
 export class ExactBchFacilitatorScheme implements SchemeNetworkFacilitator {
   readonly scheme = 'exact';
   readonly caipFamily = 'bch:*';
   private readonly policy: BchPolicy;
   private readonly strategy: BchConfirmationStrategy;
+  private readonly settlementStore: BchSettlementStore;
 
   constructor(
     private readonly provider: BchProvider,
@@ -44,6 +47,7 @@ export class ExactBchFacilitatorScheme implements SchemeNetworkFacilitator {
       ...(config.maxInputs === undefined ? {} : { maxInputs: config.maxInputs }),
     };
     this.strategy = config.settlementStrategy ?? { kind: 'confirmations', count: 1 };
+    this.settlementStore = config.settlementStore ?? new InMemoryBchSettlementStore();
   }
 
   getExtra(_network: string): undefined {
@@ -74,9 +78,13 @@ export class ExactBchFacilitatorScheme implements SchemeNetworkFacilitator {
     payload: PaymentPayload,
     requirements: PaymentRequirements,
   ): Promise<SettleResponse> {
-    let verified: VerifiedBchPayment;
+    let rawTransaction: Uint8Array;
+    let candidateTxid: string;
     try {
-      verified = await this.verifyPayment(payload, requirements);
+      const body = payload.payload as Partial<ExactBchPayload>;
+      if (typeof body.transaction !== 'string') throw new Error('missing signed BCH transaction');
+      rawTransaction = base64ToBytes(body.transaction);
+      candidateTxid = transactionId(parseTransaction(rawTransaction));
     } catch (error) {
       return {
         success: false,
@@ -86,13 +94,54 @@ export class ExactBchFacilitatorScheme implements SchemeNetworkFacilitator {
       };
     }
 
-    const rawTransaction = base64ToBytes((payload.payload as ExactBchPayload).transaction);
+    const binding = settlementBinding(payload, requirements);
+    const claim = await this.settlementStore.claim(candidateTxid, binding);
+    if (claim === 'conflict') {
+      return {
+        success: false,
+        errorReason: 'transaction_already_claimed_for_another_request',
+        transaction: candidateTxid,
+        network: this.provider.network,
+      };
+    }
+
+    if (claim === 'same') {
+      const existingStatus = await this.provider.getTransactionStatus(candidateTxid);
+      if (!(await this.acceptSettlement(candidateTxid, existingStatus))) {
+        return {
+          success: false,
+          errorReason: `settlement_pending:${candidateTxid}`,
+          transaction: candidateTxid,
+          network: this.provider.network,
+        };
+      }
+      await this.settlementStore.markAccepted(candidateTxid);
+      return {
+        success: true,
+        transaction: candidateTxid,
+        network: this.provider.network,
+      };
+    }
+
+    let verified: VerifiedBchPayment;
+    try {
+      verified = await this.verifyPayment(payload, requirements);
+    } catch (error) {
+      await this.settlementStore.release(candidateTxid);
+      return {
+        success: false,
+        errorReason: `invalid_exact_bch_payment:${error instanceof Error ? error.message : String(error)}`,
+        transaction: '',
+        network: this.provider.network,
+      };
+    }
     let txid: string;
     try {
       txid = await this.provider.broadcast(rawTransaction);
     } catch (error) {
       const status = await this.provider.getTransactionStatus(verified.txid);
       if (status.kind !== 'mempool' && status.kind !== 'confirmed') {
+        await this.settlementStore.release(verified.txid);
         return {
           success: false,
           errorReason: `broadcast_failed:${error instanceof Error ? error.message : String(error)}`,
@@ -104,6 +153,7 @@ export class ExactBchFacilitatorScheme implements SchemeNetworkFacilitator {
       txid = verified.txid;
     }
     if (txid.toLowerCase() !== verified.txid.toLowerCase()) {
+      await this.settlementStore.release(verified.txid);
       return {
         success: false,
         errorReason: 'broadcast_returned_mismatched_txid',
@@ -124,6 +174,7 @@ export class ExactBchFacilitatorScheme implements SchemeNetworkFacilitator {
         payer: verified.payer,
       };
     }
+    await this.settlementStore.markAccepted(txid);
     return {
       success: true,
       transaction: txid,
@@ -148,7 +199,10 @@ export class ExactBchFacilitatorScheme implements SchemeNetworkFacilitator {
     const merchantScript = p2pkhScript(payToHash);
     const sources = [];
     for (const input of transaction.inputs) {
-      sources.push(await this.provider.getSourceOutput(input.outpoint));
+      const source = await this.provider.getSourceOutput(input.outpoint);
+      const status = await this.provider.getOutpointStatus(input.outpoint, source);
+      if (status !== 'unspent') throw new Error(`source output is not unspent: ${status}`);
+      sources.push(source);
     }
     const result = verifyPayment(
       transaction,
@@ -177,6 +231,21 @@ export class ExactBchFacilitatorScheme implements SchemeNetworkFacilitator {
   }
 }
 
+function settlementBinding(payload: PaymentPayload, requirements: PaymentRequirements): string {
+  return stableSerialize({ accepted: requirements, resource: payload.resource ?? null });
+}
+
+function stableSerialize(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stableSerialize(entry)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
 type VerifiedBchPayment = {
   txid: string;
   payer: string;
@@ -196,6 +265,7 @@ function validateRequirements(
   }
   if (!/^(0|[1-9][0-9]*)$/.test(value.amount))
     throw new Error('BCH amount must be canonical satoshis');
+  if (BigInt(value.amount) > 0xffffffffffffffffn) throw new Error('BCH amount exceeds u64');
   return value as ExactBchRequirements;
 }
 

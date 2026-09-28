@@ -31,6 +31,7 @@ function makeProvider(): BchProvider {
     network: NETWORK,
     listUtxos: vi.fn(async () => [utxo]),
     getSourceOutput: vi.fn(async () => ({ value: utxo.value, scriptPubKey })),
+    getOutpointStatus: vi.fn(async () => 'unspent' as const),
     broadcast: vi.fn(async (raw) => transactionId(parseTransaction(raw))),
     getTransactionStatus: vi.fn(async () => ({ kind: 'confirmed' as const, height: 100 })),
     getTipHeight: vi.fn(async () => 100),
@@ -56,6 +57,10 @@ describe('BCH x402 v2 exact scheme', () => {
       network: NETWORK,
       payer: signer.getAddress(NETWORK),
     });
+    expect(provider.broadcast).toHaveBeenCalledOnce();
+
+    const retried = await facilitator.settle(payload, REQUIREMENTS);
+    expect(retried).toMatchObject({ success: true, transaction: settled.transaction });
     expect(provider.broadcast).toHaveBeenCalledOnce();
   });
 
