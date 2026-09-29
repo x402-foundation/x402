@@ -16,6 +16,7 @@ uv add x402[fastapi]    # FastAPI middleware
 uv add x402[flask]      # Flask middleware
 
 # Blockchain mechanisms (pick one or more)
+uv add x402[cardano]    # Cardano
 uv add x402[evm]        # EVM/Ethereum
 uv add x402[svm]        # Solana
 uv add x402[tvm]        # TON/TVM
@@ -321,6 +322,7 @@ client.register("eip155:8453", CustomScheme())
 ## Related Modules
 
 - `x402.http` - HTTP clients, middleware, and facilitator client
+- [`x402.mechanisms.cardano`](mechanisms/cardano/README.md) - Cardano payments, script locks, and Masumi escrow
 - `x402.mechanisms.evm` - EVM/Ethereum implementation
 - `x402.mechanisms.svm` - Solana implementation
 - `x402.mechanisms.tvm` - TON/TVM implementation
