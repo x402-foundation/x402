@@ -1290,12 +1290,9 @@ importers:
 
   packages/mechanisms/bch:
     dependencies:
-      '@noble/hashes':
-        specifier: ^1.8.0
-        version: 1.8.0
-      '@noble/secp256k1':
-        specifier: ^1.7.2
-        version: 1.7.2
+      '@bitauth/libauth':
+        specifier: ^3.0.0
+        version: 3.0.0
       '@x402/core':
         specifier: workspace:~
         version: link:../../core
@@ -2242,6 +2239,10 @@ importers:
         version: 3.2.7(@types/debug@4.1.13)(@types/node@22.19.17)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(terser@5.46.1)(tsx@4.21.0)(yaml@2.8.1)
 
 packages:
+
+  '@bitauth/libauth@3.0.0':
+    resolution: {integrity: sha512-3yoL31XpnhAnf5nDVMFk4xPqebxDwXrgYAwpa31ARJnV5A/eXWlpNYvCd6FTZPFM4VvKfjCBi+jRCrw1hOZ0Jg==}
+    engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
 
   '@adraffy/ens-normalize@1.10.1':
     resolution: {integrity: sha512-96Z2IP3mYmF1Xg2cDm8f1gWGf/HUVedQ3FMifV4kG/PQ4yEP51xDtRAEfhVNt5f/uzpNkZHwWQuUcu6D6K+Ekw==}
@@ -10342,6 +10343,8 @@ packages:
         optional: true
 
 snapshots:
+
+  '@bitauth/libauth@3.0.0': {}
 
   '@adraffy/ens-normalize@1.10.1': {}
 

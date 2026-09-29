@@ -22,8 +22,7 @@
   "repository": "https://github.com/x402-foundation/x402",
   "description": "Bitcoin Cash exact payment mechanism for x402",
   "dependencies": {
-    "@noble/hashes": "^1.8.0",
-    "@noble/secp256k1": "^1.7.2",
+    "@bitauth/libauth": "^3.0.0",
     "@x402/core": "workspace:~"
   },
   "devDependencies": {

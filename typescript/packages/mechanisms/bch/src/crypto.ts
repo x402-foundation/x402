@@ -1,19 +1,17 @@
-import * as secp256k1 from '@noble/secp256k1';
-import { ripemd160 } from '@noble/hashes/ripemd160';
-import { sha256 } from '@noble/hashes/sha256';
+import {
+  decodeCashAddress as decodeLibauthCashAddress,
+  decodeTransactionBCH,
+  encodeCashAddress as encodeLibauthCashAddress,
+  encodeTransactionBCH,
+  generateSigningSerializationBCH,
+  hash160 as libauthHash160,
+  hash256 as libauthHash256,
+  secp256k1,
+} from '@bitauth/libauth';
 import type { BchNetwork, BchOutPoint, BchSourceOutput } from './types';
 
 export const SIGHASH_ALL_FORKID = 0x41;
 export const BCH_ASSET = 'BCH';
-
-const CASHADDR_CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
-const CASHADDR_GENERATORS = [
-  0x98f2bc8e61n,
-  0x79b76d99e2n,
-  0xf33e5fb3c4n,
-  0xae2eabe2a8n,
-  0x1e4f43e470n,
-];
 
 const NETWORK_PREFIX: Record<BchNetwork, string> = {
   'bch:bitcoincash': 'bitcoincash',
@@ -87,11 +85,11 @@ export function base64ToBytes(value: string): Uint8Array {
 }
 
 export function hash160(value: Uint8Array): Uint8Array {
-  return ripemd160(sha256(value));
+  return libauthHash160(value);
 }
 
 export function doubleSha256(value: Uint8Array): Uint8Array {
-  return sha256(sha256(value));
+  return libauthHash256(value);
 }
 
 export function p2pkhScript(hash: Uint8Array): Uint8Array {
@@ -111,79 +109,86 @@ export function isP2pkhScript(script: Uint8Array): boolean {
 }
 
 export function decodeCashAddr(value: string, network: BchNetwork): Uint8Array {
-  const separator = value.indexOf(':');
-  if (separator <= 0 || separator === value.length - 1) throw new Error('CashAddr prefix required');
   if (value !== value.toLowerCase()) throw new Error('CashAddr must be lowercase');
-  const prefix = value.slice(0, separator);
-  if (prefix !== NETWORK_PREFIX[network]) throw new Error('CashAddr network mismatch');
-  const payload = value.slice(separator + 1);
-  const values = Array.from(payload, (character) => {
-    const index = CASHADDR_CHARSET.indexOf(character);
-    if (index < 0) throw new Error(`invalid CashAddr character: ${character}`);
-    return index;
-  });
-  if (values.length < 9 || cashAddrPolymod([...prefixExpand(prefix), ...values]) !== 1n) {
-    throw new Error('invalid CashAddr checksum');
-  }
-  const decoded = convertBits(values.slice(0, -8), 5, 8, false);
-  if (decoded.length !== 21 || decoded[0] !== 0) throw new Error('CashAddr is not P2PKH');
-  return Uint8Array.from(decoded.slice(1));
+  const decoded = decodeLibauthCashAddress(value);
+  if (typeof decoded === 'string') throw new Error(decoded);
+  if (decoded.prefix !== NETWORK_PREFIX[network]) throw new Error('CashAddr network mismatch');
+  if (decoded.type !== 'p2pkh') throw new Error('CashAddr type mismatch');
+  return decoded.payload;
 }
 
 export function encodeCashAddr(hash: Uint8Array, network: BchNetwork): string {
   if (hash.length !== 20) throw new Error('P2PKH hash must be 20 bytes');
-  const prefix = NETWORK_PREFIX[network];
-  const data = convertBits(Uint8Array.from([0, ...hash]), 8, 5, true);
-  const checksum = cashAddrChecksum([...prefixExpand(prefix), ...data]);
-  return `${prefix}:${[...data, ...checksum].map((value) => CASHADDR_CHARSET[value]).join('')}`;
+  const encoded = encodeLibauthCashAddress({
+    payload: hash,
+    prefix: NETWORK_PREFIX[network],
+    type: 'p2pkh',
+  });
+  if (typeof encoded === 'string') throw new Error(encoded);
+  return encoded.address;
+}
+
+function toLibauthTransaction(transaction: BchTransaction) {
+  return {
+    version: transaction.version,
+    inputs: transaction.inputs.map((input) => ({
+      outpointIndex: input.outpoint.vout,
+      outpointTransactionHash: hexToBytes(input.outpoint.txid),
+      sequenceNumber: input.sequence,
+      unlockingBytecode: input.scriptSig,
+    })),
+    outputs: transaction.outputs.map((output) => ({
+      valueSatoshis: output.value,
+      lockingBytecode: output.scriptPubKey,
+    })),
+    locktime: transaction.lockTime,
+  };
+}
+
+function fromLibauthTransaction(transaction: {
+  version: number;
+  inputs: Array<{
+    outpointIndex: number;
+    outpointTransactionHash: Uint8Array;
+    sequenceNumber: number;
+    unlockingBytecode: Uint8Array;
+  }>;
+  outputs: Array<{ valueSatoshis: bigint; lockingBytecode: Uint8Array }>;
+  locktime: number;
+}): BchTransaction {
+  return {
+    version: transaction.version,
+    inputs: transaction.inputs.map((input) => ({
+      outpoint: {
+        txid: bytesToHex(input.outpointTransactionHash),
+        vout: input.outpointIndex,
+      },
+      scriptSig: input.unlockingBytecode,
+      sequence: input.sequenceNumber,
+    })),
+    outputs: transaction.outputs.map((output) => ({
+      value: output.valueSatoshis,
+      scriptPubKey: output.lockingBytecode,
+    })),
+    lockTime: transaction.locktime,
+  };
 }
 
 export function parseTransaction(raw: Uint8Array): BchTransaction {
-  const reader = new Reader(raw);
-  const version = reader.i32();
-  const inputCount = Number(reader.varInt());
-  if (inputCount < 1 || inputCount > 10_000) throw new Error('invalid input count');
-  const inputs: BchTxInput[] = [];
-  for (let index = 0; index < inputCount; index += 1) {
-    const txidBytes = reader.bytes(32).slice().reverse();
-    inputs.push({
-      outpoint: { txid: bytesToHex(txidBytes), vout: reader.u32() },
-      scriptSig: reader.varBytes(),
-      sequence: reader.u32(),
-    });
+  const decoded = decodeTransactionBCH(raw);
+  if (typeof decoded === 'string') {
+    if (decoded.includes('unexpected bytes')) throw new Error('trailing transaction bytes');
+    throw new Error(decoded);
   }
-  const outputCount = Number(reader.varInt());
-  if (outputCount < 1 || outputCount > 10_000) throw new Error('invalid output count');
-  const outputs: BchTxOutput[] = [];
-  for (let index = 0; index < outputCount; index += 1) {
-    outputs.push({ value: reader.u64(), scriptPubKey: reader.varBytes() });
-  }
-  const lockTime = reader.u32();
-  if (!reader.done()) throw new Error('trailing transaction bytes');
-  return { version, inputs, outputs, lockTime };
+  return fromLibauthTransaction(decoded);
 }
 
 export function serializeTransaction(transaction: BchTransaction): Uint8Array {
-  const result: number[] = [];
-  writeI32(result, transaction.version);
-  writeVarInt(result, BigInt(transaction.inputs.length));
-  for (const input of transaction.inputs) {
-    result.push(...hexToBytes(input.outpoint.txid).slice().reverse());
-    writeU32(result, input.outpoint.vout);
-    writeVarBytes(result, input.scriptSig);
-    writeU32(result, input.sequence);
-  }
-  writeVarInt(result, BigInt(transaction.outputs.length));
-  for (const output of transaction.outputs) {
-    writeU64(result, output.value);
-    writeVarBytes(result, output.scriptPubKey);
-  }
-  writeU32(result, transaction.lockTime);
-  return Uint8Array.from(result);
+  return encodeTransactionBCH(toLibauthTransaction(transaction));
 }
 
 export function transactionId(transaction: BchTransaction): string {
-  return bytesToHex(doubleSha256(serializeTransaction(transaction)).slice().reverse());
+  return bytesToHex(libauthHash256(serializeTransaction(transaction)).slice().reverse());
 }
 
 export function signingHash(
@@ -193,32 +198,22 @@ export function signingHash(
 ): Uint8Array {
   if (inputIndex < 0 || inputIndex >= transaction.inputs.length)
     throw new Error('invalid input index');
-  const input = transaction.inputs[inputIndex];
-  const prevouts: number[] = [];
-  const sequences: number[] = [];
-  for (const candidate of transaction.inputs) {
-    prevouts.push(...hexToBytes(candidate.outpoint.txid).slice().reverse());
-    writeU32(prevouts, candidate.outpoint.vout);
-    writeU32(sequences, candidate.sequence);
-  }
-  const outputs: number[] = [];
-  for (const output of transaction.outputs) {
-    writeU64(outputs, output.value);
-    writeVarBytes(outputs, output.scriptPubKey);
-  }
-  const preimage: number[] = [];
-  writeI32(preimage, transaction.version);
-  preimage.push(...doubleSha256(Uint8Array.from(prevouts)));
-  preimage.push(...doubleSha256(Uint8Array.from(sequences)));
-  preimage.push(...hexToBytes(input.outpoint.txid).slice().reverse());
-  writeU32(preimage, input.outpoint.vout);
-  writeVarBytes(preimage, source.scriptPubKey);
-  writeU64(preimage, source.value);
-  writeU32(preimage, input.sequence);
-  preimage.push(...doubleSha256(Uint8Array.from(outputs)));
-  writeU32(preimage, transaction.lockTime);
-  writeU32(preimage, SIGHASH_ALL_FORKID);
-  return doubleSha256(Uint8Array.from(preimage));
+  const serialization = generateSigningSerializationBCH(
+    {
+      inputIndex,
+      sourceOutputs: transaction.inputs.map(() => ({
+        valueSatoshis: source.value,
+        lockingBytecode: source.scriptPubKey,
+      })),
+      transaction: toLibauthTransaction(transaction),
+    },
+    {
+      coveredBytecode: source.scriptPubKey,
+      signingSerializationType: Uint8Array.of(SIGHASH_ALL_FORKID),
+      forkId: Uint8Array.of(0, 0, 0),
+    },
+  );
+  return libauthHash256(serialization);
 }
 
 export function verifyP2pkhInput(
@@ -240,10 +235,10 @@ export function verifyP2pkhInput(
     throw new Error('P2PKH public key does not match source output');
   }
   if (
-    !secp256k1.verify(
+    !secp256k1.verifySignatureDER(
       signature.slice(0, -1),
-      signingHash(transaction, inputIndex, source),
       publicKey,
+      signingHash(transaction, inputIndex, source),
     )
   ) {
     throw new Error('invalid BCH signature');
@@ -317,57 +312,6 @@ export function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-function prefixExpand(prefix: string): number[] {
-  return [...prefix].map((character) => character.charCodeAt(0) & 0x1f).concat(0);
-}
-
-function cashAddrPolymod(values: number[]): bigint {
-  let checksum = 1n;
-  for (const value of values) {
-    const top = checksum >> 35n;
-    checksum = ((checksum & 0x07ffffffffn) << 5n) ^ BigInt(value);
-    for (let index = 0; index < CASHADDR_GENERATORS.length; index += 1) {
-      if (((top >> BigInt(index)) & 1n) !== 0n) checksum ^= CASHADDR_GENERATORS[index];
-    }
-  }
-  return checksum;
-}
-
-function cashAddrChecksum(values: number[]): number[] {
-  const checksum = cashAddrPolymod([...values, ...new Array(8).fill(0)]) ^ 1n;
-  return Array.from({ length: 8 }, (_, index) =>
-    Number((checksum >> BigInt(5 * (7 - index))) & 31n),
-  );
-}
-
-function convertBits(
-  data: Uint8Array | number[],
-  from: number,
-  to: number,
-  pad: boolean,
-): number[] {
-  let accumulator = 0;
-  let bits = 0;
-  const maxValue = (1 << to) - 1;
-  const maxAccumulator = (1 << (from + to - 1)) - 1;
-  const result: number[] = [];
-  for (const value of data) {
-    if (value < 0 || value >> from !== 0) throw new Error('invalid CashAddr data');
-    accumulator = ((accumulator << from) | value) & maxAccumulator;
-    bits += from;
-    while (bits >= to) {
-      bits -= to;
-      result.push((accumulator >> bits) & maxValue);
-    }
-  }
-  if (pad) {
-    if (bits > 0) result.push((accumulator << (to - bits)) & maxValue);
-  } else if (bits >= from || ((accumulator << (to - bits)) & maxValue) !== 0) {
-    throw new Error('invalid CashAddr padding');
-  }
-  return result;
-}
-
 function parsePushes(script: Uint8Array): Uint8Array[] {
   const pushes: Uint8Array[] = [];
   let offset = 0;
@@ -418,104 +362,5 @@ function assertStrictDer(signature: Uint8Array): void {
     (sLength > 1 && signature[sStart] === 0 && !(signature[sStart + 1] & 0x80))
   ) {
     throw new Error('invalid DER signature');
-  }
-}
-
-function writeI32(output: number[], value: number): void {
-  writeU32(output, value >>> 0);
-}
-
-function writeU32(output: number[], value: number): void {
-  const normalized = value >>> 0;
-  output.push(
-    normalized & 255,
-    (normalized >>> 8) & 255,
-    (normalized >>> 16) & 255,
-    (normalized >>> 24) & 255,
-  );
-}
-
-function writeU64(output: number[], value: bigint): void {
-  for (let index = 0; index < 8; index += 1)
-    output.push(Number((value >> BigInt(index * 8)) & 255n));
-}
-
-function writeVarInt(output: number[], value: bigint): void {
-  if (value <= 252n) output.push(Number(value));
-  else if (value <= 0xffffn) {
-    output.push(253);
-    output.push(Number(value & 255n), Number((value >> 8n) & 255n));
-  } else if (value <= 0xffffffffn) {
-    output.push(254);
-    writeU32(output, Number(value));
-  } else {
-    output.push(255);
-    writeU64(output, value);
-  }
-}
-
-function writeVarBytes(output: number[], value: Uint8Array): void {
-  writeVarInt(output, BigInt(value.length));
-  output.push(...value);
-}
-
-class Reader {
-  private offset = 0;
-
-  constructor(private readonly value: Uint8Array) {}
-
-  bytes(length: number): Uint8Array {
-    const result = this.value.slice(this.offset, this.offset + length);
-    if (result.length !== length) throw new Error('truncated transaction');
-    this.offset += length;
-    return result;
-  }
-
-  u32(): number {
-    const bytes = this.bytes(4);
-    return (bytes[0] | (bytes[1] << 8) | (bytes[2] << 16) | (bytes[3] << 24)) >>> 0;
-  }
-
-  i32(): number {
-    return this.u32() | 0;
-  }
-
-  u64(): bigint {
-    let value = 0n;
-    const bytes = this.bytes(8);
-    for (let index = 0; index < 8; index += 1) value |= BigInt(bytes[index]) << BigInt(index * 8);
-    return value;
-  }
-
-  varInt(): bigint {
-    const prefix = this.bytes(1)[0];
-    if (prefix <= 252) return BigInt(prefix);
-    if (prefix === 253) {
-      const bytes = this.bytes(2);
-      const value = BigInt(bytes[0] | (bytes[1] << 8));
-      if (value < 253n) throw new Error('non-canonical transaction varint');
-      return value;
-    }
-    if (prefix === 254) {
-      const bytes = this.bytes(4);
-      const value = BigInt(
-        (bytes[0] | (bytes[1] << 8) | (bytes[2] << 16) | (bytes[3] << 24)) >>> 0,
-      );
-      if (value <= 0xffffn) throw new Error('non-canonical transaction varint');
-      return value;
-    }
-    const value = this.u64();
-    if (value <= 0xffffffffn) throw new Error('non-canonical transaction varint');
-    return value;
-  }
-
-  varBytes(): Uint8Array {
-    const length = Number(this.varInt());
-    if (!Number.isSafeInteger(length)) throw new Error('transaction field is too large');
-    return this.bytes(length);
-  }
-
-  done(): boolean {
-    return this.offset === this.value.length;
   }
 }

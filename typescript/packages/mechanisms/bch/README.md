@@ -12,6 +12,9 @@ non-dust change output.
 
 CashTokens, CashScript, PSBT, sponsorship, alternate address formats, and
 batch/debit settlement are not part of this package's initial exact mechanism.
+See the specification's [compatibility boundary](../../../../specs/schemes/exact/scheme_exact_bch.md#compatibility-boundary-and-known-functional-gaps)
+for the UTXO/account-model differences and deliberately unsupported BCH
+features.
 
 ## Client
 

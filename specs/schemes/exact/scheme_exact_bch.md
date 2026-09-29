@@ -102,3 +102,41 @@ broadcast, transaction status, tip height, and double-spend-proof evidence.
 Availability failover does not prove chain consistency; deployments SHOULD
 compare independent chain-tip/header observations and use authenticated or
 otherwise reviewed transports.
+
+## Compatibility boundary and known functional gaps
+
+This mechanism is intentionally not an account-model translation. The x402
+core contract describes a payment requirement and a settlement result, while
+BCH settlement is a UTXO state transition with different operational
+invariants:
+
+- A payer does not have a balance to debit. The client selects specific UTXOs,
+  and the facilitator must resolve each outpoint's authoritative value and
+  locking script before accepting the payment.
+- A valid signed transaction is not proof that it was accepted by the network.
+  The facilitator must distinguish build, signature verification, broadcast,
+  mempool observation, confirmation, and finality. A lost broadcast response
+  is indeterminate and requires TXID reconciliation.
+- Idempotency is transaction-based. The TXID claim and request binding prevent
+  duplicate broadcast and prevent the same transaction from being reused for a
+  different resource or price requirement. A process-local settlement store is
+  suitable only for a single process; multi-process deployments need a shared
+  atomic store.
+- BCH fee and change selection are client responsibilities. A facilitator
+  cannot infer a missing fee from an account balance, and a change output is a
+  separate UTXO subject to dust and payer-ownership rules.
+- Confirmation depth, mempool policy, double-spend-proof availability, chain
+  reorganizations, and provider tip consistency have no direct equivalent in
+  the usual account-model adapter. They remain provider and deployment policy,
+  not x402 core semantics.
+- The initial package does not cover CashTokens, covenant/CashScript payments,
+  multisig, PSBT transport, sponsored transactions, non-P2PKH scripts,
+  batch payments, or debit/streaming settlement. Adding any of these requires
+  a separate wire contract and validation model rather than widening this
+  P2PKH exact scheme implicitly.
+
+The package uses `@bitauth/libauth` for BCH transaction encoding/decoding,
+CashAddr validation, hashing, BCH signing serialization, and secp256k1
+operations. The x402-specific layer remains responsible for requirements,
+source-output policy, payer consistency, fee/change policy, provider evidence,
+and settlement idempotency.
