@@ -290,6 +290,7 @@ export function verifyPayment(
     throw new Error('transaction fee is below the required BCH fee rate');
   }
   if (transaction.outputs.length === 2) {
+    if (!payerHash) throw new Error('missing payer');
     const change = transaction.outputs.find(
       (output) =>
         !(output.value === merchantAmount && equalBytes(output.scriptPubKey, merchantScript)),
@@ -297,6 +298,9 @@ export function verifyPayment(
     if (!change || change.value < policy.dustThreshold) throw new Error('change output is dust');
     if (equalBytes(change.scriptPubKey, merchantScript))
       throw new Error('duplicate merchant output');
+    if (!equalBytes(change.scriptPubKey, p2pkhScript(payerHash))) {
+      throw new Error('change output must return to the payer');
+    }
   }
   if (!payerHash) throw new Error('missing payer');
   return { txid: transactionId(transaction), payer: encodeCashAddr(payerHash, network), fee };

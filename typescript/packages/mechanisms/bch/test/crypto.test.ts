@@ -7,6 +7,7 @@ import {
   parseTransaction,
   p2pkhScript,
   serializeTransaction,
+  signingHash,
   transactionId,
   verifyPayment,
 } from '../src/crypto';
@@ -100,5 +101,44 @@ describe('BCH CashAddr and transaction primitives', () => {
     expect(() => parseTransaction(Uint8Array.from([...transactionBytes, 0]))).toThrow(
       'trailing transaction bytes',
     );
+  });
+
+  it('rejects change sent to a different P2PKH owner', async () => {
+    const signer = createSecp256k1BchSigner(SECRET_KEY);
+    const merchantScript = p2pkhScript(new Uint8Array(20).fill(0x22));
+    const selected = [
+      {
+        txid: '00'.repeat(32),
+        vout: 0,
+        value: 100_000n,
+        scriptPubKey: p2pkhScript(hash160(signer.getPublicKey())),
+      },
+    ];
+    const transaction = await buildAndSignTransaction(selected, merchantScript, 1_000n, signer);
+    const tampered = {
+      ...transaction,
+      outputs: transaction.outputs.map((output, index) =>
+        index === 1
+          ? { ...output, scriptPubKey: p2pkhScript(new Uint8Array(20).fill(0x33)) }
+          : output,
+      ),
+    };
+    const signature = Uint8Array.from([
+      ...(await signer.signDigest(signingHash(tampered, 0, selected[0]))),
+      0x41,
+    ]);
+    tampered.inputs[0].scriptSig = Uint8Array.from([
+      ...[signature.length, ...signature],
+      ...[signer.getPublicKey().length, ...signer.getPublicKey()],
+    ]);
+    expect(() =>
+      verifyPayment(
+        tampered,
+        selected.map(({ value, scriptPubKey }) => ({ value, scriptPubKey })),
+        NETWORK,
+        merchantScript,
+        1_000n,
+      ),
+    ).toThrow('change output must return to the payer');
   });
 });
