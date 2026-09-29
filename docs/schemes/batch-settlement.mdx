@@ -694,16 +694,28 @@ Every channel is bound at open to a `receiverAuthorizer` key that signs cooperat
 
 Start `BatchChannelManager` outside the request path to claim batches and distribute payouts:
 
-```typescript
-const manager = batchSvmScheme.createChannelManager(facilitatorClient, requirements, {
-  rpcUrl: process.env.SVM_RPC_URL,
-  onClaim: r => console.log(`Claimed ${r.vouchers} vouchers (tx: ${r.transaction})`),
-  onSettle: r => console.log(`Distributed to payTo (tx: ${r.transaction})`),
-  onSeal: r => console.log(`Sealed channel ${r.channel} (tx: ${r.transaction})`),
-  onError: e => console.error(e),
-});
-manager.start(60); // seconds between passes
-```
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    const manager = batchSvmScheme.createChannelManager(facilitatorClient, requirements, {
+      rpcUrl: process.env.SVM_RPC_URL,
+      onClaim: r => console.log(`Claimed ${r.vouchers} vouchers (tx: ${r.transaction})`),
+      onSettle: r => console.log(`Distributed to payTo (tx: ${r.transaction})`),
+      onSeal: r => console.log(`Sealed channel ${r.channel} (tx: ${r.transaction})`),
+      onError: e => console.error(e),
+    });
+    manager.start(60); // seconds between passes
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    manager, err := scheme.CreateChannelManager(facilitatorClient, requirements, batchserver.BatchChannelManagerConfig{
+        RPCURL: os.Getenv("SVM_RPC_URL"),
+    })
+    // requirements must include extra.feePayer from the facilitator's supported kind
+    ```
+  </Tab>
+</Tabs>
 
 Claim promptly: if the facilitator or payer forces a close before your latest voucher is claimed, unclaimed value returns to the payer. Set `withdrawDelay` comfortably above your claim cadence.
 
