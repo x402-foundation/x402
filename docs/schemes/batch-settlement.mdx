@@ -723,36 +723,75 @@ Claim promptly: if the facilitator or payer forces a close before your latest vo
 
 Register `BatchSvmScheme` for `solana:*`. The SDK opens or tops up the channel on first use and attaches the correct payload per mode:
 
-```typescript
-import { x402Client } from "@x402/core/client";
-import { ExactSvmScheme } from "@x402/svm/exact/client";
-import { BatchSvmScheme } from "@x402/svm/batch-settlement/client";
-import { createKeyPairSignerFromBytes } from "@solana/kit";
-import { base58 } from "@scure/base";
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { x402Client } from "@x402/core/client";
+    import { ExactSvmScheme } from "@x402/svm/exact/client";
+    import { BatchSvmScheme } from "@x402/svm/batch-settlement/client";
+    import { createKeyPairSignerFromBytes } from "@solana/kit";
+    import { base58 } from "@scure/base";
 
-const signer = await createKeyPairSignerFromBytes(
-  base58.decode(process.env.SVM_PRIVATE_KEY!),
-);
+    const signer = await createKeyPairSignerFromBytes(
+      base58.decode(process.env.SVM_PRIVATE_KEY!),
+    );
 
-const client = new x402Client();
-client.register("solana:*", new ExactSvmScheme(signer));
-client.register("solana:*", new BatchSvmScheme(signer, {
-  depositPolicy: { depositMultiplier: 5 },
-  rpcUrl: process.env.SVM_RPC_URL,
-}));
-```
+    const client = new x402Client();
+    client.register("solana:*", new ExactSvmScheme(signer));
+    client.register("solana:*", new BatchSvmScheme(signer, {
+      depositPolicy: { depositMultiplier: 5 },
+      rpcUrl: process.env.SVM_RPC_URL,
+    }));
+    ```
 
-To opt into server-signed channels for a trusted operator:
+    To opt into server-signed channels for a trusted operator:
 
-```typescript
-const batch = new BatchSvmScheme(signer, {
-  serverSignedChannelsPolicy: {
-    allowedOperators: ["OperatorBase58Pubkey"],
-    maxDeposit: "$1", // USD cap for default assets
-  },
-});
-client.register("solana:*", batch);
-```
+    ```typescript
+    const batch = new BatchSvmScheme(signer, {
+      serverSignedChannelsPolicy: {
+        allowedOperators: ["OperatorBase58Pubkey"],
+        maxDeposit: "$1", // USD cap for default assets
+      },
+    });
+    client.register("solana:*", batch);
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        x402 "github.com/x402-foundation/x402/go/v2"
+        exactsvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
+        batchclient "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement/client"
+        svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
+    )
+
+    svmSigner, err := svmsigners.NewClientSignerFromPrivateKey(os.Getenv("SVM_PRIVATE_KEY"))
+
+    multiplier := 5
+    batch, err := batchclient.NewBatchSvmScheme(svmSigner, &batchclient.BatchSvmClientConfig{
+        DepositPolicy: &batchclient.DepositPolicy{DepositMultiplier: &multiplier},
+        RPCURL:        os.Getenv("SVM_RPC_URL"),
+    })
+
+    x402Client := x402.Newx402Client().
+        Register("solana:*", exactsvm.NewExactSvmScheme(svmSigner)).
+        Register("solana:*", batch)
+    ```
+
+    To opt into server-signed channels for a trusted operator:
+
+    ```go
+    batch, err := batchclient.NewBatchSvmScheme(svmSigner, &batchclient.BatchSvmClientConfig{
+        ServerSignedChannelsPolicy: &batchclient.BatchServerSignedChannelsPolicy{
+            AllowedOperators: []string{"OperatorBase58Pubkey"},
+            MaxDeposit:       "$1", // USD cap for default assets
+        },
+    })
+    x402Client.Register("solana:*", batch)
+    x402Client.RegisterPolicy(batch.PaymentPolicy())
+    ```
+  </Tab>
+</Tabs>
 
 #### Facilitator Setup (SVM)
 
