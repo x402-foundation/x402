@@ -1,11 +1,15 @@
 package server
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
 	"reflect"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 )
@@ -84,14 +88,39 @@ func TestInMemoryChannelStorage_ReturnsCopy(t *testing.T) {
 func TestInMemoryChannelStorage_Delete(t *testing.T) {
 	s := NewInMemoryChannelStorage()
 	_ = s.Set(testChA, sampleSession(testChA, "10"))
+	ok, err := s.Acquire(testChA, "pending", 60_000)
+	if err != nil || !ok {
+		t.Fatalf("Acquire: ok=%v err=%v", ok, err)
+	}
 	if err := s.Delete(testChA); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if got, _ := s.Get(testChA); got != nil {
 		t.Fatalf("expected nil after delete")
 	}
+	held, err := s.IsHeld(testChA, "")
+	if err != nil || held {
+		t.Fatalf("Delete must drop admission lock: held=%v err=%v", held, err)
+	}
 	if err := s.Delete("missing"); err == nil || err.Error() != batchsettlement.ErrInvalidChannelId {
 		t.Fatalf("Delete missing: expected ErrInvalidChannelId, got %v", err)
+	}
+}
+
+func TestInMemoryChannelStorage_UpdateChannelDeleteClearsAdmissionLock(t *testing.T) {
+	s := NewInMemoryChannelStorage()
+	_ = s.Set(testChA, sampleSession(testChA, "10"))
+	ok, err := s.Acquire(testChA, "pending", 60_000)
+	if err != nil || !ok {
+		t.Fatalf("Acquire: ok=%v err=%v", ok, err)
+	}
+	res, err := s.UpdateChannel(testChA, func(*ChannelSession) *ChannelSession { return nil })
+	if err != nil || res.Status != ChannelDeleted {
+		t.Fatalf("UpdateChannel delete: res=%+v err=%v", res, err)
+	}
+	held, err := s.IsHeld(testChA, "")
+	if err != nil || held {
+		t.Fatalf("UpdateChannel delete must drop admission lock: held=%v err=%v", held, err)
 	}
 }
 
@@ -186,6 +215,27 @@ func TestInMemoryChannelStorage_MixedCaseCanonicalGet(t *testing.T) {
 	}
 }
 
+func TestInMemoryChannelStorage_ExpiredAdmissionLockIsFree(t *testing.T) {
+	s := NewInMemoryChannelStorage()
+	ok, err := s.Acquire(testChA, "old", 1)
+	if err != nil || !ok {
+		t.Fatalf("Acquire old: ok=%v err=%v", ok, err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	held, err := s.IsHeld(testChA, "")
+	if err != nil || held {
+		t.Fatalf("expired lock should be free: held=%v err=%v", held, err)
+	}
+	ok, err = s.Acquire(testChA, "new", 60_000)
+	if err != nil || !ok {
+		t.Fatalf("Acquire new: ok=%v err=%v", ok, err)
+	}
+	held, err = s.IsHeld(testChA, "new")
+	if err != nil || !held {
+		t.Fatalf("new lock should be held: held=%v err=%v", held, err)
+	}
+}
+
 func TestInMemoryChannelStorage_Concurrent(t *testing.T) {
 	s := NewInMemoryChannelStorage()
 	var wg sync.WaitGroup
@@ -202,4 +252,25 @@ func TestInMemoryChannelStorage_Concurrent(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestRethrowLockImplementationError(t *testing.T) {
+	if got := RethrowLockImplementationError(nil); got != nil {
+		t.Fatalf("nil: %v", got)
+	}
+	if got := RethrowLockImplementationError(errors.New("lock down")); got != nil {
+		t.Fatalf("io: %v", got)
+	}
+	syntax := &json.SyntaxError{}
+	if got := RethrowLockImplementationError(syntax); !errors.Is(got, syntax) {
+		t.Fatalf("syntax: %v", got)
+	}
+	unmarshalType := &json.UnmarshalTypeError{Value: "string", Offset: 1}
+	if got := RethrowLockImplementationError(unmarshalType); !errors.Is(got, unmarshalType) {
+		t.Fatalf("unmarshal type: %v", got)
+	}
+	wrapped := fmt.Errorf("hold: %w", syntax)
+	if got := RethrowLockImplementationError(wrapped); !errors.Is(got, wrapped) {
+		t.Fatalf("wrapped: %v", got)
+	}
 }

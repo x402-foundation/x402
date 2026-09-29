@@ -130,6 +130,8 @@ scheme := server.NewBatchSettlementEvmScheme(receiverAddress, &server.BatchSettl
     Storage: server.NewFileChannelStorage(batchsettlement.FileChannelStorageOptions{
         Directory: "./sessions",
     }),
+    // LockStorage: defaults to Storage when it implements ChannelLockStorage.
+    // Pass a separate lock store when hosts do not share that directory.
 })
 
 srv := x402.Newx402ResourceServer().Register("eip155:84532", scheme)
@@ -139,16 +141,14 @@ manager.Start(server.AutoSettlementConfig{
     ClaimIntervalSecs:  60,
     SettleIntervalSecs: 300,
     RefundIntervalSecs: 3600,
-    // Refund channels with non-zero balance, no live pending request, and
-    // idle for at least 1 hour. Inline the predicate so callers can swap in
-    // their own logic (e.g. balance thresholds, pending-withdrawal flushing).
+    // Refund channels with non-zero balance and idle for at least 1 hour.
+    // Admission locks live on ChannelLockStorage, not the ChannelSession.
+    // Inline the predicate so callers can swap in their own logic (e.g. balance
+    // thresholds, pending-withdrawal flushing).
     SelectRefundChannels: func(channels []*server.ChannelSession, ctx server.AutoSettlementContext) ([]*server.ChannelSession, error) {
         out := make([]*server.ChannelSession, 0, len(channels))
         for _, c := range channels {
             if c.Balance == "" || c.Balance == "0" {
-                continue
-            }
-            if c.PendingRequest != nil && c.PendingRequest.ExpiresAt > ctx.Now {
                 continue
             }
             if ctx.Now-c.LastRequestTimestamp < 3600_000 {
@@ -162,6 +162,27 @@ manager.Start(server.AutoSettlementConfig{
 
 // On shutdown, drain pending claims:
 defer manager.Stop(ctx, &server.StopOptions{Flush: true})
+```
+
+For serverless or multi-instance servers, use `RedisChannelStorage` so sessions survive cold starts and update atomically across processes. Wrap your Redis/Valkey client as `RedisChannelStorageClient`. The SDK does not import a Redis library. Pass one object as `Storage` when the backend implements both roles (`InMemoryChannelStorage`, `FileChannelStorage`, `RedisChannelStorage`); admission locks are inferred. File locks are shared only by processes that use the same directory. Hosts that do not share that directory need an explicit `LockStorage` (Redis); otherwise each host admits independently and only the charge CAS protects revenue:
+
+```go
+// Redis for durable state and locks (one object, lock inferred)
+scheme := server.NewBatchSettlementEvmScheme(receiverAddress, &server.BatchSettlementEvmSchemeServerConfig{
+    Storage: server.NewRedisChannelStorage(server.RedisChannelStorageOptions{
+        Client: redisAdapter,
+    }),
+})
+
+// File durable, Redis lock (multi-host without a shared filesystem)
+scheme = server.NewBatchSettlementEvmScheme(receiverAddress, &server.BatchSettlementEvmSchemeServerConfig{
+    Storage: server.NewFileChannelStorage(batchsettlement.FileChannelStorageOptions{
+        Directory: "./sessions",
+    }),
+    LockStorage: server.NewRedisChannelLockStorage(server.RedisChannelStorageOptions{
+        Client: redisAdapter,
+    }),
+})
 ```
 
 ### Receiver Authorizer
