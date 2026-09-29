@@ -578,56 +578,117 @@ In server mode the channel's onchain `authorized_signer` is the operator, who co
 
 Every channel is bound at open to a `receiverAuthorizer` key that signs cooperative close authorizations. Pass `receiverAuthorizer` to self-manage closes (recommended), or omit it to delegate to the facilitator's advertised key.
 
-```typescript
-import { BatchSvmScheme, MemoryChannelStore } from "@x402/svm/batch-settlement/server";
-import { createKeyPairSignerFromBytes } from "@solana/kit";
-import { base58 } from "@scure/base";
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { BatchSvmScheme, MemoryChannelStore } from "@x402/svm/batch-settlement/server";
+    import { createKeyPairSignerFromBytes } from "@solana/kit";
+    import { base58 } from "@scure/base";
 
-const receiverAuthorizer = await createKeyPairSignerFromBytes(
-  base58.decode(process.env.SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY!),
-);
+    const receiverAuthorizer = await createKeyPairSignerFromBytes(
+      base58.decode(process.env.SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY!),
+    );
 
-const batchSvmScheme = new BatchSvmScheme({
-  receiverAuthorizer,
-  withdrawDelay: 86_400,
-  store: new MemoryChannelStore(),
-});
+    const batchSvmScheme = new BatchSvmScheme({
+      receiverAuthorizer,
+      withdrawDelay: 86_400,
+      store: new MemoryChannelStore(),
+    });
 
-const resourceServer = new x402ResourceServer(facilitatorClient)
-  .register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", batchSvmScheme);
+    const resourceServer = new x402ResourceServer(facilitatorClient)
+      .register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", batchSvmScheme);
 
-app.use(paymentMiddleware({
-  "GET /api/data": {
-    accepts: {
-      scheme: "batch-settlement",
-      price: "$0.01",
-      network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
-      payTo: "YourSolanaAddress",
-    },
-    description: "Data API",
-  },
-}, resourceServer));
-```
+    app.use(paymentMiddleware({
+      "GET /api/data": {
+        accepts: {
+          scheme: "batch-settlement",
+          price: "$0.01",
+          network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+          payTo: "YourSolanaAddress",
+        },
+        description: "Data API",
+      },
+    }, resourceServer));
+    ```
 
-For server-signed (metered) routes, configure an `operator` signer and use `setSettlementOverrides` to charge actual usage:
+    For server-signed (metered) routes, configure an `operator` signer and use `setSettlementOverrides` to charge actual usage:
 
-```typescript
-const operator = await createKeyPairSignerFromBytes(
-  base58.decode(process.env.SVM_OPERATOR_PRIVATE_KEY!),
-);
+    ```typescript
+    const operator = await createKeyPairSignerFromBytes(
+      base58.decode(process.env.SVM_OPERATOR_PRIVATE_KEY!),
+    );
 
-const batchSvmScheme = new BatchSvmScheme({
-  receiverAuthorizer,
-  operator,
-  store: new MemoryChannelStore(),
-});
+    const batchSvmScheme = new BatchSvmScheme({
+      receiverAuthorizer,
+      operator,
+      store: new MemoryChannelStore(),
+    });
 
-// In your handler:
-app.get("/api/generate", (req, res) => {
-  setSettlementOverrides(res, { amount: "50%" }); // or raw atomic units / dollar price
-  res.json({ result: "..." });
-});
-```
+    // In your handler:
+    app.get("/api/generate", (req, res) => {
+      setSettlementOverrides(res, { amount: "50%" }); // or raw atomic units / dollar price
+      res.json({ result: "..." });
+    });
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        x402 "github.com/x402-foundation/x402/go/v2"
+        svmmech "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+        batchserver "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement/server"
+        svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
+    )
+
+    authorizer, err := svmsigners.NewReceiverAuthorizerSignerFromPrivateKey(
+        os.Getenv("SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"),
+    )
+
+    delay := 86400
+    scheme := batchserver.NewBatchSvmScheme(&batchserver.Config{
+        ReceiverAuthorizer: authorizer,
+        WithdrawDelay:      &delay,
+        Store:              batchserver.NewMemoryChannelStore(),
+    })
+
+    resource.Register(svmmech.SolanaDevnetCAIP2, scheme)
+
+    routes := x402http.RoutesConfig{
+        "GET /api/data": {
+            Accepts: x402http.PaymentOptions{
+                {
+                    Scheme:  "batch-settlement",
+                    Price:   "$0.01",
+                    Network: x402.Network("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"),
+                    PayTo:   "YourSolanaAddress",
+                },
+            },
+            Description: "Data API",
+        },
+    }
+    ```
+
+    For server-signed (metered) routes, configure an `Operator` signer and use `SetSettlementOverrides`:
+
+    ```go
+    operator, err := svmsigners.NewOperatorSignerFromPrivateKey(
+        os.Getenv("SVM_OPERATOR_PRIVATE_KEY"),
+    )
+
+    scheme := batchserver.NewBatchSvmScheme(&batchserver.Config{
+        ReceiverAuthorizer: authorizer,
+        Operator:           operator,
+        Store:              batchserver.NewMemoryChannelStore(),
+    })
+
+    // In your handler:
+    mux.HandleFunc("GET /api/generate", func(w http.ResponseWriter, r *http.Request) {
+        nethttpmw.SetSettlementOverrides(w, &x402.SettlementOverrides{Amount: "50%"})
+        _ = json.NewEncoder(w).Encode(map[string]any{"result": "..."})
+    })
+    ```
+  </Tab>
+</Tabs>
 
 #### Redemption Worker (SVM)
 
