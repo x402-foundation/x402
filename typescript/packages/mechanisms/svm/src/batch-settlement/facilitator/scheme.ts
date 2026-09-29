@@ -1926,6 +1926,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
         this.distributeInstruction(channelId, channel, terms as BatchTerms, requirements),
       fetchChannel: (network, channelId) => this.fetchChannel(network, channelId),
       nowSeconds: () => Math.floor(Date.now() / 1000),
+      onDistributionConfirmed: this.config.onDistributionConfirmed,
       pendingStore: this.pendingStore,
       readChannel: (network, channelId) => this.readChannel(network, channelId),
       getDelegatedCallerIdentity: (network, channelId) =>
