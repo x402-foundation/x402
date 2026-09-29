@@ -795,30 +795,56 @@ Register `BatchSvmScheme` for `solana:*`. The SDK opens or tops up the channel o
 
 #### Facilitator Setup (SVM)
 
-```typescript
-import { toFacilitatorSvmSigner } from "@x402/svm";
-import {
-  BatchSvmScheme,
-  InMemoryBatchChannelStorage,
-  InMemoryBatchReceiverAuthorizerStore,
-} from "@x402/svm/batch-settlement/facilitator";
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { toFacilitatorSvmSigner } from "@x402/svm";
+    import {
+      BatchSvmScheme,
+      InMemoryBatchChannelStorage,
+    } from "@x402/svm/batch-settlement/facilitator";
 
-const svmSigner = toFacilitatorSvmSigner(
-  keypair,
-  process.env.SVM_RPC_URL ? { defaultRpcUrl: process.env.SVM_RPC_URL } : undefined,
-);
+    const svmSigner = toFacilitatorSvmSigner(
+      keypair,
+      process.env.SVM_RPC_URL ? { defaultRpcUrl: process.env.SVM_RPC_URL } : undefined,
+    );
 
-const scheme = new BatchSvmScheme(svmSigner, {
-  channelStorage: new InMemoryBatchChannelStorage(),
-  receiverAuthorizerStore: new InMemoryBatchReceiverAuthorizerStore(),
-});
+    const scheme = new BatchSvmScheme(svmSigner, {
+      channelStorage: new InMemoryBatchChannelStorage(),
+    });
 
-facilitator.register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", scheme);
+    facilitator.register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", scheme);
 
-// Reclaim PDA rent from abandoned channels
-const rentCleanup = scheme.createRentCleanupManager("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1");
-rentCleanup.start({ intervalSecs: 60, abandonGraceSecs: 120 });
-```
+    // Reclaim PDA rent from abandoned channels
+    const rentCleanup = scheme.createRentCleanupManager("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1");
+    rentCleanup.start({ intervalSecs: 60, abandonGraceSecs: 120 });
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        x402 "github.com/x402-foundation/x402/go/v2"
+        svmmech "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+        batchfacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement/facilitator"
+        svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
+    )
+
+    svmSigner, err := svmsigners.NewFacilitatorSignerFromPrivateKey(
+        os.Getenv("SVM_PRIVATE_KEY"),
+        os.Getenv("SVM_RPC_URL"),
+    )
+
+    scheme := batchfacilitator.NewBatchSvmScheme(context.Background(), svmSigner, &batchfacilitator.Config{
+        // ChannelStorage defaults to in-memory; inject a durable store for production
+    })
+
+    facilitator.Register([]x402.Network{svmmech.SolanaDevnetCAIP2}, scheme)
+
+    // Reclaim PDA rent from abandoned channels
+    cleanup := scheme.CreateRentCleanupManager(svmmech.SolanaDevnetCAIP2)
+    ```
+  </Tab>
+</Tabs>
 
 #### SVM Examples
 
