@@ -11,7 +11,7 @@ export function createSecp256k1BchSigner(privateKey: Uint8Array): BchSigner {
     signDigest: (digest) => {
       const signature = secp256k1.signMessageHashDER(privateKey, digest);
       if (typeof signature === 'string') throw new Error(signature);
-      return signature;
+      return Promise.resolve(signature);
     },
     getAddress: (network) => encodeCashAddr(hash160(publicKey), network),
   };

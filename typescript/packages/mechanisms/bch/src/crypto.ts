@@ -13,7 +13,7 @@ import type { BchNetwork, BchOutPoint, BchSourceOutput } from './types';
 export const SIGHASH_ALL_FORKID = 0x41;
 export const BCH_ASSET = 'BCH';
 
-const NETWORK_PREFIX: Record<BchNetwork, string> = {
+const NETWORK_PREFIX: Record<BchNetwork, 'bitcoincash' | 'bchtest'> = {
   'bch:bitcoincash': 'bitcoincash',
   'bch:bchtest': 'bchtest',
 };
@@ -210,7 +210,6 @@ export function signingHash(
     {
       coveredBytecode: source.scriptPubKey,
       signingSerializationType: Uint8Array.of(SIGHASH_ALL_FORKID),
-      forkId: Uint8Array.of(0, 0, 0),
     },
   );
   return libauthHash256(serialization);
