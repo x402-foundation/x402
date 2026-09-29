@@ -1,0 +1,199 @@
+"""EVM server implementation for the Exact payment scheme (V2)."""
+
+from collections.abc import Callable
+
+from ....schemas import AssetAmount, Network, PaymentRequirements, Price, SupportedKind
+from ....schemas.helpers import convert_to_token_amount, parse_money
+from ..constants import SCHEME_EXACT
+from ..default_assets import find_default_asset, get_default_asset
+from ..utils import (
+    get_asset_info,
+    parse_amount,
+)
+
+# Type alias for money parser (sync)
+MoneyParser = Callable[[str | int | float, str], AssetAmount | None]
+
+
+class ExactEvmScheme:
+    """EVM server implementation for the Exact payment scheme (V2).
+
+    Parses prices and enhances payment requirements with EIP-712 domain info.
+
+    Note: parse_price orchestrates shared helpers plus scheme asset/extra.
+
+    Attributes:
+        scheme: The scheme identifier ("exact").
+    """
+
+    scheme = SCHEME_EXACT
+    default_asset_transfer_method = "eip3009"
+    payment_flows = {
+        "eip3009": {"supported": ("authorization", "upfront"), "default": "authorization"},
+        "permit2": {"supported": ("authorization", "upfront"), "default": "authorization"},
+    }
+
+    def __init__(self):
+        """Create ExactEvmScheme."""
+        self._money_parsers: list[MoneyParser] = []
+
+    def register_money_parser(self, parser: MoneyParser) -> "ExactEvmScheme":
+        """Register custom money parser in the parser chain.
+
+        Multiple parsers can be registered - tried in registration order.
+        Each parser receives a decimal string (e.g., "1.50" for $1.50).
+        If parser returns None, next parser is tried.
+        Default parser is always the final fallback.
+
+        Args:
+            parser: Custom function to convert amount to AssetAmount.
+
+        Returns:
+            Self for chaining.
+        """
+        self._money_parsers.append(parser)
+        return self
+
+    def get_asset_decimals(self, asset: str, network: Network) -> int | None:
+        """Decimals for a known default asset, or ``None``."""
+        found = find_default_asset(asset, str(network))
+        return found["decimals"] if found is not None else None
+
+    def parse_price(self, price: Price, network: Network) -> AssetAmount:
+        """Parse price into asset amount.
+
+        If price is already AssetAmount, returns it directly.
+        If price is Money (str|float), parses and tries custom parsers.
+        Falls back to default USDC conversion.
+
+        Args:
+            price: Price to parse (string, number, or AssetAmount dict).
+            network: Network identifier.
+
+        Returns:
+            AssetAmount with amount, asset, and extra fields.
+
+        Raises:
+            ValueError: If asset address is missing for AssetAmount input.
+        """
+        # Already an AssetAmount (dict with 'amount' key)
+        if isinstance(price, dict) and "amount" in price:
+            if not price.get("asset"):
+                raise ValueError(f"Asset address required for AssetAmount on {network}")
+            return AssetAmount(
+                amount=price["amount"],
+                asset=price["asset"],
+                extra=price.get("extra", {}),
+            )
+
+        # Already an AssetAmount object
+        if isinstance(price, AssetAmount):
+            if not price.asset:
+                raise ValueError(f"Asset address required for AssetAmount on {network}")
+            return price
+
+        # Parse Money to decimal
+        parsed = parse_money(price)
+        decimal_amount = parsed["amount"]
+        symbol = parsed.get("symbol")
+
+        # Try custom parsers (sync)
+        for parser in self._money_parsers:
+            result = parser(decimal_amount, str(network))
+            if result is not None:
+                return result
+
+        # Default: convert using the network (or ticker) default asset
+        return self._default_money_conversion(decimal_amount, str(network), symbol)
+
+    def enhance_payment_requirements(
+        self,
+        requirements: PaymentRequirements,
+        supported_kind: SupportedKind,
+        extension_keys: list[str],
+    ) -> PaymentRequirements:
+        """Add scheme-specific enhancements to payment requirements.
+
+        - Fills in default asset if not specified
+        - Adds EIP-712 domain parameters (name, version) to extra
+        - Adds assetTransferMethod to extra when present on the asset
+        - Converts decimal amounts to smallest unit
+
+        Args:
+            requirements: Base payment requirements.
+            supported_kind: Supported kind from facilitator.
+            extension_keys: Extension keys being used.
+
+        Returns:
+            Enhanced payment requirements.
+        """
+        # Default asset
+        if not requirements.asset:
+            requirements.asset = get_default_asset(str(requirements.network))["asset"]
+
+        try:
+            asset_info = get_asset_info(str(requirements.network), requirements.asset)
+        except ValueError:
+            asset_info = None
+
+        # Ensure amount is in smallest unit
+        if "." in requirements.amount:
+            if asset_info is None:
+                raise ValueError(
+                    f"Token {requirements.asset} is not a registered asset for network "
+                    f"{requirements.network}; provide amount in atomic units"
+                )
+            requirements.amount = str(parse_amount(requirements.amount, asset_info["decimals"]))
+
+        # Add EIP-712 domain params
+        if requirements.extra is None:
+            requirements.extra = {}
+        if asset_info is not None:
+            atm = asset_info.get("asset_transfer_method")
+            include_eip712_domain = not atm or asset_info.get("supports_eip2612", False)
+
+            if include_eip712_domain:
+                if "name" not in requirements.extra:
+                    requirements.extra["name"] = asset_info["name"]
+                if "version" not in requirements.extra:
+                    requirements.extra["version"] = asset_info["version"]
+            if "assetTransferMethod" not in requirements.extra and atm:
+                requirements.extra["assetTransferMethod"] = atm
+
+        return requirements
+
+    def _default_money_conversion(
+        self, amount: str, network: str, symbol: str | None = None
+    ) -> AssetAmount:
+        """Convert decimal amount to network's default stablecoin AssetAmount.
+
+        Args:
+            amount: Decimal amount as a string (e.g., "1.50").
+            network: Network identifier.
+
+        Returns:
+            AssetAmount for the network's default stablecoin.
+
+        Raises:
+            ValueError: If no default stablecoin is configured for the network.
+        """
+        from ..default_assets import ExactDefaultAssetInfo
+
+        asset: ExactDefaultAssetInfo = get_default_asset(network, symbol)
+        token_amount = convert_to_token_amount(amount, asset["decimals"])
+
+        atm = asset.get("asset_transfer_method")
+        include_eip712_domain = not atm or asset.get("supports_eip2612", False)
+
+        extra: dict = {}
+        if include_eip712_domain:
+            extra["name"] = asset["name"]
+            extra["version"] = asset["version"]
+        if atm:
+            extra["assetTransferMethod"] = atm
+
+        return AssetAmount(
+            amount=str(token_amount),
+            asset=asset["asset"],
+            extra=extra,
+        )

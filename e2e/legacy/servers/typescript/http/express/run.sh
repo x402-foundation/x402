@@ -1,0 +1,2 @@
+#!/bin/bash
+pnpm dev 

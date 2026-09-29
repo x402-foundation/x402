@@ -1,0 +1,87 @@
+{
+  "env": {
+    "SERVER_SVM_ADDRESS": { "required": true, "roles": ["server"] },
+    "SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY": {
+      "required": false,
+      "roles": ["server"]
+    },
+    "SERVER_SVM_OPERATOR_PRIVATE_KEY": {
+      "required": false,
+      "roles": ["server"]
+    },
+    "CLIENT_SVM_PRIVATE_KEY": { "required": true, "roles": ["client"] },
+    "CLIENT_SVM_SERVER_SIGNED_OPERATORS": {
+      "required": false,
+      "roles": ["client"]
+    },
+    "CLIENT_SVM_SERVER_SIGNED_MAX_DEPOSIT": {
+      "required": false,
+      "roles": ["client"]
+    },
+    "FACILITATOR_SVM_PRIVATE_KEY": { "required": true, "roles": ["facilitator"] },
+    "FACILITATOR_SVM_BATCH_BINDING_STORE": {
+      "required": false,
+      "roles": ["facilitator"]
+    },
+    "SVM_ARCHIVE_RPC_URL": {
+      "required": false,
+      "roles": ["facilitator"]
+    },
+    "SVM_BATCH_SETTLEMENT_RECOVERY": {
+      "required": false,
+      "roles": ["client"]
+    },
+    "SWIG_ACCOUNT_ADDRESS": { "required": false, "roles": ["client"] },
+    "SWIG_ID_BASE58": { "required": false, "roles": ["client"] }
+  },
+  "testnet": {
+    "name": "Solana Devnet",
+    "caip2": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+    "rpcUrlDefault": "https://api.devnet.solana.com"
+  },
+  "mainnet": {
+    "name": "Solana",
+    "caip2": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+    "rpcUrlDefault": "https://api.mainnet-beta.solana.com"
+  },
+  "routes": {
+    "/exact/svm": {
+      "scheme": "exact",
+      "sdks": ["typescript", "go", "python"],
+      "price": { "usd": "$0.001" },
+      "extensions": ["bazaar"]
+    },
+    "/exact/svm/upfront": {
+      "scheme": "exact",
+      "sdks": ["typescript", "go", "python"],
+      "paymentFlow": "upfront",
+      "price": { "usd": "$0.001" },
+      "extensions": ["bazaar"]
+    },
+    "/upto/svm": {
+      "scheme": "upto",
+      "requiresEnv": "SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY",
+      "sdks": ["typescript", "go"],
+      "paymentFlow": "escrow",
+      "price": { "usd": "$0.002" },
+      "extensions": ["bazaar"],
+      "settlementOverride": { "amount": "1000" }
+    },
+    "/batch-settlement/svm": {
+      "scheme": "batch-settlement",
+      "requiresEnv": "SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY",
+      "sdks": ["typescript"],
+      "price": { "usd": "$0.001" },
+      "extensions": ["bazaar"],
+      "requirementsExtra": { "voucherSigner": "client" }
+    },
+    "/batch-settlement-server-signed/svm": {
+      "scheme": "batch-settlement",
+      "requiresEnv": "SERVER_SVM_OPERATOR_PRIVATE_KEY",
+      "sdks": ["typescript"],
+      "price": { "usd": "$0.001" },
+      "extensions": ["bazaar"],
+      "settlementOverride": { "amount": "50%" }
+    }
+  }
+}

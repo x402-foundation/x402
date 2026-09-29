@@ -1,0 +1,343 @@
+import { Account, Ed25519PrivateKey, PrivateKey, PrivateKeyVariants } from "@aptos-labs/ts-sdk";
+import * as KeetaNet from "@keetanetwork/keetanet-client";
+import { base58 } from "@scure/base";
+import { createKeyPairSignerFromBytes } from "@solana/kit";
+import { toFacilitatorAptosSigner } from "@x402/aptos";
+import { ExactAptosScheme } from "@x402/aptos/exact/facilitator";
+import { x402Facilitator } from "@x402/core/facilitator";
+import { Network } from "@x402/core/types";
+import { toFacilitatorEvmSigner } from "@x402/evm";
+import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/facilitator";
+import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
+import { ExactEvmSchemeV1 } from "@x402/evm/exact/v1/facilitator";
+import { UptoEvmScheme } from "@x402/evm/upto/facilitator";
+import {
+  EIP2612_GAS_SPONSORING,
+  createErc20ApprovalGasSponsoringExtension,
+} from "@x402/extensions";
+import { BuilderCodeFacilitatorExtension } from "@x402/extensions/builder-code";
+import {
+  AccountId as HederaAccountId,
+  PrivateKey as HederaPrivateKey,
+  createHederaClient,
+  createHederaPreflightTransfer,
+  createHederaSignAndSubmitTransaction,
+  createHederaVerifyPayerSignature,
+  toFacilitatorHederaSigner,
+} from "@x402/hedera";
+import { ExactHederaScheme } from "@x402/hedera/exact/facilitator";
+import { toFacilitatorKeetaSigner, KEETA_TESTNET_CAIP2 } from "@x402/keeta";
+import { ExactKeetaScheme } from "@x402/keeta/exact/facilitator";
+import { createEd25519Signer } from "@x402/stellar";
+import { ExactStellarScheme } from "@x402/stellar/exact/facilitator";
+import { toFacilitatorSvmSigner } from "@x402/svm";
+import { ExactSvmScheme } from "@x402/svm/exact/facilitator";
+import { ExactSvmSchemeV1 } from "@x402/svm/exact/v1/facilitator";
+import { toFacilitatorAvmSigner } from "@x402/avm";
+import { ExactAvmScheme } from "@x402/avm/exact/facilitator";
+import { XRPL_TESTNET } from "@x402/xrpl";
+import { ExactXrplScheme } from "@x402/xrpl/exact/facilitator";
+import { createWalletClient, http, publicActions } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import { baseSepolia } from "viem/chains";
+
+/**
+ * Initialize and configure the x402 facilitator with EVM, SVM, AVM, Aptos, Stellar, Hedera, Keeta, and XRPL support
+ * This is called lazily on first use to support Next.js module loading
+ *
+ * @returns A configured x402Facilitator instance
+ */
+async function createFacilitator(): Promise<x402Facilitator> {
+  // Validate required environment variables
+  if (!process.env.FACILITATOR_EVM_PRIVATE_KEY) {
+    throw new Error("❌ FACILITATOR_EVM_PRIVATE_KEY environment variable is required");
+  }
+
+  if (!process.env.FACILITATOR_SVM_PRIVATE_KEY) {
+    throw new Error("❌ FACILITATOR_SVM_PRIVATE_KEY environment variable is required");
+  }
+
+  const avmPrivateKey = process.env.FACILITATOR_AVM_PRIVATE_KEY;
+
+  // Initialize the EVM account from private key
+  const evmAccount = privateKeyToAccount(process.env.FACILITATOR_EVM_PRIVATE_KEY as `0x${string}`);
+
+  // Create a Viem client with both wallet and public capabilities
+  const viemClient = createWalletClient({
+    account: evmAccount,
+    chain: baseSepolia,
+    transport: http(),
+  }).extend(publicActions);
+
+  // Initialize the x402 Facilitator with EVM signer
+  const evmSigner = toFacilitatorEvmSigner({
+    address: evmAccount.address,
+    readContract: (args: {
+      address: `0x${string}`;
+      abi: readonly unknown[];
+      functionName: string;
+      args?: readonly unknown[];
+    }) =>
+      viemClient.readContract({
+        ...args,
+        args: args.args || [],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any),
+    verifyTypedData: (args: {
+      address: `0x${string}`;
+      domain: Record<string, unknown>;
+      types: Record<string, unknown>;
+      primaryType: string;
+      message: Record<string, unknown>;
+      signature: `0x${string}`;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }) => viemClient.verifyTypedData(args as any),
+    writeContract: (args: {
+      address: `0x${string}`;
+      abi: readonly unknown[];
+      functionName: string;
+      args: readonly unknown[];
+    }) =>
+      viemClient.writeContract({
+        ...args,
+        args: args.args || [],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any),
+    sendTransaction: (args: { to: `0x${string}`; data: `0x${string}` }) =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      viemClient.sendTransaction({ to: args.to, data: args.data } as any),
+    waitForTransactionReceipt: (args: { hash: `0x${string}` }) =>
+      viemClient.waitForTransactionReceipt(args),
+    getCode: (args: { address: `0x${string}` }) => viemClient.getCode(args),
+  });
+
+  // Initialize the SVM account from private key
+  const svmAccount = await createKeyPairSignerFromBytes(
+    base58.decode(process.env.FACILITATOR_SVM_PRIVATE_KEY as string),
+  );
+
+  // Initialize SVM signer - handles all Solana networks with automatic RPC creation
+  const svmSigner = toFacilitatorSvmSigner(svmAccount);
+
+  // Create and configure the facilitator with all networks
+  // EIP6492 allowed factory addresses for x402.org testnet facilitator.
+  // Ported from the CDP Facilitator's allowlist to keep trusted factories in parity.
+  // To extend support for new factories, add more factory addresses to the array.
+  const eip6492AllowedFactories = [
+    // Coinbase Smart Wallet (CoinbaseSmartWalletFactory)
+    "0x0BA5ED0c6AA8c49038F819E587E2633c4A9F428a", // v1
+    "0xBA5ED110eFDBa3D005bfC882d75358ACBbB85842", // v1.1
+    // Safe / Gnosis Safe (SafeProxyFactory)
+    "0x76E2cFc1F5Fa8F6a5b3fC4c8F4788F0116861F9B", // v1.1.1
+    "0x6851D6fDFAfD08c0295C392436245E5bc78B0185", // v1.2.0
+    "0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2", // v1.3.0 (canonical)
+    "0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC", // v1.3.0 (singleton)
+    "0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67", // v1.4.0/v1.4.1 (also used by Candide SafeAccountV2)
+    "0xc329D02fd8CB2fc13aa919005aF46320794a8629", // v1.4.1 zkSync
+    "0x14F2982D601c9458F93bd70B218933A6f8165e7b", // v1.5.0
+    // ZeroDev Kernel (KernelFactory) — also used by Crossmint
+    "0xd703aaE79538628d27099B8c4f621bE4CCd142d5", // Kernel MetaFactory (v3.x shared, all v3 deployments)
+    "0x4E4946298614FC299B50c947289F4aD0572CB9ce", // v1.0 (EP v0.6)
+    "0x12358cA00141D09cB90253F05a1DD16bE93A8EE6", // v2.0 (EP v0.6)
+    "0x5de4839a76cf55d0c90e2061ef4386d962E15ae3", // v2.1-v2.4 (EP v0.6)
+    "0x6723b44Abeec4E71eBE3232BD5B455805baDD22f", // v3.0 (EP v0.7)
+    "0xaac5D4240AF87249B3f71BC8E4A2cae074A3E419", // v3.1 (EP v0.7)
+    "0x7a1dBAB750f12a90EB1B60D2Ae3aD17D4D81EfFe", // v3.2 (EP v0.7)
+    "0x2577507b78c2008Ff367261CB6285d44ba5eF2E9", // v3.3 (EP v0.7)
+    // Biconomy (NexusAccountFactory / BiconomySmartAccountFactory)
+    "0x000000F9eE1842Bb72F6BBDD75E6D3d4e3e9594C", // Smart Account V1 (EP v0.6)
+    "0x000000a56Aaca3e9a4C479ea6b6CD0DbcB6634F5", // Smart Account V2 (EP v0.6)
+    "0x0000002D6DB27c52E3C11c1Cf24072004AC0562a", // Nexus v1.0.0
+    "0x0000000C8B6b3329cEa5d15C9d8C15F1f254ec3C", // Nexus v1.0.2
+    "0x000000001D1D5004a02bAfAb9de2D6CE5b7B13de", // Nexus v1.2.0 (chain-specific)
+    "0x0000006648ED9B2B842552BE63Af870bC74af837", // Nexus v1.2.0 (MEE v2.0.0)
+    "0x000000002c9A405a196f2dc766F2476B731693c3", // Nexus v1.3.0 (MEE v2.1.0)
+    "0x5836Bdb35913c7CBA6ef40675354445121449917", // Nexus v1.3.1 (MEE v2.1.0 latest)
+    // Alchemy Light Account (LightAccountFactory)
+    "0x000000893A26168158fbeaDD9335Be5bC96592E2", // v1.0.1
+    "0x00000055C0b4fA41dde26A74435ff03692292FBD", // v1.0.2
+    "0x00004EC70002a32400f8ae005A26081065620D20", // v1.1.0
+    "0x0000000000400CdFef5E2714E63d8040b700BC24", // v2.0.0
+    "0x000000000019d2Ee9F2729A65AfE20bb0020AefC", // MultiOwner v2.0.0
+    // Alchemy Modular Account
+    "0x000000e92D78D90000007F0082006FDA09BD5f11", // V1 MultiOwnerModularAccountFactory (EP v0.6)
+    "0x00000000000017c61b5bEe81050EC8eFc9c6fecd", // V2 AccountFactory (EP v0.7)
+    // eth-infinitism SimpleAccount
+    "0x9406Cc6185a346906296840746125a0E44976454", // SimpleAccountFactory (EP v0.6)
+    "0x91E60e0613810449d098b0b5Ec8b51A0FE8c8985", // SimpleAccountFactory (EP v0.7)
+    // Thirdweb (AccountFactory)
+    "0x85e23b94e7F5E9cC1fF78BCe78cfb15B81f0DF00", // EP v0.6
+    "0x4bE0ddfebcA9A5A4a617dee4DeCe99E7c862dceb", // EP v0.7
+  ];
+
+  const facilitator = new x402Facilitator()
+    .register("eip155:84532", new ExactEvmScheme(evmSigner, { eip6492AllowedFactories }))
+    .registerV1(
+      "base-sepolia" as Network,
+      new ExactEvmSchemeV1(evmSigner, { eip6492AllowedFactories }),
+    )
+    .register("eip155:84532", new UptoEvmScheme(evmSigner))
+    .register("eip155:84532", new BatchSettlementEvmScheme(evmSigner))
+    .register(
+      "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+      new ExactSvmScheme(svmSigner, undefined, { enableSmartWalletVerification: true }),
+    )
+    .registerV1("solana-devnet" as Network, new ExactSvmSchemeV1(svmSigner));
+
+  // Optionally register Algorand if configured
+  if (avmPrivateKey) {
+    const avmSigner = toFacilitatorAvmSigner(avmPrivateKey);
+    facilitator.register(
+      "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe",
+      new ExactAvmScheme(avmSigner),
+    );
+  }
+
+  // Optionally register Aptos if configured
+  if (process.env.FACILITATOR_APTOS_PRIVATE_KEY) {
+    const formattedAptosKey = PrivateKey.formatPrivateKey(
+      process.env.FACILITATOR_APTOS_PRIVATE_KEY,
+      PrivateKeyVariants.Ed25519,
+    );
+    const aptosPrivateKey = new Ed25519PrivateKey(formattedAptosKey);
+    const aptosAccount = Account.fromPrivateKey({ privateKey: aptosPrivateKey });
+    const aptosSigner = toFacilitatorAptosSigner(aptosAccount);
+    facilitator.register("aptos:2", new ExactAptosScheme(aptosSigner));
+  }
+
+  // Optionally register Keeta if configured
+  if (process.env.FACILITATOR_KEETA_MNEMONIC) {
+    const amountSigners = parseInt(process.env.FACILITATOR_KEETA_SIGNER_AMOUNT ?? "1");
+    const keetaAccounts = [];
+
+    for (let i = 0; i < amountSigners; i++) {
+      const account = KeetaNet.lib.Account.fromSeed(
+        await KeetaNet.lib.Account.seedFromPassphrase(process.env.FACILITATOR_KEETA_MNEMONIC),
+        i,
+      );
+      keetaAccounts.push(account);
+    }
+
+    const keetaSigner = toFacilitatorKeetaSigner(keetaAccounts);
+    facilitator.register(KEETA_TESTNET_CAIP2, new ExactKeetaScheme(keetaSigner, console));
+
+    // Tear down signer on shutdown so the process exits cleanly.
+    // createFacilitator() runs once as a lazy singleton, so these handlers only register once.
+    const destroyKeetaSigner = async () => {
+      await keetaSigner.destroy();
+      // We don't process.exit here to allow other cleanups to run as well.
+    };
+    process.once("SIGINT", destroyKeetaSigner);
+    process.once("SIGTERM", destroyKeetaSigner);
+  }
+
+  // Optionally register Stellar if configured
+  if (process.env.FACILITATOR_STELLAR_PRIVATE_KEY) {
+    const stellarSigners = process.env.FACILITATOR_STELLAR_PRIVATE_KEY.split(",")
+      .map(k => k.trim())
+      .filter(k => k.length > 0)
+      .map(k => createEd25519Signer(k));
+
+    const feeBumpSigner = process.env.FACILITATOR_STELLAR_FEEBUMP_PRIVATE_KEY
+      ? createEd25519Signer(process.env.FACILITATOR_STELLAR_FEEBUMP_PRIVATE_KEY)
+      : undefined;
+
+    facilitator.register(
+      "stellar:testnet",
+      new ExactStellarScheme(stellarSigners, { feeBumpSigner }),
+    );
+  }
+
+  // Optionally register Hedera if configured
+  if (process.env.FACILITATOR_HEDERA_PRIVATE_KEY && process.env.FACILITATOR_HEDERA_ACCOUNT_ID) {
+    // Facilitator fee-payer key is expected to be an ECDSA (secp256k1) key.
+    const hederaFeePayerKey = HederaPrivateKey.fromStringECDSA(
+      process.env.FACILITATOR_HEDERA_PRIVATE_KEY,
+    );
+    const hederaFeePayer = process.env.FACILITATOR_HEDERA_ACCOUNT_ID;
+    const buildHederaClient = (network: string) => {
+      const client = createHederaClient(network);
+      client.setOperator(HederaAccountId.fromString(hederaFeePayer), hederaFeePayerKey);
+      return client;
+    };
+
+    const hederaSigner = toFacilitatorHederaSigner({
+      getAddresses: () => [hederaFeePayer],
+      signAndSubmitTransaction: createHederaSignAndSubmitTransaction(
+        buildHederaClient,
+        hederaFeePayerKey,
+      ),
+      verifyPayerSignature: createHederaVerifyPayerSignature(),
+      preflightTransfer: createHederaPreflightTransfer(),
+    });
+
+    facilitator.register(
+      "hedera:testnet",
+      new ExactHederaScheme(hederaSigner, { aliasPolicy: "reject" }),
+    );
+  }
+
+  // Optionally register XRPL if enabled. Unlike the other networks, no
+  // facilitator key or funds are needed: the payer signs the transaction and
+  // pays its fee, and the facilitator only verifies and submits the signed blob.
+  if (process.env.FACILITATOR_XRPL_ENABLED === "true") {
+    const xrplWsUrl = process.env.FACILITATOR_XRPL_TESTNET_WS_URL;
+    facilitator.register(
+      XRPL_TESTNET,
+      new ExactXrplScheme(xrplWsUrl ? { wsUrlByNetwork: { [XRPL_TESTNET]: xrplWsUrl } } : {}),
+    );
+  }
+
+  // Build ERC-20 approval signer with sendTransactions for Permit2 gas sponsoring
+  const erc20ApprovalSigner = {
+    ...evmSigner,
+    sendTransactions: async (
+      transactions: (`0x${string}` | { to: `0x${string}`; data: `0x${string}`; gas?: bigint })[],
+    ): Promise<`0x${string}`[]> => {
+      const hashes: `0x${string}`[] = [];
+      for (const tx of transactions) {
+        let hash: `0x${string}`;
+        if (typeof tx === "string") {
+          hash = await viemClient.sendRawTransaction({ serializedTransaction: tx });
+        } else {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          hash = await viemClient.sendTransaction(tx as any);
+        }
+        const receipt = await viemClient.waitForTransactionReceipt({ hash });
+        if (receipt.status !== "success") {
+          throw new Error(`transaction_failed: ${hash}`);
+        }
+        hashes.push(hash);
+      }
+      return hashes;
+    },
+  };
+
+  // Register facilitator extensions for builder attribution and Permit2 support
+  facilitator
+    .registerExtension(
+      new BuilderCodeFacilitatorExtension({
+        builderCode: process.env.FACILITATOR_BUILDER_CODE,
+      }),
+    )
+    .registerExtension(EIP2612_GAS_SPONSORING)
+    .registerExtension(createErc20ApprovalGasSponsoringExtension(erc20ApprovalSigner));
+
+  return facilitator;
+}
+
+// Lazy initialization
+let _facilitatorPromise: Promise<x402Facilitator> | null = null;
+
+/**
+ * Get the configured facilitator instance
+ * Uses lazy initialization to create the facilitator on first access
+ *
+ * @returns A promise that resolves to the configured facilitator
+ */
+export async function getFacilitator(): Promise<x402Facilitator> {
+  if (!_facilitatorPromise) {
+    _facilitatorPromise = createFacilitator();
+  }
+  return _facilitatorPromise;
+}
