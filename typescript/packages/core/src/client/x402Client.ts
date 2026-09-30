@@ -181,8 +181,8 @@ export interface SpendControlAsset {
  *
  * By default only assets `findDefaultAsset` recognizes are allowed, capped at
  * {@link DEFAULT_MAX_AMOUNT_PER_PAYMENT}, and requirements whose `maxTimeoutSeconds`
- * exceeds {@link DEFAULT_MAX_TIMEOUT_SECONDS} are rejected. Pass `spendControls: false`
- * to disable all spend controls (any asset, no caps).
+ * is missing, null, negative, non-numeric, or exceeds {@link DEFAULT_MAX_TIMEOUT_SECONDS}
+ * are rejected. Pass `spendControls: false` to disable all spend controls (any asset, no caps).
  */
 export interface SpendControls {
   /**
@@ -203,8 +203,8 @@ export interface SpendControls {
    * Upper bound, in seconds, on a requirement's `maxTimeoutSeconds`. That value comes from
    * the server's 402 and sets how long the signed authorization stays valid (e.g. EIP-3009
    * `validBefore`), so without a cap the server alone decides how long it can settle.
-   * Requirements above the cap (or with a non-numeric `maxTimeoutSeconds`) are filtered out.
-   * `false` disables.
+   * Requirements above the cap, or with a missing, null, negative, or non-numeric
+   * `maxTimeoutSeconds`, are filtered out. `0` is within the cap. `false` disables.
    *
    * @default 3600
    */
@@ -1013,12 +1013,15 @@ export class x402Client {
     if (timeoutCap !== false) {
       filtered = filtered.filter(requirement => {
         const timeout: unknown = requirement.maxTimeoutSeconds;
-        if (timeout == null) {
-          return true;
-        }
-        // Non-numbers are rejected: schemes compute `now + maxTimeoutSeconds`, and a string
-        // would concatenate into an unbounded deadline.
-        return typeof timeout === "number" && Number.isFinite(timeout) && timeout <= timeoutCap;
+        // Missing, null, non-numeric, and negative values are rejected: schemes compute
+        // `now + maxTimeoutSeconds`, and anything but a finite non-negative number can
+        // become an unbounded or invalid deadline. Zero is within the cap.
+        return (
+          typeof timeout === "number" &&
+          Number.isFinite(timeout) &&
+          timeout >= 0 &&
+          timeout <= timeoutCap
+        );
       });
       if (filtered.length === 0) {
         throw new Error(

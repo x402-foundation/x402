@@ -2301,6 +2301,41 @@ describe("x402Client", () => {
         ).rejects.toThrow(/maxTimeoutSeconds/);
       });
 
+      it("rejects a missing, null, or negative maxTimeoutSeconds while the cap is on", async () => {
+        const { client, mockClient } = clientWithDefaultAsset();
+        for (const maxTimeoutSeconds of [undefined, null, -1]) {
+          await expect(
+            client.createPaymentPayload(
+              buildPaymentRequired({
+                accepts: [req({ maxTimeoutSeconds: maxTimeoutSeconds as unknown as number })],
+              }),
+            ),
+          ).rejects.toThrow(/spendControls\.maxTimeoutSeconds/);
+        }
+        expect(mockClient.createPaymentPayloadCalls).toHaveLength(0);
+      });
+
+      it("accepts a zero maxTimeoutSeconds under the default cap", async () => {
+        const { client, mockClient } = clientWithDefaultAsset();
+        await client.createPaymentPayload(
+          buildPaymentRequired({ accepts: [req({ maxTimeoutSeconds: 0 })] }),
+        );
+        expect(mockClient.createPaymentPayloadCalls).toHaveLength(1);
+        expect(mockClient.createPaymentPayloadCalls[0].requirements.maxTimeoutSeconds).toBe(0);
+      });
+
+      it("maxTimeoutSeconds: false still allows missing, null, and negative windows", async () => {
+        const { client, mockClient } = clientWithDefaultAsset(usdc, { maxTimeoutSeconds: false });
+        for (const maxTimeoutSeconds of [undefined, null, -1]) {
+          await client.createPaymentPayload(
+            buildPaymentRequired({
+              accepts: [req({ maxTimeoutSeconds: maxTimeoutSeconds as unknown as number })],
+            }),
+          );
+        }
+        expect(mockClient.createPaymentPayloadCalls).toHaveLength(3);
+      });
+
       it("caps v1 accepts too", async () => {
         const mockClient = new MockSchemeNetworkClient("exact");
         mockClient.setFindDefaultAsset(usdc);
