@@ -1,0 +1,50 @@
+[project]
+name = "x402"
+version = "1.0.0"
+description = "x402: An internet native payments protocol"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "erik", email = "erik.reppel@coinbase.com" },
+    { name = "x402 Foundation", email = "" }
+]
+requires-python = ">=3.10"
+keywords = ["x402", "sdk", "crypto", "cdp", "payments", "web3"]
+dependencies = [
+    "eth-account>=0.13.7",
+    "eth-typing>=4.0.0",
+    "eth-utils>=3.0.0",
+    "fastapi[standard]>=0.115.12",
+    "flask>=3.0.0",
+    "pydantic>=2.10.3",
+    "pydantic-settings>=2.2.1",
+    "python-dotenv>=1.0.1",
+    "web3>=6.0.0",
+]
+
+[project.scripts]
+
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+    "pytest-asyncio>=1.0.0",
+    "ruff>=0.11.9",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/x402"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.uv]
+required-version = ">=0.11.0"
+exclude-newer = "3 days"

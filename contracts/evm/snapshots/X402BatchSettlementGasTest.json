@@ -1,0 +1,11 @@
+{
+  "baseline_erc20_transfer": "25745",
+  "claim_10_channels": "192043",
+  "claim_1_voucher": "40252",
+  "deposit_erc20_pull_first": "84770",
+  "deposit_erc3009_first": "111738",
+  "deposit_permit2_mock_first": "119685",
+  "refund_full_receiverAuth": "43859",
+  "refund_with_signature_relay": "53670",
+  "settle_receiver_token": "31204"
+}

@@ -1,0 +1,8 @@
+{
+  "name": "@x402-examples/cloudfront-lambda-edge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "x402 payment using Amazon CloudFront and Lambda@Edge",
+  "scripts": {
+  }
+}

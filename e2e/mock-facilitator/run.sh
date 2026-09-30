@@ -1,0 +1,1 @@
+npx tsx index.ts

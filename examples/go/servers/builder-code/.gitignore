@@ -1,0 +1,3 @@
+.env
+*.log
+builder-code
