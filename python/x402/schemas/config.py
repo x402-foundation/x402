@@ -30,11 +30,13 @@ class FacilitatorConfig(TypedDict, total=False):
 
     Attributes:
         url: Facilitator service URL.
-        create_headers: Function to create auth headers.
+        create_headers: Function returning auth headers keyed by facilitator
+            path ("verify", "settle", "supported", optionally "bazaar" or
+            "list"), each a headers dict.
     """
 
     url: str
-    create_headers: Callable[[], dict[str, str]]
+    create_headers: Callable[[], dict[str, dict[str, str]]]
 
 
 class PaywallConfig(TypedDict, total=False):
