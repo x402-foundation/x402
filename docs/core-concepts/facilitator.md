@@ -89,6 +89,25 @@ const evmSigner = toFacilitatorEvmSigner(walletClient, {
 
 The default is `180_000` ms (3 minutes), matching viem's own default. In Python, pass `confirmation_timeout_seconds` to `FacilitatorWeb3Signer` (default `120`).
 
+### Facilitator HTTP request timeout (resource server side)
+
+When a resource server calls the facilitator over HTTP, each request — `verify`, `settle`, and `getSupported` — is subject to a per-request deadline. If the facilitator does not respond within that deadline, the call rejects with a `FacilitatorTimeoutError`.
+
+The default timeout is **90 seconds**. You can override it by passing `timeoutMs` to `HTTPFacilitatorClient`:
+
+```typescript
+import { HTTPFacilitatorClient } from "@x402/core/http";
+
+const facilitatorClient = new HTTPFacilitatorClient({
+  url: "https://your-facilitator.com",
+  timeoutMs: 30_000, // 30 seconds
+});
+```
+
+`timeoutMs` must be a positive integer no greater than `2_147_483_647` (about 24.8 days). Values outside this range throw a `RangeError` at construction time.
+
+**Note:** a timeout during `settle` is an indeterminate outcome — the facilitator may have completed the settlement even though the resource server did not receive a response. Handle `FacilitatorTimeoutError` from `settle` accordingly.
+
 ### Duplicate Settlement (Solana)
 
 On Solana, a race condition can occur when the same payment transaction is submitted to a facilitator's `/settle` endpoint multiple times before the first submission is confirmed onchain. Because Solana's RPC returns "success" for duplicate submissions (the network deduplicates at the consensus level), the facilitator may return a successful settlement response for each call. A malicious client could exploit this to access multiple resources while only paying once.
