@@ -1,0 +1,23 @@
+{
+  "id": "X4-026",
+  "title": "Payment Amount Rounding Attack (IEEE 754)",
+  "category": "advanced_payment",
+  "requirement": "HC-19: Payment amounts must use integer smallest-unit representation, reject floats",
+  "method": "GET",
+  "request": {
+    "rounding_payloads": [
+      "ieee754_classic",
+      "float_sum",
+      "sub_cent",
+      "large_with_fraction",
+      "scientific_notation",
+      "negative_epsilon"
+    ]
+  },
+  "owasp_asi": "ASI03",
+  "severity": "high",
+  "impact": "overpayment",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-026"
+}

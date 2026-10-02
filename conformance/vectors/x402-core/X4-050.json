@@ -1,0 +1,20 @@
+{
+  "id": "X4-050",
+  "title": "Settlement Race Condition",
+  "category": "settlement_finality",
+  "requirement": "HC-40: Resource access must not be granted until settlement is confirmed",
+  "method": "GET",
+  "request": {
+    "nonce": "76c40ee4a7fe4f6fbff51d20606d1363",
+    "settlement_statuses": [
+      "pending",
+      "confirming"
+    ]
+  },
+  "owasp_asi": "ASI03",
+  "severity": "high",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-050"
+}

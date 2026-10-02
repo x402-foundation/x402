@@ -1,0 +1,23 @@
+{
+  "id": "X4-041",
+  "title": "Settlement Callback URL SSRF",
+  "category": "network_attacks",
+  "requirement": "HC-31: Settlement callback URLs must be validated against allowlist, reject internal addresses",
+  "method": "GET",
+  "request": {
+    "ssrf_targets": [
+      "localhost",
+      "internal_ip",
+      "internal_dns",
+      "loopback_ipv6",
+      "dns_rebind",
+      "file_scheme"
+    ]
+  },
+  "owasp_asi": "ASI07",
+  "severity": "critical",
+  "impact": "info_leak",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-041"
+}
