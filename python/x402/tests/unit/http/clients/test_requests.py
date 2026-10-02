@@ -16,7 +16,13 @@ from x402.http.clients.requests import (
 from x402.http.utils import encode_payment_required_header, encode_payment_response_header
 from x402.http.x402_http_client import x402HTTPClientSync
 from x402.http.x402_http_client_base import ProcessPaymentResult
-from x402.schemas import PaymentPayload, PaymentRequired, PaymentRequirements, SettleResponse
+from x402.schemas import (
+    PaymentPayload,
+    PaymentRequired,
+    PaymentRequirements,
+    ResourceInfo,
+    SettleResponse,
+)
 from x402.schemas.hooks import PaymentRequiredHeadersResult, RecoveredResponseResult
 
 # Skip tests if requests not installed
@@ -138,6 +144,7 @@ class TestX402HTTPAdapter:
 
         # Create payment required
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )
@@ -182,6 +189,7 @@ class TestX402HTTPAdapter:
         adapter = x402HTTPAdapter(mock_client)
 
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )
@@ -303,6 +311,7 @@ class TestX402HTTPAdapter:
         adapter = x402HTTPAdapter(http_client)
 
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )
@@ -344,6 +353,7 @@ class TestX402HTTPAdapter:
         adapter = x402HTTPAdapter(mock_client)
 
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )

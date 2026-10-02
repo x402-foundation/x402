@@ -102,6 +102,7 @@ func TestX402MCPClient_CallTool_FreeTool(t *testing.T) {
 func TestX402MCPClient_CallTool_PaymentRequired(t *testing.T) {
 	paymentRequired := types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Accepts: []types.PaymentRequirements{
 			{
 				Scheme:            "exact",
@@ -381,6 +382,7 @@ func TestX402MCPClient_CallToolWithPayment_AfterPaymentHook(t *testing.T) {
 func TestX402MCPClient_GetToolPaymentRequirements(t *testing.T) {
 	paymentRequired := types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Accepts: []types.PaymentRequirements{
 			{
 				Scheme:  "exact",
@@ -446,6 +448,7 @@ func TestX402MCPClient_CallTool_AutoPaymentE2E(t *testing.T) {
 	// First call returns 402 payment required, second call returns success
 	paymentRequired := types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Accepts: []types.PaymentRequirements{
 			{
 				Scheme:            "exact",
@@ -520,6 +523,7 @@ func TestX402MCPClient_CallTool_SelectsSupportedNonFirstAccept(t *testing.T) {
 	// otherwise CreatePaymentPayload fails for the unregistered first network.
 	paymentRequired := types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Accepts: []types.PaymentRequirements{
 			{Scheme: "exact", Network: "eip155:1", Amount: "1000", Asset: "USDC", PayTo: "0xrecipient", MaxTimeoutSeconds: 300},
 			{Scheme: "exact", Network: "eip155:84532", Amount: "1000", Asset: "USDC", PayTo: "0xrecipient", MaxTimeoutSeconds: 300},
@@ -574,6 +578,7 @@ func TestX402MCPClient_CallTool_SelectsSupportedNonFirstAccept(t *testing.T) {
 func TestX402MCPClient_CallTool_HookAbort(t *testing.T) {
 	paymentRequired := types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Accepts: []types.PaymentRequirements{
 			{
 				Scheme:  "exact",
@@ -626,6 +631,7 @@ func TestX402MCPClient_CallTool_HookAbort(t *testing.T) {
 func TestX402MCPClient_CallTool_HookCustomPayment(t *testing.T) {
 	paymentRequired := types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Accepts: []types.PaymentRequirements{
 			{
 				Scheme:  "exact",
@@ -703,6 +709,7 @@ func TestX402MCPClient_CallTool_HookCustomPayment(t *testing.T) {
 func TestX402MCPClient_CallTool_OnPaymentRequestedApproved(t *testing.T) {
 	paymentRequired := types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Accepts: []types.PaymentRequirements{
 			{
 				Scheme:  "exact",
@@ -762,6 +769,7 @@ func TestX402MCPClient_CallTool_OnPaymentRequestedApproved(t *testing.T) {
 func TestX402MCPClient_CallTool_OnPaymentRequestedDenied(t *testing.T) {
 	paymentRequired := types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Accepts: []types.PaymentRequirements{
 			{
 				Scheme:  "exact",
@@ -812,6 +820,7 @@ func TestX402MCPClient_CallTool_OnPaymentRequestedDenied(t *testing.T) {
 func TestX402MCPClient_CallTool_BeforePaymentHookCalled(t *testing.T) {
 	paymentRequired := types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Accepts: []types.PaymentRequirements{
 			{
 				Scheme:  "exact",
@@ -875,6 +884,7 @@ func TestX402MCPClient_CallTool_BeforePaymentHookCalled(t *testing.T) {
 func TestX402MCPClient_CallTool_BeforePaymentHookError(t *testing.T) {
 	paymentRequired := types.PaymentRequired{
 		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 		Accepts: []types.PaymentRequirements{
 			{
 				Scheme:  "exact",
@@ -970,6 +980,7 @@ func TestX402MCPClientFromConfig_SpendControlsDefaultRejectsOverCap(t *testing.T
 		callToolResults: []MCPToolResult{
 			mcp402Result(t, types.PaymentRequired{
 				X402Version: 2,
+				Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 				Accepts: []types.PaymentRequirements{{
 					Scheme: "exact", Network: "eip155:84532",
 					Asset: "0xCustomUnknownToken", Amount: "2000000",
@@ -993,6 +1004,7 @@ func TestX402MCPClient_WrapExistingClientHonoursSpendControlsWhenUnset(t *testin
 		callToolResults: []MCPToolResult{
 			mcp402Result(t, types.PaymentRequired{
 				X402Version: 2,
+				Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 				Accepts: []types.PaymentRequirements{{
 					Scheme: "exact", Network: "eip155:84532",
 					Asset: "0xCustomUnknownToken", Amount: "1",
@@ -1017,6 +1029,7 @@ func TestX402MCPClient_WrapUsesPaymentClientDisableSpendControls(t *testing.T) {
 		callToolResults: []MCPToolResult{
 			mcp402Result(t, types.PaymentRequired{
 				X402Version: 2,
+				Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 				Accepts: []types.PaymentRequirements{{
 					Scheme: "exact", Network: "eip155:84532",
 					Asset: "0xCustomUnknownToken", Amount: "2000000",
@@ -1045,6 +1058,7 @@ func TestX402MCPClient_WrapUsesPaymentClientSpendControls(t *testing.T) {
 		callToolResults: []MCPToolResult{
 			mcp402Result(t, types.PaymentRequired{
 				X402Version: 2,
+				Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 				Accepts: []types.PaymentRequirements{{
 					Scheme: "exact", Network: "eip155:84532",
 					Asset: "0xCustomUnknownToken", Amount: "1",
