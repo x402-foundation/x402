@@ -60,8 +60,10 @@ type PaymentCreationFailureHookResult struct {
 // and an error will be returned with the provided reason
 type BeforePaymentCreationHook func(PaymentCreationContext) (*BeforePaymentCreationHookResult, error)
 
-// AfterPaymentCreationHook is called after successful payment payload creation
-// Any error returned will be logged but will not affect the payment creation result
+// AfterPaymentCreationHook is called after successful payment payload creation.
+// A returned error is observable: failure hooks may recover a payload, otherwise
+// CreatePaymentPayload returns the error. The scheme is not asked to create again,
+// and an already-created payload is not undone.
 type AfterPaymentCreationHook func(PaymentCreatedContext) error
 
 // OnPaymentCreationFailureHook is called when payment payload creation fails
