@@ -11,6 +11,7 @@ import {
   resolveFailurePathSettlement,
   resolvePaymentFlow,
   resolvePaymentFlowPhases,
+  snapshotPaymentRequirementsList,
   x402ResourceServer,
 } from "@x402/core/server";
 
@@ -672,9 +673,12 @@ async function createPaymentRequiredResult(
   paymentPayload?: PaymentPayload,
 ): Promise<WrappedToolResult> {
   const resourceInfo = buildToolResourceInfo(toolName, config);
+  // Enrichers may mutate Extra in place (e.g. batch-settlement channelState).
+  // Snapshot so wrapper config stays a stable match baseline across tool calls.
+  const accepts = snapshotPaymentRequirementsList(config.accepts);
 
   const paymentRequired = await resourceServer.createPaymentRequiredResponse(
-    config.accepts,
+    accepts,
     resourceInfo,
     errorMessage,
     config.extensions,
