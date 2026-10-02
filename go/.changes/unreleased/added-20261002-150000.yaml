@@ -1,0 +1,3 @@
+kind: added
+body: 'Add facilitator-authored settlement metadata (`m`) to the builder-code ERC-8021 Schema 2 suffix: `evm.DataSuffixContext.Metadata`, `BuilderCodeSuffixData`, and `m` support in `EncodeBuilderCodeSuffix` and `ParseBuilderCodeSuffixFromCalldata`. `EncodeBuilderCodeSuffix` now takes `BuilderCodeSuffixData` and returns an error when the CBOR exceeds 65,535 bytes.'
+time: 2026-10-02T15:00:00.000000+02:00

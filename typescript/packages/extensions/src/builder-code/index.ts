@@ -45,6 +45,9 @@
 export type {
   BuilderCodeExtensionData,
   BuilderCodeFacilitatorConfig,
+  SettlementMetadata,
+  SettlementMetadataValue,
+  BuilderCodeSuffixData,
   DataSuffixContext,
 } from "./types";
 

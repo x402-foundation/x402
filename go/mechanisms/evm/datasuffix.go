@@ -17,6 +17,7 @@ const BuilderCodeKey = "builder-code"
 type DataSuffixContext struct {
 	Payload      types.PaymentPayload
 	Requirements types.PaymentRequirements
+	Metadata     map[string]any
 }
 
 // BuilderCodeFacilitatorExtension is implemented by the builder-code facilitator

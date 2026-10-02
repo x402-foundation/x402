@@ -8,9 +8,17 @@ import type { Hex } from "viem";
 
 export const BUILDER_CODE_KEY = "builder-code" as const;
 
+type SettlementMetadataValue =
+  | number
+  | bigint
+  | string
+  | readonly SettlementMetadataValue[]
+  | { readonly [key: string]: SettlementMetadataValue };
+
 export interface DataSuffixContext {
   paymentPayload: PaymentPayload;
   paymentRequirements: PaymentRequirements;
+  metadata?: { readonly [key: string]: SettlementMetadataValue };
 }
 
 export interface BuilderCodeFacilitatorExtension extends FacilitatorExtension {

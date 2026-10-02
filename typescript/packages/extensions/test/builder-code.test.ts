@@ -467,5 +467,152 @@ describe("Builder Code Extension", () => {
     it("returns undefined when calldata has no ERC-8021 suffix", () => {
       expect(parseBuilderCodeSuffixFromCalldata("0xdeadbeef")).toBeUndefined();
     });
+
+    it("keeps the spec vectors unchanged", () => {
+      expect(encodeBuilderCodeSuffix({ a: "bc_myapp" })).toBe(
+        "0xa161616862635f6d79617070000c0280218021802180218021802180218021",
+      );
+      expect(encodeBuilderCodeSuffix({ a: "bc_myapp", w: "bc_myfacilitator" })).toBe(
+        "0xa261616862635f6d7961707061777062635f6d79666163696c697461746f72001f0280218021802180218021802180218021",
+      );
+    });
+  });
+
+  describe("settlement metadata (m)", () => {
+    const MARKER = "80218021802180218021802180218021";
+
+    /**
+     * Wraps raw CBOR bytes into a Schema 2 suffix and appends it to dummy calldata.
+     *
+     * @param cborHex - Hex-encoded CBOR data without 0x prefix
+     * @returns Calldata ending with the ERC-8021 suffix
+     */
+    function calldataWithCbor(cborHex: string): `0x${string}` {
+      const length = (cborHex.length / 2).toString(16).padStart(4, "0");
+      return `0xdeadbeef${cborHex}${length}02${MARKER}`;
+    }
+
+    /**
+     * Encodes and re-parses a suffix.
+     *
+     * @param data - Suffix data to encode
+     * @returns Parsed suffix data
+     */
+    function roundTrip(
+      data: Parameters<typeof encodeBuilderCodeSuffix>[0],
+    ): ReturnType<typeof parseBuilderCodeSuffixFromCalldata> {
+      const suffix = encodeBuilderCodeSuffix(data);
+      return parseBuilderCodeSuffixFromCalldata(`0xdeadbeef${suffix.slice(2)}` as `0x${string}`);
+    }
+
+    it("matches the spec vector", () => {
+      const suffix = encodeBuilderCodeSuffix({
+        a: "bc_myapp",
+        w: "bc_myfacilitator",
+        m: { x402Example: 7 },
+      });
+
+      expect(suffix).toBe(
+        "0xa361616862635f6d7961707061777062635f6d79666163696c697461746f72616da16b783430324578616d706c6507002f0280218021802180218021802180218021",
+      );
+    });
+
+    it("round-trips nested maps, arrays, text, and uints at argument boundaries", () => {
+      const m = {
+        zero: 0,
+        inline: 23,
+        oneByte: 24,
+        twoBytes: 2 ** 16,
+        fourBytes: 2 ** 32,
+        eightBytes: 2n ** 63n + 5n,
+        maxUint64: 2n ** 64n - 1n,
+        text: "hello",
+        list: [1, "two", [3], { four: 4 }],
+        nested: { inner: { deep: 1 } },
+      };
+
+      expect(roundTrip({ a: APP, w: WALLET, s: SERVICE, m })?.m).toEqual({
+        zero: 0n,
+        inline: 23n,
+        oneByte: 24n,
+        twoBytes: 65536n,
+        fourBytes: 4294967296n,
+        eightBytes: 2n ** 63n + 5n,
+        maxUint64: 2n ** 64n - 1n,
+        text: "hello",
+        list: [1n, "two", [3n], { four: 4n }],
+        nested: { inner: { deep: 1n } },
+      });
+    });
+
+    it("sorts map keys bytewise by encoded form regardless of insertion order", () => {
+      const forward = encodeBuilderCodeSuffix({ m: { aa: 1, b: 2, c: 3 } });
+      const reversed = encodeBuilderCodeSuffix({ m: { c: 3, b: 2, aa: 1 } });
+
+      expect(forward).toBe(reversed);
+      // Shorter encoded keys sort first: b, c, then aa.
+      expect(forward).toContain("a3616202616303626161" + "01");
+    });
+
+    it("builds a suffix from metadata alone", () => {
+      const ext = new BuilderCodeFacilitatorExtension();
+      const suffix = ext.buildDataSuffix({
+        ...suffixContext({}),
+        metadata: { x402Example: 7 },
+      });
+
+      expect(suffix).toBeDefined();
+      expect(parseBuilderCodeSuffixFromCalldata(`0xdeadbeef${suffix!.slice(2)}`)).toEqual({
+        m: { x402Example: 7n },
+      });
+    });
+
+    it("emits no suffix for empty metadata and no attribution", () => {
+      const ext = new BuilderCodeFacilitatorExtension();
+
+      expect(ext.buildDataSuffix({ ...suffixContext({}), metadata: {} })).toBeUndefined();
+    });
+
+    it("ignores m supplied in the client payload", () => {
+      const ext = new BuilderCodeFacilitatorExtension({ builderCode: WALLET });
+      const suffix = ext.buildDataSuffix(
+        suffixContext({
+          paymentPayloadExtensions: {
+            [BUILDER_CODE]: { info: { a: APP, m: { x402Example: 1 } }, schema: {} },
+          },
+        }),
+      );
+
+      expect(parseBuilderCodeSuffixFromCalldata(`0xdeadbeef${suffix!.slice(2)}`)).toEqual({
+        a: APP,
+        w: WALLET,
+      });
+    });
+
+    it("rejects metadata that does not fit in 65,535 bytes", () => {
+      expect(() => encodeBuilderCodeSuffix({ m: { big: "x".repeat(0x10000) } })).toThrow(
+        /maximum is 65535/,
+      );
+    });
+
+    it("rejects unsupported metadata values when encoding", () => {
+      expect(() => encodeBuilderCodeSuffix({ m: { negative: -1 } })).toThrow();
+      expect(() => encodeBuilderCodeSuffix({ m: { float: 1.5 } })).toThrow();
+      expect(() => encodeBuilderCodeSuffix({ m: { tooLarge: 2n ** 64n } })).toThrow();
+    });
+
+    it.each([
+      ["negative integer", "a1616d" + "a1616b20"],
+      ["byte string", "a1616d" + "a1616b4100"],
+      ["float", "a1616d" + "a1616bf90000"],
+      ["tag", "a1616d" + "a1616bc101"],
+      ["boolean", "a1616d" + "a1616bf5"],
+      ["indefinite-length array", "a1616d" + "a1616b9fff"],
+      ["non-text map key", "a1616d" + "a10100"],
+      ["truncated value", "a1616d" + "a1616b1b00"],
+      ["m that is not a map", "a1616d" + "01"],
+    ])("parser rejects %s inside m", (_name, cborHex) => {
+      expect(parseBuilderCodeSuffixFromCalldata(calldataWithCbor(cborHex))).toBeUndefined();
+    });
   });
 });
