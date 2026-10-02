@@ -293,7 +293,7 @@ export type HederaVerifyConfig = {
 /**
  * Account key as returned by the Mirror Node `/accounts/{id}` endpoint.
  */
-type MirrorAccountKey = {
+export type MirrorAccountKey = {
   key: { _type: "ED25519" | "ECDSA_SECP256K1" | "ProtobufEncoded"; key: string } | null;
 };
 
@@ -317,7 +317,7 @@ class ProtobufKeyReconstructionError extends Error {}
  * @throws {ProtobufKeyReconstructionError} If the SDK no longer exposes
  * `Key._fromProtobufKey`
  */
-function parseMirrorKey(mirrorKey: MirrorAccountKey["key"]): Key | null {
+export function parseMirrorKey(mirrorKey: MirrorAccountKey["key"]): Key | null {
   if (!mirrorKey || typeof mirrorKey.key !== "string" || mirrorKey.key.length === 0) {
     return null;
   }

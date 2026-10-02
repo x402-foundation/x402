@@ -51,3 +51,6 @@ REVIEW_PROMPT.md
 .omc/
 /demo/
 /contracts/tvm/
+
+# local Hedera test account credentials
+.env.testnet-accounts
