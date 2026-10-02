@@ -191,6 +191,7 @@ function guardReplyRaw(reply: FastifyReply): RawGuard {
       const data =
         typeof args[0] === "function" ? undefined : (args[0] as string | Buffer | undefined);
       guard.buffer.push({ method: "end", data });
+      reply.send();
       return this;
     }
     return Reflect.apply(origEnd, this, args) as ServerResponse;
@@ -455,6 +456,8 @@ export function paymentMiddlewareFromHTTPServer(
       if (bodyChunks.length > 0) {
         effectivePayload = Buffer.concat(bodyChunks);
       }
+      // Error responses can re-enter onSend; do not replay the original response.
+      rawGuard.buffer.length = 0;
     }
 
     if (reply.statusCode >= 400) {
