@@ -18,6 +18,7 @@ import { ExactXrplScheme } from "@x402/xrpl/exact/server";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/server";
 import { ExactCardanoScheme } from "@x402/cardano/exact/server";
 import { toMasumiSellerSigner } from "@x402/cardano";
+import { ExactCantonScheme } from "@x402/canton/exact/server";
 import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import {
   declareEip2612GasSponsoringExtension,
@@ -68,6 +69,9 @@ async function registerFamilySchemes(
   switch (family) {
     case "avm":
       server.register(pattern, new ExactAvmScheme());
+      return;
+    case "canton":
+      server.register(pattern, new ExactCantonScheme());
       return;
     case "ccd":
       server.register(pattern, new ExactConcordiumScheme());
