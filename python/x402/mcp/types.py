@@ -3,7 +3,7 @@
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Optional
 
-from ..schemas import PaymentPayload, PaymentRequirements, SettleResponse
+from ..schemas import PaymentPayload, PaymentPayloadV1, PaymentRequirements, SettleResponse
 from ..schemas.base import Price
 
 if TYPE_CHECKING:
@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 # Protocol constants for MCP x402 payment integration.
 MCP_PAYMENT_REQUIRED_CODE = 402
+JSONRPC_PAYMENT_REQUIRED_CODE = -32042
 MCP_PAYMENT_META_KEY = "x402/payment"
 MCP_PAYMENT_RESPONSE_META_KEY = "x402/payment-response"
 
@@ -71,7 +72,7 @@ class PaymentRequiredHookResult:
 
     def __init__(
         self,
-        payment: PaymentPayload | None = None,
+        payment: PaymentPayload | PaymentPayloadV1 | None = None,
         abort: bool = False,
     ):
         """Initialize hook result.
@@ -85,7 +86,7 @@ class PaymentRequiredHookResult:
 
 
 # Sync hook type aliases
-SyncPaymentRequiredHook = Callable[[PaymentRequiredContext], PaymentRequiredHookResult]
+SyncPaymentRequiredHook = Callable[[PaymentRequiredContext], PaymentRequiredHookResult | None]
 SyncBeforePaymentHook = Callable[[PaymentRequiredContext], None]
 SyncAfterPaymentHook = Callable[["AfterPaymentContext"], None]  # type: ignore
 
@@ -96,7 +97,7 @@ class AfterPaymentContext:
     def __init__(
         self,
         tool_name: str,
-        payment_payload: PaymentPayload,
+        payment_payload: PaymentPayload | PaymentPayloadV1,
         result: "MCPToolResult",  # type: ignore
         settle_response: SettleResponse | None = None,
     ):
