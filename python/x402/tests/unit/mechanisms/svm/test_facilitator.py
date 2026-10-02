@@ -1,16 +1,34 @@
 """Tests for ExactSvmScheme facilitator."""
 
+import base64
 from unittest.mock import patch
 
 import pytest
+from solders.hash import Hash
+from solders.instruction import AccountMeta, Instruction
+from solders.keypair import Keypair
+from solders.message import MessageV0
+from solders.pubkey import Pubkey
+from solders.signature import Signature
+from solders.transaction import VersionedTransaction
 
 from x402.mechanisms.svm import (
+    COMPUTE_BUDGET_PROGRAM_ADDRESS,
+    ERR_PROTOCOL_INSTRUCTION_ORDER,
+    ERR_UNKNOWN_INSTRUCTION,
+    LIGHTHOUSE_PROGRAM_ADDRESS,
+    MEMO_PROGRAM_ADDRESS,
     SOLANA_DEVNET_CAIP2,
     SOLANA_MAINNET_CAIP2,
+    TOKEN_PROGRAM_ADDRESS,
     USDC_DEVNET_ADDRESS,
 )
-from x402.mechanisms.svm.exact import ExactSvmFacilitatorScheme
-from x402.mechanisms.svm.utils import transaction_message_hash
+from x402.mechanisms.svm.constants import (
+    ERR_MEMO_COUNT,
+    ERR_PREFLIGHT_POSTFLIGHT_FEE_PAYER_NOT_ISOLATED,
+)
+from x402.mechanisms.svm.exact import ExactSvmFacilitatorScheme, InstructionIdentity
+from x402.mechanisms.svm.utils import derive_ata, transaction_message_hash
 from x402.schemas import PaymentPayload, PaymentRequirements, ResourceInfo, VerifyResponse
 
 
@@ -43,6 +61,270 @@ class _ConfirmTimeoutSigner(MockFacilitatorSigner):
 
     def confirm_transaction(self, signature: str, network: str) -> None:
         raise TimeoutError("rpc: timeout waiting for confirmation")
+
+
+_COMPUTE_BUDGET_PUBKEY = Pubkey.from_string(COMPUTE_BUDGET_PROGRAM_ADDRESS)
+_TOKEN_PUBKEY = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
+_LIGHTHOUSE_PUBKEY = Pubkey.from_string(LIGHTHOUSE_PROGRAM_ADDRESS)
+_MEMO_PUBKEY = Pubkey.from_string(MEMO_PROGRAM_ADDRESS)
+
+
+def _lighthouse_instruction() -> Instruction:
+    return Instruction(_LIGHTHOUSE_PUBKEY, bytes([0x01]), [])
+
+
+def _build_exact_fixture(
+    before: list | None = None,
+    after: list | None = None,
+    facilitator: Keypair | None = None,
+):
+    """Build a syntactically valid exact-SVM payment payload/requirements pair:
+    ComputeLimit + ComputePrice + TransferChecked, with `before`/`after` guard
+    instructions inserted ahead of/appended past the protocol sequence --
+    reproducing wallets (e.g. Phantom) that inject Lighthouse assertions both
+    before and after the payment instructions.
+
+    Returns (payload, requirements, facilitator_address).
+    """
+    facilitator = facilitator or Keypair()
+    owner = Keypair()
+    mint = Keypair().pubkey()
+    pay_to = Keypair().pubkey()
+
+    source_ata = Pubkey.from_string(derive_ata(str(owner.pubkey()), str(mint)))
+    dest_ata = Pubkey.from_string(derive_ata(str(pay_to), str(mint)))
+
+    amount = 1000
+    decimals = 6
+    cu_limit_ix = Instruction(
+        _COMPUTE_BUDGET_PUBKEY, bytes([2]) + (200000).to_bytes(4, "little"), []
+    )
+    cu_price_ix = Instruction(_COMPUTE_BUDGET_PUBKEY, bytes([3]) + (1000).to_bytes(8, "little"), [])
+    transfer_ix = Instruction(
+        _TOKEN_PUBKEY,
+        bytes([12]) + amount.to_bytes(8, "little") + bytes([decimals]),
+        [
+            AccountMeta(source_ata, False, True),
+            AccountMeta(mint, False, False),
+            AccountMeta(dest_ata, False, True),
+            AccountMeta(owner.pubkey(), True, False),
+        ],
+    )
+
+    instructions = [*(before or []), cu_limit_ix, cu_price_ix, transfer_ix, *(after or [])]
+
+    message = MessageV0.try_compile(facilitator.pubkey(), instructions, [], Hash.default())
+    num_sigs = message.header.num_required_signatures
+    signatures = [Signature.default()] * num_sigs
+    owner_index = list(message.account_keys).index(owner.pubkey())
+    signatures[owner_index] = owner.sign_message(bytes(message))
+
+    tx = VersionedTransaction.populate(message, signatures)
+    encoded = base64.b64encode(bytes(tx)).decode()
+
+    requirements = PaymentRequirements(
+        scheme="exact",
+        network=SOLANA_DEVNET_CAIP2,
+        asset=str(mint),
+        amount=str(amount),
+        pay_to=str(pay_to),
+        max_timeout_seconds=3600,
+        extra={"feePayer": str(facilitator.pubkey())},
+    )
+    payload = PaymentPayload(
+        x402_version=2,
+        resource=ResourceInfo(
+            url="http://example.com/protected",
+            description="Test resource",
+            mime_type="application/json",
+        ),
+        accepted=requirements,
+        payload={"transaction": encoded},
+    )
+
+    return payload, requirements, str(facilitator.pubkey())
+
+
+def _block_instruction(
+    program: Pubkey, discriminator: bytes, fee_payer: Pubkey | None = None
+) -> Instruction:
+    """Stand-in for an operator-configured preflight/postflight instruction; `fee_payer`,
+    if given, is attached as a readonly account (to test isolation)."""
+    return Instruction(
+        program, discriminator, [AccountMeta(fee_payer, False, False)] if fee_payer else []
+    )
+
+
+def _memo_instruction(data: bytes) -> Instruction:
+    return Instruction(_MEMO_PUBKEY, data, [])
+
+
+_SETUP, _FINISH = Keypair().pubkey(), Keypair().pubkey()
+_LONG = bytes(range(1, 9))
+_PRE = [InstructionIdentity(_SETUP, b"\xaa")]
+_POST = [InstructionIdentity(_FINISH, b"\xbb")]
+_GUARD = _lighthouse_instruction
+_SETUP_IX = lambda fp=None: _block_instruction(_SETUP, b"\xaa", fp)  # noqa: E731
+_FINISH_IX = lambda fp=None: _block_instruction(_FINISH, b"\xbb", fp)  # noqa: E731
+_BOTH = {"preflight_instruction_allowlist": [_PRE], "postflight_instruction_allowlist": [_POST]}
+
+
+class TestVerifyPath1InstructionLayout:
+    """Path 1 identity-based layout: guards anywhere, protocol instructions in fixed
+    relative order, optional fee-payer-isolated preflight/postflight allowlists."""
+
+    @pytest.mark.parametrize(
+        ("before", "after", "scheme_kwargs", "memo", "reason"),
+        [
+            pytest.param([_GUARD()], [], {}, None, None, id="guard-before-phantom"),
+            pytest.param([], [_GUARD()], {}, None, None, id="guard-after"),
+            pytest.param([_GUARD()] * 2, [_GUARD()], {}, None, None, id="guards-both-sides"),
+            pytest.param([_GUARD()] * 3, [_GUARD()] * 5, {}, None, None, id="many-guards-no-cap"),
+            pytest.param(
+                [],
+                [_memo_instruction(b"one"), _memo_instruction(b"two")],
+                {},
+                None,
+                None,
+                id="several-memos-without-extra-memo",
+            ),
+            pytest.param(
+                [],
+                [_memo_instruction(b"one"), _memo_instruction(b"two")],
+                {},
+                "one",
+                ERR_MEMO_COUNT,
+                id="several-memos-with-extra-memo",
+            ),
+            pytest.param(
+                [_memo_instruction(b"early")],
+                [],
+                {},
+                None,
+                ERR_PROTOCOL_INSTRUCTION_ORDER,
+                id="memo-before-transfer",
+            ),
+            pytest.param([_SETUP_IX()], [_FINISH_IX()], _BOTH, None, None, id="pre-and-postflight"),
+            pytest.param([_SETUP_IX()], [], {}, None, ERR_UNKNOWN_INSTRUCTION, id="no-allowlist"),
+            pytest.param(
+                [_block_instruction(_SETUP, b"\xff")],
+                [],
+                {"preflight_instruction_allowlist": [_PRE]},
+                None,
+                ERR_UNKNOWN_INSTRUCTION,
+                id="preflight-wrong-discriminator",
+            ),
+            pytest.param(
+                [],
+                [_block_instruction(_FINISH, b"\xff")],
+                {"postflight_instruction_allowlist": [_POST]},
+                None,
+                ERR_UNKNOWN_INSTRUCTION,
+                id="postflight-wrong-discriminator",
+            ),
+            pytest.param(
+                [_block_instruction(_SETUP, _LONG), _GUARD(), _FINISH_IX()],
+                [],
+                {
+                    "preflight_instruction_allowlist": [
+                        [InstructionIdentity(_SETUP, _LONG), InstructionIdentity(_FINISH, b"\xbb")]
+                    ]
+                },
+                None,
+                None,
+                id="tuple-with-interspersed-guard-and-long-discriminator",
+            ),
+            pytest.param(
+                [_SETUP_IX],
+                [],
+                {"preflight_instruction_allowlist": [_PRE]},
+                None,
+                ERR_PREFLIGHT_POSTFLIGHT_FEE_PAYER_NOT_ISOLATED,
+                id="fee-payer-in-preflight",
+            ),
+            pytest.param(
+                [],
+                [_FINISH_IX],
+                {"postflight_instruction_allowlist": [_POST]},
+                None,
+                ERR_PREFLIGHT_POSTFLIGHT_FEE_PAYER_NOT_ISOLATED,
+                id="fee-payer-in-postflight",
+            ),
+            pytest.param(
+                [_SETUP_IX()],
+                [],
+                {"preflight_instruction_allowlist": [[]]},
+                None,
+                ERR_UNKNOWN_INSTRUCTION,
+                id="empty-tuple-fails-closed",
+            ),
+            pytest.param(
+                [_SETUP_IX()],
+                [],
+                {"preflight_instruction_allowlist": [[InstructionIdentity(_SETUP, b"")]]},
+                None,
+                ERR_UNKNOWN_INSTRUCTION,
+                id="empty-discriminator-fails-closed",
+            ),
+        ],
+    )
+    def test_layout(self, before, after, scheme_kwargs, memo, reason):
+        facilitator_key = Keypair()
+        # A callable stands in for an instruction that needs the fee payer as an account.
+        before, after = (
+            [ix(facilitator_key.pubkey()) if callable(ix) else ix for ix in ixs]
+            for ixs in (before, after)
+        )
+        payload, requirements, facilitator_addr = _build_exact_fixture(
+            before=before, after=after, facilitator=facilitator_key
+        )
+        if memo:
+            requirements.extra["memo"] = memo
+        facilitator = ExactSvmFacilitatorScheme(
+            MockFacilitatorSigner([facilitator_addr]), **scheme_kwargs
+        )
+
+        result = facilitator.verify(payload, requirements)
+
+        assert result.is_valid is (reason is None)
+        assert result.invalid_reason == reason
+
+    def test_rejects_duplicate_transfer_instruction(self):
+        payload, requirements, facilitator_addr = _build_exact_fixture()
+        tx_bytes = base64.b64decode(payload.payload["transaction"])
+        tx = VersionedTransaction.from_bytes(tx_bytes)
+
+        dup_instructions = list(tx.message.instructions) + [tx.message.instructions[2]]
+        message = MessageV0(
+            tx.message.header,
+            tx.message.account_keys,
+            tx.message.recent_blockhash,
+            dup_instructions,
+            tx.message.address_table_lookups,
+        )
+        signatures = list(tx.signatures)
+        dup_tx = VersionedTransaction.populate(message, signatures)
+        payload.payload["transaction"] = base64.b64encode(bytes(dup_tx)).decode()
+
+        signer = MockFacilitatorSigner([facilitator_addr])
+        facilitator = ExactSvmFacilitatorScheme(signer)
+
+        result = facilitator.verify(payload, requirements)
+
+        assert result.is_valid is False
+        assert result.invalid_reason == ERR_PROTOCOL_INSTRUCTION_ORDER
+
+    def test_rejects_unknown_program_anywhere(self):
+        system_program = Pubkey.from_string("11111111111111111111111111111111")
+        unknown_ix = Instruction(system_program, bytes([0x00]), [])
+        payload, requirements, facilitator_addr = _build_exact_fixture(after=[unknown_ix])
+        signer = MockFacilitatorSigner([facilitator_addr])
+        facilitator = ExactSvmFacilitatorScheme(signer)
+
+        result = facilitator.verify(payload, requirements)
+
+        assert result.is_valid is False
+        assert result.invalid_reason == ERR_UNKNOWN_INSTRUCTION
 
 
 class TestExactSvmSchemeConstructor:

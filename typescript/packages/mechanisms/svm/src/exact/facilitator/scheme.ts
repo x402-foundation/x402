@@ -55,6 +55,7 @@ import {
   type TransferCheckedInfo,
 } from "./smartWalletVerification";
 import { verifyRequiredSignatures } from "./signatureVerification";
+import { resolveProtocolLayout, type InstructionTuple } from "./instructionLayout";
 import * as Errors from "./errors";
 
 const compiledMessageDecoder = getCompiledTransactionMessageDecoder();
@@ -73,8 +74,6 @@ const DEFAULT_SMART_WALLET_ALLOWED_PROGRAMS = [
   "CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d", // Metaplex Core
   LIGHTHOUSE_PROGRAM_ADDRESS, // Phantom's wallet-protection assertions (see #2097)
 ];
-
-const IX_TOKEN_TRANSFER_CHECKED = 12;
 
 /**
  * Which verification path produced a successful result.
@@ -95,8 +94,9 @@ type VerifyResult = {
 
 /**
  * Path 1 failure reasons that indicate a transaction layout a standard-wallet
- * parser could not handle — extra/unknown instructions, unexpected counts, or
- * a missing positional transfer. These are the only cases where falling through
+ * parser could not handle — unknown programs, out-of-order protocol
+ * instructions, malformed compute budget instructions, or a missing
+ * transfer. These are the only cases where falling through
  * to Path 2 (simulation) can legitimately recover the payment, because the
  * transfer may simply be wrapped in a smart-wallet CPI.
  *
@@ -106,12 +106,9 @@ type VerifyResult = {
  * mask the real reason behind a misleading smart_wallet_* error code.
  */
 const LAYOUT_RECOVERABLE_REASONS = new Set<string>([
-  Errors.ErrTransactionInstructionsLength,
   Errors.ErrNoTransferInstruction,
-  Errors.ErrUnknownFourthInstruction,
-  Errors.ErrUnknownFifthInstruction,
-  Errors.ErrUnknownSixthInstruction,
-  Errors.ErrUnknownOptionalInstruction,
+  Errors.ErrUnknownInstruction,
+  Errors.ErrProtocolInstructionOrder,
   Errors.ErrComputeLimitInstruction,
   Errors.ErrComputePriceInstruction,
 ]);
@@ -123,7 +120,7 @@ export type ExactSvmSchemeOptions = {
   /**
    * Enable simulation-based smart wallet verification.
    * When enabled, transactions rejected by the static validation path
-   * (unknown programs, wrong instruction count) are re-verified using
+   * (unknown programs, out-of-order protocol instructions) are re-verified using
    * simulation inner instruction analysis. Works for any smart wallet
    * program (Squads, Swig, SPL Governance, etc.) without per-wallet parsers.
    *
@@ -159,6 +156,23 @@ export type ExactSvmSchemeOptions = {
    * Default: Squads Multisig v4, Squads Smart Account, Swig, SPL Governance, Metaplex Core
    */
   smartWalletAllowedPrograms?: string[];
+
+  /**
+   * Instruction tuples that may appear as a contiguous block (guards aside)
+   * immediately BEFORE the protocol instructions on Path 1, e.g. to prefix the
+   * payment with out-of-band setup. A matched block is fee-payer-isolation-checked.
+   *
+   * Default: [] (no preflight instructions accepted)
+   */
+  preflightInstructionAllowlist?: InstructionTuple[];
+
+  /**
+   * Like {@link preflightInstructionAllowlist}, but immediately AFTER the
+   * protocol instructions.
+   *
+   * Default: [] (no postflight instructions accepted)
+   */
+  postflightInstructionAllowlist?: InstructionTuple[];
 
   /**
    * Maximum compute unit price in microlamports accepted on the static path.
@@ -225,8 +239,8 @@ function assertLimit(name: string, value: number | undefined, min: number): void
  *
  * Dual-path verification:
  *
- * Path 1 (Static): Strict positional instruction validation for standard wallets.
- *   Fast, preserves existing behavior.
+ * Path 1 (Static): Strict identity-based instruction validation (program ID +
+ *   discriminator) for standard wallets. Fast.
  *
  * Path 2 (Simulation): Outcome-based verification for smart wallets.
  *   When Path 1 rejects a transaction and smart wallet verification is enabled,
@@ -378,7 +392,10 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
           // verificationPath itself isn't available here.
           isSmartWalletSettlement =
             !!this.options?.enableSmartWalletVerification &&
-            !this.hasStaticTransferLayout(decodedTransaction!);
+            !this.hasStaticTransferLayout(
+              decodedTransaction!,
+              requirements.extra?.feePayer as string,
+            );
         } catch {
           // Ignore; payer stays "" and isSmartWalletSettlement stays false.
         }
@@ -655,30 +672,18 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
   }
 
   /**
-   * Cheap, local structural check for whether a decoded transaction matches
-   * Path 1's static positional layout (compute budget instructions followed
-   * by a TransferChecked at index 2). Used to re-derive which verification
-   * path a pending settlement originally used, without re-simulating.
+   * Cheap, local check for whether a transaction matches Path 1's static layout
+   * (allowlists included). Used to re-derive which verification path a pending
+   * settlement originally used, without re-simulating.
    *
    * @param transaction - Decoded transaction to inspect
+   * @param feePayerAddress - Facilitator fee payer (for allowlisted block isolation)
    * @returns Whether the transaction has Path 1's static transfer shape
    */
-  private hasStaticTransferLayout(transaction: Transaction): boolean {
+  private hasStaticTransferLayout(transaction: Transaction, feePayerAddress: string): boolean {
     const compiled = compiledMessageDecoder.decode(transaction.messageBytes);
     const instructions = decompileTransactionMessage(compiled).instructions ?? [];
-    if (instructions.length < 3 || instructions.length > 7) {
-      return false;
-    }
-    const transferIx = instructions[2];
-    const programAddress = transferIx.programAddress.toString();
-    if (
-      programAddress !== TOKEN_PROGRAM_ADDRESS.toString() &&
-      programAddress !== TOKEN_2022_PROGRAM_ADDRESS.toString()
-    ) {
-      return false;
-    }
-    const ixData = transferIx.data;
-    return !!ixData && ixData.length >= 10 && ixData[0] === IX_TOKEN_TRANSFER_CHECKED;
+    return !("errorReason" in resolveProtocolLayout(instructions, this.options, feePayerAddress));
   }
 
   /**
@@ -880,11 +885,12 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
 
     // ─── Path 2: Simulation-based verification (smart wallets) ──────────
     // Only fall through to Path 2 when Path 1 failed for a recoverable layout
-    // reason (extra/unknown instructions, unexpected count, missing positional
-    // transfer). A semantic rejection — wrong amount/mint/recipient/memo,
-    // self-spend, or a genuinely failing simulation — describes a transaction
-    // that is invalid for this payment regardless of wallet type, so Path 2 must
-    // not run; doing so would mask the real reason behind a smart_wallet_* code.
+    // reason (unknown program, out-of-order protocol instruction, malformed
+    // compute budget instruction, missing transfer). A semantic rejection —
+    // wrong amount/mint/recipient/memo, self-spend, or a genuinely failing
+    // simulation — describes a transaction that is invalid for this payment
+    // regardless of wallet type, so Path 2 must not run; doing so would mask
+    // the real reason behind a smart_wallet_* code.
     const staticReasonRecoverable =
       typeof staticResult.invalidReason === "string" &&
       LAYOUT_RECOVERABLE_REASONS.has(staticResult.invalidReason);
@@ -953,8 +959,10 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
 
   /**
    * Path 1: Static instruction-layout verification for standard wallets.
-   * Validates positional instruction structure, program allowlist, and
-   * transfer details. Unchanged from the original implementation.
+   * Protocol instructions (ComputeLimit, ComputePrice, TransferChecked, Memo)
+   * are found by program-ID/discriminator identity and must appear in that
+   * fixed relative order; guard instructions (Lighthouse) may appear
+   * anywhere in the instruction list.
    *
    * @param transaction - Decoded transaction to verify
    * @param decompiled - Pre-decompiled message (lookups already resolved)
@@ -970,28 +978,29 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     requirements: PaymentRequirements,
     signerAddresses: string[],
   ): Promise<VerifyResponse> {
-    const instructions = decompiled.instructions ?? [];
-
-    // Allow 3-7 instructions:
-    // - 3 instructions: ComputeLimit + ComputePrice + TransferChecked
-    // - 4 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse or Memo
-    // - 5 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse + Lighthouse or Memo
-    // - 6 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse + Lighthouse + Memo
-    // - 7 instructions: + a third wallet-injected Lighthouse (Phantom, see #2097)
+    // Protocol instructions (ComputeLimit, ComputePrice, TransferChecked, and
+    // optional Memo) are identified by program ID + instruction discriminator
+    // and MUST appear in that fixed relative order. Guard instructions
+    // (currently only Lighthouse — Phantom/Solflare's wallet-protection
+    // assertions) may appear anywhere, since they only assert/abort and never
+    // mutate payment-relevant state. A configured preflight/postflight
+    // allowlist block is stripped (and fee-payer-isolation-checked) first.
     // See: https://github.com/x402-foundation/x402/issues/828
     //  and: https://github.com/x402-foundation/x402/issues/2097
-    if (instructions.length < 3 || instructions.length > 7) {
-      return {
-        isValid: false,
-        invalidReason: Errors.ErrTransactionInstructionsLength,
-        payer: "",
-      };
+    const layout = resolveProtocolLayout(
+      decompiled.instructions ?? [],
+      this.options,
+      requirements.extra?.feePayer as string,
+    );
+    if ("errorReason" in layout) {
+      return { isValid: false, invalidReason: layout.errorReason, payer: "" };
     }
+    const { computeLimitIx, computePriceIx, transferIx, memoIx, memoCount } = layout;
 
     // Step 3: Verify Compute Budget Instructions
     try {
-      this.verifyComputeLimitInstruction(instructions[0] as never);
-      this.verifyComputePriceInstruction(instructions[1] as never);
+      this.verifyComputeLimitInstruction(computeLimitIx as never);
+      this.verifyComputePriceInstruction(computePriceIx as never);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       return {
@@ -1011,29 +1020,7 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     }
 
     // Step 4: Verify Transfer Instruction
-    const transferIx = instructions[2];
     const programAddress = transferIx.programAddress.toString();
-
-    if (
-      programAddress !== TOKEN_PROGRAM_ADDRESS.toString() &&
-      programAddress !== TOKEN_2022_PROGRAM_ADDRESS.toString()
-    ) {
-      return {
-        isValid: false,
-        invalidReason: Errors.ErrNoTransferInstruction,
-        payer,
-      };
-    }
-
-    // parseTransferCheckedInstruction does not assert discriminator 12.
-    const ixData = transferIx.data;
-    if (!ixData || ixData.length < 10 || ixData[0] !== IX_TOKEN_TRANSFER_CHECKED) {
-      return {
-        isValid: false,
-        invalidReason: Errors.ErrNoTransferInstruction,
-        payer,
-      };
-    }
 
     // Parse the transfer instruction using the appropriate library helper
     let parsedTransfer;
@@ -1109,46 +1096,18 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
       };
     }
 
-    // Step 5: Verify optional instructions (if present)
-    // Allowed optional programs: Lighthouse (wallet protection) and Memo (uniqueness)
-    const optionalInstructions = instructions.slice(3);
-    const invalidReasonByIndex = [
-      Errors.ErrUnknownFourthInstruction,
-      Errors.ErrUnknownFifthInstruction,
-      Errors.ErrUnknownSixthInstruction,
-      Errors.ErrUnknownSeventhInstruction,
-    ];
-
-    for (let i = 0; i < optionalInstructions.length; i += 1) {
-      const programAddress = optionalInstructions[i].programAddress.toString();
-      if (
-        programAddress === LIGHTHOUSE_PROGRAM_ADDRESS ||
-        programAddress === MEMO_PROGRAM_ADDRESS
-      ) {
-        continue;
-      }
-
-      return {
-        isValid: false,
-        invalidReason: invalidReasonByIndex[i] ?? Errors.ErrUnknownOptionalInstruction,
-        payer,
-      };
-    }
-
-    // Step 5b: Verify memo content matches extra.memo when present
+    // Step 5: Verify memo content matches extra.memo when present (exactly
+    // one Memo instruction is required in that case).
     const expectedMemo = requirements.extra?.memo as string | undefined;
     if (expectedMemo) {
-      const memoInstructions = optionalInstructions.filter(
-        ix => ix.programAddress.toString() === MEMO_PROGRAM_ADDRESS,
-      );
-      if (memoInstructions.length !== 1) {
+      if (!memoIx || memoCount !== 1) {
         return {
           isValid: false,
           invalidReason: Errors.ErrMemoCount,
           payer,
         };
       }
-      const memoData = memoInstructions[0].data;
+      const memoData = memoIx.data;
       const actualMemo = memoData ? new TextDecoder().decode(new Uint8Array(memoData)) : "";
       if (actualMemo !== expectedMemo) {
         return {
@@ -1182,7 +1141,8 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
   }
 
   /**
-   * Verify that the compute limit instruction is valid.
+   * Verify that the compute limit instruction's payload is valid (the
+   * instruction's role was already established by classification).
    *
    * @param instruction - The compute limit instruction
    * @param instruction.programAddress - Program address
@@ -1192,16 +1152,6 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     programAddress: Address;
     data?: Readonly<Uint8Array>;
   }): void {
-    const programAddress = instruction.programAddress.toString();
-
-    if (
-      programAddress !== COMPUTE_BUDGET_PROGRAM_ADDRESS.toString() ||
-      !instruction.data ||
-      instruction.data[0] !== 2 // discriminator for SetComputeUnitLimit
-    ) {
-      throw new Error(Errors.ErrComputeLimitInstruction);
-    }
-
     try {
       const parsedInstruction = parseSetComputeUnitLimitInstruction(instruction as never);
 
@@ -1218,7 +1168,8 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
   }
 
   /**
-   * Verify that the compute price instruction is valid.
+   * Verify that the compute price instruction's payload is valid (the
+   * instruction's role was already established by classification).
    *
    * @param instruction - The compute price instruction
    * @param instruction.programAddress - Program address
@@ -1228,16 +1179,6 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     programAddress: Address;
     data?: Readonly<Uint8Array>;
   }): void {
-    const programAddress = instruction.programAddress.toString();
-
-    if (
-      programAddress !== COMPUTE_BUDGET_PROGRAM_ADDRESS.toString() ||
-      !instruction.data ||
-      instruction.data[0] !== 3 // discriminator for SetComputeUnitPrice
-    ) {
-      throw new Error(Errors.ErrComputePriceInstruction);
-    }
-
     try {
       const parsedInstruction = parseSetComputeUnitPriceInstruction(instruction as never);
 

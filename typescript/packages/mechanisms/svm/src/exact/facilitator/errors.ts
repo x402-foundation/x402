@@ -16,16 +16,33 @@ export const ErrTransactionCouldNotBeDecoded =
   "invalid_exact_svm_payload_transaction_could_not_be_decoded";
 export const ErrSignatureInvalid = "invalid_exact_svm_payload_signature_invalid";
 export const ErrExcessiveSigners = "invalid_exact_svm_payload_excessive_signers";
+
+/** @deprecated Positional instruction-count checks were replaced by identity-based classification; no longer returned. */
 export const ErrTransactionInstructionsLength =
   "invalid_exact_svm_payload_transaction_instructions_length";
-export const ErrComputeLimitInstructionTooHigh =
-  "invalid_exact_svm_payload_transaction_instructions_compute_limit_instruction_too_high";
+/** @deprecated See {@link ErrUnknownInstruction}; no longer returned. */
 export const ErrUnknownFourthInstruction = "invalid_exact_svm_payload_unknown_fourth_instruction";
+/** @deprecated See {@link ErrUnknownInstruction}; no longer returned. */
 export const ErrUnknownFifthInstruction = "invalid_exact_svm_payload_unknown_fifth_instruction";
+/** @deprecated See {@link ErrUnknownInstruction}; no longer returned. */
 export const ErrUnknownSixthInstruction = "invalid_exact_svm_payload_unknown_sixth_instruction";
+/** @deprecated See {@link ErrUnknownInstruction}; no longer returned. */
 export const ErrUnknownSeventhInstruction = "invalid_exact_svm_payload_unknown_seventh_instruction";
+/** @deprecated See {@link ErrUnknownInstruction}; no longer returned. */
 export const ErrUnknownOptionalInstruction =
   "invalid_exact_svm_payload_unknown_optional_instruction";
+
+export const ErrComputeLimitInstructionTooHigh =
+  "invalid_exact_svm_payload_transaction_instructions_compute_limit_instruction_too_high";
+// Identity-based instruction classification (program ID + discriminator).
+// ErrUnknownInstruction covers any unrecognized program anywhere in the
+// sequence; ErrProtocolInstructionOrder covers protocol instructions (compute
+// limit/price, transfer) found out of relative order or duplicated, or a memo
+// before the transfer. Guard (Lighthouse) instructions are exempt from
+// ordering and may appear anywhere.
+export const ErrUnknownInstruction = "invalid_exact_svm_payload_unknown_instruction";
+export const ErrProtocolInstructionOrder =
+  "invalid_exact_svm_payload_transaction_instructions_order";
 export const ErrComputeLimitInstruction =
   "invalid_exact_svm_payload_transaction_instructions_compute_limit_instruction";
 export const ErrComputePriceInstruction =
@@ -85,6 +102,16 @@ export const ErrSmartWalletTransferMismatch = "invalid_exact_svm_smart_wallet_tr
 export const ErrSmartWalletMultipleMatchingTransfers =
   "invalid_exact_svm_smart_wallet_multiple_matching_transfers";
 export const ErrSmartWalletProgramNotAllowed = "invalid_exact_svm_smart_wallet_program_not_allowed";
+
+/**
+ * A preflight/postflight instruction-tuple allowlist matched, but the
+ * facilitator's fee payer appeared in one of the matched instructions'
+ * accounts or as a program ID. Unlike the fixed protocol/guard instruction
+ * set, an allowlisted tuple is operator-configured arbitrary code and must
+ * be isolation-checked the same way Path 2 smart wallet instructions are.
+ */
+export const ErrPreflightPostflightFeePayerNotIsolated =
+  "invalid_exact_svm_preflight_postflight_fee_payer_not_isolated";
 
 /**
  * Non-terminal settle error reason used when a transaction was broadcast but

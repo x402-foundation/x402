@@ -940,7 +940,7 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
     );
 
     expect(result.isValid).toBe(false);
-    expect(result.invalidReason).toBe("invalid_exact_svm_payload_no_transfer_instruction");
+    expect(result.invalidReason).toBe("invalid_exact_svm_payload_unknown_instruction");
   });
 
   it("verify does NOT fall through to Path 2 on a semantic (amount mismatch) failure", async () => {

@@ -288,21 +288,29 @@ When `enableSmartWalletVerification` is enabled, the signer MUST implement the s
 
 ### 3.1 Path 1 — Static Layout Verification (standard wallets)
 
-The fast path for standard wallets. The decompiled transaction MUST contain 3 to 7 instructions in this order:
+The fast path for standard wallets. Rather than matching instructions by absolute position, the verifier classifies every top-level instruction by **identity** — program ID plus instruction discriminator — into one of six roles: `computeLimit`, `computePrice`, `transfer`, `memo`, `guard`, or `unknown`.
 
-1. Compute Budget: Set Compute Unit Limit
-2. Compute Budget: Set Compute Unit Price
-3. SPL Token or Token-2022 `TransferChecked`
-4. (Optional) Lighthouse or Memo program instruction
-5. (Optional) Lighthouse or Memo program instruction
-6. (Optional) Lighthouse or Memo program instruction
-7. (Optional) Memo program instruction
-
-- Allowed optional programs: Lighthouse (`L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95`) and SPL Memo (`MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr`).
-- Phantom wallet injects up to 3 Lighthouse instructions; Solflare injects 2. These are wallet-injected user protection mechanisms and MUST be allowed. The cap of 7 instructions keeps these wallets on the fast path without needing Path 2.
+- **Protocol instructions** — Compute Budget `SetComputeUnitLimit`, Compute Budget `SetComputeUnitPrice`, SPL Token/Token-2022 `TransferChecked`, and optional SPL Memo (`MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr`) — MUST appear in that fixed **relative** order (interspersed guard instructions do not break the ordering). Encountering a `SetComputeUnitLimit`, `SetComputeUnitPrice`, or `TransferChecked` out of order or more than once MUST be rejected (`invalid_exact_svm_payload_transaction_instructions_order`). A `Memo` before the first `TransferChecked` is treated the same way, since a payment reference is only meaningful once the transfer it is attached to exists. Memo instructions after the transfer MAY repeat (this preserves the previously accepted shapes); their count is only constrained when `extra.memo` is present (below). A transaction without a `TransferChecked` is rejected (`invalid_exact_svm_payload_no_transfer_instruction`).
+- **Guard instructions** — currently only Lighthouse (`L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95`), Phantom/Solflare's wallet-injected assertion/abort instructions — MAY appear anywhere in the instruction list: before, after, or interspersed among the protocol instructions. There is **no upper bound** on the number of guard instructions, because a Lighthouse instruction only asserts account state and aborts the transaction if the assertion fails; it never mutates payment-relevant state, so it cannot be used to smuggle an unauthorized effect past the verifier.
+- **Any other program**, anywhere in the sequence, MUST be rejected (`invalid_exact_svm_payload_unknown_instruction`). This is what still makes an unrecognized wrapper (e.g. a smart wallet CPI) fail Path 1 and fall through to Path 2 when enabled (§3.3).
 - The Memo instruction ensures transaction uniqueness across concurrent payments with identical parameters. Clients MUST include a Memo instruction containing either the value of `extra.memo` (when present) or a random nonce (at least 16 bytes, hex-encoded for UTF-8 compliance).
-- If `extra.memo` is present, the facilitator MUST verify that exactly one Memo instruction exists and that its data matches `extra.memo` encoded as UTF-8.
+- If `extra.memo` is present, the facilitator MUST verify that exactly one Memo instruction exists (`invalid_exact_svm_payload_memo_count` otherwise) and that its data matches `extra.memo` encoded as UTF-8.
 - Fee payer isolation, compute budget validity (compute unit price ≤ 5 lamports/CU on this path), destination ATA derivation, and exact amount match are enforced as before.
+
+This identity-based design replaces an earlier positional layout check (a fixed 3-to-7 instruction window with wallet-attributed magic counts — "Phantom injects up to 3 Lighthouse instructions, Solflare injects 2"). That check rejected legitimate payments whenever a wallet injected its guard instructions *before* the compute-budget/transfer sequence instead of strictly after it — observed in the wild with Phantom (see [x402#828](https://github.com/x402-foundation/x402/issues/828) and [x402#2097](https://github.com/x402-foundation/x402/issues/2097)) — because the guard instructions shifted every subsequent instruction's index. Classifying by identity instead of position tolerates any wallet's guard-instruction placement without needing to special-case that wallet or cap how many guard instructions it may inject. The relative-order requirement on ComputeBudget-before-TransferChecked is an x402 verification convention adopted for parser simplicity, not a Solana runtime requirement — the runtime does not require compute budget instructions to precede the instructions they budget for.
+
+#### 3.1.1 Preflight/Postflight Instruction-Tuple Allowlist (Extension Point)
+
+Sponsors MAY configure an allowlist of **instruction tuples** — ordered sequences of instruction identities (program ID + discriminator) — that are permitted to appear as a contiguous block immediately **before** (`preflightInstructionAllowlist`) or **after** (`postflightInstructionAllowlist`) the required protocol instructions described above. This exists to let a sponsor accept a fixed, pre-vetted extension to the instruction sequence — for example, atomically channeling funds from an out-of-band payment mechanism into the same transaction as the merchant transfer — without weakening the closed instruction set Path 1 otherwise enforces.
+
+- Both allowlists default to **empty**, which is a strict no-op: with no tuples configured, Path 1 behaves exactly as described in §3.1, with no leading or trailing instructions tolerated beyond the existing guard-instruction allowance.
+- A leading/trailing block is matched against each configured tuple in turn, and both a leading and a trailing block MAY match in the same transaction; a match consumes the corresponding instructions (in order) from the front/back of the sequence before the §3.1 identity-based scan runs on what remains. **Guard instructions MAY appear interspersed within a matched block**, consistent with their unconstrained placement elsewhere in the sequence (§3.1).
+- An instruction sequence at the front/back that does **not** fully match any configured tuple is not given special treatment — it falls through to the ordinary §3.1 scan and is rejected as `invalid_exact_svm_payload_unknown_instruction` exactly as it would be without this extension.
+- Because a configured tuple is sponsor-supplied and not part of the fixed, pre-audited protocol/guard instruction set, a matched block MUST be fee-payer-isolation-checked (§2.1.1 style: the fee payer MUST NOT appear in any of the block's instruction accounts or as a program ID) before being accepted; failure is rejected as `invalid_exact_svm_preflight_postflight_fee_payer_not_isolated`.
+- A tuple MUST be non-empty and every identity MUST carry a non-empty discriminator. An empty tuple or an empty discriminator never matches (fail closed), so a whole program cannot be allowlisted by accident.
+- The isolation check covers every instruction in the matched block, including any interspersed guard instructions.
+- The same allowlist-aware layout resolution is used to re-derive which path (Path 1 or Path 2) a pending settlement originally used, so a transaction that verified through an allowlisted block is reconciled as a Path 1 settlement.
+- This is a Path 1-only extension point. It has no effect on Path 2 (§3.2), and the reference implementation does not ship with any concrete tuple configured — operators opt in explicitly.
 
 ### 3.2 Path 2 — Simulation-Based Smart Wallet Verification
 
@@ -317,7 +325,7 @@ Smart wallet programs wrap the transfer inside their own instruction (e.g. Squad
 
 ### 3.3 Path Selection (Path 1 → Path 2)
 
-Path 2 runs **only** when Path 1 rejects for a *recoverable layout reason* — i.e. the verifier could not structurally understand the transaction (wrong instruction count, unknown or extra instructions, missing positional transfer). These reasons are tracked in an explicit recoverable-reason set.
+Path 2 runs **only** when Path 1 rejects for a *recoverable layout reason* — i.e. the verifier could not structurally classify the transaction (an unrecognized program, a protocol instruction found out of order, a missing transfer, or a malformed compute-budget instruction). These reasons are tracked in an explicit recoverable-reason set.
 
 Semantic failures — amount mismatch, mint mismatch, recipient mismatch, memo count/mismatch, self-spend, or a failed Path 1 simulation — return their real reason and MUST NOT fall through to Path 2. This prevents a legitimate semantic rejection from being masked behind a misleading `smart_wallet_*` error code. (A transaction that fails Path 1 simulation would fail Path 2 simulation too, so there is nothing to recover.)
 
