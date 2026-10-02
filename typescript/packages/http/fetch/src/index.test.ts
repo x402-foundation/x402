@@ -143,9 +143,7 @@ describe("wrapFetchWithPayment()", () => {
     const retryRequest = retryCall[0] as Request;
     expect(retryRequest.headers.get("Content-Type")).toBe("application/json");
     expect(retryRequest.headers.get("PAYMENT-SIGNATURE")).toBe("encoded-payment-header");
-    expect(retryRequest.headers.get("Access-Control-Expose-Headers")).toBe(
-      "PAYMENT-RESPONSE,X-PAYMENT-RESPONSE",
-    );
+    expect(retryRequest.headers.has("Access-Control-Expose-Headers")).toBe(false);
   });
 
   it("should not retry if already retried (PAYMENT-SIGNATURE header present)", async () => {
@@ -283,7 +281,7 @@ describe("wrapFetchWithPayment()", () => {
     );
   });
 
-  it("should set Access-Control-Expose-Headers on retry request", async () => {
+  it("should not inject Access-Control-Expose-Headers into retry requests", async () => {
     const successResponse = createResponse(200, { data: "success" });
 
     mockFetch.mockResolvedValueOnce(createResponse(402, validPaymentRequired));
@@ -293,9 +291,7 @@ describe("wrapFetchWithPayment()", () => {
 
     const retryCall = mockFetch.mock.calls[1];
     const retryRequest = retryCall[0] as Request;
-    expect(retryRequest.headers.get("Access-Control-Expose-Headers")).toBe(
-      "PAYMENT-RESPONSE,X-PAYMENT-RESPONSE",
-    );
+    expect(retryRequest.headers.has("Access-Control-Expose-Headers")).toBe(false);
   });
 
   it("should preserve Headers object during retry", async () => {
@@ -323,9 +319,7 @@ describe("wrapFetchWithPayment()", () => {
 
     // Check payment headers were added
     expect(retryRequest.headers.get("PAYMENT-SIGNATURE")).toBe("encoded-payment-header");
-    expect(retryRequest.headers.get("Access-Control-Expose-Headers")).toBe(
-      "PAYMENT-RESPONSE,X-PAYMENT-RESPONSE",
-    );
+    expect(retryRequest.headers.has("Access-Control-Expose-Headers")).toBe(false);
 
     // Check original headers were preserved (this would fail before the fix)
     expect(retryRequest.headers.get("Content-Type")).toBe("application/json");
@@ -464,6 +458,7 @@ describe("wrapFetchWithPayment()", () => {
 
     const recoveryRequest = mockFetch.mock.calls[2][0] as Request;
     expect(recoveryRequest.headers.get("PAYMENT-SIGNATURE")).toBe("encoded-payment-header");
+    expect(recoveryRequest.headers.has("Access-Control-Expose-Headers")).toBe(false);
   });
 
   it("should return immediately when hook retry succeeds with a non-402 status", async () => {
