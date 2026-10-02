@@ -10,6 +10,7 @@ import {
   decodeSignedTransactionBlob,
   getCurrentLedgerIndex,
   getExactXrplPayload,
+  getFacilitatorAttributionMemoError,
   getMaxLastLedgerSequence,
   getSignedTransactionHash,
   getXrplAccountAuthorization,
@@ -18,6 +19,8 @@ import {
   isIssuedCurrencyAmount,
   isRecord,
   isValidDestinationTag,
+  isValidFacilitatorProof,
+  isValidSourceTag,
   isXrplNetwork,
   isXrplTicketAvailable,
   parseXrplNetworkId,
@@ -65,7 +68,13 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
    * @returns Extra metadata advertising that fees are never sponsored
    */
   getExtra(_network: Network): Record<string, unknown> | undefined {
-    return { areFeesSponsored: false };
+    return {
+      areFeesSponsored: false,
+      features: {
+        sourceTag: true,
+        facilitatorProof: true,
+      },
+    };
   }
 
   /**
@@ -299,6 +308,35 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
     if (payload.accepted.extra?.destinationTag !== requirements.extra?.destinationTag) {
       return "invalid_exact_xrpl_destination_tag_mismatch";
     }
+    const requiredSourceTag = requirements.extra?.sourceTag;
+    const acceptedSourceTag = payload.accepted.extra?.sourceTag;
+    if (
+      (requiredSourceTag !== undefined && !isValidSourceTag(requiredSourceTag)) ||
+      (acceptedSourceTag !== undefined && !isValidSourceTag(acceptedSourceTag))
+    ) {
+      return "invalid_exact_xrpl_source_tag_malformed";
+    }
+    if (acceptedSourceTag !== requiredSourceTag) {
+      return "invalid_exact_xrpl_source_tag_mismatch";
+    }
+    const requiredFacilitatorProof = requirements.extra?.facilitatorProof;
+    const acceptedFacilitatorProof = payload.accepted.extra?.facilitatorProof;
+    if (
+      (requiredFacilitatorProof !== undefined &&
+        !isValidFacilitatorProof(requiredFacilitatorProof)) ||
+      (acceptedFacilitatorProof !== undefined && !isValidFacilitatorProof(acceptedFacilitatorProof))
+    ) {
+      return "invalid_exact_xrpl_facilitator_proof_malformed";
+    }
+    if (
+      (requiredFacilitatorProof !== undefined && requiredSourceTag === undefined) ||
+      (acceptedFacilitatorProof !== undefined && acceptedSourceTag === undefined)
+    ) {
+      return "invalid_exact_xrpl_facilitator_proof_requires_source_tag";
+    }
+    if (acceptedFacilitatorProof !== requiredFacilitatorProof) {
+      return "invalid_exact_xrpl_facilitator_proof_mismatch";
+    }
     if (requirements.asset !== "XRP") {
       try {
         requireClassicAddress(requirements.extra?.issuer, "issuer");
@@ -353,12 +391,72 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
         : this.verifyIouAmount(transaction, requirements);
     if (amountError) return amountError;
 
+    const attributionError = this.verifyFacilitatorAttribution(transaction, requirements);
+    if (attributionError) return attributionError;
+
     const invoiceError = this.verifyInvoiceBinding(transaction, requirements);
     if (invoiceError) return invoiceError;
 
     const feeError = this.verifyFee(transaction);
     if (feeError) return feeError;
 
+    return undefined;
+  }
+
+  /**
+   * Verifies negotiated SourceTag and canonical facilitator-attribution Memo fields.
+   *
+   * @param transaction - Decoded XRPL payment transaction
+   * @param requirements - Payment requirements
+   * @returns Invalid reason, if validation fails
+   */
+  private verifyFacilitatorAttribution(
+    transaction: Payment,
+    requirements: PaymentRequirements,
+  ): string | undefined {
+    const sourceTag = requirements.extra?.sourceTag;
+    const facilitatorProof = requirements.extra?.facilitatorProof;
+
+    if (sourceTag === undefined) {
+      if (transaction.Memos !== undefined) {
+        return "invalid_exact_xrpl_payload_memos_not_allowed";
+      }
+      return undefined;
+    }
+    if (!isValidSourceTag(sourceTag)) {
+      return "invalid_exact_xrpl_source_tag_malformed";
+    }
+    if (transaction.SourceTag !== sourceTag) {
+      return "invalid_exact_xrpl_payload_source_tag_mismatch";
+    }
+
+    if (facilitatorProof === undefined) {
+      if (transaction.Memos !== undefined) {
+        return "invalid_exact_xrpl_payload_memos_not_allowed";
+      }
+      return undefined;
+    }
+    if (!isValidFacilitatorProof(facilitatorProof)) {
+      return "invalid_exact_xrpl_facilitator_proof_malformed";
+    }
+
+    const memoError = getFacilitatorAttributionMemoError(
+      transaction.Memos,
+      sourceTag,
+      facilitatorProof,
+    );
+    if (memoError === "missing") {
+      return "invalid_exact_xrpl_payload_attribution_memo_missing";
+    }
+    if (memoError === "cardinality") {
+      return "invalid_exact_xrpl_payload_attribution_memo_cardinality";
+    }
+    if (memoError === "malformed") {
+      return "invalid_exact_xrpl_payload_attribution_memo_malformed";
+    }
+    if (memoError === "mismatch") {
+      return "invalid_exact_xrpl_payload_attribution_memo_mismatch";
+    }
     return undefined;
   }
 
@@ -472,10 +570,6 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
     transaction: Payment,
     requirements: PaymentRequirements,
   ): string | undefined {
-    if (transaction.Memos !== undefined) {
-      return "invalid_exact_xrpl_payload_memos_not_allowed";
-    }
-
     const invoiceId = requirements.extra?.invoiceId;
     if (invoiceId === undefined) {
       return undefined;

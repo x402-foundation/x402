@@ -4,6 +4,7 @@ import {
   decode,
   hashes,
   isValidClassicAddress,
+  type Payment,
   type SubmittableTransaction,
   type TicketCreate,
   type Transaction,
@@ -12,6 +13,8 @@ import {
 import {
   DEFAULT_LEDGER_CLOSE_SECONDS,
   DEFAULT_LEDGER_TOLERANCE,
+  FACILITATOR_ATTRIBUTION_MEMO_FORMAT,
+  FACILITATOR_ATTRIBUTION_MEMO_TYPE,
   LSF_DISABLE_MASTER,
   MAX_ACCOUNT_TICKETS,
   MAX_DESTINATION_TAG,
@@ -212,6 +215,116 @@ export function isValidDestinationTag(value: unknown): value is number {
     value >= 0 &&
     value <= MAX_DESTINATION_TAG
   );
+}
+
+/**
+ * Checks whether a value is a valid XRPL source tag.
+ *
+ * @param value - Value to inspect
+ * @returns Whether the value is a 32-bit unsigned integer
+ */
+export function isValidSourceTag(value: unknown): value is number {
+  return isValidDestinationTag(value);
+}
+
+/**
+ * Checks whether a value is a 32-byte facilitator proof commitment.
+ *
+ * @param value - Value to inspect
+ * @returns Whether the value is exactly 64 hexadecimal characters
+ */
+export function isValidFacilitatorProof(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Fa-f0-9]{64}$/.test(value);
+}
+
+/**
+ * Builds the canonical facilitator-attribution MemoData value.
+ *
+ * @param sourceTag - Negotiated facilitator source tag
+ * @param facilitatorProof - 32-byte facilitator proof commitment
+ * @returns Four-byte source tag followed by proof bytes, as uppercase hex
+ */
+export function facilitatorAttributionMemoData(
+  sourceTag: number,
+  facilitatorProof: string,
+): string {
+  if (!isValidSourceTag(sourceTag)) {
+    throw new Error("sourceTag must be a 32-bit unsigned integer");
+  }
+  if (!isValidFacilitatorProof(facilitatorProof)) {
+    throw new Error("facilitatorProof must be 64 hexadecimal characters");
+  }
+
+  return `${sourceTag.toString(16).padStart(8, "0")}${facilitatorProof}`.toUpperCase();
+}
+
+/**
+ * Builds the canonical, single XRPL Memo for facilitator attribution.
+ *
+ * @param sourceTag - Negotiated facilitator source tag
+ * @param facilitatorProof - 32-byte facilitator proof commitment
+ * @returns A one-entry XRPL Memos array
+ */
+export function buildFacilitatorAttributionMemos(
+  sourceTag: number,
+  facilitatorProof: string,
+): NonNullable<Payment["Memos"]> {
+  return [
+    {
+      Memo: {
+        MemoType: FACILITATOR_ATTRIBUTION_MEMO_TYPE,
+        MemoFormat: FACILITATOR_ATTRIBUTION_MEMO_FORMAT,
+        MemoData: facilitatorAttributionMemoData(sourceTag, facilitatorProof),
+      },
+    },
+  ];
+}
+
+/**
+ * Canonical facilitator-attribution Memo validation failures.
+ */
+export type FacilitatorAttributionMemoError = "missing" | "cardinality" | "malformed" | "mismatch";
+
+/**
+ * Validates the exact facilitator-attribution Memo encoding and cardinality.
+ *
+ * @param memos - Signed XRPL Memos field
+ * @param sourceTag - Negotiated facilitator source tag
+ * @param facilitatorProof - Negotiated facilitator proof commitment
+ * @returns Validation failure, or undefined when canonical
+ */
+export function getFacilitatorAttributionMemoError(
+  memos: Payment["Memos"],
+  sourceTag: number,
+  facilitatorProof: string,
+): FacilitatorAttributionMemoError | undefined {
+  if (memos === undefined) return "missing";
+  if (!Array.isArray(memos) || memos.length !== 1) return "cardinality";
+
+  const entry = memos[0];
+  if (!isRecord(entry) || !isRecord(entry.Memo)) return "malformed";
+
+  const memo = entry.Memo;
+  if (
+    Object.keys(memo).length !== 3 ||
+    typeof memo.MemoType !== "string" ||
+    typeof memo.MemoFormat !== "string" ||
+    typeof memo.MemoData !== "string" ||
+    !/^[A-F0-9]+$/.test(memo.MemoType) ||
+    !/^[A-F0-9]+$/.test(memo.MemoFormat) ||
+    !/^[A-F0-9]{72}$/.test(memo.MemoData)
+  ) {
+    return "malformed";
+  }
+
+  if (
+    memo.MemoType !== FACILITATOR_ATTRIBUTION_MEMO_TYPE ||
+    memo.MemoFormat !== FACILITATOR_ATTRIBUTION_MEMO_FORMAT ||
+    memo.MemoData !== facilitatorAttributionMemoData(sourceTag, facilitatorProof)
+  ) {
+    return "mismatch";
+  }
+  return undefined;
 }
 
 /**
