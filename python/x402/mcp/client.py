@@ -32,7 +32,9 @@ from ..client import x402Client, x402ClientSync
 from ..schemas.responses import SettleResponse
 from .constants import MCP_PAYMENT_META_KEY, MCP_PAYMENT_RESPONSE_META_KEY
 from .utils import (
+    PaymentRequiredMismatchError,
     _extract_payment_required_from_object,
+    _payment_required_agree,
     convert_mcp_result,
     extract_payment_required_from_result,
     extract_payment_response_from_meta,
@@ -188,31 +190,41 @@ class x402MCPSession:
         """Extract PaymentRequired (x402 v1 or v2) from an error result.
 
         Prefers ``structuredContent`` (per spec), falls back to parsing
-        ``content[0].text`` as JSON.  Also handles FastMCP-wrapped error
-        formats via regex fallback. Version-aware so v1 servers are detected too.
+        ``content[0].text`` as JSON. When both representations are payment-required
+        objects, they must encode the same terms or this raises
+        PaymentRequiredMismatchError so auto-pay does not sign one while a hook
+        or UI reads the other. Also handles FastMCP-wrapped error formats via
+        regex fallback. Version-aware so v1 servers are detected too.
         """
-        # Preferred path: check structuredContent first (per MCP x402 spec)
+        structured = None
         if hasattr(result, "structuredContent") and result.structuredContent:
             sc = result.structuredContent
             if isinstance(sc, dict) and "accepts" in sc:
-                pr = _extract_payment_required_from_object(sc)
-                if pr is not None:
-                    return pr
+                structured = _extract_payment_required_from_object(sc)
 
-        # Fallback: parse content[].text as JSON
-        if not hasattr(result, "content") or not result.content:
-            return None
+        from_text = None
+        if hasattr(result, "content") and result.content:
+            for item in result.content:
+                if not hasattr(item, "text"):
+                    continue
+                parsed = _try_extract_payment_json(item.text)
+                if not parsed:
+                    continue
+                from_text = _extract_payment_required_from_object(parsed)
+                if from_text is not None:
+                    break
 
-        for item in result.content:
-            if not hasattr(item, "text"):
-                continue
-            parsed = _try_extract_payment_json(item.text)
-            if parsed:
-                pr = _extract_payment_required_from_object(parsed)
-                if pr is not None:
-                    return pr
-
-        return None
+        if (
+            structured is not None
+            and from_text is not None
+            and not _payment_required_agree(structured, from_text)
+        ):
+            raise PaymentRequiredMismatchError(
+                "mcp payment required: structuredContent and content text disagree"
+            )
+        if structured is not None:
+            return structured
+        return from_text
 
 
 class x402MCPClientSync:
