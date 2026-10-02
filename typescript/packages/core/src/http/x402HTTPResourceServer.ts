@@ -13,6 +13,7 @@ import {
   decodePaymentSignatureHeader,
   encodePaymentRequiredHeader,
   encodePaymentResponseHeader,
+  InvalidPaymentHeaderError,
 } from ".";
 import {
   PaymentPayload,
@@ -559,11 +560,26 @@ export class x402HTTPResourceServer {
       }
     }
 
+    // Check for payment header (v1 or v2)
+    let paymentPayload: PaymentPayload | null;
+    try {
+      paymentPayload = this.extractPayment(adapter);
+    } catch (error) {
+      if (error instanceof InvalidPaymentHeaderError) {
+        return {
+          type: "payment-error",
+          response: {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+            body: { error: error.message },
+          },
+        };
+      }
+      throw error;
+    }
+
     // Normalize accepts field to array of payment options
     const paymentOptions = this.normalizePaymentOptions(routeConfig);
-
-    // Check for payment header (v1 or v2)
-    const paymentPayload = this.extractPayment(adapter);
 
     // Create resource info, using config override if provided
     const resourceInfo = {
@@ -1273,14 +1289,10 @@ export class x402HTTPResourceServer {
    */
   private extractPayment(adapter: HTTPAdapter): PaymentPayload | null {
     // Check v2 header first (PAYMENT-SIGNATURE)
-    const header = adapter.getHeader("payment-signature") || adapter.getHeader("PAYMENT-SIGNATURE");
+    const header = adapter.getHeader("payment-signature") ?? adapter.getHeader("PAYMENT-SIGNATURE");
 
-    if (header) {
-      try {
-        return decodePaymentSignatureHeader(header);
-      } catch (error) {
-        console.warn("Failed to decode PAYMENT-SIGNATURE header:", error);
-      }
+    if (header !== undefined) {
+      return decodePaymentSignatureHeader(header);
     }
 
     return null;
