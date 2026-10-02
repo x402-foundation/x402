@@ -304,6 +304,19 @@ describe("type guards", () => {
       ).toBe(true);
     });
 
+    it("accepts v1.1 charge completion fields on a bound Permit2 payload", () => {
+      expect(
+        isPermit2Payload({
+          ...validPermit2,
+          saltNonce: "0x0000000000000000000000000000000000000000000000000000000000000abc",
+          amount: "100",
+          feeAmount: "1",
+          feeReceiver: validExtra.feeRecipient,
+          authorizerSignature: "0xab",
+        }),
+      ).toBe(true);
+    });
+
     it("rejects a malformed charge group even with saltNonce", () => {
       expect(
         isPermit2Payload({

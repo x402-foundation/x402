@@ -1,0 +1,208 @@
+{
+  "abi": [
+    {
+      "type": "function",
+      "name": "authorize",
+      "inputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "internalType": "struct GasWastingOperator.PaymentInfo",
+          "components": [
+            {
+              "name": "operator",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "payer",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "receiver",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "token",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "maxAmount",
+              "type": "uint120",
+              "internalType": "uint120"
+            },
+            {
+              "name": "preApprovalExpiry",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "authorizationExpiry",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "refundExpiry",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "minFeeBps",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "maxFeeBps",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "feeReceiver",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "salt",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "charge",
+      "inputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "internalType": "struct GasWastingOperator.PaymentInfo",
+          "components": [
+            {
+              "name": "operator",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "payer",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "receiver",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "token",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "maxAmount",
+              "type": "uint120",
+              "internalType": "uint120"
+            },
+            {
+              "name": "preApprovalExpiry",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "authorizationExpiry",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "refundExpiry",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "minFeeBps",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "maxFeeBps",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "feeReceiver",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "salt",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "",
+          "type": "bytes",
+          "internalType": "bytes"
+        },
+        {
+          "name": "",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "sink",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    }
+  ],
+  "bytecode": "0x6080604052348015600e575f5ffd5b5061026d8061001c5f395ff3fe608060405234801561000f575f5ffd5b506004361061003f575f3560e01c806341d66202146100435780639e65819f14610058578063c74e820e1461006b575b5f5ffd5b610056610051366004610166565b610085565b005b6100566100663660046101d5565b610094565b6100735f5481565b60405190815260200160405180910390f35b61008d6100a5565b5050505050565b61009c6100a5565b50505050505050565b5f8054905b61c3508110156100ea57604080516020810184905290810182905260600160408051601f19818403018152919052805160209091012091506001016100aa565b505f55565b5f6101808284031215610100575f5ffd5b50919050565b80356001600160a01b038116811461011c575f5ffd5b919050565b5f5f83601f840112610131575f5ffd5b50813567ffffffffffffffff811115610148575f5ffd5b60208301915083602082850101111561015f575f5ffd5b9250929050565b5f5f5f5f5f6101e0868803121561017b575f5ffd5b61018587876100ef565b9450610180860135935061019c6101a08701610106565b92506101c086013567ffffffffffffffff8111156101b8575f5ffd5b6101c488828901610121565b969995985093965092949392505050565b5f5f5f5f5f5f5f610220888a0312156101ec575f5ffd5b6101f689896100ef565b9650610180880135955061020d6101a08901610106565b94506101c088013567ffffffffffffffff811115610229575f5ffd5b6102358a828b01610121565b9095509350506101e088013561ffff81168114610250575f5ffd5b915061025f6102008901610106565b90509295989194975092955056"
+}

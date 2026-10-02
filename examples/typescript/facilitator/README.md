@@ -9,6 +9,7 @@ This directory contains TypeScript facilitator examples. A facilitator verifies 
 | [`basic/`](./basic/) | Minimal facilitator exposing `/verify` and `/settle` |
 | [`advanced/`](./advanced/) | All-networks support, Bazaar discovery, gas-sponsoring extensions, lifecycle hooks |
 | [`batch-settlement/`](./batch-settlement/) | Submits batch-settlement contract calls |
+| [`auth-capture/`](./auth-capture/) | Submits auth-capture collect and lifecycle calls to AuthCaptureEscrow |
 | [`builder-code/`](./builder-code/) | Appends ERC-8021 wallet attribution at settlement |
 
 ## Getting Started

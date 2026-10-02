@@ -2,13 +2,12 @@ import { ExactAvmScheme } from "@x402/avm/exact/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { UptoEvmScheme } from "@x402/evm/upto/server";
 import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/server";
-import { BatchSvmScheme as BatchSettlementSvmScheme } from "@x402/svm/batch-settlement/server";
+import { AuthCaptureEvmScheme } from "@x402/evm/auth-capture/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { UptoSvmScheme } from "@x402/svm/upto/server";
 import { base58 } from "@scure/base";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { ExactAptosScheme } from "@x402/aptos/exact/server";
-import { ExactCasperScheme } from "@x402/casper/exact/server";
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
 import { ExactKeetaScheme } from "@x402/keeta/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
@@ -16,8 +15,6 @@ import { ExactTvmScheme } from "@x402/tvm/exact/server";
 import { ExactNearScheme } from "@x402/near/exact/server";
 import { ExactXrplScheme } from "@x402/xrpl/exact/server";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/server";
-import { ExactCardanoScheme } from "@x402/cardano/exact/server";
-import { toMasumiSellerSigner } from "@x402/cardano";
 import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import {
   declareEip2612GasSponsoringExtension,
@@ -39,6 +36,7 @@ import {
   networkCaip2Pattern,
   routeDiscoveryOutput,
   mcpToolName,
+  schemesForSdkNetwork,
   type RouteTransport,
 } from "../../src/mechanisms";
 
@@ -72,19 +70,6 @@ async function registerFamilySchemes(
     case "ccd":
       server.register(pattern, new ExactConcordiumScheme());
       return;
-    case "cardano": {
-      const sellerMnemonic = process.env.SERVER_CARDANO_SELLER_MNEMONIC;
-      if (!sellerMnemonic) break;
-      server.register(
-        pattern,
-        new ExactCardanoScheme({
-          masumi: {
-            seller: network => toMasumiSellerSigner({ mnemonic: sellerMnemonic, network }),
-          },
-        }),
-      );
-      return;
-    }
     case "evm": {
       server.register(pattern, new ExactEvmScheme());
       server.register(pattern, new UptoEvmScheme());
@@ -101,44 +86,45 @@ async function registerFamilySchemes(
           ...(receiverAuthorizerSigner ? { receiverAuthorizerSigner } : {}),
         }),
       );
+      if (schemesForSdkNetwork("typescript", "evm").includes("auth-capture")) {
+        if (!receiverAuthorizerPrivateKey) {
+          console.error(
+            "❌ SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY is required for auth-capture on evm",
+          );
+          process.exit(1);
+        }
+        console.info(
+          `Auth-capture receiver authorizer: ${privateKeyToAccount(receiverAuthorizerPrivateKey).address}`,
+        );
+        server.register(
+          pattern,
+          new AuthCaptureEvmScheme({
+            receiverAuthorizerSigner: privateKeyToAccount(receiverAuthorizerPrivateKey),
+          }),
+        );
+      }
       return;
     }
     case "svm": {
       server.register(pattern, new ExactSvmScheme());
       const receiverAuthorizerPrivateKey = process.env.SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY;
-      const receiverAuthorizerSigner = receiverAuthorizerPrivateKey
-        ? await createKeyPairSignerFromBytes(base58.decode(receiverAuthorizerPrivateKey))
-        : undefined;
-      if (!receiverAuthorizerSigner) return;
-      console.info(`SVM receiver authorizer: ${receiverAuthorizerSigner.address}`);
-      server.register(
-        pattern,
-        new UptoSvmScheme({
-          receiverAuthorizerSigner,
-          rpcUrl: process.env.SVM_RPC_URL,
-        }),
-      );
-      const operatorPrivateKey = process.env.SERVER_SVM_OPERATOR_PRIVATE_KEY;
-      const operatorSigner = operatorPrivateKey
-        ? await createKeyPairSignerFromBytes(base58.decode(operatorPrivateKey))
-        : undefined;
-      if (operatorSigner) {
-        console.info(`SVM batch-settlement operator: ${operatorSigner.address}`);
+      if (receiverAuthorizerPrivateKey) {
+        const receiverAuthorizerSigner = await createKeyPairSignerFromBytes(
+          base58.decode(receiverAuthorizerPrivateKey),
+        );
+        console.info(`SVM receiver authorizer: ${receiverAuthorizerSigner.address}`);
+        server.register(
+          pattern,
+          new UptoSvmScheme({
+            receiverAuthorizerSigner,
+            rpcUrl: process.env.SVM_RPC_URL,
+          }),
+        );
       }
-      server.register(
-        pattern,
-        new BatchSettlementSvmScheme({
-          receiverAuthorizer: receiverAuthorizerSigner,
-          ...(operatorSigner ? { operator: operatorSigner } : {}),
-        }),
-      );
       return;
     }
     case "aptos":
       server.register(pattern, new ExactAptosScheme());
-      return;
-    case "casper":
-      server.register(pattern, new ExactCasperScheme());
       return;
     case "hedera":
       server.register(pattern, new ExactHederaScheme());
@@ -218,7 +204,6 @@ export function buildResolvedRouteConfig(
       scheme: route.scheme,
       network: route.network as Caip2Network,
       price: route.price,
-      ...(route.maxTimeoutSeconds ? { maxTimeoutSeconds: route.maxTimeoutSeconds } : {}),
       ...(route.extra ? { extra: route.extra } : {}),
     },
     ...(route.extensions.length > 0 ? { extensions } : {}),

@@ -326,6 +326,59 @@
       "settlementOverride": {
         "amount": "1000"
       }
+    },
+    "/auth-capture/evm/eip3009": {
+      "scheme": "auth-capture",
+      "assetTransferMethod": "eip3009",
+      "sdks": [
+        "typescript",
+        "go"
+      ],
+      "price": {
+        "usd": "$0.001"
+      },
+      "extensions": [
+        "bazaar"
+      ],
+      "schemeExtra": {
+        "feeRecipient": "0x0000000000000000000000000000000000000000",
+        "minFeeBps": 0,
+        "maxFeeBps": 0,
+        "captureDeadlineSeconds": 3600,
+        "refundDeadlineSeconds": 7200,
+        "operatorType": "delegated",
+        "paymentFlow": "escrow",
+        "captureMode": "sync"
+      }
+    },
+    "/auth-capture/evm/permit2": {
+      "scheme": "auth-capture",
+      "assetTransferMethod": "permit2",
+      "sdks": [
+        "typescript",
+        "go"
+      ],
+      "schemeOptions": {
+        "permit2Direct": true
+      },
+      "price": {
+        "amount": "1000",
+        "assetRef": "permit2",
+        "permit2Domain": true
+      },
+      "extensions": [
+        "bazaar"
+      ],
+      "schemeExtra": {
+        "feeRecipient": "0x0000000000000000000000000000000000000000",
+        "minFeeBps": 0,
+        "maxFeeBps": 0,
+        "captureDeadlineSeconds": 3600,
+        "refundDeadlineSeconds": 7200,
+        "operatorType": "delegated",
+        "paymentFlow": "escrow",
+        "captureMode": "sync"
+      }
     }
   }
 }

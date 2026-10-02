@@ -14,7 +14,7 @@ You do **not** need to edit `generic-server` / `generic-client` / `generic-facil
 
 - **`env`** — map of env key → `{ required: boolean, roles: ["server"|"client"|"facilitator", ...] }`. Every key a role reads (including unprefixed ones like `TVM_PROVIDER` or `EVM_PERMIT2_ASSET`) is declared here; [`src/mechanisms.ts`](src/mechanisms.ts) has no hardcoded role override table. Prefix (`SERVER_` / `CLIENT_` / `FACILITATOR_`) is only a fallback for undeclared keys.
 - **`testnet` / `mainnet`** — `name`, `caip2`, optional `rpcUrlDefault`, optional `permit2Asset`/`permit2AssetName`. RPC env is pure convention, not declared: an operator sets `${ID}_TESTNET_RPC_URL` / `${ID}_MAINNET_RPC_URL` (e.g. `EVM_TESTNET_RPC_URL`), and the harness injects it into every spawned component as `${ID}_RPC_URL`. Set `rpcUrlRequired: true` on a mode with no `rpcUrlDefault` and no free public endpoint at all (a network whose SDK has no built-in node default, unlike e.g. Hedera/Keeta) so the harness fails fast at startup — with the missing input key named in the same preflight list as other required env — instead of deep inside a scenario run. Network identity defaults (`${ID}_NETWORK`) fall back to catalog `testnet.caip2` via `resolveNetworkCaip2`.
-- **`routes`** — one canonical definition per paid HTTP path: `scheme`, `sdks`, `assetTransferMethod`, `schemeOptions`, declared `extensions`, required `price`, and optional `settlementOverride`. Handlers always return `{ message: "Protected endpoint accessed successfully", timestamp }`. The loader injects `network` (the file id) — routes never declare it themselves.
+- **`routes`** — one canonical definition per paid HTTP path: `scheme`, `sdks`, `assetTransferMethod`, `schemeOptions`, `schemeExtra`, declared `extensions`, required `price`, and optional `settlementOverride`. Handlers always return `{ message: "Protected endpoint accessed successfully", timestamp }`. The loader injects `network` (the file id) — routes never declare it themselves.
 
 CI family selection ([`scripts/ci-select-families.sh`](scripts/ci-select-families.sh) → [`scripts/ci-select-families.ts`](scripts/ci-select-families.ts)) prints families whose catalog `required: true` keys are all set — no per-family hardcoding in the shell script.
 
@@ -34,7 +34,7 @@ Route support is **listed** on each route via `sdks`, never inferred from a cart
 
 Adding a paid route to every SDK that should serve it is a catalog edit:
 
-1. **Define the route** — add an entry under `routes` in the relevant `config/mechanisms_<id>.json`, keyed by its path, with `scheme`, `sdks` (e.g. `["typescript", "go", "python"]`), and `price`. Add `extensions`, `schemeOptions`, or `settlementOverride` only where the route needs them.
+1. **Define the route** — add an entry under `routes` in the relevant `config/mechanisms_<id>.json`, keyed by its path, with `scheme`, `sdks` (e.g. `["typescript", "go", "python"]`), and `price`. Add `extensions`, `schemeOptions`, `schemeExtra` (auth-capture deadlines/flow), or `settlementOverride` only where the route needs them.
 2. **Register the scheme once per language**, if it is new: server module (`servers/<lang>/`), client module (`clients/<lang>/`), and the facilitator main.
 
 Servers pick up the route, its `402` payment requirements, and its handler with no per-framework edit. A surface that serves less than its SDK’s list can declare the narrowing in a local `test.config.json` (`excludeSchemes` / `excludeNetworks`); the harness applies it to the derived endpoints and forwards it to the server process (`E2E_EXCLUDE_SCHEMES` / `E2E_EXCLUDE_NETWORKS`), so declared and mounted routes cannot diverge.
@@ -113,15 +113,6 @@ cd facilitators/go
 go mod tidy && go build -o go .
 ```
 
-### Wallet status
-
-Print facilitator / client / server addresses plus facilitator native and client payment-token balances for every family whose catalog-required env keys are set.
-
-```bash
-pnpm wallet:status
-pnpm wallet:status --mainnet
-```
-
 ## Usage
 
 ### Interactive Test Mode
@@ -136,7 +127,7 @@ Launches an interactive CLI where you can select:
 - **Clients** - Payment-capable HTTP clients (axios, fetch, httpx, requests, etc.)
 - **Extensions** - Additional features like Bazaar discovery
 - **Protocols** - EVM, SVM, AVM, Aptos, Concordium, Hedera, NEAR, Stellar, and/or TVM networks
-- **Payment schemes** (when multiple apply) - `exact`, `upto`, or `batch-settlement`
+- **Payment schemes** (when multiple apply) - `exact`, `upto`, `batch-settlement`, or `auth-capture`
 - **Payment flows** (when multiple apply) - `authorization`, `upfront`, or `escrow`
 - **Asset transfer methods** (when multiple apply) - `eip3009`, `permit2`, `sequence`, or `ticketSequence`
 
@@ -203,15 +194,12 @@ CLIENT_EVM_PRIVATE_KEY=0x...        # EVM private key for client payments
 CLIENT_SVM_PRIVATE_KEY=...          # Solana private key for client payments
 CLIENT_AVM_PRIVATE_KEY=...          # Algorand private key for client payments
 CLIENT_APTOS_PRIVATE_KEY=...        # Aptos private key for client payments (hex string)
-CLIENT_CASPER_PRIVATE_KEY=...       # Casper private key for client payments
-CLIENT_CASPER_PRIVATE_KEY_ALGORITHM=ed25519 # Optional: ed25519 (default) or secp256k1
-CLIENT_CCD_PRIVATE_KEY=...          # Concordium private key for client payments
-CLIENT_CCD_ADDRESS=...              # Concordium account address for client payments
+CLIENT_CCD_PRIVATE_KEY=...         # Concordium private key for client payments
+CLIENT_CCD_ADDRESS=...            # Concordium account address for client payments
 CLIENT_HEDERA_ACCOUNT_ID=0.0....    # Hedera account id for client payments
 CLIENT_HEDERA_PRIVATE_KEY=0x...     # Hedera ECDSA private key for client payments
 CLIENT_KEETA_MNEMONIC=...           # Keeta mnemonic for client payments
 CLIENT_STELLAR_PRIVATE_KEY=...      # Stellar private key for client payments
-CLIENT_CARDANO_MNEMONIC=...         # Cardano wallet mnemonic (24 words) for client payments
 CLIENT_TVM_PRIVATE_KEY=...          # TVM private key for client payments
 CLIENT_NEAR_ACCOUNT_ID=...          # NEAR payer account id that owns the access key
 CLIENT_NEAR_PRIVATE_KEY=ed25519:... # NEAR private key for that payer account
@@ -222,7 +210,6 @@ SERVER_EVM_ADDRESS=0x...            # Where servers receive EVM payments
 SERVER_SVM_ADDRESS=...              # Where servers receive Solana payments
 SERVER_AVM_ADDRESS=...              # Where servers receive Algorand payments
 SERVER_APTOS_ADDRESS=0x...          # Where servers receive Aptos payments
-SERVER_CASPER_ADDRESS=00...         # Where servers receive Casper payments
 SERVER_CCD_ADDRESS=...              # Where servers receive Concordium payments
 SERVER_HEDERA_ADDRESS=0.0....       # Where servers receive Hedera payments
 SERVER_KEETA_ADDRESS=keeta_...      # Where servers receive Keeta payments
@@ -236,8 +223,6 @@ FACILITATOR_EVM_PRIVATE_KEY=0x...   # EVM private key for facilitator
 FACILITATOR_SVM_PRIVATE_KEY=...     # Solana private key for facilitator
 FACILITATOR_AVM_PRIVATE_KEY=...     # Algorand private key for facilitator
 FACILITATOR_APTOS_PRIVATE_KEY=...   # Aptos private key for facilitator (hex string)
-FACILITATOR_CASPER_PRIVATE_KEY=...  # Casper private key for facilitator gas payments
-FACILITATOR_CASPER_PRIVATE_KEY_ALGORITHM=ed25519 # Optional: ed25519 (default) or secp256k1
 FACILITATOR_CCD_PRIVATE_KEY=...    # Concordium private key for facilitator
 FACILITATOR_CCD_ADDRESS=...       # Concordium account address for facilitator
 FACILITATOR_HEDERA_ACCOUNT_ID=0.0... # Hedera fee payer account id for facilitator
@@ -247,26 +232,7 @@ FACILITATOR_STELLAR_PRIVATE_KEY=... # Stellar private key for facilitator
 FACILITATOR_TVM_PRIVATE_KEY=...     # TVM private key for facilitator
 FACILITATOR_NEAR_ACCOUNT_ID=...     # NEAR relayer account id (submits meta-tx, sponsors gas)
 FACILITATOR_NEAR_PRIVATE_KEY=ed25519:... # NEAR relayer private key
-FACILITATOR_CARDANO_MNEMONIC=...    # Optional: the Cardano facilitator only broadcasts, so it runs provider-only without a mnemonic
 # XRPL needs no facilitator wallet — the facilitator is keyless (payer signs and pays fees)
-
-# Casper CEP-18 support
-CASPER_ASSET=...                    # CEP-18 contract package hash (64 hex chars, no 0x/hash-)
-CASPER_TOKEN_NAME=...               # CEP-3009 EIP-712 token name
-CASPER_TOKEN_VERSION=...            # CEP-3009 EIP-712 token version
-CASPER_AMOUNT=1                     # Optional; defaults to 1
-
-# Casper network override
-CASPER_TESTNET_RPC_URL=https://node.testnet.casper.network/rpc # Optional; defaults by network
-CASPER_SPECULATIVE_RPC_URL=https://node-specexec.testnet.casper.network/rpc # Optional
-
-BLOCKFROST_PROJECT_ID=preprod...    # Blockfrost preprod project id (get one at blockfrost.io)
-CARDANO_TESTNET_RPC_URL=...         # Optional Blockfrost base URL override (default https://cardano-preprod.blockfrost.io/api/v0)
-CARDANO_L1_CONFIRMATIONS=           # Optional (-1..20). Unset = 1 confirmation; -1 = mempool (faster local runs)
-SERVER_CARDANO_SELLER_MNEMONIC=     # Masumi quote signer (no funds needed)
-# SERVER_CARDANO_SCRIPT_ADDRESS=    # Optional script-route payee (default: always-succeeds fixture)
-# SERVER_CARDANO_SCRIPT_CODE=       # Optional script-route validator hex
-# SERVER_CARDANO_SCRIPT_DATUM=      # Optional script-route inline datum hex
 
 # Concordium network override
 CCD_NETWORK=ccd:4221332d34e1694168c2a0c0b3fd0f27  # Optional; defaults to testnet
@@ -298,22 +264,13 @@ pnpm test --testnet --min --families=evm --sdk=ts --paymentflow=upfront --assetT
 
 `--sdk` keeps scenarios whose client, server, and facilitator are that language (`ts` / `typescript`, `py` / `python`, `go`). `--paymentflow` and `--assetTransferMethod` match the catalog route fields (omitted `paymentFlow` is `authorization`).
 
-Optional environment variables (batch-settlement scheme):
+Optional environment variables:
 
 ```bash
-# EVM
-SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY=0x...              # optional: self-managed receiver authorizer (omit to delegate to facilitator /supported)
+SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY=0x...              # required for auth-capture delegated sync; optional for self-managed batch-settlement receiver authorizer
+SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY=...                # server hot key that signs upto settlement vouchers (no SOL required)
 CLIENT_EVM_BATCH_SETTLEMENT_VOUCHER_SIGNER_PRIVATE_KEY=0x...  # EOA the client uses to sign vouchers
 EVM_BATCH_SETTLEMENT_RECOVERY=true                            # test client state-loss recovery scenario (default: true)
-
-# SVM
-SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY=...                # required for /upto/svm and /batch-settlement/svm; signs upto vouchers and the batch receiver authorizer (no SOL required)
-SERVER_SVM_OPERATOR_PRIVATE_KEY=...                           # required for /batch-settlement-server-signed/svm; operator that meters and signs vouchers
-CLIENT_SVM_SERVER_SIGNED_OPERATORS=...                        # optional: base58 operator pubkeys trusted by the client (defaults to pubkey derived from SERVER_SVM_OPERATOR_PRIVATE_KEY on server-signed routes)
-CLIENT_SVM_SERVER_SIGNED_MAX_DEPOSIT=$1                       # optional USD escrow cap per server-signed channel (default asset)
-FACILITATOR_SVM_BATCH_BINDING_STORE=memory                    # optional: `memory` (default) uses in-memory receiver-authorizer store; `none` relies on RPC history reads
-SVM_ARCHIVE_RPC_URL=https://...                                 # optional: full-history RPC for receiver-binding reconstruction (archive node)
-SVM_BATCH_SETTLEMENT_RECOVERY=true                            # test client state-loss recovery scenario (default: true)
 ```
 
 Optional environment variables for XRPL issued-currency tests are generated by
@@ -382,22 +339,6 @@ You need **three separate NEAR testnet accounts** for e2e tests — client (paye
 1. Create three testnet accounts (e.g. via [MyNearWallet testnet](https://testnet.mynearwallet.com/) or `near create-account`); export each account's private key (`ed25519:...`) — e.g. from `~/.near-credentials/testnet/<account>.json`.
 2. Fund the **facilitator (relayer)** account with testnet NEAR for gas from the [NEAR faucet](https://near-faucet.io/). The relayer submits the NEP-366 `SignedDelegate` and sponsors gas, so the payer spends zero gas.
 3. Give the **client (payer)** the payment token. The default asset is **wNEAR** (`wrap.testnet`, a NEP-141): wrap NEAR via `wrap.testnet` `near_deposit`. Both payer and merchant must be `storage_deposit`-registered on the token contract.
-
-#### Casper Testnet
- 
-Create or reuse dedicated Casper testnet accounts or wallet keys for the client,
-server payee, and facilitator. Fund any account that submits Casper transactions
-with testnet CSPR from the [CSPR.live testnet faucet](https://testnet.cspr.live/tools/faucet);
-CSPR is required for gas on Casper Testnet. 
-
-Use [testnet.cspr.trade](https://testnet.cspr.trade) to get wrapped CSPR (WCSPR) or csprUSD for
-the client payments.
-
-#### Cardano Preprod
-
-1. Create a preprod wallet (CIP-30 wallet or `PrivateKey.generateMnemonic()` from `@evolution-sdk/evolution`) and set `CLIENT_CARDANO_MNEMONIC` plus `SERVER_CARDANO_ADDRESS` (the client's `addr_test1...` works).
-2. Fund the client wallet with test ADA from the [Cardano testnets faucet](https://docs.cardano.org/cardano-testnets/tools/faucet/) (select **Preprod**). Override the asset with `SERVER_CARDANO_ASSET` / `SERVER_CARDANO_AMOUNT` for token runs.
-3. Get a free **Blockfrost** preprod project id at [blockfrost.io](https://blockfrost.io/) and set `BLOCKFROST_PROJECT_ID`.
 
 > **Note:** payer key = `CLIENT_NEAR_*`, relayer key = `FACILITATOR_NEAR_*`, merchant = `SERVER_NEAR_ADDRESS`. `CLIENT_NEAR_ACCOUNT_ID` is required because a NEAR private key identifies a public key, but the signer must also know which account owns that access key to read its nonce and set the delegated action `senderId`. Override the token with `SERVER_NEAR_ASSET` / `SERVER_NEAR_AMOUNT` (defaults: `wrap.testnet` / `1000000000000000000000` = 0.001 wNEAR; set them to a NEP-141 like Circle USDC for stablecoin runs).
 

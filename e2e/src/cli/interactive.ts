@@ -317,7 +317,7 @@ export async function runInteractiveMode(
       message: 'Select payment schemes',
       choices: schemeChoices,
       min: 1,
-      hint: 'exact = eip3009/permit2-style; upto = usage-based; batch-settlement = voucher channel',
+      hint: 'exact = eip3009/permit2-style; upto = usage-based; batch-settlement = voucher channel; auth-capture = escrow hold + sync capture',
       instructions: false,
     });
 

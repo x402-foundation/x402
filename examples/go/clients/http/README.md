@@ -5,7 +5,7 @@ Example client demonstrating how to use the x402 Go HTTP client to make requests
 ## Prerequisites
 
 - Go 1.24 or higher
-- A running x402 server (see [gin server example](../../servers/gin))
+- A running x402 server (see [gin server example](../../servers/gin) or [auth-capture server example](../../typescript/servers/auth-capture))
 - Valid EVM and/or SVM private keys for making payments
 
 ## Setup

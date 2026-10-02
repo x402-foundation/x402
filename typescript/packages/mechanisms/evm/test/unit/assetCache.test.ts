@@ -7,6 +7,7 @@ import {
   globalAssetContractCache,
   resetAssetContractCache,
   startAssetContractCheck,
+  validateAssetIsContract,
   type AssetContractCacheKey,
 } from "../../src/assetCache";
 
@@ -94,6 +95,24 @@ describe("asset contract cache", () => {
     expect(
       globalAssetContractCache.isFresh({ network: "", asset: cacheTestAsset }, Date.now()),
     ).toBe(false);
+  });
+
+  it("wraps eth_getCode failures", async () => {
+    const signer: FacilitatorEvmSigner = {
+      getAddresses: () => [],
+      readContract: async () => 0n,
+      verifyTypedData: async () => false,
+      writeContract: async () => "0x",
+      sendTransaction: async () => "0x",
+      waitForTransactionReceipt: async () => ({ status: "success" }),
+      getCode: async () => {
+        throw "rpc down";
+      },
+    };
+
+    await expect(validateAssetIsContract(signer, "eip155:84532", cacheTestAsset)).rejects.toThrow(
+      "failed to check whether asset is a contract: rpc down",
+    );
   });
 
   it("expires entries after the TTL", () => {
