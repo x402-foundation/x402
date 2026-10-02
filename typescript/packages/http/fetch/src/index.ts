@@ -89,7 +89,26 @@ export function wrapFetchWithPayment(
       if (hookResponse.status !== 402) {
         return hookResponse; // Hook succeeded
       }
-      // Hook's retry got 402, fall through to payment
+      // The hook's retry returned another 402 whose requirements may differ
+      // from the first offer. Re-parse them so payment is created from the
+      // latest 402, not the superseded one (#3582).
+      try {
+        const getHookHeader = (name: string) => hookResponse.headers.get(name);
+        let hookBody: PaymentRequired | undefined;
+        try {
+          const hookText = await hookResponse.text();
+          if (hookText) {
+            hookBody = JSON.parse(hookText) as PaymentRequired;
+          }
+        } catch {
+          // Ignore JSON parse errors - might be header-only response
+        }
+        paymentRequired = httpClient.getPaymentRequiredResponse(getHookHeader, hookBody);
+      } catch (error) {
+        throw new Error(
+          `Failed to parse payment requirements: ${error instanceof Error ? error.message : "Unknown error"}`,
+        );
+      }
     }
 
     // Create payment payload (copy extensions from PaymentRequired)
