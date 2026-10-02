@@ -8,6 +8,9 @@ permissions:
 jobs:
   test-python:
     runs-on: ubuntu-latest
+    env:
+      # Lightning's coincurve dependency has wheels through Python 3.13.
+      UV_PYTHON: "3.13"
     defaults:
       run:
         working-directory: ./python/x402
@@ -21,7 +24,7 @@ jobs:
           cache-dependency-glob: "python/x402/uv.lock"
 
       - name: Set up Python
-        run: uv python install
+        run: uv python install 3.13
 
       - name: Install dependencies
         run: uv sync --all-extras --dev
