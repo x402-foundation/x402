@@ -2,74 +2,6 @@ package authcapture
 
 import "testing"
 
-func TestIsAuthCaptureExtra(t *testing.T) {
-	future := float64(4102444800)
-	valid := map[string]interface{}{
-		"captureAuthorizer": "0xcccccccccccccccccccccccccccccccccccccccc",
-		"captureDeadline":   future,
-		"refundDeadline":    future + 86400,
-		"feeRecipient":      "0x4444444444444444444444444444444444444444",
-		"minFeeBps":         float64(0),
-		"maxFeeBps":         float64(100),
-		"name":              "USDC",
-		"version":           "2",
-	}
-
-	if !IsAuthCaptureExtra(valid) {
-		t.Fatal("expected valid extra")
-	}
-	if IsAuthCaptureExtra(nil) || IsAuthCaptureExtra("string") || IsAuthCaptureExtra(42) {
-		t.Fatal("expected non-object to be rejected")
-	}
-
-	noAuthorizer := copyMap(valid)
-	delete(noAuthorizer, "captureAuthorizer")
-	if IsAuthCaptureExtra(noAuthorizer) {
-		t.Fatal("expected missing captureAuthorizer to be rejected")
-	}
-
-	badDeadline := copyMap(valid)
-	badDeadline["captureDeadline"] = "soon"
-	if IsAuthCaptureExtra(badDeadline) {
-		t.Fatal("expected non-number captureDeadline to be rejected")
-	}
-
-	badFeeRecipient := copyMap(valid)
-	badFeeRecipient["feeRecipient"] = 42
-	if IsAuthCaptureExtra(badFeeRecipient) {
-		t.Fatal("expected non-string feeRecipient to be rejected")
-	}
-
-	noName := copyMap(valid)
-	delete(noName, "name")
-	if IsAuthCaptureExtra(noName) {
-		t.Fatal("expected missing name to be rejected")
-	}
-
-	noMinFee := copyMap(valid)
-	delete(noMinFee, "minFeeBps")
-	if IsAuthCaptureExtra(noMinFee) {
-		t.Fatal("expected missing minFeeBps to be rejected")
-	}
-
-	noMaxFee := copyMap(valid)
-	delete(noMaxFee, "maxFeeBps")
-	if IsAuthCaptureExtra(noMaxFee) {
-		t.Fatal("expected missing maxFeeBps to be rejected")
-	}
-
-	oldShape := map[string]interface{}{
-		"escrowAddress":   "0xeee",
-		"operatorAddress": "0xccc",
-		"tokenCollector":  "0xbbb",
-		"name":            "USDC",
-		"version":         "2",
-	}
-	if IsAuthCaptureExtra(oldShape) {
-		t.Fatal("expected old commerce-era extra to be rejected")
-	}
-}
-
 func TestIsEip3009Payload(t *testing.T) {
 	future := "4102444800"
 	valid := map[string]interface{}{
@@ -197,4 +129,115 @@ func copyMap(in map[string]interface{}) map[string]interface{} {
 		out[k] = v
 	}
 	return out
+}
+
+func validCapture() map[string]interface{} {
+	return map[string]interface{}{
+		"type":                     "capture",
+		"paymentInfo":              validPaymentInfoWire(),
+		"saltNonce":                "0x01",
+		"amount":                   "600000",
+		"feeAmount":                "0",
+		"feeReceiver":              "0x4444444444444444444444444444444444444444",
+		"expectedCapturableAmount": "400000",
+		"expectedRefundableAmount": "0",
+		"authorizerSignature":      "0xabcd",
+	}
+}
+
+func validPaymentInfoWire() map[string]interface{} {
+	wire, err := mockPaymentInfo().ToWireMap()
+	if err != nil {
+		panic(err)
+	}
+	return wire
+}
+
+func TestIsCapturePayload(t *testing.T) {
+	valid := validCapture()
+	if !IsCapturePayload(valid) {
+		t.Fatal("expected a v1.1 capture payload")
+	}
+
+	v10 := copyMap(valid)
+	delete(v10, "feeAmount")
+	v10["feeBps"] = float64(50)
+	if !IsCapturePayload(v10) {
+		t.Fatal("expected a v1.0 capture payload")
+	}
+
+	both := copyMap(valid)
+	both["feeBps"] = float64(50)
+	neither := copyMap(valid)
+	delete(neither, "feeAmount")
+	noSaltNonce := copyMap(valid)
+	delete(noSaltNonce, "saltNonce")
+	noSignature := copyMap(valid)
+	delete(noSignature, "authorizerSignature")
+	badInfo := copyMap(valid)
+	badInfo["paymentInfo"] = map[string]interface{}{}
+	void := copyMap(valid)
+	void["type"] = "void"
+
+	for name, payload := range map[string]interface{}{
+		"both fee fields": both, "no fee field": neither, "no saltNonce": noSaltNonce,
+		"no signature": noSignature, "bad paymentInfo": badInfo, "wrong type": void, "nil": nil,
+	} {
+		if IsCapturePayload(payload) {
+			t.Fatalf("expected %s to be rejected", name)
+		}
+	}
+}
+
+func TestIsVoidPayload(t *testing.T) {
+	valid := map[string]interface{}{
+		"type":                "void",
+		"paymentInfo":         validPaymentInfoWire(),
+		"saltNonce":           "0x01",
+		"authorizerSignature": "0xabcd",
+	}
+	if !IsVoidPayload(valid) {
+		t.Fatal("expected a void payload")
+	}
+
+	noSignature := copyMap(valid)
+	delete(noSignature, "authorizerSignature")
+	capture := copyMap(valid)
+	capture["type"] = "capture"
+	if IsVoidPayload(noSignature) || IsVoidPayload(capture) || IsVoidPayload("void") {
+		t.Fatal("expected malformed void payloads to be rejected")
+	}
+}
+
+func TestLifecyclePayloadParsing(t *testing.T) {
+	capture, err := CapturePayloadFromMap(validCapture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capture.Amount != "600000" || capture.FeeAmount != "0" || capture.FeeBps != nil || capture.PaymentInfo.MaxFeeBps != 100 {
+		t.Fatalf("unexpected capture payload: %+v", capture)
+	}
+
+	v10 := validCapture()
+	delete(v10, "feeAmount")
+	v10["feeBps"] = float64(50)
+	v10["voidAuthorizerSignature"] = "0xbeef"
+	parsed, err := CapturePayloadFromMap(v10)
+	if err != nil || parsed.FeeBps == nil || *parsed.FeeBps != 50 || parsed.VoidAuthorizerSignature != "0xbeef" {
+		t.Fatalf("unexpected v1.0 capture payload: %+v, %v", parsed, err)
+	}
+
+	void, err := VoidPayloadFromMap(map[string]interface{}{
+		"paymentInfo": validPaymentInfoWire(), "saltNonce": "0x01", "authorizerSignature": "0xabcd",
+	})
+	if err != nil || void.SaltNonce != "0x01" || void.AuthorizerSignature != "0xabcd" {
+		t.Fatalf("unexpected void payload: %+v, %v", void, err)
+	}
+
+	if _, err := CapturePayloadFromMap(map[string]interface{}{}); err == nil {
+		t.Fatal("expected a missing paymentInfo to fail")
+	}
+	if _, err := VoidPayloadFromMap(map[string]interface{}{"paymentInfo": map[string]interface{}{}}); err == nil {
+		t.Fatal("expected an incomplete paymentInfo to fail")
+	}
 }

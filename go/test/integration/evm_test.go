@@ -1133,6 +1133,13 @@ func waitForPendingTransactions(t *testing.T, ctx context.Context, privateKeyHex
 // revokePermit2Approval sets the Permit2 allowance to 0 so the test exercises the settleWithPermit path.
 func revokePermit2Approval(t *testing.T, ctx context.Context, clientPrivateKey string, tokenAddress string, rpcURL string) {
 	t.Helper()
+	setPermit2Allowance(t, ctx, clientPrivateKey, tokenAddress, rpcURL, big.NewInt(0))
+}
+
+// setPermit2Allowance approves Permit2 for target when the current allowance is below it (or, for a
+// zero target, revokes any existing allowance).
+func setPermit2Allowance(t *testing.T, ctx context.Context, clientPrivateKey string, tokenAddress string, rpcURL string, target *big.Int) {
+	t.Helper()
 
 	privateKeyHex := strings.TrimPrefix(clientPrivateKey, "0x")
 	privateKey, err := crypto.HexToECDSA(privateKeyHex)
@@ -1170,20 +1177,24 @@ func revokePermit2Approval(t *testing.T, ctx context.Context, clientPrivateKey s
 	}
 
 	allowance := new(big.Int).SetBytes(result)
-	if allowance.Sign() == 0 {
+	if target.Sign() == 0 && allowance.Sign() == 0 {
 		t.Logf("✅ Permit2 allowance already revoked")
 		return
 	}
+	if target.Sign() > 0 && allowance.Cmp(target) >= 0 {
+		t.Logf("✅ Permit2 allowance already sufficient")
+		return
+	}
 
-	t.Logf("🔓 Revoking Permit2 approval (current allowance: %s)...", allowance.String())
+	t.Logf("🔓 Setting Permit2 allowance to %s (current allowance: %s)...", target.String(), allowance.String())
 
-	// Build approve(PERMIT2, 0) transaction
+	// Build approve(PERMIT2, target) transaction
 	approveABI, err := abi.JSON(strings.NewReader(string(evm.ERC20ApproveABI)))
 	if err != nil {
 		t.Fatalf("Failed to parse ERC20 approve ABI: %v", err)
 	}
 
-	approveData, err := approveABI.Pack("approve", permit2Addr, big.NewInt(0))
+	approveData, err := approveABI.Pack("approve", permit2Addr, target)
 	if err != nil {
 		t.Fatalf("Failed to pack approve call: %v", err)
 	}
@@ -1206,15 +1217,15 @@ func revokePermit2Approval(t *testing.T, ctx context.Context, clientPrivateKey s
 	tx := ethtypes.NewTransaction(nonce, tokenAddr, big.NewInt(0), 100000, gasPrice, approveData)
 	signedTx, err := ethtypes.SignTx(tx, ethtypes.LatestSignerForChainID(chainID), privateKey)
 	if err != nil {
-		t.Fatalf("Failed to sign revoke transaction: %v", err)
+		t.Fatalf("Failed to sign approve transaction: %v", err)
 	}
 
 	err = ethClient.SendTransaction(ctx, signedTx)
 	if err != nil {
-		t.Fatalf("Failed to send revoke transaction: %v", err)
+		t.Fatalf("Failed to send approve transaction: %v", err)
 	}
 
-	t.Logf("📤 Revoke tx sent: %s", signedTx.Hash().Hex())
+	t.Logf("📤 Approve tx sent: %s", signedTx.Hash().Hex())
 
 	deadline := time.Now().Add(2 * time.Minute)
 	ticker := time.NewTicker(2 * time.Second)
@@ -1224,19 +1235,19 @@ func revokePermit2Approval(t *testing.T, ctx context.Context, clientPrivateKey s
 		receipt, err := ethClient.TransactionReceipt(ctx, signedTx.Hash())
 		if err == nil && receipt != nil {
 			if receipt.Status == 1 {
-				t.Logf("✅ Permit2 approval revoked in block %d", receipt.BlockNumber.Uint64())
+				t.Logf("✅ Permit2 allowance set in block %d", receipt.BlockNumber.Uint64())
 				return
 			}
-			t.Fatalf("Permit2 revoke transaction reverted (status=0)")
+			t.Fatalf("Permit2 approve transaction reverted (status=0)")
 		}
 
 		if time.Now().After(deadline) {
-			t.Fatalf("Permit2 revoke transaction not mined after 2 minutes")
+			t.Fatalf("Permit2 approve transaction not mined after 2 minutes")
 		}
 
 		select {
 		case <-ctx.Done():
-			t.Fatalf("Context cancelled waiting for revoke receipt")
+			t.Fatalf("Context cancelled waiting for approve receipt")
 		case <-ticker.C:
 		}
 	}

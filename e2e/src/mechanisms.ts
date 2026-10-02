@@ -30,7 +30,7 @@ export type ConfigRole = 'server' | 'client' | 'facilitator';
 /** Network id, e.g. "evm" — one per `mechanisms_<id>.json` file. No fixed union: adding a network is a catalog-only edit. */
 export type CatalogNetworkId = string;
 
-type PaymentScheme = 'exact' | 'upto' | 'batch-settlement';
+type PaymentScheme = 'exact' | 'upto' | 'batch-settlement' | 'auth-capture';
 type AssetTransferMethod =
   | 'eip3009'
   | 'permit2'
@@ -117,8 +117,10 @@ export type RouteDefinition = {
   scheme: PaymentScheme;
   network: CatalogNetworkId;
   assetTransferMethod?: AssetTransferMethod;
-  /** SDKs that implement this route. */
+  /** SDKs that implement this route end to end (client, server and facilitator). */
   sdks: SdkId[];
+  /** SDKs that implement only the client role. Servers and facilitators never see them. */
+  clientSdks?: SdkId[];
   schemeOptions?: Record<string, boolean>;
   /** Every route declares its own price. */
   price: PriceSpec;
@@ -283,9 +285,14 @@ export function getRouteDefinition(path: string): RouteDefinition {
   return def;
 }
 
-export function sdkRoutesFor(sdk: string): SdkRoute[] {
+/** Routes an SDK implements. With `role: 'client'`, routes it implements only as a client are included. */
+export function sdkRoutesFor(sdk: string, role?: ConfigRole): SdkRoute[] {
   return Object.entries(catalog.routes)
-    .filter(([, def]) => def.sdks.includes(sdk as SdkId))
+    .filter(
+      ([, def]) =>
+        def.sdks.includes(sdk as SdkId) ||
+        (role === 'client' && def.clientSdks?.includes(sdk as SdkId)),
+    )
     .map(([path, def]) => ({ path, ...def }));
 }
 
@@ -308,9 +315,13 @@ export function schemesForSdk(sdk: string): PaymentScheme[] {
 }
 
 /** Schemes an SDK implements for one catalog network (from route `sdks`). */
-export function schemesForSdkNetwork(sdk: string, network: CatalogNetworkId): PaymentScheme[] {
+export function schemesForSdkNetwork(
+  sdk: string,
+  network: CatalogNetworkId,
+  role?: ConfigRole,
+): PaymentScheme[] {
   const schemes = new Set<PaymentScheme>();
-  for (const route of sdkRoutesFor(sdk)) {
+  for (const route of sdkRoutesFor(sdk, role)) {
     if (route.network === network) {
       schemes.add(route.scheme);
     }
@@ -327,8 +338,9 @@ export function schemesForComponent(
   sdk: string,
   network: CatalogNetworkId,
   declaredSchemes: PaymentScheme[] | undefined,
+  role?: ConfigRole,
 ): PaymentScheme[] {
-  const sdkSchemes = schemesForSdkNetwork(sdk, network);
+  const sdkSchemes = schemesForSdkNetwork(sdk, network, role);
   if (!declaredSchemes?.length) {
     return sdkSchemes;
   }
@@ -672,7 +684,7 @@ export function enrichConfigFromMechanisms(
     excludeSchemes: config.excludeSchemes as string[] | undefined,
     excludeNetworks: config.excludeNetworks as string[] | undefined,
   };
-  const routes = availableRoutes(sdkRoutesFor(sdk), key => process.env[key], filter);
+  const routes = availableRoutes(sdkRoutesFor(sdk, type), key => process.env[key], filter);
 
   const fromCatalog = NETWORK_IDS.filter(id => routes.some(route => route.network === id));
   const protocolFamilies =

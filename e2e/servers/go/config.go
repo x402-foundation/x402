@@ -1,12 +1,15 @@
 package server
 
 import (
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strings"
 
+	"github.com/ethereum/go-ethereum/crypto"
 	x402 "github.com/x402-foundation/x402/go/v2"
 	x402http "github.com/x402-foundation/x402/go/v2/http"
+	authcaptureserver "github.com/x402-foundation/x402/go/v2/mechanisms/evm/auth-capture/server"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 	batchedserver "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/server"
 	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
@@ -106,9 +109,10 @@ func SchemeBindings(cfg Config) []SchemeBinding {
 		exactEVM *exactevm.ExactEvmScheme
 		uptoEVM  *uptoevm.UptoEvmScheme
 		batched  *batchedserver.BatchSettlementEvmScheme
-		exactSVM  *svm.ExactSvmScheme
-		uptoSVM   *uptosvm.UptoSvmScheme
-		batchSVM  *batchsvmserver.BatchSvmScheme
+		authCap  *authcaptureserver.AuthCaptureEvmScheme
+		exactSVM *svm.ExactSvmScheme
+		uptoSVM  *uptosvm.UptoSvmScheme
+		batchSVM *batchsvmserver.BatchSvmScheme
 	)
 
 	schemeFor := func(networkID, scheme string) x402.SchemeNetworkServer {
@@ -142,6 +146,17 @@ func SchemeBindings(cfg Config) []SchemeBinding {
 					batched = batchedserver.NewBatchSettlementEvmScheme(cfg.Payee("evm"), batchedCfg)
 				}
 				return batched
+			case "auth-capture":
+				if authCap == nil {
+					authorizer, err := authCaptureAuthorizerSigner()
+					if err != nil {
+						fmt.Printf("Failed to create auth-capture receiver authorizer: %v\n", err)
+						os.Exit(1)
+					}
+					fmt.Printf("Auth-capture receiver authorizer: %s\n", authorizer.Address())
+					authCap = authcaptureserver.NewAuthCaptureEvmScheme(&authcaptureserver.Config{ReceiverAuthorizerSigner: authorizer})
+				}
+				return authCap
 			}
 		case "svm":
 			switch scheme {
@@ -220,4 +235,18 @@ func SchemeBindings(cfg Config) []SchemeBinding {
 	}
 
 	return bindings
+}
+
+// authCaptureAuthorizerSigner returns the signer for auth-capture Capture and Void messages:
+// SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY when set, otherwise a throwaway key. It only
+// signs and never holds funds, so the routes need no operator-supplied secret.
+func authCaptureAuthorizerSigner() (*BatchedAuthorizerSigner, error) {
+	if key := os.Getenv("SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"); key != "" {
+		return NewBatchedAuthorizerSigner(key)
+	}
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		return nil, err
+	}
+	return NewBatchedAuthorizerSigner(hex.EncodeToString(crypto.FromECDSA(key)))
 }

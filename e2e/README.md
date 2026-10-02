@@ -28,13 +28,13 @@ Every SDK reads this same set of files. The harness ([`src/mechanisms.ts`](src/m
 
 Resource servers resolve the same data at boot — payment middleware config **and** route handlers — through a per-language loader: [`servers/typescript/catalog.ts`](servers/typescript/catalog.ts), [`servers/python/catalog.py`](servers/python/catalog.py), [`servers/go/catalog.go`](servers/go/catalog.go). No framework entrypoint hardcodes a path, price, or extension; each loops over its resolved routes. The harness passes the catalog directory in `E2E_MECHANISMS_CATALOG`, and each loader falls back to walking up to `e2e/config/` so a server still runs standalone from its own directory.
 
-Route support is **listed** on each route via `sdks`, never inferred from a cartesian product. Scheme **registration** stays in the language-root client/server modules and facilitator mains.
+Route support is **listed** on each route via `sdks` (and `clientSdks` for SDKs that implement only the client role), never inferred from a cartesian product. Scheme **registration** stays in the language-root client/server modules and facilitator mains.
 
 ## Add a mechanism
 
 Adding a paid route to every SDK that should serve it is a catalog edit:
 
-1. **Define the route** — add an entry under `routes` in the relevant `config/mechanisms_<id>.json`, keyed by its path, with `scheme`, `sdks` (e.g. `["typescript", "go", "python"]`), and `price`. Add `extensions`, `schemeOptions`, or `settlementOverride` only where the route needs them.
+1. **Define the route** — add an entry under `routes` in the relevant `config/mechanisms_<id>.json`, keyed by its path, with `scheme`, `sdks` (e.g. `["typescript", "go", "python"]`), and `price`. Add `extensions`, `schemeOptions`, or `settlementOverride` only where the route needs them. An SDK that implements only the client role goes in `clientSdks` instead; it then pairs with servers and facilitators from other SDKs but is never asked to serve the route.
 2. **Register the scheme once per language**, if it is new: server module (`servers/<lang>/`), client module (`clients/<lang>/`), and the facilitator main.
 
 Servers pick up the route, its `402` payment requirements, and its handler with no per-framework edit. A surface that serves less than its SDK’s list can declare the narrowing in a local `test.config.json` (`excludeSchemes` / `excludeNetworks`); the harness applies it to the derived endpoints and forwards it to the server process (`E2E_EXCLUDE_SCHEMES` / `E2E_EXCLUDE_NETWORKS`), so declared and mounted routes cannot diverge.
@@ -70,7 +70,7 @@ These keep local `test.config.json` overlays and/or special orchestration — no
 | Swig smart wallet | Client overlay [`clients/typescript/http/svm-smart-wallet/test.config.json`](clients/typescript/http/svm-smart-wallet/test.config.json) (`protocolFamilies`, `facilitators`, Swig env) + [`scripts/swig-setup.ts`](scripts/swig-setup.ts); uses catalog route `/exact/svm` |
 | Legacy (v1) | `legacy/` trees only — separate configs; do not extend the mechanisms catalog for v1 |
 
-If an SDK implements a route end-to-end (client + server + facilitator), list it in that route’s `sdks`. Omit only when the mechanism package is missing (e.g. Go has no TVM; Python/Go have no AVM/NEAR/XRPL; Python has no SVM upto).
+If an SDK implements a route end-to-end (client + server + facilitator), list it in that route’s `sdks`. Omit only when the mechanism package is missing (e.g. Go has no TVM; Python/Go have no AVM/NEAR/XRPL; Python has no SVM upto). Where an SDK has only a client, list it in `clientSdks` (e.g. TypeScript for `/auth-capture/*`).
 
 ## Legacy
 
@@ -305,6 +305,7 @@ Optional environment variables (batch-settlement scheme):
 SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY=0x...              # optional: self-managed receiver authorizer (omit to delegate to facilitator /supported)
 CLIENT_EVM_BATCH_SETTLEMENT_VOUCHER_SIGNER_PRIVATE_KEY=0x...  # EOA the client uses to sign vouchers
 EVM_BATCH_SETTLEMENT_RECOVERY=true                            # test client state-loss recovery scenario (default: true)
+# /auth-capture/evm/* uses SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY to sign capture and void when set, else a throwaway key (no funds needed). The payer needs Base Sepolia USDC and the facilitator needs gas.
 
 # SVM
 SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY=...                # required for /upto/svm and /batch-settlement/svm; signs upto vouchers and the batch receiver authorizer (no SOL required)

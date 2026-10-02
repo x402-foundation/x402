@@ -242,6 +242,7 @@ export class TestDiscovery {
             clientLanguage,
             endpointProtocolFamily,
             client.config.schemes,
+            'client',
           );
           if (!clientSchemesForFamily.includes(endpointScheme)) {
             verboseLog(`  ⚠️  Skipping ${client.name} ↔ ${server.name} ${endpoint.path}: Payment scheme mismatch (client supports [${clientSchemesForFamily.join(', ')}] on ${endpointProtocolFamily}, endpoint requires ${endpointScheme})`);
@@ -274,6 +275,7 @@ export class TestDiscovery {
               facilLanguage,
               endpointProtocolFamily,
               f.config.schemes,
+              'facilitator',
             );
             if (!facilSchemesForFamily.includes(endpointScheme)) return false;
             if (endpointProtocolFamily === 'evm') {

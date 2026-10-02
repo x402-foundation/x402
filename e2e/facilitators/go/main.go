@@ -35,6 +35,7 @@ import (
 	"github.com/x402-foundation/x402/go/v2/extensions/erc20approvalgassponsor"
 	exttypes "github.com/x402-foundation/x402/go/v2/extensions/types"
 	evmmech "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	authcapturefacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/evm/auth-capture/facilitator"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 	batchedevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/facilitator"
 	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
@@ -246,6 +247,19 @@ func (s *realFacilitatorEvmSigner) ReadContract(
 	method string,
 	args ...interface{},
 ) (interface{}, error) {
+	return s.ReadContractFrom(ctx, s.address.Hex(), contractAddress, abiJSON, method, args...)
+}
+
+// ReadContractFrom reads as an explicit sender, which the auth-capture escrow requires
+// because it gates authorize, capture and void on msg.sender.
+func (s *realFacilitatorEvmSigner) ReadContractFrom(
+	ctx context.Context,
+	from string,
+	contractAddress string,
+	abiJSON []byte,
+	method string,
+	args ...interface{},
+) (interface{}, error) {
 	// Parse ABI
 	contractABI, err := abi.JSON(strings.NewReader(string(abiJSON)))
 	if err != nil {
@@ -267,7 +281,7 @@ func (s *realFacilitatorEvmSigner) ReadContract(
 	// msg.sender == witness.facilitator in settle().
 	to := common.HexToAddress(contractAddress)
 	msg := ethereum.CallMsg{
-		From: s.address,
+		From: common.HexToAddress(from),
 		To:   &to,
 		Data: data,
 	}
@@ -1061,6 +1075,13 @@ func main() {
 		facilitator.Register(
 			[]x402.Network{x402.Network(evmNetwork)},
 			batchedevm.NewBatchSettlementEvmScheme(evmSigner, batchedAuthorizer),
+		)
+
+		facilitator.Register(
+			[]x402.Network{x402.Network(evmNetwork)},
+			authcapturefacilitator.NewAuthCaptureEvmScheme(evmSigner, authcapturefacilitator.AuthCaptureEvmSchemeConfig{
+				CaptureAuthorizer: addresses[0],
+			}),
 		)
 
 		evmV1Config := &exactevmv1.ExactEvmSchemeV1Config{}

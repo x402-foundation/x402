@@ -1,0 +1,3 @@
+kind: added
+body: Add the auth-capture EVM scheme server and facilitator (delegated operator, escrow flow with authorize, capture and void), typed escrow revert mapping, and Go examples alongside the existing client.
+time: 2026-09-29T12:00:00Z

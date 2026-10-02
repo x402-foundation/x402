@@ -326,6 +326,45 @@
       "settlementOverride": {
         "amount": "1000"
       }
+    },
+    "/auth-capture/evm/eip3009": {
+      "scheme": "auth-capture",
+      "assetTransferMethod": "eip3009",
+      "sdks": [
+        "go"
+      ],
+      "clientSdks": [
+        "typescript"
+      ],
+      "paymentFlow": "escrow",
+      "price": {
+        "usd": "$0.001"
+      },
+      "extensions": [
+        "bazaar"
+      ]
+    },
+    "/auth-capture/evm/permit2": {
+      "scheme": "auth-capture",
+      "assetTransferMethod": "permit2",
+      "sdks": [
+        "go"
+      ],
+      "clientSdks": [
+        "typescript"
+      ],
+      "paymentFlow": "escrow",
+      "schemeOptions": {
+        "permit2Direct": true
+      },
+      "price": {
+        "amount": "1000",
+        "assetRef": "permit2",
+        "permit2Domain": true
+      },
+      "extensions": [
+        "bazaar"
+      ]
     }
   }
 }

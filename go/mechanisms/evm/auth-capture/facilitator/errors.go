@@ -1,0 +1,58 @@
+package facilitator
+
+// Error reasons for the auth-capture EVM scheme, as listed in the spec's Error Codes section.
+const (
+	// Verification errors.
+	ErrInvalidScheme                  = "invalid_auth_capture_evm_scheme"
+	ErrNetworkMismatch                = "invalid_auth_capture_evm_network_mismatch"
+	ErrInvalidNetwork                 = "invalid_network"
+	ErrPayloadFormat                  = "invalid_auth_capture_evm_payload_format"
+	ErrPayloadType                    = "invalid_auth_capture_evm_payload_type"
+	ErrExtra                          = "invalid_auth_capture_evm_extra"
+	ErrUnsupportedOperatorType        = "invalid_auth_capture_evm_unsupported_operator_type"
+	ErrPolicy                         = "invalid_auth_capture_evm_policy"
+	ErrLifecycleNotRelayed            = "invalid_auth_capture_evm_lifecycle_not_relayed"
+	ErrOperatorNotAdmitted            = "invalid_auth_capture_evm_operator_not_admitted"
+	ErrOperatorMismatch               = "invalid_auth_capture_evm_operator_mismatch"
+	ErrSaltBindingMismatch            = "invalid_auth_capture_evm_salt_binding_mismatch"
+	ErrAuthorizerSignature            = "invalid_auth_capture_evm_authorizer_signature"
+	ErrUnexpectedPaymentState         = "invalid_auth_capture_evm_unexpected_payment_state"
+	ErrUnsupportedAssetTransferMethod = "invalid_auth_capture_evm_unsupported_asset_transfer_method"
+	ErrPayloadMethodMismatch          = "invalid_auth_capture_evm_payload_method_mismatch"
+	ErrCaptureDeadlineExpired         = "invalid_auth_capture_evm_capture_deadline_expired"
+	ErrRefundDeadlineExpired          = "invalid_auth_capture_evm_refund_deadline_expired"
+	ErrDeadlineOrdering               = "invalid_auth_capture_evm_deadline_ordering"
+	ErrAuthorizationExpired           = "invalid_auth_capture_evm_authorization_expired"
+	ErrAuthorizationNotYetValid       = "invalid_auth_capture_evm_authorization_not_yet_valid"
+	ErrSignature                      = "invalid_auth_capture_evm_signature"
+	ErrErc6492FactoryNotAllowed       = "invalid_auth_capture_evm_erc6492_factory_not_allowed"
+	ErrAmountMismatch                 = "invalid_auth_capture_evm_amount_mismatch"
+	ErrTokenCollectorMismatch         = "invalid_auth_capture_evm_token_collector_mismatch"
+	ErrTokenMismatch                  = "invalid_auth_capture_evm_token_mismatch"
+	ErrNonceMismatch                  = "invalid_auth_capture_evm_nonce_mismatch"
+	ErrSimulationFailed               = "invalid_auth_capture_evm_simulation_failed"
+	ErrUnsupportedPaymentFlow         = "invalid_auth_capture_evm_unsupported_payment_flow"
+	ErrVoidAuthorizerSignature        = "invalid_auth_capture_evm_void_authorizer_signature"
+	ErrVoidRemainderFullCapture       = "invalid_auth_capture_evm_void_remainder_full_capture"
+	ErrPaymentInfoMismatch            = "invalid_auth_capture_evm_payment_info_mismatch"
+	ErrUndeployedSmartWallet          = "invalid_auth_capture_evm_payload_undeployed_smart_wallet"
+
+	// Typed simulation and settlement reverts.
+	ErrPaymentAlreadyCollected   = "invalid_auth_capture_evm_payment_already_collected"
+	ErrTokenCollectionFailed     = "invalid_auth_capture_evm_token_collection_failed"
+	ErrCollector                 = "invalid_auth_capture_evm_collector"
+	ErrAmountOverflow            = "invalid_auth_capture_evm_amount_overflow"
+	ErrFeeBps                    = "invalid_auth_capture_evm_fee_bps"
+	ErrFeeBpsRange               = "invalid_auth_capture_evm_fee_bps_range"
+	ErrFeeBpsOutOfRange          = "invalid_auth_capture_evm_fee_bps_out_of_range"
+	ErrZeroFeeReceiver           = "invalid_auth_capture_evm_zero_fee_receiver"
+	ErrFeeReceiver               = "invalid_auth_capture_evm_fee_receiver"
+	ErrInsufficientAuthorization = "invalid_auth_capture_evm_insufficient_authorization"
+	ErrZeroAuthorization         = "invalid_auth_capture_evm_zero_authorization"
+	ErrRefundExceedsCapture      = "invalid_auth_capture_evm_refund_exceeds_capture"
+
+	// Settlement errors.
+	ErrVerificationFailed          = "invalid_auth_capture_evm_verification_failed"
+	ErrTransactionReverted         = "invalid_auth_capture_evm_transaction_reverted"
+	ErrSmartWalletDeploymentFailed = "smart_wallet_deployment_failed"
+)

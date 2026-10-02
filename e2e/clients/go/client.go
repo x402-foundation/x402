@@ -14,12 +14,13 @@ import (
 
 	x402 "github.com/x402-foundation/x402/go/v2"
 	x402http "github.com/x402-foundation/x402/go/v2/http"
+	authcaptureclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/auth-capture/client"
 	batchedclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/client"
-	batchsvmclient "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement/client"
 	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
 	exactevmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/v1/client"
 	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/client"
 	svmconfig "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+	batchsvmclient "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement/client"
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
 	svmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/v1/client"
 	uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/client"
@@ -51,9 +52,9 @@ type SettleResponseExtractor interface {
 
 // ClientContext holds a configured payment-capable HTTP client for e2e runs.
 type ClientContext struct {
-	URL           string
-	HTTPClient    *http.Client
-	Settle        SettleResponseExtractor
+	URL              string
+	HTTPClient       *http.Client
+	Settle           SettleResponseExtractor
 	BatchedEvmScheme *batchedclient.BatchSettlementEvmScheme
 	BatchedSvmScheme *batchsvmclient.BatchSvmScheme
 	BatchPhase       string
@@ -64,7 +65,7 @@ type ClientContext struct {
 // Transports that speak something other than plain HTTP (e.g. MCP) wrap
 // Client themselves instead of going through Newx402HTTPClient.
 type PaymentClientContext struct {
-	Client        *x402.X402Client
+	Client           *x402.X402Client
 	BatchedEvmScheme *batchedclient.BatchSettlementEvmScheme
 	BatchedSvmScheme *batchsvmclient.BatchSvmScheme
 	BatchPhase       string
@@ -129,6 +130,7 @@ func BuildPaymentClient() *PaymentClientContext {
 			Register(evmPattern, exactevm.NewExactEvmScheme(evmSigner, evmConfig)).
 			Register(evmPattern, uptoevm.NewUptoEvmScheme(evmSigner, uptoConfig)).
 			Register(evmPattern, batchedEvmScheme).
+			Register(evmPattern, authcaptureclient.NewAuthCaptureEvmScheme(evmSigner)).
 			RegisterV1("base-sepolia", exactevmv1.NewExactEvmSchemeV1(evmSigner)).
 			RegisterV1("base", exactevmv1.NewExactEvmSchemeV1(evmSigner))
 	}
