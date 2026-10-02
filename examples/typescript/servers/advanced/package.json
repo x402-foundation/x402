@@ -10,6 +10,7 @@
     "dev:custom-money-definition": "tsx index.ts custom-money-definition",
     "dev:dynamic-pay-to": "tsx index.ts dynamic-pay-to",
     "dev:dynamic-price": "tsx index.ts dynamic-price",
+    "dev:dynamic-routes": "tsx index.ts dynamic-routes",
     "dev:hooks": "tsx index.ts hooks",
     "format": "prettier -c .prettierrc --write \"**/*.{ts,js,cjs,json,md}\"",
     "format:check": "prettier -c .prettierrc --check \"**/*.{ts,js,cjs,json,md}\"",
