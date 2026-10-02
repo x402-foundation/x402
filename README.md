@@ -124,7 +124,29 @@ See `specs/` for full documentation of the x402 standard/
 ### Typical x402 flow
 
 x402 payments typically adhere to the following flow, but servers have a lot of flexibility. See `advanced` folders in `examples/`.
-![](./static/flow.png)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant RS as Resource Server
+    participant F as Facilitator
+    participant B as Blockchain
+    Note over F: Optional — server can verify and settle directly
+
+    C->>RS: GET /api
+    RS-->>C: 402 Payment Required (PAYMENT-REQUIRED header)
+    C->>C: Select PaymentRequirements, create PaymentPayload
+    C->>RS: GET /api + PAYMENT-SIGNATURE header
+    RS->>F: POST /verify (PaymentPayload + PaymentRequirements)
+    F-->>RS: Verification Response
+    RS->>RS: Fulfill request
+    RS->>F: POST /settle (PaymentPayload + PaymentRequirements)
+    F->>B: Submit transaction
+    B-->>F: Transaction confirmed
+    F-->>RS: Payment Execution Response
+    RS-->>C: 200 OK + PAYMENT-RESPONSE header + content
+```
 
 The following outlines the flow of a payment using the `x402` protocol. Note that steps (1) and (2) are optional if the client already knows the payment details accepted for a resource.
 
