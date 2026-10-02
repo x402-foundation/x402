@@ -914,7 +914,28 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
         topLevelPrograms.push(addr);
       }
 
-      const disallowedProgram = topLevelPrograms.find(addr => !allowedPrograms.has(addr));
+      const isDisallowed = (addr: string): boolean => !allowedPrograms.has(addr);
+      const disallowedProgram = topLevelPrograms.find(isDisallowed);
+      const distinctDisallowedCount = new Set(topLevelPrograms.filter(isDisallowed)).size;
+
+      // A direct token transaction — one rejected token program, with nothing beside
+      // it but wallet-injected Lighthouse assertions — has no wrapper for Path 2 to
+      // verify: the allowlist error would blame the SPL Token program and bury the
+      // real Path 1 reason (#3268). Path 1 has already rejected it, so only the
+      // reason changes. Any other distinct program disqualifies it (repeats of the
+      // rejected address do not), so the decision does not depend on instruction
+      // order — though the program named in the allowlist error still does.
+      if (
+        distinctDisallowedCount === 1 &&
+        (disallowedProgram === TOKEN_PROGRAM_ADDRESS.toString() ||
+          disallowedProgram === TOKEN_2022_PROGRAM_ADDRESS.toString()) &&
+        topLevelPrograms.every(
+          addr => addr === disallowedProgram || addr === LIGHTHOUSE_PROGRAM_ADDRESS,
+        )
+      ) {
+        return { response: staticResult, verificationPath: null };
+      }
+
       if (disallowedProgram) {
         return {
           response: {
