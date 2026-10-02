@@ -1,0 +1,8 @@
+{
+  "name": "AIBTC MCP Server",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "/logos/aibtc.png",
+  "description": "MCP server for AI agents with x402 tools (@aibtc/mcp-server on npm). Discover, probe, pay for, and scaffold x402-enabled endpoints from any MCP-compatible AI client.",
+  "websiteUrl": "https://www.npmjs.com/package/@aibtc/mcp-server",
+  "githubUrl": "https://github.com/aibtcdev/aibtc-mcp-server"
+}
