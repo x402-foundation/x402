@@ -1,21 +1,6 @@
 import type { PaymentRequired } from "../types";
 import { getSvmTemplate } from "./template-loader";
-
-/**
- * Escapes a string for safe injection into JavaScript string literals
- *
- * @param str - The string to escape
- * @returns The escaped string
- */
-function escapeString(str: string): string {
-  return str
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/'/g, "\\'")
-    .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r")
-    .replace(/\t/g, "\\t");
-}
+import { toScriptJson } from "../scriptJson";
 
 interface SvmPaywallOptions {
   amount: number;
@@ -57,15 +42,15 @@ export function getSvmPaywallHtml(options: SvmPaywallOptions): string {
   <script>
     window.x402 = {
       amount: ${amount},
-      paymentRequired: ${JSON.stringify(paymentRequired)},
+      paymentRequired: ${toScriptJson(paymentRequired)},
       testnet: ${testnet},
-      currentUrl: "${escapeString(currentUrl)}",
+      currentUrl: ${toScriptJson(currentUrl)},
       config: {
         chainConfig: {},
       },
-      appName: "${escapeString(appName || "")}",
-      appLogo: "${escapeString(appLogo || "")}",
-      faucetUrls: ${faucetUrls ? JSON.stringify(faucetUrls) : "undefined"},
+      appName: ${toScriptJson(appName || "")},
+      appLogo: ${toScriptJson(appLogo || "")},
+      faucetUrls: ${faucetUrls ? toScriptJson(faucetUrls) : "undefined"},
     };
     ${logOnTestnet}
   </script>`;
