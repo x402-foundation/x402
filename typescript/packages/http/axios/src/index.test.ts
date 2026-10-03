@@ -734,6 +734,105 @@ describe("wrapAxiosWithPayment()", () => {
     expect(result).toBe(retryResponse);
     expect(MockX402HTTPClient.prototype.processPaymentResult).toHaveBeenCalledTimes(2);
   });
+  it.each([400, 500])(
+    "should fire payment response hooks when the paid retry is rejected with HTTP %i",
+    async status => {
+      const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+      const paidError = createAxiosError(status, createErrorConfig(true), undefined, {
+        "payment-response": "settled",
+      });
+      (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockRejectedValue(paidError);
+      (
+        MockX402HTTPClient.prototype.processPaymentResult as ReturnType<typeof vi.fn>
+      ).mockImplementation(
+        async (_payload: PaymentPayload, getHeader: (name: string) => string | undefined) => {
+          expect(getHeader("PAYMENT-RESPONSE")).toBe("settled");
+          return { recovered: false };
+        },
+      );
+
+      const error = createAxiosError(402, createErrorConfig(), validPaymentRequired);
+
+      await expect(interceptor(error)).rejects.toBe(paidError);
+      expect(MockX402HTTPClient.prototype.processPaymentResult).toHaveBeenCalledTimes(1);
+      expect(MockX402HTTPClient.prototype.processPaymentResult).toHaveBeenCalledWith(
+        validPaymentPayload,
+        expect.any(Function),
+        status,
+      );
+    },
+  );
+
+  it("should not fire payment response hooks when the paid retry fails without a response", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const networkError = new AxiosError("Network Error", "ERR_NETWORK", createErrorConfig(true));
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockRejectedValue(networkError);
+
+    const error = createAxiosError(402, createErrorConfig(), validPaymentRequired);
+
+    await expect(interceptor(error)).rejects.toBe(networkError);
+    expect(MockX402HTTPClient.prototype.processPaymentResult).not.toHaveBeenCalled();
+  });
+
+  it("should recover after a paid retry rejected with an HTTP error", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const paidError = createAxiosError(500, createErrorConfig(true));
+    const successResponse = createAxiosResponse(200, { data: "success" });
+    const freshPaymentPayload: PaymentPayload = {
+      ...validPaymentPayload,
+      payload: { signature: "0xfreshsignature" },
+    };
+
+    (mockClient.createPaymentPayload as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(validPaymentPayload)
+      .mockResolvedValueOnce(freshPaymentPayload);
+    (MockX402HTTPClient.prototype.processPaymentResult as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ recovered: true })
+      .mockResolvedValueOnce({ recovered: false });
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(paidError)
+      .mockResolvedValueOnce(successResponse);
+
+    const error = createAxiosError(402, createErrorConfig(), validPaymentRequired);
+    const result = await interceptor(error);
+
+    expect(result).toBe(successResponse);
+    expect(MockX402HTTPClient.prototype.processPaymentResult).toHaveBeenNthCalledWith(
+      1,
+      validPaymentPayload,
+      expect.any(Function),
+      500,
+    );
+    expect(MockX402HTTPClient.prototype.processPaymentResult).toHaveBeenNthCalledWith(
+      2,
+      freshPaymentPayload,
+      expect.any(Function),
+      200,
+    );
+  });
+
+  it("should fire hooks and rethrow when the recovery retry is rejected with an HTTP error", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const paidError = createAxiosError(500, createErrorConfig(true));
+    const retryError = createAxiosError(400, createErrorConfig());
+
+    (MockX402HTTPClient.prototype.processPaymentResult as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ recovered: true })
+      .mockResolvedValueOnce({ recovered: false });
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(paidError)
+      .mockRejectedValueOnce(retryError);
+
+    const error = createAxiosError(402, createErrorConfig(), validPaymentRequired);
+
+    await expect(interceptor(error)).rejects.toBe(retryError);
+    expect(MockX402HTTPClient.prototype.processPaymentResult).toHaveBeenCalledTimes(2);
+    expect(MockX402HTTPClient.prototype.processPaymentResult).toHaveBeenLastCalledWith(
+      validPaymentPayload,
+      expect.any(Function),
+      400,
+    );
+  });
 });
 
 describe("wrapAxiosWithPaymentFromConfig()", () => {
