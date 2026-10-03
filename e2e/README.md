@@ -70,7 +70,7 @@ These keep local `test.config.json` overlays and/or special orchestration — no
 | Swig smart wallet | Client overlay [`clients/typescript/http/svm-smart-wallet/test.config.json`](clients/typescript/http/svm-smart-wallet/test.config.json) (`protocolFamilies`, `facilitators`, Swig env) + [`scripts/swig-setup.ts`](scripts/swig-setup.ts); uses catalog route `/exact/svm` |
 | Legacy (v1) | `legacy/` trees only — separate configs; do not extend the mechanisms catalog for v1 |
 
-If an SDK implements a route end-to-end (client + server + facilitator), list it in that route’s `sdks`. Omit only when the mechanism package is missing (e.g. Go has no TVM; Python/Go have no AVM/NEAR/XRPL; Python has no SVM upto).
+If an SDK implements a route end-to-end (client + server + facilitator), list it in that route’s `sdks`. Omit only when the mechanism package is missing (e.g. Go has no TVM; Python/Go have no AVM/NEAR/Xahau/XRPL; Python has no SVM upto).
 
 ## Legacy
 
@@ -215,6 +215,7 @@ CLIENT_CARDANO_MNEMONIC=...         # Cardano wallet mnemonic (24 words) for cli
 CLIENT_TVM_PRIVATE_KEY=...          # TVM private key for client payments
 CLIENT_NEAR_ACCOUNT_ID=...          # NEAR payer account id that owns the access key
 CLIENT_NEAR_PRIVATE_KEY=ed25519:... # NEAR private key for that payer account
+CLIENT_XAHAU_SEED=s...              # Xahau seed for client payments (ed25519 or secp256k1; payer signs and pays fees)
 CLIENT_XRPL_SEED=s...               # XRPL seed for client payments (payer signs and pays fees)
 
 # Server payment addresses
@@ -229,6 +230,7 @@ SERVER_KEETA_ADDRESS=keeta_...      # Where servers receive Keeta payments
 SERVER_STELLAR_ADDRESS=...          # Where servers receive Stellar payments
 SERVER_TVM_ADDRESS=...              # Where servers receive TVM payments
 SERVER_NEAR_ADDRESS=...             # Where servers receive NEAR payments (merchant account)
+SERVER_XAHAU_ADDRESS=r...           # Where servers receive Xahau payments
 SERVER_XRPL_ADDRESS=r...            # Where servers receive XRPL payments
 
 # Facilitator wallets (⚠️ TEST WALLETS ONLY — used to fund/drain client between tests)
@@ -248,6 +250,7 @@ FACILITATOR_TVM_PRIVATE_KEY=...     # TVM private key for facilitator
 FACILITATOR_NEAR_ACCOUNT_ID=...     # NEAR relayer account id (submits meta-tx, sponsors gas)
 FACILITATOR_NEAR_PRIVATE_KEY=ed25519:... # NEAR relayer private key
 FACILITATOR_CARDANO_MNEMONIC=...    # Optional: the Cardano facilitator only broadcasts, so it runs provider-only without a mnemonic
+# Xahau needs no facilitator wallet — the facilitator is keyless (payer signs and pays fees)
 # XRPL needs no facilitator wallet — the facilitator is keyless (payer signs and pays fees)
 
 # Casper CEP-18 support

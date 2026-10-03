@@ -34,6 +34,7 @@
     "@x402/svm": "workspace:*",
     "@x402/stellar": "workspace:*",
     "@x402/tvm": "workspace:*",
+    "@x402/xahau": "workspace:*",
     "@x402/xrpl": "workspace:*",
     "@x402/extensions": "workspace:*"
   },

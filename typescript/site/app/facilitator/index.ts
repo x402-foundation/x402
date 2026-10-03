@@ -35,6 +35,8 @@ import { ExactSvmScheme } from "@x402/svm/exact/facilitator";
 import { ExactSvmSchemeV1 } from "@x402/svm/exact/v1/facilitator";
 import { toFacilitatorAvmSigner } from "@x402/avm";
 import { ExactAvmScheme } from "@x402/avm/exact/facilitator";
+import { XAHAU_TESTNET } from "@x402/xahau";
+import { ExactXahauScheme } from "@x402/xahau/exact/facilitator";
 import { XRPL_TESTNET } from "@x402/xrpl";
 import { ExactXrplScheme } from "@x402/xrpl/exact/facilitator";
 import { createWalletClient, http, publicActions } from "viem";
@@ -42,7 +44,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
 
 /**
- * Initialize and configure the x402 facilitator with EVM, SVM, AVM, Aptos, Stellar, Hedera, Keeta, and XRPL support
+ * Initialize and configure the x402 facilitator with EVM, SVM, AVM, Aptos, Stellar, Hedera, Keeta, Xahau, and XRPL support
  * This is called lazily on first use to support Next.js module loading
  *
  * @returns A configured x402Facilitator instance
@@ -274,6 +276,16 @@ async function createFacilitator(): Promise<x402Facilitator> {
     facilitator.register(
       "hedera:testnet",
       new ExactHederaScheme(hederaSigner, { aliasPolicy: "reject" }),
+    );
+  }
+
+  // Optionally register Xahau if enabled. Like XRPL, it is keyless: the payer
+  // signs the transaction and pays its fee (including Hook execution).
+  if (process.env.FACILITATOR_XAHAU_ENABLED === "true") {
+    const xahauWsUrl = process.env.FACILITATOR_XAHAU_TESTNET_WS_URL;
+    facilitator.register(
+      XAHAU_TESTNET,
+      new ExactXahauScheme(xahauWsUrl ? { wsUrlByNetwork: { [XAHAU_TESTNET]: xahauWsUrl } } : {}),
     );
   }
 

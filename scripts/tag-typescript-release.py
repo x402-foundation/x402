@@ -49,6 +49,7 @@ PUBLISHED_PACKAGES = [
     "@x402/near",
     "@x402/concordium",
     "@x402/tvm",
+    "@x402/xahau",
     "@x402/xrpl",
     "@x402/paywall",
     "@x402/axios",

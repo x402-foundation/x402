@@ -1,6 +1,6 @@
 # x402 Facilitator
 
-A standalone [Next.js](https://nextjs.org) service that runs the x402 testnet facilitator. It exposes the facilitator API used to verify and settle x402 payments across EVM, SVM, AVM, Aptos, Stellar, Hedera, Keeta, and XRPL.
+A standalone [Next.js](https://nextjs.org) service that runs the x402 testnet facilitator. It exposes the facilitator API used to verify and settle x402 payments across EVM, SVM, AVM, Aptos, Stellar, Hedera, Keeta, Xahau, and XRPL.
 
 ## Endpoints
 
@@ -27,7 +27,7 @@ pnpm install
 
 ### Configuration
 
-Configure environment variables in `.env`. EVM and SVM keys are required; other networks are registered only when their variables are present (XRPL, which needs no key, is enabled by an explicit `FACILITATOR_XRPL_ENABLED=true` flag).
+Configure environment variables in `.env`. EVM and SVM keys are required; other networks are registered only when their variables are present (Xahau and XRPL, which need no key, are enabled by explicit `FACILITATOR_XAHAU_ENABLED=true` / `FACILITATOR_XRPL_ENABLED=true` flags).
 
 ```bash
 # Required
@@ -50,6 +50,13 @@ FACILITATOR_HEDERA_PRIVATE_KEY=your_hedera_ecdsa_private_key
 FACILITATOR_KEETA_MNEMONIC=...
 # Number of signers to derive from the mnemonic for concurrent settlement (each must be funded).
 # FACILITATOR_KEETA_SIGNER_AMOUNT=2
+
+# Optional: Xahau (registers xahau:21338 testnet). No key or funds are needed:
+# the payer signs the transaction and pays its fee, and the facilitator only
+# verifies and submits the signed blob.
+# FACILITATOR_XAHAU_ENABLED=true
+# Optional override for the default public testnet WebSocket endpoint.
+# FACILITATOR_XAHAU_TESTNET_WS_URL=wss://xahau-test.net
 
 # Optional: XRPL (registers xrpl:1 testnet). No key or funds are needed: the
 # payer signs the transaction and pays its fee, and the facilitator only

@@ -37,10 +37,12 @@
     "@x402/stellar": "workspace:*",
     "@x402/svm": "workspace:*",
     "@x402/tvm": "workspace:*",
+    "@x402/xahau": "workspace:*",
     "@x402/xrpl": "workspace:*",
     "axios": "1.12.2",
     "viem": "^2.48.11",
     "ws": "^8.18.0",
+    "xahau": "^4.1.1",
     "xrpl": "^4.6.0"
   },
   "devDependencies": {

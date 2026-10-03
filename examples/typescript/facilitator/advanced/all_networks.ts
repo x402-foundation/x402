@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
+ * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xahau" before "xrpl").
  */
 
 import {
@@ -77,6 +77,8 @@ import {
   TVM_PROVIDER_TONCENTER,
 } from "@x402/tvm";
 import { ExactTvmScheme } from "@x402/tvm/exact/facilitator";
+import { XAHAU_TESTNET } from "@x402/xahau";
+import { ExactXahauScheme } from "@x402/xahau/exact/facilitator";
 import { XRPL_TESTNET } from "@x402/xrpl";
 import { ExactXrplScheme } from "@x402/xrpl/exact/facilitator";
 import dotenv from "dotenv";
@@ -123,6 +125,9 @@ const tvmPrivateKey = process.env.TVM_PRIVATE_KEY as string | undefined;
 const hederaAccountId = process.env.HEDERA_ACCOUNT_ID;
 // Hedera private key should be an ECDSA key string (0x-prefixed or DER-encoded).
 const hederaPrivateKey = process.env.HEDERA_PRIVATE_KEY;
+// Xahau is keyless for the facilitator: the payer signs and pays fees.
+const xahauNetwork = process.env.XAHAU_NETWORK || XAHAU_TESTNET;
+const xahauWsUrl = process.env.XAHAU_WS_URL as string | undefined;
 // XRPL is keyless for the facilitator: the payer signs and pays fees.
 const xrplNetwork = process.env.XRPL_NETWORK || XRPL_TESTNET;
 const xrplWsUrl = process.env.XRPL_WS_URL as string | undefined;
@@ -162,6 +167,7 @@ const NEAR_NETWORK = nearNetwork as Network; // NEAR Testnet
 const SVM_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"; // Solana Devnet
 const STELLAR_NETWORK = "stellar:testnet"; // Stellar Testnet
 const TVM_NETWORK = (process.env.TVM_NETWORK || "tvm:-3") as Network; // TON Testnet
+const XAHAU_NETWORK = xahauNetwork as Network; // Xahau Testnet
 const XRPL_NETWORK = xrplNetwork as Network; // XRPL Testnet
 
 // Initialize the x402 Facilitator
@@ -438,6 +444,25 @@ if (tvmPrivateKey) {
   );
 
   facilitator.register(TVM_NETWORK, new ExactTvmScheme(tvmSigner));
+}
+
+// Register Xahau scheme if XAHAU_NETWORK is set. Like XRPL, it is keyless.
+if (process.env.XAHAU_NETWORK) {
+  facilitator.register(
+    XAHAU_NETWORK,
+    new ExactXahauScheme(
+      xahauWsUrl
+        ? {
+            wsUrlByNetwork: {
+              [XAHAU_NETWORK as `xahau:${number}`]: xahauWsUrl,
+            },
+          }
+        : {},
+    ),
+  );
+  console.info(
+    `Xahau facilitator enabled on ${XAHAU_NETWORK} (payer-signed transactions; no facilitator signer)`,
+  );
 }
 
 // Register XRPL scheme if XRPL_NETWORK is set. XRPL is keyless: the payer

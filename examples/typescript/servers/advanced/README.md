@@ -84,6 +84,9 @@ and fill required environment variables:
 - `STELLAR_ADDRESS` - Stellar public address (starts with `G`) to receive payments
 - `HEDERA_ACCOUNT_ID` - Hedera account id to receive payments (optional for `all-networks`; format: `0.0.XXXXX`)
 - `KEETA_ADDRESS` - Keeta address (starts with `keeta_`) to receive payments
+- `XAHAU_ADDRESS` - Xahau classic address (starts with `r`) to receive payments (optional for `all-networks`)
+- `XAHAU_NETWORK` - Xahau network CAIP-2 (optional, defaults to `xahau:21338` Xahau Testnet)
+- `XAHAU_AMOUNT` - Xahau price in drops (optional, defaults to `1000` = 0.001 XAH)
 - `XRPL_ADDRESS` - XRPL classic address (starts with `r`) to receive payments (optional for `all-networks`)
 - `XRPL_NETWORK` - XRPL network CAIP-2 (optional, defaults to `xrpl:1` XRPL Testnet)
 - `XRPL_AMOUNT` - XRPL price in drops (optional, defaults to `1000` = 0.001 XRP)
@@ -140,6 +143,13 @@ For testing on Aptos testnet, you can obtain test tokens from these faucets:
 
 - **Test APT**: https://aptos.dev/network/faucet or through an account on [geomi.dev](https://geomi.dev/manage/faucet)
 - **Test USDC**: https://faucet.circle.com/
+
+#### Xahau Testnet
+
+The receiving account must exist on the ledger, i.e. hold the base reserve (1 XAH at the time of writing):
+
+1. Use the [Xahau Testnet faucet](https://xahau.network/docs/features/faucet-and-explorer/) to generate a funded account, and copy its classic address (starts with `r`) into `XAHAU_ADDRESS`.
+2. The `all-networks` example prices in XAH drops, so no further setup is needed. If the receiving account has Hooks installed, their execution fees are paid by the payer and must fit under the facilitator's `maxFeeDrops` (default 0.1 XAH).
 
 #### XRPL Testnet
 

@@ -12,6 +12,7 @@ Express.js facilitator service demonstrating advanced x402 patterns including al
 - Hedera account id + private key for Hedera testnet fees (optional)
 - Keeta mnemonic (seed phrase) and wallet with Testnet KTA for transaction fees (create wallet on [Keeta Testnet Wallet](https://wallet.test.keeta.com/) and fund via [Keeta Testnet Faucet](https://faucet.test.keeta.com/))
 - Cardano: a Blockfrost project id (preprod/preview) for chain queries and submission, plus an optional facilitator mnemonic — the facilitator only broadcasts the client's signed transaction, so it needs **no funds**
+- No Xahau account or key: the Xahau facilitator is keyless (the payer signs and pays transaction fees); set `XAHAU_NETWORK` to enable it (optional)
 - No XRPL account or key: the XRPL facilitator is keyless (the payer signs and pays transaction fees); set `XRPL_NETWORK` to enable it (optional)
 - Casper private key with testnet CSPR for transaction fees (fund via the [CSPR.live testnet faucet](https://testnet.cspr.live/tools/faucet))
 
@@ -44,6 +45,8 @@ and fill required environment variables:
 - `CARDANO_NETWORK` - Cardano network (optional, defaults to `cardano:preprod`)
 - `CARDANO_L1_CONFIRMATIONS` - Optional confirmation policy (`-1..20`; `-1` enables mempool settlement)
 - `BLOCKFROST_PROJECT_ID` / `BLOCKFROST_PREPROD_URL` - Blockfrost project id + endpoint (required for Cardano chain queries and submission)
+- `XAHAU_NETWORK` - Xahau network CAIP-2 (e.g., `xahau:21338` for Xahau Testnet); set to enable the keyless Xahau scheme (optional; `all-networks`)
+- `XAHAU_WS_URL` - Custom Xahau WebSocket endpoint (optional, defaults to the public endpoint for `XAHAU_NETWORK`)
 - `XRPL_NETWORK` - XRPL network CAIP-2 (e.g., `xrpl:1` for XRPL Testnet); set to enable the keyless XRPL scheme (optional; `all-networks`)
 - `XRPL_WS_URL` - Custom XRPL WebSocket endpoint (optional, defaults to the public endpoint for `XRPL_NETWORK`)
 - `PORT` - Server port (optional, defaults to 4022)
@@ -309,5 +312,7 @@ Networks use [CAIP-2](https://github.com/ChainAgnostic/CAIPs/blob/main/CAIPs/cai
 - `cardano:mainnet` — Cardano Mainnet
 - `cardano:preprod` — Cardano Preprod Testnet
 - `cardano:preview` — Cardano Preview Testnet
+- `xahau:21338` — Xahau Testnet
+- `xahau:21337` — Xahau Mainnet
 - `xrpl:1` — XRPL Testnet
 - `xrpl:0` — XRPL Mainnet

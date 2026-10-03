@@ -1,0 +1,96 @@
+{
+  "env": {
+    "SERVER_XAHAU_ADDRESS": {
+      "required": true,
+      "roles": [
+        "server"
+      ]
+    },
+    "CLIENT_XAHAU_SEED": {
+      "required": true,
+      "roles": [
+        "client"
+      ]
+    },
+    "SERVER_XAHAU_AMOUNT": {
+      "required": false,
+      "roles": [
+        "server"
+      ]
+    }
+  },
+  "testnet": {
+    "name": "Xahau Testnet",
+    "caip2": "xahau:21338",
+    "rpcUrlDefault": "wss://xahau-test.net"
+  },
+  "mainnet": {
+    "name": "Xahau",
+    "caip2": "xahau:21337",
+    "rpcUrlDefault": "wss://xahau.network"
+  },
+  "routes": {
+    "/exact/xahau/sequence": {
+      "scheme": "exact",
+      "assetTransferMethod": "sequence",
+      "sdks": [
+        "typescript"
+      ],
+      "price": {
+        "amount": "1000",
+        "amountEnv": "SERVER_XAHAU_AMOUNT",
+        "asset": "XAH"
+      },
+      "extensions": [
+        "bazaar"
+      ]
+    },
+    "/exact/xahau/sequence/upfront": {
+      "scheme": "exact",
+      "assetTransferMethod": "sequence",
+      "sdks": [
+        "typescript"
+      ],
+      "paymentFlow": "upfront",
+      "price": {
+        "amount": "1000",
+        "amountEnv": "SERVER_XAHAU_AMOUNT",
+        "asset": "XAH"
+      },
+      "extensions": [
+        "bazaar"
+      ]
+    },
+    "/exact/xahau/ticketSequence": {
+      "scheme": "exact",
+      "assetTransferMethod": "ticketSequence",
+      "sdks": [
+        "typescript"
+      ],
+      "price": {
+        "amount": "1000",
+        "amountEnv": "SERVER_XAHAU_AMOUNT",
+        "asset": "XAH"
+      },
+      "extensions": [
+        "bazaar"
+      ]
+    },
+    "/exact/xahau/ticketSequence/upfront": {
+      "scheme": "exact",
+      "assetTransferMethod": "ticketSequence",
+      "sdks": [
+        "typescript"
+      ],
+      "paymentFlow": "upfront",
+      "price": {
+        "amount": "1000",
+        "amountEnv": "SERVER_XAHAU_AMOUNT",
+        "asset": "XAH"
+      },
+      "extensions": [
+        "bazaar"
+      ]
+    }
+  }
+}

@@ -37,6 +37,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | keeta | ✅ | ❌ | ❌ |
 | near | ✅ | ❌ | ❌ |
 | ccd (Concordium) | ✅ | ❌ | ❌ |
+| xahau | ✅ | ❌ | ❌ |
 | xrpl | ✅ | ❌ | ❌ |
 | cardano | ✅ | ❌ | ❌ |
 
@@ -56,6 +57,8 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | exact | keeta | - | ✅ | ❌ | ❌ |
 | exact | near | - | ✅ | ❌ | ❌ |
 | exact | ccd (Concordium) | sponsored V1 | ✅ | ❌ | ❌ |
+| exact | xahau | `sequence` | ✅ | ❌ | ❌ |
+| exact | xahau | `ticketSequence` | ✅ | ❌ | ❌ |
 | exact | xrpl | `sequence` | ✅ | ❌ | ❌ |
 | exact | xrpl | `ticketSequence` | ✅ | ❌ | ❌ |
 | exact | cardano | `default` | ✅ | ❌ | ❌ |

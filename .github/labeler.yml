@@ -171,6 +171,14 @@ tvm:
           - 'go/signers/tvm/**'
           - 'python/x402/mechanisms/tvm/**'
           - 'specs/schemes/**/scheme_*_tvm.md'
+xahau:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'typescript/packages/mechanisms/xahau/**'
+          - 'go/mechanisms/xahau/**'
+          - 'go/signers/xahau/**'
+          - 'python/x402/mechanisms/xahau/**'
+          - 'specs/schemes/**/scheme_*_xahau.md'
 xrpl:
   - changed-files:
       - any-glob-to-any-file:

@@ -17,12 +17,13 @@ x402 uses [CAIP-2](https://chainagnostic.org/CAIPs/caip-2) standard network iden
 - **Keeta**: `keeta:<networkId>` (e.g., `keeta:21378` for mainnet)
 - **NEAR**: `near:<network>` (`mainnet` or `testnet`)
 - **Concordium**: `ccd:<genesisHash>` (e.g., `ccd:9dd9ca4d19e9393877d2c44b70f89acb` for mainnet)
+- **Xahau**: `xahau:<networkId>` (`xahau:21337` for mainnet, `xahau:21338` for testnet)
 - **XRPL**: `xrpl:<networkId>` (e.g., `xrpl:0` for mainnet, `xrpl:1` for testnet)
 - **Cardano**: `cardano:<network>` (`mainnet`, `preprod`, or `preview`). CIP-34 aliases (`cip34:1-764824073`, `cip34:0-1`, `cip34:0-2`) are accepted as input aliases and normalized to the canonical form.
 
 ## Token Support
 
-x402 supports tokens on EVM, Solana, TON, Algorand (AVM), Stellar, Aptos, Hedera, Keeta, NEAR, Concordium, XRPL, and Cardano networks:
+x402 supports tokens on EVM, Solana, TON, Algorand (AVM), Stellar, Aptos, Hedera, Keeta, NEAR, Concordium, Xahau, XRPL, and Cardano networks:
 
 | Ecosystem | Supported Tokens | Transfer Method |
 |-----------|------------------|-----------------|
@@ -36,6 +37,7 @@ x402 supports tokens on EVM, Solana, TON, Algorand (AVM), Stellar, Aptos, Hedera
 | **Keeta** | Any Keeta token | `SEND` operation |
 | **NEAR** | Any NEP-141 token | NEP-366 `SignedDelegate` authorizing `ft_transfer` |
 | **Concordium** | CCD or any PLT token (e.g., EURR) | Sponsored V1 transfer |
+| **Xahau** | XAH or any issued currency | Payer-signed `Payment` transaction |
 | **XRPL** | XRP or any issued currency (e.g., RLUSD) | Payer-signed `Payment` transaction |
 | **Cardano** | ADA (lovelace) or any Cardano Native Token (e.g., USDM) | Client-signed, facilitator-submitted transaction |
 
@@ -357,7 +359,7 @@ Video Guide: [Adding EVM Chains to x402](https://x.com/jaycoolh/status/192085155
 
 Key takeaways:
 
-* **Any EVM chain** is supported via `eip155:<chainId>` — plus Solana, TON (TVM), Algorand (AVM), Stellar, Aptos, Hedera, Keeta, NEAR, Concordium, XRPL, and Cardano
+* **Any EVM chain** is supported via `eip155:<chainId>` — plus Solana, TON (TVM), Algorand (AVM), Stellar, Aptos, Hedera, Keeta, NEAR, Concordium, Xahau, XRPL, and Cardano
 * [Default assets](#default-assets-for-dollar-string-pricing) are a convenience for `"$0.01"` dollar-string pricing; explicit `TokenAmount` works on any chain
 * Any ERC-20 token works on any EVM facilitator (via EIP-3009 or Permit2)
 * CAIP-2 identifiers provide unambiguous cross-chain support

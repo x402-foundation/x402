@@ -54,6 +54,9 @@ There are pre-configured [examples available in the x402 repo](https://github.co
     # For NEAR support, also add:
     npm install @x402/near
 
+    # For Xahau support, also add:
+    npm install @x402/xahau
+
     # For XRPL support, also add:
     npm install @x402/xrpl
     ```
@@ -257,6 +260,18 @@ const nearSigner = createClientNearSigner({
   accountId: "alice.testnet",
   secretKey: process.env.NEAR_SECRET_KEY!, // ed25519:... full-access key
 });
+```
+
+#### Xahau
+
+Use `@x402/xahau` to instantiate a signer:
+
+```typescript
+import { Wallet } from "xahau";
+import { createXahauWalletSigner } from "@x402/xahau";
+
+// ed25519 seed; pass { algorithm: ECDSA.secp256k1 } for secp256k1 seeds (e.g. from the testnet faucet)
+const xahauSigner = createXahauWalletSigner(Wallet.fromSeed(process.env.XAHAU_SEED!));
 ```
 
 #### XRPL
@@ -600,6 +615,14 @@ You can register multiple payment schemes to handle different networks:
     });
     client.register("near:*", new ExactNearScheme(nearSigner));
 
+    // For Xahau support, also add (XAH is not a USD default asset, so allow it in spendControls):
+    import { Wallet as XahauWallet } from "xahau";
+    import { createXahauWalletSigner } from "@x402/xahau";
+    import { ExactXahauScheme } from "@x402/xahau/exact/client";
+
+    const xahauSigner = createXahauWalletSigner(XahauWallet.fromSeed(process.env.XAHAU_SEED!));
+    client.register("xahau:*", new ExactXahauScheme(xahauSigner));
+
     // For XRPL support, also add:
     import { Wallet } from "xrpl";
     import { createXrplWalletSigner } from "@x402/xrpl";
@@ -819,7 +842,7 @@ try {
 
 ### Summary
 
-* Install x402 client packages (`@x402/fetch` or `@x402/axios`) and mechanism packages (`@x402/evm`, `@x402/svm`, `@x402/tvm`, `@x402/aptos`, `@x402/keeta`, `@x402/near`, `@x402/xrpl`)
+* Install x402 client packages (`@x402/fetch` or `@x402/axios`) and mechanism packages (`@x402/evm`, `@x402/svm`, `@x402/tvm`, `@x402/aptos`, `@x402/keeta`, `@x402/near`, `@x402/xahau`, `@x402/xrpl`)
 * Create a wallet signer
 * Create an `x402Client` and register payment schemes (`exact` for fixed-price, `upto` for usage-based billing, `batch-settlement` for batched EVM micropayments when the server advertises it)
 * Use the provided wrapper/interceptor to make paid API requests

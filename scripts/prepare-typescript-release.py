@@ -67,6 +67,7 @@ PUBLISH_WORKFLOWS = [
             ("@x402/keeta", "Publish @x402/keeta package to NPM"),
             ("@x402/near", "Publish @x402/near package to NPM"),
             ("@x402/concordium", "Publish @x402/concordium package to NPM"),
+            ("@x402/xahau", "Publish @x402/xahau package to NPM"),
             ("@x402/xrpl", "Publish @x402/xrpl package to NPM"),
         ],
     ),

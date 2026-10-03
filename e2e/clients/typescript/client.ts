@@ -27,6 +27,9 @@ import { ExactTvmScheme } from "@x402/tvm/exact/client";
 import { toClientTvmSigner, TVM_PROVIDER_TONAPI, TVM_PROVIDER_TONCENTER } from "@x402/tvm";
 import { createClientNearSigner, type ClientNearSignerConfig } from "@x402/near";
 import { ExactNearScheme as ExactNearClientScheme } from "@x402/near/exact/client";
+import { createXahauWalletSigner } from "@x402/xahau";
+import { ExactXahauScheme as ExactXahauClientScheme } from "@x402/xahau/exact/client";
+import { decodeSeed, ECDSA, Wallet as XahauWallet } from "xahau";
 import { createXrplWalletSigner } from "@x402/xrpl";
 import { ExactXrplScheme as ExactXrplClientScheme } from "@x402/xrpl/exact/client";
 import { Wallet } from "xrpl";
@@ -365,6 +368,22 @@ export async function createE2EClient(): Promise<E2EClientContext> {
     schemes.push({
       network: networkCaip2Pattern("cardano"),
       client: new ExactCardanoClientScheme(cardanoSigner),
+    });
+  }
+  if (process.env.CLIENT_XAHAU_SEED) {
+    const xahauSeed = process.env.CLIENT_XAHAU_SEED;
+    const xahauNetwork = resolveNetworkCaip2("xahau") as `xahau:${number}`;
+    const algorithm =
+      decodeSeed(xahauSeed).type === "ed25519" ? ECDSA.ed25519 : ECDSA.secp256k1;
+    const xahauSigner = createXahauWalletSigner(XahauWallet.fromSeed(xahauSeed, { algorithm }));
+    schemes.push({
+      network: networkCaip2Pattern("xahau"),
+      client: new ExactXahauClientScheme(
+        xahauSigner,
+        process.env.XAHAU_RPC_URL
+          ? { wsUrlByNetwork: { [xahauNetwork]: process.env.XAHAU_RPC_URL } }
+          : {},
+      ),
     });
   }
   if (process.env.CLIENT_XRPL_SEED) {

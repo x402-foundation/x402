@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
+ * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xahau" before "xrpl").
  */
 
 import {
@@ -44,6 +44,9 @@ import { ExactHederaScheme } from "@x402/hedera/exact/client";
 import { createClientHederaSigner, PrivateKey } from "@x402/hedera";
 import { toClientTvmSigner, TVM_PROVIDER_TONAPI, TVM_PROVIDER_TONCENTER } from "@x402/tvm";
 import { keyPairFromSeed, type KeyPair } from "@ton/crypto";
+import { createXahauWalletSigner, XAHAU_TESTNET } from "@x402/xahau";
+import { ExactXahauScheme } from "@x402/xahau/exact/client";
+import { decodeSeed, ECDSA, Wallet as XahauWallet } from "xahau";
 import { createXrplWalletSigner, XRPL_TESTNET } from "@x402/xrpl";
 import { ExactXrplScheme } from "@x402/xrpl/exact/client";
 import { Wallet } from "xrpl";
@@ -82,6 +85,9 @@ const hederaNetwork = process.env.HEDERA_NETWORK || "hedera:testnet";
 const tvmPrivateKey = process.env.TVM_PRIVATE_KEY as string | undefined;
 const tvmNetwork = process.env.TVM_NETWORK || "tvm:-3";
 const tvmProvider = (process.env.TVM_PROVIDER || TVM_PROVIDER_TONCENTER).toLowerCase();
+const xahauSeed = process.env.XAHAU_SEED as string | undefined;
+const xahauNetwork = (process.env.XAHAU_NETWORK || XAHAU_TESTNET) as Network;
+const xahauWsUrl = process.env.XAHAU_WS_URL as string | undefined;
 const xrplSeed = process.env.XRPL_SEED as string | undefined;
 const xrplNetwork = (process.env.XRPL_NETWORK || XRPL_TESTNET) as Network;
 const xrplWsUrl = process.env.XRPL_WS_URL as string | undefined;
@@ -128,16 +134,18 @@ async function main(): Promise<void> {
     !stellarPrivateKey &&
     !(hederaAccountId && hederaPrivateKey) &&
     !tvmPrivateKey &&
+    !xahauSeed &&
     !xrplSeed
   ) {
     console.error(
-      "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CARDANO_MNEMONIC, CASPER_PRIVATE_KEY, CCD_PRIVATE_KEY + CCD_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_ACCOUNT_ID + NEAR_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY, TVM_PRIVATE_KEY, or XRPL_SEED is required",
+      "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CARDANO_MNEMONIC, CASPER_PRIVATE_KEY, CCD_PRIVATE_KEY + CCD_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_ACCOUNT_ID + NEAR_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY, TVM_PRIVATE_KEY, XAHAU_SEED, or XRPL_SEED is required",
     );
     process.exit(1);
   }
 
   const client = new x402Client().setSpendControls({
     allowedAssets: [
+      { network: "xahau:*", asset: "XAH" },
       { network: "xrpl:*", asset: "XRP" },
       { network: "ccd:*", asset: "CCD" },
     ],
@@ -269,6 +277,21 @@ async function main(): Promise<void> {
     });
     client.register("tvm:*", new ExactTvmScheme(tvmSigner));
     console.log(`Initialized TVM account: ${tvmSigner.address}`);
+  }
+
+  // Register Xahau scheme if seed is provided
+  if (xahauSeed) {
+    // Faucet seeds are secp256k1; xahau.js defaults to ed25519 unless told otherwise.
+    const algorithm = decodeSeed(xahauSeed).type === "ed25519" ? ECDSA.ed25519 : ECDSA.secp256k1;
+    const xahauSigner = createXahauWalletSigner(XahauWallet.fromSeed(xahauSeed, { algorithm }));
+    client.register(
+      xahauNetwork,
+      new ExactXahauScheme(
+        xahauSigner,
+        xahauWsUrl ? { wsUrlByNetwork: { [xahauNetwork as `xahau:${number}`]: xahauWsUrl } } : {},
+      ),
+    );
+    console.log(`Initialized Xahau account: ${xahauSigner.classicAddress} on ${xahauNetwork}`);
   }
 
   // Register XRPL scheme if seed is provided

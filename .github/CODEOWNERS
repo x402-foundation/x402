@@ -23,6 +23,7 @@
 #   @x402-foundation/keeta       — Keeta network maintainers
 #   @x402-foundation/near        — NEAR network maintainers
 #   @x402-foundation/tvm         — TVM (TON) network maintainers
+#   @x402-foundation/xahau       — Xahau network maintainers
 #   @x402-foundation/xrpl        — XRPL network maintainers
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -217,6 +218,11 @@
 /python/x402/mechanisms/tvm/                                              @x402-foundation/tvm
 /python/x402/tests/unit/mechanisms/tvm/                                   @x402-foundation/tvm
 /.github/workflows/publish_npm_scoped_x402_tvm.yml                        @x402-foundation/tvm
+
+# ── Xahau ─────────────────────────────────────────────────────────────────────
+/specs/schemes/**/scheme_*_xahau.md                                       @x402-foundation/xahau
+/typescript/packages/mechanisms/xahau/                                      @x402-foundation/xahau
+/.github/workflows/publish_npm_scoped_x402_xahau.yml                      @x402-foundation/xahau
 
 # ── XRPL ──────────────────────────────────────────────────────────────────────
 /specs/schemes/**/scheme_*_xrpl.md                                        @x402-foundation/xrpl

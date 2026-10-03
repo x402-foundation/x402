@@ -53,6 +53,9 @@ and fill required environment variables:
 - `HEDERA_PRIVATE_KEY` - Hedera **ECDSA** private key (0x-prefixed or DER-encoded) for Hedera payments (optional)
 - `HEDERA_NETWORK` - Hedera network (optional, defaults to `hedera:testnet`)
 - `KEETA_MNEMONIC` - Keeta mnemonic for Keeta payments
+- `XAHAU_SEED` - Xahau family seed (starts with `s`; ed25519 or secp256k1) for Xahau payments (optional; `all-networks`)
+- `XAHAU_NETWORK` - Xahau network CAIP-2 (optional, defaults to `xahau:21338` Xahau Testnet)
+- `XAHAU_WS_URL` - Custom Xahau WebSocket endpoint (optional, defaults to the public endpoint for `XAHAU_NETWORK`)
 - `XRPL_SEED` - XRPL family seed (starts with `s`) for XRPL payments (optional; `all-networks`)
 - `XRPL_NETWORK` - XRPL network CAIP-2 (optional, defaults to `xrpl:1` XRPL Testnet)
 - `XRPL_WS_URL` - Custom XRPL WebSocket endpoint (optional, defaults to the public endpoint for `XRPL_NETWORK`)
@@ -114,6 +117,13 @@ To get test PLT, there is no universal public faucet for arbitrary PLT symbols. 
 
 1. Use a token issuer's own test distribution for the symbol you want to use, or
 2. Request your own PLT issuance on testnet, then mint/distribute balances from the nominated governance account. Official guide: [Request PLT](https://docs.concordium.com/en/mainnet/tutorials/plt/request-plt.html).
+
+#### Xahau Testnet
+
+To create and fund a Xahau Testnet payer account:
+
+1. Use the [Xahau Testnet faucet](https://xahau.network/docs/features/faucet-and-explorer/) to generate a funded account, and copy its secret (starts with `s`) into `XAHAU_SEED`.
+2. Keep the base reserve funded (1 XAH at the time of writing; the faucet funding is more than enough). The `all-networks` example pays in XAH drops, so no further setup is needed.
 
 #### XRPL Testnet
 

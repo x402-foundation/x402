@@ -2092,6 +2092,67 @@ importers:
         specifier: ^3.2.7
         version: 3.2.7(@types/debug@4.1.12)(@types/node@22.16.0)(jiti@1.21.7)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(terser@5.46.2)(tsx@4.21.0)(yaml@2.8.1)
 
+  ../typescript/packages/mechanisms/xahau:
+    dependencies:
+      '@x402/core':
+        specifier: workspace:~
+        version: link:../../core
+      xahau:
+        specifier: ^4.1.1
+        version: 4.1.1(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+    devDependencies:
+      '@eslint/js':
+        specifier: ^9.24.0
+        version: 9.38.0
+      '@types/node':
+        specifier: ^22.13.4
+        version: 22.16.0
+      '@typescript-eslint/eslint-plugin':
+        specifier: ^8.29.1
+        version: 8.48.0(@typescript-eslint/parser@8.48.0(eslint@9.38.0(jiti@1.21.7))(typescript@5.8.3))(eslint@9.38.0(jiti@1.21.7))(typescript@5.8.3)
+      '@typescript-eslint/parser':
+        specifier: ^8.29.1
+        version: 8.48.0(eslint@9.38.0(jiti@1.21.7))(typescript@5.8.3)
+      '@vitest/coverage-v8':
+        specifier: ^3.2.7
+        version: 3.2.7(vitest@3.2.7(@types/debug@4.1.12)(@types/node@22.16.0)(jiti@1.21.7)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(terser@5.46.2)(tsx@4.21.0)(yaml@2.8.1))
+      eslint:
+        specifier: ^9.24.0
+        version: 9.38.0(jiti@1.21.7)
+      eslint-plugin-import:
+        specifier: ^2.31.0
+        version: 2.32.0(@typescript-eslint/parser@8.48.0(eslint@9.38.0(jiti@1.21.7))(typescript@5.8.3))(eslint-import-resolver-typescript@3.10.1)(eslint@9.38.0(jiti@1.21.7))
+      eslint-plugin-jsdoc:
+        specifier: ^50.6.9
+        version: 50.8.0(eslint@9.38.0(jiti@1.21.7))
+      eslint-plugin-prettier:
+        specifier: ^5.2.6
+        version: 5.5.4(eslint@9.38.0(jiti@1.21.7))(prettier@3.5.2)
+      eslint-plugin-sonarjs:
+        specifier: ^3.0.7
+        version: 3.0.7(eslint@9.38.0(jiti@1.21.7))
+      prettier:
+        specifier: 3.5.2
+        version: 3.5.2
+      tsup:
+        specifier: ^8.4.0
+        version: 8.5.0(jiti@1.21.7)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.8.3)(yaml@2.8.1)
+      tsx:
+        specifier: ^4.21.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.3
+        version: 5.8.3
+      vite:
+        specifier: ^6.2.6
+        version: 6.4.1(@types/node@22.16.0)(jiti@1.21.7)(terser@5.46.2)(tsx@4.21.0)(yaml@2.8.1)
+      vite-tsconfig-paths:
+        specifier: ^5.1.4
+        version: 5.1.4(typescript@5.8.3)(vite@6.4.1(@types/node@22.16.0)(jiti@1.21.7)(terser@5.46.2)(tsx@4.21.0)(yaml@2.8.1))
+      vitest:
+        specifier: ^3.2.7
+        version: 3.2.7(@types/debug@4.1.12)(@types/node@22.16.0)(jiti@1.21.7)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(terser@5.46.2)(tsx@4.21.0)(yaml@2.8.1)
+
   ../typescript/packages/mechanisms/xrpl:
     dependencies:
       '@x402/core':
@@ -2239,6 +2300,9 @@ importers:
       '@x402/tvm':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/tvm
+      '@x402/xahau':
+        specifier: workspace:*
+        version: link:../../../typescript/packages/mechanisms/xahau
       '@x402/xrpl':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/xrpl
@@ -2251,6 +2315,9 @@ importers:
       ws:
         specifier: ^8.18.0
         version: 8.21.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+      xahau:
+        specifier: ^4.1.1
+        version: 4.1.1(bufferutil@4.0.9)(utf-8-validate@5.0.10)
       xrpl:
         specifier: ^4.6.0
         version: 4.6.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
@@ -2324,6 +2391,9 @@ importers:
       '@x402/tvm':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/tvm
+      '@x402/xahau':
+        specifier: workspace:*
+        version: link:../../../typescript/packages/mechanisms/xahau
       '@x402/xrpl':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/xrpl
@@ -2693,6 +2763,9 @@ importers:
       '@x402/tvm':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/tvm
+      '@x402/xahau':
+        specifier: workspace:*
+        version: link:../../../typescript/packages/mechanisms/xahau
       '@x402/xrpl':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/xrpl
@@ -2769,6 +2842,9 @@ importers:
       '@x402/tvm':
         specifier: workspace:*
         version: link:../../../../../typescript/packages/mechanisms/tvm
+      '@x402/xahau':
+        specifier: workspace:*
+        version: link:../../../../../typescript/packages/mechanisms/xahau
       '@x402/xrpl':
         specifier: workspace:*
         version: link:../../../../../typescript/packages/mechanisms/xrpl
@@ -7441,6 +7517,9 @@ packages:
     resolution: {integrity: sha512-ncZUdMXr6VlSXtdoiDi0jTH+gBrgGxwVeEidhoegII3PmyErbQsyj6e+j7acmR4LW/lvBkPkzb9QzRfJH0n3rA==}
     engines: {node: '>=18.0.0'}
 
+  '@xrplf/secret-numbers@1.0.0':
+    resolution: {integrity: sha512-qsCLGyqe1zaq9j7PZJopK+iGTGRbk6akkg6iZXJJgxKwck0C5x5Gnwlb1HKYGOwPKyrXWpV6a2YmcpNpUFctGg==}
+
   '@xrplf/secret-numbers@2.0.0':
     resolution: {integrity: sha512-z3AOibRTE9E8MbjgzxqMpG1RNaBhQ1jnfhNCa1cGf2reZUJzPMYs4TggQTc7j8+0WyV3cr7y/U8Oz99SXIkN5Q==}
 
@@ -12069,6 +12148,22 @@ packages:
         optional: true
       utf-8-validate:
         optional: true
+
+  xahau-address-codec@5.0.0:
+    resolution: {integrity: sha512-z1K0fQXCDdkPynBKNx3HsShd1B9HXbjn4lBTLpEnUD09zyY62kepqg4KJOrt1Pfc38PuBlqYTRz328ucejXiZg==}
+    engines: {node: '>= 18'}
+
+  xahau-binary-codec@2.2.0:
+    resolution: {integrity: sha512-5t0qpn5ydkeMlqVc4PFBy10l/oJNC0F6w5soXCohU4d7Dpoa8a8kS5ML45H/QcGDXDVa7/iMsxGX5KH+KP2/Ig==}
+    engines: {node: '>= 18'}
+
+  xahau-keypairs@2.0.0:
+    resolution: {integrity: sha512-8Gjv6pjCqH4nP/QnKzJk2beqyOPj1jfkCcSQrbPz0G/1G8Eby0Bp7SCxgEDboI5nEE6FSOVbRe+KfzCMO9Ft3Q==}
+    engines: {node: '>= 18'}
+
+  xahau@4.1.1:
+    resolution: {integrity: sha512-5DyY9vVFMaOMcJFXs4beoRqMZFuG2/DFL0A8TdE9QfZyWp+NMy5H16QGMP8FYUwFX+8/Aw9Nd9jGTROAoLIVyA==}
+    engines: {node: '>=18.0.0'}
 
   xml-name-validator@5.0.0:
     resolution: {integrity: sha512-EvGK8EJ3DhaHfbRlETOWAS5pO9MZITeauHKJyb8wyajUfQUenkIg2MvLDTZ4T/TgIcm3HU0TFBgWWboAZ30UHg==}
@@ -19674,6 +19769,14 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
+  '@xrplf/secret-numbers@1.0.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)':
+    dependencies:
+      '@xrplf/isomorphic': 1.0.2(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+      ripple-keypairs: 2.0.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
   '@xrplf/secret-numbers@2.0.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)':
     dependencies:
       '@xrplf/isomorphic': 1.0.2(bufferutil@4.0.9)(utf-8-validate@5.0.10)
@@ -20155,7 +20258,7 @@ snapshots:
 
   browserify-rsa@4.1.1:
     dependencies:
-      bn.js: 5.2.2
+      bn.js: 5.2.5
       randombytes: 2.1.0
       safe-buffer: 5.2.1
 
@@ -25472,6 +25575,47 @@ snapshots:
     optionalDependencies:
       bufferutil: 4.0.9
       utf-8-validate: 5.0.10
+
+  xahau-address-codec@5.0.0(bufferutil@4.0.9)(utf-8-validate@5.0.10):
+    dependencies:
+      '@scure/base': 1.2.6
+      '@xrplf/isomorphic': 1.0.2(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
+  xahau-binary-codec@2.2.0(bufferutil@4.0.9)(utf-8-validate@5.0.10):
+    dependencies:
+      '@xrplf/isomorphic': 1.0.2(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+      bignumber.js: 9.3.1
+      xahau-address-codec: 5.0.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
+  xahau-keypairs@2.0.0(bufferutil@4.0.9)(utf-8-validate@5.0.10):
+    dependencies:
+      '@noble/curves': 1.9.7
+      '@xrplf/isomorphic': 1.0.2(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+      xahau-address-codec: 5.0.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
+  xahau@4.1.1(bufferutil@4.0.9)(utf-8-validate@5.0.10):
+    dependencies:
+      '@scure/bip32': 1.7.0
+      '@scure/bip39': 1.6.0
+      '@xrplf/isomorphic': 1.0.2(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+      '@xrplf/secret-numbers': 1.0.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+      bignumber.js: 9.3.1
+      eventemitter3: 5.0.1
+      xahau-address-codec: 5.0.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+      xahau-binary-codec: 2.2.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+      xahau-keypairs: 2.0.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   xml-name-validator@5.0.0: {}
 

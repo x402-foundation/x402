@@ -99,6 +99,7 @@ import {
   type FacilitatorNearSignerConfig,
 } from "@x402/near";
 import { ExactNearScheme as ExactNearFacilitatorScheme } from "@x402/near/exact/facilitator";
+import { ExactXahauScheme as ExactXahauFacilitatorScheme } from "@x402/xahau/exact/facilitator";
 import { ExactXrplScheme as ExactXrplFacilitatorScheme } from "@x402/xrpl/exact/facilitator";
 import * as KeetaNet from "@keetanetwork/keetanet-client";
 import crypto from "crypto";
@@ -136,6 +137,8 @@ const TVM_NETWORK = resolveNetworkCaip2("tvm");
 const NEAR_NETWORK = resolveNetworkCaip2("near");
 const CASPER_NETWORK = resolveNetworkCaip2("casper");
 const NEAR_RPC_URL = process.env.NEAR_RPC_URL;
+const XAHAU_NETWORK = resolveNetworkCaip2("xahau");
+const XAHAU_RPC_URL = process.env.XAHAU_RPC_URL;
 const XRPL_NETWORK = resolveNetworkCaip2("xrpl");
 const XRPL_RPC_URL = process.env.XRPL_RPC_URL;
 const CCD_NETWORK = resolveNetworkCaip2("ccd");
@@ -202,6 +205,7 @@ const hasFacilitatorCredential = [
     process.env.FACILITATOR_NEAR_PRIVATE_KEY,
   process.env.FACILITATOR_CCD_PRIVATE_KEY &&
     process.env.FACILITATOR_CCD_ADDRESS,
+  process.env.XAHAU_NETWORK, // keyless Xahau facilitator
   process.env.XRPL_NETWORK, // keyless XRPL facilitator
   process.env.BLOCKFROST_PROJECT_ID, // Cardano runs provider-only without a mnemonic
 ].some(Boolean);
@@ -740,6 +744,23 @@ if (nearSigner) {
     new ExactNearFacilitatorScheme(nearSigner),
   );
 }
+if (process.env.XAHAU_NETWORK) {
+  facilitator.register(
+    XAHAU_NETWORK as Network,
+    new ExactXahauFacilitatorScheme(
+      XAHAU_RPC_URL
+        ? {
+            wsUrlByNetwork: {
+              [XAHAU_NETWORK as `xahau:${number}`]: XAHAU_RPC_URL,
+            },
+          }
+        : {},
+    ),
+  );
+  console.info(
+    `Xahau facilitator enabled on ${XAHAU_NETWORK} (payer-signed; no facilitator signer)`,
+  );
+}
 if (process.env.XRPL_NETWORK) {
   facilitator.register(
     XRPL_NETWORK as Network,
@@ -1126,6 +1147,7 @@ app.get("/health", (req, res) => {
       : "(not configured)",
     stellarNetwork: stellarSigner ? STELLAR_NETWORK : "(not configured)",
     nearNetwork: nearSigner ? NEAR_NETWORK : "(not configured)",
+    xahauNetwork: process.env.XAHAU_NETWORK ? XAHAU_NETWORK : "(not configured)",
     xrplNetwork: process.env.XRPL_NETWORK ? XRPL_NETWORK : "(not configured)",
     ccdNetwork: concordiumSigner ? CCD_NETWORK : "(not configured)",
     cardanoNetwork: cardanoSigner ? CARDANO_NETWORK : "(not configured)",
@@ -1166,6 +1188,7 @@ let server = app.listen(parseInt(PORT), () => {
 ║  Hedera Network: ${HEDERA_NETWORK}                     ║
 ║  Keeta Network: ${KEETA_NETWORK}                       ║
 ║  NEAR Network: ${NEAR_NETWORK}                         ║
+║  Xahau Network: ${XAHAU_NETWORK}                       ║
 ║  XRPL Network: ${XRPL_NETWORK}                         ║
 ║  CCD Network:  ${CCD_NETWORK}                          ║
 ║  EVM Address:  ${evmAccount?.address ?? "(not configured)"}                   ║

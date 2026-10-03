@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
+ * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xahau" before "xrpl").
  */
 
 import { config } from "dotenv";
@@ -27,6 +27,8 @@ import { NEAR_TESTNET_CAIP2 } from "@x402/near";
 import { ExactNearScheme } from "@x402/near/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { ExactTvmScheme } from "@x402/tvm/exact/server";
+import { XAHAU_TESTNET } from "@x402/xahau";
+import { ExactXahauScheme } from "@x402/xahau/exact/server";
 import { XRPL_TESTNET } from "@x402/xrpl";
 import { ExactXrplScheme } from "@x402/xrpl/exact/server";
 import { HTTPFacilitatorClient } from "@x402/core/server";
@@ -47,6 +49,7 @@ const nearAddress = process.env.NEAR_ADDRESS as string | undefined;
 const svmAddress = process.env.SVM_ADDRESS as string | undefined;
 const stellarAddress = process.env.STELLAR_ADDRESS as string | undefined;
 const tvmAddress = process.env.TVM_ADDRESS as string | undefined;
+const xahauAddress = process.env.XAHAU_ADDRESS as string | undefined;
 const xrplAddress = process.env.XRPL_ADDRESS as string | undefined;
 
 // Validate at least one address is provided
@@ -63,10 +66,11 @@ if (
   !stellarAddress &&
   !hederaAddress &&
   !tvmAddress &&
+  !xahauAddress &&
   !xrplAddress
 ) {
   console.error(
-    "❌ At least one of AVM_ADDRESS, APTOS_ADDRESS, CARDANO_ADDRESS, CASPER_ADDRESS, CCD_ADDRESS, EVM_ADDRESS, KEETA_ADDRESS, NEAR_ADDRESS, SVM_ADDRESS, STELLAR_ADDRESS, HEDERA_ACCOUNT_ID, TVM_ADDRESS, or XRPL_ADDRESS is required",
+    "❌ At least one of AVM_ADDRESS, APTOS_ADDRESS, CARDANO_ADDRESS, CASPER_ADDRESS, CCD_ADDRESS, EVM_ADDRESS, KEETA_ADDRESS, NEAR_ADDRESS, SVM_ADDRESS, STELLAR_ADDRESS, HEDERA_ACCOUNT_ID, TVM_ADDRESS, XAHAU_ADDRESS, or XRPL_ADDRESS is required",
   );
   process.exit(1);
 }
@@ -97,6 +101,7 @@ const STELLAR_NETWORK = "stellar:testnet" as const; // Stellar Testnet
 const HEDERA_HBAR_ASSET = "0.0.0" as const; // Native HBAR asset id
 const HEDERA_WEATHER_PRICE_TINYBARS = "100000" as const; // 0.001 HBAR
 const TVM_NETWORK = (process.env.TVM_NETWORK || "tvm:-3") as Network; // TON Testnet
+const XAHAU_NETWORK = (process.env.XAHAU_NETWORK || XAHAU_TESTNET) as Network; // Xahau Testnet
 const XRPL_NETWORK = (process.env.XRPL_NETWORK || XRPL_TESTNET) as Network; // XRPL Testnet
 const CCD_WEATHER_PRICE_MICRO_CCD = "1000" as const; // 0.001 CCD
 
@@ -226,6 +231,17 @@ if (tvmAddress) {
     payTo: tvmAddress,
   });
 }
+if (xahauAddress) {
+  accepts.push({
+    scheme: "exact",
+    price: {
+      amount: process.env.XAHAU_AMOUNT || "1000",
+      asset: "XAH",
+    },
+    network: XAHAU_NETWORK,
+    payTo: xahauAddress,
+  });
+}
 if (xrplAddress) {
   accepts.push({
     scheme: "exact",
@@ -278,6 +294,9 @@ if (stellarAddress) {
 }
 if (tvmAddress) {
   server.register(TVM_NETWORK, new ExactTvmScheme());
+}
+if (xahauAddress) {
+  server.register(XAHAU_NETWORK, new ExactXahauScheme());
 }
 if (xrplAddress) {
   server.register(XRPL_NETWORK, new ExactXrplScheme());
@@ -354,6 +373,9 @@ app.listen(port, () => {
   }
   if (tvmAddress) {
     console.log(`   TVM: ${tvmAddress} on ${TVM_NETWORK}`);
+  }
+  if (xahauAddress) {
+    console.log(`   Xahau: ${xahauAddress} on ${XAHAU_NETWORK}`);
   }
   if (xrplAddress) {
     console.log(`   XRPL: ${xrplAddress} on ${XRPL_NETWORK}`);

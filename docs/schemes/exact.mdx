@@ -370,6 +370,75 @@ const facilitator = new x402Facilitator()
 
 The `asset` field is the 32-byte hex `contract_package_hash` of the CEP-18 token. The `extra.name` and `extra.version` fields are required — they are used to construct the CEP-3009 EIP-712 domain separator.
 
+### Xahau Setup
+
+The Xahau implementation uses payer-signed `Payment` transactions and is built on [xahau.js](https://github.com/Xahau/xahau.js). The payer pays the transaction fee, which includes the execution of Hooks installed on the payer and destination accounts; facilitator-sponsored fees are not supported.
+
+Install the Xahau package:
+
+```bash
+npm install @x402/xahau
+```
+
+**Server**
+
+```typescript
+import { x402ResourceServer } from "@x402/core/server";
+import { ExactXahauScheme } from "@x402/xahau/exact/server";
+
+const resourceServer = new x402ResourceServer(facilitatorClient)
+  .register("xahau:*", new ExactXahauScheme());
+
+// In your route config:
+{
+  "GET /data": {
+    accepts: [
+      {
+        scheme: "exact",
+        price: {
+          amount: "1000000", // 1 XAH in drops
+          asset: "XAH",
+        },
+        network: "xahau:21338", // Xahau testnet
+        payTo: "rYourXahauAddress",
+      },
+    ],
+    description: "Data endpoint",
+    mimeType: "application/json",
+  },
+}
+```
+
+There is no default USD asset on Xahau, so dollar-string prices (`"$0.10"`) require a registered money parser.
+
+**Client**
+
+```typescript
+import { Wallet } from "xahau";
+import { x402Client } from "@x402/core/client";
+import { createXahauWalletSigner } from "@x402/xahau";
+import { ExactXahauScheme } from "@x402/xahau/exact/client";
+
+const signer = createXahauWalletSigner(Wallet.fromSeed(process.env.XAHAU_SEED!));
+
+const client = x402Client.fromConfig({
+  schemes: [{ network: "xahau:*", client: new ExactXahauScheme(signer) }],
+  spendControls: { allowedAssets: [{ network: "xahau:*", asset: "XAH" }] },
+});
+```
+
+**Facilitator**
+
+```typescript
+import { x402Facilitator } from "@x402/core/facilitator";
+import { ExactXahauScheme } from "@x402/xahau/exact/facilitator";
+
+const facilitator = new x402Facilitator()
+  .register("xahau:*", new ExactXahauScheme());
+```
+
+The facilitator is keyless: it verifies the signed transaction (including a `simulate` call) and submits it. `maxFeeDrops` (default 0.1 XAH) caps the payer's fee; raise it for destinations with heavy Hooks. Like XRPL, Xahau supports the `sequence` and `ticketSequence` asset transfer methods described below.
+
 ### XRPL Setup
 
 The XRPL implementation uses payer-signed `Payment` transactions. The payer pays the XRPL transaction fee; facilitator-sponsored fees are not supported.
@@ -544,7 +613,7 @@ For testnet funds, get test ADA from the [Cardano testnets faucet](https://docs.
 
 ### Network Implementations
 
-The `exact` scheme has network specifications for EVM, SVM, AVM, Stellar, Aptos, Casper, Hedera, TON, Cardano, Keeta, Sui, Concordium, NEAR, XRPL, and Bitcoin Lightning (`lnbtc`).
+The `exact` scheme has network specifications for EVM, SVM, AVM, Stellar, Aptos, Casper, Hedera, TON, Cardano, Keeta, Sui, Concordium, NEAR, Xahau, XRPL, and Bitcoin Lightning (`lnbtc`).
 
 ### SVM Smart Wallet Support
 
@@ -661,6 +730,7 @@ Permit2 may require a one-time approval. The gas sponsoring extensions can let t
 * [`exact` Casper spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_casper.md)
 * [`exact` Sui spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_sui.md)
 * [`exact` NEAR spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_near.md)
+* [`exact` Xahau spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_xahau.md)
 * [`exact` XRPL spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_xrpl.md)
 * [`exact` Bitcoin Lightning spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_lnbtc.md)
 
