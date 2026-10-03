@@ -172,3 +172,4 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | Feature | TypeScript | Go | Python |
 |---------|------------|-----|--------|
 | spendControls (asset allowlist + USD cap) | ✅ | ✅ | ✅ |
+| spendControls validity-window cap (`maxTimeoutSeconds`) | ✅ | ❌ | ❌ |

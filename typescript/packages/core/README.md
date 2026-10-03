@@ -162,6 +162,7 @@ const client = x402Client.fromConfig({
   ],
   spendControls: {
     maxAmountPerPayment: '$5', // default "$1" on default assets; false to disable
+    maxTimeoutSeconds: 600, // default 3600; cap on the signed validity window; false to disable
   },
   policies: [
     // Filter: drop accepts that pay an unexpected recipient
@@ -177,13 +178,14 @@ For per-asset caps and asset allowlists, see spend controls below.
 
 ### Spend controls
 
-Built-in safety rails applied before policies. Use these for amount and asset bounds—not for network preference.
+Built-in safety rails applied before policies. Use these for amount, asset, and validity-window bounds—not for network preference.
 
-By default only assets `findDefaultAsset` recognizes are allowed, with a **`$1`** USD ceiling. Opt into other tokens via `allowedAssets`, or pass `spendControls: false` to disable all spend controls.
+By default only assets `findDefaultAsset` recognizes are allowed, with a **`$1`** USD ceiling, and accepts whose `maxTimeoutSeconds` is missing, negative, or exceeds **3600** seconds are rejected. Opt into other tokens via `allowedAssets`, or pass `spendControls: false` to disable all spend controls.
 
 ```typescript
 spendControls: {
   maxAmountPerPayment: '$5', // USD cap on default assets; false to remove
+  maxTimeoutSeconds: 600, // cap on the server-requested validity window (default 3600); false to remove
   allowedAssets: [
     // opt-in non-default with atomic cap
     { network: 'eip155:8453', asset: '0xCustomToken', maxAmountPerPayment: '2000000' },
@@ -202,6 +204,7 @@ spendControls: {
 | `spendControls: false` | Disable all spend controls (any asset, no caps). Useful for UI-confirmed flows (paywall) and tests. |
 | `maxAmountPerPayment` | USD ceiling on payments in recognized USD-pegged assets (default **`$1`**). Applies to every default asset the registered scheme's `findDefaultAsset` knows about. Set a higher `Money` value to raise the cap, or **`false`** to remove it. |
 | `allowedAssets` | Opt-in for non-default tokens. Omit for default assets only; `true` to allow any asset; or a list of `{ network, asset }` (optional integer atomic `maxAmountPerPayment` per entry, e.g. `"2000000"`, not `"$1"`). `asset` may be an onchain id or a default-asset symbol (e.g. `"PYUSD"`). |
+| `maxTimeoutSeconds` | Upper bound, in seconds, on an accept's `maxTimeoutSeconds` (default **`3600`**, exported as `DEFAULT_MAX_TIMEOUT_SECONDS`). The server's 402 sets this value and schemes sign it as the authorization's validity window (e.g. EIP-3009 `validBefore = now + maxTimeoutSeconds`), so without a cap a server can hold a signed authorization and settle it long after the request ended. Accepts above the cap, or with a missing, null, negative, or non-numeric value, are filtered out. `0` is allowed. Set a number to change the cap, or **`false`** to remove it. |
 
 Network scoping is separate: register only the networks you intend to pay on (e.g. `registerExactEvmScheme(client, { signer, networks: ['eip155:8453'] })`). Unregistered networks are never selected regardless of spend controls.
 
