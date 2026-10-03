@@ -50,6 +50,7 @@
     "@signinwithethereum/siwe": "^4.1.0",
     "@x402/core": "workspace:~",
     "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
     "jose": "^5.9.6",
     "tweetnacl": "^1.0.3",
     "viem": "^2.48.11",
