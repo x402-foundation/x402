@@ -276,24 +276,58 @@ See §6.2 and §6.3 for complete examples.
 
 **5.2 Receipt Payload Fields**
 
-The canonical receipt payload contains the following fields:
+The canonical receipt payload contains the following fields. **Payload version `1`** is the legacy field set (this document prior to the v2 revision). **Payload version `2`** adds settlement sum-type binding and optional content binding. Version `1` receipts remain valid forever for existing signers.
 
-| Field         | Type   | Required | Description                                                        |
-| ------------- | ------ | -------- | ------------------------------------------------------------------ |
-| `version`     | number | Yes      | Receipt payload schema version (currently `1`)                     |
-| `network`     | string | Yes      | Blockchain network identifier (CAIP-2 format, e.g., "eip155:8453") |
-| `resourceUrl` | string | Yes      | The paid resource URL                                              |
-| `payer`       | string | Yes      | Payer identifier (commonly a wallet address)                       |
-| `issuedAt`    | number | Yes      | Unix timestamp (seconds) when receipt was issued                   |
-| `transaction` | string | Optional | Blockchain transaction hash                                        |
+| Field | Type | Required | Description |
+| ----- | ---- | -------- | ----------- |
+| `version` | number | Yes | Receipt payload schema version. **`1`** = legacy. **`2`** = this revision (content + commitment binding). |
+| `network` | string | Yes | Blockchain network identifier (CAIP-2 format, e.g., "eip155:8453") |
+| `resourceUrl` | string | Yes | The paid resource URL |
+| `payer` | string | Yes | Payer identifier (commonly a wallet address) |
+| `issuedAt` | number | Yes | Unix timestamp (seconds) when receipt was issued |
+| `transaction` | string | Conditional | Onchain settlement **transaction hash** when the scheme produces one (`exact`, `upto`, and any scheme whose settlement result includes a non-empty tx hash). |
+| `commitmentId` | string | Conditional | **NEW in v2.** Settlement **commitment identifier** when the scheme stores a commitment rather than (or before) broadcasting a transfer — notably **`batch-settlement`**. MUST be the same non-empty string returned in the settlement result's commitment identifier (scheme-defined). |
+| `settlementUnbound` | boolean | Conditional | **NEW in v2.** If `true`, the issuer explicitly declines settlement binding (privacy-maximal). Verifiers that require settlement binding MUST reject. For **`version === 2`**, at least one of `transaction`, `commitmentId`, or `settlementUnbound: true` MUST be present (see Settlement binding rules). |
+| `contentHash` | string | Optional | **NEW in v2.** Hex-encoded **SHA-256** of the **decoded entity body** of the successful paid response (see Content binding rules). When present, verifiers with access to that body MUST recompute and match. |
+| `contentHashAlg` | string | Optional | **NEW in v2.** Digest algorithm id. MUST be `"sha256"` when `contentHash` is present in v2. Reserved for future algs; unknown values → unsupported. |
+| `requestHash` | string | Optional | **NEW in v2.** Hex-encoded SHA-256 of the **decoded request entity body** (after request Content-Encoding removal), if any. Binds "this answer to this question." |
+| `receiptRef` | string | Optional | **NEW in v2.** HTTPS URL (or content-addressed URI) from which the **full** receipt artifact may be fetched. When the signed payload is too large for headers, servers SHOULD put a **compact** receipt inline and the full artifact at `receiptRef`. Fetch is **verifier-side optional**; offline verifiers use a caller-supplied copy. **Transport convenience only** — signed fields win on mismatch. |
 
-The receipt is **privacy-minimal** by default and intentionally omits transaction references to reduce correlation risk. Servers MAY include the optional `transaction` field when stronger verifiability is preferred over privacy. If `transaction` is included, verifiers can look up the payment amount on-chain.
+Version `1` remains **privacy-minimal** by default and intentionally omits transaction references to reduce correlation risk. Servers MAY include the optional `transaction` field on v1 when stronger verifiability is preferred over privacy. If `transaction` is included, verifiers can look up the payment amount onchain.
 
 **Note**: Servers MUST convert v1 network identifiers (e.g., "base-sepolia") to CAIP-2 format (e.g., "eip155:84532") in the receipt payload.
 
+##### Settlement binding rules (normative, `version >= 2`)
+
+1. **Exact sum type:** Exactly one of the following MUST hold:
+   - non-empty `transaction`, empty `commitmentId`, `settlementUnbound = false`; or
+   - non-empty `commitmentId`, empty `transaction`, `settlementUnbound = false`; or
+   - `settlementUnbound = true`, empty `transaction`, empty `commitmentId`.
+   Reject: all empty; two non-empty identifiers; `settlementUnbound = true` with either identifier non-empty.
+   (EIP-712: empty string `""` = absent for strings; `false` = absent for the unbound flag when an identifier is used.)
+2. If the settlement scheme's success result includes a **transaction hash** (`exact`, `upto`, …), the receipt MUST use the **transaction** arm (rule 1 first bullet) and MUST set `transaction` to that hash.
+3. If the settlement scheme's success result includes a **commitment identifier** and no transaction hash (`batch-settlement`), the receipt MUST use the **commitmentId** arm and MUST NOT invent a fake `transaction`.
+4. `settlementUnbound: true` is the only allowed way to omit both identifiers under v2.
+5. **Scheme-matched verification:** Verifiers that know the payment scheme from the Offer / `PAYMENT-REQUIRED` for this paid request MUST reject a receipt whose settlement arm does not match that scheme:
+   - schemes with a tx hash → require non-empty `transaction`, empty `commitmentId`, `settlementUnbound = false`
+   - `batch-settlement` → require non-empty `commitmentId`, empty `transaction`, `settlementUnbound = false`
+   - unknown scheme + verifier requires settlement bind → fail closed
+
+##### Content binding rules (normative, `version >= 2`)
+
+1. **Preimage:** `contentHash`, when present, is over the **decoded HTTP entity body** of the successful paid resource response (status 2xx that completes the paid interaction) — i.e. the bytes the **application layer** receives **after** removal of `Content-Encoding` (gzip, br, …). It is **not** over Transfer-Encoding framing and **not** over still-compressed wire bytes. If both a compressed representation and a decoded body exist, the digest MUST use the decoded entity. v2 does **not** use RFC 8785 re-serialization; optional future algs may via `contentHashAlg`.
+2. **Same rule for `requestHash`:** decoded request entity body after request `Content-Encoding` removal.
+3. Servers that advertise delivery proof in product language MUST include `contentHash`.
+4. Absence of `contentHash` is allowed (privacy / streaming cases) but MUST NOT be marketed as proof of delivery.
+5. **Not global delivery proof:** A signature on `contentHash` **without** a corresponding body held by the verifier is **not** proof of delivery *to that verifier*. Marketing and verify docs MUST NOT imply public global proof of delivery from the receipt alone. The model is **payer-held (or auditor-held) body** + signed digest.
+6. **Freshness / uniqueness:** This extension is a **seller attestation**. Verifiers that require freshness MUST treat `(payer, resourceUrl, contentHash, settlement-id, issuedAt)` as the logical receipt key and SHOULD reject **duplicate settlement identifiers** across receipts when settlement is onchain or commitment-visible. Do **not** claim cryptographic anti-replay stronger than seller honesty + settlement uniqueness.
+7. **`receiptRef`:** Signed fields are authoritative. `receiptRef` is a transport convenience. If a full artifact is fetched from `receiptRef`, a mismatch against signed `contentHash` or embedded identifiers → **reject**. Do not treat the ref as a second source of truth.
+
 **5.3 EIP-712 Types for Receipt (Normative Schema)**
 
-The following `types` and `primaryType` are the canonical EIP-712 schema for receipts. Per §3.2.1, these definitions are used for signing and verification but MUST NOT be transmitted on the wire.
+The following `types` and `primaryType` are the canonical EIP-712 schemas for receipts. Per §3.2.1, these definitions are used for signing and verification but MUST NOT be transmitted on the wire.
+
+**Version 1** (legacy — domain `version: "1"`):
 
 ```javascript
 {
@@ -316,11 +350,40 @@ The following `types` and `primaryType` are the canonical EIP-712 schema for rec
 }
 ```
 
-For the optional `transaction` field, implementations MUST set unused fields to empty string `""`. This rule applies only to EIP-712 signing, where fixed schemas require all fields to be present. Verifiers MUST treat empty-string optional fields as equivalent to absence.
+**Version 2** (domain `version: "2"`; domain name remains `"x402 receipt"`):
+
+```javascript
+{
+  "primaryType": "Receipt",
+  "types": {
+    "EIP712Domain": [
+      { "name": "name", "type": "string" },
+      { "name": "version", "type": "string" },
+      { "name": "chainId", "type": "uint256" }
+    ],
+    "Receipt": [
+      { "name": "version", "type": "uint256" },
+      { "name": "network", "type": "string" },
+      { "name": "resourceUrl", "type": "string" },
+      { "name": "payer", "type": "string" },
+      { "name": "issuedAt", "type": "uint256" },
+      { "name": "transaction", "type": "string" },
+      { "name": "commitmentId", "type": "string" },
+      { "name": "settlementUnbound", "type": "bool" },
+      { "name": "contentHash", "type": "string" },
+      { "name": "contentHashAlg", "type": "string" },
+      { "name": "requestHash", "type": "string" },
+      { "name": "receiptRef", "type": "string" }
+    ]
+  }
+}
+```
+
+For EIP-712, implementations MUST set unused optional string fields to empty string `""` and unused bool fields to `false`. This rule applies only to EIP-712 signing, where fixed schemas require all fields to be present. Verifiers MUST treat empty-string optional fields and `false` bools as equivalent to absence.
 
 **5.4 Receipt Examples**
 
-**EIP-712 format (privacy-minimal):**
+**EIP-712 format (v1 privacy-minimal):**
 
 ```json
 {
@@ -337,7 +400,7 @@ For the optional `transaction` field, implementations MUST set unused fields to 
 }
 ```
 
-**EIP-712 format (with transaction for verifiability):**
+**EIP-712 format (v1 with transaction for verifiability):**
 
 ```json
 {
@@ -354,7 +417,30 @@ For the optional `transaction` field, implementations MUST set unused fields to 
 }
 ```
 
-**JWS format:**
+**EIP-712 format (v2 batch-settlement + content-bound):**
+
+```json
+{
+  "format": "eip712",
+  "payload": {
+    "version": 2,
+    "network": "eip155:8453",
+    "resourceUrl": "https://api.example.com/v1/infer",
+    "payer": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
+    "issuedAt": 1786400000,
+    "transaction": "",
+    "commitmentId": "bset_01HZXEXAMPLE",
+    "settlementUnbound": false,
+    "contentHash": "a3f1c9e0b2d4e5f678901234567890abcdef1234567890abcdef1234567890ab",
+    "contentHashAlg": "sha256",
+    "requestHash": "91bb0c1d2e3f4567890abcdef1234567890abcdef1234567890abcdef123456",
+    "receiptRef": ""
+  },
+  "signature": "0x1234567890abcdef..."
+}
+```
+
+**JWS format (v1):**
 
 ```json
 {
@@ -363,26 +449,32 @@ For the optional `transaction` field, implementations MUST set unused fields to 
 }
 ```
 
+For JWS format under v2, the JSON payload object is exactly the v2 field set (omit absent optionals rather than empty strings).
+
 **5.5 Receipt Verification**
 
 **For EIP-712:**
 1. Extract `receipt.payload` and `receipt.signature`
-2. Check `payload.version` to select the appropriate EIP-712 types (currently only version `1` is defined; see §5.3)
-3. Construct the EIP-712 typed data hash using the domain (`name: "x402 receipt"`, `version: "1"`, `chainId: 1`) and the types for the payload version. The `receipt.payload` object MUST be used exactly as transmitted; verifiers MUST NOT reconstruct or infer payload fields from surrounding x402 context.
+2. Check `payload.version` to select the appropriate EIP-712 types (version `1` or `2`; see §5.3)
+3. Construct the EIP-712 typed data hash using the domain (`name: "x402 receipt"`, `version: "1"` for payload v1 or `"2"` for payload v2, `chainId: 1`) and the types for the payload version. The `receipt.payload` object MUST be used exactly as transmitted; verifiers MUST NOT reconstruct or infer payload fields from surrounding x402 context.
 4. Verify the signature and recover the signer address
 5. Confirm the signer is authorized to sign for the service identified by `payload.resourceUrl` (see §4.5.1)
 6. Confirm `issuedAt` is within acceptable verifier policy
-7. If `transaction` is present and non-empty, verifiers MAY check the blockchain to confirm the transaction exists and matches expected parameters
+7. If `version >= 2`, enforce Settlement binding rules and Content binding rules in §5.2
+8. If `transaction` is present and non-empty, verifiers MAY check the blockchain to confirm the transaction exists and matches expected parameters
+9. If `commitmentId` is present and non-empty, verifiers MAY resolve the commitment against the scheme's commitment store when available
+10. If `contentHash` is present and the verifier holds the response body, recompute SHA-256 over the **decoded entity body** and require equality
 
 **For JWS:**
 1. Parse the JWS compact string from `receipt.signature`
 2. Extract `kid` from the JWS header; extract the payload by base64url-decoding the JWS payload component
-3. Check the payload's `version` to determine how to interpret the remaining fields (currently only version `1` is defined)
+3. Check the payload's `version` to determine how to interpret the remaining fields (version `1` or `2`)
 4. Resolve `kid` to a public key
 5. Verify the JWS signature over the complete payload
 6. Confirm the key is authorized to sign for the service identified by the payload's `resourceUrl` (see §4.5.1)
 7. Confirm `issuedAt` (from the payload) is within acceptable verifier policy
-8. If `transaction` is present, verifiers MAY check the blockchain to confirm the transaction exists
+8. If `version >= 2`, enforce Settlement binding rules and Content binding rules in §5.2
+9. If `transaction` is present, verifiers MAY check the blockchain to confirm the transaction exists
 
 When verifying a receipt outside the immediate x402 payment session (e.g., for reputation, auditing, or dispute resolution), verifiers SHOULD evaluate signer authorization as of the receipt's `issuedAt` time, not merely at the time of verification. Revocation or removal of a signing key from a mutable authorization source SHOULD be treated as prospective — it prevents future reliance on that key but does not by itself prove the key was unauthorized at `issuedAt`.
 
