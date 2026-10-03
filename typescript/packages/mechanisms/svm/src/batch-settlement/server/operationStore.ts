@@ -1,3 +1,5 @@
+import type { SettleResponse } from "@x402/core/types";
+
 /** Single-use server-mode request records, separate from channel accounting. */
 
 export type BatchOperation =
@@ -14,18 +16,31 @@ export type BatchOperation =
       ceiling: bigint;
       actual: bigint;
       cumulative: bigint;
+      /**
+       * Payment response returned for an idempotent retry.
+       *
+       * Custom durable stores must persist this field to opt in to response
+       * replay. A completed operation without it remains a duplicate.
+       */
+      response?: SettleResponse | undefined;
     };
 
 export interface BatchOperationStore {
   /** Fetch a reserved or completed request operation. */
   get(channelId: string, requestId: string): Promise<BatchOperation | undefined>;
-  /** Atomically create a request reservation unless the operation already exists. */
+  /**
+   * Atomically create a request reservation unless the operation already exists.
+   * A reused key returns its original operation unchanged, even if `ceiling` differs.
+   */
   reserve(
     channelId: string,
     requestId: string,
     ceiling: bigint,
   ): Promise<{ created: boolean; operation: BatchOperation }>;
-  /** Atomically mark a reservation completed so the request cannot be reused. */
+  /**
+   * Atomically mark a reservation completed so the request cannot be reused.
+   * Persist `operation.response` durably to support response replay.
+   */
   complete(operation: Extract<BatchOperation, { status: "completed" }>): Promise<void>;
   /** End failed or canceled work while retaining the consumed request id. */
   release(channelId: string, requestId: string): Promise<void>;
@@ -50,9 +65,6 @@ export class MemoryBatchOperationStore implements BatchOperationStore {
     return this.withLock(channelId, requestId, () => {
       const key = operationKey(channelId, requestId);
       const existing = this.operations.get(key);
-      if (existing && existing.ceiling !== ceiling) {
-        throw new Error("batch operation ceiling changed for a request id");
-      }
       if (existing) return { created: false, operation: existing };
       const operation: BatchOperation = {
         status: "reserved",

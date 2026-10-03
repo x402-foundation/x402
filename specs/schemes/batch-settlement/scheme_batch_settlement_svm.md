@@ -1477,9 +1477,15 @@ resource, a client that holds such trust SHOULD prefer the server-mode accept
 and every other client MUST fall back to the client-mode accept.
 The client MUST keep at most one server-mode request in flight per channel so
 the returned cumulative voucher can be evaluated against one exact local
-watermark. A transport retry is a new x402 request and MUST use a new
-`requestId`; applications requiring response recovery SHOULD use the payment
-identifier extension. No onchain transaction is required in the request path.
+watermark. Each newly built payload, including an ordinary retry built by the
+reference client, MUST use a new `requestId`. A client recovering a persisted
+pending payload MAY resend that exact signed payload with its original
+`requestId`; this is the only retry that can recover the stored settlement
+response described in Phase 5. The reference client's response-recovery path
+can correlate that response with the persisted pending payload. The application
+resource body is not recovered; applications that require it SHOULD use the
+payment identifier extension. No onchain transaction is required in the request
+path.
 The server verifies the authorization under Phase 3, reserves up to
 `PaymentRequirements.amount`, then after the handler measures the actual charge
 and stores an operator-signed voucher for that amount.
@@ -1543,10 +1549,12 @@ request, the server MUST:
    reserved.
 6. Enforce replay protection. Reject stale or already accepted client vouchers,
    and atomically create at most one server-mode operation for each
-   `(channelId, requestId)`. Any duplicate operation, whether running or
-   completed, MUST be rejected with `duplicate_settlement` and MUST NOT execute
-   the handler. The scheme does not replay either the settlement response or
-   the application resource body.
+   `(channelId, requestId)`. A reserved operation MUST return
+   `duplicate_settlement`. A completed operation with a durable response MUST
+   replay the stored `SettleResponse`, adding only `extra.replayed = true`, and
+   MUST NOT execute the handler. A completed operation without a stored response
+   MUST return `duplicate_settlement`. A replay returns an empty JSON resource
+   body (`{}`); the application resource body is neither stored nor replayed.
 7. Execute the resource handler. In client mode, the actual charge is the
    advertised amount. In server mode, after metering completes, choose an actual
    charge satisfying `0 <= chargedAmount <= PaymentRequirements.amount` and set
@@ -1559,8 +1567,11 @@ request, the server MUST:
    `chargedAmount = voucher.maxClaimableAmount - localConfirmed`, and require
    `0 <= chargedAmount <= PaymentRequirements.amount`. On any mismatch it MUST
    leave local state unchanged and resynchronize through a corrective 402. The
-   server MUST durably bind `requestId` to the ceiling, actual charge, and
-   resulting cumulative amount before acknowledging success.
+   server MUST durably bind `requestId` to the ceiling, actual charge, resulting
+   cumulative amount, and `SettleResponse` before acknowledging success. Custom
+   operation-store implementations MUST persist the optional response field to
+   opt in to replay; completed records from stores that omit it remain
+   duplicates.
 
 Different operations MAY complete in any order. Each completion briefly locks
 the channel, adds its actual charge to the then-current watermark, signs that
@@ -1639,14 +1650,17 @@ advertise.
 ### Phase 5 - Duplicate and Concurrent Operation Handling
 
 The cumulative voucher and payment-channel state machine prevent duplicate
-token movement. Core x402 requests are single-shot; scheme state prevents a
-duplicate request from executing but is not an HTTP response-recovery protocol:
+token movement. Scheme state also provides bounded settlement-response recovery
+without re-executing a paid resource handler:
 
 - **Server-mode paid requests.** The operation record is the authoritative
-  replay defense. Reuse of a running or completed `(channelId, requestId)` MUST
-  return `duplicate_settlement`; it MUST NOT replay a settlement response or
-  execute the handler. Applications that need to recover a resource body after
-  a lost response SHOULD use the payment identifier extension.
+  replay defense. Reuse of a reserved `(channelId, requestId)` MUST return
+  `duplicate_settlement`. Reuse of a completed operation with a durable response
+  MUST replay that response with `extra.replayed = true`, without executing the
+  handler. Reuse of a completed operation without a stored response, including
+  a legacy record, MUST return `duplicate_settlement`. The replay response has
+  an empty JSON resource body; applications that need to recover the original
+  resource body SHOULD use the payment identifier extension.
 - **Client-mode paid requests.** The per-channel lock and charged watermark are
   the authoritative replay defense. The same authorization MUST NOT execute the
   resource handler more than once.
@@ -1844,9 +1858,10 @@ Standard x402 codes apply. The facilitator reports verification failures in
   returned escrow to a payer or treasury that aliases `payTo`. The facilitator
   returns the confirmed signature with this reason instead of an `amount`;
   the server reconciles from onchain state.
-- `duplicate_settlement` - a server-mode `requestId` was already reserved or
-  completed, or the same client-supplied setup or refund transaction is already
-  being settled.
+- `duplicate_settlement` - a server-mode `requestId` is reserved, is completed
+  without a matching durable response, or the same client-supplied setup or
+  refund transaction is already being settled. A completed server-mode request
+  with a matching durable response is replayed instead.
 
 ## 8. Security Properties
 
@@ -1916,8 +1931,10 @@ Standard x402 codes apply. The facilitator reports verification failures in
   voucher, and only after authenticating the server.
 - **No replay / no rollback.** Server offchain watermark plus onchain
   `settled` monotonicity reject old vouchers. Server-mode request identifiers
-  are single use; duplicates are rejected rather than replayed. Clients keep
-  one request in flight per channel and only advance from their local confirmed
+  are single use: a duplicate never re-executes the handler, and only a matching
+  completed operation with a durable response can replay its settlement result.
+  Reserved or response-less completed operations are rejected. Clients keep one
+  request in flight per channel and only advance from their local confirmed
   watermark. A sponsored `request_close` is idempotent by that transaction.
   Cooperative closes use a separate operation namespace and a terminal onchain
   transition.

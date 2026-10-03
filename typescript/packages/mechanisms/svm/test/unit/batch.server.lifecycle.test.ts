@@ -92,7 +92,10 @@ function state(overrides: Partial<ChannelState> = {}): ChannelState {
 }
 
 type ServerInternals = {
-  validatePayload(raw: BatchPayload, requirements: PaymentRequirements): Promise<string>;
+  validatePayload(
+    raw: BatchPayload,
+    requirements: PaymentRequirements,
+  ): Promise<{ channelId: string }>;
   applySnapshot(
     channelId: string,
     snapshot: {
@@ -146,7 +149,9 @@ describe("batch server lifecycle boundaries", () => {
 
   it("validates every immutable payload binding", async () => {
     const api = internals(new BatchSvmScheme({ receiverAuthorizer }));
-    await expect(api.validatePayload(depositPayload, requirements())).resolves.toBe(channelId);
+    await expect(api.validatePayload(depositPayload, requirements())).resolves.toEqual({
+      channelId,
+    });
     const invalid: Array<[BatchPayload, PaymentRequirements, string]> = [
       [depositPayload, requirements({ extra: undefined }), BatchError.PAYMENT_FLOW],
       [
