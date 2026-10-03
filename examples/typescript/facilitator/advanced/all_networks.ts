@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
+ * (e.g., "algorand" before "aptos" before "bsv" before "cardano" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
  */
 
 import {
@@ -15,10 +15,12 @@ import {
   PrivateKeyVariants,
 } from "@aptos-labs/ts-sdk";
 import * as KeetaNet from "@keetanetwork/keetanet-client";
+import { ServerWallet } from "@bsv/simple/server";
 import { toFacilitatorAptosSigner } from "@x402/aptos";
 import { ExactAptosScheme } from "@x402/aptos/exact/facilitator";
 import { toFacilitatorAvmSigner } from "@x402/avm";
 import { ExactAvmScheme } from "@x402/avm/exact/facilitator";
+import { ExactBsvScheme } from "@x402/bsv/exact/facilitator";
 import { toFacilitatorCardanoSigner } from "@x402/cardano";
 import { ExactCardanoScheme } from "@x402/cardano/exact/facilitator";
 import { createFacilitatorCasperSigner } from "@x402/casper";
@@ -99,6 +101,11 @@ const blockfrostBaseUrl = process.env.BLOCKFROST_PREPROD_URL;
 const blockfrostProjectId = process.env.BLOCKFROST_PROJECT_ID;
 const aptosPrivateKey = process.env.APTOS_PRIVATE_KEY as string | undefined;
 const aptosRpcUrl = process.env.APTOS_RPC_URL as string | undefined;
+// BSV settlement internalizes into the recipient's server-side BRC-100 wallet
+// (@bsv/simple ServerWallet: private key + wallet storage endpoint).
+const bsvServerPrivateKey = process.env.BSV_SERVER_PRIVATE_KEY as string | undefined;
+const bsvWalletStorageUrl =
+  process.env.BSV_WALLET_STORAGE_URL || "https://store-us-1.bsvb.tech";
 const casperPrivateKey = process.env.CASPER_PRIVATE_KEY as string | undefined;
 const casperRpcUrl = process.env.CASPER_RPC_URL as string | undefined;
 const ccdFacilitatorPrivateKey = process.env.CCD_FACILITATOR_PRIVATE_KEY as
@@ -132,6 +139,7 @@ if (
   !avmPrivateKey &&
   !cardanoMnemonic &&
   !aptosPrivateKey &&
+  !bsvServerPrivateKey &&
   !casperPrivateKey &&
   !(ccdFacilitatorPrivateKey && ccdFacilitatorAddress) &&
   !evmPrivateKey &&
@@ -143,7 +151,7 @@ if (
   !(hederaAccountId && hederaPrivateKey)
 ) {
   console.error(
-    "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CARDANO_MNEMONIC, CASPER_PRIVATE_KEY, CCD_FACILITATOR_PRIVATE_KEY + CCD_FACILITATOR_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_RELAYER_ACCOUNT_ID + NEAR_RELAYER_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, TVM_PRIVATE_KEY, or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY is required",
+    "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, BSV_SERVER_PRIVATE_KEY, CARDANO_MNEMONIC, CASPER_PRIVATE_KEY, CCD_FACILITATOR_PRIVATE_KEY + CCD_FACILITATOR_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_RELAYER_ACCOUNT_ID + NEAR_RELAYER_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, TVM_PRIVATE_KEY, or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY is required",
   );
   process.exit(1);
 }
@@ -152,6 +160,7 @@ if (
 const AVM_NETWORK = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe"; // Algorand Testnet
 const CARDANO_NETWORK = cardanoNetwork; // Cardano Preprod Testnet (default)
 const APTOS_NETWORK = (process.env.APTOS_NETWORK || "aptos:2") as Network; // Aptos Testnet
+const BSV_NETWORK = (process.env.BSV_NETWORK || "bsv:mainnet") as Network; // BSV Mainnet
 const CASPER_NETWORK = (process.env.CASPER_NETWORK ||
   "casper:casper-test") as Network; // Casper Testnet
 const CCD_NETWORK = CONCORDIUM_TESTNET_CAIP2; // Concordium Testnet
@@ -209,6 +218,37 @@ if (aptosPrivateKey) {
   console.info(
     `Aptos Facilitator account: ${aptosAccount.accountAddress.toStringLong()} on ${APTOS_NETWORK}`,
   );
+}
+
+// Register BSV scheme if a server wallet key is provided.
+// The facilitator settles by internalizing payments into this wallet, so it
+// must be the RECIPIENT's wallet — payTo is its identity key.
+if (bsvServerPrivateKey) {
+  // Map CAIP-2 (bsv:*) to ServerWallet network names. Refuse unknown ids —
+  // do not default bip122/genesis references to BSV.
+  const bsvWalletNetwork =
+    BSV_NETWORK === "bsv:mainnet"
+      ? "main"
+      : BSV_NETWORK === "bsv:testnet"
+        ? "testnet"
+        : BSV_NETWORK === "bsv:ttn"
+          ? "ttn"
+          : BSV_NETWORK === "bsv:tstn"
+            ? "tstn"
+            : undefined;
+  if (!bsvWalletNetwork) {
+    throw new Error(
+      `Unsupported BSV_NETWORK=${BSV_NETWORK}; use bsv:mainnet|bsv:testnet|bsv:ttn|bsv:tstn`,
+    );
+  }
+  const bsvWallet = await ServerWallet.create({
+    privateKey: bsvServerPrivateKey,
+    network: bsvWalletNetwork,
+    storageUrl: bsvWalletStorageUrl,
+  });
+  const bsvScheme = await ExactBsvScheme.create({ wallet: bsvWallet.getClient() });
+  console.info(`BSV Facilitator identity: ${bsvScheme.getSigners(BSV_NETWORK)[0]}`);
+  facilitator.register(BSV_NETWORK, bsvScheme);
 }
 
 // Register Cardano scheme if a mnemonic and Blockfrost connection are provided

@@ -72,6 +72,8 @@ and fill required environment variables:
 - `CARDANO_ADDRESS` - Cardano `addr_test1...` address to receive payments (optional for `all-networks`)
 - `CARDANO_L1_CONFIRMATIONS` - Optional confirmation policy (`-1..20`; unset = 1 confirmation)
 - `APTOS_ADDRESS` - Aptos account address to receive payments (optional for `all-networks`)
+- `BSV_IDENTITY_KEY` - BSV recipient wallet identity public key (compressed hex; optional for `all-networks`; payments settle into the wallet holding this key)
+- `BSV_NETWORK` - BSV network CAIP-2 (optional; defaults to `bsv:mainnet`; also `bsv:testnet`, `bsv:ttn`, `bsv:tstn`)
 - `CASPER_ADDRESS` - Casper address to receive payments (optional for `all-networks`)
 - `CASPER_NETWORK` - Casper network CAIP-2 (optional; defaults to `casper:casper-test`)
 - `CASPER_ASSET` - CEP-18 contract package hash (optional for `all-networks`)
