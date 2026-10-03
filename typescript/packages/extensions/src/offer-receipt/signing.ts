@@ -724,6 +724,44 @@ export interface EIP712VerificationResult<T> {
 }
 
 /**
+ * Check that a payload carries every field of its EIP-712 type with the declared shape, so a malformed payload is rejected
+ * with a defined error instead of surfacing as a TypeError deep inside BigInt() or the encoder. The payload is used exactly
+ * as transmitted (§5.5 step 3): an omitted field is not filled in, even one whose unused value is "" (§5.3).
+ *
+ * @param payload - The payload to check
+ * @param fields - The EIP-712 type fields for the payload
+ * @param kind - "offer" or "receipt", for the error message
+ */
+function assertEIP712PayloadShape(
+  payload: unknown,
+  fields: ReadonlyArray<{ name: string; type: string }>,
+  kind: "offer" | "receipt",
+): void {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error(`Invalid ${kind}: missing or malformed payload`);
+  }
+  const p = payload as Record<string, unknown>;
+  for (const { name, type } of fields) {
+    if (!(name in p)) {
+      throw new Error(`Invalid ${kind}: missing or malformed payload (field "${name}" is missing)`);
+    }
+    const v = p[name];
+    const ok =
+      type === "string"
+        ? typeof v === "string"
+        : type === "uint256"
+          ? (typeof v === "number" && Number.isSafeInteger(v) && v >= 0) ||
+            (typeof v === "bigint" && v >= 0n)
+          : true;
+    if (!ok) {
+      throw new Error(
+        `Invalid ${kind}: missing or malformed payload (field "${name}" is not a valid ${type})`,
+      );
+    }
+  }
+}
+
+/**
  * Verify an EIP-712 signed offer and recover the signer address.
  * Does NOT verify signer authorization for the resourceUrl - see spec §4.5.1.
  *
@@ -736,9 +774,7 @@ export async function verifyOfferSignatureEIP712(
   if (offer.format !== "eip712") {
     throw new Error(`Expected eip712 format, got ${offer.format}`);
   }
-  if (!offer.payload || !("scheme" in offer.payload)) {
-    throw new Error("Invalid offer: missing or malformed payload");
-  }
+  assertEIP712PayloadShape(offer.payload, OFFER_TYPES.Offer, "offer");
 
   const signer = await recoverTypedDataAddress({
     domain: createOfferDomain(),
@@ -764,9 +800,7 @@ export async function verifyReceiptSignatureEIP712(
   if (receipt.format !== "eip712") {
     throw new Error(`Expected eip712 format, got ${receipt.format}`);
   }
-  if (!receipt.payload || !("payer" in receipt.payload)) {
-    throw new Error("Invalid receipt: missing or malformed payload");
-  }
+  assertEIP712PayloadShape(receipt.payload, RECEIPT_TYPES.Receipt, "receipt");
 
   const signer = await recoverTypedDataAddress({
     domain: createReceiptDomain(),

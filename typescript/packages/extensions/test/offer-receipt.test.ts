@@ -359,6 +359,87 @@ describe("x402 Offer/Receipt Extension", () => {
     });
   });
 
+  describe("EIP-712 verification rejects malformed payloads with a defined error", () => {
+    const account = privateKeyToAccount(TEST_PRIVATE_KEY);
+    const receiptInput = {
+      resourceUrl: "https://api.example.com/resource",
+      payer: "0x857b06519E91e3A54538791bDbb0E22373e36b66",
+      network: "eip155:8453",
+    };
+    const offerInput = {
+      acceptIndex: 0,
+      scheme: "exact",
+      network: "eip155:8453",
+      asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      payTo: "0x1234567890123456789012345678901234567890",
+      amount: "10000",
+    };
+
+    it('a well-formed receipt (transaction set to "") still verifies', async () => {
+      const receipt = await createReceiptEIP712(receiptInput, p => account.signTypedData(p));
+      const { signer } = await verifyReceiptSignatureEIP712(receipt);
+      expect(signer.toLowerCase()).toBe(account.address.toLowerCase());
+    });
+
+    for (const field of ["version", "network", "resourceUrl", "payer", "issuedAt", "transaction"]) {
+      it(`receipt without "${field}" rejects (no TypeError)`, async () => {
+        const receipt = await createReceiptEIP712(receiptInput, p => account.signTypedData(p));
+        const payload = { ...receipt.payload } as Record<string, unknown>;
+        delete payload[field];
+        await expect(
+          verifyReceiptSignatureEIP712({ ...receipt, payload } as typeof receipt),
+        ).rejects.toThrow(
+          `Invalid receipt: missing or malformed payload (field "${field}" is missing)`,
+        );
+      });
+    }
+
+    it("receipt with version as a string or a negative issuedAt rejects", async () => {
+      const receipt = await createReceiptEIP712(receiptInput, p => account.signTypedData(p));
+      await expect(
+        verifyReceiptSignatureEIP712({
+          ...receipt,
+          payload: { ...receipt.payload, version: "1" },
+        } as unknown as typeof receipt),
+      ).rejects.toThrow('(field "version" is not a valid uint256)');
+      await expect(
+        verifyReceiptSignatureEIP712({ ...receipt, payload: { ...receipt.payload, issuedAt: -1 } }),
+      ).rejects.toThrow('(field "issuedAt" is not a valid uint256)');
+    });
+
+    for (const field of [
+      "version",
+      "resourceUrl",
+      "scheme",
+      "network",
+      "asset",
+      "payTo",
+      "amount",
+      "validUntil",
+    ]) {
+      it(`offer without "${field}" rejects (no TypeError)`, async () => {
+        const offer = await createOfferEIP712("https://api.example.com/resource", offerInput, p =>
+          account.signTypedData(p),
+        );
+        const payload = { ...offer.payload } as Record<string, unknown>;
+        delete payload[field];
+        await expect(
+          verifyOfferSignatureEIP712({ ...offer, payload } as typeof offer),
+        ).rejects.toThrow(
+          `Invalid offer: missing or malformed payload (field "${field}" is missing)`,
+        );
+      });
+    }
+
+    it("a well-formed offer still verifies", async () => {
+      const offer = await createOfferEIP712("https://api.example.com/resource", offerInput, p =>
+        account.signTypedData(p),
+      );
+      const { signer } = await verifyOfferSignatureEIP712(offer);
+      expect(signer.toLowerCase()).toBe(account.address.toLowerCase());
+    });
+  });
+
   describe("JCS Canonicalization (RFC 8785)", () => {
     it("sorts object keys lexicographically", () => {
       expect(canonicalize({ z: 1, a: 2 })).toBe('{"a":2,"z":1}');
