@@ -1,0 +1,1 @@
+Fixed `x402Client` (async) blocking the event loop while a scheme builds the payment payload. Scheme `create_payment_payload` calls, which can do synchronous network I/O such as Solana RPC reads, now run in a worker thread; `x402ClientSync` is unchanged.
