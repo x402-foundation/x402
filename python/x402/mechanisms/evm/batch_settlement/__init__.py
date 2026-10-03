@@ -22,6 +22,12 @@ from .constants import (
     SCHEME_BATCH_SETTLEMENT,
     VOUCHER_TYPES,
 )
+from .digest import (
+    compute_channel_config_digest,
+    compute_claim_batch_digest,
+    compute_refund_digest,
+    compute_voucher_digest,
+)
 from .types import (
     AuthorizerSigner,
     ChannelConfig,
@@ -96,5 +102,9 @@ __all__ = [
     "is_settle_payload",
     "is_enriched_refund_payload",
     "compute_channel_id",
+    "compute_channel_config_digest",
+    "compute_voucher_digest",
+    "compute_refund_digest",
+    "compute_claim_batch_digest",
     "get_batch_settlement_eip712_domain",
 ]
