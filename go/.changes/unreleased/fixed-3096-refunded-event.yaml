@@ -1,0 +1,2 @@
+kind: fixed
+body: Fail closed when a batch-settlement refund receipt is missing a positive Refunded event (possible no-op early return).
