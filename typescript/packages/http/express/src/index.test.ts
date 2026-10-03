@@ -413,6 +413,34 @@ describe("paymentMiddleware", () => {
     expect(resourceServer.registerExtension).not.toHaveBeenCalled();
   });
 
+  it("sends a declared text/plain payment-error body without JSON encoding", async () => {
+    const expected = "Payment required.\nPreview line 2.";
+    setupMockHttpServer({
+      type: "payment-error",
+      response: {
+        status: 402,
+        body: expected,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+        isHtml: false,
+      },
+    });
+
+    const middleware = paymentMiddleware(
+      mockRoutes,
+      {} as unknown as x402ResourceServer,
+      undefined,
+      undefined,
+      false,
+    );
+    const res = createMockResponse();
+
+    await middleware(createMockRequest(), res, vi.fn());
+
+    expect(res.status).toHaveBeenCalledWith(402);
+    expect(res.send).toHaveBeenCalledWith(expected);
+    expect(res.json).not.toHaveBeenCalled();
+  });
+
   it("returns 402 JSON for payment-error", async () => {
     setupMockHttpServer({
       type: "payment-error",
