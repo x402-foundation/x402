@@ -663,8 +663,10 @@ payment hash and MUST return:
 
 - `exact_lnbtc_invoice_not_settled` if the invoice is open or accepted and can
   still settle.
-- `exact_lnbtc_receiver_unavailable` if the receiver reports no invoice state,
-  for example because the query fails or times out, or the payment hash is unknown.
+- `exact_lnbtc_receiver_unavailable` if the receiver gives no answer, for example
+  because the query fails or times out.
+- `invalid_exact_lnbtc_invoice_unknown` if the receiver answers that it does not
+  know the payment hash.
 - `invalid_exact_lnbtc_invoice_canceled` if the invoice can no longer settle.
   Held HTLCs then fail back to the payer through Lightning's own failure or
   timeout handling; x402 adds no return path.
@@ -700,8 +702,8 @@ receiver before claiming the key, so a non-final attempt holds no claim. A claim
 held while querying MUST be released before any result other than success is
 returned, and MUST be bounded by a lease so that an abnormally terminated attempt
 cannot hold it indefinitely; lease expiry MUST NOT let two attempts both succeed.
-Each replay entry SHOULD record the asset transfer method that settled it,
-because only a `bolt11` entry is backed by a self-verifying proof.
+An entry recorded under `invoice` MUST be marked as such, because only a
+`bolt11` entry is backed by a self-verifying proof.
 
 The replay entry MUST remain until at least one hour after
 `invoice_end + skew`. It MUST NOT be removed while the invoice can still pass
@@ -759,8 +761,9 @@ MUST preserve the validation reason when validation fails.
 | `invalid_exact_lnbtc_payment_hash_malformed` | `payload.paymentHash` is not 64 lowercase hexadecimal characters. |
 | `invalid_exact_lnbtc_payment_hash_mismatch` | `payload.paymentHash` differs from the accepted invoice's payment hash. |
 | `invalid_exact_lnbtc_invoice_expired` | The paid-but-expired settlement-time window was exceeded. |
-| `exact_lnbtc_invoice_not_settled` | Under `invoice`, the receiver reports the invoice as open or accepted; it can still settle. |
-| `exact_lnbtc_receiver_unavailable` | Under `invoice`, the facilitator could not obtain the invoice state from the receiver. |
+| `exact_lnbtc_invoice_not_settled` | Under `invoice`, the receiver reports the invoice as open or accepted; it can still settle and may be retried. |
+| `exact_lnbtc_receiver_unavailable` | Under `invoice`, the receiver gave no answer; settlement may be retried. |
+| `invalid_exact_lnbtc_invoice_unknown` | Under `invoice`, the receiver does not know the payment hash. |
 | `invalid_exact_lnbtc_invoice_canceled` | Under `invoice`, the receiver reports the invoice as canceled; it can no longer settle. |
 
 Client and server implementations SHOULD use these stable local failure reasons.
@@ -818,6 +821,10 @@ invoice issuance before calling the receiver. They MUST NOT reuse an invoice
 across clients or challenges. If the transport provides a payment payload before
 challenge generation, the server SHOULD validate it before it creates a replacement
 invoice.
+
+Under `invoice`, a settle attempt queries the receiver even when nothing was paid,
+and a non-final result records nothing. Facilitators SHOULD cache or rate-limit
+receiver queries per `payTo` and payment hash.
 
 ### Network and Currency Confusion
 
