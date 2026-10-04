@@ -4,8 +4,9 @@ These tests DOCUMENT current behavior of the legacy 1.x Flask adapter.
 See https://github.com/x402-foundation/x402/issues/3465 — on paid routes,
 responses with a 3xx status are delivered to the client WITHOUT settlement
 (the settle gate is `200 <= status < 300`). The v2 line changed this gate to
-`< 400` in 2.15.0 (PR #2826); these tests pin the 1.x behavior so any future
-change to it is an explicit, reviewed decision.
+`< 400` in 2.11.0 (PR #2388; PR #2826 in 2.15.0 fixed a main-branch
+regression that did not reach a shipped release); these tests pin the 1.x
+behavior so any future change to it is an explicit, reviewed decision.
 """
 
 import base64
