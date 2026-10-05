@@ -167,3 +167,17 @@ advanced/
 1. **Use hooks for observability** - Log payment events for debugging and metrics
 2. **Configure network preferences** - Users may prefer specific networks
 3. **Separate keys per environment** - Don't use production keys for testing
+
+### Cardano
+
+`all_networks.py` also supports Cardano Preprod. Install the example dependencies
+with `uv sync`, then set `CARDANO_NETWORK=cardano:preprod`. Clients use
+`CARDANO_MNEMONIC` and `BLOCKFROST_PROJECT_ID`; servers use `CARDANO_ADDRESS`;
+facilitators need only `BLOCKFROST_PROJECT_ID`. Set `FACILITATOR_URL` to your
+Cardano-enabled facilitator. The default USD price uses Preprod USDM, so the
+buyer needs that token and ADA for fees and minimum UTxO deposits.
+
+`CARDANO_RPC_URL` overrides the Preprod Blockfrost URL. When selecting another
+network, supply its matching provider URL and project ID. See the
+[Cardano mechanism guide](../../../../python/x402/mechanisms/cardano/README.md)
+for explicit ADA prices, script payments, Masumi quotes and confirmation policy.
