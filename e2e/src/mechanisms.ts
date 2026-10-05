@@ -942,6 +942,19 @@ function resolvePayTo(
   }
 }
 
+/** Canton pins the instrument in `extra.instrumentId` ({admin, id}); verify
+ *  rejects a requirement without it. `CC` is the Amulet instrument. */
+function cantonRouteExtra(route: SdkRoute, env: EnvLookup): Record<string, unknown> | undefined {
+  if (route.network !== 'canton') {
+    return undefined;
+  }
+  const admin = env('SERVER_CANTON_INSTRUMENT_ADMIN');
+  if (!admin) {
+    throw new Error(`Route ${route.path}: SERVER_CANTON_INSTRUMENT_ADMIN is required`);
+  }
+  return { instrumentId: { admin, id: 'Amulet' } };
+}
+
 function cardanoRouteExtra(route: SdkRoute, env: EnvLookup): Record<string, unknown> | undefined {
   if (route.network !== 'cardano') {
     return undefined;
@@ -1037,11 +1050,10 @@ export function resolvePaymentRoutes(
     if (!payTo) continue;
 
     const { price, extra: priceExtra } = resolvePrice(route, caip2, env);
+    const networkExtra = cardanoRouteExtra(route, env) ?? cantonRouteExtra(route, env);
     const extra = mergeRouteExtra(
       priceExtra,
-      route.requirementsExtra
-        ? { ...route.requirementsExtra, ...cardanoRouteExtra(route, env) }
-        : cardanoRouteExtra(route, env),
+      route.requirementsExtra ? { ...route.requirementsExtra, ...networkExtra } : networkExtra,
       route.paymentFlow,
     );
 

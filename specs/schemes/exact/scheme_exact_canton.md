@@ -230,8 +230,11 @@ On failure:
 
 ## Facilitator Verification Rules (MUST)
 
-1. **Network match.** `paymentRequirements.network` MUST equal the facilitator's
-   configured network.
+1. **Network match.** `paymentPayload.accepted.scheme` and
+   `paymentRequirements.scheme` MUST be `exact` (else `unsupported_scheme`), and
+   `paymentPayload.accepted.network` MUST equal `paymentRequirements.network`,
+   which MUST be a network the facilitator is configured for (else
+   `invalid_network`).
 
 2. **Proof present & well-formed.** The payload MUST carry `preparedTransaction`,
    `preparedTxHash` and `signature`. If absent, reject with
@@ -242,7 +245,10 @@ On failure:
 3. **Signature valid.** The decoded prepared transaction MUST contain exactly one
    `TransferFactory_Transfer`, its recomputed hash MUST equal `preparedTxHash`, and
    `signature` MUST verify against the payer party over that hash. Reject with
-   `invalid_exact_canton_signature_invalid`.
+   `invalid_exact_canton_signature_invalid`. That exercise MUST target the
+   transfer factory the facilitator itself resolves from the instrument's
+   registry, never a contract named by the payload. Reject with
+   `invalid_exact_canton_malformed_payload`.
 
 4. **Amount.** The transfer amount MUST equal `paymentRequirements.amount`
    converted to on-ledger Decimal (1 CC = 1e10 atomic units). Reject with
