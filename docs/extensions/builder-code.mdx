@@ -350,7 +350,7 @@ The suffix appended to settlement calldata (reading from the end backwards):
 | `ercMarker` | 16 bytes | Constant: `80218021802180218021802180218021` |
 | `schemaId` | 1 byte | `0x02` for Schema 2 |
 | `cborLength` | 2 bytes | Length of CBOR data (big-endian) |
-| `cborData` | variable | CBOR-encoded map with `a`, `w`, and/or `s` fields |
+| `cborData` | variable | CBOR-encoded map with `a`, `w`, `s`, and/or `m` fields |
 
 Wire order: `[cborData][cborLength (2B)][schemaId (1B)][ercMarker (16B)]`
 
