@@ -250,4 +250,4 @@ EN 16931-1 (+ CEN/TS 16931-8:2024 e-receipt; VAT category codes, UNCL5305 subset
 
 ## Implementation status
 
-An MIT-licensed TypeScript implementation exists; it does not yet conform to this specification. The spec is self-contained: an implementation needs nothing from it, and the vectors above test canonicalization conformance.
+A TypeScript implementation exists; it does not yet conform to this specification. The spec is self-contained: an implementation needs nothing from it, and the vectors above test canonicalization conformance.
