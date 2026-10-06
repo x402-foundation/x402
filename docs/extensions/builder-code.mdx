@@ -18,6 +18,7 @@ Three parties each contribute an attribution code:
 | `a` | Resource server | App code — identifies the application exposing the paid endpoint |
 | `w` | Facilitator | Wallet code — identifies the facilitator settling the payment on-chain |
 | `s` | Client, server, and/or facilitator | Service code(s) — attribution codes from the payment path; each party has its own dedicated reservation (`MAX_CLIENT_SERVICE_CODES`, `MAX_SERVER_SERVICE_CODES`, `MAX_FACILITATOR_SERVICE_CODES`) so declaring up to that amount never crowds out another party's codes |
+| `m` | Facilitator (at settlement) | Settlement metadata — facilitator-authored key/value map supplied by the settling mechanism; keys must start with `x402` and values must be unsigned integers, strings, arrays, or maps with string keys |
 
 These codes are CBOR-encoded as an [ERC-8021](https://eip.tools/eip/8021) Schema 2 suffix and appended to the settlement transaction calldata. Off-chain tools can parse the calldata to verify attribution.
 
