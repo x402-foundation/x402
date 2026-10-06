@@ -412,7 +412,9 @@ facilitator.registerExtension(
 );
 ```
 
-Reads `a` and `s` from the payment payload at settlement time, adds `w`, appends its own `serviceCode` to `s` (deduped), and encodes the ERC-8021 CBOR suffix. On v1 payloads, `a` is omitted from the suffix (the resource-server echo gate that validates `a` does not run on v1).
+Reads `a` and `s` from the payment payload at settlement time, adds `w`, appends its own `serviceCode` to `s` (deduped), includes `m` when the settling mechanism supplies settlement metadata, and encodes the ERC-8021 CBOR suffix. On v1 payloads, `a` is omitted from the suffix (the resource-server echo gate that validates `a` does not run on v1).
+
+The `m` field is written exclusively by the facilitator at settlement — it never appears in `PaymentRequired` or `PaymentPayload`, and the facilitator ignores any `m` found in a client payload. Keys inside `m` must start with `x402` and are defined by the scheme spec that emits them.
 
 ### Utilities
 
