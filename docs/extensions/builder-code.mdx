@@ -418,12 +418,17 @@ Reads `a` and `s` from the payment payload at settlement time, adds `w`, appends
 
 #### `encodeBuilderCodeSuffix(data)`
 
-Encodes builder code fields as an ERC-8021 Schema 2 hex suffix.
+Encodes builder code fields as an ERC-8021 Schema 2 hex suffix. Accepts `a`, `w`, `s`, and `m` fields. Throws when the resulting CBOR exceeds 65,535 bytes.
 
 ```typescript
 import { encodeBuilderCodeSuffix } from "@x402/extensions/builder-code";
 
-const suffix = encodeBuilderCodeSuffix({ a: "bc_my_app", w: "bc_my_fac", s: ["bc_my_client"] });
+const suffix = encodeBuilderCodeSuffix({
+  a: "bc_my_app",
+  w: "bc_my_fac",
+  s: ["bc_my_client"],
+  m: { x402Example: 7n },
+});
 // Returns hex string to append to calldata
 ```
 
@@ -435,7 +440,8 @@ Parses ERC-8021 Schema 2 attribution from settlement transaction calldata.
 import { parseBuilderCodeSuffixFromCalldata } from "@x402/extensions/builder-code";
 
 const attribution = parseBuilderCodeSuffixFromCalldata(tx.input);
-// Returns { a?, w?, s? } or null if no valid suffix found
+// Returns { a?, w?, s?, m? } or null if no valid suffix found
+// Unsigned integers inside `m` are returned as bigint
 ```
 
 ### Constants
