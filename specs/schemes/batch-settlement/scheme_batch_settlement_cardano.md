@@ -1,6 +1,6 @@
 # Scheme: `batch-settlement` on `Cardano`
 
-Status: **draft**, v0.6 (2026-09-25). Reference implementation and preprod measurements:
+Status: **draft**, v0.7 (2026-10-06). Reference implementation and preprod measurements:
 [loveaihq/subbit-x402](https://github.com/loveaihq/subbit-x402) (`src/x402/`, [`RESULTS.md`](https://github.com/loveaihq/subbit-x402/blob/main/RESULTS.md)).
 
 The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are to be read as in RFC 2119.
@@ -495,6 +495,12 @@ transaction to fold.
 
 ## Client verification rules
 
+**The validator.** The server names it in `scriptHash`, and it decides who can spend the deposit.
+The client MUST open or top up a channel only at a `scriptHash` it already trusts, such as the
+validator it ships with, and MUST refuse a 402 that names any other. A client MAY trust several
+validators, and so admit variants of this one. It trusts a new one only once that hash has been
+rebuilt from reviewed source (for Aiken, [uplc.link](https://uplc.link) rebuilds and compares).
+
 **Steady state.** The client moves its count only by the response's `chargedAmount`, only when
 that is ≤ `amount`, and only when `channelState.chargedCumulativeAmount`, if present, equals its
 previous count plus `chargedAmount`. It MAY take `channelRef` from `channelState`.
@@ -584,7 +590,7 @@ non-terminal `settlement_pending`.
 
 [loveaihq/subbit-x402](https://github.com/loveaihq/subbit-x402): `src/x402/` implements the client, resource-server and
 facilitator schemes for `@x402/core` 2.27.0 and the server's channel manager, on
-`@evolution-sdk/evolution` 0.5.14 and Blockfrost or Koios, with 58 chain-free tests, and 73 Aiken
+`@evolution-sdk/evolution` 0.5.15 and Blockfrost or Koios, with 58 chain-free tests, and 73 Aiken
 tests of the validator at the hash above.
 [`RESULTS.md`](https://github.com/loveaihq/subbit-x402/blob/main/RESULTS.md) records every preprod transaction: steps 1–3 exercise the validator,
 step 4 the ADA binding end to end, step 5 a token binding, step 6 top-ups and the automatic
@@ -607,3 +613,4 @@ in [`SPONSORSHIP.md`](https://github.com/loveaihq/subbit-x402/blob/main/SPONSORS
 | 0.4 | 2026-09-25 | Retries of the latest voucher answered from the kept response; delegating the provider key to the facilitator |
 | 0.5 | 2026-09-25 | Following the validator's address instead of polling each channel; token-channel exits and delegation measured |
 | 0.6 | 2026-09-25 | The server's channel records survive rollbacks: a deep anchor per channel, records dropped only when their end is deep |
+| 0.7 | 2026-10-06 | The client opens and tops up only at a validator it already trusts, and may trust several |
