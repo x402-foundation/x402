@@ -268,6 +268,43 @@ func TestExecuteRefundWithSignature_NoBalance(t *testing.T) {
 	}
 }
 
+func TestExecuteRefundWithSignature_FailsClosedWithoutRefundedEvent(t *testing.T) {
+	cfg := validConfig()
+	cfg.ReceiverAuthorizer = "0xauthorizer"
+	txHash := "0x" + strings.Repeat("ab", 32)
+	signer := &fakeFacilitatorSigner{
+		addresses: []string{"0xfacilitator"},
+		readContract: func(functionName string, _ ...interface{}) (interface{}, error) {
+			if functionName == evm.FunctionTryAggregate {
+				return multicallChannelStateResult(t, big.NewInt(10000), big.NewInt(0), 0, big.NewInt(0)), nil
+			}
+			if functionName == "refundWithSignature" {
+				return nil, nil
+			}
+			return nil, errors.New("unexpected rpc")
+		},
+		writeContract: func(functionName string, _ ...interface{}) (string, error) {
+			return txHash, nil
+		},
+		waitForReceipt: func(got string) (*evm.TransactionReceipt, error) {
+			return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: got}, nil
+		},
+	}
+	payload := &batchsettlement.BatchSettlementEnrichedRefundPayload{
+		Type:          "refund",
+		ChannelConfig: cfg,
+		Amount:        "1000",
+		RefundNonce:   "0",
+	}
+	resp, err := ExecuteRefundWithSignature(context.Background(), signer, payload, reqsFor(testNetwork), &fakeAuthorizerSigner{addr: "0xauthorizer"}, nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if resp.Success || resp.ErrorReason != ErrRefundedEventMismatch {
+		t.Fatalf("got %+v", resp)
+	}
+}
+
 func TestExecuteRefundWithSignature_BadProvidedClaimSig(t *testing.T) {
 	scheme := newScheme()
 	cfg := validConfig()
