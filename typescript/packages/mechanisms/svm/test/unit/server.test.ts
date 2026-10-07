@@ -212,6 +212,50 @@ describe("ExactSvmScheme", () => {
         feePayer: "FeePayer1111111111111111111111111111",
       });
     });
+
+    it("copies the facilitator's transactionVersions into extra", async () => {
+      const result = await server.enhancePaymentRequirements(
+        {
+          scheme: "exact",
+          network: SOLANA_DEVNET_CAIP2,
+          asset: USDC_DEVNET_ADDRESS,
+          amount: "100000",
+          payTo: "PayToAddress11111111111111111111111111",
+          maxTimeoutSeconds: 3600,
+          extra: {},
+        } as never,
+        {
+          x402Version: 2,
+          scheme: "exact",
+          network: SOLANA_DEVNET_CAIP2,
+          extra: { feePayer: "FeePayer1111111111111111111111111111", transactionVersions: [0] },
+        },
+        [],
+      );
+      expect(result.extra.transactionVersions).toEqual([0]);
+    });
+
+    it("forwards malformed transactionVersions so the client fails closed", async () => {
+      const result = await server.enhancePaymentRequirements(
+        {
+          scheme: "exact",
+          network: SOLANA_DEVNET_CAIP2,
+          asset: USDC_DEVNET_ADDRESS,
+          amount: "100000",
+          payTo: "PayToAddress11111111111111111111111111",
+          maxTimeoutSeconds: 3600,
+          extra: {},
+        } as never,
+        {
+          x402Version: 2,
+          scheme: "exact",
+          network: SOLANA_DEVNET_CAIP2,
+          extra: { feePayer: "FeePayer1111111111111111111111111111", transactionVersions: "0" },
+        },
+        [],
+      );
+      expect(result.extra.transactionVersions).toBe("0");
+    });
   });
 
   describe("getAssetDecimals", () => {

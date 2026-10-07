@@ -2,6 +2,8 @@
 
 # Constants
 from .constants import (
+    ACCEPTED_TRANSACTION_VERSIONS,
+    ADVERTISED_TRANSACTION_VERSIONS,
     COMPUTE_BUDGET_PROGRAM_ADDRESS,
     DEFAULT_COMPUTE_UNIT_LIMIT,
     DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
@@ -31,6 +33,7 @@ from .constants import (
     ERR_UNKNOWN_FOURTH_INSTRUCTION,
     ERR_UNKNOWN_SIXTH_INSTRUCTION,
     ERR_UNSUPPORTED_SCHEME,
+    ERR_UNSUPPORTED_TRANSACTION_VERSION,
     LIGHTHOUSE_PROGRAM_ADDRESS,
     MAINNET_RPC_URL,
     MAINNET_WS_URL,
@@ -86,9 +89,12 @@ from .utils import (
     get_asset_info,
     get_network_config,
     get_token_payer_from_transaction,
+    get_transaction_version,
     get_usdc_address,
+    is_accepted_transaction_version,
     normalize_network,
     parse_amount,
+    resolve_transaction_version,
     validate_svm_address,
 )
 
@@ -105,6 +111,8 @@ __all__ = [
     "DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS",
     "MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS",
     "MAX_MEMO_BYTES",
+    "ACCEPTED_TRANSACTION_VERSIONS",
+    "ADVERTISED_TRANSACTION_VERSIONS",
     "DEVNET_RPC_URL",
     "TESTNET_RPC_URL",
     "MAINNET_RPC_URL",
@@ -147,6 +155,7 @@ __all__ = [
     "ERR_SIMULATION_FAILED",
     "ERR_TRANSACTION_FAILED",
     "ERR_SETTLEMENT_PENDING",
+    "ERR_UNSUPPORTED_TRANSACTION_VERSION",
     # Types
     "ExactSvmPayload",
     "ExactSvmPayloadV1",
@@ -171,6 +180,9 @@ __all__ = [
     "format_amount",
     "decode_transaction_from_payload",
     "get_token_payer_from_transaction",
+    "get_transaction_version",
+    "is_accepted_transaction_version",
+    "resolve_transaction_version",
     "extract_transaction_info",
     "derive_ata",
     # Default assets
