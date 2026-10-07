@@ -1,5 +1,6 @@
 """Unit tests for x402.http.clients.requests - requests adapter wrapper."""
 
+import io
 import json
 from unittest.mock import MagicMock, patch
 
@@ -13,7 +14,12 @@ from x402.http.clients.requests import (
     x402_requests,
     x402HTTPAdapter,
 )
-from x402.http.utils import encode_payment_required_header, encode_payment_response_header
+from x402.http.utils import (
+    MAX_CONTROL_PLANE_RESPONSE_BYTES,
+    ResponseBodyTooLargeError,
+    encode_payment_required_header,
+    encode_payment_response_header,
+)
 from x402.http.x402_http_client import x402HTTPClientSync
 from x402.http.x402_http_client_base import ProcessPaymentResult
 from x402.schemas import PaymentPayload, PaymentRequired, PaymentRequirements, SettleResponse
@@ -22,6 +28,15 @@ from x402.schemas.hooks import PaymentRequiredHeadersResult, RecoveredResponseRe
 # Skip tests if requests not installed
 pytest.importorskip("requests")
 import requests
+
+
+def _attach_raw(response: MagicMock, content: bytes | None = None) -> MagicMock:
+    body = content if content is not None else response.content
+    response.content = body
+    response.raw = io.BytesIO(body)
+    response.close = MagicMock()
+    return response
+
 
 # =============================================================================
 # Helpers
@@ -64,6 +79,9 @@ class MockX402ClientSync:
     def create_payment_payload(self, payment_required):
         self.create_calls.append(payment_required)
         return self.payload
+
+    def get_extensions(self):
+        return []
 
     def handle_payment_response(self, ctx):
         return None
@@ -125,11 +143,43 @@ class TestX402HTTPAdapter:
         mock_response.status_code = 200
         mock_response.content = b'{"data": "test"}'
 
-        with patch.object(requests.adapters.HTTPAdapter, "send", return_value=mock_response):
+        captured_kwargs: list[dict] = []
+
+        def mock_send(_req, **kwargs):
+            captured_kwargs.append(kwargs)
+            return mock_response
+
+        with patch.object(requests.adapters.HTTPAdapter, "send", side_effect=mock_send):
             response = adapter.send(mock_request)
 
         assert response == mock_response
         assert len(mock_client.create_calls) == 0
+        assert captured_kwargs[0]["stream"] is True
+
+    def test_send_honors_caller_stream_kwarg(self):
+        """Caller stream=True skips eager content materialization on non-402."""
+        mock_client = MockX402ClientSync()
+        adapter = x402HTTPAdapter(mock_client)
+
+        mock_request = MagicMock(spec=requests.PreparedRequest)
+        mock_request.headers = {}
+
+        content_reads = 0
+
+        def read_content(_self: requests.Response) -> bytes:
+            nonlocal content_reads
+            content_reads += 1
+            return b"{}"
+
+        mock_response = MagicMock(spec=requests.Response)
+        mock_response.status_code = 200
+        type(mock_response).content = property(read_content)
+
+        with patch.object(requests.adapters.HTTPAdapter, "send", return_value=mock_response):
+            adapter.send(mock_request, stream=True)
+            assert content_reads == 0
+            adapter.send(mock_request)
+            assert content_reads == 1
 
     def test_send_402_triggers_payment_retry(self):
         """Test that 402 response triggers payment creation and retry."""
@@ -154,6 +204,7 @@ class TestX402HTTPAdapter:
         mock_402_response.headers = {"PAYMENT-REQUIRED": encoded}
         mock_402_response.content = b"{}"
         mock_402_response.url = "https://api.example.com/"
+        _attach_raw(mock_402_response, b"{}")
 
         mock_200_response = MagicMock(spec=requests.Response)
         mock_200_response.status_code = 200
@@ -202,6 +253,7 @@ class TestX402HTTPAdapter:
         mock_402_response.headers = {"PAYMENT-REQUIRED": encoded}
         mock_402_response.content = b"{}"
         mock_402_response.url = "https://api.example.com/"
+        _attach_raw(mock_402_response, b"{}")
 
         mock_200_response = MagicMock(spec=requests.Response)
         mock_200_response.status_code = 200
@@ -257,6 +309,7 @@ class TestX402HTTPAdapter:
         mock_402_response.headers = {}  # No header
         mock_402_response.content = json.dumps(v1_body).encode("utf-8")
         mock_402_response.url = "https://example.com"
+        _attach_raw(mock_402_response, json.dumps(v1_body).encode("utf-8"))
 
         mock_200_response = MagicMock(spec=requests.Response)
         mock_200_response.status_code = 200
@@ -288,6 +341,7 @@ class TestX402HTTPAdapter:
         mock_402_response.status_code = 402
         mock_402_response.headers = {}  # No valid payment info
         mock_402_response.content = b"not json"
+        _attach_raw(mock_402_response, b"not json")
 
         with patch.object(requests.adapters.HTTPAdapter, "send", return_value=mock_402_response):
             with pytest.raises(PaymentError):
@@ -317,6 +371,7 @@ class TestX402HTTPAdapter:
         mock_402.headers = {"PAYMENT-REQUIRED": encoded}
         mock_402.content = b"{}"
         mock_402.url = "https://example.com/api"
+        _attach_raw(mock_402, b"{}")
 
         mock_200 = MagicMock(spec=requests.Response)
         mock_200.status_code = 200
@@ -368,11 +423,13 @@ class TestX402HTTPAdapter:
         mock_initial_402.headers = {"PAYMENT-REQUIRED": encoded_required}
         mock_initial_402.content = b"{}"
         mock_initial_402.url = "https://example.com/api"
+        _attach_raw(mock_initial_402, b"{}")
 
         mock_paid_402 = MagicMock(spec=requests.Response)
         mock_paid_402.status_code = 402
         mock_paid_402.headers = {"PAYMENT-RESPONSE": encoded_response}
         mock_paid_402.content = b"{}"
+        _attach_raw(mock_paid_402, b"{}")
 
         mock_success = MagicMock(spec=requests.Response)
         mock_success.status_code = 200
@@ -395,6 +452,201 @@ class TestX402HTTPAdapter:
         assert response == mock_success
         assert len(mock_client.create_calls) == 2
         assert call_count[0] == 3
+
+    def test_rejects_oversized_initial_402(self) -> None:
+        raw = _TrackingRaw(MAX_CONTROL_PLANE_RESPONSE_BYTES + 1)
+        response_402 = requests.Response()
+        response_402.status_code = 402
+        response_402.headers = {}
+        response_402.raw = raw
+        response_402.url = "https://api.example.com/data"
+
+        adapter = x402HTTPAdapter(MockX402ClientSync())
+        mock_request = MagicMock(spec=requests.PreparedRequest)
+        mock_request.headers = {}
+        mock_request.url = "https://api.example.com/data"
+
+        with patch.object(requests.adapters.HTTPAdapter, "send", return_value=response_402):
+            with pytest.raises(ResponseBodyTooLargeError):
+                adapter.send(mock_request)
+        assert raw.closed
+
+    def test_rejects_oversized_auth_retry_402(self) -> None:
+        required = PaymentRequired(
+            x402_version=2,
+            extensions={
+                "sign-in-with-x": {"info": {"nonce": "abc"}},
+            },
+            accepts=[make_payment_requirements()],
+        )
+        encoded_required = encode_payment_required_header(required)
+        auth_raw = _TrackingRaw(MAX_CONTROL_PLANE_RESPONSE_BYTES + 1)
+
+        initial_402 = requests.Response()
+        initial_402.status_code = 402
+        initial_402.headers = {"PAYMENT-REQUIRED": encoded_required}
+        initial_402.raw = io.BytesIO(b"")
+        initial_402.url = "https://api.example.com/profile"
+
+        auth_402 = requests.Response()
+        auth_402.status_code = 402
+        auth_402.headers = {}
+        auth_402.raw = auth_raw
+        auth_402.url = "https://api.example.com/profile"
+
+        mock_client = MockX402ClientSync()
+        http_client = x402HTTPClientSync(mock_client)
+        http_client.on_payment_required(
+            lambda ctx: PaymentRequiredHeadersResult(headers={"SIGN-IN-WITH-X": "signed"})
+        )
+        adapter = x402HTTPAdapter(http_client)
+
+        mock_request = MagicMock(spec=requests.PreparedRequest)
+        mock_request.headers = {}
+        mock_request.url = "https://api.example.com/profile"
+        mock_retry_request = MagicMock(spec=requests.PreparedRequest)
+        mock_retry_request.headers = {}
+        mock_request.copy.return_value = mock_retry_request
+
+        def mock_send(req, **kwargs):
+            if req.headers.get("SIGN-IN-WITH-X"):
+                return auth_402
+            return initial_402
+
+        with patch.object(requests.adapters.HTTPAdapter, "send", side_effect=mock_send):
+            with pytest.raises(ResponseBodyTooLargeError):
+                adapter.send(mock_request)
+        assert auth_raw.closed
+
+    def test_rejects_oversized_paid_retry_402(self) -> None:
+        required = PaymentRequired(
+            x402_version=2,
+            accepts=[make_payment_requirements()],
+        )
+        encoded_required = encode_payment_required_header(required)
+        paid_raw = _TrackingRaw(MAX_CONTROL_PLANE_RESPONSE_BYTES + 1)
+
+        initial_402 = requests.Response()
+        initial_402.status_code = 402
+        initial_402.headers = {"PAYMENT-REQUIRED": encoded_required}
+        initial_402.raw = io.BytesIO(b"")
+        initial_402.url = "https://api.example.com/data"
+
+        paid_402 = requests.Response()
+        paid_402.status_code = 402
+        paid_402.headers = {}
+        paid_402.raw = paid_raw
+        paid_402.url = "https://api.example.com/data"
+
+        adapter = x402HTTPAdapter(MockX402ClientSync())
+        mock_request = MagicMock(spec=requests.PreparedRequest)
+        mock_request.headers = {}
+        mock_request.url = "https://api.example.com/data"
+        mock_retry_request = MagicMock(spec=requests.PreparedRequest)
+        mock_retry_request.headers = {}
+        mock_request.copy.return_value = mock_retry_request
+
+        def mock_send(req, **kwargs):
+            if req.headers.get(x402HTTPAdapter.RETRY_HEADER) == "1":
+                return paid_402
+            return initial_402
+
+        with patch.object(requests.adapters.HTTPAdapter, "send", side_effect=mock_send):
+            with pytest.raises(ResponseBodyTooLargeError):
+                adapter.send(mock_request)
+        assert paid_raw.closed
+
+    def test_rejects_oversized_recovery_402(self) -> None:
+        required = PaymentRequired(
+            x402_version=2,
+            accepts=[make_payment_requirements()],
+        )
+        encoded_required = encode_payment_required_header(required)
+        settle = SettleResponse(
+            success=False,
+            error_reason="failed",
+            transaction="0x0",
+            network="eip155:8453",
+        )
+        encoded_response = encode_payment_response_header(settle)
+        recovery_raw = _TrackingRaw(MAX_CONTROL_PLANE_RESPONSE_BYTES + 1)
+
+        initial_402 = requests.Response()
+        initial_402.status_code = 402
+        initial_402.headers = {"PAYMENT-REQUIRED": encoded_required}
+        initial_402.raw = io.BytesIO(b"")
+        initial_402.url = "https://api.example.com/data"
+
+        paid_402 = requests.Response()
+        paid_402.status_code = 402
+        paid_402.headers = {"PAYMENT-RESPONSE": encoded_response}
+        paid_402.raw = io.BytesIO(b"")
+        paid_402.url = "https://api.example.com/data"
+
+        recovery_402 = requests.Response()
+        recovery_402.status_code = 402
+        recovery_402.headers = {}
+        recovery_402.raw = recovery_raw
+        recovery_402.url = "https://api.example.com/data"
+
+        adapter = x402HTTPAdapter(MockRecoveringClientSync())
+        mock_request = MagicMock(spec=requests.PreparedRequest)
+        mock_request.headers = {}
+        mock_request.url = "https://api.example.com/data"
+        mock_retry_request = MagicMock(spec=requests.PreparedRequest)
+        mock_retry_request.headers = {}
+        mock_request.copy.return_value = mock_retry_request
+
+        def mock_send(req, **kwargs):
+            if req.headers.get(x402HTTPAdapter.RECOVERY_HEADER) == "1":
+                return recovery_402
+            if req.headers.get(x402HTTPAdapter.RETRY_HEADER) == "1":
+                return paid_402
+            return initial_402
+
+        with patch.object(requests.adapters.HTTPAdapter, "send", side_effect=mock_send):
+            with pytest.raises(ResponseBodyTooLargeError):
+                adapter.send(mock_request)
+        assert recovery_raw.closed
+
+    def test_rejects_oversized_already_retried_402(self) -> None:
+        raw = _TrackingRaw(MAX_CONTROL_PLANE_RESPONSE_BYTES + 1)
+        response_402 = requests.Response()
+        response_402.status_code = 402
+        response_402.headers = {}
+        response_402.raw = raw
+        response_402.url = "https://api.example.com/data"
+
+        adapter = x402HTTPAdapter(MockX402ClientSync())
+        mock_request = MagicMock(spec=requests.PreparedRequest)
+        mock_request.headers = {x402HTTPAdapter.RETRY_HEADER: "1"}
+        mock_request.url = "https://api.example.com/data"
+
+        with patch.object(requests.adapters.HTTPAdapter, "send", return_value=response_402):
+            with pytest.raises(ResponseBodyTooLargeError):
+                adapter.send(mock_request)
+        assert raw.closed
+
+
+class _TrackingRaw:
+    def __init__(self, nbytes: int) -> None:
+        self.closed = False
+        self._remaining = nbytes
+
+    def read(self, amt: int = -1, decode_content: bool = False) -> bytes:
+        if self._remaining <= 0:
+            return b""
+        if amt is None or amt < 0:
+            amt = self._remaining
+        n = min(int(amt), self._remaining)
+        self._remaining -= n
+        return b"\x00" * n
+
+    def close(self) -> None:
+        self.closed = True
+
+    def release_conn(self) -> None:
+        self.closed = True
 
 
 # =============================================================================
@@ -531,6 +783,7 @@ def _create_response(status_code: int, content: bytes = b"") -> requests.Respons
     response = requests.Response()
     response.status_code = status_code
     response._content = content
+    response.raw = io.BytesIO(content)
     response.headers = {}
     return response
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 
 from x402.extensions.bazaar import (
@@ -19,10 +20,12 @@ from x402.extensions.bazaar import (
     with_bazaar,
 )
 from x402.extensions.bazaar.facilitator_client import (
+    MAX_DISCOVERY_RESPONSE_BYTES,
     _parse_discovery_resource_item,
     _parse_list_response,
     _parse_search_response,
 )
+from x402.http.utils import ResponseBodyTooLargeError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -37,13 +40,23 @@ def _make_client(url: str = "https://facilitator.example.com") -> MagicMock:
     return client
 
 
-def _make_http_response(status_code: int = 200, json_data: dict | None = None) -> MagicMock:
-    """Create a mock HTTP response."""
-    response = MagicMock()
-    response.status_code = status_code
-    response.text = json.dumps(json_data or {})
-    response.json.return_value = json_data or {}
-    return response
+def _make_http_response(
+    status_code: int = 200, json_data: dict | None = None, text: str = ""
+) -> httpx.Response:
+    """Create an HTTP response."""
+    if json_data is not None:
+        content = json.dumps(json_data).encode("utf-8")
+    else:
+        content = text.encode("utf-8")
+    return httpx.Response(status_code, content=content)
+
+
+def _wire_streaming_http_client(http_client: MagicMock, response: httpx.Response) -> MagicMock:
+    """Mock build_request + send(stream=True) like HTTPFacilitatorClient."""
+    built_request = MagicMock()
+    http_client.build_request.return_value = built_request
+    http_client.send.return_value = response
+    return built_request
 
 
 LIST_RESPONSE_FIXTURE = {
@@ -225,10 +238,10 @@ class TestWithBazaar:
 
 
 class TestListResources:
-    def _make_extended(self, response: MagicMock) -> BazaarExtendedClient:
+    def _make_extended(self, response: httpx.Response) -> BazaarExtendedClient:
         client = _make_client()
         http_client = MagicMock()
-        http_client.get.return_value = response
+        _wire_streaming_http_client(http_client, response)
         client._get_client.return_value = http_client
         return with_bazaar(client)
 
@@ -239,8 +252,11 @@ class TestListResources:
         extended.extensions.bazaar.list_resources()
 
         http_client = extended._client._get_client()
-        call_args = http_client.get.call_args
-        assert call_args[0][0] == "https://facilitator.example.com/discovery/resources"
+        call_args = http_client.build_request.call_args
+        assert call_args[0][0] == "GET"
+        assert call_args[0][1] == "https://facilitator.example.com/discovery/resources"
+        http_client.send.assert_called_once()
+        assert http_client.send.call_args[1]["stream"] is True
 
     def test_passes_type_param(self) -> None:
         response = _make_http_response(200, LIST_RESPONSE_FIXTURE)
@@ -249,7 +265,7 @@ class TestListResources:
         extended.extensions.bazaar.list_resources(ListDiscoveryResourcesParams(type="http"))
 
         http_client = extended._client._get_client()
-        call_kwargs = http_client.get.call_args[1]
+        call_kwargs = http_client.build_request.call_args[1]
         assert call_kwargs["params"]["type"] == "http"
 
     def test_passes_limit_and_offset(self) -> None:
@@ -259,7 +275,7 @@ class TestListResources:
         extended.extensions.bazaar.list_resources(ListDiscoveryResourcesParams(limit=10, offset=5))
 
         http_client = extended._client._get_client()
-        call_kwargs = http_client.get.call_args[1]
+        call_kwargs = http_client.build_request.call_args[1]
         assert call_kwargs["params"]["limit"] == "10"
         assert call_kwargs["params"]["offset"] == "5"
 
@@ -277,7 +293,7 @@ class TestListResources:
         )
 
         http_client = extended._client._get_client()
-        call_kwargs = http_client.get.call_args[1]
+        call_kwargs = http_client.build_request.call_args[1]
         assert call_kwargs["params"]["payTo"] == "0x1234567890123456789012345678901234567890"
         assert call_kwargs["params"]["scheme"] == "exact"
         assert call_kwargs["params"]["network"] == "eip155:8453"
@@ -290,7 +306,7 @@ class TestListResources:
         extended.extensions.bazaar.list_resources()
 
         http_client = extended._client._get_client()
-        call_kwargs = http_client.get.call_args[1]
+        call_kwargs = http_client.build_request.call_args[1]
         assert call_kwargs.get("params") is None
 
     def test_returns_parsed_response(self) -> None:
@@ -305,16 +321,14 @@ class TestListResources:
         assert result.pagination.total == 1
 
     def test_raises_on_error_response(self) -> None:
-        response = _make_http_response(500, {})
-        response.text = "internal server error"
+        response = _make_http_response(500, text="internal server error")
         extended = self._make_extended(response)
 
         with pytest.raises(ValueError, match="listDiscoveryResources failed \\(500\\)"):
             extended.extensions.bazaar.list_resources()
 
     def test_raises_on_404(self) -> None:
-        response = _make_http_response(404, {})
-        response.text = "not found"
+        response = _make_http_response(404, text="not found")
         extended = self._make_extended(response)
 
         with pytest.raises(ValueError, match="listDiscoveryResources failed \\(404\\)"):
@@ -324,7 +338,7 @@ class TestListResources:
         response = _make_http_response(200, LIST_RESPONSE_FIXTURE)
         client = _make_client()
         http_client = MagicMock()
-        http_client.get.return_value = response
+        _wire_streaming_http_client(http_client, response)
         client._get_client.return_value = http_client
 
         auth_provider = MagicMock()
@@ -336,21 +350,21 @@ class TestListResources:
         extended = with_bazaar(client)
         extended.extensions.bazaar.list_resources()
 
-        call_kwargs = http_client.get.call_args[1]
+        call_kwargs = http_client.build_request.call_args[1]
         assert call_kwargs["headers"]["Authorization"] == "Bearer test-token"
 
     def test_no_auth_headers_when_no_provider(self) -> None:
         response = _make_http_response(200, LIST_RESPONSE_FIXTURE)
         client = _make_client()
         http_client = MagicMock()
-        http_client.get.return_value = response
+        _wire_streaming_http_client(http_client, response)
         client._get_client.return_value = http_client
         client._auth_provider = None
 
         extended = with_bazaar(client)
         extended.extensions.bazaar.list_resources()
 
-        call_kwargs = http_client.get.call_args[1]
+        call_kwargs = http_client.build_request.call_args[1]
         assert "Authorization" not in call_kwargs["headers"]
 
 
@@ -360,10 +374,10 @@ class TestListResources:
 
 
 class TestSearch:
-    def _make_extended(self, response: MagicMock) -> BazaarExtendedClient:
+    def _make_extended(self, response: httpx.Response) -> BazaarExtendedClient:
         client = _make_client()
         http_client = MagicMock()
-        http_client.get.return_value = response
+        _wire_streaming_http_client(http_client, response)
         client._get_client.return_value = http_client
         return with_bazaar(client)
 
@@ -374,8 +388,10 @@ class TestSearch:
         extended.extensions.bazaar.search(SearchDiscoveryResourcesParams(query="weather"))
 
         http_client = extended._client._get_client()
-        call_args = http_client.get.call_args
-        assert "/discovery/search" in call_args[0][0]
+        call_args = http_client.build_request.call_args
+        assert call_args[0][0] == "GET"
+        assert "/discovery/search" in call_args[0][1]
+        assert http_client.send.call_args[1]["stream"] is True
 
     def test_passes_query_param(self) -> None:
         response = _make_http_response(200, SEARCH_RESPONSE_FIXTURE)
@@ -384,7 +400,7 @@ class TestSearch:
         extended.extensions.bazaar.search(SearchDiscoveryResourcesParams(query="weather APIs"))
 
         http_client = extended._client._get_client()
-        call_kwargs = http_client.get.call_args[1]
+        call_kwargs = http_client.build_request.call_args[1]
         assert call_kwargs["params"]["query"] == "weather APIs"
 
     def test_passes_optional_type_param(self) -> None:
@@ -396,7 +412,7 @@ class TestSearch:
         )
 
         http_client = extended._client._get_client()
-        call_kwargs = http_client.get.call_args[1]
+        call_kwargs = http_client.build_request.call_args[1]
         assert call_kwargs["params"]["type"] == "http"
 
     def test_passes_limit_and_cursor(self) -> None:
@@ -408,7 +424,7 @@ class TestSearch:
         )
 
         http_client = extended._client._get_client()
-        call_kwargs = http_client.get.call_args[1]
+        call_kwargs = http_client.build_request.call_args[1]
         assert call_kwargs["params"]["limit"] == "5"
         assert call_kwargs["params"]["cursor"] == "abc123"
 
@@ -427,7 +443,7 @@ class TestSearch:
         )
 
         http_client = extended._client._get_client()
-        call_kwargs = http_client.get.call_args[1]
+        call_kwargs = http_client.build_request.call_args[1]
         assert call_kwargs["params"]["payTo"] == "0x1234567890123456789012345678901234567890"
         assert call_kwargs["params"]["scheme"] == "exact"
         assert call_kwargs["params"]["network"] == "eip155:8453"
@@ -456,8 +472,7 @@ class TestSearch:
             extended.extensions.bazaar.search(SearchDiscoveryResourcesParams(query=""))
 
     def test_raises_on_error_response(self) -> None:
-        response = _make_http_response(500, {})
-        response.text = "search failed"
+        response = _make_http_response(500, text="search failed")
         extended = self._make_extended(response)
 
         with pytest.raises(ValueError, match="searchDiscoveryResources failed \\(500\\)"):
@@ -467,7 +482,7 @@ class TestSearch:
         response = _make_http_response(200, SEARCH_RESPONSE_FIXTURE)
         client = _make_client()
         http_client = MagicMock()
-        http_client.get.return_value = response
+        _wire_streaming_http_client(http_client, response)
         client._get_client.return_value = http_client
 
         auth_provider = MagicMock()
@@ -479,7 +494,7 @@ class TestSearch:
         extended = with_bazaar(client)
         extended.extensions.bazaar.search(SearchDiscoveryResourcesParams(query="test"))
 
-        call_kwargs = http_client.get.call_args[1]
+        call_kwargs = http_client.build_request.call_args[1]
         assert call_kwargs["headers"]["X-Api-Key"] == "secret"
 
     def test_search_without_type_omits_type_from_params(self) -> None:
@@ -489,7 +504,7 @@ class TestSearch:
         extended.extensions.bazaar.search(SearchDiscoveryResourcesParams(query="weather"))
 
         http_client = extended._client._get_client()
-        call_kwargs = http_client.get.call_args[1]
+        call_kwargs = http_client.build_request.call_args[1]
         assert "type" not in call_kwargs["params"]
 
     def test_search_without_cursor_omits_cursor(self) -> None:
@@ -499,7 +514,7 @@ class TestSearch:
         extended.extensions.bazaar.search(SearchDiscoveryResourcesParams(query="weather"))
 
         http_client = extended._client._get_client()
-        call_kwargs = http_client.get.call_args[1]
+        call_kwargs = http_client.build_request.call_args[1]
         assert "cursor" not in call_kwargs["params"]
 
     def test_returns_pagination_object_with_cursor(self) -> None:
@@ -579,3 +594,75 @@ class TestDiscoveryResourceSerialization:
             "serviceName": "Weather API",
             "tags": ["weather", "api"],
         }
+
+
+class _TrackingSyncStream(httpx.SyncByteStream):
+    def __init__(self, nbytes: int) -> None:
+        self.closed = False
+        self._nbytes = nbytes
+
+    def __iter__(self):
+        remaining = self._nbytes
+        while remaining > 0:
+            n = min(65536, remaining)
+            remaining -= n
+            yield b"\x00" * n
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_discovery_clients_reject_oversized_responses() -> None:
+    tests = [
+        (
+            "list success",
+            200,
+            lambda client: client.extensions.bazaar.list_resources(),
+        ),
+        (
+            "search error",
+            500,
+            lambda client: client.extensions.bazaar.search(
+                SearchDiscoveryResourcesParams(query="test")
+            ),
+        ),
+    ]
+
+    for name, status_code, call in tests:
+        stream = _TrackingSyncStream(MAX_DISCOVERY_RESPONSE_BYTES + 1)
+        response = httpx.Response(status_code, stream=stream)
+        client = _make_client()
+        http_client = MagicMock()
+        _wire_streaming_http_client(http_client, response)
+        client._get_client.return_value = http_client
+        extended = with_bazaar(client)
+
+        with pytest.raises(ResponseBodyTooLargeError):
+            call(extended)
+        assert stream.closed, name
+
+
+def test_discovery_list_resources_with_real_httpx_client() -> None:
+    """httpx.Client.get() has no stream= kwarg; discovery must use send(stream=True)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/discovery/resources"
+        return httpx.Response(200, json=LIST_RESPONSE_FIXTURE)
+
+    transport = httpx.MockTransport(handler)
+    http_client = httpx.Client(
+        transport=transport,
+        base_url="https://facilitator.example.com",
+    )
+    client = _make_client()
+    client._get_client.return_value = http_client
+    extended = with_bazaar(client)
+
+    try:
+        result = extended.extensions.bazaar.list_resources()
+    finally:
+        http_client.close()
+
+    assert len(result.items) == 1
+    assert result.items[0].resource == "https://api.example.com/weather"
