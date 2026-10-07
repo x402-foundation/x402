@@ -1,0 +1,134 @@
+---
+title: "Batch Settlement Recovery"
+description: "Wire-level recovery contract for stale-cumulative voucher conflicts in the batch-settlement scheme."
+---
+
+The `batch-settlement` scheme uses cumulative vouchers for repeated paid requests on a single channel. When two clients (or two in-flight retries) sign vouchers against the same channel state, one of them can arrive at the server with a `maxClaimableAmount` that is already below the server's tracked cumulative. The server cannot accept that voucher — but the client also cannot recover without an authoritative state snapshot.
+
+This document specifies the **corrective-402 recovery contract** that closes this gap, and links to the [reference vectors](./batch-settlement-recovery-vectors/v0/) any x402 SDK can implement against.
+
+## When recovery is needed
+
+A `corrective 402` is returned when the server's `chargedCumulativeAmount` for the channel meets or exceeds the `maxClaimableAmount` of the voucher in the incoming request:
+
+```
+server.chargedCumulativeAmount < voucher.maxClaimableAmount   →   accept
+server.chargedCumulativeAmount ≥ voucher.maxClaimableAmount   →   corrective 402
+```
+
+This happens in three representative situations:
+
+1. **Stale client state (happy path)** — the client's local cumulative is behind the server's, for example because a previous response was lost, the client restarted from disk without re-syncing, or the channel was just opened and the client did not see prior charges.
+2. **Concurrent advancement** — two concurrent requests on the same channel both signed against the same prior cumulative; one arrived first and bumped the server, so the other request is stale when it arrives. A server-observed compare-and-set failure is one possible cause, but the corrective response does not prove that cause to the client.
+3. **Persistent failure (pathological)** — the corrected retry also receives a corrective response. The server cumulative may have advanced again, or it may be unchanged because voucher reconstruction or server verification is faulty. In either case, the client cannot complete the logical request through another automatic retry.
+
+Cases (1) and (2) have the same wire-visible protocol state and are recoverable by a single retry. Case (3) is what the loop guard prevents.
+
+## Invariant
+
+After recovery, the channel must satisfy:
+
+```
+onchain.totalClaimed   ≤   server.chargedCumulativeAmount   ≤   voucher.maxClaimableAmount
+```
+
+The middle term is monotone non-decreasing per channel; the left term lags it by at most one batched `claim()` transaction. The client trusts the server's `chargedCumulativeAmount` **only after** verifying `totalClaimed` against the onchain `BatchSettlement.channels(channelId)` call — the trust-but-verify split that lets the client safely retry without re-reading the chain on every request.
+
+If the verified onchain `totalClaimed` exceeds the corrective `chargedCumulativeAmount`, the corrective snapshot is invalid. The client MUST surface a hard error (`INVALID_CORRECTIVE_STATE`), MUST NOT update its local channel state from the snapshot, MUST NOT sign a replacement voucher, and MUST NOT retry the request. Recovery requires the server to reconcile its local cumulative state with the onchain state before issuing another corrective response. See [`invalid-corrective-state.json`](./batch-settlement-recovery-vectors/v0/invalid-corrective-state.json).
+
+The verification can also fail to produce an answer at all — an RPC transport failure, a node error, or a timeout while reading `BatchSettlement.channels(channelId)`. That is a different condition and MUST NOT be reported as the one above: the invariant was never evaluated, so the snapshot has not been shown to be invalid and the server has done nothing observably wrong. The client MUST surface a distinct **non-terminal** error (`TRANSIENT_STATE_UNAVAILABLE`) that preserves the underlying cause, MUST NOT update its local channel state from the unverified snapshot, MUST NOT sign a replacement voucher, and MUST NOT retry. Because no replacement voucher is signed, this outcome does not consume a loop-guard attempt: the same logical request MAY be attempted again once the read is available, and that attempt starts with a fresh budget. This mirrors how the settle path treats `settlement_pending` — a broadcast whose confirmation cannot be established is reported as non-terminal with its evidence attached, rather than collapsed into either success or failure. See [`transient-state-unavailable.json`](./batch-settlement-recovery-vectors/v0/transient-state-unavailable.json).
+
+## Wire shape of the corrective response
+
+A corrective 402 carries the authoritative server state in `extra.channelState`:
+
+```json
+{
+  "channelState": {
+    "channelId": "0x...",
+    "balance": "<escrow balance>",
+    "totalClaimed": "<onchain totalClaimed>",
+    "chargedCumulativeAmount": "<server cumulative, may exceed totalClaimed>"
+  }
+}
+```
+
+This is the same `ChannelStateExtra` shape used by successful responses; only the HTTP status (402 vs 200) distinguishes them at the transport layer. The client uses this snapshot to:
+
+1. **Verify** `totalClaimed` against onchain `BatchSettlement.channels(channelId)` (trust-but-verify)
+2. **Validate** that the corrective snapshot satisfies `totalClaimed ≤ chargedCumulativeAmount`
+3. **Replace** its local cumulative with `chargedCumulativeAmount`
+4. **Sign** a new voucher with `maxClaimableAmount = chargedCumulativeAmount + requestCharge`
+5. **Retry exactly once**
+
+If the retry also receives a corrective 402, the client MUST surface a hard error (`PERSISTENT_STALE`) and MUST NOT retry further, regardless of whether the second `chargedCumulativeAmount` advanced or remained unchanged. The observed value movement is diagnostic metadata only and MUST NOT trigger another signature or retry. The client MAY replace its local cumulative with the second snapshot, subject to the same onchain verification it applies to the first, so that a later logical request does not start stale again; that update MUST NOT be followed by a signature or a retry within this request. See [`loop-guard.json`](./batch-settlement-recovery-vectors/v0/loop-guard.json) and [`loop-guard-unchanged.json`](./batch-settlement-recovery-vectors/v0/loop-guard-unchanged.json).
+
+## Recovery flow
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Server
+    participant Chain
+
+    Client->>Server: POST + voucher (stale)
+    Server->>Server: detect charged ≥ maxClaimable
+    Server-->>Client: 402 + channelState
+    Client->>Chain: verify totalClaimed
+    Chain-->>Client: confirmed
+    Client->>Client: update local state, sign new voucher
+    Client->>Server: POST + voucher (corrected, retry 1/1)
+    alt success
+      Server-->>Client: 200 + channelState
+    else still stale
+      Server-->>Client: 402 + channelState
+      Client->>Client: hard error (PERSISTENT_STALE)
+    end
+```
+
+## Why retry is exactly once
+
+A second corrective 402 means one of several things, none of which another client retry can fix:
+
+- **Client-side bug** — the voucher reconstruction after the first recovery is producing the wrong `maxClaimableAmount`.
+- **Server-side persistent drift** — the server's `chargedCumulativeAmount` keeps advancing between retries due to concurrent traffic or a server bug.
+- **Server-side verification failure** — the server rejects the corrected voucher even though its `chargedCumulativeAmount` has not changed.
+- **Adversarial server** — a malicious server can keep returning corrective states to force the client into a retry loop and deny the client's ability to complete any paid request. (The server cannot extract money — the client verifies `totalClaimed` against onchain — but it can deny service.)
+
+The loop guard caps client resource burn, surfaces the failure for human or operational diagnosis, and removes the denial-of-service surface.
+
+## Telemetry
+
+Implementations should emit a distinguishable label for each wire-observable recovery outcome:
+
+| Label | Trigger | Operational meaning |
+| --- | --- | --- |
+| `recovery.stale_state` | First valid corrective 402 | Recoverable cumulative mismatch; investigate if frequent on a single channel |
+| `recovery.persistent_stale` | Second corrective 402 on the same logical request | Bug or attack; alert on the dashboard, do not retry |
+| `recovery.invalid_corrective_state` | Corrective snapshot violates `onchain.totalClaimed ≤ server.chargedCumulativeAmount` | Invalid server state; do not mutate local state or retry |
+| `recovery.transient_state_unavailable` | Corrective 402 whose snapshot could not be verified because the onchain read was unavailable | Chain access problem, not a server fault; non-terminal, attempt the logical request again once reads recover |
+
+The first outcome is recoverable by the standard single-retry flow. `recovery.transient_state_unavailable` is non-terminal but not recoverable in place — it reports that the client could not establish the facts it needs. The remaining two surface hard errors.
+
+The wire response cannot establish why the client's signing base became stale. Implementations MAY record `cas_conflict` as a suspected diagnostic cause when they have supporting evidence, such as locally observed concurrent requests built from the same base or a server-observed compare-and-set failure. This diagnostic is not a protocol outcome and MUST NOT alter recovery behavior. Persisted base-provenance metadata is not required for conformance.
+
+## Reference vectors
+
+Six machine-readable JSON vectors under [`batch-settlement-recovery-vectors/v0/`](./batch-settlement-recovery-vectors/v0/) pin the wire shape and expected client behaviour for each scenario:
+
+- [`happy-path.json`](./batch-settlement-recovery-vectors/v0/happy-path.json) — stale local cumulative, single retry succeeds
+- [`invalid-corrective-state.json`](./batch-settlement-recovery-vectors/v0/invalid-corrective-state.json) — onchain claimed exceeds the server cumulative, hard error without retry
+- [`loop-guard.json`](./batch-settlement-recovery-vectors/v0/loop-guard.json) — retry receives a corrective with an advanced cumulative, hard error
+- [`loop-guard-unchanged.json`](./batch-settlement-recovery-vectors/v0/loop-guard-unchanged.json) — retry receives a corrective with an unchanged cumulative, same hard error
+- [`cas-conflict.json`](./batch-settlement-recovery-vectors/v0/cas-conflict.json) — concurrent same-channel requests, one wins, the other recovers; CAS is an optional suspected cause
+- [`transient-state-unavailable.json`](./batch-settlement-recovery-vectors/v0/transient-state-unavailable.json) — the onchain read needed to verify the snapshot is unavailable, non-terminal error without mutation or retry
+
+SDKs implementing the `batch-settlement` scheme should add an integration test that walks each vector's `steps` array and asserts the `expectedClientBehaviour`.
+
+## Refs
+
+- [`batch-settlement` scheme](./batch-settlement.mdx) — base scheme this recovery contract extends
+- [#2061](https://github.com/x402-foundation/x402/pull/2061) — original TS implementation thread where the corrective-402 contract was proposed by @phdargen, with discussion of recovery semantics from @jithinraj and @Bortlesboat
+- [#3083](https://github.com/x402-foundation/x402/pull/3083) — introduced `settlement_pending` as a non-terminal settle outcome, the settle-path counterpart to `TRANSIENT_STATE_UNAVAILABLE` here
+- [#2908](https://github.com/x402-foundation/x402/issues/2908) — typed recovery outcomes for SDK clients; `TRANSIENT_STATE_UNAVAILABLE` was identified there while scoping a Go implementation against these vectors
+- Byte-equivalence fixtures for the EIP-712 signing layer that this recovery contract sits above: `python/x402/tests/fixtures/batch-settlement-byte-equivalence/v0/`
