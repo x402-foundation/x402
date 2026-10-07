@@ -2612,6 +2612,71 @@ describe("Bazaar Discovery Extension", () => {
       spy.mockRestore();
     });
 
+    it("should keep protocol checks when runtime code generation is unavailable", () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const ext = declareDiscoveryExtension({
+        input: { q: "test" },
+        inputSchema: { properties: { q: { type: "string" } } },
+      });
+      const accepts = [
+        { scheme: "exact", payTo: "0x1", price: "$0.01", network: "eip155:1" as const },
+      ];
+      const routes = {
+        "/valid": {
+          accepts,
+          extensions: ext,
+        },
+        "/invalid": {
+          accepts,
+          extensions: {
+            bazaar: {
+              info: { input: { type: "grpc" } },
+              schema: {},
+            },
+          },
+        },
+      };
+
+      try {
+        vi.stubGlobal("Function", function () {
+          throw new EvalError("Code generation from strings disallowed for this context");
+        });
+        validateBazaarRouteExtensions(routes);
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        expect(warnSpy.mock.calls[0][0]).toContain('Route "/invalid"');
+        expect(warnSpy.mock.calls[0][0]).toContain("input.type");
+        expect(errorSpy).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+        warnSpy.mockRestore();
+        errorSpy.mockRestore();
+      }
+    });
+
+    it("should warn when a bazaar extension has a malformed JSON schema in Node", () => {
+      const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const routes = {
+        "/api": {
+          accepts: [
+            { scheme: "exact", payTo: "0x1", price: "$0.01", network: "eip155:1" as const },
+          ],
+          extensions: {
+            bazaar: {
+              info: { input: { type: "http", method: "GET" } },
+              schema: { type: "not-a-json-schema-type" },
+            },
+          },
+        },
+      };
+
+      validateBazaarRouteExtensions(routes);
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0][0]).toContain("invalid bazaar extension");
+      spy.mockRestore();
+    });
+
     it("should warn for an extension with invalid input.type", () => {
       const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
       const routes = {
