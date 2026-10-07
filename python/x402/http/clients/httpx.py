@@ -88,7 +88,6 @@ class x402AsyncTransport(AsyncBaseTransport):
         # Clone request with additional headers
         new_headers = dict(request.headers)
         new_headers.update(extra_headers)
-        new_headers["Access-Control-Expose-Headers"] = "PAYMENT-RESPONSE,X-PAYMENT-RESPONSE"
         new_extensions = dict(request.extensions)
         if payment_retry:
             # Mark as retry in extensions

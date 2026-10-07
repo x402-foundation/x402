@@ -695,6 +695,37 @@ class TestConsecutivePayments:
         assert captured_requests[1].extensions.get(x402AsyncTransport.RETRY_KEY) is True
 
     @pytest.mark.asyncio
+    async def test_should_not_send_cors_response_header_on_retry(self):
+        """Should not put the response-only Access-Control-Expose-Headers on the retry."""
+        mock_client = MockX402ClientWithCounter()
+
+        payment_required = PaymentRequired(
+            x402_version=2,
+            accepts=[make_payment_requirements()],
+        )
+        encoded = encode_payment_required_header(payment_required)
+
+        captured_requests = []
+
+        async def mock_handle_request(request):
+            captured_requests.append(request)
+            is_retry = request.extensions.get(x402AsyncTransport.RETRY_KEY)
+            if is_retry:
+                return _create_mock_response(200, b'{"success": true}')
+            mock_402 = _create_mock_response(402, b"{}")
+            mock_402.headers = {"PAYMENT-REQUIRED": encoded}
+            return mock_402
+
+        mock_transport = AsyncMock()
+        mock_transport.handle_async_request = mock_handle_request
+
+        transport = x402AsyncTransport(mock_client, mock_transport)
+        await transport.handle_async_request(_create_httpx_request())
+
+        assert len(captured_requests) == 2
+        assert "Access-Control-Expose-Headers" not in captured_requests[1].headers
+
+    @pytest.mark.asyncio
     async def test_should_not_modify_original_request(self):
         """Should not modify original request during retry."""
         mock_client = MockX402ClientWithCounter()
