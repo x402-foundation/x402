@@ -22,6 +22,7 @@ If you are evaluating a mainnet EVM route, decide on your production facilitator
 | [Built on Stellar](https://developers.stellar.org/docs/build/apps/x402/built-on-stellar) | Free, public x402 facilitator for Stellar |
 | [CDP Facilitator](https://docs.cdp.coinbase.com/x402/docs/quickstart-sellers) | Coinbase-hosted facilitator with KYT/OFAC checks on every transaction |
 | [Celo Facilitator](https://x402.celo.org) | Gasless x402 facilitator for Celo Mainnet (API: `https://api.x402.celo.org`), accepting USDC, USD₮ and USA₮ via EIP-3009 |
+| [Consensus Facilitator](https://docs.consensus.canister.software/facilitator/overview/) | Public multi-network facilitator for EVM (Ethereum, Base), Solana, and the Internet Computer (ICP, ckUSDC, ckUSDT), with verify, settle, and resource discovery. No API keys required |
 | [Corbits](https://corbits.dev) | Production-grade multi-network, multi-token facilitator supporting EVM and Solana |
 | [Dexter](https://dexter.cash/facilitator) | Free public x402 facilitator across Solana and EVM chains with no fees and no account required |
 | [Fireblocks Facilitator](https://developers.fireblocks.com/docs/x402-facilitator-overview) | Open-source and hosted facilitator with Fireblocks vault settlement; private keys never leave Fireblocks |
