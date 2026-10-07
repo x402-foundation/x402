@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HTTPFacilitatorClient, computeRetryDelay } from "../../../src/http/httpFacilitatorClient";
+import {
+  HTTPFacilitatorClient,
+  computeRetryDelay,
+  MAX_CONTROL_PLANE_RESPONSE_BYTES,
+  readLimitedBody,
+  ResponseBodyTooLargeError,
+} from "../../../src/http/httpFacilitatorClient";
 import {
   FacilitatorResponseError,
   FacilitatorTimeoutError,
@@ -25,6 +31,85 @@ const paymentPayload: PaymentPayload = {
   accepted: paymentRequirements,
   payload: { signature: "0xmock" },
 };
+
+function finiteZeroBody(byteLength: number): ReadableStream<Uint8Array> {
+  let remaining = byteLength;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (remaining <= 0) {
+        controller.close();
+        return;
+      }
+      const size = Math.min(remaining, 64 * 1024);
+      controller.enqueue(new Uint8Array(size));
+      remaining -= size;
+    },
+  });
+}
+
+function infiniteZeroBody(): {
+  stream: ReadableStream<Uint8Array>;
+  closed: { value: boolean };
+} {
+  const closed = { value: false };
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      controller.enqueue(new Uint8Array(64 * 1024));
+    },
+    cancel() {
+      closed.value = true;
+    },
+  });
+  return { stream, closed };
+}
+
+function hangingResponse(status: number, signal: AbortSignal): Response {
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        const onAbort = () => controller.error(signal.reason);
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+        signal.addEventListener("abort", onAbort, { once: true });
+      },
+    }),
+    { status },
+  );
+}
+
+describe("readLimitedBody", () => {
+  it("returns a short body", async () => {
+    const body = await readLimitedBody(new Response("response"));
+    expect(body).toBe("response");
+  });
+
+  it("accepts a body at the exact limit", async () => {
+    const body = await readLimitedBody(
+      new Response(finiteZeroBody(MAX_CONTROL_PLANE_RESPONSE_BYTES)),
+    );
+    expect(body.length).toBe(MAX_CONTROL_PLANE_RESPONSE_BYTES);
+  });
+
+  it("rejects a body over the limit", async () => {
+    const { stream, closed } = infiniteZeroBody();
+    await expect(readLimitedBody(new Response(stream))).rejects.toBeInstanceOf(
+      ResponseBodyTooLargeError,
+    );
+    expect(closed.value).toBe(true);
+  });
+
+  it("propagates reader errors", async () => {
+    const readErr = new Error("read failed");
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.error(readErr);
+      },
+    });
+    await expect(readLimitedBody(new Response(stream))).rejects.toBe(readErr);
+  });
+});
 
 describe("HTTPFacilitatorClient", () => {
   afterEach(() => {
@@ -75,6 +160,47 @@ describe("HTTPFacilitatorClient", () => {
 
     expect(error).toBeInstanceOf(FacilitatorResponseError);
     expect(error.message).toContain("Facilitator supported returned invalid data");
+  });
+
+  it("rejects oversized facilitator responses without retrying", async () => {
+    const cases: Array<{
+      name: string;
+      status: number;
+      call: (client: HTTPFacilitatorClient) => Promise<unknown>;
+    }> = [
+      {
+        name: "supported 429",
+        status: 429,
+        call: client => client.getSupported(),
+      },
+      {
+        name: "verify success",
+        status: 200,
+        call: client => client.verify(paymentPayload, paymentRequirements),
+      },
+      {
+        name: "settle error",
+        status: 500,
+        call: client => client.settle(paymentPayload, paymentRequirements),
+      },
+    ];
+
+    for (const testCase of cases) {
+      const { stream, closed } = infiniteZeroBody();
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(new Response(stream, { status: testCase.status }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new HTTPFacilitatorClient({ url: "https://facilitator.example.com" });
+      const error = await testCase.call(client).catch(caught => caught as Error);
+
+      expect(error, testCase.name).toBeInstanceOf(ResponseBodyTooLargeError);
+      expect(closed.value, testCase.name).toBe(true);
+      expect(fetchMock, testCase.name).toHaveBeenCalledTimes(1);
+
+      vi.unstubAllGlobals();
+    }
   });
 
   it("preserves VerifyError semantics for valid non-200 verify responses", async () => {
@@ -570,15 +696,7 @@ describe("request timeout", () => {
       "fetch",
       vi.fn().mockImplementation((_url: string, init: RequestInit) => {
         const signal = init.signal!;
-        return Promise.resolve({
-          ok: true,
-          status: 200,
-          headers: new Headers(),
-          text: () =>
-            new Promise((_resolve, reject) => {
-              signal.addEventListener("abort", () => reject(signal.reason));
-            }),
-        } as unknown as Response);
+        return Promise.resolve(hangingResponse(200, signal));
       }),
     );
 
@@ -619,15 +737,7 @@ describe("request timeout", () => {
   it("throws FacilitatorTimeoutError when a 429 error body stalls, without retrying", async () => {
     const fetchMock = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
       const signal = init.signal!;
-      return Promise.resolve({
-        ok: false,
-        status: 429,
-        headers: new Headers(),
-        text: () =>
-          new Promise((_resolve, reject) => {
-            signal.addEventListener("abort", () => reject(signal.reason));
-          }),
-      } as unknown as Response);
+      return Promise.resolve(hangingResponse(429, signal));
     });
     vi.stubGlobal("fetch", fetchMock);
 

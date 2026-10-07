@@ -1,4 +1,5 @@
 import { x402Client, x402ClientConfig, x402HTTPClient } from "@x402/core/client";
+import { MAX_CONTROL_PLANE_RESPONSE_BYTES, ResponseBodyTooLargeError } from "@x402/core/http";
 import { type PaymentRequired } from "@x402/core/types";
 import { type AxiosInstance, type AxiosError, type InternalAxiosRequestConfig } from "axios";
 
@@ -72,6 +73,40 @@ function setAxiosHeader(headers: AxiosHeaderRecord, key: string, value: string):
 }
 
 /**
+ * Ensures an Axios `response.data` value stays within the control-plane body cap.
+ * Axios buffers response bodies, so byte length can be checked without streaming.
+ *
+ * @param data - Axios `response.data` for a payment-required or retry response
+ * @param maxBytes - Maximum allowed body size in bytes
+ * @throws {@link ResponseBodyTooLargeError} when the buffered body exceeds `maxBytes`
+ */
+function assertAxiosResponseBodyWithinLimit(
+  data: unknown,
+  maxBytes: number = MAX_CONTROL_PLANE_RESPONSE_BYTES,
+): void {
+  if (data == null) {
+    return;
+  }
+
+  let byteLength: number;
+  if (typeof data === "string") {
+    byteLength = new TextEncoder().encode(data).byteLength;
+  } else if (data instanceof ArrayBuffer) {
+    byteLength = data.byteLength;
+  } else if (data instanceof Uint8Array) {
+    byteLength = data.byteLength;
+  } else if (typeof Blob !== "undefined" && data instanceof Blob) {
+    byteLength = data.size;
+  } else {
+    byteLength = new TextEncoder().encode(JSON.stringify(data)).byteLength;
+  }
+
+  if (byteLength > maxBytes) {
+    throw new ResponseBodyTooLargeError(maxBytes);
+  }
+}
+
+/**
  * Clones an Axios internal request config so a retry can treat HTTP 402 as a successful
  * response status for validation (so the interceptor can handle payment flow).
  *
@@ -139,7 +174,12 @@ export function wrapAxiosWithPayment(
   const httpClient = client instanceof x402HTTPClient ? client : new x402HTTPClient(client);
 
   axiosInstance.interceptors.response.use(
-    response => response,
+    response => {
+      if (response.status === 402) {
+        assertAxiosResponseBodyWithinLimit(response.data);
+      }
+      return response;
+    },
     async (error: AxiosError) => {
       if (!error.response || error.response.status !== 402) {
         return Promise.reject(error);
@@ -152,15 +192,17 @@ export function wrapAxiosWithPayment(
 
       // Check if this is already a retry to prevent infinite loops
       if ((originalConfig as X402RetryConfig).__is402Retry) {
+        assertAxiosResponseBodyWithinLimit(error.response.data);
         return Promise.reject(error);
       }
 
       try {
+        const response = error.response!; // Already validated above
+        assertAxiosResponseBodyWithinLimit(response.data);
+
         // Parse payment requirements from response
         let paymentRequired: PaymentRequired;
         try {
-          const response = error.response!; // Already validated above
-
           // Create getHeader function for case-insensitive header lookup
           const getHeader = (name: string) => {
             const value = response.headers[name] ?? response.headers[name.toLowerCase()];
@@ -191,6 +233,7 @@ export function wrapAxiosWithPayment(
           if (hookResponse.status !== 402) {
             return hookResponse; // Hook succeeded
           }
+          assertAxiosResponseBodyWithinLimit(hookResponse.data);
           // Hook's retry got 402, fall through to payment
         }
 
@@ -226,6 +269,9 @@ export function wrapAxiosWithPayment(
 
         // Retry the request with payment
         const secondResponse = await axiosInstance.request(paidConfig);
+        if (secondResponse.status === 402) {
+          assertAxiosResponseBodyWithinLimit(secondResponse.data);
+        }
 
         // Fire payment response hooks and handle recovery
         const getResponseHeader = (name: string) => {
@@ -252,6 +298,9 @@ export function wrapAxiosWithPayment(
             "PAYMENT-RESPONSE,X-PAYMENT-RESPONSE",
           );
           const retryResponse = await axiosInstance.request(retryConfig);
+          if (retryResponse.status === 402) {
+            assertAxiosResponseBodyWithinLimit(retryResponse.data);
+          }
           // Process the final retry result without another recovery attempt.
           const getRetryHeader = (name: string) => {
             const value = retryResponse.headers[name] ?? retryResponse.headers[name.toLowerCase()];
@@ -313,7 +362,7 @@ export type {
   SelectPaymentRequirements,
   x402ClientConfig,
 } from "@x402/core/client";
-export { decodePaymentResponseHeader } from "@x402/core/http";
+export { decodePaymentResponseHeader, ResponseBodyTooLargeError } from "@x402/core/http";
 export type {
   Network,
   PaymentPayload,

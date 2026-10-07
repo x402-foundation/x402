@@ -138,6 +138,84 @@ export function computeRetryDelay(retryAfter: string | null, attempt: number): n
   return Math.min(delay, MAX_RETRY_DELAY_MS);
 }
 
+/**
+ * Bounds the payment-required and facilitator responses buffered by this package.
+ * Control-plane JSON is small, so a tight limit is enough.
+ */
+export const MAX_CONTROL_PLANE_RESPONSE_BYTES = 1 << 20;
+
+/**
+ * Error thrown when an HTTP response body exceeds the buffering limit applied by
+ * x402 clients.
+ */
+export class ResponseBodyTooLargeError extends Error {
+  readonly limitBytes: number;
+
+  /**
+   * Creates a ResponseBodyTooLargeError for an oversized HTTP response body.
+   *
+   * @param limitBytes - The buffering limit that the response exceeded, in bytes
+   */
+  constructor(limitBytes: number) {
+    super(`http response body too large: limit ${limitBytes} bytes`);
+    this.name = "ResponseBodyTooLargeError";
+    this.limitBytes = limitBytes;
+  }
+}
+
+/**
+ * Reads at most `maxBytes` from a fetch response. A larger body throws
+ * {@link ResponseBodyTooLargeError} without buffering the rest.
+ *
+ * @param response - The HTTP response whose body should be buffered
+ * @param maxBytes - Maximum number of bytes to buffer
+ * @returns The decoded response body
+ */
+export async function readLimitedBody(
+  response: Response,
+  maxBytes: number = MAX_CONTROL_PLANE_RESPONSE_BYTES,
+): Promise<string> {
+  const stream = response.body;
+  if (!stream) {
+    return "";
+  }
+
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (!value || value.byteLength === 0) {
+        continue;
+      }
+      if (total + value.byteLength > maxBytes) {
+        throw new ResponseBodyTooLargeError(maxBytes);
+      }
+      chunks.push(value);
+      total += value.byteLength;
+    }
+  } finally {
+    void reader.cancel().catch(() => undefined);
+  }
+
+  if (total === 0) {
+    return "";
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
 const verifyResponseSchema: z.ZodType<VerifyResponse, z.ZodTypeDef, unknown> = z.object({
   isValid: z.boolean(),
   invalidReason: z
@@ -337,7 +415,7 @@ async function parseSuccessResponse<T>(
   schema: z.ZodType<T, z.ZodTypeDef, unknown>,
   operation: string,
 ): Promise<T> {
-  const text = await response.text();
+  const text = await readLimitedBody(response);
 
   let data: unknown;
   try {
@@ -421,7 +499,7 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
       });
 
       if (!response.ok) {
-        const text = await response.text();
+        const text = await readLimitedBody(response);
         let data: unknown;
         try {
           data = JSON.parse(text);
@@ -479,7 +557,7 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
       });
 
       if (!response.ok) {
-        const text = await response.text();
+        const text = await readLimitedBody(response);
         let data: unknown;
         try {
           data = JSON.parse(text);
@@ -536,11 +614,11 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
           };
         }
 
-        const errorText = await response.text().catch((cause: unknown) => {
+        const errorText = await readLimitedBody(response).catch((cause: unknown) => {
           // A deadline abort during the error-body read must surface as a
           // timeout, not be masked as a generic HTTP failure (which would be
           // retried for 429). statusText covers other body-read failures.
-          if (isAbortOrTimeoutError(cause)) {
+          if (isAbortOrTimeoutError(cause) || cause instanceof ResponseBodyTooLargeError) {
             throw cause;
           }
           return response.statusText;
