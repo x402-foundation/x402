@@ -1,0 +1,17 @@
+{
+  "name": "Ceaser Privacy Protocol",
+  "description": "Privacy-preserving ETH wrapper on Base using Noir/UltraHonk ZK proofs. Shield, transfer, and unshield ETH without revealing the depositor's address. Implements the zk-relay scheme with gasless withdrawals via a facilitator relay.",
+  "logoUrl": "/logos/ceaser.png",
+  "websiteUrl": "https://ceaser.org",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://ceaser.org",
+    "networks": ["base"],
+    "addresses": {
+      "base": ["0x214999174d5925aB5744e176f433e1585705Ad4d"]
+    },
+    "schemes": ["zk-relay"],
+    "assets": ["ETH"],
+    "supports": { "verify": true, "settle": true, "supported": true, "status": true }
+  }
+}
