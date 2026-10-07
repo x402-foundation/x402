@@ -6,6 +6,7 @@ import {
 } from "../../../src/upto/client/permit2";
 import { createUptoPermit2Payload } from "../../../src/upto/client/permit2";
 import type { ClientEvmSigner } from "../../../src/signer";
+import { _resetSponsoringWarnings } from "../../../src/shared/extensions/gasSponsoring";
 import { PaymentRequirements } from "@x402/core/types";
 import { PERMIT2_ADDRESS, x402UptoPermit2ProxyAddress } from "../../../src/constants";
 import { isUptoPermit2Payload } from "../../../src/types";
@@ -77,6 +78,29 @@ describe("UptoEvmScheme (Client)", () => {
       expect(result.payload.permit2Authorization.witness.facilitator.toLowerCase()).toBe(
         FACILITATOR_ADDRESS.toLowerCase(),
       );
+    });
+
+    it("warns once, and skips the sponsored permit, when the signer cannot read the chain (#3458)", async () => {
+      // The shared helper is what this surface calls; the warning must reach it too.
+      _resetSponsoringWarnings();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const bareSigner: ClientEvmSigner = {
+          address: "0x1234567890123456789012345678901234567890",
+          signTypedData: vi.fn().mockResolvedValue("0xmocksignature123456789"),
+        };
+        const scheme = new UptoEvmScheme(bareSigner);
+        const result = await scheme.createPaymentPayload(2, makeRequirements(), {
+          extensions: {
+            eip2612GasSponsoring: { info: { description: "test", version: "1" }, schema: {} },
+          },
+        });
+        expect(result.extensions).toBeUndefined();
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0]?.[0]).toMatch(/cannot read the chain/);
+      } finally {
+        warn.mockRestore();
+      }
     });
 
     it("attaches an ERC-20 approval extension when Permit2 allowance is missing", async () => {
