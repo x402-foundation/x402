@@ -319,7 +319,7 @@ describe("paymentMiddleware", () => {
     await middleware(context, next);
 
     expect(next).not.toHaveBeenCalled();
-    expect(context.html).toHaveBeenCalledWith("<html>Paywall</html>", 402);
+    expect(context.html).toHaveBeenCalledWith("<html>Paywall</html>", 402, {});
   });
 
   it("returns 402 JSON with an empty object when payment-error has no body", async () => {
@@ -345,7 +345,7 @@ describe("paymentMiddleware", () => {
     await middleware(context, next);
 
     expect(next).not.toHaveBeenCalled();
-    expect(context.json).toHaveBeenCalledWith({}, 402);
+    expect(context.json).toHaveBeenCalledWith({}, 402, {});
   });
 
   it("returns 402 JSON for payment-error", async () => {
@@ -372,7 +372,7 @@ describe("paymentMiddleware", () => {
     await middleware(context, next);
 
     expect(next).not.toHaveBeenCalled();
-    expect(context.json).toHaveBeenCalledWith({ error: "Payment required" }, 402);
+    expect(context.json).toHaveBeenCalledWith({ error: "Payment required" }, 402, {});
   });
 
   it("sets custom headers from payment-error response", async () => {
