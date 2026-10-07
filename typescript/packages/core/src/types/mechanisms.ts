@@ -94,6 +94,12 @@ export interface SchemeNetworkClient {
   /** Optional reverse lookup for USD spend caps. Not the same as `getAssetDecimals`. */
   findDefaultAsset?: FindDefaultAsset;
 
+  /**
+   * Published aliases for one network. Omit to keep exact identity lookup.
+   * Unknown networks return the input alone. Core does not import mechanisms.
+   */
+  networkEquivalents?(network: string): readonly string[];
+
   createPaymentPayload(
     x402Version: number,
     paymentRequirements: PaymentRequirements,
@@ -245,6 +251,11 @@ export interface PaymentFlowConfig {
 
 export interface SchemeNetworkServer {
   readonly scheme: string;
+  /**
+   * Published aliases for one network. Omit to keep exact identity lookup.
+   * Unknown networks return the input alone. Core does not import mechanisms.
+   */
+  networkEquivalents?(network: string): readonly string[];
   /**
    * ATM used when `requirements.extra.assetTransferMethod` is absent.
    * Use `"default"` only as SDK plumbing when the scheme has no on-wire ATM.
