@@ -8,6 +8,7 @@
  * - hooks: Payment lifecycle hooks for verification and settlement
  * - dynamic-price: Dynamic pricing based on request context
  * - dynamic-pay-to: Route payments to different addresses
+ * - dynamic-routes: Register payment-protected routes at runtime
  * - custom-money-definition: Use alternative tokens for payments
  *
  * Usage:
@@ -16,6 +17,7 @@
  *   npm start hooks
  *   npm start dynamic-price
  *   npm start dynamic-pay-to
+ *   npm start dynamic-routes
  *   npm start custom-money-definition
  */
 
@@ -39,13 +41,16 @@ switch (example) {
   case "dynamic-pay-to":
     await import("./dynamic-pay-to.js");
     break;
+  case "dynamic-routes":
+    await import("./dynamic-routes.js");
+    break;
   case "custom-money-definition":
     await import("./custom-money-definition.js");
     break;
   default:
     console.error(`❌ Unknown example: ${example}`);
     console.error(
-      "Available examples: all-networks, bazaar, hooks, dynamic-price, dynamic-pay-to, custom-money-definition",
+      "Available examples: all-networks, bazaar, hooks, dynamic-price, dynamic-pay-to, dynamic-routes, custom-money-definition",
     );
     process.exit(1);
 }
