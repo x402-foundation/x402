@@ -1,6 +1,10 @@
 import { x402Version } from "..";
 import { SettleResponse, VerifyResponse } from "../types/facilitator";
-import { FacilitatorExtension } from "../types/extensions";
+import {
+  FacilitatorExtension,
+  FacilitatorSettleContext,
+  FacilitatorSettleResultContext,
+} from "../types/extensions";
 import { SchemeNetworkFacilitator, FacilitatorContext } from "../types/mechanisms";
 import { PaymentPayload, PaymentRequirements } from "../types/payments";
 import { Network } from "../types";
@@ -23,14 +27,7 @@ export interface FacilitatorVerifyFailureContext extends FacilitatorVerifyContex
   error: Error;
 }
 
-export interface FacilitatorSettleContext {
-  paymentPayload: PaymentPayload;
-  requirements: PaymentRequirements;
-}
-
-export interface FacilitatorSettleResultContext extends FacilitatorSettleContext {
-  result: SettleResponse;
-}
+export type { FacilitatorSettleContext, FacilitatorSettleResultContext };
 
 export interface FacilitatorSettleFailureContext extends FacilitatorSettleContext {
   error: Error;
@@ -465,6 +462,25 @@ export class x402Facilitator {
 
       for (const hook of this.afterSettleHooks) {
         await hook(resultContext);
+      }
+
+      // Run enrichSettleResponse hooks on all registered extensions
+      for (const [key, extension] of this.extensions) {
+        if (!extension.enrichSettleResponse) continue;
+        try {
+          const extensionData = await extension.enrichSettleResponse(resultContext);
+          if (extensionData !== undefined) {
+            if (!settleResult.extensions) {
+              settleResult.extensions = {};
+            }
+            settleResult.extensions[key] = extensionData;
+          }
+        } catch (error) {
+          console.error(
+            `[x402] facilitator extension "${key}" enrichSettleResponse threw`,
+            error instanceof Error ? error : new Error(String(error)),
+          );
+        }
       }
 
       return settleResult;
