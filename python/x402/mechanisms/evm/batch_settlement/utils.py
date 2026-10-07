@@ -6,8 +6,7 @@ import re
 from typing import Any
 
 try:
-    from eth_account.messages import encode_typed_data
-    from eth_utils import keccak, to_checksum_address
+    from eth_utils import to_checksum_address
 except ImportError as e:
     raise ImportError(
         "EVM mechanism requires ethereum packages. Install with: pip install x402[evm]"
@@ -18,7 +17,6 @@ from .constants import (
     BATCH_SETTLEMENT_ADDRESS,
     BATCH_SETTLEMENT_DOMAIN_NAME,
     BATCH_SETTLEMENT_DOMAIN_VERSION,
-    CHANNEL_CONFIG_TYPES,
 )
 from .errors import ERR_CHANNEL_ID_MISMATCH, ERR_INVALID_CHANNEL_ID
 from .types import ChannelConfig
@@ -114,6 +112,9 @@ def coerce_bytes32(value: str | bytes) -> bytes:
 def compute_channel_id(config: ChannelConfig, network_or_chain_id: str | int) -> str:
     """Compute the chain-bound channel id for a `ChannelConfig`.
 
+    Thin wrapper over `compute_channel_config_digest` that returns the digest
+    as a 0x-prefixed hex string, matching the wire-shape used as channelId.
+
     Args:
         config: Immutable channel configuration.
         network_or_chain_id: CAIP-2 network identifier or numeric chain id.
@@ -121,18 +122,13 @@ def compute_channel_id(config: ChannelConfig, network_or_chain_id: str | int) ->
     Returns:
         0x-prefixed bytes32 channel id.
     """
-    chain_id = _resolve_chain_id(network_or_chain_id)
-    domain = get_batch_settlement_eip712_domain(chain_id)
-    message = _channel_config_message(config)
+    # Local import: digest.py imports helpers (channel_config_to_signing_message,
+    # coerce_bytes32, get_batch_settlement_eip712_domain) from this module at top
+    # level, so a top-level import here would form an import cycle.
+    from .digest import compute_channel_config_digest
 
-    signable = encode_typed_data(
-        domain_data=domain,
-        message_types=CHANNEL_CONFIG_TYPES,
-        message_data=message,
-    )
-    # SignableMessage: .version = b"\x01", .header = domainSeparator, .body = structHash.
-    # EIP-712 digest is keccak(0x19 || 0x01 || domainSeparator || structHash).
-    digest = keccak(b"\x19" + signable.version + signable.header + signable.body)
+    chain_id = _resolve_chain_id(network_or_chain_id)
+    digest = compute_channel_config_digest(config, chain_id)
     return "0x" + digest.hex()
 
 

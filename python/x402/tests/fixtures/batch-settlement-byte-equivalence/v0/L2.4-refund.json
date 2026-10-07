@@ -1,0 +1,38 @@
+{
+  "vector": "L2.4",
+  "description": "Refund EIP-712 digest (flat scalar: channelId + nonce + amount).",
+  "domain": {
+    "name": "x402 Batch Settlement",
+    "version": "1",
+    "chainId": 84532,
+    "verifyingContract": "0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003"
+  },
+  "primaryType": "Refund",
+  "types": {
+    "Refund": [
+      {
+        "name": "channelId",
+        "type": "bytes32"
+      },
+      {
+        "name": "nonce",
+        "type": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint128"
+      }
+    ]
+  },
+  "input": {
+    "channelId": "0x5aa0c653042e33ac01a3e944daa7f9a9db4153a203423551757927bca6a8fc93",
+    "nonce": "0",
+    "amount": "500"
+  },
+  "expected_digest": "0xc1a94fb1c3b10ade231ee6347ba905daef6c2ce0217deb1901d7f61960e49a49",
+  "meta": {
+    "generator": "_generator.ts",
+    "generator_version": "1",
+    "viem_version": "2.48.11"
+  }
+}
