@@ -30,6 +30,7 @@ If you are evaluating a mainnet EVM route, decide on your production facilitator
 | [Meridian](https://mrdn.finance) | Multi-chain facilitator with developer-first features |
 | [Mogami Facilitator](https://facilitator.mogami.tech) | Free, developer-focused facilitator for Base with optional self-hosted Docker deployment |
 | [NEAR x402 Facilitator](https://x402.mikedotexe.com/) | Independent open-source facilitator for exact Circle USDC payments on NEAR and Base, with sponsored gas and durable settlement recovery |
+| [P2Flux](https://p2flux.com/docs/agents.html) | Non-custodial facilitator for Base mainnet (API: `https://api.p2flux.com/x402`): exact, upto and batch-settlement in USDC, gas paid by the facilitator, fee taken on chain; paywall plugins for sites without an x402 library |
 | [PayAI Facilitator](https://facilitator.payai.network) | Production-grade multi-network facilitator supporting all tokens. No API keys required |
 | [Polygon Facilitator](https://docs.polygon.technology/payment-services/agentic-payments/x402/intro/) | Production-grade x402 facilitator for Polygon Mainnet and Amoy testnet |
 | [Solvador](https://solvador.com) | Multi-network facilitator with broad mainnet coverage across EVM plus Solana and NEAR, supporting multiple schemes and extensions |
