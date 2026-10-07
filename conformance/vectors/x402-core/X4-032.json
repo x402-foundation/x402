@@ -1,0 +1,37 @@
+{
+  "id": "X4-032",
+  "title": "Currency Type Confusion",
+  "category": "protocol_abuse",
+  "requirement": "HC-22: Server must validate exact token contract, not just symbol name",
+  "method": "GET",
+  "request": {
+    "confusion_pairs": [
+      [
+        "USDC",
+        "EURC"
+      ],
+      [
+        "USDC",
+        "USDT"
+      ],
+      [
+        "USDC",
+        "DAI"
+      ],
+      [
+        "EURC",
+        "USDC"
+      ],
+      [
+        "USDC",
+        "USDbC"
+      ]
+    ]
+  },
+  "owasp_asi": "ASI03",
+  "severity": "high",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-032"
+}
