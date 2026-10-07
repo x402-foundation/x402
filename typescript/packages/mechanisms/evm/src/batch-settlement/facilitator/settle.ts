@@ -108,20 +108,36 @@ export async function executeSettle(
     return await waitAndReturnSettleResponse(signer, tx, network, undefined, {
       failedStatusReason: Errors.ErrSettleTransactionFailed,
       onSuccess: receipt => {
-        let amount = "";
-        if (receipt.logs) {
-          const logs = parseEventLogs({
-            abi: batchSettlementABI,
-            eventName: "Settled",
-            logs: receipt.logs.filter(log => isAddressEqual(log.address, contractAddr)),
-          });
-          const settledLog = logs.find(
-            log =>
-              isAddressEqual(log.args.receiver, receiver) && isAddressEqual(log.args.token, token),
-          );
-          amount = settledLog?.args.amount.toString() ?? "0";
+        const logs = receipt.logs
+          ? parseEventLogs({
+              abi: batchSettlementABI,
+              eventName: "Settled",
+              logs: receipt.logs.filter(log => isAddressEqual(log.address, contractAddr)),
+            })
+          : [];
+        const settledLog = logs.find(
+          log =>
+            isAddressEqual(log.args.receiver, receiver) &&
+            isAddressEqual(log.args.token, token) &&
+            log.args.amount !== undefined &&
+            log.args.amount > 0n,
+        );
+        if (!settledLog || settledLog.args.amount === undefined) {
+          return {
+            success: false,
+            errorReason: Errors.ErrSettledEventMismatch,
+            errorMessage:
+              "settle receipt missing Settled event with positive amount (possible no-op early return)",
+            transaction: tx,
+            network,
+          };
         }
-        return { success: true, transaction: tx, network, amount };
+        return {
+          success: true,
+          transaction: tx,
+          network,
+          amount: settledLog.args.amount.toString(),
+        };
       },
     });
   } catch (e) {
