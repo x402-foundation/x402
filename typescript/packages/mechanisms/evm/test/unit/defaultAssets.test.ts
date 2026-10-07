@@ -25,6 +25,18 @@ describe("defaultAssets (EVM)", () => {
       expect(MEZO_TESTNET_MUSD.decimals).toBe(18);
     });
 
+    it("finds USDs on Arbitrum One as a Permit2 asset without EIP-2612", () => {
+      const usds = findDefaultAsset("0xd74f5255d557944cf7dd0e45ff521520002d5748", "eip155:42161");
+      expect(usds).toMatchObject({ symbol: "USDs", name: "Sperax USD", version: "1", decimals: 18 });
+      expect(usds?.assetTransferMethod).toBe("permit2");
+      expect(usds?.supportsEip2612).toBeUndefined();
+    });
+
+    it("keeps USDC as the Arbitrum One default for bare dollar prices", () => {
+      expect(getDefaultAsset("eip155:42161").symbol).toBe("USDC");
+      expect(getDefaultAsset("eip155:42161", "USDs").decimals).toBe(18);
+    });
+
     it("returns undefined for an unknown asset", () => {
       expect(
         findDefaultAsset("0x0000000000000000000000000000000000000001", "eip155:8453"),
