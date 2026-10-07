@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { preprod, PrivateKey } from "@evolution-sdk/evolution";
+import { preprod, PrivateKey, Transaction } from "@evolution-sdk/evolution";
 import {
   blockfrostQueries,
+  submitRawCardanoTransaction,
   toClientCardanoSigner,
   toFacilitatorCardanoSigner,
   withCardanoProviderTimeout,
@@ -17,6 +18,8 @@ import { MASUMI_MAX_DEADLINE_HORIZON_MS } from "../../src/exact/masumi/constants
 import { verifyMasumiAuthorization } from "../../src/exact/masumi/verify";
 import type { CardanoExtraMasumi } from "../../src/types";
 import { issueMasumiRequirements } from "../helpers/masumi";
+import { buildSignedTx } from "../helpers/buildSignedTx";
+import { freshPreprodAddress } from "../helpers/stubs";
 
 const makeSigner = (): ReturnType<typeof toFacilitatorCardanoSigner> =>
   toFacilitatorCardanoSigner({
@@ -96,6 +99,126 @@ describe("toFacilitatorCardanoSigner", () => {
       provider: { blockfrost: { baseUrl: "http://offline.invalid" } },
     });
     expect(providerOnly.getAddresses()).toEqual([]);
+  });
+
+  // Decoding and re-encoding is not byte-preserving (untagged Conway sets come
+  // back tagged 258), which changes the tx id and invalidates the witnesses.
+  it("broadcasts the received transaction bytes unchanged", async () => {
+    const txHash = "c".repeat(64);
+    // Not a decodable transaction: proves the bytes are never re-serialized.
+    const received = Uint8Array.from([0x84, 0xa4, 0x00, 0xd9, 0x01, 0x02, 0x80, 0xff]);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify(txHash), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const signer = toFacilitatorCardanoSigner({
+        network: CARDANO_PREPROD_CAIP2,
+        provider: {
+          blockfrost: {
+            baseUrl: "https://cardano-preprod.blockfrost.io/api/v0/",
+            projectId: "preprodKey",
+          },
+        },
+        awaitConfirmation: false,
+      });
+      await expect(
+        signer.submitTransaction(Buffer.from(received).toString("base64"), CARDANO_PREPROD_CAIP2),
+      ).resolves.toEqual({ txHash, status: "mempool" });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe("https://cardano-preprod.blockfrost.io/api/v0/tx/submit");
+      expect(init.method).toBe("POST");
+      expect(init.headers).toEqual({
+        "Content-Type": "application/cbor",
+        project_id: "preprodKey",
+      });
+      expect(Buffer.from(init.body).equals(Buffer.from(received))).toBe(true);
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("preserves an untagged Conway input set that a decode/encode round trip would tag", async () => {
+    const { transaction } = await buildSignedTx({
+      payTo: await freshPreprodAddress(),
+      asset: LOVELACE_ASSET,
+      amount: 2_000_000n,
+      nonceUtxoRef: `${"a".repeat(64)}#0`,
+      ttlSlot: 90_000_000n,
+    });
+    // Rewrite body key 0 (inputs) from `d9 0102 <array>` to a plain `<array>`,
+    // the shape cardano-cli and other wallets emit.
+    const tagged = Buffer.from(transaction, "base64").toString("hex");
+    const at = tagged.indexOf("00d90102");
+    expect(at).toBeGreaterThan(0);
+    const untagged = Buffer.from(tagged.slice(0, at + 2) + tagged.slice(at + 8), "hex");
+    expect(
+      Buffer.from(Transaction.toCBORBytes(Transaction.fromCBORBytes(untagged))).equals(untagged),
+    ).toBe(false);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify("e".repeat(64)), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const signer = toFacilitatorCardanoSigner({
+        network: CARDANO_PREPROD_CAIP2,
+        provider: { blockfrost: { baseUrl: "https://cardano-preprod.blockfrost.io/api/v0" } },
+        awaitConfirmation: false,
+      });
+      await signer.submitTransaction(untagged.toString("base64"), CARDANO_PREPROD_CAIP2);
+      expect(Buffer.from(fetchMock.mock.calls[0][1].body).equals(untagged)).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("submits raw CBOR to Koios with its bearer token", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify("D".repeat(64)), { status: 202 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const bytes = Uint8Array.from([1, 2, 3]);
+      await expect(
+        submitRawCardanoTransaction(
+          { koios: { baseUrl: "https://preprod.koios.rest/api/v1", token: "jwt" } },
+          bytes,
+        ),
+      ).resolves.toBe("d".repeat(64));
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe("https://preprod.koios.rest/api/v1/submittx");
+      expect(init.headers).toEqual({
+        "Content-Type": "application/cbor",
+        authorization: "Bearer jwt",
+      });
+      expect(init.body).toBe(bytes);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("surfaces provider rejections and malformed submit responses", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("MissingVKeyWitnessesUTXOW", { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const provider = { blockfrost: { baseUrl: "https://cardano-preprod.blockfrost.io/api/v0" } };
+      await expect(submitRawCardanoTransaction(provider, Uint8Array.of(0))).rejects.toThrow(
+        /Blockfrost submitTx failed: 400 MissingVKeyWitnessesUTXOW/,
+      );
+      await expect(submitRawCardanoTransaction(provider, Uint8Array.of(0))).rejects.toThrow(
+        /unexpected body/,
+      );
+      expect(fetchMock.mock.calls[0][1].headers).toEqual({ "Content-Type": "application/cbor" });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("attaches a bounded timeout to direct Blockfrost evidence requests", async () => {
