@@ -123,6 +123,11 @@ export {
 } from "../types";
 export { attachBackgroundInitHandler, isFatalStartupInitError } from "./backgroundInit";
 export {
+  MAX_CONTROL_PLANE_RESPONSE_BYTES,
+  ResponseBodyTooLargeError,
+  readLimitedText,
+} from "./responseBody";
+export {
   x402HTTPClient,
   PaymentRequiredContext,
   PaymentRequiredHook,
