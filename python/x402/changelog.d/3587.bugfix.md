@@ -1,0 +1,1 @@
+`HTTPFacilitatorClient` now raises `ValueError` when a `create_headers` callable returns a flat headers dict (e.g. `{"Authorization": "..."}`) instead of one keyed by facilitator path (`verify`/`settle`/`supported`), matching TypeScript. Previously auth was silently dropped on every request. `x402.FacilitatorConfig.create_headers` is now typed with the path-keyed shape.

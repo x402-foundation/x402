@@ -50,6 +50,9 @@ class AuthProvider(Protocol):
         ...
 
 
+_AUTH_HEADER_PATHS = ("verify", "settle", "supported", "list", "bazaar")
+
+
 class CreateHeadersAuthProvider:
     """AuthProvider that wraps a create_headers callable.
 
@@ -61,8 +64,22 @@ class CreateHeadersAuthProvider:
         self._create_headers = create_headers
 
     def get_auth_headers(self) -> AuthHeaders:
-        """Get authentication headers by calling the create_headers function."""
+        """Get authentication headers by calling the create_headers function.
+
+        Raises:
+            ValueError: If create_headers returns a flat headers dict instead of
+                one keyed by facilitator path.
+        """
         result = self._create_headers()
+        # A flat dict such as {"Authorization": "..."} matches no path key and
+        # would otherwise drop auth on every request.
+        has_path_key = any(isinstance(result.get(path), dict) for path in _AUTH_HEADER_PATHS)
+        if not has_path_key and any(not isinstance(value, dict) for value in result.values()):
+            raise ValueError(
+                "create_headers must return a dict keyed by facilitator path, e.g. "
+                '{"verify": {"Authorization": "..."}, "settle": {...}, "supported": {...}}, '
+                "but received a flat headers dict"
+            )
         return AuthHeaders(
             verify=result.get("verify", {}),
             settle=result.get("settle", {}),
