@@ -1,6 +1,6 @@
 # Scheme: `batch-settlement` on `Cardano`
 
-Status: **draft**, v0.7 (2026-10-06). Reference implementation and preprod measurements:
+Status: **draft**, v0.8 (2026-10-07). Reference implementation and preprod measurements:
 [loveaihq/subbit-x402](https://github.com/loveaihq/subbit-x402) (`src/x402/`, [`RESULTS.md`](https://github.com/loveaihq/subbit-x402/blob/main/RESULTS.md)).
 
 The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are to be read as in RFC 2119.
@@ -15,8 +15,11 @@ through a cooperative close, or through the channel's own timed exit when either
 cooperating.
 
 The channels are [Subbit](https://github.com/kompact-io/subbit-xyz) channels, an Aiken validator
-(Apache-2.0). This binding is written against commit `66648db`, validator
-`subbit.subbit.spend`, script hash `62ce4309e37e09e5c633c96c6ae68061c434f122d32626d6912d7c2a`.
+(Apache-2.0). This binding is written against validator `subbit.subbit.spend` as built at commit
+`74c20d2`, script hash `6d8774631fece31d0c768afb960c9a8a9957f8a85fa31deae1159094`. The build at
+`66648db`, script hash `62ce4309e37e09e5c633c96c6ae68061c434f122d32626d6912d7c2a`, differs from it
+only by the defect in *Security and trust*; its channels work the same, and a client MAY keep
+trusting it (*Client verification rules*).
 
 Compared with the EVM binding:
 
@@ -197,10 +200,10 @@ There is no `assetTransferMethod`, and `paymentFlow` is `authorization`.
   "payTo": "addr_test1qrxchm0g4la6hqfd9wq6vuuldx7l20az52t7lvgpgujr8pvwmpzru5kuf4mpmvtaf0hlsjtz7t4r2h7tj9v3c02dhljq0wqkef",
   "maxTimeoutSeconds": 300,
   "extra": {
-    "scriptHash": "62ce4309e37e09e5c633c96c6ae68061c434f122d32626d6912d7c2a",
+    "scriptHash": "6d8774631fece31d0c768afb960c9a8a9957f8a85fa31deae1159094",
     "receiverAuthorizer": "cd8bede8affbab812d2b81a6739f69bdf53fa2a297efb10147243385",
     "withdrawDelay": 900,
-    "referenceScript": "544752f68665183e51c8ecb6e0a835543aec64a6ec8e7588d34470ddfd12cdb5#0",
+    "referenceScript": "ff61e3f44d45b57e02a474f4d0f24effa017abf71744f4fd7d33df7aa0ee458c#0",
     "minDeposit": "10000"
   }
 }
@@ -580,17 +583,17 @@ non-terminal `settlement_pending`.
   NOT sign that message for any other party.
 - **The validator** is Subbit's, alpha and unaudited. The reference implementation carries its
   source, which compiles to exactly the hash this binding names, and 73 tests of it. They found
-  one defect, of liveness only. A `Main` transaction that needs two different signers fails when
-  the later step's signer sorts first. This binding's transactions each need one signer: the
-  provider for claims, the consumer for its own steps. A refund is `Mutual`, so none of them
-  meets the defect.
+  one defect, of liveness only, which Subbit fixed in kompact-io/subbit-xyz#10: at the build of
+  `66648db`, a `Main` transaction that needs two different signers fails when the later step's
+  signer sorts first. This binding's transactions each need one signer (the provider for claims,
+  the consumer for its own steps; a refund is `Mutual`), so they work at either build.
 
 
 ## Reference implementation
 
 [loveaihq/subbit-x402](https://github.com/loveaihq/subbit-x402): `src/x402/` implements the client, resource-server and
 facilitator schemes for `@x402/core` 2.27.0 and the server's channel manager, on
-`@evolution-sdk/evolution` 0.5.15 and Blockfrost or Koios, with 58 chain-free tests, and 73 Aiken
+`@evolution-sdk/evolution` 0.5.15 and Blockfrost or Koios, with 116 chain-free tests, and 73 Aiken
 tests of the validator at the hash above.
 [`RESULTS.md`](https://github.com/loveaihq/subbit-x402/blob/main/RESULTS.md) records every preprod transaction: steps 1–3 exercise the validator,
 step 4 the ADA binding end to end, step 5 a token binding, step 6 top-ups and the automatic
@@ -601,7 +604,9 @@ following the chain, and `elapse` and delegation on token channels, step 12 a wa
 survives rollbacks, step 13 retries after a lost answer over MCP and top-ups that fall back to
 what the wallet can fund, and step 14 the whole of it through Koios. Step 15, with no chain,
 tests the validator itself. Step 16 runs seller-sponsored channels, an optional extension described
-in [`SPONSORSHIP.md`](https://github.com/loveaihq/subbit-x402/blob/main/SPONSORSHIP.md).
+in [`SPONSORSHIP.md`](https://github.com/loveaihq/subbit-x402/blob/main/SPONSORSHIP.md), and step 17 a variant of the validator that returns a
+sponsor's reserve to it. Step 18 runs the binding at the fixed build, and a two-signer `Main`
+transaction that only the fixed build accepts.
 
 ## Version history
 
@@ -614,3 +619,4 @@ in [`SPONSORSHIP.md`](https://github.com/loveaihq/subbit-x402/blob/main/SPONSORS
 | 0.5 | 2026-09-25 | Following the validator's address instead of polling each channel; token-channel exits and delegation measured |
 | 0.6 | 2026-09-25 | The server's channel records survive rollbacks: a deep anchor per channel, records dropped only when their end is deep |
 | 0.7 | 2026-10-06 | The client opens and tops up only at a validator it already trusts, and may trust several |
+| 0.8 | 2026-10-07 | The binding names Subbit's fixed build (kompact-io/subbit-xyz#10); the earlier build stays usable |
