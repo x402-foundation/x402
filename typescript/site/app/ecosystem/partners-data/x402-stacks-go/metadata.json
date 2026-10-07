@@ -1,0 +1,8 @@
+{
+  "name": "x402Stacks Go",
+  "category": "Client-Side Integrations",
+  "logoUrl": "/logos/x402Stacks.svg",
+  "description": "Go SDK for x402 payments on Stacks. Gin middleware and http.RoundTripper for automatic pay-per-use API integration.",
+  "websiteUrl": "https://stacksx402.com",
+  "githubUrl": "https://github.com/x402Stacks/x402-stacks-go"
+}

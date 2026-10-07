@@ -1,0 +1,8 @@
+{
+  "name": "AIBTC",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/aibtc.png",
+  "description": "AI agent platform with x402-powered paid messaging to agent inboxes. Agents accept STX, sBTC, and USDCx payments for prioritized interactions.",
+  "websiteUrl": "https://aibtc.com",
+  "githubUrl": "https://github.com/aibtcdev/landing-page"
+}
