@@ -412,7 +412,7 @@ This is the payment-channels program voucher layout (`VOUCHER_MAGIC`,
 | `type` | string | MUST be `"proof"`. |
 | `channelId` | string | Channel PDA (base58). |
 | `payer` | string | MUST equal `channelConfig.payer`. |
-| `requestId` | string | Fresh opaque single-use request identifier. |
+| `requestId` | string | Fresh opaque single-use request identifier; an identical resend that recovers a lost response (Phase 5) reuses it. |
 | `authorizedAmount` | string | Maximum charge in atomic units; MUST equal `PaymentRequirements.amount`. |
 | `expiresAt` | number | Integer Unix seconds. The server MUST require `now < expiresAt`. |
 | `signature` | string | Base58 payer signature over the authorization message below. |
@@ -434,9 +434,11 @@ through 256 UTF-8 bytes. The proof authorizes one request up to
 `authorizedAmount` for that channel, payer, and operator until `expiresAt`. It
 MUST be handled as a bearer credential. Clients SHOULD set `expiresAt` no later
 than their current time plus `maxTimeoutSeconds` and MUST issue a fresh proof
-for each HTTP request. The request and amount bindings limit a leaked proof to
-one bounded request; expiry limits how long it can be presented. None of these
-fields revoke the operator's onchain authority to sign vouchers for the channel.
+for each new request. Resending an identical `PaymentPayload` to recover a lost
+response (Phase 5) is not a new request. The request and amount bindings limit
+a leaked proof to one bounded request; expiry limits how long it can be
+presented. None of these fields revoke the operator's onchain authority to sign
+vouchers for the channel.
 
 `CloseAuthorization`:
 
@@ -1477,9 +1479,13 @@ resource, a client that holds such trust SHOULD prefer the server-mode accept
 and every other client MUST fall back to the client-mode accept.
 The client MUST keep at most one server-mode request in flight per channel so
 the returned cumulative voucher can be evaluated against one exact local
-watermark. A transport retry is a new x402 request and MUST use a new
-`requestId`; applications requiring response recovery SHOULD use the payment
-identifier extension. No onchain transaction is required in the request path.
+watermark. No onchain transaction is required in the request path. To run a
+request again, the client sends a new x402 request with a new `requestId` and a
+fresh proof. To recover the response to a request whose outcome it did not
+observe, a client that attached a
+[payment identifier](../../extensions/payment_identifier.md) the server
+declared MAY resend the identical `PaymentPayload` (see Phase 5). An identical
+resend is the same request, not a second request in flight.
 The server verifies the authorization under Phase 3, reserves up to
 `PaymentRequirements.amount`, then after the handler measures the actual charge
 and stores an operator-signed voucher for that amount.
@@ -1546,7 +1552,9 @@ request, the server MUST:
    `(channelId, requestId)`. Any duplicate operation, whether running or
    completed, MUST be rejected with `duplicate_settlement` and MUST NOT execute
    the handler. The scheme does not replay either the settlement response or
-   the application resource body.
+   the application resource body. A response stored under the payment
+   identifier extension is returned before Phase 3 and is not a scheme replay
+   (Phase 5).
 7. Execute the resource handler. In client mode, the actual charge is the
    advertised amount. In server mode, after metering completes, choose an actual
    charge satisfying `0 <= chargedAmount <= PaymentRequirements.amount` and set
@@ -1643,10 +1651,26 @@ token movement. Core x402 requests are single-shot; scheme state prevents a
 duplicate request from executing but is not an HTTP response-recovery protocol:
 
 - **Server-mode paid requests.** The operation record is the authoritative
-  replay defense. Reuse of a running or completed `(channelId, requestId)` MUST
-  return `duplicate_settlement`; it MUST NOT replay a settlement response or
-  execute the handler. Applications that need to recover a resource body after
-  a lost response SHOULD use the payment identifier extension.
+  replay defense. A request that reaches Phase 3 with a running or completed
+  `(channelId, requestId)` MUST be rejected with `duplicate_settlement`; the
+  scheme MUST NOT rebuild or re-sign a settlement response for it, or execute
+  the handler. Applications that need to recover a resource body after a lost
+  response SHOULD use the payment identifier extension, whose lookup runs
+  before Phase 3
+  ([Recovering a Lost Response](../../extensions/payment_identifier.md#recovering-a-lost-response)).
+  Returning the response it stored is not a scheme replay. A resource server
+  that returns stored responses for server-mode requests MUST return one only
+  to an identical `PaymentPayload`, since the lookup precedes the proof's
+  signature and expiry checks. It MUST store the `SettlementResponse` exactly
+  as sent, since the client advances its watermark only from that response's
+  operator voucher. It SHOULD store the response atomically with completing
+  the operation, and SHOULD keep it until the next server-mode operation on the
+  channel completes. If the original request is still running, the server
+  SHOULD answer the resend with the original's response once it completes, or
+  with a retryable error other than `duplicate_settlement`. A resend that gets
+  no stored response goes through Phase 3 like any other request. Its
+  rejection does not show that the original was left uncharged, and the client
+  SHOULD NOT restore its pre-request watermark on that basis.
 - **Client-mode paid requests.** The per-channel lock and charged watermark are
   the authoritative replay defense. The same authorization MUST NOT execute the
   resource handler more than once.
@@ -1883,7 +1907,10 @@ Standard x402 codes apply. The facilitator reports verification failures in
   single-use request identifier, amount ceiling, and expiry under a versioned
   domain. It MUST NOT be logged or sent to any origin other than the authorized
   resource server. The request binding limits a stolen proof to one bounded
-  request, while `expiresAt` limits how long it can be presented. Servers MAY additionally require an
+  request, while `expiresAt` limits how long it can be presented. An identical
+  resend after `expiresAt` can still retrieve a response the server stored for
+  the proof (Phase 5), for as long as the server keeps it; the request is never
+  executed or charged again. Servers MAY additionally require an
   authenticated session, audience binding, or a per-request payer signature.
   Proof expiry does not remove the operator's onchain signing authority;
   closing the channel is the only protocol-level revocation mechanism.
@@ -1916,7 +1943,8 @@ Standard x402 codes apply. The facilitator reports verification failures in
   voucher, and only after authenticating the server.
 - **No replay / no rollback.** Server offchain watermark plus onchain
   `settled` monotonicity reject old vouchers. Server-mode request identifiers
-  are single use; duplicates are rejected rather than replayed. Clients keep
+  are single use; duplicates that reach the operation record are rejected
+  rather than replayed (Phase 5 covers stored-response recovery). Clients keep
   one request in flight per channel and only advance from their local confirmed
   watermark. A sponsored `request_close` is idempotent by that transaction.
   Cooperative closes use a separate operation namespace and a terminal onchain

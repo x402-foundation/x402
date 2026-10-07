@@ -110,6 +110,24 @@ Servers should avoid using `id` alone as the storage key for authorization
 decisions when the same backend handles multiple paid resources. Scope the key
 by tenant, merchant, route, or facilitator account when those boundaries exist.
 
+### Recovering a Lost Response
+
+A client that loses the response to a paid request can resend the identical
+`PaymentPayload`, with the same `id`, to get that response back. For a resource
+server to return it:
+
+- Look up the `id` before verifying the payment. A resend can fail verification
+  once its payment has settled or its authorization has expired.
+- Store the response as it was sent, including the `PAYMENT-RESPONSE` header.
+  A client reconciles its payment state from the settlement response, not from
+  the body.
+- A lookup that runs before verification is unauthenticated, so bind the `id`
+  to the exact `PaymentPayload` rather than to the fingerprint above. Any other
+  payload with that `id` is the "same `id`, different payload" case.
+- If the original request is still being processed, do not process the resend.
+  Return the original's response once it is available, or an error the client
+  can retry.
+
 ---
 
 ## Responsibilities
