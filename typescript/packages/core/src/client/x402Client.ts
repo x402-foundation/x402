@@ -156,6 +156,14 @@ export type PaymentPolicy = (x402Version: number, paymentRequirements: PaymentRe
 export const DEFAULT_MAX_AMOUNT_PER_PAYMENT: Money = "$1";
 
 /**
+ * Default cap, in seconds, on a requirement's `maxTimeoutSeconds` (the validity window the
+ * client signs, e.g. EIP-3009 `validBefore = now + maxTimeoutSeconds`). One hour: generous
+ * for slow services while still bounding how long a signed authorization stays cashable.
+ * Override via {@link SpendControls.maxTimeoutSeconds}.
+ */
+export const DEFAULT_MAX_TIMEOUT_SECONDS = 3600;
+
+/**
  * Opt-in asset for {@link SpendControls.allowedAssets}.
  * Default assets are always allowed; list non-default tokens here (and optional atomic caps).
  */
@@ -172,8 +180,9 @@ export interface SpendControlAsset {
  * Network scoping is scheme registration, not a control here.
  *
  * By default only assets `findDefaultAsset` recognizes are allowed, capped at
- * {@link DEFAULT_MAX_AMOUNT_PER_PAYMENT}. Pass `spendControls: false` to disable
- * all spend controls (any asset, no caps).
+ * {@link DEFAULT_MAX_AMOUNT_PER_PAYMENT}, and requirements whose `maxTimeoutSeconds`
+ * is missing, null, negative, non-numeric, or exceeds {@link DEFAULT_MAX_TIMEOUT_SECONDS}
+ * are rejected. Pass `spendControls: false` to disable all spend controls (any asset, no caps).
  */
 export interface SpendControls {
   /**
@@ -190,6 +199,16 @@ export interface SpendControls {
    * - list: defaults plus listed entries; optional integer atomic `maxAmountPerPayment` per entry
    */
   allowedAssets?: true | SpendControlAsset[];
+  /**
+   * Upper bound, in seconds, on a requirement's `maxTimeoutSeconds`. That value comes from
+   * the server's 402 and sets how long the signed authorization stays valid (e.g. EIP-3009
+   * `validBefore`), so without a cap the server alone decides how long it can settle.
+   * Requirements above the cap, or with a missing, null, negative, or non-numeric
+   * `maxTimeoutSeconds`, are filtered out. `0` is within the cap. `false` disables.
+   *
+   * @default 3600
+   */
+  maxTimeoutSeconds?: number | false;
 }
 
 /**
@@ -303,8 +322,9 @@ export interface x402ClientConfig {
   policies?: PaymentPolicy[];
 
   /**
-   * Spend controls; default is default assets only + {@link DEFAULT_MAX_AMOUNT_PER_PAYMENT}.
-   * Pass `false` to disable all spend controls (any asset, no caps).
+   * Spend controls; default is default assets only + {@link DEFAULT_MAX_AMOUNT_PER_PAYMENT}
+   * + {@link DEFAULT_MAX_TIMEOUT_SECONDS}. Pass `false` to disable all spend controls
+   * (any asset, no caps).
    */
   spendControls?: SpendControls | false;
 
@@ -419,12 +439,21 @@ export class x402Client {
   /**
    * Replace spend controls. Pass `false` to disable all spend controls.
    * When an object is passed, omitted `maxAmountPerPayment` still defaults to
-   * {@link DEFAULT_MAX_AMOUNT_PER_PAYMENT}.
+   * {@link DEFAULT_MAX_AMOUNT_PER_PAYMENT} and omitted `maxTimeoutSeconds` to
+   * {@link DEFAULT_MAX_TIMEOUT_SECONDS}.
    *
    * @param controls - Spend control configuration, or `false` to disable
    * @returns This client for chaining
    */
   setSpendControls(controls: SpendControls | false): x402Client {
+    if (controls !== false && controls.maxTimeoutSeconds != null && controls.maxTimeoutSeconds !== false) {
+      const cap = controls.maxTimeoutSeconds;
+      if (typeof cap !== "number" || !Number.isFinite(cap) || cap < 0) {
+        throw new Error(
+          `spendControls.maxTimeoutSeconds must be a non-negative number of seconds or false; got ${JSON.stringify(cap)}`,
+        );
+      }
+    }
     this.spendControls = controls;
     return this;
   }
@@ -847,7 +876,8 @@ export class x402Client {
   }
 
   /**
-   * Filter by spend controls (default-asset allowlist → opt-in assets → caps).
+   * Filter by spend controls (default-asset allowlist → opt-in assets → amount caps →
+   * validity-window cap).
    * Keeps any accept that fits so a mixed offer can still pay the affordable option.
    *
    * @param x402Version - Protocol version (v1 uses `maxAmountRequired`)
@@ -963,6 +993,33 @@ export class x402Client {
           `set allowedAssets[].maxAmountPerPayment for a per-asset atomic cap, ` +
           `or set spendControls: false to disable all spend controls.`,
       );
+    }
+
+    const timeoutCap =
+      controls.maxTimeoutSeconds === false
+        ? false
+        : (controls.maxTimeoutSeconds ?? DEFAULT_MAX_TIMEOUT_SECONDS);
+    if (timeoutCap !== false) {
+      filtered = filtered.filter(requirement => {
+        const timeout: unknown = requirement.maxTimeoutSeconds;
+        // Missing, null, non-numeric, and negative values are rejected: schemes compute
+        // `now + maxTimeoutSeconds`, and anything but a finite non-negative number can
+        // become an unbounded or invalid deadline. Zero is within the cap.
+        return (
+          typeof timeout === "number" &&
+          Number.isFinite(timeout) &&
+          timeout >= 0 &&
+          timeout <= timeoutCap
+        );
+      });
+      if (filtered.length === 0) {
+        throw new Error(
+          `All payment requirements were rejected by spendControls.maxTimeoutSeconds ` +
+            `(${timeoutCap}s): the server asked for a longer authorization validity window. ` +
+            `Raise maxTimeoutSeconds, set it to false to disable, ` +
+            `or set spendControls: false to disable all spend controls.`,
+        );
+      }
     }
 
     return filtered;

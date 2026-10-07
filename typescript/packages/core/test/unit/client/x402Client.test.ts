@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { x402Client } from "../../../src/client/x402Client";
-import { PaymentPolicy } from "../../../src/client/x402Client";
+import { DEFAULT_MAX_TIMEOUT_SECONDS, PaymentPolicy } from "../../../src/client/x402Client";
 import { MockSchemeNetworkClient } from "../../mocks";
 import { buildPaymentPayload, buildPaymentRequired, buildPaymentRequirements } from "../../mocks";
 import { Network, PaymentRequirements } from "../../../src/types";
@@ -2040,6 +2040,230 @@ describe("x402Client", () => {
         }),
       );
       expect(mockClient.createPaymentPayloadCalls[0].context?.maxAmountPerPayment).toBe("500000");
+    });
+
+    describe("maxTimeoutSeconds", () => {
+      const TEN_YEARS = 315_360_000;
+
+      const req = (overrides: Partial<PaymentRequirements> = {}) =>
+        buildPaymentRequirements({
+          scheme: "exact",
+          network,
+          asset: usdc.asset,
+          amount: "1000",
+          ...overrides,
+        });
+
+      it("exports a one-hour default", () => {
+        expect(DEFAULT_MAX_TIMEOUT_SECONDS).toBe(3600);
+      });
+
+      it("rejects a multi-year validity window by default", async () => {
+        const { client, mockClient } = clientWithDefaultAsset();
+        await expect(
+          client.createPaymentPayload(
+            buildPaymentRequired({ accepts: [req({ maxTimeoutSeconds: TEN_YEARS })] }),
+          ),
+        ).rejects.toThrow(/spendControls\.maxTimeoutSeconds \(3600s\)/);
+        expect(mockClient.createPaymentPayloadCalls).toHaveLength(0);
+      });
+
+      it("rejects a window one second over the default cap", async () => {
+        const { client } = clientWithDefaultAsset();
+        await expect(
+          client.createPaymentPayload(
+            buildPaymentRequired({ accepts: [req({ maxTimeoutSeconds: 3601 })] }),
+          ),
+        ).rejects.toThrow(/maxTimeoutSeconds/);
+      });
+
+      it("accepts windows within the default cap, including exactly one hour", async () => {
+        const { client, mockClient } = clientWithDefaultAsset();
+        for (const maxTimeoutSeconds of [60, 300, 3600]) {
+          await client.createPaymentPayload(
+            buildPaymentRequired({ accepts: [req({ maxTimeoutSeconds })] }),
+          );
+        }
+        expect(mockClient.createPaymentPayloadCalls).toHaveLength(3);
+      });
+
+      it("picks the bounded accept when a long-window accept is also offered", async () => {
+        const { client, mockClient } = clientWithDefaultAsset();
+        await client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [req({ maxTimeoutSeconds: TEN_YEARS }), req({ maxTimeoutSeconds: 300 })],
+          }),
+        );
+        expect(mockClient.createPaymentPayloadCalls[0].requirements.maxTimeoutSeconds).toBe(300);
+      });
+
+      it("honours a custom cap via setSpendControls and fromConfig", async () => {
+        const { client, mockClient } = clientWithDefaultAsset(usdc, { maxTimeoutSeconds: 120 });
+        await expect(
+          client.createPaymentPayload(
+            buildPaymentRequired({ accepts: [req({ maxTimeoutSeconds: 300 })] }),
+          ),
+        ).rejects.toThrow(/spendControls\.maxTimeoutSeconds \(120s\)/);
+        await client.createPaymentPayload(
+          buildPaymentRequired({ accepts: [req({ maxTimeoutSeconds: 120 })] }),
+        );
+        expect(mockClient.createPaymentPayloadCalls).toHaveLength(1);
+
+        const mockDay = new MockSchemeNetworkClient("exact");
+        mockDay.setFindDefaultAsset(usdc);
+        const clientDay = x402Client.fromConfig({
+          schemes: [{ network, client: mockDay }],
+          spendControls: { maxTimeoutSeconds: 86_400 },
+        });
+        await clientDay.createPaymentPayload(
+          buildPaymentRequired({ accepts: [req({ maxTimeoutSeconds: 7200 })] }),
+        );
+        expect(mockDay.createPaymentPayloadCalls).toHaveLength(1);
+      });
+
+      it("maxTimeoutSeconds: false allows a long window while keeping other controls", async () => {
+        const { client, mockClient } = clientWithDefaultAsset(usdc, { maxTimeoutSeconds: false });
+        await client.createPaymentPayload(
+          buildPaymentRequired({ accepts: [req({ maxTimeoutSeconds: TEN_YEARS })] }),
+        );
+        expect(mockClient.createPaymentPayloadCalls).toHaveLength(1);
+
+        await expect(
+          client.createPaymentPayload(
+            buildPaymentRequired({
+              accepts: [req({ maxTimeoutSeconds: TEN_YEARS, amount: "1000001" })],
+            }),
+          ),
+        ).rejects.toThrow(/maxAmountPerPayment/);
+      });
+
+      it("spendControls: false also disables the timeout cap", async () => {
+        const { client, mockClient } = clientWithDefaultAsset(usdc, false);
+        await client.createPaymentPayload(
+          buildPaymentRequired({ accepts: [req({ maxTimeoutSeconds: TEN_YEARS })] }),
+        );
+        expect(mockClient.createPaymentPayloadCalls).toHaveLength(1);
+      });
+
+      it("applies alongside maxAmountPerPayment: an accept must pass both caps", async () => {
+        const { client, mockClient } = clientWithDefaultAsset();
+        // cheap + long window, expensive + short window, cheap + short window
+        await client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              req({ amount: "500000", maxTimeoutSeconds: TEN_YEARS }),
+              req({ amount: "5000000", maxTimeoutSeconds: 60 }),
+              req({ amount: "400000", maxTimeoutSeconds: 60 }),
+            ],
+          }),
+        );
+        expect(mockClient.createPaymentPayloadCalls[0].requirements.amount).toBe("400000");
+        expect(mockClient.createPaymentPayloadCalls[0].requirements.maxTimeoutSeconds).toBe(60);
+
+        // over the USD cap is still reported as an amount rejection
+        await expect(
+          client.createPaymentPayload(
+            buildPaymentRequired({ accepts: [req({ amount: "5000000", maxTimeoutSeconds: 60 })] }),
+          ),
+        ).rejects.toThrow(/spendControls\.maxAmountPerPayment/);
+
+        // affordable but too long is reported as a timeout rejection
+        await expect(
+          client.createPaymentPayload(
+            buildPaymentRequired({
+              accepts: [
+                req({ amount: "5000000", maxTimeoutSeconds: 60 }),
+                req({ amount: "500000", maxTimeoutSeconds: TEN_YEARS }),
+              ],
+            }),
+          ),
+        ).rejects.toThrow(/spendControls\.maxTimeoutSeconds/);
+
+        // raising the amount cap does not lift the timeout cap
+        const { client: rich } = clientWithDefaultAsset(usdc, { maxAmountPerPayment: "$100" });
+        await expect(
+          rich.createPaymentPayload(
+            buildPaymentRequired({
+              accepts: [req({ amount: "5000000", maxTimeoutSeconds: TEN_YEARS })],
+            }),
+          ),
+        ).rejects.toThrow(/spendControls\.maxTimeoutSeconds/);
+      });
+
+      it("rejects a non-numeric maxTimeoutSeconds from the 402", async () => {
+        const { client } = clientWithDefaultAsset();
+        await expect(
+          client.createPaymentPayload(
+            buildPaymentRequired({
+              accepts: [req({ maxTimeoutSeconds: "300" as unknown as number })],
+            }),
+          ),
+        ).rejects.toThrow(/maxTimeoutSeconds/);
+      });
+
+      it("rejects a missing, null, or negative maxTimeoutSeconds while the cap is on", async () => {
+        const { client, mockClient } = clientWithDefaultAsset();
+        for (const maxTimeoutSeconds of [undefined, null, -1]) {
+          await expect(
+            client.createPaymentPayload(
+              buildPaymentRequired({
+                accepts: [req({ maxTimeoutSeconds: maxTimeoutSeconds as unknown as number })],
+              }),
+            ),
+          ).rejects.toThrow(/spendControls\.maxTimeoutSeconds/);
+        }
+        expect(mockClient.createPaymentPayloadCalls).toHaveLength(0);
+      });
+
+      it("accepts a zero maxTimeoutSeconds under the default cap", async () => {
+        const { client, mockClient } = clientWithDefaultAsset();
+        await client.createPaymentPayload(
+          buildPaymentRequired({ accepts: [req({ maxTimeoutSeconds: 0 })] }),
+        );
+        expect(mockClient.createPaymentPayloadCalls).toHaveLength(1);
+        expect(mockClient.createPaymentPayloadCalls[0].requirements.maxTimeoutSeconds).toBe(0);
+      });
+
+      it("maxTimeoutSeconds: false still allows missing, null, and negative windows", async () => {
+        const { client, mockClient } = clientWithDefaultAsset(usdc, { maxTimeoutSeconds: false });
+        for (const maxTimeoutSeconds of [undefined, null, -1]) {
+          await client.createPaymentPayload(
+            buildPaymentRequired({
+              accepts: [req({ maxTimeoutSeconds: maxTimeoutSeconds as unknown as number })],
+            }),
+          );
+        }
+        expect(mockClient.createPaymentPayloadCalls).toHaveLength(3);
+      });
+
+      it("caps v1 accepts too", async () => {
+        const mockClient = new MockSchemeNetworkClient("exact");
+        mockClient.setFindDefaultAsset(usdc);
+        const client = new x402Client();
+        client.registerV1("base" as Network, mockClient);
+        const v1Req = {
+          scheme: "exact",
+          network: "base",
+          asset: usdc.asset,
+          maxAmountRequired: "1000",
+          payTo: "0xpay",
+          maxTimeoutSeconds: TEN_YEARS,
+          description: "",
+          mimeType: "",
+          resource: "https://example.com",
+        } as unknown as PaymentRequirements;
+        await expect(
+          client.createPaymentPayload(buildPaymentRequired({ x402Version: 1, accepts: [v1Req] })),
+        ).rejects.toThrow(/maxTimeoutSeconds/);
+      });
+
+      it("throws on an invalid cap configuration", () => {
+        for (const bad of [-1, Number.NaN, Number.POSITIVE_INFINITY, "3600"]) {
+          expect(() =>
+            new x402Client().setSpendControls({ maxTimeoutSeconds: bad as unknown as number }),
+          ).toThrow(/spendControls\.maxTimeoutSeconds must be a non-negative number/);
+        }
+      });
     });
   });
 });
