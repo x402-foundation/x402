@@ -259,4 +259,37 @@ describe("ExactStellarScheme", () => {
       },
     );
   });
+
+  describe("contract account signing", () => {
+    // A C-account must supply its own `authorizeEntry`; the SDK default cannot sign for it.
+    const contractAddress = "CA6DO6TXG4IAIYQ7OWS2OBSO7J66SGG6KEBKAO22H3LJ6QHLWOSCSKCQ";
+
+    it("forwards a signer's authorizeEntry to signAuthEntries", async () => {
+      const customAuthorizeEntry = vi.fn();
+      const contractSigner: ClientStellarSigner = {
+        address: contractAddress,
+        signAuthEntry: vi.fn().mockResolvedValue({ signedAuthEntry: "signed" }),
+        authorizeEntry: customAuthorizeEntry as never,
+      };
+      mockTransaction.needsNonInvokerSigningBy.mockReturnValueOnce([contractAddress]);
+      mockTransaction.needsNonInvokerSigningBy.mockReturnValueOnce([]);
+
+      await new ExactStellarScheme(contractSigner).createPaymentPayload(2, validPaymentReq);
+
+      expect(mockTransaction.signAuthEntries).toHaveBeenCalledWith(
+        expect.objectContaining({ authorizeEntry: customAuthorizeEntry }),
+      );
+    });
+
+    it("omits authorizeEntry entirely when the signer does not supply one", async () => {
+      setupSuccessfulTransaction();
+
+      await new ExactStellarScheme(mockSigner).createPaymentPayload(2, validPaymentReq);
+
+      // Absent, not undefined, so the SDK applies its own default.
+      expect(mockTransaction.signAuthEntries).toHaveBeenCalledWith(
+        expect.not.objectContaining({ authorizeEntry: expect.anything() }),
+      );
+    });
+  });
 });
