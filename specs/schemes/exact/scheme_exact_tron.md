@@ -12,6 +12,9 @@ The TRON `exact` binding transfers one fixed TRC-20 amount. It supports:
 TRON Base58Check addresses are used in requirements and deployment configuration. Addresses inside
 TIP-712 typed data are normalized to 20-byte, `0x`-prefixed hex by removing the TRON `0x41` network
 prefix.
+The normalized values represent the same TRON addresses, not assets or accounts on another chain.
+Signed token and recipient addresses MUST match the normalized `asset` and `payTo`; Permit2's
+signed spender MUST match the normalized exact proxy configured for the accepted network.
 
 ## Payment Flow and Resource Costs
 
@@ -67,6 +70,11 @@ tokens do not expose TransferWithAuthorization.
 
 ## TransferWithAuthorization Payload
 
+Both payload examples below illustrate address encoding and field relationships, not executable
+payment authorizations. Payer and recipient addresses are synthetic; this first example also uses
+a synthetic token address and does not assert a deployed TransferWithAuthorization token. Signatures
+are placeholders, and timestamps must be replaced with a valid window when constructing a payment.
+
 ```json
 {
   "x402Version": 2,
@@ -74,8 +82,8 @@ tokens do not expose TransferWithAuthorization.
     "scheme": "exact",
     "network": "tron:3448148188",
     "amount": "1000",
-    "asset": "TTokenAddress",
-    "payTo": "TReceiverAddress",
+    "asset": "THkQfRopincF6emzbk6VMC7jTHqJ8MP8g7",
+    "payTo": "TGCAjMXComunWZEXCT1LPBdcYbDVuyexBv",
     "maxTimeoutSeconds": 60,
     "extra": {
       "assetTransferMethod": "eip3009",
@@ -87,7 +95,7 @@ tokens do not expose TransferWithAuthorization.
     "signature": "0x...",
     "authorization": {
       "from": "0x1111111111111111111111111111111111111111",
-      "to": "0x2222222222222222222222222222222222222222",
+      "to": "0x4444444444444444444444444444444444444444",
       "value": "1000",
       "validAfter": "0",
       "validBefore": "1786500000",
@@ -97,7 +105,8 @@ tokens do not expose TransferWithAuthorization.
 }
 ```
 
-The TIP-712 domain is `{ name, version, chainId, verifyingContract = asset }`. The primary type is
+The TIP-712 domain is `{ name, version, chainId, verifyingContract = normalized(asset) }`;
+`normalized(asset)` is `0x5555555555555555555555555555555555555555` in this example. The primary type is
 `TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256
 validBefore,bytes32 nonce)`.
 
@@ -111,7 +120,7 @@ validBefore,bytes32 nonce)`.
     "network": "tron:3448148188",
     "amount": "1000",
     "asset": "TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf",
-    "payTo": "TReceiverAddress",
+    "payTo": "TGCAjMXComunWZEXCT1LPBdcYbDVuyexBv",
     "maxTimeoutSeconds": 60,
     "extra": { "assetTransferMethod": "permit2" }
   },
@@ -120,10 +129,10 @@ validBefore,bytes32 nonce)`.
     "permit2Authorization": {
       "from": "0x1111111111111111111111111111111111111111",
       "permitted": {
-        "token": "0x2222222222222222222222222222222222222222",
+        "token": "0xeca9bc828a3005b9a3b909f2cc5c2a54794de05f",
         "amount": "1000"
       },
-      "spender": "0x3333333333333333333333333333333333333333",
+      "spender": "0x3a2c916ce2b40f0ffc06cc80c0f72c0fc25be105",
       "nonce": "1",
       "deadline": "1786500000",
       "witness": {
@@ -135,7 +144,8 @@ validBefore,bytes32 nonce)`.
 }
 ```
 
-The TIP-712 domain is `{ name: "Permit2", chainId, verifyingContract: Permit2 }`. The spender MUST
+The TIP-712 domain is `{ name: "Permit2", chainId, verifyingContract: normalized(Permit2) }`, using
+the Permit2 deployment configured for the accepted network. The spender MUST
 be the configured exact proxy. The witness binds `payTo`; `permitted.token` and `permitted.amount`
 bind the asset and exact amount. The payer MUST first grant the Permit2 contract sufficient TRC-20
 allowance. Approval amount and wallet prompting are client policies, not part of the signed payment
@@ -152,11 +162,34 @@ The facilitator MUST:
 3. Verify the payer signature.
 4. Match recipient, asset, and exact amount.
 5. Require at least six seconds of remaining validity and reject a future `validAfter`.
-6. For Permit2, match the exact proxy spender and check Permit2 allowance when readable.
-7. Check payer token balance when readable.
+6. For Permit2, match the exact proxy spender and verify that the payer's token allowance to
+   Permit2 covers the required amount.
+7. Verify that the payer's token balance covers the required amount.
 
-Allowance and balance read failures are treated optimistically by the current implementation; all
-cryptographic and term checks remain mandatory, and settlement is authoritative.
+Required balance and allowance checks may be established by successful state reads or by a
+successful simulation of the intended settlement call that enforces those conditions. If neither
+establishes a required condition, verification MUST NOT return `isValid: true`. Infrastructure
+failures SHOULD be reported distinctly from invalid payment authorizations so callers can retry
+verification. All signature and payment-term checks remain mandatory.
+
+### Settlement Simulation
+
+The facilitator SHOULD simulate the intended settlement call using the actual submitting address,
+configured contracts, and the same parameters that will be submitted on-chain:
+
+- TransferWithAuthorization: simulate the token's `transferWithAuthorization` call.
+- Permit2: simulate `x402ExactPermit2Proxy.settle`.
+
+TRON's `triggerconstantcontract` endpoint can simulate these state-changing calls without
+broadcasting a transaction. The facilitator MUST inspect the execution result and any return values
+required by the configured contract; an HTTP success or a transaction object alone is insufficient.
+The facilitator MUST reject verification if simulation reports a contract revert or another definite
+execution failure. A transport error, timeout, or unavailable simulation endpoint MUST NOT be
+treated as a successful simulation. If simulation is unavailable, the mandatory verification checks
+above still apply.
+
+Simulation does not reserve funds or consume the authorization nonce. A successful simulation does
+not guarantee settlement success; the settlement confirmation requirements below still apply.
 
 ## Settlement
 
