@@ -1564,5 +1564,25 @@ describe("x402HTTPResourceServer", () => {
     it("detects private case-insensitively", () => {
       expect(withPrivateCacheControl("max-age=60, Private")).toBe("max-age=60, Private");
     });
+
+    it("does not treat quoted text as a private directive", () => {
+      const value = 'public, max-age=60, example="a, private, b"';
+      expect(withPrivateCacheControl(value)).toBe(`${value}, private`);
+    });
+
+    it("keeps a real private directive that follows a quoted value", () => {
+      const value = 'public, example="a, private, b", private';
+      expect(withPrivateCacheControl(value)).toBe(value);
+    });
+
+    it("does not treat an escaped quote inside a quoted value as a closer", () => {
+      const value = 'public, example="a, \\"private\\", b"';
+      expect(withPrivateCacheControl(value)).toBe(`${value}, private`);
+    });
+
+    it("appends private when the existing directive is field-qualified", () => {
+      const value = 'public, max-age=60, private="Set-Cookie"';
+      expect(withPrivateCacheControl(value)).toBe(`${value}, private`);
+    });
   });
 });

@@ -2116,6 +2116,26 @@ func TestWithPrivateCacheControl(t *testing.T) {
 		{name: "append private", input: "max-age=60", want: "max-age=60, private"},
 		{name: "idempotent lowercase", input: "max-age=60, private", want: "max-age=60, private"},
 		{name: "idempotent mixed case", input: "max-age=60, Private", want: "max-age=60, Private"},
+		{
+			name:  "quoted comma is not a private directive",
+			input: `public, max-age=60, example="a, private, b"`,
+			want:  `public, max-age=60, example="a, private, b", private`,
+		},
+		{
+			name:  "real private after quoted value",
+			input: `public, example="a, private, b", private`,
+			want:  `public, example="a, private, b", private`,
+		},
+		{
+			name:  "escaped quote stays inside the quoted value",
+			input: `public, example="a, \"private\", b"`,
+			want:  `public, example="a, \"private\", b", private`,
+		},
+		{
+			name:  "field-qualified private is not whole-response private",
+			input: `public, max-age=60, private="Set-Cookie"`,
+			want:  `public, max-age=60, private="Set-Cookie", private`,
+		},
 	}
 
 	for _, tt := range tests {
