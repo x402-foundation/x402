@@ -1,0 +1,3 @@
+kind: added
+body: 'Add USDG (Global Dollar) on Robinhood Chain mainnet (eip155:4663) as the default stablecoin, so dollar prices resolve on that network and client spend controls recognize the asset.'
+time: 2026-10-09T22:00:00.000000+00:00
