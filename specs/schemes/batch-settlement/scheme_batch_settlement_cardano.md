@@ -1,6 +1,6 @@
 # Scheme: `batch-settlement` on `Cardano`
 
-Status: **draft**, v0.9 (2026-10-09). Reference implementation and preprod measurements:
+Status: **draft**, v0.10 (2026-10-09). Reference implementation and preprod measurements:
 [loveaihq/subbit-x402](https://github.com/loveaihq/subbit-x402) (`src/x402/`, [`RESULTS.md`](https://github.com/loveaihq/subbit-x402/blob/main/RESULTS.md)).
 
 The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are to be read as in RFC 2119.
@@ -39,6 +39,32 @@ accept the CIP-34 forms (`cip34:1-764824073`, `cip34:0-1`, `cip34:0-2`) and norm
 
 Assets are written as in Cardano `exact`: `lovelace` for ADA, `<policyId>.<assetNameHex>` for a
 native token.
+
+## Terms
+
+The wire format keeps the field names of the EVM and SVM bindings, so that x402 clients and servers
+see the same shapes on every chain. The text uses Subbit's terms where it means the channel itself.
+Where a name means something else here than on EVM or SVM, the table says so.
+
+| x402 (wire) | Subbit | Here |
+|---|---|---|
+| `channelId` | `tag` | the same 32 bytes, derived from an input the opening spends (*Identity and position*); on EVM, a hash of the config |
+| `channelRef` | — | the channel's current UTxO, `txHash#index`; it moves with every step that continues the channel |
+| `payer` | `consumer` | a key hash |
+| `payerAuthorizer` | `iouKey` | an Ed25519 public key, one per channel |
+| `receiver` | — | the server's `payTo`; the datum does not hold it, and the validator lets a redemption pay anywhere |
+| `receiverAuthorizer` | `provider` | the key hash that signs `Sub` and `Settle` |
+| `token` | `currency` | |
+| `withdrawDelay` (s) | `closePeriod` (ms) | as on SVM, how long after a `Close` the provider can still `Settle` before the consumer can `Elapse`; on EVM it delays a withdrawal from a channel that stays usable |
+| `withdrawRequestedAt` (s) | `elapseAt − closePeriod` | 0 while the channel is `Opened` |
+| voucher | IOU | the x402 object that carries an IOU: `maxClaimableAmount` is the IOU's cumulative `amount`, `signature` the IOU itself |
+| `totalClaimed` | `subbed` | |
+| `balance` | — | the capacity: `subbed` plus what the channel can still pay out (*Minimum UTxO value*) |
+| `chargedCumulativeAmount` | — | the server's own count, at most the latest IOU |
+| `deposit` | open, `Add` | an opening runs no script |
+| `claim` | `Sub`, `Settle` | in one batched transaction (*Steps, and who must sign them*) |
+| `refund` | `Mutual` | the channel ends; on EVM a refund leaves it open |
+| — | `Close`, `End`, `Elapse` | the consumer's own exit, outside x402 |
 
 ## The channel
 
@@ -150,9 +176,10 @@ Every output must hold its min-UTxO in ADA, and a channel output carries a large
    the channel output, and sends it with the IOU for this request. The facilitator verifies it
    and, after the handler runs, broadcasts it and waits for the confirmation policy. The response
    carries the new `channelRef`.
-2. **Requests.** Each request carries a voucher for `chargedCumulativeAmount + amount`. The server
-   checks it, serves, and counts the charge locally. Nothing is broadcast.
-3. **Top up (deposit).** When a voucher would pass the capacity, the client builds and signs an
+2. **Requests.** Each request carries an IOU for the server's count plus this request's price
+   (`chargedCumulativeAmount + amount`). The server checks it, serves, and counts the charge
+   locally. Nothing is broadcast.
+3. **Top up (deposit).** When an IOU would pass the capacity, the client builds and signs an
    `Add` on the channel's current position and sends it as a `deposit` naming that position in
    `voucher.channelRef`, with the IOU for this request. It is verified and broadcast as an
    opening is; the channel keeps its id and moves to the top-up's output.
@@ -305,7 +332,7 @@ a voucher), and a `pendingRequest` reservation.
    With no record, the base is `maxClaimableAmount − amount`. While `onchainSyncedAt` is less than
    `TTL` ago, the server MAY verify a voucher locally with the facilitator's rules below and skip
    `/verify`; past that it MUST send the voucher to `/verify`. `TTL` is at most
-   `clamp(withdrawDelay / 3, 30 s, 5 min)`, and *Claim and settlement strategy* bounds it further.
+   `clamp(close period / 3, 30 s, 5 min)`, and *Claim and settlement strategy* bounds it further.
    An answer of `channel_closed` means the consumer has closed: the server refuses the voucher and
    the channel's vouchers from then on, and settles what the channel owes at once. A voucher above
    the recorded balance may follow a top-up the server has not seen (one confirmed after its
@@ -467,14 +494,14 @@ channel is `TTL` old (*Request processing*). For one that goes quiet, the server
 idle claims or watch its channels.
 
 **Idle claims.** A channel with charges not yet redeemed is claimed no later than `T` after the
-last voucher committed on it (counted from `lastRequestTimestamp`, like EVM's `idleSecs`; `T`
+last IOU committed on it (counted from `lastRequestTimestamp`, like EVM's `idleSecs`; `T`
 includes the interval at which claims run). A claim waiting for its block SHOULD NOT hold back the
 next: on preprod, one that did put another channel's claim 25 s past `T`. Take a close that lands
 at time t, with L how far the index behind the server's views trails the chain, and C the time a
 claim takes to confirm, retries included. Every view asked for from t + L on shows the close, so
-the server verifies its last voucher locally before t + L + `TTL`. After that, the channel's next
+the server verifies its last IOU locally before t + L + `TTL`. After that, the channel's next
 request finds the close at `/verify`, or the channel is idle and claimed by t + L + `TTL` + `T`.
-The vouchers it accepted after the close stay good, since `Settle` redeems up to the latest IOU. As
+The IOUs it accepted after the close stay good, since `Settle` redeems up to the latest one. As
 `elapseAt` ≥ t + the close period, the server MUST keep `TTL` + `T` + L + C below the close period,
 and SHOULD keep `TTL` + `T` at most half of it: at the 900 s minimum that leaves 450 s for L and C,
 where on preprod one gap between blocks lasted 111 s and one deposit took 150 s to confirm. A
@@ -486,10 +513,10 @@ with no request after, is never settled, and what it owed is void once its consu
 **Watching.** Instead, the server MAY watch its channels, often enough that a settle lands well
 inside the close period. It then needs no idle claims and stops serving a closed channel sooner,
 but reads the chain continuously. On seeing a close it SHOULD stop accepting the channel's
-vouchers (set `withdrawRequestedAt`) and settle with the latest voucher. The reference server polls
+IOUs (set `withdrawRequestedAt`) and settle with the latest one. The reference server polls
 every 15–30 s and drops a channel's record only once the channel is settled, or after two
 consecutive reads find no channel, since one missing read may be a lagging index and the record
-holds the only copy of the latest voucher. With many channels a server SHOULD follow the
+holds the only copy of the latest IOU. With many channels a server SHOULD follow the
 validator's address rather than read each channel: the reference server can read every channel
 once and then only the address's new transactions, and the outputs of those that spend its
 channels (on preprod, 1 request a quiet pass against 20 for ten channels polled, and 3 to find a
@@ -504,7 +531,7 @@ delegated, the facilitator makes these reads and builds the claim (*Delegating t
 the server needs the chain only to audit its claims and to see them deep enough to stay.
 
 **Rollbacks.** What the server records MUST survive a rollback: its record of a channel holds the
-only copy of the latest voucher. A rolled-back claim must leave the charges claimable, and a
+only copy of the latest IOU. A rolled-back claim must leave the charges claimable, and a
 rolled-back close must reopen the channel; the server drops a record only once the transaction
 that ended the channel is deep enough to stay. The reference server keeps, for each channel, a
 position at least 3 blocks deep and reads from there forward. Its watcher, following the address,
@@ -565,10 +592,10 @@ field but `receiver`, which the next 402 on the channel's terms (`receiverAuthor
 close period, script, network) supplies, and the client binds the channel to that server. Its
 count starts from `subbed`, the most the chain proves; the server's answer to the first voucher is
 a corrective 402, and the client adopts the server's count only as the rules above allow, that is
-only when the server holds a voucher of this very key for at least that much. A channel whose key
+only when the server holds an IOU of this very key for at least that much. A channel whose key
 does not derive again can only be left: `Close`, then `End` once the server has settled, or
 `Elapse` from `elapseAt` on without it. A server that has lost its records has lost what it
-charged and did not redeem; the client's next voucher, being cumulative, restores its count from
+charged and did not redeem; the client's next IOU, being cumulative, restores its count from
 there.
 
 ## Network requirements
@@ -658,3 +685,4 @@ and `/verify` once its view is `TTL` old, settle the channels their consumers cl
 | 0.7 | 2026-10-06 | The client opens and tops up only at a validator it already trusts, and may trust several |
 | 0.8 | 2026-10-07 | The binding names Subbit's fixed build (kompact-io/subbit-xyz#10); the earlier build stays usable |
 | 0.9 | 2026-10-09 | A server need not watch its channels: `/verify` past `TTL` and idle claims after `T` find every close in time when `TTL` + `T` stays well below the close period; a minimum for idle claims bounds what a close can cost |
+| 0.10 | 2026-10-09 | *Terms*: a table of the wire names and Subbit's, and where they differ from EVM's and SVM's; the text says IOU where it means one. The protocol is unchanged |
