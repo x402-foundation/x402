@@ -324,6 +324,15 @@ export const DEFAULT_ASSETS: DefaultAssetTable<ExactDefaultAssetInfo> = {
       symbol: "USDC",
     },
   ], // Arc Testnet USDC (EIP-3009 supported)
+  "eip155:4663": [
+    {
+      asset: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+      name: "Global Dollar",
+      version: "1",
+      decimals: 6,
+      symbol: "USDG",
+    },
+  ], // Robinhood Chain mainnet USDG (EIP-3009)
 };
 
 /**
