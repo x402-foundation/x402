@@ -6,7 +6,7 @@ The TRON `exact` binding transfers one fixed TRC-20 amount. It supports:
 
 | `extra.assetTransferMethod` | Authorization | Settlement |
 | --- | --- | --- |
-| `eip3009` or omitted | TIP-712 `TransferWithAuthorization` | Call the token's `transferWithAuthorization` |
+| `tip3009` or omitted | TIP-712 `TransferWithAuthorization` | Call the token's `transferWithAuthorization` |
 | `permit2` | TIP-712 `PermitWitnessTransferFrom` | Call the network's `x402ExactPermit2Proxy.settle` |
 
 TRON Base58Check addresses are used in requirements and deployment configuration. Addresses inside
@@ -15,6 +15,9 @@ prefix.
 The normalized values represent the same TRON addresses, not assets or accounts on another chain.
 Signed token and recipient addresses MUST match the normalized `asset` and `payTo`; Permit2's
 signed spender MUST match the normalized exact proxy configured for the accepted network.
+
+TRON's TransferWithAuthorization proposal is [TIP-3009](https://github.com/tronprotocol/tips/blob/master/tip-3009.md),
+currently Draft. This binding uses `tip3009` as its canonical transfer-method identifier.
 
 ## Payment Flow and Resource Costs
 
@@ -28,7 +31,7 @@ this binding does not sponsor its resource cost.
 
 | Method | Replay primitive | Bounded validity window |
 | --- | --- | --- |
-| `eip3009` | Token authorization nonce for the payer | Signed `validAfter` and `validBefore` |
+| `tip3009` | Token authorization nonce for the payer | Signed `validAfter` and `validBefore` |
 | `permit2` | Permit2 unordered nonce for the payer | Signed witness `validAfter` and permit `deadline` |
 
 Distinct unused nonces allow concurrent authorizations; they do not reserve the payer's balance or
@@ -60,10 +63,10 @@ The common fields follow the [core specification](../../x402-specification-v2.md
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `assetTransferMethod` | No | `eip3009` (default) or `permit2` |
+| `assetTransferMethod` | No | `tip3009` (default) or `permit2` |
 | `paymentFlow` | No | `authorization` (default and only supported flow) |
-| `name` | For `eip3009` | Token TIP-712 domain name |
-| `version` | For `eip3009` | Token TIP-712 domain version |
+| `name` | For `tip3009` | Token TIP-712 domain name |
+| `version` | For `tip3009` | Token TIP-712 domain version |
 
 The server selects a transfer method supported by the configured token. Verification uses the
 server-selected requirements, not untrusted client replacements for those requirements.
@@ -86,7 +89,7 @@ are placeholders, and timestamps must be replaced with a valid window when const
     "payTo": "TGCAjMXComunWZEXCT1LPBdcYbDVuyexBv",
     "maxTimeoutSeconds": 60,
     "extra": {
-      "assetTransferMethod": "eip3009",
+      "assetTransferMethod": "tip3009",
       "name": "Example Token",
       "version": "1"
     }
@@ -168,7 +171,7 @@ Both methods use [TIP-712](https://github.com/tronprotocol/tips/issues/443) stru
 The domain types are:
 
 ```text
-EIP-3009: EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)
+TIP-3009: EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)
 Permit2:  EIP712Domain(string name,uint256 chainId,address verifyingContract)
 ```
 
