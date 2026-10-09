@@ -16,8 +16,10 @@ The normalized values represent the same TRON addresses, not assets or accounts 
 Signed token and recipient addresses MUST match the normalized `asset` and `payTo`; Permit2's
 signed spender MUST match the normalized exact proxy configured for the accepted network.
 
-TRON's TransferWithAuthorization proposal is [TIP-3009](https://github.com/tronprotocol/tips/blob/master/tip-3009.md),
-currently Draft. This binding uses `tip3009` as its canonical transfer-method identifier.
+[TIP-3009](https://github.com/tronprotocol/tips/blob/master/tip-3009.md) is the TRON adaptation of
+[EIP-3009](https://eips.ethereum.org/EIPS/eip-3009): `TransferWithAuthorization` for TRC-20 tokens
+using TIP-712 signatures. The proposal is currently Draft. This binding uses `tip3009` as its
+canonical transfer-method identifier.
 
 ## Payment Flow and Resource Costs
 
