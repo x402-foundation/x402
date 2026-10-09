@@ -1,6 +1,6 @@
 # Scheme: `batch-settlement` on `Cardano`
 
-Status: **draft**, v0.8 (2026-10-07). Reference implementation and preprod measurements:
+Status: **draft**, v0.9 (2026-10-09). Reference implementation and preprod measurements:
 [loveaihq/subbit-x402](https://github.com/loveaihq/subbit-x402) (`src/x402/`, [`RESULTS.md`](https://github.com/loveaihq/subbit-x402/blob/main/RESULTS.md)).
 
 The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are to be read as in RFC 2119.
@@ -164,8 +164,9 @@ Every output must hold its min-UTxO in ADA, and a channel output carries a large
 6. **Unilateral exit** (outside x402). The consumer `Close`s; the server MUST `Settle` its latest
    IOU before `elapseAt`; the consumer then `End`s, or `Elapse`s after `elapseAt` if the server
    never settled. The validator gives `Settle` no deadline of its own: after `elapseAt` a late
-   settle and an elapse race, so `elapseAt` is the server's deadline in practice. A server finds
-   out about a close by watching its channels (*Claim and settlement strategy*).
+   settle and an elapse race, so `elapseAt` is the server's deadline in practice. A server learns
+   of a close from `/verify`, from an idle claim, or by watching its channels (*Claim and
+   settlement strategy*).
 
 ## 402 response: `PaymentRequirements`
 
@@ -292,21 +293,25 @@ the channel; reuse means opening a new one.
 
 `channelId`, `channelConfig`, `channelRef`, `balance` (capacity), `totalClaimed` (`subbed`),
 `withdrawRequestedAt` (seconds; `elapseAt − closePeriod` once closed, else 0),
-`chargedCumulativeAmount`, `signedMaxClaimable`, `signature`, `onchainSyncedAt`, and a
-`pendingRequest` reservation.
+`chargedCumulativeAmount`, `signedMaxClaimable`, `signature`, `onchainSyncedAt` (when the server
+last read the channel, or asked `/verify` about it), `lastRequestTimestamp` (when it last committed
+a voucher), and a `pendingRequest` reservation.
 
 ### Request processing
 
 1. **Before verify.** The config MUST match the requirements (`receiver`, `receiverAuthorizer`,
-   `token`, `withdrawDelay`). A paid voucher MUST equal `chargedCumulativeAmount + amount` (a refund
-   voucher: `chargedCumulativeAmount`); otherwise the server answers the **corrective 402**. With
-   no record, the base is `maxClaimableAmount − amount`. When the mirrored chain state is fresh
-   (within `clamp(withdrawDelay / 3, 30 s, 5 min)`), the server MAY verify a voucher locally with
-   the facilitator's rules below and skip `/verify`. A voucher above the recorded balance may
-   follow a top-up the server has not seen (one confirmed after its request gave up, or an `Add`
-   made outside x402); the server SHOULD then send it to `/verify`, which reads the channel, and
-   take the balance from the answer. The reference server does so at most once per 30 s per
-   channel and otherwise refuses locally.
+   `token`, `withdrawDelay`). A paid voucher MUST equal `chargedCumulativeAmount + amount` (a
+   refund voucher: `chargedCumulativeAmount`); otherwise the server answers the **corrective 402**.
+   With no record, the base is `maxClaimableAmount − amount`. While `onchainSyncedAt` is less than
+   `TTL` ago, the server MAY verify a voucher locally with the facilitator's rules below and skip
+   `/verify`; past that it MUST send the voucher to `/verify`. `TTL` is at most
+   `clamp(withdrawDelay / 3, 30 s, 5 min)`, and *Claim and settlement strategy* bounds it further.
+   An answer of `channel_closed` means the consumer has closed: the server refuses the voucher and
+   the channel's vouchers from then on, and settles what the channel owes at once. A voucher above
+   the recorded balance may follow a top-up the server has not seen (one confirmed after its
+   request gave up, or an `Add` made outside x402); the server SHOULD then send it to `/verify`,
+   which reads the channel, and take the balance from the answer. The reference server does so at
+   most once per 30 s per channel and otherwise refuses locally.
 2. **After verify.** The server reserves the channel: one request per channel at a time; a second
    is refused `channel_busy`. A refund skips the handler.
 3. **Settle.** A voucher is committed locally (`charged += amount`, never above the voucher) with
@@ -457,23 +462,54 @@ not delegate.)
 
 The server SHOULD redeem in batches, by interval or once unredeemed charges pass a threshold, and
 MUST settle a closed channel before its `elapseAt`. Nothing tells the server that a consumer has
-closed: it MUST watch its channels, often enough that a settle lands well inside the close
-period. On seeing a close it SHOULD stop accepting the channel's vouchers (set
-`withdrawRequestedAt`) and settle with the latest voucher: `Settle` in place of `Sub`, in the same
-batched claim, leaving the channel `Settled` for the consumer to `End`. The reference server polls
+closed. A consumer that keeps paying is found out at `/verify`, once the server's view of the
+channel is `TTL` old (*Request processing*). For one that goes quiet, the server MUST either make
+idle claims or watch its channels.
+
+**Idle claims.** A channel with charges not yet redeemed is claimed no later than `T` after the
+last voucher committed on it (counted from `lastRequestTimestamp`, like EVM's `idleSecs`; `T`
+includes the interval at which claims run). A claim waiting for its block SHOULD NOT hold back the
+next: on preprod, one that did put another channel's claim 25 s past `T`. Take a close that lands
+at time t, with L how far the index behind the server's views trails the chain, and C the time a
+claim takes to confirm, retries included. Every view asked for from t + L on shows the close, so
+the server verifies its last voucher locally before t + L + `TTL`. After that, the channel's next
+request finds the close at `/verify`, or the channel is idle and claimed by t + L + `TTL` + `T`.
+The vouchers it accepted after the close stay good, since `Settle` redeems up to the latest IOU. As
+`elapseAt` ≥ t + the close period, the server MUST keep `TTL` + `T` + L + C below the close period,
+and SHOULD keep `TTL` + `T` at most half of it: at the 900 s minimum that leaves 450 s for L and C,
+where on preprod one gap between blocks lasted 111 s and one deposit took 150 s to confirm. A
+`/verify` costs a facilitator call and an idle claim a transaction, so a short `TTL` and a long `T`
+is the cheaper split. A server MAY leave out of idle claims a channel that owes less than a
+minimum, and that minimum then bounds what a close can cost it: a channel that closes owing less,
+with no request after, is never settled, and what it owed is void once its consumer elapses.
+
+**Watching.** Instead, the server MAY watch its channels, often enough that a settle lands well
+inside the close period. It then needs no idle claims and stops serving a closed channel sooner,
+but reads the chain continuously. On seeing a close it SHOULD stop accepting the channel's
+vouchers (set `withdrawRequestedAt`) and settle with the latest voucher. The reference server polls
 every 15–30 s and drops a channel's record only once the channel is settled, or after two
 consecutive reads find no channel, since one missing read may be a lagging index and the record
 holds the only copy of the latest voucher. With many channels a server SHOULD follow the
 validator's address rather than read each channel: the reference server can read every channel
 once and then only the address's new transactions, and the outputs of those that spend its
 channels (on preprod, 1 request a quiet pass against 20 for ten channels polled, and 3 to find a
-close among them). What the server records MUST survive a rollback: its record of a channel holds
-the only copy of the latest voucher. The reference server keeps, for each channel, a position at
-least 3 blocks deep and reads from there forward, so a rolled-back claim leaves the charges
-claimable and a rolled-back close reopens the channel; it drops a record only once the transaction
-that ended the channel is that deep, and, following, acts on a transaction only once it is. On preprod, with a 15 s poll and the 900 s minimum
-close period, the close was seen within 12 s and the settle landed 30–62 s after it, over 18
-minutes before `elapseAt`. A settle costs what a `Sub` does.
+close among them). On preprod, with a 15 s poll and the 900 s minimum close period, the close was
+seen within 12 s and the settle landed 30–62 s after it, over 18 minutes before `elapseAt`.
+
+**Claims.** A claim reads each channel's current position and stage, and redeems an open channel
+with `Sub` and a closed one with `Settle`, in the same batched transaction. A `Settle` costs what a
+`Sub` does and leaves the channel `Settled` for the consumer to `End`. A claim that loses a race
+with the consumer's `Close` reads the channel again and settles it. When the provider key is
+delegated, the facilitator makes these reads and builds the claim (*Delegating the provider key*);
+the server needs the chain only to audit its claims and to see them deep enough to stay.
+
+**Rollbacks.** What the server records MUST survive a rollback: its record of a channel holds the
+only copy of the latest voucher. A rolled-back claim must leave the charges claimable, and a
+rolled-back close must reopen the channel; the server drops a record only once the transaction
+that ended the channel is deep enough to stay. The reference server keeps, for each channel, a
+position at least 3 blocks deep and reads from there forward. Its watcher, following the address,
+acts on a transaction only once it is that deep; without one, it reads a channel from there only
+until its own latest claim on it is that deep.
 
 A claim over N channels cost, on preprod:
 
@@ -582,7 +618,7 @@ non-terminal `settlement_pending`.
 - **Derived IOU keys** are as secret as the wallet's signature of the root message; a client MUST
   NOT sign that message for any other party.
 - **The validator** is Subbit's, alpha and unaudited. The reference implementation carries its
-  source, which compiles to exactly the hash this binding names, and 73 tests of it. They found
+  source, which compiles to exactly the hash this binding names, and 74 tests of it. They found
   one defect, of liveness only, which Subbit fixed in kompact-io/subbit-xyz#10: at the build of
   `66648db`, a `Main` transaction that needs two different signers fails when the later step's
   signer sorts first. This binding's transactions each need one signer (the provider for claims,
@@ -593,7 +629,7 @@ non-terminal `settlement_pending`.
 
 [loveaihq/subbit-x402](https://github.com/loveaihq/subbit-x402): `src/x402/` implements the client, resource-server and
 facilitator schemes for `@x402/core` 2.27.0 and the server's channel manager, on
-`@evolution-sdk/evolution` 0.5.15 and Blockfrost or Koios, with 116 chain-free tests, and 73 Aiken
+`@evolution-sdk/evolution` 0.5.15 and Blockfrost or Koios, with 119 chain-free tests, and 74 Aiken
 tests of the validator at the hash above.
 [`RESULTS.md`](https://github.com/loveaihq/subbit-x402/blob/main/RESULTS.md) records every preprod transaction: steps 1–3 exercise the validator,
 step 4 the ADA binding end to end, step 5 a token binding, step 6 top-ups and the automatic
@@ -606,7 +642,8 @@ what the wallet can fund, and step 14 the whole of it through Koios. Step 15, wi
 tests the validator itself. Step 16 runs seller-sponsored channels, an optional extension described
 in [`SPONSORSHIP.md`](https://github.com/loveaihq/subbit-x402/blob/main/SPONSORSHIP.md), and step 17 a variant of the validator that returns a
 sponsor's reserve to it. Step 18 runs the binding at the fixed build, and a two-signer `Main`
-transaction that only the fixed build accepts.
+transaction that only the fixed build accepts. Step 19 runs a server with no watcher: idle claims,
+and `/verify` once its view is `TTL` old, settle the channels their consumers close.
 
 ## Version history
 
@@ -620,3 +657,4 @@ transaction that only the fixed build accepts.
 | 0.6 | 2026-09-25 | The server's channel records survive rollbacks: a deep anchor per channel, records dropped only when their end is deep |
 | 0.7 | 2026-10-06 | The client opens and tops up only at a validator it already trusts, and may trust several |
 | 0.8 | 2026-10-07 | The binding names Subbit's fixed build (kompact-io/subbit-xyz#10); the earlier build stays usable |
+| 0.9 | 2026-10-09 | A server need not watch its channels: `/verify` past `TTL` and idle claims after `T` find every close in time when `TTL` + `T` stays well below the close period; a minimum for idle claims bounds what a close can cost |
