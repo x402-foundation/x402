@@ -777,6 +777,38 @@ describe("createPaymentWrapper", () => {
       expect(result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toEqual(mockSettleResponse);
     });
 
+    it.each([
+      ["upfront", ["before-handler"]],
+      ["escrow", ["before-handler", "after-handler"]],
+    ])(
+      "should settle skipHandler responses on an %s flow like a normal call",
+      async (flow, phases) => {
+        mockResourceServer.getPaymentFlow.mockReturnValue(flow);
+        mockResourceServer.verifyPayment.mockResolvedValueOnce({
+          isValid: true,
+          skipHandler: { body: { refunded: true } },
+        });
+        const paid = createPaymentWrapper(
+          mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+          {
+            accepts: [mockPaymentRequirements],
+          },
+        );
+        const handler = vi.fn();
+        const wrappedHandler = paid(handler);
+
+        const result = await wrappedHandler(
+          { test: "arg" },
+          { _meta: { "x402/payment": mockPaymentPayload } },
+        );
+
+        expect(handler).not.toHaveBeenCalled();
+        expect(mockResourceServer.settlePayment.mock.calls.map(call => call[5])).toEqual(phases);
+        expect(result.structuredContent).toEqual({ refunded: true });
+        expect(result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toEqual(mockSettleResponse);
+      },
+    );
+
     it("should pass MCP transport context through core lifecycle calls", async () => {
       const paid = createPaymentWrapper(
         mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],

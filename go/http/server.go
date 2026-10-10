@@ -785,61 +785,64 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 	if verifyResp != nil {
 		result.SkipHandler = verifyResp.SkipHandler
 	}
+	flow, flowErr := s.GetPaymentFlow(*matchingReqs)
+	if flowErr != nil {
+		log.Printf("[x402] Failed to resolve payment flow: %v", flowErr)
+		return HTTPProcessResult{
+			Type: ResultPaymentError,
+			Response: &HTTPResponseInstructions{
+				Status:  500,
+				Headers: map[string]string{"Content-Type": "application/json"},
+				Body:    map[string]string{"error": "Internal Server Error"},
+			},
+		}
+	}
+	phases, phasesErr := x402.ResolvePaymentFlowPhases(flow)
+	if phasesErr != nil {
+		log.Printf("[x402] Failed to resolve payment flow phases: %v", phasesErr)
+		return HTTPProcessResult{
+			Type: ResultPaymentError,
+			Response: &HTTPResponseInstructions{
+				Status:  500,
+				Headers: map[string]string{"Content-Type": "application/json"},
+				Body:    map[string]string{"error": "Internal Server Error"},
+			},
+		}
+	}
+
+	// Settle before the handler even when SkipHandler bypasses it, so a skipped
+	// request settles like a normal one; the middleware's after-handler settle
+	// then echoes or completes it.
+	var beforeHandlerSettlement *x402.CompletedSettlement
+	if phases.SettleBeforeHandler {
+		beforeSettleResult := s.ProcessSettlement(
+			ctx,
+			*typedPayload,
+			*matchingReqs,
+			nil,
+			nil,
+			extensions,
+			nil,
+			x402.SettlePhaseBeforeHandler,
+		)
+		if !beforeSettleResult.Success {
+			return HTTPProcessResult{
+				Type:     ResultPaymentError,
+				Response: beforeSettleResult.Response,
+			}
+		}
+		beforeHandlerSettlement = &x402.CompletedSettlement{
+			Phase:        x402.SettlePhaseBeforeHandler,
+			Flow:         flow,
+			Result:       beforeSettleResult.SettleResponse,
+			Requirements: beforeSettleResult.Requirements,
+		}
+	}
+	result.BeforeHandlerSettlement = beforeHandlerSettlement
+
 	// Skip-handler runs inline; only attach a cancellation dispatcher when there
 	// is a downstream resource handler whose outcome can fail.
 	if result.SkipHandler == nil {
-		flow, flowErr := s.GetPaymentFlow(*matchingReqs)
-		if flowErr != nil {
-			log.Printf("[x402] Failed to resolve payment flow: %v", flowErr)
-			return HTTPProcessResult{
-				Type: ResultPaymentError,
-				Response: &HTTPResponseInstructions{
-					Status:  500,
-					Headers: map[string]string{"Content-Type": "application/json"},
-					Body:    map[string]string{"error": "Internal Server Error"},
-				},
-			}
-		}
-		phases, phasesErr := x402.ResolvePaymentFlowPhases(flow)
-		if phasesErr != nil {
-			log.Printf("[x402] Failed to resolve payment flow phases: %v", phasesErr)
-			return HTTPProcessResult{
-				Type: ResultPaymentError,
-				Response: &HTTPResponseInstructions{
-					Status:  500,
-					Headers: map[string]string{"Content-Type": "application/json"},
-					Body:    map[string]string{"error": "Internal Server Error"},
-				},
-			}
-		}
-
-		var beforeHandlerSettlement *x402.CompletedSettlement
-		if phases.SettleBeforeHandler {
-			beforeSettleResult := s.ProcessSettlement(
-				ctx,
-				*typedPayload,
-				*matchingReqs,
-				nil,
-				nil,
-				extensions,
-				nil,
-				x402.SettlePhaseBeforeHandler,
-			)
-			if !beforeSettleResult.Success {
-				return HTTPProcessResult{
-					Type:     ResultPaymentError,
-					Response: beforeSettleResult.Response,
-				}
-			}
-			beforeHandlerSettlement = &x402.CompletedSettlement{
-				Phase:        x402.SettlePhaseBeforeHandler,
-				Flow:         flow,
-				Result:       beforeSettleResult.SettleResponse,
-				Requirements: beforeSettleResult.Requirements,
-			}
-		}
-		result.BeforeHandlerSettlement = beforeHandlerSettlement
-
 		var settledPhases []x402.SettlePhase
 		if beforeHandlerSettlement != nil {
 			settledPhases = []x402.SettlePhase{x402.SettlePhaseBeforeHandler}

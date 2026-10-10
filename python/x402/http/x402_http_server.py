@@ -171,6 +171,7 @@ class x402HTTPResourceServer(x402HTTPServerBase):
                         declared_extensions,
                         transport_context,
                         skip_handler,
+                        before_handler_settlement,
                     ) = target
                     settle_result = await self.process_settlement(
                         payload,
@@ -178,6 +179,7 @@ class x402HTTPResourceServer(x402HTTPServerBase):
                         context=transport_context.request,
                         declared_extensions=declared_extensions,
                         transport_context=transport_context,
+                        before_handler_settlement=before_handler_settlement,
                         phase="after-handler",
                     )
                     result = self._process_skip_handler_settlement(
@@ -566,6 +568,7 @@ class x402HTTPResourceServerSync(x402HTTPServerBase):
                         declared_extensions,
                         transport_context,
                         skip_handler,
+                        before_handler_settlement,
                     ) = target
                     settle_result = self.process_settlement(
                         payload,
@@ -573,6 +576,7 @@ class x402HTTPResourceServerSync(x402HTTPServerBase):
                         context=transport_context.request,
                         declared_extensions=declared_extensions,
                         transport_context=transport_context,
+                        before_handler_settlement=before_handler_settlement,
                         phase="after-handler",
                     )
                     result = self._process_skip_handler_settlement(

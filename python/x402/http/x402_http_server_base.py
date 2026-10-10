@@ -581,20 +581,6 @@ class x402HTTPServerBase:
                     ),
                 )
 
-            if verify_result.skip_handler is not None:
-                skip_result = yield (
-                    "skip_handler_settlement",
-                    (
-                        payment_payload,
-                        matching_reqs,
-                        extensions,
-                        transport_context,
-                        verify_result.skip_handler,
-                    ),
-                    None,
-                )
-                return skip_result
-
             before_handler_settlement: CompletedSettlement | None = None
 
             if phases.settle_before_handler:
@@ -619,6 +605,23 @@ class x402HTTPServerBase:
                     result=before_settle.settle_response,
                     requirements=matching_reqs,
                 )
+
+            # Bypass the resource handler. Settle as a normal request would, after
+            # the before-handler settle, so flows like upfront and escrow are not skipped.
+            if verify_result.skip_handler is not None:
+                skip_result = yield (
+                    "skip_handler_settlement",
+                    (
+                        payment_payload,
+                        matching_reqs,
+                        extensions,
+                        transport_context,
+                        verify_result.skip_handler,
+                        before_handler_settlement,
+                    ),
+                    None,
+                )
+                return skip_result
 
             cancellation_dispatcher = self._server.create_payment_cancellation_dispatcher(
                 payment_payload,

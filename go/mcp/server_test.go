@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1727,5 +1728,93 @@ func TestPaymentWrapper_PaymentRequiredDoesNotMutateConfigAccepts(t *testing.T) 
 	}
 	if verifyCalls != 1 {
 		t.Fatalf("expected facilitator verify on retry, got %d", verifyCalls)
+	}
+}
+
+// singleFlowSchemeServer is a "cash" scheme that supports only one payment flow.
+type singleFlowSchemeServer struct {
+	mockSchemeNetworkServer
+	flow x402.PaymentFlowName
+}
+
+func (m *singleFlowSchemeServer) PaymentFlows() map[string]x402.PaymentFlowConfig {
+	return map[string]x402.PaymentFlowConfig{
+		x402.SDKDefaultAssetTransferMethod: {Supported: []x402.PaymentFlowName{m.flow}, Default: m.flow},
+	}
+}
+
+func TestPaymentWrapper_SkipHandlerSettlesLikeANormalCall(t *testing.T) {
+	cases := []struct {
+		flow   x402.PaymentFlowName
+		phases []x402.SettlePhase
+	}{
+		{x402.PaymentFlowUpfront, []x402.SettlePhase{x402.SettlePhaseBeforeHandler}},
+		{x402.PaymentFlowEscrow, []x402.SettlePhase{x402.SettlePhaseBeforeHandler, x402.SettlePhaseAfterHandler}},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.flow), func(t *testing.T) {
+			mockFacilitator := &mockFacilitatorClient{
+				settleFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {
+					return &x402.SettleResponse{Success: true, Transaction: "0xskip", Network: "x402:cash", Payer: "p"}, nil
+				},
+			}
+			server := x402.Newx402ResourceServer(
+				x402.WithFacilitatorClient(mockFacilitator),
+				x402.WithSchemeServer("x402:cash", &singleFlowSchemeServer{mockSchemeNetworkServer{scheme: "cash"}, tc.flow}),
+			)
+			ctx := context.Background()
+			if err := server.Initialize(ctx); err != nil {
+				t.Fatalf("Initialize: %v", err)
+			}
+			// Without verify-before-handler, after-verify hooks only run after a before-verify skip.
+			server.OnBeforeVerify(func(x402.VerifyContext) (*x402.BeforeHookResult, error) {
+				return &x402.BeforeHookResult{Skip: true, SkipVerifyResult: &x402.VerifyResponse{IsValid: true, Payer: "p"}}, nil
+			})
+			server.OnAfterVerify(func(x402.VerifyResultContext) (*x402.AfterVerifyResult, error) {
+				return &x402.AfterVerifyResult{
+					SkipHandler: true,
+					Response:    &x402.SkipHandlerDirective{Body: map[string]interface{}{"refunded": true}},
+				}, nil
+			})
+			var settlePhases []x402.SettlePhase
+			server.OnBeforeSettle(func(c x402.SettleContext) (*x402.BeforeHookResult, error) {
+				settlePhases = append(settlePhases, c.Phase)
+				return nil, nil
+			})
+
+			requirements := types.PaymentRequirements{
+				Scheme: "cash", Network: "x402:cash", Amount: "1000", PayTo: "test-recipient",
+				Extra: map[string]interface{}{"paymentFlow": string(tc.flow)},
+			}
+			wrapper := NewPaymentWrapper(server, PaymentWrapperConfig{Accepts: []types.PaymentRequirements{requirements}})
+			handlerCalled := false
+			wrapped := wrapper.Wrap(func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				handlerCalled = true
+				return &mcp.CallToolResult{}, nil
+			})
+
+			payload := types.PaymentPayload{
+				X402Version: 2,
+				Accepted:    requirements,
+				Payload:     map[string]interface{}{"signature": "~test-payer"},
+			}
+			result, err := wrapped(ctx, makeCallToolRequest(nil, mcp.Meta{MCP_PAYMENT_META_KEY: payload}))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if handlerCalled {
+				t.Fatal("tool handler should not run on SkipHandler")
+			}
+			if !slices.Equal(settlePhases, tc.phases) {
+				t.Fatalf("expected settle phases %v, got %v", tc.phases, settlePhases)
+			}
+			if result.IsError {
+				t.Fatalf("expected success skip result, got %#v", result.Content)
+			}
+			resp, ok := result.Meta[MCP_PAYMENT_RESPONSE_META_KEY].(*x402.SettleResponse)
+			if !ok || resp == nil || resp.Transaction != "0xskip" {
+				t.Fatalf("expected settlement in meta, got %#v", result.Meta[MCP_PAYMENT_RESPONSE_META_KEY])
+			}
+		})
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1697,4 +1698,158 @@ func TestPaymentMiddleware_LiteralRoutePercentEncodedSeparatorBypass(t *testing.
 			t.Errorf("Expected status 404 for /health, got %d", w.Code)
 		}
 	})
+}
+
+// singleFlowSchemeServer is an "exact" scheme that supports only one payment flow.
+type singleFlowSchemeServer struct {
+	mockSchemeServer
+	flow x402.PaymentFlowName
+}
+
+func (m *singleFlowSchemeServer) PaymentFlows() map[string]x402.PaymentFlowConfig {
+	return map[string]x402.PaymentFlowConfig{
+		x402.SDKDefaultAssetTransferMethod: {Supported: []x402.PaymentFlowName{m.flow}, Default: m.flow},
+	}
+}
+
+// serveSkipHandler sends one paid request to a route using flow whose hooks
+// skip verification and the resource handler. It returns the response, the
+// facilitator settle count, the handler call count, and the settle phases seen.
+func serveSkipHandler(t *testing.T, flow x402.PaymentFlowName, settle *x402.SettleResponse) (*httptest.ResponseRecorder, int, int, []x402.SettlePhase) {
+	t.Helper()
+	settleCalls := 0
+	mockClient := &mockFacilitatorClient{
+		settleFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {
+			settleCalls++
+			return settle, nil
+		},
+		supportedFunc: defaultSupportedFunc(),
+	}
+
+	server := x402.Newx402ResourceServer(x402.WithFacilitatorClient(mockClient)).
+		Register("eip155:1", &singleFlowSchemeServer{mockSchemeServer{scheme: "exact"}, flow})
+	// Without verify-before-handler, after-verify hooks only run after a before-verify skip.
+	server.OnBeforeVerify(func(x402.VerifyContext) (*x402.BeforeHookResult, error) {
+		return &x402.BeforeHookResult{
+			Skip:             true,
+			SkipVerifyResult: &x402.VerifyResponse{IsValid: true, Payer: "0xpayer"},
+		}, nil
+	})
+	server.OnAfterVerify(func(x402.VerifyResultContext) (*x402.AfterVerifyResult, error) {
+		return &x402.AfterVerifyResult{
+			SkipHandler: true,
+			Response:    &x402.SkipHandlerDirective{Body: map[string]string{"message": "skipped"}},
+		}, nil
+	})
+	var settlePhases []x402.SettlePhase
+	server.OnBeforeSettle(func(ctx x402.SettleContext) (*x402.BeforeHookResult, error) {
+		settlePhases = append(settlePhases, ctx.Phase)
+		return nil, nil
+	})
+
+	routes := x402http.RoutesConfig{
+		"GET /api": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{Scheme: "exact", PayTo: "0xtest", Price: "$1.00", Network: "eip155:1"},
+			},
+		},
+	}
+	handlerCalls := 0
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalls++
+		w.WriteHeader(http.StatusOK)
+	})
+	wrapped := PaymentMiddleware(routes, server, WithTimeout(5*time.Second))(handler)
+
+	payload, _ := json.Marshal(x402.PaymentPayload{
+		X402Version: 2,
+		Payload:     map[string]any{"sig": "test"},
+		Accepted: x402.PaymentRequirements{
+			Scheme:            "exact",
+			Network:           "eip155:1",
+			Asset:             "USDC",
+			Amount:            "1000000",
+			PayTo:             "0xtest",
+			MaxTimeoutSeconds: 300,
+			// The server advertises its non-default flow in extra.paymentFlow.
+			Extra: map[string]any{"paymentFlow": string(flow)},
+		},
+	})
+	req := httptest.NewRequest("GET", "/api", nil)
+	req.Header.Set("PAYMENT-SIGNATURE", base64.StdEncoding.EncodeToString(payload))
+	req.Host = "example.com"
+
+	w := httptest.NewRecorder()
+	wrapped.ServeHTTP(w, req)
+	return w, settleCalls, handlerCalls, settlePhases
+}
+
+func TestPaymentMiddleware_SkipHandlerSettlesUpfrontFlow(t *testing.T) {
+	w, settleCalls, handlerCalls, settlePhases := serveSkipHandler(t, x402.PaymentFlowUpfront, &x402.SettleResponse{
+		Success: true, Transaction: "0xtx", Network: "eip155:1", Payer: "0xpayer",
+	})
+
+	if settleCalls != 1 {
+		t.Errorf("Expected 1 settle call, got %d", settleCalls)
+	}
+	if !slices.Equal(settlePhases, []x402.SettlePhase{x402.SettlePhaseBeforeHandler}) {
+		t.Errorf("Expected a before-handler settle, got %v", settlePhases)
+	}
+	if handlerCalls != 0 {
+		t.Errorf("Expected the handler to be skipped, got %d calls", handlerCalls)
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+	if w.Header().Get("PAYMENT-RESPONSE") == "" {
+		t.Error("Expected PAYMENT-RESPONSE header")
+	}
+	if !strings.Contains(w.Body.String(), "skipped") {
+		t.Errorf("Expected skip response body, got %q", w.Body.String())
+	}
+}
+
+func TestPaymentMiddleware_SkipHandlerUpfrontSettlementFailureWithholdsResponse(t *testing.T) {
+	w, settleCalls, handlerCalls, _ := serveSkipHandler(t, x402.PaymentFlowUpfront, &x402.SettleResponse{
+		Success: false, ErrorReason: "insufficient_funds", Network: "eip155:1",
+	})
+
+	if settleCalls != 1 {
+		t.Errorf("Expected 1 settle call, got %d", settleCalls)
+	}
+	if handlerCalls != 0 {
+		t.Errorf("Expected the handler to be skipped, got %d calls", handlerCalls)
+	}
+	if w.Code != http.StatusPaymentRequired {
+		t.Errorf("Expected status 402, got %d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), "skipped") {
+		t.Errorf("Skip response body must not be released, got %q", w.Body.String())
+	}
+}
+
+func TestPaymentMiddleware_SkipHandlerSettlesBothEscrowPhases(t *testing.T) {
+	w, settleCalls, handlerCalls, settlePhases := serveSkipHandler(t, x402.PaymentFlowEscrow, &x402.SettleResponse{
+		Success: true, Transaction: "0xtx", Network: "eip155:1", Payer: "0xpayer",
+	})
+
+	if settleCalls != 2 {
+		t.Errorf("Expected 2 settle calls, got %d", settleCalls)
+	}
+	want := []x402.SettlePhase{x402.SettlePhaseBeforeHandler, x402.SettlePhaseAfterHandler}
+	if !slices.Equal(settlePhases, want) {
+		t.Errorf("Expected settle phases %v, got %v", want, settlePhases)
+	}
+	if w.Header().Get("PAYMENT-RESPONSE") == "" {
+		t.Error("Expected PAYMENT-RESPONSE header")
+	}
+	if handlerCalls != 0 {
+		t.Errorf("Expected the handler to be skipped, got %d calls", handlerCalls)
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "skipped") {
+		t.Errorf("Expected skip response body, got %q", w.Body.String())
+	}
 }

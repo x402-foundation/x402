@@ -681,17 +681,6 @@ export class x402HTTPResourceServer {
         };
       }
 
-      // Bypass the resource handler
-      if (verifyResult.skipHandler) {
-        return await this.processSkipHandlerSettlement(
-          paymentPayload,
-          matchingRequirements,
-          extensions,
-          transportContext,
-          verifyResult.skipHandler,
-        );
-      }
-
       let beforeHandlerSettlement: CompletedSettlement | undefined;
 
       if (phases.settleBeforeHandler) {
@@ -718,6 +707,19 @@ export class x402HTTPResourceServer {
           result,
           requirements,
         };
+      }
+
+      // Bypass the resource handler. Settle as a normal request would, after the
+      // before-handler settle, so flows like upfront and escrow are not skipped.
+      if (verifyResult.skipHandler) {
+        return await this.processSkipHandlerSettlement(
+          paymentPayload,
+          matchingRequirements,
+          extensions,
+          transportContext,
+          verifyResult.skipHandler,
+          beforeHandlerSettlement,
+        );
       }
 
       const cancellationDispatcher = this.ResourceServer.createPaymentCancellationDispatcher(
@@ -991,6 +993,7 @@ export class x402HTTPResourceServer {
    * @param declaredExtensions - Optional declared extensions for the route.
    * @param transportContext - Optional HTTP transport context.
    * @param skipHandlerResponse - Optional content type + body to return on success.
+   * @param beforeHandlerSettlement - Before-handler settle, when the flow has one.
    * @returns A `payment-error` HTTPProcessResult carrying the final response.
    */
   private async processSkipHandlerSettlement(
@@ -999,6 +1002,7 @@ export class x402HTTPResourceServer {
     declaredExtensions: Record<string, unknown> | undefined,
     transportContext: HTTPTransportContext,
     skipHandlerResponse: SkipHandlerDirective | undefined,
+    beforeHandlerSettlement: CompletedSettlement | undefined,
   ): Promise<HTTPProcessResult> {
     const settleResult = await this.processSettlement(
       paymentPayload,
@@ -1006,7 +1010,7 @@ export class x402HTTPResourceServer {
       declaredExtensions,
       transportContext,
       undefined,
-      undefined,
+      beforeHandlerSettlement,
       "after-handler",
     );
 

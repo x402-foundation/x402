@@ -14,16 +14,18 @@ from x402.http.types import (
     RouteConfig,
 )
 from x402.http.utils import encode_payment_signature_header
-from x402.http.x402_http_server import x402HTTPResourceServer
+from x402.http.x402_http_server import x402HTTPResourceServer, x402HTTPResourceServerSync
 from x402.schemas import PaymentPayload, PaymentRequirements, SettleResponse, VerifyResponse
 from x402.schemas.hooks import (
     AbortProtectedRequestResult,
     GrantAccessResult,
     SkipHandlerDirective,
     SkipHandlerResult,
+    SkipVerifyResult,
 )
 from x402.schemas.payments import PaymentRequired
 from x402.schemas.responses import SupportedKind, SupportedResponse
+from x402.server import x402ResourceServerSync
 
 
 def make_requirements() -> PaymentRequirements:
@@ -257,3 +259,148 @@ class TestSkipHandlerSettlement:
         assert result.response.status == 200
         assert result.response.body == {"message": "Refund acknowledged"}
         assert "PAYMENT-RESPONSE" in result.response.headers
+
+
+class SingleFlowExactScheme:
+    scheme = "exact"
+    default_asset_transfer_method = "default"
+
+    def __init__(self, flow: str) -> None:
+        self.payment_flows = {"default": {"supported": (flow,), "default": flow}}
+
+
+class UnfundedFacilitatorClient(MockFacilitatorClient):
+    async def settle(self, payload, requirements) -> SettleResponse:
+        self.settle_calls.append((payload, requirements))
+        return SettleResponse(
+            success=False,
+            error_reason="insufficient_funds",
+            transaction="",
+            network=requirements.network,
+        )
+
+
+class SyncMockFacilitatorClient(MockFacilitatorClient):
+    def verify(self, payload, requirements) -> VerifyResponse:  # type: ignore[override]
+        self.verify_calls.append((payload, requirements))
+        return VerifyResponse(is_valid=True, payer="0xpayer")
+
+    def settle(self, payload, requirements) -> SettleResponse:  # type: ignore[override]
+        self.settle_calls.append((payload, requirements))
+        return SettleResponse(
+            success=True,
+            transaction="0xmock",
+            network=requirements.network,
+            payer="0xpayer",
+        )
+
+
+class TestSkipHandlerBeforeHandlerSettlement:
+    """`skipHandler` must settle like a normal request when the flow settles before the handler."""
+
+    @staticmethod
+    def _setup(server, flow: str):
+        """Register hooks that skip verification and the handler; return routes, context, phases."""
+        server.register("eip155:8453", SingleFlowExactScheme(flow))
+        server.initialize()
+        # Without verify-before-handler, afterVerify hooks only run after a beforeVerify skip.
+        server.on_before_verify(
+            lambda _ctx: SkipVerifyResult(result=VerifyResponse(is_valid=True, payer="0xpayer"))
+        )
+        server.on_after_verify(
+            lambda _ctx: SkipHandlerResult(
+                response=SkipHandlerDirective(body={"message": "skipped"})
+            )
+        )
+        settle_phases: list[str] = []
+        server.on_before_settle(lambda ctx: settle_phases.append(ctx.phase))
+
+        requirements = make_requirements()
+        payment_header = encode_payment_signature_header(
+            PaymentPayload(payload={}, accepted=requirements)
+        )
+
+        class PaidAdapter(MockHTTPAdapter):
+            def get_header(self, name: str) -> str | None:
+                if name.lower() == PAYMENT_SIGNATURE_HEADER.lower():
+                    return payment_header
+                return None
+
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+        context = HTTPRequestContext(adapter=PaidAdapter(), path="/api/protected", method="GET")
+        return requirements, routes, context, settle_phases
+
+    async def _process(self, client: MockFacilitatorClient, flow: str = "upfront"):
+        server = x402ResourceServer(client)
+        requirements, routes, context, settle_phases = self._setup(server, flow)
+        with patch.object(
+            x402HTTPResourceServer,
+            "_build_payment_requirements_from_options",
+            new=AsyncMock(return_value=[requirements]),
+        ):
+            result = await x402HTTPResourceServer(server, routes).process_http_request(context)
+        return result, settle_phases
+
+    @pytest.mark.asyncio
+    async def test_settles_upfront_before_returning_skip_response(self):
+        client = MockFacilitatorClient()
+
+        result, settle_phases = await self._process(client)
+
+        assert len(client.settle_calls) == 1
+        assert settle_phases == ["before-handler"]
+        assert result.response is not None
+        assert result.response.status == 200
+        assert result.response.body == {"message": "skipped"}
+        assert "PAYMENT-RESPONSE" in result.response.headers
+
+    @pytest.mark.asyncio
+    async def test_settles_both_escrow_phases_before_returning_skip_response(self):
+        client = MockFacilitatorClient()
+
+        result, settle_phases = await self._process(client, flow="escrow")
+
+        assert len(client.settle_calls) == 2
+        assert settle_phases == ["before-handler", "after-handler"]
+        assert result.response is not None
+        assert result.response.status == 200
+        assert result.response.body == {"message": "skipped"}
+        assert "PAYMENT-RESPONSE" in result.response.headers
+
+    @pytest.mark.asyncio
+    async def test_failed_settlement_does_not_release_skip_response(self):
+        client = UnfundedFacilitatorClient()
+
+        result, _ = await self._process(client)
+
+        assert len(client.settle_calls) == 1
+        assert result.response is not None
+        assert result.response.status == 402
+        assert result.response.body != {"message": "skipped"}
+
+    def test_sync_server_settles_both_escrow_phases(self):
+        client = SyncMockFacilitatorClient()
+        server = x402ResourceServerSync(client)
+        requirements, routes, context, settle_phases = self._setup(server, "escrow")
+
+        with patch.object(
+            x402HTTPResourceServerSync,
+            "_build_payment_requirements_from_options_sync",
+            return_value=[requirements],
+        ):
+            result = x402HTTPResourceServerSync(server, routes).process_http_request(context)
+
+        assert len(client.settle_calls) == 2
+        assert settle_phases == ["before-handler", "after-handler"]
+        assert result.response is not None
+        assert result.response.status == 200
+        assert result.response.body == {"message": "skipped"}
