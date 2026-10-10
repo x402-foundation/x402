@@ -16,6 +16,7 @@
     "lint:check": "eslint . --ext .ts"
   },
   "dependencies": {
+    "@getalby/sdk": "^8.0.3",
     "@aptos-labs/ts-sdk": "^5.2.1",
     "@keetanetwork/keetanet-client": "^0.18.1",
     "@scure/base": "^1.2.6",
@@ -26,6 +27,7 @@
     "@x402/concordium": "workspace:*",
     "@x402/evm": "workspace:*",
     "@x402/keeta": "workspace:*",
+    "@x402/lnbtc": "workspace:*",
     "@x402/near": "workspace:*",
     "@x402/svm": "workspace:*",
     "@x402/stellar": "workspace:*",

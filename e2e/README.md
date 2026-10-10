@@ -210,6 +210,7 @@ CLIENT_CCD_ADDRESS=...              # Concordium account address for client paym
 CLIENT_HEDERA_ACCOUNT_ID=0.0....    # Hedera account id for client payments
 CLIENT_HEDERA_PRIVATE_KEY=0x...     # Hedera ECDSA private key for client payments
 CLIENT_KEETA_MNEMONIC=...           # Keeta mnemonic for client payments
+CLIENT_LNBTC_NWC_URL=nostr+walletconnect://... # Lightning payer: NWC connection with pay_invoice (must return the preimage)
 CLIENT_STELLAR_PRIVATE_KEY=...      # Stellar private key for client payments
 CLIENT_CARDANO_MNEMONIC=...         # Cardano wallet mnemonic (24 words) for client payments
 CLIENT_TVM_PRIVATE_KEY=...          # TVM private key for client payments
@@ -226,6 +227,8 @@ SERVER_CASPER_ADDRESS=00...         # Where servers receive Casper payments
 SERVER_CCD_ADDRESS=...              # Where servers receive Concordium payments
 SERVER_HEDERA_ADDRESS=0.0....       # Where servers receive Hedera payments
 SERVER_KEETA_ADDRESS=keeta_...      # Where servers receive Keeta payments
+SERVER_LNBTC_ADDRESS=02...          # Lightning payee: the receiving node's compressed public key (66 hex)
+SERVER_LNBTC_NWC_URL=nostr+walletconnect://... # NWC connection to that node with make_invoice (description_hash)
 SERVER_STELLAR_ADDRESS=...          # Where servers receive Stellar payments
 SERVER_TVM_ADDRESS=...              # Where servers receive TVM payments
 SERVER_NEAR_ADDRESS=...             # Where servers receive NEAR payments (merchant account)
@@ -249,6 +252,7 @@ FACILITATOR_NEAR_ACCOUNT_ID=...     # NEAR relayer account id (submits meta-tx, 
 FACILITATOR_NEAR_PRIVATE_KEY=ed25519:... # NEAR relayer private key
 FACILITATOR_CARDANO_MNEMONIC=...    # Optional: the Cardano facilitator only broadcasts, so it runs provider-only without a mnemonic
 # XRPL needs no facilitator wallet — the facilitator is keyless (payer signs and pays fees)
+# Lightning needs no facilitator wallet — the facilitator checks the preimage against the invoice locally
 
 # Casper CEP-18 support
 CASPER_ASSET=...                    # CEP-18 contract package hash (64 hex chars, no 0x/hash-)
@@ -384,6 +388,16 @@ You need **three separate NEAR testnet accounts** for e2e tests — client (paye
 1. Create three testnet accounts (e.g. via [MyNearWallet testnet](https://testnet.mynearwallet.com/) or `near create-account`); export each account's private key (`ed25519:...`) — e.g. from `~/.near-credentials/testnet/<account>.json`.
 2. Fund the **facilitator (relayer)** account with testnet NEAR for gas from the [NEAR faucet](https://near-faucet.io/). The relayer submits the NEP-366 `SignedDelegate` and sponsors gas, so the payer spends zero gas.
 3. Give the **client (payer)** the payment token. The default asset is **wNEAR** (`wrap.testnet`, a NEP-141): wrap NEAR via `wrap.testnet` `near_deposit`. Both payer and merchant must be `storage_deposit`-registered on the token contract.
+
+#### Bitcoin Lightning Testnet (lnbtc)
+
+You need **two Lightning testnet wallets** reachable over [Nostr Wallet Connect](https://nwc.dev) (NIP-47), with a route between them — client (payer) and server (payee). The facilitator needs no wallet.
+
+1. Set up the payee node and set `SERVER_LNBTC_ADDRESS` to its compressed public key. Create an NWC connection to it with the `make_invoice` permission (the wallet must honor `description_hash`) and set `SERVER_LNBTC_NWC_URL`. Nothing else may create invoices on this node: anyone who can could pay their own invoice and present the preimage.
+2. Create an NWC connection to the payer wallet with the `pay_invoice` permission and set `CLIENT_LNBTC_NWC_URL`. The wallet must return the payment preimage. Each paid request costs 1 sat (1000 msat) plus routing fees, so a small budget on the connection is enough.
+3. The payer needs outbound liquidity and the payee inbound liquidity on testnet.
+
+Only the TypeScript client, servers (express, hono, fastify, next, MCP), and facilitator implement lnbtc. Every scenario uses the `upfront` flow: the server settles before the handler runs, and the settlement `transaction` is the payment hash.
 
 #### Casper Testnet
  

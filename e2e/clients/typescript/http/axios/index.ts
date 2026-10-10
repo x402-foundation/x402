@@ -1,7 +1,9 @@
 import axios from "axios";
 import { wrapAxiosWithPayment, decodePaymentResponseHeader } from "@x402/axios";
 import {
+  bindHttpRequest,
   createE2EClient,
+  e2eRequestUrl,
   runClientScenario,
   type RequestResult,
 } from "../../index.ts";
@@ -10,14 +12,19 @@ import {
  * Axios E2E Test Client with x402 Payment Wrapper
  */
 
-const { url, client, batchSettlementScheme, batchSettlementPhase } = await createE2EClient();
+/** The request this client makes; lnbtc pays only invoices bound to it. */
+const request = { method: "GET", url: e2eRequestUrl() };
+
+const { url, client, batchSettlementScheme, batchSettlementPhase } = await createE2EClient({
+  lnbtcRequestBinding: bindHttpRequest(request),
+});
 const axiosWithPayment = wrapAxiosWithPayment(axios.create(), client);
 
 /**
  * Issues a single paid request and returns the parsed result.
  */
 async function issueRequest(): Promise<RequestResult> {
-  const response = await axiosWithPayment.get(url);
+  const response = await axiosWithPayment.request({ method: request.method, url: request.url });
   const paymentResponseHeader =
     response.headers["payment-response"] || response.headers["x-payment-response"];
 

@@ -1,0 +1,28 @@
+{
+  "env": {
+    "SERVER_LNBTC_ADDRESS": { "required": true, "roles": ["server"] },
+    "SERVER_LNBTC_NWC_URL": { "required": true, "roles": ["server"] },
+    "CLIENT_LNBTC_NWC_URL": { "required": true, "roles": ["client"] }
+  },
+  "testnet": {
+    "name": "Bitcoin Lightning Testnet",
+    "caip2": "lnbtc:000000000933ea01ad0ee984209779ba"
+  },
+  "mainnet": {
+    "name": "Bitcoin Lightning",
+    "caip2": "lnbtc:000000000019d6689c085ae165831e93"
+  },
+  "routes": {
+    "/exact/lnbtc/bolt11/upfront": {
+      "scheme": "exact",
+      "assetTransferMethod": "bolt11",
+      "sdks": ["typescript"],
+      "paymentFlow": "upfront",
+      "price": {
+        "amount": "1000",
+        "asset": "BTC"
+      },
+      "extensions": ["bazaar"]
+    }
+  }
+}

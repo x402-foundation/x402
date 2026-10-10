@@ -9,6 +9,7 @@
     "start": "NODE_NO_WARNINGS=1 next start -p ${PORT:-4021}"
   },
   "dependencies": {
+    "@getalby/sdk": "^8.0.3",
     "@x402/aptos": "workspace:*",
     "@x402/avm": "workspace:*",
     "@x402/cardano": "workspace:*",    
@@ -18,6 +19,7 @@
     "@x402/evm": "workspace:*",
     "@x402/hedera": "workspace:*",
     "@x402/keeta": "workspace:*",
+    "@x402/lnbtc": "workspace:*",
     "@x402/near": "workspace:*",
     "@x402/extensions": "workspace:*",
     "@x402/next": "workspace:*",

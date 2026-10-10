@@ -12,6 +12,13 @@ import { ExactAptosScheme } from "@x402/aptos/exact/server";
 import { ExactCasperScheme } from "@x402/casper/exact/server";
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
 import { ExactKeetaScheme } from "@x402/keeta/exact/server";
+import type { LightningReceiver } from "@x402/lnbtc";
+import {
+  ExactLnbtcScheme,
+  httpTransportBinding,
+  mcpTransportBinding,
+} from "@x402/lnbtc/exact/server";
+import { NWCClient } from "@getalby/sdk";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { ExactTvmScheme } from "@x402/tvm/exact/server";
 import { ExactNearScheme } from "@x402/near/exact/server";
@@ -67,11 +74,56 @@ export function createFacilitatorClients(facilitatorUrl: string): HTTPFacilitato
   return facilitatorClients;
 }
 
+/**
+ * Origin e2e clients use to reach this server. The harness hands every client
+ * `http://localhost:${port}` (`serverUrl` in test.ts); lnbtc binds each invoice
+ * to the request URL under this origin, so it must be exactly that.
+ */
+export function e2eServerOrigin(cfg: ServerEnvConfig): string {
+  return `http://localhost:${cfg.PORT}`;
+}
+
+/** SSE endpoint of the MCP server; the e2e MCP client connects to `${origin}/sse`. */
+export const MCP_SSE_PATH = "/sse";
+
+/** The URI the e2e MCP client connects to: lnbtc's `mcp:1` server identity. */
+export function e2eMcpServerUri(cfg: ServerEnvConfig): string {
+  return `${e2eServerOrigin(cfg)}${MCP_SSE_PATH}`;
+}
+
+/**
+ * Lightning receiver over Nostr Wallet Connect (`make_invoice` with the request
+ * hash as the description hash). The wallet must be the node whose public key is
+ * SERVER_LNBTC_ADDRESS, and nothing else may create invoices on it: anyone who
+ * can could pay their own invoice and present its preimage.
+ *
+ * @param nostrWalletConnectUrl - NWC connection URI with the make_invoice permission
+ * @returns Receiver adapter for the lnbtc server scheme
+ */
+function nwcLightningReceiver(nostrWalletConnectUrl: string): LightningReceiver {
+  const nwc = new NWCClient({ nostrWalletConnectUrl });
+  return {
+    async createInvoice({ amountMsat, descriptionHash, expirySeconds }) {
+      // NIP-47 carries msat as a JSON number.
+      if (amountMsat > BigInt(Number.MAX_SAFE_INTEGER)) {
+        throw new Error(`lnbtc amount ${amountMsat} msat is too large for NWC make_invoice`);
+      }
+      const { invoice } = await nwc.makeInvoice({
+        amount: Number(amountMsat),
+        description_hash: descriptionHash,
+        expiry: expirySeconds,
+      });
+      return invoice;
+    },
+  };
+}
+
 /** Register schemes for one configured family. */
 async function registerFamilySchemes(
   server: x402ResourceServer,
   family: ProtocolFamily,
   cfg: ServerEnvConfig,
+  transport: RouteTransport,
   primaryFacilitator?: HTTPFacilitatorClient,
 ): Promise<void> {
   const pattern = networkCaip2Pattern(family);
@@ -175,6 +227,27 @@ async function registerFamilySchemes(
     case "keeta":
       server.register(pattern, new ExactKeetaScheme());
       return;
+    case "lnbtc": {
+      const nwcUrl = process.env.SERVER_LNBTC_NWC_URL;
+      if (!nwcUrl) {
+        throw new Error(
+          "SERVER_LNBTC_NWC_URL is required to issue invoices for SERVER_LNBTC_ADDRESS",
+        );
+      }
+      server.register(
+        pattern,
+        new ExactLnbtcScheme({
+          receiver: nwcLightningReceiver(nwcUrl),
+          // Each invoice commits to the request the client is making: the URL under the
+          // origin clients use (HTTP), or the tool call on the endpoint they connect to (MCP).
+          requestBinding:
+            transport === "mcp"
+              ? mcpTransportBinding({ server: e2eMcpServerUri(cfg) })
+              : httpTransportBinding({ publicOrigin: e2eServerOrigin(cfg) }),
+        }),
+      );
+      return;
+    }
     case "stellar":
       server.register(pattern, new ExactStellarScheme());
       return;
@@ -192,16 +265,19 @@ async function registerFamilySchemes(
 
 /**
  * Registers e2e schemes + bazaar extension for every family with a payee address
- * configured (catalog-driven via {@link isFamilyConfigured}).
+ * configured (catalog-driven via {@link isFamilyConfigured}). `primaryFacilitator` is passed to
+ * schemes that need a facilitator client of their own; `transport` is the surface this server
+ * exposes routes over, for schemes that bind the request.
  */
 export async function configureResourceServer(
   server: x402ResourceServer,
   cfg: ServerEnvConfig,
   primaryFacilitator?: HTTPFacilitatorClient,
+  transport: RouteTransport = "http",
 ): Promise<void> {
   for (const family of PROTOCOL_FAMILIES) {
     if (isFamilyConfigured(cfg, family)) {
-      await registerFamilySchemes(server, family, cfg, primaryFacilitator);
+      await registerFamilySchemes(server, family, cfg, transport, primaryFacilitator);
     }
   }
 
@@ -259,6 +335,19 @@ export function buildResolvedRouteConfig(
 }
 
 /**
+ * Route-config `resource` for a route served at `httpPath`, when its scheme binds
+ * the request URL. lnbtc requires `PaymentRequired.resource.url` to equal the bound
+ * URL (public origin + path), so it is pinned rather than taken from the Host header.
+ */
+export function httpRouteResource(
+  route: ResolvedRoute,
+  cfg: ServerEnvConfig,
+  httpPath: string,
+): { resource: string } | Record<string, never> {
+  return route.networkId === "lnbtc" ? { resource: `${e2eServerOrigin(cfg)}${httpPath}` } : {};
+}
+
+/**
  * Payment-middleware route map for the express/hono/fastify e2e servers, derived
  * from config/mechanisms.json. Routes whose network has no payee address
  * configured are omitted by the resolver.
@@ -267,7 +356,10 @@ export function buildPaymentRoutes(cfg: ServerEnvConfig): RoutesConfig {
   const routes: Record<string, unknown> = {};
 
   for (const route of resolvedRoutes(cfg)) {
-    routes[`GET ${route.path}`] = buildResolvedRouteConfig(route);
+    routes[`GET ${route.path}`] = {
+      ...buildResolvedRouteConfig(route),
+      ...httpRouteResource(route, cfg, route.path),
+    };
   }
 
   return routes as RoutesConfig;

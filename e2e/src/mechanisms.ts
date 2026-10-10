@@ -36,6 +36,7 @@ type AssetTransferMethod =
   | 'permit2'
   | 'sequence'
   | 'ticketSequence'
+  | 'bolt11'
   | 'default'
   | 'masumi'
   | 'script';

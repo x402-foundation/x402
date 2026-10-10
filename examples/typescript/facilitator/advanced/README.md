@@ -40,6 +40,7 @@ and fill required environment variables:
 - `HEDERA_ACCOUNT_ID` - Hedera account id for fee payer (optional)
 - `HEDERA_PRIVATE_KEY` - Hedera **ECDSA** private key (0x-prefixed or DER-encoded) for fee payer (optional)
 - `KEETA_MNEMONIC` - Keeta mnemonic
+- `LNBTC_ENABLED` - set to `true` to settle Bitcoin Lightning payments. No key is needed: settlement checks the preimage locally. The example keeps consumed payment hashes in memory; production needs a restart-durable replay store
 - `CARDANO_MNEMONIC` - Cardano facilitator mnemonic (optional; only exposes an address — the facilitator needs no funds)
 - `CARDANO_NETWORK` - Cardano network (optional, defaults to `cardano:preprod`)
 - `CARDANO_L1_CONFIRMATIONS` - Optional confirmation policy (`-1..20`; `-1` enables mempool settlement)

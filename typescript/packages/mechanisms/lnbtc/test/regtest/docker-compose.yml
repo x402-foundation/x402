@@ -1,0 +1,55 @@
+# Regtest Lightning pair for @x402/lnbtc integration tests.
+# payer (alice) opens a 1,000,000-sat channel to receiver (bob).
+# Bring up with ./setup.sh; tear down with: docker compose down -v
+name: x402-lnbtc-regtest
+
+x-lnd: &lnd
+  image: lightninglabs/lnd:v0.21.4-beta
+  depends_on: [bitcoind]
+  restart: unless-stopped
+
+x-lnd-args: &lnd-args
+  - --bitcoin.regtest
+  - --bitcoin.node=bitcoind
+  - --bitcoind.rpchost=bitcoind
+  - --bitcoind.rpcuser=x402
+  - --bitcoind.rpcpass=x402
+  - --bitcoind.zmqpubrawblock=tcp://bitcoind:28332
+  - --bitcoind.zmqpubrawtx=tcp://bitcoind:28333
+  - --noseedbackup
+  - --rpclisten=0.0.0.0:10009
+  - --restlisten=0.0.0.0:8080
+  - --listen=0.0.0.0:9735
+  - --tlsextradomain=localhost
+  - --trickledelay=50
+  - --debuglevel=info
+
+services:
+  bitcoind:
+    image: lightninglabs/bitcoin-core:29
+    restart: unless-stopped
+    command:
+      - -regtest
+      - -server
+      - -txindex
+      - -rpcuser=x402
+      - -rpcpassword=x402
+      - -rpcbind=0.0.0.0
+      - -rpcallowip=0.0.0.0/0
+      - -fallbackfee=0.0002
+      - -zmqpubrawblock=tcp://0.0.0.0:28332
+      - -zmqpubrawtx=tcp://0.0.0.0:28333
+
+  alice:
+    <<: *lnd
+    hostname: alice
+    command: *lnd-args
+    ports: ["18081:8080"]
+    volumes: ["./.data/alice:/root/.lnd"]
+
+  bob:
+    <<: *lnd
+    hostname: bob
+    command: *lnd-args
+    ports: ["18082:8080"]
+    volumes: ["./.data/bob:/root/.lnd"]
