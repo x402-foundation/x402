@@ -1,0 +1,3 @@
+kind: fixed
+body: 'Fixed exact SVM facilitator Path 1 rejecting valid Phantom-signed payments when Lighthouse guard instructions were injected before the compute budget/TransferChecked sequence instead of strictly after it. Path 1 now classifies instructions by program ID and discriminator instead of fixed position: protocol instructions (compute limit, compute price, transfer, optional memo) must still appear in that relative order, but Lighthouse guard instructions are accepted anywhere with no upper bound. Purely additive - old-style payloads still validate and no existing error constant was renamed or removed.'
+time: 2026-09-28T21:10:38.22474-07:00
