@@ -693,30 +693,33 @@ export class BatchSvmScheme implements SchemeNetworkServer {
     if (snapshot && !this.applySnapshot(request.channelId, snapshot)) {
       return this.abort(BatchError.CHANNEL_STATE, "verified channel snapshot is unusable");
     }
-    if (snapshot) {
-      await this.persistSnapshot(request.channelId, raw, ctx.requirements, snapshot);
-    }
-
-    // A client-signed voucher must be checked against the refreshed baseline.
-    if (request.requiresCumulativeCheck && request.proof?.signer === "client") {
-      const state = await this.store.get(request.channelId);
-      if (!state) return this.abort(BatchError.CHANNEL_STATE, "channel state unavailable");
-      const submitted = BigInt(request.proof.voucher.maxClaimableAmount);
-      const expected = state.chargedCumulativeAmount + BigInt(ctx.requirements.amount);
-      if (submitted !== expected) {
-        // The corrective 402 that follows carries this rebuilt snapshot and no
-        // voucher proof, so the client resynchronizes from onchain state.
-        return this.abort(
-          BatchError.CUMULATIVE_AMOUNT_MISMATCH,
-          `voucher authorizes ${submitted}, expected ${expected}`,
-        );
-      }
-    }
 
     const pendingId = `${Date.now()}:${(this.reservationSequence += 1)}`;
     const expiresAt = Date.now() + Math.max(5_000, ctx.requirements.maxTimeoutSeconds * 1_000);
     let operationReserved = false;
+    // Core logs a throwing hook and keeps the facilitator's valid result, so
+    // every failure before the reservation is written must abort here instead.
     try {
+      if (snapshot) {
+        await this.persistSnapshot(request.channelId, raw, ctx.requirements, snapshot);
+      }
+
+      // A client-signed voucher must be checked against the refreshed baseline.
+      if (request.requiresCumulativeCheck && request.proof?.signer === "client") {
+        const state = await this.store.get(request.channelId);
+        if (!state) return this.abort(BatchError.CHANNEL_STATE, "channel state unavailable");
+        const submitted = BigInt(request.proof.voucher.maxClaimableAmount);
+        const expected = state.chargedCumulativeAmount + BigInt(ctx.requirements.amount);
+        if (submitted !== expected) {
+          // The corrective 402 that follows carries this rebuilt snapshot and no
+          // voucher proof, so the client resynchronizes from onchain state.
+          return this.abort(
+            BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+            `voucher authorizes ${submitted}, expected ${expected}`,
+          );
+        }
+      }
+
       if (request.requestId && request.ceiling !== undefined) {
         const reserved = await this.operationStore.reserve(
           request.channelId,
@@ -778,7 +781,12 @@ export class BatchSvmScheme implements SchemeNetworkServer {
       }
     } catch (error) {
       if (operationReserved && request.requestId) {
-        await this.operationStore.release(request.channelId, request.requestId);
+        try {
+          await this.operationStore.release(request.channelId, request.requestId);
+        } catch {
+          // An unreleased record still retires the request id; rethrowing
+          // would turn this abort into a passed verify.
+        }
       }
       this.requestContexts.delete(ctx.paymentPayload);
       return this.abort(
