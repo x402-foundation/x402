@@ -151,6 +151,41 @@ describe("wrapAxiosWithPayment()", () => {
       .calls[0][1];
   });
 
+  it("uses the updated 402 requirements after an onPaymentRequired hook retry (#3582)", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+
+    const updatedPaymentRequired: PaymentRequired = {
+      ...validPaymentRequired,
+      accepts: [{ ...validPaymentRequired.accepts[0], amount: "2000000" } as PaymentRequirements],
+    };
+
+    (MockX402HTTPClient.prototype.getPaymentRequiredResponse as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce(validPaymentRequired)
+      .mockReturnValueOnce(updatedPaymentRequired);
+    (
+      MockX402HTTPClient.prototype.handlePaymentRequired as ReturnType<typeof vi.fn>
+    ).mockResolvedValue({ "X-Alt-Auth": "token" });
+
+    const successResponse = { data: "success" } as AxiosResponse;
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        status: 402,
+        headers: { "PAYMENT-REQUIRED": "second" },
+        data: updatedPaymentRequired,
+      } as unknown as AxiosResponse)
+      .mockResolvedValueOnce(successResponse);
+
+    const error = createAxiosError(402, createErrorConfig(), validPaymentRequired, {
+      "PAYMENT-REQUIRED": "first",
+    });
+
+    const result = await interceptor(error);
+
+    expect(result).toBe(successResponse);
+    expect(MockX402HTTPClient.prototype.getPaymentRequiredResponse).toHaveBeenCalledTimes(2);
+    expect(mockClient.createPaymentPayload).toHaveBeenCalledWith(updatedPaymentRequired);
+  });
+
   it("should return the axios client instance", () => {
     const result = wrapAxiosWithPayment(mockAxiosClient, mockClient);
     expect(result).toBe(mockAxiosClient);
