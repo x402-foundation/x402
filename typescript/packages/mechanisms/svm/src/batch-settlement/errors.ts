@@ -25,6 +25,7 @@ export const BatchError = {
   CHANNEL_STATE: `${PREFIX}channel_state`,
   REFUND_TRANSACTION: `${PREFIX}refund_transaction`,
   PAYOUT_ATTRIBUTION_AMBIGUOUS: `${PREFIX}payout_attribution_ambiguous`,
+  OPERATION_CEILING_CHANGED: `${PREFIX}operation_ceiling_changed`,
 } as const;
 
 export type BatchErrorReason = (typeof BatchError)[keyof typeof BatchError];

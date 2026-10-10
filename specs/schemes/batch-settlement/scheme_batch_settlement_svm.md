@@ -1544,9 +1544,11 @@ request, the server MUST:
 6. Enforce replay protection. Reject stale or already accepted client vouchers,
    and atomically create at most one server-mode operation for each
    `(channelId, requestId)`. Any duplicate operation, whether running or
-   completed, MUST be rejected with `duplicate_settlement` and MUST NOT execute
-   the handler. The scheme does not replay either the settlement response or
-   the application resource body.
+   completed, MUST be rejected with `duplicate_settlement` (or
+   `invalid_batch_settlement_svm_operation_ceiling_changed` when its ceiling
+   differs from the recorded one) and MUST NOT execute the handler. The scheme
+   does not replay either the settlement response or the application resource
+   body.
 7. Execute the resource handler. In client mode, the actual charge is the
    advertised amount. In server mode, after metering completes, choose an actual
    charge satisfying `0 <= chargedAmount <= PaymentRequirements.amount` and set
@@ -1644,7 +1646,9 @@ duplicate request from executing but is not an HTTP response-recovery protocol:
 
 - **Server-mode paid requests.** The operation record is the authoritative
   replay defense. Reuse of a running or completed `(channelId, requestId)` MUST
-  return `duplicate_settlement`; it MUST NOT replay a settlement response or
+  return `duplicate_settlement`, or
+  `invalid_batch_settlement_svm_operation_ceiling_changed` when the reuse
+  carries a different ceiling; it MUST NOT replay a settlement response or
   execute the handler. Applications that need to recover a resource body after
   a lost response SHOULD use the payment identifier extension.
 - **Client-mode paid requests.** The per-channel lock and charged watermark are
@@ -1844,9 +1848,13 @@ Standard x402 codes apply. The facilitator reports verification failures in
   returned escrow to a payer or treasury that aliases `payTo`. The facilitator
   returns the confirmed signature with this reason instead of an `amount`;
   the server reconciles from onchain state.
+- `invalid_batch_settlement_svm_operation_ceiling_changed` - a server-mode
+  `requestId` was already reserved or completed with a different ceiling. The
+  reuse is a duplicate operation: the handler did not run, and the earlier
+  request's outcome is not reported.
 - `duplicate_settlement` - a server-mode `requestId` was already reserved or
-  completed, or the same client-supplied setup or refund transaction is already
-  being settled.
+  completed with the same ceiling, or the same client-supplied setup or refund
+  transaction is already being settled.
 
 ## 8. Security Properties
 

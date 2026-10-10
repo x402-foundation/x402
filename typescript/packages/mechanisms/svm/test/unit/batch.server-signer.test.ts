@@ -593,6 +593,17 @@ describe("batch server voucher signer boundaries", () => {
     const second = await reserve(await payment("concurrent-2"));
     expect(Object.values((await store.get(channelId))?.reservations ?? {})).toHaveLength(2);
 
+    const repricedRequirements = { ...requirements(), amount: "100" };
+    const repriced = await reserve(
+      await payment("concurrent-2", repricedRequirements),
+      repricedRequirements,
+    );
+    expect(repriced.result).toMatchObject({
+      abort: true,
+      reason: BatchError.OPERATION_CEILING_CHANGED,
+    });
+    expect(Object.values((await store.get(channelId))?.reservations ?? {})).toHaveLength(2);
+
     const exhaustedRequirements = { ...requirements(), amount: "2000" };
     const exhaustedPayment = await payment("concurrent-3", exhaustedRequirements);
     const exhausted = await reserve(exhaustedPayment, exhaustedRequirements);
@@ -675,6 +686,11 @@ describe("batch server voucher signer boundaries", () => {
 
     const replay = await reserve(replacementPayment, exhaustedRequirements);
     expect(replay.result).toMatchObject({ abort: true, reason: "duplicate_settlement" });
+    const repricedReplay = await reserve(await payment("concurrent-4"));
+    expect(repricedReplay.result).toMatchObject({
+      abort: true,
+      reason: BatchError.OPERATION_CEILING_CHANGED,
+    });
   });
 
   it("enriches server-mode refunds with the stored operator voucher", async () => {

@@ -1,0 +1,3 @@
+kind: fixed
+body: Reject reuse of a server-mode SVM batch-settlement request id with a different ceiling as invalid_batch_settlement_svm_operation_ceiling_changed instead of transaction_failed, so servers can tell it apart from other failures and treat it like duplicate_settlement. MemoryBatchOperationStore.Reserve now returns the existing operation instead of an error; custom BatchOperationStore implementations should do the same.
+time: 2026-10-05T12:00:00Z

@@ -724,7 +724,12 @@ export class BatchSvmScheme implements SchemeNetworkServer {
           request.ceiling,
         );
         if (!reserved.created) {
-          throw new Error(CHANNEL_BUSY);
+          const recorded = reserved.operation.ceiling;
+          throw new Error(
+            recorded === request.ceiling
+              ? CHANNEL_BUSY
+              : `${BatchError.OPERATION_CEILING_CHANGED}: request id was recorded with ceiling ${recorded}, not ${request.ceiling}`,
+          );
         }
         operationReserved = true;
       }

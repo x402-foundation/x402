@@ -28,6 +28,7 @@ const (
 	ErrChannelState               = errorPrefix + "channel_state"
 	ErrRefundTransaction          = errorPrefix + "refund_transaction"
 	ErrPayoutAttributionAmbiguous = errorPrefix + "payout_attribution_ambiguous"
+	ErrOperationCeilingChanged    = errorPrefix + "operation_ceiling_changed"
 )
 
 // ErrorReasons is every batch-settlement machine reason, in declaration order.
@@ -57,5 +58,6 @@ func ErrorReasons() []string {
 		ErrChannelState,
 		ErrRefundTransaction,
 		ErrPayoutAttributionAmbiguous,
+		ErrOperationCeilingChanged,
 	}
 }

@@ -111,6 +111,8 @@ type ReserveResult struct {
 // BatchOperationStore tracks server-mode request ids separately from channel accounting.
 type BatchOperationStore interface {
 	Get(channelID, requestID string) (*BatchOperation, error)
+	// Reserve atomically creates a request reservation unless the operation already exists.
+	// An existing operation is returned unchanged, whatever its ceiling; the scheme rejects the reuse.
 	Reserve(channelID, requestID string, ceiling uint64) (ReserveResult, error)
 	Complete(operation BatchOperation) error
 	Release(channelID, requestID string) error

@@ -745,6 +745,12 @@ func (s *BatchSvmScheme) afterVerify(ctx x402.VerifyResultContext) (*x402.AfterV
 			return abortAfter(err), nil
 		}
 		if !reserved.Created {
+			if recorded := reserved.Operation.Ceiling; recorded != *request.Ceiling {
+				return abortAfter(fmt.Errorf(
+					"%s: request id was recorded with ceiling %d, not %d",
+					batchsettlement.ErrOperationCeilingChanged, recorded, *request.Ceiling,
+				)), nil
+			}
 			return abortAfter(errors.New(ChannelBusy)), nil
 		}
 		reservedOperation = true
