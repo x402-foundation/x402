@@ -14,6 +14,13 @@ export { checkIfBazaarNeeded } from "@x402/core/server";
 const HTTP_VERB_RE = /^(GET|POST|PUT|PATCH|DELETE|HEAD)\b/i;
 
 /**
+ * Tracks whether we've already warned, for this process, that bazaar schema
+ * validation is unavailable (e.g. because dynamic code generation is disallowed
+ * on Cloudflare Workers). Prevents emitting the same notice once per route.
+ */
+let warnedSchemaValidationUnavailable = false;
+
+/**
  * Inject a synthetic method into a pre-enrichment extension so the schema's
  * required:["method"] check doesn't produce a false-positive warning at startup.
  * Priority: (1) route pattern verb (e.g. "GET /api"), (2) body vs query inference.
@@ -71,6 +78,21 @@ export function validateBazaarRouteExtensions(routes: RoutesConfig): void {
       const schemaResult = validateDiscoveryExtension(
         extForSchema as unknown as DiscoveryExtension,
       );
+      if (schemaResult.unavailable) {
+        // The runtime forbids dynamic code generation (e.g. Cloudflare Workers), so
+        // schema validation cannot run for any route here. This is an environment
+        // limitation, not a sign the schemas are invalid, so warn once and stop
+        // trying rather than repeating the same per-route noise.
+        if (!warnedSchemaValidationUnavailable) {
+          console.warn(
+            "x402: Bazaar extension schema validation is unavailable in this runtime " +
+              "(dynamic code generation is disallowed); skipping schema checks. " +
+              "Extensions are not affected and will still be served as declared.",
+          );
+          warnedSchemaValidationUnavailable = true;
+        }
+        continue;
+      }
       if (!schemaResult.valid) {
         console.warn(
           `x402: Route "${pattern}" has an invalid bazaar extension: ${schemaResult.errors?.join(", ")}`,
