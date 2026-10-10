@@ -196,6 +196,29 @@ class TestDecodedPathDivergenceBypass:
         assert self._server().requires_payment(context) is False
 
 
+class TestCorsPreflight:
+    """A method-less route must not answer the browser's OPTIONS preflight with a 402."""
+
+    @pytest.mark.parametrize(
+        "routes",
+        [
+            {"/api/premium": RouteConfig(accepts=[])},
+            RouteConfig(accepts=[]),
+        ],
+        ids=["method-less-route", "single-route-config"],
+    )
+    def test_options_does_not_require_payment(
+        self, routes: dict[str, RouteConfig] | RouteConfig
+    ) -> None:
+        server = x402HTTPServerBase(MagicMock(), routes)
+        assert server.requires_payment(_context("/api/premium", "OPTIONS")) is False
+        assert server.requires_payment(_context("/api/premium", "GET")) is True
+
+    def test_explicit_options_route_requires_payment(self) -> None:
+        server = x402HTTPServerBase(MagicMock(), {"OPTIONS /api/premium": RouteConfig(accepts=[])})
+        assert server.requires_payment(_context("/api/premium", "OPTIONS")) is True
+
+
 class _ExactAuthorizeScheme:
     scheme = "exact"
     default_asset_transfer_method = "default"

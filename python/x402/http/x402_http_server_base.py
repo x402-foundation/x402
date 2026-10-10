@@ -365,11 +365,16 @@ class x402HTTPServerBase:
         """
         upper_method = method.upper()
 
+        def verb_matches(verb: str) -> bool:
+            # A method-less route must not gate the CORS preflight: the browser sends
+            # OPTIONS without a payment and only sends the paid request if it succeeds.
+            # An explicit "OPTIONS /path" route still matches.
+            return verb == upper_method or (verb == "*" and upper_method != "OPTIONS")
+
         def find_match(candidate: str) -> tuple[RouteConfig, str] | None:
             for route in self._compiled_routes:
-                if route.regex.match(candidate):
-                    if route.verb == "*" or route.verb == upper_method:
-                        return route.config, route.pattern
+                if route.regex.match(candidate) and verb_matches(route.verb):
+                    return route.config, route.pattern
             return None
 
         match = find_match(self._normalize_path(path))

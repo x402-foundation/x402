@@ -1328,6 +1328,33 @@ func TestDecodedPathDivergenceBypass(t *testing.T) {
 	})
 }
 
+func TestCorsPreflightNotPaid(t *testing.T) {
+	serverFor := func(pattern string) *x402HTTPResourceServer {
+		return Newx402HTTPResourceServer(RoutesConfig{
+			pattern: {Accepts: PaymentOptions{}},
+		})
+	}
+	reqCtx := func(method string) HTTPRequestContext {
+		return HTTPRequestContext{Path: "/api/premium", Method: method}
+	}
+
+	t.Run("method-less route does not gate OPTIONS", func(t *testing.T) {
+		server := serverFor("/api/premium")
+		if server.RequiresPayment(reqCtx("OPTIONS")) {
+			t.Error("expected OPTIONS not to require payment")
+		}
+		if !server.RequiresPayment(reqCtx("GET")) {
+			t.Error("expected GET to require payment")
+		}
+	})
+
+	t.Run("explicit OPTIONS route requires payment", func(t *testing.T) {
+		if !serverFor("OPTIONS /api/premium").RequiresPayment(reqCtx("OPTIONS")) {
+			t.Error("expected explicit OPTIONS route to require payment")
+		}
+	})
+}
+
 func TestGetDisplayAmount(t *testing.T) {
 	server := Newx402HTTPResourceServer(RoutesConfig{})
 

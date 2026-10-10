@@ -1244,10 +1244,15 @@ export class x402HTTPResourceServer {
     decodedPath?: string,
   ): { config: RouteConfig; pattern: string } | undefined {
     const upperMethod = method.toUpperCase();
+    // A method-less route must not gate the CORS preflight: the browser sends
+    // OPTIONS without a payment and only sends the paid request if it succeeds.
+    // An explicit "OPTIONS /path" route still matches.
+    const matchesVerb = (verb: string): boolean =>
+      verb === upperMethod || (verb === "*" && upperMethod !== "OPTIONS");
 
     const findMatch = (candidate: string): { config: RouteConfig; pattern: string } | undefined => {
       const matchingRoute = this.compiledRoutes.find(
-        route => route.regex.test(candidate) && (route.verb === "*" || route.verb === upperMethod),
+        route => route.regex.test(candidate) && matchesVerb(route.verb),
       );
       if (!matchingRoute) return undefined;
       return { config: matchingRoute.config, pattern: matchingRoute.pattern };

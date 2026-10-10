@@ -532,6 +532,75 @@ describe("x402HTTPResourceServer", () => {
       expect(result.type).toBe("no-payment-required");
     });
 
+    it.each([
+      [
+        "method-less route",
+        {
+          "/api/protected": {
+            accepts: {
+              scheme: "exact",
+              payTo: "0xabc",
+              price: "$1.00" as Price,
+              network: "eip155:8453" as Network,
+            },
+          },
+        },
+      ],
+      [
+        "single route config",
+        {
+          accepts: {
+            scheme: "exact",
+            payTo: "0xabc",
+            price: "$1.00" as Price,
+            network: "eip155:8453" as Network,
+          },
+        },
+      ],
+    ])("should not require payment for an OPTIONS preflight on a %s", async (_name, routes) => {
+      const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+
+      const adapter = new MockHTTPAdapter();
+      adapter.getMethod = () => "OPTIONS";
+      const context: HTTPRequestContext = {
+        adapter,
+        path: "/api/protected",
+        method: "OPTIONS",
+      };
+
+      expect(httpServer.requiresPayment(context)).toBe(false);
+      const result = await httpServer.processHTTPRequest(context);
+      expect(result.type).toBe("no-payment-required");
+      expect(httpServer.requiresPayment({ ...context, method: "GET" })).toBe(true);
+    });
+
+    it("should match an explicit OPTIONS route", async () => {
+      const routes = {
+        "OPTIONS /api/protected": {
+          accepts: {
+            scheme: "exact",
+            payTo: "0xabc",
+            price: "$1.00" as Price,
+            network: "eip155:8453" as Network,
+          },
+        },
+      };
+
+      const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+
+      const adapter = new MockHTTPAdapter();
+      adapter.getMethod = () => "OPTIONS";
+      const context: HTTPRequestContext = {
+        adapter,
+        path: "/api/protected",
+        method: "OPTIONS",
+      };
+
+      const result = await httpServer.processHTTPRequest(context);
+
+      expect(result.type).toBe("payment-error");
+    });
+
     describe("malformed percent-encoding", () => {
       it("should require payment for path with trailing malformed %", async () => {
         const routes = {
