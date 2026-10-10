@@ -21,7 +21,7 @@
   "routes": {
     "/exact/hedera": {
       "scheme": "exact",
-      "sdks": ["typescript"],
+      "sdks": ["typescript", "go"],
       "price": {
         "amount": "100000",
         "amountEnv": "HEDERA_AMOUNT",
@@ -32,7 +32,7 @@
     },
     "/exact/hedera/upfront": {
       "scheme": "exact",
-      "sdks": ["typescript"],
+      "sdks": ["typescript", "go"],
       "paymentFlow": "upfront",
       "price": {
         "amount": "100000",

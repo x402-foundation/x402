@@ -135,19 +135,23 @@ Full `PaymentPayload` object:
 
 ### `SettlementResponse`
 
-The `SettlementResponse` for the `exact` scheme on Hedera:
+The `SettlementResponse` for the `exact` scheme on Hedera (core v2 shape):
 
 ```json
 {
   "success": true,
-  "transactionId": "0.0.1235@1700000000.000000000",
+  "transaction": "0.0.1235@1700000000.000000000",
   "network": "hedera:mainnet",
-  "payer": "0.0.1235"
+  "payer": "0.0.5001"
 }
 ```
 
-- `transactionId`: The Hedera transaction ID of the submitted transaction.
-- `payer`: The Hedera account ID of the fee payer that sponsored the transaction.
+- `transaction`: The Hedera transaction ID of the submitted transaction. Its account is the `feePayer`.
+- `payer`: The Hedera account ID debited `amount`.
+
+If the transaction was submitted but its receipt cannot be obtained (node error, timeout), the
+facilitator MAY return `settlement_pending` with `success: false` and the transaction ID in
+`transaction`, so the caller can reconcile on chain before retrying.
 
 ### Facilitator Verification Rules (MUST)
 

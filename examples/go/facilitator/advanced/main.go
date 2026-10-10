@@ -53,16 +53,20 @@ func main() {
 		return
 	}
 
+	hederaAccountID := os.Getenv("HEDERA_ACCOUNT_ID")
+	hederaPrivateKey := os.Getenv("HEDERA_PRIVATE_KEY")
+	hederaConfigured := pattern == "all-networks" && hederaAccountID != "" && hederaPrivateKey != ""
+
 	// Validate at least one private key is provided
-	if evmPrivateKey == "" && svmPrivateKey == "" {
-		fmt.Println("❌ At least one of EVM_PRIVATE_KEY or SVM_PRIVATE_KEY is required")
+	if evmPrivateKey == "" && svmPrivateKey == "" && !hederaConfigured {
+		fmt.Println("❌ At least one of EVM_PRIVATE_KEY or SVM_PRIVATE_KEY (or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY for all-networks) is required")
 		os.Exit(1)
 	}
 
 	// Run the selected example
 	switch pattern {
 	case "all-networks":
-		if err := runAllNetworksExample(evmPrivateKey, svmPrivateKey); err != nil {
+		if err := runAllNetworksExample(evmPrivateKey, svmPrivateKey, hederaAccountID, hederaPrivateKey); err != nil {
 			fmt.Printf("❌ Error: %v\n", err)
 			os.Exit(1)
 		}

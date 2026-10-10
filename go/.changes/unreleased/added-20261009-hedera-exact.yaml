@@ -1,0 +1,3 @@
+kind: added
+body: Add the Hedera exact scheme (`cryptoTransfer`) with client, server, and facilitator support, default USDC assets, and `settlement_pending` reconciliation when a submitted transaction's outcome is unknown.
+time: 2026-10-09T09:11:39Z

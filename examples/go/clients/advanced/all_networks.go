@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
 	x402http "github.com/x402-foundation/x402/go/v2/http"
 	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
 	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/client"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/hedera"
+	exacthedera "github.com/x402-foundation/x402/go/v2/mechanisms/hedera/exact/client"
 	exactsvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
 	uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/client"
 	evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
@@ -25,14 +28,18 @@ import (
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "eip155" before "solana").
+ * (e.g., "eip155" before "hedera" before "solana").
  */
 
-func runAllNetworksExample(ctx context.Context, evmPrivateKey, svmPrivateKey, url string) error {
+func runAllNetworksExample(ctx context.Context, evmPrivateKey, svmPrivateKey, hederaAccountID, hederaPrivateKey, url string) error {
 	fmt.Println("📦 Creating client with all available networks...\n")
 
-	// Create x402 client
-	client := x402.Newx402Client()
+	// Create x402 client; HBAR is not a default asset, so it must be opted in
+	client := x402.Newx402Client().SetSpendControls(x402.SpendControls{
+		AllowedAssets: []x402.SpendControlAsset{
+			{Network: "hedera:*", Asset: hedera.HBARAssetID, MaxAmountPerPayment: "1000000"}, // 0.01 HBAR in tinybars
+		},
+	})
 
 	// Register EVM scheme if private key is provided
 	if evmPrivateKey != "" {
@@ -43,6 +50,20 @@ func runAllNetworksExample(ctx context.Context, evmPrivateKey, svmPrivateKey, ur
 		client.Register("eip155:*", exactevm.NewExactEvmScheme(evmSigner, nil))
 		client.Register("eip155:*", uptoevm.NewUptoEvmScheme(evmSigner, nil))
 		fmt.Printf("✅ Registered EVM networks (eip155:*) — exact + upto\n")
+	}
+
+	// Register Hedera scheme if account id and private key are provided
+	if hederaAccountID != "" && hederaPrivateKey != "" {
+		hederaNetwork := os.Getenv("HEDERA_NETWORK")
+		if hederaNetwork == "" {
+			hederaNetwork = hedera.HederaTestnetCAIP2
+		}
+		hederaSigner, err := hedera.NewPrivateKeyClientSigner(hederaAccountID, hederaPrivateKey, hederaNetwork)
+		if err != nil {
+			return fmt.Errorf("failed to create Hedera signer: %w", err)
+		}
+		client.Register("hedera:*", exacthedera.NewExactHederaScheme(hederaSigner))
+		fmt.Printf("✅ Registered Hedera networks (hedera:*) — exact\n")
 	}
 
 	// Register SVM scheme if private key is provided

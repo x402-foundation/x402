@@ -41,6 +41,8 @@ import (
 	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
 	exactevmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/v1/facilitator"
 	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/facilitator"
+	hederamech "github.com/x402-foundation/x402/go/v2/mechanisms/hedera"
+	hedera "github.com/x402-foundation/x402/go/v2/mechanisms/hedera/exact/facilitator"
 	svmmech "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
 	svmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/v1/facilitator"
@@ -994,8 +996,11 @@ func main() {
 
 	evmPrivateKey := os.Getenv("FACILITATOR_EVM_PRIVATE_KEY")
 	svmPrivateKey := os.Getenv("FACILITATOR_SVM_PRIVATE_KEY")
-	if evmPrivateKey == "" && svmPrivateKey == "" {
-		log.Fatal("❌ At least one of FACILITATOR_EVM_PRIVATE_KEY or FACILITATOR_SVM_PRIVATE_KEY is required")
+	hederaAccountID := os.Getenv("FACILITATOR_HEDERA_ACCOUNT_ID")
+	hederaPrivateKey := os.Getenv("FACILITATOR_HEDERA_PRIVATE_KEY")
+	hederaConfigured := hederaAccountID != "" && hederaPrivateKey != ""
+	if evmPrivateKey == "" && svmPrivateKey == "" && !hederaConfigured {
+		log.Fatal("❌ At least one of FACILITATOR_EVM_PRIVATE_KEY, FACILITATOR_SVM_PRIVATE_KEY, or FACILITATOR_HEDERA_ACCOUNT_ID + FACILITATOR_HEDERA_PRIVATE_KEY is required")
 	}
 
 	facilitator := x402.Newx402Facilitator()
@@ -1098,6 +1103,22 @@ func main() {
 		facilitator.RegisterV1(
 			[]x402.Network{x402.Network(getV1SvmNetwork(svmNetwork))},
 			svmv1.NewExactSvmSchemeV1(svmSigner),
+		)
+	}
+
+	if hederaConfigured {
+		hederaNetwork := resolveNetworkCaip2("hedera")
+		log.Printf("🌐 Hedera Network: %s", hederaNetwork)
+		hederaSigner, err := hederamech.NewPrivateKeyFacilitatorSigner(hederamech.SignerConfig{
+			Operators: []hederamech.OperatorCredentials{{AccountID: hederaAccountID, PrivateKey: hederaPrivateKey}},
+		})
+		if err != nil {
+			log.Fatalf("Failed to create Hedera signer: %v", err)
+		}
+		log.Printf("Hedera Facilitator account: %s", hederaAccountID)
+		facilitator.Register(
+			[]x402.Network{x402.Network(hederaNetwork)},
+			hedera.NewExactHederaScheme(hederaSigner),
 		)
 	}
 
