@@ -349,6 +349,7 @@ export class ExactNearScheme implements SchemeNetworkFacilitator {
         verified.invalidReason || "verification_failed",
         requirements.network,
         verified.payer,
+        verified.invalidMessage,
       );
     }
 
@@ -442,12 +443,19 @@ export class ExactNearScheme implements SchemeNetworkFacilitator {
    * @param reason - Error reason code.
    * @param network - Network identifier.
    * @param payer - Payer account, when independently verified.
+   * @param message - Human-readable detail behind the reason code, when available.
    * @returns Settle response.
    */
-  private settleFailure(reason: string, network: Network, payer?: string): SettleResponse {
+  private settleFailure(
+    reason: string,
+    network: Network,
+    payer?: string,
+    message?: string,
+  ): SettleResponse {
     return {
       success: false,
       errorReason: reason,
+      errorMessage: message,
       transaction: "",
       network,
       payer,
