@@ -1,0 +1,94 @@
+---
+title: "Shared Payment Token"
+description: "Experimental x402 scheme for fixed-price payments settled with an opaque processor-issued Shared Payment Token."
+---
+
+The `shared-payment-token` scheme is an experimental fixed-price x402 payment
+scheme. The seller advertises a processor-neutral Shared Payment Token (SPT)
+route, the client obtains an opaque checkout credential from an SPT-capable
+issuer, and a facilitator verifies the credential before settling through the
+configured processor route.
+
+An SPT is scoped, short-lived, single-use, and processor-redeemable. This scheme
+uses x402-native field names while preserving the same SPT contract around
+amount, currency, merchant identity, processor route, resource binding,
+idempotency, and replay protection.
+
+Use this scheme when a resource has a known price and the client should not
+receive raw card credentials, CVC, network-token cryptograms, or PSP secrets.
+
+<Warning>
+  This is an experimental provider-neutral proposal. Production deployments
+  should use a trusted facilitator and processor-specific adapters until the
+  scheme and conformance language are accepted by the x402 Foundation.
+</Warning>
+
+### How It Works
+
+1. The resource server returns `402 Payment Required` with an `accepts[]` entry
+   for `shared-payment-token`.
+2. The client or wallet calls the advertised credential acquisition URL for the
+   selected SPT-capable processor or issuer.
+3. The issuer returns a short-lived SPT bound to the resource, amount, currency,
+   merchant, processor route, nonce, and idempotency key.
+4. The client retries with a `PaymentPayload` containing the opaque SPT.
+5. The facilitator verifies the binding and settles through the configured
+   processor adapter.
+
+### Payment Requirement
+
+```json
+{
+  "scheme": "shared-payment-token",
+  "network": "spt:sandbox",
+  "amount": "1200",
+  "asset": "USD",
+  "payTo": "merchant_123",
+  "maxTimeoutSeconds": 300,
+  "extra": {
+    "credentialAcquisitionUrl": "https://processor.example/spt/credentials",
+    "merchantId": "merchant_123",
+    "processorBinding": {
+      "processor": "examplepay",
+      "merchantAccountId": "acct_merchant_123"
+    },
+    "singleUse": true,
+    "binding": {
+      "resourceOrigin": "https://api.example.com",
+      "resourcePath": "/reports/alpha",
+      "method": "GET",
+      "requestBodySha256": null,
+      "nonce": "nonce_01J4ZTK4P6Y57HXBN2P8EJJEZW"
+    }
+  }
+}
+```
+
+### Payment Payload
+
+```json
+{
+  "x402Version": 2,
+  "accepted": {
+    "scheme": "shared-payment-token",
+    "network": "spt:sandbox",
+    "amount": "1200",
+    "asset": "USD",
+    "payTo": "merchant_123",
+    "maxTimeoutSeconds": 300
+  },
+  "payload": {
+    "credential": {
+      "type": "shared_payment_token",
+      "id": "spt_01J4ZTM7JVAF5J29VE1S58F7RC",
+      "token": "spt_sandbox_opaque_value",
+      "bindingProof": "sptproof_opaque_value",
+      "expiresAt": "2026-07-24T18:05:00Z",
+      "singleUse": true
+    }
+  }
+}
+```
+
+For complete scheme semantics, see the
+[`shared-payment-token` spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/shared-payment-token/scheme_shared_payment_token.md).
