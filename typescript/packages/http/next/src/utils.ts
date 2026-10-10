@@ -257,7 +257,7 @@ export async function handleSettlement(
     }
 
     // Settlement succeeded - add headers and return the buffered response.
-    const settled = new NextResponse(responseBody, {
+    const settled = new NextResponse(response.body === null ? null : responseBody, {
       status: response.status,
       headers: response.headers,
     });
