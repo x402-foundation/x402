@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -327,10 +328,22 @@ func IssueRequest(
 	}
 
 	success := true
+	var stepErr string
 	if resp.StatusCode == 402 {
 		success = false
+		stepErr = describePaymentFailure(responseData, resp)
+	} else if resp.StatusCode >= 400 {
+		success = false
+		stepErr = describeRequestFailure(responseData, resp)
 	} else if settleResp, ok := paymentResponse.(*x402.SettleResponse); ok && settleResp != nil {
 		success = settleResp.Success
+		if !success {
+			if settleResp.ErrorReason != "" {
+				stepErr = fmt.Sprintf("Payment failed: %s", settleResp.ErrorReason)
+			} else {
+				stepErr = fmt.Sprintf("Payment failed (status %d)", resp.StatusCode)
+			}
+		}
 	}
 
 	return StepResult{
@@ -338,7 +351,60 @@ func IssueRequest(
 		Data:            responseData,
 		StatusCode:      resp.StatusCode,
 		PaymentResponse: paymentResponse,
+		Error:           stepErr,
 	}
+}
+
+// describePaymentFailure builds an actionable error for a 402 response that
+// carries no PAYMENT-RESPONSE (verify rejection). It prefers the response
+// body's error field, then the decoded PAYMENT-REQUIRED error reason (so
+// batch-settlement corrective mismatches surface as
+// "invalid_batch_settlement_evm_*" instead of "missing payment response").
+func describePaymentFailure(responseData interface{}, resp *http.Response) string {
+	if m, ok := responseData.(map[string]interface{}); ok {
+		if msg, ok := m["error"].(string); ok && msg != "" {
+			return fmt.Sprintf("Payment failed (402): %s", msg)
+		}
+	}
+	if header := resp.Header.Get("PAYMENT-REQUIRED"); header != "" {
+		if reason := decodePaymentRequiredError(header); reason != "" {
+			return fmt.Sprintf("Payment failed (402): %s", reason)
+		}
+		return fmt.Sprintf("Payment failed (402): missing payment response (PAYMENT-REQUIRED present, body: %v)", responseData)
+	}
+	return fmt.Sprintf("Payment failed (402): %v", responseData)
+}
+
+// decodePaymentRequiredError extracts the 402 error reason from a base64
+// PAYMENT-REQUIRED header. Returns "" when the header cannot be decoded.
+func decodePaymentRequiredError(header string) string {
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(header))
+	if err != nil {
+		return ""
+	}
+	var required struct {
+		Error   string `json:"error"`
+		Accepts []struct {
+			Scheme string `json:"scheme"`
+			Extra  map[string]interface{} `json:"extra"`
+		} `json:"accepts"`
+	}
+	if err := json.Unmarshal(decoded, &required); err != nil {
+		return ""
+	}
+	return required.Error
+}
+
+// describeRequestFailure builds an actionable error for a non-402 error
+// response that carries no PAYMENT-RESPONSE (e.g. a 500 from a misconfigured
+// route). It prefers the response body's error field.
+func describeRequestFailure(responseData interface{}, resp *http.Response) string {
+	if m, ok := responseData.(map[string]interface{}); ok {
+		if msg, ok := m["error"].(string); ok && msg != "" {
+			return fmt.Sprintf("Request failed (%d): %s", resp.StatusCode, msg)
+		}
+	}
+	return fmt.Sprintf("Request failed (%d): %v", resp.StatusCode, responseData)
 }
 
 // IssueRefund triggers a cooperative refund on the batch-settlement channel.
@@ -381,25 +447,35 @@ func IssueRefund(ctx context.Context, scheme *batchedclient.BatchSettlementEvmSc
 		return StepResult{
 			Success:    false,
 			Error:      fmt.Sprintf("Refund failed: %v", err),
-			StatusCode: 200,
-			Data:       map[string]bool{"refund": true},
+			StatusCode: 500,
+			Data:       map[string]bool{"refund": false},
 		}
+	}
+	refundStatus := 200
+	if !settle.Success {
+		refundStatus = 500
 	}
 	return StepResult{
 		Success:         settle.Success,
-		Data:            map[string]bool{"refund": true},
-		StatusCode:      200,
+		Data:            map[string]bool{"refund": settle.Success},
+		StatusCode:      refundStatus,
 		PaymentResponse: settle,
 	}
 }
 
 // Aggregate builds the multi-step batchSettlement payload.
+// On failure the aggregate status surfaces the first failing step so a
+// trailing refund step can no longer mask an earlier 402 as 200.
 func Aggregate(phase string, results []StepResult, details map[string]StepResult) AggregateResult {
 	last := results[len(results)-1]
+	statusCode := last.StatusCode
+	paymentResponse := last.PaymentResponse
 	allOk := true
 	for _, r := range results {
 		if !r.Success {
 			allOk = false
+			statusCode = r.StatusCode
+			paymentResponse = r.PaymentResponse
 			break
 		}
 	}
@@ -413,8 +489,8 @@ func Aggregate(phase string, results []StepResult, details map[string]StepResult
 	return AggregateResult{
 		Success:         allOk,
 		Data:            map[string]interface{}{"batchSettlement": batch},
-		StatusCode:      last.StatusCode,
-		PaymentResponse: last.PaymentResponse,
+		StatusCode:      statusCode,
+		PaymentResponse: paymentResponse,
 	}
 }
 

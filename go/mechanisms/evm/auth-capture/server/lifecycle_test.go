@@ -214,6 +214,7 @@ func TestSettleOnCancel_SkipsHoldsItCannotVoid(t *testing.T) {
 		requirements, err := scheme.SettleOnCancel(x402.VerifiedPaymentCanceledContext{
 			SettleContext: settleContext(x402.SettlePhaseCancel, extra),
 			Reason:        x402.CancellationReasonHandlerFailed,
+			SettledPhases: []x402.SettlePhase{x402.SettlePhaseBeforeHandler},
 		})
 		require.NoError(t, err)
 		return requirements
@@ -684,6 +685,7 @@ func TestSettleOnCancel_ReturnsRequirementsWithoutASignerWhenDelegated(t *testin
 	requirements, err := delegatedScheme().SettleOnCancel(x402.VerifiedPaymentCanceledContext{
 		SettleContext: settleContext(x402.SettlePhaseCancel, delegatedDeferredExtra),
 		Reason:        x402.CancellationReasonHandlerFailed,
+		SettledPhases: []x402.SettlePhase{x402.SettlePhaseBeforeHandler},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, requirements)

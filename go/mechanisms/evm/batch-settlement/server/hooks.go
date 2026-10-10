@@ -15,31 +15,50 @@ import (
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/facilitator"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/storage"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 const zeroAddress = "0x0000000000000000000000000000000000000000"
 
-// Pending reservation TTL bounds. Cleanup hooks normally clear reservations on
-// failure; these bounds release the channel if cleanup never runs.
+// Pending reservation TTL bounds. Cleanup hooks normally release admission
+// locks on failure; these bounds release the channel if cleanup never runs.
+type admissionHold int
+
 const (
-	minPendingTtlMs = 5_000          // 5 seconds
-	maxPendingTtlMs = 10 * 60 * 1000 // 10 minutes
+	admissionSelf admissionHold = iota
+	admissionOther
+	admissionNone
 )
 
-func pendingExpiresAt(maxTimeoutSeconds int, now int64) int64 {
-	ttl := int64(maxTimeoutSeconds) * 1000
-	if ttl < minPendingTtlMs {
-		ttl = minPendingTtlMs
+// inspectAdmission classifies whether this request still holds the admission
+// lock, another request holds it, or no lock is present (lost/expired or lock
+// store I/O down). Implementation/parse errors fail closed.
+func inspectAdmission(ctx context.Context, scheme *BatchSettlementEvmScheme, channelId, pendingId string) (admissionHold, error) {
+	locks := scheme.GetLockStorage()
+	if pendingId != "" {
+		held, err := locks.IsHeld(ctx, channelId, pendingId)
+		if impl := RethrowLockImplementationError(err); impl != nil {
+			return admissionNone, impl
+		}
+		if err != nil {
+			return admissionNone, nil //nolint:nilerr // lock I/O failure → optimistic none
+		}
+		if held {
+			return admissionSelf, nil
+		}
 	}
-	if ttl > maxPendingTtlMs {
-		ttl = maxPendingTtlMs
+	held, err := locks.IsHeld(ctx, channelId, "")
+	if impl := RethrowLockImplementationError(err); impl != nil {
+		return admissionNone, impl
 	}
-	return now + ttl
-}
-
-func isPendingLive(pending *PendingRequest, now int64) bool {
-	return pending != nil && pending.ExpiresAt > now
+	if err != nil {
+		return admissionNone, nil //nolint:nilerr // lock I/O failure → optimistic none
+	}
+	if held {
+		return admissionOther, nil
+	}
+	return admissionNone, nil
 }
 
 func verificationStateUnavailable() *x402.BeforeHookResult {
@@ -58,144 +77,337 @@ func verificationStateUnavailableAfter() *x402.AfterVerifyResult {
 	}
 }
 
-// BeforeVerifyHook binds the claimed channelId and reads a channel snapshot.
-// This phase performs no storage mutation. Reservation + persist happen in
-// AfterVerifyHook after successful verification.
+// AbortIfBelowMinDeposit rejects a deposit below extra.minDeposit when enforcement is on.
+func AbortIfBelowMinDeposit(scheme *BatchSettlementEvmScheme, raw map[string]interface{}, requirements x402.PaymentRequirementsView) (*x402.BeforeHookResult, error) {
+	if !scheme.GetEnforceMinDeposit() || !batchsettlement.IsDepositPayload(raw) {
+		return nil, nil
+	}
+	hintReq := types.PaymentRequirements{
+		Amount:  requirements.GetAmount(),
+		Asset:   requirements.GetAsset(),
+		Network: requirements.GetNetwork(),
+		Extra:   requirements.GetExtra(),
+	}
+	minDepositStr, hintErr := scheme.ResolveMinDepositHint(hintReq)
+	if hintErr != nil {
+		return nil, hintErr
+	}
+	minDeposit, ok := new(big.Int).SetString(minDepositStr, 10)
+	depositAmount := depositAmountFromPayload(raw)
+	if ok && minDeposit != nil && depositAmount != nil && depositAmount.Cmp(minDeposit) < 0 {
+		return &x402.BeforeHookResult{
+			Abort:   true,
+			Reason:  batchsettlement.ErrDepositBelowMinDeposit,
+			Message: "Deposit amount is below the server minimum",
+		}, nil
+	}
+	return nil, nil
+}
+
+// AbortIfUnexpectedPendingId rejects a client-supplied pendingId. Reservations are server-authored.
+func AbortIfUnexpectedPendingId(raw map[string]interface{}) *x402.BeforeHookResult {
+	if _, ok := raw["pendingId"]; !ok {
+		return nil
+	}
+	return &x402.BeforeHookResult{
+		Abort:   true,
+		Reason:  batchsettlement.ErrUnexpectedPendingId,
+		Message: "pendingId is server-authored and must not be supplied by the client",
+	}
+}
+
+// AbortIfUnexpectedCancel rejects a client-supplied cancel flag. Cancel settle is server-authored.
+func AbortIfUnexpectedCancel(raw map[string]interface{}) *x402.BeforeHookResult {
+	if _, ok := raw["cancel"]; !ok {
+		return nil
+	}
+	return &x402.BeforeHookResult{
+		Abort:   true,
+		Reason:  batchsettlement.ErrUnexpectedCancel,
+		Message: "cancel is server-authored and must not be supplied by the client",
+	}
+}
+
+// AbortIfUnexpectedServerAuthoredSettleFields rejects client-supplied pendingId or cancel.
+func AbortIfUnexpectedServerAuthoredSettleFields(raw map[string]interface{}) *x402.BeforeHookResult {
+	if abort := AbortIfUnexpectedPendingId(raw); abort != nil {
+		return abort
+	}
+	return AbortIfUnexpectedCancel(raw)
+}
+
+// AbortIfChannelUnbound rejects a claimed channel id that does not match channelConfig.
+func AbortIfChannelUnbound(raw map[string]interface{}, network string) *x402.BeforeHookResult {
+	cfgMap, _ := raw["channelConfig"].(map[string]interface{})
+	cfg, err := batchsettlement.ChannelConfigFromMap(cfgMap)
+	if err != nil {
+		return verificationStateUnavailable()
+	}
+	voucherFields, _ := raw["voucher"].(map[string]interface{})
+	rawChannelId, _ := voucherFields["channelId"].(string)
+	if bindErr := batchsettlement.ChannelIdBindingError(cfg, rawChannelId, network); bindErr != "" {
+		return &x402.BeforeHookResult{
+			Abort:   true,
+			Reason:  bindErr,
+			Message: "Channel id does not match channel config",
+		}
+	}
+	return nil
+}
+
+// SkipHandlerForRefund is the resource-handler skip used after a verified refund.
+func SkipHandlerForRefund(channelId string) *x402.AfterVerifyResult {
+	return &x402.AfterVerifyResult{
+		SkipHandler: true,
+		Response: &x402.SkipHandlerDirective{
+			ContentType: "application/json",
+			Body: map[string]interface{}{
+				"message":   "Refund acknowledged",
+				"channelId": channelId,
+			},
+		},
+	}
+}
+
+// WriteCorrectiveAcceptExtra copies corrective channel and voucher snapshots onto a 402 accept.
+func WriteCorrectiveAcceptExtra(
+	accept *types.PaymentRequirements,
+	channelState batchsettlement.BatchSettlementChannelStateExtra,
+	voucherState batchsettlement.BatchSettlementVoucherStateExtra,
+) {
+	if accept.Extra == nil {
+		accept.Extra = make(map[string]interface{})
+	}
+	accept.Extra["channelState"] = channelState.ToMap()
+	if voucherMap := voucherState.ToMap(); voucherMap != nil {
+		accept.Extra["voucherState"] = voucherMap
+	}
+}
+
+func isNonNegativeIntegerString(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, c := range value {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func paymentRequirementsFromView(v x402.PaymentRequirementsView) types.PaymentRequirements {
+	return types.PaymentRequirements{
+		Scheme:            v.GetScheme(),
+		Network:           v.GetNetwork(),
+		Asset:             v.GetAsset(),
+		Amount:            v.GetAmount(),
+		PayTo:             v.GetPayTo(),
+		MaxTimeoutSeconds: v.GetMaxTimeoutSeconds(),
+		Extra:             v.GetExtra(),
+	}
+}
+
+// BeforeVerifyHook runs cheap rejects with no lock, then acquires an admission
+// lock, performs one storage.Get, and re-checks the cumulative base under that
+// reservation. Local voucher verify may skip the facilitator; otherwise the
+// lock is held across facilitator /verify.
 func (s *BatchSettlementEvmScheme) BeforeVerifyHook() x402.BeforeVerifyHook {
 	return func(ctx x402.VerifyContext) (*x402.BeforeHookResult, error) {
 		if ctx.Requirements.GetScheme() != batchsettlement.SchemeBatched {
 			return nil, nil
 		}
-
-		payload := ctx.Payload.GetPayload()
-
-		isPaid := batchsettlement.IsVoucherPayload(payload) || batchsettlement.IsDepositPayload(payload)
-		isZeroCharge := batchsettlement.IsRefundPayload(payload)
-		if !isPaid && !isZeroCharge {
-			return nil, nil
+		if !s.handlersMatch(ctx.Requirements) {
+			return voucherStoreModeMismatchAbort(), nil
 		}
-
-		if s.enforceMinDeposit && batchsettlement.IsDepositPayload(payload) {
-			hintReq := types.PaymentRequirements{
-				Amount:  ctx.Requirements.GetAmount(),
-				Asset:   ctx.Requirements.GetAsset(),
-				Network: ctx.Requirements.GetNetwork(),
-				Extra:   ctx.Requirements.GetExtra(),
-			}
-			minDepositStr, hintErr := s.ResolveMinDepositHint(hintReq)
-			if hintErr != nil {
-				return nil, hintErr
-			}
-			minDeposit, ok := new(big.Int).SetString(minDepositStr, 10)
-			depositAmount := depositAmountFromPayload(payload)
-			if ok && minDeposit != nil && depositAmount != nil && depositAmount.Cmp(minDeposit) < 0 {
-				return &x402.BeforeHookResult{
-					Abort:   true,
-					Reason:  batchsettlement.ErrDepositBelowMinDeposit,
-					Message: "Deposit amount is below the server minimum",
-				}, nil
-			}
+		if s.configuredMode == VoucherStoreModeFacilitator {
+			return handleManagedBeforeVerify(s, ctx)
 		}
+		return handleBeforeVerify(s, ctx)
+	}
+}
 
-		voucherFields, _ := payload["voucher"].(map[string]interface{})
-		if voucherFields == nil {
-			return nil, nil
+func handleBeforeVerify(s *BatchSettlementEvmScheme, ctx x402.VerifyContext) (*x402.BeforeHookResult, error) {
+	payload := ctx.Payload.GetPayload()
+
+	isPaid := batchsettlement.IsVoucherPayload(payload) || batchsettlement.IsDepositPayload(payload)
+	isZeroCharge := batchsettlement.IsRefundPayload(payload)
+	if !isPaid && !isZeroCharge {
+		return nil, nil
+	}
+
+	if serverFieldAbort := AbortIfUnexpectedServerAuthoredSettleFields(payload); serverFieldAbort != nil {
+		return serverFieldAbort, nil
+	}
+
+	minDepositAbort, hintErr := AbortIfBelowMinDeposit(s, payload, ctx.Requirements)
+	if hintErr != nil {
+		return nil, hintErr
+	}
+	if minDepositAbort != nil {
+		return minDepositAbort, nil
+	}
+
+	voucherFields, _ := payload["voucher"].(map[string]interface{})
+	if voucherFields == nil {
+		return nil, nil
+	}
+	rawChannelId, _ := voucherFields["channelId"].(string)
+	signedMaxStr, _ := voucherFields["maxClaimableAmount"].(string)
+
+	if bindAbort := AbortIfChannelUnbound(payload, ctx.Requirements.GetNetwork()); bindAbort != nil {
+		return bindAbort, nil
+	}
+
+	cfgMap, _ := payload["channelConfig"].(map[string]interface{})
+	cfg, cfgErr := batchsettlement.ChannelConfigFromMap(cfgMap)
+	if cfgErr != nil {
+		return verificationStateUnavailable(), nil //nolint:nilerr // map storage/parse failures to fail-closed abort
+	}
+
+	if !isNonNegativeIntegerString(signedMaxStr) ||
+		!isNonNegativeIntegerString(ctx.Requirements.GetAmount()) {
+		return verificationStateUnavailable(), nil
+	}
+	if batchsettlement.IsDepositPayload(payload) {
+		deposit, _ := payload["deposit"].(map[string]interface{})
+		depositAmount, _ := deposit["amount"].(string)
+		if !isNonNegativeIntegerString(depositAmount) {
+			return verificationStateUnavailable(), nil
 		}
-		rawChannelId, _ := voucherFields["channelId"].(string)
-		signedMaxStr, _ := voucherFields["maxClaimableAmount"].(string)
+	}
 
-		cfgMap, _ := payload["channelConfig"].(map[string]interface{})
-		cfg, cfgErr := batchsettlement.ChannelConfigFromMap(cfgMap)
-		if cfgErr != nil {
-			return verificationStateUnavailable(), nil //nolint:nilerr // map storage/parse failures to fail-closed abort
+	if cfgErr := facilitator.ValidateChannelConfig(cfg, rawChannelId, paymentRequirementsFromView(ctx.Requirements)); cfgErr != nil {
+		reason := facilitator.ErrChannelIdMismatch
+		var ve *x402.VerifyError
+		if errors.As(cfgErr, &ve) && ve.InvalidReason != "" {
+			reason = ve.InvalidReason
 		}
+		return &x402.BeforeHookResult{
+			Abort:   true,
+			Reason:  reason,
+			Message: "Channel config does not match payment requirements",
+		}, nil
+	}
 
-		if bindErr := batchsettlement.ChannelIdBindingError(cfg, rawChannelId, ctx.Requirements.GetNetwork()); bindErr != "" {
+	if batchsettlement.IsVoucherPayload(payload) && !strings.EqualFold(cfg.PayerAuthorizer, zeroAddress) {
+		vp, parseErr := batchsettlement.VoucherPayloadFromMap(payload)
+		if parseErr != nil {
+			return verificationStateUnavailable(), nil //nolint:nilerr // map parse failures to fail-closed abort
+		}
+		if !verifyEoaVoucherSignature(vp, ctx.Requirements.GetNetwork()) {
 			return &x402.BeforeHookResult{
 				Abort:   true,
-				Reason:  bindErr,
-				Message: "Channel id does not match channel config",
+				Reason:  facilitator.ErrVoucherSignatureInvalid,
+				Message: "Voucher signature is invalid",
 			}, nil
 		}
+	}
 
-		channelId := rawChannelId
-		if normalized, err := batchsettlement.NormalizeChannelId(rawChannelId); err == nil {
-			channelId = normalized
+	channelId := rawChannelId
+	if normalized, err := batchsettlement.NormalizeChannelId(rawChannelId); err == nil {
+		channelId = normalized
+	}
+
+	now := time.Now().UnixMilli()
+	pendingNonce, err := evm.CreateNonce()
+	if err != nil {
+		return verificationStateUnavailable(), nil //nolint:nilerr // map nonce failures to fail-closed abort
+	}
+	pendingId := pendingNonce
+	s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{
+		ChannelId: channelId,
+		PendingId: pendingId,
+	})
+
+	acquired, acquireErr := s.lockStorage.Acquire(ctx.Ctx, channelId, pendingId, storage.PendingTtlMs(ctx.Requirements.GetMaxTimeoutSeconds()))
+	if impl := RethrowLockImplementationError(acquireErr); impl != nil {
+		s.TakeRequestContext(ctx.Payload)
+		return nil, impl
+	}
+	if acquireErr == nil {
+		if !acquired {
+			s.TakeRequestContext(ctx.Payload)
+			return &x402.BeforeHookResult{
+				Abort:   true,
+				Reason:  batchsettlement.ErrChannelBusy,
+				Message: "Channel is already processing a request",
+			}, nil
+		}
+		s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{ReservationCommitted: reservationFlag(true)})
+	}
+
+	channelSnapshot, getErr := s.storage.Get(ctx.Ctx, channelId)
+	if getErr != nil {
+		_ = s.ClearPendingRequest(ctx.Payload)
+		return verificationStateUnavailable(), nil //nolint:nilerr // map storage failures to fail-closed abort
+	}
+
+	// With no local record the baseline is the facilitator-verified onchain
+	// totalClaimed, which is only known in AfterVerify; the cumulative check runs there.
+	if channelSnapshot != nil {
+		prevCharged, _ := new(big.Int).SetString(channelSnapshot.ChargedCumulativeAmount, 10)
+		if prevCharged == nil {
+			prevCharged = big.NewInt(0)
+		}
+		reqAmount, _ := new(big.Int).SetString(ctx.Requirements.GetAmount(), 10)
+		if reqAmount == nil {
+			reqAmount = big.NewInt(0)
+		}
+		signedMax, _ := new(big.Int).SetString(signedMaxStr, 10)
+		if signedMax == nil {
+			signedMax = big.NewInt(0)
 		}
 
-		now := time.Now().UnixMilli()
-		pendingNonce, err := evm.CreateNonce()
-		if err != nil {
-			return verificationStateUnavailable(), nil //nolint:nilerr // map nonce failures to fail-closed abort
-		}
-		pendingId := pendingNonce
-
-		channelSnapshot, getErr := s.storage.Get(channelId)
-		if getErr != nil {
-			return verificationStateUnavailable(), nil //nolint:nilerr // map storage failures to fail-closed abort
+		expectedMax := new(big.Int).Set(prevCharged)
+		if !isZeroCharge {
+			expectedMax.Add(expectedMax, reqAmount)
 		}
 
-		// With no local record the baseline is the facilitator-verified onchain
-		// totalClaimed, which is only known in AfterVerify; the cumulative check runs there.
-		if channelSnapshot != nil {
-			prevCharged, _ := new(big.Int).SetString(channelSnapshot.ChargedCumulativeAmount, 10)
-			if prevCharged == nil {
-				prevCharged = big.NewInt(0)
-			}
-			reqAmount, _ := new(big.Int).SetString(ctx.Requirements.GetAmount(), 10)
-			if reqAmount == nil {
-				reqAmount = big.NewInt(0)
-			}
-			signedMax, _ := new(big.Int).SetString(signedMaxStr, 10)
-			if signedMax == nil {
-				signedMax = big.NewInt(0)
-			}
-
-			expectedMax := new(big.Int).Set(prevCharged)
-			if !isZeroCharge {
-				expectedMax.Add(expectedMax, reqAmount)
-			}
-
-			if signedMax.Cmp(expectedMax) != 0 {
-				s.RememberChannelSnapshot(ctx.Payload, channelSnapshot)
-				return &x402.BeforeHookResult{
-					Abort:   true,
-					Reason:  batchsettlement.ErrCumulativeAmountMismatch,
-					Message: "Client voucher base does not match server state",
-				}, nil
-			}
+		if signedMax.Cmp(expectedMax) != 0 {
+			s.RememberChannelSnapshot(ctx.Payload, channelSnapshot)
+			_ = s.ReleasePendingRequest(ctx.Payload)
+			return &x402.BeforeHookResult{
+				Abort:   true,
+				Reason:  batchsettlement.ErrCumulativeAmountMismatch,
+				Message: "Client voucher base does not match server state",
+			}, nil
 		}
+	}
 
-		s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{
-			ChannelId:       channelId,
-			PendingId:       pendingId,
-			ChannelSnapshot: channelSnapshot,
-		})
+	s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{ChannelSnapshot: channelSnapshot})
 
-		if batchsettlement.IsVoucherPayload(payload) {
-			localResult := s.verifyVoucherLocally(ctx.Requirements, payload, channelSnapshot, now)
-			if localResult != nil {
-				s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{LocalVerify: true})
+	if batchsettlement.IsVoucherPayload(payload) {
+		localResult := s.evaluateVoucherAgainstCachedState(ctx.Requirements, payload, channelSnapshot, now)
+		if localResult != nil {
+			if !localResult.IsValid {
+				_ = s.ClearPendingRequest(ctx.Payload)
 				return &x402.BeforeHookResult{
 					Skip:             true,
 					SkipVerifyResult: localResult,
 				}, nil
 			}
+			s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{LocalVerify: true})
+			return &x402.BeforeHookResult{
+				Skip:             true,
+				SkipVerifyResult: localResult,
+			}, nil
 		}
-		return nil, nil
 	}
+	return nil, nil
 }
 
-// verifyVoucherLocally returns a successful VerifyResponse when the voucher can
-// be verified entirely against locally cached channel state — i.e. the cache is
-// within the configured TTL of last onchain sync, the channel config validates,
-// the recomputed channelId matches, and the voucher signature recovers to the
-// payerAuthorizer. Returns nil on any check that requires falling back to the
-// facilitator, and an explicit invalid VerifyResponse when a local check fails.
+// evaluateVoucherAgainstCachedState returns a successful VerifyResponse when the
+// voucher can be verified entirely against locally cached channel state — i.e.
+// the cache is within the configured TTL of last onchain sync, the channel
+// config validates, the recomputed channelId matches, and balance/claimed
+// bounds hold. EOA signature validity is enforced earlier in BeforeVerify.
+// Returns nil on any check that requires falling back to the facilitator, and
+// an explicit invalid VerifyResponse when a local check fails.
 //
 // The smart-wallet (ERC-1271) path is intentionally not supported — vouchers
 // signed by a non-zero EOA payerAuthorizer are the only candidates.
-func (s *BatchSettlementEvmScheme) verifyVoucherLocally(
+func (s *BatchSettlementEvmScheme) evaluateVoucherAgainstCachedState(
 	requirements x402.PaymentRequirementsView,
 	payload map[string]interface{},
 	channel *ChannelSession,
@@ -221,18 +433,7 @@ func (s *BatchSettlementEvmScheme) verifyVoucherLocally(
 
 	payer := vp.ChannelConfig.Payer
 
-	// Construct a types.PaymentRequirements from the view to reuse the
-	// shared validator (avoids duplicating receiver/token/delay/channelId checks).
-	reqs := types.PaymentRequirements{
-		Scheme:            requirements.GetScheme(),
-		Network:           requirements.GetNetwork(),
-		Asset:             requirements.GetAsset(),
-		Amount:            requirements.GetAmount(),
-		PayTo:             requirements.GetPayTo(),
-		MaxTimeoutSeconds: requirements.GetMaxTimeoutSeconds(),
-		Extra:             requirements.GetExtra(),
-	}
-	if cfgErr := facilitator.ValidateChannelConfig(vp.ChannelConfig, vp.Voucher.ChannelId, reqs); cfgErr != nil {
+	if cfgErr := facilitator.ValidateChannelConfig(vp.ChannelConfig, vp.Voucher.ChannelId, paymentRequirementsFromView(requirements)); cfgErr != nil {
 		reason := facilitator.ErrChannelIdMismatch
 		var ve *x402.VerifyError
 		if errors.As(cfgErr, &ve) && ve.InvalidReason != "" {
@@ -244,40 +445,6 @@ func (s *BatchSettlementEvmScheme) verifyVoucherLocally(
 	computed, err := batchsettlement.ComputeChannelId(vp.ChannelConfig, requirements.GetNetwork())
 	if err != nil || !strings.EqualFold(computed, channel.ChannelId) {
 		return invalidLocalVerifyResponse(payer, facilitator.ErrChannelIdMismatch)
-	}
-
-	// Verify the EIP-712 voucher signature against the channel's
-	// payerAuthorizer using ECDSA. Smart-wallet (ERC-1271) signatures are
-	// intentionally not supported here — the early `vp.ChannelConfig
-	// .PayerAuthorizer == zeroAddress` skip above ensures this path only
-	// runs against EOA payerAuthorizers.
-	sigOk := false
-	chainID, sigErr := evm.GetEvmChainId(requirements.GetNetwork())
-	if sigErr == nil {
-		maxClaimable, ok := new(big.Int).SetString(vp.Voucher.MaxClaimableAmount, 10)
-		if !ok {
-			return invalidLocalVerifyResponse(payer, facilitator.ErrVoucherSignatureInvalid)
-		}
-		hash, hashErr := evm.HashTypedData(
-			batchsettlement.GetBatchSettlementEip712Domain(chainID),
-			batchsettlement.VoucherTypes,
-			"Voucher",
-			map[string]interface{}{
-				"channelId":          vp.Voucher.ChannelId,
-				"maxClaimableAmount": maxClaimable,
-			},
-		)
-		if hashErr == nil {
-			sigBytes := common.FromHex(vp.Voucher.Signature)
-			sigOk, sigErr = evm.VerifyEOASignature(
-				hash, sigBytes, common.HexToAddress(vp.ChannelConfig.PayerAuthorizer),
-			)
-		} else {
-			sigErr = hashErr
-		}
-	}
-	if sigErr != nil || !sigOk {
-		return invalidLocalVerifyResponse(payer, facilitator.ErrVoucherSignatureInvalid)
 	}
 
 	maxClaimable, ok := new(big.Int).SetString(vp.Voucher.MaxClaimableAmount, 10)
@@ -310,6 +477,35 @@ func (s *BatchSettlementEvmScheme) verifyVoucherLocally(
 			"refundNonce":         fmt.Sprintf("%d", channel.RefundNonce),
 		},
 	}
+}
+
+// verifyEoaVoucherSignature verifies an EOA voucher via ecrecover, matching
+// x402BatchSettlement._processVoucherClaim. It does not need a channel row.
+func verifyEoaVoucherSignature(vp *batchsettlement.BatchSettlementVoucherPayload, network string) bool {
+	chainID, err := evm.GetEvmChainId(network)
+	if err != nil {
+		return false
+	}
+	maxClaimable, ok := new(big.Int).SetString(vp.Voucher.MaxClaimableAmount, 10)
+	if !ok {
+		return false
+	}
+	hash, err := evm.HashTypedData(
+		batchsettlement.GetBatchSettlementEip712Domain(chainID),
+		batchsettlement.VoucherTypes,
+		"Voucher",
+		map[string]interface{}{
+			"channelId":          vp.Voucher.ChannelId,
+			"maxClaimableAmount": maxClaimable,
+		},
+	)
+	if err != nil {
+		return false
+	}
+	ok, err = evm.VerifyEOASignature(
+		hash, common.FromHex(vp.Voucher.Signature), common.HexToAddress(vp.ChannelConfig.PayerAuthorizer),
+	)
+	return err == nil && ok
 }
 
 // invalidLocalVerifyResponse builds a failed VerifyResponse preserving the
@@ -350,8 +546,9 @@ func buildProvisionalChannelFromPayload(
 	}
 }
 
-// AfterVerifyHook atomically reserves the channel and persists session state
-// after successful verification. Busy / stale / missing-context outcomes abort.
+// AfterVerifyHook stashes facilitator extras on the request snapshot.
+// Admission is reserved in BeforeVerifyHook; this hook does not acquire
+// and does not read storage.
 //
 // For refund vouchers (refund: true), additionally returns a SkipHandler
 // directive so the resource server bypasses the application handler and
@@ -361,189 +558,164 @@ func (s *BatchSettlementEvmScheme) AfterVerifyHook() x402.AfterVerifyHook {
 		if ctx.Requirements.GetScheme() != batchsettlement.SchemeBatched {
 			return nil, nil
 		}
-		if ctx.Result == nil || !ctx.Result.IsValid || ctx.Result.Payer == "" {
-			return nil, nil
+		if !s.handlersMatch(ctx.Requirements) {
+			return voucherStoreModeMismatchAbortAfter(), nil
 		}
-
-		payload := ctx.Payload.GetPayload()
-
-		var channelId, signedMaxClaimable, signature string
-		var channelConfig batchsettlement.ChannelConfig
-		isRefundVoucher := false
-
-		switch {
-		case batchsettlement.IsDepositPayload(payload):
-			dp, parseErr := batchsettlement.DepositPayloadFromMap(payload)
-			if parseErr != nil {
-				return nil, nil //nolint:nilerr // parse failure in after-hook is non-fatal
-			}
-			channelId = dp.Voucher.ChannelId
-			signedMaxClaimable = dp.Voucher.MaxClaimableAmount
-			signature = dp.Voucher.Signature
-			channelConfig = dp.ChannelConfig
-		case batchsettlement.IsVoucherPayload(payload):
-			vp, parseErr := batchsettlement.VoucherPayloadFromMap(payload)
-			if parseErr != nil {
-				return nil, nil //nolint:nilerr // parse failure in after-hook is non-fatal
-			}
-			channelId = vp.Voucher.ChannelId
-			signedMaxClaimable = vp.Voucher.MaxClaimableAmount
-			signature = vp.Voucher.Signature
-			channelConfig = vp.ChannelConfig
-		case batchsettlement.IsRefundPayload(payload):
-			rp, parseErr := batchsettlement.RefundPayloadFromMap(payload)
-			if parseErr != nil {
-				return nil, nil //nolint:nilerr // parse failure in after-hook is non-fatal
-			}
-			channelId = rp.Voucher.ChannelId
-			signedMaxClaimable = rp.Voucher.MaxClaimableAmount
-			signature = rp.Voucher.Signature
-			channelConfig = rp.ChannelConfig
-			isRefundVoucher = true
-		default:
-			return nil, nil
+		if s.configuredMode == VoucherStoreModeFacilitator {
+			return handleManagedAfterVerify(s, ctx)
 		}
+		return handleAfterVerify(s, ctx)
+	}
+}
 
-		ex := ctx.Result.Extra
-		balance := mapStringField(ex, "balance", "0")
-		totalClaimed, ok := mapUintStringField(ex, "totalClaimed")
-		if !ok {
-			return verificationStateUnavailableAfter(), nil
-		}
-		withdrawRequestedAt := mapIntField(ex, "withdrawRequestedAt", 0)
-		refundNonce := mapIntField(ex, "refundNonce", 0)
+func voucherStoreModeMismatchAbortAfter() *x402.AfterVerifyResult {
+	return &x402.AfterVerifyResult{
+		Abort:   true,
+		Reason:  batchsettlement.ErrVoucherStoreModeMismatch,
+		Message: "Payment requirements voucherManager does not match the server voucherStoreMode",
+	}
+}
 
-		normalizedId, normErr := batchsettlement.NormalizeChannelId(channelId)
-		if normErr != nil {
-			return verificationStateUnavailableAfter(), nil //nolint:nilerr // map invalid ids to fail-closed abort
-		}
-		now := time.Now().UnixMilli()
-
-		rc := s.ReadRequestContext(ctx.Payload)
-		if rc == nil || rc.PendingId == "" {
-			return verificationStateUnavailableAfter(), nil
-		}
-		pendingId := rc.PendingId
-		localVerify := rc.LocalVerify
-
-		var outcomeStatus string // "reserved" | "busy" | "stale"
-		var outcomeStaleChannel *ChannelSession
-
-		updateRes, err := s.storage.UpdateChannel(normalizedId, func(current *ChannelSession) *ChannelSession {
-			var pending *PendingRequest
-			if current != nil {
-				pending = current.PendingRequest
-			}
-			if isPendingLive(pending, now) {
-				outcomeStatus = "busy"
-				return current
-			}
-
-			// With no local record the baseline is the facilitator-verified onchain
-			// totalClaimed, never a value derived from the payer-signed voucher.
-			base := totalClaimed
-			if current != nil {
-				base = current.ChargedCumulativeAmount
-			}
-			baseAmt, _ := new(big.Int).SetString(base, 10)
-			if baseAmt == nil {
-				baseAmt = big.NewInt(0)
-			}
-			reqAmount, _ := new(big.Int).SetString(ctx.Requirements.GetAmount(), 10)
-			if reqAmount == nil {
-				reqAmount = big.NewInt(0)
-			}
-			signedMax, _ := new(big.Int).SetString(signedMaxClaimable, 10)
-			if signedMax == nil {
-				signedMax = big.NewInt(0)
-			}
-			var expectedMax *big.Int
-			if isRefundVoucher {
-				expectedMax = new(big.Int).Set(baseAmt)
-			} else {
-				expectedMax = new(big.Int).Add(baseAmt, reqAmount)
-			}
-			if signedMax.Cmp(expectedMax) != 0 {
-				outcomeStatus = "stale"
-				if current != nil {
-					outcomeStaleChannel = current
-				} else {
-					provisional := buildProvisionalChannelFromPayload(
-						normalizedId, signedMaxClaimable, signature, payload, base, now,
-					)
-					provisional.Balance = balance
-					provisional.TotalClaimed = totalClaimed
-					provisional.WithdrawRequestedAt = withdrawRequestedAt
-					provisional.RefundNonce = refundNonce
-					outcomeStaleChannel = provisional
-				}
-				return current
-			}
-
-			onchainSyncedAt := now
-			if localVerify && batchsettlement.IsVoucherPayload(payload) && current != nil {
-				onchainSyncedAt = current.OnchainSyncedAt
-			}
-
-			outcomeStatus = "reserved"
-			return &ChannelSession{
-				ChannelId:               normalizedId,
-				ChannelConfig:           channelConfig,
-				ChargedCumulativeAmount: base,
-				SignedMaxClaimable:      signedMaxClaimable,
-				Signature:               signature,
-				Balance:                 balance,
-				TotalClaimed:            totalClaimed,
-				WithdrawRequestedAt:     withdrawRequestedAt,
-				RefundNonce:             refundNonce,
-				OnchainSyncedAt:         onchainSyncedAt,
-				LastRequestTimestamp:    now,
-				PendingRequest: &PendingRequest{
-					PendingId:          pendingId,
-					SignedMaxClaimable: signedMaxClaimable,
-					ExpiresAt:          pendingExpiresAt(ctx.Requirements.GetMaxTimeoutSeconds(), now),
-				},
-			}
-		})
-		if err != nil {
-			return verificationStateUnavailableAfter(), nil //nolint:nilerr // map storage failures to fail-closed abort
-		}
-
-		switch outcomeStatus {
-		case "busy":
-			return &x402.AfterVerifyResult{
-				Abort:   true,
-				Reason:  batchsettlement.ErrChannelBusy,
-				Message: "Channel is already processing a request",
-			}, nil
-		case "stale":
-			s.RememberChannelSnapshot(ctx.Payload, outcomeStaleChannel)
-			return &x402.AfterVerifyResult{
-				Abort:   true,
-				Reason:  batchsettlement.ErrCumulativeAmountMismatch,
-				Message: "Client voucher base does not match server state",
-			}, nil
-		}
-
-		if updateRes.Status == ChannelUpdated && updateRes.Channel != nil {
-			s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{ReservationCommitted: true})
-			s.RememberChannelSnapshot(ctx.Payload, updateRes.Channel)
-		}
-
-		if isRefundVoucher && updateRes.Status == ChannelUpdated {
-			return &x402.AfterVerifyResult{
-				SkipHandler: true,
-				Response: &x402.SkipHandlerDirective{
-					ContentType: "application/json",
-					Body: map[string]interface{}{
-						"message":   "Refund acknowledged",
-						"channelId": normalizedId,
-					},
-				},
-			}, nil
-		}
+func handleAfterVerify(s *BatchSettlementEvmScheme, ctx x402.VerifyResultContext) (*x402.AfterVerifyResult, error) {
+	if ctx.Requirements.GetScheme() != batchsettlement.SchemeBatched {
 		return nil, nil
 	}
+	if ctx.Result != nil && !ctx.Result.IsValid {
+		// A structured facilitator rejection does not run OnVerifyFailure, so release the BeforeVerify admission lock here.
+		return nil, s.ClearPendingRequest(ctx.Payload)
+	}
+	if ctx.Result == nil || ctx.Result.Payer == "" {
+		return nil, nil
+	}
+
+	payload := ctx.Payload.GetPayload()
+
+	var channelId, signedMaxClaimable, signature string
+	var channelConfig batchsettlement.ChannelConfig
+	isRefundVoucher := false
+
+	switch {
+	case batchsettlement.IsDepositPayload(payload):
+		dp, parseErr := batchsettlement.DepositPayloadFromMap(payload)
+		if parseErr != nil {
+			return nil, nil //nolint:nilerr // parse failure in after-hook is non-fatal
+		}
+		channelId = dp.Voucher.ChannelId
+		signedMaxClaimable = dp.Voucher.MaxClaimableAmount
+		signature = dp.Voucher.Signature
+		channelConfig = dp.ChannelConfig
+	case batchsettlement.IsVoucherPayload(payload):
+		vp, parseErr := batchsettlement.VoucherPayloadFromMap(payload)
+		if parseErr != nil {
+			return nil, nil //nolint:nilerr // parse failure in after-hook is non-fatal
+		}
+		channelId = vp.Voucher.ChannelId
+		signedMaxClaimable = vp.Voucher.MaxClaimableAmount
+		signature = vp.Voucher.Signature
+		channelConfig = vp.ChannelConfig
+	case batchsettlement.IsRefundPayload(payload):
+		rp, parseErr := batchsettlement.RefundPayloadFromMap(payload)
+		if parseErr != nil {
+			return nil, nil //nolint:nilerr // parse failure in after-hook is non-fatal
+		}
+		channelId = rp.Voucher.ChannelId
+		signedMaxClaimable = rp.Voucher.MaxClaimableAmount
+		signature = rp.Voucher.Signature
+		channelConfig = rp.ChannelConfig
+		isRefundVoucher = true
+	default:
+		return nil, nil
+	}
+
+	normalizedId, normErr := batchsettlement.NormalizeChannelId(channelId)
+	if normErr != nil {
+		return verificationStateUnavailableAfter(), nil //nolint:nilerr // map invalid ids to fail-closed abort
+	}
+
+	rc := s.ReadRequestContext(ctx.Payload)
+	if rc == nil || rc.PendingId == "" {
+		return verificationStateUnavailableAfter(), nil
+	}
+	localVerify := rc.LocalVerify
+	now := time.Now().UnixMilli()
+
+	ex := ctx.Result.Extra
+	balance := mapStringField(ex, "balance", "0")
+	totalClaimed, ok := mapUintStringField(ex, "totalClaimed")
+	if !ok {
+		return verificationStateUnavailableAfter(), nil
+	}
+	withdrawRequestedAt := mapIntField(ex, "withdrawRequestedAt", 0)
+	refundNonce := mapIntField(ex, "refundNonce", 0)
+
+	// With no local record the baseline is the facilitator-verified onchain
+	// totalClaimed, never a value derived from the payer-signed voucher.
+	prior := rc.ChannelSnapshot
+	base := totalClaimed
+	if prior != nil {
+		base = prior.ChargedCumulativeAmount
+	}
+	baseAmt, _ := new(big.Int).SetString(base, 10)
+	if baseAmt == nil {
+		baseAmt = big.NewInt(0)
+	}
+	reqAmount, _ := new(big.Int).SetString(ctx.Requirements.GetAmount(), 10)
+	if reqAmount == nil {
+		reqAmount = big.NewInt(0)
+	}
+	signedMax, _ := new(big.Int).SetString(signedMaxClaimable, 10)
+	if signedMax == nil {
+		signedMax = big.NewInt(0)
+	}
+	expectedMax := new(big.Int).Set(baseAmt)
+	if !isRefundVoucher {
+		expectedMax.Add(expectedMax, reqAmount)
+	}
+	if signedMax.Cmp(expectedMax) != 0 {
+		stale := prior
+		if stale == nil {
+			stale = buildProvisionalChannelFromPayload(
+				normalizedId, signedMaxClaimable, signature, payload, base, now,
+			)
+			stale.Balance = balance
+			stale.TotalClaimed = totalClaimed
+			stale.WithdrawRequestedAt = withdrawRequestedAt
+			stale.RefundNonce = refundNonce
+		}
+		s.RememberChannelSnapshot(ctx.Payload, stale)
+		_ = s.ReleasePendingRequest(ctx.Payload)
+		return &x402.AfterVerifyResult{
+			Abort:   true,
+			Reason:  batchsettlement.ErrCumulativeAmountMismatch,
+			Message: "Client voucher base does not match server state",
+		}, nil
+	}
+
+	onchainSyncedAt := now
+	if localVerify && prior != nil {
+		onchainSyncedAt = prior.OnchainSyncedAt
+	}
+
+	channelSnapshot := &ChannelSession{
+		ChannelId:               normalizedId,
+		ChannelConfig:           channelConfig,
+		ChargedCumulativeAmount: base,
+		SignedMaxClaimable:      signedMaxClaimable,
+		Signature:               signature,
+		Balance:                 balance,
+		TotalClaimed:            totalClaimed,
+		WithdrawRequestedAt:     withdrawRequestedAt,
+		RefundNonce:             refundNonce,
+		OnchainSyncedAt:         onchainSyncedAt,
+		LastRequestTimestamp:    now,
+	}
+
+	s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{ChannelSnapshot: channelSnapshot})
+
+	if isRefundVoucher {
+		return SkipHandlerForRefund(normalizedId), nil
+	}
+	return nil, nil
 }
 
 // OnVerifyFailureHook releases a reservation when facilitator verification fails.
@@ -551,6 +723,12 @@ func (s *BatchSettlementEvmScheme) OnVerifyFailureHook() x402.OnVerifyFailureHoo
 	return func(ctx x402.VerifyFailureContext) (*x402.VerifyFailureHookResult, error) {
 		if ctx.Requirements.GetScheme() != batchsettlement.SchemeBatched {
 			return nil, nil
+		}
+		if !s.handlersMatch(ctx.Requirements) {
+			return nil, nil
+		}
+		if s.configuredMode == VoucherStoreModeFacilitator {
+			return handleManagedVerifyFailure(s, ctx)
 		}
 		return nil, s.ClearPendingRequest(ctx.Payload)
 	}
@@ -560,152 +738,156 @@ func (s *BatchSettlementEvmScheme) OnVerifyFailureHook() x402.OnVerifyFailureHoo
 // logic.  For voucher payloads it:
 //   - Increments chargedCumulativeAmount locally via UpdateChannel
 //   - Returns a Skip result so onchain settlement is NOT triggered
-//   - If the voucher has refund=true, rewrites the payload to a refund settle
-//     action that the facilitator will execute onchain
 //
-// For deposit payloads it annotates responseExtra with the new charged amount.
-// All other payload types pass through to the facilitator.
+// Refund and deposit payloads pass through to facilitator settlement; their
+// durable rows update in AfterSettleHook.
 func (s *BatchSettlementEvmScheme) BeforeSettleHook() x402.BeforeSettleHook {
 	return func(ctx x402.SettleContext) (*x402.BeforeHookResult, error) {
 		if ctx.Requirements.GetScheme() != batchsettlement.SchemeBatched {
 			return nil, nil
 		}
-
-		payload := ctx.Payload.GetPayload()
-
-		// Deposit and refund payloads pass through to the facilitator. Server-
-		// owned enrichment for refunds (claims + authorizer signatures) lives
-		// in EnrichSettlementPayload below.
-		if !batchsettlement.IsVoucherPayload(payload) {
-			return nil, nil
+		if !s.handlersMatch(ctx.Requirements) {
+			return voucherStoreModeMismatchAbort(), nil
 		}
-
-		// --- Voucher path: short-circuit on-chain settlement ---
-
-		voucherMap, _ := payload["voucher"].(map[string]interface{})
-		if voucherMap == nil {
-			return nil, nil
+		if s.configuredMode == VoucherStoreModeFacilitator {
+			return handleManagedBeforeSettle(s, ctx)
 		}
-		channelId, _ := voucherMap["channelId"].(string)
+		return handleBeforeSettle(s, ctx)
+	}
+}
 
-		session, storageErr := s.storage.Get(channelId)
-		if storageErr != nil || session == nil {
-			return &x402.BeforeHookResult{ //nolint:nilerr // storage error treated as missing session
-				Abort:   true,
-				Reason:  batchsettlement.ErrMissingChannel,
-				Message: "No session for channel; verify may not have completed",
-			}, nil
+func handleBeforeSettle(s *BatchSettlementEvmScheme, ctx x402.SettleContext) (*x402.BeforeHookResult, error) {
+	if ctx.Requirements.GetScheme() != batchsettlement.SchemeBatched {
+		return nil, nil
+	}
+
+	payload := ctx.Payload.GetPayload()
+
+	// Deposit and refund payloads pass through to the facilitator. Server-
+	// owned enrichment for refunds (claims + authorizer signatures) lives
+	// in EnrichSettlementPayload below.
+	if !batchsettlement.IsVoucherPayload(payload) {
+		return nil, nil
+	}
+
+	// --- Voucher path: short-circuit on-chain settlement ---
+
+	voucherMap, _ := payload["voucher"].(map[string]interface{})
+	if voucherMap == nil {
+		return nil, nil
+	}
+	channelId, _ := voucherMap["channelId"].(string)
+
+	increment, _ := new(big.Int).SetString(ctx.Requirements.GetAmount(), 10)
+	if increment == nil {
+		increment = big.NewInt(0)
+	}
+	maxClaimable, _ := voucherMap["maxClaimableAmount"].(string)
+	sig, _ := voucherMap["signature"].(string)
+	rc := s.ReadRequestContext(ctx.Payload)
+	var snapshot *ChannelSession
+	var pendingId string
+	localVerify := false
+	if rc != nil {
+		snapshot = rc.ChannelSnapshot
+		pendingId = rc.PendingId
+		localVerify = rc.LocalVerify
+	}
+	now := time.Now().UnixMilli()
+	signedCap, _ := new(big.Int).SetString(maxClaimable, 10)
+	if signedCap == nil {
+		signedCap = big.NewInt(0)
+	}
+	recoverFromSnapshot := false
+	voucher := batchsettlement.BatchSettlementVoucherFields{
+		ChannelId:          channelId,
+		MaxClaimableAmount: maxClaimable,
+		Signature:          sig,
+	}
+
+	outcome, err := storage.CommitVoucherCharge(ctx.Ctx, s.GetStorage(), channelId, storage.CommitVoucherChargeInput[*ChannelSession]{
+		Increment:           increment,
+		SignedCap:           signedCap,
+		Voucher:             voucher,
+		Snapshot:            snapshot,
+		RecoverFromSnapshot: &recoverFromSnapshot,
+		Now:                 now,
+		LocalVerify:         localVerify,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if outcome.Status == storage.CommitMissing && snapshot != nil {
+		hold, holdErr := inspectAdmission(ctx.Ctx, s, channelId, pendingId)
+		if holdErr != nil {
+			return nil, holdErr
 		}
-
-		_ = session // existence already enforced above; UpdateChannel re-reads under lock
-
-		increment, _ := new(big.Int).SetString(ctx.Requirements.GetAmount(), 10)
-		if increment == nil {
-			increment = big.NewInt(0)
+		if hold == admissionSelf {
+			outcome, err = storage.CommitVoucherCharge(ctx.Ctx, s.GetStorage(), channelId, storage.CommitVoucherChargeInput[*ChannelSession]{
+				Increment:   increment,
+				SignedCap:   signedCap,
+				Voucher:     voucher,
+				Snapshot:    snapshot,
+				Now:         now,
+				LocalVerify: localVerify,
+			})
+			if err != nil {
+				return nil, err
+			}
 		}
-		maxClaimable, _ := voucherMap["maxClaimableAmount"].(string)
-		sig, _ := voucherMap["signature"].(string)
-		rc := s.ReadRequestContext(ctx.Payload)
-		var pendingId string
-		if rc != nil {
-			pendingId = rc.PendingId
-		}
+	}
 
-		var (
-			outcome             string // "missing" | "pending_mismatch" | "cap_exceeded" | "committed"
-			capExceededAmount   string
-			committedPrev       *ChannelSession
-			committedNew        *ChannelSession
-			committedNewCharged *big.Int
+	_ = s.ClearPendingRequest(ctx.Payload)
+
+	switch outcome.Status {
+	case storage.CommitMissing:
+		return &x402.BeforeHookResult{
+			Abort:   true,
+			Reason:  batchsettlement.ErrMissingChannel,
+			Message: "No channel record",
+		}, nil
+	case storage.CommitCapExceeded:
+		return &x402.BeforeHookResult{
+			Abort:   true,
+			Reason:  batchsettlement.ErrChargeExceedsSignedCumulative,
+			Message: fmt.Sprintf("Charged %s exceeds signed max %s", outcome.Charged, signedCap.String()),
+		}, nil
+	case storage.CommitWatermarkMismatch:
+		return &x402.BeforeHookResult{
+			Abort:   true,
+			Reason:  batchsettlement.ErrCumulativeAmountMismatch,
+			Message: "Charged amount does not match the verified watermark",
+		}, nil
+	case storage.CommitCommitted:
+		charged := outcome.Current.ChargedCumulativeAmount
+		reqAmount := ctx.Requirements.GetAmount()
+		skipExtra := storage.PaymentResponseExtra(
+			storage.ChannelStateExtra(outcome.Current, &charged),
+			&reqAmount,
+			nil,
 		)
-
-		_, updateErr := s.storage.UpdateChannel(channelId, func(current *ChannelSession) *ChannelSession {
-			if current == nil {
-				outcome = "missing"
-				return current
-			}
-			if pendingId == "" || current.PendingRequest == nil ||
-				current.PendingRequest.PendingId != pendingId {
-				outcome = "pending_mismatch"
-				return current
-			}
-			curCharged, _ := new(big.Int).SetString(current.ChargedCumulativeAmount, 10)
-			if curCharged == nil {
-				curCharged = big.NewInt(0)
-			}
-			next := new(big.Int).Add(curCharged, increment)
-			cap2, _ := new(big.Int).SetString(maxClaimable, 10)
-			if cap2 != nil && next.Cmp(cap2) > 0 {
-				outcome = "cap_exceeded"
-				capExceededAmount = next.String()
-				cleared := *current
-				cleared.PendingRequest = nil
-				return &cleared
-			}
-			updated := *current
-			updated.ChargedCumulativeAmount = next.String()
-			updated.SignedMaxClaimable = maxClaimable
-			updated.Signature = sig
-			updated.LastRequestTimestamp = time.Now().UnixMilli()
-			updated.PendingRequest = nil
-			outcome = "committed"
-			committedPrev = current
-			committedNew = &updated
-			committedNewCharged = next
-			return &updated
-		})
-		if updateErr != nil {
-			return nil, updateErr
-		}
-
-		switch outcome {
-		case "missing":
-			s.TakeRequestContext(ctx.Payload)
-			return &x402.BeforeHookResult{
-				Abort:   true,
-				Reason:  batchsettlement.ErrMissingChannel,
-				Message: "No channel record",
-			}, nil
-		case "pending_mismatch":
-			s.TakeRequestContext(ctx.Payload)
-			return &x402.BeforeHookResult{
-				Abort:   true,
-				Reason:  batchsettlement.ErrChannelBusy,
-				Message: "Concurrent request modified channel state",
-			}, nil
-		case "cap_exceeded":
-			capStr := maxClaimable
-			s.TakeRequestContext(ctx.Payload)
-			return &x402.BeforeHookResult{
-				Abort:   true,
-				Reason:  batchsettlement.ErrChargeExceedsSignedCumulative,
-				Message: fmt.Sprintf("Charged %s exceeds signed max %s", capExceededAmount, capStr),
-			}, nil
-		}
-
-		s.TakeRequestContext(ctx.Payload)
-		// Emit the nested response shape: chargedAmount + channelState.
-		skipExtra := &batchsettlement.BatchSettlementPaymentResponseExtra{
-			ChargedAmount: ctx.Requirements.GetAmount(),
-			ChannelState: &batchsettlement.BatchSettlementChannelStateExtra{
-				ChannelId:               channelId,
-				Balance:                 committedNew.Balance,
-				TotalClaimed:            committedNew.TotalClaimed,
-				WithdrawRequestedAt:     committedNew.WithdrawRequestedAt,
-				RefundNonce:             fmt.Sprintf("%d", committedNew.RefundNonce),
-				ChargedCumulativeAmount: committedNewCharged.String(),
-			},
-		}
 		return &x402.BeforeHookResult{
 			Skip: true,
 			SkipResult: &x402.SettleResponse{
 				Success:     true,
 				Transaction: "",
 				Network:     x402.Network(ctx.Requirements.GetNetwork()),
-				Payer:       committedPrev.ChannelConfig.Payer,
+				Payer:       strings.ToLower(outcome.Previous.ChannelConfig.Payer),
 				Amount:      "",
 				Extra:       skipExtra.ToMap(),
 			},
+		}, nil
+	case storage.CommitConflict:
+		return &x402.BeforeHookResult{
+			Abort:   true,
+			Reason:  batchsettlement.ErrChannelBusy,
+			Message: "Concurrent request modified channel state",
+		}, nil
+	default:
+		return &x402.BeforeHookResult{
+			Abort:   true,
+			Reason:  batchsettlement.ErrChannelBusy,
+			Message: "Concurrent request modified channel state",
 		}, nil
 	}
 }
@@ -715,6 +897,12 @@ func (s *BatchSettlementEvmScheme) OnSettleFailureHook() x402.OnSettleFailureHoo
 	return func(ctx x402.SettleFailureContext) (*x402.SettleFailureHookResult, error) {
 		if ctx.Requirements.GetScheme() != batchsettlement.SchemeBatched {
 			return nil, nil
+		}
+		if !s.handlersMatch(ctx.Requirements) {
+			return nil, nil
+		}
+		if s.configuredMode == VoucherStoreModeFacilitator {
+			return handleManagedSettleFailure(s, ctx)
 		}
 		return nil, s.ClearPendingRequest(ctx.Payload)
 	}
@@ -733,6 +921,19 @@ func (s *BatchSettlementEvmScheme) EnrichSettlementPayload(ctx x402.SettleContex
 	if ctx.Requirements.GetScheme() != batchsettlement.SchemeBatched {
 		return nil, nil
 	}
+	if err := s.requireHandlers(ctx.Requirements); err != nil {
+		return nil, err
+	}
+	if s.configuredMode == VoucherStoreModeFacilitator {
+		return handleManagedEnrichSettlementPayload(s, ctx)
+	}
+	return handleEnrichSettlementPayload(s, ctx)
+}
+
+func handleEnrichSettlementPayload(s *BatchSettlementEvmScheme, ctx x402.SettleContext) (map[string]interface{}, error) {
+	if ctx.Requirements.GetScheme() != batchsettlement.SchemeBatched {
+		return nil, nil
+	}
 	payload := ctx.Payload.GetPayload()
 	if !batchsettlement.IsRefundPayload(payload) {
 		return nil, nil
@@ -744,14 +945,39 @@ func (s *BatchSettlementEvmScheme) EnrichSettlementPayload(ctx x402.SettleContex
 	}
 	channelIdStr, _ := voucherMap["channelId"].(string)
 
-	session, storageErr := s.storage.Get(channelIdStr)
-	if storageErr != nil || session == nil {
+	requestContext := s.ReadRequestContext(ctx.Payload)
+	var snapshot *ChannelSession
+	var pendingId string
+	if requestContext != nil {
+		snapshot = requestContext.ChannelSnapshot
+		pendingId = requestContext.PendingId
+	}
+	stored, storageErr := s.storage.Get(ctx.Ctx, channelIdStr)
+	if storageErr != nil {
+		return nil, storageErr
+	}
+	hold, holdErr := inspectAdmission(ctx.Ctx, s, channelIdStr, pendingId)
+	if holdErr != nil {
+		return nil, holdErr
+	}
+	if stored == nil && snapshot != nil && hold != admissionSelf {
 		return nil, errors.New(batchsettlement.ErrMissingChannel)
 	}
-	rc := s.ReadRequestContext(ctx.Payload)
-	if rc == nil || rc.PendingId == "" || session.PendingRequest == nil ||
-		session.PendingRequest.PendingId != rc.PendingId {
+	if hold == admissionOther {
 		return nil, errors.New(batchsettlement.ErrChannelBusy)
+	}
+	var session *ChannelSession
+	if snapshot != nil {
+		merged := *snapshot
+		if stored != nil {
+			merged.ChargedCumulativeAmount = stored.ChargedCumulativeAmount
+		}
+		session = &merged
+	} else {
+		session = stored
+	}
+	if session == nil {
+		return nil, errors.New(batchsettlement.ErrMissingChannel)
 	}
 
 	maxClaimable, _ := voucherMap["maxClaimableAmount"].(string)
@@ -763,26 +989,79 @@ func (s *BatchSettlementEvmScheme) EnrichSettlementPayload(ctx x402.SettleContex
 		return nil, errors.New(facilitator.ErrVoucherSignatureInvalid)
 	}
 
-	config := session.ChannelConfig
+	requestedStr, _ := payload["amount"].(string)
+	if requestedStr != "" {
+		balance, _ := new(big.Int).SetString(session.Balance, 10)
+		if balance == nil {
+			balance = big.NewInt(0)
+		}
+		chargedAmt, _ := new(big.Int).SetString(session.ChargedCumulativeAmount, 10)
+		if chargedAmt == nil {
+			chargedAmt = big.NewInt(0)
+		}
+		remainder := new(big.Int).Sub(balance, chargedAmt)
+		requested, ok := new(big.Int).SetString(requestedStr, 10)
+		if ok && requested.Sign() > 0 && requested.Cmp(remainder) > 0 {
+			return nil, errors.New(batchsettlement.ErrRefundAmountExceedsBalance)
+		}
+	}
 
-	// Refund vouchers are zero-charge: claim's totalClaimed == session.chargedCumulativeAmount.
+	enrichment, err := BuildRefundSettlementFields(RefundSettlementFields{
+		Ctx:                             ctx.Ctx,
+		Channel:                         session,
+		ChannelConfig:                   session.ChannelConfig,
+		MaxClaimableAmount:              maxClaimable,
+		Signature:                       sig,
+		Amount:                          requestedStr,
+		ChannelId:                       channelIdStr,
+		Network:                         ctx.Requirements.GetNetwork(),
+		RefundSigner:                    s.GetRefundAuthorizerSigner(),
+		IncludeClaimAuthorizerSignature: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	s.RememberChannelSnapshot(ctx.Payload, session)
+	return enrichment, nil
+}
+
+// RefundSettlementFields is the input for BuildRefundSettlementFields.
+type RefundSettlementFields struct {
+	Ctx                             context.Context
+	Channel                         *ChannelSession
+	ChannelConfig                   batchsettlement.ChannelConfig
+	MaxClaimableAmount              string
+	Signature                       string
+	Amount                          string
+	ChannelId                       string
+	Network                         string
+	RefundSigner                    AuthorizerSigner
+	IncludeClaimAuthorizerSignature bool
+}
+
+// BuildRefundSettlementFields builds additive refund settle fields from a channel snapshot.
+func BuildRefundSettlementFields(opts RefundSettlementFields) (map[string]interface{}, error) {
+	if opts.Channel == nil {
+		return nil, errors.New(batchsettlement.ErrMissingChannel)
+	}
 	claimEntry := batchsettlement.BatchSettlementVoucherClaim{
 		Voucher: struct {
 			Channel            batchsettlement.ChannelConfig `json:"channel"`
 			MaxClaimableAmount string                        `json:"maxClaimableAmount"`
 		}{
-			Channel:            config,
-			MaxClaimableAmount: maxClaimable,
+			Channel:            opts.ChannelConfig,
+			MaxClaimableAmount: opts.MaxClaimableAmount,
 		},
-		Signature:    sig,
-		TotalClaimed: session.ChargedCumulativeAmount,
+		Signature:    opts.Signature,
+		TotalClaimed: opts.Channel.ChargedCumulativeAmount,
 	}
 
-	balance, _ := new(big.Int).SetString(session.Balance, 10)
+	balance, _ := new(big.Int).SetString(opts.Channel.Balance, 10)
 	if balance == nil {
 		balance = big.NewInt(0)
 	}
-	charged, _ := new(big.Int).SetString(session.ChargedCumulativeAmount, 10)
+	charged, _ := new(big.Int).SetString(opts.Channel.ChargedCumulativeAmount, 10)
 	if charged == nil {
 		charged = big.NewInt(0)
 	}
@@ -792,48 +1071,45 @@ func (s *BatchSettlementEvmScheme) EnrichSettlementPayload(ctx x402.SettleContex
 	}
 
 	refundAmount := new(big.Int).Set(remainder)
-	requestedStr, hasRequestedAmount := payload["amount"].(string)
-	hasRequestedAmount = hasRequestedAmount && requestedStr != ""
+	hasRequestedAmount := opts.Amount != ""
 	if hasRequestedAmount {
-		requested, ok := new(big.Int).SetString(requestedStr, 10)
-		if !ok || requested.Sign() <= 0 {
+		if !isNonNegativeIntegerString(opts.Amount) {
 			return nil, errors.New(batchsettlement.ErrRefundAmountInvalid)
 		}
-		if requested.Cmp(remainder) > 0 {
-			return nil, errors.New(batchsettlement.ErrRefundAmountExceedsBalance)
+		requested, ok := new(big.Int).SetString(opts.Amount, 10)
+		if !ok || requested.Sign() <= 0 {
+			return nil, errors.New(batchsettlement.ErrRefundAmountInvalid)
 		}
 		refundAmount = requested
 	}
 
-	nonce := fmt.Sprintf("%d", session.RefundNonce)
-
+	nonce := fmt.Sprintf("%d", opts.Channel.RefundNonce)
 	enrichment := map[string]interface{}{
 		"refundNonce": nonce,
 		"claims":      []batchsettlement.BatchSettlementVoucherClaim{claimEntry},
 	}
 	if !hasRequestedAmount {
-		// Only fill `amount` when the client omitted it; otherwise the additive
-		// policy would reject the overwrite.
 		enrichment["amount"] = refundAmount.String()
 	}
 
-	if s.receiverAuthorizerSigner != nil {
-		network := ctx.Requirements.GetNetwork()
-		authSig, err := s.SignRefund(context.Background(), channelIdStr, refundAmount.String(), nonce, network)
+	if opts.RefundSigner != nil {
+		signCtx := opts.Ctx
+		if signCtx == nil {
+			signCtx = context.Background()
+		}
+		authSig, err := signRefundWith(signCtx, opts.RefundSigner, opts.ChannelId, refundAmount.String(), nonce, opts.Network)
 		if err != nil {
 			return nil, fmt.Errorf("failed to sign refund: %w", err)
 		}
-		claimAuthSig, err := s.SignClaimBatch(context.Background(), []batchsettlement.BatchSettlementVoucherClaim{claimEntry}, network)
-		if err != nil {
-			return nil, fmt.Errorf("failed to sign claim batch for refund: %w", err)
-		}
 		enrichment["refundAuthorizerSignature"] = evm.BytesToHex(authSig)
-		enrichment["claimAuthorizerSignature"] = evm.BytesToHex(claimAuthSig)
+		if opts.IncludeClaimAuthorizerSignature {
+			claimAuthSig, err := signClaimBatchWith(signCtx, opts.RefundSigner, []batchsettlement.BatchSettlementVoucherClaim{claimEntry}, opts.Network)
+			if err != nil {
+				return nil, fmt.Errorf("failed to sign claim batch for refund: %w", err)
+			}
+			enrichment["claimAuthorizerSignature"] = evm.BytesToHex(claimAuthSig)
+		}
 	}
-
-	// Snapshot the pre-refund channel state for EnrichSettlementResponse, which
-	// adds chargedCumulativeAmount onto the post-facilitator response.
-	s.RememberChannelSnapshot(ctx.Payload, session)
 
 	return enrichment, nil
 }
@@ -857,164 +1133,200 @@ func (s *BatchSettlementEvmScheme) AfterSettleHook() x402.AfterSettleHook {
 		if ctx.Requirements.GetScheme() != batchsettlement.SchemeBatched {
 			return nil
 		}
-		if ctx.Result == nil || !ctx.Result.Success {
+		if !s.handlersMatch(ctx.Requirements) {
 			return nil
 		}
+		if s.configuredMode == VoucherStoreModeFacilitator {
+			return handleManagedAfterSettle(s, ctx)
+		}
+		return handleAfterSettle(s, ctx)
+	}
+}
 
-		payload := ctx.Payload.GetPayload()
+func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext) error {
+	if ctx.Result == nil || !ctx.Result.Success {
+		return nil
+	}
 
-		// --- Deposit: storage update from facilitator channelState ---
-		if batchsettlement.IsDepositPayload(payload) {
-			dp, parseErr := batchsettlement.DepositPayloadFromMap(payload)
-			if parseErr != nil {
-				log.Printf("[batched] AfterSettle deposit: parse payload failed: %v", parseErr)
-				return nil //nolint:nilerr // parse failure in after-hook is non-fatal
-			}
-			normalizedId := dp.Voucher.ChannelId
-			rc := s.ReadRequestContext(ctx.Payload)
-			var pendingId string
-			if rc != nil {
-				pendingId = rc.PendingId
-			}
+	payload := ctx.Payload.GetPayload()
 
-			// Read channelState from facilitator response.
-			cs := readChannelStateFromExtra(ctx.Result.Extra)
-			now := time.Now().UnixMilli()
-			reqAmount, _ := new(big.Int).SetString(ctx.Requirements.GetAmount(), 10)
-			if reqAmount == nil {
-				reqAmount = big.NewInt(0)
-			}
-
-			updateRes, updateErr := s.storage.UpdateChannel(normalizedId, func(current *ChannelSession) *ChannelSession {
-				if current == nil {
-					return current
-				}
-				if pendingId == "" || current.PendingRequest == nil ||
-					current.PendingRequest.PendingId != pendingId {
-					return current
-				}
-				curCharged, _ := new(big.Int).SetString(current.ChargedCumulativeAmount, 10)
-				if curCharged == nil {
-					curCharged = big.NewInt(0)
-				}
-				next := *current
-				next.ChannelConfig = dp.ChannelConfig
-				next.ChargedCumulativeAmount = new(big.Int).Add(curCharged, reqAmount).String()
-				next.SignedMaxClaimable = dp.Voucher.MaxClaimableAmount
-				next.Signature = dp.Voucher.Signature
-				if cs != nil {
-					if cs.Balance != "" {
-						next.Balance = cs.Balance
-					}
-					if cs.TotalClaimed != "" {
-						next.TotalClaimed = cs.TotalClaimed
-					}
-					if cs.WithdrawRequestedAt != 0 {
-						next.WithdrawRequestedAt = cs.WithdrawRequestedAt
-					}
-					if cs.RefundNonce != "" {
-						if n, ok := new(big.Int).SetString(cs.RefundNonce, 10); ok {
-							next.RefundNonce = int(n.Int64())
-						}
-					}
-				}
-				next.OnchainSyncedAt = now
-				next.LastRequestTimestamp = now
-				next.PendingRequest = nil
-				return &next
-			})
-			if updateErr != nil {
-				return updateErr
-			}
-			if updateRes.Status == ChannelUpdated && updateRes.Channel != nil {
-				// Snapshot for EnrichSettlementResponse to read
-				// chargedCumulativeAmount additively into the response.
-				s.RememberChannelSnapshot(ctx.Payload, updateRes.Channel)
-			}
-			return nil
+	// --- Deposit: storage update from facilitator channelState ---
+	if batchsettlement.IsDepositPayload(payload) {
+		dp, parseErr := batchsettlement.DepositPayloadFromMap(payload)
+		if parseErr != nil {
+			log.Printf("[batched] AfterSettle deposit: parse payload failed: %v", parseErr)
+			return nil //nolint:nilerr // parse failure in after-hook is non-fatal
+		}
+		normalizedId := dp.Voucher.ChannelId
+		rc := s.ReadRequestContext(ctx.Payload)
+		var pendingId string
+		if rc != nil {
+			pendingId = rc.PendingId
 		}
 
-		// --- Refund: storage update from facilitator post-refund snapshot ---
-		if batchsettlement.IsEnrichedRefundPayload(payload) {
-			refundPayload, err := batchsettlement.EnrichedRefundPayloadFromMap(payload)
-			if err != nil {
-				log.Printf("[batched] AfterSettle refund: parse payload failed: %v", err)
-				return nil //nolint:nilerr // parse failure in after-hook is non-fatal
-			}
-			channelId, err := batchsettlement.ComputeChannelId(refundPayload.ChannelConfig, ctx.Requirements.GetNetwork())
-			if err != nil {
-				log.Printf("[batched] AfterSettle refund: ComputeChannelId failed: %v", err)
-				return nil //nolint:nilerr
-			}
-			normalizedId := channelId
-			rc := s.ReadRequestContext(ctx.Payload)
-			var pendingId string
-			if rc != nil {
-				pendingId = rc.PendingId
-			}
+		cs := readChannelStateFromExtra(ctx.Result.Extra)
+		now := time.Now().UnixMilli()
+		reqAmount, _ := new(big.Int).SetString(ctx.Requirements.GetAmount(), 10)
+		if reqAmount == nil {
+			reqAmount = big.NewInt(0)
+		}
 
-			snapshot := readChannelStateFromExtra(ctx.Result.Extra)
-			if snapshot == nil {
-				return nil
-			}
-			now := time.Now().UnixMilli()
-			outcome := ""
+		hold, holdErr := inspectAdmission(ctx.Ctx, s, normalizedId, pendingId)
+		if holdErr != nil {
+			return holdErr
+		}
+		if hold == admissionOther {
+			return x402.NewAfterSettleAbort(batchsettlement.ErrChannelBusy, "")
+		}
+		var recovered *ChannelSession
+		if rc != nil {
+			recovered = rc.ChannelSnapshot
+		}
 
-			_, updateErr := s.storage.UpdateChannel(normalizedId, func(current *ChannelSession) *ChannelSession {
+		missingRow := false
+		updateRes, updateErr := s.storage.UpdateChannel(ctx.Ctx, normalizedId, func(current *ChannelSession) *ChannelSession {
+			existing := current
+			if existing == nil && hold == admissionSelf {
+				existing = recovered
+			}
+			if existing == nil {
 				if current == nil {
-					outcome = "missing"
-					return current
+					missingRow = true
 				}
-				if pendingId == "" || current.PendingRequest == nil ||
-					current.PendingRequest.PendingId != pendingId {
-					outcome = "pending_mismatch"
-					return current
+				return current
+			}
+			curCharged, _ := new(big.Int).SetString(existing.ChargedCumulativeAmount, 10)
+			if curCharged == nil {
+				curCharged = big.NewInt(0)
+			}
+			next := *existing
+			next.ChannelId = normalizedId
+			next.ChannelConfig = dp.ChannelConfig
+			next.ChargedCumulativeAmount = new(big.Int).Add(curCharged, reqAmount).String()
+			next.SignedMaxClaimable = dp.Voucher.MaxClaimableAmount
+			next.Signature = dp.Voucher.Signature
+			if cs != nil {
+				if cs.Balance != "" {
+					next.Balance = cs.Balance
 				}
-				postBalance, _ := new(big.Int).SetString(snapshot.Balance, 10)
-				if postBalance == nil {
-					postBalance = big.NewInt(0)
+				if cs.TotalClaimed != "" {
+					next.TotalClaimed = cs.TotalClaimed
 				}
-				curCharged, _ := new(big.Int).SetString(current.ChargedCumulativeAmount, 10)
-				if curCharged == nil {
-					curCharged = big.NewInt(0)
+				if cs.WithdrawRequestedAt != 0 {
+					next.WithdrawRequestedAt = cs.WithdrawRequestedAt
 				}
-				if postBalance.Cmp(curCharged) <= 0 {
-					// Full refund: delete the channel session.
-					outcome = "deleted"
-					return nil
-				}
-				next := *current
-				if snapshot.Balance != "" {
-					next.Balance = snapshot.Balance
-				}
-				if snapshot.TotalClaimed != "" {
-					next.TotalClaimed = snapshot.TotalClaimed
-				}
-				if snapshot.WithdrawRequestedAt != 0 {
-					next.WithdrawRequestedAt = snapshot.WithdrawRequestedAt
-				}
-				if snapshot.RefundNonce != "" {
-					if n, ok := new(big.Int).SetString(snapshot.RefundNonce, 10); ok {
+				if cs.RefundNonce != "" {
+					if n, ok := new(big.Int).SetString(cs.RefundNonce, 10); ok {
 						next.RefundNonce = int(n.Int64())
 					}
 				}
-				next.OnchainSyncedAt = now
-				next.LastRequestTimestamp = now
-				next.PendingRequest = nil
-				outcome = "updated"
-				return &next
-			})
-			if updateErr != nil {
-				return updateErr
 			}
-			if outcome == "pending_mismatch" {
-				return errors.New(batchsettlement.ErrChannelBusy)
+			next.OnchainSyncedAt = now
+			next.LastRequestTimestamp = now
+			return &next
+		})
+		if updateErr != nil {
+			if impl := RethrowLockImplementationError(updateErr); impl != nil {
+				return impl
 			}
+			return x402.NewAfterSettleAbort(batchsettlement.ErrVoucherStoreUnavailable, updateErr.Error())
+		}
+		if updateRes.Status == ChannelUpdated && updateRes.Channel != nil {
+			s.RememberChannelSnapshot(ctx.Payload, updateRes.Channel)
+			_ = s.ReleasePendingRequest(ctx.Payload)
 			return nil
 		}
+		if missingRow {
+			return x402.NewAfterSettleAbort(batchsettlement.ErrMissingChannel, "")
+		}
+		return x402.NewAfterSettleAbort(batchsettlement.ErrChannelBusy, "")
+	}
 
+	// --- Refund: storage update from facilitator post-refund snapshot ---
+	if batchsettlement.IsEnrichedRefundPayload(payload) {
+		refundPayload, err := batchsettlement.EnrichedRefundPayloadFromMap(payload)
+		if err != nil {
+			log.Printf("[batched] AfterSettle refund: parse payload failed: %v", err)
+			return nil //nolint:nilerr // parse failure in after-hook is non-fatal
+		}
+		channelId, err := batchsettlement.ComputeChannelId(refundPayload.ChannelConfig, ctx.Requirements.GetNetwork())
+		if err != nil {
+			log.Printf("[batched] AfterSettle refund: ComputeChannelId failed: %v", err)
+			return nil //nolint:nilerr
+		}
+		normalizedId := channelId
+		rc := s.ReadRequestContext(ctx.Payload)
+		var pendingId string
+		if rc != nil {
+			pendingId = rc.PendingId
+		}
+
+		snapshot := readChannelStateFromExtra(ctx.Result.Extra)
+		if snapshot == nil {
+			return nil
+		}
+		now := time.Now().UnixMilli()
+		hold, holdErr := inspectAdmission(ctx.Ctx, s, normalizedId, pendingId)
+		if holdErr != nil {
+			return holdErr
+		}
+		if hold == admissionOther {
+			return errors.New(batchsettlement.ErrChannelBusy)
+		}
+		var recovered *ChannelSession
+		if rc != nil {
+			recovered = rc.ChannelSnapshot
+		}
+
+		updateRes, updateErr := s.storage.UpdateChannel(ctx.Ctx, normalizedId, func(current *ChannelSession) *ChannelSession {
+			existing := current
+			if existing == nil && hold == admissionSelf {
+				existing = recovered
+			}
+			if existing == nil {
+				return current
+			}
+			postBalance, _ := new(big.Int).SetString(snapshot.Balance, 10)
+			if postBalance == nil {
+				postBalance = big.NewInt(0)
+			}
+			curCharged, _ := new(big.Int).SetString(existing.ChargedCumulativeAmount, 10)
+			if curCharged == nil {
+				curCharged = big.NewInt(0)
+			}
+			if postBalance.Cmp(curCharged) <= 0 {
+				return nil
+			}
+			next := *existing
+			if snapshot.Balance != "" {
+				next.Balance = snapshot.Balance
+			}
+			if snapshot.TotalClaimed != "" {
+				next.TotalClaimed = snapshot.TotalClaimed
+			}
+			if snapshot.WithdrawRequestedAt != 0 {
+				next.WithdrawRequestedAt = snapshot.WithdrawRequestedAt
+			}
+			if snapshot.RefundNonce != "" {
+				if n, ok := new(big.Int).SetString(snapshot.RefundNonce, 10); ok {
+					next.RefundNonce = int(n.Int64())
+				}
+			}
+			next.OnchainSyncedAt = now
+			next.LastRequestTimestamp = now
+			return &next
+		})
+		if updateErr != nil {
+			return updateErr
+		}
+		if updateRes.Status == ChannelUnchanged {
+			return errors.New(batchsettlement.ErrChannelBusy)
+		}
+		_ = s.ReleasePendingRequest(ctx.Payload)
 		return nil
 	}
+
+	return nil
 }
 
 // EnrichSettlementResponse supplies server-owned settlement-response fields
@@ -1030,6 +1342,16 @@ func (s *BatchSettlementEvmScheme) EnrichSettlementResponse(ctx x402.SettleResul
 	if ctx.Requirements.GetScheme() != batchsettlement.SchemeBatched {
 		return nil, nil
 	}
+	if !s.handlersMatch(ctx.Requirements) {
+		return nil, nil
+	}
+	if s.configuredMode == VoucherStoreModeFacilitator {
+		return handleManagedEnrichSettlementResponse(s, ctx)
+	}
+	return handleEnrichSettlementResponse(s, ctx)
+}
+
+func handleEnrichSettlementResponse(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext) (map[string]interface{}, error) {
 	payload := ctx.Payload.GetPayload()
 	if batchsettlement.IsVoucherPayload(payload) {
 		return nil, nil
@@ -1082,6 +1404,11 @@ func readChannelStateFromExtra(extra map[string]interface{}) *batchsettlement.Ba
 		out.RefundNonce = v
 	} else if v, ok := raw["refundNonce"].(float64); ok {
 		out.RefundNonce = fmt.Sprintf("%.0f", v)
+	}
+	if v, ok := raw["chargedCumulativeAmount"].(string); ok {
+		out.ChargedCumulativeAmount = v
+	} else if v, ok := raw["chargedCumulativeAmount"].(float64); ok {
+		out.ChargedCumulativeAmount = fmt.Sprintf("%.0f", v)
 	}
 	return out
 }

@@ -73,7 +73,7 @@ func (e *baselineEnv) onchain() (balance, totalClaimed int64) {
 
 func (e *baselineEnv) localCharged() *string {
 	e.t.Helper()
-	ch, err := e.pipe.serverScheme.GetStorage().Get(e.channelId)
+	ch, err := e.pipe.serverScheme.GetStorage().Get(e.ctx, e.channelId)
 	if err != nil {
 		e.t.Fatalf("read local record: %v", err)
 	}

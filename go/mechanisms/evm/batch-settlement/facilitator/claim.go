@@ -12,9 +12,21 @@ import (
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
+// SubmitClaimInput is the network, claims, optional pre-signed authorizer
+// signature, and data suffix for SubmitClaim. OnClaimed, when set, receives the row keys that
+// emitted Claimed once the claim confirms.
+type SubmitClaimInput struct {
+	Network    string
+	Claims     []batchsettlement.BatchSettlementVoucherClaim
+	Signature  string
+	DataSuffix []byte
+	OnClaimed  OnClaimedRows
+}
+
 // ExecuteClaimWithSignature executes a batch claim with receiverAuthorizer signature.
 // If ClaimAuthorizerSignature is absent from the payload, the authorizerSigner
-// auto-signs the ClaimBatch digest.
+// auto-signs the ClaimBatch digest. An optional onClaimed callback receives the row keys that
+// emitted Claimed once the claim confirms.
 func ExecuteClaimWithSignature(
 	ctx context.Context,
 	signer evm.FacilitatorEvmSigner,
@@ -22,6 +34,7 @@ func ExecuteClaimWithSignature(
 	requirements types.PaymentRequirements,
 	authorizerSigner batchsettlement.AuthorizerSigner,
 	dataSuffix []byte,
+	onClaimed ...OnClaimedRows,
 ) (*x402.SettleResponse, error) {
 	network := x402.Network(requirements.Network)
 
@@ -30,7 +43,6 @@ func ExecuteClaimWithSignature(
 			"no claims provided")
 	}
 
-	// Resolve signature — auto-sign if absent
 	var sigBytes []byte
 	if payload.ClaimAuthorizerSignature != "" {
 		var err error
@@ -44,7 +56,6 @@ func ExecuteClaimWithSignature(
 			return nil, x402.NewSettleError(ErrAuthorizerNotConfigured, "", network, "",
 				"no claim authorizer signature in payload and no authorizer signer configured")
 		}
-		// Verify authorizer address matches all claims' receiverAuthorizer
 		for _, claim := range payload.Claims {
 			if !strings.EqualFold(claim.Voucher.Channel.ReceiverAuthorizer, authorizerSigner.Address()) {
 				return nil, x402.NewSettleError(ErrAuthorizerAddressMismatch, "", network, "",
@@ -52,7 +63,6 @@ func ExecuteClaimWithSignature(
 						claim.Voucher.Channel.ReceiverAuthorizer, authorizerSigner.Address()))
 			}
 		}
-		// Auto-sign
 		var err error
 		sigBytes, err = authorizerSigner.SignClaimBatch(ctx, payload.Claims, string(network))
 		if err != nil {
@@ -61,48 +71,92 @@ func ExecuteClaimWithSignature(
 		}
 	}
 
-	claimArgs := buildVoucherClaimArgs(payload.Claims)
-
-	// Simulate the transaction before submitting
-	if _, simErr := signer.ReadContract(
-		ctx,
-		batchsettlement.BatchSettlementAddress,
+	return submitClaimTransaction(ctx, signer, string(network), "claimWithSignature",
 		batchsettlement.BatchSettlementClaimWithSignatureABI,
-		"claimWithSignature",
-		claimArgs,
-		sigBytes,
-	); simErr != nil {
+		[]interface{}{buildVoucherClaimArgs(payload.Claims), sigBytes},
+		dataSuffix, firstOnClaimed(onClaimed))
+}
+
+// ExecuteClaim submits a batch claim via claim() as msg.sender. An optional onClaimed callback
+// receives the row keys that emitted Claimed once the claim confirms.
+func ExecuteClaim(
+	ctx context.Context,
+	signer evm.FacilitatorEvmSigner,
+	payload *batchsettlement.BatchSettlementClaimPayload,
+	network string,
+	dataSuffix []byte,
+	onClaimed ...OnClaimedRows,
+) (*x402.SettleResponse, error) {
+	return submitClaimTransaction(ctx, signer, network, "claim",
+		batchsettlement.BatchSettlementClaimABI,
+		[]interface{}{buildVoucherClaimArgs(payload.Claims)},
+		dataSuffix, firstOnClaimed(onClaimed))
+}
+
+// SubmitClaim dispatches a claim through the relay or direct submit path.
+// A payload signature always uses claimWithSignature. Otherwise SubmitMode
+// selects the path ("relay" when omitted). Direct mode requires AuthorizerSubmitter.
+func SubmitClaim(ctx context.Context, input SubmitClaimInput, submitCtx SubmitContext) (*x402.SettleResponse, error) {
+	payload := &batchsettlement.BatchSettlementClaimPayload{
+		Type:   "claim",
+		Claims: input.Claims,
+	}
+	if input.Signature != "" {
+		payload.ClaimAuthorizerSignature = input.Signature
+	}
+
+	reqs := types.PaymentRequirements{Network: input.Network}
+	if ShouldRelaySubmit(submitCtx.SubmitMode, input.Signature != "") {
+		return ExecuteClaimWithSignature(ctx, submitCtx.Signer, payload, reqs, submitCtx.AuthorizerSigner, input.DataSuffix, input.OnClaimed)
+	}
+	if submitCtx.AuthorizerSubmitter == nil {
+		return &x402.SettleResponse{
+			Success:     false,
+			ErrorReason: ErrAuthorizerNotConfigured,
+			Transaction: "",
+			Network:     x402.Network(input.Network),
+		}, nil
+	}
+	return ExecuteClaim(ctx, submitCtx.AuthorizerSubmitter, payload, input.Network, input.DataSuffix, input.OnClaimed)
+}
+
+func submitClaimTransaction(
+	ctx context.Context,
+	signer evm.FacilitatorEvmSigner,
+	network string,
+	functionName string,
+	abiJSON []byte,
+	args []interface{},
+	dataSuffix []byte,
+	onClaimed OnClaimedRows,
+) (*x402.SettleResponse, error) {
+	net := x402.Network(network)
+	if _, simErr := signer.ReadContract(ctx, batchsettlement.BatchSettlementAddress, abiJSON, functionName, args...); simErr != nil {
 		return &x402.SettleResponse{ //nolint:nilerr // simulation failure → error encoded in response
 			Success:      false,
 			ErrorReason:  ErrClaimSimulationFailed,
 			ErrorMessage: simErr.Error(),
 			Transaction:  "",
-			Network:      network,
+			Network:      net,
 		}, nil
 	}
 
-	txHash, err := signer.WriteContract(
-		ctx,
-		batchsettlement.BatchSettlementAddress,
-		batchsettlement.BatchSettlementClaimWithSignatureABI,
-		"claimWithSignature",
-		dataSuffix,
-		claimArgs,
-		sigBytes,
-	)
+	txHash, err := signer.WriteContract(ctx, batchsettlement.BatchSettlementAddress, abiJSON, functionName, dataSuffix, args...)
 	if err != nil {
-		return nil, x402.NewSettleError(ErrClaimTransactionFailed, "", network, "",
-			fmt.Sprintf("claimWithSignature transaction failed: %s", err))
+		return nil, x402.NewSettleError(ErrClaimTransactionFailed, "", net, "",
+			fmt.Sprintf("%s transaction failed: %s", functionName, err))
 	}
-	if _, err := evm.WaitForSettleReceipt(ctx, signer, txHash, "", network,
-		ErrClaimTransactionFailed, ErrTransactionReverted); err != nil {
+	receipt, err := evm.WaitForSettleReceipt(ctx, signer, txHash, "", net,
+		ErrClaimTransactionFailed, ErrTransactionReverted)
+	if err != nil {
 		return nil, err
 	}
+	notifyClaimed(onClaimed, receipt)
 
 	return &x402.SettleResponse{
 		Success:     true,
 		Transaction: txHash,
-		Network:     network,
+		Network:     net,
 	}, nil
 }
 

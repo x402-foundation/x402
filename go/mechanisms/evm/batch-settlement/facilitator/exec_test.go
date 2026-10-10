@@ -1,16 +1,19 @@
 package facilitator
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
@@ -421,7 +424,7 @@ func TestSettleDeposit_BadAmount(t *testing.T) {
 			Amount: "not-a-number",
 		},
 	}
-	_, err := SettleDeposit(context.Background(), scheme.signer, payload, reqsFor(testNetwork), nil, nil, nil, nil, nil)
+	_, _, err := SettleDeposit(context.Background(), scheme.signer, payload, reqsFor(testNetwork), nil, nil, nil, nil, nil, nil)
 	var se *x402.SettleError
 	if !errors.As(err, &se) || se.ErrorReason != ErrInvalidDepositPayload {
 		t.Fatalf("got err = %v", err)
@@ -429,21 +432,177 @@ func TestSettleDeposit_BadAmount(t *testing.T) {
 }
 
 func TestSettleDeposit_MissingAuthorization(t *testing.T) {
-	// buildERC3009CollectorData returns an error when no auth is present, so
-	// SettleDeposit short-circuits with ErrInvalidDepositPayload before any RPC.
-	scheme := newScheme()
+	cfg := validConfig()
+	channelId, err := batchsettlement.ComputeChannelId(cfg, testNetwork)
+	if err != nil {
+		t.Fatalf("compute channel id: %v", err)
+	}
+	signer := &fakeFacilitatorSigner{addresses: []string{"0xfacilitator"}}
 	payload := &batchsettlement.BatchSettlementDepositPayload{
 		Type:          "deposit",
-		ChannelConfig: validConfig(),
+		ChannelConfig: cfg,
+		Voucher: batchsettlement.BatchSettlementVoucherFields{
+			ChannelId:          channelId,
+			MaxClaimableAmount: "100",
+			Signature:          "0x" + strings.Repeat("11", 65),
+		},
 		Deposit: batchsettlement.BatchSettlementDepositData{
 			Amount: "100",
 		},
 	}
-	_, err := SettleDeposit(context.Background(), scheme.signer, payload, reqsFor(testNetwork), nil, nil, nil, nil, nil)
+	_, _, err = SettleDeposit(context.Background(), signer, payload, reqsFor(testNetwork), nil, nil, nil, nil, nil, nil)
 	var se *x402.SettleError
-	if !errors.As(err, &se) || se.ErrorReason != ErrInvalidDepositPayload {
+	if !errors.As(err, &se) || se.ErrorReason != ErrErc3009AuthorizationRequired {
 		t.Fatalf("got err = %v", err)
 	}
+	if signer.writeCalls != 0 || signer.sendCalls != 0 {
+		t.Fatalf("missing authorization must not broadcast, writes=%d sends=%d", signer.writeCalls, signer.sendCalls)
+	}
+}
+
+// signedErc3009Deposit returns a deposit VerifyDeposit accepts for the payer key
+// used across facilitator tests.
+func signedErc3009Deposit(t *testing.T, network, amount, maxClaimable string) (*batchsettlement.BatchSettlementDepositPayload, types.PaymentRequirements) {
+	t.Helper()
+	clientSigner, err := evmsigners.NewClientSignerFromPrivateKey(managedAuthKeyHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := batchsettlement.ChannelConfig{
+		Payer:              managedPayer,
+		PayerAuthorizer:    managedPayer,
+		Receiver:           "0x3333333333333333333333333333333333333333",
+		ReceiverAuthorizer: "0x4444444444444444444444444444444444444444",
+		Token:              "0x5555555555555555555555555555555555555555",
+		WithdrawDelay:      900,
+		Salt:               "0x" + strings.Repeat("01", 32),
+	}
+	channelId, err := batchsettlement.ComputeChannelId(cfg, network)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chainID, err := evm.GetEvmChainId(network)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const tokenName, tokenVersion = "USD Coin", "2"
+	now := time.Now().Unix()
+	salt := "0x" + strings.Repeat("aa", 32)
+	depositAmount, ok := new(big.Int).SetString(amount, 10)
+	if !ok {
+		t.Fatalf("amount %s", amount)
+	}
+	erc3009Nonce, err := batchsettlement.BuildErc3009DepositNonce(channelId, salt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonceBytes, err := evm.HexToBytes(erc3009Nonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	erc3009Sig, err := clientSigner.SignTypedData(
+		context.Background(),
+		evm.TypedDataDomain{
+			Name:              tokenName,
+			Version:           tokenVersion,
+			ChainID:           chainID,
+			VerifyingContract: cfg.Token,
+		},
+		map[string][]evm.TypedDataField{
+			"EIP712Domain": {
+				{Name: "name", Type: "string"},
+				{Name: "version", Type: "string"},
+				{Name: "chainId", Type: "uint256"},
+				{Name: "verifyingContract", Type: "address"},
+			},
+			"ReceiveWithAuthorization": batchsettlement.ReceiveAuthorizationTypes["ReceiveWithAuthorization"],
+		},
+		"ReceiveWithAuthorization",
+		map[string]interface{}{
+			"from":        cfg.Payer,
+			"to":          batchsettlement.ERC3009DepositCollectorAddress,
+			"value":       depositAmount,
+			"validAfter":  big.NewInt(0),
+			"validBefore": big.NewInt(now + 3600),
+			"nonce":       nonceBytes,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	voucher, err := bsclient.SignVoucher(context.Background(), clientSigner, channelId, maxClaimable, network)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := &batchsettlement.BatchSettlementDepositPayload{
+		Type:          "deposit",
+		ChannelConfig: cfg,
+		Deposit: batchsettlement.BatchSettlementDepositData{
+			Amount: amount,
+			Authorization: batchsettlement.BatchSettlementDepositAuthorization{
+				Erc3009Authorization: &batchsettlement.BatchSettlementErc3009Authorization{
+					ValidAfter:  "0",
+					ValidBefore: fmt.Sprintf("%d", now+3600),
+					Salt:        salt,
+					Signature:   evm.BytesToHex(erc3009Sig),
+				},
+			},
+		},
+		Voucher: *voucher,
+	}
+	reqs := types.PaymentRequirements{
+		Scheme:            batchsettlement.SchemeBatched,
+		Network:           network,
+		PayTo:             cfg.Receiver,
+		Asset:             cfg.Token,
+		Amount:            amount,
+		MaxTimeoutSeconds: 3600,
+		Extra: map[string]interface{}{
+			"receiverAuthorizer":  cfg.ReceiverAuthorizer,
+			"assetTransferMethod": "eip3009",
+			"name":                tokenName,
+			"version":             tokenVersion,
+		},
+	}
+	return payload, reqs
+}
+
+func signedPermit2Deposit(t *testing.T, network, amount, maxClaimable string) (*batchsettlement.BatchSettlementDepositPayload, types.PaymentRequirements) {
+	t.Helper()
+	clientSigner, err := evmsigners.NewClientSignerFromPrivateKey(managedAuthKeyHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := batchsettlement.ChannelConfig{
+		Payer:              managedPayer,
+		PayerAuthorizer:    managedPayer,
+		Receiver:           "0x3333333333333333333333333333333333333333",
+		ReceiverAuthorizer: "0x4444444444444444444444444444444444444444",
+		Token:              "0x5555555555555555555555555555555555555555",
+		WithdrawDelay:      900,
+		Salt:               "0x" + strings.Repeat("02", 32),
+	}
+	reqs := types.PaymentRequirements{
+		Scheme:            batchsettlement.SchemeBatched,
+		Network:           network,
+		PayTo:             cfg.Receiver,
+		Asset:             cfg.Token,
+		Amount:            amount,
+		MaxTimeoutSeconds: 3600,
+		Extra: map[string]interface{}{
+			"receiverAuthorizer":  cfg.ReceiverAuthorizer,
+			"assetTransferMethod": string(batchsettlement.AssetTransferMethodPermit2),
+		},
+	}
+	payment, err := bsclient.CreateBatchedPermit2DepositPayload(context.Background(), clientSigner, reqs, cfg, amount, maxClaimable, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := batchsettlement.DepositPayloadFromMap(payment.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload, reqs
 }
 
 // TestSettleDeposit_PostReceiptBalanceNotDoubled pins that SettleDeposit anchors
@@ -451,16 +610,15 @@ func TestSettleDeposit_MissingAuthorization(t *testing.T) {
 // already reflects deposit=100 (balance=100), the settle extra must report 100
 // — not 200 from adding depositAmount again on top of the post-deposit read.
 func TestSettleDeposit_PostReceiptBalanceNotDoubled(t *testing.T) {
-	cfg := validConfig()
-	channelId, err := batchsettlement.ComputeChannelId(cfg, testNetwork)
-	if err != nil {
-		t.Fatalf("compute channel id: %v", err)
-	}
+	payload, reqs := signedErc3009Deposit(t, testNetwork, "100", "100")
 
 	var tryAggregateCalls int
 	var writeSeen bool
 	signer := &fakeFacilitatorSigner{
 		addresses: []string{"0xfacilitator"},
+		getBalance: func(string, string) (*big.Int, error) {
+			return big.NewInt(1000), nil
+		},
 		writeContract: func(functionName string, _ ...interface{}) (string, error) {
 			if functionName != "deposit" {
 				t.Fatalf("unexpected write: %s", functionName)
@@ -475,6 +633,9 @@ func TestSettleDeposit_PostReceiptBalanceNotDoubled(t *testing.T) {
 			return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: txHash}, nil
 		},
 		readContract: func(functionName string, _ ...interface{}) (interface{}, error) {
+			if functionName == "deposit" {
+				return nil, nil
+			}
 			if functionName != evm.FunctionTryAggregate {
 				return nil, errors.New("unexpected rpc")
 			}
@@ -488,23 +649,7 @@ func TestSettleDeposit_PostReceiptBalanceNotDoubled(t *testing.T) {
 		},
 	}
 
-	payload := &batchsettlement.BatchSettlementDepositPayload{
-		Type:          "deposit",
-		ChannelConfig: cfg,
-		Voucher: batchsettlement.BatchSettlementVoucherFields{
-			ChannelId:          channelId,
-			MaxClaimableAmount: "100",
-			Signature:          "0x" + strings.Repeat("22", 65),
-		},
-		Deposit: batchsettlement.BatchSettlementDepositData{
-			Amount: "100",
-			Authorization: batchsettlement.BatchSettlementDepositAuthorization{
-				Erc3009Authorization: goodErc3009Auth(),
-			},
-		},
-	}
-
-	resp, err := SettleDeposit(context.Background(), signer, payload, reqsFor(testNetwork), nil, nil, nil, nil, nil)
+	resp, _, err := SettleDeposit(context.Background(), signer, payload, reqs, nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("SettleDeposit: %v", err)
 	}
@@ -535,6 +680,11 @@ func (s *singleHashExtensionSigner) SendTransactions(_ context.Context, _ []erc2
 }
 
 func TestSettleDeposit_Erc20ApprovalAcceptsSingleExtensionHash(t *testing.T) {
+	payload, reqs := signedPermit2Deposit(t, testNetwork, "1000", "1000")
+	info := goodErc20ApprovalInfo()
+	info.From = payload.ChannelConfig.Payer
+	info.Asset = payload.ChannelConfig.Token
+	info.Amount = "1000"
 	const txHash = "0x" + "abababababababababababababababababababababababababababababababab"
 	extensionSigner := &singleHashExtensionSigner{
 		fakeFacilitatorSigner: &fakeFacilitatorSigner{
@@ -545,6 +695,9 @@ func TestSettleDeposit_Erc20ApprovalAcceptsSingleExtensionHash(t *testing.T) {
 		txHash: txHash,
 	}
 	signer := &fakeFacilitatorSigner{
+		getBalance: func(string, string) (*big.Int, error) {
+			return big.NewInt(10000), nil
+		},
 		waitForReceipt: func(gotTxHash string) (*evm.TransactionReceipt, error) {
 			return nil, errors.New("base signer must not wait for extension transaction")
 		},
@@ -564,23 +717,10 @@ func TestSettleDeposit_Erc20ApprovalAcceptsSingleExtensionHash(t *testing.T) {
 			Signer: extensionSigner,
 		},
 	})
-	payload := &batchsettlement.BatchSettlementDepositPayload{
-		Type:          "deposit",
-		ChannelConfig: goodPermit2Config(),
-		Voucher: batchsettlement.BatchSettlementVoucherFields{
-			ChannelId: testPermit2ChannelId,
-		},
-		Deposit: batchsettlement.BatchSettlementDepositData{
-			Amount: "1000",
-			Authorization: batchsettlement.BatchSettlementDepositAuthorization{
-				Permit2Authorization: goodPermit2Auth(),
-			},
-		},
-	}
 
-	resp, err := SettleDeposit(
-		context.Background(), signer, payload, reqsFor(testNetwork),
-		extensionsWithErc20Approval(goodErc20ApprovalInfo()), fctx, nil, nil, nil,
+	resp, _, err := SettleDeposit(
+		context.Background(), signer, payload, reqs,
+		extensionsWithErc20Approval(info), fctx, nil, nil, nil, nil,
 	)
 	if err != nil {
 		t.Fatalf("SettleDeposit: %v", err)
@@ -596,6 +736,11 @@ func TestSettleDeposit_Erc20ApprovalAcceptsSingleExtensionHash(t *testing.T) {
 // non-conforming sequential signer) but the channel balance never reflects the
 // deposit, settlement must fail rather than report success without funds moving.
 func TestSettleDeposit_Erc20ApprovalSingleHashWithoutBalanceIncreaseFails(t *testing.T) {
+	payload, reqs := signedPermit2Deposit(t, testNetwork, "1000", "1000")
+	info := goodErc20ApprovalInfo()
+	info.From = payload.ChannelConfig.Payer
+	info.Asset = payload.ChannelConfig.Token
+	info.Amount = "1000"
 	const txHash = "0x" + "abababababababababababababababababababababababababababababababab"
 	extensionSigner := &singleHashExtensionSigner{
 		fakeFacilitatorSigner: &fakeFacilitatorSigner{
@@ -606,6 +751,9 @@ func TestSettleDeposit_Erc20ApprovalSingleHashWithoutBalanceIncreaseFails(t *tes
 		txHash: txHash,
 	}
 	signer := &fakeFacilitatorSigner{
+		getBalance: func(string, string) (*big.Int, error) {
+			return big.NewInt(10000), nil
+		},
 		waitForReceipt: func(gotTxHash string) (*evm.TransactionReceipt, error) {
 			return nil, errors.New("base signer must not wait for extension transaction")
 		},
@@ -623,23 +771,10 @@ func TestSettleDeposit_Erc20ApprovalSingleHashWithoutBalanceIncreaseFails(t *tes
 			Signer: extensionSigner,
 		},
 	})
-	payload := &batchsettlement.BatchSettlementDepositPayload{
-		Type:          "deposit",
-		ChannelConfig: goodPermit2Config(),
-		Voucher: batchsettlement.BatchSettlementVoucherFields{
-			ChannelId: testPermit2ChannelId,
-		},
-		Deposit: batchsettlement.BatchSettlementDepositData{
-			Amount: "1000",
-			Authorization: batchsettlement.BatchSettlementDepositAuthorization{
-				Permit2Authorization: goodPermit2Auth(),
-			},
-		},
-	}
 
-	_, err := SettleDeposit(
-		context.Background(), signer, payload, reqsFor(testNetwork),
-		extensionsWithErc20Approval(goodErc20ApprovalInfo()), fctx, nil, nil, nil,
+	_, _, err := SettleDeposit(
+		context.Background(), signer, payload, reqs,
+		extensionsWithErc20Approval(info), fctx, nil, nil, nil, nil,
 	)
 	var se *x402.SettleError
 	if !errors.As(err, &se) || se.ErrorReason != ErrDepositTransactionFailed {
@@ -654,6 +789,11 @@ func TestSettleDeposit_Erc20ApprovalSingleHashWithoutBalanceIncreaseFails(t *tes
 // landed deposit from a non-conforming approve-only broadcast, so settlement is pending
 // (with the broadcast hash) for the caller to reconcile rather than an optimistic success.
 func TestSettleDeposit_Erc20ApprovalSingleHashWithReadErrorReturnsSettlementPending(t *testing.T) {
+	payload, reqs := signedPermit2Deposit(t, testNetwork, "1000", "1000")
+	info := goodErc20ApprovalInfo()
+	info.From = payload.ChannelConfig.Payer
+	info.Asset = payload.ChannelConfig.Token
+	info.Amount = "1000"
 	const txHash = "0x" + "abababababababababababababababababababababababababababababababab"
 	extensionSigner := &singleHashExtensionSigner{
 		fakeFacilitatorSigner: &fakeFacilitatorSigner{
@@ -663,13 +803,21 @@ func TestSettleDeposit_Erc20ApprovalSingleHashWithReadErrorReturnsSettlementPend
 		},
 		txHash: txHash,
 	}
+	channelReads := 0
 	signer := &fakeFacilitatorSigner{
+		getBalance: func(string, string) (*big.Int, error) {
+			return big.NewInt(10000), nil
+		},
 		waitForReceipt: func(gotTxHash string) (*evm.TransactionReceipt, error) {
 			return nil, errors.New("base signer must not wait for extension transaction")
 		},
 		readContract: func(functionName string, _ ...interface{}) (interface{}, error) {
 			if functionName != evm.FunctionTryAggregate {
 				return nil, errors.New("unexpected rpc")
+			}
+			channelReads++
+			if channelReads == 1 {
+				return multicallChannelStateResult(t, big.NewInt(0), big.NewInt(0), 0, big.NewInt(0)), nil
 			}
 			return nil, errors.New("rpc: channel state unavailable")
 		},
@@ -679,23 +827,10 @@ func TestSettleDeposit_Erc20ApprovalSingleHashWithReadErrorReturnsSettlementPend
 			Signer: extensionSigner,
 		},
 	})
-	payload := &batchsettlement.BatchSettlementDepositPayload{
-		Type:          "deposit",
-		ChannelConfig: goodPermit2Config(),
-		Voucher: batchsettlement.BatchSettlementVoucherFields{
-			ChannelId: testPermit2ChannelId,
-		},
-		Deposit: batchsettlement.BatchSettlementDepositData{
-			Amount: "1000",
-			Authorization: batchsettlement.BatchSettlementDepositAuthorization{
-				Permit2Authorization: goodPermit2Auth(),
-			},
-		},
-	}
 
-	_, err := SettleDeposit(
-		context.Background(), signer, payload, reqsFor(testNetwork),
-		extensionsWithErc20Approval(goodErc20ApprovalInfo()), fctx, nil, nil, nil,
+	_, _, err := SettleDeposit(
+		context.Background(), signer, payload, reqs,
+		extensionsWithErc20Approval(info), fctx, nil, nil, nil, nil,
 	)
 	var se *x402.SettleError
 	if !errors.As(err, &se) || se.ErrorReason != ErrSettlementPending {
@@ -704,8 +839,8 @@ func TestSettleDeposit_Erc20ApprovalSingleHashWithReadErrorReturnsSettlementPend
 	if se.Transaction != txHash {
 		t.Fatalf("transaction = %q, want %q", se.Transaction, txHash)
 	}
-	if se.Payer != testPermit2Payer {
-		t.Fatalf("payer = %q, want %q", se.Payer, testPermit2Payer)
+	if se.Payer != payload.ChannelConfig.Payer {
+		t.Fatalf("payer = %q, want %q", se.Payer, payload.ChannelConfig.Payer)
 	}
 }
 
@@ -1264,6 +1399,177 @@ func zeros(n int) string {
 type testMulticallResult struct {
 	Success    bool
 	ReturnData []byte
+}
+
+func multicallTryAggregateStub(t *testing.T, rpc *managedRPC, args ...interface{}) []testMulticallResult {
+	t.Helper()
+	calls, ok := multicallArgCalls(args)
+	if !ok {
+		return multicallChannelStateResult(t, rpc.balance, rpc.totalClaimed, rpc.withdrawAt, rpc.refundNonce)
+	}
+	if calls.Len() == 3 && bytes.Equal(multicallSelector(calls.Index(2)), refundNonceSelector()) {
+		view := managedChainView{Balance: rpc.balance, TotalClaimed: rpc.totalClaimed, WithdrawAt: rpc.withdrawAt}
+		if rpc.resyncView != nil {
+			view = *rpc.resyncView
+		} else if override, found := chainViewForCall(rpc, calls.Index(0)); found {
+			view = override
+		}
+		return multicallChannelStateResult(t, view.Balance, view.TotalClaimed, view.WithdrawAt, rpc.refundNonce)
+	}
+	if bytes.Equal(multicallSelector(calls.Index(0)), receiversSelector()) {
+		return multicallReceiversResults(t, rpc, calls)
+	}
+	if bytes.Equal(multicallSelector(calls.Index(0)), channelsSelector()) ||
+		bytes.Equal(multicallSelector(calls.Index(0)), pendingWithdrawalsSelector()) {
+		return multicallChannelReadResults(t, rpc, calls)
+	}
+	if calls.Len() == 3 {
+		return multicallChannelStateResult(t, rpc.balance, rpc.totalClaimed, rpc.withdrawAt, rpc.refundNonce)
+	}
+	return multicallReceiversResults(t, rpc, calls)
+}
+
+func multicallArgCalls(args []interface{}) (reflect.Value, bool) {
+	if len(args) < 2 {
+		return reflect.Value{}, false
+	}
+	calls := reflect.ValueOf(args[1])
+	if calls.Kind() != reflect.Slice || calls.Len() == 0 {
+		return reflect.Value{}, false
+	}
+	return calls, true
+}
+
+func multicallSelector(call reflect.Value) []byte {
+	data := call.FieldByName("CallData").Bytes()
+	if len(data) < 4 {
+		return nil
+	}
+	return data[:4]
+}
+
+func channelIDForCall(call reflect.Value) (string, bool) {
+	data := call.FieldByName("CallData").Bytes()
+	if len(data) < 36 {
+		return "", false
+	}
+	return strings.ToLower(common.BytesToHash(data[4:36]).Hex()), true
+}
+
+func chainViewForCall(rpc *managedRPC, call reflect.Value) (managedChainView, bool) {
+	if rpc == nil || rpc.chainViews == nil {
+		return managedChainView{}, false
+	}
+	id, ok := channelIDForCall(call)
+	if !ok {
+		return managedChainView{}, false
+	}
+	view, ok := rpc.chainViews[id]
+	return view, ok
+}
+
+func multicallChannelReadResults(t *testing.T, rpc *managedRPC, calls reflect.Value) []testMulticallResult {
+	t.Helper()
+	channelsABI, err := abi.JSON(strings.NewReader(string(batchsettlement.BatchSettlementChannelsABI)))
+	if err != nil {
+		t.Fatalf("channels abi: %v", err)
+	}
+	pendingABI, err := abi.JSON(strings.NewReader(string(batchsettlement.BatchSettlementPendingWithdrawalsABI)))
+	if err != nil {
+		t.Fatalf("pending withdrawals abi: %v", err)
+	}
+	out := make([]testMulticallResult, calls.Len())
+	for i := 0; i < calls.Len(); i++ {
+		call := calls.Index(i)
+		if id, found := channelIDForCall(call); found {
+			if _, fail := rpc.failReads[id]; fail {
+				out[i] = testMulticallResult{Success: false}
+				continue
+			}
+		}
+		view := managedChainView{Balance: rpc.balance, TotalClaimed: rpc.totalClaimed, WithdrawAt: rpc.withdrawAt}
+		if override, found := chainViewForCall(rpc, call); found {
+			view = override
+		}
+		sel := multicallSelector(call)
+		var data []byte
+		switch {
+		case bytes.Equal(sel, channelsSelector()):
+			data, err = channelsABI.Methods["channels"].Outputs.Pack(view.Balance, view.TotalClaimed)
+		case bytes.Equal(sel, pendingWithdrawalsSelector()):
+			data, err = pendingABI.Methods["pendingWithdrawals"].Outputs.Pack(big.NewInt(0), big.NewInt(view.WithdrawAt))
+		default:
+			t.Fatalf("unexpected claim preflight selector %x", sel)
+		}
+		if err != nil {
+			t.Fatalf("pack channel read: %v", err)
+		}
+		out[i] = testMulticallResult{Success: true, ReturnData: data}
+	}
+	return out
+}
+
+func channelsSelector() []byte {
+	return mustMethodID(batchsettlement.BatchSettlementChannelsABI, "channels")
+}
+
+func pendingWithdrawalsSelector() []byte {
+	return mustMethodID(batchsettlement.BatchSettlementPendingWithdrawalsABI, "pendingWithdrawals")
+}
+
+func receiversSelector() []byte {
+	return mustMethodID(batchsettlement.BatchSettlementReceiversABI, "receivers")
+}
+
+func refundNonceSelector() []byte {
+	return mustMethodID(batchsettlement.BatchSettlementRefundNonceABI, "refundNonce")
+}
+
+func mustMethodID(abiJSON []byte, name string) []byte {
+	parsed, err := abi.JSON(strings.NewReader(string(abiJSON)))
+	if err != nil {
+		panic(err)
+	}
+	return parsed.Methods[name].ID
+}
+
+func multicallReceiversResults(t *testing.T, rpc *managedRPC, calls reflect.Value) []testMulticallResult {
+	t.Helper()
+	receiversABI, err := abi.JSON(strings.NewReader(string(batchsettlement.BatchSettlementReceiversABI)))
+	if err != nil {
+		t.Fatalf("receivers abi: %v", err)
+	}
+	defaultData, err := receiversABI.Methods["receivers"].Outputs.Pack(rpc.receiverClaimed, rpc.receiverSettled)
+	if err != nil {
+		t.Fatalf("pack receivers: %v", err)
+	}
+	out := make([]testMulticallResult, calls.Len())
+	for i := range out {
+		call := calls.Index(i)
+		data := defaultData
+		if receiver, found := receiverForCall(call); found {
+			if _, fail := rpc.failReceivers[receiver]; fail {
+				out[i] = testMulticallResult{Success: false}
+				continue
+			}
+			if settled, ok := rpc.receiverSettledByAddr[receiver]; ok {
+				data, err = receiversABI.Methods["receivers"].Outputs.Pack(rpc.receiverClaimed, settled)
+				if err != nil {
+					t.Fatalf("pack receivers: %v", err)
+				}
+			}
+		}
+		out[i] = testMulticallResult{Success: true, ReturnData: data}
+	}
+	return out
+}
+
+func receiverForCall(call reflect.Value) (string, bool) {
+	data := call.FieldByName("CallData").Bytes()
+	if len(data) < 36 {
+		return "", false
+	}
+	return strings.ToLower(common.BytesToAddress(data[4:36]).Hex()), true
 }
 
 func multicallChannelStateResult(

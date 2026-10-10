@@ -57,7 +57,8 @@ func getRefundableAmount(
 
 // ExecuteRefundWithSignature executes a cooperative refund using receiverAuthorizer signature.
 // If RefundAuthorizerSignature or ClaimAuthorizerSignature are absent, the
-// authorizerSigner auto-signs them.
+// authorizerSigner auto-signs them. An optional onClaimed callback receives the row keys that
+// emitted Claimed in a bundled claim once the refund confirms.
 func ExecuteRefundWithSignature(
 	ctx context.Context,
 	signer evm.FacilitatorEvmSigner,
@@ -65,6 +66,19 @@ func ExecuteRefundWithSignature(
 	requirements types.PaymentRequirements,
 	authorizerSigner batchsettlement.AuthorizerSigner,
 	dataSuffix []byte,
+	onClaimed ...OnClaimedRows,
+) (*x402.SettleResponse, error) {
+	return executeRefundWithSignature(ctx, signer, payload, requirements, authorizerSigner, dataSuffix, firstOnClaimed(onClaimed))
+}
+
+func executeRefundWithSignature(
+	ctx context.Context,
+	signer evm.FacilitatorEvmSigner,
+	payload *batchsettlement.BatchSettlementEnrichedRefundPayload,
+	requirements types.PaymentRequirements,
+	authorizerSigner batchsettlement.AuthorizerSigner,
+	dataSuffix []byte,
+	onClaimed OnClaimedRows,
 ) (*x402.SettleResponse, error) {
 	network := x402.Network(requirements.Network)
 
@@ -216,10 +230,12 @@ func ExecuteRefundWithSignature(
 			return nil, x402.NewSettleError(ErrRefundTransactionFailed, "", network, "",
 				fmt.Sprintf("multicall (claim+refund) transaction failed: %s", err))
 		}
-		if _, err := evm.WaitForSettleReceipt(ctx, signer, txHash, payload.ChannelConfig.Payer, network,
-			ErrRefundTransactionFailed, ErrTransactionReverted); err != nil {
+		receipt, err := evm.WaitForSettleReceipt(ctx, signer, txHash, payload.ChannelConfig.Payer, network,
+			ErrRefundTransactionFailed, ErrTransactionReverted)
+		if err != nil {
 			return nil, err
 		}
+		notifyClaimed(onClaimed, receipt)
 
 		details := computeRefundSettlementDetails(ctx, signer, payload, channelId, preState, refundAmount)
 		return buildRefundResponse(txHash, network, payload.ChannelConfig.Payer, details), nil
@@ -420,4 +436,155 @@ func buildRefundResponse(
 			},
 		},
 	}
+}
+
+// SubmitRefundInput is the network, refund payload, and optional data suffix. OnClaimed, when
+// set, receives the row keys that emitted Claimed in a bundled claim once the refund confirms.
+type SubmitRefundInput struct {
+	Network    string
+	Payload    *batchsettlement.BatchSettlementEnrichedRefundPayload
+	DataSuffix []byte
+	OnClaimed  OnClaimedRows
+}
+
+// ExecuteRefund executes a cooperative refund via refund() as msg.sender. An optional onClaimed
+// callback receives the row keys that emitted Claimed in a bundled claim once the refund
+// confirms.
+func ExecuteRefund(
+	ctx context.Context,
+	signer evm.FacilitatorEvmSigner,
+	payload *batchsettlement.BatchSettlementEnrichedRefundPayload,
+	network string,
+	dataSuffix []byte,
+	onClaimed ...OnClaimedRows,
+) (*x402.SettleResponse, error) {
+	reqs := types.PaymentRequirements{Network: network}
+	refundAmount, ok := new(big.Int).SetString(payload.Amount, 10)
+	if !ok {
+		return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", x402.Network(network), "",
+			fmt.Sprintf("invalid refund amount: %s", payload.Amount))
+	}
+	configTuple := ToContractChannelConfig(payload.ChannelConfig)
+	call, err := buildDirectRefundCall(payload, configTuple, refundAmount)
+	if err != nil {
+		return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", x402.Network(network), "", err.Error())
+	}
+	return submitRefundCall(ctx, signer, payload, reqs, call.abiJSON, call.functionName, call.args, dataSuffix, refundAmount, firstOnClaimed(onClaimed))
+}
+
+// SubmitRefund dispatches a refund through the relay or direct submit path.
+// A payload that already has an authorizer signature always uses the relay
+// functions. Otherwise SubmitMode selects the path ("relay" when omitted).
+func SubmitRefund(ctx context.Context, input SubmitRefundInput, submitCtx SubmitContext) (*x402.SettleResponse, error) {
+	hasAuthorizerSignature := input.Payload.RefundAuthorizerSignature != "" || input.Payload.ClaimAuthorizerSignature != ""
+	reqs := types.PaymentRequirements{Network: input.Network}
+	if ShouldRelaySubmit(submitCtx.SubmitMode, hasAuthorizerSignature) {
+		return executeRefundWithSignature(ctx, submitCtx.Signer, input.Payload, reqs, submitCtx.AuthorizerSigner, input.DataSuffix, input.OnClaimed)
+	}
+	if submitCtx.AuthorizerSubmitter == nil {
+		return &x402.SettleResponse{
+			Success:     false,
+			ErrorReason: ErrAuthorizerNotConfigured,
+			Transaction: "",
+			Network:     x402.Network(input.Network),
+		}, nil
+	}
+	return ExecuteRefund(ctx, submitCtx.AuthorizerSubmitter, input.Payload, input.Network, input.DataSuffix, input.OnClaimed)
+}
+
+type refundCall struct {
+	functionName string
+	abiJSON      []byte
+	args         []interface{}
+}
+
+func buildDirectRefundCall(
+	payload *batchsettlement.BatchSettlementEnrichedRefundPayload,
+	configTuple ContractChannelConfigTuple,
+	refundAmount *big.Int,
+) (refundCall, error) {
+	if len(payload.Claims) == 0 {
+		return refundCall{
+			functionName: "refund",
+			abiJSON:      batchsettlement.BatchSettlementRefundABI,
+			args:         []interface{}{configTuple, refundAmount},
+		}, nil
+	}
+
+	claimAbi, err := abi.JSON(strings.NewReader(string(batchsettlement.BatchSettlementClaimABI)))
+	if err != nil {
+		return refundCall{}, fmt.Errorf("failed to load claim ABI: %s", err)
+	}
+	claimCalldata, err := claimAbi.Pack("claim", buildVoucherClaimArgs(payload.Claims))
+	if err != nil {
+		return refundCall{}, fmt.Errorf("failed to encode claim calldata: %s", err)
+	}
+
+	refundAbi, err := abi.JSON(strings.NewReader(string(batchsettlement.BatchSettlementRefundABI)))
+	if err != nil {
+		return refundCall{}, fmt.Errorf("failed to load refund ABI: %s", err)
+	}
+	refundCalldata, err := refundAbi.Pack("refund", configTuple, refundAmount)
+	if err != nil {
+		return refundCall{}, fmt.Errorf("failed to encode refund calldata: %s", err)
+	}
+	return refundCall{
+		functionName: "multicall",
+		abiJSON:      batchsettlement.BatchSettlementMulticallABI,
+		args:         []interface{}{[][]byte{claimCalldata, refundCalldata}},
+	}, nil
+}
+
+func submitRefundCall(
+	ctx context.Context,
+	signer evm.FacilitatorEvmSigner,
+	payload *batchsettlement.BatchSettlementEnrichedRefundPayload,
+	requirements types.PaymentRequirements,
+	abiJSON []byte,
+	functionName string,
+	args []interface{},
+	dataSuffix []byte,
+	refundAmount *big.Int,
+	onClaimed OnClaimedRows,
+) (*x402.SettleResponse, error) {
+	network := x402.Network(requirements.Network)
+	channelId, err := batchsettlement.ComputeChannelId(payload.ChannelConfig, string(network))
+	if err != nil {
+		return nil, x402.NewSettleError(ErrInvalidRefundPayload, payload.ChannelConfig.Payer, network, "",
+			fmt.Sprintf("failed to compute channel id: %s", err))
+	}
+	preState, _ := ReadChannelState(ctx, signer, channelId)
+	if refundableAmount, ok := getRefundableAmount(payload, preState, channelId, string(network), refundAmount); ok && refundableAmount.Sign() == 0 {
+		return &x402.SettleResponse{ //nolint:nilerr // no-op refund -> error encoded in response
+			Success:      false,
+			ErrorReason:  ErrRefundNoBalance,
+			ErrorMessage: "Nothing to refund",
+			Transaction:  "",
+			Network:      network,
+		}, nil
+	}
+
+	if _, simErr := signer.ReadContract(ctx, batchsettlement.BatchSettlementAddress, abiJSON, functionName, args...); simErr != nil {
+		return &x402.SettleResponse{ //nolint:nilerr // simulation failure → error encoded in response
+			Success:      false,
+			ErrorReason:  ErrRefundSimulationFailed,
+			ErrorMessage: simErr.Error(),
+			Transaction:  "",
+			Network:      network,
+		}, nil
+	}
+
+	txHash, err := signer.WriteContract(ctx, batchsettlement.BatchSettlementAddress, abiJSON, functionName, dataSuffix, args...)
+	if err != nil {
+		return nil, x402.NewSettleError(ErrRefundTransactionFailed, "", network, "",
+			fmt.Sprintf("%s transaction failed: %s", functionName, err))
+	}
+	receipt, err := evm.WaitForSettleReceipt(ctx, signer, txHash, payload.ChannelConfig.Payer, network,
+		ErrRefundTransactionFailed, ErrTransactionReverted)
+	if err != nil {
+		return nil, err
+	}
+	notifyClaimed(onClaimed, receipt)
+	details := computeRefundSettlementDetails(ctx, signer, payload, channelId, preState, refundAmount)
+	return buildRefundResponse(txHash, network, payload.ChannelConfig.Payer, details), nil
 }

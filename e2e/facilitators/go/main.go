@@ -38,6 +38,7 @@ import (
 	authcapturefacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/evm/auth-capture/facilitator"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 	batchedevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/facilitator"
+	channelstorage "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/storage"
 	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
 	exactevmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/v1/facilitator"
 	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/facilitator"
@@ -1000,6 +1001,12 @@ func main() {
 
 	facilitator := x402.Newx402Facilitator()
 	var evmSigner *realFacilitatorEvmSigner
+	var batchChannelManager *batchedevm.FacilitatorChannelManager
+
+	voucherStoreEnabled := func() bool {
+		raw := strings.TrimSpace(strings.ToLower(os.Getenv("E2E_FACILITATOR_VOUCHER_STORE")))
+		return raw == "1" || raw == "true" || raw == "yes"
+	}()
 
 	if evmPrivateKey != "" {
 		log.Printf("🌐 EVM Network: %s", evmNetwork)
@@ -1025,10 +1032,64 @@ func main() {
 			log.Fatalf("Failed to create batch-settlement authorizer: %v", err)
 		}
 		log.Printf("EVM Receiver Authorizer (batch-settlement): %s", batchedAuthorizer.Address())
-		facilitator.Register(
-			[]x402.Network{x402.Network(evmNetwork)},
-			batchedevm.NewBatchSettlementEvmScheme(evmSigner, batchedAuthorizer),
-		)
+
+		batchRefundIdentity := batchedevm.BatchSettlementEvmSchemeConfig{
+			ResolveCallerIdentity: func(_ batchedevm.DelegatedSettleContext) (string, error) {
+				return "x402-e2e", nil
+			},
+			DelegatedAuthStore: channelstorage.NewInMemoryDelegatedAuthStore(),
+		}
+		if voucherStoreEnabled {
+			store := channelstorage.NewInMemoryChannelStorage[*batchedevm.FacilitatorChannel]()
+			batchConfig := batchRefundIdentity
+			batchConfig.VoucherStore = &batchedevm.VoucherStoreConfig{
+				Storage:             store,
+				WithdrawDelay:       900,
+				SettleTargetStorage: channelstorage.NewInMemorySettleTargetStorage(),
+			}
+			batchScheme, err := batchedevm.NewBatchSettlementEvmSchemeWithConfig(evmSigner, batchedAuthorizer, &batchConfig)
+			if err != nil {
+				log.Fatalf("Failed to create batch-settlement scheme with voucher store: %v", err)
+			}
+			facilitator.Register(
+				[]x402.Network{x402.Network(evmNetwork)},
+				batchScheme,
+			)
+			batchChannelManager, err = batchScheme.CreateChannelManager(nil)
+			if err != nil {
+				log.Fatalf("Failed to create voucher-store channel manager: %v", err)
+			}
+			claimSecs, settleSecs, refundSecs, refundIdle := 60, 120, 180, 180
+			batchChannelManager.Start(batchedevm.FacilitatorAutoConfig{
+				ClaimIntervalSecs:  &claimSecs,
+				SettleIntervalSecs: &settleSecs,
+				RefundIntervalSecs: &refundSecs,
+				RefundIdleSecs:     &refundIdle,
+				MaxClaimsPerBatch:  100,
+				OnClaim: func(r batchedevm.FacilitatorClaimResult) {
+					log.Printf("[voucher store] Claimed %d vouchers (tx: %s)", r.Vouchers, r.Transaction)
+				},
+				OnSettle: func(r batchedevm.FacilitatorSettleResult) {
+					log.Printf("[voucher store] Settled %s (tx: %s)", r.Receiver, r.Transaction)
+				},
+				OnRefund: func(r batchedevm.FacilitatorRefundResult) {
+					log.Printf("[voucher store] Refunded channel %s (tx: %s)", r.Channel, r.Transaction)
+				},
+				OnError: func(e error) {
+					log.Printf("[voucher store] Settlement error: %v", e)
+				},
+			})
+			log.Printf("Facilitator voucher store: enabled (in-memory, withdrawDelay 900s)")
+		} else {
+			batchScheme, err := batchedevm.NewBatchSettlementEvmSchemeWithConfig(evmSigner, batchedAuthorizer, &batchRefundIdentity)
+			if err != nil {
+				log.Fatalf("Failed to create batch-settlement scheme: %v", err)
+			}
+			facilitator.Register(
+				[]x402.Network{x402.Network(evmNetwork)},
+				batchScheme,
+			)
+		}
 
 		authCaptureDelegatedStorage := authcapturefacilitator.NewInMemoryAuthCaptureDelegatedAuthStorage()
 		authCaptureAuthorizer, err := newBatchedAuthorizerSigner(evmPrivateKey)
@@ -1437,6 +1498,14 @@ func main() {
 		// Give time for response to be sent, then exit
 		go func() {
 			time.Sleep(100 * time.Millisecond)
+			if batchChannelManager != nil {
+				log.Println("Shutting down — flushing voucher-store claims…")
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if err := batchChannelManager.Stop(ctx, true); err != nil {
+					log.Printf("Channel manager stop: %v", err)
+				}
+			}
 			os.Exit(0)
 		}()
 	})
