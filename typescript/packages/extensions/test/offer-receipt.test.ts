@@ -359,6 +359,117 @@ describe("x402 Offer/Receipt Extension", () => {
     });
   });
 
+  describe("EIP-712 verification rejects malformed payloads with a defined error", () => {
+    const account = privateKeyToAccount(TEST_PRIVATE_KEY);
+    const receiptInput = {
+      resourceUrl: "https://api.example.com/resource",
+      payer: "0x857b06519E91e3A54538791bDbb0E22373e36b66",
+      network: "eip155:8453",
+    };
+    const offerInput = {
+      acceptIndex: 0,
+      scheme: "exact",
+      network: "eip155:8453",
+      asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      payTo: "0x1234567890123456789012345678901234567890",
+      amount: "10000",
+    };
+
+    it('a well-formed receipt (transaction set to "") still verifies', async () => {
+      const receipt = await createReceiptEIP712(receiptInput, p => account.signTypedData(p));
+      const { signer } = await verifyReceiptSignatureEIP712(receipt);
+      expect(signer.toLowerCase()).toBe(account.address.toLowerCase());
+    });
+
+    for (const field of ["version", "network", "resourceUrl", "payer", "issuedAt", "transaction"]) {
+      it(`receipt without "${field}" rejects (no TypeError)`, async () => {
+        const receipt = await createReceiptEIP712(receiptInput, p => account.signTypedData(p));
+        const payload = { ...receipt.payload } as Record<string, unknown>;
+        delete payload[field];
+        await expect(
+          verifyReceiptSignatureEIP712({ ...receipt, payload } as typeof receipt),
+        ).rejects.toThrow(
+          `Invalid receipt: missing or malformed payload (field "${field}" is missing)`,
+        );
+      });
+    }
+
+    it("receipt with version as a string or a negative issuedAt rejects", async () => {
+      const receipt = await createReceiptEIP712(receiptInput, p => account.signTypedData(p));
+      await expect(
+        verifyReceiptSignatureEIP712({
+          ...receipt,
+          payload: { ...receipt.payload, version: "1" },
+        } as unknown as typeof receipt),
+      ).rejects.toThrow('(field "version" is not a valid uint256)');
+      await expect(
+        verifyReceiptSignatureEIP712({ ...receipt, payload: { ...receipt.payload, issuedAt: -1 } }),
+      ).rejects.toThrow('(field "issuedAt" is not a valid uint256)');
+    });
+
+    for (const field of [
+      "version",
+      "resourceUrl",
+      "scheme",
+      "network",
+      "asset",
+      "payTo",
+      "amount",
+      "validUntil",
+    ]) {
+      it(`offer without "${field}" rejects (no TypeError)`, async () => {
+        const offer = await createOfferEIP712("https://api.example.com/resource", offerInput, p =>
+          account.signTypedData(p),
+        );
+        const payload = { ...offer.payload } as Record<string, unknown>;
+        delete payload[field];
+        await expect(
+          verifyOfferSignatureEIP712({ ...offer, payload } as typeof offer),
+        ).rejects.toThrow(
+          `Invalid offer: missing or malformed payload (field "${field}" is missing)`,
+        );
+      });
+    }
+
+    it("a well-formed offer still verifies", async () => {
+      const offer = await createOfferEIP712("https://api.example.com/resource", offerInput, p =>
+        account.signTypedData(p),
+      );
+      const { signer } = await verifyOfferSignatureEIP712(offer);
+      expect(signer.toLowerCase()).toBe(account.address.toLowerCase());
+    });
+
+    it("a correctly signed offer with version 2 rejects (only version 1 is defined, §4.5 step 2)", async () => {
+      const offer = await createOfferEIP712("https://api.example.com/resource", offerInput, p =>
+        account.signTypedData(p),
+      );
+      const payload = { ...offer.payload, version: 2 };
+      const signature = await account.signTypedData({
+        domain: createOfferDomain(),
+        types: OFFER_TYPES,
+        primaryType: "Offer",
+        message: prepareOfferForEIP712(payload) as unknown as Record<string, unknown>,
+      });
+      await expect(verifyOfferSignatureEIP712({ ...offer, payload, signature })).rejects.toThrow(
+        "Invalid offer: unsupported version 2 (only version 1 is defined)",
+      );
+    });
+
+    it("a correctly signed receipt with version 2 rejects (only version 1 is defined, §5.5 step 2)", async () => {
+      const receipt = await createReceiptEIP712(receiptInput, p => account.signTypedData(p));
+      const payload = { ...receipt.payload, version: 2 };
+      const signature = await account.signTypedData({
+        domain: createReceiptDomain(),
+        types: RECEIPT_TYPES,
+        primaryType: "Receipt",
+        message: prepareReceiptForEIP712(payload) as unknown as Record<string, unknown>,
+      });
+      await expect(
+        verifyReceiptSignatureEIP712({ ...receipt, payload, signature }),
+      ).rejects.toThrow("Invalid receipt: unsupported version 2 (only version 1 is defined)");
+    });
+  });
+
   describe("JCS Canonicalization (RFC 8785)", () => {
     it("sorts object keys lexicographically", () => {
       expect(canonicalize({ z: 1, a: 2 })).toBe('{"a":2,"z":1}');
@@ -1591,6 +1702,30 @@ describe("Signature Verification", () => {
           "No public key provided and JWS header missing kid",
         );
       });
+
+      it("a correctly signed offer with version 2 rejects (only version 1 is defined, §4.5 step 3)", async () => {
+        const keyPair = await generateES256KKeyPair();
+        const signer = await createES256KSigner(keyPair.privateKey, "did:web:example.com");
+
+        const offer = await createOfferJWS(
+          "https://api.example.com/resource",
+          {
+            acceptIndex: 0,
+            scheme: "exact",
+            network: "eip155:8453",
+            asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            payTo: "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+            amount: "10000",
+          },
+          signer,
+        );
+        const payload = { ...extractJWSPayload<OfferPayload>(offer.signature), version: 2 };
+        const jws = await createJWS(payload, signer);
+
+        await expect(
+          verifyOfferSignatureJWS({ ...offer, signature: jws }, keyPair.publicKey),
+        ).rejects.toThrow("Invalid offer: unsupported version 2 (only version 1 is defined)");
+      });
     });
 
     describe("verifyReceiptSignatureJWS", () => {
@@ -1635,6 +1770,26 @@ describe("Signature Verification", () => {
 
         expect(payload.resourceUrl).toBe("https://api.example.com/resource");
         expect(payload.transaction).toBe("0xabcdef");
+      });
+
+      it("a correctly signed receipt with version 2 rejects (only version 1 is defined, §5.5 step 3)", async () => {
+        const keyPair = await generateES256KKeyPair();
+        const signer = await createES256KSigner(keyPair.privateKey, "did:web:example.com");
+
+        const receipt = await createReceiptJWS(
+          {
+            resourceUrl: "https://api.example.com/resource",
+            payer: "0x857b06519E91e3A54538791bDbb0E22373e36b66",
+            network: "eip155:8453",
+          },
+          signer,
+        );
+        const payload = { ...extractJWSPayload<ReceiptPayload>(receipt.signature), version: 2 };
+        const jws = await createJWS(payload, signer);
+
+        await expect(
+          verifyReceiptSignatureJWS({ ...receipt, signature: jws }, keyPair.publicKey),
+        ).rejects.toThrow("Invalid receipt: unsupported version 2 (only version 1 is defined)");
       });
     });
   });
