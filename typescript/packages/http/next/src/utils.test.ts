@@ -262,7 +262,7 @@ describe("createRequestContext", () => {
 });
 
 describe("handlePaymentError", () => {
-  it("returns HTML response when isHtml is true", () => {
+  it("returns HTML response when isHtml is true", async () => {
     const response = handlePaymentError({
       status: 402,
       body: "<html>Paywall</html>",
@@ -273,6 +273,7 @@ describe("handlePaymentError", () => {
     expect(response.status).toBe(402);
     expect(response.headers.get("Content-Type")).toBe("text/html");
     expect(response.headers.get("X-Custom")).toBe("value");
+    expect(await response.text()).toBe("<html>Paywall</html>");
   });
 
   it("returns JSON response when isHtml is false", async () => {
