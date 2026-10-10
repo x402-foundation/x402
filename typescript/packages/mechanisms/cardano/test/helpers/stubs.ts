@@ -29,6 +29,8 @@ import type { ClientCardanoSigner, FacilitatorCardanoSigner } from "../../src/si
 import type { CardanoExtraScript } from "../../src/types";
 import { decodeCardanoTransaction } from "../../src/utils";
 import { buildSignedTx, getFixtureInputSnapshot } from "./buildSignedTx";
+import { REQUEST_COMMITMENT_METADATA_LABEL } from "../../src/exact/requestCommitment/binding";
+import { encodeRequestCommitmentMetadatum } from "../../src/exact/requestCommitment/transaction";
 
 /** `coinsPerUtxoByte` used by the offline fixtures (current mainnet value). */
 export const STUB_COINS_PER_UTXO_BYTE = 4310n;
@@ -181,7 +183,9 @@ export async function buildStubMasumiLockTx(
  *
  * @returns A client signer stub.
  */
-export function stubClientSigner(): ClientCardanoSigner {
+export function stubClientSigner(
+  options: { ignoreRequestCommitment?: boolean } = {},
+): ClientCardanoSigner {
   return {
     getAddress: () => PAYER_ADDRESS,
     buildAndSignPaymentTransaction: async input => {
@@ -213,6 +217,18 @@ export function stubClientSigner(): ClientCardanoSigner {
         ttlSlot: TTL_SLOT,
         network: input.network,
         ...(scriptDatum ? { datum: scriptDatum } : {}),
+        // Embed the request commitment exactly as the reference signer does.
+        ...(input.requestCommitment && !options.ignoreRequestCommitment
+          ? {
+              metadata: {
+                label: REQUEST_COMMITMENT_METADATA_LABEL,
+                metadatum: encodeRequestCommitmentMetadatum(
+                  input.requestCommitment.profile,
+                  input.requestCommitment.hash,
+                ),
+              },
+            }
+          : {}),
       });
       return { transaction: built.transaction, nonce: built.nonce };
     },

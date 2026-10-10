@@ -30,6 +30,14 @@ import { LOVELACE_ASSET, USDM_PREPROD_ASSET } from "../../src/constants";
 import { masumiEscrowAddress } from "../../src/exact/masumi/blueprint";
 import { toMasumiSellerSigner } from "../../src/exact/masumi/issue";
 import { buildScriptDatumInline } from "../../src/exact/script/datum";
+import {
+  CARDANO_REQUEST_COMMITMENT,
+  buildHttpBinding,
+  buildRequestCommitment,
+  createRequestCommitmentServerExtension,
+  declareRequestCommitmentExtension,
+  randomSalt,
+} from "../../src/exact/requestCommitment";
 import { decodeCardanoTransaction, slotToPosixMs } from "../../src/utils";
 import { buildSignedTx, getFixtureInputSnapshot } from "../helpers/buildSignedTx";
 import { issueMasumiRequirements } from "../helpers/masumi";
@@ -950,6 +958,99 @@ describe.skipIf(!LIVE_READY)("Cardano Integration Tests (live preprod)", () => {
       `${settleResponse.errorReason}: ${settleResponse.errorMessage ?? ""}`,
     ).toBe(true);
     expect(settleResponse.transaction).toMatch(/^[0-9a-f]{64}$/);
+  }, 300_000);
+
+  it("settles a payment carrying a request commitment and the chain records it", async () => {
+    const ORIGIN = "https://api.example.com";
+    const request = { method: "GET", url: `${ORIGIN}/article/A`, headers: {} };
+    // A fresh salt per run, fixed here only so the test knows what lands on-chain.
+    const salt = randomSalt();
+    const expected = buildRequestCommitment(buildHttpBinding(request, []), salt).digest;
+    const adapter = {
+      getHeader: () => undefined,
+      getMethod: () => "GET",
+      getUrl: () => "/article/A",
+    };
+    const transport = { request: { adapter } };
+    const declared = {
+      [CARDANO_REQUEST_COMMITMENT]: declareRequestCommitmentExtension({ required: true }),
+    };
+
+    const clientSigner = toClientCardanoSigner({
+      mnemonic: LIVE_ENV.clientMnemonic!,
+      network: NETWORK,
+      provider,
+    });
+    await waitForFreshUtxo(clientSigner.getAddress());
+    const client = x402Client.fromConfig({
+      schemes: [
+        {
+          network: NETWORK,
+          client: new ExactCardanoClient(clientSigner, {
+            requestCommitmentRequest: () => request,
+            requestCommitmentSalt: () => salt,
+          }),
+        },
+      ],
+      spendControls: false,
+    });
+    const facilitator = new x402Facilitator().register(
+      NETWORK,
+      new ExactCardanoFacilitator(
+        toFacilitatorCardanoSigner({ network: NETWORK, provider, awaitConfirmation: false }),
+      ),
+    );
+    const server = new x402ResourceServer(new CardanoFacilitatorClient(facilitator));
+    server.register(NETWORK, new ExactCardanoServer());
+    server.registerExtension(createRequestCommitmentServerExtension({ publicOrigin: ORIGIN }));
+    await server.initialize();
+
+    const accepts = [
+      buildRequirements(LIVE_ENV.payTo!, "1000000", LOVELACE_ASSET, {
+        confirmationPolicy: LIVE_CONFIRMATION_POLICY,
+      }),
+    ];
+    const paymentRequired = await server.createPaymentRequiredResponse(
+      accepts,
+      { url: `${ORIGIN}/article/A`, description: "article", mimeType: "application/json" },
+      undefined,
+      server.enrichExtensions(declared, transport.request),
+      transport,
+    );
+    const paymentPayload = await client.createPaymentPayload(paymentRequired);
+    const accepted = server.findMatchingRequirements(accepts, paymentPayload);
+    expect(accepted).toBeDefined();
+
+    const enriched = server.enrichExtensions(declared, transport.request);
+    const verifyResponse = await server.verifyPayment(
+      paymentPayload,
+      accepted!,
+      enriched,
+      transport,
+    );
+    expect(verifyResponse.isValid, `verify failed: ${verifyResponse.invalidReason}`).toBe(true);
+
+    lastSpentNonce = (paymentPayload.payload as { nonce: string }).nonce;
+    const settleResponse = await server.settlePayment(paymentPayload, accepted!);
+    expect(
+      settleResponse.success,
+      `${settleResponse.errorReason}: ${settleResponse.errorMessage ?? ""}`,
+    ).toBe(true);
+
+    // Read the metadata back from the chain, not from the bytes we built. The
+    // label-402 row's payload carries h as hex whether Blockfrost renders it as
+    // JSON ("0x…") or CBOR, so the row is matched on the hex digest.
+    const response = await fetch(
+      `${provider.blockfrost.baseUrl}/txs/${settleResponse.transaction}/metadata`,
+      { headers: { project_id: provider.blockfrost.projectId } },
+    );
+    expect(response.ok, `Blockfrost metadata lookup failed: ${response.status}`).toBe(true);
+    const rows = (await response.json()) as Array<{ label: string }>;
+    const row = rows.find(r => r.label === "402");
+    expect(row, `label 402 not found on chain: ${JSON.stringify(rows)}`).toBeDefined();
+    expect(JSON.stringify(row)).toContain(expected);
+    // Printed so the run leaves a public, checkable transaction id.
+    console.log(`request commitment on preprod: tx ${settleResponse.transaction}, h ${expected}`);
   }, 300_000);
 
   it("verifies and settles a Masumi escrow lock", async () => {

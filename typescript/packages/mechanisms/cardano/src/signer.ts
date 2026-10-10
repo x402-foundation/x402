@@ -37,6 +37,8 @@ import {
 } from "./exact/masumi/verify";
 import { isKeyCredentialAddressOn, validateMasumiExtra } from "./exact/masumi/schema";
 import { buildScriptDatumInline } from "./exact/script/datum";
+import { REQUEST_COMMITMENT_METADATA_LABEL } from "./exact/requestCommitment/binding";
+import { encodeRequestCommitmentMetadatum } from "./exact/requestCommitment/transaction";
 import { DEFAULT_CARDANO_PROVIDER_TIMEOUT_MS } from "./limits";
 import type { CardanoExtra, CardanoExtraMasumi, CardanoExtraScript } from "./types";
 import { decodeCardanoTransactionBytes, parseAssetUnit, parseUtxoRef } from "./utils";
@@ -229,6 +231,12 @@ export interface ClientCardanoSignInput {
   extra?: Record<string, unknown>;
   /** Protected resource, used to validate registered Masumi agent endpoints. */
   resource?: ResourceInfo;
+  /**
+   * Request commitment to embed as transaction metadata under label 402
+   * (`cardano-request-commitment`). Signers MUST embed it before signing when
+   * present; the client scheme refuses a signed transaction that lacks it.
+   */
+  requestCommitment?: { profile: string; hash: string };
 }
 
 /**
@@ -732,26 +740,38 @@ export function toClientCardanoSigner(config: ClientCardanoSignerConfig): Client
         ? BigInt(masumiExtra.terms.payByTime)
         : BigInt(Date.now()) + BigInt(input.maxTimeoutSeconds) * 1000n;
 
+      let txBuilder = client
+        .newTx()
+        // .collectFrom() with a specific UTXO ensures the nonce appears as an input (rule 5).
+        // Additional UTXOs from the wallet may be auto-selected as needed to satisfy the output and fees.
+        .collectFrom({ inputs: [nonceUtxo] })
+        .payToAddress({
+          address: Address.fromBech32(input.payTo),
+          assets: outputAssets,
+          ...(paymentDatum ? { datum: paymentDatum } : {}),
+        })
+        .setValidity({ to: ttlMs });
+      if (input.requestCommitment) {
+        // Attached before build so the body's auxiliary_data_hash commits to it
+        // and the buyer's signature covers it.
+        txBuilder = txBuilder.attachMetadata({
+          label: REQUEST_COMMITMENT_METADATA_LABEL,
+          metadata: encodeRequestCommitmentMetadatum(
+            input.requestCommitment.profile,
+            input.requestCommitment.hash,
+          ),
+        });
+      }
+
       const signBuilder = await withCardanoProviderTimeout(
-        client
-          .newTx()
-          // .collectFrom() with a specific UTXO ensures the nonce appears as an input (rule 5).
-          // Additional UTXOs from the wallet may be auto-selected as needed to satisfy the output and fees.
-          .collectFrom({ inputs: [nonceUtxo] })
-          .payToAddress({
-            address: Address.fromBech32(input.payTo),
-            assets: outputAssets,
-            ...(paymentDatum ? { datum: paymentDatum } : {}),
-          })
-          .setValidity({ to: ttlMs })
-          .build({
-            changeAddress,
-            // Bump the output to the protocol min-UTXO for native-asset outputs
-            // and for datum-bearing outputs (an attached datum raises it). A
-            // Masumi lock already carries its exact structural lovelace, and
-            // raising it would break `locked == requested + collateral`.
-            autoMinUtxo: masumiExtra ? false : !isLovelace || paymentDatum !== undefined,
-          }),
+        txBuilder.build({
+          changeAddress,
+          // Bump the output to the protocol min-UTXO for native-asset outputs
+          // and for datum-bearing outputs (an attached datum raises it). A
+          // Masumi lock already carries its exact structural lovelace, and
+          // raising it would break `locked == requested + collateral`.
+          autoMinUtxo: masumiExtra ? false : !isLovelace || paymentDatum !== undefined,
+        }),
         timeoutMs,
         "buildTransaction",
       );
@@ -762,7 +782,9 @@ export function toClientCardanoSigner(config: ClientCardanoSignerConfig): Client
         body: unsigned.body,
         witnessSet: submitBuilder.witnessSet,
         isValid: true,
-        auxiliaryData: null,
+        // Keep the auxiliary data the body commits to; dropping it would leave
+        // auxiliary_data_hash pointing at nothing and the ledger would reject the tx.
+        auxiliaryData: unsigned.auxiliaryData ?? null,
       });
 
       if (masumiExtra) {
