@@ -19,13 +19,14 @@ export type {
 } from "./client";
 
 // Server exports
-export { createPaymentWrapper } from "./server";
+export { createPaymentWrapper, captureRawToolCalls } from "./server";
 export type {
   PaymentWrapperConfig,
   PaymentWrappedHandler,
   WrappedToolResult,
   ToolResult,
   MCPToolCallback,
+  MCPPaymentTransportContext,
 } from "./server";
 
 // Type exports
@@ -38,6 +39,7 @@ export {
 export type {
   // Core MCP types
   MCPToolContext,
+  MCPRawToolCall,
   MCPToolPaymentConfig,
   MCPPaymentProcessResult,
   MCPPaymentError,

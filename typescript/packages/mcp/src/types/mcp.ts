@@ -61,6 +61,30 @@ export interface MCPToolContext {
 }
 
 /**
+ * The `params` of an MCP `tools/call` request exactly as the server received
+ * them, before the MCP SDK validated the arguments against the tool's input
+ * schema (so without defaults applied and without unknown keys stripped).
+ *
+ * Request-bound payment schemes use this to bind the payment to the call the
+ * client actually made. The object is a frozen deep copy taken when the
+ * request arrived, so neither the tool handler nor a scheme can change it.
+ * A member the client omitted is absent, not `undefined` or `{}`.
+ *
+ * Only available when the server opted in with `captureRawToolCalls`.
+ */
+export interface MCPRawToolCall {
+  /** `params.name`: the tool name the client called. */
+  readonly name: string;
+  /** `params.arguments` as sent; absent when the client omitted them. */
+  readonly arguments?: Readonly<Record<string, unknown>>;
+  /**
+   * `params._meta` as sent, including protocol members such as
+   * `x402/payment` and `progressToken`; absent when the client omitted it.
+   */
+  readonly _meta?: Readonly<Record<string, unknown>>;
+}
+
+/**
  * Payment configuration for a paid MCP tool
  */
 export interface MCPToolPaymentConfig {
