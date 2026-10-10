@@ -78,8 +78,10 @@ paid. A client MUST NOT use an adapter that cannot return the preimage.
 
 A receiver adapter MUST be able to create a fresh invoice for an exact
 millisatoshi amount with a caller-supplied BOLT11 description hash. The resource
-server MUST have exclusive invoice-issuance authority for the receiver key in
-`payTo`; an untrusted party MUST NOT be able to create invoices signed by that key.
+server MUST either have exclusive invoice-issuance authority for the receiver key
+in `payTo` or meet the shared-receiver requirements in
+[Receiver Key Isolation](#receiver-key-isolation). Either way, an untrusted party
+MUST NOT be able to create an invoice signed by that key that the server accepts.
 
 ## Amounts
 
@@ -210,8 +212,10 @@ hashes.
 
 The payment hash identifies the invoice, not a particular request attempt.
 An unused proof MUST be accepted for another challenge with the same request
-binding and payment terms if all validation rules pass. Servers need not track
-issued payment hashes per challenge.
+binding and payment terms if all validation rules pass. Servers with exclusive
+issuance authority need not track issued payment hashes per challenge; servers
+on a shared receiver key track them as
+[Receiver Key Isolation](#receiver-key-isolation) requires.
 
 The server MUST select the profile for the operation being purchased. MCP tool
 calls MUST use `mcp:1`, including when MCP uses an HTTP transport. Other HTTP
@@ -710,15 +714,37 @@ the receiver node key.
 
 Request binding does not identify the payer. A disclosed preimage and invoice
 remain bearer proof for the bound request; replay protection permits at most one
-successful claim. No server challenge store or receiver lookup is required.
+successful claim. A server with exclusive issuance authority needs no challenge
+store or receiver lookup.
 
 ### Receiver Key Isolation
 
-`payTo` binds the invoice to the receiver node. A shared custodial node is not
-compatible if an untrusted tenant can create invoices under the same node key. The
-tenant could pay its own invoice and use the preimage against another tenant's
-payment requirement. A compliant deployment MUST give the resource server
-exclusive invoice-issuance authority for the receiver key.
+`payTo` binds the invoice to the receiver node. If an untrusted party can create
+invoices under the same key, as other tenants of a custodial or hosted node can,
+it could pay its own invoice (or read the preimage when the invoice is created)
+and present the proof against another party's payment requirement. Facilitator
+validation cannot detect this: the invoice is correctly signed by `payTo`.
+
+A compliant deployment MUST do one of the following:
+
+1. Give the resource server exclusive invoice-issuance authority for the receiver
+   key. No further tracking is required.
+2. If the receiver key is shared with parties the resource server does not
+   trust, the resource server MUST, in addition to every other rule in this
+   document:
+   1. Durably record the payment hash of every invoice it issues for that key,
+      with its network, amount, and request hash, before returning the challenge.
+   2. Before calling `/settle`, reject any accepted invoice whose payment hash it
+      did not issue with the same network, amount, and request hash.
+   3. Before processing the request, confirm with the receiver node that the
+      invoice was settled to it.
+
+Requirement 2.2 stops a co-tenant's self-issued invoice. Requirement 2.3 stops a
+preimage disclosed by the shared node rather than earned by payment. These checks
+belong to the resource server, because only it knows which invoices it issued;
+facilitator validation is unchanged and still needs no receiver access. A
+rejected invoice under 2.2 or 2.3 is never sent to `/settle`, so its payment hash
+is not consumed.
 
 ### Invoice Issuance Denial of Service
 
