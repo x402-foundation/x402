@@ -372,6 +372,156 @@ describe("x402 Offer/Receipt Extension", () => {
     it("handles -0 as 0", () => {
       expect(canonicalize({ n: -0 })).toBe('{"n":0}');
     });
+
+    describe("RFC 8785 §3.2.2 serialization example", () => {
+      it("matches the published output", () => {
+        const input = String.raw`{
+          "numbers": [333333333.33333329, 1E30, 4.50, 2e-3, 0.000000000000000000000000001],
+          "string": "\u20ac$\u000F\u000aA'\u0042\u0022\u005c\\\"\/",
+          "literals": [null, true, false]
+        }`;
+        const expected = String.raw`{"literals":[null,true,false],"numbers":[333333333.3333333,1e+30,4.5,0.002,1e-27],"string":"€$\u000f\nA'B\"\\\\\"/"}`;
+        expect(canonicalize(JSON.parse(input))).toBe(expected);
+      });
+    });
+
+    describe("RFC 8785 §3.2.3 sorting example", () => {
+      it("sorts keys by UTF-16 code units and escapes \\r as a short escape", () => {
+        const input = {
+          "\u20ac": "Euro Sign",
+          "\r": "Carriage Return",
+          "\ufb33": "Hebrew Letter Dalet With Dagesh",
+          "1": "One",
+          "\ud83d\ude00": "Emoji: Grinning Face",
+          "\u0080": "Control",
+          "\u00f6": "Latin Small Letter O With Diaeresis",
+        };
+        const expected =
+          '{"\\r":"Carriage Return","1":"One","\u0080":"Control",' +
+          '"\u00f6":"Latin Small Letter O With Diaeresis","\u20ac":"Euro Sign",' +
+          '"\ud83d\ude00":"Emoji: Grinning Face","\ufb33":"Hebrew Letter Dalet With Dagesh"}';
+        expect(canonicalize(input)).toBe(expected);
+      });
+    });
+
+    describe("RFC 8785 Appendix B number serialization", () => {
+      const vectors: Array<[string, string]> = [
+        ["0000000000000000", "0"],
+        ["8000000000000000", "0"],
+        ["0000000000000001", "5e-324"],
+        ["8000000000000001", "-5e-324"],
+        ["7fefffffffffffff", "1.7976931348623157e+308"],
+        ["ffefffffffffffff", "-1.7976931348623157e+308"],
+        ["4340000000000000", "9007199254740992"],
+        ["c340000000000000", "-9007199254740992"],
+        ["4430000000000000", "295147905179352830000"],
+        ["44b52d02c7e14af5", "9.999999999999997e+22"],
+        ["44b52d02c7e14af6", "1e+23"],
+        ["44b52d02c7e14af7", "1.0000000000000001e+23"],
+        ["444b1ae4d6e2ef4e", "999999999999999700000"],
+        ["444b1ae4d6e2ef4f", "999999999999999900000"],
+        ["444b1ae4d6e2ef50", "1e+21"],
+        ["3eb0c6f7a0b5ed8c", "9.999999999999997e-7"],
+        ["3eb0c6f7a0b5ed8d", "0.000001"],
+        ["41b3de4355555553", "333333333.3333332"],
+        ["41b3de4355555554", "333333333.33333325"],
+        ["41b3de4355555555", "333333333.3333333"],
+        ["41b3de4355555556", "333333333.3333334"],
+        ["41b3de4355555557", "333333333.33333343"],
+        ["becbf647612f3696", "-0.0000033333333333333333"],
+        ["43143ff3c1cb0959", "1424953923781206.2"],
+      ];
+
+      const fromIeeeHex = (hex: string): number => {
+        const view = new DataView(new ArrayBuffer(8));
+        view.setBigUint64(0, BigInt(`0x${hex}`));
+        return view.getFloat64(0);
+      };
+
+      it.each(vectors)("serializes IEEE-754 %s as %s", (hex, expected) => {
+        expect(canonicalize(fromIeeeHex(hex))).toBe(expected);
+      });
+
+      it.each(["7fffffffffffffff", "7ff0000000000000", "fff0000000000000"])(
+        "rejects non-finite IEEE-754 %s",
+        hex => {
+          expect(() => canonicalize(fromIeeeHex(hex))).toThrow();
+        },
+      );
+    });
+
+    describe("strings", () => {
+      it("escapes U+0000..U+001F exactly like JSON.stringify", () => {
+        for (let code = 0; code < 0x20; code++) {
+          const s = `a${String.fromCharCode(code)}b`;
+          expect(canonicalize(s)).toBe(JSON.stringify(s));
+          expect(canonicalize({ [s]: s })).toBe(`{${JSON.stringify(s)}:${JSON.stringify(s)}}`);
+        }
+      });
+
+      it("uses the short escapes \\b \\t \\n \\f \\r", () => {
+        expect(canonicalize("\b\t\n\f\r")).toBe('"\\b\\t\\n\\f\\r"');
+      });
+
+      it("emits non-ASCII, U+007F and U+2028 unescaped", () => {
+        expect(canonicalize("\u007f\u2028\u2029\u00e9\ud83d\ude00")).toBe(
+          '"\u007f\u2028\u2029\u00e9\ud83d\ude00"',
+        );
+      });
+
+      it.each(["\ud800", "\udead", "a\ud83db", "\ude00\ud83d", "x\ud83d"])(
+        "rejects lone surrogates in values (%j)",
+        s => {
+          expect(() => canonicalize(s)).toThrow(/surrogate/i);
+        },
+      );
+
+      it("rejects lone surrogates in object keys", () => {
+        expect(() => canonicalize({ "\udead": 1 })).toThrow(/surrogate/i);
+      });
+    });
+
+    describe("JSON data model", () => {
+      it("rejects top-level undefined (JSON.stringify yields no text)", () => {
+        expect(() => canonicalize(undefined)).toThrow();
+      });
+
+      it("omits undefined object members and serializes undefined array elements as null", () => {
+        expect(canonicalize({ a: undefined, b: [undefined, 1] })).toBe('{"b":[null,1]}');
+      });
+
+      it("serializes sparse array holes as null", () => {
+        expect(canonicalize([1, , 3])).toBe("[1,null,3]");
+        expect(canonicalize(new Array(2))).toBe("[null,null]");
+      });
+
+      it("honors toJSON like JSON.stringify", () => {
+        const date = new Date(Date.UTC(2025, 0, 2, 3, 4, 5));
+        expect(canonicalize({ d: date })).toBe('{"d":"2025-01-02T03:04:05.000Z"}');
+        const custom = { toJSON: (key: string) => ({ z: key, a: 1 }) };
+        expect(canonicalize({ k: custom })).toBe('{"k":{"a":1,"z":"k"}}');
+      });
+
+      it("unwraps boxed primitives like JSON.stringify", () => {
+        expect(canonicalize([new String("s"), new Number(1.5), new Boolean(false)])).toBe(
+          '["s",1.5,false]',
+        );
+      });
+
+      it("rejects BigInt values", () => {
+        expect(() => canonicalize(1n)).toThrow();
+        expect(() => canonicalize({ n: Object(1n) })).toThrow();
+      });
+
+      it("agrees with JSON.stringify after a JSON round trip", () => {
+        const value = {
+          z: [1e21, 1e-7, -0, 0.1, "tab\there", { "\n": null }],
+          a: { description: "line1\nline2\r\n", nested: { b: true, a: false } },
+          "\u00e9": new Date(0),
+        };
+        expect(canonicalize(value)).toBe(canonicalize(JSON.parse(JSON.stringify(value))));
+      });
+    });
   });
 
   describe("Cryptographic Verification", () => {
