@@ -1,0 +1,3 @@
+kind: changed
+body: 'SVM upto: negotiate version 0 for client-built opens (an unsupported open message version is rejected with unsupported_transaction_version) while independently building facilitator claim/reclaim transactions as v1 with inline resource limits; the settlement loaded-account-data budget defaults to 4 MiB and is configurable via SettleLoadedAccountsDataSizeLimit; reclaim cleanup now greedily packs against the 4,096-byte wire, 64-account, and 64-instruction ceilings.'
+time: 2026-09-14T12:05:00Z

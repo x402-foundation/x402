@@ -1369,6 +1369,7 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
       const { facilitator } = await buildFixture();
       expect(facilitator.getExtra(SOLANA_DEVNET_CAIP2)).toEqual({
         feePayer: expect.any(String),
+        transactionVersions: [0],
       });
       expect(facilitator.getExtra(SOLANA_DEVNET_CAIP2)).not.toHaveProperty("receiverAuthorizer");
 
@@ -1381,6 +1382,7 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
       expect(delegated.getExtra(SOLANA_DEVNET_CAIP2)).toEqual({
         feePayer: expect.any(String),
         receiverAuthorizer: authorizerSigner.address,
+        transactionVersions: [0],
       });
     });
 

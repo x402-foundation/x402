@@ -17,7 +17,8 @@ const (
 	DefaultMaxReclaimsPerTx = paymentchannels.DefaultMaxReclaimsPerTx
 
 	// MaxSafeReclaimsPerTx is the largest reclaim batch that serializes under
-	// Solana's packet data size. MaxReclaimsPerTx is clamped to this.
+	// Solana's v0 packet data size. V1 cleanup uses the actual transaction
+	// packer instead of this fixed cap.
 	MaxSafeReclaimsPerTx = paymentchannels.MaxSafeReclaimsPerTx
 
 	// DefaultMaxTxsPerRun caps the close/distribute transactions the storage
@@ -83,8 +84,6 @@ func (o CleanupOptions) withDefaults() CleanupOptions {
 	}
 	if o.MaxReclaimsPerTx <= 0 {
 		o.MaxReclaimsPerTx = DefaultMaxReclaimsPerTx
-	} else if o.MaxReclaimsPerTx > MaxSafeReclaimsPerTx {
-		o.MaxReclaimsPerTx = MaxSafeReclaimsPerTx
 	}
 	if o.MaxTxsPerRun <= 0 {
 		o.MaxTxsPerRun = DefaultMaxTxsPerRun
@@ -183,6 +182,13 @@ type RentCleanupConfig struct {
 	// Token-2022 extension mints. Reclaim batches instead derive their limit
 	// per channel (paymentchannels.ReclaimComputeUnitLimit) and are mint-independent.
 	SettleComputeUnitLimit *uint32
+
+	// SettleLoadedAccountsDataSizeLimit is the inline v1 loaded-account-data
+	// budget for close/distribute cleanup transactions. Unset defaults to
+	// paymentchannels.DefaultSettleLoadedAccountsDataSizeLimit (4 MiB, sized
+	// for a mainnet Token-2022 settlement). Reclaim batches derive their own
+	// account-data limit per channel.
+	SettleLoadedAccountsDataSizeLimit *uint32
 }
 
 // RentCleanupManager recovers the rent a facilitator fronts for payment
@@ -201,14 +207,16 @@ func NewRentCleanupManager(config RentCleanupConfig) *RentCleanupManager {
 	sealClosingChannels := false
 	return &RentCleanupManager{
 		inner: paymentchannels.NewPaymentChannelRentCleanupManager(paymentchannels.PaymentChannelRentCleanupConfig{
-			Signer:                        config.Signer,
-			Storage:                       config.Storage,
-			Network:                       config.Network,
-			ComputeUnitPriceMicroLamports: config.ComputeUnitPriceMicroLamports,
-			SettleComputeUnitLimit:        config.SettleComputeUnitLimit,
-			AbandonPolicy:                 paymentchannels.OpenAbandonPolicyExpiry,
-			SealClosingChannels:           &sealClosingChannels,
-			Label:                         "RentCleanupManager",
+			Signer:                            config.Signer,
+			Storage:                           config.Storage,
+			Network:                           config.Network,
+			ComputeUnitPriceMicroLamports:     config.ComputeUnitPriceMicroLamports,
+			SettleComputeUnitLimit:            config.SettleComputeUnitLimit,
+			SettleLoadedAccountsDataSizeLimit: config.SettleLoadedAccountsDataSizeLimit,
+			UseTransactionV1:                  true,
+			AbandonPolicy:                     paymentchannels.OpenAbandonPolicyExpiry,
+			SealClosingChannels:               &sealClosingChannels,
+			Label:                             "RentCleanupManager",
 		}),
 	}
 }

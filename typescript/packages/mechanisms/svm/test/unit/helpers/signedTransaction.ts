@@ -11,6 +11,7 @@ import {
 import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
 import { findAssociatedTokenPda, getTransferCheckedInstruction } from "@solana-program/token-2022";
 import {
+  AccountRole,
   appendTransactionMessageInstructions,
   compileTransactionMessage,
   createTransactionMessage,
@@ -20,12 +21,15 @@ import {
   getCompiledTransactionMessageEncoder,
   getTransactionDecoder,
   partiallySignTransaction,
+  partiallySignTransactionMessageWithSigners,
   pipe,
   prependTransactionMessageInstruction,
+  setTransactionMessageConfig,
   setTransactionMessageFeePayer,
   setTransactionMessageLifetimeUsingBlockhash,
   type Address,
   type Blockhash,
+  type KeyPairSigner,
   type TransactionSigner,
 } from "@solana/kit";
 import { MEMO_PROGRAM_ADDRESS } from "../../../src/constants";
@@ -120,6 +124,28 @@ const FAKE_BLOCKHASH = {
 };
 
 /**
+ * Build a minimally valid, unsigned v0 wire transaction for tests that only
+ * exercise facilitator co-sign/broadcast behavior.
+ *
+ * @param feePayer - Static fee-payer address
+ * @returns Base64 wire transaction with a placeholder fee-payer signature
+ */
+export function buildVersion0WireTransaction(feePayer: Address): string {
+  const message = pipe(
+    createTransactionMessage({ version: 0 }),
+    m => setTransactionMessageFeePayer(feePayer, m),
+    m => setTransactionMessageLifetimeUsingBlockhash(FAKE_BLOCKHASH, m),
+  );
+  const messageBytes = getCompiledTransactionMessageEncoder().encode(
+    compileTransactionMessage(message),
+  );
+  return getBase64EncodedWireTransaction({
+    messageBytes,
+    signatures: placeholderFeePayerSignature(feePayer),
+  } as never);
+}
+
+/**
  * Build a standard-wallet exact payment: compute budget + TransferChecked + memo.
  *
  * @param args - Transfer fields and optional memo text
@@ -135,6 +161,8 @@ export async function buildExactPaymentTransaction(args: {
   includeMemo?: boolean;
   memo?: string;
   tokenProgram?: Address;
+  /** Message version to compile; defaults to `0`. */
+  version?: 0 | "legacy";
 }): Promise<string> {
   const tokenProgram = args.tokenProgram ?? TOKEN_PROGRAM_ADDRESS;
   const [sourceATA] = await findAssociatedTokenPda({
@@ -167,7 +195,7 @@ export async function buildExactPaymentTransaction(args: {
     });
   }
   const msg = pipe(
-    createTransactionMessage({ version: 0 }),
+    createTransactionMessage({ version: args.version ?? 0 }),
     m => setTransactionMessageComputeUnitPrice(1, m),
     m => setTransactionMessageFeePayer(args.feePayer, m),
     m =>
@@ -183,4 +211,51 @@ export async function buildExactPaymentTransaction(args: {
     [args.payer],
     placeholderFeePayerSignature(args.feePayer),
   );
+}
+
+/**
+ * Build a structurally valid, partially signed transaction-v1 wire payload:
+ * inline compute and loaded-account-data budgets, no Compute Budget
+ * instructions, one Memo instruction that requires `payer`'s signature. The
+ * fee-payer slot is left unsigned, as a client submits it. Verifiers that
+ * only accept legacy and version 0 must refuse it at the version gate.
+ *
+ * @param args - Fee payer address and the client signer
+ * @param args.feePayer - Fee payer address (left unsigned)
+ * @param args.payer - Client keypair that signs the memo
+ * @returns Base64 wire transaction with a version-1 message
+ */
+export async function buildVersion1WireTransaction(args: {
+  feePayer: Address;
+  payer: KeyPairSigner;
+}): Promise<string> {
+  const msg = pipe(
+    createTransactionMessage({ version: 1 }),
+    m =>
+      setTransactionMessageConfig(
+        { computeUnitLimit: 10_000, loadedAccountsDataSizeLimit: 65_536 },
+        m,
+      ),
+    m => setTransactionMessageFeePayer(args.feePayer, m),
+    m => setTransactionMessageLifetimeUsingBlockhash(FAKE_BLOCKHASH, m),
+    m =>
+      appendTransactionMessageInstructions(
+        [
+          {
+            programAddress: MEMO_PROGRAM_ADDRESS as Address,
+            accounts: [
+              {
+                address: args.payer.address,
+                role: AccountRole.READONLY_SIGNER,
+                signer: args.payer,
+              },
+            ],
+            data: new TextEncoder().encode("v1"),
+          },
+        ],
+        m,
+      ),
+  );
+  const signed = await partiallySignTransactionMessageWithSigners(msg);
+  return getBase64EncodedWireTransaction(signed);
 }

@@ -245,6 +245,11 @@ func (s *ExactSvmScheme) EnhancePaymentRequirements(
 		if feePayer, ok := supportedKind.Extra["feePayer"]; ok {
 			requirements.Extra["feePayer"] = feePayer
 		}
+		// Forward the facilitator's accepted transaction message versions so
+		// the client can pick one it is able to build.
+		if versions, ok := supportedKind.Extra[svm.ExtraTransactionVersions]; ok {
+			requirements.Extra[svm.ExtraTransactionVersions] = versions
+		}
 	}
 
 	s.enrichRecentBlockhash(ctx, requirements.Extra)

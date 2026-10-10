@@ -1,0 +1,3 @@
+kind: fixed
+body: 'Honor explicit MaxReclaimsPerTx values above 16 for SVM v1 rent cleanup, including the public upto manager, with batches bounded by actual wire, account, and instruction limits. Preserve the default of 8, nonpositive-value fallback, and v0 cap of 16.'
+time: 2026-10-07T16:27:54Z

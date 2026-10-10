@@ -2,15 +2,16 @@ package svm
 
 import (
 	"context"
+	"crypto/ed25519"
 	"testing"
 
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/programs/system"
 )
 
-// Test private key (deterministic for testing)
-// This is a valid test key for Solana
-const testPrivateKeyBase58 = "4Z7cXSyeFR8wNGMVXUE1TwtKn5D5Vu7FzEv69dokLv7KrQk7h2enu1bSz1tLTjKLuqBm1cUYXL9j3xTmD8wWEqmr"
+// testPrivateKeyBase58 is a deterministic, internally consistent Solana key.
+// Newer solana-go versions validate that the public half matches the seed.
+var testPrivateKeyBase58 = solana.PrivateKey(ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))).String()
 
 func TestNewClientSignerFromPrivateKey(t *testing.T) {
 	tests := []struct {

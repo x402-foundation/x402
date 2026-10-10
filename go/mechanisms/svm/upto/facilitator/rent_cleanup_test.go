@@ -2,7 +2,6 @@ package facilitator
 
 import (
 	"context"
-	"encoding/binary"
 	"sync"
 	"testing"
 	"time"
@@ -135,8 +134,8 @@ func (h *cleanupHarness) exists(channelID string) bool {
 }
 
 // sentInstructionData returns the settlement instruction data for the
-// transaction at index, excluding the leading ComputeBudget prefix submitSettle
-// always attaches.
+// transaction at index. The ComputeBudget skip preserves compatibility with
+// simulated/client-built fixtures; facilitator v1 settlements contain none.
 func (h *cleanupHarness) sentInstructionData(index int) [][]byte {
 	h.t.Helper()
 	sent := h.signer.sentTransactions()
@@ -155,23 +154,16 @@ func (h *cleanupHarness) sentInstructionData(index int) [][]byte {
 	return data
 }
 
-// sentComputeUnitLimit extracts the SetComputeUnitLimit value from the leading
-// ComputeBudget prefix of the transaction at index.
+// sentComputeUnitLimit extracts the inline v1 compute limit.
 func (h *cleanupHarness) sentComputeUnitLimit(index int) uint32 {
 	h.t.Helper()
 	sent := h.signer.sentTransactions()
 	require.Greater(h.t, len(sent), index)
 
 	message := &sent[index].Message
-	for _, instruction := range message.Instructions {
-		program, err := message.Program(instruction.ProgramIDIndex)
-		require.NoError(h.t, err)
-		if program.Equals(solana.ComputeBudget) && instruction.Data[0] == paymentchannels.ComputeBudgetSetUnitLimit {
-			return binary.LittleEndian.Uint32(instruction.Data[1:5])
-		}
-	}
-	h.t.Fatalf("transaction %d has no SetComputeUnitLimit instruction", index)
-	return 0
+	require.Equal(h.t, solana.MessageVersionV1, message.GetVersion())
+	require.NotNil(h.t, message.TransactionConfig.ComputeUnitLimit)
+	return *message.TransactionConfig.ComputeUnitLimit
 }
 
 // closeAccountOnSend removes the channel account once the close lands, matching
@@ -270,6 +262,28 @@ func TestCleanupDistributesSealedChannels(t *testing.T) {
 	assert.False(t, harness.exists(record.ChannelID))
 }
 
+func TestCleanupPacks62LiveChannelsIntoOneV1ReclaimTransaction(t *testing.T) {
+	harness := newCleanupHarness(t)
+	openSlot := testSlot - paymentchannels.OpenSlotWindow - 1
+	for i := 0; i < 62; i++ {
+		harness.seedRecord(
+			paymentchannels.PaymentChannelRecord{PayTo: harness.payTo.String()},
+			harness.channel(generated.ChannelStatus_Distributed, openSlot),
+		)
+	}
+
+	require.NoError(t, harness.manager.Cleanup(context.Background(), harness.options(CleanupOptions{
+		MaxReclaimsPerTx: 62,
+		MaxTxsPerSigner:  1,
+	})))
+
+	require.Empty(t, harness.errors)
+	require.Len(t, harness.reclaims, 1)
+	require.Len(t, harness.reclaims[0].ChannelIDs, 62)
+	require.Len(t, harness.signer.sentTransactions(), 1)
+	require.Len(t, harness.sentInstructionData(0), 62)
+}
+
 func TestCleanupDefersClosingChannels(t *testing.T) {
 	harness := newCleanupHarness(t)
 	record := harness.seedRecord(
@@ -345,13 +359,15 @@ func TestCleanupBatchReclaimsDistributedChannels(t *testing.T) {
 func TestCleanupUsesTheConfiguredSettleComputeBudget(t *testing.T) {
 	harness := newCleanupHarness(t)
 	settleLimit := uint32(222_222)
+	loadedLimit := uint32(3_145_728)
 	price := uint64(9)
 	harness.manager = NewRentCleanupManager(RentCleanupConfig{
-		Signer:                        harness.signer,
-		Storage:                       harness.storage,
-		Network:                       testNetwork,
-		SettleComputeUnitLimit:        &settleLimit,
-		ComputeUnitPriceMicroLamports: &price,
+		Signer:                            harness.signer,
+		Storage:                           harness.storage,
+		Network:                           testNetwork,
+		SettleComputeUnitLimit:            &settleLimit,
+		SettleLoadedAccountsDataSizeLimit: &loadedLimit,
+		ComputeUnitPriceMicroLamports:     &price,
 	})
 	record := harness.seedRecord(
 		paymentchannels.PaymentChannelRecord{PayTo: harness.payTo.String(), ExpiresAt: time.Now().Unix() + 3600},
@@ -363,6 +379,9 @@ func TestCleanupUsesTheConfiguredSettleComputeBudget(t *testing.T) {
 
 	require.Len(t, harness.closes, 1)
 	assert.Equal(t, settleLimit, harness.sentComputeUnitLimit(0))
+	sentConfig := harness.signer.sentTransactions()[0].Message.TransactionConfig
+	require.NotNil(t, sentConfig.LoadedAccountsDataSizeLimit)
+	assert.Equal(t, loadedLimit, *sentConfig.LoadedAccountsDataSizeLimit)
 }
 
 func TestCleanupRespectsReclaimBatchCaps(t *testing.T) {

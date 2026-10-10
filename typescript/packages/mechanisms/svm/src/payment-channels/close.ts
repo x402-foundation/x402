@@ -28,6 +28,8 @@ import {
   MAX_MEMO_BYTES,
   MEMO_PROGRAM_ADDRESS,
 } from "../constants";
+import { ErrUnsupportedTransactionVersion } from "../exact/facilitator/errors";
+import { isAcceptedTransactionVersion } from "../utils";
 import {
   getRequestCloseInstruction,
   REQUEST_CLOSE_DISCRIMINATOR,
@@ -117,9 +119,13 @@ export async function verifyRequestCloseTransaction(
     throw new Error("verifyRequestCloseTransaction: payer must differ from feePayer");
   }
   const decoded = getTransactionDecoder().decode(getBase64Codec().encode(transactionBase64));
-  const message = getCompiledTransactionMessageDecoder().decode(
-    decoded.messageBytes,
-  ) as unknown as CompiledMessage;
+  const compiledMessage = getCompiledTransactionMessageDecoder().decode(decoded.messageBytes);
+  if (!isAcceptedTransactionVersion(compiledMessage.version)) {
+    throw new Error(
+      `${ErrUnsupportedTransactionVersion}: verifyRequestCloseTransaction: transaction message version ${String(compiledMessage.version)} is not accepted; request-close transactions must be legacy or version 0`,
+    );
+  }
+  const message = compiledMessage as unknown as CompiledMessage;
   if (message.addressTableLookups && message.addressTableLookups.length > 0) {
     throw new Error("verifyRequestCloseTransaction: address lookup tables are not permitted");
   }

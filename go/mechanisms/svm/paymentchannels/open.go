@@ -230,7 +230,9 @@ func BuildOpenTransaction(args BuildOpenArgs) (*BuiltOpen, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to build open transaction: %w", err)
 	}
-	tx.Message.SetVersion(solana.MessageVersionV0)
+	if _, err := tx.Message.SetVersion(solana.MessageVersionV0); err != nil {
+		return nil, fmt.Errorf("failed to set open transaction version: %w", err)
+	}
 	raw, err := tx.MarshalBinary()
 	if err != nil {
 		return nil, fmt.Errorf("failed to serialize open transaction: %w", err)
@@ -430,7 +432,9 @@ func BuildTopUpPaymentChannelTransaction(args BuildTopUpArgs) (*BuiltTopUp, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to build top-up transaction: %w", err)
 	}
-	tx.Message.SetVersion(solana.MessageVersionV0)
+	if _, err := tx.Message.SetVersion(solana.MessageVersionV0); err != nil {
+		return nil, fmt.Errorf("failed to set top-up transaction version: %w", err)
+	}
 	return &BuiltTopUp{ChannelID: args.ChannelID, Amount: args.Amount, Transaction: tx}, nil
 }
 
@@ -457,6 +461,9 @@ func VerifyTopUpTransaction(transactionBase64 string, expected VerifyTopUpExpect
 		return fmt.Errorf("verifyTopUpTransaction: %w", err)
 	}
 	message := &tx.Message
+	if !svm.IsAcceptedTransactionVersion(message.GetVersion()) {
+		return fmt.Errorf("%s: verifyTopUpTransaction: unsupported transaction message version %d", svm.ErrUnsupportedTransactionVersion, int(message.GetVersion())-1)
+	}
 	if len(message.AddressTableLookups) > 0 {
 		return fmt.Errorf("verifyTopUpTransaction: address-lookup tables are not permitted")
 	}
@@ -629,6 +636,13 @@ func VerifyOpenTransaction(transactionBase64 string, expected VerifyOpenExpected
 		return nil, fmt.Errorf("verifyOpenTransaction: %w", err)
 	}
 	message := &tx.Message
+
+	// The checks below model the legacy/v0 message layout. Reject newer
+	// versions before inspecting any instruction so version-specific policy
+	// fields cannot bypass the sponsor's limits.
+	if !svm.IsAcceptedTransactionVersion(message.GetVersion()) {
+		return nil, fmt.Errorf("%s: verifyOpenTransaction: unsupported transaction message version %d", svm.ErrUnsupportedTransactionVersion, int(message.GetVersion())-1)
+	}
 
 	// Address Lookup Tables hide instruction programs and accounts from the
 	// static key list, so every program must be visible before signing.

@@ -20,7 +20,7 @@ import {
 import type { PaymentRequirements, VerifyResponse } from "@x402/core/types";
 import { MEMO_PROGRAM_ADDRESS } from "../../constants";
 import type { FacilitatorSvmSigner, SvmInnerInstructionsResult } from "../../signer";
-import { decodeTransactionFromPayload } from "../../utils";
+import { decodeTransactionFromPayload, isAcceptedTransactionVersion } from "../../utils";
 import * as Errors from "./errors";
 
 const DEFAULT_SMART_WALLET_MAX_COMPUTE_UNITS = 400_000;
@@ -183,6 +183,21 @@ export function resolveAccountKeys(
 }
 
 /**
+ * Fail closed on any transaction message version these checks predate. The
+ * compute budget and fee-payer isolation checks scan instructions, which a
+ * version that relocates its budget (e.g. transaction v1's `message.config`)
+ * would let pass vacuously.
+ *
+ * @param version - The `version` field of the compiled transaction message
+ * @throws Error prefixed with `unsupported_transaction_version`
+ */
+function assertAcceptedTransactionVersion(version: number | string): void {
+  if (!isAcceptedTransactionVersion(version)) {
+    throw new Error(`${Errors.ErrUnsupportedTransactionVersion}: ${String(version)}`);
+  }
+}
+
+/**
  * Asserts the fee payer does NOT appear in any instruction's accounts or as a
  * program ID. If the fee payer is never referenced in any instruction, the
  * Solana runtime cannot authorize it for token transfers, account creation,
@@ -201,6 +216,7 @@ export async function assertFeePayerIsolated(
   network?: string,
 ): Promise<void> {
   const compiled = getCompiledTransactionMessageDecoder().decode(transaction.messageBytes);
+  assertAcceptedTransactionVersion(compiled.version);
 
   // Check if transaction uses Address Lookup Tables
   const hasALTs =
@@ -285,6 +301,7 @@ export function validateComputeBudgetLimits(
     limits?.maxPriorityFeeMicroLamports ?? DEFAULT_SMART_WALLET_MAX_PRIORITY_FEE_MICROLAMPORTS;
 
   const compiled = getCompiledTransactionMessageDecoder().decode(transaction.messageBytes);
+  assertAcceptedTransactionVersion(compiled.version);
   const decompiled = decompileTransactionMessage(compiled);
   validateComputeBudgetLimitsFromInstructions(decompiled.instructions ?? [], {
     maxComputeUnits: maxCU,

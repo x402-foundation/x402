@@ -15,6 +15,7 @@ except ImportError as e:
 from .....schemas import Network, SettleResponse, VerifyResponse
 from .....schemas.v1 import PaymentPayloadV1, PaymentRequirementsV1
 from ...constants import (
+    ADVERTISED_TRANSACTION_VERSIONS,
     COMPUTE_BUDGET_PROGRAM_ADDRESS,
     ERR_AMOUNT_INSUFFICIENT,
     ERR_DUPLICATE_SETTLEMENT,
@@ -37,6 +38,7 @@ from ...constants import (
     ERR_UNKNOWN_FOURTH_INSTRUCTION,
     ERR_UNKNOWN_SIXTH_INSTRUCTION,
     ERR_UNSUPPORTED_SCHEME,
+    ERR_UNSUPPORTED_TRANSACTION_VERSION,
     LIGHTHOUSE_PROGRAM_ADDRESS,
     MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
     MEMO_PROGRAM_ADDRESS,
@@ -51,6 +53,8 @@ from ...utils import (
     decode_transaction_from_payload,
     derive_ata,
     get_token_payer_from_transaction,
+    get_transaction_version,
+    is_accepted_transaction_version,
     transaction_message_hash,
 )
 
@@ -92,12 +96,15 @@ class ExactSvmSchemeV1:
             network: Network identifier.
 
         Returns:
-            Extra data with feePayer address.
+            Extra data with feePayer address and transactionVersions.
         """
         _ = network  # Unused
         addresses = self._signer.get_addresses()
         fee_payer = random.choice(addresses)
-        return {"feePayer": fee_payer}
+        return {
+            "feePayer": fee_payer,
+            "transactionVersions": list(ADVERTISED_TRANSACTION_VERSIONS),
+        }
 
     def get_signers(self, network: Network) -> list[str]:
         """Get facilitator wallet addresses.
@@ -159,6 +166,13 @@ class ExactSvmSchemeV1:
         except Exception:
             return VerifyResponse(
                 is_valid=False, invalid_reason=ERR_TRANSACTION_DECODE_FAILED, payer=""
+            )
+
+        # Version allowlist, checked before any signature or instruction check:
+        # every check below reads its fee policy from version-specific structure.
+        if not is_accepted_transaction_version(get_transaction_version(tx.message)):
+            return VerifyResponse(
+                is_valid=False, invalid_reason=ERR_UNSUPPORTED_TRANSACTION_VERSION, payer=""
             )
 
         message = tx.message

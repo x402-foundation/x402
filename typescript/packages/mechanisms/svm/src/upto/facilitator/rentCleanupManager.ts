@@ -49,6 +49,11 @@ export interface UptoSvmRentCleanupManagerConfig {
    * (`reclaimComputeUnitLimit`) and are mint-independent.
    */
   settleComputeUnitLimit?: number;
+  /**
+   * Inline v1 loaded-account-data budget for close/distribute cleanup
+   * transactions. Defaults to 4 MiB; reclaim batches derive their own limit.
+   */
+  settleLoadedAccountsDataSizeLimit?: number;
 }
 
 /**
@@ -70,6 +75,7 @@ export class UptoSvmRentCleanupManager extends PaymentChannelRentCleanupManager 
       abandonPolicy: "expiry",
       label: "UptoSvmRentCleanupManager",
       sealClosingChannels: false,
+      useTransactionV1: true,
     };
     super(shared);
   }

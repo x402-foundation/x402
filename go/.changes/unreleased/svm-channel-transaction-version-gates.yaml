@@ -1,0 +1,3 @@
+kind: fixed
+body: Reject unsupported transaction versions before inspecting client-supplied SVM top-up and request-close transactions.
+time: 2026-10-07T16:27:54Z

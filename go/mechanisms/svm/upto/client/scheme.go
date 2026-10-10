@@ -111,6 +111,12 @@ func (c *UptoSvmScheme) CreatePaymentPayload(
 		return types.PaymentPayload{}, err
 	}
 
+	// The open is built as version 0; refuse up front when the facilitator
+	// advertises a transactionVersions list this client cannot satisfy.
+	if _, err := svm.ResolveTransactionVersion(requirements.Extra); err != nil {
+		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToBuildOpen+": %w", err)
+	}
+
 	open, err := paymentchannels.BuildOpenTransaction(paymentchannels.BuildOpenArgs{
 		Payer:            c.signer.Address(),
 		Payee:            feePayer,
