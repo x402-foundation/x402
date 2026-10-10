@@ -214,21 +214,30 @@ def attach_payment_response_to_meta(
     )
 
 
+class PaymentRequiredMismatchError(ValueError):
+    """structuredContent and content text both look like PaymentRequired but disagree.
+
+    Auto-payment must not sign one representation while a hook, log, or UI reads the other.
+    """
+
+
 def extract_payment_required_from_result(
     result: MCPToolResult,
 ) -> PaymentRequired | PaymentRequiredV1 | None:
     """Extract PaymentRequired from tool result (dual format, x402 v1 and v2).
 
-    Handles both structuredContent (preferred) and content[0].text (fallback).
+    Prefers structuredContent, then content[0].text. When both representations are
+    payment-required objects, they must encode the same terms. A disagreement raises
+    PaymentRequiredMismatchError so callers do not auto-pay ambiguous terms.
     """
     if not result.is_error:
         return None
 
-    if result.structured_content:
-        pr = _extract_payment_required_from_object(result.structured_content)
-        if pr:
-            return pr
+    structured = None
+    if isinstance(result.structured_content, dict):
+        structured = _extract_payment_required_from_object(result.structured_content)
 
+    from_text = None
     if result.content and len(result.content) > 0:
         first_item = result.content[0]
         if isinstance(first_item, dict) and first_item.get("type") == "text":
@@ -237,13 +246,33 @@ def extract_payment_required_from_result(
                 try:
                     parsed = json.loads(text)
                     if isinstance(parsed, dict):
-                        pr = _extract_payment_required_from_object(parsed)
-                        if pr:
-                            return pr
+                        from_text = _extract_payment_required_from_object(parsed)
                 except (json.JSONDecodeError, TypeError):
                     pass
 
-    return None
+    if (
+        structured is not None
+        and from_text is not None
+        and not _payment_required_agree(structured, from_text)
+    ):
+        raise PaymentRequiredMismatchError(
+            "mcp payment required: structuredContent and content text disagree"
+        )
+    if structured is not None:
+        return structured
+    return from_text
+
+
+def _payment_required_agree(left: Any, right: Any) -> bool:
+    """True when both parsed objects dump to the same JSON terms."""
+    try:
+        left_dump = left.model_dump(by_alias=True, exclude_none=True)
+        right_dump = right.model_dump(by_alias=True, exclude_none=True)
+    except AttributeError:
+        return left == right
+    return json.dumps(left_dump, sort_keys=True, default=str) == json.dumps(
+        right_dump, sort_keys=True, default=str
+    )
 
 
 def _extract_payment_required_from_object(
