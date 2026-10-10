@@ -351,7 +351,9 @@ export function paymentMiddlewareFromHTTPServer(
     if (request.url.charCodeAt(0) !== 47 /* "/" */) {
       return reply.status(400).send({ error: "Bad Request" });
     }
+  });
 
+  app.addHook("preValidation", async (request: FastifyRequest, reply: FastifyReply) => {
     const path = request.url.split("?")[0];
     const adapter = new FastifyAdapter(request);
     const context: HTTPRequestContext = {

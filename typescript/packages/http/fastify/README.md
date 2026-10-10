@@ -111,7 +111,7 @@ function paymentMiddleware(
 ): void;
 ```
 
-Registers Fastify hooks (`onRequest` and `onSend`) that:
+Registers Fastify hooks (`onRequest`, `preValidation`, `onSend`, and `onError`) that:
 
 1. Use the provided x402ResourceServer for payment processing
 2. Check if the incoming request matches a protected route
@@ -119,6 +119,20 @@ Registers Fastify hooks (`onRequest` and `onSend`) that:
 4. Return payment instructions (402 status) if payment is missing or invalid
 5. Process the request if payment is valid
 6. Handle settlement after successful response
+
+Payment processing runs after Fastify parses the request body, before schema validation.
+Protected-request hooks and dynamic pricing callbacks can read it through
+`context.adapter.getBody()` without consuming the route handler's body. Custom
+content-type parsers apply before these callbacks run, but schema coercion and
+validation have not run yet. Validate any body fields used to make payment decisions.
+Malformed JSON and body-limit errors return Fastify's normal errors before payment
+processing, rather than returning a payment challenge. Payment processing still
+precedes schema validation, preserving access to payment headers before schema
+validation can remove undeclared fields.
+
+Register this middleware before other `preValidation` hooks that serve paid content.
+Responses sent from `onRequest`, `preParsing`, or earlier-registered `preValidation`
+hooks do not reach the payment gate; do not serve paid content from those hooks.
 
 ### Route Configuration
 
