@@ -1,0 +1,8 @@
+[project]
+name = "x402-svm-batch-client-example"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["x402[svm,requests]"]
+
+[tool.uv.sources]
+x402 = { path = "../../../../python/x402" }

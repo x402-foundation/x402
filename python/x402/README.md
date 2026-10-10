@@ -322,7 +322,7 @@ client.register("eip155:8453", CustomScheme())
 
 - `x402.http` - HTTP clients, middleware, and facilitator client
 - `x402.mechanisms.evm` - EVM/Ethereum implementation
-- `x402.mechanisms.svm` - Solana implementation
+- `x402.mechanisms.svm` - Solana exact payments and [batch settlement](mechanisms/svm/batch_settlement/README.md)
 - `x402.mechanisms.tvm` - TON/TVM implementation
 - `x402.extensions` - Protocol extensions (Bazaar discovery)
 

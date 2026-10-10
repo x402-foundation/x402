@@ -14,9 +14,45 @@ import threading
 from typing import Any
 
 
+def settlement_hooks(resource_server: Any, override: dict[str, str] | None) -> Any:
+    """Apply the catalog's metered amount through the normal settlement hooks."""
+    if not override or "amount" not in override:
+        return None
+    from x402.http import x402HTTPResourceServer
+    from x402.mcp import PaymentWrapperHooks
+
+    def meter(context: Any) -> None:
+        requirements = context.payment_requirements
+        raw = str(override["amount"])
+        decimals = None
+        if raw.startswith("$"):
+            scheme = resource_server.get_registered_scheme(
+                requirements.network, requirements.scheme
+            )
+            get_decimals = getattr(scheme, "get_asset_decimals", None)
+            if callable(get_decimals):
+                decimals = get_decimals(requirements.asset, requirements.network)
+        requirements.amount = x402HTTPResourceServer.resolve_settlement_override_amount(
+            raw,
+            requirements,
+            decimals,
+        )
+
+    return PaymentWrapperHooks(on_after_execution=meter)
+
+
 def main() -> None:
     """Start the MCP server with x402 payment-wrapped tools."""
     import uvicorn
+    from catalog import (
+        PROTECTED_ROUTE_MESSAGE,
+        catalog_routes,
+        mcp_tool_name,
+        resolve_routes,
+        route_description,
+    )
+    from config import build_resolved_route_config, configure_resource_server, load_server_config
+    from handlers import CLOSE_PATH, HEALTH_PATH, close_body, health_body
     from mcp.server.fastmcp import FastMCP
     from starlette.applications import Starlette
     from starlette.responses import JSONResponse
@@ -25,10 +61,6 @@ def main() -> None:
     from x402 import ResourceConfig, ResourceInfo, x402ResourceServer
     from x402.http import FacilitatorConfig, HTTPFacilitatorClient
     from x402.mcp import create_payment_wrapper
-
-    from catalog import PROTECTED_ROUTE_MESSAGE, catalog_routes, mcp_tool_name, resolve_routes, route_description
-    from config import build_resolved_route_config, configure_resource_server, load_server_config
-    from handlers import CLOSE_PATH, HEALTH_PATH, close_body, health_body, route_body
 
     cfg = load_server_config()
 
@@ -44,7 +76,11 @@ def main() -> None:
     # descriptions too even though they never register a tool below.
     tool_descriptions = {
         route.path: route_description(
-            route.network, route.scheme, route.asset_transfer_method, route.extensions, route.payment_flow
+            route.network,
+            route.scheme,
+            route.asset_transfer_method,
+            route.extensions,
+            route.payment_flow,
         )
         for route in catalog_routes()
     }
@@ -72,6 +108,7 @@ def main() -> None:
                 mime_type="application/json",
             ),
             extensions=route_config.get("extensions"),
+            hooks=settlement_hooks(resource_server, route.settlement_override),
         )
 
         @mcp.tool(name=tool_name, description=description)

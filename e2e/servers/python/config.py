@@ -77,6 +77,11 @@ def configure_resource_server(server: Any, cfg: ServerConfig) -> None:
         BatchSettlementEvmSchemeServerConfig,
     )
     from x402.mechanisms.svm.exact import register_exact_svm_server
+    from x402.mechanisms.svm.batch_settlement import (
+        BatchSvmServerConfig,
+        register_batch_svm_server,
+    )
+    from x402.mechanisms.svm.signers import KeypairSigner
     from x402.mechanisms.tvm.exact import ExactTvmServerScheme
     from x402.extensions.bazaar import bazaar_resource_server_extension
 
@@ -99,7 +104,19 @@ def configure_resource_server(server: Any, cfg: ServerConfig) -> None:
         )
 
     if cfg.payee("svm"):
-        register_exact_svm_server(server, network_caip2_pattern("svm"))
+        svm_pattern = network_caip2_pattern("svm")
+        register_exact_svm_server(server, svm_pattern)
+        receiver_authorizer_pk = os.environ.get("SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY")
+        if receiver_authorizer_pk:
+            operator_pk = os.environ.get("SERVER_SVM_OPERATOR_PRIVATE_KEY")
+            register_batch_svm_server(
+                server,
+                svm_pattern,
+                BatchSvmServerConfig(
+                    receiver_authorizer=KeypairSigner.from_base58(receiver_authorizer_pk),
+                    operator=KeypairSigner.from_base58(operator_pk) if operator_pk else None,
+                ),
+            )
 
     if cfg.payee("tvm"):
         server.register(network_caip2_pattern("tvm"), ExactTvmServerScheme())

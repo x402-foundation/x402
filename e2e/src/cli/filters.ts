@@ -87,6 +87,13 @@ export function filterScenarios(
   filters: TestFilters
 ): TestScenario[] {
   return scenarios.filter(scenario => {
+    // A discovered proxy may target production; only an explicit facilitator
+    // selection may include it in a run, even when other filters match.
+    if (scenario.facilitator?.isExternal &&
+        !filters.facilitators?.includes(scenario.facilitator.name)) {
+      return false;
+    }
+
     // Transport filter
     if (filters.transports && filters.transports.length > 0) {
       const serverTransport = scenario.server.config.transport || 'http';
@@ -238,4 +245,3 @@ export function getUniqueProtocolFamilies(scenarios: TestScenario[]): string[] {
   scenarios.forEach(s => families.add(s.protocolFamily));
   return Array.from(families).sort();
 }
-

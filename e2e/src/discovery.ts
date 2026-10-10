@@ -266,17 +266,21 @@ export class TestDiscovery {
             const supportsProtocol = f.config.protocolFamilies?.includes(endpointProtocolFamily);
             const supportsVersion = f.config.x402Versions?.includes(serverVersion);
             const facilLanguage = f.config.language;
-            if (!facilLanguage) return false;
+            if (!facilLanguage && !f.isExternal) return false;
             const clientFacilitators = client.config.facilitators;
             if (clientFacilitators && !clientFacilitators.includes(f.name)) {
               return false;
             }
-            const facilSchemesForFamily = schemesForComponent(
-              facilLanguage,
-              endpointProtocolFamily,
-              f.config.schemes,
-              'facilitator',
-            );
+            // External services declare their own capabilities; they are not
+            // constrained by the SDK language used to implement the proxy.
+            const facilSchemesForFamily = f.isExternal
+              ? f.config.schemes ?? []
+              : schemesForComponent(
+                  facilLanguage!,
+                  endpointProtocolFamily,
+                  f.config.schemes,
+                  'facilitator',
+                );
             if (!facilSchemesForFamily.includes(endpointScheme)) return false;
             if (endpointProtocolFamily === 'evm') {
               const endpointAtm = endpointAssetTransferMethod(endpoint)!;

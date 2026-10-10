@@ -42,13 +42,14 @@ else:
 server = x402ResourceServer(facilitator)
 configure_resource_server(server, cfg)
 routes = build_payment_routes(cfg)
+handle_payment = payment_middleware(routes, server)
 
 
 # Apply payment middleware (inner). Unconfigured check is registered after so it
 # becomes the outer middleware and short-circuits with 501 first.
 @app.middleware("http")
 async def x402_payment_middleware(request, call_next):
-    return await payment_middleware(routes, server)(request, call_next)
+    return await handle_payment(request, call_next)
 
 
 @app.middleware("http")

@@ -52,6 +52,7 @@ async def main() -> None:
     from x402.mcp.constants import MCP_PAYMENT_META_KEY, MCP_PAYMENT_RESPONSE_META_KEY
     from x402.mcp.utils import convert_mcp_result, extract_payment_required_from_result
     from x402.mechanisms.evm.batch_settlement.client import RefundOptions
+    from x402.mechanisms.svm.batch_settlement import BatchSvmClientScheme
 
     ctx = create_e2e_client()
     tool_name = ctx.endpoint_path
@@ -76,7 +77,7 @@ async def main() -> None:
             }
 
         def mcp_refund_fetch(url: str, headers: dict[str, str]) -> _McpFetchResponse:
-            """Bridges `BatchSettlementEvmScheme.refund()`'s sync HTTP `fetch` dependency
+            """Bridges the batch client's sync HTTP `fetch` dependency
             onto MCP tool calls, so the same cooperative-refund flow used by the HTTP
             clients works unmodified over the MCP transport. Runs on the refund's worker
             thread (via `asyncio.to_thread`), so async MCP calls are scheduled back onto
@@ -96,7 +97,9 @@ async def main() -> None:
                         return _McpFetchResponse(status=200)
                     return _McpFetchResponse(
                         status=402,
-                        headers={"PAYMENT-REQUIRED": encode_payment_required_header(payment_required)},
+                        headers={
+                            "PAYMENT-REQUIRED": encode_payment_required_header(payment_required)
+                        },
                     )
 
                 payment_payload = decode_payment_signature_header(payment_header)
@@ -132,9 +135,7 @@ async def main() -> None:
                         return _McpFetchResponse(
                             status=402,
                             headers={
-                                "PAYMENT-REQUIRED": encode_payment_required_header(
-                                    payment_required
-                                )
+                                "PAYMENT-REQUIRED": encode_payment_required_header(payment_required)
                             },
                         )
 
@@ -144,6 +145,10 @@ async def main() -> None:
             return future.result()
 
         async def refund(_url: str) -> Any:
+            if isinstance(ctx.batch_scheme, BatchSvmClientScheme):
+                return await asyncio.to_thread(
+                    ctx.batch_scheme.refund, tool_resource_url, fetch=mcp_refund_fetch
+                )
             options = RefundOptions(fetch=mcp_refund_fetch)
             return await asyncio.to_thread(ctx.batch_scheme.refund, tool_resource_url, options)
 

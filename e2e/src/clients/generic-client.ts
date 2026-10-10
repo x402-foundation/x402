@@ -29,8 +29,7 @@ export class GenericClientProxy extends BaseProxy implements ClientProxy {
         ENDPOINT_PATH: config.endpointPath,
         ...(config.batchSettlement
           ? {
-              // Family-neutral names; the EVM_ aliases stay for the Go and
-              // Python clients, which only run batch-settlement on EVM.
+              // Family-neutral names with EVM_ aliases for older clients.
               BATCH_SETTLEMENT_CHANNEL: config.batchSettlement.channelSalt,
               BATCH_SETTLEMENT_PHASE: config.batchSettlement.phase,
               EVM_BATCH_SETTLEMENT_CHANNEL: config.batchSettlement.channelSalt,
@@ -61,10 +60,11 @@ export class GenericClientProxy extends BaseProxy implements ClientProxy {
       // Convert ProcessResult to ClientCallResult
       if (result.success && result.data) {
         return {
-          success: true,
+          success: result.data.success !== false,
           data: result.data.data,
           status_code: result.data.status_code,
           payment_response: result.data.payment_response,
+          error: result.data.error,
           exitCode: result.exitCode,
         };
       }
