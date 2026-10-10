@@ -18,7 +18,7 @@ class MockAsyncResourceServer:
 
     def __init__(self):
         """Initialize mock async server."""
-        self.verify_payment = AsyncMock(return_value=Mock(is_valid=True, skip_handler=None))
+        self.verify_payment = AsyncMock(return_value=Mock(is_valid=True))
         self.settle_payment = AsyncMock(
             return_value=SettleResponse(
                 success=True,
@@ -704,8 +704,8 @@ async def test_create_payment_wrapper_async_async_hooks():
 
 
 @pytest.mark.asyncio
-async def test_create_payment_wrapper_async_hook_error_swallowed():
-    """Test that on_after_execution errors don't propagate."""
+async def test_create_payment_wrapper_async_metering_error_prevents_settlement():
+    """A failed metering hook cancels the verified payment instead of charging."""
     server = MockAsyncResourceServer()
 
     def error_hook(ctx):
@@ -757,8 +757,8 @@ async def test_create_payment_wrapper_async_hook_error_swallowed():
         },
     )
 
-    assert result.is_error is False
-    assert server.settle_payment.called
+    assert result.is_error is True
+    server.settle_payment.assert_not_called()
 
 
 def _mcp_accepts_async():

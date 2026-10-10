@@ -23,7 +23,7 @@ class MockResourceServer:
 
     def __init__(self):
         """Initialize mock server."""
-        self.verify_payment = Mock(return_value=Mock(is_valid=True, skip_handler=None))
+        self.verify_payment = Mock(return_value=Mock(is_valid=True))
         self.settle_payment = Mock(
             return_value=SettleResponse(
                 success=True,
@@ -487,8 +487,8 @@ def test_create_payment_wrapper_handler_error_no_settlement():
     server.settle_payment.assert_not_called()
 
 
-def test_create_payment_wrapper_hook_errors_non_fatal():
-    """Test that on_after_execution errors are swallowed and don't propagate."""
+def test_create_payment_wrapper_metering_error_prevents_settlement():
+    """A failed metering hook cancels the verified payment instead of charging."""
     from x402.mcp.types import SyncPaymentWrapperHooks as PaymentWrapperHooks
 
     server = MockResourceServer()
@@ -547,8 +547,9 @@ def test_create_payment_wrapper_hook_errors_non_fatal():
         },
     )
 
-    assert result.is_error is False
-    assert "x402/payment-response" in result.meta
+    assert result.is_error is True
+    server.settle_payment.assert_not_called()
+    assert "x402/payment-response" not in result.meta
 
 
 def test_create_payment_wrapper_find_matching_requirement():
