@@ -12,6 +12,8 @@ export const ErrNetworkMismatch = "invalid_exact_evm_network_mismatch";
 export const ErrMissingEip712Domain = "invalid_exact_evm_missing_eip712_domain";
 export const ErrRecipientMismatch = "invalid_exact_evm_recipient_mismatch";
 export const ErrInvalidSignature = "invalid_exact_evm_signature";
+/** Payer code lookup or signature RPC failed. Matches Go/Python `invalid_exact_evm_failed_to_verify_signature`. */
+export const ErrFailedToVerifySignature = "invalid_exact_evm_failed_to_verify_signature";
 export const ErrValidBeforeExpired = "invalid_exact_evm_payload_authorization_valid_before";
 export const ErrValidAfterInFuture = "invalid_exact_evm_payload_authorization_valid_after";
 export const ErrInvalidAuthorizationValue = "invalid_exact_evm_authorization_value";
