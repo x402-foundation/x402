@@ -1,0 +1,35 @@
+{
+  "schema": "x402.fiscal_authority.readiness_card_reference.v0",
+  "id": "0002-algovoi-signed-attestation",
+  "status": "ready_contributor_owned_reference",
+  "variant": {
+    "cap_enforcement": "facilitator_policy",
+    "charge_evidence_type": "signed_attestation"
+  },
+  "contributor": {
+    "name": "AlgoVoi",
+    "github_repository": "chopmob-cloud/algovoi-jcs-conformance-vectors"
+  },
+  "reference": {
+    "card_url": "https://github.com/chopmob-cloud/algovoi-jcs-conformance-vectors/blob/main/fixtures/fiscal-authority-readiness-card/algovoi-signed-attestation/v0/card.json",
+    "readme_url": "https://github.com/chopmob-cloud/algovoi-jcs-conformance-vectors/blob/main/fixtures/fiscal-authority-readiness-card/algovoi-signed-attestation/v0/README.md",
+    "source_commit": "4d49978",
+    "observed_raw_sha256": "ab23571e02363a7a16f43c13b77146de2ae5f9a1c4241380ea5f0d32feacdafc"
+  },
+  "observed_discriminator_coverage": {
+    "cap.enforcement": "facilitator_policy",
+    "charge_evidence.type": "signed_attestation",
+    "preflight_verdict.buyer_agent_can_spend_without_human": false
+  },
+  "notes": [
+    "The AlgoVoi card stays contributor-owned and byte-fresh in the AlgoVoi conformance vectors repository.",
+    "This x402-side sample only indexes the public card URL and observed hash.",
+    "The sample card remains not spend-without-human because authority and price are intentionally partial in the sample."
+  ],
+  "safe_public_boundary": {
+    "requires_secrets": false,
+    "requires_wallet_access": false,
+    "requires_private_dashboard": false,
+    "requires_customer_data": false
+  }
+}
