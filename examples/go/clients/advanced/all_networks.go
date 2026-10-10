@@ -6,14 +6,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
 	x402http "github.com/x402-foundation/x402/go/v2/http"
+	exactcardano "github.com/x402-foundation/x402/go/v2/mechanisms/cardano/exact/client"
 	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
 	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/client"
 	exactsvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
 	uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/client"
+	cardanosigners "github.com/x402-foundation/x402/go/v2/signers/cardano"
 	evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
 	svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
 )
@@ -33,6 +36,24 @@ func runAllNetworksExample(ctx context.Context, evmPrivateKey, svmPrivateKey, ur
 
 	// Create x402 client
 	client := x402.Newx402Client()
+
+	// Register Cardano (preprod) if a mnemonic and Blockfrost project are provided
+	if mnemonic, projectID := os.Getenv("CARDANO_MNEMONIC"), os.Getenv("BLOCKFROST_PROJECT_ID"); mnemonic != "" && projectID != "" {
+		baseURL, err := cardanosigners.DefaultBlockfrostURL("cardano:preprod")
+		if err != nil {
+			return err
+		}
+		cardanoSigner, err := cardanosigners.NewClientSigner(cardanosigners.ClientSignerConfig{
+			Mnemonic: mnemonic,
+			Network:  "cardano:preprod",
+			Provider: cardanosigners.NewBlockfrost(baseURL, projectID, 0),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create Cardano signer: %w", err)
+		}
+		client.Register("cardano:*", exactcardano.NewExactCardanoScheme(cardanoSigner))
+		fmt.Printf("✅ Registered Cardano networks (cardano:*) — exact\n")
+	}
 
 	// Register EVM scheme if private key is provided
 	if evmPrivateKey != "" {

@@ -20,6 +20,7 @@ and fill required environment variables:
 
 - `FACILITATOR_URL` - Facilitator endpoint URL
 - `EVM_PAYEE_ADDRESS` - Ethereum address to receive payments
+- `CARDANO_PAYEE_ADDRESS` - Cardano address to receive payments (optional, all-networks example)
 
 2. Install dependencies:
 

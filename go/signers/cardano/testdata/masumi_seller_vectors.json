@@ -1,0 +1,20 @@
+[
+ {
+  "mnemonic": "test walk nut penalty hip pave soap entry language right filter choice",
+  "network": "cardano:preprod",
+  "accountIndex": 0,
+  "sellerAddress": "addr_test1qz2fxv2umyhttkxyxp8x0dlpdt3k6cwng5pxj3jhsydzer3jcu5d8ps7zex2k2xt3uqxgjqnnj83ws8lhrn648jjxtwq2ytjqp",
+  "digest": "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f",
+  "key": "a401010327200621582073fea80d424276ad0978d4fe5310e8bc2d485f5f6bb3bf87612989f112ad5a7d",
+  "signature": "845846a2012767616464726573735839009493315cd92eb5d8c4304e67b7e16ae36d61d34502694657811a2c8e32c728d3861e164cab28cb8f006448139c8f1740ffb8e7aa9e5232dca166686173686564f458207f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f58405f90eaefc50648e9cf8428455a1adcac39d1eb9643d4ed7d2ba4171ef20af0262a2927fc22a1859269cd07176bef8bcd154f70e269700c032e41ab5086fad807"
+ },
+ {
+  "mnemonic": "test walk nut penalty hip pave soap entry language right filter choice",
+  "network": "cardano:mainnet",
+  "accountIndex": 2,
+  "sellerAddress": "addr1qx7kpnvyp220edvfv7vmlq4w9vrsw63cwktk668232jflshp3cnr2gz83nazn4s6gxls4ullxj0vgrk8f4an89ee4r3stqvd34",
+  "digest": "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f",
+  "key": "a401010327200621582045cde9b01a1ca521b84c54f9b4bdc78c798d3bef3e369be17f33b7e384a79b80",
+  "signature": "845846a201276761646472657373583901bd60cd840a94fcb5896799bf82ae2b07076a3875976d68ea8aa49fc2e18e263520478cfa29d61a41bf0af3ff349ec40ec74d7b339739a8e3a166686173686564f458207f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f5840783bbeeaf19597e1faaa0598b779043c69f208af7b5827ccff21f814752d5770a0eb20fe989b6d75c97855bd13c6152459358f9fabc13c9851e404a94fc17f03"
+ }
+]

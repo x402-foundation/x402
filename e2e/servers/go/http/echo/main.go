@@ -47,7 +47,7 @@ func main() {
 		Facilitator:            facilitatorClient,
 		Schemes:                schemes,
 		SyncFacilitatorOnStart: true,
-		Timeout:                30 * time.Second,
+		Timeout:                e2eserver.PaymentTimeout(),
 		ErrorHandler: func(c echo.Context, err error) {
 			fmt.Printf("❌ [E2E SERVER ERROR] Payment error occurred\n")
 			fmt.Printf("   Path: %s\n", c.Request().URL.Path)

@@ -102,6 +102,7 @@ type catalogRouteDefinition struct {
 	SettlementOverride  *SettlementAmount      `json:"settlementOverride"`
 	PaymentFlow         string                 `json:"paymentFlow"`
 	RequirementsExtra   map[string]interface{} `json:"requirementsExtra"`
+	MaxTimeoutSeconds   int                    `json:"maxTimeoutSeconds"`
 }
 
 // SettlementAmount is the partial amount an upto route settles.
@@ -132,6 +133,7 @@ type CatalogRoute struct {
 	SettlementOverride  *SettlementAmount
 	PaymentFlow         string
 	RequirementsExtra   map[string]interface{}
+	MaxTimeoutSeconds   int
 }
 
 // ResolvedRoute is a catalog route with env-dependent requirements resolved.
@@ -146,6 +148,7 @@ type ResolvedRoute struct {
 	Extra               map[string]interface{}
 	Extensions          []string
 	SettlementOverride  *SettlementAmount
+	MaxTimeoutSeconds   int
 }
 
 var (
@@ -383,6 +386,7 @@ func CatalogRoutes() []CatalogRoute {
 			SettlementOverride:  definition.SettlementOverride,
 			PaymentFlow:         definition.PaymentFlow,
 			RequirementsExtra:   definition.RequirementsExtra,
+			MaxTimeoutSeconds:   definition.MaxTimeoutSeconds,
 		})
 	}
 	return routes
@@ -569,7 +573,7 @@ func ResolvedRoutes() []ResolvedRoute {
 			}
 		}
 
-		resolved = append(resolved, ResolvedRoute{
+		resolvedRoute := ResolvedRoute{
 			Path:                route.Path,
 			NetworkID:           route.Network,
 			Scheme:              route.Scheme,
@@ -580,7 +584,15 @@ func ResolvedRoutes() []ResolvedRoute {
 			Extra:               extra,
 			Extensions:          route.Extensions,
 			SettlementOverride:  route.SettlementOverride,
-		})
+			MaxTimeoutSeconds:   route.MaxTimeoutSeconds,
+		}
+		if route.Network == "cardano" {
+			if err := resolveCardanoRoute(&resolvedRoute); err != nil {
+				fmt.Printf("❌ %v\n", err)
+				os.Exit(1)
+			}
+		}
+		resolved = append(resolved, resolvedRoute)
 	}
 
 	return resolved

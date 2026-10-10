@@ -52,50 +52,52 @@ func main() {
 		description := e2eserver.RouteDescription(route)
 		_, extensions := e2eserver.BuildResolvedRouteConfig(route, "mcp")
 
-		requirements, err := resourceServer.BuildPaymentRequirementsFromConfig(ctx, x402.ResourceConfig{
-			Scheme:  route.Scheme,
-			PayTo:   route.PayTo,
-			Price:   route.Price,
-			Network: x402.Network(route.Network),
-			Extra:   route.Extra,
-		})
-		if err != nil {
-			fmt.Printf("❌ Failed to build payment requirements for %s: %v\n", route.Path, err)
-			os.Exit(1)
+		toolHandler := func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			if shutdownRequested {
+				body, _ := json.Marshal(map[string]interface{}{"error": "Server shutting down"})
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{&mcp.TextContent{Text: string(body)}},
+					IsError: true,
+				}, nil
+			}
+			body, _ := json.Marshal(e2eserver.RouteBody())
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(body)}}}, nil
+		}
+		resource := &mcp402.ResourceInfo{
+			URL:         "mcp://tool/" + toolName,
+			Description: description,
+			MimeType:    "application/json",
 		}
 
-		wrapperConfig := mcp402.PaymentWrapperConfig{
-			Accepts: requirements,
-			Resource: &mcp402.ResourceInfo{
-				URL:         "mcp://tool/" + toolName,
-				Description: description,
-				MimeType:    "application/json",
-			},
+		var wrapped mcp402.ToolHandler
+		if e2eserver.IsCardanoMasumiRoute(route) {
+			wrapped = e2eserver.CardanoMasumiTool(resourceServer, route, resource, extensions, toolHandler)
+		} else {
+			requirements, err := resourceServer.BuildPaymentRequirementsFromConfig(ctx, x402.ResourceConfig{
+				Scheme:            route.Scheme,
+				PayTo:             route.PayTo,
+				Price:             route.Price,
+				Network:           x402.Network(route.Network),
+				MaxTimeoutSeconds: route.MaxTimeoutSeconds,
+				Extra:             route.Extra,
+			})
+			if err != nil {
+				fmt.Printf("❌ Failed to build payment requirements for %s: %v\n", route.Path, err)
+				os.Exit(1)
+			}
+			wrapperConfig := mcp402.PaymentWrapperConfig{Accepts: requirements, Resource: resource}
+			if len(extensions) > 0 {
+				wrapperConfig.Extensions = extensions
+			}
+			wrapped = mcp402.NewPaymentWrapper(resourceServer, wrapperConfig).Wrap(toolHandler)
 		}
-		if len(extensions) > 0 {
-			wrapperConfig.Extensions = extensions
-		}
-		wrapper := mcp402.NewPaymentWrapper(resourceServer, wrapperConfig)
 
 		tool := &mcp.Tool{
 			Name:        toolName,
 			Description: description,
 			InputSchema: &jsonschema.Schema{Type: "object"},
 		}
-
-		mcpServer.AddTool(tool, wrapper.Wrap(
-			func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				if shutdownRequested {
-					body, _ := json.Marshal(map[string]interface{}{"error": "Server shutting down"})
-					return &mcp.CallToolResult{
-						Content: []mcp.Content{&mcp.TextContent{Text: string(body)}},
-						IsError: true,
-					}, nil
-				}
-				body, _ := json.Marshal(e2eserver.RouteBody())
-				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(body)}}}, nil
-			},
-		))
+		mcpServer.AddTool(tool, wrapped)
 	}
 
 	mux := http.NewServeMux()

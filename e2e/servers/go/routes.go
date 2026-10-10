@@ -76,13 +76,17 @@ func buildRouteExtensions(route ResolvedRoute, transport string) map[string]inte
 // a single resolved route, shared by the HTTP RoutesConfig builder and the MCP
 // server's per-tool payment wrapper setup.
 func BuildResolvedRouteConfig(route ResolvedRoute, transport string) (x402http.PaymentOptions, map[string]interface{}) {
+	if IsCardanoMasumiRoute(route) {
+		return x402http.PaymentOptions{cardanoMasumiOption(route)}, buildRouteExtensions(route, transport)
+	}
 	accepts := x402http.PaymentOptions{
 		{
-			Scheme:  route.Scheme,
-			PayTo:   route.PayTo,
-			Price:   route.Price,
-			Network: networkFor(route.Network),
-			Extra:   route.Extra,
+			Scheme:            route.Scheme,
+			PayTo:             route.PayTo,
+			Price:             route.Price,
+			Network:           networkFor(route.Network),
+			MaxTimeoutSeconds: route.MaxTimeoutSeconds,
+			Extra:             route.Extra,
 		},
 	}
 	return accepts, buildRouteExtensions(route, transport)

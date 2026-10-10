@@ -994,8 +994,11 @@ func main() {
 
 	evmPrivateKey := os.Getenv("FACILITATOR_EVM_PRIVATE_KEY")
 	svmPrivateKey := os.Getenv("FACILITATOR_SVM_PRIVATE_KEY")
-	if evmPrivateKey == "" && svmPrivateKey == "" {
-		log.Fatal("❌ At least one of FACILITATOR_EVM_PRIVATE_KEY or FACILITATOR_SVM_PRIVATE_KEY is required")
+	// Cardano runs provider-only; a mnemonic only names the advertised address.
+	blockfrostProjectID := os.Getenv("BLOCKFROST_PROJECT_ID")
+	cardanoRpcUrl := os.Getenv("CARDANO_RPC_URL")
+	if evmPrivateKey == "" && svmPrivateKey == "" && blockfrostProjectID == "" {
+		log.Fatal("❌ At least one of FACILITATOR_EVM_PRIVATE_KEY, FACILITATOR_SVM_PRIVATE_KEY or BLOCKFROST_PROJECT_ID is required")
 	}
 
 	facilitator := x402.Newx402Facilitator()
@@ -1098,6 +1101,14 @@ func main() {
 		facilitator.RegisterV1(
 			[]x402.Network{x402.Network(getV1SvmNetwork(svmNetwork))},
 			svmv1.NewExactSvmSchemeV1(svmSigner),
+		)
+	}
+
+	if blockfrostProjectID != "" && cardanoRpcUrl != "" {
+		cardanoNetwork := resolveNetworkCaip2("cardano")
+		facilitator.Register(
+			[]x402.Network{x402.Network(cardanoNetwork)},
+			newCardanoFacilitatorScheme(cardanoNetwork, cardanoRpcUrl, blockfrostProjectID),
 		)
 	}
 
@@ -1230,6 +1241,13 @@ func main() {
 			return nil, nil
 		}).
 		OnAfterSettle(func(ctx x402.FacilitatorSettleResultContext) error {
+			// A settlement_pending result is followed by the resource server's
+			// automatic retry with the same payload, which must still pass Hook 3,
+			// so the verified-payment record is kept until a terminal outcome.
+			if !ctx.Result.Success && ctx.Result.ErrorReason == x402.ErrSettlementPending {
+				log.Printf("⏳ Settlement pending: %s (%v)", ctx.Result.Transaction, ctx.Result.Extra)
+				return nil
+			}
 			// Hook 4: Clean up verified payment tracking after successful settlement.
 			// Skip cleanup for the flows exempted above: the verify-time entry was
 			// keyed by a different payload, or never written at all, so there is

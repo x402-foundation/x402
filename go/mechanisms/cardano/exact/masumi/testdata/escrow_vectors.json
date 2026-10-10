@@ -1,0 +1,148 @@
+[
+ {
+  "deployment": {
+   "requiredAdmins": "2",
+   "adminVkeys": [
+    "fc16a1fcf309aed03ec18bb2176f5ea29acea70bb79145ebaffa8e75",
+    "7f78161369549d8e2b138fee724c9fa606d6107a66720bdb4c48ada6",
+    "89eef9ea84e0ee7fe4921fa93eb2873ff6e34473f751d5d52cb75aa6"
+   ],
+   "cooldownPeriod": "420000"
+  },
+  "scriptHash": "a15ce9d82d2f67645fc624e2edac03c6f1c106d0ad1af5815a3b14ad",
+  "addresses": {
+   "cardano:mainnet": "addr1wxs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgge2j6d",
+   "cardano:preprod": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "cardano:preview": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "cip34:0-1": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g"
+  }
+ },
+ {
+  "deployment": {
+   "requiredAdmins": "3",
+   "adminVkeys": [
+    "fc16a1fcf309aed03ec18bb2176f5ea29acea70bb79145ebaffa8e75",
+    "7f78161369549d8e2b138fee724c9fa606d6107a66720bdb4c48ada6",
+    "89eef9ea84e0ee7fe4921fa93eb2873ff6e34473f751d5d52cb75aa6"
+   ],
+   "cooldownPeriod": "420000"
+  },
+  "scriptHash": "982fc37afa4b395c291fdfe4822fb1668319777d6792e5232a1b96e1",
+  "addresses": {
+   "cardano:mainnet": "addr1wxvzlsm6lf9njhpfrl07fq30k9ngxxth04ne9efr9gdedcg3f5gld",
+   "cardano:preprod": "addr_test1wzvzlsm6lf9njhpfrl07fq30k9ngxxth04ne9efr9gdedcg2pq5sg",
+   "cardano:preview": "addr_test1wzvzlsm6lf9njhpfrl07fq30k9ngxxth04ne9efr9gdedcg2pq5sg",
+   "cip34:0-1": "addr_test1wzvzlsm6lf9njhpfrl07fq30k9ngxxth04ne9efr9gdedcg2pq5sg"
+  }
+ },
+ {
+  "deployment": {
+   "requiredAdmins": "2",
+   "adminVkeys": [
+    "fc16a1fcf309aed03ec18bb2176f5ea29acea70bb79145ebaffa8e75",
+    "7f78161369549d8e2b138fee724c9fa606d6107a66720bdb4c48ada6",
+    "89eef9ea84e0ee7fe4921fa93eb2873ff6e34473f751d5d52cb75aa6"
+   ],
+   "cooldownPeriod": "999999"
+  },
+  "scriptHash": "e5c67b7e8246342c822224cac0f109cbc6e0032974c6decc847f13ba",
+  "addresses": {
+   "cardano:mainnet": "addr1w8juv7m7sfrrgtyzygjv4s83p89udcqr996vdhkvs3l38wsxu2y8z",
+   "cardano:preprod": "addr_test1wrjuv7m7sfrrgtyzygjv4s83p89udcqr996vdhkvs3l38wsa57cg8",
+   "cardano:preview": "addr_test1wrjuv7m7sfrrgtyzygjv4s83p89udcqr996vdhkvs3l38wsa57cg8",
+   "cip34:0-1": "addr_test1wrjuv7m7sfrrgtyzygjv4s83p89udcqr996vdhkvs3l38wsa57cg8"
+  }
+ },
+ {
+  "deployment": {
+   "requiredAdmins": "2",
+   "adminVkeys": [
+    "fc16a1fcf309aed03ec18bb2176f5ea29acea70bb79145ebaffa8e75",
+    "7f78161369549d8e2b138fee724c9fa606d6107a66720bdb4c48ada6",
+    "89eef9ea84e0ee7fe4921fa93eb2873ff6e34473f751d5d52cb75aa6"
+   ],
+   "cooldownPeriod": "0"
+  },
+  "scriptHash": "8f9bdf8f7e7eb5d83065d6d54cf965b420013f7d151fef79f2bdb181",
+  "addresses": {
+   "cardano:mainnet": "addr1wx8ehhu00elttkpsvhtd2n8evk6zqqfl0523lmme727mrqg8s838z",
+   "cardano:preprod": "addr_test1wz8ehhu00elttkpsvhtd2n8evk6zqqfl0523lmme727mrqgucndg8",
+   "cardano:preview": "addr_test1wz8ehhu00elttkpsvhtd2n8evk6zqqfl0523lmme727mrqgucndg8",
+   "cip34:0-1": "addr_test1wz8ehhu00elttkpsvhtd2n8evk6zqqfl0523lmme727mrqgucndg8"
+  }
+ },
+ {
+  "deployment": {
+   "requiredAdmins": "2",
+   "adminVkeys": [
+    "fc16a1fcf309aed03ec18bb2176f5ea29acea70bb79145ebaffa8e75",
+    "7f78161369549d8e2b138fee724c9fa606d6107a66720bdb4c48ada6",
+    "89eef9ea84e0ee7fe4921fa93eb2873ff6e34473f751d5d52cb75aa6"
+   ],
+   "cooldownPeriod": "99999999999999999999"
+  },
+  "scriptHash": "6a0b8df59e2a7ef4d05d9f537803a13522aa5edfb9408a3a76ac4e09",
+  "addresses": {
+   "cardano:mainnet": "addr1w94qhr04nc48aaxstk04x7qr5y6j92j7m7u5pz36w6kyuzgvlqmr3",
+   "cardano:preprod": "addr_test1wp4qhr04nc48aaxstk04x7qr5y6j92j7m7u5pz36w6kyuzghh58v5",
+   "cardano:preview": "addr_test1wp4qhr04nc48aaxstk04x7qr5y6j92j7m7u5pz36w6kyuzghh58v5",
+   "cip34:0-1": "addr_test1wp4qhr04nc48aaxstk04x7qr5y6j92j7m7u5pz36w6kyuzghh58v5"
+  }
+ },
+ {
+  "deployment": {
+   "requiredAdmins": "2",
+   "adminVkeys": [
+    "fc16a1fcf309aed03ec18bb2176f5ea29acea70bb79145ebaffa8e75",
+    "fc16a1fcf309aed03ec18bb2176f5ea29acea70bb79145ebaffa8e75",
+    "7f78161369549d8e2b138fee724c9fa606d6107a66720bdb4c48ada6"
+   ],
+   "cooldownPeriod": "420000"
+  },
+  "scriptHash": "6477a8ff1936a4370f17abd77d84ae54947dc7c2cf953a2d83d35854",
+  "addresses": {
+   "cardano:mainnet": "addr1w9j8028lrym2gdc0z74awlvy4e2fglw8ct8e2w3ds0f4s4qvyxplw",
+   "cardano:preprod": "addr_test1wpj8028lrym2gdc0z74awlvy4e2fglw8ct8e2w3ds0f4s4qhvjast",
+   "cardano:preview": "addr_test1wpj8028lrym2gdc0z74awlvy4e2fglw8ct8e2w3ds0f4s4qhvjast",
+   "cip34:0-1": "addr_test1wpj8028lrym2gdc0z74awlvy4e2fglw8ct8e2w3ds0f4s4qhvjast"
+  }
+ },
+ {
+  "deployment": {
+   "requiredAdmins": "1",
+   "adminVkeys": [
+    "7de92d339b85784e501e046e33c1a9863c5758287aa0e4f2a9eb40da"
+   ],
+   "cooldownPeriod": "1"
+  },
+  "scriptHash": "1064540f7d79862915a65c5a0576217f1749d1679a2ffd3d341745d1",
+  "addresses": {
+   "cardano:mainnet": "addr1wygxg4q004ucv2g45ew95ptky9l3wjw3v7dzllfaxst5t5gpzrqgh",
+   "cardano:preprod": "addr_test1wqgxg4q004ucv2g45ew95ptky9l3wjw3v7dzllfaxst5t5g62hu8j",
+   "cardano:preview": "addr_test1wqgxg4q004ucv2g45ew95ptky9l3wjw3v7dzllfaxst5t5g62hu8j",
+   "cip34:0-1": "addr_test1wqgxg4q004ucv2g45ew95ptky9l3wjw3v7dzllfaxst5t5g62hu8j"
+  }
+ },
+ {
+  "deployment": {
+   "requiredAdmins": "5",
+   "adminVkeys": [
+    "fc2a33a3c9579c74da043dd31fe4ce6775b9223ac284f1dbe93ce40f",
+    "a25fb56b2adea0a673a9470cadd08b792708b361645c07e6e05661e8",
+    "c4389160bb0d5ded646a95f1328152e1b480930e347f8afb30295c2e",
+    "1ebccccf1649042125a055583ecfb9874c6d8a81fd0b7bc2addc4927",
+    "681137e314855e54445596a583e263e4856187d8a19ce74fa83aa267",
+    "ada3377de7377fee99a21cb21f2d7a5e64f2bf9c8fa0e38d0f5da8c7",
+    "999872a4aa8457c36978a1404cdda6470fa367c80dfd6a372369ff19"
+   ],
+   "cooldownPeriod": "3600000"
+  },
+  "scriptHash": "d4b9617ba1f59c1c3017107b24550a14b06f485a7707396dccf37051",
+  "addresses": {
+   "cardano:mainnet": "addr1w82tjctm586ec8pszug8kfz4pg2tqm6gtfmswwtdenehq5gvtzfw6",
+   "cardano:preprod": "addr_test1wr2tjctm586ec8pszug8kfz4pg2tqm6gtfmswwtdenehq5ghrk4pl",
+   "cardano:preview": "addr_test1wr2tjctm586ec8pszug8kfz4pg2tqm6gtfmswwtdenehq5ghrk4pl",
+   "cip34:0-1": "addr_test1wr2tjctm586ec8pszug8kfz4pg2tqm6gtfmswwtdenehq5ghrk4pl"
+  }
+ }
+]

@@ -16,6 +16,14 @@ Mechanisms are organized by network type and scheme:
 
 ```
 mechanisms/
+├── cardano/                - Cardano networks
+│   └── exact/              - Exact payment scheme for Cardano
+│       ├── client/         - Client-side: create payments
+│       ├── server/         - Server-side: verify payments
+│       ├── facilitator/    - Facilitator-side: settle payments
+│       ├── masumi/         - Masumi escrow terms, datum and lock checks
+│       └── script/         - Script-address derivation and datums
+│
 ├── evm/                    - Ethereum Virtual Machine networks
 │   └── exact/              - Exact payment scheme for EVM
 │       ├── client/         - Client-side: create payments
@@ -71,6 +79,12 @@ Solana-based exact payments using token transfers.
 
 **See:** [svm/README.md](svm/README.md)
 
+### Cardano - Exact
+
+Cardano exact payments (`default`, `script` and Masumi escrow transfers).
+
+**See:** [cardano/README.md](cardano/README.md)
+
 ## Future Mechanisms
 
 As new payment schemes are developed, they will be added to this directory:
@@ -123,6 +137,7 @@ For questions about contributing mechanisms, please:
 
 ## Mechanism Documentation
 
+- **[Cardano Mechanisms](cardano/README.md)** - Cardano payment schemes
 - **[EVM Mechanisms](evm/README.md)** - Ethereum Virtual Machine payment schemes
 - **[SVM Mechanisms](svm/README.md)** - Solana Virtual Machine payment schemes
 

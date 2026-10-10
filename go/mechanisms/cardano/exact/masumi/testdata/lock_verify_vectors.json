@@ -1,0 +1,2578 @@
+[
+ {
+  "name": "valid lovelace",
+  "quote": "lovelace unregistered absent",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "50000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0a",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e1f35a2913056b0161684702526861a1729081f2839286b06081a2b14a52ba59aab0aa7b4468a973d2912714abda6112dae2ab91831969619b01100a89a391124a2969525968974bf46339e8aae3c912e0e560bb014ab456b22863b3aab22dd4822a50f3b3296d612cb3cf76657080a960e229e491bf64611390cb7b92bbea59f07a2230190c04f891488d0a3108894410e1886a512518ec55c169f4c4500a8a44f2f8819caa7d149a2580c390a8460783d5a5a11208546a470902c2766a28c15c2e0009c00fa0017150019c0524003b800bd851815251c5c32c0002c00d6e29524a00368a45000adc55a002d970006e0047220f32dc280398003d2892956658026800380a6dc05ca7a0076ec714606d400"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "50000000",
+     "assets": {},
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa65840e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d581a637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0aff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    },
+    {
+     "address": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+     "coin": "5000000",
+     "assets": {}
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": true
+  }
+ },
+ {
+  "name": "valid token",
+  "quote": "token custom deployment multi part",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d",
+   "amount": "1500000",
+   "payTo": "addr_test1wzydnh6p2vrhmr2gssyue35dekln7vv7jw77purtr0esfwc8zlvkc",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "parameters",
+       "canonicalization": "jcs",
+       "content": {
+        "n": 9007199254740992,
+        "f": 0.1,
+        "e": 1e+21,
+        "s": 1e-7,
+        "neg": 0,
+        "u": "é😀 ",
+        "nested": [
+         {
+          "b": 1,
+          "a": [
+           true,
+           null
+          ]
+         }
+        ]
+       },
+       "digest": "bf5dc3c09409a2d74b6d2586b32f9a7ddd01371fab9a996d581d27324a9152b6"
+      },
+      {
+       "name": "raw",
+       "canonicalization": "raw",
+       "mediaType": "application/octet-stream",
+       "digest": "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+      },
+      {
+       "name": "empty",
+       "canonicalization": "jcs",
+       "mediaType": "",
+       "content": {},
+       "digest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      }
+     ],
+     "digest": "8abf13a103d14ac0c560cafbbcf9451df4335f26489935922eca13ee3f973908"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vqzf75t34nj2gy8ujleuthj96x003mnzhl04vev0289wnmccsps4l",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "8abf13a103d14ac0c560cafbbcf9451df4335f26489935922eca13ee3f973908",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a401010327200621582066be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a",
+    "referenceSignature": "84582aa201276761646472657373581d60049f5171ace4a410fc97f3c5de45d19ef8ee62bfdf56658f51cae9efa166686173686564f45820a15cf8e99d1c7191b52143e97c62c85cee955cc63735858d404d47c7f4fe959558403485c3df0324c21a7db355a64d095e7c03329392da71180f6a2ee33b46674e55402b33a6a85235013d8aa84010610fc53ce2d018afd846a989225af3471ced05",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a54511804e0066584b912c003180530cc03092243240f2435a4ac5d6569203a50b4d3a655c20857119599a112527069fa8705ad6d2531ad287ac748761e112b9624a19380973db8808908162e09062b13b924a9a49a28718096287a7b2b0e0e17063f295a5a861093962e4e196b061664ab25912b2e0624a2703917081156301d17112e749a476740ab00ae171f49091a12a52131ab2b083d3506349e595996c8f0166e11691b5a012629112792a686b482e90dc5a63ac09a3cee30fa830e21918cb0c8793dd149d461f14c241c311ac2049b48b6b849391e4582da74405c48b04d4fd10110f2224d018240f6022dacf8b420d84201f2292440d6301c15c2e0009c00fa0017690019c0524003b800bc009e5c001d8002d2800075c000dc790a802d8f37000736170ba5005754569a4006b000d9cbc86ab57900056e2f239195c69e40a794411509c5994955ad516c9100",
+    "deployment": {
+     "requiredAdmins": "2",
+     "adminVkeys": [
+      "fc16a1fcf309aed03ec18bb2176f5ea29acea70bb79145ebaffa8e75",
+      "fc16a1fcf309aed03ec18bb2176f5ea29acea70bb79145ebaffa8e75",
+      "7f78161369549d8e2b138fee724c9fa606d6107a66720bdb4c48ada6"
+     ],
+     "cooldownPeriod": "999999"
+    }
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzydnh6p2vrhmr2gssyue35dekln7vv7jw77purtr0esfwc8zlvkc",
+     "coin": "3715220",
+     "assets": {
+      "e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d": "1500000"
+     },
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c049f5171ace4a410fc97f3c5de45d19ef8ee62bfdf56658f51cae9efffd87a80ffd87a80582aa401010327200621582066be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a5f584084582aa201276761646472657373581d60049f5171ace4a410fc97f3c5de45d19ef8ee62bfdf56658f51cae9efa166686173686564f45820a15cf8e99d1c71915840b52143e97c62c85cee955cc63735858d404d47c7f4fe959558403485c3df0324c21a7db355a64d095e7c03329392da71180f6a2ee33b46674e55402b33a6a852581a35013d8aa84010610fc53ce2d018afd846a989225af3471ced05ff5820abababababababababababababababababababababababababababababababab40401a0038b09458208abf13a103d14ac0c560cafbbcf9451df4335f26489935922eca13ee3f973908401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    },
+    {
+     "address": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+     "coin": "5000000",
+     "assets": {}
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": true,
+  "horizon": null,
+  "result": {
+   "ok": true
+  }
+ },
+ {
+  "name": "valid registered",
+  "quote": "registered with return address",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "2500000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "confirmationPolicy": {
+     "l1Confirmations": 3
+    },
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vqjhzsk56euudsj6cjf8av3q4ph6q0stqlqy6scsjc0vnmqhclw5u",
+     "sellerReturnAddress": "addr_test1vpk3we70vc2e92avfgvmjeefauywkgf986j569dulffj2wqt99enq",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "0102030405060708090a0b0c0d",
+     "agentIdentifier": "67ab0c92c4ac1610895a1c965ee50aba41a8f1513b15240723b3bd0b0101010101010101",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f618",
+    "referenceSignature": "84582aa201276761646472657373581d60257142d4d679c6c25ac4927eb220a86fa03e0b07c04d4310961ec9eca166686173686564f45820c616bcb700585ab83a81b31e9b095c97be8922273b28df2437566c923099bdcf584085ea06d5bf997d8b832b003c8ec77fd6e038ac7f7544f6fde71eff995f7cc929fd897f22de4bf0ea0e330409f8e52b300a96a9ea0840f1b6873ca89125e80c03",
+    "blockchainIdentifier": "218235ed23ab67ee8840d80eca003018c09c0262c01660b011995230038701598537656814c5da3710d382a03352b5480661082f210ca8f28d1004c3080c94572b5ab4803a35783308c923b229d430e4e8bb06399aaa15a54f3060bb49e54682b242dfa7354c2010ea472c678b4a8a484787284a1a83858c858e12484f8a82c2078babcc87cc07a2c96a85806b1c29438142cb8b50cc88d541401c8cdb4de7cf68ed85e205820a818180ef42054c2bca420952c384a74b8a8202c3439eea27854727c12811dc9f8fa38f372587c0e9254ac85c872b4207c27a87254e3c2784a7a5854b5a8a87c50b1584541200350b442210f8f9390b1222c3e13ce87c52ae0f038404d00139386111e181621458c27d24931bf5a27df49c6ab007044ea248042036804b0bc1c1b958542b30934c0492a83ed261b20f0821ea0348d242083e8852c04359d0c1950b0a10c1e00a2113a91015954720c4c22c0385872219e0893f612b131142a00ae4720013801f4002e2c0033a7b48007700178fb082c6400770b40005801ac032c20c006cb058001580670005b39000dc008e18575167d00730007b2083b1e13117300074f69780c23e13600768100e114b4000"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "3935230",
+     "assets": {},
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c257142d4d679c6c25ac4927eb220a86fa03e0b07c04d4310961ec9ecffd87a80ffd8799fd8799fd8799f581c6d1767cf661592abac4a19b96729ef08eb21253ea54d15bcfa532538ffd87a80ffff582aa4010103272006215820fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f6185f584084582aa201276761646472657373581d60257142d4d679c6c25ac4927eb220a86fa03e0b07c04d4310961ec9eca166686173686564f45820c616bcb700585ab858403a81b31e9b095c97be8922273b28df2437566c923099bdcf584085ea06d5bf997d8b832b003c8ec77fd6e038ac7f7544f6fde71eff995f7cc929fd897f22de4b581af0ea0e330409f8e52b300a96a9ea0840f1b6873ca89125e80c03ff5820abababababababababababababababababababababababababababababababab4d0102030405060708090a0b0c0d582467ab0c92c4ac1610895a1c965ee50aba41a8f1513b15240723b3bd0b01010101010101011a0015e65e5820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    },
+    {
+     "address": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+     "coin": "5000000",
+     "assets": {}
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": true,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": true
+  }
+ },
+ {
+  "name": "registered without validator",
+  "quote": "registered with return address",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "2500000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "confirmationPolicy": {
+     "l1Confirmations": 3
+    },
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vqjhzsk56euudsj6cjf8av3q4ph6q0stqlqy6scsjc0vnmqhclw5u",
+     "sellerReturnAddress": "addr_test1vpk3we70vc2e92avfgvmjeefauywkgf986j569dulffj2wqt99enq",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "0102030405060708090a0b0c0d",
+     "agentIdentifier": "67ab0c92c4ac1610895a1c965ee50aba41a8f1513b15240723b3bd0b0101010101010101",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f618",
+    "referenceSignature": "84582aa201276761646472657373581d60257142d4d679c6c25ac4927eb220a86fa03e0b07c04d4310961ec9eca166686173686564f45820c616bcb700585ab83a81b31e9b095c97be8922273b28df2437566c923099bdcf584085ea06d5bf997d8b832b003c8ec77fd6e038ac7f7544f6fde71eff995f7cc929fd897f22de4bf0ea0e330409f8e52b300a96a9ea0840f1b6873ca89125e80c03",
+    "blockchainIdentifier": "218235ed23ab67ee8840d80eca003018c09c0262c01660b011995230038701598537656814c5da3710d382a03352b5480661082f210ca8f28d1004c3080c94572b5ab4803a35783308c923b229d430e4e8bb06399aaa15a54f3060bb49e54682b242dfa7354c2010ea472c678b4a8a484787284a1a83858c858e12484f8a82c2078babcc87cc07a2c96a85806b1c29438142cb8b50cc88d541401c8cdb4de7cf68ed85e205820a818180ef42054c2bca420952c384a74b8a8202c3439eea27854727c12811dc9f8fa38f372587c0e9254ac85c872b4207c27a87254e3c2784a7a5854b5a8a87c50b1584541200350b442210f8f9390b1222c3e13ce87c52ae0f038404d00139386111e181621458c27d24931bf5a27df49c6ab007044ea248042036804b0bc1c1b958542b30934c0492a83ed261b20f0821ea0348d242083e8852c04359d0c1950b0a10c1e00a2113a91015954720c4c22c0385872219e0893f612b131142a00ae4720013801f4002e2c0033a7b48007700178fb082c6400770b40005801ac032c20c006cb058001580670005b39000dc008e18575167d00730007b2083b1e13117300074f69780c23e13600768100e114b4000"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "3935230",
+     "assets": {},
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c257142d4d679c6c25ac4927eb220a86fa03e0b07c04d4310961ec9ecffd87a80ffd8799fd8799fd8799f581c6d1767cf661592abac4a19b96729ef08eb21253ea54d15bcfa532538ffd87a80ffff582aa4010103272006215820fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f6185f584084582aa201276761646472657373581d60257142d4d679c6c25ac4927eb220a86fa03e0b07c04d4310961ec9eca166686173686564f45820c616bcb700585ab858403a81b31e9b095c97be8922273b28df2437566c923099bdcf584085ea06d5bf997d8b832b003c8ec77fd6e038ac7f7544f6fde71eff995f7cc929fd897f22de4b581af0ea0e330409f8e52b300a96a9ea0840f1b6873ca89125e80c03ff5820abababababababababababababababababababababababababababababababab4d0102030405060708090a0b0c0d582467ab0c92c4ac1610895a1c965ee50aba41a8f1513b15240723b3bd0b01010101010101011a0015e65e5820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    },
+    {
+     "address": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+     "coin": "5000000",
+     "assets": {}
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_requirements_masumi_agent_identifier",
+   "detail": "registry claims require an independent on-network validator"
+  }
+ },
+ {
+  "name": "registered validator rejects",
+  "quote": "registered with return address",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "2500000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "confirmationPolicy": {
+     "l1Confirmations": 3
+    },
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vqjhzsk56euudsj6cjf8av3q4ph6q0stqlqy6scsjc0vnmqhclw5u",
+     "sellerReturnAddress": "addr_test1vpk3we70vc2e92avfgvmjeefauywkgf986j569dulffj2wqt99enq",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "0102030405060708090a0b0c0d",
+     "agentIdentifier": "67ab0c92c4ac1610895a1c965ee50aba41a8f1513b15240723b3bd0b0101010101010101",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f618",
+    "referenceSignature": "84582aa201276761646472657373581d60257142d4d679c6c25ac4927eb220a86fa03e0b07c04d4310961ec9eca166686173686564f45820c616bcb700585ab83a81b31e9b095c97be8922273b28df2437566c923099bdcf584085ea06d5bf997d8b832b003c8ec77fd6e038ac7f7544f6fde71eff995f7cc929fd897f22de4bf0ea0e330409f8e52b300a96a9ea0840f1b6873ca89125e80c03",
+    "blockchainIdentifier": "218235ed23ab67ee8840d80eca003018c09c0262c01660b011995230038701598537656814c5da3710d382a03352b5480661082f210ca8f28d1004c3080c94572b5ab4803a35783308c923b229d430e4e8bb06399aaa15a54f3060bb49e54682b242dfa7354c2010ea472c678b4a8a484787284a1a83858c858e12484f8a82c2078babcc87cc07a2c96a85806b1c29438142cb8b50cc88d541401c8cdb4de7cf68ed85e205820a818180ef42054c2bca420952c384a74b8a8202c3439eea27854727c12811dc9f8fa38f372587c0e9254ac85c872b4207c27a87254e3c2784a7a5854b5a8a87c50b1584541200350b442210f8f9390b1222c3e13ce87c52ae0f038404d00139386111e181621458c27d24931bf5a27df49c6ab007044ea248042036804b0bc1c1b958542b30934c0492a83ed261b20f0821ea0348d242083e8852c04359d0c1950b0a10c1e00a2113a91015954720c4c22c0385872219e0893f612b131142a00ae4720013801f4002e2c0033a7b48007700178fb082c6400770b40005801ac032c20c006cb058001580670005b39000dc008e18575167d00730007b2083b1e13117300074f69780c23e13600768100e114b4000"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "3935230",
+     "assets": {},
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c257142d4d679c6c25ac4927eb220a86fa03e0b07c04d4310961ec9ecffd87a80ffd8799fd8799fd8799f581c6d1767cf661592abac4a19b96729ef08eb21253ea54d15bcfa532538ffd87a80ffff582aa4010103272006215820fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f6185f584084582aa201276761646472657373581d60257142d4d679c6c25ac4927eb220a86fa03e0b07c04d4310961ec9eca166686173686564f45820c616bcb700585ab858403a81b31e9b095c97be8922273b28df2437566c923099bdcf584085ea06d5bf997d8b832b003c8ec77fd6e038ac7f7544f6fde71eff995f7cc929fd897f22de4b581af0ea0e330409f8e52b300a96a9ea0840f1b6873ca89125e80c03ff5820abababababababababababababababababababababababababababababababab4d0102030405060708090a0b0c0d582467ab0c92c4ac1610895a1c965ee50aba41a8f1513b15240723b3bd0b01010101010101011a0015e65e5820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    },
+    {
+     "address": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+     "coin": "5000000",
+     "assets": {}
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": true,
+  "registryResult": false,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_requirements_masumi_agent_identifier",
+   "detail": "registry validation rejected the claim"
+  }
+ },
+ {
+  "name": "custom deployment without approval",
+  "quote": "token custom deployment multi part",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d",
+   "amount": "1500000",
+   "payTo": "addr_test1wzydnh6p2vrhmr2gssyue35dekln7vv7jw77purtr0esfwc8zlvkc",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "parameters",
+       "canonicalization": "jcs",
+       "content": {
+        "n": 9007199254740992,
+        "f": 0.1,
+        "e": 1e+21,
+        "s": 1e-7,
+        "neg": 0,
+        "u": "é😀 ",
+        "nested": [
+         {
+          "b": 1,
+          "a": [
+           true,
+           null
+          ]
+         }
+        ]
+       },
+       "digest": "bf5dc3c09409a2d74b6d2586b32f9a7ddd01371fab9a996d581d27324a9152b6"
+      },
+      {
+       "name": "raw",
+       "canonicalization": "raw",
+       "mediaType": "application/octet-stream",
+       "digest": "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+      },
+      {
+       "name": "empty",
+       "canonicalization": "jcs",
+       "mediaType": "",
+       "content": {},
+       "digest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      }
+     ],
+     "digest": "8abf13a103d14ac0c560cafbbcf9451df4335f26489935922eca13ee3f973908"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vqzf75t34nj2gy8ujleuthj96x003mnzhl04vev0289wnmccsps4l",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "8abf13a103d14ac0c560cafbbcf9451df4335f26489935922eca13ee3f973908",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a401010327200621582066be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a",
+    "referenceSignature": "84582aa201276761646472657373581d60049f5171ace4a410fc97f3c5de45d19ef8ee62bfdf56658f51cae9efa166686173686564f45820a15cf8e99d1c7191b52143e97c62c85cee955cc63735858d404d47c7f4fe959558403485c3df0324c21a7db355a64d095e7c03329392da71180f6a2ee33b46674e55402b33a6a85235013d8aa84010610fc53ce2d018afd846a989225af3471ced05",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a54511804e0066584b912c003180530cc03092243240f2435a4ac5d6569203a50b4d3a655c20857119599a112527069fa8705ad6d2531ad287ac748761e112b9624a19380973db8808908162e09062b13b924a9a49a28718096287a7b2b0e0e17063f295a5a861093962e4e196b061664ab25912b2e0624a2703917081156301d17112e749a476740ab00ae171f49091a12a52131ab2b083d3506349e595996c8f0166e11691b5a012629112792a686b482e90dc5a63ac09a3cee30fa830e21918cb0c8793dd149d461f14c241c311ac2049b48b6b849391e4582da74405c48b04d4fd10110f2224d018240f6022dacf8b420d84201f2292440d6301c15c2e0009c00fa0017690019c0524003b800bc009e5c001d8002d2800075c000dc790a802d8f37000736170ba5005754569a4006b000d9cbc86ab57900056e2f239195c69e40a794411509c5994955ad516c9100",
+    "deployment": {
+     "requiredAdmins": "2",
+     "adminVkeys": [
+      "fc16a1fcf309aed03ec18bb2176f5ea29acea70bb79145ebaffa8e75",
+      "fc16a1fcf309aed03ec18bb2176f5ea29acea70bb79145ebaffa8e75",
+      "7f78161369549d8e2b138fee724c9fa606d6107a66720bdb4c48ada6"
+     ],
+     "cooldownPeriod": "999999"
+    }
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzydnh6p2vrhmr2gssyue35dekln7vv7jw77purtr0esfwc8zlvkc",
+     "coin": "3715220",
+     "assets": {
+      "e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d": "1500000"
+     },
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c049f5171ace4a410fc97f3c5de45d19ef8ee62bfdf56658f51cae9efffd87a80ffd87a80582aa401010327200621582066be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a5f584084582aa201276761646472657373581d60049f5171ace4a410fc97f3c5de45d19ef8ee62bfdf56658f51cae9efa166686173686564f45820a15cf8e99d1c71915840b52143e97c62c85cee955cc63735858d404d47c7f4fe959558403485c3df0324c21a7db355a64d095e7c03329392da71180f6a2ee33b46674e55402b33a6a852581a35013d8aa84010610fc53ce2d018afd846a989225af3471ced05ff5820abababababababababababababababababababababababababababababababab40401a0038b09458208abf13a103d14ac0c560cafbbcf9451df4335f26489935922eca13ee3f973908401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    },
+    {
+     "address": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+     "coin": "5000000",
+     "assets": {}
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_requirements_masumi_deployment",
+   "detail": "custom deployment requires explicit application approval"
+  }
+ },
+ {
+  "name": "coin plus one",
+  "quote": "lovelace unregistered absent",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "50000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0a",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e1f35a2913056b0161684702526861a1729081f2839286b06081a2b14a52ba59aab0aa7b4468a973d2912714abda6112dae2ab91831969619b01100a89a391124a2969525968974bf46339e8aae3c912e0e560bb014ab456b22863b3aab22dd4822a50f3b3296d612cb3cf76657080a960e229e491bf64611390cb7b92bbea59f07a2230190c04f891488d0a3108894410e1886a512518ec55c169f4c4500a8a44f2f8819caa7d149a2580c390a8460783d5a5a11208546a470902c2766a28c15c2e0009c00fa0017150019c0524003b800bd851815251c5c32c0002c00d6e29524a00368a45000adc55a002d970006e0047220f32dc280398003d2892956658026800380a6dc05ca7a0076ec714606d400"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "50000001",
+     "assets": {},
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa65840e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d581a637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0aff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_payload_masumi_collateral",
+   "detail": "locked 50000001 lovelace, expected 50000000"
+  }
+ },
+ {
+  "name": "no escrow output",
+  "quote": "lovelace unregistered absent",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "50000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0a",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e1f35a2913056b0161684702526861a1729081f2839286b06081a2b14a52ba59aab0aa7b4468a973d2912714abda6112dae2ab91831969619b01100a89a391124a2969525968974bf46339e8aae3c912e0e560bb014ab456b22863b3aab22dd4822a50f3b3296d612cb3cf76657080a960e229e491bf64611390cb7b92bbea59f07a2230190c04f891488d0a3108894410e1886a512518ec55c169f4c4500a8a44f2f8819caa7d149a2580c390a8460783d5a5a11208546a470902c2766a28c15c2e0009c00fa0017150019c0524003b800bd851815251c5c32c0002c00d6e29524a00368a45000adc55a002d970006e0047220f32dc280398003d2892956658026800380a6dc05ca7a0076ec714606d400"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+     "coin": "1",
+     "assets": {}
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_payload_masumi_escrow_output_count"
+  }
+ },
+ {
+  "name": "two escrow outputs",
+  "quote": "lovelace unregistered absent",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "50000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0a",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e1f35a2913056b0161684702526861a1729081f2839286b06081a2b14a52ba59aab0aa7b4468a973d2912714abda6112dae2ab91831969619b01100a89a391124a2969525968974bf46339e8aae3c912e0e560bb014ab456b22863b3aab22dd4822a50f3b3296d612cb3cf76657080a960e229e491bf64611390cb7b92bbea59f07a2230190c04f891488d0a3108894410e1886a512518ec55c169f4c4500a8a44f2f8819caa7d149a2580c390a8460783d5a5a11208546a470902c2766a28c15c2e0009c00fa0017150019c0524003b800bd851815251c5c32c0002c00d6e29524a00368a45000adc55a002d970006e0047220f32dc280398003d2892956658026800380a6dc05ca7a0076ec714606d400"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "50000000",
+     "assets": {},
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa65840e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d581a637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0aff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    },
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "50000000",
+     "assets": {},
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa65840e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d581a637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0aff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_payload_masumi_escrow_output_count"
+  }
+ },
+ {
+  "name": "datum missing",
+  "quote": "lovelace unregistered absent",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "50000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0a",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e1f35a2913056b0161684702526861a1729081f2839286b06081a2b14a52ba59aab0aa7b4468a973d2912714abda6112dae2ab91831969619b01100a89a391124a2969525968974bf46339e8aae3c912e0e560bb014ab456b22863b3aab22dd4822a50f3b3296d612cb3cf76657080a960e229e491bf64611390cb7b92bbea59f07a2230190c04f891488d0a3108894410e1886a512518ec55c169f4c4500a8a44f2f8819caa7d149a2580c390a8460783d5a5a11208546a470902c2766a28c15c2e0009c00fa0017150019c0524003b800bd851815251c5c32c0002c00d6e29524a00368a45000adc55a002d970006e0047220f32dc280398003d2892956658026800380a6dc05ca7a0076ec714606d400"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "50000000",
+     "assets": {}
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_payload_masumi_datum_missing"
+  }
+ },
+ {
+  "name": "reference script",
+  "quote": "lovelace unregistered absent",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "50000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0a",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e1f35a2913056b0161684702526861a1729081f2839286b06081a2b14a52ba59aab0aa7b4468a973d2912714abda6112dae2ab91831969619b01100a89a391124a2969525968974bf46339e8aae3c912e0e560bb014ab456b22863b3aab22dd4822a50f3b3296d612cb3cf76657080a960e229e491bf64611390cb7b92bbea59f07a2230190c04f891488d0a3108894410e1886a512518ec55c169f4c4500a8a44f2f8819caa7d149a2580c390a8460783d5a5a11208546a470902c2766a28c15c2e0009c00fa0017150019c0524003b800bd851815251c5c32c0002c00d6e29524a00368a45000adc55a002d970006e0047220f32dc280398003d2892956658026800380a6dc05ca7a0076ec714606d400"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "50000000",
+     "assets": {},
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa65840e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d581a637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0aff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+     "hasReferenceScript": true
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_payload_masumi_reference_script"
+  }
+ },
+ {
+  "name": "datum malformed",
+  "quote": "lovelace unregistered absent",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "50000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0a",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e1f35a2913056b0161684702526861a1729081f2839286b06081a2b14a52ba59aab0aa7b4468a973d2912714abda6112dae2ab91831969619b01100a89a391124a2969525968974bf46339e8aae3c912e0e560bb014ab456b22863b3aab22dd4822a50f3b3296d612cb3cf76657080a960e229e491bf64611390cb7b92bbea59f07a2230190c04f891488d0a3108894410e1886a512518ec55c169f4c4500a8a44f2f8819caa7d149a2580c390a8460783d5a5a11208546a470902c2766a28c15c2e0009c00fa0017150019c0524003b800bd851815251c5c32c0002c00d6e29524a00368a45000adc55a002d970006e0047220f32dc280398003d2892956658026800380a6dc05ca7a0076ec714606d400"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "50000000",
+     "assets": {},
+     "datum": "d8799f01ff"
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_payload_masumi_datum_invalid",
+   "detail": "datum does not match masumi.vested_pay.v2"
+  }
+ },
+ {
+  "name": "cooldown nonzero",
+  "quote": "lovelace unregistered absent",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "50000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0a",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e1f35a2913056b0161684702526861a1729081f2839286b06081a2b14a52ba59aab0aa7b4468a973d2912714abda6112dae2ab91831969619b01100a89a391124a2969525968974bf46339e8aae3c912e0e560bb014ab456b22863b3aab22dd4822a50f3b3296d612cb3cf76657080a960e229e491bf64611390cb7b92bbea59f07a2230190c04f891488d0a3108894410e1886a512518ec55c169f4c4500a8a44f2f8819caa7d149a2580c390a8460783d5a5a11208546a470902c2766a28c15c2e0009c00fa0017150019c0524003b800bd851815251c5c32c0002c00d6e29524a00368a45000adc55a002d970006e0047220f32dc280398003d2892956658026800380a6dc05ca7a0076ec714606d400"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "50000000",
+     "assets": {},
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa65840e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d581a637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0aff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200100d87980ff"
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_payload_masumi_datum_invalid",
+   "detail": "cooldown"
+  }
+ },
+ {
+  "name": "seller nonce mismatch",
+  "quote": "lovelace unregistered absent",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "50000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0a",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e1f35a2913056b0161684702526861a1729081f2839286b06081a2b14a52ba59aab0aa7b4468a973d2912714abda6112dae2ab91831969619b01100a89a391124a2969525968974bf46339e8aae3c912e0e560bb014ab456b22863b3aab22dd4822a50f3b3296d612cb3cf76657080a960e229e491bf64611390cb7b92bbea59f07a2230190c04f891488d0a3108894410e1886a512518ec55c169f4c4500a8a44f2f8819caa7d149a2580c390a8460783d5a5a11208546a470902c2766a28c15c2e0009c00fa0017150019c0524003b800bd851815251c5c32c0002c00d6e29524a00368a45000adc55a002d970006e0047220f32dc280398003d2892956658026800380a6dc05ca7a0076ec714606d400"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "50000000",
+     "assets": {},
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa65840e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d581a637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0aff5820cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_payload_masumi_datum_mismatch",
+   "detail": "seller_nonce"
+  }
+ },
+ {
+  "name": "input hash mismatch",
+  "quote": "lovelace unregistered absent",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "50000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0a",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e1f35a2913056b0161684702526861a1729081f2839286b06081a2b14a52ba59aab0aa7b4468a973d2912714abda6112dae2ab91831969619b01100a89a391124a2969525968974bf46339e8aae3c912e0e560bb014ab456b22863b3aab22dd4822a50f3b3296d612cb3cf76657080a960e229e491bf64611390cb7b92bbea59f07a2230190c04f891488d0a3108894410e1886a512518ec55c169f4c4500a8a44f2f8819caa7d149a2580c390a8460783d5a5a11208546a470902c2766a28c15c2e0009c00fa0017150019c0524003b800bd851815251c5c32c0002c00d6e29524a00368a45000adc55a002d970006e0047220f32dc280398003d2892956658026800380a6dc05ca7a0076ec714606d400"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "50000000",
+     "assets": {},
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa65840e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d581a637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0aff5820abababababababababababababababababababababababababababababababab40400058200000000000000000000000000000000000000000000000000000000000000000401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_payload_masumi_datum_mismatch",
+   "detail": "input_hash"
+  }
+ },
+ {
+  "name": "unlock time mismatch",
+  "quote": "lovelace unregistered absent",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "50000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0a",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e1f35a2913056b0161684702526861a1729081f2839286b06081a2b14a52ba59aab0aa7b4468a973d2912714abda6112dae2ab91831969619b01100a89a391124a2969525968974bf46339e8aae3c912e0e560bb014ab456b22863b3aab22dd4822a50f3b3296d612cb3cf76657080a960e229e491bf64611390cb7b92bbea59f07a2230190c04f891488d0a3108894410e1886a512518ec55c169f4c4500a8a44f2f8819caa7d149a2580c390a8460783d5a5a11208546a470902c2766a28c15c2e0009c00fa0017150019c0524003b800bd851815251c5c32c0002c00d6e29524a00368a45000adc55a002d970006e0047220f32dc280398003d2892956658026800380a6dc05ca7a0076ec714606d400"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "50000000",
+     "assets": {},
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa65840e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d581a637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0aff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e811b0000019fc77a2a200000d87980ff"
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_payload_masumi_deadline",
+   "detail": "deadline intervals below the minimum"
+  }
+ },
+ {
+  "name": "seller return declared but none",
+  "quote": "registered with return address",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "2500000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "confirmationPolicy": {
+     "l1Confirmations": 3
+    },
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vqjhzsk56euudsj6cjf8av3q4ph6q0stqlqy6scsjc0vnmqhclw5u",
+     "sellerReturnAddress": "addr_test1vpk3we70vc2e92avfgvmjeefauywkgf986j569dulffj2wqt99enq",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "0102030405060708090a0b0c0d",
+     "agentIdentifier": "67ab0c92c4ac1610895a1c965ee50aba41a8f1513b15240723b3bd0b0101010101010101",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f618",
+    "referenceSignature": "84582aa201276761646472657373581d60257142d4d679c6c25ac4927eb220a86fa03e0b07c04d4310961ec9eca166686173686564f45820c616bcb700585ab83a81b31e9b095c97be8922273b28df2437566c923099bdcf584085ea06d5bf997d8b832b003c8ec77fd6e038ac7f7544f6fde71eff995f7cc929fd897f22de4bf0ea0e330409f8e52b300a96a9ea0840f1b6873ca89125e80c03",
+    "blockchainIdentifier": "218235ed23ab67ee8840d80eca003018c09c0262c01660b011995230038701598537656814c5da3710d382a03352b5480661082f210ca8f28d1004c3080c94572b5ab4803a35783308c923b229d430e4e8bb06399aaa15a54f3060bb49e54682b242dfa7354c2010ea472c678b4a8a484787284a1a83858c858e12484f8a82c2078babcc87cc07a2c96a85806b1c29438142cb8b50cc88d541401c8cdb4de7cf68ed85e205820a818180ef42054c2bca420952c384a74b8a8202c3439eea27854727c12811dc9f8fa38f372587c0e9254ac85c872b4207c27a87254e3c2784a7a5854b5a8a87c50b1584541200350b442210f8f9390b1222c3e13ce87c52ae0f038404d00139386111e181621458c27d24931bf5a27df49c6ab007044ea248042036804b0bc1c1b958542b30934c0492a83ed261b20f0821ea0348d242083e8852c04359d0c1950b0a10c1e00a2113a91015954720c4c22c0385872219e0893f612b131142a00ae4720013801f4002e2c0033a7b48007700178fb082c6400770b40005801ac032c20c006cb058001580670005b39000dc008e18575167d00730007b2083b1e13117300074f69780c23e13600768100e114b4000"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "3935230",
+     "assets": {},
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c257142d4d679c6c25ac4927eb220a86fa03e0b07c04d4310961ec9ecffd87a80ffd87a80582aa4010103272006215820fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f6185f584084582aa201276761646472657373581d60257142d4d679c6c25ac4927eb220a86fa03e0b07c04d4310961ec9eca166686173686564f45820c616bcb700585ab858403a81b31e9b095c97be8922273b28df2437566c923099bdcf584085ea06d5bf997d8b832b003c8ec77fd6e038ac7f7544f6fde71eff995f7cc929fd897f22de4b581af0ea0e330409f8e52b300a96a9ea0840f1b6873ca89125e80c03ff5820abababababababababababababababababababababababababababababababab4d0102030405060708090a0b0c0d582467ab0c92c4ac1610895a1c965ee50aba41a8f1513b15240723b3bd0b01010101010101011a0015e65e5820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": true,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_payload_masumi_datum_mismatch",
+   "detail": "seller_return_address"
+  }
+ },
+ {
+  "name": "no ttl",
+  "quote": "lovelace unregistered absent",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "50000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0a",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e1f35a2913056b0161684702526861a1729081f2839286b06081a2b14a52ba59aab0aa7b4468a973d2912714abda6112dae2ab91831969619b01100a89a391124a2969525968974bf46339e8aae3c912e0e560bb014ab456b22863b3aab22dd4822a50f3b3296d612cb3cf76657080a960e229e491bf64611390cb7b92bbea59f07a2230190c04f891488d0a3108894410e1886a512518ec55c169f4c4500a8a44f2f8819caa7d149a2580c390a8460783d5a5a11208546a470902c2766a28c15c2e0009c00fa0017150019c0524003b800bd851815251c5c32c0002c00d6e29524a00368a45000adc55a002d970006e0047220f32dc280398003d2892956658026800380a6dc05ca7a0076ec714606d400"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "50000000",
+     "assets": {},
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa65840e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d581a637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0aff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    },
+    {
+     "address": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+     "coin": "5000000",
+     "assets": {}
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_payload_masumi_deadline",
+   "detail": "no validity upper bound"
+  }
+ },
+ {
+  "name": "ttl after pay by",
+  "quote": "lovelace unregistered absent",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "50000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0a",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e1f35a2913056b0161684702526861a1729081f2839286b06081a2b14a52ba59aab0aa7b4468a973d2912714abda6112dae2ab91831969619b01100a89a391124a2969525968974bf46339e8aae3c912e0e560bb014ab456b22863b3aab22dd4822a50f3b3296d612cb3cf76657080a960e229e491bf64611390cb7b92bbea59f07a2230190c04f891488d0a3108894410e1886a512518ec55c169f4c4500a8a44f2f8819caa7d149a2580c390a8460783d5a5a11208546a470902c2766a28c15c2e0009c00fa0017150019c0524003b800bd851815251c5c32c0002c00d6e29524a00368a45000adc55a002d970006e0047220f32dc280398003d2892956658026800380a6dc05ca7a0076ec714606d400"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072801",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "50000000",
+     "assets": {},
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa65840e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d581a637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0aff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    },
+    {
+     "address": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+     "coin": "5000000",
+     "assets": {}
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_payload_masumi_deadline",
+   "detail": "TTL is after pay_by_time"
+  }
+ },
+ {
+  "name": "no buyer witness",
+  "quote": "lovelace unregistered absent",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "50000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0a",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e1f35a2913056b0161684702526861a1729081f2839286b06081a2b14a52ba59aab0aa7b4468a973d2912714abda6112dae2ab91831969619b01100a89a391124a2969525968974bf46339e8aae3c912e0e560bb014ab456b22863b3aab22dd4822a50f3b3296d612cb3cf76657080a960e229e491bf64611390cb7b92bbea59f07a2230190c04f891488d0a3108894410e1886a512518ec55c169f4c4500a8a44f2f8819caa7d149a2580c390a8460783d5a5a11208546a470902c2766a28c15c2e0009c00fa0017150019c0524003b800bd851815251c5c32c0002c00d6e29524a00368a45000adc55a002d970006e0047220f32dc280398003d2892956658026800380a6dc05ca7a0076ec714606d400"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "00000000000000000000000000000000000000000000000000000000"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "50000000",
+     "assets": {},
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa65840e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d581a637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0aff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    },
+    {
+     "address": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+     "coin": "5000000",
+     "assets": {}
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_payload_masumi_datum_mismatch",
+   "detail": "no witness for the buyer credential"
+  }
+ },
+ {
+  "name": "payer mismatch",
+  "quote": "lovelace unregistered absent",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "50000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0a",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e1f35a2913056b0161684702526861a1729081f2839286b06081a2b14a52ba59aab0aa7b4468a973d2912714abda6112dae2ab91831969619b01100a89a391124a2969525968974bf46339e8aae3c912e0e560bb014ab456b22863b3aab22dd4822a50f3b3296d612cb3cf76657080a960e229e491bf64611390cb7b92bbea59f07a2230190c04f891488d0a3108894410e1886a512518ec55c169f4c4500a8a44f2f8819caa7d149a2580c390a8460783d5a5a11208546a470902c2766a28c15c2e0009c00fa0017150019c0524003b800bd851815251c5c32c0002c00d6e29524a00368a45000adc55a002d970006e0047220f32dc280398003d2892956658026800380a6dc05ca7a0076ec714606d400"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "50000000",
+     "assets": {},
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa65840e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d581a637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0aff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    },
+    {
+     "address": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+     "coin": "5000000",
+     "assets": {}
+    }
+   ]
+  },
+  "payer": "addr_test1vqxk54m7j3q6mrkevcunryrwf4p7e68c93cjk8gzxkhlkpsffv7s0",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_payload_masumi_datum_mismatch",
+   "detail": "buyer does not control the nonce input"
+  }
+ },
+ {
+  "name": "token amount wrong",
+  "quote": "token custom deployment multi part",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d",
+   "amount": "1500000",
+   "payTo": "addr_test1wzydnh6p2vrhmr2gssyue35dekln7vv7jw77purtr0esfwc8zlvkc",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "parameters",
+       "canonicalization": "jcs",
+       "content": {
+        "n": 9007199254740992,
+        "f": 0.1,
+        "e": 1e+21,
+        "s": 1e-7,
+        "neg": 0,
+        "u": "é😀 ",
+        "nested": [
+         {
+          "b": 1,
+          "a": [
+           true,
+           null
+          ]
+         }
+        ]
+       },
+       "digest": "bf5dc3c09409a2d74b6d2586b32f9a7ddd01371fab9a996d581d27324a9152b6"
+      },
+      {
+       "name": "raw",
+       "canonicalization": "raw",
+       "mediaType": "application/octet-stream",
+       "digest": "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+      },
+      {
+       "name": "empty",
+       "canonicalization": "jcs",
+       "mediaType": "",
+       "content": {},
+       "digest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      }
+     ],
+     "digest": "8abf13a103d14ac0c560cafbbcf9451df4335f26489935922eca13ee3f973908"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vqzf75t34nj2gy8ujleuthj96x003mnzhl04vev0289wnmccsps4l",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "8abf13a103d14ac0c560cafbbcf9451df4335f26489935922eca13ee3f973908",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a401010327200621582066be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a",
+    "referenceSignature": "84582aa201276761646472657373581d60049f5171ace4a410fc97f3c5de45d19ef8ee62bfdf56658f51cae9efa166686173686564f45820a15cf8e99d1c7191b52143e97c62c85cee955cc63735858d404d47c7f4fe959558403485c3df0324c21a7db355a64d095e7c03329392da71180f6a2ee33b46674e55402b33a6a85235013d8aa84010610fc53ce2d018afd846a989225af3471ced05",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a54511804e0066584b912c003180530cc03092243240f2435a4ac5d6569203a50b4d3a655c20857119599a112527069fa8705ad6d2531ad287ac748761e112b9624a19380973db8808908162e09062b13b924a9a49a28718096287a7b2b0e0e17063f295a5a861093962e4e196b061664ab25912b2e0624a2703917081156301d17112e749a476740ab00ae171f49091a12a52131ab2b083d3506349e595996c8f0166e11691b5a012629112792a686b482e90dc5a63ac09a3cee30fa830e21918cb0c8793dd149d461f14c241c311ac2049b48b6b849391e4582da74405c48b04d4fd10110f2224d018240f6022dacf8b420d84201f2292440d6301c15c2e0009c00fa0017690019c0524003b800bc009e5c001d8002d2800075c000dc790a802d8f37000736170ba5005754569a4006b000d9cbc86ab57900056e2f239195c69e40a794411509c5994955ad516c9100",
+    "deployment": {
+     "requiredAdmins": "2",
+     "adminVkeys": [
+      "fc16a1fcf309aed03ec18bb2176f5ea29acea70bb79145ebaffa8e75",
+      "fc16a1fcf309aed03ec18bb2176f5ea29acea70bb79145ebaffa8e75",
+      "7f78161369549d8e2b138fee724c9fa606d6107a66720bdb4c48ada6"
+     ],
+     "cooldownPeriod": "999999"
+    }
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzydnh6p2vrhmr2gssyue35dekln7vv7jw77purtr0esfwc8zlvkc",
+     "coin": "3715220",
+     "assets": {
+      "e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d": "1"
+     },
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c049f5171ace4a410fc97f3c5de45d19ef8ee62bfdf56658f51cae9efffd87a80ffd87a80582aa401010327200621582066be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a5f584084582aa201276761646472657373581d60049f5171ace4a410fc97f3c5de45d19ef8ee62bfdf56658f51cae9efa166686173686564f45820a15cf8e99d1c71915840b52143e97c62c85cee955cc63735858d404d47c7f4fe959558403485c3df0324c21a7db355a64d095e7c03329392da71180f6a2ee33b46674e55402b33a6a852581a35013d8aa84010610fc53ce2d018afd846a989225af3471ced05ff5820abababababababababababababababababababababababababababababababab40401a0038b09458208abf13a103d14ac0c560cafbbcf9451df4335f26489935922eca13ee3f973908401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": true,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_payload_masumi_asset",
+   "detail": "native token amount is not exact"
+  }
+ },
+ {
+  "name": "extra token",
+  "quote": "lovelace unregistered absent",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "50000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0a",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e1f35a2913056b0161684702526861a1729081f2839286b06081a2b14a52ba59aab0aa7b4468a973d2912714abda6112dae2ab91831969619b01100a89a391124a2969525968974bf46339e8aae3c912e0e560bb014ab456b22863b3aab22dd4822a50f3b3296d612cb3cf76657080a960e229e491bf64611390cb7b92bbea59f07a2230190c04f891488d0a3108894410e1886a512518ec55c169f4c4500a8a44f2f8819caa7d149a2580c390a8460783d5a5a11208546a470902c2766a28c15c2e0009c00fa0017150019c0524003b800bd851815251c5c32c0002c00d6e29524a00368a45000adc55a002d970006e0047220f32dc280398003d2892956658026800380a6dc05ca7a0076ec714606d400"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "50000000",
+     "assets": {
+      "11111111111111111111111111111111111111111111111111111111.00": "1"
+     },
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa65840e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d581a637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0aff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_payload_masumi_asset",
+   "detail": "escrow output carries extra native tokens"
+  }
+ },
+ {
+  "name": "min utxo",
+  "quote": "lovelace unregistered absent",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "50000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0a",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e1f35a2913056b0161684702526861a1729081f2839286b06081a2b14a52ba59aab0aa7b4468a973d2912714abda6112dae2ab91831969619b01100a89a391124a2969525968974bf46339e8aae3c912e0e560bb014ab456b22863b3aab22dd4822a50f3b3296d612cb3cf76657080a960e229e491bf64611390cb7b92bbea59f07a2230190c04f891488d0a3108894410e1886a512518ec55c169f4c4500a8a44f2f8819caa7d149a2580c390a8460783d5a5a11208546a470902c2766a28c15c2e0009c00fa0017150019c0524003b800bd851815251c5c32c0002c00d6e29524a00368a45000adc55a002d970006e0047220f32dc280398003d2892956658026800380a6dc05ca7a0076ec714606d400"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "50000000",
+     "assets": {},
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa65840e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d581a637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0aff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    },
+    {
+     "address": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+     "coin": "5000000",
+     "assets": {}
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "1000000",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_payload_masumi_min_utxo",
+   "detail": "locked 50000000, post-result minimum 808000000"
+  }
+ },
+ {
+  "name": "collateral below floor",
+  "quote": "agentIdentifier null",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "1000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "agentIdentifier": null,
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f4582079f3cb0fdc8ac05efc226f9370c1be134fa08bcf91e64a3503c38a4e2b5c3f7158408c012f1c2d52c943dd5073bc6c74eac706aac442106a0e15a60d265efea23586c8fe469d36d9fe38b5803018be18b5c365b47f8e559ce501e6d1723e51c8e404",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e11391694ab29911497229a302291160a94b293148db9112289080ab38614b01f08229a490a9d300291386b2c460aae0812ab14b93da61f3c5914893297162e228eab173f706b316522849ab4d125012285a0bce16e61af171322549aae02a78c6efd16bca517284aad535a35693f2e7f337339b91486961616a28a962939571bcfb5faf434182206190c07049148d50a311e6821c310d4a229a51580d6f80c88a024a7d8220672a9f4692d16030e42a118723972080b422410a8d48e12059ceb841943460027003e8005c5400672149000ee002f517d52892a19600016006b494a9a5001b45228005692ad0016cb800370023910f956d1401cc001e94696ab58a2534001c85b6ca948bd003b7624a30b6a0000"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "1000001",
+     "assets": {},
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f4582079f3cb0fdc8ac05e5840fc226f9370c1be134fa08bcf91e64a3503c38a4e2b5c3f7158408c012f1c2d52c943dd5073bc6c74eac706aac442106a0e15a60d265efea23586c8fe469d36d9581afe38b5803018be18b5c365b47f8e559ce501e6d1723e51c8e404ff5820abababababababababababababababababababababababababababababababab4040015820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_payload_masumi_collateral",
+   "detail": "collateral 1 below the floor"
+  }
+ },
+ {
+  "name": "amount tampered",
+  "quote": "lovelace unregistered absent",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "49999999",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0a",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e1f35a2913056b0161684702526861a1729081f2839286b06081a2b14a52ba59aab0aa7b4468a973d2912714abda6112dae2ab91831969619b01100a89a391124a2969525968974bf46339e8aae3c912e0e560bb014ab456b22863b3aab22dd4822a50f3b3296d612cb3cf76657080a960e229e491bf64611390cb7b92bbea59f07a2230190c04f891488d0a3108894410e1886a512518ec55c169f4c4500a8a44f2f8819caa7d149a2580c390a8460783d5a5a11208546a470902c2766a28c15c2e0009c00fa0017150019c0524003b800bd851815251c5c32c0002c00d6e29524a00368a45000adc55a002d970006e0047220f32dc280398003d2892956658026800380a6dc05ca7a0076ec714606d400"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "50000000",
+     "assets": {},
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa65840e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d581a637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0aff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    },
+    {
+     "address": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+     "coin": "5000000",
+     "assets": {}
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_requirements_masumi_seller_signature"
+  }
+ },
+ {
+  "name": "payTo tampered",
+  "quote": "lovelace unregistered absent",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "50000000",
+   "payTo": "addr_test1vz9ftj8dtzpsd65gsc94f6cvvhnhm74en9ufe30xegqg0xgkplq9s",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0a",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e1f35a2913056b0161684702526861a1729081f2839286b06081a2b14a52ba59aab0aa7b4468a973d2912714abda6112dae2ab91831969619b01100a89a391124a2969525968974bf46339e8aae3c912e0e560bb014ab456b22863b3aab22dd4822a50f3b3296d612cb3cf76657080a960e229e491bf64611390cb7b92bbea59f07a2230190c04f891488d0a3108894410e1886a512518ec55c169f4c4500a8a44f2f8819caa7d149a2580c390a8460783d5a5a11208546a470902c2766a28c15c2e0009c00fa0017150019c0524003b800bd851815251c5c32c0002c00d6e29524a00368a45000adc55a002d970006e0047220f32dc280398003d2892956658026800380a6dc05ca7a0076ec714606d400"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "50000000",
+     "assets": {},
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa65840e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d581a637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0aff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    },
+    {
+     "address": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+     "coin": "5000000",
+     "assets": {}
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_requirements_masumi_deployment",
+   "detail": "derived escrow addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g does not equal payTo"
+  }
+ },
+ {
+  "name": "schema unknown field",
+  "quote": "lovelace unregistered absent",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "50000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0a",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e1f35a2913056b0161684702526861a1729081f2839286b06081a2b14a52ba59aab0aa7b4468a973d2912714abda6112dae2ab91831969619b01100a89a391124a2969525968974bf46339e8aae3c912e0e560bb014ab456b22863b3aab22dd4822a50f3b3296d612cb3cf76657080a960e229e491bf64611390cb7b92bbea59f07a2230190c04f891488d0a3108894410e1886a512518ec55c169f4c4500a8a44f2f8819caa7d149a2580c390a8460783d5a5a11208546a470902c2766a28c15c2e0009c00fa0017150019c0524003b800bd851815251c5c32c0002c00d6e29524a00368a45000adc55a002d970006e0047220f32dc280398003d2892956658026800380a6dc05ca7a0076ec714606d400",
+    "contractAddress": "x"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "50000000",
+     "assets": {},
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa65840e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d581a637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0aff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    },
+    {
+     "address": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+     "coin": "5000000",
+     "assets": {}
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": null,
+  "result": {
+   "ok": false,
+   "reason": "invalid_exact_cardano_requirements_masumi_schema",
+   "detail": "extra has unknown field contractAddress"
+  }
+ },
+ {
+  "name": "horizon ignores deadlines already past",
+  "quote": "lovelace unregistered absent",
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "50000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0a",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e1f35a2913056b0161684702526861a1729081f2839286b06081a2b14a52ba59aab0aa7b4468a973d2912714abda6112dae2ab91831969619b01100a89a391124a2969525968974bf46339e8aae3c912e0e560bb014ab456b22863b3aab22dd4822a50f3b3296d612cb3cf76657080a960e229e491bf64611390cb7b92bbea59f07a2230190c04f891488d0a3108894410e1886a512518ec55c169f4c4500a8a44f2f8819caa7d149a2580c390a8460783d5a5a11208546a470902c2766a28c15c2e0009c00fa0017150019c0524003b800bd851815251c5c32c0002c00d6e29524a00368a45000adc55a002d970006e0047220f32dc280398003d2892956658026800380a6dc05ca7a0076ec714606d400"
+   }
+  },
+  "decoded": {
+   "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inputs": [],
+   "fee": "200000",
+   "sizeBytes": 1000,
+   "balanceChangingOperations": [],
+   "vkeyWitnessCount": 1,
+   "scriptWitnessCount": 0,
+   "redeemerCount": 0,
+   "signaturesValid": true,
+   "isValid": true,
+   "ttlSlot": "130072800",
+   "vkeyHashes": [
+    "7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6"
+   ],
+   "outputs": [
+    {
+     "address": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+     "coin": "50000000",
+     "assets": {},
+     "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa65840e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d581a637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0aff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff"
+    },
+    {
+     "address": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+     "coin": "5000000",
+     "assets": {}
+    }
+   ]
+  },
+  "payer": "addr_test1qp7573my7h0fyj9cd2fwrws5v6ep0e6urpx007pz0pjnmakny46m3vmfawqwv3m48dv2s6eysht6tjfdk48lrzrkmj5qpmyq7l",
+  "coinsPerUtxoByte": "4310",
+  "registry": false,
+  "registryResult": true,
+  "approve": false,
+  "horizon": "1000",
+  "result": {
+   "ok": true
+  }
+ }
+]

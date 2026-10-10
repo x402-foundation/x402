@@ -161,6 +161,10 @@ func SchemeBindings(cfg Config) []SchemeBinding {
 				}
 				return authCap
 			}
+		case "cardano":
+			if scheme == "exact" {
+				return CardanoScheme()
+			}
 		case "svm":
 			switch scheme {
 			case "exact":

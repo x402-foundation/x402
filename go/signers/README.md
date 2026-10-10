@@ -69,6 +69,9 @@ This package provides **helper implementations** of mechanism-defined signer int
   - Helper: `NewClientSignerFromPrivateKey(base58Key)` - Creates SVM client signer
   - Eliminates: ~70 lines of Ed25519 signing code
 
+- **`signers/cardano`** - Implements `mechanisms/cardano.ClientCardanoSigner` and `mechanisms/cardano.FacilitatorCardanoSigner` over Blockfrost
+  - Helpers: `NewClientSigner` (CIP-1852 wallet from a BIP-39 mnemonic), `NewFacilitatorSigner` (no key; the facilitator never signs), `NewMasumiSellerSigner`
+
 ### Future Helpers
 
 **Facilitator Signers** (planned):
