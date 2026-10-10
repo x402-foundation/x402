@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -257,3 +259,55 @@ class TestSkipHandlerSettlement:
         assert result.response.status == 200
         assert result.response.body == {"message": "Refund acknowledged"}
         assert "PAYMENT-RESPONSE" in result.response.headers
+
+
+class PaymentHeaderAdapter(MockHTTPAdapter):
+    def __init__(self, payment_header: str) -> None:
+        self._payment_header = payment_header
+
+    def get_header(self, name: str) -> str | None:
+        if name.lower() == PAYMENT_SIGNATURE_HEADER.lower():
+            return self._payment_header
+        return None
+
+
+class TestV1PayloadRejected:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("version", [1, True])
+    async def test_v1_payload_returns_402(self, protected_routes, version):
+        server = MagicMock()
+        server.enrich_extensions.side_effect = lambda declared, _ctx: declared
+        requirements = [make_requirements()]
+
+        async def mock_create_payment_required(
+            _requirements, _resource, error, _extensions, **_kwargs
+        ):
+            return PaymentRequired(x402_version=2, error=error, accepts=requirements)
+
+        server.create_payment_required_response = AsyncMock(
+            side_effect=mock_create_payment_required
+        )
+        http_server = x402HTTPResourceServer(server, protected_routes)
+
+        header = base64.b64encode(
+            json.dumps(
+                {"x402Version": version, "scheme": "exact", "network": "eip155:8453", "payload": {}}
+            ).encode()
+        ).decode()
+        context = HTTPRequestContext(
+            adapter=PaymentHeaderAdapter(header),
+            path="/api/protected",
+            method="GET",
+        )
+
+        with patch.object(
+            x402HTTPResourceServer,
+            "_build_payment_requirements_from_options",
+            new=AsyncMock(return_value=requirements),
+        ):
+            result = await http_server.process_http_request(context)
+
+        assert result.type == "payment-error"
+        assert result.response is not None
+        assert result.response.status == 402
+        server.find_matching_requirements.assert_not_called()
