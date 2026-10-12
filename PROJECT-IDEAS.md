@@ -113,6 +113,22 @@ Impact-based micro‑grants up to **\$3k** are available for projects that unloc
 
 ---
 
+
+---
+
+## Security & Autonomous Agent Defense
+
+### Prompt-Injection Firewall & Wallet Shield (Live: CanaryGuard 402)
+
+* **What it does:** Autonomous firewall and honeypot scrubber that protects AI agents from prompt injection, system role overrides, concealed Unicode exploits, and malicious wallet-draining instructions before context ingestion.
+* **Payment moment:** Per-sanitization micro-transaction (\$0.003 USDC via x402 on Base mainnet).
+* **Live Deployment:** `https://canaryguard-402.onrender.com` (Base mainnet / Coinbase CDP Facilitator).
+* **SDKs & Plugins:**
+  - ElizaOS Plugin: `@kurox_real/plugin-canaryguard`
+  - Coinbase AgentKit Action Provider: `@kurox_real/agentkit-canaryguard-402`
+  - TypeScript SDK: `@kurox_real/canaryguard-client`
+* **Verification / Discovery:** Fully indexed on the Coinbase CDP x402 Bazaar Discovery API. Tested latency <5ms with deterministic blocking rules.
+
 ## Need Something Else?
 
 Have an idea that doesn’t fit? **We’re flexible.** Pitch it in an issue, outline the APIs you’ll wrap, and we’ll help you scope it.
