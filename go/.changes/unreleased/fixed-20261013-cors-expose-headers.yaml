@@ -1,0 +1,3 @@
+kind: fixed
+body: 'The Gin, Echo and net/http payment middlewares now add PAYMENT-REQUIRED and PAYMENT-RESPONSE to Access-Control-Expose-Headers on every response that carries one of them, so cross-origin browser clients can read the 402 challenge and the settlement receipt. An expose list already on the response is merged case-insensitively across all of its values instead of being replaced, and Access-Control-Allow-Origin is never set. Add WithPaymentCORSExposeHeaders and ApplyPaymentResponseHeaders for custom middleware.'
+time: 2026-10-13T12:00:00.000000+05:30
