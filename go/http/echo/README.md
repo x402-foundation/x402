@@ -240,6 +240,10 @@ e.Use(echomw.PaymentMiddlewareFromConfig(routes,
 ))
 ```
 
+### Browser Clients (CORS)
+
+The middleware adds `PAYMENT-REQUIRED` and `PAYMENT-RESPONSE` to `Access-Control-Expose-Headers` on every response that carries one of them, merged with any expose list already set. It never sets `Access-Control-Allow-Origin`. Register your CORS middleware first (`e.Use(cors...)` before the payment middleware) so it also runs on the 402, name `PAYMENT-SIGNATURE` in its allowed headers, and key paid routes with their method so the `OPTIONS` preflight is answered by CORS, not charged. See [Browser Clients (CORS)](../../SERVER.md#browser-clients-cors).
+
 ## Convenience Functions
 
 ### X402Payment (Config Struct)
