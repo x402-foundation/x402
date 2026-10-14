@@ -137,7 +137,8 @@ Both middlewares add `PAYMENT-REQUIRED` and `PAYMENT-RESPONSE` to `Access-Contro
 Your CORS setup must also:
 
 - name `PAYMENT-SIGNATURE` explicitly in the allowed request headers (`*` is not a wildcard for credentialed requests);
-- answer the `OPTIONS` preflight with a 2xx without requiring payment (key paid routes with their method, e.g. `GET /api/weather`).
+- answer the `OPTIONS` preflight with a 2xx without requiring payment (key paid routes with their method, e.g. `GET /api/weather`);
+- send `Vary: Origin` if it reflects the request's `Origin` instead of `*`, so a shared cache never serves one origin's response to another.
 
 **FastAPI:** add `CORSMiddleware` after the payment middleware so it wraps it and sees the 402. If you pass `expose_headers`, Starlette replaces the expose list, so include the payment headers:
 
