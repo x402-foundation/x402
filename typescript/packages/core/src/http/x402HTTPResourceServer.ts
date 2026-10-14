@@ -31,8 +31,8 @@ export const SETTLEMENT_OVERRIDES_HEADER = "Settlement-Overrides";
 
 export const PAYMENT_REQUIRED_CACHE_CONTROL = "no-store";
 
-// Encoded PAYMENT-REQUIRED header sizes that common clients reject: Python aiohttp
-// fails on header values over 8,190 bytes, Node.js fetch (undici) on over 16 KB of headers.
+// Warning thresholds for the encoded PAYMENT-REQUIRED header. Python aiohttp rejects
+// header values over 8,190 bytes; Node.js fetch (undici) rejects over 16 KB of headers.
 const PAYMENT_REQUIRED_HEADER_WARN_BYTES = 8 * 1024;
 const PAYMENT_REQUIRED_HEADER_MAX_BYTES = 16 * 1024;
 
