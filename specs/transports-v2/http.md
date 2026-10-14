@@ -52,6 +52,15 @@ The base64 header decodes to:
 }
 ```
 
+### Header Size
+
+Servers should keep the encoded `PAYMENT-REQUIRED` header under 8 KB (8,192 bytes). Common HTTP clients reject larger headers before the client can read the 402:
+
+- Python aiohttp rejects a header value over 8,190 bytes.
+- Node.js `fetch` (undici) rejects a response with more than 16 KB of headers, failing with `UND_ERR_HEADERS_OVERFLOW`.
+
+Extensions count toward this budget. Keep extension examples short: for Bazaar, one representative item, not a full response.
+
 ## Payment Payload Transmission
 
 Clients send payment data using the `PAYMENT-SIGNATURE` HTTP header.
