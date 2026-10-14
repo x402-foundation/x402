@@ -1,5 +1,6 @@
 """SVM utility functions for network, address, and amount handling."""
 
+import asyncio
 import base64
 import hashlib
 import re
@@ -46,6 +47,25 @@ def resolve_blockhash(client: "SolanaClient", recent_blockhash: object = None) -
             pass
 
     return client.get_latest_blockhash().value.blockhash
+
+
+async def resolve_blockhash_async(
+    client: "SolanaClient", recent_blockhash: object = None
+) -> Hash:
+    """Async counterpart of :func:`resolve_blockhash`.
+
+    The synchronous RPC call is offloaded to a worker thread so the event loop
+    stays free for other coroutines while the request is in flight (mirrors the
+    TypeScript implementation, which awaits the same operation).
+    """
+    if isinstance(recent_blockhash, str) and recent_blockhash:
+        try:
+            return Hash.from_string(recent_blockhash)
+        except ParseHashError:
+            pass
+
+    response = await asyncio.to_thread(client.get_latest_blockhash)
+    return response.value.blockhash
 
 
 def normalize_network(network: str) -> str:

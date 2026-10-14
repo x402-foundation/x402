@@ -16,6 +16,7 @@ from .client_base import (
     DEFAULT_MAX_AMOUNT_PER_PAYMENT,
     AfterPaymentCreationHook,
     BeforePaymentCreationHook,
+    CreationCommand,
     HookCommand,
     OnPaymentCreationFailureHook,
     OnPaymentResponseHook,
@@ -228,16 +229,19 @@ class x402Client(x402ClientBase):
 
     async def _run_payment_creation_generator(
         self,
-        gen: Generator[HookCommand, Any, PaymentPayloadT],
+        gen: Generator[CreationCommand, Any, PaymentPayloadT],
     ) -> PaymentPayloadT:
         """Drive payment creation hooks, routing hook errors back through the generator."""
         result = None
         try:
             command = gen.send(result)
             while True:
-                _, hook, ctx = command
+                phase, target, ctx = command
                 try:
-                    result = await self._execute_hook(hook, ctx)
+                    if phase == "scheme_call":
+                        result = await self._execute_scheme_call_async(target, ctx)
+                    else:
+                        result = await self._execute_hook(target, ctx)
                 except Exception as hook_error:
                     result = None
                     command = gen.throw(hook_error)
@@ -252,6 +256,22 @@ class x402Client(x402ClientBase):
         result = hook(context)
         if asyncio.iscoroutine(result) or asyncio.isfuture(result):
             return await result
+        return result
+
+    async def _execute_scheme_call_async(self, scheme_client: Any, call_ctx: Any) -> Any:
+        """Invoke a scheme's payload creation, preferring its async variant.
+
+        Schemes that define ``create_payment_payload_async`` run their RPC calls
+        off the event loop; schemes with only a sync method behave exactly as
+        before (the sync call still executes inline).
+        """
+        selected, kwargs = call_ctx
+        method = getattr(scheme_client, "create_payment_payload_async", None)
+        if method is None:
+            method = scheme_client.create_payment_payload
+        result = method(selected, **kwargs)
+        if asyncio.iscoroutine(result) or asyncio.isfuture(result):
+            result = await result
         return result
 
 
@@ -413,16 +433,19 @@ class x402ClientSync(x402ClientBase):
 
     def _run_payment_creation_generator(
         self,
-        gen: Generator[HookCommand, Any, PaymentPayloadT],
+        gen: Generator[CreationCommand, Any, PaymentPayloadT],
     ) -> PaymentPayloadT:
         """Drive payment creation hooks, routing hook errors back through the generator."""
         result = None
         try:
             command = gen.send(result)
             while True:
-                _, hook, ctx = command
+                phase, target, ctx = command
                 try:
-                    result = self._execute_hook_sync(hook, ctx)
+                    if phase == "scheme_call":
+                        result = self._execute_scheme_call_sync(target, ctx)
+                    else:
+                        result = self._execute_hook_sync(target, ctx)
                 except Exception as hook_error:
                     result = None
                     command = gen.throw(hook_error)
@@ -440,5 +463,17 @@ class x402ClientSync(x402ClientBase):
             raise TypeError(
                 "Async hooks are not supported in x402ClientSync. "
                 "Use x402Client for async hook support."
+            )
+        return result
+
+    def _execute_scheme_call_sync(self, scheme_client: Any, call_ctx: Any) -> Any:
+        """Invoke a scheme's sync payload creation; async-only schemes are rejected."""
+        selected, kwargs = call_ctx
+        result = scheme_client.create_payment_payload(selected, **kwargs)
+        if asyncio.iscoroutine(result):
+            result.close()  # Prevent warning
+            raise TypeError(
+                "This scheme only provides an async create_payment_payload_async. "
+                "Use x402Client instead of x402ClientSync."
             )
         return result
