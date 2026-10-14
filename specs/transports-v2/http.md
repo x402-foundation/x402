@@ -54,7 +54,7 @@ The base64 header decodes to:
 
 ### Header Size
 
-Servers should keep the encoded `PAYMENT-REQUIRED` header under 8 KB (8,192 bytes). Above these limits, common HTTP clients fail before the application can read the 402:
+Servers should keep the encoded `PAYMENT-REQUIRED` header at or under 8,190 bytes. Above these limits, common HTTP clients fail before the application can read the 402:
 
 - Python aiohttp rejects a header value over 8,190 bytes.
 - Node.js `fetch` (undici) rejects a response with more than 16 KB of headers, failing with `UND_ERR_HEADERS_OVERFLOW`.

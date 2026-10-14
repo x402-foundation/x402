@@ -33,7 +33,7 @@ export const PAYMENT_REQUIRED_CACHE_CONTROL = "no-store";
 
 // Warning thresholds for the encoded PAYMENT-REQUIRED header. Python aiohttp rejects
 // header values over 8,190 bytes; Node.js fetch (undici) rejects over 16 KB of headers.
-const PAYMENT_REQUIRED_HEADER_WARN_BYTES = 8 * 1024;
+const PAYMENT_REQUIRED_HEADER_WARN_BYTES = 8190;
 const PAYMENT_REQUIRED_HEADER_MAX_BYTES = 16 * 1024;
 
 /**

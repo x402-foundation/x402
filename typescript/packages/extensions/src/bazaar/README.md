@@ -255,9 +255,9 @@ export const proxy = paymentProxy(
 
 ### Keep Examples Short
 
-The discovery extension, including its examples and schema, is sent base64-encoded in the `PAYMENT-REQUIRED` header of every 402 response. Keep that header under 8 KB (8,192 bytes): Python aiohttp rejects header values over 8,190 bytes, and Node.js `fetch` fails when response headers exceed 16 KB, so those clients never see the 402.
+The discovery extension, including its examples and schema, is sent base64-encoded in the `PAYMENT-REQUIRED` header of every 402 response. Keep that header at or under 8,190 bytes: Python aiohttp rejects header values over 8,190 bytes, and Node.js `fetch` fails when response headers exceed 16 KB, so those clients never see the 402.
 
-Use one representative item in `input` and `output.example`, not a full response. `x402HTTPResourceServer` logs a warning, once per route, when the header goes over 8 KB and again over 16 KB.
+Use one representative item in `input` and `output.example`, not a full response. `x402HTTPResourceServer` logs a warning, once per route, when the header goes over 8,190 bytes and again over 16 KB.
 
 ## For Facilitators
 

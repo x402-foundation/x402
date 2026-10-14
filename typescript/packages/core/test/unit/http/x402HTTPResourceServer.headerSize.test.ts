@@ -84,30 +84,43 @@ describe("x402HTTPResourceServer PAYMENT-REQUIRED header size", () => {
     vi.restoreAllMocks();
   });
 
-  it("does not warn when the header is under 8 KB", async () => {
+  it("does not warn when the header is within 8,190 bytes", async () => {
     const httpServer = new x402HTTPResourceServer(resourceServer, { "GET /api/data": route(5500) });
 
     const header = await request(httpServer, "/api/data");
 
-    expect(header.length).toBeLessThanOrEqual(8192);
+    expect(header.length).toBeLessThanOrEqual(8190);
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  it("warns once over 8 KB with the route, size and largest fields", async () => {
+  it("warns at 8,192 bytes, which aiohttp already rejects", async () => {
+    let header = "";
+    for (let n = 5000; n < 7000 && header.length !== 8192; n++) {
+      warnSpy.mockClear();
+      const httpServer = new x402HTTPResourceServer(resourceServer, { "GET /api/data": route(n) });
+      header = await request(httpServer, "/api/data");
+    }
+
+    expect(header.length).toBe(8192);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toContain("bytes encoded, over 8190");
+  });
+
+  it("warns once over 8,190 bytes with the route, size and largest fields", async () => {
     const config = route(7000);
     const httpServer = new x402HTTPResourceServer(resourceServer, { "GET /api/data": config });
 
     const header = await request(httpServer, "/api/data");
     await request(httpServer, "/api/data");
 
-    expect(header.length).toBeGreaterThan(8192);
+    expect(header.length).toBeGreaterThan(8190);
     expect(header.length).toBeLessThanOrEqual(16384);
     expect(decodePaymentRequiredHeader(header).extensions).toEqual(config.extensions);
     expect(warnSpy).toHaveBeenCalledTimes(1);
     const message = warnSpy.mock.calls[0][0] as string;
     expect(message).toContain('Route "GET /api/data"');
     expect(message).toContain(
-      `PAYMENT-REQUIRED header is ${header.length} bytes encoded, over 8192`,
+      `PAYMENT-REQUIRED header is ${header.length} bytes encoded, over 8190`,
     );
     expect(message).toMatch(
       /Largest fields: extensions\.bazaar \(\d+ bytes\), accepts \(\d+ bytes\)/,
