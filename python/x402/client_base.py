@@ -312,6 +312,11 @@ SyncOnPaymentResponseHook = Callable[[PaymentResponseContext], RecoveredResponse
 # Hook command type for generator-based implementation
 HookPhase = Literal["before", "after", "failure"]
 HookCommand = tuple[HookPhase, Any, Any]  # (phase, hook, context)
+# Payment creation generators also yield a "scheme_call" command so the driver
+# can invoke the scheme's payload method (sync or async) instead of the
+# generator calling it inline and blocking the event loop.
+SchemeCallPhase = Literal["scheme_call"]
+CreationCommand = tuple[HookPhase | SchemeCallPhase, Any, Any]
 
 
 # ============================================================================
@@ -764,10 +769,12 @@ class x402ClientBase:
         payment_required: PaymentRequired,
         resource: ResourceInfo | None,
         extensions: dict[str, Any] | None,
-    ) -> Generator[HookCommand, Any, PaymentPayload]:
+    ) -> Generator[CreationCommand, Any, PaymentPayload]:
         """Core V2 payment creation logic as generator.
 
-        Yields (phase, hook, context) tuples for hook execution.
+        Yields (phase, target, context) tuples for hook execution, plus a
+        ("scheme_call", scheme_client, (selected, kwargs)) command the driver
+        resolves to the scheme's sync or async payload method.
         """
         # 1. Select requirements
         selected = self._select_requirements_v2(payment_required.accepts)
@@ -821,10 +828,10 @@ class x402ClientBase:
                 kwargs["context"] = payload_context
             if "extensions" in sig.parameters:
                 kwargs["extensions"] = server_extensions
-            if kwargs:
-                inner_payload = client.create_payment_payload(selected, **kwargs)
-            else:
-                inner_payload = client.create_payment_payload(selected)
+            # Yield the scheme call instead of invoking it inline so the async
+            # driver can await schemes that expose create_payment_payload_async
+            # (non-blocking RPC); the sync driver calls the sync method directly.
+            inner_payload = yield ("scheme_call", client, (selected, kwargs))
 
             # 5b. Extract scheme-generated extensions (e.g. gas sponsoring) and
             # deep-merge them onto the server's declared extensions. This keeps
@@ -885,10 +892,12 @@ class x402ClientBase:
     def _create_payment_payload_v1_core(
         self,
         payment_required: PaymentRequiredV1,
-    ) -> Generator[HookCommand, Any, PaymentPayloadV1]:
+    ) -> Generator[CreationCommand, Any, PaymentPayloadV1]:
         """Core V1 payment creation logic as generator.
 
-        Yields (phase, hook, context) tuples for hook execution.
+        Yields (phase, target, context) tuples for hook execution, plus a
+        ("scheme_call", scheme_client, (selected, kwargs)) command the driver
+        resolves to the scheme's sync or async payload method.
         """
         # 1. Select requirements
         selected = self._select_requirements_v1(payment_required.accepts)
@@ -923,7 +932,10 @@ class x402ClientBase:
             client = schemes[selected.scheme]
 
             # 5. Create inner payload
-            inner_payload = client.create_payment_payload(selected)
+            # Yield the scheme call so the async driver can await schemes that
+            # expose create_payment_payload_async (non-blocking RPC); the sync
+            # driver calls the sync method directly.
+            inner_payload = yield ("scheme_call", client, (selected, {}))
 
             # 6. Wrap into full PaymentPayloadV1
             payload = PaymentPayloadV1(
