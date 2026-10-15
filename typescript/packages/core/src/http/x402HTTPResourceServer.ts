@@ -25,10 +25,16 @@ import {
   PaymentRequirements,
 } from "../types";
 import { x402Version } from "..";
+import { safeBase64Encode } from "../utils";
 
 export const SETTLEMENT_OVERRIDES_HEADER = "Settlement-Overrides";
 
 export const PAYMENT_REQUIRED_CACHE_CONTROL = "no-store";
+
+// Warning thresholds for the encoded PAYMENT-REQUIRED header. Python aiohttp rejects
+// header values over 8,190 bytes; Node.js fetch (undici) rejects over 16 KB of headers.
+const PAYMENT_REQUIRED_HEADER_WARN_BYTES = 8190;
+const PAYMENT_REQUIRED_HEADER_MAX_BYTES = 16 * 1024;
 
 /**
  * Appends the `private` directive to an existing Cache-Control header value.
@@ -411,6 +417,7 @@ export class x402HTTPResourceServer {
   private paywallProvider?: PaywallProvider;
   private protectedRequestHooks: ProtectedRequestHook[] = [];
   private warnedMissingBeforeHandlerSettlement = false;
+  private paymentRequiredHeaderWarnings = new Map<string, number>();
 
   /**
    * Creates a new x402HTTPResourceServer instance.
@@ -538,8 +545,9 @@ export class x402HTTPResourceServer {
     if (!routeMatch) {
       return { type: "no-payment-required" }; // No payment required for this route
     }
-    const { config: routeConfig, pattern: routePattern } = routeMatch;
+    const { config: routeConfig, pattern: routePattern, verb: routeVerb } = routeMatch;
     const enrichedContext: HTTPRequestContext = { ...context, routePattern };
+    const routeKey = routeVerb === "*" ? routePattern : `${routeVerb} ${routePattern}`;
 
     // Execute request hooks before any payment processing
     for (const hook of this.getProtectedRequestHooks(routeConfig)) {
@@ -608,6 +616,7 @@ export class x402HTTPResourceServer {
         type: "payment-error",
         response: this.createHTTPResponse(
           paymentRequired,
+          routeKey,
           this.isWebBrowser(adapter),
           paywallConfig,
           routeConfig.customPaywallHtml,
@@ -633,7 +642,7 @@ export class x402HTTPResourceServer {
         );
         return {
           type: "payment-error",
-          response: this.createHTTPResponse(errorResponse, false, paywallConfig),
+          response: this.createHTTPResponse(errorResponse, routeKey, false, paywallConfig),
         };
       }
 
@@ -652,7 +661,7 @@ export class x402HTTPResourceServer {
         );
         return {
           type: "payment-error",
-          response: this.createHTTPResponse(errorResponse, false, paywallConfig),
+          response: this.createHTTPResponse(errorResponse, routeKey, false, paywallConfig),
         };
       }
 
@@ -677,7 +686,7 @@ export class x402HTTPResourceServer {
         );
         return {
           type: "payment-error",
-          response: this.createHTTPResponse(errorResponse, false, paywallConfig),
+          response: this.createHTTPResponse(errorResponse, routeKey, false, paywallConfig),
         };
       }
 
@@ -749,7 +758,7 @@ export class x402HTTPResourceServer {
       );
       return {
         type: "payment-error",
-        response: this.createHTTPResponse(errorResponse, false, paywallConfig),
+        response: this.createHTTPResponse(errorResponse, routeKey, false, paywallConfig),
       };
     }
   }
@@ -1236,16 +1245,18 @@ export class x402HTTPResourceServer {
    * @param path - Request path
    * @param method - HTTP method
    * @param decodedPath - Framework decoded routing view, if distinct from path
-   * @returns Route configuration and pattern, or undefined if no match
+   * @returns Route configuration, pattern and verb, or undefined if no match
    */
   private getRouteConfig(
     path: string,
     method: string,
     decodedPath?: string,
-  ): { config: RouteConfig; pattern: string } | undefined {
+  ): { config: RouteConfig; pattern: string; verb: string } | undefined {
     const upperMethod = method.toUpperCase();
 
-    const findMatch = (candidate: string): { config: RouteConfig; pattern: string } | undefined => {
+    const findMatch = (
+      candidate: string,
+    ): { config: RouteConfig; pattern: string; verb: string } | undefined => {
       let matchingRoute = this.compiledRoutes.find(
         route => route.regex.test(candidate) && (route.verb === "*" || route.verb === upperMethod),
       );
@@ -1255,7 +1266,11 @@ export class x402HTTPResourceServer {
         );
       }
       if (!matchingRoute) return undefined;
-      return { config: matchingRoute.config, pattern: matchingRoute.pattern };
+      return {
+        config: matchingRoute.config,
+        pattern: matchingRoute.pattern,
+        verb: matchingRoute.verb,
+      };
     };
 
     const match = findMatch(this.normalizePath(path));
@@ -1307,6 +1322,7 @@ export class x402HTTPResourceServer {
    * Create HTTP response instructions from payment required
    *
    * @param paymentRequired - Payment requirements
+   * @param routeKey - Matched route, e.g. "GET /weather"
    * @param isWebBrowser - Whether request is from browser
    * @param paywallConfig - Paywall configuration
    * @param customHtml - Custom HTML template
@@ -1315,6 +1331,7 @@ export class x402HTTPResourceServer {
    */
   private createHTTPResponse(
     paymentRequired: PaymentRequired,
+    routeKey: string,
     isWebBrowser: boolean,
     paywallConfig?: PaywallConfig,
     customHtml?: string,
@@ -1323,7 +1340,7 @@ export class x402HTTPResourceServer {
     // Use 412 Precondition Failed for permit2_allowance_required error
     // This signals client needs to approve Permit2 before retrying
     const status = paymentRequired.error === "permit2_allowance_required" ? 412 : 402;
-    const response = this.createHTTPPaymentRequiredResponse(paymentRequired);
+    const response = this.createHTTPPaymentRequiredResponse(paymentRequired, routeKey);
 
     if (isWebBrowser) {
       const html = this.generatePaywallHTML(paymentRequired, paywallConfig, customHtml);
@@ -1356,17 +1373,70 @@ export class x402HTTPResourceServer {
    * Create HTTP payment required response (v1 puts in body, v2 puts in header)
    *
    * @param paymentRequired - Payment required object
+   * @param routeKey - Matched route, e.g. "GET /weather"
    * @returns Headers and body for the HTTP response
    */
-  private createHTTPPaymentRequiredResponse(paymentRequired: PaymentRequired): {
+  private createHTTPPaymentRequiredResponse(
+    paymentRequired: PaymentRequired,
+    routeKey: string,
+  ): {
     headers: Record<string, string>;
   } {
+    const header = encodePaymentRequiredHeader(paymentRequired);
+    this.warnIfPaymentRequiredHeaderTooLarge(routeKey, header, paymentRequired);
     return {
       headers: {
-        "PAYMENT-REQUIRED": encodePaymentRequiredHeader(paymentRequired),
+        "PAYMENT-REQUIRED": header,
         "Cache-Control": PAYMENT_REQUIRED_CACHE_CONTROL,
       },
     };
+  }
+
+  /**
+   * Warns once per route and size threshold when the encoded PAYMENT-REQUIRED
+   * header is large enough for common HTTP clients to reject the 402 response.
+   *
+   * @param routeKey - Matched route, e.g. "GET /weather"
+   * @param header - Encoded PAYMENT-REQUIRED header value
+   * @param paymentRequired - Payment required object encoded in the header
+   */
+  private warnIfPaymentRequiredHeaderTooLarge(
+    routeKey: string,
+    header: string,
+    paymentRequired: PaymentRequired,
+  ): void {
+    const threshold =
+      header.length > PAYMENT_REQUIRED_HEADER_MAX_BYTES
+        ? PAYMENT_REQUIRED_HEADER_MAX_BYTES
+        : header.length > PAYMENT_REQUIRED_HEADER_WARN_BYTES
+          ? PAYMENT_REQUIRED_HEADER_WARN_BYTES
+          : 0;
+    if (threshold <= (this.paymentRequiredHeaderWarnings.get(routeKey) ?? 0)) {
+      return;
+    }
+    this.paymentRequiredHeaderWarnings.set(routeKey, threshold);
+
+    const { extensions, ...fields } = paymentRequired;
+    const largestFields = [
+      ...Object.entries(fields),
+      ...Object.entries(extensions ?? {}).map(([key, value]) => [`extensions.${key}`, value]),
+    ]
+      .filter(([, value]) => value !== undefined)
+      .map(([name, value]) => ({ name, size: safeBase64Encode(JSON.stringify(value)).length }))
+      .sort((a, b) => b.size - a.size)
+      .slice(0, 3)
+      .map(({ name, size }) => `${name} (${size} bytes)`)
+      .join(", ");
+    const impact =
+      threshold === PAYMENT_REQUIRED_HEADER_MAX_BYTES
+        ? "Node.js fetch clients fail with UND_ERR_HEADERS_OVERFLOW and never see the 402"
+        : "Python aiohttp clients reject header values over 8190 bytes";
+
+    console.warn(
+      `[x402] Route "${routeKey}": PAYMENT-REQUIRED header is ${header.length} bytes encoded, ` +
+        `over ${threshold}. ${impact}. Largest fields: ${largestFields}. ` +
+        `Keep Bazaar examples to one representative item, not a full response.`,
+    );
   }
 
   /**
