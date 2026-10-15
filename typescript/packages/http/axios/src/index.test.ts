@@ -202,6 +202,48 @@ describe("wrapAxiosWithPayment()", () => {
     expect(retryConfig.__is402Retry).toBe(true);
   });
 
+  it("keeps a Cookie array so Axios can join it with semicolons on the paid retry", async () => {
+    const successResponse = { data: "success" } as AxiosResponse;
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(successResponse);
+
+    const config = createErrorConfig();
+    config.headers.set("Cookie", ["session=demo", "locale=zh"]);
+    config.headers.set("X-Trace", "keep-me");
+
+    await interceptor(createAxiosError(402, config, validPaymentRequired));
+
+    const retryConfig = (mockAxiosClient.request as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(retryConfig.headers.Cookie).toEqual(["session=demo", "locale=zh"]);
+    expect(retryConfig.headers["X-Trace"]).toBe("keep-me");
+    expect(retryConfig.headers["PAYMENT-SIGNATURE"]).toBe("encoded-payment-header");
+  });
+
+  it("keeps empty Cookie array elements so the paid retry matches native join", async () => {
+    const successResponse = { data: "success" } as AxiosResponse;
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(successResponse);
+
+    const config = createErrorConfig();
+    config.headers.set("Cookie", ["", "locale=zh"]);
+
+    await interceptor(createAxiosError(402, config, validPaymentRequired));
+
+    const retryConfig = (mockAxiosClient.request as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(retryConfig.headers.Cookie).toEqual(["", "locale=zh"]);
+  });
+
+  it("keeps an empty Cookie array so it still overrides an instance default", async () => {
+    const successResponse = { data: "success" } as AxiosResponse;
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(successResponse);
+
+    const config = createErrorConfig();
+    config.headers.set("Cookie", []);
+
+    await interceptor(createAxiosError(402, config, validPaymentRequired));
+
+    const retryConfig = (mockAxiosClient.request as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(retryConfig.headers.Cookie).toEqual([]);
+  });
+
   it("should not retry if already retried", async () => {
     const error = createAxiosError(402, createErrorConfig(true), validPaymentRequired);
     await expect(interceptor(error)).rejects.toBe(error);
