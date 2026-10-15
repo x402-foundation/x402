@@ -42,9 +42,9 @@ import (
 	exactevmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/v1/facilitator"
 	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/facilitator"
 	svmmech "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+	batchsvmfac "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement/facilitator"
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
 	svmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/v1/facilitator"
-	batchsvmfac "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement/facilitator"
 	uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/facilitator"
 	x402types "github.com/x402-foundation/x402/go/v2/types"
 )
@@ -708,53 +708,7 @@ func (s *realFacilitatorSvmSigner) ConfirmTransaction(ctx context.Context, signa
 		return err
 	}
 
-	for attempt := 0; attempt < svmmech.MaxConfirmAttempts; attempt++ {
-		// Check for context cancellation
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		// Try getSignatureStatuses first (faster)
-		statuses, err := rpcClient.GetSignatureStatuses(ctx, true, signature)
-		if err == nil && statuses != nil && statuses.Value != nil && len(statuses.Value) > 0 {
-			status := statuses.Value[0]
-			if status != nil {
-				if status.Err != nil {
-					return fmt.Errorf("transaction failed on-chain")
-				}
-				if status.ConfirmationStatus == rpc.ConfirmationStatusConfirmed ||
-					status.ConfirmationStatus == rpc.ConfirmationStatusFinalized {
-					return nil
-				}
-			}
-		}
-
-		// Fallback to getTransaction
-		if err != nil {
-			txResult, txErr := rpcClient.GetTransaction(ctx, signature, &rpc.GetTransactionOpts{
-				Encoding:   solana.EncodingBase58,
-				Commitment: svmmech.DefaultCommitment,
-			})
-
-			if txErr == nil && txResult != nil && txResult.Meta != nil {
-				if txResult.Meta.Err != nil {
-					return fmt.Errorf("transaction failed on-chain")
-				}
-				return nil
-			}
-		}
-
-		// Wait before retrying
-		delay := svmmech.ConfirmRetryDelay
-		if attempt < svmmech.ConfirmInitialAttempts {
-			delay = svmmech.ConfirmInitialRetryDelay
-		}
-		time.Sleep(delay)
-	}
-
-	return fmt.Errorf("transaction confirmation timed out after %d attempts", svmmech.MaxConfirmAttempts)
+	return svmmech.ConfirmSignature(ctx, rpcClient, signature, svmmech.ConfirmPolicy{})
 }
 
 func (s *realFacilitatorSvmSigner) GetAccountInfo(

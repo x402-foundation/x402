@@ -591,14 +591,9 @@ func (f *ExactSvmScheme) Settle(
 	}
 	releaseLock = false
 
-	// Wait for confirmation
+	// Wait for confirmation. releaseLock stays false: the signature was broadcast.
 	if err := f.signer.ConfirmTransaction(ctx, signature, string(requirements.Network)); err != nil {
-		// Broadcast succeeded but confirmation couldn't be observed in time.
-		// Non-terminal: leave the dedup lock in place (a fresh broadcast would
-		// risk double-sending) and record the signature so a retry reconciles
-		// via the pending-settlement fast path above instead of re-verifying
-		// and re-sending.
-		return nil, svm.RecordPendingOrTerminal(ctx, f.pendingStore, txKey, signature.String(), result.response.Payer, network, ErrTransactionFailed, err)
+		return nil, f.finishUnconfirmed(ctx, txKey, signature.String(), result.response.Payer, network, err)
 	}
 	if f.pendingStore != nil {
 		_ = f.pendingStore.Delete(ctx, txKey)
@@ -657,6 +652,39 @@ func hasStaticTransferLayout(tx *solana.Transaction) bool {
 	return len(transfer.Data) >= 10 && transfer.Data[0] == ixTokenTransferChecked
 }
 
+// finishUnconfirmed classifies a confirmation error after a successful broadcast.
+//
+// A TransactionOnchainFailureError means the status double, or a live node,
+// observed a confirmed or finalized execution failure. That is terminal: the
+// signature stays on the settle error, any pending record is removed so a
+// restart cannot report settlement_pending, and the dedup lock is held so
+// this process does not send the same payload again.
+//
+// Timeout, transport failure, a missing or malformed status, and every other
+// error that is not that typed failure stay settlement_pending. The signature
+// is stored so a later attempt reconciles the same broadcast.
+func (f *ExactSvmScheme) finishUnconfirmed(
+	ctx context.Context,
+	txKey string,
+	sigStr string,
+	payer string,
+	network x402.Network,
+	waitErr error,
+) error {
+	var onchain *svm.TransactionOnchainFailureError
+	if errors.As(waitErr, &onchain) {
+		if f.pendingStore != nil {
+			_ = f.pendingStore.Delete(ctx, txKey)
+		}
+		// IsDuplicate records the key when this process has not claimed it yet
+		// (a restarted reconciler). A key already held from the first broadcast
+		// stays held. Either way a same-payload retry does not send again.
+		_ = f.settlementCache.IsDuplicate(txKey)
+		return x402.NewSettleError(ErrTransactionFailed, payer, network, sigStr, onchain.Error())
+	}
+	return svm.RecordPendingOrTerminal(ctx, f.pendingStore, txKey, sigStr, payer, network, ErrTransactionFailed, waitErr)
+}
+
 // reconcilePendingSettlement handles a PendingSettlementStore cache hit: a
 // prior Settle call for this transaction (keyed by txKey, the message hash)
 // already broadcast sigStr but couldn't confirm it before returning
@@ -682,7 +710,7 @@ func (f *ExactSvmScheme) reconcilePendingSettlement(
 	}
 
 	if err := f.signer.ConfirmTransaction(ctx, signature, networkStr); err != nil {
-		return nil, svm.RecordPendingOrTerminal(ctx, f.pendingStore, txKey, sigStr, payer, network, ErrTransactionFailed, err)
+		return nil, f.finishUnconfirmed(ctx, txKey, sigStr, payer, network, err)
 	}
 	_ = f.pendingStore.Delete(ctx, txKey)
 

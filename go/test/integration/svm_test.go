@@ -10,7 +10,6 @@ import (
 	"os"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
@@ -152,55 +151,7 @@ func (s *realFacilitatorSvmSigner) ConfirmTransaction(ctx context.Context, signa
 	if err != nil {
 		return err
 	}
-
-	// Wait for confirmation with retries
-	for attempt := 0; attempt < svm.MaxConfirmAttempts; attempt++ {
-		// Check for context cancellation
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		// Try getSignatureStatuses first (faster)
-		statuses, err := rpcClient.GetSignatureStatuses(ctx, true, signature)
-		if err == nil && statuses != nil && statuses.Value != nil && len(statuses.Value) > 0 {
-			status := statuses.Value[0]
-			if status != nil {
-				if status.Err != nil {
-					return fmt.Errorf("transaction failed on-chain")
-				}
-				if status.ConfirmationStatus == rpc.ConfirmationStatusConfirmed ||
-					status.ConfirmationStatus == rpc.ConfirmationStatusFinalized {
-					return nil
-				}
-			}
-		}
-
-		// Fallback to getTransaction
-		if err != nil {
-			txResult, txErr := rpcClient.GetTransaction(ctx, signature, &rpc.GetTransactionOpts{
-				Encoding:   solana.EncodingBase58,
-				Commitment: svm.DefaultCommitment,
-			})
-
-			if txErr == nil && txResult != nil && txResult.Meta != nil {
-				if txResult.Meta.Err != nil {
-					return fmt.Errorf("transaction failed on-chain")
-				}
-				return nil
-			}
-		}
-
-		// Wait before retrying
-		delay := svm.ConfirmRetryDelay
-		if attempt < svm.ConfirmInitialAttempts {
-			delay = svm.ConfirmInitialRetryDelay
-		}
-		time.Sleep(delay)
-	}
-
-	return fmt.Errorf("transaction confirmation timed out after %d attempts", svm.MaxConfirmAttempts)
+	return svm.ConfirmSignature(ctx, rpcClient, signature, svm.ConfirmPolicy{})
 }
 
 func (s *realFacilitatorSvmSigner) GetAccountInfo(
