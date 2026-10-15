@@ -156,13 +156,7 @@ func main() {
 		// Settle payment
 		result, err := facilitator.Settle(ctx, reqBody.PaymentPayload, reqBody.PaymentRequirements)
 		if err != nil {
-			// All failures (business logic and system errors) are returned as errors
-			// You can extract structured information from SettleError if needed:
-			// if se, ok := err.(*x402.SettleError); ok {
-			//     log.Printf("Settlement failed: reason=%s, payer=%s, network=%s, tx=%s",
-			//                se.Reason, se.Payer, se.Network, se.Transaction)
-			// }
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			writeSettleError(c, err)
 			return
 		}
 

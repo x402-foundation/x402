@@ -207,6 +207,11 @@ func main() {
 		result, err := facilitator.Settle(ctx, payload, requirements)
 		if err != nil {
 			fmt.Printf("Settle error: %v\n", err)
+			var settleErr *x402.SettleError
+			if errors.As(err, &settleErr) {
+				writeSettleError(w, err)
+				return
+			}
 			if strings.Contains(err.Error(), "Settlement aborted:") {
 				writeJSON(w, http.StatusOK, x402.SettleResponse{
 					Success:     false,
@@ -215,16 +220,7 @@ func main() {
 				})
 				return
 			}
-			var settleErr *x402.SettleError
-			if errors.As(err, &settleErr) && settleErr.ErrorReason != "" && settleErr.Transaction == "" {
-				writeJSON(w, http.StatusOK, x402.SettleResponse{
-					Success:     false,
-					ErrorReason: settleErr.ErrorReason,
-					Network:     settleErr.Network,
-				})
-				return
-			}
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeSettleError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, result)

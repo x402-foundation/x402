@@ -153,7 +153,7 @@ func main() {
 		}
 		result, err := facilitator.Settle(ctx, payload, requirements)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeSettleError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, result)
