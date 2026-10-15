@@ -912,7 +912,13 @@ export class x402ResourceServer {
 
     // Add extensions if provided
     if (extensions && Object.keys(extensions).length > 0) {
-      response.extensions = extensions;
+      // Shallow copy rather than alias: the enrichment below writes into
+      // response.extensions, and sharing the reference would overwrite the
+      // route declaration itself. That declaration is read again later, when
+      // enrichSettlementResponse runs, so mutating it here silently strips the
+      // route config an extension needs at settlement time. accepts is already
+      // cloned a few lines above for the same reason.
+      response.extensions = { ...extensions };
     }
 
     for (let i = 0; i < workingAccepts.length; i++) {

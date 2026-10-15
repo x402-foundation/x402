@@ -2768,6 +2768,38 @@ describe("x402ResourceServer", () => {
       expect(result.extensions).toEqual({ bazaar: true, customExt: "value" });
     });
 
+    it("should not mutate the extensions it was given while enriching", async () => {
+      // The same object travels on to settle() as declaredExtensions, so
+      // enrichment writing through it strips the declaration a later hook
+      // (enrichSettlementResponse) needs.
+      const server = new x402ResourceServer();
+      server.registerExtension({
+        key: "receiptish",
+        // Returns something shaped nothing like its own declaration, which is
+        // the normal case: an extension returns signed offers, not its config.
+        enrichPaymentRequiredResponse: async () => ({ info: { offers: ["signed"] } }),
+      });
+
+      const declaration = { includeTxHash: true };
+      const extensions = { receiptish: declaration };
+
+      const result = await server.createPaymentRequiredResponse(
+        [buildPaymentRequirements()],
+        { url: "https://example.com", description: "", mimeType: "" },
+        undefined,
+        extensions,
+      );
+
+      // The 402 carries the enriched value.
+      expect((result.extensions?.receiptish as { info?: unknown })?.info).toEqual({
+        offers: ["signed"],
+      });
+
+      // The caller's object is untouched.
+      expect(extensions.receiptish).toBe(declaration);
+      expect(declaration).toEqual({ includeTxHash: true });
+    });
+
     it("should omit extensions if empty", async () => {
       const server = new x402ResourceServer();
 
