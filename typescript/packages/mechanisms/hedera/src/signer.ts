@@ -3,6 +3,7 @@ import type { PaymentRequirements } from "@x402/core/types";
 // `parseMirrorKey` below relies on the SDK's internal `Key._fromProtobufKey`,
 // so re-check its availability whenever either dependency is bumped.
 import { proto } from "@hiero-ledger/proto";
+import type { HederaTransferEntry } from "./types";
 import {
   AccountId,
   Client,
@@ -14,6 +15,7 @@ import {
   TokenId,
   Transaction,
   TransactionId,
+  TransactionRecord,
   TransferTransaction,
 } from "@hiero-ledger/sdk";
 import { HEDERA_MAINNET_CAIP2, HEDERA_TESTNET_CAIP2 } from "./constants";
@@ -59,6 +61,11 @@ export type FacilitatorHederaSigner = {
   /**
    * Add fee payer signature and submit the transaction to Hedera.
    *
+   * Implementations SHOULD include `transfers` in the result: the effective
+   * balance changes from the consensus record (i.e. after HTS custom fees are
+   * assessed), which the scheme uses to confirm the payee actually received
+   * the full amount. Custom signers that omit it skip that check.
+   *
    * Must resolve only when the transaction has reached consensus with a
    * SUCCESS receipt; any non-SUCCESS status (e.g. `TOKEN_NOT_ASSOCIATED_TO_ACCOUNT`,
    * `INSUFFICIENT_ACCOUNT_BALANCE`, `INVALID_SIGNATURE`) must throw. The scheme
@@ -76,7 +83,13 @@ export type FacilitatorHederaSigner = {
     transactionBase64: string,
     feePayer: string,
     network: string,
-  ): Promise<{ transactionId: string }>;
+  ): Promise<{
+    transactionId: string;
+    transfers?: {
+      hbarTransfers: HederaTransferEntry[];
+      tokenTransfers: Record<string, HederaTransferEntry[]>;
+    };
+  }>;
 
   /**
    * Verify that the inferred payer actually signed the frozen transaction body.
@@ -250,11 +263,52 @@ export function createHederaSignAndSubmitTransaction(
     try {
       const response = await signed.execute(client);
       await response.getReceipt(client);
-      return { transactionId: response.transactionId.toString() };
+
+      // Receipt status only proves the tx reached consensus. Fetch the record
+      // so the scheme can verify the payee's net credit after HTS custom fees
+      // (fractional fees are deducted from the receiver, fixed fees with
+      // net-of-transfers likewise) — a custom-fee token can otherwise settle
+      // SUCCESS while the payee received less than the required amount.
+      const record = await response.getRecord(client);
+      const transfers = flattenRecordTransfers(record);
+
+      return { transactionId: response.transactionId.toString(), transfers };
     } finally {
       client.close();
     }
   };
+}
+
+/**
+ * Flattens a consensus record's effective balance changes into the
+ * HederaTransferEntry shape the scheme verifies against. The record's
+ * transfer lists already include assessed custom-fee legs, so the payee's
+ * net entry reflects what was actually received.
+ *
+ * @param record - Consensus record of the settled transaction
+ * @returns Effective HBAR and per-token transfer lists
+ */
+function flattenRecordTransfers(record: TransactionRecord): {
+  hbarTransfers: HederaTransferEntry[];
+  tokenTransfers: Record<string, HederaTransferEntry[]>;
+} {
+  const hbarTransfers: HederaTransferEntry[] = (record.transfers ?? []).map(entry => ({
+    accountId: entry.accountId.toString(),
+    amount: entry.amount.toTinybars().toString(),
+  }));
+
+  const tokenTransfers: Record<string, HederaTransferEntry[]> = {};
+  if (record.tokenTransfers) {
+    for (const [tokenId, accountMap] of record.tokenTransfers) {
+      const entries: HederaTransferEntry[] = [];
+      for (const [accountId, amount] of accountMap) {
+        entries.push({ accountId: accountId.toString(), amount: amount.toString() });
+      }
+      tokenTransfers[tokenId.toString()] = entries;
+    }
+  }
+
+  return { hbarTransfers, tokenTransfers };
 }
 
 /**
