@@ -594,13 +594,16 @@ describe("ExactEvmSchemeV1", () => {
     });
 
     it("rejects a counterfactual payment when getCode fails and the factory is unknown", async () => {
+      // A failed payer lookup is an RPC failure, not an allowlist rejection. Verify
+      // reports it before the factory gate so a dropped eth_getCode cannot look like
+      // eip6492_factory_not_allowed.
       mockSigner.getCode = vi.fn().mockRejectedValue(new Error("rpc timeout"));
       const facilitator = new ExactEvmSchemeV1(mockSigner, {
         eip6492AllowedFactories: ["0x3333333333333333333333333333333333333333"],
       });
       const result = await facilitator.verify(makePayload() as never, requirements as never);
       expect(result.isValid).toBe(false);
-      expect(result.invalidReason).toBe(Errors.ErrFactoryNotAllowed);
+      expect(result.invalidReason).toBe(Errors.ErrFailedToVerifySignature);
     });
 
     it("rejects settle when the undeployed wallet's factory is not allowlisted", async () => {
@@ -652,10 +655,12 @@ describe("ExactEvmSchemeV1", () => {
     });
 
     it("rejects settle when verify saw a deployed wallet but settle's getCode reports undeployed", async () => {
+      // Verify reuses the single payer lookup from classification, so only the first
+      // call is bytecode. Settle's own getCode is the next call and must see undeployed.
       let payerLookups = 0;
       mockSigner.getCode = vi.fn().mockImplementation(() => {
         payerLookups += 1;
-        return Promise.resolve(payerLookups <= 2 ? "0x6080604052" : "0x");
+        return Promise.resolve(payerLookups === 1 ? "0x6080604052" : "0x");
       });
       mockSigner.sendTransaction = vi.fn();
       const facilitator = new ExactEvmSchemeV1(mockSigner, { eip6492AllowedFactories: [] });

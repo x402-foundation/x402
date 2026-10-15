@@ -8,9 +8,13 @@ import {
   VerifyResponse,
 } from "@x402/core/types";
 import { resolveDataSuffix } from "../../../shared/extensions";
-import { verifyTypedDataSignature, classifyErc6492Payer } from "../../../shared/verifySignature";
+import {
+  verifyHashSignatureWithCode,
+  classifyErc6492Payer,
+  payerCodeLookupFailureMessage,
+} from "../../../shared/verifySignature";
 import { PaymentRequirementsV1 } from "@x402/core/types/v1";
-import { getAddress, Hex, isAddressEqual, parseErc6492Signature } from "viem";
+import { getAddress, hashTypedData, Hex, isAddressEqual, parseErc6492Signature } from "viem";
 import { authorizationTypes } from "../../../constants";
 import { FacilitatorEvmSigner } from "../../../signer";
 import { ExactEvmPayloadV1 } from "../../../types";
@@ -352,7 +356,19 @@ export class ExactEvmSchemeV1 implements SchemeNetworkFacilitator {
       isCounterfactual,
       innerSignature,
       eip6492Deployment: classification6492,
+      payerCode,
+      codeLookupError,
     } = await classifyErc6492Payer(this.signer, signature, payer);
+
+    if (codeLookupError !== undefined) {
+      const invalidMessage = payerCodeLookupFailureMessage(codeLookupError);
+      return {
+        isValid: false,
+        invalidReason: Errors.ErrFailedToVerifySignature,
+        invalidMessage,
+        payer,
+      };
+    }
 
     if (classification6492) {
       eip6492Deployment = classification6492;
@@ -380,11 +396,19 @@ export class ExactEvmSchemeV1 implements SchemeNetworkFacilitator {
       // Non-counterfactual path: verify using the strict primitive that mirrors
       // on-chain SignatureChecker semantics (ecrecover for EOAs, strict EIP-1271
       // for any address with code). No ECDSA fallback for code addresses.
-      const isValid = await verifyTypedDataSignature(this.signer, {
-        address: payer,
-        ...permitTypedData,
-        signature: innerSignature,
-      });
+      let isValid = false;
+      try {
+        const digest = hashTypedData(permitTypedData);
+        isValid = await verifyHashSignatureWithCode(
+          this.signer,
+          payer,
+          payerCode,
+          digest,
+          innerSignature,
+        );
+      } catch {
+        isValid = false;
+      }
       if (!isValid) {
         return {
           isValid: false,
