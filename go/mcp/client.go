@@ -1,8 +1,10 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -102,10 +104,17 @@ func (c *X402MCPClient) CallTool(ctx context.Context, name string, args map[stri
 		return buildMCPToolCallResultFromSDK(result, false), nil
 	}
 
-	paymentRequired := extractPaymentRequired(result)
+	paymentRequired, mismatch := extractPaymentRequired(result)
+	if mismatch {
+		return nil, errPaymentRequiredMismatch
+	}
 	if paymentRequired == nil || len(paymentRequired.Accepts) == 0 {
 		// No v2 requirement — try v1 (e.g. a Bazaar proxy bridging a legacy v1 service).
-		if prV1 := extractPaymentRequiredV1(result); prV1 != nil && len(prV1.Accepts) > 0 {
+		prV1, mismatchV1 := extractPaymentRequiredV1(result)
+		if mismatchV1 {
+			return nil, errPaymentRequiredMismatch
+		}
+		if prV1 != nil && len(prV1.Accepts) > 0 {
 			return c.callToolWithV1Payment(ctx, name, args, prV1)
 		}
 		return buildMCPToolCallResultFromSDK(result, false), nil
@@ -228,7 +237,11 @@ func (c *X402MCPClient) callToolWithPayload(ctx context.Context, name string, ar
 
 	var paymentRequired *types.PaymentRequired
 	if paymentResponse == nil && result.IsError {
-		paymentRequired = extractPaymentRequired(result)
+		var mismatch bool
+		paymentRequired, mismatch = extractPaymentRequired(result)
+		if mismatch {
+			return nil, errPaymentRequiredMismatch
+		}
 	}
 
 	recovered, err := c.handlePaidToolPaymentResponse(ctx, payload, paymentResponse, paymentRequired)
@@ -277,7 +290,11 @@ func (c *X402MCPClient) callToolWithPayload(ctx context.Context, name string, ar
 
 		var retryPaymentRequired *types.PaymentRequired
 		if retryPaymentResponse == nil && retryResult.IsError {
-			retryPaymentRequired = extractPaymentRequired(retryResult)
+			var mismatch bool
+			retryPaymentRequired, mismatch = extractPaymentRequired(retryResult)
+			if mismatch {
+				return nil, errPaymentRequiredMismatch
+			}
 		}
 		if _, err := c.handlePaidToolPaymentResponse(ctx, freshPayload, retryPaymentResponse, retryPaymentRequired); err != nil {
 			return nil, err
@@ -430,7 +447,11 @@ func (c *X402MCPClient) GetToolPaymentRequirements(ctx context.Context, name str
 		return nil, err
 	}
 
-	return extractPaymentRequired(result), nil
+	paymentRequired, mismatch := extractPaymentRequired(result)
+	if mismatch {
+		return nil, errPaymentRequiredMismatch
+	}
+	return paymentRequired, nil
 }
 
 // buildMCPToolCallResultFromSDK converts *mcp.CallToolResult to MCPToolCallResult.
@@ -557,10 +578,16 @@ func CallPaidTool(
 	}
 
 	// Try to extract payment required from error content (v2 first, then v1).
-	paymentRequired := extractPaymentRequired(result)
+	paymentRequired, mismatch := extractPaymentRequired(result)
+	if mismatch {
+		return nil, errPaymentRequiredMismatch
+	}
 	if paymentRequired == nil || len(paymentRequired.Accepts) == 0 {
 		// v1 fallback (e.g. a Bazaar proxy bridging a legacy v1 service).
-		prV1 := extractPaymentRequiredV1(result)
+		prV1, mismatchV1 := extractPaymentRequiredV1(result)
+		if mismatchV1 {
+			return nil, errPaymentRequiredMismatch
+		}
 		if prV1 == nil || len(prV1.Accepts) == 0 {
 			return buildResult(result, false), nil
 		}
@@ -636,36 +663,47 @@ func buildResult(result *mcp.CallToolResult, paymentMade bool) *ToolCallResult {
 	}
 }
 
+// errPaymentRequiredMismatch is returned when structuredContent and
+// content text both look like PaymentRequired but do not encode the same object.
+// Auto-payment must not sign one representation while a hook, log, or UI reads the other.
+var errPaymentRequiredMismatch = errors.New("mcp payment required: structuredContent and content text disagree")
+
 // extractPaymentRequired extracts a v2 PaymentRequired from an error result.
+// The bool is true when both representations are present and disagree.
 // Returns nil for v1 responses (use extractPaymentRequiredV1) or non-payment results.
-func extractPaymentRequired(result *mcp.CallToolResult) *types.PaymentRequired {
-	obj := paymentRequiredObject(result)
-	if obj == nil || paymentRequiredVersion(obj) != 2 {
-		return nil
+func extractPaymentRequired(result *mcp.CallToolResult) (*types.PaymentRequired, bool) {
+	obj, mismatch := paymentRequiredObject(result)
+	if mismatch || obj == nil || paymentRequiredVersion(obj) != 2 {
+		return nil, mismatch
 	}
-	return unmarshalPaymentRequired(obj)
+	return unmarshalPaymentRequired(obj), false
 }
 
 // extractPaymentRequiredV1 extracts a v1 PaymentRequired from an error result.
+// The bool is true when both representations are present and disagree.
 // Returns nil for v2 responses or non-payment results. v1 is what a Bazaar proxy
 // surfaces when it bridges a legacy v1 HTTP service into an MCP proxy tool call.
-func extractPaymentRequiredV1(result *mcp.CallToolResult) *types.PaymentRequiredV1 {
-	obj := paymentRequiredObject(result)
-	if obj == nil || paymentRequiredVersion(obj) != 1 {
-		return nil
+func extractPaymentRequiredV1(result *mcp.CallToolResult) (*types.PaymentRequiredV1, bool) {
+	obj, mismatch := paymentRequiredObject(result)
+	if mismatch || obj == nil || paymentRequiredVersion(obj) != 1 {
+		return nil, mismatch
 	}
-	return unmarshalPaymentRequiredV1(obj)
+	return unmarshalPaymentRequiredV1(obj), false
 }
 
 // paymentRequiredObject returns the payment-required JSON object from a result,
 // preferring structuredContent (per spec), then content[0].text. It requires an
-// "accepts" array and an "x402Version" field; returns nil otherwise.
-func paymentRequiredObject(result *mcp.CallToolResult) map[string]any {
+// "accepts" array and an "x402Version" field. When both representations are
+// payment-required objects, they must be canonically equal; otherwise the bool
+// is true and the object is nil so callers do not auto-pay ambiguous terms.
+func paymentRequiredObject(result *mcp.CallToolResult) (map[string]any, bool) {
+	var structured map[string]any
 	if result.StructuredContent != nil {
 		if sc, ok := result.StructuredContent.(map[string]any); ok && isPaymentRequiredObject(sc) {
-			return sc
+			structured = sc
 		}
 	}
+	var fromText map[string]any
 	for _, content := range result.Content {
 		textContent, ok := content.(*mcp.TextContent)
 		if !ok {
@@ -676,10 +714,45 @@ func paymentRequiredObject(result *mcp.CallToolResult) map[string]any {
 			continue
 		}
 		if isPaymentRequiredObject(parsed) {
-			return parsed
+			fromText = parsed
+			break
 		}
 	}
-	return nil
+	if structured != nil && fromText != nil && !paymentRequiredMapsAgree(structured, fromText) {
+		return nil, true
+	}
+	if structured != nil {
+		return structured, false
+	}
+	return fromText, false
+}
+
+// paymentRequiredMapsAgree reports whether both maps decode to the same
+// PaymentRequired. Number encoding (JSON 2 vs a Go int 2) is not a mismatch.
+func paymentRequiredMapsAgree(a, b map[string]any) bool {
+	va, vb := paymentRequiredVersion(a), paymentRequiredVersion(b)
+	if va == 0 || va != vb {
+		return false
+	}
+	switch va {
+	case 1:
+		pa, pb := unmarshalPaymentRequiredV1(a), unmarshalPaymentRequiredV1(b)
+		return pa != nil && pb != nil && canonicalValueEqual(pa, pb)
+	case 2:
+		pa, pb := unmarshalPaymentRequired(a), unmarshalPaymentRequired(b)
+		return pa != nil && pb != nil && canonicalValueEqual(pa, pb)
+	default:
+		return canonicalValueEqual(a, b)
+	}
+}
+
+func canonicalValueEqual(a, b any) bool {
+	ab, errA := json.Marshal(a)
+	bb, errB := json.Marshal(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return bytes.Equal(ab, bb)
 }
 
 // isPaymentRequiredObject reports whether obj looks like an x402 payment-required

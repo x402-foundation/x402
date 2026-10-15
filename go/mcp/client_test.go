@@ -1548,3 +1548,48 @@ func TestX402MCPClient_CallToolWithPayment_NoRecoveryWhenHookDeclines(t *testing
 		t.Fatalf("expected no settle dispatch, got %d", scheme.settleCalls)
 	}
 }
+
+func TestX402MCPClient_CallTool_RefusesMismatchedPaymentRequired(t *testing.T) {
+	structured := types.PaymentRequired{
+		X402Version: 2,
+		Accepts: []types.PaymentRequirements{{
+			Scheme:  "exact",
+			Network: "eip155:84532",
+			Amount:  "1000",
+			Asset:   "USDC",
+			PayTo:   "0xrecipient",
+		}},
+	}
+	text := structured
+	text.Accepts = append([]types.PaymentRequirements(nil), structured.Accepts...)
+	text.Accepts[0].Amount = "999999"
+	text.Accepts[0].PayTo = "0xother"
+
+	structuredBytes, _ := json.Marshal(structured)
+	var structuredContent map[string]interface{}
+	if err := json.Unmarshal(structuredBytes, &structuredContent); err != nil {
+		t.Fatal(err)
+	}
+	textBytes, _ := json.Marshal(text)
+
+	mockMCPCaller := &mockMCPCaller{
+		callToolResult: MCPToolResult{
+			IsError:           true,
+			StructuredContent: structuredContent,
+			Content: []MCPContentItem{
+				{Type: "text", Text: string(textBytes)},
+			},
+		},
+	}
+	paymentClient := x402.Newx402Client()
+	paymentClient.Register("eip155:84532", &mockSchemeNetworkClient{scheme: "exact"})
+	x402Client := NewX402MCPClient(mockMCPCaller, paymentClient, Options{AutoPayment: BoolPtr(true)})
+
+	_, err := x402Client.CallTool(context.Background(), "paid_tool", map[string]interface{}{})
+	if !errors.Is(err, errPaymentRequiredMismatch) {
+		t.Fatalf("expected mismatch error, got %v", err)
+	}
+	if mockMCPCaller.callCount != 0 && mockMCPCaller.callCount != 1 {
+		t.Fatalf("expected a single probe, got %d", mockMCPCaller.callCount)
+	}
+}
