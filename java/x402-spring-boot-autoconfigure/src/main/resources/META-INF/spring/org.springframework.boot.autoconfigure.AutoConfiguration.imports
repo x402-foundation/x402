@@ -1,0 +1,10 @@
+org.x402.spring.autoconfigure.X402AutoConfiguration
+org.x402.spring.autoconfigure.X402WebMvcAutoConfiguration
+org.x402.spring.autoconfigure.X402WebFluxAutoConfiguration
+org.x402.spring.client.servlet.X402RestClientAutoConfiguration
+org.x402.spring.client.reactive.X402WebClientAutoConfiguration
+org.x402.spring.cardano.X402CardanoAutoConfiguration
+org.x402.spring.client.cardano.X402CardanoClientAutoConfiguration
+org.x402.spring.extensions.X402BazaarAutoConfiguration
+org.x402.spring.facilitator.X402FacilitatorServerAutoConfiguration
+org.x402.spring.autoconfigure.X402MechanismCheckAutoConfiguration

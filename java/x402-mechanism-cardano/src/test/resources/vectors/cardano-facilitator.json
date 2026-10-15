@@ -1,0 +1,3272 @@
+{
+  "generatedFrom": "typescript/packages/mechanisms/cardano",
+  "tsCommit": "f8f83309706b14cc696962f0a002eeeb66c3dc26",
+  "now": 1791818618923,
+  "network": "cardano:preprod",
+  "fixtures": [
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "01-default-happy",
+      "rule": "all",
+      "description": "plain lovelace payment, default confirmation policy",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": true,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "1c7f122ea817bb2a084a1c5fc96753f2897a5cefca161ff09494b542"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": true,
+        "payer": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv"
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "02a-wrong-network-accepted",
+      "rule": "1",
+      "description": "accepted.network differs from requirements.network",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:mainnet",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": true,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "1c7f122ea817bb2a084a1c5fc96753f2897a5cefca161ff09494b542"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "network_mismatch",
+        "payer": ""
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "02b-wrong-network-testnet-tx",
+      "rule": "1",
+      "description": "preprod transaction against mainnet requirements (address network tag)",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:mainnet",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr1qy9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxqlakl5j",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:mainnet",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr1qy9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxqlakl5j",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": true,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "1c7f122ea817bb2a084a1c5fc96753f2897a5cefca161ff09494b542"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_payload_recipient_mismatch",
+        "payer": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv"
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "03-no-payto-output",
+      "rule": "2",
+      "description": "no output pays requirements.payTo",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr_test1qrptwch0w62ahdyygepw7ej0n6c67zvy0slxgsq94u6jkk7wd9fzra2s8ydv70wdztf622l8srsp8fjs9l9fxt382l3qqv0yj7",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qrptwch0w62ahdyygepw7ej0n6c67zvy0slxgsq94u6jkk7wd9fzra2s8ydv70wdztf622l8srsp8fjs9l9fxt382l3qqv0yj7",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": true,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "1c7f122ea817bb2a084a1c5fc96753f2897a5cefca161ff09494b542"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_payload_recipient_mismatch",
+        "payer": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv"
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "04-underpay",
+      "rule": "3",
+      "description": "payTo output carries less than amount",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2500000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2500000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": true,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "1c7f122ea817bb2a084a1c5fc96753f2897a5cefca161ff09494b542"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_payload_amount_insufficient",
+        "invalidMessage": "output to addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd pays 2000000, requires 2500000",
+        "payer": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv"
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "05-wrong-asset",
+      "rule": "4",
+      "description": "payTo output pays lovelace, requirements ask for USDM",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": true,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "1c7f122ea817bb2a084a1c5fc96753f2897a5cefca161ff09494b542"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_payload_asset_mismatch",
+        "payer": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv"
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "06-nonce-not-input",
+      "rule": "5",
+      "description": "payload.nonce is not one of the transaction inputs",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff#7"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": true,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "1c7f122ea817bb2a084a1c5fc96753f2897a5cefca161ff09494b542"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_payload_nonce_not_in_inputs",
+        "payer": ""
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "07-nonce-spent",
+      "rule": "5",
+      "description": "nonce UTxO is no longer in the UTxO set",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": false,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_payload_nonce_not_on_chain",
+        "payer": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv"
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "09-ttl-too-far",
+      "rule": "7",
+      "description": "TTL is later than now + maxTimeoutSeconds",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 120,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 120,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": true,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "1c7f122ea817bb2a084a1c5fc96753f2897a5cefca161ff09494b542"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_payload_ttl_too_far",
+        "payer": ""
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "09b-ttl-expired",
+      "rule": "7",
+      "description": "current slot is past the TTL",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135719",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": true,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "1c7f122ea817bb2a084a1c5fc96753f2897a5cefca161ff09494b542"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_payload_ttl_expired",
+        "payer": ""
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "11a-l1-out-of-range",
+      "rule": "9",
+      "description": "confirmationPolicy.l1Confirmations above 20",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "confirmationPolicy": {
+            "l1Confirmations": 21
+          }
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "confirmationPolicy": {
+              "l1Confirmations": 21
+            }
+          }
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": true,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "1c7f122ea817bb2a084a1c5fc96753f2897a5cefca161ff09494b542"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_requirements_policy",
+        "payer": ""
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "11b-depth-without-evidence",
+      "rule": "9",
+      "description": "l1Confirmations 2 with a backend that cannot read evidence",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "confirmationPolicy": {
+            "l1Confirmations": 2
+          }
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "confirmationPolicy": {
+              "l1Confirmations": 2
+            }
+          }
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": true,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "1c7f122ea817bb2a084a1c5fc96753f2897a5cefca161ff09494b542"
+          }
+        },
+        "transactionEvidence": false,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "exact_cardano_facilitator_evidence_unavailable",
+        "invalidMessage": "confirmation depth above canonical inclusion requires transaction evidence",
+        "payer": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv"
+      }
+    },
+    {
+      "operation": "settle",
+      "options": {
+        "acceptMempool": false
+      },
+      "id": "11c-mempool-policy-without-acceptMempool",
+      "rule": "9",
+      "description": "l1Confirmations -1, operator did not opt into mempool evidence, submitter reports mempool",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "confirmationPolicy": {
+            "l1Confirmations": -1
+          }
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "confirmationPolicy": {
+              "l1Confirmations": -1
+            }
+          }
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": true,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "1c7f122ea817bb2a084a1c5fc96753f2897a5cefca161ff09494b542"
+          }
+        },
+        "transactionEvidence": false,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ],
+        "submit": {
+          "status": "mempool"
+        }
+      },
+      "expected": {
+        "transaction": "667665eb4e6a5172f1e048eda4f2a3cebe06cc7da3cdc96776e4a01bde152456",
+        "network": "cardano:preprod",
+        "payer": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+        "success": false,
+        "errorReason": "exact_cardano_settlement_not_confirmed",
+        "extra": {
+          "status": "mempool",
+          "confirmations": -1
+        }
+      }
+    },
+    {
+      "operation": "settle",
+      "options": {
+        "acceptMempool": true
+      },
+      "id": "11d-mempool-policy-with-acceptMempool",
+      "rule": "9",
+      "description": "l1Confirmations -1 with acceptMempool: the node's acceptance settles",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "confirmationPolicy": {
+            "l1Confirmations": -1
+          }
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "confirmationPolicy": {
+              "l1Confirmations": -1
+            }
+          }
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": true,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "1c7f122ea817bb2a084a1c5fc96753f2897a5cefca161ff09494b542"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ],
+        "submit": {
+          "status": "mempool"
+        }
+      },
+      "expected": {
+        "transaction": "667665eb4e6a5172f1e048eda4f2a3cebe06cc7da3cdc96776e4a01bde152456",
+        "network": "cardano:preprod",
+        "payer": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+        "success": true,
+        "extra": {
+          "status": "mempool",
+          "confirmations": -1
+        }
+      }
+    },
+    {
+      "operation": "settle",
+      "options": {
+        "confirmationTimeoutMs": 1,
+        "confirmationPollMs": 1
+      },
+      "id": "11e-settle-confirmed",
+      "rule": "9",
+      "description": "default policy, evidence shows one confirmation after submit",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": true,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "1c7f122ea817bb2a084a1c5fc96753f2897a5cefca161ff09494b542"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ],
+        "evidenceAfterSubmit": {
+          "status": "confirmed",
+          "confirmations": 1
+        }
+      },
+      "expected": {
+        "transaction": "667665eb4e6a5172f1e048eda4f2a3cebe06cc7da3cdc96776e4a01bde152456",
+        "network": "cardano:preprod",
+        "payer": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+        "success": true,
+        "extra": {
+          "status": "confirmed",
+          "confirmations": 1
+        }
+      }
+    },
+    {
+      "operation": "settle",
+      "options": {
+        "confirmationTimeoutMs": 1,
+        "confirmationPollMs": 1
+      },
+      "id": "11f-settle-pending",
+      "rule": "9",
+      "description": "included but below the required depth → settlement_pending with the transaction id",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": true,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "1c7f122ea817bb2a084a1c5fc96753f2897a5cefca161ff09494b542"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ],
+        "evidenceAfterSubmit": {
+          "status": "confirmed",
+          "confirmations": 0
+        }
+      },
+      "expected": {
+        "transaction": "667665eb4e6a5172f1e048eda4f2a3cebe06cc7da3cdc96776e4a01bde152456",
+        "network": "cardano:preprod",
+        "payer": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+        "success": false,
+        "errorReason": "settlement_pending",
+        "errorMessage": "the transaction was broadcast and is awaiting the required confirmations",
+        "extra": {
+          "status": "pending",
+          "confirmations": 0,
+          "transactionId": "667665eb4e6a5172f1e048eda4f2a3cebe06cc7da3cdc96776e4a01bde152456"
+        }
+      }
+    },
+    {
+      "operation": "settle",
+      "options": {
+        "confirmationTimeoutMs": 1,
+        "confirmationPollMs": 1
+      },
+      "id": "11g-settle-submit-failed",
+      "rule": "9",
+      "description": "submit throws, evidence unknown, not definitive → settlement failed (claim retained)",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": true,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "1c7f122ea817bb2a084a1c5fc96753f2897a5cefca161ff09494b542"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ],
+        "submit": {
+          "error": "node unreachable",
+          "definitive": false
+        }
+      },
+      "expected": {
+        "success": false,
+        "errorReason": "exact_cardano_settlement_failed",
+        "errorMessage": "node unreachable",
+        "transaction": "667665eb4e6a5172f1e048eda4f2a3cebe06cc7da3cdc96776e4a01bde152456",
+        "network": "cardano:preprod"
+      }
+    },
+    {
+      "operation": "settle",
+      "options": {
+        "confirmationTimeoutMs": 1,
+        "confirmationPollMs": 1
+      },
+      "id": "11h-settle-definitive-rejection",
+      "rule": "9",
+      "description": "submit throws a definitive rejection",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": true,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "1c7f122ea817bb2a084a1c5fc96753f2897a5cefca161ff09494b542"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ],
+        "submit": {
+          "error": "BadInputsUTxO",
+          "definitive": true
+        }
+      },
+      "expected": {
+        "success": false,
+        "errorReason": "exact_cardano_settlement_definitively_rejected",
+        "errorMessage": "BadInputsUTxO",
+        "transaction": "667665eb4e6a5172f1e048eda4f2a3cebe06cc7da3cdc96776e4a01bde152456",
+        "network": "cardano:preprod"
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "06b-value-not-conserved",
+      "rule": "6",
+      "description": "authenticated input value does not balance outputs plus fee",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": true,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+            "coin": "11000000",
+            "assets": {},
+            "paymentKeyHash": "1c7f122ea817bb2a084a1c5fc96753f2897a5cefca161ff09494b542"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_payload_value_not_conserved",
+        "invalidMessage": "inputs carry 11000000 lovelace but outputs and fee total 10000000",
+        "payer": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv"
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "06c-input-value-unavailable",
+      "rule": "6",
+      "description": "chain layer reports an input without its value",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": true,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "exact_cardano_facilitator_input_value_unavailable",
+        "invalidMessage": "the chain layer reported no value for input 0101010101010101010101010101010101010101010101010101010101010101#1",
+        "payer": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv"
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "06d-fee-below-minimum",
+      "rule": "6",
+      "description": "fee below minFeeB + minFeeA * size",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "10000000"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": true,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "1c7f122ea817bb2a084a1c5fc96753f2897a5cefca161ff09494b542"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_payload_fee_below_minimum",
+        "invalidMessage": "fee 168405 is below the protocol minimum 10013024 for 296 bytes",
+        "payer": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv"
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "07b-chain-lookup-failed",
+      "rule": "5",
+      "description": "input lookup fails at the provider",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "error": "provider timeout"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "exact_cardano_facilitator_chain_lookup_failed",
+        "invalidMessage": "provider timeout",
+        "payer": ""
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "07c-already-on-ledger",
+      "rule": "5",
+      "description": "evidence shows the transaction on the ledger; its spent nonce no longer fails verify",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": false,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {
+          "667665eb4e6a5172f1e048eda4f2a3cebe06cc7da3cdc96776e4a01bde152456": {
+            "status": "confirmed",
+            "confirmations": 3
+          }
+        },
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": true,
+        "payer": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv"
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "01b-invalid-signature",
+      "rule": "witness",
+      "description": "vkey witness signature does not verify over the body hash",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4A9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": true,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "1c7f122ea817bb2a084a1c5fc96753f2897a5cefca161ff09494b542"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_payload_invalid_signature",
+        "payer": ""
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "01c-garbage-transaction",
+      "rule": "decode",
+      "description": "transaction is not CBOR",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "bm90IGEgdHJhbnNhY3Rpb24=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": true,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "1c7f122ea817bb2a084a1c5fc96753f2897a5cefca161ff09494b542"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_payload_transaction_decode_failed",
+        "invalidMessage": "Invalid CBOR: expected to consume 17 bytes, but consumed 15",
+        "payer": ""
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "01d-requirements-not-canonical",
+      "rule": "envelope",
+      "description": "uppercase asset unit in requirements",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "E675B46E4D2242C991A8932A99DB3044E80515AE14B4C4CCF6B3F4C9.0014DF10745553444D",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAHH8SLqgXuyoIShxfyWdT8ol6XO/KFh/wlJS1QuFBuCl8U3NxNv4Pmc99667gNxAoTUSOxR+vj2waAHeAKwIaAAKR1QMaCB1EJqEA2QECgYJYINHwRn+HwQmGglXe/vDO9Zr4T/wznkKu8l01Myfb6D9cWEAgHijLoO+XDLOv3gPtKIOp0HHl200vtsJZOwWX4eL6rXzL1gmDkGAEt62vos1oQvjNMsUUinJ6+EPY1VpO+i4F9fY=",
+          "nonce": "0101010101010101010101010101010101010101010101010101010101010101#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0101010101010101010101010101010101010101010101010101010101010101#1": {
+            "exists": true,
+            "address": "addr_test1qqw87y3w4qtmk2sgfgw9ljt820egj7jual9pv8lsjj2t2shpgxuzjlznwdcndls0n88hm6awuqm3q2zdgj8v28a03akqjwdnsv",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "1c7f122ea817bb2a084a1c5fc96753f2897a5cefca161ff09494b542"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_requirements",
+        "invalidMessage": "amount and asset must use their positive canonical wire forms",
+        "payer": ""
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "01e-native-asset-happy",
+      "rule": "all",
+      "description": "USDM payment with the min-UTxO lovelace the builder adds",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d",
+        "amount": "1500000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d",
+          "amount": "1500000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMghoAEfQ2oVgc5nW0bk0iQsmRqJMqmdswROgFFa4UtMTM9rP0yaFJABTfEHRVU0RNGgAW42CCWDkA2J5QEpGPZ5CI0A91erqUY8jxi3izM5LFhlKu97WDKsRa8MqELeNlQhLLkUZVPIKI/CorMHkKXlAaAIQINQIaAAKaFQMaCB1EJqEA2QECgYJYILUV+RIRUu+f1IrmT2g12Q5IOUtgXULC1ijOX3bYJLfeWECyqlZpW2sT4mPcRTasYoMinOm+jIfO7Q+6t+75WCi6kHBgptCrfuVvjFgMex9kyYA5Oh3MO8VbWQJ7+v48KWYD9fY=",
+          "nonce": "0202020202020202020202020202020202020202020202020202020202020202#2"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0202020202020202020202020202020202020202020202020202020202020202#2": {
+            "exists": true,
+            "address": "addr_test1qrvfu5qjjx8k0yyg6q8h2746j33u3uvt0zen8yk9sef2aaa4sv4vgkhse2zzmcm9ggfvhy2x257g9z8u9g4nq7g2tegq2ll9g4",
+            "coin": "10000000",
+            "assets": {
+              "e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d": "1500000"
+            },
+            "paymentKeyHash": "d89e5012918f679088d00f757aba9463c8f18b78b33392c58652aef7"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": true,
+        "payer": "addr_test1qrvfu5qjjx8k0yyg6q8h2746j33u3uvt0zen8yk9sef2aaa4sv4vgkhse2zzmcm9ggfvhy2x257g9z8u9g4nq7g2tegq2ll9g4"
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "10-below-min-utxo",
+      "rule": "8",
+      "description": "payTo output carries less lovelace than the protocol min-UTxO",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d",
+        "amount": "1500000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d",
+          "amount": "1500000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAAGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMghoAB6EgoVgc5nW0bk0iQsmRqJMqmdswROgFFa4UtMTM9rP0yaFJABTfEHRVU0RNGgAW42CCWDkAvTnxMd3tyc/deCTnujXaAveMDdzc54HXgxShCZuaWVracM/EraiP2cogrsJGKU4sUnCa2JXVgPgaAI5bSwIaAAKaFQMaCB1EJqEA2QECgYJYIBZlz0+ES20PDcUs301tROmb15x1+WBKkSNy5k/CV4bNWEBKdUpXRDWn1gSYXijZMxUFnCQqIsZpRcz2qSbQfztnmuPNVR7gmhVxsJ6qDp5KhMEnbVfOgIWBM8/QWsZbHHMJ9fY=",
+          "nonce": "0303030303030303030303030303030303030303030303030303030303030303#0"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0303030303030303030303030303030303030303030303030303030303030303#0": {
+            "exists": true,
+            "address": "addr_test1qz7nnuf3mhkunn7a0qjw0w34mgp00rqdmnww0qwhsv22zzvmnfv44knselz2m2y0m89zptkzgc55utzjwzdd39w4sruqdx3zfa",
+            "coin": "10000000",
+            "assets": {
+              "e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d": "1500000"
+            },
+            "paymentKeyHash": "bd39f131ddedc9cfdd7824e7ba35da02f78c0ddcdce781d78314a109"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_payload_min_utxo_insufficient",
+        "invalidMessage": "output to addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd carries 500000 lovelace, min-UTXO requires 1176630",
+        "payer": "addr_test1qz7nnuf3mhkunn7a0qjw0w34mgp00rqdmnww0qwhsv22zzvmnfv44knselz2m2y0m89zptkzgc55utzjwzdd39w4sruqdx3zfa"
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "08-certificate-present",
+      "rule": "6",
+      "description": "transaction carries a stake registration certificate",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "2000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "2000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {}
+        },
+        "payload": {
+          "transaction": "hKUA2QECgYJYIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAehICCWDkAkYFoFuCRMhYH4eGmK2JSW6luSkklImWetsJPYwCpnZaxLjJTJAgR6ZTCptWYS/+QastuZqdQS/kaAQ/+mwIaAAKp5QMaCB1EJgTZAQKBggCCAFgcAKmdlrEuMlMkCBHplMKm1ZhL/5Bqy25mp1BL+aEA2QECgoJYIKSaBXTrh2ako5AkydviR4Cb8CJ5OBwqaWx/AkITM0IBWEAZaQzL2R+U4mHKm8lUscI7TTSr8X5JLJmas1rRL2+db73V57ZSr4DG5m9F+XA2Ky0wro7veO2X1FnrYPKD5pYJglggcsliHW6LxYkexfKLnpDxXIbnVnfiQHXKRYWvfKxeKZhYQBi+/VGpAeNXI/eJQD0G2nAuvkv/Ly/ZunTG6fbegMuSWCATJtpYycR03E9ftZZBEksjoHL1f2bf+yM5iGVnqwj19g==",
+          "nonce": "0404040404040404040404040404040404040404040404040404040404040404#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0404040404040404040404040404040404040404040404040404040404040404#1": {
+            "exists": true,
+            "address": "addr_test1qzgcz6qkuzgny9s8u8s6v2mz2fd6jmj2fyjjyev7kmpy7ccq4xwedvfwxffjgzq3ax2v9fk4np9llyr2edhxdf6sf0usv2pwmt",
+            "coin": "20000000",
+            "assets": {},
+            "paymentKeyHash": "91816816e091321607e1e1a62b62525ba96e4a492522659eb6c24f63"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_payload_phase1_invalid",
+        "invalidMessage": "transaction carries certificates; without a complete phase-1 validator only plain payments are accepted",
+        "payer": "addr_test1qzgcz6qkuzgny9s8u8s6v2mz2fd6jmj2fyjjyev7kmpy7ccq4xwedvfwxffjgzq3ax2v9fk4np9llyr2edhxdf6sf0usv2pwmt"
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "12-masumi-happy",
+      "rule": "masumi",
+      "description": "seller-signed Masumi quote, escrow lock with a FundsLocked datum",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "5000000",
+        "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "masumi",
+          "inputCommitment": {
+            "version": "1",
+            "algorithm": "sha256",
+            "parts": [
+              {
+                "name": "body",
+                "canonicalization": "jcs",
+                "mediaType": "application/json",
+                "content": {
+                  "days": 3,
+                  "units": "metric"
+                },
+                "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+              }
+            ],
+            "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+          },
+          "terms": {
+            "version": "1",
+            "paymentType": "Web3CardanoV2",
+            "sellerAddress": "addr_test1vpe6c4xkpsdcsyd566jhuz6ykmra2e9vg8r3m79376eqrhgfchug4",
+            "sellerNonce": "abababababababababababababababababababababababababababababababab",
+            "buyerNonce": "",
+            "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+            "payByTime": "1791819208923",
+            "submitResultTime": "1791819508923",
+            "unlockTime": "1791820408923",
+            "externalDisputeUnlockTime": "1791821308923"
+          },
+          "referenceKey": "a4010103272006215820fef991fc60b9f76a24ea087c6efc9b3b545ae7ea6649e4fffbc09bad191459c3",
+          "referenceSignature": "84582aa201276761646472657373581d6073ac54d60c1b8811b4d6a57e0b44b6c7d564ac41c71df8b1f6b201dda166686173686564f4582045f8171b121013014cd7acf4b96b396b17b92138c8b8c691f925ae9909787e08584038d1a015a32b821c7227b0f358278cfe8b20f02494ff86d0a566a2140ed93967e30c1461c4d69d61b49fb6134f4c6db119e4915104cd1f0c1f35d18f57e2fc07",
+          "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545bc00632c18791012441a3424248cac058053222030610940792e58ea08c24b7700666840963944316e5d82d4a94d25126c9f33ac7b1e22d94eb8932125256520c012e72412f10004e2b5678f37238dc12563401334cca588b58dc2c604558d8a258f2347265341c0c220cae12605222d65c4934ad5c0a102263561c0a4ce345336263225c0c588c63534a2e22054742127ac52e58c4ea4550f17a4339589e5958e30d74b9f0c5f31258c519922c60f0a6c9f101ac26b463255c63008f8c8603d582c176a3088444a1a486fd453194a16012f0e2c62a210308a169555188812c440ac103088a8a6ab011c3347bcc2e40a27009a796c2c404ac10570b80027003e8005d1400677e49000ee002f217632862c25600016006b3162825001b01008005662d88016cb800370023911b9e6a1401cc001e940952b58186011a000efcab70158c60f400edd8628c15a800"
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "5000000",
+          "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "masumi",
+            "inputCommitment": {
+              "version": "1",
+              "algorithm": "sha256",
+              "parts": [
+                {
+                  "name": "body",
+                  "canonicalization": "jcs",
+                  "mediaType": "application/json",
+                  "content": {
+                    "days": 3,
+                    "units": "metric"
+                  },
+                  "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+                }
+              ],
+              "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+            },
+            "terms": {
+              "version": "1",
+              "paymentType": "Web3CardanoV2",
+              "sellerAddress": "addr_test1vpe6c4xkpsdcsyd566jhuz6ykmra2e9vg8r3m79376eqrhgfchug4",
+              "sellerNonce": "abababababababababababababababababababababababababababababababab",
+              "buyerNonce": "",
+              "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+              "payByTime": "1791819208923",
+              "submitResultTime": "1791819508923",
+              "unlockTime": "1791820408923",
+              "externalDisputeUnlockTime": "1791821308923"
+            },
+            "referenceKey": "a4010103272006215820fef991fc60b9f76a24ea087c6efc9b3b545ae7ea6649e4fffbc09bad191459c3",
+            "referenceSignature": "84582aa201276761646472657373581d6073ac54d60c1b8811b4d6a57e0b44b6c7d564ac41c71df8b1f6b201dda166686173686564f4582045f8171b121013014cd7acf4b96b396b17b92138c8b8c691f925ae9909787e08584038d1a015a32b821c7227b0f358278cfe8b20f02494ff86d0a566a2140ed93967e30c1461c4d69d61b49fb6134f4c6db119e4915104cd1f0c1f35d18f57e2fc07",
+            "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545bc00632c18791012441a3424248cac058053222030610940792e58ea08c24b7700666840963944316e5d82d4a94d25126c9f33ac7b1e22d94eb8932125256520c012e72412f10004e2b5678f37238dc12563401334cca588b58dc2c604558d8a258f2347265341c0c220cae12605222d65c4934ad5c0a102263561c0a4ce345336263225c0c588c63534a2e22054742127ac52e58c4ea4550f17a4339589e5958e30d74b9f0c5f31258c519922c60f0a6c9f101ac26b463255c63008f8c8603d582c176a3088444a1a486fd453194a16012f0e2c62a210308a169555188812c440ac103088a8a6ab011c3347bcc2e40a27009a796c2c404ac10570b80027003e8005d1400677e49000ee002f217632862c25600016006b3162825001b01008005662d88016cb800370023911b9e6a1401cc001e940952b58186011a000efcab70158c60f400edd8628c15a800"
+          }
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAgGCowBYHXChXOnYLS9nZF/GJOLtrAPG8cEG0K0a9YFaOxStARoATEtAAoIB2BhZAcLYeZ/YeZ/YeZ9YHBi7r184ZL7yt8xd8tWWugvtz1HEob4fIUy5Whn/2Hmf2Hmf2HmfWBw+XMlVBaFFIa65BjoPn1Zbm+ovaykzuT3HUVgi/////9h6gNh5n9h5n1gcc6xU1gwbiBG01qV+C0S2x9VkrEHHHfix9rIB3f/YeoD/2HqAWCqkAQEDJyAGIVgg/vmR/GC592ok6gh8bvybO1Ra5+pmSeT/+8CbrRkUWcNfWECEWCqiASdnYWRkcmVzc1gdYHOsVNYMG4gRtNalfgtEtsfVZKxBxx34sfayAd2hZmhhc2hlZPRYIEX4FxsSEBMBWEBM16z0uWs5axe5ITjIuMaR+SWumQl4fghYQDjRoBWjK4Icciew81gnjP6LIPAklP+G0KVmohQO2Tln4wwUYcTWWBqdYbSfthNPTG2xGeSRUQTNHwwfNdGPV+L8B/9YIKurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urQEAAWCDzNvrcwbKfqsunG24Ox/gLxbxGc9trj8k/WeX5+zxJx0AbAAABoTC/WNsbAAABoTDD7LsbAAABoTDRqFsbAAABoTDfY/sAANh5gP+CWDkAGLuvXzhkvvK3zF3y1Za6C+3PUcShvh8hTLlaGT5cyVUFoUUhrrkGOg+fVlub6i9rKTO5PcdRWCIaAJW6awIaAALcFQMaCB1EJqEA2QECgYJYIDW1hweIkGbvAo6W8VpOFJSZsfETWfSIMuQyK/4mNsWIWED4ULv7FUQLsIiEO+QwULwuUWrFWSmpc5seGxeBzLoJ5B7E/SoiS9J4pmYbnuGG/aNiZ/kuhO09gd8c68bvZzYA9fY=",
+          "nonce": "0505050505050505050505050505050505050505050505050505050505050505#2"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0505050505050505050505050505050505050505050505050505050505050505#2": {
+            "exists": true,
+            "address": "addr_test1qqvtht6l8pjtau4he3wl94vkhg97mn63cjsmu8epfju45xf7tny42pdpg5s6awgx8g8e74jmn04z76efxwunm363tq3qp5w9nh",
+            "coin": "15000000",
+            "assets": {},
+            "paymentKeyHash": "18bbaf5f3864bef2b7cc5df2d596ba0bedcf51c4a1be1f214cb95a19"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": true,
+        "payer": "addr_test1qqvtht6l8pjtau4he3wl94vkhg97mn63cjsmu8epfju45xf7tny42pdpg5s6awgx8g8e74jmn04z76efxwunm363tq3qp5w9nh"
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "12b-masumi-second-transaction",
+      "rule": "masumi",
+      "description": "another valid lock for the same quote (different nonce)",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "5000000",
+        "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "masumi",
+          "inputCommitment": {
+            "version": "1",
+            "algorithm": "sha256",
+            "parts": [
+              {
+                "name": "body",
+                "canonicalization": "jcs",
+                "mediaType": "application/json",
+                "content": {
+                  "days": 3,
+                  "units": "metric"
+                },
+                "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+              }
+            ],
+            "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+          },
+          "terms": {
+            "version": "1",
+            "paymentType": "Web3CardanoV2",
+            "sellerAddress": "addr_test1vpe6c4xkpsdcsyd566jhuz6ykmra2e9vg8r3m79376eqrhgfchug4",
+            "sellerNonce": "abababababababababababababababababababababababababababababababab",
+            "buyerNonce": "",
+            "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+            "payByTime": "1791819208923",
+            "submitResultTime": "1791819508923",
+            "unlockTime": "1791820408923",
+            "externalDisputeUnlockTime": "1791821308923"
+          },
+          "referenceKey": "a4010103272006215820fef991fc60b9f76a24ea087c6efc9b3b545ae7ea6649e4fffbc09bad191459c3",
+          "referenceSignature": "84582aa201276761646472657373581d6073ac54d60c1b8811b4d6a57e0b44b6c7d564ac41c71df8b1f6b201dda166686173686564f4582045f8171b121013014cd7acf4b96b396b17b92138c8b8c691f925ae9909787e08584038d1a015a32b821c7227b0f358278cfe8b20f02494ff86d0a566a2140ed93967e30c1461c4d69d61b49fb6134f4c6db119e4915104cd1f0c1f35d18f57e2fc07",
+          "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545bc00632c18791012441a3424248cac058053222030610940792e58ea08c24b7700666840963944316e5d82d4a94d25126c9f33ac7b1e22d94eb8932125256520c012e72412f10004e2b5678f37238dc12563401334cca588b58dc2c604558d8a258f2347265341c0c220cae12605222d65c4934ad5c0a102263561c0a4ce345336263225c0c588c63534a2e22054742127ac52e58c4ea4550f17a4339589e5958e30d74b9f0c5f31258c519922c60f0a6c9f101ac26b463255c63008f8c8603d582c176a3088444a1a486fd453194a16012f0e2c62a210308a169555188812c440ac103088a8a6ab011c3347bcc2e40a27009a796c2c404ac10570b80027003e8005d1400677e49000ee002f217632862c25600016006b3162825001b01008005662d88016cb800370023911b9e6a1401cc001e940952b58186011a000efcab70158c60f400edd8628c15a800"
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "5000000",
+          "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "masumi",
+            "inputCommitment": {
+              "version": "1",
+              "algorithm": "sha256",
+              "parts": [
+                {
+                  "name": "body",
+                  "canonicalization": "jcs",
+                  "mediaType": "application/json",
+                  "content": {
+                    "days": 3,
+                    "units": "metric"
+                  },
+                  "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+                }
+              ],
+              "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+            },
+            "terms": {
+              "version": "1",
+              "paymentType": "Web3CardanoV2",
+              "sellerAddress": "addr_test1vpe6c4xkpsdcsyd566jhuz6ykmra2e9vg8r3m79376eqrhgfchug4",
+              "sellerNonce": "abababababababababababababababababababababababababababababababab",
+              "buyerNonce": "",
+              "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+              "payByTime": "1791819208923",
+              "submitResultTime": "1791819508923",
+              "unlockTime": "1791820408923",
+              "externalDisputeUnlockTime": "1791821308923"
+            },
+            "referenceKey": "a4010103272006215820fef991fc60b9f76a24ea087c6efc9b3b545ae7ea6649e4fffbc09bad191459c3",
+            "referenceSignature": "84582aa201276761646472657373581d6073ac54d60c1b8811b4d6a57e0b44b6c7d564ac41c71df8b1f6b201dda166686173686564f4582045f8171b121013014cd7acf4b96b396b17b92138c8b8c691f925ae9909787e08584038d1a015a32b821c7227b0f358278cfe8b20f02494ff86d0a566a2140ed93967e30c1461c4d69d61b49fb6134f4c6db119e4915104cd1f0c1f35d18f57e2fc07",
+            "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545bc00632c18791012441a3424248cac058053222030610940792e58ea08c24b7700666840963944316e5d82d4a94d25126c9f33ac7b1e22d94eb8932125256520c012e72412f10004e2b5678f37238dc12563401334cca588b58dc2c604558d8a258f2347265341c0c220cae12605222d65c4934ad5c0a102263561c0a4ce345336263225c0c588c63534a2e22054742127ac52e58c4ea4550f17a4339589e5958e30d74b9f0c5f31258c519922c60f0a6c9f101ac26b463255c63008f8c8603d582c176a3088444a1a486fd453194a16012f0e2c62a210308a169555188812c440ac103088a8a6ab011c3347bcc2e40a27009a796c2c404ac10570b80027003e8005d1400677e49000ee002f217632862c25600016006b3162825001b01008005662d88016cb800370023911b9e6a1401cc001e940952b58186011a000efcab70158c60f400edd8628c15a800"
+          }
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGAAGCowBYHXChXOnYLS9nZF/GJOLtrAPG8cEG0K0a9YFaOxStARoATEtAAoIB2BhZAcLYeZ/YeZ/YeZ9YHBi7r184ZL7yt8xd8tWWugvtz1HEob4fIUy5Whn/2Hmf2Hmf2HmfWBw+XMlVBaFFIa65BjoPn1Zbm+ovaykzuT3HUVgi/////9h6gNh5n9h5n1gcc6xU1gwbiBG01qV+C0S2x9VkrEHHHfix9rIB3f/YeoD/2HqAWCqkAQEDJyAGIVgg/vmR/GC592ok6gh8bvybO1Ra5+pmSeT/+8CbrRkUWcNfWECEWCqiASdnYWRkcmVzc1gdYHOsVNYMG4gRtNalfgtEtsfVZKxBxx34sfayAd2hZmhhc2hlZPRYIEX4FxsSEBMBWEBM16z0uWs5axe5ITjIuMaR+SWumQl4fghYQDjRoBWjK4Icciew81gnjP6LIPAklP+G0KVmohQO2Tln4wwUYcTWWBqdYbSfthNPTG2xGeSRUQTNHwwfNdGPV+L8B/9YIKurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urQEAAWCDzNvrcwbKfqsunG24Ox/gLxbxGc9trj8k/WeX5+zxJx0AbAAABoTC/WNsbAAABoTDD7LsbAAABoTDRqFsbAAABoTDfY/sAANh5gP+CWDkAGLuvXzhkvvK3zF3y1Za6C+3PUcShvh8hTLlaGT5cyVUFoUUhrrkGOg+fVlub6i9rKTO5PcdRWCIaAJW6awIaAALcFQMaCB1EJqEA2QECgYJYIDW1hweIkGbvAo6W8VpOFJSZsfETWfSIMuQyK/4mNsWIWEB/Z3LIUdYJmz1s1NkG3Ua9xgWDd+jgTdoF3cpOfwg5UHGoeR1V/BlJ0/xMKJ0AXGNzGpBfP8iVxNPfF9/xiOgL9fY=",
+          "nonce": "0606060606060606060606060606060606060606060606060606060606060606#0"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0606060606060606060606060606060606060606060606060606060606060606#0": {
+            "exists": true,
+            "address": "addr_test1qqvtht6l8pjtau4he3wl94vkhg97mn63cjsmu8epfju45xf7tny42pdpg5s6awgx8g8e74jmn04z76efxwunm363tq3qp5w9nh",
+            "coin": "15000000",
+            "assets": {},
+            "paymentKeyHash": "18bbaf5f3864bef2b7cc5df2d596ba0bedcf51c4a1be1f214cb95a19"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": true,
+        "payer": "addr_test1qqvtht6l8pjtau4he3wl94vkhg97mn63cjsmu8epfju45xf7tny42pdpg5s6awgx8g8e74jmn04z76efxwunm363tq3qp5w9nh"
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "13-masumi-tampered-datum",
+      "rule": "masumi",
+      "description": "escrow datum seller_nonce differs from the signed terms",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "5000000",
+        "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "masumi",
+          "inputCommitment": {
+            "version": "1",
+            "algorithm": "sha256",
+            "parts": [
+              {
+                "name": "body",
+                "canonicalization": "jcs",
+                "mediaType": "application/json",
+                "content": {
+                  "days": 3,
+                  "units": "metric"
+                },
+                "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+              }
+            ],
+            "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+          },
+          "terms": {
+            "version": "1",
+            "paymentType": "Web3CardanoV2",
+            "sellerAddress": "addr_test1vpe6c4xkpsdcsyd566jhuz6ykmra2e9vg8r3m79376eqrhgfchug4",
+            "sellerNonce": "abababababababababababababababababababababababababababababababab",
+            "buyerNonce": "",
+            "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+            "payByTime": "1791819208923",
+            "submitResultTime": "1791819508923",
+            "unlockTime": "1791820408923",
+            "externalDisputeUnlockTime": "1791821308923"
+          },
+          "referenceKey": "a4010103272006215820fef991fc60b9f76a24ea087c6efc9b3b545ae7ea6649e4fffbc09bad191459c3",
+          "referenceSignature": "84582aa201276761646472657373581d6073ac54d60c1b8811b4d6a57e0b44b6c7d564ac41c71df8b1f6b201dda166686173686564f4582045f8171b121013014cd7acf4b96b396b17b92138c8b8c691f925ae9909787e08584038d1a015a32b821c7227b0f358278cfe8b20f02494ff86d0a566a2140ed93967e30c1461c4d69d61b49fb6134f4c6db119e4915104cd1f0c1f35d18f57e2fc07",
+          "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545bc00632c18791012441a3424248cac058053222030610940792e58ea08c24b7700666840963944316e5d82d4a94d25126c9f33ac7b1e22d94eb8932125256520c012e72412f10004e2b5678f37238dc12563401334cca588b58dc2c604558d8a258f2347265341c0c220cae12605222d65c4934ad5c0a102263561c0a4ce345336263225c0c588c63534a2e22054742127ac52e58c4ea4550f17a4339589e5958e30d74b9f0c5f31258c519922c60f0a6c9f101ac26b463255c63008f8c8603d582c176a3088444a1a486fd453194a16012f0e2c62a210308a169555188812c440ac103088a8a6ab011c3347bcc2e40a27009a796c2c404ac10570b80027003e8005d1400677e49000ee002f217632862c25600016006b3162825001b01008005662d88016cb800370023911b9e6a1401cc001e940952b58186011a000efcab70158c60f400edd8628c15a800"
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "5000000",
+          "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "masumi",
+            "inputCommitment": {
+              "version": "1",
+              "algorithm": "sha256",
+              "parts": [
+                {
+                  "name": "body",
+                  "canonicalization": "jcs",
+                  "mediaType": "application/json",
+                  "content": {
+                    "days": 3,
+                    "units": "metric"
+                  },
+                  "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+                }
+              ],
+              "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+            },
+            "terms": {
+              "version": "1",
+              "paymentType": "Web3CardanoV2",
+              "sellerAddress": "addr_test1vpe6c4xkpsdcsyd566jhuz6ykmra2e9vg8r3m79376eqrhgfchug4",
+              "sellerNonce": "abababababababababababababababababababababababababababababababab",
+              "buyerNonce": "",
+              "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+              "payByTime": "1791819208923",
+              "submitResultTime": "1791819508923",
+              "unlockTime": "1791820408923",
+              "externalDisputeUnlockTime": "1791821308923"
+            },
+            "referenceKey": "a4010103272006215820fef991fc60b9f76a24ea087c6efc9b3b545ae7ea6649e4fffbc09bad191459c3",
+            "referenceSignature": "84582aa201276761646472657373581d6073ac54d60c1b8811b4d6a57e0b44b6c7d564ac41c71df8b1f6b201dda166686173686564f4582045f8171b121013014cd7acf4b96b396b17b92138c8b8c691f925ae9909787e08584038d1a015a32b821c7227b0f358278cfe8b20f02494ff86d0a566a2140ed93967e30c1461c4d69d61b49fb6134f4c6db119e4915104cd1f0c1f35d18f57e2fc07",
+            "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545bc00632c18791012441a3424248cac058053222030610940792e58ea08c24b7700666840963944316e5d82d4a94d25126c9f33ac7b1e22d94eb8932125256520c012e72412f10004e2b5678f37238dc12563401334cca588b58dc2c604558d8a258f2347265341c0c220cae12605222d65c4934ad5c0a102263561c0a4ce345336263225c0c588c63534a2e22054742127ac52e58c4ea4550f17a4339589e5958e30d74b9f0c5f31258c519922c60f0a6c9f101ac26b463255c63008f8c8603d582c176a3088444a1a486fd453194a16012f0e2c62a210308a169555188812c440ac103088a8a6ab011c3347bcc2e40a27009a796c2c404ac10570b80027003e8005d1400677e49000ee002f217632862c25600016006b3162825001b01008005662d88016cb800370023911b9e6a1401cc001e940952b58186011a000efcab70158c60f400edd8628c15a800"
+          }
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHAQGCowBYHXChXOnYLS9nZF/GJOLtrAPG8cEG0K0a9YFaOxStARoATEtAAoIB2BhZAcLYeZ/YeZ/YeZ9YHBi7r184ZL7yt8xd8tWWugvtz1HEob4fIUy5Whn/2Hmf2Hmf2HmfWBw+XMlVBaFFIa65BjoPn1Zbm+ovaykzuT3HUVgi/////9h6gNh5n9h5n1gcc6xU1gwbiBG01qV+C0S2x9VkrEHHHfix9rIB3f/YeoD/2HqAWCqkAQEDJyAGIVgg/vmR/GC592ok6gh8bvybO1Ra5+pmSeT/+8CbrRkUWcNfWECEWCqiASdnYWRkcmVzc1gdYHOsVNYMG4gRtNalfgtEtsfVZKxBxx34sfayAd2hZmhhc2hlZPRYIEX4FxsSEBMBWEBM16z0uWs5axe5ITjIuMaR+SWumQl4fghYQDjRoBWjK4Icciew81gnjP6LIPAklP+G0KVmohQO2Tln4wwUYcTWWBqdYbSfthNPTG2xGeSRUQTNHwwfNdGPV+L8B/9YIM3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3NQEAAWCDzNvrcwbKfqsunG24Ox/gLxbxGc9trj8k/WeX5+zxJx0AbAAABoTC/WNsbAAABoTDD7LsbAAABoTDRqFsbAAABoTDfY/sAANh5gP+CWDkAGLuvXzhkvvK3zF3y1Za6C+3PUcShvh8hTLlaGT5cyVUFoUUhrrkGOg+fVlub6i9rKTO5PcdRWCIaAJW6awIaAALcFQMaCB1EJqEA2QECgYJYIDW1hweIkGbvAo6W8VpOFJSZsfETWfSIMuQyK/4mNsWIWECX9RwcgbU70uH+xvcq7wPWmD6irYNbnHXDN/pUPpywN0z48mEQ3/mCjlonERSbXL1FJBlQ/PyUPlg/3ig3h+8O9fY=",
+          "nonce": "0707070707070707070707070707070707070707070707070707070707070707#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0707070707070707070707070707070707070707070707070707070707070707#1": {
+            "exists": true,
+            "address": "addr_test1qqvtht6l8pjtau4he3wl94vkhg97mn63cjsmu8epfju45xf7tny42pdpg5s6awgx8g8e74jmn04z76efxwunm363tq3qp5w9nh",
+            "coin": "15000000",
+            "assets": {},
+            "paymentKeyHash": "18bbaf5f3864bef2b7cc5df2d596ba0bedcf51c4a1be1f214cb95a19"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_payload_masumi_datum_mismatch",
+        "invalidMessage": "seller_nonce",
+        "payer": "addr_test1qqvtht6l8pjtau4he3wl94vkhg97mn63cjsmu8epfju45xf7tny42pdpg5s6awgx8g8e74jmn04z76efxwunm363tq3qp5w9nh"
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "14-masumi-bad-cose-signature",
+      "rule": "masumi",
+      "description": "referenceSignature does not verify over termsDigest",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "5000000",
+        "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "masumi",
+          "inputCommitment": {
+            "version": "1",
+            "algorithm": "sha256",
+            "parts": [
+              {
+                "name": "body",
+                "canonicalization": "jcs",
+                "mediaType": "application/json",
+                "content": {
+                  "days": 3,
+                  "units": "metric"
+                },
+                "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+              }
+            ],
+            "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+          },
+          "terms": {
+            "version": "1",
+            "paymentType": "Web3CardanoV2",
+            "sellerAddress": "addr_test1vpe6c4xkpsdcsyd566jhuz6ykmra2e9vg8r3m79376eqrhgfchug4",
+            "sellerNonce": "abababababababababababababababababababababababababababababababab",
+            "buyerNonce": "",
+            "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+            "payByTime": "1791819208923",
+            "submitResultTime": "1791819508923",
+            "unlockTime": "1791820408923",
+            "externalDisputeUnlockTime": "1791821308923"
+          },
+          "referenceKey": "a4010103272006215820fef991fc60b9f76a24ea087c6efc9b3b545ae7ea6649e4fffbc09bad191459c3",
+          "referenceSignature": "84582aa201276761646472657373581d6073ac54d60c1b8811b4d6a57e0b44b6c7d564ac41c71df8b1f6b201dda166686173686564f4582045f8171b121013014cd7acf4b96b396b17b92138c8b8c691f925ae9909787e08584038d1a015a32b821c7227b0f358278cfe8b20f02494ff86d0a566a2140ed93967e30c1461c4d69d61b49fb6134f4c6db119e4915104cd1f0c1f35d18f57e2fc00",
+          "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545bc00632c18791012441a3424248cac058053222030610940792e58ea08c24b7700666840963944316e5d82d4a94d25126c9f33ac7b1e22d94eb8932125256520c012e72412f10004e2b5678f37238dc12563401334cca588b58dc2c604558d8a258f2347265341c0c220cae12605222d65c4934ad5c0a102263561c0a4ce345336263225c0c588c63534a2e22054742127ac52e58c4ea4550f17a4339589e5958e30d74b9f0c5f31258c519922c60f0a6c9f101ac26b463255c63008f8c8603d582c176a3088444a1a486fd453194a16012f0e2c62a210308a169555188812c440ac103088a8a6ab011c3347bcc2e40a27009a796c2c404ac10570b80027003e8005d1400677e49000ee002f217632862c25600016006b3162825001b01008005662d88016cb800370023911b9e6a1401cc001e940952b58186011a000efcab70158c60f400edd8628c15a800"
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "5000000",
+          "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "masumi",
+            "inputCommitment": {
+              "version": "1",
+              "algorithm": "sha256",
+              "parts": [
+                {
+                  "name": "body",
+                  "canonicalization": "jcs",
+                  "mediaType": "application/json",
+                  "content": {
+                    "days": 3,
+                    "units": "metric"
+                  },
+                  "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+                }
+              ],
+              "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+            },
+            "terms": {
+              "version": "1",
+              "paymentType": "Web3CardanoV2",
+              "sellerAddress": "addr_test1vpe6c4xkpsdcsyd566jhuz6ykmra2e9vg8r3m79376eqrhgfchug4",
+              "sellerNonce": "abababababababababababababababababababababababababababababababab",
+              "buyerNonce": "",
+              "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+              "payByTime": "1791819208923",
+              "submitResultTime": "1791819508923",
+              "unlockTime": "1791820408923",
+              "externalDisputeUnlockTime": "1791821308923"
+            },
+            "referenceKey": "a4010103272006215820fef991fc60b9f76a24ea087c6efc9b3b545ae7ea6649e4fffbc09bad191459c3",
+            "referenceSignature": "84582aa201276761646472657373581d6073ac54d60c1b8811b4d6a57e0b44b6c7d564ac41c71df8b1f6b201dda166686173686564f4582045f8171b121013014cd7acf4b96b396b17b92138c8b8c691f925ae9909787e08584038d1a015a32b821c7227b0f358278cfe8b20f02494ff86d0a566a2140ed93967e30c1461c4d69d61b49fb6134f4c6db119e4915104cd1f0c1f35d18f57e2fc00",
+            "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545bc00632c18791012441a3424248cac058053222030610940792e58ea08c24b7700666840963944316e5d82d4a94d25126c9f33ac7b1e22d94eb8932125256520c012e72412f10004e2b5678f37238dc12563401334cca588b58dc2c604558d8a258f2347265341c0c220cae12605222d65c4934ad5c0a102263561c0a4ce345336263225c0c588c63534a2e22054742127ac52e58c4ea4550f17a4339589e5958e30d74b9f0c5f31258c519922c60f0a6c9f101ac26b463255c63008f8c8603d582c176a3088444a1a486fd453194a16012f0e2c62a210308a169555188812c440ac103088a8a6ab011c3347bcc2e40a27009a796c2c404ac10570b80027003e8005d1400677e49000ee002f217632862c25600016006b3162825001b01008005662d88016cb800370023911b9e6a1401cc001e940952b58186011a000efcab70158c60f400edd8628c15a800"
+          }
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAgGCowBYHXChXOnYLS9nZF/GJOLtrAPG8cEG0K0a9YFaOxStARoATEtAAoIB2BhZAcLYeZ/YeZ/YeZ9YHBi7r184ZL7yt8xd8tWWugvtz1HEob4fIUy5Whn/2Hmf2Hmf2HmfWBw+XMlVBaFFIa65BjoPn1Zbm+ovaykzuT3HUVgi/////9h6gNh5n9h5n1gcc6xU1gwbiBG01qV+C0S2x9VkrEHHHfix9rIB3f/YeoD/2HqAWCqkAQEDJyAGIVgg/vmR/GC592ok6gh8bvybO1Ra5+pmSeT/+8CbrRkUWcNfWECEWCqiASdnYWRkcmVzc1gdYHOsVNYMG4gRtNalfgtEtsfVZKxBxx34sfayAd2hZmhhc2hlZPRYIEX4FxsSEBMBWEBM16z0uWs5axe5ITjIuMaR+SWumQl4fghYQDjRoBWjK4Icciew81gnjP6LIPAklP+G0KVmohQO2Tln4wwUYcTWWBqdYbSfthNPTG2xGeSRUQTNHwwfNdGPV+L8B/9YIKurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urQEAAWCDzNvrcwbKfqsunG24Ox/gLxbxGc9trj8k/WeX5+zxJx0AbAAABoTC/WNsbAAABoTDD7LsbAAABoTDRqFsbAAABoTDfY/sAANh5gP+CWDkAGLuvXzhkvvK3zF3y1Za6C+3PUcShvh8hTLlaGT5cyVUFoUUhrrkGOg+fVlub6i9rKTO5PcdRWCIaAJW6awIaAALcFQMaCB1EJqEA2QECgYJYIDW1hweIkGbvAo6W8VpOFJSZsfETWfSIMuQyK/4mNsWIWED4ULv7FUQLsIiEO+QwULwuUWrFWSmpc5seGxeBzLoJ5B7E/SoiS9J4pmYbnuGG/aNiZ/kuhO09gd8c68bvZzYA9fY=",
+          "nonce": "0505050505050505050505050505050505050505050505050505050505050505#2"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0505050505050505050505050505050505050505050505050505050505050505#2": {
+            "exists": true,
+            "address": "addr_test1qqvtht6l8pjtau4he3wl94vkhg97mn63cjsmu8epfju45xf7tny42pdpg5s6awgx8g8e74jmn04z76efxwunm363tq3qp5w9nh",
+            "coin": "15000000",
+            "assets": {},
+            "paymentKeyHash": "18bbaf5f3864bef2b7cc5df2d596ba0bedcf51c4a1be1f214cb95a19"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_requirements_masumi_seller_signature",
+        "payer": "addr_test1qqvtht6l8pjtau4he3wl94vkhg97mn63cjsmu8epfju45xf7tny42pdpg5s6awgx8g8e74jmn04z76efxwunm363tq3qp5w9nh"
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "15-masumi-unknown-field",
+      "rule": "masumi",
+      "description": "extra carries a field outside the closed Masumi schema",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "5000000",
+        "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "masumi",
+          "inputCommitment": {
+            "version": "1",
+            "algorithm": "sha256",
+            "parts": [
+              {
+                "name": "body",
+                "canonicalization": "jcs",
+                "mediaType": "application/json",
+                "content": {
+                  "days": 3,
+                  "units": "metric"
+                },
+                "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+              }
+            ],
+            "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+          },
+          "terms": {
+            "version": "1",
+            "paymentType": "Web3CardanoV2",
+            "sellerAddress": "addr_test1vpe6c4xkpsdcsyd566jhuz6ykmra2e9vg8r3m79376eqrhgfchug4",
+            "sellerNonce": "abababababababababababababababababababababababababababababababab",
+            "buyerNonce": "",
+            "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+            "payByTime": "1791819208923",
+            "submitResultTime": "1791819508923",
+            "unlockTime": "1791820408923",
+            "externalDisputeUnlockTime": "1791821308923"
+          },
+          "referenceKey": "a4010103272006215820fef991fc60b9f76a24ea087c6efc9b3b545ae7ea6649e4fffbc09bad191459c3",
+          "referenceSignature": "84582aa201276761646472657373581d6073ac54d60c1b8811b4d6a57e0b44b6c7d564ac41c71df8b1f6b201dda166686173686564f4582045f8171b121013014cd7acf4b96b396b17b92138c8b8c691f925ae9909787e08584038d1a015a32b821c7227b0f358278cfe8b20f02494ff86d0a566a2140ed93967e30c1461c4d69d61b49fb6134f4c6db119e4915104cd1f0c1f35d18f57e2fc07",
+          "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545bc00632c18791012441a3424248cac058053222030610940792e58ea08c24b7700666840963944316e5d82d4a94d25126c9f33ac7b1e22d94eb8932125256520c012e72412f10004e2b5678f37238dc12563401334cca588b58dc2c604558d8a258f2347265341c0c220cae12605222d65c4934ad5c0a102263561c0a4ce345336263225c0c588c63534a2e22054742127ac52e58c4ea4550f17a4339589e5958e30d74b9f0c5f31258c519922c60f0a6c9f101ac26b463255c63008f8c8603d582c176a3088444a1a486fd453194a16012f0e2c62a210308a169555188812c440ac103088a8a6ab011c3347bcc2e40a27009a796c2c404ac10570b80027003e8005d1400677e49000ee002f217632862c25600016006b3162825001b01008005662d88016cb800370023911b9e6a1401cc001e940952b58186011a000efcab70158c60f400edd8628c15a800",
+          "memo": "hello"
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "5000000",
+          "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "masumi",
+            "inputCommitment": {
+              "version": "1",
+              "algorithm": "sha256",
+              "parts": [
+                {
+                  "name": "body",
+                  "canonicalization": "jcs",
+                  "mediaType": "application/json",
+                  "content": {
+                    "days": 3,
+                    "units": "metric"
+                  },
+                  "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+                }
+              ],
+              "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+            },
+            "terms": {
+              "version": "1",
+              "paymentType": "Web3CardanoV2",
+              "sellerAddress": "addr_test1vpe6c4xkpsdcsyd566jhuz6ykmra2e9vg8r3m79376eqrhgfchug4",
+              "sellerNonce": "abababababababababababababababababababababababababababababababab",
+              "buyerNonce": "",
+              "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+              "payByTime": "1791819208923",
+              "submitResultTime": "1791819508923",
+              "unlockTime": "1791820408923",
+              "externalDisputeUnlockTime": "1791821308923"
+            },
+            "referenceKey": "a4010103272006215820fef991fc60b9f76a24ea087c6efc9b3b545ae7ea6649e4fffbc09bad191459c3",
+            "referenceSignature": "84582aa201276761646472657373581d6073ac54d60c1b8811b4d6a57e0b44b6c7d564ac41c71df8b1f6b201dda166686173686564f4582045f8171b121013014cd7acf4b96b396b17b92138c8b8c691f925ae9909787e08584038d1a015a32b821c7227b0f358278cfe8b20f02494ff86d0a566a2140ed93967e30c1461c4d69d61b49fb6134f4c6db119e4915104cd1f0c1f35d18f57e2fc07",
+            "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545bc00632c18791012441a3424248cac058053222030610940792e58ea08c24b7700666840963944316e5d82d4a94d25126c9f33ac7b1e22d94eb8932125256520c012e72412f10004e2b5678f37238dc12563401334cca588b58dc2c604558d8a258f2347265341c0c220cae12605222d65c4934ad5c0a102263561c0a4ce345336263225c0c588c63534a2e22054742127ac52e58c4ea4550f17a4339589e5958e30d74b9f0c5f31258c519922c60f0a6c9f101ac26b463255c63008f8c8603d582c176a3088444a1a486fd453194a16012f0e2c62a210308a169555188812c440ac103088a8a6ab011c3347bcc2e40a27009a796c2c404ac10570b80027003e8005d1400677e49000ee002f217632862c25600016006b3162825001b01008005662d88016cb800370023911b9e6a1401cc001e940952b58186011a000efcab70158c60f400edd8628c15a800",
+            "memo": "hello"
+          }
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAgGCowBYHXChXOnYLS9nZF/GJOLtrAPG8cEG0K0a9YFaOxStARoATEtAAoIB2BhZAcLYeZ/YeZ/YeZ9YHBi7r184ZL7yt8xd8tWWugvtz1HEob4fIUy5Whn/2Hmf2Hmf2HmfWBw+XMlVBaFFIa65BjoPn1Zbm+ovaykzuT3HUVgi/////9h6gNh5n9h5n1gcc6xU1gwbiBG01qV+C0S2x9VkrEHHHfix9rIB3f/YeoD/2HqAWCqkAQEDJyAGIVgg/vmR/GC592ok6gh8bvybO1Ra5+pmSeT/+8CbrRkUWcNfWECEWCqiASdnYWRkcmVzc1gdYHOsVNYMG4gRtNalfgtEtsfVZKxBxx34sfayAd2hZmhhc2hlZPRYIEX4FxsSEBMBWEBM16z0uWs5axe5ITjIuMaR+SWumQl4fghYQDjRoBWjK4Icciew81gnjP6LIPAklP+G0KVmohQO2Tln4wwUYcTWWBqdYbSfthNPTG2xGeSRUQTNHwwfNdGPV+L8B/9YIKurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urQEAAWCDzNvrcwbKfqsunG24Ox/gLxbxGc9trj8k/WeX5+zxJx0AbAAABoTC/WNsbAAABoTDD7LsbAAABoTDRqFsbAAABoTDfY/sAANh5gP+CWDkAGLuvXzhkvvK3zF3y1Za6C+3PUcShvh8hTLlaGT5cyVUFoUUhrrkGOg+fVlub6i9rKTO5PcdRWCIaAJW6awIaAALcFQMaCB1EJqEA2QECgYJYIDW1hweIkGbvAo6W8VpOFJSZsfETWfSIMuQyK/4mNsWIWED4ULv7FUQLsIiEO+QwULwuUWrFWSmpc5seGxeBzLoJ5B7E/SoiS9J4pmYbnuGG/aNiZ/kuhO09gd8c68bvZzYA9fY=",
+          "nonce": "0505050505050505050505050505050505050505050505050505050505050505#2"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0505050505050505050505050505050505050505050505050505050505050505#2": {
+            "exists": true,
+            "address": "addr_test1qqvtht6l8pjtau4he3wl94vkhg97mn63cjsmu8epfju45xf7tny42pdpg5s6awgx8g8e74jmn04z76efxwunm363tq3qp5w9nh",
+            "coin": "15000000",
+            "assets": {},
+            "paymentKeyHash": "18bbaf5f3864bef2b7cc5df2d596ba0bedcf51c4a1be1f214cb95a19"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_requirements_masumi_schema",
+        "invalidMessage": "extra has unknown field memo",
+        "payer": "addr_test1qqvtht6l8pjtau4he3wl94vkhg97mn63cjsmu8epfju45xf7tny42pdpg5s6awgx8g8e74jmn04z76efxwunm363tq3qp5w9nh"
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "15b-masumi-payto-not-escrow",
+      "rule": "masumi",
+      "description": "payTo is not the derived escrow address",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "5000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "masumi",
+          "inputCommitment": {
+            "version": "1",
+            "algorithm": "sha256",
+            "parts": [
+              {
+                "name": "body",
+                "canonicalization": "jcs",
+                "mediaType": "application/json",
+                "content": {
+                  "days": 3,
+                  "units": "metric"
+                },
+                "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+              }
+            ],
+            "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+          },
+          "terms": {
+            "version": "1",
+            "paymentType": "Web3CardanoV2",
+            "sellerAddress": "addr_test1vpe6c4xkpsdcsyd566jhuz6ykmra2e9vg8r3m79376eqrhgfchug4",
+            "sellerNonce": "abababababababababababababababababababababababababababababababab",
+            "buyerNonce": "",
+            "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+            "payByTime": "1791819208923",
+            "submitResultTime": "1791819508923",
+            "unlockTime": "1791820408923",
+            "externalDisputeUnlockTime": "1791821308923"
+          },
+          "referenceKey": "a4010103272006215820fef991fc60b9f76a24ea087c6efc9b3b545ae7ea6649e4fffbc09bad191459c3",
+          "referenceSignature": "84582aa201276761646472657373581d6073ac54d60c1b8811b4d6a57e0b44b6c7d564ac41c71df8b1f6b201dda166686173686564f4582045f8171b121013014cd7acf4b96b396b17b92138c8b8c691f925ae9909787e08584038d1a015a32b821c7227b0f358278cfe8b20f02494ff86d0a566a2140ed93967e30c1461c4d69d61b49fb6134f4c6db119e4915104cd1f0c1f35d18f57e2fc07",
+          "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545bc00632c18791012441a3424248cac058053222030610940792e58ea08c24b7700666840963944316e5d82d4a94d25126c9f33ac7b1e22d94eb8932125256520c012e72412f10004e2b5678f37238dc12563401334cca588b58dc2c604558d8a258f2347265341c0c220cae12605222d65c4934ad5c0a102263561c0a4ce345336263225c0c588c63534a2e22054742127ac52e58c4ea4550f17a4339589e5958e30d74b9f0c5f31258c519922c60f0a6c9f101ac26b463255c63008f8c8603d582c176a3088444a1a486fd453194a16012f0e2c62a210308a169555188812c440ac103088a8a6ab011c3347bcc2e40a27009a796c2c404ac10570b80027003e8005d1400677e49000ee002f217632862c25600016006b3162825001b01008005662d88016cb800370023911b9e6a1401cc001e940952b58186011a000efcab70158c60f400edd8628c15a800"
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "5000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "masumi",
+            "inputCommitment": {
+              "version": "1",
+              "algorithm": "sha256",
+              "parts": [
+                {
+                  "name": "body",
+                  "canonicalization": "jcs",
+                  "mediaType": "application/json",
+                  "content": {
+                    "days": 3,
+                    "units": "metric"
+                  },
+                  "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+                }
+              ],
+              "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+            },
+            "terms": {
+              "version": "1",
+              "paymentType": "Web3CardanoV2",
+              "sellerAddress": "addr_test1vpe6c4xkpsdcsyd566jhuz6ykmra2e9vg8r3m79376eqrhgfchug4",
+              "sellerNonce": "abababababababababababababababababababababababababababababababab",
+              "buyerNonce": "",
+              "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+              "payByTime": "1791819208923",
+              "submitResultTime": "1791819508923",
+              "unlockTime": "1791820408923",
+              "externalDisputeUnlockTime": "1791821308923"
+            },
+            "referenceKey": "a4010103272006215820fef991fc60b9f76a24ea087c6efc9b3b545ae7ea6649e4fffbc09bad191459c3",
+            "referenceSignature": "84582aa201276761646472657373581d6073ac54d60c1b8811b4d6a57e0b44b6c7d564ac41c71df8b1f6b201dda166686173686564f4582045f8171b121013014cd7acf4b96b396b17b92138c8b8c691f925ae9909787e08584038d1a015a32b821c7227b0f358278cfe8b20f02494ff86d0a566a2140ed93967e30c1461c4d69d61b49fb6134f4c6db119e4915104cd1f0c1f35d18f57e2fc07",
+            "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545bc00632c18791012441a3424248cac058053222030610940792e58ea08c24b7700666840963944316e5d82d4a94d25126c9f33ac7b1e22d94eb8932125256520c012e72412f10004e2b5678f37238dc12563401334cca588b58dc2c604558d8a258f2347265341c0c220cae12605222d65c4934ad5c0a102263561c0a4ce345336263225c0c588c63534a2e22054742127ac52e58c4ea4550f17a4339589e5958e30d74b9f0c5f31258c519922c60f0a6c9f101ac26b463255c63008f8c8603d582c176a3088444a1a486fd453194a16012f0e2c62a210308a169555188812c440ac103088a8a6ab011c3347bcc2e40a27009a796c2c404ac10570b80027003e8005d1400677e49000ee002f217632862c25600016006b3162825001b01008005662d88016cb800370023911b9e6a1401cc001e940952b58186011a000efcab70158c60f400edd8628c15a800"
+          }
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAgGCowBYHXChXOnYLS9nZF/GJOLtrAPG8cEG0K0a9YFaOxStARoATEtAAoIB2BhZAcLYeZ/YeZ/YeZ9YHBi7r184ZL7yt8xd8tWWugvtz1HEob4fIUy5Whn/2Hmf2Hmf2HmfWBw+XMlVBaFFIa65BjoPn1Zbm+ovaykzuT3HUVgi/////9h6gNh5n9h5n1gcc6xU1gwbiBG01qV+C0S2x9VkrEHHHfix9rIB3f/YeoD/2HqAWCqkAQEDJyAGIVgg/vmR/GC592ok6gh8bvybO1Ra5+pmSeT/+8CbrRkUWcNfWECEWCqiASdnYWRkcmVzc1gdYHOsVNYMG4gRtNalfgtEtsfVZKxBxx34sfayAd2hZmhhc2hlZPRYIEX4FxsSEBMBWEBM16z0uWs5axe5ITjIuMaR+SWumQl4fghYQDjRoBWjK4Icciew81gnjP6LIPAklP+G0KVmohQO2Tln4wwUYcTWWBqdYbSfthNPTG2xGeSRUQTNHwwfNdGPV+L8B/9YIKurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urQEAAWCDzNvrcwbKfqsunG24Ox/gLxbxGc9trj8k/WeX5+zxJx0AbAAABoTC/WNsbAAABoTDD7LsbAAABoTDRqFsbAAABoTDfY/sAANh5gP+CWDkAGLuvXzhkvvK3zF3y1Za6C+3PUcShvh8hTLlaGT5cyVUFoUUhrrkGOg+fVlub6i9rKTO5PcdRWCIaAJW6awIaAALcFQMaCB1EJqEA2QECgYJYIDW1hweIkGbvAo6W8VpOFJSZsfETWfSIMuQyK/4mNsWIWED4ULv7FUQLsIiEO+QwULwuUWrFWSmpc5seGxeBzLoJ5B7E/SoiS9J4pmYbnuGG/aNiZ/kuhO09gd8c68bvZzYA9fY=",
+          "nonce": "0505050505050505050505050505050505050505050505050505050505050505#2"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0505050505050505050505050505050505050505050505050505050505050505#2": {
+            "exists": true,
+            "address": "addr_test1qqvtht6l8pjtau4he3wl94vkhg97mn63cjsmu8epfju45xf7tny42pdpg5s6awgx8g8e74jmn04z76efxwunm363tq3qp5w9nh",
+            "coin": "15000000",
+            "assets": {},
+            "paymentKeyHash": "18bbaf5f3864bef2b7cc5df2d596ba0bedcf51c4a1be1f214cb95a19"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_payload_recipient_mismatch",
+        "payer": "addr_test1qqvtht6l8pjtau4he3wl94vkhg97mn63cjsmu8epfju45xf7tny42pdpg5s6awgx8g8e74jmn04z76efxwunm363tq3qp5w9nh"
+      }
+    },
+    {
+      "operation": "settle",
+      "options": {
+        "confirmationTimeoutMs": 1,
+        "confirmationPollMs": 1
+      },
+      "id": "12c-masumi-settle",
+      "rule": "masumi",
+      "description": "settles a Masumi lock with one confirmation",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "5000000",
+        "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "masumi",
+          "inputCommitment": {
+            "version": "1",
+            "algorithm": "sha256",
+            "parts": [
+              {
+                "name": "body",
+                "canonicalization": "jcs",
+                "mediaType": "application/json",
+                "content": {
+                  "days": 3,
+                  "units": "metric"
+                },
+                "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+              }
+            ],
+            "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+          },
+          "terms": {
+            "version": "1",
+            "paymentType": "Web3CardanoV2",
+            "sellerAddress": "addr_test1vpe6c4xkpsdcsyd566jhuz6ykmra2e9vg8r3m79376eqrhgfchug4",
+            "sellerNonce": "abababababababababababababababababababababababababababababababab",
+            "buyerNonce": "",
+            "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+            "payByTime": "1791819208923",
+            "submitResultTime": "1791819508923",
+            "unlockTime": "1791820408923",
+            "externalDisputeUnlockTime": "1791821308923"
+          },
+          "referenceKey": "a4010103272006215820fef991fc60b9f76a24ea087c6efc9b3b545ae7ea6649e4fffbc09bad191459c3",
+          "referenceSignature": "84582aa201276761646472657373581d6073ac54d60c1b8811b4d6a57e0b44b6c7d564ac41c71df8b1f6b201dda166686173686564f4582045f8171b121013014cd7acf4b96b396b17b92138c8b8c691f925ae9909787e08584038d1a015a32b821c7227b0f358278cfe8b20f02494ff86d0a566a2140ed93967e30c1461c4d69d61b49fb6134f4c6db119e4915104cd1f0c1f35d18f57e2fc07",
+          "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545bc00632c18791012441a3424248cac058053222030610940792e58ea08c24b7700666840963944316e5d82d4a94d25126c9f33ac7b1e22d94eb8932125256520c012e72412f10004e2b5678f37238dc12563401334cca588b58dc2c604558d8a258f2347265341c0c220cae12605222d65c4934ad5c0a102263561c0a4ce345336263225c0c588c63534a2e22054742127ac52e58c4ea4550f17a4339589e5958e30d74b9f0c5f31258c519922c60f0a6c9f101ac26b463255c63008f8c8603d582c176a3088444a1a486fd453194a16012f0e2c62a210308a169555188812c440ac103088a8a6ab011c3347bcc2e40a27009a796c2c404ac10570b80027003e8005d1400677e49000ee002f217632862c25600016006b3162825001b01008005662d88016cb800370023911b9e6a1401cc001e940952b58186011a000efcab70158c60f400edd8628c15a800"
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "5000000",
+          "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "masumi",
+            "inputCommitment": {
+              "version": "1",
+              "algorithm": "sha256",
+              "parts": [
+                {
+                  "name": "body",
+                  "canonicalization": "jcs",
+                  "mediaType": "application/json",
+                  "content": {
+                    "days": 3,
+                    "units": "metric"
+                  },
+                  "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+                }
+              ],
+              "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+            },
+            "terms": {
+              "version": "1",
+              "paymentType": "Web3CardanoV2",
+              "sellerAddress": "addr_test1vpe6c4xkpsdcsyd566jhuz6ykmra2e9vg8r3m79376eqrhgfchug4",
+              "sellerNonce": "abababababababababababababababababababababababababababababababab",
+              "buyerNonce": "",
+              "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+              "payByTime": "1791819208923",
+              "submitResultTime": "1791819508923",
+              "unlockTime": "1791820408923",
+              "externalDisputeUnlockTime": "1791821308923"
+            },
+            "referenceKey": "a4010103272006215820fef991fc60b9f76a24ea087c6efc9b3b545ae7ea6649e4fffbc09bad191459c3",
+            "referenceSignature": "84582aa201276761646472657373581d6073ac54d60c1b8811b4d6a57e0b44b6c7d564ac41c71df8b1f6b201dda166686173686564f4582045f8171b121013014cd7acf4b96b396b17b92138c8b8c691f925ae9909787e08584038d1a015a32b821c7227b0f358278cfe8b20f02494ff86d0a566a2140ed93967e30c1461c4d69d61b49fb6134f4c6db119e4915104cd1f0c1f35d18f57e2fc07",
+            "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545bc00632c18791012441a3424248cac058053222030610940792e58ea08c24b7700666840963944316e5d82d4a94d25126c9f33ac7b1e22d94eb8932125256520c012e72412f10004e2b5678f37238dc12563401334cca588b58dc2c604558d8a258f2347265341c0c220cae12605222d65c4934ad5c0a102263561c0a4ce345336263225c0c588c63534a2e22054742127ac52e58c4ea4550f17a4339589e5958e30d74b9f0c5f31258c519922c60f0a6c9f101ac26b463255c63008f8c8603d582c176a3088444a1a486fd453194a16012f0e2c62a210308a169555188812c440ac103088a8a6ab011c3347bcc2e40a27009a796c2c404ac10570b80027003e8005d1400677e49000ee002f217632862c25600016006b3162825001b01008005662d88016cb800370023911b9e6a1401cc001e940952b58186011a000efcab70158c60f400edd8628c15a800"
+          }
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAgGCowBYHXChXOnYLS9nZF/GJOLtrAPG8cEG0K0a9YFaOxStARoATEtAAoIB2BhZAcLYeZ/YeZ/YeZ9YHBi7r184ZL7yt8xd8tWWugvtz1HEob4fIUy5Whn/2Hmf2Hmf2HmfWBw+XMlVBaFFIa65BjoPn1Zbm+ovaykzuT3HUVgi/////9h6gNh5n9h5n1gcc6xU1gwbiBG01qV+C0S2x9VkrEHHHfix9rIB3f/YeoD/2HqAWCqkAQEDJyAGIVgg/vmR/GC592ok6gh8bvybO1Ra5+pmSeT/+8CbrRkUWcNfWECEWCqiASdnYWRkcmVzc1gdYHOsVNYMG4gRtNalfgtEtsfVZKxBxx34sfayAd2hZmhhc2hlZPRYIEX4FxsSEBMBWEBM16z0uWs5axe5ITjIuMaR+SWumQl4fghYQDjRoBWjK4Icciew81gnjP6LIPAklP+G0KVmohQO2Tln4wwUYcTWWBqdYbSfthNPTG2xGeSRUQTNHwwfNdGPV+L8B/9YIKurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urQEAAWCDzNvrcwbKfqsunG24Ox/gLxbxGc9trj8k/WeX5+zxJx0AbAAABoTC/WNsbAAABoTDD7LsbAAABoTDRqFsbAAABoTDfY/sAANh5gP+CWDkAGLuvXzhkvvK3zF3y1Za6C+3PUcShvh8hTLlaGT5cyVUFoUUhrrkGOg+fVlub6i9rKTO5PcdRWCIaAJW6awIaAALcFQMaCB1EJqEA2QECgYJYIDW1hweIkGbvAo6W8VpOFJSZsfETWfSIMuQyK/4mNsWIWED4ULv7FUQLsIiEO+QwULwuUWrFWSmpc5seGxeBzLoJ5B7E/SoiS9J4pmYbnuGG/aNiZ/kuhO09gd8c68bvZzYA9fY=",
+          "nonce": "0505050505050505050505050505050505050505050505050505050505050505#2"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0505050505050505050505050505050505050505050505050505050505050505#2": {
+            "exists": true,
+            "address": "addr_test1qqvtht6l8pjtau4he3wl94vkhg97mn63cjsmu8epfju45xf7tny42pdpg5s6awgx8g8e74jmn04z76efxwunm363tq3qp5w9nh",
+            "coin": "15000000",
+            "assets": {},
+            "paymentKeyHash": "18bbaf5f3864bef2b7cc5df2d596ba0bedcf51c4a1be1f214cb95a19"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ],
+        "evidenceAfterSubmit": {
+          "status": "confirmed",
+          "confirmations": 1
+        }
+      },
+      "expected": {
+        "transaction": "dd875e917bc9d424a99840cb5d047f631c54e1bc777cc00a119bef822ca16708",
+        "network": "cardano:preprod",
+        "payer": "addr_test1qqvtht6l8pjtau4he3wl94vkhg97mn63cjsmu8epfju45xf7tny42pdpg5s6awgx8g8e74jmn04z76efxwunm363tq3qp5w9nh",
+        "success": true,
+        "extra": {
+          "status": "confirmed",
+          "confirmations": 1
+        }
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "16-script-happy",
+      "rule": "script",
+      "description": "payment to the script address with the declared inline datum",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "3000000",
+        "payTo": "addr_test1wp8l7eylksmjas7ypzm0q35dwnjdxxvsfn0z0lflqzgs55stpd682",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "script",
+          "script": {
+            "type": "plutusV3",
+            "code": "4d01000033222220051200120011"
+          },
+          "datum": "d8799f4568656c6c6f182aff"
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "3000000",
+          "payTo": "addr_test1wp8l7eylksmjas7ypzm0q35dwnjdxxvsfn0z0lflqzgs55stpd682",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "script",
+            "script": {
+              "type": "plutusV3",
+              "code": "4d01000033222220051200120011"
+            },
+            "datum": "d8799f4568656c6c6f182aff"
+          }
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAgGCowBYHXBP/2SftDcuw8QItvBGjXTk0xmQTN4n/T8AkQpSARoALcbAAoIB2BhM2HmfRWhlbGxvGCr/glg5AHEa74OBy8qYYg4FxFVCZVuyEb2m0suHXeWkfrE2qAl8IVpLqUqTb7k6gJ5jXFkeyxGb3LAgeSgfGgBoP0sCGgACkHUDGggdRCahANkBAoGCWCDtWbLtXYV+jhTTL8AZeIVG93lq236jkk4+Oik3hIJcK1hAmrrhtyVEwTP7m6hCpV+x1XGJ+O5VCgyo5sBmYjZWs6ymJZ8ZYa8BlEBmNzHFNJvjmMsKVCG9SLWmIeVzNiFGCvX2",
+          "nonce": "0808080808080808080808080808080808080808080808080808080808080808#2"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0808080808080808080808080808080808080808080808080808080808080808#2": {
+            "exists": true,
+            "address": "addr_test1qpc34murs89u4xrzpczug42zv4dmyyda5mfvhp6aukj8avfk4qyhcg26fw554ym0hyagp8nrt3v3ajc3n0wtqgre9q0s2q252m",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "711aef8381cbca98620e05c45542655bb211bda6d2cb875de5a47eb1"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": true,
+        "payer": "addr_test1qpc34murs89u4xrzpczug42zv4dmyyda5mfvhp6aukj8avfk4qyhcg26fw554ym0hyagp8nrt3v3ajc3n0wtqgre9q0s2q252m"
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "17-script-wrong-datum",
+      "rule": "script",
+      "description": "output datum differs from extra.datum (TS does not verify script datums)",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "3000000",
+        "payTo": "addr_test1wp8l7eylksmjas7ypzm0q35dwnjdxxvsfn0z0lflqzgs55stpd682",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "script",
+          "script": {
+            "type": "plutusV3",
+            "code": "4d01000033222220051200120011"
+          },
+          "datum": "d8799f4568656c6c6f182aff"
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "3000000",
+          "payTo": "addr_test1wp8l7eylksmjas7ypzm0q35dwnjdxxvsfn0z0lflqzgs55stpd682",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "script",
+            "script": {
+              "type": "plutusV3",
+              "code": "4d01000033222220051200120011"
+            },
+            "datum": "d8799f4568656c6c6f182aff"
+          }
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJAAGCowBYHXBP/2SftDcuw8QItvBGjXTk0xmQTN4n/T8AkQpSARoALcbAAoIB2BhD2HmAglg5AG3x8BYXn+UMjSpwA8Tw5LVfWc3yw66uZGFwPClCO4Upl1ANNjZjCSRBa1lYvstJ2Pj7d+ByXx+aGgBoQNcCGgACjukDGggdRCahANkBAoGCWCD3eLUCcVs7689i/kzJ2pw681AHAX1kzJIFiDew9To1oVhAWgGPyEomhaKqiGjPdG6jxMYTOhPUiCtfS4hFeWJKhoUhZTSLSc8fYzcNrGsJ1JXt2ghEjtoI4OpH9nKA2mEwCvX2",
+          "nonce": "0909090909090909090909090909090909090909090909090909090909090909#0"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0909090909090909090909090909090909090909090909090909090909090909#0": {
+            "exists": true,
+            "address": "addr_test1qpklruqkz7072ryd9fcq838suj647kwd7tp6atnyv9crc22z8wzjn96sp5mrvccfy3qkkk2chm95nk8cldm7qujlr7dqhfwwan",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "6df1f016179fe50c8d2a7003c4f0e4b55f59cdf2c3aeae6461703c29"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": true,
+        "payer": "addr_test1qpklruqkz7072ryd9fcq838suj647kwd7tp6atnyv9crc22z8wzjn96sp5mrvccfy3qkkk2chm95nk8cldm7qujlr7dqhfwwan"
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "18-script-wrong-address",
+      "rule": "script",
+      "description": "payTo is not the address of the declared script",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "3000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "script",
+          "script": {
+            "type": "plutusV3",
+            "code": "4d01000033222220051200120011"
+          },
+          "datum": "d8799f4568656c6c6f182aff"
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "3000000",
+          "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "script",
+            "script": {
+              "type": "plutusV3",
+              "code": "4d01000033222220051200120011"
+            },
+            "datum": "d8799f4568656c6c6f182aff"
+          }
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKAQGCglg5AAv+pZQGli2+8vNu6ZYOiFZ+r9xf/K/u1TAxJcFWjWxD+9pgsw9ruX3u1PP0/HMpqXm/ThRAVZEMGgAtxsCCWDkAzKc8skLXW+NoHUGWJFYTz/QH3CLoWOeOEg8owIcHCBS1x04ghShChmb4GhfNBqQOBNj2DFacgKcaAGg96wIaAAKR1QMaCB1EJqEA2QECgYJYIPy9UWcmaJOYMtB/xQIR3J32tGblFBypOMXjp8ikpG5qWEAkEnwENAuAFFMzKGxhm59TKLtMrtJShZ2oVWDgztWqxkhUpBStH8pfqUMQ514X3xVuSWATtXIyTrkxjuCX4v4D9fY=",
+          "nonce": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a#1"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a#1": {
+            "exists": true,
+            "address": "addr_test1qrx2w09jgtt4hcmgr4qevfzkz08lgp7uyt593euwzg8j3sy8quypfdw8fcsg22zzsen0sxshe5r2grsymrmqc45usznsgecmk0",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "cca73cb242d75be3681d4196245613cff407dc22e858e78e120f28c0"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_payload_script_address_mismatch",
+        "payer": "addr_test1qrx2w09jgtt4hcmgr4qevfzkz08lgp7uyt593euwzg8j3sy8quypfdw8fcsg22zzsen0sxshe5r2grsymrmqc45usznsgecmk0"
+      }
+    },
+    {
+      "operation": "verify",
+      "options": {},
+      "id": "16b-script-parameters",
+      "rule": "script",
+      "description": "script address derived after applying four typed parameters",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "3000000",
+        "payTo": "addr_test1wqd4f7zeu8w33hpm0r8s93c3gm5vzu5qmhh009z3j437phq7fa877",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "script",
+          "script": {
+            "type": "plutusV3",
+            "code": "4d01000033222220051200120011"
+          },
+          "parameters": {
+            "2": {
+              "type": "integer",
+              "value": 42
+            },
+            "owner": {
+              "type": "bytes",
+              "value": "deadbeef"
+            },
+            "flag": {
+              "type": "boolean",
+              "value": true
+            },
+            "label": {
+              "type": "string",
+              "value": "x402"
+            }
+          }
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "3000000",
+          "payTo": "addr_test1wqd4f7zeu8w33hpm0r8s93c3gm5vzu5qmhh009z3j437phq7fa877",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "script",
+            "script": {
+              "type": "plutusV3",
+              "code": "4d01000033222220051200120011"
+            },
+            "parameters": {
+              "2": {
+                "type": "integer",
+                "value": 42
+              },
+              "owner": {
+                "type": "bytes",
+                "value": "deadbeef"
+              },
+              "flag": {
+                "type": "boolean",
+                "value": true
+              },
+              "label": {
+                "type": "string",
+                "value": "x402"
+              }
+            }
+          }
+        },
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLAgGCglgdcBtU+Fnh3RjcO3jPAscRRujBcoDd7veUUZVj4NwaAC3GwIJYOQCVWLCxB8Akwy24N5em5t8BZn+uzlQeVSJyhTki46r7fTSEC8cpsONEvLrXKTDCoj+eHyYAlsPv9hoAaEK7AhoAAo0FAxoIHUQmoQDZAQKBglggL/6XIcuVTQJw06qXImOQRQ4W6ih9GpPO97JSjMsfEydYQJVw3bG6+bHz22XKF2q5QP7nl/02XLRicj/levQu57dJFOqgQSV7byPJNMxQ3jSsa7pOQ8qEFOR0WgLNW+X5VQH19g==",
+          "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b#2"
+        }
+      },
+      "chain": {
+        "currentSlot": "136135418",
+        "protocolParameters": {
+          "coinsPerUtxoByte": "4310",
+          "minFeeCoefficient": "44",
+          "minFeeConstant": "155381"
+        },
+        "utxos": {
+          "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b#2": {
+            "exists": true,
+            "address": "addr_test1qz243v93qlqzfsedhqme0fhxmuqkvlawee2pu4fzw2znjghr4tah6dyyp0rjnv8rgj7t44efxrp2y0u7runqp9kralmqmlag36",
+            "coin": "10000000",
+            "assets": {},
+            "paymentKeyHash": "9558b0b107c024c32db83797a6e6df01667faece541e552272853922"
+          }
+        },
+        "transactionEvidence": true,
+        "evidence": {},
+        "addresses": [
+          "addr_test1vpfacilitatorpayerplaceholder"
+        ]
+      },
+      "expected": {
+        "isValid": true,
+        "payer": "addr_test1qz243v93qlqzfsedhqme0fhxmuqkvlawee2pu4fzw2znjghr4tah6dyyp0rjnv8rgj7t44efxrp2y0u7runqp9kralmqmlag36"
+      }
+    }
+  ],
+  "supported": [
+    {
+      "acceptMempool": false,
+      "transactionEvidence": true,
+      "extra": {
+        "assetTransferMethods": [
+          "default",
+          "masumi",
+          "script"
+        ],
+        "areFeesSponsored": false,
+        "l1Confirmations": {
+          "minimum": 0,
+          "maximum": 20
+        }
+      }
+    },
+    {
+      "acceptMempool": true,
+      "transactionEvidence": true,
+      "extra": {
+        "assetTransferMethods": [
+          "default",
+          "masumi",
+          "script"
+        ],
+        "areFeesSponsored": false,
+        "l1Confirmations": {
+          "minimum": -1,
+          "maximum": 20
+        }
+      }
+    },
+    {
+      "acceptMempool": false,
+      "transactionEvidence": false,
+      "extra": {
+        "assetTransferMethods": [
+          "default",
+          "masumi",
+          "script"
+        ],
+        "areFeesSponsored": false,
+        "l1Confirmations": {
+          "minimum": 0,
+          "maximum": 0
+        }
+      }
+    },
+    {
+      "acceptMempool": true,
+      "transactionEvidence": false,
+      "extra": {
+        "assetTransferMethods": [
+          "default",
+          "masumi",
+          "script"
+        ],
+        "areFeesSponsored": false,
+        "l1Confirmations": {
+          "minimum": -1,
+          "maximum": 0
+        }
+      }
+    }
+  ]
+}

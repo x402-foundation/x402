@@ -1,0 +1,182 @@
+# ============================================================================================
+# Reference: every x402.* key, with its default. NOT a profile to activate (it names beans and
+# networks this example doesn't have). Copy what you need.
+#
+# ExampleProfilesSmokeTest binds this file through the SDK's own properties classes
+# (X402Properties, X402CardanoProperties, X402FacilitatorServerProperties), fails on any key
+# they don't bind, and fails when a key of the starter's configuration metadata is missing here.
+# So this file cannot drift from the code.
+#
+# Defaults are shown as "default: …" in comments; a key you leave out takes its default.
+# ============================================================================================
+
+x402:
+  enabled: true                          # default: true. false switches off server and client.
+  filter-order: -99                      # default: right after Spring Security (401 before 402)
+  local-facilitator: false               # default: false. true = use the in-process facilitator
+                                         # (needs x402.facilitator-server.enabled=true); it is
+                                         # prepended with the reserved identifier "local".
+
+  # ---- Resource server: who verifies and settles ------------------------------------------
+  facilitators:                          # a list; order = precedence for unpinned options.
+                                         # default: one entry https://x402.org/facilitator
+    - url: "https://cardano-facilitator.example/x402"
+      identifier: cardano                # optional; default: the url (trailing slashes removed).
+                                         # Only needed to pin options with a short name.
+      timeout: 90s                       # default: 90s. settle and /supported.
+      verify-timeout: 15s                # default: 15s. /verify only.
+      headers:                           # static headers per endpoint (TS createAuthHeaders)
+        verify: { Authorization: "Bearer ${FACILITATOR_TOKEN}" }
+        settle: { Authorization: "Bearer ${FACILITATOR_TOKEN}" }
+        supported: { Authorization: "Bearer ${FACILITATOR_TOKEN}" }
+    - url: "https://backup-facilitator.example/x402"
+      identifier: backup
+      auth-ref: backupFacilitatorAuth    # bean name of an X402FacilitatorAuthProvider;
+                                         # replaces headers for this entry
+
+  sync:                                  # the /supported sync with the facilitators
+    startup-timeout: 10s                 # default: 10s, total across facilitators
+    initial-backoff: 1s                  # default: 1s, first background re-sync delay
+    max-backoff: 60s                     # default: 60s
+
+  # ---- Resource server: where you get paid ------------------------------------------------
+  accounts:                              # names match [a-z0-9-]+; options reference them
+    preprod:
+      network: "cardano:preprod"         # CAIP-2, required
+      pay-to: "${PREPROD_PAY_TO}"        # or pay-to-ref (one of the two)
+      scheme: exact                      # default: x402.defaults.scheme
+      max-timeout-seconds: 300           # default: x402.defaults.max-timeout-seconds
+      extra: { assetTransferMethod: default }   # merged under each option's extra
+      facilitator: cardano               # pins every option of this account (identifier)
+      cardano:
+        l1-confirmations: 1              # -1..20 → extra.confirmationPolicy; omitted = TS default 1
+    preprod-escrow:
+      network: "cardano:preprod"
+      extra: { assetTransferMethod: masumi }
+      # no pay-to: the Masumi escrow address is derived from the deployment
+      cardano:
+        masumi:
+          seller-mnemonic: "${SELLER_MNEMONIC}"        # signs quotes; a CardanoSellerSigner bean wins
+          seller-return-address: "${SELLER_PAYOUT}"     # optional key-credential payout address
+          agent-identifier: "${MASUMI_AGENT_ID}"        # optional Masumi registry asset id
+    preview-escrow:
+      network: "cardano:preview"
+      extra: { assetTransferMethod: masumi }
+      cardano:
+        masumi:
+          seller-mnemonic: "${PREVIEW_SELLER_MNEMONIC}"
+          deployment:                    # a non-canonical escrow deployment; required on Preview
+            required-admins: "2"
+            admin-vkeys:
+              - "fc16a1fcf309aed03ec18bb2176f5ea29acea70bb79145ebaffa8e75"
+              - "7f78161369549d8e2b138fee724c9fa606d6107a66720bdb4c48ada6"
+              - "89eef9ea84e0ee7fe4921fa93eb2873ff6e34473f751d5d52cb75aa6"
+            cooldown-period: "420000"
+    mainnet:
+      network: "cardano:mainnet"
+      pay-to-ref: mainnetTreasury        # bean name of an X402DynamicPayTo, resolved per request
+
+  defaults:                              # network-independent only
+    scheme: exact                        # default: exact
+    max-timeout-seconds: 300             # default: 300
+    failover: false                      # default: false. verify-only failover, one hop
+    facilitator: cardano                 # default pin; account and option pins win
+
+  # ---- Resource server: offers --------------------------------------------------------------
+  routes:
+    report:                              # @X402Payment("report")
+      path: "GET /reports/*"             # optional: also protects matching requests without an
+                                         # annotation. x402 route syntax: *, :param, [param]
+      description: Market report
+      mime-type: application/json
+      resource: "https://api.example.com/reports"   # default: the request URL
+      service-name: Example API
+      tags: [markets, cardano]
+      icon-url: "https://api.example.com/icon.png"
+      custom-paywall-html: "<html><body>Pay to read the report</body></html>"
+      failover: true                     # default: x402.defaults.failover
+      extensions:
+        bazaar: { discoverable: true }   # discovery declaration (bazaar extension)
+      accepts:                           # always a list; your order of preference
+        - account: preprod
+          price: "$0.50"                 # "$" = USDM on Cardano, 1:1; "0.50 USDM" is the same
+          max-timeout-seconds: 120
+          extra: { confirmationPolicy: { l1Confirmations: 2 } }
+          facilitator: cardano           # pin (identifier); option > account > defaults
+        - account: preprod
+          price: { amount: "1500000", asset: lovelace, extra: { note: ada } }  # 1.5 ADA, atomic
+        - account: preprod-escrow
+          price: "$0.50"
+        - network: "cardano:mainnet"     # inline option, no account (TS shape)
+          scheme: exact
+          pay-to-ref: mainnetTreasury    # or pay-to
+          price-ref: tieredPricer        # bean name of an X402DynamicPrice (instead of price)
+    preview-job:
+      accepts:
+        - { account: preview-escrow, price: { amount: "5000000", asset: lovelace } }
+    partner:
+      accepts:
+        - { network: "cardano:preprod", pay-to: "${PARTNER_PAY_TO}", price: "$0.10" }
+
+  paywall:                               # browser 402s
+    enabled: true                        # default: true. false = always JSON
+    app-name: Example API
+    app-logo: "https://api.example.com/logo.png"
+    testnet: true
+
+  # ---- Client: paying 402s from RestClient / RestTemplate / WebClient ---------------------
+  client:
+    enabled: false                       # default: false
+    hosts: ["api.example.com", "*.example.com"]   # only these may trigger a payment; empty = none
+    instrument-beans: true               # default: true. hook self-built WebClient beans, warn
+                                         # about self-built RestClient / RestTemplate beans
+    max-replay-body: 1MB                 # default: 1MB. larger bodies → 402 returned unpaid
+    spend-controls:
+      enabled: true                      # default: true. false = no spend controls
+      max-amount-per-payment: "$1"       # default: "$1", USD cap for default assets (USDM)
+      allow-any-asset: false             # default: false. true pays any asset; non-default
+                                         # assets are then paid with NO cap
+      allowed-assets:                    # lovelace is refused unless listed here. An entry
+                                         # without max-amount-per-payment is UNCAPPED; a
+                                         # network pattern like cardano:* includes mainnet
+        - { network: "cardano:preprod", asset: lovelace, max-amount-per-payment: "2000000" }
+    prefer:                              # first entry most preferred
+      networks: ["cardano:preprod"]
+      schemes: [exact]
+    cardano:
+      mnemonic: "${BUYER_MNEMONIC}"      # default for every network below; a ClientCardanoSigner bean wins
+      networks:                          # one client scheme + signer per network
+        - network: "cardano:preprod"
+          mnemonic: "${PREPROD_BUYER_MNEMONIC}"   # per-network override
+          blockfrost:
+            project-id: "${BLOCKFROST_PREPROD_PROJECT_ID}"
+            base-url: "https://cardano-preprod.blockfrost.io/api/v0"   # default per network
+
+  # ---- Facilitator server -------------------------------------------------------------------
+  facilitator-server:
+    enabled: false                       # default: false; independent of x402.enabled
+    expose-http: true                    # default: true. false = in-process only
+    base-path: /x402                     # default: /x402; "" or "/" = root
+    cardano:
+      accept-mempool: false              # default: false
+      confirmation-timeout: 75s          # default: 75s; keep below 85s
+      confirmation-poll: 5s              # default: 5s
+      max-tip-age: 5m                    # default: 5m; a provider whose tip lags more is refused
+      lookup-timeout: 10s                # default: 10s; chain lookups of one verification
+      max-input-lookups: 64              # default: 64; inputs one verification resolves
+      script-datum-policy: reference     # default: reference | strict | v3-optional
+      max-tx-bytes: 65536                # default: 65536; the protocol's maxTxSize lowers it
+      networks:                          # one facilitator scheme per network
+        - network: "cardano:preprod"     # a CIP-34 alias (cip34:0-1) names the same network
+          blockfrost:
+            project-id: "${BLOCKFROST_PREPROD_PROJECT_ID}"
+            base-url: "https://cardano-preprod.blockfrost.io/api/v0"
+          mnemonic: "${FACILITATOR_MNEMONIC}"   # optional; provider-only without it
+          network-magic: 1               # default: the public network's (764824073, 1, 2)
+          evaluation: true               # default: true; false for a provider without
+                                         # /utils/txs/evaluate (yaci-store)
+          masumi-allowed-script-hashes: []   # default: empty; when set, only these escrows
+          slot-config:                   # default: built in; set all three for a private network
+            zero-time: 1655769600000     # (these are preprod's own values)
+            zero-slot: 86400
+            slot-length: 1000

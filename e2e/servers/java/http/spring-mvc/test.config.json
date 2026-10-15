@@ -1,0 +1,7 @@
+{
+  "name": "java/http/spring-mvc",
+  "type": "server",
+  "language": "java",
+  "transport": "http",
+  "x402Version": 2
+}

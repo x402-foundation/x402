@@ -25,7 +25,7 @@ const CARDANO_ALWAYS_SUCCEEDS_ADDRESS =
   'addr_test1wp8l7eylksmjas7ypzm0q35dwnjdxxvsfn0z0lflqzgs55stpd682';
 
 /** Keep local types here to avoid circular imports with types.ts / networks.ts. */
-export type SdkId = 'typescript' | 'python' | 'go';
+export type SdkId = 'typescript' | 'python' | 'go' | 'java';
 export type ConfigRole = 'server' | 'client' | 'facilitator';
 /** Network id, e.g. "evm" — one per `mechanisms_<id>.json` file. No fixed union: adding a network is a catalog-only edit. */
 export type CatalogNetworkId = string;
@@ -684,7 +684,7 @@ export function enrichConfigFromMechanisms(
   }
 
   const sdk = String(config.language ?? '');
-  if (!sdk || !['typescript', 'python', 'go'].includes(sdk)) {
+  if (!sdk || !['typescript', 'python', 'go', 'java'].includes(sdk)) {
     return config;
   }
 

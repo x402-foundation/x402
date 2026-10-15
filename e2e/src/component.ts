@@ -13,7 +13,7 @@ const SKIP_COMPONENT_DIRS = new Set([
   '.next',
 ]);
 
-const LANGUAGES = new Set(['typescript', 'go', 'python']);
+const LANGUAGES = new Set(['typescript', 'go', 'python', 'java']);
 const TRANSPORTS = new Set(['http', 'mcp']);
 
 type ComponentLocation = {
@@ -30,7 +30,7 @@ function componentName(roleDir: string, componentDir: string): string {
 
 /**
  * Discover leaf components under role/{language}/{transport}/...
- * Layout: servers|clients / typescript|go|python / http|mcp / [component]
+ * Layout: servers|clients / typescript|go|python|java / http|mcp / [component]
  */
 export function discoverComponentLocations(roleDir: string): ComponentLocation[] {
   if (!existsSync(roleDir)) {

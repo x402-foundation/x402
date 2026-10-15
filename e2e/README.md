@@ -58,6 +58,7 @@ Also add `SERVER_*` / `CLIENT_*` / `FACILITATOR_*` secrets to [`.env-local`](.en
 |-----|--------|
 | TypeScript | Add `clients/typescript/http/<name>/index.ts` or `servers/typescript/http/<name>/index.ts` using the language-root helpers (`../../client.ts` / `../../index.ts` for servers); add the adapter dep to the language `package.json`. Vanilla components need no local `test.config.json`. |
 | Go / Python | Add component dir with `main.go` / `main.py` + module file. `setup.sh` runs language defaults. Vanilla components need no local `test.config.json`. |
+| Java | Add `clients/java/http/<name>/` (or `servers/java/http/<name>/`) with `test.config.json` (`"language": "java"`), `build.sh` (installs the `java/` reactor with `mvn -q -f <repo>/java/pom.xml install -DskipTests` unless `X402_JAVA_REACTOR_READY` is set, then packages the component) and `run.sh`. `setup.sh` installs the reactor once, sets that variable and runs each `build.sh`. Needs JDK 17+ and Maven on `PATH`. See [Java components](#java-components). |
 
 ## Custom flows (escape hatches)
 
@@ -80,7 +81,9 @@ If an SDK implements a route end-to-end (client + server + facilitator), list it
 
 ### First Time Setup
 
-Install all dependencies (TypeScript via pnpm, Go, Python):
+Install all dependencies (TypeScript via pnpm, Go, Python, Java):
+
+> **Java components** (`*/java/**`) need JDK 17+ and Maven on `PATH`; without them `setup.sh` reports those components as failed.
 
 ```bash
 pnpm install:all
@@ -296,7 +299,7 @@ Catalog dimensions can also be filtered from the CLI (`pnpm test --help` for the
 pnpm test --testnet --min --families=evm --sdk=ts --paymentflow=upfront --assetTransferMethod=eip3009
 ```
 
-`--sdk` keeps scenarios whose client, server, and facilitator are that language (`ts` / `typescript`, `py` / `python`, `go`). `--paymentflow` and `--assetTransferMethod` match the catalog route fields (omitted `paymentFlow` is `authorization`).
+`--sdk` keeps scenarios whose client, server, and facilitator are that language (`ts` / `typescript`, `py` / `python`, `go`, `java`). `--paymentflow` and `--assetTransferMethod` match the catalog route fields (omitted `paymentFlow` is `authorization`).
 
 Optional environment variables (batch-settlement scheme):
 
@@ -402,6 +405,35 @@ the client payments.
 3. Get a free **Blockfrost** preprod project id at [blockfrost.io](https://blockfrost.io/) and set `BLOCKFROST_PROJECT_ID`.
 
 > **Note:** payer key = `CLIENT_NEAR_*`, relayer key = `FACILITATOR_NEAR_*`, merchant = `SERVER_NEAR_ADDRESS`. `CLIENT_NEAR_ACCOUNT_ID` is required because a NEAR private key identifies a public key, but the signer must also know which account owns that access key to read its nonce and set the delegated action `senderId`. Override the token with `SERVER_NEAR_ASSET` / `SERVER_NEAR_AMOUNT` (defaults: `wrap.testnet` / `1000000000000000000000` = 0.001 wNEAR; set them to a NEP-141 like Circle USDC for stablecoin runs).
+
+#### Java components
+
+The Java v2 SDK (`java/`) currently implements Cardano only, so `java` is listed in the `sdks` of the three `/exact/cardano/*` routes and nowhere else.
+
+- **Client** [`clients/java/http/java-http`](clients/java/http/java-http): one-shot Maven app on `org.x402:x402-core` + `x402-mechanism-cardano`. Env: `RESOURCE_SERVER_URL`, `ENDPOINT_PATH`, `CLIENT_CARDANO_MNEMONIC`, `BLOCKFROST_PROJECT_ID`, `CARDANO_NETWORK` / `CARDANO_RPC_URL` (injected by the harness; Blockfrost base URL, default per network). Spend controls are off (the routes are priced in lovelace). Prints one JSON line on stdout; `success` is true only for a 2xx answer with a successful settlement. It exits 0 for 2xx and 402 (the harness judges those) and exits 1 for any other status or when the request cannot complete (`error` is set), so a degraded server never counts as a pass. The Java servers likewise exit 1 instead of printing `Server listening` when the x402 facilitator sync did not reach READY. After a settled payment it waits (up to 120 s) until Blockfrost lists the change output, like the TS client, so the next one-shot client does not reuse a spent input.
+- **Servers** [`servers/java/http/spring-mvc`](servers/java/http/spring-mvc) and [`servers/java/http/spring-webflux`](servers/java/http/spring-webflux) are Spring Boot apps on `org.x402:x402-spring-boot-starter` plus `org.x402:x402-mechanism-cardano` (the starter bundles no mechanism). At startup, the shared code in [`servers/java/src`](servers/java/src) turns the catalog (`E2E_MECHANISMS_CATALOG`, else a walk up to `config/`) into `x402.*` properties.
+  - **Accounts:** `cardano` (`SERVER_CARDANO_ADDRESS`), `cardano-script` (`SERVER_CARDANO_SCRIPT_ADDRESS`, else the always-succeeds fixture) and `cardano-masumi` (derived escrow, `SERVER_CARDANO_SELLER_MNEMONIC`). `CARDANO_L1_CONFIRMATIONS` becomes each account's `cardano.l1-confirmations`.
+  - **Offers:** one per route, with one `accepts` entry carrying the catalog `extra` (script block, `paymentFlow`), plus bazaar from the catalog.
+  - **Facilitators:** `x402.facilitators` = `FACILITATOR_URL`, then `MOCK_FACILITATOR_URL`.
+  - **Handlers:** `/exact/cardano/default` is served by an `@X402Payment` controller; the other routes use YAML `path:` offers.
+  - **Without `SERVER_CARDANO_SELLER_MNEMONIC`** the Masumi route is left out and the server still starts.
+  - **Endpoints and output:** they print `Server listening` and serve `GET /health` and `POST /close`.
+- **Facilitator** [`facilitators/java`](facilitators/java): the starter's facilitator server at the root (`/verify`, `/settle`, `/supported`), plus `GET /health` and `POST /close`. It prints `Facilitator listening`.
+  - Env: `PORT` (default 4022). Cardano is registered only when both `CARDANO_RPC_URL` and `BLOCKFROST_PROJECT_ID` are set. `FACILITATOR_CARDANO_MNEMONIC` is optional (provider-only without it). `CARDANO_NETWORK` picks the network, and `CARDANO_L1_CONFIRMATIONS=-1` enables accept-mempool.
+  - It has no `/discovery/resources`. `test.config.json` declares `"extensions": []`, so bazaar validation skips it.
+  - Because `java` is in the Cardano routes' `sdks`, unfiltered Cardano runs pair it with every server and client (full matrix).
+- **Build** once with `./setup.sh` (it installs the `java/` reactor once), or with a component's `build.sh` alone, which then installs the reactor itself. `run.sh` only starts the packaged jar (`target/app.jar` for the Spring apps).
+- **Seller mnemonic.** The harness requires `SERVER_CARDANO_SELLER_MNEMONIC` for **any** Cardano run (catalog `required: true`), and the TS servers register the Cardano scheme only when it is set. Without it, no Cardano scenario runs, including `default` and `script`. CI writes it from the `SERVER_CARDANO_SELLER_MNEMONIC` repository secret; until that secret exists, CI selects no Cardano scenario.
+- **One wallet per run.** Live runs that share `CLIENT_CARDANO_MNEMONIC` must not run concurrently. A wallet with one UTxO lets only one payer at a time spend it, and a concurrent payment makes the other settle fail (`settlement_failed`, then `nonce_not_on_chain`).
+
+Examples:
+
+```bash
+# Java client against the TS server and facilitator
+SERVER_SVM_ADDRESS= SERVER_EVM_ADDRESS= pnpm test --testnet --families=cardano --clients=java/http/java-http --servers=typescript/http/express --facilitators=typescript
+# All-Java scenarios (Java servers × java-http × Java facilitator)
+pnpm test --testnet --families=cardano --sdk=java
+```
 
 ## Example Session
 
