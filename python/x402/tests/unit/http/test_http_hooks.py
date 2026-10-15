@@ -15,7 +15,13 @@ from x402.http.types import (
 )
 from x402.http.utils import encode_payment_signature_header
 from x402.http.x402_http_server import x402HTTPResourceServer
-from x402.schemas import PaymentPayload, PaymentRequirements, SettleResponse, VerifyResponse
+from x402.schemas import (
+    PaymentPayload,
+    PaymentRequirements,
+    ResourceInfo,
+    SettleResponse,
+    VerifyResponse,
+)
 from x402.schemas.hooks import (
     AbortProtectedRequestResult,
     GrantAccessResult,
@@ -128,6 +134,7 @@ class TestOnProtectedRequest:
             _requirements, _resource, error, _extensions, **_kwargs
         ):
             return PaymentRequired(
+                resource=ResourceInfo(url="https://example.com/resource"),
                 x402_version=2,
                 error=error,
                 accepts=requirements,
