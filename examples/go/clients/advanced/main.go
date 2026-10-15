@@ -47,6 +47,8 @@ func main() {
 	// Get configuration
 	evmPrivateKey := os.Getenv("EVM_PRIVATE_KEY")
 	svmPrivateKey := os.Getenv("SVM_PRIVATE_KEY")
+	hederaAccountID := os.Getenv("HEDERA_ACCOUNT_ID")
+	hederaPrivateKey := os.Getenv("HEDERA_PRIVATE_KEY")
 
 	// For all-networks, at least one key is required
 	// For other examples, EVM key is required
@@ -55,8 +57,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if pattern == "all-networks" && evmPrivateKey == "" && svmPrivateKey == "" {
-		fmt.Println("❌ At least one of EVM_PRIVATE_KEY or SVM_PRIVATE_KEY is required")
+	if pattern == "all-networks" && evmPrivateKey == "" && svmPrivateKey == "" && (hederaAccountID == "" || hederaPrivateKey == "") {
+		fmt.Println("❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY is required")
 		os.Exit(1)
 	}
 
@@ -70,7 +72,7 @@ func main() {
 
 	switch pattern {
 	case "all-networks":
-		if err := runAllNetworksExample(ctx, evmPrivateKey, svmPrivateKey, url); err != nil {
+		if err := runAllNetworksExample(ctx, evmPrivateKey, svmPrivateKey, hederaAccountID, hederaPrivateKey, url); err != nil {
 			fmt.Printf("❌ Error: %v\n", err)
 			os.Exit(1)
 		}

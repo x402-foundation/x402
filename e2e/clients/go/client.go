@@ -19,6 +19,8 @@ import (
 	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
 	exactevmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/v1/client"
 	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/client"
+	hederamech "github.com/x402-foundation/x402/go/v2/mechanisms/hedera"
+	hedera "github.com/x402-foundation/x402/go/v2/mechanisms/hedera/exact/client"
 	svmconfig "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	batchsvmclient "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement/client"
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
@@ -77,8 +79,11 @@ type PaymentClientContext struct {
 func BuildPaymentClient() *PaymentClientContext {
 	evmPrivateKey := os.Getenv("CLIENT_EVM_PRIVATE_KEY")
 	svmPrivateKey := os.Getenv("CLIENT_SVM_PRIVATE_KEY")
-	if evmPrivateKey == "" && svmPrivateKey == "" {
-		log.Fatal("At least one of CLIENT_EVM_PRIVATE_KEY or CLIENT_SVM_PRIVATE_KEY is required")
+	hederaAccountID := os.Getenv("CLIENT_HEDERA_ACCOUNT_ID")
+	hederaPrivateKey := os.Getenv("CLIENT_HEDERA_PRIVATE_KEY")
+	hederaConfigured := hederaAccountID != "" && hederaPrivateKey != ""
+	if evmPrivateKey == "" && svmPrivateKey == "" && !hederaConfigured {
+		log.Fatal("At least one of CLIENT_EVM_PRIVATE_KEY, CLIENT_SVM_PRIVATE_KEY, or CLIENT_HEDERA_ACCOUNT_ID + CLIENT_HEDERA_PRIVATE_KEY is required")
 	}
 
 	x402Client := x402.Newx402Client().DisableSpendControls()
@@ -186,6 +191,15 @@ func BuildPaymentClient() *PaymentClientContext {
 		if batchCfg.ServerSignedChannelsPolicy != nil {
 			x402Client.RegisterPolicy(batchedSvmScheme.PaymentPolicy())
 		}
+	}
+
+	if hederaConfigured {
+		hederaSigner, err := hederamech.NewPrivateKeyClientSigner(hederaAccountID, hederaPrivateKey, resolveNetworkCaip2("hedera"))
+		if err != nil {
+			OutputError(fmt.Sprintf("Failed to create Hedera signer: %v", err))
+			return nil
+		}
+		x402Client.Register(x402.Network(networkCaip2Pattern("hedera")), hedera.NewExactHederaScheme(hederaSigner))
 	}
 
 	batchPhase := strings.TrimSpace(os.Getenv("BATCH_SETTLEMENT_PHASE"))
