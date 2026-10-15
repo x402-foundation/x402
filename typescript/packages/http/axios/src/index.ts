@@ -1,6 +1,11 @@
 import { x402Client, x402ClientConfig, x402HTTPClient } from "@x402/core/client";
 import { type PaymentRequired } from "@x402/core/types";
-import { type AxiosInstance, type AxiosError, type InternalAxiosRequestConfig } from "axios";
+import {
+  type AxiosInstance,
+  type AxiosError,
+  type AxiosResponse,
+  type InternalAxiosRequestConfig,
+} from "axios";
 
 type X402RetryConfig = InternalAxiosRequestConfig & { __is402Retry?: boolean };
 type AxiosHeaderRecord = Record<string, string>;
@@ -83,15 +88,14 @@ function createX402RetryConfig(config: InternalAxiosRequestConfig): X402RetryCon
 
   return {
     ...config,
+    __is402Retry: true,
     headers: cloneAxiosHeaders(config.headers) as InternalAxiosRequestConfig["headers"],
     validateStatus: status => {
       if (status === 402) {
         return true;
       }
 
-      return originalValidateStatus
-        ? originalValidateStatus(status)
-        : status >= 200 && status < 300;
+      return !originalValidateStatus || originalValidateStatus(status);
     },
   };
 }
@@ -138,133 +142,142 @@ export function wrapAxiosWithPayment(
 ): AxiosInstance {
   const httpClient = client instanceof x402HTTPClient ? client : new x402HTTPClient(client);
 
-  axiosInstance.interceptors.response.use(
-    response => response,
-    async (error: AxiosError) => {
-      if (!error.response || error.response.status !== 402) {
-        return Promise.reject(error);
-      }
+  const handlePaymentRequired = async (
+    response: AxiosResponse,
+    originalConfig: InternalAxiosRequestConfig | undefined,
+    rejectInvalidChallenge = true,
+  ) => {
+    if (!originalConfig || !originalConfig.headers) {
+      return Promise.reject(new Error("Missing axios request configuration"));
+    }
 
-      const originalConfig = error.config;
-      if (!originalConfig || !originalConfig.headers) {
-        return Promise.reject(new Error("Missing axios request configuration"));
-      }
-
-      // Check if this is already a retry to prevent infinite loops
-      if ((originalConfig as X402RetryConfig).__is402Retry) {
-        return Promise.reject(error);
-      }
-
+    try {
+      // Parse payment requirements from response
+      let paymentRequired: PaymentRequired;
       try {
-        // Parse payment requirements from response
-        let paymentRequired: PaymentRequired;
-        try {
-          const response = error.response!; // Already validated above
+        // Create getHeader function for case-insensitive header lookup
+        const getHeader = (name: string) => {
+          const value = response.headers[name] ?? response.headers[name.toLowerCase()];
+          return typeof value === "string" ? value : undefined;
+        };
 
-          // Create getHeader function for case-insensitive header lookup
-          const getHeader = (name: string) => {
-            const value = response.headers[name] ?? response.headers[name.toLowerCase()];
-            return typeof value === "string" ? value : undefined;
-          };
+        // Try to get from headers first (v2), then from body (v1)
+        const body = response.data as PaymentRequired | undefined;
 
-          // Try to get from headers first (v2), then from body (v1)
-          const body = response.data as PaymentRequired | undefined;
+        paymentRequired = httpClient.getPaymentRequiredResponse(getHeader, body);
+      } catch (parseError) {
+        // Preserve caller-accepted 402 responses that are not x402 challenges.
+        if (!rejectInvalidChallenge) return response;
+        return Promise.reject(
+          new Error(
+            `Failed to parse payment requirements: ${parseError instanceof Error ? parseError.message : "Unknown error"}`,
+          ),
+        );
+      }
 
-          paymentRequired = httpClient.getPaymentRequiredResponse(getHeader, body);
-        } catch (parseError) {
-          return Promise.reject(
-            new Error(
-              `Failed to parse payment requirements: ${parseError instanceof Error ? parseError.message : "Unknown error"}`,
-            ),
-          );
-        }
-
-        // Run payment required hooks
-        const requestUrl = resolveAxiosRequestUrl(originalConfig, axiosInstance, error.response);
-        const hookHeaders = await httpClient.handlePaymentRequired(paymentRequired, requestUrl);
-        if (hookHeaders) {
-          const hookConfig = createX402RetryConfig(originalConfig);
-          Object.entries(hookHeaders).forEach(([key, value]) => {
-            setAxiosHeader(hookConfig.headers, key, value);
-          });
-          const hookResponse = await axiosInstance.request(hookConfig);
-          if (hookResponse.status !== 402) {
-            return hookResponse; // Hook succeeded
-          }
-          // Hook's retry got 402, fall through to payment
-        }
-
-        // Create payment payload
-        let paymentPayload;
-        try {
-          paymentPayload = await client.createPaymentPayload(paymentRequired);
-        } catch (paymentError) {
-          return Promise.reject(
-            new Error(
-              `Failed to create payment payload: ${paymentError instanceof Error ? paymentError.message : "Unknown error"}`,
-            ),
-          );
-        }
-
-        // Encode payment header
-        const paymentHeaders = httpClient.encodePaymentSignatureHeader(paymentPayload);
-
-        const paidConfig = createX402RetryConfig(originalConfig);
-        paidConfig.__is402Retry = true;
-
-        // Add payment headers to the request
-        Object.entries(paymentHeaders).forEach(([key, value]) => {
-          setAxiosHeader(paidConfig.headers, key, value);
+      // Run payment required hooks
+      const requestUrl = resolveAxiosRequestUrl(originalConfig, axiosInstance, response);
+      const hookHeaders = await httpClient.handlePaymentRequired(paymentRequired, requestUrl);
+      if (hookHeaders) {
+        const hookConfig = createX402RetryConfig(originalConfig);
+        Object.entries(hookHeaders).forEach(([key, value]) => {
+          setAxiosHeader(hookConfig.headers, key, value);
         });
+        const hookResponse = await axiosInstance.request(hookConfig);
+        if (hookResponse.status !== 402) {
+          return hookResponse; // Hook succeeded
+        }
+        // Hook's retry got 402, fall through to payment
+      }
 
-        // Add CORS header to expose payment response
+      // Create payment payload
+      let paymentPayload;
+      try {
+        paymentPayload = await client.createPaymentPayload(paymentRequired);
+      } catch (paymentError) {
+        return Promise.reject(
+          new Error(
+            `Failed to create payment payload: ${paymentError instanceof Error ? paymentError.message : "Unknown error"}`,
+          ),
+        );
+      }
+
+      // Encode payment header
+      const paymentHeaders = httpClient.encodePaymentSignatureHeader(paymentPayload);
+
+      const paidConfig = createX402RetryConfig(originalConfig);
+
+      // Add payment headers to the request
+      Object.entries(paymentHeaders).forEach(([key, value]) => {
+        setAxiosHeader(paidConfig.headers, key, value);
+      });
+
+      // Add CORS header to expose payment response
+      setAxiosHeader(
+        paidConfig.headers,
+        "Access-Control-Expose-Headers",
+        "PAYMENT-RESPONSE,X-PAYMENT-RESPONSE",
+      );
+
+      // Retry the request with payment
+      const secondResponse = await axiosInstance.request(paidConfig);
+
+      // Fire payment response hooks and handle recovery
+      const getResponseHeader = (name: string) => {
+        const value = secondResponse.headers[name] ?? secondResponse.headers[name.toLowerCase()];
+        return typeof value === "string" ? value : undefined;
+      };
+      const result = await httpClient.processPaymentResult(
+        paymentPayload,
+        getResponseHeader,
+        secondResponse.status,
+      );
+
+      if (result.recovered) {
+        // Retry once with a fresh payload after recovery.
+        const freshPayload = await client.createPaymentPayload(paymentRequired);
+        const retryHeaders = httpClient.encodePaymentSignatureHeader(freshPayload);
+        const retryConfig = createX402RetryConfig(originalConfig);
+        Object.entries(retryHeaders).forEach(([key, value]) => {
+          setAxiosHeader(retryConfig.headers, key, value);
+        });
         setAxiosHeader(
-          paidConfig.headers,
+          retryConfig.headers,
           "Access-Control-Expose-Headers",
           "PAYMENT-RESPONSE,X-PAYMENT-RESPONSE",
         );
-
-        // Retry the request with payment
-        const secondResponse = await axiosInstance.request(paidConfig);
-
-        // Fire payment response hooks and handle recovery
-        const getResponseHeader = (name: string) => {
-          const value = secondResponse.headers[name] ?? secondResponse.headers[name.toLowerCase()];
+        const retryResponse = await axiosInstance.request(retryConfig);
+        // Process the final retry result without another recovery attempt.
+        const getRetryHeader = (name: string) => {
+          const value = retryResponse.headers[name] ?? retryResponse.headers[name.toLowerCase()];
           return typeof value === "string" ? value : undefined;
         };
-        const result = await httpClient.processPaymentResult(
-          paymentPayload,
-          getResponseHeader,
-          secondResponse.status,
-        );
-
-        if (result.recovered) {
-          // Retry once with a fresh payload after recovery.
-          const freshPayload = await client.createPaymentPayload(paymentRequired);
-          const retryHeaders = httpClient.encodePaymentSignatureHeader(freshPayload);
-          const retryConfig = createX402RetryConfig(originalConfig);
-          Object.entries(retryHeaders).forEach(([key, value]) => {
-            setAxiosHeader(retryConfig.headers, key, value);
-          });
-          setAxiosHeader(
-            retryConfig.headers,
-            "Access-Control-Expose-Headers",
-            "PAYMENT-RESPONSE,X-PAYMENT-RESPONSE",
-          );
-          const retryResponse = await axiosInstance.request(retryConfig);
-          // Process the final retry result without another recovery attempt.
-          const getRetryHeader = (name: string) => {
-            const value = retryResponse.headers[name] ?? retryResponse.headers[name.toLowerCase()];
-            return typeof value === "string" ? value : undefined;
-          };
-          await httpClient.processPaymentResult(freshPayload, getRetryHeader, retryResponse.status);
-          return retryResponse;
-        }
-
-        return secondResponse;
-      } catch (retryError) {
-        return Promise.reject(retryError);
+        await httpClient.processPaymentResult(freshPayload, getRetryHeader, retryResponse.status);
+        return retryResponse;
       }
+
+      return secondResponse;
+    } catch (retryError) {
+      return Promise.reject(retryError);
+    }
+  };
+
+  axiosInstance.interceptors.response.use(
+    response => {
+      if (response.status !== 402 || (response.config as X402RetryConfig).__is402Retry) {
+        return response;
+      }
+      return handlePaymentRequired(response, response.config, false);
+    },
+    (error: AxiosError) => {
+      if (
+        !error.response ||
+        error.response.status !== 402 ||
+        (error.config as X402RetryConfig | undefined)?.__is402Retry
+      ) {
+        return Promise.reject(error);
+      }
+      return handlePaymentRequired(error.response, error.config);
     },
   );
 

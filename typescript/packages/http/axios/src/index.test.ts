@@ -628,7 +628,7 @@ describe("wrapAxiosWithPayment()", () => {
     expect(retryConfig.headers.compute).toBeUndefined();
   });
 
-  it("should treat 200-299 as success and reject others when no validateStatus is set", async () => {
+  it("should preserve Axios accept-all semantics when no validateStatus is set", async () => {
     const successResponse = createAxiosResponse(200, { data: "success" });
     (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(successResponse);
 
@@ -638,9 +638,9 @@ describe("wrapAxiosWithPayment()", () => {
     const retryConfig = (mockAxiosClient.request as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(retryConfig.validateStatus(200)).toBe(true);
     expect(retryConfig.validateStatus(299)).toBe(true);
-    expect(retryConfig.validateStatus(300)).toBe(false);
+    expect(retryConfig.validateStatus(300)).toBe(true);
     expect(retryConfig.validateStatus(402)).toBe(true);
-    expect(retryConfig.validateStatus(500)).toBe(false);
+    expect(retryConfig.validateStatus(500)).toBe(true);
   });
 
   it("should look up payment-required headers case-insensitively and ignore non-strings", async () => {
