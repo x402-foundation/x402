@@ -8,6 +8,7 @@ This directory contains examples demonstrating how to use the x402 v2 SDK with d
 |-----------|-------------|---------|
 | [httpx/](./httpx/) | httpx | Async |
 | [requests/](./requests/) | requests | Sync |
+| [svm-batch-settlement/](./svm-batch-settlement/) | requests | Solana escrow and offchain vouchers |
 
 ## Quick Start
 

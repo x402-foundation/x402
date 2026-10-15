@@ -6,7 +6,7 @@ import warnings
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from ..schemas import PaymentPayload, PaymentRequired
+from ..schemas import PaymentPayload, PaymentRequired, PaymentResponseContext
 from .types import (
     AfterPaymentContext,
     MCPToolCallResult,
@@ -14,12 +14,13 @@ from .types import (
     PaymentRequiredContext,
     PaymentRequiredError,
     PaymentRequiredHookResult,
+    PaymentResponseError,
 )
 from .utils import (
     attach_payment_to_meta,
     convert_mcp_result,
     extract_payment_required_from_result,
-    extract_payment_response_from_meta,
+    extract_payment_response_from_result,
     paid_read_timeout_seconds,
     probe_read_timeout_seconds,
     resolve_max_request_timeout_seconds,
@@ -164,6 +165,7 @@ class x402MCPClient:
 
         Raises:
             PaymentRequiredError: If payment required but auto_payment disabled
+            PaymentResponseError: If receipt reconciliation fails; ``result`` retains tool output
         """
         # First attempt without payment
         call_params = {"name": name, "arguments": args}
@@ -184,27 +186,26 @@ class x402MCPClient:
                 payment_made=False,
             )
 
-        # Payment required - run hooks first
-        payment_required_context = PaymentRequiredContext(
-            tool_name=name,
-            arguments=args,
-            payment_required=payment_required,
+        payment_payload = await self._create_approved_payment(name, args, payment_required)
+        return await self._call_tool_with_payment(
+            name, args, payment_payload, payment_required, **kwargs
         )
 
-        # Run payment required hooks
+    async def _create_approved_payment(
+        self, name: str, args: dict[str, Any], payment_required: PaymentRequired
+    ) -> PaymentPayload:
+        """Run the same approval gates before every automatically created payment."""
+        context = PaymentRequiredContext(name, args, payment_required)
         for hook in self._payment_required_hooks:
-            hook_result = hook(payment_required_context)
+            hook_result = hook(context)
             if hasattr(hook_result, "__await__"):
                 hook_result = await hook_result
             if hook_result:
                 if hook_result.abort:
                     raise PaymentRequiredError("Payment aborted by hook", payment_required)
                 if hook_result.payment:
-                    return await self.call_tool_with_payment(
-                        name, args, hook_result.payment, **kwargs
-                    )
+                    return hook_result.payment
 
-        # No hook handled it, proceed with normal flow
         if not self._auto_payment:
             raise PaymentRequiredError(
                 "Payment required but auto_payment is disabled and no "
@@ -212,29 +213,20 @@ class x402MCPClient:
                 "auto_payment or register a hook via on_payment_required().",
                 payment_required,
             )
-
-        # Check if payment is approved
         if self._on_payment_requested:
-            approved = self._on_payment_requested(payment_required_context)
+            approved = self._on_payment_requested(context)
             if hasattr(approved, "__await__"):
                 approved = await approved
             if not approved:
                 raise PaymentRequiredError("Payment request denied", payment_required)
-
-        # Run before payment hooks
         for hook in self._before_payment_hooks:
-            result_or_coro = hook(payment_required_context)
-            if hasattr(result_or_coro, "__await__"):
-                await result_or_coro
-
-        # Create payment payload (async)
-        create_method = self._payment_client.create_payment_payload
-        payment_payload = create_method(payment_required)
-        if hasattr(payment_payload, "__await__"):
-            payment_payload = await payment_payload
-
-        # Retry with payment
-        return await self.call_tool_with_payment(name, args, payment_payload, **kwargs)
+            outcome = hook(context)
+            if hasattr(outcome, "__await__"):
+                await outcome
+        payload = self._payment_client.create_payment_payload(payment_required)
+        if hasattr(payload, "__await__"):
+            payload = await payload
+        return payload
 
     async def call_tool_with_payment(
         self,
@@ -254,42 +246,107 @@ class x402MCPClient:
         Returns:
             Tool call result with payment metadata
         """
-        # Build call params with payment in _meta
-        call_params = attach_payment_to_meta({"name": name, "arguments": args}, payload)
+        return await self._call_tool_with_payment(name, args, payload, None, **kwargs)
 
-        accepted = payload.accepted
-        max_timeout_seconds = accepted.max_timeout_seconds if accepted is not None else None
-        paid_timeout = paid_read_timeout_seconds(
-            kwargs.get("read_timeout_seconds"),
-            max_timeout_seconds,
-            self._max_request_timeout_seconds,
-        )
-        paid_kwargs = {**kwargs, "read_timeout_seconds": paid_timeout}
+    async def _call_tool_with_payment(
+        self,
+        name: str,
+        args: dict[str, Any],
+        payload: PaymentPayload,
+        payment_required: PaymentRequired | None,
+        **kwargs: Any,
+    ) -> MCPToolCallResult:
+        for attempt in range(2):
+            # Build call params with payment in _meta
+            call_params = attach_payment_to_meta({"name": name, "arguments": args}, payload)
 
-        # Call with payment
-        result = await self._call_mcp_tool(call_params, **paid_kwargs)
+            accepted = payload.accepted
+            max_timeout_seconds = accepted.max_timeout_seconds if accepted is not None else None
+            paid_timeout = paid_read_timeout_seconds(
+                kwargs.get("read_timeout_seconds"),
+                max_timeout_seconds,
+                self._max_request_timeout_seconds,
+            )
+            paid_kwargs = {**kwargs, "read_timeout_seconds": paid_timeout}
 
-        # Extract payment response
-        settle_response = extract_payment_response_from_meta(result)
+            # Call with payment
+            result = await self._call_mcp_tool(call_params, **paid_kwargs)
 
-        # Run after payment hooks
-        after_context = AfterPaymentContext(
-            tool_name=name,
-            payment_payload=payload,
-            result=result,
-            settle_response=settle_response,
-        )
-        for hook in self._after_payment_hooks:
-            result_or_coro = hook(after_context)
-            if hasattr(result_or_coro, "__await__"):
-                await result_or_coro
+            # Extract payment response
+            settle_response = extract_payment_response_from_result(result)
 
-        return MCPToolCallResult(
-            content=result.content,
-            is_error=result.is_error,
-            payment_response=settle_response,
-            payment_made=True,
-        )
+            corrective = extract_payment_required_from_result(result) if result.is_error else None
+            response_hook = getattr(self._payment_client, "handle_payment_response", None)
+            recovered = None
+            response_error = None
+            try:
+                if callable(response_hook):
+                    recovered = response_hook(
+                        PaymentResponseContext(
+                            payment_payload=payload,
+                            requirements=payload.accepted,
+                            settle_response=settle_response,
+                            payment_required=corrective,
+                        )
+                    )
+                    if hasattr(recovered, "__await__"):
+                        recovered = await recovered
+            except Exception as error:
+                response_error = error
+
+            response = MCPToolCallResult(
+                content=result.content,
+                is_error=result.is_error or response_error is not None,
+                payment_response=(
+                    settle_response
+                    if settle_response is not None
+                    and settle_response.success
+                    and not response_error
+                    else None
+                ),
+                payment_made=True,
+                raw_result=result,
+            )
+            after_context = AfterPaymentContext(
+                tool_name=name,
+                payment_payload=payload,
+                result=result,
+                settle_response=response.payment_response,
+            )
+            # Observers still receive paid output after validation fails. Never
+            # present the rejected receipt as validated or hide the primary error.
+            observer_error = None
+            for hook in self._after_payment_hooks:
+                try:
+                    outcome = hook(after_context)
+                    if hasattr(outcome, "__await__"):
+                        await outcome
+                except Exception as error:
+                    observer_error = observer_error or error
+            if response_error is not None:
+                raise PaymentResponseError(str(response_error), response) from response_error
+            if observer_error is not None:
+                # Preserve callers' exception handlers for application observers.
+                observer_error.mcp_result = response
+                raise observer_error
+
+            if (
+                attempt == 0
+                and corrective is not None
+                and getattr(recovered, "recovered", False) is True
+            ):
+                original = payment_required or PaymentRequired(
+                    x402_version=payload.x402_version,
+                    accepts=[payload.accepted],
+                    resource=payload.resource,
+                    extensions=payload.extensions,
+                )
+                payload = await self._create_approved_payment(name, args, original)
+                continue
+
+            break
+
+        return response
 
     async def get_tool_payment_requirements(
         self,

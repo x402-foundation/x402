@@ -7,7 +7,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { base, baseSepolia } from 'viem/chains';
 import { TestDiscovery } from './src/discovery';
 import { ClientConfig, ScenarioResult, ServerConfig, TestScenario, endpointAssetTransferMethod, endpointAuthCaptureCoverageBranch, endpointAuthCaptureNeedsDeferredCapture, endpointPaymentFlow, endpointPaymentScheme, endpointUsesBatchSettlement } from './src/types';
-import { AUTH_CAPTURE_E2E_CAPTURE_PATH } from './src/mechanisms';
+import { AUTH_CAPTURE_E2E_CAPTURE_PATH, getNetworkDefinition } from './src/mechanisms';
 import { config as loggerConfig, log, verboseLog, errorLog, close as closeLogger, createComboLogger } from './src/logger';
 import { handleDiscoveryValidation, shouldRunDiscoveryValidation, type TestedDiscoveryScenario } from './extensions/bazaar';
 import { parseArgs, printHelp } from './src/cli/args';
@@ -42,7 +42,7 @@ async function resolveSvmServerSignedOperators(endpointPath: string): Promise<st
   if (explicit) {
     return explicit;
   }
-  if (!endpointPath.includes('/batch-settlement-server-signed/')) {
+  if (!isServerSignedBatchEndpoint(endpointPath)) {
     return undefined;
   }
   const operatorKey = process.env.SERVER_SVM_OPERATOR_PRIVATE_KEY?.trim();
@@ -751,11 +751,19 @@ function envFlagDefaultTrue(value: string | undefined): boolean {
   return !['0', 'false', 'no', 'off'].includes(value.toLowerCase());
 }
 
-function batchSettlementRecoveryForFamily(protocolFamily: string): boolean {
+function isServerSignedBatchEndpoint(endpointPath: string): boolean {
+  return endpointPath.startsWith('/batch-settlement-server-signed/') ||
+    endpointPath.startsWith('batch_settlement_server_signed_');
+}
+
+function batchSettlementRecoveryForFamily(protocolFamily: string, endpointPath: string): boolean {
   switch (protocolFamily) {
     case 'evm':
       return envFlagDefaultTrue(process.env.EVM_BATCH_SETTLEMENT_RECOVERY);
     case 'svm':
+      // Unclaimed operator receipts cannot be reconstructed from chain state.
+      // Keep server-signed history in one client until the cooperative refund.
+      if (isServerSignedBatchEndpoint(endpointPath)) return false;
       return envFlagDefaultTrue(process.env.SVM_BATCH_SETTLEMENT_RECOVERY);
     default:
       return true;
@@ -923,7 +931,15 @@ async function runTest() {
 
   const requiredEnvByFamily: Record<string, Array<[string, string | undefined]>> = {};
   for (const family of PROTOCOL_FAMILIES) {
-    const keys = [...requiredEnvForFamily(family), ...requiredRpcEnvForFamily(family, networkMode)];
+    // Facilitator credentials are checked against the selected component below.
+    // External proxies do not need the SDK facilitator's private wallet keys.
+    const familyEnv = getNetworkDefinition(family).env;
+    const keys = [
+      ...requiredEnvForFamily(family).filter(key =>
+        familyEnv[key].roles.some(role => role !== 'facilitator'),
+      ),
+      ...requiredRpcEnvForFamily(family, networkMode),
+    ];
     requiredEnvByFamily[family] = keys.map(key => [key, process.env[key]]);
   }
 
@@ -1420,7 +1436,7 @@ async function runTest() {
           ...(svmServerSignedOperators ? { svmServerSignedOperators } : {}),
         };
 
-        if (!batchSettlementRecoveryForFamily(scenario.protocolFamily)) {
+        if (!batchSettlementRecoveryForFamily(scenario.protocolFamily, scenario.endpoint.path)) {
           const fullResult = await runClientTest(scenario.client.proxy, {
             ...baseClientConfig,
             batchSettlement: { ...batchBase, phase: 'full' },

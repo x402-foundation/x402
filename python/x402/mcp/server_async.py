@@ -12,7 +12,9 @@ from ..payment_flow import (
     resolve_payment_flow_phases,
 )
 from ..schemas import PaymentRequirements, ResourceInfo
-from ..schemas.hooks import CompletedSettlement, VerifiedPaymentCancelOptions
+from ..schemas.errors import PaymentAbortedError
+from ..schemas.hooks import CompletedSettlement, SkipHandlerDirective, VerifiedPaymentCancelOptions
+from ..schemas.responses import SettleResponse
 from ..server import x402ResourceServer as x402ResourceServerAsync
 from .types import (
     MCP_PAYMENT_RESPONSE_META_KEY,
@@ -24,8 +26,10 @@ from .types import (
     SettlementContext,
 )
 from .utils import (
+    attach_failure_path_receipt,
     build_tool_resource_info,
     extract_payment_from_meta,
+    metered_payment_requirements,
     post_enrichment_accepts,
     validate_payment_wrapper_accepts,
 )
@@ -240,7 +244,7 @@ async def _process_paid_tool_call_async(
     resource_info = build_tool_resource_info(tool_name, config.resource)
     try:
         payment_required = await resource_server.create_payment_required_response(
-            config.accepts,
+            snapshot_payment_requirements_list(config.accepts),
             resource_info,
             None,
             config.extensions,
@@ -248,7 +252,7 @@ async def _process_paid_tool_call_async(
         )
     except TypeError:
         payment_required = await resource_server.create_payment_required_response(
-            config.accepts,
+            snapshot_payment_requirements_list(config.accepts),
             resource_info,
             None,
             config.extensions,
@@ -293,7 +297,7 @@ async def _process_paid_tool_call_async(
     hook_context = ServerHookContext(
         tool_name=tool_name,
         arguments=args,
-        payment_requirements=payment_requirements,
+        payment_requirements=payment_requirements.model_copy(deep=True),
         payment_payload=payment_payload,
     )
 
@@ -318,7 +322,7 @@ async def _process_paid_tool_call_async(
         )
 
     skip_handler = getattr(verify_result, "skip_handler", None)
-    if skip_handler is not None:
+    if isinstance(skip_handler, SkipHandlerDirective):
         body = getattr(skip_handler, "body", None)
         skip_result = MCPToolResult(
             content=[
@@ -339,18 +343,24 @@ async def _process_paid_tool_call_async(
             ext_map,
             transport_context,
             skip_result,
+            verified_requirements=payment_requirements,
         )
 
     before_handler_settlement = None
     if phases.settle_before_handler:
         try:
-            before_settle = await resource_server.settle_payment(
-                payment_payload,
-                payment_requirements,
-                declared_extensions=ext_map,
-                transport_context=transport_context,
-                phase="before-handler",
-            )
+            try:
+                before_settle = await resource_server.settle_payment(
+                    payment_payload,
+                    payment_requirements,
+                    declared_extensions=ext_map,
+                    transport_context=transport_context,
+                    phase="before-handler",
+                )
+            except TypeError:
+                before_settle = await resource_server.settle_payment(
+                    payment_payload, payment_requirements
+                )
             if not before_settle.success:
                 return await _create_settlement_failed_result_async(
                     resource_server,
@@ -359,6 +369,7 @@ async def _process_paid_tool_call_async(
                     before_settle.error_reason
                     or before_settle.error_message
                     or "Settlement failed",
+                    settle_response=before_settle,
                 )
             before_handler_settlement = CompletedSettlement(
                 phase="before-handler",
@@ -366,24 +377,18 @@ async def _process_paid_tool_call_async(
                 result=before_settle,
                 requirements=payment_requirements,
             )
-        except TypeError:
-            before_settle = await resource_server.settle_payment(
-                payment_payload, payment_requirements
-            )
-            if not before_settle.success:
-                return await _create_settlement_failed_result_async(
+        except Exception as error:
+            if isinstance(error, PaymentAbortedError):
+                canceled = await _cancel_aborted_settlement_async(
                     resource_server,
-                    tool_name,
-                    config,
-                    before_settle.error_reason or "Settlement failed",
+                    payment_payload,
+                    payment_requirements,
+                    ext_map,
+                    transport_context,
+                    error,
                 )
-            before_handler_settlement = CompletedSettlement(
-                phase="before-handler",
-                flow=flow,
-                result=before_settle,
-                requirements=payment_requirements,
-            )
-        except Exception:
+                if canceled is not None:
+                    return canceled
             return await _create_settlement_failed_result_async(
                 resource_server, tool_name, config, "Settlement failed"
             )
@@ -404,11 +409,85 @@ async def _process_paid_tool_call_async(
             transport_context,
         )
 
+    async def cancel_before_execution(error: Exception | None = None) -> SettleResponse | None:
+        cancel_settlement = None
+        options = VerifiedPaymentCancelOptions(reason="after_verify_aborted", error=error)
+        try:
+            if dispatcher is not None:
+                cancel_settlement = dispatcher.cancel(options)
+                if hasattr(cancel_settlement, "__await__"):
+                    cancel_settlement = await cancel_settlement
+        except Exception:
+            cancel_settlement = None
+            if before_handler_settlement is None:
+                raise
+            # A failed cancellation does not undo the completed upfront transfer.
+        return resolve_failure_path_settlement(
+            cancel_settlement, before_handler_settlement, payment_payload
+        )
+
+    async def cancel_failed_execution(
+        result: MCPToolResult, metering_error: Exception | None = None
+    ) -> MCPToolResult:
+        cancel_settlement = None
+        cancellation_completed = False
+        try:
+            if dispatcher is not None:
+                cancel_settlement = dispatcher.cancel(
+                    VerifiedPaymentCancelOptions(
+                        reason="after_verify_aborted"
+                        if metering_error is not None
+                        else "handler_failed",
+                        error=metering_error,
+                    )
+                )
+                if hasattr(cancel_settlement, "__await__"):
+                    cancel_settlement = await cancel_settlement
+                cancellation_completed = True
+        except Exception:
+            cancel_settlement = None
+            if before_handler_settlement is None:
+                raise
+            # Upfront payment is still a known fact even if cancellation failed.
+            # Surface its original receipt without claiming a completed refund.
+            result.content.append({"type": "text", "text": "Payment cancellation outcome unknown"})
+        failure_receipt = resolve_failure_path_settlement(
+            cancel_settlement, before_handler_settlement, payment_payload
+        )
+        if failure_receipt is None:
+            if metering_error is not None and cancellation_completed:
+                return await _create_settlement_failed_result_async(
+                    resource_server, tool_name, config, "Payment metering failed"
+                )
+            return result
+        return attach_failure_path_receipt(result, failure_receipt)
+
+    settlement_requirements = payment_requirements.model_copy(deep=True)
     if config.hooks and config.hooks.on_before_execution:
-        proceed = config.hooks.on_before_execution(hook_context)
-        if hasattr(proceed, "__await__"):
-            proceed = await proceed
+        try:
+            proceed = config.hooks.on_before_execution(hook_context)
+            if hasattr(proceed, "__await__"):
+                proceed = await proceed
+        except Exception as error:
+            receipt = await cancel_before_execution(error)
+            if receipt is None:
+                raise
+            return attach_failure_path_receipt(
+                MCPToolResult(
+                    content=[{"type": "text", "text": "Execution hook failed"}], is_error=True
+                ),
+                receipt,
+            )
         if not proceed:
+            receipt = await cancel_before_execution()
+            if receipt is not None:
+                return attach_failure_path_receipt(
+                    MCPToolResult(
+                        content=[{"type": "text", "text": "Execution blocked by hook"}],
+                        is_error=True,
+                    ),
+                    receipt,
+                )
             return await _create_payment_required_result_async(
                 resource_server,
                 tool_name,
@@ -417,65 +496,78 @@ async def _process_paid_tool_call_async(
                 transport_context=transport_context,
             )
 
+        try:
+            settlement_requirements = metered_payment_requirements(
+                payment_requirements, hook_context.payment_requirements.amount
+            )
+        except ValueError as error:
+            return await cancel_failed_execution(
+                MCPToolResult(
+                    content=[{"type": "text", "text": "Payment metering failed"}], is_error=True
+                ),
+                error,
+            )
+
     try:
         handler_result = handler(args, tool_context)
         if hasattr(handler_result, "__await__"):
             handler_result = await handler_result
+        result = _normalize_tool_result(handler_result)
     except Exception as error:
         mark_handler_threw()
         cancel_settlement = None
-        if dispatcher is not None:
-            cancel_settlement = dispatcher.cancel(
-                VerifiedPaymentCancelOptions(reason="handler_threw", error=error)
-            )
-            if hasattr(cancel_settlement, "__await__"):
-                cancel_settlement = await cancel_settlement
+        try:
+            if dispatcher is not None:
+                cancel_settlement = dispatcher.cancel(
+                    VerifiedPaymentCancelOptions(reason="handler_threw", error=error)
+                )
+                if hasattr(cancel_settlement, "__await__"):
+                    cancel_settlement = await cancel_settlement
+        except Exception:
+            cancel_settlement = None
+            if before_handler_settlement is None:
+                raise
         failure_receipt = resolve_failure_path_settlement(
             cancel_settlement, before_handler_settlement, payment_payload
         )
         if failure_receipt is None:
             raise
-        return MCPToolResult(
-            content=[{"type": "text", "text": "Internal Server Error"}],
-            is_error=True,
-            meta={MCP_PAYMENT_RESPONSE_META_KEY: _settle_meta(failure_receipt)},
+        return attach_failure_path_receipt(
+            MCPToolResult(
+                content=[{"type": "text", "text": "Internal Server Error"}], is_error=True
+            ),
+            failure_receipt,
         )
 
-    result = _normalize_tool_result(handler_result)
     transport_context["result"] = result
 
     after_exec_context = AfterExecutionContext(
         tool_name=tool_name,
         arguments=args,
-        payment_requirements=payment_requirements,
+        payment_requirements=settlement_requirements,
         payment_payload=payment_payload,
         result=result,
     )
-    if config.hooks and config.hooks.on_after_execution:
-        try:
+    metering_error = None
+    try:
+        if config.hooks and config.hooks.on_after_execution:
             coro = config.hooks.on_after_execution(after_exec_context)
             if hasattr(coro, "__await__"):
                 await coro
-        except Exception:
-            pass
+        settlement_requirements = metered_payment_requirements(
+            payment_requirements, settlement_requirements.amount
+        )
+    except Exception as error:
+        metering_error = error
+        # Metering is part of choosing what to charge, not an observer.
+        # Reuse cancellation below; never fall back to the signed ceiling.
+        result = MCPToolResult(
+            content=[{"type": "text", "text": "Payment metering failed"}],
+            is_error=True,
+        )
 
     if result.is_error:
-        cancel_settlement = None
-        if dispatcher is not None:
-            cancel_settlement = dispatcher.cancel(
-                VerifiedPaymentCancelOptions(reason="handler_failed")
-            )
-            if hasattr(cancel_settlement, "__await__"):
-                cancel_settlement = await cancel_settlement
-        failure_receipt = resolve_failure_path_settlement(
-            cancel_settlement, before_handler_settlement, payment_payload
-        )
-        if failure_receipt is None:
-            return result
-        if result.meta is None:
-            result.meta = {}
-        result.meta[MCP_PAYMENT_RESPONSE_META_KEY] = _settle_meta(failure_receipt)
-        return result
+        return await cancel_failed_execution(result, metering_error)
 
     return await _settle_payment_result_async(
         resource_server,
@@ -483,11 +575,59 @@ async def _process_paid_tool_call_async(
         config,
         hook_context,
         payment_payload,
-        payment_requirements,
+        settlement_requirements,
         ext_map,
         transport_context,
         result,
         before_handler_settlement,
+        verified_requirements=payment_requirements,
+    )
+
+
+async def _cancel_aborted_settlement_async(
+    resource_server: x402ResourceServerAsync,
+    payment_payload: Any,
+    payment_requirements: Any,
+    ext_map: dict[str, Any],
+    transport_context: Any,
+    error: Exception,
+    before_handler_settlement: CompletedSettlement | None = None,
+) -> MCPToolResult | None:
+    """Release an explicit pre-submission abort, retaining any known deposit."""
+    cancel_settlement = None
+    try:
+        try:
+            dispatcher = resource_server.create_payment_cancellation_dispatcher(
+                payment_payload,
+                payment_requirements,
+                ext_map,
+                transport_context,
+                ["before-handler"] if before_handler_settlement is not None else [],
+            )
+        except TypeError:
+            dispatcher = resource_server.create_payment_cancellation_dispatcher(
+                payment_payload,
+                payment_requirements,
+                ext_map,
+                transport_context,
+            )
+        if dispatcher is not None:
+            cancel_settlement = dispatcher.cancel(
+                VerifiedPaymentCancelOptions(reason="after_verify_aborted", error=error)
+            )
+            if hasattr(cancel_settlement, "__await__"):
+                cancel_settlement = await cancel_settlement
+    except Exception:
+        cancel_settlement = None
+        if before_handler_settlement is None:
+            raise
+    receipt = resolve_failure_path_settlement(
+        cancel_settlement, before_handler_settlement, payment_payload
+    )
+    if receipt is None:
+        return None
+    return attach_failure_path_receipt(
+        MCPToolResult(content=[{"type": "text", "text": str(error)}], is_error=True), receipt
     )
 
 
@@ -502,6 +642,8 @@ async def _settle_payment_result_async(
     transport_context: Any,
     result: MCPToolResult,
     before_handler_settlement: CompletedSettlement | None = None,
+    *,
+    verified_requirements: PaymentRequirements,
 ) -> MCPToolResult:
     try:
         if before_handler_settlement is not None:
@@ -556,6 +698,18 @@ async def _settle_payment_result_async(
                 payment_payload, payment_requirements
             )
     except Exception as e:
+        if isinstance(e, PaymentAbortedError):
+            canceled = await _cancel_aborted_settlement_async(
+                resource_server,
+                payment_payload,
+                verified_requirements,
+                ext_map,
+                transport_context,
+                e,
+                before_handler_settlement,
+            )
+            if canceled is not None:
+                return canceled
         return await _create_settlement_failed_result_async(
             resource_server, tool_name, config, str(e)
         )
@@ -566,6 +720,7 @@ async def _settle_payment_result_async(
             tool_name,
             config,
             settle_result.error_reason or "Unknown settlement failure",
+            settle_response=settle_result,
         )
 
     if config.hooks and config.hooks.on_after_settlement:
@@ -653,6 +808,8 @@ async def _create_settlement_failed_result_async(
     tool_name: str,
     config: PaymentWrapperConfig,
     error_message: str,
+    *,
+    settle_response: SettleResponse | None = None,
 ) -> MCPToolResult:
     """Create a 402 settlement failed result (async).
 
@@ -668,7 +825,7 @@ async def _create_settlement_failed_result_async(
     resource_info = build_tool_resource_info(tool_name, config.resource)
 
     payment_required = await resource_server.create_payment_required_response(
-        config.accepts,
+        snapshot_payment_requirements_list(config.accepts),
         resource_info,
         f"Payment settlement failed: {error_message}",
         config.extensions,
@@ -680,6 +837,8 @@ async def _create_settlement_failed_result_async(
         "transaction": "",
         "network": config.accepts[0].network,
     }
+    if settle_response is not None:
+        settlement_failure = settle_response.model_dump(by_alias=True, exclude_none=True)
 
     # Merge paymentRequired with settlement failure (camelCase for wire format)
     error_data = (

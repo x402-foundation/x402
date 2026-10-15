@@ -573,6 +573,7 @@ class x402HTTPServerBase:
                         verify_result.invalid_reason,
                         extensions,
                         transport_context,
+                        payment_payload,
                     ),
                     None,
                 )

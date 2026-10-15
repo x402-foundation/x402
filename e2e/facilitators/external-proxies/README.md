@@ -26,6 +26,31 @@ Each proxy requires:
 
 See individual proxy directories for specific setup requirements.
 
+A proxy's `test.config.json` declares the remote service's capabilities rather
+than the SDK language used for the forwarding process. For example:
+
+```json
+{
+  "name": "my-external-proxy",
+  "type": "facilitator",
+  "language": "external",
+  "protocolFamilies": ["svm"],
+  "x402Versions": [2],
+  "schemes": ["batch-settlement"],
+  "environment": {
+    "required": ["EXTERNAL_FACILITATOR_URL"],
+    "optional": []
+  }
+}
+```
+
+Use a local `run.sh` to launch the forwarding process on `PORT`. Log
+`Facilitator listening` when ready, expose local `/health` and `/close`
+endpoints, and forward `/supported`, `/verify`, and `/settle` to the configured
+service. Preserve its status codes and response bodies. `/close` shuts down
+the local proxy only. Declare any authentication variables in `environment`;
+the remote service's wallet private keys are not needed by the proxy.
+
 ## Selection Behavior
 
 External facilitators:
@@ -33,4 +58,3 @@ External facilitators:
 - Display under an "External" grouping in interactive mode
 - Require explicit selection by developers
 - Must have all required environment variables set before running
-

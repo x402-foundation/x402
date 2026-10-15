@@ -49,7 +49,13 @@ from x402.mechanisms.evm.batch_settlement.authorizer_signer import LocalAuthoriz
 from x402.mechanisms.evm.batch_settlement.facilitator import (
     BatchSettlementEvmFacilitator,
 )
-from x402.mechanisms.svm import FacilitatorKeypairSigner
+from x402.mechanisms.svm.batch_settlement import (
+    BatchFacilitatorKeypairSigner,
+    BatchSvmFacilitatorConfig,
+    MemoryBatchPendingSettlementStore,
+    MemoryPaymentChannelStorage,
+    register_batch_svm_facilitator,
+)
 from x402.mechanisms.svm.exact import register_exact_svm_facilitator
 from x402.mechanisms.tvm import (
     TVM_PROVIDER_TONAPI,
@@ -59,8 +65,8 @@ from x402.mechanisms.tvm import (
 from x402.mechanisms.tvm.exact import ExactTvmFacilitatorScheme
 
 
-def _catalog_testnet_caip2(network_id: str) -> str:
-    """Read testnet.caip2 from e2e/config/mechanisms_<id>.json."""
+def _catalog_network(network_id: str) -> dict[str, Any]:
+    """Read network defaults from e2e/config/mechanisms_<id>.json."""
     injected = os.getenv("E2E_MECHANISMS_CATALOG")
     candidates: list[Path] = []
     if injected:
@@ -70,14 +76,39 @@ def _catalog_testnet_caip2(network_id: str) -> str:
     for catalog_dir in candidates:
         path = catalog_dir / f"mechanisms_{network_id}.json"
         if path.is_file():
-            data = json.loads(path.read_text(encoding="utf-8"))
-            return data["testnet"]["caip2"]
+            return json.loads(path.read_text(encoding="utf-8"))
     raise FileNotFoundError(f"Could not locate mechanisms_{network_id}.json")
 
 
 def _resolve_network_caip2(network_id: str) -> str:
     env_key = f"{network_id.upper()}_NETWORK"
-    return os.environ.get(env_key) or _catalog_testnet_caip2(network_id)
+    return os.environ.get(env_key) or _catalog_network(network_id)["testnet"]["caip2"]
+
+
+def _resolve_rpc_url(network_id: str, network: str) -> str:
+    env_key = f"{network_id.upper()}_RPC_URL"
+    if rpc_url := os.environ.get(env_key):
+        return rpc_url
+    catalog = _catalog_network(network_id)
+    for environment in ("testnet", "mainnet"):
+        if catalog[environment]["caip2"] == network:
+            return catalog[environment]["rpcUrlDefault"]
+    raise ValueError(f"{env_key} is required for network {network}")
+
+
+def _build_svm_batch_facilitator_config() -> BatchSvmFacilitatorConfig:
+    binding_store = os.getenv("FACILITATOR_SVM_BATCH_BINDING_STORE", "").strip().lower()
+    if binding_store not in ("", "memory", "inmemory", "true", "1"):
+        raise ValueError(
+            "Python e2e SVM batch requires FACILITATOR_SVM_BATCH_BINDING_STORE=memory; "
+            "RPC history-only binding recovery is not configured"
+        )
+    if os.getenv("SVM_ARCHIVE_RPC_URL", "").strip():
+        raise ValueError("Python e2e SVM batch does not support SVM_ARCHIVE_RPC_URL")
+    return BatchSvmFacilitatorConfig(
+        channel_storage=MemoryPaymentChannelStorage(),
+        pending_settlement_store=MemoryBatchPendingSettlementStore(),
+    )
 
 
 def _caip2_pattern(caip2: str) -> str:
@@ -131,7 +162,9 @@ if os.environ.get("FACILITATOR_EVM_PRIVATE_KEY"):
 svm_signer = None
 if os.environ.get("FACILITATOR_SVM_PRIVATE_KEY"):
     svm_keypair = Keypair.from_base58_string(os.environ["FACILITATOR_SVM_PRIVATE_KEY"])
-    svm_signer = FacilitatorKeypairSigner(svm_keypair)
+    svm_signer = BatchFacilitatorKeypairSigner(
+        svm_keypair, rpc_url=_resolve_rpc_url("svm", SVM_NETWORK)
+    )
     print(f"SVM Facilitator account: {svm_signer.get_addresses()[0]}")
 
 # Initialize the TVM signer from private key when configured
@@ -310,6 +343,12 @@ if svm_signer is not None:
         facilitator,
         svm_signer,
         networks=SVM_NETWORK,
+    )
+    register_batch_svm_facilitator(
+        facilitator,
+        svm_signer,
+        networks=SVM_NETWORK,
+        config=_build_svm_batch_facilitator_config(),
     )
 
 # Register TVM schemes (V2)

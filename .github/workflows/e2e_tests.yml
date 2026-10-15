@@ -107,6 +107,9 @@ jobs:
       - name: Install E2E dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Test scenario discovery and client result handling
+        run: pnpm test:unit
+
       - name: Select protocol families from configured secrets
         id: families
         run: |
