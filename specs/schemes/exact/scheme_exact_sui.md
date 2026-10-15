@@ -3,45 +3,41 @@
 ## Summary
 
 The `exact` scheme on Sui transfers a specific `amount` of an asset from the payer to the resource
-server's declared recipient, `payTo`. The payer builds and signs a complete Sui transaction, so the
-facilitator cannot change the amount or the destination; it broadcasts the payer-signed bytes and,
-when it sponsors gas, co-signs the gas it funds.
+server's recipient, `payTo`. The payer builds and signs a complete Sui transaction, so the
+facilitator cannot change the amount or the destination. The facilitator broadcasts the payer-signed
+bytes and, when it sponsors gas, co-signs as the gas owner.
 
-Verification is effects-only. The facilitator reads the transaction's `balanceChanges` and verifies
-that the declared recipient was credited exactly the requested amount. It does not constrain the
-payer's total debit, forbid other recipients, or otherwise limit how the transaction is built. A
-payment MAY draw the asset from an Address Balance, from `Coin<T>` objects, from an on-demand swap,
-from a contract withdrawal with a balance limit, or from any combination, and MAY attach an on-chain
-payment or receipt record in the same transaction. Any party can recompute a settled payment's
-outcome from public chain data.
+Verification is effects-only: it checks only the outcome, that the transaction's balance changes
+credit `payTo` with exactly `amount`, not how the transaction is built. A payment can draw the asset
+from an address balance, `Coin<T>` objects, a swap, a contract withdrawal, or any mix.
 
-Payments of an allowlisted stablecoin drawn from the payer's Address Balance are often
-[naturally gasless](https://docs.sui.io/develop/transaction-payment/gasless-stablecoin-transfers)
-(no gas coin, no sponsor). Gaslessness is a property the client MAY choose on the paying side; the
-facilitator neither requires nor rewards it.
+## Terminology
+
+- **Address balance**: A per-address, per-coin-type balance held by the protocol, not in a coin
+  object.
+- **Coin reservation**: An input or gas-payment entry that reserves part of an address balance.
+- **Gas owner**: The address that pays for gas and signs for it; the sender unless sponsored.
+- **`GasCoin`**: The argument for the gas coin; with an empty gas payment, a coin equal to the
+  budget.
+- **`Pure` input**: A transaction input of raw bytes; it is unused when no command references it.
 
 ## Protocol Sequencing
 
-The flow is client-driven. When the facilitator sponsors gas, it advertises `extra.feePayer` (the
-sponsor address) via its `/supported` response, and the resource server relays it verbatim in the
-payment requirements.
-
-1. Client requests a resource and receives a `402 Payment Required` response carrying the
+1. Client requests a resource and receives a `402 Payment Required` response with the
    `PaymentRequirements`.
-2. If the client lacks local balance information, it MAY query an RPC service to construct the
-   transaction.
-3. Client builds a complete transaction whose effects transfer the exact `amount` to the declared
-   recipient. It sources the asset and arranges gas however it chooses: paying its own gas,
-   producing a naturally gasless transfer, or — when the requirements announce a `feePayer` — setting
-   the announced sponsor as the gas owner with an empty gas payment.
+2. Client queries a Sui RPC for the current epoch and any balance or gas data it needs.
+3. Client builds a transaction that credits `payTo` with exactly `amount` and arranges gas (see
+   [Gas](#gas)).
 4. Client signs the transaction and resends the request with the `PaymentPayload`.
-5. Resource server passes the payload to the facilitator for verification.
+5. Resource server asks the facilitator to verify the payload.
 6. Resource server fulfills the request.
-7. Resource server requests settlement from the facilitator.
-8. On a sponsored payment the facilitator co-signs the gas over the identical client-signed bytes;
-   otherwise no sponsor signature is added.
-9. Facilitator submits the transaction and reports the result to the resource server.
-10. Resource server returns the response to the client.
+7. Resource server asks the facilitator to settle. On a sponsored payment the facilitator co-signs
+   the client-signed bytes as gas owner.
+8. Facilitator submits the transaction, waits for finality, and reports the result.
+9. Resource server returns the response to the client.
+
+Because Sui finality is sub-second, a resource server MAY settle before step 6 when the work is
+costly.
 
 ## Network Format
 
@@ -52,9 +48,6 @@ x402 v2 uses CAIP-2 network identifiers:
 - **Devnet:** `sui:devnet`
 
 ## `PaymentRequirements` for `exact`
-
-In addition to the standard fields, the `exact` scheme on Sui uses the following `extra` fields, all
-optional:
 
 ```json
 {
@@ -68,28 +61,27 @@ optional:
 }
 ```
 
-- `asset`: The coin type `T` (a normalized Sui struct tag).
+- `asset`: The coin type `T`, as a normalized Sui struct tag.
 - `payTo`: The recipient address.
-- `amount`: The exact amount in atomic units (decimal string).
-- `extra.feePayer` (string): The sponsor's address, present when the facilitator offers gas
-  sponsorship. A client using sponsorship sets it as the transaction's gas owner. See
+- `amount`: The exact amount in atomic units, as a positive decimal string. A resource server
+  refuses to build requirements with any other amount.
+- `extra.feePayer` (optional): The facilitator's sponsor address. The facilitator advertises it in
+  `/supported` and the resource server copies it into the requirements. See
   [Gas sponsorship](#gas-sponsorship).
-- `extra.nonce` (string): A server-issued, per-request identifier that binds a payment to the
-  challenge that issued it and lands on-chain for reconciliation. See
-  [Server-issued nonce](#server-issued-nonce).
+- `extra.maxGasBudget` (optional): The largest gas budget the sponsor accepts, in MIST, as a decimal
+  string. Present whenever `extra.feePayer` is. A client using the sponsor MUST NOT exceed it.
+- `extra.nonce` (optional): A Base64-encoded, server-issued value that binds the payment to its
+  challenge. See [Server-issued nonce](#server-issued-nonce).
+
+A resource server MUST NOT put the epoch or other build hints in `extra`: the server compares the
+client's `accepted.extra` to its own by value, and the epoch changes every 24 hours.
 
 ## PaymentPayload `payload` Field
 
-The `payload` field contains:
-
-- `transaction`: The Base64-encoded BCS-serialized Sui transaction.
-- `signature`: A Base64-encoded serialized signature over the transaction, or an array of such
-  signatures. It MUST cover the payer (`sender`); a single string is equivalent to a one-element
-  array, and both map to Sui `executeTransaction({ signatures })`. An array is used only when the
-  transaction has more than one required signer — for example a
-  sponsored transaction whose gas owner (the sponsor) is a distinct signer from the sender, such as a
-  client using its own gas sponsor. When the facilitator itself sponsors, it adds its sponsor
-  signature at settlement, so in that case the client sends only the sender signature.
+- `transaction`: The Base64-encoded, BCS-serialized Sui transaction.
+- `signature`: One Base64 Sui signature per required signer, as a string or an array. Required
+  signers are the sender and, if different, the gas owner. When the gas owner is the facilitator's
+  sponsor, omit its signature; the facilitator adds it at settlement.
 
 ```json
 {
@@ -126,239 +118,240 @@ Full `PaymentPayload` object:
 
 ## Construction
 
-The client builds one complete Sui transaction whose effects credit the declared recipient with
-exactly the requested amount. Beyond that, construction is unconstrained:
+The client builds one Sui transaction whose effects credit `payTo` with exactly `amount` of `asset`.
+Because verification is effects-only, the asset source is unconstrained.
+`tx.balance({ type, balance })` in the Sui SDK picks the source (address balance or coins)
+automatically.
 
-- **Asset source is arbitrary.** The asset MAY come from the payer's Address Balance, from `Coin<T>`
-  objects, from an on-demand swap, from a contract withdrawal, or any mix. The Sui SDK's
-  `tx.balance({ type, balance })` input resolves the source automatically and often yields a gasless
-  stablecoin transfer.
-- **Gas is the client's choice.** The client MAY pay its own gas, produce a naturally gasless
-  transfer, arrange its own separate gas sponsor, or use the facilitator's announced sponsor. A
-  transaction with more than one required signer — a sponsored transaction whose gas owner (the
-  sponsor) differs from the sender — carries all the signatures it needs in the
-  [payload](#paymentpayload-payload-field).
-- **Expiry.** A payment's validity window is bounded on-chain by the transaction's own expiration,
-  enforced by simulation at verify and by execution at settle. `maxTimeoutSeconds` is the resource
-  server's advertised window and is NOT enforced at the transaction level by this scheme.
-- **Server nonce.** When the requirements declare `extra.nonce`, the client Base64-decodes it and
-  embeds the resulting bytes as a `Pure` input in the transaction (see
-  [Server-issued nonce](#server-issued-nonce)).
+### Expiration
 
-### Gas sponsorship
+Sui requires a bounded expiration on any transaction with no address-owned inputs, no coin
+reservations, and no gas payment. Validators remember executed digests for the current and previous
+epoch, so such a transaction executes at most once. Owned-object transactions are protected by
+object versions instead; this scheme requires the expiration on every payment so that all payments
+have the same bounded window.
 
-Sponsorship is a gas arrangement available to any payment, independent of how the asset is sourced.
-It is non-interactive: gas is drawn from the SUI
-[Address Balance](https://sdk.mystenlabs.com/sui/transactions/signing-and-execution#address-balance-sponsorship)
-of the announced sponsor, so no gas coin objects appear in the signed bytes and the client talks only
-to the resource server. To use sponsorship, the client builds the transaction with:
+The client MUST set a `ValidDuring` or `Validity` expiration with both `minEpoch` and `maxEpoch` set
+and `maxEpoch - minEpoch <= 1`. It SHOULD set `minEpoch` to the current epoch and `maxEpoch` to the
+current epoch plus one. It MUST NOT set `minTimestamp` or `maxTimestamp`, because validators
+currently reject timestamp-based expiration.
 
-1. `sender` set to the payer; the transfer effects move the exact `amount` to the declared
-   recipient.
-2. Gas owner set to `extra.feePayer`.
-3. Gas payment set to `[]`, so gas resolves from the sponsor's Address Balance.
-
-The facilitator supplies the sponsor signature at settlement, co-signing the identical client-signed
-bytes and executing with `[senderSignature, sponsorSignature]`.
-
-What the facilitator is willing to sponsor — package and function filters, budget ceilings,
-withdraw-from-sponsor protection, gas-coin protection — is the sponsor's own policy, enforced by the
-sponsor at settlement, and is outside x402 scope. A sponsor MAY decline a payment for any policy
-reason, which surfaces at settlement as `sponsor_rejected`. Sponsorship changes only who pays gas,
-never what x402 validates.
-
-## Verification
-
-The facilitator returns `{ isValid, payer }` (with `invalidReason` when invalid) per
-[VerifyResponse](../../x402-specification-v2.md#54-verifyresponse-schema). Steps:
-
-1. **Envelope.** `x402Version` MUST be `2` (`invalid_x402_version`), the scheme MUST be `"exact"`
-   (`unsupported_scheme`), the payload `network` MUST match the requirements (`network_mismatch`) and
-   be a supported Sui network (`invalid_network`), and the payload MUST have the shape
-   `{ transaction, signature }` (`invalid_payload`, or
-   `invalid_exact_sui_payload_transaction_could_not_be_decoded` when the bytes fail to decode).
-2. **Signature binds the payer.** The transaction MUST carry a `sender`
-   (`invalid_exact_sui_payload_missing_sender`), and the supplied `signature` MUST verify over the
-   transaction against that `sender` (`invalid_exact_sui_payload_invalid_signature`). On a sponsored
-   payment the sponsor's gas signature is added later, at
-   settlement; execution enforces that every required signer is covered, so a transaction missing any
-   required signature fails to execute.
-3. **Server nonce.** When the requirements declare `extra.nonce`, the facilitator Base64-decodes it
-   (rejecting a value that is not valid Base64) and the transaction MUST carry the decoded bytes as a
-   `Pure` input; a transaction that does not is rejected
-   (`invalid_exact_sui_payload_missing_nonce`). When the requirements do not declare a nonce, this
-   step is skipped.
-4. **Not already executed.** Recompute the transaction digest from the signed bytes and look it up
-   on-chain; if it is already committed, reject (`invalid_transaction_state`). A transaction sourced
-   entirely from Address Balances has no object inputs, so simulation alone cannot detect a replay.
-   The lookup is best-effort — nodes prune old transactions — but at-most-once execution does not
-   depend on it: an executed transaction can never commit again, so a replay whose digest has been
-   pruned instead fails simulation or execution (its inputs are consumed or its expiration has
-   passed).
-5. **Simulate.** Simulate the transaction with transaction checks enabled to confirm it would
-   succeed (`invalid_exact_sui_payload_simulation_failed`). Checks-enabled simulation validates the
-   transaction's expiration, so an expired transaction fails here.
-6. **Effects.** Apply the [effects check](#effects-check) to the simulated `balanceChanges`.
-
-A simulation may preview a SUI gas line even for a would-be-gasless payment, because the node
-simulates with a non-zero budget; only the asset effects are asserted.
-
-### Effects check
-
-A balance change is `{ coinType, address, amount }`; the facilitator matches the recipient by its
-`address` in the agreed asset's balance changes, summing the amounts per address.
-
-The facilitator MUST request balance changes from transports where they are opt-in and MUST reject
-verification or settlement when they are unavailable.
-
-Reading the agreed asset's `balanceChanges` (from simulation during verify, or from the executed
-effects during settle), the facilitator asserts that the declared recipient, `payTo`, was credited
-(net) exactly `amount` in the agreed asset.
-
-It does not assert how much the payer was debited, nor forbid other recipients of the asset.
-
-A mismatch is rejected with `invalid_exact_sui_payload_transfer_mismatch`.
+The validity window is therefore epoch-granular: up to about 48 hours on mainnet, where an epoch is
+24 hours. `maxTimeoutSeconds` is advisory because Sui cannot enforce it. Once Sui supports timestamp
+expiration, clients SHOULD bound the transaction by `maxTimeoutSeconds`.
 
 ### Server-issued nonce
 
-`extra.nonce` is an optional, server-issued, per-request identifier: a Base64-encoded value (matching
-how `transaction` and `signature` are encoded in this scheme). A value that is not valid Base64 is
-rejected. It SHOULD be at most 32 bytes so the payment can remain gasless-eligible — the gasless
-stablecoin path allows a single unused `Pure` input of at most 32 bytes. It MAY be longer when
-needed, but a payment carrying a larger nonce (as an unused input) cannot use the gasless path and
-must pay gas from the sender or use a sponsor. The resource server issues one value per payment challenge and persists it so the same request
-always resolves to the same value across requirement rebuilds, while distinct requests get distinct
-values. It MUST NOT be regenerated randomly on each rebuild, since requirement matching compares
-`extra` by value against the client's `accepted.extra`.
+`extra.nonce` is a Base64-encoded value that the resource server issues per challenge. The client
+MUST add a `Pure` input whose bytes equal the decoded nonce exactly (raw bytes, not BCS-encoded). A
+client that wants its Move commands to read the nonce adds a separate BCS `vector<u8>` input.
 
-It serves as a stable challenge-binding and reconciliation key: a unique-per-request value that binds
-the payment to the challenge that issued it, MAY double as an invoice or order reference, and lets a
-server make each payment single-use by construction (see
-[Exactly-once serving](#exactly-once-serving)). Like SVM's `extra.memo`, it is not consumed on-chain
-and provides no single-use guarantee on its own.
+The resource server MUST return the same value each time it rebuilds the requirements for the same
+challenge, because requirement matching compares `extra` by value. It can store the value or derive
+it statelessly, for example as an HMAC over the challenge.
 
-When present, the client Base64-decodes `extra.nonce` to raw bytes and MUST embed those bytes as a
-`Pure` input in the transaction; the facilitator Base64-decodes `extra.nonce` and matches the bytes
-against the transaction's `Pure` inputs, rejecting a transaction that does not carry them
-(`invalid_exact_sui_payload_missing_nonce`). The input need not be unused —
-the client MAY reference the nonce in a command, for example to write it to an on-chain receipt.
+The nonce binds a payment to its challenge and can serve as an invoice or order reference. It is not
+consumed on-chain, and [settlement deduplication](#settlement-deduplication) is keyed on the
+transaction digest, not the nonce. A server that wants at most one payment per challenge retires the
+challenge itself once it has served it.
+
+A nonce longer than 32 bytes makes the payment ineligible for [gasless](#gasless-transfers)
+execution.
+
+### Gas
+
+When the requirements include `extra.feePayer`, a client SHOULD use the facilitator's sponsor (the
+address in `extra.feePayer`), and MAY instead pay its own gas. Otherwise it MAY build a
+[gasless transfer](#gasless-transfers) when eligible, or make a self-paid payment (the sender is the
+gas owner). A client MAY also use its own sponsor and include that sponsor's signature in the
+payload.
+
+#### Gas sponsorship
+
+To use the facilitator's sponsor, the client builds the transaction with:
+
+1. `sender` set to the payer.
+2. Gas owner set to the facilitator's sponsor.
+3. Gas payment set explicitly to `[]` (MUST), so gas is reserved from the sponsor's SUI address
+   balance.
+4. A gas budget no larger than `extra.maxGasBudget`.
+5. No command that uses `GasCoin`. A client using `tx.balance` or `tx.coin` for a SUI payment passes
+   `useGasCoin: false`.
+
+The client signs as sender. At settlement the facilitator co-signs the same bytes as gas owner and
+executes with both signatures.
+
+Whenever the gas owner is an address the facilitator sponsors for, whether or not the requirements
+name it, the facilitator MUST check the following at verify and again at settle:
+
+- The gas payment is empty. A non-empty payment names the sponsor's coin objects or coin
+  reservations, which contend with concurrent payments, and a reservation can expose the sponsor's
+  whole balance.
+- The gas budget is at most the facilitator's configured cap, advertised as `extra.maxGasBudget`.
+- No command argument references `GasCoin`, which would spend the sponsor's funds up to the budget.
+- No funds withdrawal draws from the sponsor, either as `Sponsor` or as `SenderAllowance` with the
+  sponsor as `funder`. Sui currently rejects `Sponsor` withdrawals; the check guards against that
+  changing.
+
+These checks apply only to sponsored payments. A self-paid payment may use `GasCoin`, and a gasless
+transaction has no gas coin to use.
+
+A sponsored transaction that fails for lack of funds is not charged gas. One that aborts during
+execution costs the sponsor up to the signed budget, bounded by the cap and per-sender rate
+limiting. The sponsor SHOULD rate-limit per sender and MAY apply other policy.
+
+Earlier drafts of this spec used `extra.gasStation`; clients MUST ignore it.
+
+#### Gasless transfers
+
+Sui executes some stablecoin transfers with no gas. The
+[Sui docs](https://docs.sui.io/develop/transaction-payment/gasless-stablecoin-transfers) define the
+full rules. In summary, a gasless transfer:
+
+- pays an allowlisted stablecoin (such as USDC) from the payer's address balance;
+- on mainnet, credits each recipient at least 10,000 atomic units ($0.01 for USDC) and leaves the
+  payer's address balance at 0 or at least that minimum;
+- has every `Pure` input at most 32 bytes, with at most one unused;
+- creates or mutates no objects, so an on-chain receipt object forfeits gasless.
+
+Gasless transactions are deprioritized under congestion. A gas-price-0 transaction that breaks a
+rule is rejected, not charged.
+
+## Verification
+
+The facilitator returns a `VerifyResponse` (core spec [§5.4](../../x402-specification-v2.md)) with
+`payer` set to the transaction's `sender`. Steps 1-5 are the offline checks.
+
+1. **Envelope.** `x402Version` MUST be `2` (`invalid_x402_version`). The scheme MUST be `"exact"`
+   (`unsupported_scheme`). The payload network MUST match the requirements (`network_mismatch`) and
+   be a supported Sui network (`invalid_network`). The payload MUST be `{ transaction, signature }`
+   (`invalid_payload`), and the transaction bytes MUST decode
+   (`invalid_exact_sui_payload_transaction_could_not_be_decoded`). The requirements' `amount` MUST
+   be a positive integer (`invalid_payment_requirements`).
+2. **Signatures.** The transaction MUST have a `sender`
+   (`invalid_exact_sui_payload_missing_sender`). The payload MUST carry exactly one valid signature
+   per required signer, as described in [`payload`](#paymentpayload-payload-field)
+   (`invalid_exact_sui_payload_invalid_signature`).
+3. **Nonce.** When the requirements declare `extra.nonce`, it MUST be valid Base64 and a `Pure`
+   input MUST equal the decoded bytes (`invalid_exact_sui_payload_missing_nonce`).
+4. **Expiration.** The transaction MUST carry a `ValidDuring` or `Validity`
+   [expiration](#expiration) with both epochs set and a span of at most one
+   (`invalid_exact_sui_payload_invalid_expiration`). This step checks only the variant, the epochs,
+   and the span. Timestamps are not checked offline; simulation rejects them today.
+5. **Sponsorship.** When the gas owner is an address the facilitator sponsors for, the transaction
+   MUST pass the [sponsorship checks](#gas-sponsorship)
+   (`invalid_exact_sui_payload_sponsorship_rejected`).
+6. **Not already executed.** The facilitator recomputes the digest and looks it up. If the
+   transaction has already executed, it rejects with `invalid_exact_sui_payload_already_executed`.
+   This is needed because re-simulating an executed address-balance transaction still succeeds. The
+   lookup is best-effort: a node that has not indexed or has pruned the transaction reports it as
+   missing. See [deduplication](#settlement-deduplication).
+7. **Simulate.** The facilitator simulates the signed transaction as-is, with transaction checks
+   enabled and without letting the node select gas (`invalid_exact_sui_payload_simulation_failed`).
+   This rejects an expired transaction.
+8. **Effects.** The simulated `balanceChanges` MUST pass the [effects check](#effects-check).
+
+Any other error during verification returns `invalid_exact_sui_payload_verification_error`.
+
+### Effects check
+
+A balance change is `{ coinType, address, amount }`. Sui nets balance changes per address and coin
+type, so there is normally one entry for `payTo`; the facilitator sums any entries for `payTo` in
+`asset` (zero if there are none) and requires the total to equal `amount` exactly
+(`invalid_exact_sui_payload_transfer_mismatch` on a simulation, `settlement_effects_mismatch` on
+executed effects). It does not check the payer's debit or other recipients. When `asset` is SUI and
+`payTo` is the gas owner, gas nets into the same balance change, so the payment cannot match.
+
+The facilitator MUST request balance changes where the transport makes them opt-in. At verify it
+MUST reject the payment when they are unavailable. At settle, if the execution result lacks balance
+changes, it fetches the transaction by digest. If they are still missing, it returns
+`transaction_failed`, not `settlement_effects_mismatch`.
 
 ## Settlement
 
-Settlement broadcasts the signed transaction and judges success only on the executed effects. On a
-self-paid or naturally gasless payment the broadcast is keyless: the facilitator holds no payer key
-and only relays the signed bytes. On a sponsored payment the facilitator delegates execution to the
-sponsor, which applies its own policy to the identical client-signed bytes and either co-signs and
-executes or returns a policy rejection (`sponsor_rejected`). The sponsor's SUI is an Address Balance,
-so no gas coin objects are reserved and concurrent sponsorships do not contend for a coin pool.
+1. Re-run the offline checks (verification steps 1-5), with the same reason codes. A signature check
+   that fails for environmental reasons, such as a zkLogin RPC error, returns `transaction_failed`.
+2. Check that the current epoch is within `[minEpoch, maxEpoch]`
+   (`invalid_exact_sui_payload_invalid_expiration`). A fullnode returns the cached effects of an
+   executed transaction without re-checking its expiration; without this check, a claim would have
+   to be kept forever.
+3. Claim the transaction digest. If it is already claimed, return `duplicate_settlement`.
+4. Submit the transaction and wait for finality. On a self-paid or gasless payment the facilitator
+   only relays the signed bytes. On a sponsored payment the sponsor co-signs and executes, or
+   declines (`sponsor_rejected`).
+5. Require a successful execution status (`transaction_failed`) and pass the
+   [effects check](#effects-check) on the executed `balanceChanges` (`settlement_effects_mismatch`).
 
-Steps:
+If submission or the finality wait fails, the facilitator SHOULD look the transaction up by digest
+and report its actual outcome. If the lookup also fails, it releases the claim and returns
+`transaction_failed` with the digest in `transaction`, so the resource server can reconcile.
 
-1. Re-run the offline checks: envelope, the sender-bound signature, and the declared nonce. The
-   not-already-executed digest lookup and the simulation are not repeated.
-2. Broadcast the transaction — or, when sponsored, hand the signed bytes to the sponsor to co-sign
-   and execute — and wait for finality.
-3. From the executed effects, require a successful execution status and the
-   [effects check](#effects-check) against the executed `balanceChanges`. A committed-but-failed
-   transaction returns `transaction_failed`; effects that do not match return
-   `settlement_effects_mismatch`.
+On success the facilitator returns a `SettlementResponse` (core spec
+[§5.3](../../x402-specification-v2.md)) with the digest as `transaction`, the `network`, and the
+`payer`.
 
-Sui transaction execution is idempotent: re-submitting an already-committed transaction returns its
-existing effects rather than erroring, and the chain commits a given transaction at most once. A
-retried settle re-executes to the same committed effects and re-runs the same effects check, with no
-double charge. Transport or execution errors surface as `transaction_failed`.
+### Settlement deduplication
 
-The `SettlementResponse` returns `success`, the transaction `digest` (as `transaction`), the `network`,
-and the `payer` per
-[SettlementResponse](../../x402-specification-v2.md#53-settlementresponse-schema).
+The chain executes a transaction at most once, but re-submitting an executed transaction returns its
+original effects as a success. The facilitator MUST deduplicate settlements so that it reports
+success at most once per transaction:
 
-### Exactly-once serving
-
-The chain guarantees at-most-once execution: a given signed transaction commits once, so
-double-spend is impossible. It does not guarantee at-most-once *serving*. Because execution is
-idempotent, two requests carrying the same payment — retried or concurrent — both observe the same
-successful effects. Whether the same payment is served more than once is therefore an
-application-level concern the protocol cannot decide: the chain exposes no signal to tell a first
-settlement from a repeat.
-
-A facilitator or resource server MAY deduplicate repeat or concurrent settlement requests, keyed on
-the transaction digest — the payment's on-chain identity, which already encodes a declared nonce since
-that nonce is enforced inside the transaction — and reject a duplicate with `duplicate_settlement`.
-For the guard to hold, the step that claims a payment and the settlement it
-protects MUST be atomic with respect to concurrent requests, so that of two in-flight requests for
-the same payment only one proceeds: a party that claims the payment before acting on it keeps both
-from serving it.
-
-Alternatively, a server MAY make each payment single-use by construction: issue a fresh per-request
-`extra.nonce` and treat that challenge — not the payment — as the thing it retires. A payment then
-satisfies only the one request it was built for, so a repeat cannot be redirected at a different unit
-of work. This narrows the guard to a per-challenge check but does not remove the atomicity
-requirement above for two concurrent requests bearing the same challenge.
-
-A single instance MAY hold this state locally. A horizontally-scaled deployment has no shared view of
-what its peers have served, so it SHOULD use shared deduplication state; without it, duplicates routed
-to different instances each pass their local check.
+1. The claim key is the transaction digest, scoped by network.
+2. The facilitator claims the key before submitting, and only after the offline checks pass, so a
+   forged payload cannot hold a genuine payment's key.
+3. Checking and recording the claim MUST be atomic with respect to concurrent settle requests.
+4. The facilitator keeps the claim only when settlement succeeds and releases it on any other
+   outcome. Releasing on failure is safe: if the transaction executed and failed, re-submitting it
+   returns the same failure, so a retry cannot turn it into a success.
+5. A successful claim MUST be kept until at least one epoch after `maxEpoch` has ended. A node that
+   lags by an epoch would otherwise accept a re-settle of an evicted claim.
+6. A single process MAY keep claims in memory. After a restart, the only protection against
+   re-settling a payment the store has forgotten is verify's best-effort
+   [digest lookup](#verification), which the standard resource server flow always runs first. A
+   facilitator whose settle can be called without verify, or that runs several instances, SHOULD use
+   a shared, durable claim store. Two facilitators that do not share a claim store can each report
+   the same payment as settled.
+7. `duplicate_settlement` therefore means the payment has already settled successfully or a settle
+   for it is in progress.
 
 ## Security Considerations
 
-- **Authorization scope.** The payer signs the complete transaction, so no party can redirect funds
-  away from the declared recipient or reduce its credited amount. The scheme verifies that the
-  server receives exactly what it declared — the recipient credited exactly `amount` — and does not
-  constrain whatever else the transaction does.
-- **Effects-only validation.** Verification inspects the balance changes, not the transaction's
-  commands or gas shape. It lets a payment be sourced arbitrarily: Address Balance,
-  `Coin<T>` objects, swaps, withdrawals, or a mix. Sui transactions are intentionally composable, and
-  the exact recipient-credit check already binds what the server receives, so the scheme does not
-  constrain the transaction shape with a command allowlist or a gasless-eligibility requirement.
-- **Replay prevention.** Settlement is at-most-once per signed transaction. Simulation is not a
-  sufficient replay guard for a payment sourced entirely from Address Balances, since re-simulating
-  executed bytes still succeeds; verification detects a recent replay by recomputing the digest and
-  looking it up on-chain, and a replay old enough to outlive node retention fails simulation or
-  execution instead, since an executed transaction can never commit again. A payment's validity
-  window is bounded on-chain by the transaction's own expiration, enforced by simulation at verify
-  and by execution at settle. Serving a payment at most once is an application-level concern the
-  chain does not decide; a facilitator or resource server MAY deduplicate above the chain (see
-  [Exactly-once serving](#exactly-once-serving)).
-- **Settlement atomicity.** The payment settles in one transaction; a Sui programmable transaction is
-  all-or-nothing, so the recipient credit either lands in full or the transaction commits nothing.
-- **Independently recomputable settlement.** Because verification is effects-based, any third party
-  can recompute a settled payment's outcome — the digest and the recipient's credit — from
-  public chain data, with no trust in the facilitator's report. Receipt and attestation extensions
-  can bind to this result without additional on-chain state.
-- **Sponsor exposure.** What a facilitator is willing to sponsor is bounded by the sponsor's own
-  policy, not by any x402 field or facilitator check. x402 defines no gas-budget or gas-shape
-  validation; it delegates sponsored settlement to the sponsor, which enforces its policy and MAY
-  decline.
+- **Authorization scope.** The payer signs the complete transaction, so no other party can redirect
+  the payment or reduce the recipient's credit.
+- **Atomicity.** A Sui programmable transaction is all-or-nothing, so the credit lands in full or
+  not at all.
+- **Cross-network replay.** `ValidDuring` and `Validity` carry the chain identifier, so a payment
+  signed for one network cannot execute on another.
+- **Sponsor address.** The sponsor address SHOULD be dedicated to gas, with no roles or privileges
+  elsewhere, since Move code can read `tx_context::sponsor()`.
+
+Replay and repeat settlement are covered under [Expiration](#expiration) and
+[Settlement deduplication](#settlement-deduplication); sponsor exposure under
+[Gas sponsorship](#gas-sponsorship).
 
 ## Appendix
 
 ### Reason codes
 
-| Code | Stage | Meaning |
-| ---- | ----- | ------- |
-| `invalid_x402_version` | verify / settle | `x402Version` is not `2`. |
-| `unsupported_scheme` | verify / settle | Scheme is not `"exact"`. |
-| `network_mismatch` | verify / settle | Payload network does not match the requirements. |
-| `invalid_network` | verify / settle | Network is not a supported Sui network. |
-| `invalid_payload` | verify / settle | Payload is not `{ transaction, signature }`. |
-| `invalid_exact_sui_payload_transaction_could_not_be_decoded` | verify / settle | Transaction bytes failed to decode. |
-| `invalid_exact_sui_payload_missing_sender` | verify / settle | Transaction carries no `sender`. |
-| `invalid_exact_sui_payload_invalid_signature` | verify / settle | Signature does not verify against `sender`. |
-| `invalid_exact_sui_payload_missing_nonce` | verify / settle | Declared `extra.nonce` malformed (not valid Base64) or not carried as a `Pure` input in the transaction. |
-| `invalid_transaction_state` | verify | Transaction is already executed. |
-| `invalid_exact_sui_payload_simulation_failed` | verify | Simulation would not succeed. |
-| `invalid_exact_sui_payload_transfer_mismatch` | verify | The declared recipient was not credited exactly `amount` in the agreed asset. |
-| `invalid_exact_sui_payload_verification_error` | verify | Catch-all for an unexpected error or RPC failure during verification. |
-| `invalid_payment_requirements` | server | Requirements are invalid. |
-| `duplicate_settlement` | settle | A repeat or concurrent settle for the same payment was rejected by deduplication. |
-| `transaction_failed` | settle | Execution failed or a transport error occurred. |
-| `settlement_effects_mismatch` | settle | Executed effects do not match the requirements. |
-| `sponsor_rejected` | settle | The sponsor declined under its own policy. |
-
-## Recommendation
-
-Construct payments to be gasless-eligible by default: an allowlisted stablecoin (such as USDC) drawn
-from the payer's Address Balance, at or above the protocol's per-transfer minimum, settles with no
-gas token and no sponsor — the cheapest path for both the client and the server. Reserve sender-paid
-gas, or an offered sponsor, for payments that cannot meet those conditions, such as a non-allowlisted
-asset or an amount below the minimum.
+| Code                                                         | Stage           | Meaning                                                                                     |
+| ------------------------------------------------------------ | --------------- | ------------------------------------------------------------------------------------------- |
+| `invalid_x402_version`                                       | verify / settle | `x402Version` is not `2`.                                                                   |
+| `unsupported_scheme`                                         | verify / settle | Scheme is not `"exact"`.                                                                    |
+| `network_mismatch`                                           | verify / settle | Payload network does not match the requirements.                                            |
+| `invalid_network`                                            | verify / settle | Network is not a supported Sui network.                                                     |
+| `invalid_payload`                                            | verify / settle | Payload is not `{ transaction, signature }`.                                                |
+| `invalid_exact_sui_payload_transaction_could_not_be_decoded` | verify / settle | Transaction bytes failed to decode.                                                         |
+| `invalid_exact_sui_payload_missing_sender`                   | verify / settle | Transaction has no `sender`.                                                                |
+| `invalid_exact_sui_payload_invalid_signature`                | verify / settle | Signatures are missing, extra, or invalid for the required signers.                         |
+| `invalid_exact_sui_payload_missing_nonce`                    | verify / settle | Declared `extra.nonce` is not valid Base64 or no `Pure` input equals it.                    |
+| `invalid_exact_sui_payload_invalid_expiration`               | verify / settle | Expiration missing or malformed, span exceeds one epoch, or (settle) outside window.        |
+| `invalid_exact_sui_payload_sponsorship_rejected`             | verify / settle | A sponsored transaction fails the sponsorship checks.                                       |
+| `invalid_exact_sui_payload_already_executed`                 | verify          | Transaction has already executed.                                                           |
+| `invalid_exact_sui_payload_simulation_failed`                | verify          | Simulation failed, including for an expired transaction.                                    |
+| `invalid_exact_sui_payload_transfer_mismatch`                | verify          | Simulated effects do not credit `payTo` with exactly `amount`.                              |
+| `invalid_exact_sui_payload_verification_error`               | verify          | Unexpected error or RPC failure during verification.                                        |
+| `invalid_payment_requirements`                               | verify / settle | The requirements' `amount` is not a positive integer.                                       |
+| `sponsor_rejected`                                           | settle          | The sponsor declined the transaction.                                                       |
+| `duplicate_settlement`                                       | settle          | The transaction has already settled successfully, or a settle for it is in progress.        |
+| `transaction_failed`                                         | settle          | Execution failed or outcome unknown, balance changes missing, or a signature check errored. |
+| `settlement_effects_mismatch`                                | settle          | Executed effects do not credit `payTo` with exactly `amount`.                               |
