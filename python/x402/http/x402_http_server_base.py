@@ -430,6 +430,18 @@ class x402HTTPServerBase:
         # Extract payment from headers
         payment_payload = self._extract_payment(context.adapter)
 
+        # A HEAD response carries no content (RFC 9110 9.3.2), so settling on
+        # one charges for a result that cannot be delivered. HEAD reaches a
+        # paid route because route matching falls back to the GET rule, which
+        # is what closes the bypass; this stops the other half, where the
+        # buyer pays and receives an empty body. The challenge is still
+        # served, so the price stays discoverable over HEAD, and only the
+        # settlement is refused.
+        head_cannot_settle = (
+            (context.method or context.adapter.get_method() or "").upper() == "HEAD"
+            and payment_payload is not None
+        )
+
         # Build resource info (Static metadata as per maintainer feedback)
         resource_info = ResourceInfo(
             url=route_config.resource or context.adapter.get_url(),
@@ -477,15 +489,21 @@ class x402HTTPServerBase:
             (
                 requirements,
                 resource_info,
-                None if payment_payload else "Payment required",
+                "Payment required"
+                if not payment_payload
+                else (
+                    "a HEAD response cannot carry the result; retry as GET"
+                    if head_cannot_settle
+                    else None
+                ),
                 extensions,
                 transport_context,
             ),
             None,
         )
 
-        # No payment provided
-        if payment_payload is None:
+        # No payment provided, or the request can never deliver what it buys
+        if payment_payload is None or head_cannot_settle:
             unpaid_body = None
             if route_config.unpaid_response_body:
                 unpaid_body = route_config.unpaid_response_body(context)

@@ -565,6 +565,14 @@ export class x402HTTPResourceServer {
     // Check for payment header (v1 or v2)
     const paymentPayload = this.extractPayment(adapter);
 
+    // A HEAD response carries no content (RFC 9110 9.3.2), so settling on one
+    // charges for a result that cannot be delivered. HEAD still reaches this
+    // point because route matching falls back to the GET rule, which is what
+    // closes the bypass; this stops the other half, where the buyer pays and
+    // receives an empty body. The challenge is still served, so the price
+    // stays discoverable with HEAD and only the settlement is refused.
+    const headCannotSettle = method.toUpperCase() === "HEAD" && !!paymentPayload;
+
     // Create resource info, using config override if provided
     const resourceInfo = {
       url: routeConfig.resource || enrichedContext.adapter.getUrl(),
@@ -592,13 +600,17 @@ export class x402HTTPResourceServer {
     const paymentRequired = await this.ResourceServer.createPaymentRequiredResponse(
       requirements,
       resourceInfo,
-      !paymentPayload ? "Payment required" : undefined,
+      !paymentPayload
+        ? "Payment required"
+        : headCannotSettle
+          ? "a HEAD response cannot carry the result; retry as GET"
+          : undefined,
       extensions,
       transportContext,
     );
 
-    // If no payment provided
-    if (!paymentPayload) {
+    // If no payment provided, or the request can never deliver what it pays for
+    if (!paymentPayload || headCannotSettle) {
       // Resolve custom unpaid response body if provided
       const unpaidBody = routeConfig.unpaidResponseBody
         ? await routeConfig.unpaidResponseBody(enrichedContext)

@@ -2166,3 +2166,129 @@ func TestWithPrivateCacheControl(t *testing.T) {
 		})
 	}
 }
+
+// TestHeadCannotSettlePayment covers the half of HEAD handling that route
+// matching does not.
+//
+// Falling back to the GET rule (TestHeadRouteMatching above) is what stops a
+// HEAD reaching a paid handler unpaid. Once it matches, though, nothing else
+// stops the payment settling - and a HEAD response carries no content
+// (RFC 9110 9.3.2), so the buyer would be charged for a body that can never
+// be returned. The challenge must still be served over HEAD, so the price
+// stays discoverable; only the settlement is refused.
+func TestHeadCannotSettlePayment(t *testing.T) {
+	ctx := context.Background()
+
+	routes := RoutesConfig{
+		"GET /api": {
+			Accepts: PaymentOptions{
+				{
+					Scheme:  "exact",
+					PayTo:   "0xtest",
+					Price:   "$1.00",
+					Network: "eip155:1",
+				},
+			},
+		},
+	}
+
+	verifyCalls := 0
+	mockServer := &mockSchemeServer{scheme: "exact"}
+	mockClient := &mockFacilitatorClient{
+		verify: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+			verifyCalls++
+			return &x402.VerifyResponse{IsValid: true, Payer: "0xpayer"}, nil
+		},
+		supported: func(ctx context.Context) (x402.SupportedResponse, error) {
+			return x402.SupportedResponse{
+				Kinds: []x402.SupportedKind{
+					{X402Version: 2, Scheme: "exact", Network: "eip155:1"},
+				},
+				Extensions: []string{},
+				Signers:    make(map[string][]string),
+			}, nil
+		},
+	}
+
+	server := Newx402HTTPResourceServer(
+		routes,
+		x402.WithFacilitatorClient(mockClient),
+		x402.WithSchemeServer("eip155:1", mockServer),
+	)
+	_ = server.Initialize(ctx)
+
+	// Matches the route's requirements exactly, so without the guard this
+	// request reaches verification and settlement rather than being refused
+	// for some unrelated reason.
+	paymentPayload := x402.PaymentPayload{
+		X402Version: 2,
+		Payload:     map[string]interface{}{"sig": "test"},
+		Accepted: x402.PaymentRequirements{
+			Scheme:            "exact",
+			Network:           "eip155:1",
+			Asset:             "USDC",
+			Amount:            "1000000",
+			PayTo:             "0xtest",
+			MaxTimeoutSeconds: 300,
+			Extra: map[string]interface{}{
+				"resourceUrl": "http://example.com/api",
+			},
+		},
+	}
+	payloadJSON, _ := json.Marshal(paymentPayload)
+	encoded := base64.StdEncoding.EncodeToString(payloadJSON)
+
+	t.Run("a paid HEAD is refused and never verified", func(t *testing.T) {
+		verifyCalls = 0
+		result := server.ProcessHTTPRequest(ctx, HTTPRequestContext{
+			Adapter: &mockHTTPAdapter{
+				method:  "HEAD",
+				path:    "/api",
+				url:     "http://example.com/api",
+				headers: map[string]string{"PAYMENT-SIGNATURE": encoded},
+			},
+			Path:   "/api",
+			Method: "HEAD",
+		}, nil)
+
+		if result.Type != ResultPaymentError {
+			t.Fatalf("a paid HEAD was accepted (%v); it would be charged for an empty body", result.Type)
+		}
+		if verifyCalls != 0 {
+			t.Errorf("facilitator was consulted %d time(s) for a HEAD that cannot deliver", verifyCalls)
+		}
+	})
+
+	t.Run("an unpaid HEAD is still challenged", func(t *testing.T) {
+		result := server.ProcessHTTPRequest(ctx, HTTPRequestContext{
+			Adapter: &mockHTTPAdapter{
+				method: "HEAD",
+				path:   "/api",
+				url:    "http://example.com/api",
+			},
+			Path:   "/api",
+			Method: "HEAD",
+		}, nil)
+
+		if result.Type != ResultPaymentError {
+			t.Fatalf("unpaid HEAD must still be challenged, got %v", result.Type)
+		}
+	})
+
+	t.Run("a paid GET still succeeds, so the guard is not over-broad", func(t *testing.T) {
+		result := server.ProcessHTTPRequest(ctx, HTTPRequestContext{
+			Adapter: &mockHTTPAdapter{
+				method:  "GET",
+				path:    "/api",
+				url:     "http://example.com/api",
+				headers: map[string]string{"PAYMENT-SIGNATURE": encoded},
+			},
+			Path:   "/api",
+			Method: "GET",
+		}, nil)
+
+		if result.Type != ResultPaymentVerified {
+			t.Fatalf("a paid GET must still verify, got %v", result.Type)
+		}
+	})
+}
