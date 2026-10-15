@@ -109,6 +109,9 @@ export {
   SETTLEMENT_OVERRIDES_HEADER,
   PAYMENT_REQUIRED_CACHE_CONTROL,
   withPrivateCacheControl,
+  withPaymentCorsExposeHeaders,
+  applyPaymentResponseHeaders,
+  ACCESS_CONTROL_EXPOSE_HEADERS,
 } from "./x402HTTPResourceServer";
 export {
   HTTPFacilitatorClient,

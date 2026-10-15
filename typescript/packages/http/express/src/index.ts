@@ -13,6 +13,7 @@ import {
   SettlementOverrides,
   checkIfBazaarNeeded,
   withPrivateCacheControl,
+  applyPaymentResponseHeaders,
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
 import { NextFunction, Request, Response } from "express";
@@ -225,9 +226,11 @@ export function paymentMiddlewareFromHTTPServer(
         // Payment required but not provided or invalid
         const { response } = result;
         res.status(response.status);
-        Object.entries(response.headers).forEach(([key, value]) => {
-          res.setHeader(key, value);
-        });
+        applyPaymentResponseHeaders(
+          response.headers,
+          name => res.getHeader(name),
+          (name, value) => res.setHeader(name, value),
+        );
         if (response.isHtml) {
           res.send(response.body);
         } else {
@@ -324,9 +327,11 @@ export function paymentMiddlewareFromHTTPServer(
             existingCacheControl,
           );
           if (failureHeaders) {
-            Object.entries(failureHeaders).forEach(([key, value]) => {
-              res.setHeader(key, String(value));
-            });
+            applyPaymentResponseHeaders(
+              failureHeaders,
+              name => res.getHeader(name),
+              (name, value) => res.setHeader(name, value),
+            );
           }
           bufferedCalls = [];
           restoreResponseMethods();
@@ -352,9 +357,11 @@ export function paymentMiddlewareFromHTTPServer(
             existingCacheControl,
           );
           if (failureHeaders) {
-            Object.entries(failureHeaders).forEach(([key, value]) => {
-              res.setHeader(key, String(value));
-            });
+            applyPaymentResponseHeaders(
+              failureHeaders,
+              name => res.getHeader(name),
+              (name, value) => res.setHeader(name, value),
+            );
           }
           restoreResponseMethods();
           // Replay all buffered calls in order
@@ -398,9 +405,11 @@ export function paymentMiddlewareFromHTTPServer(
           if (!settleResult.success) {
             bufferedCalls = [];
             const { response } = settleResult;
-            Object.entries(response.headers).forEach(([key, value]) => {
-              res.setHeader(key, value);
-            });
+            applyPaymentResponseHeaders(
+              response.headers,
+              name => res.getHeader(name),
+              (name, value) => res.setHeader(name, value),
+            );
             if (response.isHtml) {
               res.status(response.status).send(response.body);
             } else {
@@ -410,9 +419,11 @@ export function paymentMiddlewareFromHTTPServer(
           }
 
           // Settlement succeeded - add headers to response
-          Object.entries(settleResult.headers).forEach(([key, value]) => {
-            res.setHeader(key, value);
-          });
+          applyPaymentResponseHeaders(
+            settleResult.headers,
+            name => res.getHeader(name),
+            (name, value) => res.setHeader(name, value),
+          );
           res.setHeader(
             "Cache-Control",
             withPrivateCacheControl(
