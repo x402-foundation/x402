@@ -1208,11 +1208,16 @@ func (s *x402HTTPResourceServer) buildSettlementFailureResult(errorReason string
 // so a route can't be bypassed via either representation.
 func (s *x402HTTPResourceServer) getRouteConfig(path, method, decodedPath string) (*RouteConfig, string) {
 	upperMethod := strings.ToUpper(method)
+	// A method-less route must not gate the CORS preflight: the browser sends
+	// OPTIONS without a payment and only sends the paid request if it succeeds.
+	// An explicit "OPTIONS /path" route still matches.
+	verbMatches := func(verb string) bool {
+		return verb == upperMethod || (verb == "*" && upperMethod != "OPTIONS")
+	}
 
 	findMatch := func(candidate string) (*RouteConfig, string) {
 		for _, route := range s.compiledRoutes {
-			if route.Regex.MatchString(candidate) &&
-				(route.Verb == "*" || route.Verb == upperMethod) {
+			if route.Regex.MatchString(candidate) && verbMatches(route.Verb) {
 				config := route.Config // Make a copy
 				return &config, route.Pattern
 			}
