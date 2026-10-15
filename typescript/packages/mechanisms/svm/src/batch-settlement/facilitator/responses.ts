@@ -264,6 +264,7 @@ export function sealResponse(args: {
         totalClaimed: args.finalSettled.toString(),
         withdrawRequestedAt: 0,
       } satisfies BatchChannelState,
+      paidToReceiver: args.paidToReceiver.toString(),
     },
   };
 }
