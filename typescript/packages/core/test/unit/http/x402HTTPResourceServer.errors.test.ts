@@ -9,6 +9,7 @@ import {
   buildPaymentRequirements,
   buildSettleResponse,
   buildSupportedResponse,
+  buildVerifyResponse,
 } from "../../mocks";
 import {
   decodePaymentRequiredHeader,
@@ -245,5 +246,41 @@ describe("x402HTTPResourceServer facilitator response errors", () => {
 
     expect(result.type).toBe("payment-error");
     expect(facilitator.verifyCalls).toHaveLength(0);
+  });
+
+  it("includes the invalidReason in the JSON 402 body when verification fails", async () => {
+    facilitator.setVerifyResponse(
+      buildVerifyResponse({ isValid: false, invalidReason: "insufficient_funds" }),
+    );
+
+    const accepted = buildPaymentRequirements({
+      scheme: "exact",
+      network,
+      payTo: "0xabc",
+      asset: "USDC",
+      amount: "1000000",
+    });
+    const payload = buildPaymentPayload({
+      x402Version: 2,
+      accepted,
+    });
+
+    const result = await httpServer.processHTTPRequest({
+      adapter: new MockHTTPAdapter({
+        "payment-signature": encodePaymentSignatureHeader(payload),
+      }),
+      path: "/api/test",
+      method: "GET",
+      paymentHeader: encodePaymentSignatureHeader(payload),
+    });
+
+    expect(result.type).toBe("payment-error");
+    if (result.type !== "payment-error") throw new Error("expected payment-error");
+    expect(result.response.status).toBe(402);
+    expect(result.response.isHtml).toBeFalsy();
+    expect(result.response.body).toEqual({ error: "insufficient_funds" });
+    expect(decodePaymentRequiredHeader(result.response.headers["PAYMENT-REQUIRED"]).error).toBe(
+      "insufficient_funds",
+    );
   });
 });

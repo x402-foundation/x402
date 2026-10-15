@@ -918,7 +918,7 @@ describe("paymentMiddleware", () => {
 
     expect(res.removeHeader).toHaveBeenCalledWith("Settlement-Overrides");
     expect(res.status).toHaveBeenCalledWith(402);
-    expect(res.json).toHaveBeenCalledWith({});
+    expect(res.json).toHaveBeenCalledWith({ error: "settlement_failed" });
   });
 
   it("returns 502 when facilitator init fails during protected request", async () => {

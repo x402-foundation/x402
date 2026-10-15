@@ -1338,9 +1338,15 @@ export class x402HTTPResourceServer {
       };
     }
 
-    // Use callback result if provided, otherwise default to JSON with empty object
+    // Use callback result if provided, otherwise include the error reason so
+    // non-browser clients can tell WHY a payment was rejected without decoding
+    // the PAYMENT-REQUIRED header (e.g. insufficient_funds vs. signature error).
     const contentType = unpaidResponse ? unpaidResponse.contentType : "application/json";
-    const body = unpaidResponse ? unpaidResponse.body : {};
+    const body = unpaidResponse
+      ? unpaidResponse.body
+      : paymentRequired.error
+        ? { error: paymentRequired.error }
+        : {};
 
     return {
       status,

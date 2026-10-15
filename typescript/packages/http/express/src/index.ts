@@ -430,7 +430,7 @@ export function paymentMiddlewareFromHTTPServer(
           console.error(error);
           // If settlement fails, don't send the buffered response
           bufferedCalls = [];
-          res.status(402).json({});
+          res.status(402).json({ error: "settlement_failed" });
           return;
         } finally {
           restoreResponseMethods();
