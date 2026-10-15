@@ -1,6 +1,11 @@
 import { x402Client, x402ClientConfig, x402HTTPClient } from "@x402/core/client";
 import { type PaymentRequired } from "@x402/core/types";
-import { type AxiosInstance, type AxiosError, type InternalAxiosRequestConfig } from "axios";
+import {
+  type AxiosError,
+  type AxiosInstance,
+  type AxiosResponse,
+  type InternalAxiosRequestConfig,
+} from "axios";
 
 type X402RetryConfig = InternalAxiosRequestConfig & { __is402Retry?: boolean };
 type AxiosHeaderRecord = Record<string, string>;
@@ -94,6 +99,54 @@ function createX402RetryConfig(config: InternalAxiosRequestConfig): X402RetryCon
         : status >= 200 && status < 300;
     },
   };
+}
+
+type PaidRequestOutcome = {
+  response: AxiosResponse;
+  /** The Axios rejection to rethrow once payment response hooks have run. */
+  error?: AxiosError;
+};
+
+/**
+ * Checks whether a rejection is an Axios error that carries an HTTP response.
+ *
+ * @param error - Value thrown by `axiosInstance.request`
+ * @returns True when the error has a response whose headers and status can be read
+ */
+function isAxiosErrorWithResponse(
+  error: unknown,
+): error is AxiosError & { response: AxiosResponse } {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as AxiosError).isAxiosError === true &&
+    (error as AxiosError).response !== undefined
+  );
+}
+
+/**
+ * Sends a paid request and returns its response even when Axios rejects it.
+ *
+ * Paid retries keep the caller's `validateStatus`, so HTTP errors such as 400 or 500
+ * reject. The response is still needed to fire payment response hooks, so the
+ * rejection is returned alongside it and rethrown by the caller afterwards.
+ *
+ * @param axiosInstance - Axios instance used to send the request
+ * @param config - Request configuration carrying the payment headers
+ * @returns The response, plus the Axios error when the status was rejected
+ */
+async function sendPaidRequest(
+  axiosInstance: AxiosInstance,
+  config: X402RetryConfig,
+): Promise<PaidRequestOutcome> {
+  try {
+    return { response: await axiosInstance.request(config) };
+  } catch (error) {
+    if (isAxiosErrorWithResponse(error)) {
+      return { response: error.response, error };
+    }
+    throw error;
+  }
 }
 
 /**
@@ -224,8 +277,10 @@ export function wrapAxiosWithPayment(
           "PAYMENT-RESPONSE,X-PAYMENT-RESPONSE",
         );
 
-        // Retry the request with payment
-        const secondResponse = await axiosInstance.request(paidConfig);
+        // Retry the request with payment. HTTP error statuses are kept so the payment
+        // response hooks below run before the rejection is rethrown.
+        const paidOutcome = await sendPaidRequest(axiosInstance, paidConfig);
+        const secondResponse = paidOutcome.response;
 
         // Fire payment response hooks and handle recovery
         const getResponseHeader = (name: string) => {
@@ -251,16 +306,23 @@ export function wrapAxiosWithPayment(
             "Access-Control-Expose-Headers",
             "PAYMENT-RESPONSE,X-PAYMENT-RESPONSE",
           );
-          const retryResponse = await axiosInstance.request(retryConfig);
+          const retryOutcome = await sendPaidRequest(axiosInstance, retryConfig);
+          const retryResponse = retryOutcome.response;
           // Process the final retry result without another recovery attempt.
           const getRetryHeader = (name: string) => {
             const value = retryResponse.headers[name] ?? retryResponse.headers[name.toLowerCase()];
             return typeof value === "string" ? value : undefined;
           };
           await httpClient.processPaymentResult(freshPayload, getRetryHeader, retryResponse.status);
+          if (retryOutcome.error) {
+            throw retryOutcome.error;
+          }
           return retryResponse;
         }
 
+        if (paidOutcome.error) {
+          throw paidOutcome.error;
+        }
         return secondResponse;
       } catch (retryError) {
         return Promise.reject(retryError);
