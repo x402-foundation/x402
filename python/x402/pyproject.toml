@@ -3,14 +3,14 @@ name = "x402"
 version = "2.25.0"
 description = "x402 Payment Protocol SDK for Python"
 readme = "README.md"
-license = { text = "MIT" }
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.10"
 authors = [{ name = "x402 Foundation" }]
 keywords = ["x402", "payment", "protocol", "http", "402"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -128,6 +128,12 @@ exclude = [
     "tests/",
     "**/__pycache__/",
 ]
+
+# LICENSE and NOTICE live at the repo root, outside this project directory.
+# Copy them into the sdist; `uv build` then packs license-files into the wheel.
+[tool.hatch.build.targets.sdist.force-include]
+"../../LICENSE" = "LICENSE"
+"../../NOTICE" = "NOTICE"
 
 [tool.hatch.build.targets.wheel]
 # Force inclusion with package name remapping
