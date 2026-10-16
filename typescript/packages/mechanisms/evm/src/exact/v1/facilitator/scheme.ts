@@ -135,6 +135,7 @@ export class ExactEvmSchemeV1 implements SchemeNetworkFacilitator {
         network: payloadV1.network,
         transaction: "",
         errorReason: valid.invalidReason ?? Errors.ErrInvalidScheme,
+        errorMessage: valid.invalidMessage,
         payer: exactEvmPayload.authorization.from,
       };
     }
