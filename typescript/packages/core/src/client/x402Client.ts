@@ -13,7 +13,6 @@ import {
   convertToTokenAmount,
   deepEqual,
   findByNetworkAndScheme,
-  findSchemesByNetwork,
   networkMatchesPattern,
   parseMoney,
   toComparableArray,
@@ -333,6 +332,7 @@ export class x402Client {
   private afterPaymentCreationHooks: AfterPaymentCreationHook[] = [];
   private onPaymentCreationFailureHooks: OnPaymentCreationFailureHook[] = [];
   private paymentResponseHooks: OnPaymentResponseHook[] = [];
+  private networkEquivalentFns: Array<(network: string) => readonly string[]> = [];
 
   /**
    * Creates a new x402Client instance.
@@ -341,6 +341,36 @@ export class x402Client {
    */
   constructor(paymentRequirementsSelector?: SelectPaymentRequirements) {
     this.paymentRequirementsSelector = paymentRequirementsSelector || ((x402Version, accepts) => accepts[0]);
+  }
+
+  /**
+   * Scheme lookup using aliases registered by mechanism implementations.
+   * No registered hook keeps exact identity lookup.
+   */
+  private lookup<T>(
+    map: Map<string, Map<string, T>>,
+    scheme: string,
+    network: Network,
+  ): T | undefined {
+    return findByNetworkAndScheme(map, scheme, network, (value) => this.equivalentNames(value));
+  }
+
+  private equivalentNames(network: string): readonly string[] {
+    const names: string[] = [];
+    const add = (name: string) => {
+      if (!names.includes(name)) names.push(name);
+    };
+    add(network);
+    for (const fn of this.networkEquivalentFns) {
+      for (const name of fn(network)) add(name);
+    }
+    return names;
+  }
+
+  private rememberEquivalents(fn: ((network: string) => readonly string[]) | undefined): void {
+    if (typeof fn === "function" && !this.networkEquivalentFns.includes(fn)) {
+      this.networkEquivalentFns.push(fn);
+    }
   }
 
   /**
@@ -562,7 +592,7 @@ export class x402Client {
     }
 
     try {
-      const schemeNetworkClient = findByNetworkAndScheme(clientSchemesByNetwork, requirements.scheme, requirements.network);
+      const schemeNetworkClient = this.lookup(clientSchemesByNetwork, requirements.scheme, requirements.network);
       if (!schemeNetworkClient) {
         throw new Error(`No client registered for scheme: ${requirements.scheme} and network: ${requirements.network}`);
       }
@@ -780,15 +810,10 @@ export class x402Client {
       throw new Error(`No client registered for x402 version: ${x402Version}`);
     }
 
-    // Step 1: Filter by registered schemes
+    // Step 1: Filter by registered schemes, including a mechanism alias hook.
     const supportedPaymentRequirements = paymentRequirements.filter(requirement => {
-      let clientSchemes = findSchemesByNetwork(clientSchemesByNetwork, requirement.network);
-      if (!clientSchemes) {
-        return false;
-      }
-
-      return clientSchemes.has(requirement.scheme);
-    })
+      return Boolean(this.lookup(clientSchemesByNetwork, requirement.scheme, requirement.network));
+    });
 
     if (supportedPaymentRequirements.length === 0) {
       throw new Error(`No network/scheme registered for x402 version: ${x402Version} which comply with the payment requirements. ${JSON.stringify({
@@ -870,7 +895,7 @@ export class x402Client {
         ? (requirement as unknown as PaymentRequirementsV1).maxAmountRequired
         : requirement.amount;
     const schemeFor = (requirement: PaymentRequirements) =>
-      findByNetworkAndScheme(
+      this.lookup(
         clientSchemesByNetwork,
         requirement.scheme,
         requirement.network,
@@ -987,6 +1012,7 @@ export class x402Client {
 
     const clientByScheme = clientSchemesByNetwork.get(network)!;
     clientByScheme.set(client.scheme, client);
+    this.rememberEquivalents(client.networkEquivalents);
 
     if (!this.schemeClientHookAdapters.has(x402Version)) {
       this.schemeClientHookAdapters.set(x402Version, new Map());
@@ -1066,7 +1092,7 @@ export class x402Client {
     const out: Array<NonNullable<ClientHookAdapterHandles[P]>> = [...manual];
     const adaptersByNetwork = this.schemeClientHookAdapters.get(x402Version);
     const schemeAdapter = adaptersByNetwork
-      ? findByNetworkAndScheme(adaptersByNetwork, requirements.scheme, requirements.network)
+      ? this.lookup(adaptersByNetwork, requirements.scheme, requirements.network)
       : undefined;
     const hook = schemeAdapter?.[phase];
     if (hook !== undefined) {
