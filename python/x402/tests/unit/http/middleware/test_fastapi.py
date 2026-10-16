@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import threading
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
@@ -959,70 +961,96 @@ class TestFastAPIMiddlewareIntegration:
 class TestFastAPIMiddlewareConcurrency:
     """Tests for concurrency-safe lazy facilitator initialization."""
 
+    @pytest.fixture()
+    def lazy_init(self, monkeypatch):
+        http_server = MagicMock()
+        http_server.initialize.side_effect = FacilitatorResponseError("Startup unavailable")
+        http_server.requires_payment.side_effect = lambda ctx: ctx.path == "/paid"
+        http_server.process_http_request = AsyncMock(
+            return_value=HTTPProcessResult(
+                type="payment-error",
+                response=HTTPResponseInstructions(status=402, headers={}, body={}),
+            )
+        )
+        monkeypatch.setattr(
+            "x402.http.middleware.fastapi.x402HTTPResourceServer",
+            lambda *args: http_server,
+        )
+        middleware = payment_middleware({}, MagicMock())
+        http_server.initialize.reset_mock()
+        return middleware, http_server
+
     @pytest.mark.asyncio
-    async def test_concurrent_requests_initialize_only_once(self):
-        """Test that concurrent requests only trigger one initialization call."""
-        import asyncio
+    @pytest.mark.parametrize("cancel_waiter", [False, True])
+    @pytest.mark.parametrize("fail_init", [False, True])
+    async def test_lazy_init_keeps_public_routes_responsive(
+        self, lazy_init, cancel_waiter, fail_init
+    ):
+        middleware, http_server = lazy_init
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
+        release = threading.Event()
 
-        app = FastAPI()
+        def initialize():
+            loop.call_soon_threadsafe(started.set)
+            assert release.wait(3), "initialization was not released"
+            if fail_init:
+                raise FacilitatorResponseError("Still unavailable")
 
-        @app.get("/api/protected")
-        def protected_route():
-            return {"data": "Protected content"}
+        http_server.initialize.side_effect = initialize
+        call_next = AsyncMock(return_value=JSONResponse({"healthy": True}))
+        first = asyncio.create_task(middleware(make_mock_fastapi_request(path="/paid"), call_next))
+        second = None
+        try:
+            await asyncio.wait_for(started.wait(), 1)
+            assert not first.done()
+            health = await middleware(make_mock_fastapi_request(path="/health"), call_next)
+            assert health.status_code == 200
+            assert not release.is_set()
+            http_server.process_http_request.assert_not_called()
 
-        mock_server = MagicMock()
-        routes = {
-            "GET /api/protected": RouteConfig(
-                accepts=PaymentOption(
-                    scheme="exact",
-                    pay_to="0x1234567890123456789012345678901234567890",
-                    price="$0.01",
-                    network="eip155:8453",
-                ),
-            )
-        }
+            if cancel_waiter:
+                first.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await first
 
-        init_call_count = 0
+            entered = asyncio.Event()
 
-        with patch("x402.http.middleware.fastapi.x402HTTPResourceServer") as mock_http_server:
-            mock_http_server_instance = MagicMock()
-            mock_http_server_instance.requires_payment.return_value = True
-            mock_http_server_instance.process_http_request = AsyncMock(
-                return_value=HTTPProcessResult(
-                    type="payment-error",
-                    response=HTTPResponseInstructions(
-                        status=402,
-                        headers={"PAYMENT-REQUIRED": "encoded"},
-                        body={"error": "Payment required"},
-                    ),
-                )
-            )
+            async def another_request():
+                entered.set()
+                return await middleware(make_mock_fastapi_request(path="/paid"), call_next)
 
-            def slow_initialize():
-                nonlocal init_call_count
-                init_call_count += 1
+            second = asyncio.create_task(another_request())
+            await entered.wait()
+            assert not second.done()
+            assert http_server.initialize.call_count == 1
+            release.set()
+            expected_status = 502 if fail_init else 402
+            assert (await asyncio.wait_for(second, 1)).status_code == expected_status
+            if not cancel_waiter:
+                assert (await first).status_code == expected_status
+            assert http_server.initialize.call_count == 1
+            expected_processed = 0 if fail_init else (1 if cancel_waiter else 2)
+            assert http_server.process_http_request.await_count == expected_processed
+        finally:
+            release.set()
+            await asyncio.gather(first, *([second] if second else []), return_exceptions=True)
 
-            mock_http_server_instance.initialize.side_effect = slow_initialize
-            mock_http_server.return_value = mock_http_server_instance
+    @pytest.mark.asyncio
+    async def test_failed_lazy_init_can_retry(self, lazy_init):
+        middleware, http_server = lazy_init
+        http_server.initialize.side_effect = [FacilitatorResponseError("Still unavailable"), None]
+        call_next = AsyncMock(return_value=JSONResponse({"healthy": True}))
+        request = make_mock_fastapi_request(path="/paid")
 
-            mw = payment_middleware(routes, mock_server, sync_facilitator_on_start=True)
-
-            request1 = make_mock_fastapi_request(path="/api/protected")
-            request2 = make_mock_fastapi_request(path="/api/protected")
-            request3 = make_mock_fastapi_request(path="/api/protected")
-
-            async def call_next(req):
-                return MagicMock()
-
-            await asyncio.gather(
-                mw(request1, call_next),
-                mw(request2, call_next),
-                mw(request3, call_next),
-            )
-
-            assert init_call_count == 1, (
-                f"Expected initialize() to be called exactly once, got {init_call_count}"
-            )
+        assert (await middleware(request, call_next)).status_code == 502
+        http_server.process_http_request.assert_not_called()
+        assert (
+            await middleware(make_mock_fastapi_request(path="/health"), call_next)
+        ).status_code == 200
+        assert (await middleware(request, call_next)).status_code == 402
+        assert (await middleware(request, call_next)).status_code == 402
+        assert http_server.initialize.call_count == 2
 
     @pytest.mark.asyncio
     async def test_init_error_does_not_block_subsequent_requests(self):
