@@ -268,6 +268,18 @@ The `VerifyResponse` schema contains the following fields:
 
 Facilitators MAY expose extension outcomes separately from `extensions` as `extensionResponses` (populated from the transport sidechannel; never serialized to buyers). See section 7.2.1.
 
+**5.5 Settlement and Refusal Identity Invariant**
+
+Any artifact used to correlate a request across its settlement, refusal, replay-lookup, and challenge-quote paths — regardless of its name (`attempt_id`, `Idempotency-Key`, idempotency scope, or any scheme-specific field) — MUST be derived **once, at ingress**, from the complete request snapshot as received by the facilitator, and MUST NOT be re-derived or partially re-derived downstream.
+
+- The facilitator captures the identity artifact from a single, immutable snapshot taken at ingress (for example, a canonical digest composed of the decoded method, path, query, body, and the resolved `payTo` / `asset` / `network` / `amount` / `scheme`).
+- `/settle`, refusal handling ([§9 Error Handling](#9-error-handling)), replay-lookup, and challenge-quote responses all resolve the **same** artifact value. None of them re-reads the request or recomputes the digest.
+- A request whose `amount`, query, or body changes between paths MUST produce a **different** artifact, and that change MUST surface as a settlement or announcement event — never as a silent divergence in which two paths resolve different identities for the same logical request.
+
+This invariant is independent of the artifact's name or mechanism. An implementation that already uses `Idempotency-Key` satisfies it by binding that key to the ingress snapshot; an implementation that uses `attempt_id` satisfies it the same way. The requirement is the *discipline* (derive once, resolve identically), not the introduction of a specific field.
+
+See [§10.1 Replay Attack Prevention](#101-replay-attack-prevention) and the normative conformance tests in the specification repository for the required negative cases.
+
 **6. Payment Schemes (The Logic)**
 
 This section describes the payment schemes supported by the x402 protocol. Payment schemes define how payments are formed, validated, and settled on specific payment networks. Schemes are independent of the underlying transport mechanism.
@@ -399,6 +411,8 @@ Durably commits payment state for the request — establishing finality from the
 > **Note**: While the request structure is identical, some payment schemes may assign different semantics to fields at settlement time versus verification time. For example, in the `upto` scheme, the `amount` field in `paymentRequirements` represents the maximum authorized amount at verification time, but the actual amount to settle at settlement time. See individual scheme specifications for details.
 
 > **Note**: `/settle` MAY be invoked more than once for a single payment (for example, the `escrow` flow settles a deposit before the resource executes and the final charge after). A scheme defining multiple settles MUST specify how the facilitator distinguishes them from payload content. Because the client typically signs a single payload, that distinction is usually server-led (for example, a scheme-specific `step` field), though a facilitator MAY instead infer the step from network-ledger state.
+
+> **Note**: Every settle, refusal, and replay-lookup for a request MUST resolve the same identity artifact derived once at ingress (see [§5.5 Settlement and Refusal Identity Invariant](#55-settlement-and-refusal-identity-invariant)). Distinct settles of one payment (for example, the `escrow` deposit versus the final charge) are distinguished by payload content or ledger state per the rule above — not by re-deriving identity from a different request snapshot mid-attempt.
 
 **Successful Response:**
 
@@ -617,6 +631,7 @@ The x402 protocol implements multiple layers of protection against replay attack
 - **Blockchain Protection**: EIP-3009 contracts inherently prevent nonce reuse at the smart contract level
 - **Time Constraints**: Authorizations have explicit valid time windows to limit their lifetime
 - **Signature Verification**: All authorizations are cryptographically signed by the payer
+- **Ingress Identity Binding**: The artifact used to correlate replays, settles, and refusals ([§5.5 Settlement and Refusal Identity Invariant](#55-settlement-and-refusal-identity-invariant)) is derived once at ingress from the full request snapshot. Replays, settles, and refusals of the same logical request resolve the same artifact; a request whose query or body differs between paths is treated as a distinct request rather than a replay of the original.
 
 **10.2 Authentication Integration**
 
