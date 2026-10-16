@@ -1,5 +1,6 @@
 import { x402Client, x402ClientConfig, x402HTTPClient } from "@x402/core/client";
 import { type PaymentRequired } from "@x402/core/types";
+import { httpPaymentCall } from "./paymentCall";
 
 /**
  * Enables the payment of APIs using the x402 payment protocol v2.
@@ -46,6 +47,9 @@ export function wrapFetchWithPayment(
   return async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     const clonedRequest = request.clone();
+    // Captured before any payment header is added. The body is only cloned and
+    // read if a scheme asks for it, from the copy that has not been sent yet.
+    const call = httpPaymentCall(request, () => clonedRequest.clone());
 
     const response = await fetch(request);
 
@@ -95,7 +99,7 @@ export function wrapFetchWithPayment(
     // Create payment payload (copy extensions from PaymentRequired)
     let paymentPayload;
     try {
-      paymentPayload = await client.createPaymentPayload(paymentRequired);
+      paymentPayload = await client.createPaymentPayload(paymentRequired, { call });
     } catch (error) {
       throw new Error(
         `Failed to create payment payload: ${error instanceof Error ? error.message : "Unknown error"}`,
@@ -131,7 +135,7 @@ export function wrapFetchWithPayment(
 
     if (result.recovered) {
       // Hook fixed state — retry with fresh payload (bounded to one recovery)
-      const freshPayload = await client.createPaymentPayload(paymentRequired);
+      const freshPayload = await client.createPaymentPayload(paymentRequired, { call });
       const retryHeaders = httpClient.encodePaymentSignatureHeader(freshPayload);
       const retryRequest = clonedRequest;
       for (const [k, v] of Object.entries(retryHeaders)) {
@@ -186,4 +190,6 @@ export type {
   PaymentRequired,
   PaymentRequirements,
   SchemeNetworkClient,
+  PaymentCall,
+  HttpPaymentCall,
 } from "@x402/core/types";

@@ -226,6 +226,9 @@ function createMockPaymentClient(): MockPaymentClient {
 // x402MCPClient Tests
 // ============================================================================
 
+/** Any per-call MCP context passed to createPaymentPayload. */
+const MCP_CALL = { call: expect.objectContaining({ kind: "mcp" }) };
+
 describe("x402MCPClient", () => {
   let mockMcpClient: MockMCPClient;
   let mockPaymentClient: MockPaymentClient;
@@ -448,7 +451,10 @@ describe("x402MCPClient", () => {
       expect(result.content[0]?.text).toBe("paid result");
       expect(result.paymentResponse).toEqual(mockSettleResponse);
       expect(mockMcpClient.callTool).toHaveBeenCalledTimes(2);
-      expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledWith(mockPaymentRequired);
+      expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledWith(
+        mockPaymentRequired,
+        MCP_CALL,
+      );
     });
 
     it("should include payment in _meta on retry", async () => {
@@ -618,6 +624,7 @@ describe("x402MCPClient", () => {
       expect(mockPaymentClient.createPaymentPayload).toHaveBeenNthCalledWith(
         2,
         correctivePaymentRequired,
+        MCP_CALL,
       );
       expect(mockPaymentClient.handlePaymentResponse).toHaveBeenCalledTimes(2);
       expect(mockPaymentClient.handlePaymentResponse).toHaveBeenNthCalledWith(1, {
@@ -940,7 +947,10 @@ describe("x402MCPClient response format interoperability", () => {
       const result = await client.callTool("paid_tool");
 
       expect(result.paymentMade).toBe(true);
-      expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledWith(mockPaymentRequired);
+      expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledWith(
+        mockPaymentRequired,
+        MCP_CALL,
+      );
     });
 
     it("should auto-pay when structuredContent has null optional resource fields", async () => {
@@ -988,7 +998,10 @@ describe("x402MCPClient response format interoperability", () => {
       const result = await client.callTool("paid_tool");
 
       expect(result.paymentMade).toBe(true);
-      expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledWith(mockPaymentRequiredV1);
+      expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledWith(
+        mockPaymentRequiredV1,
+        MCP_CALL,
+      );
     });
   });
 
@@ -1004,7 +1017,10 @@ describe("x402MCPClient response format interoperability", () => {
       const result = await client.callTool("paid_tool");
 
       expect(result.paymentMade).toBe(true);
-      expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledWith(mockPaymentRequired);
+      expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledWith(
+        mockPaymentRequired,
+        MCP_CALL,
+      );
     });
 
     it("should parse content with direct PaymentRequired V1 (no wrapper)", async () => {
@@ -1018,7 +1034,10 @@ describe("x402MCPClient response format interoperability", () => {
       const result = await client.callTool("paid_tool");
 
       expect(result.paymentMade).toBe(true);
-      expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledWith(mockPaymentRequiredV1);
+      expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledWith(
+        mockPaymentRequiredV1,
+        MCP_CALL,
+      );
     });
   });
 
@@ -1048,7 +1067,10 @@ describe("x402MCPClient response format interoperability", () => {
 
       expect(result.paymentMade).toBe(true);
       // Should use the structuredContent version (original mockPaymentRequired)
-      expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledWith(mockPaymentRequired);
+      expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledWith(
+        mockPaymentRequired,
+        MCP_CALL,
+      );
     });
   });
 
@@ -1224,7 +1246,10 @@ describe("x402MCPClient McpError(-32042) handling", () => {
       expect(result.content[0]?.text).toBe("paid result");
       expect(result.paymentResponse).toEqual(mockSettleResponse);
       expect(mockMcpClient.callTool).toHaveBeenCalledTimes(2);
-      expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledWith(mockPaymentRequired);
+      expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledWith(
+        mockPaymentRequired,
+        MCP_CALL,
+      );
     });
 
     it("should handle -32042 with PaymentRequired namespaced under error.data.x402", async () => {
@@ -1244,7 +1269,10 @@ describe("x402MCPClient McpError(-32042) handling", () => {
       const result = await client.callTool("paid_tool");
 
       expect(result.paymentMade).toBe(true);
-      expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledWith(mockPaymentRequired);
+      expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledWith(
+        mockPaymentRequired,
+        MCP_CALL,
+      );
     });
 
     it("should re-throw non-payment errors", async () => {
@@ -1274,7 +1302,10 @@ describe("x402MCPClient McpError(-32042) handling", () => {
       const result = await client.callTool("paid_tool");
 
       expect(result.paymentMade).toBe(true);
-      expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledWith(mockPaymentRequired);
+      expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledWith(
+        mockPaymentRequired,
+        MCP_CALL,
+      );
     });
 
     it("should re-throw legacy 402 errors that are not payment challenges", async () => {
