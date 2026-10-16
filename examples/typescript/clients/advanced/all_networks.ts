@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
+ * (e.g., "algorand" before "aptos" before "bsv" before "cardano" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
  */
 
 import {
@@ -20,6 +20,8 @@ import { x402Client, wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
 import { ExactAptosScheme } from "@x402/aptos/exact/client";
 import { toClientAvmSigner } from "@x402/avm";
 import { ExactAvmScheme } from "@x402/avm/exact/client";
+import { ExactBsvScheme } from "@x402/bsv/exact/client";
+import { WalletClient } from "@bsv/sdk";
 import { toClientCardanoSigner } from "@x402/cardano";
 import { ExactCardanoScheme } from "@x402/cardano/exact/client";
 import { createClientCasperSigner } from "@x402/casper";
@@ -62,6 +64,8 @@ const cardanoNetwork = process.env.CARDANO_NETWORK || "cardano:preprod";
 const blockfrostBaseUrl = process.env.BLOCKFROST_PREPROD_URL;
 const blockfrostProjectId = process.env.BLOCKFROST_PROJECT_ID;
 const aptosPrivateKey = process.env.APTOS_PRIVATE_KEY as string | undefined;
+// BSV payers use a running BRC-100 wallet (e.g. BSV Desktop) instead of a raw private key.
+const bsvWalletEnabled = process.env.BSV_WALLET === "true";
 const casperPrivateKey = process.env.CASPER_PRIVATE_KEY as string | undefined;
 const ccdPrivateKey = process.env.CCD_PRIVATE_KEY as string | undefined;
 const ccdAddress = process.env.CCD_ADDRESS as string | undefined;
@@ -119,6 +123,7 @@ async function main(): Promise<void> {
     !avmPrivateKey &&
     !cardanoMnemonic &&
     !aptosPrivateKey &&
+    !bsvWalletEnabled &&
     !casperPrivateKey &&
     !(ccdPrivateKey && ccdAddress) &&
     !evmPrivateKey &&
@@ -131,7 +136,7 @@ async function main(): Promise<void> {
     !xrplSeed
   ) {
     console.error(
-      "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CARDANO_MNEMONIC, CASPER_PRIVATE_KEY, CCD_PRIVATE_KEY + CCD_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_ACCOUNT_ID + NEAR_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY, TVM_PRIVATE_KEY, or XRPL_SEED is required",
+      "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, BSV_WALLET=true, CARDANO_MNEMONIC, CASPER_PRIVATE_KEY, CCD_PRIVATE_KEY + CCD_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_ACCOUNT_ID + NEAR_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY, TVM_PRIVATE_KEY, or XRPL_SEED is required",
     );
     process.exit(1);
   }
@@ -159,6 +164,14 @@ async function main(): Promise<void> {
     const account = Account.fromPrivateKey({ privateKey: new Ed25519PrivateKey(formattedKey) });
     client.register("aptos:*", new ExactAptosScheme(account));
     console.log(`Initialized Aptos account: ${account.accountAddress.toStringLong()}`);
+  }
+
+  // Register BSV scheme if a BRC-100 wallet is enabled
+  if (bsvWalletEnabled) {
+    const bsvWallet = new WalletClient();
+    client.register("bsv:*", new ExactBsvScheme(bsvWallet));
+    const { publicKey: bsvIdentityKey } = await bsvWallet.getPublicKey({ identityKey: true });
+    console.log(`Initialized BSV identity: ${bsvIdentityKey}`);
   }
 
   // Register Cardano scheme if a mnemonic and Blockfrost connection are provided
