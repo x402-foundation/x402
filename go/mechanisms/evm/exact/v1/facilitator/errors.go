@@ -20,6 +20,7 @@ const (
 	ErrInvalidSignatureFormat          = "invalid_exact_evm_signature_format"
 	ErrFailedToVerifySignature         = "invalid_exact_evm_failed_to_verify_signature"
 	ErrInvalidSignature                = "invalid_exact_evm_payload_signature"
+	ErrInvalidSignatureS               = "invalid_exact_evm_non_canonical_signature"
 
 	// Settle errors
 	ErrVerificationFailed      = "invalid_exact_evm_verification_failed"
