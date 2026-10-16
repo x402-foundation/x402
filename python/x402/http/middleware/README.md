@@ -14,7 +14,7 @@ uv add x402[fastapi]
 from fastapi import FastAPI
 from x402 import x402ResourceServer
 from x402.http import HTTPFacilitatorClient
-from x402.http.middleware import payment_middleware
+from x402.http.middleware import fastapi_payment_middleware
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
 
 app = FastAPI()
@@ -41,19 +41,20 @@ routes = {
 # Add middleware
 @app.middleware("http")
 async def x402_middleware(request, call_next):
-    return await payment_middleware(routes, server)(request, call_next)
+    return await fastapi_payment_middleware(routes, server)(request, call_next)
 ```
 
 ### ASGI Middleware Class
 
 ```python
+from x402.http import PaywallConfig
 from x402.http.middleware import PaymentMiddlewareASGI
 
 app.add_middleware(
     PaymentMiddlewareASGI,
     routes=routes,
     server=server,
-    paywall_config={"appName": "My API"},
+    paywall_config=PaywallConfig(app_name="My API"),
 )
 ```
 
@@ -64,7 +65,7 @@ app.add_middleware(
 async def weather(request: Request):
     payload = request.state.payment_payload
     requirements = request.state.payment_requirements
-    return {"weather": "sunny", "payer": payload.accepted.payTo}
+    return {"weather": "sunny", "pay_to": payload.accepted.pay_to}
 ```
 
 ## Flask (Sync)
@@ -78,14 +79,14 @@ uv add x402[flask]
 ```python
 from flask import Flask, g
 from x402 import x402ResourceServerSync
-from x402.http import HTTPFacilitatorClientSync
-from x402.http.middleware import PaymentMiddleware
+from x402.http import FacilitatorConfig, HTTPFacilitatorClientSync
+from x402.http.middleware import FlaskPaymentMiddleware
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
 
 app = Flask(__name__)
 
 # Configure server (sync variant)
-facilitator = HTTPFacilitatorClientSync(url="https://x402.org/facilitator")
+facilitator = HTTPFacilitatorClientSync(FacilitatorConfig(url="https://x402.org/facilitator"))
 server = x402ResourceServerSync(facilitator)
 server.register("eip155:*", ExactEvmServerScheme())
 
@@ -102,7 +103,7 @@ routes = {
 }
 
 # Add middleware
-PaymentMiddleware(app, routes, server)
+FlaskPaymentMiddleware(app, routes, server)
 
 
 @app.route("/api/weather")
@@ -114,9 +115,10 @@ def weather():
 ### Convenience Function
 
 ```python
-from x402.http.middleware import payment_middleware
+from x402.http import PaywallConfig
+from x402.http.middleware import flask_payment_middleware
 
-payment_middleware(app, routes, server, paywall_config={"appName": "My API"})
+flask_payment_middleware(app, routes, server, paywall_config=PaywallConfig(app_name="My API"))
 ```
 
 ## Sync/Async Matching
@@ -140,13 +142,15 @@ Using async components with Flask raises `TypeError`.
 ## Paywall Configuration
 
 ```python
-paywall_config = {
-    "appName": "My API",
-    "appLogo": "/logo.png",
-    "testnet": True,
-}
+from x402.http import PaywallConfig
 
-PaymentMiddleware(app, routes, server, paywall_config=paywall_config)
+paywall_config = PaywallConfig(
+    app_name="My API",
+    app_logo="/logo.png",
+    testnet=True,
+)
+
+FlaskPaymentMiddleware(app, routes, server, paywall_config=paywall_config)
 ```
 
 Browser requests to protected routes show an HTML paywall. API requests receive 402 with `PAYMENT-REQUIRED` header.
@@ -162,7 +166,7 @@ class MyPaywall(PaywallProvider):
         return "<html>Custom paywall...</html>"
 
 
-PaymentMiddleware(app, routes, server, paywall_provider=MyPaywall())
+FlaskPaymentMiddleware(app, routes, server, paywall_provider=MyPaywall())
 ```
 
 ## Exports
@@ -171,8 +175,8 @@ PaymentMiddleware(app, routes, server, paywall_provider=MyPaywall())
 
 | Export | Description |
 |--------|-------------|
-| `payment_middleware()` | Create middleware function |
-| `payment_middleware_from_config()` | Create from config dict |
+| `fastapi_payment_middleware()` | Create middleware function |
+| `fastapi_payment_middleware_from_config()` | Create from config dict |
 | `PaymentMiddlewareASGI` | ASGI middleware class |
 | `FastAPIAdapter` | HTTPAdapter for FastAPI |
 
@@ -180,8 +184,8 @@ PaymentMiddleware(app, routes, server, paywall_provider=MyPaywall())
 
 | Export | Description |
 |--------|-------------|
-| `PaymentMiddleware` | WSGI middleware class |
-| `payment_middleware()` | Convenience function |
-| `payment_middleware_from_config()` | Create from config dict |
+| `FlaskPaymentMiddleware` | WSGI middleware class |
+| `flask_payment_middleware()` | Convenience function |
+| `flask_payment_middleware_from_config()` | Create from config dict |
 | `FlaskAdapter` | HTTPAdapter for Flask |
 
