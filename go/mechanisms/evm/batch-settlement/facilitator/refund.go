@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/common"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
@@ -216,13 +217,13 @@ func ExecuteRefundWithSignature(
 			return nil, x402.NewSettleError(ErrRefundTransactionFailed, "", network, "",
 				fmt.Sprintf("multicall (claim+refund) transaction failed: %s", err))
 		}
-		if _, err := evm.WaitForSettleReceipt(ctx, signer, txHash, payload.ChannelConfig.Payer, network,
-			ErrRefundTransactionFailed, ErrTransactionReverted); err != nil {
+		receipt, err := evm.WaitForSettleReceipt(ctx, signer, txHash, payload.ChannelConfig.Payer, network,
+			ErrRefundTransactionFailed, ErrTransactionReverted)
+		if err != nil {
 			return nil, err
 		}
 
-		details := computeRefundSettlementDetails(ctx, signer, payload, channelId, preState, refundAmount)
-		return buildRefundResponse(txHash, network, payload.ChannelConfig.Payer, details), nil
+		return finishRefundAfterReceipt(ctx, signer, payload, channelId, preState, refundAmount, txHash, network, receipt)
 	}
 
 	// No claims — direct refundWithSignature
@@ -263,13 +264,71 @@ func ExecuteRefundWithSignature(
 		return nil, x402.NewSettleError(ErrRefundTransactionFailed, "", network, "",
 			fmt.Sprintf("refundWithSignature transaction failed: %s", err))
 	}
-	if _, err := evm.WaitForSettleReceipt(ctx, signer, txHash, payload.ChannelConfig.Payer, network,
-		ErrRefundTransactionFailed, ErrTransactionReverted); err != nil {
+	receipt, err := evm.WaitForSettleReceipt(ctx, signer, txHash, payload.ChannelConfig.Payer, network,
+		ErrRefundTransactionFailed, ErrTransactionReverted)
+	if err != nil {
 		return nil, err
 	}
 
+	return finishRefundAfterReceipt(ctx, signer, payload, channelId, preState, refundAmount, txHash, network, receipt)
+}
+
+func finishRefundAfterReceipt(
+	ctx context.Context,
+	signer evm.FacilitatorEvmSigner,
+	payload *batchsettlement.BatchSettlementEnrichedRefundPayload,
+	channelId string,
+	preState *batchsettlement.ChannelState,
+	refundAmount *big.Int,
+	txHash string,
+	network x402.Network,
+	receipt *evm.TransactionReceipt,
+) (*x402.SettleResponse, error) {
+	refundedAmt, ok := parseRefundedAmount(receipt, channelId)
+	if !ok || refundedAmt.Sign() <= 0 {
+		return &x402.SettleResponse{
+			Success:      false,
+			ErrorReason:  ErrRefundedEventMismatch,
+			ErrorMessage: "refund receipt missing Refunded event with positive amount (possible no-op early return)",
+			Transaction:  txHash,
+			Network:      network,
+		}, nil
+	}
 	details := computeRefundSettlementDetails(ctx, signer, payload, channelId, preState, refundAmount)
+	details.amount = refundedAmt.String()
 	return buildRefundResponse(txHash, network, payload.ChannelConfig.Payer, details), nil
+}
+
+func parseRefundedAmount(receipt *evm.TransactionReceipt, channelId string) (*big.Int, bool) {
+	if receipt == nil || len(receipt.Logs) == 0 {
+		return nil, false
+	}
+	parsedABI, err := abi.JSON(strings.NewReader(string(batchsettlement.BatchSettlementRefundedEventABI)))
+	if err != nil {
+		return nil, false
+	}
+	event, ok := parsedABI.Events["Refunded"]
+	if !ok {
+		return nil, false
+	}
+	contractAddr := common.HexToAddress(batchsettlement.BatchSettlementAddress)
+	wantChannel := common.HexToHash(channelId)
+	for _, log := range receipt.Logs {
+		if log == nil || log.Address != contractAddr || len(log.Topics) < 2 || log.Topics[0] != event.ID {
+			continue
+		}
+		if log.Topics[1] != wantChannel {
+			continue
+		}
+		values, err := event.Inputs.NonIndexed().Unpack(log.Data)
+		if err != nil || len(values) == 0 {
+			continue
+		}
+		if v, ok := values[0].(*big.Int); ok {
+			return v, true
+		}
+	}
+	return nil, false
 }
 
 // refundSettlementDetails captures the per-refund response fields the

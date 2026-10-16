@@ -326,6 +326,11 @@ class FacilitatorWeb3Signer:
         """The signer's Ethereum address (checksummed)."""
         return self._account.address
 
+    @property
+    def web3(self):
+        """web3.py instance used for RPC and receipt-log decoding."""
+        return self._w3
+
     def get_addresses(self) -> list[str]:
         """Get all addresses this facilitator can use.
 
