@@ -24,7 +24,7 @@ import {
   buildCloseResponse,
   formatStartupBanner,
 } from "../index.ts";
-import { buildResolvedRouteConfig } from "../config";
+import { MCP_SSE_PATH, buildResolvedRouteConfig } from "../config";
 import { PROTECTED_ROUTE_MESSAGE, sdkRouteToEndpoint, mcpToolName } from "../../../src/mechanisms";
 
 const cfg = loadServerEnv();
@@ -43,7 +43,7 @@ async function main(): Promise<void> {
 
   const facilitatorClients = createFacilitatorClients(facilitatorUrl);
   const resourceServer = new x402ResourceServer(facilitatorClients);
-  await configureResourceServer(resourceServer, cfg, facilitatorClients[0]);
+  await configureResourceServer(resourceServer, cfg, facilitatorClients[0], "mcp");
   // Unlike x402HTTPResourceServer (used by paymentMiddleware), the raw
   // x402ResourceServer used by createPaymentWrapper doesn't lazily initialize
   // on first call, so this must run before any buildPaymentRequirements call.
@@ -87,7 +87,7 @@ async function main(): Promise<void> {
   const app = express();
   const transports = new Map<string, SSEServerTransport>();
 
-  app.get("/sse", async (_req, res) => {
+  app.get(MCP_SSE_PATH, async (_req, res) => {
     const transport = new SSEServerTransport("/messages", res);
     // Key by the transport's own session id (the same id it sends the client
     // via the `endpoint` SSE event and expects back as `?sessionId=` on

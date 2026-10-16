@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
+ * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "lnbtc" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
  */
 
 import {
@@ -31,6 +31,9 @@ import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { UptoSvmScheme } from "@x402/svm/upto/client";
 import { toClientKeetaSigner } from "@x402/keeta";
 import { ExactKeetaScheme } from "@x402/keeta/exact/client";
+import { decodeInvoice, httpRequestBinding } from "@x402/lnbtc";
+import { ExactLnbtcScheme } from "@x402/lnbtc/exact/client";
+import { NWCClient, Nip47WalletError } from "@getalby/sdk";
 import {
   createClientNearSigner,
   NEAR_TESTNET_CAIP2,
@@ -67,6 +70,7 @@ const ccdPrivateKey = process.env.CCD_PRIVATE_KEY as string | undefined;
 const ccdAddress = process.env.CCD_ADDRESS as string | undefined;
 const evmPrivateKey = process.env.EVM_PRIVATE_KEY as `0x${string}` | undefined;
 const keetaMnemonic = process.env.KEETA_MNEMONIC as string | undefined;
+const lnbtcNwcUrl = process.env.LNBTC_NWC_URL as string | undefined;
 const nearAccountId = process.env.NEAR_ACCOUNT_ID as string | undefined;
 const nearPrivateKey = process.env.NEAR_PRIVATE_KEY as
   | ClientNearSignerConfig["secretKey"]
@@ -123,6 +127,7 @@ async function main(): Promise<void> {
     !(ccdPrivateKey && ccdAddress) &&
     !evmPrivateKey &&
     !keetaMnemonic &&
+    !lnbtcNwcUrl &&
     !(nearAccountId && nearPrivateKey) &&
     !svmPrivateKey &&
     !stellarPrivateKey &&
@@ -131,7 +136,7 @@ async function main(): Promise<void> {
     !xrplSeed
   ) {
     console.error(
-      "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CARDANO_MNEMONIC, CASPER_PRIVATE_KEY, CCD_PRIVATE_KEY + CCD_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_ACCOUNT_ID + NEAR_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY, TVM_PRIVATE_KEY, or XRPL_SEED is required",
+      "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CARDANO_MNEMONIC, CASPER_PRIVATE_KEY, CCD_PRIVATE_KEY + CCD_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, LNBTC_NWC_URL, NEAR_ACCOUNT_ID + NEAR_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY, TVM_PRIVATE_KEY, or XRPL_SEED is required",
     );
     process.exit(1);
   }
@@ -140,6 +145,7 @@ async function main(): Promise<void> {
     allowedAssets: [
       { network: "xrpl:*", asset: "XRP" },
       { network: "ccd:*", asset: "CCD" },
+      { network: "lnbtc:*", asset: "BTC" },
     ],
   });
 
@@ -227,6 +233,39 @@ async function main(): Promise<void> {
     console.log(`Initialized Keeta account: ${keetaAccount.publicKeyString.toString()}`);
   }
 
+  // Register Lightning scheme if an NWC connection is provided
+  const nwc = lnbtcNwcUrl ? new NWCClient({ nostrWalletConnectUrl: lnbtcNwcUrl }) : null;
+  if (nwc) {
+    client.register(
+      "lnbtc:*",
+      new ExactLnbtcScheme({
+        payer: {
+          async payInvoice(invoice) {
+            const { paymentHash, amountMsat } = decodeInvoice(invoice);
+            try {
+              const { preimage } = await nwc.payInvoice({ invoice });
+              return { invoice, paymentHash, amountMsat, status: "paid", preimage };
+            } catch (error) {
+              // Only a wallet error response means unpaid. A timeout or relay error may still
+              // complete: report it in flight, never pay twice.
+              const inFlight = !(error instanceof Nip47WalletError);
+              return {
+                invoice,
+                paymentHash,
+                amountMsat,
+                status: inFlight ? "in_flight" : "unpaid",
+              };
+            }
+          },
+        },
+        // The request this client intends to pay for; invoices bound to anything else are refused.
+        requestBinding: () =>
+          httpRequestBinding({ method: "GET", url, boundHeaders: [], getHeader: () => undefined }),
+      }),
+    );
+    console.log("Initialized Lightning wallet over NWC");
+  }
+
   // Register NEAR scheme if account and private key are provided
   if (nearAccountId && nearPrivateKey) {
     const nearSigner = createClientNearSigner({
@@ -298,6 +337,8 @@ async function main(): Promise<void> {
     response.headers.get(name),
   );
   console.log("\nPayment response:", JSON.stringify(paymentResponse, null, 2));
+  // The NWC relay connection keeps the process alive until closed.
+  nwc?.close();
 }
 
 main().catch(error => {

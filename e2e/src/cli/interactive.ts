@@ -389,7 +389,7 @@ export async function runInteractiveMode(
       message: 'Select asset transfer methods',
       choices: atmChoices,
       min: 1,
-      hint: 'eip3009, permit2 (EVM); sequence, ticketSequence (XRPL)',
+      hint: 'eip3009, permit2 (EVM); sequence, ticketSequence (XRPL); bolt11 (Lightning)',
       instructions: false,
     });
 

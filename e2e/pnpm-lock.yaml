@@ -1809,6 +1809,82 @@ importers:
         specifier: ^3.2.7
         version: 3.2.7(@types/debug@4.1.12)(@types/node@22.16.0)(jiti@1.21.7)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(terser@5.46.2)(tsx@4.21.0)(yaml@2.8.1)
 
+  ../typescript/packages/mechanisms/lnbtc:
+    dependencies:
+      '@noble/curves':
+        specifier: ^1.9.0
+        version: 1.9.7
+      '@noble/hashes':
+        specifier: ^1.8.0
+        version: 1.8.0
+      '@scure/base':
+        specifier: ^1.2.6
+        version: 1.2.6
+      '@x402/core':
+        specifier: workspace:~
+        version: link:../../core
+    devDependencies:
+      '@eslint/js':
+        specifier: ^9.24.0
+        version: 9.38.0
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.12.1
+        version: 1.25.3(hono@4.10.2)(zod@3.25.71)
+      '@types/node':
+        specifier: ^22.13.4
+        version: 22.16.0
+      '@typescript-eslint/eslint-plugin':
+        specifier: ^8.29.1
+        version: 8.48.0(@typescript-eslint/parser@8.48.0(eslint@9.38.0(jiti@1.21.7))(typescript@5.8.3))(eslint@9.38.0(jiti@1.21.7))(typescript@5.8.3)
+      '@typescript-eslint/parser':
+        specifier: ^8.29.1
+        version: 8.48.0(eslint@9.38.0(jiti@1.21.7))(typescript@5.8.3)
+      '@vitest/coverage-v8':
+        specifier: ^3.2.7
+        version: 3.2.7(vitest@3.2.7(@types/debug@4.1.12)(@types/node@22.16.0)(jiti@1.21.7)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(terser@5.46.2)(tsx@4.21.0)(yaml@2.8.1))
+      '@x402/mcp':
+        specifier: workspace:~
+        version: link:../../mcp
+      eslint:
+        specifier: ^9.24.0
+        version: 9.38.0(jiti@1.21.7)
+      eslint-plugin-import:
+        specifier: ^2.31.0
+        version: 2.32.0(@typescript-eslint/parser@8.48.0(eslint@9.38.0(jiti@1.21.7))(typescript@5.8.3))(eslint-import-resolver-typescript@3.10.1)(eslint@9.38.0(jiti@1.21.7))
+      eslint-plugin-jsdoc:
+        specifier: ^50.6.9
+        version: 50.8.0(eslint@9.38.0(jiti@1.21.7))
+      eslint-plugin-prettier:
+        specifier: ^5.2.6
+        version: 5.5.4(eslint@9.38.0(jiti@1.21.7))(prettier@3.5.2)
+      eslint-plugin-sonarjs:
+        specifier: ^3.0.7
+        version: 3.0.7(eslint@9.38.0(jiti@1.21.7))
+      prettier:
+        specifier: 3.5.2
+        version: 3.5.2
+      tsup:
+        specifier: ^8.4.0
+        version: 8.5.0(jiti@1.21.7)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.8.3)(yaml@2.8.1)
+      tsx:
+        specifier: ^4.21.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.3
+        version: 5.8.3
+      vite:
+        specifier: ^6.2.6
+        version: 6.4.1(@types/node@22.16.0)(jiti@1.21.7)(terser@5.46.2)(tsx@4.21.0)(yaml@2.8.1)
+      vite-tsconfig-paths:
+        specifier: ^5.1.4
+        version: 5.1.4(typescript@5.8.3)(vite@6.4.1(@types/node@22.16.0)(jiti@1.21.7)(terser@5.46.2)(tsx@4.21.0)(yaml@2.8.1))
+      vitest:
+        specifier: ^3.2.7
+        version: 3.2.7(@types/debug@4.1.12)(@types/node@22.16.0)(jiti@1.21.7)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(terser@5.46.2)(tsx@4.21.0)(yaml@2.8.1)
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.71
+
   ../typescript/packages/mechanisms/near:
     dependencies:
       '@near-js/crypto':
@@ -2161,6 +2237,9 @@ importers:
       '@concordium/web-sdk':
         specifier: ^12.0.0
         version: 12.0.2(@protobuf-ts/runtime-rpc@2.11.1)(cbor2@1.12.0)
+      '@getalby/sdk':
+        specifier: ^8.0.3
+        version: 8.0.3(typescript@5.8.3)
       '@keetanetwork/keetanet-client':
         specifier: ^0.18.1
         version: 0.18.1
@@ -2224,6 +2303,9 @@ importers:
       '@x402/keeta':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/keeta
+      '@x402/lnbtc':
+        specifier: workspace:*
+        version: link:../../../typescript/packages/mechanisms/lnbtc
       '@x402/mcp':
         specifier: workspace:*
         version: link:../../../typescript/packages/mcp
@@ -2417,6 +2499,9 @@ importers:
       '@x402/keeta':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/keeta
+      '@x402/lnbtc':
+        specifier: workspace:*
+        version: link:../../../typescript/packages/mechanisms/lnbtc
       '@x402/near':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/near
@@ -2738,6 +2823,9 @@ importers:
 
   servers/typescript:
     dependencies:
+      '@getalby/sdk':
+        specifier: ^8.0.3
+        version: 8.0.3(typescript@5.8.3)
       '@hono/node-server':
         specifier: ^1.14.0
         version: 1.19.9(hono@4.10.2)
@@ -2783,6 +2871,9 @@ importers:
       '@x402/keeta':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/keeta
+      '@x402/lnbtc':
+        specifier: workspace:*
+        version: link:../../../typescript/packages/mechanisms/lnbtc
       '@x402/mcp':
         specifier: workspace:*
         version: link:../../../typescript/packages/mcp
@@ -2829,6 +2920,9 @@ importers:
 
   servers/typescript/http/next:
     dependencies:
+      '@getalby/sdk':
+        specifier: ^8.0.3
+        version: 8.0.3(typescript@5.8.3)
       '@x402/aptos':
         specifier: workspace:*
         version: link:../../../../../typescript/packages/mechanisms/aptos
@@ -2859,6 +2953,9 @@ importers:
       '@x402/keeta':
         specifier: workspace:*
         version: link:../../../../../typescript/packages/mechanisms/keeta
+      '@x402/lnbtc':
+        specifier: workspace:*
+        version: link:../../../../../typescript/packages/mechanisms/lnbtc
       '@x402/near':
         specifier: workspace:*
         version: link:../../../../../typescript/packages/mechanisms/near
@@ -4094,6 +4191,14 @@ packages:
     resolution: {integrity: sha512-vv9aozWnKrrPWQ3vIFcWk7yta4hQW1Ie0fsNNPeXnjAxkbXr2hqMagEptLuMxpEP2W3mnRu05VDNKzcvAuuZDw==}
     peerDependencies:
       viem: '>=2.0.0'
+
+  '@getalby/lightning-tools@8.2.0':
+    resolution: {integrity: sha512-eL+cnHyzeUARKVzNRuFBRBppAU5RBJOLjhFVzSWt8hDibRzL5+e4hq8I79+RGHfrWWMUDv382Jx8ewOazrBj7w==}
+    engines: {node: '>=14'}
+
+  '@getalby/sdk@8.0.3':
+    resolution: {integrity: sha512-vPEogAWwLHbL55COeXrRN7yRBXMDGDxX1M2A+o3Lqw60FFng6fa9FK9sw8ptdILMD1dQZq8FzPXuabQ7seoDBA==}
+    engines: {node: '>=22'}
 
   '@google-cloud/common@5.0.2':
     resolution: {integrity: sha512-V7bmBKYQyu0eVG2BFejuUjlBt+zrya6vtsKdY+JxMM/dNntPF41vZ9+LhOshEUH01zOHEqBSvI7Dad7ZS6aUeA==}
@@ -5388,6 +5493,9 @@ packages:
   '@scure/base@1.2.6':
     resolution: {integrity: sha512-g/nm5FgUa//MCj1gV09zTJTaM6KBAHqLN907YVQqf7zC49+DcO4B1so4ZX07Ef10Twr6nuqYEH9GEggFXA4Fmg==}
 
+  '@scure/base@2.0.0':
+    resolution: {integrity: sha512-3E1kpuZginKkek01ovG8krQ0Z44E3DHPjc5S2rjJw9lZn3KSQOs8S7wqikF/AH7iRanHypj85uGyxk0XAyC37w==}
+
   '@scure/base@2.2.0':
     resolution: {integrity: sha512-b8XEupJibegiXV+tDUseI8oLQc8ei3d/4Jkb2RpbHh3MfE054ov3uIz2dhFkB3FI8iwYkEh0gGCApkrYggkPNg==}
 
@@ -5403,6 +5511,9 @@ packages:
   '@scure/bip32@1.7.0':
     resolution: {integrity: sha512-E4FFX/N3f4B80AKWp5dP6ow+flD1LQZo/w8UnLGYZO674jS6YnYeepycOOksv+vLPSpgN35wgKgy+ybfTb2SMw==}
 
+  '@scure/bip32@2.0.1':
+    resolution: {integrity: sha512-4Md1NI5BzoVP+bhyJaY3K6yMesEFzNS1sE/cP+9nuvE7p/b0kx9XbpDHHFl8dHtufcbdHRUUQdRqLIPHN/s7yA==}
+
   '@scure/bip32@2.3.0':
     resolution: {integrity: sha512-mMPjNcXxJsvNveIgRIXrnwd4omu0wdXo4JowAUZO7/82+/bpAwVltclx6MG6nv2M3dA6IbfVv4xwWxaREm3OcA==}
 
@@ -5414,6 +5525,9 @@ packages:
 
   '@scure/bip39@1.6.0':
     resolution: {integrity: sha512-+lF0BbLiJNwVlev4eKelw1WWLaiKXw7sSl8T6FvBlWkdX+94aGJ4o8XjUdlyhTCjd8c+B3KT3JfS8P0bLRNU6A==}
+
+  '@scure/bip39@2.0.1':
+    resolution: {integrity: sha512-PsxdFj/d2AcJcZDX1FXN3dDgitDDTmwf78rKZq1a6c1P1Nan1X/Sxc7667zU3U+AN60g7SxxP0YCVw2H/hBycg==}
 
   '@scure/bip39@2.3.0':
     resolution: {integrity: sha512-qdyWuxoYwi3+YmqIsfkpz1I029m980WkVPilj+kG7VxSm+gKQ2BmQru3nv3LbMtpSUXuyZwdFT65JkpKu5OHOQ==}
@@ -10307,6 +10421,17 @@ packages:
     resolution: {integrity: sha512-DlL+XwOy3NxAQ8xuC0okPgK46iuVNAK01YN7RueYBqqFeGsBjV9XmCAzAdgt+667bCl5kPh9EqKKDwnaPG1I7A==}
     engines: {node: '>=10'}
 
+  nostr-tools@2.25.2:
+    resolution: {integrity: sha512-7JAx+brEPmqGz1yzaK9MOxvis/Nl1B38j9hVsBSRDMRmxk5XSc0+5LlPEYbzeiUyk41RURBDcfuMzmaT754HAg==}
+    peerDependencies:
+      typescript: '>=5.0.0'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+
+  nostr-wasm@0.1.0:
+    resolution: {integrity: sha512-78BTryCLcLYv96ONU8Ws3Q1JzjlAt+43pWQhIl86xZmWeegYCNLPml7yQ+gG3vR6V5h4XGj+TxO+SS5dsThQIA==}
+
   nth-check@2.1.1:
     resolution: {integrity: sha512-lqjrjmaOoAnWfMmBPL+XNnynZh2+swxiX3WUE0s4yEHI6m+AwrK2UZOimIRl3X/4QctVqS8AiZjFqyOGrMXb/w==}
 
@@ -13903,6 +14028,15 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  '@getalby/lightning-tools@8.2.0': {}
+
+  '@getalby/sdk@8.0.3(typescript@5.8.3)':
+    dependencies:
+      '@getalby/lightning-tools': 8.2.0
+      nostr-tools: 2.25.2(typescript@5.8.3)
+    transitivePeerDependencies:
+      - typescript
+
   '@google-cloud/common@5.0.2':
     dependencies:
       '@google-cloud/projectify': 4.0.0
@@ -15848,6 +15982,8 @@ snapshots:
 
   '@scure/base@1.2.6': {}
 
+  '@scure/base@2.0.0': {}
+
   '@scure/base@2.2.0': {}
 
   '@scure/base@2.3.0': {}
@@ -15870,6 +16006,12 @@ snapshots:
       '@noble/hashes': 1.8.0
       '@scure/base': 1.2.6
 
+  '@scure/bip32@2.0.1':
+    dependencies:
+      '@noble/curves': 2.0.1
+      '@noble/hashes': 2.0.1
+      '@scure/base': 2.0.0
+
   '@scure/bip32@2.3.0':
     dependencies:
       '@noble/curves': 2.3.0
@@ -15890,6 +16032,11 @@ snapshots:
     dependencies:
       '@noble/hashes': 1.8.0
       '@scure/base': 1.2.6
+
+  '@scure/bip39@2.0.1':
+    dependencies:
+      '@noble/hashes': 2.0.1
+      '@scure/base': 2.0.0
 
   '@scure/bip39@2.3.0':
     dependencies:
@@ -23688,6 +23835,20 @@ snapshots:
   normalize-path@3.0.0: {}
 
   normalize-url@6.1.0: {}
+
+  nostr-tools@2.25.2(typescript@5.8.3):
+    dependencies:
+      '@noble/ciphers': 2.1.1
+      '@noble/curves': 2.0.1
+      '@noble/hashes': 2.0.1
+      '@scure/base': 2.0.0
+      '@scure/bip32': 2.0.1
+      '@scure/bip39': 2.0.1
+      nostr-wasm: 0.1.0
+    optionalDependencies:
+      typescript: 5.8.3
+
+  nostr-wasm@0.1.0: {}
 
   nth-check@2.1.1:
     dependencies:

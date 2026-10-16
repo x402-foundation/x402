@@ -13,13 +13,21 @@ import {
   encodePaymentRequiredHeader,
   encodePaymentResponseHeader,
 } from "@x402/core/http";
+import { mcpToolCallBinding } from "@x402/lnbtc";
 import { createE2EClient, runClientScenario, type RequestResult } from "../index.ts";
 
 const serverUrl = process.env.RESOURCE_SERVER_URL as string;
 const endpointPath = process.env.ENDPOINT_PATH as string; // tool name, e.g. "exact_evm_eip3009"
 const toolResourceUrl = `mcp://tool/${endpointPath}`;
+/** The MCP endpoint this client connects to: lnbtc's server identity for tool calls. */
+const sseUrl = `${serverUrl}/sse`;
+/** The tool call this client makes; lnbtc pays only invoices bound to it. */
+const toolCall = { name: endpointPath, arguments: {} as Record<string, unknown> };
 
-const { schemes, batchSettlementScheme, batchSettlementPhase } = await createE2EClient();
+const { schemes, batchSettlementScheme, batchSettlementPhase } = await createE2EClient({
+  lnbtcRequestBinding: () =>
+    mcpToolCallBinding({ server: sseUrl, ...toolCall, boundMetadata: [] }),
+});
 
 // createx402MCPClient builds its own MCP `Client`, matching the
 // `@modelcontextprotocol/sdk` version @x402/mcp resolves internally (which
@@ -56,7 +64,7 @@ function parseToolData(result: Awaited<ReturnType<typeof x402Mcp.callTool>>): un
 }
 
 async function issueRequest(): Promise<RequestResult> {
-  const result = await x402Mcp.callTool(endpointPath, {});
+  const result = await x402Mcp.callTool(toolCall.name, toolCall.arguments);
   return {
     success: result.paymentResponse?.success ?? !result.isError,
     data: parseToolData(result),
@@ -106,7 +114,7 @@ const mcpRefundFetch: typeof fetch = async (_input, init) => {
 };
 
 try {
-  const transport = new SSEClientTransport(new URL(`${serverUrl}/sse`));
+  const transport = new SSEClientTransport(new URL(sseUrl));
   await x402Mcp.connect(transport);
 
   // runClientScenario prints the JSON result and calls process.exit() itself.

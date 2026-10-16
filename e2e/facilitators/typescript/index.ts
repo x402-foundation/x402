@@ -83,6 +83,8 @@ import {
 } from "@x402/stellar";
 import { toFacilitatorKeetaSigner, FacilitatorKeetaSigner } from "@x402/keeta";
 import { ExactKeetaScheme } from "@x402/keeta/exact/facilitator";
+import { InMemoryReplayStore } from "@x402/lnbtc";
+import { ExactLnbtcScheme } from "@x402/lnbtc/exact/facilitator";
 import { ExactStellarScheme } from "@x402/stellar/exact/facilitator";
 import {
   getConcordiumGrpcUrl,
@@ -143,6 +145,7 @@ const CASPER_NETWORK = resolveNetworkCaip2("casper");
 const NEAR_RPC_URL = process.env.NEAR_RPC_URL;
 const XRPL_NETWORK = resolveNetworkCaip2("xrpl");
 const XRPL_RPC_URL = process.env.XRPL_RPC_URL;
+const LNBTC_NETWORK = resolveNetworkCaip2("lnbtc");
 const CCD_NETWORK = resolveNetworkCaip2("ccd");
 const CARDANO_NETWORK = resolveNetworkCaip2("cardano");
 const CARDANO_RPC_URL = process.env.CARDANO_RPC_URL;
@@ -177,6 +180,7 @@ console.log(`🌐 Casper Network: ${CASPER_NETWORK}`);
 console.log(`🌐 AVM Network: ${AVM_NETWORK}`);
 console.log(`🌐 Hedera Network: ${HEDERA_NETWORK}`);
 console.log(`🌐 Keeta Network: ${KEETA_NETWORK}`);
+console.log(`🌐 Lightning Network: ${LNBTC_NETWORK}`);
 console.log(`🌐 Stellar Network: ${STELLAR_NETWORK}`);
 console.log(`🌐 TVM Network: ${TVM_NETWORK}`);
 console.log(`🌐 CCD Network: ${CCD_NETWORK}`);
@@ -208,6 +212,7 @@ const hasFacilitatorCredential = [
   process.env.FACILITATOR_CCD_PRIVATE_KEY &&
     process.env.FACILITATOR_CCD_ADDRESS,
   process.env.XRPL_NETWORK, // keyless XRPL facilitator
+  process.env.LNBTC_NETWORK, // keyless Lightning facilitator (verifies preimages locally)
   process.env.BLOCKFROST_PROJECT_ID, // Cardano runs provider-only without a mnemonic
 ].some(Boolean);
 
@@ -817,6 +822,20 @@ if (process.env.XRPL_NETWORK) {
     `XRPL facilitator enabled on ${XRPL_NETWORK} (payer-signed; no facilitator signer)`,
   );
 }
+if (process.env.LNBTC_NETWORK) {
+  facilitator.register(
+    LNBTC_NETWORK as Network,
+    new ExactLnbtcScheme({
+      // The harness runs a single TypeScript facilitator process per run, so one
+      // in-process store sees every settlement. Production needs a restart-durable
+      // store shared by every instance that settles for the same receiver.
+      replayStore: new InMemoryReplayStore(),
+    }),
+  );
+  console.info(
+    `Lightning facilitator enabled on ${LNBTC_NETWORK} (local preimage checks; no node access)`,
+  );
+}
 if (concordiumSigner) {
   facilitator.register(
     CCD_NETWORK as Network,
@@ -1187,6 +1206,9 @@ app.get("/health", (req, res) => {
     stellarNetwork: stellarSigner ? STELLAR_NETWORK : "(not configured)",
     nearNetwork: nearSigner ? NEAR_NETWORK : "(not configured)",
     xrplNetwork: process.env.XRPL_NETWORK ? XRPL_NETWORK : "(not configured)",
+    lnbtcNetwork: process.env.LNBTC_NETWORK
+      ? LNBTC_NETWORK
+      : "(not configured)",
     ccdNetwork: concordiumSigner ? CCD_NETWORK : "(not configured)",
     cardanoNetwork: cardanoSigner ? CARDANO_NETWORK : "(not configured)",
     facilitator: "typescript",
@@ -1227,6 +1249,7 @@ let server = app.listen(parseInt(PORT), () => {
 ║  Keeta Network: ${KEETA_NETWORK}                       ║
 ║  NEAR Network: ${NEAR_NETWORK}                         ║
 ║  XRPL Network: ${XRPL_NETWORK}                         ║
+║  Lightning Network: ${LNBTC_NETWORK}                   ║
 ║  CCD Network:  ${CCD_NETWORK}                          ║
 ║  EVM Address:  ${evmAccount?.address ?? "(not configured)"}                   ║
 ║  AVM Address:  ${avmSigner ? avmSigner.getAddresses()[0] : "(not configured)"}

@@ -17,6 +17,7 @@ import {
   buildResolvedRouteConfig,
   configureResourceServer,
   createFacilitatorClients,
+  httpRouteResource,
 } from "../../../config";
 
 export async function createResourceServer(cfg: ServerEnvConfig): Promise<x402ResourceServer> {
@@ -33,7 +34,10 @@ export function buildWithX402RouteConfig(
   if (!route) {
     return null;
   }
-  return buildResolvedRouteConfig(route) as unknown as RouteConfig;
+  return {
+    ...buildResolvedRouteConfig(route),
+    ...httpRouteResource(route, cfg, nextWithX402HttpPath(catalogPath)),
+  } as unknown as RouteConfig;
 }
 
 function buildWithX402Handler(catalogPath: string, cfg: ServerEnvConfig) {
