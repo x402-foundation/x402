@@ -22,9 +22,11 @@ import type {
   ServerHookContext,
   AfterExecutionContext,
   SettlementContext,
+  MCPRawToolCall,
 } from "../types";
 import { MCP_PAYMENT_RESPONSE_META_KEY } from "../types";
 import { createToolResourceUrl, extractPaymentFromMeta } from "../utils";
+import { getRawToolCall } from "./rawToolCall";
 
 /**
  * Configuration for payment wrapper.
@@ -114,10 +116,29 @@ export interface ToolResult {
   isError?: boolean;
 }
 
-interface MCPPaymentTransportContext {
+/**
+ * Transport context the payment wrapper passes to the x402 resource server
+ * (`createPaymentRequiredResponse`, `verifyPayment`, `settlePayment`, and
+ * cancellation), and from there to payment schemes and extensions.
+ */
+export interface MCPPaymentTransportContext {
+  /**
+   * The tool name: the actual `params.name` when the call was captured (see
+   * `rawToolCall`); otherwise derived from `resource.url` (`mcp://tool/<name>`),
+   * or `"paid_tool"` when no resource URL is configured.
+   */
   toolName: string;
+  /** The tool arguments after the MCP SDK validated them against the input schema. */
   arguments: Record<string, unknown>;
+  /** The request's `_meta`, as passed to the tool callback. */
   meta?: Record<string, unknown>;
+  /**
+   * The `tools/call` params exactly as received, before input validation.
+   * Present only when the server opted in with `captureRawToolCalls`; schemes
+   * that bind the payment to the request should require it.
+   */
+  rawToolCall?: MCPRawToolCall;
+  /** The tool result; set once the handler has returned, before settlement. */
   result?: ToolResult | WrappedToolResult;
 }
 
@@ -250,8 +271,11 @@ async function processPaidToolCall<TArgs extends Record<string, unknown>>(
 ): Promise<WrappedToolResult> {
   // Extract _meta from extra if it's an object
   const _meta = (extra as { _meta?: Record<string, unknown> })?._meta;
-  // Derive toolName from resource URL if available, otherwise use placeholder
-  const toolName = config.resource?.url?.replace("mcp://tool/", "") || "paid_tool";
+  // The request as received, when the server opted in with captureRawToolCalls
+  const rawToolCall = getRawToolCall(extra);
+  // Prefer the actual tool name; otherwise derive it from the resource URL or use a placeholder
+  const toolName =
+    rawToolCall?.name ?? (config.resource?.url?.replace("mcp://tool/", "") || "paid_tool");
 
   const context: MCPToolContext = {
     toolName,
@@ -263,6 +287,9 @@ async function processPaidToolCall<TArgs extends Record<string, unknown>>(
     arguments: args,
     meta: _meta,
   };
+  if (rawToolCall) {
+    transportContext.rawToolCall = rawToolCall;
+  }
 
   // Extract payment from _meta if present
   const paymentPayload = extractPaymentFromMeta({

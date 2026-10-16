@@ -203,6 +203,43 @@ const paid = createPaymentWrapper(resourceServer, {
 });
 ```
 
+### Raw Tool Calls for Request-Bound Schemes
+
+The MCP SDK validates tool arguments against the tool's input schema before it calls the tool, so a paid tool normally sees arguments with defaults applied and unknown keys removed, and never sees the tool name. Schemes that bind a payment to the request itself need the call exactly as the client sent it. Opt in with `captureRawToolCalls` right after creating the server and before registering any tool:
+
+```typescript
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { captureRawToolCalls, createPaymentWrapper } from "@x402/mcp";
+
+const mcpServer = new McpServer({ name: "articles", version: "1.0.0" });
+captureRawToolCalls(mcpServer); // before the first tool registration
+
+const paid = createPaymentWrapper(resourceServer, { accepts });
+mcpServer.registerTool(
+  "get_article",
+  { inputSchema: { article: z.string(), lang: z.string().default("en") } },
+  paid(async ({ article, lang }) => ({ content: [{ type: "text", text: await load(article, lang) }] })),
+);
+```
+
+A call to `get_article` with arguments `{ "article": "A" }` then reaches the resource server and its schemes with this transport context:
+
+```typescript
+{
+  toolName: "get_article",                       // the actual params.name
+  arguments: { article: "A", lang: "en" },       // validated, as the tool sees them
+  meta: undefined,                               // params._meta, as the tool sees it
+  rawToolCall: {                                 // params exactly as received
+    name: "get_article",
+    arguments: { article: "A" },
+  },
+}
+```
+
+With capture, `toolName` in hooks and contexts and the default resource URL (`mcp://tool/<name>`) also use the actual tool name. `rawToolCall` is a frozen deep copy taken when the request arrived; members the client omitted (`arguments`, `_meta`) are absent. `_meta` includes protocol members such as `x402/payment` and `progressToken`, so a scheme must exclude what its binding does not cover. `captureRawToolCalls` throws if a `tools/call` handler already exists, and calling it twice is a no-op. It also accepts a low-level `Server`; pass your handler's `extra` argument unchanged to the paid tool callback.
+
+Without `captureRawToolCalls` the context has no `rawToolCall`, and `toolName` comes from `resource.url` (`mcp://tool/<name>`), or is `"paid_tool"` when no URL is configured. A scheme that binds the request should refuse to issue requirements when `rawToolCall` is missing rather than bind the validated arguments.
+
 ### Client - Wrapper Functions
 
 ```typescript
