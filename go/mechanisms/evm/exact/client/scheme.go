@@ -12,13 +12,15 @@ import (
 	"github.com/x402-foundation/x402/go/v2/extensions/eip2612gassponsor"
 	"github.com/x402-foundation/x402/go/v2/extensions/erc20approvalgassponsor"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/internal/clientutil"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // ExactEvmScheme implements the SchemeNetworkClient interface for EVM exact payments (V2)
 type ExactEvmScheme struct {
-	signer evm.ClientEvmSigner
-	config *ExactEvmSchemeConfig
+	signer   evm.ClientEvmSigner
+	config   *ExactEvmSchemeConfig
+	warnings *clientutil.WarningSet
 }
 
 // NewExactEvmScheme creates a new ExactEvmScheme.
@@ -26,8 +28,9 @@ type ExactEvmScheme struct {
 // Extension enrichment paths use optional runtime capabilities.
 func NewExactEvmScheme(signer evm.ClientEvmSigner, config *ExactEvmSchemeConfig) *ExactEvmScheme {
 	return &ExactEvmScheme{
-		signer: signer,
-		config: config,
+		signer:   signer,
+		config:   config,
+		warnings: &clientutil.WarningSet{},
 	}
 }
 
@@ -117,6 +120,12 @@ func (c *ExactEvmScheme) trySignEip2612Permit(
 		return nil, err
 	}
 	if readSigner == nil {
+		c.warnings.WarnMissingCapability(
+			"exact",
+			string(requirements.Network),
+			eip2612gassponsor.EIP2612GasSponsoring.Key(),
+			"the client cannot read contracts; configure ExactEvmSchemeConfig.RPCURL or RPCByChainID, or use an RPC-backed signer such as one created with signers/evm.NewClientSignerFromPrivateKeyWithClient",
+		)
 		return nil, nil
 	}
 
@@ -180,19 +189,6 @@ func (c *ExactEvmScheme) trySignErc20Approval(
 		return nil, nil
 	}
 
-	txSigner, err := c.resolveTxSigner(ctx, requirements.Network)
-	if err != nil {
-		return nil, err
-	}
-	if txSigner == nil {
-		return nil, nil
-	}
-
-	chainID, err := evm.GetEvmChainId(string(requirements.Network))
-	if err != nil {
-		return nil, err
-	}
-
 	tokenAddress := evm.NormalizeAddress(requirements.Asset)
 
 	// If read capability exists, skip signing when Permit2 allowance is already sufficient.
@@ -213,6 +209,25 @@ func (c *ExactEvmScheme) trySignErc20Approval(
 				}
 			}
 		}
+	}
+
+	txSigner, err := c.resolveTxSigner(ctx, requirements.Network)
+	if err != nil {
+		return nil, err
+	}
+	if txSigner == nil {
+		c.warnings.WarnMissingCapability(
+			"exact",
+			string(requirements.Network),
+			erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key(),
+			"the client cannot sign an ERC-20 approval transaction; configure ExactEvmSchemeConfig.RPCURL or RPCByChainID for RPC access and provide transaction-signing support, or use an RPC-backed signer such as one created with signers/evm.NewClientSignerFromPrivateKeyWithClient",
+		)
+		return nil, nil
+	}
+
+	chainID, err := evm.GetEvmChainId(string(requirements.Network))
+	if err != nil {
+		return nil, err
 	}
 
 	// Sign the approve transaction

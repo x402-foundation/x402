@@ -250,6 +250,10 @@ Deposits use one of two onchain transfer methods, controlled by `extra.assetTran
 
 Deposits are sponsored by the facilitator (gasless for the client).
 
+### Permit2 Approval Gas Sponsoring
+
+When a server advertises EIP-2612 gas sponsoring for a Permit2 deposit, the client needs a functional RPC-backed signer implementing `evm.ClientEvmSignerWithReadContract`. ERC-20 approval gas sponsoring requires a functional `evm.ClientEvmSignerWithTxSigning`. Unlike the exact and upto clients, batch-settlement has no RPC fallback in its options, so create the standard signer with `evmsigners.NewClientSignerFromPrivateKeyWithClient` or provide equivalent capabilities. If an advertised extension cannot use its required signer capability, the client keeps the existing payment behavior and logs an actionable warning.
+
 ## Examples
 
 - [Client example](../../../../../examples/go/clients/batch-settlement)
