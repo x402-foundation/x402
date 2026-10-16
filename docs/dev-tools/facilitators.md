@@ -32,6 +32,7 @@ If you are evaluating a mainnet EVM route, decide on your production facilitator
 | [NEAR x402 Facilitator](https://x402.mikedotexe.com/) | Independent open-source facilitator for exact Circle USDC payments on NEAR and Base, with sponsored gas and durable settlement recovery |
 | [PayAI Facilitator](https://facilitator.payai.network) | Production-grade multi-network facilitator supporting all tokens. No API keys required |
 | [Polygon Facilitator](https://docs.polygon.technology/payment-services/agentic-payments/x402/intro/) | Production-grade x402 facilitator for Polygon Mainnet and Amoy testnet |
+| [Priors Facilitator](https://x402.priors.trade) | x402 v1 and v2 facilitator for Robinhood Chain (`eip155:4663`), settling USDG with EIP-3009; open self-registration, 20 free settles per merchant per day |
 | [Solvador](https://solvador.com) | Multi-network facilitator with broad mainnet coverage across EVM plus Solana and NEAR, supporting multiple schemes and extensions |
 | [T54 XRPL Facilitator](https://xrpl-x402.t54.ai) | Production-grade x402 facilitator for the XRP Ledger, covering mainnet and testnet with XRP and RLUSD support |
 
