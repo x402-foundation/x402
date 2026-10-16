@@ -13,6 +13,7 @@ import {
   SettlementOverrides,
   checkIfBazaarNeeded,
   withPrivateCacheControl,
+  HTTPResponseInstructions,
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
 import { Context, MiddlewareHandler } from "hono";
@@ -66,6 +67,19 @@ function facilitatorErrorResponse(c: Context, error: FacilitatorResponseError): 
 function internalErrorResponse(c: Context, error: unknown): Response {
   console.error(error);
   return c.json({ error: "Internal Server Error" }, 500);
+}
+
+/**
+ * Identifies string bodies that should be sent without JSON serialization.
+ *
+ * @param response - Payment error response instructions.
+ * @returns Whether the body is a string with a non-JSON media type.
+ */
+function isRawStringResponse(response: HTTPResponseInstructions): boolean {
+  const contentType = new Headers(response.headers).get("Content-Type") ?? "";
+  return (
+    typeof response.body === "string" && !/^[^/]+\/(?:[^;]+\+)?json(?:\s*;|$)/i.test(contentType)
+  );
 }
 
 /**
@@ -244,9 +258,11 @@ export function paymentMiddlewareFromHTTPServer(
           c.header(key, value);
         });
         if (response.isHtml) {
-          return c.html(response.body as string, response.status as 402);
+          return c.html(response.body as string, response.status as 402, response.headers);
+        } else if (isRawStringResponse(response)) {
+          return c.body(response.body as string, response.status as 402);
         } else {
-          return c.json(response.body || {}, response.status as 402);
+          return c.json(response.body || {}, response.status as 402, response.headers);
         }
 
       case "payment-verified":
@@ -334,9 +350,10 @@ export function paymentMiddlewareFromHTTPServer(
           if (!settleResult.success) {
             // Settlement failed - do not return the protected resource
             const { response } = settleResult;
-            const body = response.isHtml
-              ? String(response.body ?? "")
-              : JSON.stringify(response.body ?? {});
+            const body =
+              response.isHtml || isRawStringResponse(response)
+                ? String(response.body ?? "")
+                : JSON.stringify(response.body ?? {});
             res = new Response(body, {
               status: response.status,
               headers: response.headers,
