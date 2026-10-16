@@ -2,9 +2,15 @@
  * Client extensions for querying Bazaar discovery resources
  */
 
-import { HTTPFacilitatorClient } from "@x402/core/http";
+import { HTTPFacilitatorClient, readLimitedText } from "@x402/core/http";
 import type { PaymentRequirements } from "@x402/core/types";
 import { WithExtensions } from "../types";
+
+/**
+ * Bounds discovery responses. Catalog pages carry resource extensions and MCP
+ * JSON schemas, so they need more room than control-plane JSON.
+ */
+const MAX_DISCOVERY_RESPONSE_BYTES = 4 << 20;
 
 /**
  * Parameters for listing discovery resources.
@@ -260,13 +266,17 @@ export function withBazaar<T extends HTTPFacilitatorClient>(
         });
 
         if (!response.ok) {
-          const errorText = await response.text().catch(() => response.statusText);
+          const errorText = await readLimitedText(response, MAX_DISCOVERY_RESPONSE_BYTES).catch(
+            () => response.statusText,
+          );
           throw new Error(
             `Facilitator listDiscoveryResources failed (${response.status}): ${errorText}`,
           );
         }
 
-        return (await response.json()) as DiscoveryResourcesResponse;
+        return JSON.parse(
+          await readLimitedText(response, MAX_DISCOVERY_RESPONSE_BYTES),
+        ) as DiscoveryResourcesResponse;
       },
 
       async search(
@@ -311,13 +321,17 @@ export function withBazaar<T extends HTTPFacilitatorClient>(
         });
 
         if (!response.ok) {
-          const errorText = await response.text().catch(() => response.statusText);
+          const errorText = await readLimitedText(response, MAX_DISCOVERY_RESPONSE_BYTES).catch(
+            () => response.statusText,
+          );
           throw new Error(
             `Facilitator searchDiscoveryResources failed (${response.status}): ${errorText}`,
           );
         }
 
-        return (await response.json()) as SearchDiscoveryResourcesResponse;
+        return JSON.parse(
+          await readLimitedText(response, MAX_DISCOVERY_RESPONSE_BYTES),
+        ) as SearchDiscoveryResourcesResponse;
       },
     },
   } as WithExtensions<T, BazaarClientExtension>["extensions"];
