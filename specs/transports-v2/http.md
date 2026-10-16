@@ -19,7 +19,7 @@ The `PAYMENT-REQUIRED` header is the canonical HTTP transport location for the
 ```http
 HTTP/1.1 402 Payment Required
 Content-Type: application/json
-PAYMENT-REQUIRED: eyJ4NDAyVmVyc2lvbiI6MiwiZXJyb3IiOiJQQVlNRU5ULVNJR05BVFVSRSBoZWFkZXIgaXMgcmVxdWlyZWQiLCJyZXNvdXJjZSI6eyJ1cmwiOiJodHRwczovL2FwaS5leGFtcGxlLmNvbS9wcmVtaXVtLWRhdGEiLCJkZXNjcmlwdGlvbiI6IkFjY2VzcyB0byBwcmVtaXVtIG1hcmtldCBkYXRhIiwibWltZVR5cGUiOiJhcHBsaWNhdGlvbi9qc29uIn0sImFjY2VwdHMiOlt7InNjaGVtZSI6ImV4YWN0IiwibmV0d29yayI6ImVpcDE1NTo4NDUzMiIsImFtb3VudCI6IjEwMDAwIiwiYXNzZXQiOiIweDAzNkNiRDUzODQyYzU0MjY2MzRlNzkyOTU0MWVDMjMxOGYzZENGN2UiLCJwYXlUbyI6IjB4MjA5NjkzQmM2YWZjMEM1MzI4YkEzNkZhRjAzQzUxNEVGMzEyMjg3QyIsIm1heFRpbWVvdXRTZWNvbmRzIjo2MCwiZXh0cmEiOnsibmFtZSI6IlVTREMiLCJ2ZXJzaW9uIjoiMiJ9fV19
+PAYMENT-REQUIRED: eyJ4NDAyVmVyc2lvbiI6MiwiZXJyb3IiOiJQQVlNRU5ULVNJR05BVFVSRSBoZWFkZXIgaXMgcmVxdWlyZWQiLCJyZXNvdXJjZSI6eyJ1cmwiOiJodHRwczovL2FwaS5leGFtcGxlLmNvbS9wcmVtaXVtLWRhdGEiLCJtZXRob2QiOiJQT1NUIiwiZGVzY3JpcHRpb24iOiJBY2Nlc3MgdG8gcHJlbWl1bSBtYXJrZXQgZGF0YSIsIm1pbWVUeXBlIjoiYXBwbGljYXRpb24vanNvbiJ9LCJhY2NlcHRzIjpbeyJzY2hlbWUiOiJleGFjdCIsIm5ldHdvcmsiOiJlaXAxNTU6ODQ1MzIiLCJhbW91bnQiOiIxMDAwMCIsImFzc2V0IjoiMHgwMzZDYkQ1Mzg0MmM1NDI2NjM0ZTc5Mjk1NDFlQzIzMThmM2RDRjdlIiwicGF5VG8iOiIweDIwOTY5M0JjNmFmYzBDNTMyOGJBMzZGYUYwM0M1MTRFRjMxMjI4N0MiLCJtYXhUaW1lb3V0U2Vjb25kcyI6NjAsImV4dHJhIjp7Im5hbWUiOiJVU0RDIiwidmVyc2lvbiI6IjIifX1dfQ==
 
 {}
 ```
@@ -32,6 +32,7 @@ The base64 header decodes to:
   "error": "PAYMENT-SIGNATURE header is required",
   "resource": {
     "url": "https://api.example.com/premium-data",
+    "method": "POST",
     "description": "Access to premium market data",
     "mimeType": "application/json"
   },
@@ -108,6 +109,49 @@ The base64 payload decodes to:
 }
 ```
 
+### Method Selection
+
+The HTTP method that carries a payment is a property of the resource, not of the
+request that discovered it. A server declares it in `resource.method` (see
+`ResourceInfo` in [x402-specification-v2 §5.1.2](../x402-specification-v2.md)).
+
+- A resource that accepts payment on a single method SHOULD declare that method
+  in `resource.method`.
+- A client that has read a declaration SHOULD send the payment on the declared
+  method. A client that has not SHOULD re-send the request that received the
+  402, unchanged except for the `PAYMENT-SIGNATURE` header.
+- A resource server SHOULD accept payment on any method whose response can
+  carry the resource. A server that refuses on method grounds MUST respond `405`
+  with an `Allow` header naming the methods it accepts, MUST NOT respond `400`,
+  and MUST NOT settle. The method check precedes payload verification, so a
+  refused request costs the client the purchase and not the payment.
+- A `HEAD` response carries no content
+  ([RFC 9110 §9.3.2](https://www.rfc-editor.org/rfc/rfc9110.html#section-9.3.2)),
+  so a server MUST NOT settle a payment presented on `HEAD` for a resource whose
+  representation is its response body: the client would pay and receive nothing.
+  A resource delivered entirely in response header fields MAY accept payment on
+  `HEAD`.
+- Where `resource.method` and `extensions.bazaar.info.input.method` are both
+  present they MUST be equal. `resource.method` is authoritative, being rendered
+  per request rather than read from a catalogue whose freshness the client
+  cannot determine.
+- Clients echo the `resource` block into `PaymentPayload`, so the echoed
+  `method` is client-controlled. A resource server MUST ignore it and use the
+  value it rendered itself. A facilitator that catalogues from `PaymentPayload`
+  MUST drop an echoed `method` that does not match the method of the request
+  carrying it, following the soft-drop convention in
+  [bazaar §Validation Rules](../extensions/bazaar.md#validation-rules).
+
+**Example (payment refused on method grounds):**
+
+```http
+HTTP/1.1 405 Method Not Allowed
+Allow: POST
+Content-Type: application/json
+
+{}
+```
+
 ## Settlement Response Delivery
 
 Servers communicate payment settlement results using the `PAYMENT-RESPONSE` header.
@@ -181,6 +225,7 @@ HTTP transport maps x402 errors to standard HTTP status codes:
 | ---------------- | ----------- | ----------------------------------------------- |
 | Payment Required | 402         | Payment needed to access resource               |
 | Invalid Payment  | 400         | Malformed payment payload or requirements       |
+| Method Mismatch  | 405         | Payment sent on a method the resource rejects   |
 | Payment Failed   | 402         | Payment verification or settlement failed       |
 | Server Error     | 500         | Internal server error during payment processing |
 | Success          | 200         | Payment verified and settled successfully       |
