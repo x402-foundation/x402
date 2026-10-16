@@ -70,7 +70,14 @@ export function wrapFetchWithPayment(
       x402Version: number;
       accepts: unknown[];
     };
-    const parsedPaymentRequirements = accepts.map(x => PaymentRequirementsSchema.parse(x));
+    const parsedPaymentRequirements = accepts.flatMap(x => {
+      const parsed = PaymentRequirementsSchema.safeParse(x);
+      return parsed.success ? [parsed.data] : [];
+    });
+
+    if (parsedPaymentRequirements.length === 0) {
+      throw new Error("No compatible payment requirements found");
+    }
 
     const network = isMultiNetworkSigner(walletClient)
       ? undefined
