@@ -260,6 +260,111 @@ describe("Bazaar Discovery Extension", () => {
       expect(result.errors).toBeDefined();
       expect(result.errors!.length).toBeGreaterThan(0);
     });
+
+    it("should reject an invalid URI format", () => {
+      const declared = declareDiscoveryExtension({
+        method: "GET",
+        input: { source: "not a uri" },
+        inputSchema: {
+          properties: {
+            source: { type: "string", format: "uri" },
+          },
+          required: ["source"],
+        },
+        output: {
+          example: { updatedAt: "2026-08-12T22:00:00Z" },
+          schema: {
+            properties: {
+              updatedAt: { type: "string", format: "date-time" },
+            },
+            required: ["updatedAt"],
+          },
+        },
+      });
+
+      const result = validateDiscoveryExtension(declared.bazaar);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain('/input/queryParams/source: must match format "uri"');
+    });
+
+    it("should reject an invalid date-time format", () => {
+      const declared = declareDiscoveryExtension({
+        method: "GET",
+        input: { source: "https://example.com/data" },
+        inputSchema: {
+          properties: {
+            source: { type: "string", format: "uri" },
+          },
+          required: ["source"],
+        },
+        output: {
+          example: { updatedAt: "not a date" },
+          schema: {
+            properties: {
+              updatedAt: { type: "string", format: "date-time" },
+            },
+            required: ["updatedAt"],
+          },
+        },
+      });
+
+      const result = validateDiscoveryExtension(declared.bazaar);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain('/output/example/updatedAt: must match format "date-time"');
+    });
+
+    it("should accept valid URI and date-time formats", () => {
+      const declared = declareDiscoveryExtension({
+        method: "GET",
+        input: { source: "https://example.com/data" },
+        inputSchema: {
+          properties: {
+            source: { type: "string", format: "uri" },
+          },
+          required: ["source"],
+        },
+        output: {
+          example: { updatedAt: "2026-08-12T22:00:00Z" },
+          schema: {
+            properties: {
+              updatedAt: { type: "string", format: "date-time" },
+            },
+            required: ["updatedAt"],
+          },
+        },
+      });
+
+      expect(validateDiscoveryExtension(declared.bazaar)).toEqual({ valid: true });
+    });
+
+    it("should not activate ajv-formats comparison keywords", () => {
+      const declared = declareDiscoveryExtension({
+        method: "GET",
+        input: { source: "https://example.com/data" },
+        inputSchema: {
+          properties: {
+            source: { type: "string", format: "uri" },
+          },
+          required: ["source"],
+        },
+        output: {
+          example: { updatedAt: "2026-08-12T22:00:00Z" },
+          schema: {
+            properties: {
+              updatedAt: {
+                type: "string",
+                format: "date-time",
+                formatMinimum: "2027-01-01T00:00:00Z",
+                formatMaximum: "2025-01-01T00:00:00Z",
+              },
+            },
+            required: ["updatedAt"],
+          },
+        },
+      });
+
+      expect(validateDiscoveryExtension(declared.bazaar)).toEqual({ valid: true });
+    });
   });
 
   describe("extractDiscoveryInfoFromExtension", () => {
