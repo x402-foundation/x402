@@ -996,6 +996,57 @@ describe("paymentMiddleware", () => {
     expect(result).toBe("<html>Settlement failed</html>");
   });
 
+  it.each([
+    { contentType: "text/plain", expected: "Settlement failed.\nPlease retry." },
+    { contentType: "application/x-ndjson", expected: "Settlement failed.\nPlease retry." },
+    { contentType: "application/json", expected: '"Settlement failed.\\nPlease retry."' },
+    {
+      contentType: "Application/JSON; charset=utf-8",
+      expected: '"Settlement failed.\\nPlease retry."',
+    },
+    { contentType: "application/problem+json", expected: '"Settlement failed.\\nPlease retry."' },
+  ])(
+    "JSON-encodes a string settlement failure body only for JSON content types ($contentType)",
+    async ({ contentType, expected }) => {
+      setupMockHttpServer(
+        {
+          type: "payment-verified",
+          paymentPayload: mockPaymentPayload,
+          paymentRequirements: mockPaymentRequirements,
+        },
+        {
+          success: false,
+          errorReason: "Insufficient funds",
+          headers: {},
+          response: {
+            status: 402,
+            headers: { "Content-Type": contentType },
+            body: "Settlement failed.\nPlease retry.",
+          },
+        },
+      );
+
+      const { app, hooks } = createMockApp();
+      paymentMiddleware(
+        app,
+        mockRoutes,
+        {} as unknown as x402ResourceServer,
+        undefined,
+        undefined,
+        false,
+      );
+
+      const request = createMockRequest();
+      const reply = createMockReply();
+      await hooks.onRequest[0](request, reply);
+      const result = await hooks.onSend[0](request, reply, JSON.stringify({ data: "secret" }));
+
+      expect(reply.status).toHaveBeenCalledWith(402);
+      expect(reply.type).toHaveBeenCalledWith(contentType);
+      expect(result).toBe(expected);
+    },
+  );
+
   it("returns 502 when settlement surfaces FacilitatorResponseError", async () => {
     setupMockHttpServer({
       type: "payment-verified",
