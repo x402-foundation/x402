@@ -19,6 +19,9 @@ export * from "./constants";
 // Signers
 export * from "./signer";
 
+// Errors
+export * from "./errors";
+
 // Utilities
 export * from "./utils";
 export * from "./shared";
