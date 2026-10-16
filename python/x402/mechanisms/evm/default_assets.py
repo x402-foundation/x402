@@ -313,6 +313,15 @@ DEFAULT_ASSETS: dict[str, list[ExactDefaultAssetInfo]] = {
             "symbol": "USDC",
         },
     ],  # Arc Testnet USDC (EIP-3009 supported)
+    "eip155:480": [
+        {
+            "asset": "0x79A02482A880bCE3F13e09Da970dC34db4CD24d1",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+            "symbol": "USDC",
+        },
+    ],  # World Chain mainnet USDC (EIP-3009 supported)
 }
 
 
