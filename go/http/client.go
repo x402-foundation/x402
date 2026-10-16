@@ -475,7 +475,38 @@ func (t *PaymentRoundTripper) sendPaymentRetry(
 		paymentReq.Body = body
 	}
 
-	return t.Transport.RoundTrip(paymentReq)
+	resp, err := t.Transport.RoundTrip(paymentReq)
+	if err != nil {
+		return nil, err
+	}
+	if err := replacePaymentRequiredBody(resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// replacePaymentRequiredBody caps a 402 that will be returned to the caller.
+// Paid resource payloads are left untouched.
+func replacePaymentRequiredBody(resp *http.Response) error {
+	if resp == nil || resp.StatusCode != http.StatusPaymentRequired {
+		return nil
+	}
+	body, err := readLimitedBody(resp.Body)
+	closeErr := resp.Body.Close()
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %w", err)
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.ContentLength = int64(len(body))
+	if resp.Header == nil {
+		resp.Header = make(http.Header)
+	} else {
+		resp.Header.Del("Transfer-Encoding")
+	}
+	return nil
 }
 
 // dispatchPaymentResponseHooks decodes PAYMENT-RESPONSE / PAYMENT-REQUIRED on the

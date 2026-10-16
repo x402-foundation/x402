@@ -8,6 +8,7 @@ import axios, {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { wrapAxiosWithPayment, wrapAxiosWithPaymentFromConfig } from "./index";
 import type { x402Client, x402ClientConfig } from "@x402/core/client";
+import { MAX_CONTROL_PLANE_RESPONSE_BYTES, ResponseBodyTooLargeError } from "@x402/core/http";
 import type { PaymentPayload, PaymentRequired, PaymentRequirements } from "@x402/core/types";
 
 // Mock the @x402/core/client module
@@ -73,7 +74,7 @@ describe("wrapAxiosWithPayment()", () => {
   const createAxiosError = (
     status: number,
     config?: InternalAxiosRequestConfig,
-    data?: PaymentRequired,
+    data?: PaymentRequired | Uint8Array | string,
     headers?: Record<string, string>,
   ): AxiosError => {
     return new AxiosError(
@@ -163,7 +164,7 @@ describe("wrapAxiosWithPayment()", () => {
   it("should pass through successful responses", async () => {
     const successHandler = (mockAxiosClient.interceptors.response.use as ReturnType<typeof vi.fn>)
       .mock.calls[0][0];
-    const response = { data: "success" } as AxiosResponse;
+    const response = { status: 200, data: "success" } as AxiosResponse;
     expect(successHandler(response)).toBe(response);
   });
 
@@ -491,6 +492,94 @@ describe("wrapAxiosWithPayment()", () => {
     expect(hookConfig.headers["X-HOOK"]).toBe("handled");
     expect(paidConfig.headers["PAYMENT-SIGNATURE"]).toBe("encoded-payment-header");
     expect(mockClient.createPaymentPayload).toHaveBeenCalledWith(validPaymentRequired);
+  });
+
+  it("rejects an oversized initial 402 response", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const oversizedBody = new Uint8Array(MAX_CONTROL_PLANE_RESPONSE_BYTES + 1);
+
+    const error = await interceptor(
+      createAxiosError(402, createErrorConfig(), oversizedBody),
+    ).catch(caught => caught as Error);
+
+    expect(error).toBeInstanceOf(ResponseBodyTooLargeError);
+    expect(mockAxiosClient.request).not.toHaveBeenCalled();
+    expect(MockX402HTTPClient.prototype.getPaymentRequiredResponse).not.toHaveBeenCalled();
+    expect(mockClient.createPaymentPayload).not.toHaveBeenCalled();
+  });
+
+  it("rejects an oversized auth-retry 402 response", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const oversizedBody = "x".repeat(MAX_CONTROL_PLANE_RESPONSE_BYTES + 1);
+
+    (
+      MockX402HTTPClient.prototype.handlePaymentRequired as ReturnType<typeof vi.fn>
+    ).mockResolvedValue({ "X-HOOK": "handled" });
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      createAxiosResponse(402, oversizedBody),
+    );
+
+    const error = await interceptor(
+      createAxiosError(402, createErrorConfig(), validPaymentRequired),
+    ).catch(caught => caught as Error);
+
+    expect(error).toBeInstanceOf(ResponseBodyTooLargeError);
+    expect(mockAxiosClient.request).toHaveBeenCalledTimes(1);
+    expect(mockClient.createPaymentPayload).not.toHaveBeenCalled();
+  });
+
+  it("rejects an oversized paid-retry 402 response", async () => {
+    const oversizedBody = "x".repeat(MAX_CONTROL_PLANE_RESPONSE_BYTES + 1);
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      createAxiosResponse(402, oversizedBody),
+    );
+
+    const error = await interceptor(
+      createAxiosError(402, createErrorConfig(), validPaymentRequired),
+    ).catch(caught => caught as Error);
+
+    expect(error).toBeInstanceOf(ResponseBodyTooLargeError);
+    expect(mockAxiosClient.request).toHaveBeenCalledTimes(1);
+    expect(mockClient.createPaymentPayload).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an oversized recovery 402 response", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const oversizedBody = "x".repeat(MAX_CONTROL_PLANE_RESPONSE_BYTES + 1);
+
+    (
+      MockX402HTTPClient.prototype.processPaymentResult as ReturnType<typeof vi.fn>
+    ).mockResolvedValueOnce({ recovered: true });
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(createAxiosResponse(402, validPaymentRequired))
+      .mockResolvedValueOnce(createAxiosResponse(402, oversizedBody));
+
+    const error = await interceptor(
+      createAxiosError(402, createErrorConfig(), validPaymentRequired),
+    ).catch(caught => caught as Error);
+
+    expect(error).toBeInstanceOf(ResponseBodyTooLargeError);
+    expect(mockAxiosClient.request).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects an oversized already-retried 402 error", async () => {
+    const oversizedBody = "x".repeat(MAX_CONTROL_PLANE_RESPONSE_BYTES + 1);
+    const error = await interceptor(
+      createAxiosError(402, createErrorConfig(true), oversizedBody),
+    ).catch(caught => caught as Error);
+
+    expect(error).toBeInstanceOf(ResponseBodyTooLargeError);
+    expect(mockAxiosClient.request).not.toHaveBeenCalled();
+  });
+
+  it("caps a 402 on the success interceptor", async () => {
+    const successHandler = (mockAxiosClient.interceptors.response.use as ReturnType<typeof vi.fn>)
+      .mock.calls[0][0];
+    const oversizedBody = "x".repeat(MAX_CONTROL_PLANE_RESPONSE_BYTES + 1);
+
+    expect(() => successHandler(createAxiosResponse(402, oversizedBody))).toThrow(
+      ResponseBodyTooLargeError,
+    );
   });
 
   it("should return immediately when hook retry succeeds with a non-402 status", async () => {
