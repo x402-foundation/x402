@@ -288,6 +288,53 @@ func TestExactSvmScheme_PendingSettlementStore_CacheHitStillPendingReturnsAgainW
 	assert.Equal(t, priorSig.String(), stored)
 }
 
+// A transaction the chain confirmed with an execution error
+// (*svm.TransactionFailedError from the signer) is terminal, not pending.
+func TestExactSvmScheme_PendingSettlementStore_ConfirmedOnChainFailureIsTerminal(t *testing.T) {
+	payload, requirements, facilitatorAddr := buildValidExactSvmFixture(t)
+	wantSig := solana.SignatureFromBytes(append([]byte{7}, make([]byte, 63)...))
+	signer := &mockExactSvmSigner{
+		addresses:     []solana.PublicKey{facilitatorAddr},
+		sendSignature: wantSig,
+		confirmErr:    &svm.TransactionFailedError{Signature: wantSig.String(), Err: map[string]any{"InstructionError": []any{2, map[string]any{"Custom": 4}}}},
+	}
+	scheme := NewExactSvmScheme(signer)
+	txKey := messageHashForPayload(t, payload)
+
+	_, err := scheme.Settle(context.Background(), payload, requirements, nil)
+	var se *x402.SettleError
+	require.True(t, errors.As(err, &se))
+	assert.Equal(t, ErrTransactionFailed, se.ErrorReason)
+	assert.Equal(t, wantSig.String(), se.Transaction)
+	assert.Contains(t, se.ErrorMessage, "transaction failed on-chain")
+
+	_, ok, _ := scheme.pendingStore.Get(context.Background(), txKey)
+	assert.False(t, ok, "a terminal failure must leave no pending entry")
+}
+
+// The reconciliation fast path rules the same way, without re-broadcasting.
+func TestExactSvmScheme_PendingSettlementStore_CacheHitConfirmedOnChainFailureIsTerminal(t *testing.T) {
+	payload, requirements, facilitatorAddr := buildValidExactSvmFixture(t)
+	priorSig := solana.SignatureFromBytes(append([]byte{8}, make([]byte, 63)...))
+	signer := &mockExactSvmSigner{
+		addresses:  []solana.PublicKey{facilitatorAddr},
+		confirmErr: &svm.TransactionFailedError{Signature: priorSig.String(), Err: "InstructionError"},
+	}
+	scheme := NewExactSvmScheme(signer)
+	txKey := messageHashForPayload(t, payload)
+	require.NoError(t, scheme.pendingStore.Set(context.Background(), txKey, priorSig.String()))
+
+	_, err := scheme.Settle(context.Background(), payload, requirements, nil)
+	var se *x402.SettleError
+	require.True(t, errors.As(err, &se))
+	assert.Equal(t, ErrTransactionFailed, se.ErrorReason)
+	assert.Equal(t, priorSig.String(), se.Transaction)
+	assert.Equal(t, 0, signer.sendCalls, "reconciliation fast path must never re-broadcast")
+
+	_, ok, _ := scheme.pendingStore.Get(context.Background(), txKey)
+	assert.False(t, ok, "a terminal failure must clear the pending entry")
+}
+
 func TestExactSvmScheme_PendingSettlementStore_TerminalVerifyFailureNeverTouchesStore(t *testing.T) {
 	payload, requirements, facilitatorAddr := buildValidExactSvmFixture(t)
 	// Corrupt the requirements amount so Verify rejects with a terminal reason

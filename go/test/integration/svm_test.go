@@ -168,7 +168,7 @@ func (s *realFacilitatorSvmSigner) ConfirmTransaction(ctx context.Context, signa
 			status := statuses.Value[0]
 			if status != nil {
 				if status.Err != nil {
-					return fmt.Errorf("transaction failed on-chain")
+					return &svm.TransactionFailedError{Signature: signature.String(), Err: status.Err}
 				}
 				if status.ConfirmationStatus == rpc.ConfirmationStatusConfirmed ||
 					status.ConfirmationStatus == rpc.ConfirmationStatusFinalized {
@@ -186,7 +186,7 @@ func (s *realFacilitatorSvmSigner) ConfirmTransaction(ctx context.Context, signa
 
 			if txErr == nil && txResult != nil && txResult.Meta != nil {
 				if txResult.Meta.Err != nil {
-					return fmt.Errorf("transaction failed on-chain")
+					return &svm.TransactionFailedError{Signature: signature.String(), Err: txResult.Meta.Err}
 				}
 				return nil
 			}
