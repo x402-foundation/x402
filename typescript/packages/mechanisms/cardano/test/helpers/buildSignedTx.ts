@@ -24,6 +24,7 @@ import {
   PrivateKey,
   Transaction,
   TransactionHash,
+  TransactionMetadatum,
   UTxO,
 } from "@evolution-sdk/evolution";
 import type { Chain } from "@evolution-sdk/evolution";
@@ -120,6 +121,11 @@ export interface BuildSignedTxParams {
   secondInput?: { ref: string; lovelace: bigint };
   /** Optional inline datum to attach to the payment output (e.g. a Masumi lock). */
   datum?: InlineDatum.InlineDatum;
+  /**
+   * Optional transaction metadata, attached before build exactly as the reference
+   * client signer does, so the body's auxiliary_data_hash commits to it.
+   */
+  metadata?: { label: bigint; metadatum: TransactionMetadatum.TransactionMetadatum };
   /**
    * Optional wallet mnemonic. Supply one when the caller needs the payer address
    * *before* building the transaction — a Masumi lock datum names the buyer, and
@@ -262,7 +268,7 @@ export async function buildSignedTx(params: BuildSignedTxParams): Promise<BuildS
         );
       })();
 
-  const signBuilder = await client
+  let txBuilder = client
     .newTx()
     .collectFrom({ inputs: [nonceUtxo] })
     .payToAddress({
@@ -270,13 +276,19 @@ export async function buildSignedTx(params: BuildSignedTxParams): Promise<BuildS
       assets: outputAssets,
       ...(params.datum ? { datum: params.datum } : {}),
     })
-    .setValidity({ to: slotToValidityMs(params.ttlSlot, chain) })
-    .build({
-      availableUtxos,
-      changeAddress: address,
-      fullProtocolParameters: OFFLINE_PROTOCOL_PARAMETERS,
-      autoMinUtxo: params.outputLovelace === undefined && !isLovelace,
+    .setValidity({ to: slotToValidityMs(params.ttlSlot, chain) });
+  if (params.metadata) {
+    txBuilder = txBuilder.attachMetadata({
+      label: params.metadata.label,
+      metadata: params.metadata.metadatum,
     });
+  }
+  const signBuilder = await txBuilder.build({
+    availableUtxos,
+    changeAddress: address,
+    fullProtocolParameters: OFFLINE_PROTOCOL_PARAMETERS,
+    autoMinUtxo: params.outputLovelace === undefined && !isLovelace,
+  });
 
   const submitBuilder = await signBuilder.sign();
   const unsigned = await signBuilder.toTransaction();
@@ -284,7 +296,7 @@ export async function buildSignedTx(params: BuildSignedTxParams): Promise<BuildS
     body: unsigned.body,
     witnessSet: submitBuilder.witnessSet,
     isValid: true,
-    auxiliaryData: null,
+    auxiliaryData: unsigned.auxiliaryData ?? null,
   });
 
   return {
