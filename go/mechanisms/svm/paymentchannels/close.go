@@ -53,7 +53,9 @@ func BuildRequestCloseTransaction(args BuildRequestCloseArgs) (*solana.Transacti
 	if err != nil {
 		return nil, fmt.Errorf("failed to build request_close transaction: %w", err)
 	}
-	tx.Message.SetVersion(solana.MessageVersionV0)
+	if _, err := tx.Message.SetVersion(solana.MessageVersionV0); err != nil {
+		return nil, fmt.Errorf("failed to set request_close transaction version: %w", err)
+	}
 	return tx, nil
 }
 
@@ -79,6 +81,9 @@ func VerifyRequestCloseTransaction(transactionBase64 string, expected VerifyRequ
 		return fmt.Errorf("verifyRequestCloseTransaction: %w", err)
 	}
 	message := &tx.Message
+	if !svm.IsAcceptedTransactionVersion(message.GetVersion()) {
+		return fmt.Errorf("%s: verifyRequestCloseTransaction: unsupported transaction message version %d", svm.ErrUnsupportedTransactionVersion, int(message.GetVersion())-1)
+	}
 	if len(message.AddressTableLookups) > 0 {
 		return fmt.Errorf("verifyRequestCloseTransaction: address lookup tables are not permitted")
 	}

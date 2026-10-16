@@ -1,5 +1,8 @@
 import { sha256 } from "@noble/hashes/sha256";
-import { ErrInvalidPayloadTransaction } from "./exact/facilitator/errors";
+import {
+  ErrInvalidPayloadTransaction,
+  ErrUnsupportedTransactionVersion,
+} from "./exact/facilitator/errors";
 import {
   isAddress,
   getBase58Encoder,
@@ -7,6 +10,7 @@ import {
   getBase64Encoder,
   getTransactionDecoder,
   getCompiledTransactionMessageDecoder,
+  getInstructionsFromCompiledTransactionMessage,
   type Blockhash,
   type Transaction,
   createSolanaRpc,
@@ -25,6 +29,8 @@ import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import type { PendingSettlementStore } from "@x402/core/facilitator";
 import type { Network, PaymentRequirements, SettleResponse } from "@x402/core/types";
 import {
+  ACCEPTED_TRANSACTION_VERSIONS,
+  CLIENT_SUPPORTED_TRANSACTION_VERSIONS,
   SVM_ADDRESS_REGEX,
   DEVNET_RPC_URL,
   TESTNET_RPC_URL,
@@ -87,6 +93,61 @@ export function decodeTransactionFromPayload(svmPayload: ExactSvmPayloadV1): Tra
 }
 
 /**
+ * Whether a decoded transaction message's version is one the SVM verifiers
+ * model. Verifiers call this before any signature or instruction check so a
+ * version whose compute budget lives elsewhere (e.g. transaction v1's
+ * `message.config`) cannot pass the instruction-scanning checks vacuously.
+ *
+ * @param version - The `version` field of a compiled or decompiled transaction message
+ * @returns Whether the version is legacy or 0
+ */
+export function isAcceptedTransactionVersion(version: number | string): boolean {
+  return ACCEPTED_TRANSACTION_VERSIONS.includes(version);
+}
+
+/**
+ * Pick the transaction message version a client builds from the versions the
+ * facilitator advertised in `extra.transactionVersions`. This client only
+ * builds version 0 today. Negotiation selects the highest version shared by
+ * the facilitator advertisement and this client's supported-version set.
+ *
+ * @param extra - The `extra` field of the payment requirements
+ * @returns The highest mutually supported transaction message version
+ * @throws Error prefixed with `unsupported_transaction_version` when the sets do not intersect
+ */
+export function resolveTransactionVersion(extra: Record<string, unknown> | undefined): 0 {
+  const advertised = extra && "transactionVersions" in extra ? extra.transactionVersions : [0];
+  if (!Array.isArray(advertised)) {
+    throw new Error(`${ErrUnsupportedTransactionVersion}: transactionVersions must be an array`);
+  }
+  const selected = selectHighestMutuallySupportedTransactionVersion(
+    advertised,
+    CLIENT_SUPPORTED_TRANSACTION_VERSIONS,
+  );
+  if (selected !== undefined) {
+    return selected as 0;
+  }
+  throw new Error(
+    `${ErrUnsupportedTransactionVersion}: facilitator accepts none of the transaction versions this client can build (advertised ${JSON.stringify(advertised)})`,
+  );
+}
+
+/**
+ * Select the maximum numeric version present in both version sets.
+ *
+ * @param advertised - Versions accepted by the facilitator
+ * @param supported - Versions the client can construct
+ * @returns Highest mutual version, or undefined when the sets do not intersect
+ */
+export function selectHighestMutuallySupportedTransactionVersion(
+  advertised: readonly unknown[],
+  supported: readonly number[],
+): number | undefined {
+  const mutual = supported.filter(version => advertised.includes(version));
+  return mutual.length > 0 ? Math.max(...mutual) : undefined;
+}
+
+/**
  * Extract the token sender (owner of the source token account) from a TransferChecked instruction
  *
  * @param transaction - The decoded transaction
@@ -94,23 +155,20 @@ export function decodeTransactionFromPayload(svmPayload: ExactSvmPayloadV1): Tra
  */
 export function getTokenPayerFromTransaction(transaction: Transaction): string {
   const compiled = getCompiledTransactionMessageDecoder().decode(transaction.messageBytes);
-  const staticAccounts = compiled.staticAccounts ?? [];
-  const instructions = compiled.instructions ?? [];
+  const instructions = getInstructionsFromCompiledTransactionMessage(compiled);
 
   for (const ix of instructions) {
-    const programIndex = ix.programAddressIndex;
-    const programAddress = staticAccounts[programIndex].toString();
+    const programAddress = ix.programAddress.toString();
 
     // Check if this is a token program instruction
     if (
       programAddress === TOKEN_PROGRAM_ADDRESS.toString() ||
       programAddress === TOKEN_2022_PROGRAM_ADDRESS.toString()
     ) {
-      const accountIndices: number[] = ix.accountIndices ?? [];
+      const accounts = ix.accounts ?? [];
       // TransferChecked account order: [source, mint, destination, owner, ...]
-      if (accountIndices.length >= 4) {
-        const ownerIndex = accountIndices[3];
-        const ownerAddress = staticAccounts[ownerIndex].toString();
+      if (accounts.length >= 4) {
+        const ownerAddress = accounts[3].address.toString();
         if (ownerAddress) return ownerAddress;
       }
     }

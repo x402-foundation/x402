@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -60,14 +61,12 @@ type Config struct {
 	// rule applies.
 	MaxRequiredSignatures *int
 
-	// ComputeUnitPriceMicroLamports is the SetComputeUnitPrice (microlamports
-	// per compute unit) attached to facilitator-submitted settlement
-	// transactions (claim, zero-charge cancel, and rent cleanup via
-	// NewRentCleanupManager). A value of 0 omits the instruction. Unset
-	// defaults to svm.DefaultComputeUnitPriceMicrolamports.
+	// ComputeUnitPriceMicroLamports is converted to v1's total priority fee for
+	// facilitator-submitted settlement transactions. A value of 0 omits the
+	// config field. Unset defaults to svm.DefaultComputeUnitPriceMicrolamports.
 	ComputeUnitPriceMicroLamports *uint64
 
-	// SettleComputeUnitLimit is the SetComputeUnitLimit for
+	// SettleComputeUnitLimit is the inline v1 compute limit for
 	// facilitator-submitted settlement transactions (claim, zero-charge
 	// cancel, and rent-cleanup close/distribute). The default
 	// (paymentchannels.DefaultSettleComputeUnitLimit, 100k) assumes standard SPL Token
@@ -76,6 +75,14 @@ type Config struct {
 	// distributions. Reclaim batches size themselves per channel and are
 	// mint-independent, so they are unaffected by this cap.
 	SettleComputeUnitLimit *uint32
+
+	// SettleLoadedAccountsDataSizeLimit is the inline v1 loaded-account-data
+	// budget for the same facilitator-submitted settlement transactions. The
+	// runtime counts the program-data accounts of every invoked program, so
+	// the default (DefaultSettleLoadedAccountsDataSizeLimit, 4 MiB) is sized
+	// for a mainnet Token-2022 claim; raise it only for unusually large
+	// account sets. Reclaim batches derive their own budget per channel.
+	SettleLoadedAccountsDataSizeLimit *uint32
 
 	// AuthorizerSigner enables facilitator-delegated receiver authorization.
 	// Advertised as /supported extra.receiverAuthorizer and used to sign claim
@@ -177,6 +184,9 @@ func NewUptoSvmScheme(signer svm.FacilitatorSvmSigner, config *Config) *UptoSvmS
 	if cfg.SettleComputeUnitLimit != nil {
 		assertPositive("settleComputeUnitLimit", int64(*cfg.SettleComputeUnitLimit))
 	}
+	if cfg.SettleLoadedAccountsDataSizeLimit != nil {
+		assertPositive("settleLoadedAccountsDataSizeLimit", int64(*cfg.SettleLoadedAccountsDataSizeLimit))
+	}
 	if cfg.AuthorizerSigner != nil && cfg.ResolveCallerIdentity == nil {
 		panic("upto svm facilitator: authorizerSigner requires resolveCallerIdentity")
 	}
@@ -234,11 +244,12 @@ func (f *UptoSvmScheme) ChannelStorage() paymentchannels.PaymentChannelStorage {
 // start: call Start or schedule Cleanup yourself.
 func (f *UptoSvmScheme) NewRentCleanupManager(network string) *RentCleanupManager {
 	return NewRentCleanupManager(RentCleanupConfig{
-		Signer:                        f.signer,
-		Storage:                       f.channelStorage,
-		Network:                       network,
-		ComputeUnitPriceMicroLamports: f.config.ComputeUnitPriceMicroLamports,
-		SettleComputeUnitLimit:        f.config.SettleComputeUnitLimit,
+		Signer:                            f.signer,
+		Storage:                           f.channelStorage,
+		Network:                           network,
+		ComputeUnitPriceMicroLamports:     f.config.ComputeUnitPriceMicroLamports,
+		SettleComputeUnitLimit:            f.config.SettleComputeUnitLimit,
+		SettleLoadedAccountsDataSizeLimit: f.config.SettleLoadedAccountsDataSizeLimit,
 	})
 }
 
@@ -250,7 +261,8 @@ func (f *UptoSvmScheme) GetExtra(network x402.Network) map[string]interface{} {
 		return nil
 	}
 	extra := map[string]interface{}{
-		upto.ExtraFeePayer: addresses[rand.IntN(len(addresses))].String(),
+		upto.ExtraFeePayer:            addresses[rand.IntN(len(addresses))].String(),
+		upto.ExtraTransactionVersions: svm.AdvertisedTransactionVersions,
 	}
 	if f.authorizerSigner != nil {
 		extra[upto.ExtraReceiverAuthorizer] = f.authorizerSigner.Address().String()
@@ -916,7 +928,9 @@ func (f *UptoSvmScheme) submitClaim(
 
 	opts := paymentchannels.SubmitSettleOptions{
 		ComputeUnitLimit:              f.config.SettleComputeUnitLimit,
+		LoadedAccountsDataSizeLimit:   f.config.SettleLoadedAccountsDataSizeLimit,
 		ComputeUnitPriceMicroLamports: f.config.ComputeUnitPriceMicroLamports,
+		UseTransactionV1:              true,
 	}
 	if prefetchedBlockhash != nil {
 		opts.LatestBlockhash = prefetchedBlockhash
@@ -1072,7 +1086,7 @@ func (f *UptoSvmScheme) validateOpenAuthorization(
 		MaxRequiredSignatures:       f.config.MaxRequiredSignatures,
 	})
 	if err != nil {
-		return nil, x402.NewVerifyError(ErrOpenTransaction, payer, err.Error())
+		return nil, x402.NewVerifyError(openTransactionReason(err), payer, err.Error())
 	}
 	if open.ChannelID.String() != uptoPayload.ChannelId {
 		return nil, x402.NewVerifyError(ErrChannelID, payer,
@@ -1172,6 +1186,17 @@ func (f *UptoSvmScheme) resolveRecentSlot(
 
 // isDelegatedSettle reports whether this settle's extra.receiverAuthorizer is
 // this facilitator's advertised authorizer.
+// openTransactionReason maps a VerifyOpenTransaction failure to its verify
+// reason. The spec requires a message version outside the accepted set to be
+// rejected with unsupported_transaction_version rather than the generic
+// open-transaction reason.
+func openTransactionReason(err error) string {
+	if strings.HasPrefix(err.Error(), svm.ErrUnsupportedTransactionVersion) {
+		return svm.ErrUnsupportedTransactionVersion
+	}
+	return ErrOpenTransaction
+}
+
 func (f *UptoSvmScheme) isDelegatedSettle(requirements types.PaymentRequirements) bool {
 	if f.authorizerSigner == nil || requirements.Extra == nil {
 		return false
