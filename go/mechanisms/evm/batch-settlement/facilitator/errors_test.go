@@ -84,6 +84,7 @@ func TestExportedErrorReasonsAreStable(t *testing.T) {
 		"ErrAuthorizerAddressMismatch": ErrAuthorizerAddressMismatch,
 		"ErrUnknownSettleAction":       ErrUnknownSettleAction,
 		"ErrNothingToSettle":           ErrNothingToSettle,
+		"ErrSettledEventMismatch":      ErrSettledEventMismatch,
 		"ErrRefundNoBalance":           ErrRefundNoBalance,
 
 		// Permit2 deposit authorization errors
@@ -234,7 +235,7 @@ func TestNoLegacyBatchSettlementEvmPrefix(t *testing.T) {
 		ErrDepositSimulationFailed, ErrClaimSimulationFailed,
 		ErrSettleSimulationFailed, ErrRefundSimulationFailed,
 		ErrAuthorizerAddressMismatch, ErrUnknownSettleAction, ErrNothingToSettle,
-		ErrRefundNoBalance,
+		ErrSettledEventMismatch, ErrRefundNoBalance,
 		ErrPermit2AuthorizationRequired, ErrPermit2InvalidSpender,
 		ErrPermit2AmountMismatch, ErrPermit2DeadlineExpired,
 		ErrPermit2InvalidSignature, ErrPermit2AllowanceRequired,

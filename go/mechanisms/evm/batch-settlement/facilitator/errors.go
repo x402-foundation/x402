@@ -116,7 +116,8 @@ const (
 	ErrAuthorizerNotConfigured   = "invalid_batch_settlement_evm_authorizer_not_configured"
 
 	// Settle action errors
-	ErrUnknownSettleAction = "invalid_batch_settlement_evm_unknown_settle_action"
-	ErrNothingToSettle     = "invalid_batch_settlement_evm_nothing_to_settle"
-	ErrRefundNoBalance     = batchsettlement.ErrRefundNoBalance
+	ErrUnknownSettleAction  = "invalid_batch_settlement_evm_unknown_settle_action"
+	ErrNothingToSettle      = "invalid_batch_settlement_evm_nothing_to_settle"
+	ErrSettledEventMismatch = "invalid_batch_settlement_evm_settled_event_mismatch"
+	ErrRefundNoBalance      = batchsettlement.ErrRefundNoBalance
 )
