@@ -399,4 +399,34 @@ describe("Network Handlers", () => {
       expect(html).toContain("amount: 0,");
     });
   });
+
+  describe("inline script data", () => {
+    const payload = "</script><script>alert(1)</script>";
+    const avmRequirement: PaymentRequirements = {
+      ...svmRequirement,
+      network: "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe",
+      asset: "0",
+    };
+
+    it.each([
+      ["evm", evmPaywall, evmRequirement],
+      ["svm", svmPaywall, svmRequirement],
+      ["avm", avmPaywall, avmRequirement],
+    ])("%s keeps request-derived strings inside window.x402", (_, handler, requirement) => {
+      const req = { ...requirement, payTo: payload };
+      const html = handler.generateHtml(
+        req,
+        { ...mockPaymentRequired, resource: { url: payload }, accepts: [req] },
+        { appName: payload, testnet: false },
+      );
+
+      expect(html).not.toContain(payload);
+      const script = html.match(/<script>\s*(window\.x402 = [\s\S]*?)<\/script>/)![1];
+      const scope = {} as { x402: { paymentRequired: PaymentRequired } & Record<string, unknown> };
+      new Function("window", script)(scope);
+      expect(scope.x402.paymentRequired.accepts[0].payTo).toBe(payload);
+      expect(scope.x402.currentUrl).toBe(payload);
+      expect(scope.x402.appName).toBe(payload);
+    });
+  });
 });
