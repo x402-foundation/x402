@@ -637,6 +637,9 @@ importers:
       '@eslint/js':
         specifier: ^9.24.0
         version: 9.34.0
+      '@evolution-sdk/evolution':
+        specifier: ^0.5.9
+        version: 0.5.11(@effect/cluster@0.58.2(@effect/platform@0.96.2(effect@3.21.4))(@effect/rpc@0.75.1(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/sql@0.51.1(@effect/experimental@0.60.0(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/workflow@0.18.2(@effect/experimental@0.60.0(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/platform@0.96.2(effect@3.21.4))(@effect/rpc@0.75.1(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(effect@3.21.4))(effect@3.21.4))(@effect/rpc@0.75.1(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/sql@0.51.1(@effect/experimental@0.60.0(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(bufferutil@4.0.9)(utf-8-validate@5.0.10)
       '@types/node':
         specifier: ^22.13.4
         version: 22.18.0
@@ -658,6 +661,9 @@ importers:
       '@x402/avm':
         specifier: workspace:~
         version: link:../../mechanisms/avm
+      '@x402/cardano':
+        specifier: workspace:~
+        version: link:../../mechanisms/cardano
       '@x402/evm':
         specifier: workspace:~
         version: link:../../mechanisms/evm
