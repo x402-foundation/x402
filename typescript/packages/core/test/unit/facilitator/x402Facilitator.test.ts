@@ -263,6 +263,97 @@ describe("x402Facilitator", () => {
       expect(testFacilitator.verifyCalls.length).toBe(1);
     });
 
+    // Regression coverage for https://github.com/x402-foundation/x402/issues/3172:
+    // a single register() call spanning more than one CAIP-2 namespace used
+    // to derive a single pattern from networks[0]'s namespace only, so
+    // every OTHER namespace involved got no wildcard coverage at all, not
+    // even the one networks[0] belonged to (that namespace's "pattern"
+    // was just a duplicate of the exact-match Set's own coverage of that
+    // one network).
+    it("keeps a namespace's own wildcard when it has multiple networks but is mixed with another namespace", async () => {
+      const facilitator = new x402Facilitator();
+      const testFacilitator = new TestFacilitator("exact");
+
+      // Two stellar networks (enough for derivePattern to justify a
+      // "stellar:*" wildcard on its own, same as the single-namespace
+      // "should use pattern matching for network" test above) PLUS one
+      // eip155 network, all in a single register() call. Previously,
+      // mixing in even one other-namespace network collapsed wildcard
+      // derivation entirely: uniqueNamespaces.size !== 1, so the whole
+      // call fell back to "use networks[0] for exact matching",
+      // discarding the wildcard "stellar:*" would otherwise have
+      // earned on its own.
+      facilitator.register(
+        ["stellar:testnet" as Network, "stellar:futurenet" as Network, "eip155:8453" as Network],
+        testFacilitator,
+      );
+
+      // Unlisted stellar network: matched via the "stellar:*" wildcard,
+      // previously lost the moment eip155:8453 joined the same call.
+      const stellarResult = await facilitator.verify(
+        buildPaymentPayload({ x402Version: 2 }),
+        buildPaymentRequirements({ scheme: "exact", network: "stellar:pubnet" as Network }),
+      );
+      expect(stellarResult.isValid).toBe(true);
+
+      // The explicitly-listed eip155 network still matches via the exact
+      // Set, unaffected either way.
+      const evmResult = await facilitator.verify(
+        buildPaymentPayload({ x402Version: 2 }),
+        buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+      );
+      expect(evmResult.isValid).toBe(true);
+
+      // eip155 only ever had ONE network registered here, so (same rule
+      // as any single-network namespace, mixed registration or not)
+      // it earns no wildcard of its own: an unlisted eip155 network must
+      // still fail closed, not be swept in by stellar's wildcard.
+      await expect(
+        facilitator.verify(
+          buildPaymentPayload({ x402Version: 2 }),
+          buildPaymentRequirements({ scheme: "exact", network: "eip155:11155111" as Network }),
+        ),
+      ).rejects.toThrow("No facilitator registered for scheme: exact and network: eip155:11155111");
+
+      // A namespace never registered at all must still fail closed too.
+      await expect(
+        facilitator.verify(
+          buildPaymentPayload({ x402Version: 2 }),
+          buildPaymentRequirements({ scheme: "exact", network: "solana:mainnet" as Network }),
+        ),
+      ).rejects.toThrow("No facilitator registered for scheme: exact and network: solana:mainnet");
+    });
+
+    it("derives independent wildcards for two namespaces registered together, each with multiple networks", async () => {
+      const facilitator = new x402Facilitator();
+      const testFacilitator = new TestFacilitator("exact");
+
+      facilitator.register(
+        [
+          "stellar:testnet" as Network,
+          "stellar:futurenet" as Network,
+          "eip155:8453" as Network,
+          "eip155:1" as Network,
+        ],
+        testFacilitator,
+      );
+
+      // Both namespaces have enough representatives to derive their own
+      // wildcard; both must work independently in the same registration.
+      const stellarResult = await facilitator.verify(
+        buildPaymentPayload({ x402Version: 2 }),
+        buildPaymentRequirements({ scheme: "exact", network: "stellar:pubnet" as Network }),
+      );
+      expect(stellarResult.isValid).toBe(true);
+
+      const evmResult = await facilitator.verify(
+        buildPaymentPayload({ x402Version: 2 }),
+        buildPaymentRequirements({ scheme: "exact", network: "eip155:11155111" as Network }),
+      );
+      expect(evmResult.isValid).toBe(true);
+      expect(testFacilitator.verifyCalls.length).toBe(2);
+    });
+
     it("should not treat regex metacharacters in network namespaces as wildcards", async () => {
       const facilitator = new x402Facilitator();
       const testFacilitator = new TestFacilitator("exact");
