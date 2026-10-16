@@ -253,7 +253,13 @@ def before_payment(ctx):
 
 
 def after_payment(ctx):
-    print(f"Payment created: {ctx.payment_payload}")
+    print(
+        "Payment created for:",
+        {
+            "network": ctx.selected_requirements.network,
+            "amount": ctx.selected_requirements.amount,
+        },
+    )
 
 
 def on_failure(ctx):
@@ -265,6 +271,9 @@ client.on_before_payment_creation(before_payment)
 client.on_after_payment_creation(after_payment)
 client.on_payment_creation_failure(on_failure)
 ```
+
+Payment payloads can contain redeemable signatures or authorizations. Do not
+write `payment_payload` to logs or traces.
 
 ### Server Hooks
 
