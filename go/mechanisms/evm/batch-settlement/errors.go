@@ -35,7 +35,7 @@ const (
 
 	// ErrChannelBusy signals that another request is currently holding the
 	// per-channel concurrency lock. Clients should back off briefly and
-	// retry. Emitted by AfterVerifyHook / BeforeSettleHook when a pending
+	// retry. Emitted by BeforeVerifyHook / BeforeSettleHook when a pending
 	// request is in flight.
 	ErrChannelBusy = "invalid_batch_settlement_evm_channel_busy"
 
@@ -87,4 +87,24 @@ const (
 	// deposit below its local extra.minDeposit policy. Opt-in via
 	// EnforceMinDeposit; the facilitator never enforces this field.
 	ErrDepositBelowMinDeposit = "invalid_batch_settlement_evm_deposit_below_min_deposit"
+
+	// ── Shared validation reasons (duplicated from facilitator so root utils
+	// can return them without importing facilitator). Wire values match.
+
+	ErrReceiverMismatch           = "invalid_batch_settlement_evm_receiver_mismatch"
+	ErrReceiverAuthorizerMismatch = "invalid_batch_settlement_evm_receiver_authorizer_mismatch"
+	ErrTokenMismatch              = "invalid_batch_settlement_evm_token_mismatch"
+	ErrWithdrawDelayOutOfRange    = "invalid_batch_settlement_evm_withdraw_delay_out_of_range"
+	ErrWithdrawDelayMismatch      = "invalid_batch_settlement_evm_withdraw_delay_mismatch"
+	ErrCumulativeExceedsBalance   = "invalid_batch_settlement_evm_cumulative_exceeds_balance"
+
+	// ── v1.1 managed-voucher / refund-authorizer reasons ──────────────────
+
+	ErrRefundAuthorizerMismatch  = "invalid_batch_settlement_evm_refund_authorizer_mismatch"
+	ErrRefundAuthorizerSignature = "invalid_batch_settlement_evm_refund_authorizer_signature"
+	ErrVoucherStoreUnavailable   = "invalid_batch_settlement_evm_voucher_store_unavailable"
+	ErrVoucherStoreModeMismatch  = "invalid_batch_settlement_evm_voucher_store_mode_mismatch"
+	ErrUnexpectedPendingId       = "invalid_batch_settlement_evm_unexpected_pending_id"
+	ErrUnexpectedCancel          = "invalid_batch_settlement_evm_unexpected_cancel"
+	ErrPendingIdMismatch         = "invalid_batch_settlement_evm_pending_id_mismatch"
 )

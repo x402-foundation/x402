@@ -1,6 +1,6 @@
 import { BaseProxy, RunConfig } from '../proxy-base';
 import { loadComponentConfig } from '../component';
-import { ServerProxy, ServerConfig } from '../types';
+import { ServerProxy, ServerConfig, voucherStoreModeForBatchRole } from '../types';
 import { verboseLog, errorLog } from '../logger';
 import { resolveEvmPermit2Asset } from '../networks/networks';
 import {
@@ -98,6 +98,7 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
       );
     }
 
+    const batchServerRole = config.batchServerRole ?? 'standard';
     const baseEnv: Record<string, string> = {
       PORT: config.port.toString(),
       ...forwardRoleCredentials('server', config.enabledFamilies),
@@ -108,8 +109,17 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
       // Servers resolve their own routes from the same catalog the harness uses,
       // including the exclusions that narrow a surface (e.g. echo, no batching).
       E2E_MECHANISMS_CATALOG: CATALOG_DIR,
+      E2E_BATCH_SERVER_ROLE: batchServerRole,
+      EVM_BATCH_SETTLEMENT_VOUCHER_STORE_MODE: voucherStoreModeForBatchRole(batchServerRole),
       ...routeExclusionEnv(componentConfig, config.runRouteFilter),
     };
+
+    const unsetKeys = [...excludedServerCredentialKeys(config.enabledFamilies)];
+    if (batchServerRole === 'managed-batch') {
+      // Managed custody must not use the self-managed receiver authorizer signer,
+      // even if it is set in the harness env — the child must not inherit it.
+      unsetKeys.push('SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY');
+    }
 
     const runConfig: RunConfig = {
       port: config.port,
@@ -119,7 +129,7 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
       // Strip SERVER_*_ADDRESS for excluded families even if they're inherited
       // from the harness's own process.env (e.g. e2e/.env), so a component never
       // registers a scheme its paired facilitator doesn't support.
-      unsetEnv: excludedServerCredentialKeys(config.enabledFamilies),
+      unsetEnv: unsetKeys,
     };
 
     await this.startProcess(runConfig);
@@ -136,6 +146,7 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
   async verifyPaidRoutes(
     enabledFamilies?: string[],
     runRouteFilter?: RouteFilter,
+    batchServerRole?: 'standard' | 'managed-batch',
   ): Promise<{ ok: boolean; problems: string[] }> {
     const config = this.loadConfig() as {
       endpoints?: Array<{
@@ -144,9 +155,11 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
         requiresPayment?: boolean;
         protocolFamily?: string;
         scheme?: string;
+        schemeOptions?: { facilitatorManaged?: boolean };
       }>;
     } | null;
 
+    const role = batchServerRole ?? 'standard';
     const paths = (config?.endpoints ?? [])
       .filter(endpoint => endpoint.requiresPayment && (endpoint.method ?? 'GET') === 'GET')
       .filter(endpoint => {
@@ -158,6 +171,12 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
           return false;
         }
         return true;
+      })
+      .filter(endpoint => {
+        const managed =
+          endpoint.scheme === 'batch-settlement' &&
+          endpoint.schemeOptions?.facilitatorManaged === true;
+        return role === 'managed-batch' ? managed : !managed;
       })
       .map(endpoint => endpoint.path);
 
