@@ -68,8 +68,8 @@ func NewPaymentWrapper(server *x402.X402ResourceServer, config PaymentWrapperCon
 //  1. Extracts x402/payment from request _meta
 //  2. If no payment, returns 402 payment required error
 //  3. Verifies payment via facilitator (when the flow requires it)
-//  4. On SkipHandler, settles without running the tool
-//  5. Settles before the handler when the flow requires it
+//  4. Settles before the handler when the flow requires it
+//  5. On SkipHandler, completes settlement without running the tool
 //  6. Creates a cancellation dispatcher for settleOnCancel / cancel hooks
 //  7. OnBeforeExecution hook (if configured)
 //  8. Executes the original handler
@@ -145,12 +145,6 @@ func (w *PaymentWrapper) Wrap(handler ToolHandler) ToolHandler {
 			PaymentPayload:      payload,
 		}
 
-		// SkipHandler: bypass the tool, settle inline, do not create a cancel dispatcher.
-		if verifyResp.SkipHandler != nil {
-			skipResult := createSkipHandlerResult(verifyResp.SkipHandler.Body)
-			return w.settlePaymentResult(ctx, hookCtx, payload, requirements, declaredExtensions, phases, skipResult, nil)
-		}
-
 		var beforeHandlerSettlement *x402.CompletedSettlement
 		if phases.SettleBeforeHandler {
 			settleResp, settleErr := w.server.SettlePaymentWithExtensions(
@@ -170,6 +164,13 @@ func (w *PaymentWrapper) Wrap(handler ToolHandler) ToolHandler {
 				Result:       settleResp,
 				Requirements: requirements,
 			}
+		}
+
+		// SkipHandler: bypass the tool and settle as a normal call would, after the
+		// before-handler settle. Do not create a cancel dispatcher.
+		if verifyResp.SkipHandler != nil {
+			skipResult := createSkipHandlerResult(verifyResp.SkipHandler.Body)
+			return w.settlePaymentResult(ctx, hookCtx, payload, requirements, declaredExtensions, phases, skipResult, beforeHandlerSettlement)
 		}
 
 		var settledPhases []x402.SettlePhase
