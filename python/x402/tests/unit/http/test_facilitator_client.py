@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import base64
+import inspect
 import json
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 from x402.http.extension_responses import EXTENSION_RESPONSES_HEADER
@@ -18,6 +20,8 @@ from x402.http.facilitator_client_base import (
     FacilitatorResponseError,
 )
 from x402.schemas import PaymentPayload, PaymentRequirements
+from x402.schemas.errors import SettleError, VerifyError
+from x402.server_base import settle_with_pending_retry, settle_with_pending_retry_async
 
 
 def make_payment_requirements() -> PaymentRequirements:
@@ -222,3 +226,146 @@ def test_defaults_timeout_to_90_seconds():
     assert HTTPFacilitatorClient()._timeout == 90.0
     assert HTTPFacilitatorClient(FacilitatorConfig(timeout=5.0))._timeout == 5.0
     assert HTTPFacilitatorClient({})._timeout == 90.0
+
+
+def _error_client(responses, as_async):
+    post = AsyncMock(side_effect=responses) if as_async else MagicMock(side_effect=responses)
+    http_client = MagicMock(post=post)
+    client_type = HTTPFacilitatorClient if as_async else HTTPFacilitatorClientSync
+    return client_type(FacilitatorConfig(http_client=http_client)), post
+
+
+async def _resolve(result):
+    return await result if inspect.isawaitable(result) else result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("as_async", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("operation,status", [("verify", 400), ("settle", 500)])
+async def test_non_200_response_raises_typed_error_with_response(as_async, operation, status):
+    body = (
+        {
+            "isValid": False,
+            "invalidReason": "insufficient_funds",
+            "invalidMessage": "Balance too low",
+            "payer": "0xpayer",
+        }
+        if operation == "verify"
+        else {
+            "success": False,
+            "errorReason": "settlement_pending",
+            "errorMessage": "Confirmation timed out",
+            "transaction": "0xpending",
+            "network": "eip155:8453",
+            "payer": "0xpayer",
+        }
+    )
+    body["extensions"] = {"terms": {"info": {"format": "uri"}}}
+    sidechannel = {"bazaar": {"status": "processing"}}
+    response = httpx.Response(
+        status,
+        json=body,
+        headers={EXTENSION_RESPONSES_HEADER: _encode_extension_responses(sidechannel)},
+    )
+    client, post = _error_client([response], as_async)
+    error_type = VerifyError if operation == "verify" else SettleError
+
+    with pytest.raises(error_type) as exc:
+        await _resolve(getattr(client, operation)(make_v2_payload(), make_payment_requirements()))
+
+    error = exc.value
+    assert error.payer == "0xpayer"
+    assert error.status_code == status
+    assert error.response.model_dump(by_alias=True, exclude_none=True) == body
+    assert error.response.extension_responses == sidechannel
+    if operation == "verify":
+        assert error.invalid_reason == "insufficient_funds"
+        assert error.invalid_message == "Balance too low"
+    else:
+        assert error.error_reason == "settlement_pending"
+        assert error.error_message == "Confirmation timed out"
+        assert error.transaction == "0xpending"
+    assert post.call_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("as_async", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("operation", ["verify", "settle"])
+@pytest.mark.parametrize(
+    "body",
+    [
+        "not-json",
+        "[]",
+        '{"error":"unavailable"}',
+        # The settlement schema requires transaction and network even on failure.
+        '{"success":false}',
+    ],
+)
+async def test_non_200_invalid_body_keeps_http_failure(as_async, operation, body):
+    client, post = _error_client([httpx.Response(503, text=body)], as_async)
+
+    with pytest.raises(ValueError, match=rf"Facilitator {operation} failed \(503\)"):
+        await _resolve(getattr(client, operation)(make_v2_payload(), make_payment_requirements()))
+
+    assert post.call_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("as_async", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("second_pending", [False, True], ids=["confirmed", "still-pending"])
+async def test_non_200_pending_response_retries_once(as_async, second_pending):
+    pending = {
+        "success": False,
+        "errorReason": "settlement_pending",
+        "transaction": "0xpending",
+        "network": "eip155:8453",
+    }
+    second = pending if second_pending else _make_settle_response()
+    client, post = _error_client(
+        [
+            httpx.Response(500, json=pending),
+            httpx.Response(500 if second_pending else 200, json=second),
+        ],
+        as_async,
+    )
+    payload, requirements = make_v2_payload(), make_payment_requirements()
+    retry = settle_with_pending_retry_async if as_async else settle_with_pending_retry
+
+    if second_pending:
+        with pytest.raises(SettleError) as exc:
+            await _resolve(retry(client, payload, requirements))
+        assert exc.value.transaction == "0xpending"
+        assert exc.value.response.network == "eip155:8453"
+    else:
+        result = await _resolve(retry(client, payload, requirements))
+        assert result.success is True
+        assert result.transaction == "0xabc"
+    assert post.call_count == 2
+    assert post.call_args_list[0] == post.call_args_list[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("as_async", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize(
+    "reason,transaction,success",
+    [
+        ("insufficient_funds", "0xpending", False),
+        ("settlement_pending", "", False),
+        ("settlement_pending", "0xpending", True),
+    ],
+)
+async def test_non_200_non_retryable_response_does_not_retry(
+    as_async, reason, transaction, success
+):
+    body = {
+        "success": success,
+        "errorReason": reason,
+        "transaction": transaction,
+        "network": "eip155:8453",
+    }
+    client, post = _error_client([httpx.Response(500, json=body)], as_async)
+    retry = settle_with_pending_retry_async if as_async else settle_with_pending_retry
+
+    with pytest.raises(SettleError):
+        await _resolve(retry(client, make_v2_payload(), make_payment_requirements()))
+    assert post.call_count == 1

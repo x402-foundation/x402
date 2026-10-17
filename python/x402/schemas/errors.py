@@ -1,5 +1,12 @@
 """Error types for the x402 Python SDK."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .responses import SettleResponse, VerifyResponse
+
 
 class PaymentError(Exception):
     """Base class for x402 payment errors."""
@@ -14,13 +21,25 @@ class VerifyError(PaymentError):
         invalid_reason: Machine-readable reason for the error.
         invalid_message: Human-readable message for the error (if available).
         payer: The payer's address (if known).
+        response: Validated facilitator response (if available).
+        status_code: Facilitator HTTP status (if available).
     """
 
-    def __init__(self, reason: str, message: str | None = None, payer: str | None = None):
+    def __init__(
+        self,
+        reason: str,
+        message: str | None = None,
+        payer: str | None = None,
+        *,
+        response: VerifyResponse | None = None,
+        status_code: int | None = None,
+    ):
         self.invalid_reason = reason
         self.invalid_message = message
         self.reason = reason
         self.payer = payer
+        self.response = response
+        self.status_code = status_code
         super().__init__(f"{reason}: {message}" if message else reason)
 
 
@@ -32,6 +51,8 @@ class SettleError(PaymentError):
         error_message: Human-readable message for the error (if available).
         transaction: Transaction hash/identifier (if available).
         payer: The payer's address (if known).
+        response: Validated facilitator response (if available).
+        status_code: Facilitator HTTP status (if available).
     """
 
     def __init__(
@@ -40,12 +61,17 @@ class SettleError(PaymentError):
         message: str | None = None,
         transaction: str | None = None,
         payer: str | None = None,
+        *,
+        response: SettleResponse | None = None,
+        status_code: int | None = None,
     ):
         self.error_reason = reason
         self.error_message = message
         self.reason = reason
         self.transaction = transaction
         self.payer = payer
+        self.response = response
+        self.status_code = status_code
         super().__init__(f"{reason}: {message}" if message else reason)
 
 
