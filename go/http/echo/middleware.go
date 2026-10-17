@@ -336,9 +336,7 @@ func createMiddlewareHandler(server *x402http.HTTPServer, config *MiddlewareConf
 // handlePaymentError handles payment error responses
 func handlePaymentError(c echo.Context, response *x402http.HTTPResponseInstructions) error {
 	// Set headers
-	for key, value := range response.Headers {
-		c.Response().Header().Set(key, value)
-	}
+	x402http.ApplyPaymentResponseHeaders(c.Response().Header(), response.Headers)
 
 	// Send response body
 	if response.IsHTML {
@@ -404,9 +402,7 @@ func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402ht
 						result.PaymentPayload,
 						origWriter.Header().Get("Cache-Control"),
 					); headers != nil {
-						for key, value := range headers {
-							origWriter.Header().Set(key, value)
-						}
+						x402http.ApplyPaymentResponseHeaders(origWriter.Header(), headers)
 					}
 					panic(rec)
 				}
@@ -434,9 +430,7 @@ func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402ht
 			result.PaymentPayload,
 			origWriter.Header().Get("Cache-Control"),
 		); headers != nil {
-			for key, value := range headers {
-				origWriter.Header().Set(key, value)
-			}
+			x402http.ApplyPaymentResponseHeaders(origWriter.Header(), headers)
 		}
 		return err
 	}
@@ -456,9 +450,7 @@ func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402ht
 			result.PaymentPayload,
 			capture.Header().Get("Cache-Control"),
 		); headers != nil {
-			for key, value := range headers {
-				origWriter.Header().Set(key, value)
-			}
+			x402http.ApplyPaymentResponseHeaders(origWriter.Header(), headers)
 		}
 		// Write captured error response
 		origWriter.WriteHeader(capture.statusCode)
@@ -484,9 +476,7 @@ func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402ht
 	// Check settlement success
 	if !settleResult.Success {
 		// Always set PAYMENT-RESPONSE header on settlement failure
-		for key, value := range settleResult.Headers {
-			origWriter.Header().Set(key, value)
-		}
+		x402http.ApplyPaymentResponseHeaders(origWriter.Header(), settleResult.Headers)
 		switch {
 		case config.ErrorHandler != nil:
 			errorReason := settleResult.ErrorReason
@@ -503,9 +493,7 @@ func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402ht
 	}
 
 	// Add settlement headers
-	for key, value := range settleResult.Headers {
-		origWriter.Header().Set(key, value)
-	}
+	x402http.ApplyPaymentResponseHeaders(origWriter.Header(), settleResult.Headers)
 	origWriter.Header().Set("Cache-Control", x402http.WithPrivateCacheControl(origWriter.Header().Get("Cache-Control")))
 
 	// Call settlement handler if configured

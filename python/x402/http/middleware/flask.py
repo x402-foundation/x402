@@ -31,7 +31,11 @@ from ..types import (
     RoutesConfig,
 )
 from ..x402_http_server import PaywallProvider, x402HTTPResourceServerSync
-from ..x402_http_server_base import PAYMENT_REQUIRED_CACHE_CONTROL, with_private_cache_control
+from ..x402_http_server_base import (
+    PAYMENT_REQUIRED_CACHE_CONTROL,
+    apply_payment_response_headers,
+    with_private_cache_control,
+)
 
 if TYPE_CHECKING:
     from ...server import x402ResourceServerSync
@@ -243,6 +247,27 @@ class ResponseWrapper:
             name: Header name.
             value: Header value.
         """
+        self.headers.append((name, value))
+
+    def get_header_values(self, name: str) -> list[str]:
+        """Return every value captured for a header (case-insensitive).
+
+        Args:
+            name: Header name.
+
+        Returns:
+            Header values in order.
+        """
+        return [v for k, v in self.headers if k.lower() == name.lower()]
+
+    def set_header(self, name: str, value: str) -> None:
+        """Replace every captured value for a header (case-insensitive).
+
+        Args:
+            name: Header name.
+            value: Header value.
+        """
+        self.headers = [(k, v) for k, v in self.headers if k.lower() != name.lower()]
         self.headers.append((name, value))
 
     def send_response(self, body_chunks: list[bytes]) -> None:
@@ -480,8 +505,11 @@ class PaymentMiddleware:
                         existing_cache_control,
                     )
                     if isinstance(failure_headers, dict):
-                        for key, value in failure_headers.items():
-                            response_wrapper.add_header(key, value)
+                        apply_payment_response_headers(
+                            failure_headers,
+                            response_wrapper.get_header_values,
+                            response_wrapper.set_header,
+                        )
                     response_wrapper.send_response(body_chunks)
                     return []
 
@@ -511,9 +539,13 @@ class PaymentMiddleware:
                         )
 
                         if settle_result.success:
-                            # Add settlement headers
-                            for key, value in settle_result.headers.items():
-                                response_wrapper.add_header(key, value)
+                            # Add settlement headers, merging any expose list the
+                            # app (e.g. flask-cors in after_request) already set
+                            apply_payment_response_headers(
+                                settle_result.headers,
+                                response_wrapper.get_header_values,
+                                response_wrapper.set_header,
+                            )
                             existing_cache_control = next(
                                 (
                                     value

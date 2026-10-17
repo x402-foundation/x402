@@ -128,6 +128,50 @@ payment_middleware(app, routes, server, paywall_config={"appName": "My API"})
 
 Using async components with Flask raises `TypeError`.
 
+## Browser Clients (CORS)
+
+Both middlewares add `PAYMENT-REQUIRED` and `PAYMENT-RESPONSE` to `Access-Control-Expose-Headers` on every response that carries one of them (the 402, settlement failures, and settled responses). An expose list already on the response is merged case-insensitively, not replaced. They never set `Access-Control-Allow-Origin`; that comes from your CORS setup, which must also reach the 402.
+
+Your CORS setup must also:
+
+- name `PAYMENT-SIGNATURE` explicitly in the allowed request headers (`*` is not a wildcard for credentialed requests);
+- answer the `OPTIONS` preflight with a 2xx without requiring payment (key paid routes with their method, e.g. `GET /api/weather`);
+- send `Vary: Origin` if it reflects the request's `Origin` instead of `*`, so a shared cache never serves one origin's response to another.
+
+**FastAPI:** add `CORSMiddleware` after the payment middleware so it wraps it and sees the 402. If you pass `expose_headers`, Starlette replaces the expose list, so include the payment headers:
+
+```python
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://app.example.com"],
+    allow_headers=["Content-Type", "PAYMENT-SIGNATURE"],
+    expose_headers=["PAYMENT-REQUIRED", "PAYMENT-RESPONSE"],
+)
+```
+
+**Flask:** `FlaskPaymentMiddleware` replaces `app.wsgi_app`, so the 402 is returned before Flask's `after_request` hooks run and flask-cors never sees it. flask-cors still applies to paid responses, and its expose list is merged. For the 402 to carry `Access-Control-Allow-Origin`, wrap `app.wsgi_app` after installing the payment middleware, and only add the header when flask-cors has not already set it (two values is an invalid header):
+
+```python
+FlaskPaymentMiddleware(app, routes, server)
+
+payment_wsgi = app.wsgi_app
+
+
+def cors_wsgi(environ, start_response):
+    def start(status, headers, exc_info=None):
+        if not any(k.lower() == "access-control-allow-origin" for k, _ in headers):
+            headers = [*headers, ("Access-Control-Allow-Origin", "https://app.example.com")]
+        return start_response(status, headers, exc_info)
+
+    return payment_wsgi(environ, start)
+
+
+app.wsgi_app = cors_wsgi
+```
+
 ## Route Patterns
 
 | Pattern | Matches |

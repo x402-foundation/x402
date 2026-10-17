@@ -9,12 +9,14 @@ import pytest
 
 # Skip all tests if fastapi not installed
 pytest.importorskip("fastapi")
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from starlette.datastructures import Headers, QueryParams
 
-from x402 import x402Facilitator, x402ResourceServer
+from x402 import x402ClientSync, x402Facilitator, x402ResourceServer
+from x402.http import x402HTTPClientSync
 from x402.http.facilitator_client_base import FacilitatorResponseError
 from x402.http.middleware.fastapi import (
     FastAPIAdapter,
@@ -39,6 +41,7 @@ from x402.schemas.hooks import (
 
 from ....mocks import (
     CashFacilitatorClient,
+    CashSchemeNetworkClient,
     CashSchemeNetworkFacilitator,
     CashSchemeNetworkServer,
 )
@@ -1366,3 +1369,125 @@ class TestLiteralRouteRootPathBypass:
     )
     def test_mounted_percent_encoded_separator_still_returns_402(self, client, path: str) -> None:
         assert client.get(path).status_code == 402
+
+
+class TestPaymentCorsExposeHeaders:
+    """Browsers can only read PAYMENT-REQUIRED / PAYMENT-RESPONSE cross-origin when
+    the response names them on Access-Control-Expose-Headers. The middleware must
+    merge them into whatever expose list is already there and never set
+    Access-Control-Allow-Origin itself.
+    """
+
+    ORIGIN = "https://app.example"
+
+    @staticmethod
+    def _routes() -> dict[str, RouteConfig]:
+        option = PaymentOption(
+            scheme="cash",
+            pay_to="merchant@example.com",
+            price="$0.10",
+            network="x402:cash",
+        )
+        return {
+            "GET /api/paid": RouteConfig(accepts=option),
+            "GET /api/paid-with-expose": RouteConfig(accepts=option),
+        }
+
+    @staticmethod
+    def _cash_server() -> x402ResourceServer:
+        facilitator = x402Facilitator().register(
+            ["x402:cash"],
+            CashSchemeNetworkFacilitator(),
+        )
+        server = x402ResourceServer(CashFacilitatorClient(facilitator))
+        server.register("x402:cash", CashSchemeNetworkServer())
+        server.initialize()
+        return server
+
+    def _app(self, *, outer_cors: bool = False) -> FastAPI:
+        app = FastAPI()
+
+        @app.get("/api/paid")
+        async def paid() -> dict[str, str]:
+            return {"ok": "paid"}
+
+        @app.get("/api/paid-with-expose")
+        async def paid_with_expose() -> Response:
+            response = JSONResponse({"ok": "paid"})
+            response.headers["Access-Control-Allow-Origin"] = self.ORIGIN
+            response.headers["Access-Control-Expose-Headers"] = "X-Request-Id, payment-required"
+            response.headers.append("Access-Control-Expose-Headers", "X-Trace")
+            return response
+
+        app.add_middleware(
+            PaymentMiddlewareASGI,
+            routes=self._routes(),
+            server=self._cash_server(),
+        )
+        if outer_cors:
+            # Added last, so it wraps the payment middleware and sees the 402.
+            app.add_middleware(CORSMiddleware, allow_origins=[self.ORIGIN])
+        return app
+
+    @staticmethod
+    def _payment_headers(response) -> dict[str, str]:
+        payer = x402HTTPClientSync(
+            x402ClientSync()
+            .register("x402:cash", CashSchemeNetworkClient("John"))
+            .set_spend_controls(False)
+        )
+        payment_required = payer.get_payment_required_response(
+            lambda name: response.headers.get(name), response.json()
+        )
+        payload = payer.create_payment_payload(payment_required)
+        return payer.encode_payment_signature_header(payload)
+
+    def test_402_exposes_payment_headers(self) -> None:
+        with TestClient(self._app()) as client:
+            response = client.get("/api/paid", headers={"Origin": self.ORIGIN})
+
+        assert response.status_code == 402
+        assert response.headers.get_list("access-control-expose-headers") == [
+            "PAYMENT-REQUIRED, PAYMENT-RESPONSE"
+        ]
+        assert "access-control-allow-origin" not in response.headers
+
+    def test_402_behind_outer_cors_middleware_is_readable(self) -> None:
+        with TestClient(self._app(outer_cors=True)) as client:
+            response = client.get("/api/paid", headers={"Origin": self.ORIGIN})
+
+        assert response.status_code == 402
+        assert response.headers.get_list("access-control-allow-origin") == [self.ORIGIN]
+        assert response.headers.get_list("access-control-expose-headers") == [
+            "PAYMENT-REQUIRED, PAYMENT-RESPONSE"
+        ]
+
+    def test_settled_response_exposes_payment_headers(self) -> None:
+        with TestClient(self._app()) as client:
+            unpaid = client.get("/api/paid", headers={"Origin": self.ORIGIN})
+            response = client.get(
+                "/api/paid",
+                headers={"Origin": self.ORIGIN, **self._payment_headers(unpaid)},
+            )
+
+        assert response.status_code == 200
+        assert response.headers.get("payment-response")
+        assert response.headers.get_list("access-control-expose-headers") == [
+            "PAYMENT-REQUIRED, PAYMENT-RESPONSE"
+        ]
+        assert "access-control-allow-origin" not in response.headers
+
+    def test_settled_response_merges_existing_expose_list(self) -> None:
+        with TestClient(self._app()) as client:
+            unpaid = client.get("/api/paid-with-expose", headers={"Origin": self.ORIGIN})
+            response = client.get(
+                "/api/paid-with-expose",
+                headers={"Origin": self.ORIGIN, **self._payment_headers(unpaid)},
+            )
+
+        assert response.status_code == 200
+        assert response.headers.get("payment-response")
+        assert response.headers.get_list("access-control-expose-headers") == [
+            "X-Request-Id, payment-required, X-Trace, PAYMENT-RESPONSE"
+        ]
+        assert response.headers.get_list("access-control-allow-origin") == [self.ORIGIN]
