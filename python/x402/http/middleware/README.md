@@ -154,10 +154,10 @@ app.add_middleware(
 )
 ```
 
-**Flask:** `PaymentMiddleware` replaces `app.wsgi_app`, so the 402 is returned before Flask's `after_request` hooks run and flask-cors never sees it. flask-cors still applies to paid responses, and its expose list is merged. For the 402 to carry `Access-Control-Allow-Origin`, wrap `app.wsgi_app` after installing the payment middleware, and only add the header when flask-cors has not already set it (two values is an invalid header):
+**Flask:** `FlaskPaymentMiddleware` replaces `app.wsgi_app`, so the 402 is returned before Flask's `after_request` hooks run and flask-cors never sees it. flask-cors still applies to paid responses, and its expose list is merged. For the 402 to carry `Access-Control-Allow-Origin`, wrap `app.wsgi_app` after installing the payment middleware, and only add the header when flask-cors has not already set it (two values is an invalid header):
 
 ```python
-PaymentMiddleware(app, routes, server)
+FlaskPaymentMiddleware(app, routes, server)
 
 payment_wsgi = app.wsgi_app
 
