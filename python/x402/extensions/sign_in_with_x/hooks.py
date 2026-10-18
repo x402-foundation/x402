@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
-from x402.http.types import HTTPRequestContext, PaymentOption, RouteConfig
+from x402.http.types import HTTPRequestContext, HTTPTransportContext, PaymentOption, RouteConfig
 from x402.schemas.extensions import ClientExtension
 from x402.schemas.hooks import (
     GrantAccessResult,
@@ -73,6 +73,28 @@ class CreateSIWxClientExtensionOptions:
     signers: list[Any]
 
 
+def _settled_resource_path(ctx: Any) -> str | None:
+    """Return the path SIWX should record for a successful settlement.
+
+    Access checks use the server request path. The payload resource URL is
+    client-supplied and is not authenticated by the payment, so it is used
+    only when this settlement has no HTTP request.
+    """
+    transport = getattr(ctx, "transport_context", None)
+    if isinstance(transport, HTTPTransportContext):
+        request = transport.request
+        path = request.path if request is not None else None
+        if isinstance(path, str) and path:
+            return path
+        return None
+
+    resource = getattr(getattr(ctx, "payment_payload", None), "resource", None)
+    resource_url = getattr(resource, "url", None) if resource is not None else None
+    if not resource_url:
+        return None
+    return urlparse(resource_url).path or None
+
+
 def create_siwx_settle_hook(options: CreateSIWxSettleHookOptions):
     """Create an onAfterSettle hook that records payments for SIWX."""
 
@@ -82,11 +104,9 @@ def create_siwx_settle_hook(options: CreateSIWxSettleHookOptions):
         address = ctx.result.payer
         if not address:
             return
-        resource = getattr(ctx.payment_payload, "resource", None)
-        resource_url = resource.url if resource else None
-        if not resource_url:
+        path = _settled_resource_path(ctx)
+        if not path:
             return
-        path = urlparse(resource_url).path
         storage = options.storage
         result = storage.record_payment(path, address)
         if inspect.isawaitable(result):

@@ -1029,7 +1029,11 @@ func (s *x402HTTPResourceServer) ProcessSettlement(
 		resolvedPhase = x402.SettlePhaseAfterHandler
 	}
 
-	settleResult, err := s.SettlePaymentWithExtensions(ctx, payload, requirements, resolved, declaredExtensions, resolvedPhase)
+	settleCtx := ctx
+	if transportContext != nil {
+		settleCtx = x402.WithSettleTransport(ctx, transportContext)
+	}
+	settleResult, err := s.SettlePaymentWithExtensions(settleCtx, payload, requirements, resolved, declaredExtensions, resolvedPhase)
 	if err != nil {
 		return s.buildSettlementFailureResultFromError(err, x402.Network(requirements.Network))
 	}

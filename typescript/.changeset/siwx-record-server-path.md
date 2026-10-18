@@ -1,0 +1,5 @@
+---
+"@x402/extensions": patch
+---
+
+Sign-In-With-X records a successful settlement against the server request path. A client-supplied payment resource URL is used only when the settlement has no HTTP request, so paying one SIWX route can no longer be recorded as access to another.
