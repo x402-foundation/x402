@@ -6,6 +6,7 @@ import { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { x402UptoPermit2ProxyAddress } from "../../../src/constants";
 import {
   ErrPermit2AmountMismatch,
+  ErrPermit2FailedToVerifySignature,
   ErrUptoAmountExceedsPermitted,
   ErrUptoFacilitatorMismatch,
   ErrUptoSettlementExceedsAmount,
@@ -582,6 +583,54 @@ describe("UptoEvmScheme (Facilitator)", () => {
       mockSigner.getCode = vi
         .fn()
         .mockImplementation(mockGetCodeEOAPayer("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"));
+
+      const result = await scheme.verify(makePayload(), makeRequirements());
+
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe("invalid_permit2_signature");
+    });
+  });
+
+  describe("RPC failures during the signature check", () => {
+    const asset = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+
+    it("reports a failed payer eth_getCode as failed-to-verify, not an invalid signature", async () => {
+      mockSigner.getCode = vi
+        .fn()
+        .mockImplementation(({ address }) =>
+          address.toLowerCase() === asset.toLowerCase()
+            ? Promise.resolve("0x6080604052")
+            : Promise.reject(new Error("HTTP request failed. Status: 503")),
+        );
+
+      const result = await scheme.verify(makePayload(), makeRequirements());
+
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe(ErrPermit2FailedToVerifySignature);
+      expect(result.invalidMessage).toContain("503");
+    });
+
+    it("reports an isValidSignature read that fails without a revert as failed-to-verify", async () => {
+      mockSigner.readContract = vi.fn().mockImplementation(async args => {
+        if (args?.functionName === "isValidSignature") {
+          throw new Error("HTTP request failed. Status: 503");
+        }
+        return BigInt("999999999999999999");
+      });
+
+      const result = await scheme.verify(makePayload(), makeRequirements());
+
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe(ErrPermit2FailedToVerifySignature);
+    });
+
+    it("still rejects as an invalid signature when isValidSignature reverts", async () => {
+      mockSigner.readContract = vi.fn().mockImplementation(async args => {
+        if (args?.functionName === "isValidSignature") {
+          throw new Error('The contract function "isValidSignature" reverted.');
+        }
+        return BigInt("999999999999999999");
+      });
 
       const result = await scheme.verify(makePayload(), makeRequirements());
 

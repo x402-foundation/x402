@@ -26,6 +26,7 @@ import {
 import {
   ErrErc20ApprovalTxFailed,
   ErrPermit2AmountMismatch,
+  ErrPermit2FailedToVerifySignature,
   ErrUptoSettlementExceedsAmount,
   ErrUptoFacilitatorMismatch,
   ErrUptoInvalidScheme,
@@ -35,9 +36,14 @@ import {
 import { FacilitatorEvmSigner } from "../../signer";
 import { UptoPermit2Payload } from "../../types";
 import { startAssetContractCheck } from "../../assetCache";
-import { finalHashFromTwoRequestSend, getEvmChainId, isValidTxHash } from "../../utils";
+import {
+  finalHashFromTwoRequestSend,
+  getEvmChainId,
+  isValidTxHash,
+  truncateErrorMessage,
+} from "../../utils";
 import { validateErc20ApprovalForPayment } from "../../shared/erc20approval";
-import { verifyTypedDataSignature } from "../../shared/verifySignature";
+import { checkTypedDataSignature } from "../../shared/verifySignature";
 import {
   buildUptoPermit2SettleArgs,
   mapSettleError,
@@ -214,7 +220,7 @@ export async function verifyUptoPermit2(
   // on-chain SignatureVerification: ecrecover when the address has no code,
   // strict EIP-1271 isValidSignature when it does. No ECDSA fallback for
   // addresses with code (would accept sigs Permit2 rejects on-chain).
-  const signatureValid = await verifyTypedDataSignature(signer, {
+  const signatureCheck = await checkTypedDataSignature(signer, {
     address: payer,
     ...permit2TypedData,
     signature: permit2Payload.signature,
@@ -225,7 +231,18 @@ export async function verifyUptoPermit2(
     return { isValid: false, invalidReason: assetReason, payer };
   }
 
-  if (!signatureValid) {
+  // An RPC failure during the check is not an invalid signature
+  if (signatureCheck.status === "unverifiable") {
+    const { error } = signatureCheck;
+    return {
+      isValid: false,
+      invalidReason: ErrPermit2FailedToVerifySignature,
+      invalidMessage: truncateErrorMessage(error instanceof Error ? error.message : String(error)),
+      payer,
+    };
+  }
+
+  if (signatureCheck.status === "invalid") {
     return {
       isValid: false,
       invalidReason: "invalid_permit2_signature",
