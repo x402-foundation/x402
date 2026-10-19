@@ -20,6 +20,7 @@ and fill required environment variables:
 
 - `FACILITATOR_URL` - Facilitator endpoint URL
 - `EVM_PAYEE_ADDRESS` - Ethereum address to receive payments
+- `CARDANO_PAYEE_ADDRESS` - Cardano address to receive payments (optional, all-networks example)
 - `CASPER_PAYEE_ADDRESS` - Optional; Casper address to receive payments in `all-networks` (66 hex chars: `00` + account hash, or `01` + contract package hash)
 
 2. Install dependencies:
