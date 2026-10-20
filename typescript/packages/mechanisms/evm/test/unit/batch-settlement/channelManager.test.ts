@@ -10,6 +10,7 @@ import {
 import { BatchSettlementEvmScheme } from "../../../src/batch-settlement/server/scheme";
 import { InMemoryChannelStorage, type Channel } from "../../../src/batch-settlement/server/storage";
 import { computeChannelId as computeChannelIdForNetwork } from "../../../src/batch-settlement/utils";
+import { ErrNothingToSettle } from "../../../src/batch-settlement/errors";
 import type { ChannelConfig, AuthorizerSigner } from "../../../src/batch-settlement/types";
 import type { FacilitatorClient } from "@x402/core/server";
 import type {
@@ -19,6 +20,7 @@ import type {
   VerifyResponse,
   SupportedResponse,
 } from "@x402/core/types";
+import { SettleError } from "@x402/core/types";
 
 const RECEIVER = "0x9876543210987654321098765432109876543210" as `0x${string}`;
 const PAYER = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as `0x${string}`;
@@ -788,5 +790,132 @@ describe("BatchSettlementChannelManager — auto-loop tick policies", () => {
 
     await manager.stop();
     expect(onError).toHaveBeenCalled();
+  });
+});
+
+/**
+ * Builds a facilitator that tracks claimed and settled totals like the contract's
+ * `receivers(receiver, token)`: claims (alone or inside a refund) add to the claimed total, and
+ * settle fails with `ErrNothingToSettle` unless something is claimed but not yet settled.
+ * Assumes each channel is claimed once, from zero.
+ *
+ * @returns Facilitator double backed by the claimed/settled totals.
+ */
+function buildChainFacilitator(): FakeFacilitator {
+  let claimed = 0n;
+  let settled = 0n;
+  return buildFacilitator(async (payload, reqs) => {
+    const p = payload.payload as { type: string; claims?: { totalClaimed: string }[] };
+    if (p.type === "settle") {
+      if (claimed <= settled) {
+        return {
+          success: false,
+          errorReason: ErrNothingToSettle,
+          errorMessage: "nothing to settle for receiver and token",
+          transaction: "",
+          network: reqs.network,
+        };
+      }
+      settled = claimed;
+      return { success: true, transaction: "0xsettle", network: reqs.network };
+    }
+    for (const claim of p.claims ?? []) {
+      claimed += BigInt(claim.totalClaimed);
+    }
+    return { success: true, transaction: `0x${p.type}`, network: reqs.network };
+  });
+}
+
+function payloadTypes(facilitator: FakeFacilitator): unknown[] {
+  return facilitator.settle.mock.calls.map(([p]) => (p.payload as Record<string, unknown>).type);
+}
+
+describe("BatchSettlementChannelManager - settling claims made outside claim()", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("settle() returns an empty transaction when the facilitator has nothing to settle", async () => {
+    const { manager } = buildManager({ facilitator: buildChainFacilitator() });
+    await expect(manager.settle()).resolves.toEqual({ transaction: "" });
+  });
+
+  it("the settle job settles claims submitted by a refund", async () => {
+    const facilitator = buildChainFacilitator();
+    const { manager, storage } = buildManager({ facilitator });
+    await storeChannel(storage, buildSession({ chargedCumulativeAmount: "3000" }));
+
+    await manager.refund();
+
+    const onSettle = vi.fn<(r: SettleResult) => void>();
+    const onError = vi.fn<(e: unknown) => void>();
+    manager.start({ claimIntervalSecs: 1, settleIntervalSecs: 1, onSettle, onError });
+    await vi.advanceTimersByTimeAsync(3100);
+    await manager.stop();
+
+    expect(onSettle).toHaveBeenCalledTimes(1);
+    expect(onSettle).toHaveBeenCalledWith({ transaction: "0xsettle" });
+    expect(onError).not.toHaveBeenCalled();
+    expect(payloadTypes(facilitator)).toEqual(["refund", "settle", "settle", "settle"]);
+  });
+
+  it("the settle job settles claims left by a previous process", async () => {
+    const facilitator = buildChainFacilitator();
+    const storage = new InMemoryChannelStorage();
+    await storeChannel(storage, buildSession({ chargedCumulativeAmount: "3000" }));
+
+    // Claims, then stops before its settle timer fires.
+    await buildManager({ facilitator, storage }).manager.claim();
+
+    const { manager } = buildManager({ facilitator, storage });
+    const onSettle = vi.fn<(r: SettleResult) => void>();
+    const onError = vi.fn<(e: unknown) => void>();
+    manager.start({ claimIntervalSecs: 1, settleIntervalSecs: 1, onSettle, onError });
+    await vi.advanceTimersByTimeAsync(1100);
+    await manager.stop();
+
+    expect(onSettle).toHaveBeenCalledWith({ transaction: "0xsettle" });
+    expect(onError).not.toHaveBeenCalled();
+    expect(payloadTypes(facilitator)).toEqual(["claim", "settle"]);
+  });
+
+  it("treats a thrown nothing-to-settle SettleError (non-2xx facilitator reply) as a no-op", async () => {
+    const facilitator = buildFacilitator(async (_, reqs) => {
+      throw new SettleError(400, {
+        success: false,
+        errorReason: ErrNothingToSettle,
+        errorMessage: "nothing to settle for receiver and token",
+        transaction: "",
+        network: reqs.network,
+      });
+    });
+    const { manager } = buildManager({ facilitator });
+    await expect(manager.settle()).resolves.toEqual({ transaction: "" });
+
+    const onSettle = vi.fn<(r: SettleResult) => void>();
+    const onError = vi.fn<(e: unknown) => void>();
+    manager.start({ settleIntervalSecs: 1, onSettle, onError });
+    await vi.advanceTimersByTimeAsync(2100);
+    await manager.stop();
+
+    expect(facilitator.settle).toHaveBeenCalledTimes(3);
+    expect(onSettle).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("stop({ flush: true }) settles claims submitted by a refund", async () => {
+    const facilitator = buildChainFacilitator();
+    const { manager, storage } = buildManager({ facilitator });
+    await storeChannel(storage, buildSession({ chargedCumulativeAmount: "3000" }));
+
+    await manager.refund();
+    manager.start();
+    await manager.stop({ flush: true });
+
+    expect(payloadTypes(facilitator)).toEqual(["refund", "settle"]);
   });
 });
