@@ -583,6 +583,42 @@ class PaymentFilterTest {
         verify(chain, never()).doFilter(any(), any());
     }
 
+    @Test
+    void encodedParentSegmentPathRequiresPayment() throws Exception {
+        // %2e%2e decodes to "..", so /public/%2e%2e/private normalises to /private
+        when(req.getRequestURI()).thenReturn("/public/%2e%2e/private");
+        when(req.getHeader("X-PAYMENT")).thenReturn(null);
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
+        verify(chain, never()).doFilter(any(), any());
+    }
+
+    @Test
+    void parentSegmentAfterDoubleSlashRequiresPayment() throws Exception {
+        // Containers collapse "//" before resolving "..", so this is /private, not /public/private
+        when(req.getRequestURI()).thenReturn("/public//../private");
+        when(req.getHeader("X-PAYMENT")).thenReturn(null);
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
+        verify(chain, never()).doFilter(any(), any());
+    }
+
+    @Test
+    void parentSegmentAboveRootRequiresPayment() throws Exception {
+        // ".." at the root is clamped, so /../private is priced like /private
+        when(req.getRequestURI()).thenReturn("/../private");
+        when(req.getHeader("X-PAYMENT")).thenReturn(null);
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
+        verify(chain, never()).doFilter(any(), any());
+    }
+
     /* ------------ facilitator IOException returns 500 --------------------- */
     @Test
     void facilitatorIOExceptionReturns500() throws Exception {

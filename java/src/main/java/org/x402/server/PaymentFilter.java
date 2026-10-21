@@ -20,8 +20,10 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.Base64;
 import java.math.BigInteger;
+import java.util.Deque;
 import java.util.Map;
 import java.util.Objects;
 
@@ -238,8 +240,10 @@ public class PaymentFilter implements Filter {
      * price-table lookup by sending {@code /%70rivate}, {@code /private;x}, {@code //private},
      * or {@code /./private} — all of which the container routes identically to {@code /private}.
      *
-     * This method mirrors that normalization: strips matrix parameters, percent-decodes,
-     * resolves {@code .}/{@code ..} segments, and collapses consecutive slashes.
+     * This method mirrors that normalization in the containers' order: strips matrix
+     * parameters, percent-decodes, then collapses consecutive slashes and resolves
+     * {@code .}/{@code ..} segments. Decoding comes first so that {@code /public/%2e%2e/private}
+     * resolves to {@code /private}, as it does in the container.
      *
      * Note: prepending a dummy scheme+authority ({@code http://x}) before parsing is required
      * because {@code new URI("//private")} incorrectly treats {@code //private} as an
@@ -254,9 +258,22 @@ public class PaymentFilter implements Filter {
             String stripped = rawUri.replaceAll(";[^/?#]*", "");
             // Prepend dummy scheme+authority so URI treats the value as a path component.
             // Without this, "//foo" would be parsed as authority="foo", path="".
-            String normalized = new URI("http://x" + stripped).normalize().getPath();
-            // Collapse consecutive slashes that normalize() leaves intact (e.g. //foo → /foo).
-            return normalized.replaceAll("/+", "/");
+            String decoded = new URI("http://x" + stripped).getPath();
+            // Empty segments are dropped before ".." is applied, and ".." above the root is
+            // clamped, so a path the container would reject can only be priced, never freed.
+            Deque<String> segments = new ArrayDeque<>();
+            String last = "";
+            for (String segment : decoded.split("/", -1)) {
+                last = segment;
+                if (segment.equals("..")) {
+                    segments.pollLast();
+                } else if (!segment.isEmpty() && !segment.equals(".")) {
+                    segments.addLast(segment);
+                }
+            }
+            String path = "/" + String.join("/", segments);
+            boolean trailingSlash = last.isEmpty() || last.equals(".") || last.equals("..");
+            return trailingSlash && !segments.isEmpty() ? path + "/" : path;
         } catch (Exception e) {
             return null;
         }
