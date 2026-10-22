@@ -28,6 +28,7 @@ import {
   ErrPermit2AmountMismatch,
   ErrUptoSettlementExceedsAmount,
   ErrUptoFacilitatorMismatch,
+  ErrUptoFailedToVerifySignature,
   ErrUptoInvalidPayload,
   ErrUptoInvalidRequiredAmount,
   ErrUptoInvalidScheme,
@@ -39,7 +40,7 @@ import { UptoPermit2Payload } from "../../types";
 import { startAssetContractCheck } from "../../assetCache";
 import { finalHashFromTwoRequestSend, getEvmChainId, isValidTxHash } from "../../utils";
 import { validateErc20ApprovalForPayment } from "../../shared/erc20approval";
-import { verifyTypedDataSignature } from "../../shared/verifySignature";
+import { checkTypedDataSignature } from "../../shared/verifySignature";
 import {
   buildUptoPermit2SettleArgs,
   mapSettleError,
@@ -226,7 +227,7 @@ export async function verifyUptoPermit2(
   // on-chain SignatureVerification: ecrecover when the address has no code,
   // strict EIP-1271 isValidSignature when it does. No ECDSA fallback for
   // addresses with code (would accept sigs Permit2 rejects on-chain).
-  const signatureValid = await verifyTypedDataSignature(signer, {
+  const signatureCheck = await checkTypedDataSignature(signer, {
     address: payer,
     ...permit2TypedData,
     signature: permit2Payload.signature,
@@ -237,7 +238,17 @@ export async function verifyUptoPermit2(
     return { isValid: false, invalidReason: assetReason, payer };
   }
 
-  if (!signatureValid) {
+  // The payer eth_getCode or isValidSignature read failed: no signature check ran.
+  if (signatureCheck === "lookup_failed") {
+    return {
+      isValid: false,
+      invalidReason: ErrUptoFailedToVerifySignature,
+      invalidMessage: "payer signature lookup failed",
+      payer,
+    };
+  }
+
+  if (signatureCheck !== "valid") {
     return {
       isValid: false,
       invalidReason: "invalid_permit2_signature",

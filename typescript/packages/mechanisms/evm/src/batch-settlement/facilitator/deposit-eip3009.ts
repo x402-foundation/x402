@@ -6,7 +6,7 @@ import { ERC3009_DEPOSIT_COLLECTOR_ADDRESS, receiveAuthorizationTypes } from "..
 import { buildErc3009CollectorData, buildErc3009DepositNonce } from "../encoding";
 import * as Errors from "../errors";
 import { erc3009AuthorizationTimeInvalidReason } from "./utils";
-import { verifyTypedDataSignature } from "../../shared/verifySignature";
+import { checkTypedDataSignature, SignatureCheckResult } from "../../shared/verifySignature";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 
@@ -138,7 +138,7 @@ export async function verifyEip3009DepositAuthorization(
   }
 
   const erc3009Nonce = buildErc3009DepositNonce(voucher.channelId, auth.salt);
-  const receiveAuthOk = await verifyReceiveAuth(signer, {
+  const receiveAuth = await verifyReceiveAuth(signer, {
     payer,
     asset: requirements.asset,
     name: extra.name,
@@ -151,7 +151,11 @@ export async function verifyEip3009DepositAuthorization(
     signature: innerSig,
   });
 
-  if (!receiveAuthOk) {
+  // A failed payer eth_getCode or isValidSignature read is an RPC failure, not a bad signature.
+  if (receiveAuth === "lookup_failed") {
+    return reject(Errors.ErrRpcReadFailed);
+  }
+  if (receiveAuth !== "valid") {
     return reject(Errors.ErrInvalidReceiveAuthorizationSignature);
   }
 
@@ -173,7 +177,8 @@ export async function verifyEip3009DepositAuthorization(
  * @param params.validBefore - Expiration timestamp.
  * @param params.nonce - ERC-3009 nonce.
  * @param params.signature - Receive authorization signature.
- * @returns True when the signature matches the expected payer.
+ * @returns `valid` when the signature matches the expected payer, `invalid` when it does not,
+ * `lookup_failed` when the payer code or `isValidSignature` read failed.
  */
 async function verifyReceiveAuth(
   signer: FacilitatorEvmSigner,
@@ -189,13 +194,13 @@ async function verifyReceiveAuth(
     nonce: `0x${string}`;
     signature: `0x${string}`;
   },
-): Promise<boolean> {
+): Promise<SignatureCheckResult> {
   // Mirror the token's on-chain ERC-3009 signature check. Modern tokens (USDC v2.2)
   // use a SignatureChecker that routes by code.length: ECDSA for EOAs, strict
   // EIP-1271 for any address with code (including 7702-delegated EOAs). No
   // ECDSA fallback for code addresses — that fallback would accept sigs the
   // token rejects on-chain.
-  return verifyTypedDataSignature(signer, {
+  return checkTypedDataSignature(signer, {
     address: getAddress(params.payer),
     domain: {
       name: params.name,
