@@ -862,13 +862,17 @@ class x402HTTPServerBase:
             )
 
         except SettleError as e:
-            settle_response = SettleResponse(
-                success=False,
-                error_reason=e.error_reason,
-                error_message=e.error_message or e.error_reason,
-                transaction=e.transaction or "",
-                network=requirements.network,
-                payer=e.payer,
+            settle_response = (
+                e.response.model_copy(update={"success": False})
+                if e.response is not None
+                else SettleResponse(
+                    success=False,
+                    error_reason=e.error_reason,
+                    error_message=e.error_message or e.error_reason,
+                    transaction=e.transaction or "",
+                    network=requirements.network,
+                    payer=e.payer,
+                )
             )
             failure = ProcessSettleResult(
                 success=False,

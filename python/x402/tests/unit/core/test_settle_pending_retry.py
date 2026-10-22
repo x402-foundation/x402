@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from x402 import x402ResourceServer, x402ResourceServerSync
 from x402.schemas import (
     PaymentPayload,
     PaymentRequirements,
     ResourceInfo,
+    SettleError,
     SettleResponse,
     SupportedKind,
     SupportedResponse,
@@ -245,7 +248,7 @@ def _payload() -> PaymentPayload:
 
 
 class _E2ESyncFacilitatorClient:
-    def __init__(self, responses: list[SettleResponse]):
+    def __init__(self, responses: list[SettleResponse | SettleError]):
         self._responses = list(responses)
         self.settle_calls = 0
 
@@ -261,11 +264,14 @@ class _E2ESyncFacilitatorClient:
 
     def settle(self, payload, requirements) -> SettleResponse:
         self.settle_calls += 1
-        return self._responses.pop(0)
+        result = self._responses.pop(0)
+        if isinstance(result, SettleError):
+            raise result
+        return result
 
 
 class _E2EAsyncFacilitatorClient:
-    def __init__(self, responses: list[SettleResponse]):
+    def __init__(self, responses: list[SettleResponse | SettleError]):
         self._responses = list(responses)
         self.settle_calls = 0
 
@@ -281,7 +287,10 @@ class _E2EAsyncFacilitatorClient:
 
     async def settle(self, payload, requirements) -> SettleResponse:
         self.settle_calls += 1
-        return self._responses.pop(0)
+        result = self._responses.pop(0)
+        if isinstance(result, SettleError):
+            raise result
+        return result
 
 
 class TestResourceServerSyncSettleRetry:
@@ -420,3 +429,55 @@ class TestResourceServerAsyncSettleRetry:
         assert result.success is True
         assert result.transaction == "0xrecovered"
         assert client.settle_calls == 2
+
+
+@pytest.mark.parametrize("as_async", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("as_error", [False, True], ids=["returned", "thrown"])
+@pytest.mark.parametrize("recover", [False, True], ids=["unrecovered", "recovered"])
+def test_pending_failure_reaches_hook_after_one_retry(as_async, as_error, recover):
+    responses = [_pending_response("0xfirst"), _pending_response("0xsecond")]
+    if as_error:
+        responses = [
+            SettleError(
+                reason=r.error_reason, transaction=r.transaction, response=r, status_code=500
+            )
+            for r in responses
+        ]
+    factory = (
+        TestResourceServerAsyncSettleRetry() if as_async else TestResourceServerSyncSettleRetry()
+    )
+    server, client = factory._make_server(responses)
+    contexts = []
+
+    def handle_failure(ctx):
+        from x402.schemas import RecoveredSettleResult
+
+        contexts.append(ctx)
+        if recover:
+            return RecoveredSettleResult(result=_success_response("0xrecovered"))
+        return None
+
+    async def async_handle_failure(ctx):
+        return handle_failure(ctx)
+
+    server.on_settle_failure(async_handle_failure if as_async else handle_failure)
+    payload, requirements = _payload(), _requirements()
+
+    def settle():
+        result = server.settle_payment(payload, requirements)
+        return asyncio.run(result) if as_async else result
+
+    if as_error and not recover:
+        with pytest.raises(SettleError) as exc:
+            settle()
+        assert exc.value is responses[-1]
+    else:
+        result = settle()
+        assert result.success is recover
+        assert result.transaction == ("0xrecovered" if recover else "0xsecond")
+    assert client.settle_calls == 2
+    assert len(contexts) == 1
+    assert contexts[0].payment_payload is payload
+    assert contexts[0].requirements is requirements
+    if as_error:
+        assert contexts[0].error is responses[-1]
