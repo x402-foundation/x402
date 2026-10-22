@@ -351,20 +351,6 @@ async function processPaidToolCall<TArgs extends Record<string, unknown>>(
     );
   }
 
-  if (verifyResult.skipHandler) {
-    return settlePaymentResult(
-      resourceServer,
-      toolName,
-      config,
-      hookContext,
-      paymentPayload,
-      paymentRequirements,
-      extMap,
-      transportContext,
-      createSkipHandlerResult(verifyResult.skipHandler.body),
-    );
-  }
-
   let beforeHandlerSettlement: CompletedSettlement | undefined;
 
   if (phases.settleBeforeHandler) {
@@ -402,6 +388,23 @@ async function processPaidToolCall<TArgs extends Record<string, unknown>>(
         transportContext,
       );
     }
+  }
+
+  // Bypass the tool. Settle as a normal call would, after the before-handler
+  // settle, so flows like upfront and escrow are not skipped.
+  if (verifyResult.skipHandler) {
+    return settlePaymentResult(
+      resourceServer,
+      toolName,
+      config,
+      hookContext,
+      paymentPayload,
+      paymentRequirements,
+      extMap,
+      transportContext,
+      createSkipHandlerResult(verifyResult.skipHandler.body),
+      beforeHandlerSettlement,
+    );
   }
 
   const cancellationDispatcher = resourceServer.createPaymentCancellationDispatcher(

@@ -1509,6 +1509,129 @@ describe("x402HTTPResourceServer", () => {
       }
     });
 
+    describe("skipHandler on a flow that settles before the handler", () => {
+      const upfrontRoutes = {
+        "/api/refund": {
+          accepts: {
+            scheme: "exact",
+            payTo: "0xabc",
+            price: "$1.00" as Price,
+            network: "eip155:8453" as Network,
+          },
+        },
+      };
+
+      /**
+       * Build a server for `flow` whose hooks skip verification and the resource handler.
+       *
+       * @param flow - Payment flow the scheme supports
+       * @returns The HTTP server, a request context carrying a payment header, and the settle phases seen
+       */
+      async function buildSkipHandlerRequest(flow: "upfront" | "escrow") {
+        const server = new x402ResourceServer(mockFacilitator);
+        server.register(
+          "eip155:8453" as Network,
+          Object.assign(
+            new MockSchemeNetworkServer("exact", {
+              amount: "1000000",
+              asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+              extra: {},
+            }),
+            { paymentFlows: { default: { supported: [flow], default: flow } } },
+          ),
+        );
+        await server.initialize();
+        // Without verify-before-handler, afterVerify hooks only run after a beforeVerify skip.
+        server.onBeforeVerify(async () => ({
+          skip: true as const,
+          result: buildVerifyResponse({ isValid: true, payer: "0xpayer" }),
+        }));
+        server.onAfterVerify(async () => ({
+          skipHandler: true as const,
+          response: { contentType: "application/json", body: { message: "skipped" } },
+        }));
+        const settlePhases: string[] = [];
+        server.onBeforeSettle(async ctx => {
+          settlePhases.push(ctx.phase);
+        });
+
+        const payload = buildPaymentPayload({
+          accepted: buildPaymentRequirements({
+            scheme: "exact",
+            network: "eip155:8453" as Network,
+            payTo: "0xabc",
+            amount: "1000000",
+            asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            maxTimeoutSeconds: 300,
+            // The server advertises its non-default flow in extra.paymentFlow.
+            extra: { paymentFlow: flow },
+          }),
+        });
+        const { encodePaymentSignatureHeader } = await import("../../../src/http");
+        const context: HTTPRequestContext = {
+          adapter: new MockHTTPAdapter({
+            "payment-signature": encodePaymentSignatureHeader(payload),
+          }),
+          path: "/api/refund",
+          method: "GET",
+        };
+        return {
+          httpServer: new x402HTTPResourceServer(server, upfrontRoutes),
+          context,
+          settlePhases,
+        };
+      }
+
+      it("settles an upfront payment before returning the skipHandler response", async () => {
+        const { httpServer, context, settlePhases } = await buildSkipHandlerRequest("upfront");
+
+        const result = await httpServer.processHTTPRequest(context);
+
+        expect(mockFacilitator.settleCalls.length).toBe(1);
+        expect(settlePhases).toEqual(["before-handler"]);
+        expect(result.type).toBe("payment-error");
+        if (result.type === "payment-error") {
+          expect(result.response.status).toBe(200);
+          expect(result.response.headers["PAYMENT-RESPONSE"]).toBeDefined();
+          expect(result.response.body).toEqual({ message: "skipped" });
+        }
+      });
+
+      it("settles both escrow phases before returning the skipHandler response", async () => {
+        const { httpServer, context, settlePhases } = await buildSkipHandlerRequest("escrow");
+
+        const result = await httpServer.processHTTPRequest(context);
+
+        expect(mockFacilitator.settleCalls.length).toBe(2);
+        expect(settlePhases).toEqual(["before-handler", "after-handler"]);
+        expect(result.type).toBe("payment-error");
+        if (result.type === "payment-error") {
+          expect(result.response.status).toBe(200);
+          expect(result.response.headers["PAYMENT-RESPONSE"]).toBeDefined();
+          expect(result.response.body).toEqual({ message: "skipped" });
+        }
+      });
+
+      it("does not release the skipHandler response when settlement fails", async () => {
+        mockFacilitator.setSettleResponse({
+          success: false,
+          errorReason: "insufficient_funds",
+          transaction: "",
+          network: "eip155:8453" as Network,
+        });
+        const { httpServer, context } = await buildSkipHandlerRequest("upfront");
+
+        const result = await httpServer.processHTTPRequest(context);
+
+        expect(mockFacilitator.settleCalls.length).toBe(1);
+        expect(result.type).toBe("payment-error");
+        if (result.type === "payment-error") {
+          expect(result.response.status).toBe(402);
+          expect(result.response.body).not.toEqual({ message: "skipped" });
+        }
+      });
+    });
+
     it("should not treat API clients as browsers", async () => {
       const routes = {
         "/api/test": {
