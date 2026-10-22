@@ -278,29 +278,42 @@ export function resolveSettlementOverrideAmount(
   requirements: PaymentRequirements,
   decimals?: number,
 ): string {
+  let resolved: string;
+
   // Percent format: "50%" or "33.33%"
   const percentMatch = rawAmount.match(/^(\d+(?:\.\d{0,2})?)%$/);
   if (percentMatch) {
     const [intPart, decPart = ""] = percentMatch[1].split(".");
     const scaledPercent = BigInt(intPart) * 100n + BigInt(decPart.padEnd(2, "0").slice(0, 2));
     const base = BigInt(requirements.amount);
-    return ((base * scaledPercent) / 10000n).toString();
-  }
-
-  // Dollar price format: "$0.05"
-  const dollarMatch = rawAmount.match(/^\$(\d+(?:\.\d+)?)$/);
-  if (dollarMatch) {
-    if (decimals === undefined) {
-      throw new Error(
-        `Cannot convert dollar settlement override "${rawAmount}" to atomic units: ` +
-          `asset decimals are unknown. Pass an atomic amount or register the asset.`,
-      );
+    resolved = ((base * scaledPercent) / 10000n).toString();
+  } else {
+    // Dollar price format: "$0.05"
+    const dollarMatch = rawAmount.match(/^\$(\d+(?:\.\d+)?)$/);
+    if (dollarMatch) {
+      if (decimals === undefined) {
+        throw new Error(
+          `Cannot convert dollar settlement override "${rawAmount}" to atomic units: ` +
+            `asset decimals are unknown. Pass an atomic amount or register the asset.`,
+        );
+      }
+      resolved = convertToTokenAmount(dollarMatch[1], decimals);
+    } else {
+      // Raw atomic units (existing behavior)
+      resolved = rawAmount;
     }
-    return convertToTokenAmount(dollarMatch[1], decimals);
   }
 
-  // Raw atomic units (existing behavior)
-  return rawAmount;
+  // SettlementOverrides.amount's own contract: the resolved amount must be
+  // <= the authorized maximum in PaymentRequirements, for every format above.
+  if (BigInt(resolved) > BigInt(requirements.amount)) {
+    throw new Error(
+      `Settlement override amount "${rawAmount}" resolves to ${resolved} atomic units, ` +
+        `which exceeds the authorized maximum of ${requirements.amount} in PaymentRequirements.`,
+    );
+  }
+
+  return resolved;
 }
 
 type HookAdapterHandles = {
@@ -912,7 +925,13 @@ export class x402ResourceServer {
 
     // Add extensions if provided
     if (extensions && Object.keys(extensions).length > 0) {
-      response.extensions = extensions;
+      // Shallow copy rather than alias: the enrichment below writes into
+      // response.extensions, and sharing the reference would overwrite the
+      // route declaration itself. That declaration is read again later, when
+      // enrichSettlementResponse runs, so mutating it here silently strips the
+      // route config an extension needs at settlement time. accepts is already
+      // cloned a few lines above for the same reason.
+      response.extensions = { ...extensions };
     }
 
     for (let i = 0; i < workingAccepts.length; i++) {

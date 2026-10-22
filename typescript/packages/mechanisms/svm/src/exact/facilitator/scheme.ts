@@ -423,6 +423,7 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
         network: payload.accepted.network,
         transaction: "",
         errorReason: valid.invalidReason ?? Errors.ErrVerificationFailed,
+        errorMessage: valid.invalidMessage,
         payer: valid.payer || "",
       };
     }

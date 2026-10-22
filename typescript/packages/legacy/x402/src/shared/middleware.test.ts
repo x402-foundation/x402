@@ -198,6 +198,20 @@ describe("findMatchingRoute", () => {
     expect(result).toEqual(routePatterns[1]);
   });
 
+  it("should match HEAD to a GET route", () => {
+    const result = findMatchingRoute(routePatterns, "/api/test", "HEAD");
+    expect(result).toEqual(routePatterns[0]);
+  });
+
+  it("should prefer an explicit HEAD route over the GET fallback", () => {
+    const explicitPatterns = computeRoutePatterns({
+      "GET /api/test": "$0.01",
+      "HEAD /api/test": "$0.02",
+    });
+    const result = findMatchingRoute(explicitPatterns, "/api/test", "HEAD");
+    expect(result).toEqual(explicitPatterns[1]);
+  });
+
   it("should not match routes with wrong verbs", () => {
     const result = findMatchingRoute(routePatterns, "/api/test", "PUT");
     expect(result).toBeUndefined();

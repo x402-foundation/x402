@@ -8,6 +8,7 @@ import {
   FeeBumpTransaction,
   Transaction,
   BASE_FEE,
+  xdr,
 } from "@stellar/stellar-sdk";
 import { Api } from "@stellar/stellar-sdk/rpc";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -200,10 +201,41 @@ describe("ExactStellarScheme - Settle (randomly using 1-2 facilitator signers)",
       });
     });
 
-    it("should return error when transaction submission returns non-PENDING status", async () => {
+    it("should surface a retryable errorReason and RPC status when submission returns TRY_AGAIN_LATER", async () => {
       vi.mocked(mockServer.sendTransaction).mockResolvedValue({
         status: "TRY_AGAIN_LATER",
         hash: "",
+        latestLedger: 4085901,
+      } as Api.SendTransactionResponse);
+
+      const result = await facilitator.settle(validPayload, validRequirements);
+
+      expect(result).toEqual({
+        success: false,
+        errorReason: "settle_exact_stellar_transaction_submission_retryable",
+        errorMessage: "Soroban RPC sendTransaction returned status TRY_AGAIN_LATER",
+        payer: CLIENT_PUBLIC,
+        network: STELLAR_TESTNET_CAIP2,
+        transaction: "",
+        extra: {
+          rpcStatus: "TRY_AGAIN_LATER",
+          retryable: true,
+          latestLedger: 4085901,
+        },
+      });
+    });
+
+    it("should surface a terminal errorReason and the RPC error result when submission returns ERROR", async () => {
+      const errorResult = new xdr.TransactionResult({
+        feeCharged: new xdr.Int64(32755),
+        result: xdr.TransactionResultResult.txBadSeq(),
+        ext: new xdr.TransactionResultExt(0),
+      });
+      vi.mocked(mockServer.sendTransaction).mockResolvedValue({
+        status: "ERROR",
+        hash: "",
+        latestLedger: 4085902,
+        errorResult,
       } as Api.SendTransactionResponse);
 
       const result = await facilitator.settle(validPayload, validRequirements);
@@ -211,9 +243,16 @@ describe("ExactStellarScheme - Settle (randomly using 1-2 facilitator signers)",
       expect(result).toEqual({
         success: false,
         errorReason: "settle_exact_stellar_transaction_submission_failed",
+        errorMessage: "Soroban RPC sendTransaction returned status ERROR (txBadSeq)",
         payer: CLIENT_PUBLIC,
         network: STELLAR_TESTNET_CAIP2,
         transaction: "",
+        extra: {
+          rpcStatus: "ERROR",
+          retryable: false,
+          latestLedger: 4085902,
+          errorResultCode: "txBadSeq",
+        },
       });
     });
 

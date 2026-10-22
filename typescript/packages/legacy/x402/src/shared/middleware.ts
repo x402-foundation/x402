@@ -110,15 +110,19 @@ export function findMatchingRoute(
     .replace(/\/+/g, "/") // collapse slashes
     .replace(/(.+?)\/+$/, "$1"); // trim trailing slashes
 
-  // Find matching route pattern
-  const matchingRoutes = routePatterns.filter(({ pattern, verb }) => {
-    const matchesPath = pattern.test(normalizedPath);
-    const upperMethod = method.toUpperCase();
-    const matchesVerb = verb === "*" || upperMethod === verb;
+  const upperMethod = method.toUpperCase();
+  const findMatchingRoutes = (candidateMethod: string): RoutePattern[] =>
+    routePatterns.filter(
+      ({ pattern, verb }) =>
+        pattern.test(normalizedPath) && (verb === "*" || candidateMethod === verb),
+    );
 
-    const result = matchesPath && matchesVerb;
-    return result;
-  });
+  // HTTP routers commonly dispatch HEAD through GET. Preserve an explicit
+  // HEAD or wildcard route, and only use GET when neither directly matched.
+  let matchingRoutes = findMatchingRoutes(upperMethod);
+  if (matchingRoutes.length === 0 && upperMethod === "HEAD") {
+    matchingRoutes = findMatchingRoutes("GET");
+  }
 
   if (matchingRoutes.length === 0) {
     return undefined;

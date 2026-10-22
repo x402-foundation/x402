@@ -242,9 +242,8 @@ def payment_middleware(
     if paywall_provider:
         http_server.register_paywall_provider(paywall_provider)
 
-    # Initialization state with async lock for concurrency safety
     init_done = False
-    init_lock = asyncio.Lock()
+    init_task: asyncio.Task[None] | None = None
 
     # Initialize if requested - queries facilitator /supported to populate
     # facilitator clients. Fatal capability / route mismatches exit the process
@@ -256,11 +255,16 @@ def payment_middleware(
         except Exception as error:
             handle_background_init_error(error)
 
+    async def initialize_in_background() -> None:
+        nonlocal init_done
+        await asyncio.to_thread(http_server.initialize)
+        init_done = True
+
     async def middleware(
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        nonlocal init_done
+        nonlocal init_task
 
         # Create adapter and context
         adapter = FastAPIAdapter(request)
@@ -281,15 +285,18 @@ def payment_middleware(
         if not http_server.requires_payment(context):
             return await call_next(request)
 
-        # Initialize on first protected request (double-checked locking)
+        # Share initialization across requests, even if one waiter is cancelled.
         if sync_facilitator_on_start and not init_done:
-            async with init_lock:
-                if not init_done:
-                    try:
-                        http_server.initialize()
-                    except FacilitatorResponseError as error:
-                        return _facilitator_error_response(error)
-                    init_done = True
+            if init_task is None or init_task.done():
+                init_task = asyncio.create_task(initialize_in_background())
+                # Retrieve failures even when every waiting request has disconnected.
+                init_task.add_done_callback(
+                    lambda task: None if task.cancelled() else task.exception()
+                )
+            try:
+                await asyncio.shield(init_task)
+            except FacilitatorResponseError as error:
+                return _facilitator_error_response(error)
 
         # Process payment request
         try:

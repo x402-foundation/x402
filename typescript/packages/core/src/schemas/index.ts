@@ -38,14 +38,19 @@ export type NetworkV1 = z.infer<typeof NetworkSchemaV1>;
 
 /**
  * Network identifier schema for V2 - CAIP-2 format validation.
- * V2 requires minimum length of 3 and a colon separator (e.g., "eip155:84532", "solana:devnet").
+ * V2 requires a CAIP-2 namespace and reference (e.g., "eip155:84532", "solana:devnet").
+ * Legacy Algorand full genesis hashes remain accepted for backward compatibility.
  */
-export const NetworkSchemaV2 = z
-  .string()
-  .min(3)
-  .refine(val => val.includes(":"), {
-    message: "Network must be in CAIP-2 format (e.g., 'eip155:84532')",
-  });
+export const NetworkSchemaV2 = z.string().refine(
+  network =>
+    /^[-a-z0-9]{3,8}:[-_a-zA-Z0-9]{1,32}$/.test(network) ||
+    // TODO: Remove this legacy Algorand exception ASAP in a fast follow; V2 MUST accept only CAIP-2 identifiers.
+    /^algorand:[A-Za-z0-9+/]{43}=$/.test(network),
+  {
+    message:
+      "Network must be in CAIP-2 format (e.g., 'eip155:84532') or a legacy Algorand full-hash identifier",
+  },
+);
 export type NetworkV2 = z.infer<typeof NetworkSchemaV2>;
 
 /**

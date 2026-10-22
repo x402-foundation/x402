@@ -10,6 +10,7 @@ import {
 } from "../types/facilitator";
 import { z } from "../schemas";
 import { safeBase64Decode } from "../utils";
+import { MAX_CONTROL_PLANE_RESPONSE_BYTES, readLimitedText } from "./responseBody";
 
 const DEFAULT_FACILITATOR_URL = "https://x402.org/facilitator";
 /** Default per-request timeout for facilitator HTTP calls, in milliseconds */
@@ -337,7 +338,7 @@ async function parseSuccessResponse<T>(
   schema: z.ZodType<T, z.ZodTypeDef, unknown>,
   operation: string,
 ): Promise<T> {
-  const text = await response.text();
+  const text = await readLimitedText(response, MAX_CONTROL_PLANE_RESPONSE_BYTES);
 
   let data: unknown;
   try {
@@ -421,7 +422,7 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
       });
 
       if (!response.ok) {
-        const text = await response.text();
+        const text = await readLimitedText(response, MAX_CONTROL_PLANE_RESPONSE_BYTES);
         let data: unknown;
         try {
           data = JSON.parse(text);
@@ -479,7 +480,7 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
       });
 
       if (!response.ok) {
-        const text = await response.text();
+        const text = await readLimitedText(response, MAX_CONTROL_PLANE_RESPONSE_BYTES);
         let data: unknown;
         try {
           data = JSON.parse(text);
@@ -536,15 +537,17 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
           };
         }
 
-        const errorText = await response.text().catch((cause: unknown) => {
-          // A deadline abort during the error-body read must surface as a
-          // timeout, not be masked as a generic HTTP failure (which would be
-          // retried for 429). statusText covers other body-read failures.
-          if (isAbortOrTimeoutError(cause)) {
-            throw cause;
-          }
-          return response.statusText;
-        });
+        const errorText = await readLimitedText(response, MAX_CONTROL_PLANE_RESPONSE_BYTES).catch(
+          (cause: unknown) => {
+            // A deadline abort during the error-body read must surface as a
+            // timeout, not be masked as a generic HTTP failure (which would be
+            // retried for 429). statusText covers other body-read failures.
+            if (isAbortOrTimeoutError(cause)) {
+              throw cause;
+            }
+            return response.statusText;
+          },
+        );
         return {
           kind: "http-error" as const,
           status: response.status,

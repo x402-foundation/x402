@@ -675,6 +675,40 @@ describe("withX402", () => {
     );
   });
 
+  it.each([204, 205, 304])("preserves a settled null-body %i response", async status => {
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    const mockServer = createMockHttpServer(
+      {
+        type: "payment-verified",
+        paymentPayload: mockPaymentPayload,
+        paymentRequirements: mockPaymentRequirements,
+        cancellationDispatcher: { cancel } as PaymentVerifiedResult["cancellationDispatcher"],
+      },
+      { success: true, headers: { "PAYMENT-RESPONSE": "settled" } },
+    );
+    const original = new NextResponse(null, {
+      status,
+      headers: { "X-Handler": "preserved", "Cache-Control": "max-age=60" },
+    });
+    setSettlementOverrides(original, { amount: "500" });
+    const handler = vi.fn().mockResolvedValue(original);
+    const wrappedHandler = withX402FromHTTPServer(handler, mockServer, undefined, undefined, false);
+
+    const response = await wrappedHandler(createMockRequest());
+
+    expect(response.status).toBe(status);
+    expect(response.body).toBeNull();
+    expect(response.headers.get("PAYMENT-RESPONSE")).toBe("settled");
+    expect(response.headers.get("X-Handler")).toBe("preserved");
+    expect(response.headers.get("Cache-Control")).toBe("max-age=60, private");
+    expect(response.headers.has("Settlement-Overrides")).toBe(false);
+    expect(mockServer.processSettlement).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(mockServer.processSettlement).mock.calls[0][3]?.responseBody).toEqual(
+      Buffer.alloc(0),
+    );
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
   it("echoes before-handler PAYMENT-RESPONSE when handler throws", async () => {
     const beforeHandlerSettlement: CompletedSettlement = {
       phase: "before-handler",

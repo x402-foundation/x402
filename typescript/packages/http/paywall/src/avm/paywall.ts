@@ -1,21 +1,6 @@
 import type { PaymentRequired } from "../types";
+import { toScriptJson } from "../scriptJson";
 import { getAvmTemplate } from "./template-loader";
-
-/**
- * Escapes a string for safe injection into JavaScript string literals
- *
- * @param str - The string to escape
- * @returns The escaped string
- */
-function escapeString(str: string): string {
-  return str
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/'/g, "\\'")
-    .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r")
-    .replace(/\t/g, "\\t");
-}
 
 interface AvmPaywallOptions {
   amount: number;
@@ -57,18 +42,18 @@ export function getAvmPaywallHtml(options: AvmPaywallOptions): string {
   <script>
     window.x402 = {
       amount: ${amount},
-      paymentRequired: ${JSON.stringify(paymentRequired)},
+      paymentRequired: ${toScriptJson(paymentRequired)},
       testnet: ${testnet},
-      currentUrl: "${escapeString(currentUrl)}",
+      currentUrl: ${toScriptJson(currentUrl)},
       config: {
         chainConfig: {},
       },
-      appName: "${escapeString(appName || "")}",
-      appLogo: "${escapeString(appLogo || "")}",
-      faucetUrls: ${faucetUrls ? JSON.stringify(faucetUrls) : "undefined"},
+      appName: ${toScriptJson(appName || "")},
+      appLogo: ${toScriptJson(appLogo || "")},
+      faucetUrls: ${faucetUrls ? toScriptJson(faucetUrls) : "undefined"},
     };
     ${logOnTestnet}
   </script>`;
 
-  return AVM_PAYWALL_TEMPLATE.replace("</head>", `${configScript}\n</head>`);
+  return AVM_PAYWALL_TEMPLATE.replace("</head>", () => `${configScript}\n</head>`);
 }

@@ -960,6 +960,62 @@ export function blockfrostQueries(provider: CardanoProviderConfig): {
 }
 
 /**
+ * Broadcasts a signed transaction exactly as received, through the provider's
+ * raw-CBOR submit endpoint.
+ *
+ * The Evolution provider's `submitTx` re-serializes a decoded `Transaction`,
+ * and that round trip is not byte-preserving: untagged sets (legal in Conway)
+ * come back tagged 258. That changes the body bytes, so the transaction id no
+ * longer matches the client's vkey witnesses and the node rejects it.
+ *
+ * @param provider - The signer's provider connection config.
+ * @param transactionBytes - The signed transaction CBOR, unmodified.
+ * @returns The transaction id (hex) reported by the provider.
+ */
+export async function submitRawCardanoTransaction(
+  provider: CardanoProviderConfig,
+  transactionBytes: Uint8Array,
+): Promise<string> {
+  const timeoutMs = providerTimeoutMs(provider);
+  const { name, url, headers } = provider.blockfrost
+    ? {
+        name: "Blockfrost",
+        url: `${provider.blockfrost.baseUrl.replace(/\/$/, "")}/tx/submit`,
+        headers: provider.blockfrost.projectId
+          ? { project_id: provider.blockfrost.projectId }
+          : undefined,
+      }
+    : {
+        name: "Koios",
+        url: `${provider.koios.baseUrl.replace(/\/$/, "")}/submittx`,
+        headers: provider.koios.token
+          ? { authorization: `Bearer ${provider.koios.token}` }
+          : undefined,
+      };
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/cbor", ...headers },
+    body: transactionBytes,
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`${name} submitTx failed: ${response.status} ${text}`);
+  }
+  // Both providers return the id as a JSON string; tolerate a bare one too.
+  let txHash: unknown = text.trim();
+  try {
+    txHash = JSON.parse(text);
+  } catch {
+    // keep the raw text
+  }
+  if (typeof txHash !== "string" || !/^[0-9a-f]{64}$/i.test(txHash)) {
+    throw new Error(`${name} submitTx returned an unexpected body: ${text}`);
+  }
+  return txHash.toLowerCase();
+}
+
+/**
  * Builds a reference {@link FacilitatorCardanoSigner} backed by the Evolution
  * SDK provider for chain queries and transaction submission.
  *
@@ -1137,9 +1193,16 @@ export function toFacilitatorCardanoSigner(
       network: string,
     ): Promise<CardanoSubmissionResult> {
       assertNetwork(network);
-      const tx = Transaction.fromCBORBytes(decodeCardanoTransactionBytes(signedTransactionBase64));
-      const hash = await withCardanoProviderTimeout(client.submitTx(tx), timeoutMs, "submitTx");
-      const txHash = Buffer.from(hash.hash).toString("hex").toLowerCase();
+      // Submit the bytes the facilitator verified, not a re-encoding of them.
+      const txHash = await withCardanoProviderTimeout(
+        submitRawCardanoTransaction(
+          config.provider,
+          decodeCardanoTransactionBytes(signedTransactionBase64),
+        ),
+        timeoutMs,
+        "submitTx",
+      );
+      const hash = TransactionHash.fromHex(txHash);
       if (config.awaitConfirmation === false) {
         return { txHash, status: "mempool" };
       }

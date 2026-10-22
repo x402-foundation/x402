@@ -539,6 +539,51 @@ describe("ExactEvmSchemeV1", () => {
       expect(result.success).toBe(false);
       expect(result.errorReason).toBe(Errors.ErrTransferEventMismatch);
     });
+
+    it("should surface the verification message in errorMessage", async () => {
+      const facilitator = new ExactEvmSchemeV1(mockSigner);
+      vi.spyOn(
+        facilitator as unknown as { _verify: () => Promise<unknown> },
+        "_verify",
+      ).mockResolvedValue({
+        isValid: false,
+        invalidReason: Errors.ErrInvalidSignature,
+        invalidMessage: "signature does not match authorization.from",
+        payer: "0x1234567890123456789012345678901234567890",
+      });
+
+      const result = await facilitator.settle(
+        {
+          x402Version: 1,
+          scheme: "exact",
+          network: "base-sepolia",
+          payload: {
+            signature: "0xinvalid",
+            authorization: {
+              from: "0x1234567890123456789012345678901234567890",
+              to: "0x9876543210987654321098765432109876543210",
+              value: "100000",
+              validAfter: "0",
+              validBefore: "99999999999",
+              nonce: "0x0000000000000000000000000000000000000000000000000000000000000000",
+            },
+          },
+        } as never,
+        {
+          scheme: "exact",
+          network: "base-sepolia",
+          asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+          maxAmountRequired: "100000",
+          payTo: "0x9876543210987654321098765432109876543210",
+          maxTimeoutSeconds: 3600,
+          extra: { name: "USDC", version: "2" },
+        } as never,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe(Errors.ErrInvalidSignature);
+      expect(result.errorMessage).toBe("signature does not match authorization.from");
+    });
   });
 
   describe("ERC-6492 factory allowlist", () => {
@@ -594,13 +639,16 @@ describe("ExactEvmSchemeV1", () => {
     });
 
     it("rejects a counterfactual payment when getCode fails and the factory is unknown", async () => {
+      // A failed payer lookup is an RPC failure, not an allowlist rejection. Verify
+      // reports it before the factory gate so a dropped eth_getCode cannot look like
+      // eip6492_factory_not_allowed.
       mockSigner.getCode = vi.fn().mockRejectedValue(new Error("rpc timeout"));
       const facilitator = new ExactEvmSchemeV1(mockSigner, {
         eip6492AllowedFactories: ["0x3333333333333333333333333333333333333333"],
       });
       const result = await facilitator.verify(makePayload() as never, requirements as never);
       expect(result.isValid).toBe(false);
-      expect(result.invalidReason).toBe(Errors.ErrFactoryNotAllowed);
+      expect(result.invalidReason).toBe(Errors.ErrFailedToVerifySignature);
     });
 
     it("rejects settle when the undeployed wallet's factory is not allowlisted", async () => {
@@ -652,10 +700,12 @@ describe("ExactEvmSchemeV1", () => {
     });
 
     it("rejects settle when verify saw a deployed wallet but settle's getCode reports undeployed", async () => {
+      // Verify reuses the single payer lookup from classification, so only the first
+      // call is bytecode. Settle's own getCode is the next call and must see undeployed.
       let payerLookups = 0;
       mockSigner.getCode = vi.fn().mockImplementation(() => {
         payerLookups += 1;
-        return Promise.resolve(payerLookups <= 2 ? "0x6080604052" : "0x");
+        return Promise.resolve(payerLookups === 1 ? "0x6080604052" : "0x");
       });
       mockSigner.sendTransaction = vi.fn();
       const facilitator = new ExactEvmSchemeV1(mockSigner, { eip6492AllowedFactories: [] });

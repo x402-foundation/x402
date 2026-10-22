@@ -21,7 +21,32 @@ export type Erc6492Classification = {
   hasDeploymentInfo: boolean;
   innerSignature: `0x${string}`;
   eip6492Deployment?: { factoryAddress: `0x${string}`; factoryCalldata: `0x${string}` };
+  /**
+   * Bytecode from the payer `eth_getCode`. `"0x"` is an EOA. Undefined when the lookup failed
+   * or returned nothing. Reuse this for signature checks so verify does not issue a second lookup.
+   */
+  payerCode?: `0x${string}`;
+  /**
+   * Set when `eth_getCode` for the payer failed. Callers must report a failed-to-verify
+   * reason instead of treating the missing bytecode as an invalid signature.
+   */
+  codeLookupError?: unknown;
 };
+
+const URL_IN_TEXT = /https?:\/\/\S+/gi;
+
+/**
+ * Client-visible reason for a failed payer code lookup. `invalidMessage` is returned to the
+ * caller, and a transport error can embed the signer URL (including a query token). Strip URLs.
+ *
+ * @param error - The thrown lookup failure, or any non-Error value caught at the call site.
+ * @returns A URL-stripped message, truncated to 200 characters, or a fixed fallback when empty.
+ */
+export function payerCodeLookupFailureMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const stripped = raw.replace(URL_IN_TEXT, "[redacted-url]").replace(/\s+/g, " ").trim();
+  return stripped.length > 0 ? stripped.slice(0, 200) : "payer eth_getCode failed";
+}
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 
@@ -51,13 +76,16 @@ export async function classifyErc6492Payer(
     : undefined;
 
   let code: `0x${string}` | undefined;
+  let codeLookupError: unknown;
   try {
     code = await signer.getCode({ address: payerAddress });
-  } catch {
+  } catch (error) {
+    codeLookupError = error;
     code = undefined;
   }
   const isDeployedAtPayer = !!(code && code !== "0x");
-  const isCounterfactual = hasDeploymentInfo && !isDeployedAtPayer;
+  // A failed lookup is not proof that the payer is undeployed.
+  const isCounterfactual = hasDeploymentInfo && !isDeployedAtPayer && codeLookupError === undefined;
 
   return {
     isCounterfactual,
@@ -65,6 +93,8 @@ export async function classifyErc6492Payer(
     hasDeploymentInfo,
     innerSignature,
     eip6492Deployment,
+    payerCode: code,
+    codeLookupError,
   };
 }
 

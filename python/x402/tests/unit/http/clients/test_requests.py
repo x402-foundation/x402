@@ -571,6 +571,23 @@ class TestConsecutivePayments:
             assert x402HTTPAdapter.RETRY_HEADER not in captured_requests[0].headers
             assert captured_requests[1].headers.get(x402HTTPAdapter.RETRY_HEADER) == "1"
 
+    def test_should_not_send_cors_response_header_on_retry(self, adapter):
+        """Should not put the response-only Access-Control-Expose-Headers on the retry."""
+        captured_requests = []
+
+        def mock_send(request, **_kwargs):
+            captured_requests.append(request)
+            is_retry = request.headers.get(x402HTTPAdapter.RETRY_HEADER) == "1"
+            if is_retry:
+                return _create_response(200, b'{"success": true}')
+            return _create_response(402, b"{}")
+
+        with patch("requests.adapters.HTTPAdapter.send", side_effect=mock_send):
+            adapter.send(_create_request())
+
+            assert len(captured_requests) == 2
+            assert "Access-Control-Expose-Headers" not in captured_requests[1].headers
+
     def test_should_not_modify_original_request(self, adapter):
         """Should not modify original request during retry."""
 

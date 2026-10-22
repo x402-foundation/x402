@@ -109,7 +109,9 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
    * @param signers - One or more Stellar signers managed by the facilitator for settlement
    * @param options - Configuration options
    * @param options.rpcConfig - Optional RPC configuration with custom RPC URL
-   * @param options.areFeesSponsored - Indicates if fees are sponsored (default: true)
+   * @param options.areFeesSponsored - Indicates if fees are sponsored (default: true). The spec
+   *   currently only supports `true`; setting `false` here still constructs successfully, but the
+   *   official client rejects any payment built against the resulting `areFeesSponsored: false`.
    * @param options.maxTransactionFeeStroops - Safety ceiling in stroops; verify rejects if the simulation-derived fee exceeds this (default: 50_000)
    * @param options.inclusionFeeStroops - Inclusion fee bid in stroops for the settlement transaction and the fee bump, on top of the resource fee (default: 100).
    *   Mainnet often needs more than the minimum for Soroban transactions to be included.
@@ -131,7 +133,7 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
     }: {
       /** Optional RPC configuration with custom RPC URL */
       rpcConfig?: RpcConfig;
-      /** Indicates if fees are sponsored (default: true) */
+      /** Indicates if fees are sponsored (default: true). See the constructor's own @param doc above: `false` is accepted here but not yet usable end-to-end. */
       areFeesSponsored?: boolean;
       /** Safety ceiling in stroops; verify rejects if the simulation-derived fee exceeds this (default: 50_000) */
       maxTransactionFeeStroops?: number;
@@ -231,6 +233,7 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
           network: payload.accepted.network,
           transaction: "",
           errorReason: verifyResult.invalidReason ?? "verification_failed",
+          errorMessage: verifyResult.invalidMessage,
           payer: verifyResult.payer,
         };
       }
@@ -344,12 +347,28 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
       const sendResult = await server.sendTransaction(txToSubmit);
 
       if (sendResult.status !== "PENDING") {
+        // TRY_AGAIN_LATER means nothing reached a ledger and nothing was spent, so
+        // the caller can safely retry. Every other non-PENDING status (e.g. ERROR)
+        // is terminal for this payload and must not be retried as-is.
+        const isRetryable = sendResult.status === "TRY_AGAIN_LATER";
+        const errorResultCode = sendResult.errorResult?.result().switch().name;
         return {
           success: false,
           network: payload.accepted.network,
           transaction: "",
-          errorReason: "settle_exact_stellar_transaction_submission_failed",
+          errorReason: isRetryable
+            ? "settle_exact_stellar_transaction_submission_retryable"
+            : "settle_exact_stellar_transaction_submission_failed",
+          errorMessage: `Soroban RPC sendTransaction returned status ${sendResult.status}${
+            errorResultCode ? ` (${errorResultCode})` : ""
+          }`,
           payer,
+          extra: {
+            rpcStatus: sendResult.status,
+            retryable: isRetryable,
+            latestLedger: sendResult.latestLedger,
+            ...(errorResultCode ? { errorResultCode } : {}),
+          },
         };
       }
 

@@ -3,7 +3,8 @@ import { type PaymentRequired } from "@x402/core/types";
 import { type AxiosInstance, type AxiosError, type InternalAxiosRequestConfig } from "axios";
 
 type X402RetryConfig = InternalAxiosRequestConfig & { __is402Retry?: boolean };
-type AxiosHeaderRecord = Record<string, string>;
+type AxiosHeaderValue = string | string[];
+type AxiosHeaderRecord = Record<string, AxiosHeaderValue>;
 
 /**
  * Resolves the final absolute URL for an Axios 402 response.
@@ -52,10 +53,22 @@ function cloneAxiosHeaders(headers: InternalAxiosRequestConfig["headers"]): Axio
       : (headers as unknown as Record<string, unknown>);
 
   return Object.entries(source).reduce<AxiosHeaderRecord>((acc, [key, value]) => {
-    if (value !== undefined && value !== null && typeof value !== "function") {
-      acc[key] = String(value);
+    if (value === undefined || value === null || typeof value === "function") {
+      return acc;
     }
 
+    // Axios joins a Cookie array with "; " in its HTTP adapter. String()
+    // joins with "," and changes the cookie the paid retry sends.
+    if (Array.isArray(value)) {
+      // Keep empty strings. Axios joins them too, so "" + "locale=zh"
+      // stays "; locale=zh" on the paid retry instead of "locale=zh".
+      // Keep an empty array. Dropping Cookie: [] lets Axios merge an
+      // instance default back in on the paid retry.
+      acc[key] = value.filter((item): item is string => typeof item === "string");
+      return acc;
+    }
+
+    acc[key] = String(value);
     return acc;
   }, {});
 }

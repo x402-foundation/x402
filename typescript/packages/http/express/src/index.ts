@@ -67,6 +67,28 @@ function sendInternalError(res: Response, error: unknown): void {
 }
 
 /**
+ * Write a payment-error body without JSON-encoding a declared plain-text payload.
+ *
+ * @param res - The Express response to write to
+ * @param response - Payment-error instructions from the HTTP resource server
+ * @param response.body - Optional response body to write
+ * @param response.headers - Response headers, including Content-Type
+ * @param response.isHtml - Whether the body should be sent as HTML
+ */
+function sendPaymentErrorBody(
+  res: Response,
+  response: { body?: unknown; headers: Record<string, string>; isHtml?: boolean },
+): void {
+  const contentType = response.headers["Content-Type"] ?? response.headers["content-type"] ?? "";
+  const mediaType = contentType.split(";")[0]?.trim().toLowerCase();
+  if (response.isHtml || (mediaType === "text/plain" && typeof response.body === "string")) {
+    res.send(response.body ?? "");
+    return;
+  }
+  res.json(response.body ?? {});
+}
+
+/**
  * Decode percent-escapes in a request path.
  *
  * @param path - Request path
@@ -231,11 +253,7 @@ export function paymentMiddlewareFromHTTPServer(
           name => res.getHeader(name),
           (name, value) => res.setHeader(name, value),
         );
-        if (response.isHtml) {
-          res.send(response.body);
-        } else {
-          res.json(response.body || {});
-        }
+        sendPaymentErrorBody(res, response);
         return;
 
       case "payment-verified":
@@ -410,11 +428,8 @@ export function paymentMiddlewareFromHTTPServer(
               name => res.getHeader(name),
               (name, value) => res.setHeader(name, value),
             );
-            if (response.isHtml) {
-              res.status(response.status).send(response.body);
-            } else {
-              res.status(response.status).json(response.body ?? {});
-            }
+            res.status(response.status);
+            sendPaymentErrorBody(res, response);
             return;
           }
 
@@ -441,7 +456,7 @@ export function paymentMiddlewareFromHTTPServer(
           console.error(error);
           // If settlement fails, don't send the buffered response
           bufferedCalls = [];
-          res.status(402).json({});
+          res.status(402).json({ error: "settlement_failed" });
           return;
         } finally {
           restoreResponseMethods();

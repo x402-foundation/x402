@@ -94,3 +94,40 @@ describe("decoded path divergence bypass", () => {
     );
   });
 });
+
+describe("HEAD route matching", () => {
+  it("requires payment for HEAD when the route is GET-only", () => {
+    const httpServer = new x402HTTPResourceServer({} as x402ResourceServer, {
+      "GET /api/premium": { accepts: [] },
+    });
+
+    expect(httpServer.requiresPayment(context("/api/premium", "HEAD"))).toBe(true);
+  });
+
+  it("prefers an explicit HEAD route over the GET fallback", () => {
+    const getConfig = { accepts: [], description: "GET route" };
+    const headConfig = { accepts: [], description: "HEAD route" };
+    const httpServer = new x402HTTPResourceServer({} as x402ResourceServer, {
+      "GET /api/premium": getConfig,
+      "HEAD /api/premium": headConfig,
+    });
+    const getRouteConfig = (
+      httpServer as unknown as {
+        getRouteConfig: (
+          path: string,
+          method: string,
+        ) => { config: typeof getConfig; pattern: string } | undefined;
+      }
+    ).getRouteConfig.bind(httpServer);
+
+    expect(getRouteConfig("/api/premium", "HEAD")?.config).toBe(headConfig);
+  });
+
+  it("does not treat HEAD as equivalent to non-GET methods", () => {
+    const httpServer = new x402HTTPResourceServer({} as x402ResourceServer, {
+      "POST /api/premium": { accepts: [] },
+    });
+
+    expect(httpServer.requiresPayment(context("/api/premium", "HEAD"))).toBe(false);
+  });
+});

@@ -54,7 +54,8 @@ tvm = [
 ]
 
 # MCP (Model Context Protocol) integration
-mcp = ["mcp>=1.0.0"]
+# Upper bound: mcp 2.x removed mcp.server.fastmcp, which x402.mcp.server imports.
+mcp = ["mcp>=1.0.0,<2"]
 
 # Extensions - optional functionality
 extensions = [
@@ -98,7 +99,7 @@ dev = [
     "pytoniq-core>=0.1.36",
     "PyNaCl>=1.5.0",
     # MCP dependencies
-    "mcp>=1.26.0",
+    "mcp>=1.26.0,<2",
     "nest-asyncio>=1.6.0",
     # Extensions dependencies
     "jsonschema>=4.0.0",

@@ -1392,6 +1392,9 @@ class TestLiteralRoutePercentEncodedSeparatorBypass:
     def test_baseline_literal_route_returns_402(self, client) -> None:
         assert client.get("/api/premium").status_code == 402
 
+    def test_head_uses_get_payment_rule(self, client) -> None:
+        assert client.head("/api/premium").status_code == 402
+
     @pytest.mark.parametrize(
         "raw_uri",
         [

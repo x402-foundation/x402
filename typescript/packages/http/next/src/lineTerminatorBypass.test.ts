@@ -50,7 +50,7 @@ describe("next end-to-end: percent-encoded line terminator under wildcard route"
 
     return paymentProxy(
       {
-        "/api/premium/*": {
+        "GET /api/premium/*": {
           accepts: {
             scheme: "exact",
             payTo: "0xabc",
@@ -71,6 +71,13 @@ describe("next end-to-end: percent-encoded line terminator under wildcard route"
     const res = await (
       await buildProxy()
     )(new NextRequest("https://example.com/api/premium/report"));
+    expect(res.status).toBe(402);
+  });
+
+  it("returns 402 for HEAD on a GET-only protected route", async () => {
+    const res = await (
+      await buildProxy()
+    )(new NextRequest("https://example.com/api/premium/report", { method: "HEAD" }));
     expect(res.status).toBe(402);
   });
 

@@ -1,6 +1,6 @@
 import { actionCreators } from "@near-js/transactions";
 import type { PaymentRequirements } from "@x402/core/types";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ExactNearScheme } from "../../src/exact/facilitator/scheme";
 import { SettlementCache } from "../../src/settlement-cache";
 import { settlementCacheKey } from "../../src/utils";
@@ -359,6 +359,22 @@ describe("near facilitator settle", () => {
     );
     expect(result.success).toBe(false);
     expect(submitted).toBe(false);
+  });
+
+  it("surfaces the verification message in errorMessage", async () => {
+    const { scheme, requirements, payload } = await validSetup();
+    vi.spyOn(scheme, "verify").mockResolvedValue({
+      isValid: false,
+      invalidReason: "unexpected_verify_error",
+      invalidMessage: "rpc timeout while fetching access key",
+      payer: "alice.testnet",
+    });
+
+    const result = await scheme.settle(payload, requirements);
+
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe("unexpected_verify_error");
+    expect(result.errorMessage).toBe("rpc timeout while fetching access key");
   });
 
   it("rejects duplicate in-flight settlements (spec §10)", async () => {

@@ -12,6 +12,28 @@ const BRACKET_PARAM_REGEX_ALL = /\[([^\]]+)\]/g;
 
 const COLON_PARAM_REGEX = /:([a-zA-Z_][a-zA-Z0-9_]*)/;
 
+const QUERY_METHODS = ["GET", "HEAD", "DELETE"];
+const BODY_METHODS = ["POST", "PUT", "PATCH"];
+
+/**
+ * Picks the method to advertise for an HTTP declaration. A route registered without a
+ * verb returns 402 for any method, so the request method is only used when it fits the
+ * declared input shape (body methods when `bodyType` is set, query methods otherwise).
+ * Otherwise it falls back to POST or GET, matching startup validation.
+ *
+ * @param input - The declaration's `info.input`
+ * @param requestMethod - HTTP method of the request being answered with 402
+ * @returns An HTTP method consistent with the declared input shape
+ */
+function resolveDeclaredMethod(
+  input: Record<string, unknown> | undefined,
+  requestMethod: string,
+): string {
+  const allowed = input?.bodyType !== undefined ? BODY_METHODS : QUERY_METHODS;
+  const method = requestMethod.toUpperCase();
+  return allowed.includes(method) ? method : allowed[0];
+}
+
 /**
  * Type guard to check if context is an HTTP request context.
  *
@@ -168,11 +190,11 @@ export const bazaarResourceServerExtension: ResourceServerExtension = {
       return declaration;
     }
 
-    const method = transportContext.method;
+    const method = resolveDeclaredMethod(extension.info?.input, transportContext.method);
 
     // At declaration time, the schema uses a broad enum (["GET", "HEAD", "DELETE"] or ["POST", "PUT", "PATCH"])
     // because the method isn't known until the HTTP context is available.
-    // Here we narrow it to the actual method for precise schema validation.
+    // Here we narrow it to the resolved method for precise schema validation.
     const existingInputProps = extension.schema?.properties?.input?.properties || {};
     const updatedInputProps = {
       ...existingInputProps,

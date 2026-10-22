@@ -365,10 +365,19 @@ class x402HTTPServerBase:
         """
         upper_method = method.upper()
 
+        def verb_matches(verb: str) -> bool:
+            # A method-less route must not gate the CORS preflight: the browser sends
+            # OPTIONS without a payment and only sends the paid request if it succeeds.
+            # An explicit "OPTIONS /path" route still matches.
+            return verb == upper_method or (verb == "*" and upper_method != "OPTIONS")
+
         def find_match(candidate: str) -> tuple[RouteConfig, str] | None:
             for route in self._compiled_routes:
-                if route.regex.match(candidate):
-                    if route.verb == "*" or route.verb == upper_method:
+                if route.regex.match(candidate) and verb_matches(route.verb):
+                    return route.config, route.pattern
+            if upper_method == "HEAD":
+                for route in self._compiled_routes:
+                    if route.regex.match(candidate) and route.verb == "GET":
                         return route.config, route.pattern
             return None
 
@@ -901,7 +910,7 @@ class x402HTTPServerBase:
     # Internal Methods
     # =========================================================================
 
-    def _extract_payment(self, adapter: HTTPAdapter) -> PaymentPayload | PaymentPayloadV1 | None:
+    def _extract_payment(self, adapter: HTTPAdapter) -> PaymentPayload | None:
         """Extract payment from HTTP headers (V2 only)."""
         # Check V2 header (case-insensitive)
         header = adapter.get_header(PAYMENT_SIGNATURE_HEADER) or adapter.get_header(
@@ -910,9 +919,14 @@ class x402HTTPServerBase:
 
         if header:
             try:
-                return decode_payment_signature_header(header)
+                payload = decode_payment_signature_header(header)
             except Exception:
                 return None
+            # V2 server only accepts V2 payments. A V1 payload has no `accepted`
+            # field and would fail requirement matching.
+            if isinstance(payload, PaymentPayloadV1):
+                return None
+            return payload
 
         return None
 
