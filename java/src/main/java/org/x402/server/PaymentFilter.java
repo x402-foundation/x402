@@ -262,9 +262,7 @@ public class PaymentFilter implements Filter {
             // Empty segments are dropped before ".." is applied, and ".." above the root is
             // clamped, so a path the container would reject can only be priced, never freed.
             Deque<String> segments = new ArrayDeque<>();
-            String last = "";
-            for (String segment : decoded.split("/", -1)) {
-                last = segment;
+            for (String segment : decoded.split("/")) {
                 if (segment.equals("..")) {
                     segments.pollLast();
                 } else if (!segment.isEmpty() && !segment.equals(".")) {
@@ -272,8 +270,9 @@ public class PaymentFilter implements Filter {
                 }
             }
             String path = "/" + String.join("/", segments);
-            boolean trailingSlash = last.isEmpty() || last.equals(".") || last.equals("..");
-            return trailingSlash && !segments.isEmpty() ? path + "/" : path;
+            // Only a literal trailing slash is kept. Tomcat routes /private/. and /private/x/..
+            // to /private; Jetty adds a slash there, which this over-prices but never frees.
+            return decoded.endsWith("/") && !segments.isEmpty() ? path + "/" : path;
         } catch (Exception e) {
             return null;
         }

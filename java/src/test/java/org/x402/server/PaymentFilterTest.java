@@ -619,6 +619,18 @@ class PaymentFilterTest {
         verify(chain, never()).doFilter(any(), any());
     }
 
+    @Test
+    void trailingDotSegmentRequiresPayment() throws Exception {
+        // Tomcat routes /private/x/%2e%2e to /private, with no trailing slash
+        when(req.getRequestURI()).thenReturn("/private/x/%2e%2e");
+        when(req.getHeader("X-PAYMENT")).thenReturn(null);
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
+        verify(chain, never()).doFilter(any(), any());
+    }
+
     /* ------------ facilitator IOException returns 500 --------------------- */
     @Test
     void facilitatorIOExceptionReturns500() throws Exception {
