@@ -163,7 +163,11 @@ function shouldResolveAxiosResponse(status: number, config: InternalAxiosRequest
   }
 
   const validateStatus = config.validateStatus;
-  return validateStatus ? validateStatus(status) : status >= 200 && status < 300;
+  // Match Axios settle: a falsy validateStatus resolves every status.
+  if (!validateStatus) {
+    return true;
+  }
+  return validateStatus(status);
 }
 
 /**

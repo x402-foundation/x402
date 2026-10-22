@@ -793,7 +793,9 @@ describe("wrapAxiosWithPayment()", () => {
       errorResponse.request = request;
       (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(errorResponse);
 
-      const error = createAxiosError(402, createErrorConfig(), validPaymentRequired);
+      const config = createErrorConfig();
+      config.validateStatus = s => s >= 200 && s < 300;
+      const error = createAxiosError(402, config, validPaymentRequired);
       const thrown = await interceptor(error).then(
         () => {
           throw new Error("expected paid follow-up to reject");
@@ -818,6 +820,29 @@ describe("wrapAxiosWithPayment()", () => {
         expect.any(Function),
         status,
       );
+    },
+  );
+
+  it.each([400, 500])(
+    "should resolve paid follow-up HTTP %i when validateStatus is null",
+    async status => {
+      const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+      const errorResponse = createAxiosResponse(
+        status,
+        { error: "failed" },
+        {
+          "PAYMENT-RESPONSE": "settled",
+        },
+      );
+      (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(errorResponse);
+
+      const config = createErrorConfig();
+      config.validateStatus = null;
+      const error = createAxiosError(402, config, validPaymentRequired);
+      const result = await interceptor(error);
+
+      expect(result).toBe(errorResponse);
+      expect(MockX402HTTPClient.prototype.processPaymentResult).toHaveBeenCalledTimes(1);
     },
   );
 
