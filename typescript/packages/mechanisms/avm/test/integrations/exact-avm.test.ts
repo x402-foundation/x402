@@ -45,6 +45,7 @@ if (!CLIENT_PRIVATE_KEY || !FACILITATOR_PRIVATE_KEY || !SERVER_ADDRESS) {
 const clientSigner = toClientAvmSigner(CLIENT_PRIVATE_KEY);
 const facilitatorSigner = toFacilitatorAvmSigner(FACILITATOR_PRIVATE_KEY);
 const FACILITATOR_ADDRESS = facilitatorSigner.getAddresses()[0];
+const ALGORAND_TESTNET_LEGACY_CAIP2 = `algorand:${ALGORAND_TESTNET_GENESIS_HASH}` as Network;
 
 /**
  * AVM Facilitator Client wrapper
@@ -136,14 +137,22 @@ describe("AVM Integration Tests", () => {
       clientAddress = clientSigner.address;
 
       const avmClient = new ExactAvmClient(clientSigner);
-      client = new x402Client().register(ALGORAND_TESTNET_CAIP2, avmClient);
+      client = new x402Client()
+        .register(ALGORAND_TESTNET_CAIP2, avmClient)
+        .register(ALGORAND_TESTNET_LEGACY_CAIP2, avmClient);
 
       const avmFacilitator = new ExactAvmFacilitator(facilitatorSigner);
-      const facilitator = new x402Facilitator().register(ALGORAND_TESTNET_CAIP2, avmFacilitator);
+      const facilitator = new x402Facilitator().register(
+        [ALGORAND_TESTNET_CAIP2, ALGORAND_TESTNET_LEGACY_CAIP2],
+        avmFacilitator,
+      );
 
       const facilitatorClient = new AvmFacilitatorClient(facilitator);
       server = new x402ResourceServer(facilitatorClient);
-      server.register(ALGORAND_TESTNET_CAIP2, new ExactAvmServer());
+      const avmServer = new ExactAvmServer();
+      server
+        .register(ALGORAND_TESTNET_CAIP2, avmServer)
+        .register(ALGORAND_TESTNET_LEGACY_CAIP2, avmServer);
       await server.initialize();
     });
 
@@ -215,8 +224,9 @@ describe("AVM Integration Tests", () => {
       "should verify and settle when paymentRequirements use legacy full-hash network ID",
       { timeout: 30000 },
       async () => {
-        const legacyNetwork = `algorand:${ALGORAND_TESTNET_GENESIS_HASH}` as Network;
-        const accepts = [buildAvmPaymentRequirements(SERVER_ADDRESS, "1000", legacyNetwork)];
+        const accepts = [
+          buildAvmPaymentRequirements(SERVER_ADDRESS, "1000", ALGORAND_TESTNET_LEGACY_CAIP2),
+        ];
         const resource = {
           url: "https://company.co",
           description: "Company Co. resource",
@@ -233,7 +243,7 @@ describe("AVM Integration Tests", () => {
 
         const settleResponse = await server.settlePayment(paymentPayload, accepted!);
         expect(settleResponse.success).toBe(true);
-        expect(settleResponse.network).toBe(legacyNetwork);
+        expect(settleResponse.network).toBe(ALGORAND_TESTNET_LEGACY_CAIP2);
       },
     );
   });

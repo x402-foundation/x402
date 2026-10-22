@@ -623,6 +623,15 @@ describe("x402 Schemas", () => {
         expect(result.success).toBe(true);
       });
 
+      it("should accept legacy Algorand full-hash networks for V2", () => {
+        const legacyAlgorand = {
+          ...validPaymentRequirementsV2,
+          network: "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=",
+        };
+        const result = PaymentRequirementsV2Schema.safeParse(legacyAlgorand);
+        expect(result.success).toBe(true);
+      });
+
       it("should reject V1-style network names for V2", () => {
         const v2WithV1Style = {
           ...validPaymentRequirementsV2,
@@ -666,6 +675,8 @@ describe("x402 Schemas", () => {
         "eip155:",
         `eip155:${"a".repeat(33)}`,
         "eip155:base.mainnet",
+        "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI",
+        "eip155:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=",
         ":84532",
         "eip155:84532:extra",
       ])("should reject malformed CAIP-2 network %s for V2", network => {

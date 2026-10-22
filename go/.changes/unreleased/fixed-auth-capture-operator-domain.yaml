@@ -1,0 +1,3 @@
+kind: fixed
+body: Include EIP-712 domain types in auth-capture operator signing requests for custom signer compatibility.
+time: 2026-10-22T17:45:00Z
