@@ -16,7 +16,10 @@ import { MASUMI_DEFAULT_DEPLOYMENT } from "../../src/exact/masumi/blueprint";
 import { MASUMI_MAX_DEADLINE_HORIZON_MS } from "../../src/exact/masumi/constants";
 import { verifyMasumiAuthorization } from "../../src/exact/masumi/verify";
 import type { CardanoExtraMasumi } from "../../src/types";
+import { decodeCardanoTransaction, minUtxoLovelace } from "../../src/utils";
+import { OFFLINE_PROTOCOL_PARAMETERS } from "../helpers/buildSignedTx";
 import { issueMasumiRequirements } from "../helpers/masumi";
+import { freshPreprodAddress, hex64 } from "../helpers/stubs";
 
 const makeSigner = (): ReturnType<typeof toFacilitatorCardanoSigner> =>
   toFacilitatorCardanoSigner({
@@ -509,5 +512,69 @@ describe("client-side Masumi authorization", () => {
         masumiRequestContent: { body: { days: 4, units: "metric" } },
       }).buildAndSignPaymentTransaction(signInput(withheld)),
     ).rejects.toThrow(/masumi_commitment/);
+  });
+});
+
+describe("toClientCardanoSigner", () => {
+  it("refuses an ADA amount one lovelace below the payee output's min-UTXO", async () => {
+    const signer = toClientCardanoSigner({
+      mnemonic: PrivateKey.generateMnemonic(),
+      network: CARDANO_PREPROD_CAIP2,
+      provider: { blockfrost: { baseUrl: "http://offline.invalid" } },
+    });
+    const p = OFFLINE_PROTOCOL_PARAMETERS;
+    const json = (body: unknown): Response =>
+      new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
+    // Blockfrost serves the protocol parameters and one 10 ADA UTXO at the signer's address.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL) =>
+        String(url).endsWith("/epochs/latest/parameters")
+          ? json({
+              min_fee_a: p.minFeeA,
+              min_fee_b: p.minFeeB,
+              pool_deposit: String(p.poolDeposit),
+              key_deposit: String(p.keyDeposit),
+              max_tx_size: p.maxTxSize,
+              max_block_size: 90_112,
+              coins_per_utxo_size: String(p.coinsPerUtxoByte),
+            })
+          : json([
+              {
+                address: signer.getAddress(),
+                tx_hash: hex64("a"),
+                tx_index: 0,
+                output_index: 0,
+                amount: [{ unit: LOVELACE_ASSET, quantity: "10000000" }],
+                block: hex64("b"),
+                data_hash: null,
+                inline_datum: null,
+                reference_script_hash: null,
+              },
+            ]),
+      ),
+    );
+    try {
+      const payTo = await freshPreprodAddress();
+      const pay = (amount: bigint) =>
+        signer.buildAndSignPaymentTransaction({
+          network: CARDANO_PREPROD_CAIP2,
+          payTo,
+          asset: LOVELACE_ASSET,
+          amount: amount.toString(),
+          maxTimeoutSeconds: 600,
+        });
+      // The facilitator's rule-8 minimum, measured on a 1 ADA payment (same output size).
+      const { transaction } = await pay(1_000_000n);
+      const payee = decodeCardanoTransaction(transaction).outputs.find(o => o.address === payTo)!;
+      const min = minUtxoLovelace(payee.serializedSize!, p.coinsPerUtxoByte);
+
+      await expect(pay(min)).resolves.toHaveProperty("transaction");
+      await expect(pay(min - 1n)).rejects.toThrow(
+        `Payee output carries ${min - 1n} lovelace, below its ${min} lovelace min-UTXO`,
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

@@ -10,7 +10,7 @@
     "test": "vitest run --coverage",
     "test:watch": "vitest",
     "build": "tsup && node ../../../scripts/mirror-cjs-dts.mjs",
-    "build:paywall": "tsx src/evm/build.ts && tsx src/svm/build.ts && tsx src/avm/build.ts",
+    "build:paywall": "tsx src/evm/build.ts && tsx src/svm/build.ts && tsx src/avm/build.ts && tsx src/cardano/build.ts",
     "watch": "tsc --watch",
     "format": "prettier -c .prettierrc --write \"**/*.{ts,js,cjs,json,md}\"",
     "format:check": "prettier -c .prettierrc --check \"**/*.{ts,js,cjs,json,md}\"",
@@ -30,6 +30,7 @@
   "devDependencies": {
     "@craftamap/esbuild-plugin-html": "^0.9.0",
     "@eslint/js": "^9.24.0",
+    "@evolution-sdk/evolution": "^0.5.9",
     "@types/node": "^22.13.4",
     "@types/react": "^19",
     "@types/react-dom": "^19",
@@ -37,6 +38,7 @@
     "@typescript-eslint/parser": "^8.29.1",
     "@vitest/coverage-v8": "^3.2.7",
     "@x402/avm": "workspace:~",
+    "@x402/cardano": "workspace:~",
     "@x402/evm": "workspace:~",
     "@x402/svm": "workspace:~",
     "buffer": "^6.0.3",
@@ -123,6 +125,16 @@
       "require": {
         "types": "./dist/cjs/avm/index.d.cts",
         "default": "./dist/cjs/avm/index.cjs"
+      }
+    },
+    "./cardano": {
+      "import": {
+        "types": "./dist/esm/cardano/index.d.ts",
+        "default": "./dist/esm/cardano/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/cardano/index.d.cts",
+        "default": "./dist/cjs/cardano/index.cjs"
       }
     }
   },

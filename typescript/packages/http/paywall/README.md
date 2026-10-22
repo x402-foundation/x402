@@ -1,6 +1,6 @@
 # `@x402/paywall` [![npm version](https://img.shields.io/npm/v/%40x402%2Fpaywall.svg)](https://www.npmjs.com/package/@x402/paywall)
 
-Modular paywall UI for the x402 payment protocol with support for EVM and Solana networks.
+Modular paywall UI for the x402 payment protocol with support for EVM, Solana, Algorand and Cardano networks.
 
 ## Features
 
@@ -26,6 +26,7 @@ Choose the import that matches your needs:
 | `@x402/paywall` | 3.5MB | EVM + Solana | Multi-network apps |
 | `@x402/paywall/evm` | 3.4MB | EVM only | Base, Ethereum, Polygon, etc. |
 | `@x402/paywall/svm` | 1.0MB | Solana only | Solana apps |
+| `@x402/paywall/cardano` | 1.5MB | Cardano only | Cardano apps (CIP-30 wallets) |
 
 ## Usage
 
@@ -79,6 +80,21 @@ const paywall = createPaywall()
   .build();
 ```
 
+### Option 4: Cardano
+
+```typescript
+import { createPaywall } from '@x402/paywall';
+import { cardanoPaywall } from '@x402/paywall/cardano';
+
+// Optional: fetch network parameters at startup so the first visitor
+// does not wait (recommended on serverless platforms).
+await cardanoPaywall.prefetch(['cardano:preprod']);
+
+const paywall = createPaywall().withNetwork(cardanoPaywall).build();
+```
+
+The Cardano page derives mainnet/testnet from the requirement's network and does not use `appName`, `appLogo` or `testnet`.
+
 ## Configuration
 
 ### PaywallConfig Options
@@ -110,6 +126,24 @@ const paywall = createPaywall()
 ```
 
 > **Warning:** the URL is embedded in the paywall HTML and visible to every visitor. Use an endpoint that is safe to expose in a browser, such as a key restricted to your domain or your own RPC proxy. Never put a secret API key here.
+
+### Cardano
+
+The Cardano paywall lets a visitor pay with any CIP-30 browser wallet (Lace, Eternl, Vespr, Typhon, Yoroi, ...). It supports the `exact` scheme with the default (plain transfer) method in ADA or a native token such as USDM; requirements using the `script` or `masumi` methods are not handled.
+
+- **Network parameters come from the server.** Public Koios endpoints do not allow browser requests, so the handler fetches `epoch_params` from Koios on the server, caches it for 15 minutes, and injects it into the page. The browser never calls a chain provider: it builds the transaction from the wallet's own UTxOs and the wallet only signs (the facilitator submits). Use `createCardanoPaywall({ koiosBaseUrls, koiosToken, cacheTtlMs })` to point at your own Koios instance or use a Koios token; the token is only sent from the server and never appears in the page.
+- **The page checks what it signs.** It refuses network parameters outside sane bounds, and any built transaction that is not exactly the displayed payment plus change back to the wallet (fee capped at 1 ADA; ADA travelling with a token capped at 3 ADA).
+- **Retries never pay twice.** Every attempt for one payment spends the same wallet UTxO, so at most one can land. The page keeps that record in `localStorage` per resource and network (a changed price, payee or asset keeps it), keeps a settled payment until its content has loaded, and serialises tabs with the Web Locks API. It refuses to sign when site storage or Web Locks are unavailable, so serve the paywall over HTTPS.
+- **Payment window.** Browser wallets need time to approve; routes must use `maxTimeoutSeconds` of at least 240 (the default is 300).
+- **Fees.** The payer pays the network fee in ADA, and a token payment also sends about 1.2 ADA with the token to the recipient, so payers need some ADA even when paying in USDM. The page says so before signing.
+
+```typescript
+import { createCardanoPaywall } from '@x402/paywall/cardano';
+
+const cardano = createCardanoPaywall({
+  koiosBaseUrls: { 'cardano:mainnet': 'https://koios.example.com/api/v1' },
+});
+```
 
 ## How It Works
 
@@ -145,6 +179,9 @@ const paywall = createPaywall()
 
 **Solana Networks** (via `svmPaywall`):
 - CAIP-2: `solana:*` (e.g., `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` for mainnet)
+
+**Cardano Networks** (via `cardanoPaywall`):
+- `cardano:mainnet`, `cardano:preprod`, `cardano:preview` (and their CIP-34 aliases)
 
 ## With HTTP Middleware
 

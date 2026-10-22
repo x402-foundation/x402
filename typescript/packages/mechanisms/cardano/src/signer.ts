@@ -1,15 +1,12 @@
 import {
   Address,
   Assets,
-  type Chain,
   Client,
   Credential,
-  mainnet,
-  preprod,
-  preview,
   Transaction,
   TransactionHash,
   TransactionInput,
+  TxOut,
 } from "@evolution-sdk/evolution";
 import { addressFromSeed } from "@evolution-sdk/evolution/sdk/wallet/Derivation";
 import type { PaymentRequirements, ResourceInfo } from "@x402/core/types";
@@ -17,12 +14,10 @@ import type { PaymentRequirements, ResourceInfo } from "@x402/core/types";
 import {
   ASSET_TRANSFER_METHOD_MASUMI,
   ASSET_TRANSFER_METHOD_SCRIPT,
-  CARDANO_MAINNET_CAIP2,
-  CARDANO_PREPROD_CAIP2,
-  CARDANO_PREVIEW_CAIP2,
   LOVELACE_ASSET,
   normalizeCardanoNetwork,
 } from "./constants";
+import { buildPaymentOutputAssets, resolveCardanoChain } from "./chain";
 import {
   MASUMI_DEFAULT_MAX_COLLATERAL_LOVELACE,
   MASUMI_MAX_DEADLINE_HORIZON_MS,
@@ -39,7 +34,12 @@ import { isKeyCredentialAddressOn, validateMasumiExtra } from "./exact/masumi/sc
 import { buildScriptDatumInline } from "./exact/script/datum";
 import { DEFAULT_CARDANO_PROVIDER_TIMEOUT_MS } from "./limits";
 import type { CardanoExtra, CardanoExtraMasumi, CardanoExtraScript } from "./types";
-import { decodeCardanoTransactionBytes, parseAssetUnit, parseUtxoRef } from "./utils";
+import {
+  decodeCardanoTransactionBytes,
+  minUtxoLovelace,
+  parseAssetUnit,
+  parseUtxoRef,
+} from "./utils";
 
 /**
  * Provider connection used by the reference signers. Exactly one of
@@ -103,25 +103,6 @@ export async function withCardanoProviderTimeout<T>(
 }
 
 /**
- * Resolves an x402 Cardano network identifier to an Evolution SDK chain preset.
- *
- * @param network - The x402 network identifier (e.g. "cardano:mainnet").
- * @returns The matching Evolution SDK chain preset.
- */
-function resolveChain(network: string): Chain {
-  switch (normalizeCardanoNetwork(network)) {
-    case CARDANO_MAINNET_CAIP2:
-      return mainnet;
-    case CARDANO_PREPROD_CAIP2:
-      return preprod;
-    case CARDANO_PREVIEW_CAIP2:
-      return preview;
-    default:
-      throw new Error(`Unsupported Cardano network: ${network}`);
-  }
-}
-
-/**
  * Normalizes a BIP-39 mnemonic: trims, collapses internal whitespace, and
  * lowercases it. The BIP-39 word list is all lowercase, so this recovers the
  * correct wallet from a mnemonic that picked up stray capitalization or extra
@@ -149,24 +130,6 @@ function withProvider(
     return assembly.withBlockfrost(provider.blockfrost);
   }
   return assembly.withKoios(provider.koios);
-}
-
-/**
- * Builds the payment-output assets for the requested asset/amount. Lovelace
- * lives in the output coin; native assets live in the multi-asset map.
- *
- * @param asset - The asset unit (`lovelace` or `policyId.assetNameHex`).
- * @param amount - The amount in the asset's smallest unit.
- * @returns Evolution SDK assets describing the output value.
- */
-function buildOutputAssets(asset: string, amount: bigint): Assets.Assets {
-  if (asset.toLowerCase() === LOVELACE_ASSET) {
-    return Assets.fromLovelace(amount);
-  }
-  const { policyId, assetNameHex } = parseAssetUnit(asset);
-  // Native-asset outputs still require lovelace; build() bumps it to the
-  // protocol minimum when autoMinUtxo is enabled.
-  return Assets.addByHex(Assets.zero, policyId, assetNameHex, amount);
 }
 
 /**
@@ -543,7 +506,7 @@ export interface ClientCardanoSignerConfig {
  * @returns A ready-to-use client signer.
  */
 export function toClientCardanoSigner(config: ClientCardanoSignerConfig): ClientCardanoSigner {
-  const chain = resolveChain(config.network);
+  const chain = resolveCardanoChain(config.network);
   const timeoutMs = providerTimeoutMs(config.provider);
   const mnemonic = normalizeMnemonic(config.mnemonic);
   const client = withProvider(Client.make(chain), config.provider).withSeed({
@@ -665,18 +628,19 @@ export function toClientCardanoSigner(config: ClientCardanoSignerConfig): Client
 
       const amount = BigInt(input.amount);
       const isLovelace = input.asset.toLowerCase() === LOVELACE_ASSET;
-      let outputAssets = buildOutputAssets(input.asset, amount);
+      let outputAssets = buildPaymentOutputAssets(input.asset, amount);
       let paymentDatum = scriptExtra ? buildScriptDatumInline(scriptExtra) : undefined;
+      const protocolParameters = await withCardanoProviderTimeout(
+        client.getProtocolParameters(),
+        timeoutMs,
+        "getProtocolParameters",
+      );
+      const { coinsPerUtxoByte } = protocolParameters;
 
       if (masumiExtra) {
         // The seller never signs `collateral_return_lovelace`; the client derives
         // it from the requested asset and live protocol parameters so the escrow
         // still clears min-UTXO after `SubmitResult`.
-        const { coinsPerUtxoByte } = await withCardanoProviderTimeout(
-          client.getProtocolParameters(),
-          timeoutMs,
-          "getProtocolParameters",
-        );
         const lock = buildMasumiLock(
           masumiExtra,
           Address.toBech32(nonceUtxo.address),
@@ -746,6 +710,7 @@ export function toClientCardanoSigner(config: ClientCardanoSignerConfig): Client
           .setValidity({ to: ttlMs })
           .build({
             changeAddress,
+            fullProtocolParameters: protocolParameters,
             // Bump the output to the protocol min-UTXO for native-asset outputs
             // and for datum-bearing outputs (an attached datum raises it). A
             // Masumi lock already carries its exact structural lovelace, and
@@ -756,8 +721,19 @@ export function toClientCardanoSigner(config: ClientCardanoSignerConfig): Client
         "buildTransaction",
       );
 
-      const submitBuilder = await signBuilder.sign();
       const unsigned = await signBuilder.toTransaction();
+      // Facilitator rule 8, before signing. Only a plain ADA output can fail it: the
+      // builder raises token and datum outputs, and the Masumi lock is sized to clear it.
+      // The payment is the only declared output; Evolution appends change after it.
+      const payee = unsigned.body.outputs[0];
+      const coin = payee.assets.lovelace;
+      const minUtxo = minUtxoLovelace(TxOut.toCBORBytes(payee).length, coinsPerUtxoByte);
+      if (coin < minUtxo) {
+        throw new Error(
+          `Payee output carries ${coin} lovelace, below its ${minUtxo} lovelace min-UTXO`,
+        );
+      }
+      const submitBuilder = await signBuilder.sign();
       const signed = new Transaction.Transaction({
         body: unsigned.body,
         witnessSet: submitBuilder.witnessSet,
@@ -969,7 +945,7 @@ export function blockfrostQueries(provider: CardanoProviderConfig): {
 export function toFacilitatorCardanoSigner(
   config: FacilitatorCardanoSignerConfig,
 ): FacilitatorCardanoSigner {
-  const chain = resolveChain(config.network);
+  const chain = resolveCardanoChain(config.network);
   const timeoutMs = providerTimeoutMs(config.provider);
   const providerClient = withProvider(Client.make(chain), config.provider);
   const slotConfig = chain.slotConfig;
