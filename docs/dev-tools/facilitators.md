@@ -21,7 +21,7 @@ If you are evaluating a mainnet EVM route, decide on your production facilitator
 | ---- | ----------- | 
 | [Built on Stellar](https://developers.stellar.org/docs/build/apps/x402/built-on-stellar) | Free, public x402 facilitator for Stellar |
 | [CDP Facilitator](https://docs.cdp.coinbase.com/x402/docs/quickstart-sellers) | Coinbase-hosted facilitator with KYT/OFAC checks on every transaction |
-| [Celo Facilitator](https://x402.celo.org) | Gasless x402 facilitator for Celo Mainnet (API: `https://api.x402.celo.org`), accepting USDC, USD₮ and USA₮ via EIP-3009 |
+| [Celo Facilitator](https://x402.celo.org) | Gasless x402 facilitator for Celo Mainnet (API: `https://api.x402.celo.org`) and Celo Sepolia (API: `https://api.x402.sepolia.celo.org`), accepting USDC, USD₮ and USA₮ via EIP-3009 and wARS, wBRL and wCOP via Permit2 |
 | [Corbits](https://corbits.dev) | Production-grade multi-network, multi-token facilitator supporting EVM and Solana |
 | [Dexter](https://dexter.cash/facilitator) | Free public x402 facilitator across Solana and EVM chains with no fees and no account required |
 | [Fireblocks Facilitator](https://developers.fireblocks.com/docs/x402-facilitator-overview) | Open-source and hosted facilitator with Fireblocks vault settlement; private keys never leave Fireblocks |
@@ -35,5 +35,6 @@ If you are evaluating a mainnet EVM route, decide on your production facilitator
 | [Solvador](https://solvador.com) | Multi-network facilitator with broad mainnet coverage across EVM plus Solana and NEAR, supporting multiple schemes and extensions |
 | [T54 XRPL Facilitator](https://xrpl-x402.t54.ai) | Production-grade x402 facilitator for the XRP Ledger, covering mainnet and testnet with XRP and RLUSD support |
 | [X Pay](https://x-pay.llc/) | x402 v2 facilitator for exact USDC payments on Base mainnet via EIP-3009; merchant API key required for verification and settlement ([capabilities](https://facilitator-xpay.llc/supported)) |
+| [TRDEFI Arc Facilitator](https://trdefi-arc-facilitator.netlify.app) | Free, public x402 facilitator for Arc (eip155:5042), settling exact USDC via EIP-3009. Source: https://github.com/TRDEFI/arc-x402-facilitator |
 
 For testnet development, the [x402.org facilitator](/core-concepts/network-and-token-support#x402org-facilitator) requires no setup. It is not intended for mainnet routes; use a production facilitator, a self-hosted facilitator, or [self-facilitation](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/self-facilitation) for production networks.

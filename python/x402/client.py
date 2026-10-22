@@ -230,14 +230,20 @@ class x402Client(x402ClientBase):
         self,
         gen: Generator[HookCommand, Any, PaymentPayloadT],
     ) -> PaymentPayloadT:
-        """Drive payment creation hooks, routing hook errors back through the generator."""
+        """Drive payment creation, routing hook and scheme errors back through the generator."""
         result = None
         try:
             command = gen.send(result)
             while True:
-                _, hook, ctx = command
+                phase, hook, ctx = command
                 try:
-                    result = await self._execute_hook(hook, ctx)
+                    if phase == "create":
+                        # Scheme clients are synchronous and may do network
+                        # I/O (RPC reads, blockhash lookups); run them off the
+                        # event loop so other tasks keep running.
+                        result = await asyncio.to_thread(hook, ctx)
+                    else:
+                        result = await self._execute_hook(hook, ctx)
                 except Exception as hook_error:
                     result = None
                     command = gen.throw(hook_error)
@@ -415,14 +421,17 @@ class x402ClientSync(x402ClientBase):
         self,
         gen: Generator[HookCommand, Any, PaymentPayloadT],
     ) -> PaymentPayloadT:
-        """Drive payment creation hooks, routing hook errors back through the generator."""
+        """Drive payment creation, routing hook and scheme errors back through the generator."""
         result = None
         try:
             command = gen.send(result)
             while True:
-                _, hook, ctx = command
+                phase, hook, ctx = command
                 try:
-                    result = self._execute_hook_sync(hook, ctx)
+                    if phase == "create":
+                        result = hook(ctx)
+                    else:
+                        result = self._execute_hook_sync(hook, ctx)
                 except Exception as hook_error:
                     result = None
                     command = gen.throw(hook_error)

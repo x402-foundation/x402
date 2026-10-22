@@ -33,9 +33,10 @@ func TestMemoryBatchOperationStore(t *testing.T) {
 		sort.Slice(created, func(i, j int) bool { return !created[i] && created[j] })
 		assert.Equal(t, []bool{false, true}, created)
 
-		_, err := store.Reserve("channel", "request", 999)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "ceiling changed")
+		changed, err := store.Reserve("channel", "request", 999)
+		require.NoError(t, err)
+		assert.False(t, changed.Created)
+		assert.Equal(t, uint64(1000), changed.Operation.Ceiling)
 	})
 
 	t.Run("permanently rejects failed and completed request ids", func(t *testing.T) {

@@ -31,6 +31,8 @@ jobs:
   prepare-python-release:
     runs-on: ubuntu-latest
     if: github.repository == 'x402-foundation/x402' && github.ref == 'refs/heads/main'
+    env:
+      UV_PYTHON: "3.13"
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

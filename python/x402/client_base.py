@@ -6,6 +6,7 @@ Contains shared logic for client implementations.
 from __future__ import annotations
 
 import asyncio
+import functools
 import inspect
 import re
 from collections.abc import Awaitable, Callable, Generator
@@ -310,7 +311,10 @@ OnPaymentResponseHook = Callable[
 SyncOnPaymentResponseHook = Callable[[PaymentResponseContext], RecoveredResponseResult | None]
 
 # Hook command type for generator-based implementation
-HookPhase = Literal["before", "after", "failure"]
+# "create" is not a user hook: it carries the scheme's create_payment_payload
+# call, so each runner decides how to execute it (inline for the sync client,
+# in a worker thread for the async client).
+HookPhase = Literal["before", "after", "failure", "create"]
 HookCommand = tuple[HookPhase, Any, Any]  # (phase, hook, context)
 
 
@@ -767,7 +771,8 @@ class x402ClientBase:
     ) -> Generator[HookCommand, Any, PaymentPayload]:
         """Core V2 payment creation logic as generator.
 
-        Yields (phase, hook, context) tuples for hook execution.
+        Yields (phase, hook, context) tuples for hook execution. The scheme's
+        ``create_payment_payload`` call is yielded as a ``"create"`` command.
         """
         # 1. Select requirements
         selected = self._select_requirements_v2(payment_required.accepts)
@@ -821,10 +826,11 @@ class x402ClientBase:
                 kwargs["context"] = payload_context
             if "extensions" in sig.parameters:
                 kwargs["extensions"] = server_extensions
-            if kwargs:
-                inner_payload = client.create_payment_payload(selected, **kwargs)
-            else:
-                inner_payload = client.create_payment_payload(selected)
+            inner_payload = yield (
+                "create",
+                functools.partial(client.create_payment_payload, **kwargs),
+                selected,
+            )
 
             # 5b. Extract scheme-generated extensions (e.g. gas sponsoring) and
             # deep-merge them onto the server's declared extensions. This keeps
@@ -888,7 +894,8 @@ class x402ClientBase:
     ) -> Generator[HookCommand, Any, PaymentPayloadV1]:
         """Core V1 payment creation logic as generator.
 
-        Yields (phase, hook, context) tuples for hook execution.
+        Yields (phase, hook, context) tuples for hook execution. The scheme's
+        ``create_payment_payload`` call is yielded as a ``"create"`` command.
         """
         # 1. Select requirements
         selected = self._select_requirements_v1(payment_required.accepts)
@@ -923,7 +930,7 @@ class x402ClientBase:
             client = schemes[selected.scheme]
 
             # 5. Create inner payload
-            inner_payload = client.create_payment_payload(selected)
+            inner_payload = yield ("create", client.create_payment_payload, selected)
 
             # 6. Wrap into full PaymentPayloadV1
             payload = PaymentPayloadV1(

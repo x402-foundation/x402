@@ -1246,9 +1246,14 @@ export class x402HTTPResourceServer {
     const upperMethod = method.toUpperCase();
 
     const findMatch = (candidate: string): { config: RouteConfig; pattern: string } | undefined => {
-      const matchingRoute = this.compiledRoutes.find(
+      let matchingRoute = this.compiledRoutes.find(
         route => route.regex.test(candidate) && (route.verb === "*" || route.verb === upperMethod),
       );
+      if (!matchingRoute && upperMethod === "HEAD") {
+        matchingRoute = this.compiledRoutes.find(
+          route => route.regex.test(candidate) && route.verb === "GET",
+        );
+      }
       if (!matchingRoute) return undefined;
       return { config: matchingRoute.config, pattern: matchingRoute.pattern };
     };

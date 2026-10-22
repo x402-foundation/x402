@@ -8,6 +8,8 @@ permissions:
 jobs:
   test-python:
     runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: "3.13"
     defaults:
       run:
         working-directory: ./python/x402

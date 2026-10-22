@@ -370,6 +370,10 @@ class x402HTTPServerBase:
                 if route.regex.match(candidate):
                     if route.verb == "*" or route.verb == upper_method:
                         return route.config, route.pattern
+            if upper_method == "HEAD":
+                for route in self._compiled_routes:
+                    if route.regex.match(candidate) and route.verb == "GET":
+                        return route.config, route.pattern
             return None
 
         match = find_match(self._normalize_path(path))

@@ -189,6 +189,7 @@ export class ExactKeetaScheme implements SchemeNetworkFacilitator {
         network: payload.accepted.network,
         transaction: "",
         errorReason: valid.invalidReason ?? "verification_failed",
+        errorMessage: valid.invalidMessage,
         payer: valid.payer || "",
       };
     }

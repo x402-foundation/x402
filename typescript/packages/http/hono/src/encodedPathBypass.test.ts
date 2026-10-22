@@ -149,6 +149,11 @@ describe("hono end-to-end: literal route percent-encoded separator", () => {
     expect(res.status).toBe(402);
   });
 
+  it("returns 402 for HEAD when Hono dispatches it to the GET handler", async () => {
+    const res = await (await buildLiteralApp()).request("/api/premium", { method: "HEAD" });
+    expect(res.status).toBe(402);
+  });
+
   it.each([["/api%2Fpremium"], ["/api%2fpremium"], ["/%61pi%2Fpremium"]])(
     "returns 402 for percent-encoded separator %s",
     async path => {

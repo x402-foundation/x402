@@ -177,7 +177,17 @@ export function handlePaymentError(response: HTTPResponseInstructions): NextResp
       headers,
     });
   }
-  headers.set("Content-Type", "application/json");
+  const mediaType = headers.get("Content-Type")?.split(";")[0].trim().toLowerCase();
+  const isJson = !mediaType || mediaType === "application/json" || mediaType.endsWith("+json");
+  if (typeof response.body === "string" && !isJson) {
+    return new NextResponse(response.body, {
+      status: response.status,
+      headers,
+    });
+  }
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
   return new NextResponse(JSON.stringify(response.body || {}), {
     status: response.status,
     headers,
@@ -257,7 +267,7 @@ export async function handleSettlement(
     }
 
     // Settlement succeeded - add headers and return the buffered response.
-    const settled = new NextResponse(responseBody, {
+    const settled = new NextResponse(response.body === null ? null : responseBody, {
       status: response.status,
       headers: response.headers,
     });

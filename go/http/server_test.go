@@ -1328,6 +1328,46 @@ func TestDecodedPathDivergenceBypass(t *testing.T) {
 	})
 }
 
+func TestHeadRouteMatching(t *testing.T) {
+	t.Run("HEAD falls back to GET", func(t *testing.T) {
+		server := Newx402HTTPResourceServer(RoutesConfig{
+			"GET /api/premium": {Accepts: PaymentOptions{}},
+		})
+
+		if !server.RequiresPayment(HTTPRequestContext{Path: "/api/premium", Method: "HEAD"}) {
+			t.Error("expected HEAD to require payment for a GET-only route")
+		}
+	})
+
+	t.Run("explicit HEAD route takes precedence", func(t *testing.T) {
+		server := Newx402HTTPResourceServer(RoutesConfig{
+			"GET /api/premium": {
+				Accepts:     PaymentOptions{},
+				Description: "GET route",
+			},
+			"HEAD /api/premium": {
+				Accepts:     PaymentOptions{},
+				Description: "HEAD route",
+			},
+		})
+
+		config, _ := server.getRouteConfig("/api/premium", "HEAD", "")
+		if config == nil || config.Description != "HEAD route" {
+			t.Errorf("expected explicit HEAD route, got %#v", config)
+		}
+	})
+
+	t.Run("HEAD does not fall back to non-GET methods", func(t *testing.T) {
+		server := Newx402HTTPResourceServer(RoutesConfig{
+			"POST /api/premium": {Accepts: PaymentOptions{}},
+		})
+
+		if server.RequiresPayment(HTTPRequestContext{Path: "/api/premium", Method: "HEAD"}) {
+			t.Error("did not expect HEAD to match a POST-only route")
+		}
+	})
+}
+
 func TestGetDisplayAmount(t *testing.T) {
 	server := Newx402HTTPResourceServer(RoutesConfig{})
 

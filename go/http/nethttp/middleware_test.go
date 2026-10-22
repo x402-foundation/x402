@@ -1544,6 +1544,42 @@ func TestValidateBazaarExtensions_MalformedExtension(t *testing.T) {
 	}
 }
 
+// TestPaymentMiddleware_HEADUsesGETPaymentRule verifies net/http's GET-to-HEAD
+// dispatch cannot run a paid GET handler without passing the payment gate.
+func TestPaymentMiddleware_HEADUsesGETPaymentRule(t *testing.T) {
+	routes := x402http.RoutesConfig{
+		"GET /api/premium": {
+			Accepts: x402http.PaymentOptions{
+				{Scheme: "exact", PayTo: "0xtest", Price: "$1.00", Network: "eip155:1"},
+			},
+		},
+	}
+	handlerRan := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/premium", func(w http.ResponseWriter, r *http.Request) {
+		handlerRan = true
+		w.Header().Set("ETag", `"paid"`)
+		w.WriteHeader(http.StatusOK)
+	})
+	middleware := PaymentMiddlewareFromConfig(routes,
+		WithFacilitatorClient(&mockFacilitatorClient{supportedFunc: defaultSupportedFunc()}),
+		WithScheme("eip155:1", &mockSchemeServer{scheme: "exact"}),
+		WithSyncFacilitatorOnStart(true),
+		WithTimeout(5*time.Second),
+	)
+
+	req := httptest.NewRequest(http.MethodHead, "/api/premium", nil)
+	w := httptest.NewRecorder()
+	middleware(mux).ServeHTTP(w, req)
+
+	if handlerRan {
+		t.Error("payment bypassed: GET handler ran for an unpaid HEAD request")
+	}
+	if w.Code != http.StatusPaymentRequired {
+		t.Errorf("Expected status 402, got %d", w.Code)
+	}
+}
+
 // TestPaymentMiddleware_EncodedPathDoesNotBypassPaymentGate guards against a
 // path-equivalence bypass (CWE-436): net/http's ServeMux dispatches on the
 // escaped path, so a request carrying "%2F" in a "{id}" segment reaches the

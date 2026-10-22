@@ -1,0 +1,3 @@
+kind: fixed
+body: Reject non-canonical high-s EIP-3009 ECDSA signatures before settlement in the Go SDK
+time: 2026-05-25T09:05:33.109502+09:00

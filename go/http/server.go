@@ -1217,6 +1217,14 @@ func (s *x402HTTPResourceServer) getRouteConfig(path, method, decodedPath string
 				return &config, route.Pattern
 			}
 		}
+		if upperMethod == http.MethodHead {
+			for _, route := range s.compiledRoutes {
+				if route.Regex.MatchString(candidate) && route.Verb == http.MethodGet {
+					config := route.Config // Make a copy
+					return &config, route.Pattern
+				}
+			}
+		}
 		return nil, ""
 	}
 

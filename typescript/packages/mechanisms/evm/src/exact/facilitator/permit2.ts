@@ -390,6 +390,7 @@ export async function settlePermit2(
       network: payload.accepted.network,
       transaction: "",
       errorReason: valid.invalidReason ?? Errors.ErrInvalidScheme,
+      errorMessage: valid.invalidMessage,
       payer,
     };
   }

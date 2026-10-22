@@ -1,0 +1,3 @@
+kind: fixed
+body: Required payment for HEAD requests when the matching route is configured for GET.
+time: 2026-10-09T12:58:00.000000-04:00

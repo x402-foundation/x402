@@ -144,8 +144,7 @@ class BuilderCodeFacilitatorExtension(FacilitatorExtension):
             else echoed_service_codes
         )
 
-        suffix_metadata = metadata if metadata else None
-        data = BuilderCodeSuffixData(a=a, w=self.builder_code, s=s or None, m=suffix_metadata)
+        data = BuilderCodeSuffixData(a=a, w=self.builder_code, s=s or None, m=metadata or None)
         if not data.a and not data.w and not data.s and not data.m:
             return None
 
