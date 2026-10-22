@@ -368,7 +368,24 @@ function hasExternalSchemaReference(node: unknown): boolean {
 }
 
 /**
- * Validates a discovery extension's info against its schema
+ * Checks whether this runtime permits the dynamic code generation Ajv uses to compile schemas.
+ * Not cached: Cloudflare Workers can allow it during startup and block it per request.
+ *
+ * @returns True if a Function can be constructed, false otherwise
+ */
+export function supportsDynamicCodeGeneration(): boolean {
+  try {
+    new Function("");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Validates a discovery extension's info against its schema. In runtimes that disallow
+ * dynamic code generation, Ajv cannot compile the schema, so only the protocol checks of
+ * {@link validateDiscoveryExtensionSpec} run.
  *
  * @param extension - The discovery extension containing info and schema
  * @returns Validation result indicating if the info matches the schema
@@ -395,6 +412,10 @@ export function validateDiscoveryExtension(extension: DiscoveryExtension): Valid
         valid: false,
         errors: ["schema must not contain external $ref/$id references"],
       };
+    }
+
+    if (!supportsDynamicCodeGeneration()) {
+      return validateDiscoveryExtensionSpec(extension as unknown as Record<string, unknown>);
     }
 
     const ajv = new Ajv({ strict: false, allErrors: true });
