@@ -9,7 +9,7 @@ import { NETWORKS } from "../../../src/v1";
 import { x402ExactPermit2ProxyAddress, PERMIT2_ADDRESS } from "../../../src/constants";
 import { ERC20_APPROVAL_GAS_SPONSORING_KEY } from "../../../src/exact/extensions";
 import { MULTICALL3_ADDRESS } from "../../../src/multicall";
-import { concat, encodeAbiParameters } from "viem";
+import { concat, encodeAbiParameters, HttpRequestError } from "viem";
 import * as Errors from "../../../src/exact/facilitator/errors";
 import { resetAssetContractCache } from "../../../src/assetCache";
 import {
@@ -1410,6 +1410,22 @@ describe("ExactEvmScheme (Facilitator)", () => {
       // matches what on-chain SignatureChecker.isValidSignatureNow would return.
       expect(result.isValid).toBe(false);
       expect(result.invalidReason).toBe(Errors.ErrInvalidSignature);
+    });
+
+    it("should report a failed isValidSignature read on a deployed wallet as failed_to_verify_signature", async () => {
+      mockFacilitatorSigner.getCode = vi.fn().mockResolvedValue("0x6080604052");
+      // The call never reached the wallet: no signature check ran.
+      mockFacilitatorSigner.readContract = vi
+        .fn()
+        .mockRejectedValue(new HttpRequestError({ url: "https://rpc.example", status: 503 }));
+
+      const result = await cfFacilitator.verify(
+        makeERC6492Payload(erc6492Sig),
+        erc6492Requirements,
+      );
+
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe(Errors.ErrFailedToVerifySignature);
     });
   });
 
