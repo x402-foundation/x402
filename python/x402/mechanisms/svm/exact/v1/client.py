@@ -3,7 +3,8 @@
 import base64
 import binascii
 import os
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 try:
     from solana.rpc.api import Client as SolanaClient
@@ -27,10 +28,31 @@ from ...constants import (
     SCHEME_EXACT,
 )
 from ...default_assets import find_default_asset
-from ...mint_cache import MintMetadataCache, get_cached_mint_metadata
+from ...mint_cache import (
+    MintMetadata,
+    MintMetadataCache,
+    get_cached_mint_metadata,
+    get_cached_mint_metadata_async,
+)
 from ...signer import ClientSvmSigner
 from ...types import ExactSvmPayload
-from ...utils import derive_ata, get_network_config, normalize_network
+from ...utils import derive_ata, get_network_config, normalize_network, resolve_blockhash_async
+
+if TYPE_CHECKING:
+    from solders.hash import Hash
+
+
+@dataclass(frozen=True)
+class _PayloadContext:
+    """Everything needed to build the V1 transfer payload after RPC data arrives."""
+
+    requirements: PaymentRequirementsV1
+    client: SolanaClient
+    network: str
+    extra: dict[str, Any]
+    fee_payer: Pubkey
+    mint: Pubkey
+    payer_pubkey: Pubkey
 
 
 class ExactSvmSchemeV1:
@@ -42,6 +64,10 @@ class ExactSvmSchemeV1:
     V1 differences:
     - Uses maxAmountRequired from requirements
     - Legacy network names (solana-devnet, not solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1)
+
+    Like the V2 scheme, both a synchronous (``create_payment_payload``) and an
+    asynchronous (``create_payment_payload_async``) entry point are provided;
+    the async path offloads the blocking RPC calls to worker threads.
 
     Attributes:
         scheme: The scheme identifier ("exact").
@@ -85,21 +111,10 @@ class ExactSvmSchemeV1:
         self._clients[caip2_network] = client
         return client
 
-    def create_payment_payload(
-        self,
-        requirements: PaymentRequirementsV1,
-    ) -> dict[str, Any]:
-        """Create signed SPL TransferChecked inner payload (V1 format).
+    def _prepare(self, requirements: PaymentRequirementsV1) -> _PayloadContext:
+        """Resolve the RPC client, fee payer and addresses for a payment.
 
-        Args:
-            requirements: V1 payment requirements.
-
-        Returns:
-            Inner payload dict (transaction).
-            x402Client wraps this with x402_version, scheme, network.
-
-        Raises:
-            ValueError: If feePayer is missing or invalid.
+        Performs no network I/O; safe to call from sync and async paths alike.
         """
         network = requirements.network
         client = self._get_client(network)
@@ -111,10 +126,82 @@ class ExactSvmSchemeV1:
             raise ValueError("feePayer is required in requirements.extra for SVM transactions")
         fee_payer = Pubkey.from_string(fee_payer_str)
 
-        mint = Pubkey.from_string(requirements.asset)
-        payer_pubkey = Pubkey.from_string(self._signer.address)
+        return _PayloadContext(
+            requirements=requirements,
+            client=client,
+            network=network,
+            extra=extra,
+            fee_payer=fee_payer,
+            mint=Pubkey.from_string(requirements.asset),
+            payer_pubkey=Pubkey.from_string(self._signer.address),
+        )
 
-        mint_metadata = get_cached_mint_metadata(client, network, mint, self._mint_cache)
+    def create_payment_payload(
+        self,
+        requirements: PaymentRequirementsV1,
+    ) -> dict[str, Any]:
+        """Create signed SPL TransferChecked inner payload (V1 format, synchronous).
+
+        Blocks the calling thread while the RPC calls are in flight. Use
+        :meth:`create_payment_payload_async` from async code.
+
+        Args:
+            requirements: V1 payment requirements.
+
+        Returns:
+            Inner payload dict (transaction).
+            x402Client wraps this with x402_version, scheme, network.
+
+        Raises:
+            ValueError: If feePayer is missing or invalid.
+        """
+        ctx = self._prepare(requirements)
+        mint_metadata = get_cached_mint_metadata(
+            ctx.client, ctx.network, ctx.mint, self._mint_cache
+        )
+        blockhash_resp = ctx.client.get_latest_blockhash()
+        blockhash = blockhash_resp.value.blockhash
+        return self._build_payload(ctx, mint_metadata, blockhash)
+
+    async def create_payment_payload_async(
+        self,
+        requirements: PaymentRequirementsV1,
+    ) -> dict[str, Any]:
+        """Create signed SPL TransferChecked inner payload (V1 format) without blocking.
+
+        The Solana RPC calls run in worker threads via ``asyncio.to_thread`` so
+        the event loop stays free for other coroutines. Output is identical to
+        :meth:`create_payment_payload`.
+
+        Args:
+            requirements: V1 payment requirements.
+
+        Returns:
+            Inner payload dict (transaction).
+
+        Raises:
+            ValueError: If feePayer is missing or invalid.
+        """
+        ctx = self._prepare(requirements)
+        mint_metadata = await get_cached_mint_metadata_async(
+            ctx.client, ctx.network, ctx.mint, self._mint_cache
+        )
+        blockhash = await resolve_blockhash_async(ctx.client)
+        return self._build_payload(ctx, mint_metadata, blockhash)
+
+    def _build_payload(
+        self,
+        ctx: _PayloadContext,
+        mint_metadata: MintMetadata,
+        blockhash: "Hash",
+    ) -> dict[str, Any]:
+        """Build the signed TransferChecked payload from resolved RPC data.
+
+        Pure CPU work plus local signing — no network I/O, shared by the sync
+        and async entry points.
+        """
+        requirements = ctx.requirements
+        extra = ctx.extra
         token_program = mint_metadata.token_program
         decimals = mint_metadata.decimals
 
@@ -155,9 +242,9 @@ class ExactSvmSchemeV1:
             program_id=token_program,
             accounts=[
                 AccountMeta(source_ata, is_signer=False, is_writable=True),
-                AccountMeta(mint, is_signer=False, is_writable=False),
+                AccountMeta(ctx.mint, is_signer=False, is_writable=False),
                 AccountMeta(dest_ata, is_signer=False, is_writable=True),
-                AccountMeta(payer_pubkey, is_signer=True, is_writable=False),
+                AccountMeta(ctx.payer_pubkey, is_signer=True, is_writable=False),
             ],
             data=transfer_data,
         )
@@ -176,13 +263,9 @@ class ExactSvmSchemeV1:
             data=memo_data,
         )
 
-        # Get latest blockhash
-        blockhash_resp = client.get_latest_blockhash()
-        blockhash = blockhash_resp.value.blockhash
-
         # Build message
         message = MessageV0.try_compile(
-            payer=fee_payer,
+            payer=ctx.fee_payer,
             instructions=[set_cu_limit_ix, set_cu_price_ix, transfer_ix, memo_ix],
             address_lookup_table_accounts=[],
             recent_blockhash=blockhash,

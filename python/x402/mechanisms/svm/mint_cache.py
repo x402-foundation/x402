@@ -1,5 +1,6 @@
 """Helpers for caching immutable SPL mint metadata."""
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -32,6 +33,36 @@ def get_cached_mint_metadata(
         return cached
 
     mint_info = client.get_account_info(mint)
+    return _store_mint_metadata(cache, key, mint_info, mint)
+
+
+async def get_cached_mint_metadata_async(
+    client: Any,
+    network: str,
+    mint: Pubkey,
+    cache: MintMetadataCache,
+) -> MintMetadata:
+    """Async counterpart of :func:`get_cached_mint_metadata`.
+
+    The synchronous RPC call is offloaded to a worker thread so the event loop
+    stays free for other coroutines while the request is in flight.
+    """
+    key = (network, str(mint))
+    cached = cache.get(key)
+    if cached:
+        return cached
+
+    mint_info = await asyncio.to_thread(client.get_account_info, mint)
+    return _store_mint_metadata(cache, key, mint_info, mint)
+
+
+def _store_mint_metadata(
+    cache: MintMetadataCache,
+    key: tuple[str, str],
+    mint_info: Any,
+    mint: Pubkey,
+) -> MintMetadata:
+    """Validate a mint account response and cache the derived metadata."""
     if not mint_info.value:
         raise ValueError(f"Token mint not found: {mint}")
 

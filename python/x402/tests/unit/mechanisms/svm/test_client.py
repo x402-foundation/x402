@@ -1,5 +1,6 @@
 """Tests for ExactSvmScheme client."""
 
+import asyncio
 import base64
 from unittest.mock import MagicMock, patch
 
@@ -9,11 +10,13 @@ from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
 
+from x402 import x402Client, x402ClientSync
 from x402.mechanisms.svm import SOLANA_DEVNET_CAIP2, TOKEN_PROGRAM_ADDRESS, USDC_DEVNET_ADDRESS
+from x402.mechanisms.svm.default_assets import find_default_asset
 from x402.mechanisms.svm.exact import ExactSvmClientScheme
 from x402.mechanisms.svm.exact.v1 import ExactSvmSchemeV1
 from x402.mechanisms.svm.signers import KeypairSigner
-from x402.schemas import PaymentRequirements
+from x402.schemas import PaymentRequired, PaymentRequirements
 from x402.schemas.v1 import PaymentRequirementsV1
 
 FIXED_BLOCKHASH = "5Tx8F3jgSHx21CbtjwmdaKPLM5tWmreWAnPrbqHomSJF"
@@ -265,3 +268,138 @@ class TestClientSchemeAttributes:
 
         # Client should have access to signer (internal attribute)
         assert client._signer is signer
+
+
+RPC_LATENCY_SECONDS = 0.15
+
+
+class _LatentRpcClient:
+    """Mock Solana RPC client whose calls sleep to simulate network latency."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def get_latest_blockhash(self):
+        import time
+
+        time.sleep(RPC_LATENCY_SECONDS)
+        self.calls += 1
+        response = MagicMock()
+        response.value.blockhash = Hash.from_string(FIXED_BLOCKHASH_ALT)
+        return response
+
+    def get_account_info(self, _mint):
+        import time
+
+        time.sleep(RPC_LATENCY_SECONDS)
+        self.calls += 1
+        info = MagicMock()
+        info.value = MagicMock()
+        info.value.owner = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
+        info.value.data = bytes(44) + bytes([6]) + bytes(37)
+        return info
+
+
+class TestAsyncEventLoopNonBlocking:
+    """Regression tests for https://github.com/x402-foundation/x402/issues/3649.
+
+    The Python async client must not block the event loop while the SVM scheme
+    performs its synchronous RPC calls (mint metadata fetch, blockhash
+    resolution), matching the TypeScript implementation which awaits them.
+    """
+
+    @staticmethod
+    def _requirements_with_memo() -> PaymentRequirements:
+        fee_payer = Keypair.from_seed(bytes([2] * 32))
+        pay_to = Keypair.from_seed(bytes([3] * 32))
+        return PaymentRequirements(
+            scheme="exact",
+            network=SOLANA_DEVNET_CAIP2,
+            asset=USDC_DEVNET_ADDRESS,
+            amount="100000",
+            pay_to=str(pay_to.pubkey()),
+            max_timeout_seconds=3600,
+            extra={"feePayer": str(fee_payer.pubkey()), "memo": "regression-test"},
+        )
+
+    @staticmethod
+    def _make_scheme_with_latent_rpc():
+        keypair = Keypair()
+        signer = KeypairSigner(keypair)
+        scheme = ExactSvmClientScheme(signer)
+        scheme._clients[SOLANA_DEVNET_CAIP2] = _LatentRpcClient()
+        return scheme
+
+    @pytest.mark.asyncio
+    async def test_async_client_keeps_event_loop_free_during_rpc(self):
+        """A concurrent heartbeat must tick while the RPC calls are in flight."""
+        scheme = self._make_scheme_with_latent_rpc()
+        client = x402Client().register(SOLANA_DEVNET_CAIP2, scheme)
+        payment_required = PaymentRequired(
+            x402_version=2,
+            accepts=[self._requirements_with_memo()],
+        )
+
+        ticks = 0
+        stop = False
+
+        async def heartbeat():
+            nonlocal ticks
+            while not stop:
+                await asyncio.sleep(0.01)
+                ticks += 1
+
+        beat = asyncio.create_task(heartbeat())
+        payload = await client.create_payment_payload(payment_required)
+        stop = True
+        await beat
+
+        # Two RPC calls of ~0.15s each; a blocked loop would tick zero times.
+        assert ticks > 0, "event loop was blocked during SVM RPC calls (issue #3649)"
+        assert payload.payload["transaction"]
+
+    @pytest.mark.asyncio
+    async def test_async_and_sync_paths_produce_identical_payloads(self):
+        """The async entry point must return exactly what the sync path returns."""
+        scheme = self._make_scheme_with_latent_rpc()
+        requirements = self._requirements_with_memo()
+
+        sync_payload = scheme.create_payment_payload(requirements)
+        async_payload = await scheme.create_payment_payload_async(requirements)
+
+        assert async_payload == sync_payload
+
+    def test_sync_client_still_works(self):
+        """The sync client path is unchanged by the async dispatch."""
+        scheme = self._make_scheme_with_latent_rpc()
+        client = x402ClientSync().register(SOLANA_DEVNET_CAIP2, scheme)
+        payment_required = PaymentRequired(
+            x402_version=2,
+            accepts=[self._requirements_with_memo()],
+        )
+
+        payload = client.create_payment_payload(payment_required)
+
+        assert payload.payload["transaction"]
+
+    def test_async_only_scheme_rejected_by_sync_client(self):
+        """A scheme with only an async method must fail clearly on x402ClientSync."""
+
+        class AsyncOnlyScheme:
+            scheme = "exact"
+            find_default_asset = staticmethod(find_default_asset)
+
+            async def create_payment_payload(self, requirements):
+                return {"transaction": "x"}
+
+        client = x402ClientSync().register(
+            SOLANA_DEVNET_CAIP2,
+            AsyncOnlyScheme(),  # type: ignore[arg-type]  # deliberate: async-only scheme
+        )
+        payment_required = PaymentRequired(
+            x402_version=2,
+            accepts=[self._requirements_with_memo()],
+        )
+
+        with pytest.raises(TypeError, match="async create_payment_payload_async"):
+            client.create_payment_payload(payment_required)
