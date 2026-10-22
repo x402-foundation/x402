@@ -28,6 +28,15 @@ const (
 	// DefaultServerMinDepositMultiplier is the default server SDK multiplier for
 	// extra.minDeposit when no floor is configured.
 	DefaultServerMinDepositMultiplier = 10
+
+	// VoucherManagerServer is the extra.voucherManager value for a resource server that
+	// owns the voucher store. On a 402 an omitted voucherManager means this.
+	VoucherManagerServer = "server"
+
+	// VoucherManagerFacilitator is the extra.voucherManager value for a facilitator
+	// that owns the voucher store. Clients read it only to gate packing the refund
+	// authorizer into the channel salt.
+	VoucherManagerFacilitator = "facilitator"
 )
 
 // ChannelConfigTypeString is the EIP-712 typed-data primary type string used
@@ -366,5 +375,35 @@ var BatchSettlementFinalizeWithdrawABI = []byte(`[
 		"inputs": [{"name": "config", "type": "tuple", "components": ` + channelConfigComponentsJSON + `}],
 		"outputs": [],
 		"stateMutability": "nonpayable"
+	}
+]`)
+
+// BatchSettlementSettledEventABI is Settled(address indexed receiver, address indexed token, address indexed sender, uint128 amount).
+var BatchSettlementSettledEventABI = []byte(`[
+	{
+		"anonymous": false,
+		"inputs": [
+			{"indexed": true, "name": "receiver", "type": "address"},
+			{"indexed": true, "name": "token", "type": "address"},
+			{"indexed": true, "name": "sender", "type": "address"},
+			{"indexed": false, "name": "amount", "type": "uint128"}
+		],
+		"name": "Settled",
+		"type": "event"
+	}
+]`)
+
+// BatchSettlementClaimedEventABI is Claimed(bytes32 indexed channelId, address indexed sender, uint128 claimAmount, uint128 newTotalClaimed).
+var BatchSettlementClaimedEventABI = []byte(`[
+	{
+		"anonymous": false,
+		"inputs": [
+			{"indexed": true, "name": "channelId", "type": "bytes32"},
+			{"indexed": true, "name": "sender", "type": "address"},
+			{"indexed": false, "name": "claimAmount", "type": "uint128"},
+			{"indexed": false, "name": "newTotalClaimed", "type": "uint128"}
+		],
+		"name": "Claimed",
+		"type": "event"
 	}
 ]`)

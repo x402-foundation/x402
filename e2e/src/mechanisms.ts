@@ -195,6 +195,10 @@ type EndpointLike = {
   schemeOptions?: Record<string, boolean>;
   extensions?: string[];
   schemeExtra?: Record<string, string | number | boolean>;
+  /** Catalog SDKs that implement this route for every role. */
+  sdks?: SdkId[];
+  /** Catalog SDKs that implement only the client role. */
+  clientSdks?: SdkId[];
   health?: boolean;
   close?: boolean;
   /** MCP tool name, equal to `path` for MCP endpoints (`method: 'tool'`). */
@@ -408,6 +412,8 @@ export function sdkRouteToEndpoint(route: SdkRoute, transport: RouteTransport = 
       paymentFlow: route.paymentFlow,
       schemeOptions: route.schemeOptions,
       extensions: route.extensions,
+      sdks: route.sdks,
+      ...(route.clientSdks ? { clientSdks: route.clientSdks } : {}),
       ...(route.schemeExtra ? { schemeExtra: route.schemeExtra } : {}),
     };
   }
@@ -423,6 +429,8 @@ export function sdkRouteToEndpoint(route: SdkRoute, transport: RouteTransport = 
     paymentFlow: route.paymentFlow,
     schemeOptions: route.schemeOptions,
     extensions: route.extensions,
+    sdks: route.sdks,
+    ...(route.clientSdks ? { clientSdks: route.clientSdks } : {}),
     ...(route.schemeExtra ? { schemeExtra: route.schemeExtra } : {}),
   };
 }
@@ -494,6 +502,72 @@ export type RouteFilter = {
   excludeSchemes?: string[];
   excludeNetworks?: string[];
 };
+
+/** Which custody side a server process serves (dual-server batch harness). */
+export type BatchServerRole = 'standard' | 'managed-batch';
+
+/** True when schemeOptions selects facilitator-managed batch custody. */
+export function isFacilitatorManagedBatchOptions(
+  schemeOptions?: Record<string, boolean>,
+): boolean {
+  return schemeOptions?.facilitatorManaged === true;
+}
+
+/** True for batch-settlement routes with `facilitatorManaged: true`. */
+export function isFacilitatorManagedBatchRoute(route: {
+  scheme?: PaymentScheme;
+  schemeOptions?: Record<string, boolean>;
+}): boolean {
+  return route.scheme === 'batch-settlement' && isFacilitatorManagedBatchOptions(route.schemeOptions);
+}
+
+/**
+ * Narrow a route list to one batch custody side.
+ * `standard` keeps everything except facilitator-managed batch routes;
+ * `managed-batch` keeps only facilitator-managed batch routes.
+ */
+export function filterRoutesByBatchCustody<T extends { scheme?: PaymentScheme; schemeOptions?: Record<string, boolean> }>(
+  routes: T[],
+  role: BatchServerRole,
+): T[] {
+  switch (role) {
+    case 'standard':
+      return routes.filter(route => !isFacilitatorManagedBatchRoute(route));
+    case 'managed-batch':
+      return routes.filter(route => isFacilitatorManagedBatchRoute(route));
+    default:
+      throw new Error(`Unknown batch server role: ${(role as never) satisfies never}`);
+  }
+}
+
+/** Read the harness-assigned server custody role (`E2E_BATCH_SERVER_ROLE`). */
+export function batchServerRoleFromEnv(env: EnvLookup): BatchServerRole | undefined {
+  const raw = env('E2E_BATCH_SERVER_ROLE')?.trim().toLowerCase();
+  if (!raw) return undefined;
+  if (raw === 'standard' || raw === 'managed-batch') return raw;
+  throw new Error(`E2E_BATCH_SERVER_ROLE must be "standard" or "managed-batch", got "${raw}"`);
+}
+
+/**
+ * Debug/CI-only custody override (`EVM_BATCH_SETTLEMENT_VOUCHER_STORE_MODE=self|facilitator`).
+ * When set, the harness runs only one custody side.
+ */
+export function batchVoucherStoreOverrideFromEnv(
+  env: EnvLookup,
+): 'self' | 'facilitator' | undefined {
+  const raw = env('EVM_BATCH_SETTLEMENT_VOUCHER_STORE_MODE')?.trim().toLowerCase();
+  if (!raw) return undefined;
+  if (raw === 'self' || raw === 'facilitator') return raw;
+  throw new Error(
+    `EVM_BATCH_SETTLEMENT_VOUCHER_STORE_MODE must be "self" or "facilitator", got "${raw}"`,
+  );
+}
+
+/** True when the facilitator process must enable its voucher store + channel manager. */
+export function facilitatorVoucherStoreEnabled(env: EnvLookup): boolean {
+  const raw = env('E2E_FACILITATOR_VOUCHER_STORE')?.trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
+}
 
 export function routeEnvSatisfied(route: SdkRoute, env: EnvLookup): boolean {
   if (route.requiresEnv && !env(route.requiresEnv)?.trim()) {
@@ -1092,7 +1166,7 @@ export function routeDiscoveryOutput(): {
   return { example, schema: { properties, required: Object.keys(example) } };
 }
 
-const HARNESS_PAYMENT_SCHEMES = ['exact', 'upto', 'batch-settlement'] as const;
+const HARNESS_PAYMENT_SCHEMES = ['exact', 'upto', 'batch-settlement', 'auth-capture'] as const;
 
 /** Merge component-level and run-level route exclusions (union of exclude lists). */
 export function mergeRouteFilters(...filters: (RouteFilter | undefined)[]): RouteFilter {

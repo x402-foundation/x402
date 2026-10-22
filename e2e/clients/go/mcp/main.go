@@ -76,11 +76,22 @@ func main() {
 			success = result.PaymentResponse.Success
 		}
 
+		data := parseToolData(result.Content)
+		var stepErr string
+		if !success {
+			if result.PaymentResponse != nil && result.PaymentResponse.ErrorReason != "" {
+				stepErr = fmt.Sprintf("Payment failed: %s", result.PaymentResponse.ErrorReason)
+			} else {
+				stepErr = fmt.Sprintf("Payment failed (%d): %v", statusCode, data)
+			}
+		}
+
 		return e2eclient.StepResult{
 			Success:         success,
-			Data:            parseToolData(result.Content),
+			Data:            data,
 			StatusCode:      statusCode,
 			PaymentResponse: result.PaymentResponse,
+			Error:           stepErr,
 		}
 	}
 

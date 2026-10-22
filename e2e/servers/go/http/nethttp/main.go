@@ -73,7 +73,7 @@ func main() {
 
 	paymentHandler := nethttpmw.X402Payment(nethttpmw.Config{
 		Routes:                 routes,
-		Facilitator:            facilitatorClient,
+		Facilitators:           e2eserver.NewFacilitatorClients(cfg),
 		Schemes:                schemes,
 		SyncFacilitatorOnStart: true,
 		Timeout:                30 * time.Second,

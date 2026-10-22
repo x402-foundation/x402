@@ -1159,6 +1159,11 @@ func (s *x402HTTPResourceServer) buildSettlementFailureResult(errorReason string
 		failureResponse.Payer = settleResult.Payer
 		failureResponse.ErrorMessage = settleResult.ErrorMessage
 		failureResponse.Transaction = sanitizedFailureTransaction(errorReason, settleResult.Transaction)
+		if settleResult.AfterSettleAborted {
+			failureResponse.Transaction = settleResult.Transaction
+			failureResponse.Amount = settleResult.Amount
+			failureResponse.Extra = settleResult.Extra
+		}
 	}
 
 	headers, err := s.CreateSettlementHeaders(&failureResponse)

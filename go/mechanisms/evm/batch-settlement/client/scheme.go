@@ -71,7 +71,8 @@ type BatchSettlementEvmSchemeOptions struct {
 	DepositStrategy DepositStrategy
 	// Storage is the session persistence backend. Defaults to in-memory.
 	Storage ClientChannelStorage
-	// Salt is the channel salt for differentiating identical configs. Defaults to zero.
+	// Salt differentiates otherwise identical channel configs. A decimal index
+	// ("0", "1", …) or 0x-prefixed hex; empty selects the zero salt.
 	Salt string
 	// PayerAuthorizer is the EOA address used for voucher signing (separate from payer).
 	// Zero address means the payer signs vouchers directly (ERC-1271).
@@ -92,7 +93,6 @@ type BatchSettlementEvmScheme struct {
 func NewBatchSettlementEvmScheme(signer evm.ClientEvmSigner, config *BatchSettlementEvmSchemeOptions) *BatchSettlementEvmScheme {
 	cfg := BatchSettlementEvmSchemeOptions{
 		DepositMultiplier: DefaultDepositMultiplier,
-		Salt:              DefaultSalt,
 	}
 	if config != nil {
 		if config.DepositMultiplier > 0 {
@@ -101,9 +101,7 @@ func NewBatchSettlementEvmScheme(signer evm.ClientEvmSigner, config *BatchSettle
 		if config.Storage != nil {
 			cfg.Storage = config.Storage
 		}
-		if config.Salt != "" {
-			cfg.Salt = config.Salt
-		}
+		cfg.Salt = config.Salt
 		cfg.DepositStrategy = config.DepositStrategy
 		cfg.PayerAuthorizer = config.PayerAuthorizer
 		cfg.VoucherSigner = config.VoucherSigner
@@ -305,11 +303,19 @@ func (c *BatchSettlementEvmScheme) resolveDepositAmount(
 	return resolveDepositAmountResult{amount: clamped}, nil
 }
 
+func (c *BatchSettlementEvmScheme) normalizedConfigSalt() (string, error) {
+	return batchsettlement.ParseChannelSalt(c.config.Salt)
+}
+
 // BuildChannelConfig constructs a ChannelConfig from payment requirements and scheme config.
 //
 // Returns an error when `requirements.Extra["receiverAuthorizer"]` is missing
 // or zero — without it the derived channelId would not match the onchain
 // channel and the deposit transaction would revert.
+//
+// Facilitator-managed 402s (voucherManager "facilitator" and a non-zero
+// refundAuthorizer) pack that address into the salt. Self-managed channels
+// keep the raw salt.
 func (c *BatchSettlementEvmScheme) BuildChannelConfig(requirements types.PaymentRequirements) (batchsettlement.ChannelConfig, error) {
 	var receiverAuthorizer string
 	if requirements.Extra != nil {
@@ -319,6 +325,22 @@ func (c *BatchSettlementEvmScheme) BuildChannelConfig(requirements types.Payment
 	}
 	if receiverAuthorizer == "" || strings.EqualFold(receiverAuthorizer, "0x0000000000000000000000000000000000000000") {
 		return batchsettlement.ChannelConfig{}, fmt.Errorf("payment requirements must include a non-zero extra.receiverAuthorizer")
+	}
+
+	baseSalt, err := c.normalizedConfigSalt()
+	if err != nil {
+		return batchsettlement.ChannelConfig{}, fmt.Errorf("invalid salt: %w", err)
+	}
+	channelSalt := baseSalt
+	if requirements.Extra != nil && requirements.Extra["voucherManager"] == batchsettlement.VoucherManagerFacilitator {
+		if refundAuthorizer, ok := requirements.Extra["refundAuthorizer"].(string); ok &&
+			refundAuthorizer != "" &&
+			!strings.EqualFold(refundAuthorizer, "0x0000000000000000000000000000000000000000") {
+			channelSalt, err = batchsettlement.PackRefundAuthorizerSalt(baseSalt, refundAuthorizer)
+			if err != nil {
+				return batchsettlement.ChannelConfig{}, fmt.Errorf("pack refund authorizer salt: %w", err)
+			}
+		}
 	}
 
 	withdrawDelay := DefaultWithdrawDelay
@@ -352,7 +374,7 @@ func (c *BatchSettlementEvmScheme) BuildChannelConfig(requirements types.Payment
 		ReceiverAuthorizer: receiverAuthorizer,
 		Token:              requirements.Asset,
 		WithdrawDelay:      withdrawDelay,
-		Salt:               c.config.Salt,
+		Salt:               channelSalt,
 	}, nil
 }
 
@@ -791,12 +813,7 @@ func (c *BatchSettlementEvmScheme) recoverFromSignature(
 		return false, nil //nolint:nilerr
 	}
 
-	domain := evm.TypedDataDomain{
-		Name:              batchsettlement.BatchSettlementDomain.Name,
-		Version:           batchsettlement.BatchSettlementDomain.Version,
-		ChainID:           chainId,
-		VerifyingContract: batchsettlement.BatchSettlementAddress,
-	}
+	domain := batchsettlement.GetBatchSettlementEip712Domain(chainId)
 
 	voucherSigner := c.signer
 	if c.config.VoucherSigner != nil {
