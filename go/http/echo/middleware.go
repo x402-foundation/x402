@@ -497,7 +497,7 @@ func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402ht
 		case settleResult.Response != nil:
 			return handlePaymentError(c, settleResult.Response)
 		default:
-			return c.JSON(http.StatusPaymentRequired, map[string]interface{}{})
+			return c.JSON(http.StatusPaymentRequired, map[string]string{"error": x402.ErrCodeSettlementFailed})
 		}
 		return nil
 	}

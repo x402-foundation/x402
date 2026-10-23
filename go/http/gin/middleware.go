@@ -504,7 +504,7 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 			handlePaymentError(c, settleResult.Response, config)
 		default:
 			// Fallback if Response is nil
-			c.JSON(http.StatusPaymentRequired, map[string]interface{}{})
+			c.JSON(http.StatusPaymentRequired, map[string]string{"error": x402.ErrCodeSettlementFailed})
 		}
 		return
 	}
