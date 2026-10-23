@@ -9,6 +9,7 @@ import {
   checkIfBazaarNeeded,
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
+  applyPaymentResponseHeaders,
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
 import { NextRequest, NextResponse } from "next/server";
@@ -385,9 +386,11 @@ export function withX402FromHTTPServer<T = unknown>(
             response.headers.get("Cache-Control"),
           );
           if (failureHeaders) {
-            Object.entries(failureHeaders).forEach(([key, value]) => {
-              response.headers.set(key, value);
-            });
+            applyPaymentResponseHeaders(
+              failureHeaders,
+              name => response.headers.get(name),
+              (name, value) => response.headers.set(name, value),
+            );
           }
           return response as NextResponse<T>;
         }

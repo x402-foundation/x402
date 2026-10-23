@@ -16,6 +16,7 @@ import {
   PaymentCancellationDispatcher,
   CompletedSettlement,
   withPrivateCacheControl,
+  applyPaymentResponseHeaders,
 } from "@x402/core/server";
 import {
   SchemeNetworkServer,
@@ -402,9 +403,11 @@ export function paymentMiddlewareFromHTTPServer(
 
       case "payment-error": {
         const { response } = result;
-        for (const [key, value] of Object.entries(response.headers)) {
-          reply.header(key, value);
-        }
+        applyPaymentResponseHeaders(
+          response.headers,
+          name => reply.getHeader(name),
+          (name, value) => reply.header(name, value),
+        );
         if (response.isHtml) {
           return reply.status(response.status).type("text/html").send(response.body);
         } else {
@@ -482,9 +485,11 @@ export function paymentMiddlewareFromHTTPServer(
         existingCacheControl,
       );
       if (failureHeaders) {
-        for (const [key, value] of Object.entries(failureHeaders)) {
-          reply.header(key, value);
-        }
+        applyPaymentResponseHeaders(
+          failureHeaders,
+          name => reply.getHeader(name),
+          (name, value) => reply.header(name, value),
+        );
       }
       return effectivePayload;
     }
@@ -511,9 +516,11 @@ export function paymentMiddlewareFromHTTPServer(
       if (!settleResult.success) {
         const { response } = settleResult;
         reply.removeHeader(SETTLEMENT_OVERRIDES_HEADER);
-        for (const [key, value] of Object.entries(response.headers)) {
-          reply.header(key, value);
-        }
+        applyPaymentResponseHeaders(
+          response.headers,
+          name => reply.getHeader(name),
+          (name, value) => reply.header(name, value),
+        );
         reply.status(response.status);
         reply.type(
           getHeaderValue(response.headers, "content-type") ||
@@ -522,9 +529,11 @@ export function paymentMiddlewareFromHTTPServer(
         return response.isHtml ? String(response.body ?? "") : JSON.stringify(response.body ?? {});
       }
 
-      for (const [key, value] of Object.entries(settleResult.headers)) {
-        reply.header(key, value);
-      }
+      applyPaymentResponseHeaders(
+        settleResult.headers,
+        name => reply.getHeader(name),
+        (name, value) => reply.header(name, value),
+      );
       reply.header(
         "Cache-Control",
         withPrivateCacheControl(
