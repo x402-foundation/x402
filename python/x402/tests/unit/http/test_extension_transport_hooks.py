@@ -10,7 +10,7 @@ import pytest
 from x402.http.types import HTTPRequestContext, PaymentOption, RouteConfig
 from x402.http.x402_http_client import x402HTTPClient
 from x402.http.x402_http_server_base import x402HTTPServerBase
-from x402.schemas import PaymentRequired, PaymentRequirements
+from x402.schemas import PaymentRequired, PaymentRequirements, ResourceInfo
 from x402.schemas.hooks import (
     GrantAccessResult,
     PaymentRequiredContext,
@@ -168,6 +168,7 @@ async def test_client_extension_on_payment_required_runs_after_manual():
         max_timeout_seconds=300,
     )
     payment_required = PaymentRequired(
+        resource=ResourceInfo(url="https://example.com/resource"),
         x402_version=2,
         accepts=[requirements],
         extensions={"cli-ext": {}},
