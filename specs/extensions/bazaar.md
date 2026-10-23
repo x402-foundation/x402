@@ -248,6 +248,16 @@ The `info.input` object uses a discriminated union type, distinguished by the `t
 
 The `info.input` object describes how to call the endpoint or tool.
 
+`info.input` describes the resource, not the request that discovered it. A
+server MUST emit the same `info.input` for a resource regardless of the
+method, headers or body of the request it is answering: a catalog built from
+a `GET` probe and one built from a `POST` probe of the same URL MUST contain
+the same declaration. The declared `method` is the method the resource
+accepts, so a route that answers 402 on any method MUST derive the declared
+method from the route or the declaration, never from the probing request. A
+declaration that varies with the probe indexes, for some probers, an entry no
+client can execute.
+
 #### Query Parameter Methods (GET, HEAD, DELETE)
 
 | Field | Type | Required | Description |
@@ -304,6 +314,14 @@ The `input.type` field acts as a discriminator for the discovery info structure:
 | `"mcp"` | MCPDiscoveryInfo | MCP tool invocation |
 
 Facilitators should use `input.type` to determine which validation rules apply. For HTTP inputs, the presence of `bodyType` further distinguishes between query and body methods.
+
+The two HTTP structures are closed sets, not menus. `bodyType` and `body`
+MUST NOT appear when `method` is `GET`, `HEAD` or `DELETE`, and MUST be
+present when it is `POST`, `PUT` or `PATCH`. A declaration that carries
+`bodyType` with a body-less method matches neither structure, and a
+facilitator MUST reject it at validation rather than catalog it - whether or
+not the resource's own `schema` would admit it, since that schema is supplied
+by the party being validated.
 
 ---
 
