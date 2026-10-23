@@ -147,9 +147,9 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 
 | Hook | TypeScript | Go | Python |
 |------|------------|-----|--------|
-| onPaymentRequired | ✅ | ✅ | ❌ |
-| onBeforePayment | ✅ | ✅ | ❌ |
-| onAfterPayment | ✅ | ✅ | ❌ |
+| onPaymentRequired | ✅ | ✅ | ✅ |
+| onBeforePayment | ✅ | ✅ | ✅ |
+| onAfterPayment | ✅ | ✅ | ✅ |
 
 ### MCP Server Hooks (payment wrapper)
 
