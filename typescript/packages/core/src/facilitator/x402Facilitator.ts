@@ -289,7 +289,9 @@ export class x402Facilitator {
       requirements: paymentRequirements,
     };
 
-    // Execute beforeVerify hooks
+    // Execute beforeVerify hooks. This is a gate phase, so a throwing hook is
+    // deliberately not isolated: verification fails closed instead of
+    // skipping the check.
     for (const hook of this.beforeVerifyHooks) {
       const result = await hook(context);
       if (result && "abort" in result && result.abort) {
@@ -349,17 +351,25 @@ export class x402Facilitator {
 
         // Execute onVerifyFailure hooks
         for (const hook of this.onVerifyFailureHooks) {
-          const result = await hook(failureContext);
-          if (result && "recovered" in result && result.recovered) {
-            // If recovered, execute afterVerify hooks with recovered result
-            const recoveredContext: FacilitatorVerifyResultContext = {
-              ...context,
-              result: result.result,
-            };
-            for (const hook of this.afterVerifyHooks) {
-              await hook(recoveredContext);
+          try {
+            const result = await hook(failureContext);
+            if (result && "recovered" in result && result.recovered) {
+              // If recovered, execute afterVerify hooks with recovered result
+              const recoveredContext: FacilitatorVerifyResultContext = {
+                ...context,
+                result: result.result,
+              };
+              for (const afterHook of this.afterVerifyHooks) {
+                try {
+                  await afterHook(recoveredContext);
+                } catch (error) {
+                  this.warnFacilitatorHookFailure("afterVerify", error);
+                }
+              }
+              return result.result;
             }
-            return result.result;
+          } catch (error) {
+            this.warnFacilitatorHookFailure("onVerifyFailure", error);
           }
         }
 
@@ -373,7 +383,11 @@ export class x402Facilitator {
       };
 
       for (const hook of this.afterVerifyHooks) {
-        await hook(resultContext);
+        try {
+          await hook(resultContext);
+        } catch (error) {
+          this.warnFacilitatorHookFailure("afterVerify", error);
+        }
       }
 
       return verifyResult;
@@ -385,9 +399,13 @@ export class x402Facilitator {
 
       // Execute onVerifyFailure hooks
       for (const hook of this.onVerifyFailureHooks) {
-        const result = await hook(failureContext);
-        if (result && "recovered" in result && result.recovered) {
-          return result.result;
+        try {
+          const result = await hook(failureContext);
+          if (result && "recovered" in result && result.recovered) {
+            return result.result;
+          }
+        } catch (hookError) {
+          this.warnFacilitatorHookFailure("onVerifyFailure", hookError);
         }
       }
 
@@ -411,7 +429,8 @@ export class x402Facilitator {
       requirements: paymentRequirements,
     };
 
-    // Execute beforeSettle hooks
+    // Execute beforeSettle hooks. Gate phase, like beforeVerify: a throwing
+    // hook stops settlement before the scheme facilitator is called.
     for (const hook of this.beforeSettleHooks) {
       const result = await hook(context);
       if (result && "abort" in result && result.abort) {
@@ -463,8 +482,15 @@ export class x402Facilitator {
         result: settleResult,
       };
 
+      // Isolate afterSettle hook failures: settlement has already executed
+      // onchain, so a throwing observer must not convert a successful settle
+      // into an error response (or trigger onSettleFailure hooks).
       for (const hook of this.afterSettleHooks) {
-        await hook(resultContext);
+        try {
+          await hook(resultContext);
+        } catch (error) {
+          this.warnFacilitatorHookFailure("afterSettle", error);
+        }
       }
 
       return settleResult;
@@ -476,14 +502,32 @@ export class x402Facilitator {
 
       // Execute onSettleFailure hooks
       for (const hook of this.onSettleFailureHooks) {
-        const result = await hook(failureContext);
-        if (result && "recovered" in result && result.recovered) {
-          return result.result;
+        try {
+          const result = await hook(failureContext);
+          if (result && "recovered" in result && result.recovered) {
+            return result.result;
+          }
+        } catch (hookError) {
+          this.warnFacilitatorHookFailure("onSettleFailure", hookError);
         }
       }
 
       throw error;
     }
+  }
+
+  /**
+   * Logs a warning when an advisory lifecycle hook (after* or on*Failure)
+   * throws. These failures are isolated so an observer cannot alter the
+   * outcome of verification or settlement. Gate hooks (before*) are not
+   * isolated: a throw there fails closed.
+   *
+   * @param phase - Lifecycle phase whose hook threw
+   * @param error - Thrown value or rejection reason
+   */
+  private warnFacilitatorHookFailure(phase: string, error: unknown): void {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.warn(`[x402] Facilitator ${phase} hook threw: ${detail}`);
   }
 
   /**
