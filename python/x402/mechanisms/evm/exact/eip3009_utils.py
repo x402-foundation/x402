@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from eth_keys.constants import SECPK1_N
+
 from ..constants import (
     AUTHORIZATION_STATE_ABI,
     BALANCE_OF_ABI,
@@ -55,6 +57,22 @@ class EIP3009SignatureClassification:
     is_smart_wallet: bool
     is_undeployed: bool
     sig_data: ERC6492SignatureData
+
+
+def is_plain_non_canonical_ecdsa_signature(
+    signer: FacilitatorEvmSigner,
+    payer: str,
+    signature: bytes,
+) -> bool:
+    """Return whether a plain EOA signature has a high s value."""
+    if len(signature) != 65:
+        return False
+
+    s = int.from_bytes(signature[32:64], "big")
+    if s <= SECPK1_N // 2:
+        return False
+
+    return len(signer.get_code(payer)) == 0
 
 
 def parse_eip3009_authorization(
