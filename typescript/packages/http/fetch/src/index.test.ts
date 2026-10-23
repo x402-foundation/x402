@@ -132,7 +132,14 @@ describe("wrapFetchWithPayment()", () => {
 
     expect(result).toBe(successResponse);
     expect(MockX402HTTPClient.prototype.getPaymentRequiredResponse).toHaveBeenCalled();
-    expect(mockClient.createPaymentPayload).toHaveBeenCalledWith(validPaymentRequired);
+    expect(mockClient.createPaymentPayload).toHaveBeenCalledWith(validPaymentRequired, {
+      call: expect.objectContaining({
+        kind: "http",
+        method: "GET",
+        url: "https://api.example.com/",
+        headers: { "content-type": "application/json" },
+      }),
+    });
     expect(MockX402HTTPClient.prototype.encodePaymentSignatureHeader).toHaveBeenCalledWith(
       validPaymentPayload,
     );
@@ -502,7 +509,9 @@ describe("wrapFetchWithPayment()", () => {
 
     expect(result).toBe(successResponse);
     expect(mockFetch).toHaveBeenCalledTimes(3);
-    expect(mockClient.createPaymentPayload).toHaveBeenCalledWith(validPaymentRequired);
+    expect(mockClient.createPaymentPayload).toHaveBeenCalledWith(validPaymentRequired, {
+      call: expect.objectContaining({ kind: "http", url: "https://api.example.com/" }),
+    });
     const hookRequest = mockFetch.mock.calls[1][0] as Request;
     expect(hookRequest.headers.get("X-HOOK")).toBe("handled");
     expect(hookRequest.headers.get("X-TRACE")).toBe("abc");

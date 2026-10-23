@@ -48,12 +48,57 @@ export type PaymentPayloadResult = Pick<PaymentPayload, "x402Version" | "payload
 };
 
 /**
+ * The HTTP request a payment is being created for.
+ *
+ * `headers` has lowercase names and never carries `payment-signature` or
+ * `x-payment`. `getBody` is present only when the request has a body and is
+ * read lazily: a scheme that does not bind the body never triggers a read.
+ */
+export interface HttpPaymentCall {
+  kind: "http";
+  method: string;
+  url: string;
+  headers: Readonly<Record<string, string>>;
+  /**
+   * Reads the request body. Every caller (hooks and the scheme) shares one read
+   * and receives its own copy of the bytes.
+   *
+   * - A `signal` that is already aborted rejects only that call; a read already
+   *   in progress for other callers continues.
+   * - A `signal` that aborts while the shared read is in progress cancels it, and
+   *   every caller waiting on it rejects. The request's own signal does the same.
+   * - A cancelled or failed read stays failed; it is never retried on a partially
+   *   consumed stream, so a partial body is never returned.
+   * - Once the read has completed, its bytes are kept for later calls.
+   */
+  getBody?: (signal?: AbortSignal) => Promise<Uint8Array>;
+}
+
+/**
+ * The MCP tool call a payment is being created for. `arguments` is a frozen
+ * snapshot of the arguments the client transmits with the call.
+ */
+export interface McpPaymentCall {
+  kind: "mcp";
+  toolName: string;
+  arguments: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * The call a payment is being created for, discriminated by transport.
+ * Passed per call, so concurrent payments on one client never share it.
+ */
+export type PaymentCall = HttpPaymentCall | McpPaymentCall;
+
+/**
  * Context passed to scheme `createPaymentPayload`.
  * `maxAmountPerPayment` is the resolved atomic spend cap; omitted when uncapped.
  */
 export interface PaymentPayloadContext {
   extensions?: Record<string, unknown>;
   maxAmountPerPayment?: string;
+  /** The call being paid for, when the transport supplied it. */
+  call?: PaymentCall;
 }
 
 export interface SchemeClientHooks {
