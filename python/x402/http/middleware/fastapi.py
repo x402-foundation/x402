@@ -22,7 +22,7 @@ except ImportError as e:
 
 from ...schemas import SettleResponse, VerifiedPaymentCancelOptions
 from ..background_init import handle_background_init_error
-from ..constants import SETTLEMENT_OVERRIDES_HEADER
+from ..constants import ACCESS_CONTROL_EXPOSE_HEADERS, SETTLEMENT_OVERRIDES_HEADER
 from ..facilitator_client_base import FacilitatorResponseError
 from ..types import (
     HTTPAdapter,
@@ -32,7 +32,12 @@ from ..types import (
     RoutesConfig,
 )
 from ..x402_http_server import PaywallProvider, x402HTTPResourceServer
-from ..x402_http_server_base import PAYMENT_REQUIRED_CACHE_CONTROL, with_private_cache_control
+from ..x402_http_server_base import (
+    PAYMENT_REQUIRED_CACHE_CONTROL,
+    apply_payment_response_headers,
+    with_payment_cors_expose_headers,
+    with_private_cache_control,
+)
 
 if TYPE_CHECKING:
     from ...server import x402ResourceServer
@@ -380,8 +385,11 @@ def payment_middleware(
                     response.headers.get("Cache-Control"),
                 )
                 if isinstance(failure_headers, dict):
-                    for key, value in failure_headers.items():
-                        response.headers[key] = value
+                    apply_payment_response_headers(
+                        failure_headers,
+                        response.headers.getlist,
+                        response.headers.__setitem__,
+                    )
                 return response
 
             # Read response body for potential buffering
@@ -431,9 +439,19 @@ def payment_middleware(
                         headers=resp.headers,
                     )
 
-                # Add settlement headers
-                headers = dict(response.headers)
-                headers.update(settle_result.headers)
+                # Add settlement headers. Access-Control-Expose-Headers is merged
+                # across every value the handler or an inner CORS layer set.
+                settlement_headers = with_payment_cors_expose_headers(
+                    settle_result.headers,
+                    response.headers.getlist(ACCESS_CONTROL_EXPOSE_HEADERS),
+                )
+                replaced = {key.lower() for key in settlement_headers}
+                headers = {
+                    key: value
+                    for key, value in dict(response.headers).items()
+                    if key.lower() not in replaced
+                }
+                headers.update(settlement_headers)
                 headers["Cache-Control"] = with_private_cache_control(headers.get("Cache-Control"))
 
                 return Response(

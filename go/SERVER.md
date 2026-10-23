@@ -226,6 +226,18 @@ func customPaymentMiddleware(server *x402http.HTTPServer) gin.HandlerFunc {
 
 See **[examples/go/servers/custom/](../examples/go/servers/custom/)** for complete implementation.
 
+### Browser Clients (CORS)
+
+The Gin, Echo and net/http middlewares add `PAYMENT-REQUIRED` and `PAYMENT-RESPONSE` to `Access-Control-Expose-Headers` on every response that carries one of them, so a cross-origin `fetch()` can read them. An expose list already on the response (from your CORS middleware or the handler, across all of its values) is merged case-insensitively, not replaced. They never set `Access-Control-Allow-Origin`; that comes from your CORS middleware, which should be registered before the payment middleware (`r.Use(cors...)` first) so it also runs on the 402.
+
+Your CORS configuration must also:
+
+- name `PAYMENT-SIGNATURE` explicitly in the allowed request headers (`*` is not a wildcard for credentialed requests);
+- answer the `OPTIONS` preflight with a 2xx without requiring payment (key paid routes with their method, e.g. `"GET /weather"`);
+- send `Vary: Origin` if it reflects the request's `Origin` instead of `*`, so a shared cache never serves one origin's response to another.
+
+A custom middleware should write payment headers with `x402http.ApplyPaymentResponseHeaders(w.Header(), headers)` rather than `Header().Set` in a loop, so the expose list is merged the same way.
+
 ## Advanced Features
 
 ### Dynamic Pricing

@@ -9,7 +9,7 @@ import dataclasses
 import html
 import logging
 import re
-from collections.abc import Generator, Mapping
+from collections.abc import Callable, Generator, Iterable, Mapping
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from ..payment_flow import (
@@ -35,6 +35,7 @@ from ..schemas.hooks import (
 )
 from ..schemas.v1 import PaymentPayloadV1
 from .constants import (
+    ACCESS_CONTROL_EXPOSE_HEADERS,
     PAYMENT_REQUIRED_HEADER,
     PAYMENT_RESPONSE_HEADER,
     PAYMENT_SIGNATURE_HEADER,
@@ -84,6 +85,79 @@ def with_private_cache_control(value: str | None) -> str:
         return value
 
     return f"{value}, private"
+
+
+PAYMENT_CORS_EXPOSE_HEADERS: tuple[str, ...] = (PAYMENT_REQUIRED_HEADER, PAYMENT_RESPONSE_HEADER)
+"""Payment response headers a cross-origin browser client must be able to read."""
+
+
+def _split_header_names(values: str | Iterable[str] | None) -> list[str]:
+    if values is None:
+        return []
+    if isinstance(values, str):
+        values = [values]
+    return [name.strip() for value in values for name in value.split(",") if name.strip()]
+
+
+def with_payment_cors_expose_headers(
+    headers: Mapping[str, str],
+    existing_expose_headers: str | Iterable[str] | None = None,
+) -> dict[str, str]:
+    """Name PAYMENT-REQUIRED and PAYMENT-RESPONSE on Access-Control-Expose-Headers.
+
+    Browsers hide non-safelisted response headers from cross-origin ``fetch()``
+    unless they are listed there. When ``headers`` carries a payment protocol
+    header, the returned copy has one Access-Control-Expose-Headers entry holding
+    the union of ``existing_expose_headers`` (the list already on the response,
+    as one string or one string per header line), any expose list in ``headers``,
+    and the two payment headers. Names are compared case-insensitively, the first
+    spelling and the original order are kept, and nothing is duplicated.
+
+    Headers without a payment protocol header are returned unchanged. This never
+    sets Access-Control-Allow-Origin; that stays the app's decision.
+    """
+    result = dict(headers)
+    keys = {key.lower() for key in result}
+    if not any(name.lower() in keys for name in PAYMENT_CORS_EXPOSE_HEADERS):
+        return result
+
+    expose_key = next(
+        (key for key in result if key.lower() == ACCESS_CONTROL_EXPOSE_HEADERS.lower()),
+        ACCESS_CONTROL_EXPOSE_HEADERS,
+    )
+    own = result.pop(expose_key, None)
+
+    names: list[str] = []
+    seen: set[str] = set()
+    for name in [
+        *_split_header_names(existing_expose_headers),
+        *_split_header_names(own),
+        *PAYMENT_CORS_EXPOSE_HEADERS,
+    ]:
+        if name.lower() not in seen:
+            seen.add(name.lower())
+            names.append(name)
+    result[expose_key] = ", ".join(names)
+    return result
+
+
+def apply_payment_response_headers(
+    headers: Mapping[str, str],
+    get_header_values: Callable[[str], Iterable[str]],
+    set_header: Callable[[str, str], None],
+) -> None:
+    """Write payment response headers onto a framework response.
+
+    ``set_header`` must replace any existing value for the name. The
+    Access-Control-Expose-Headers list already on the response (all of its
+    values, read through ``get_header_values``) is merged rather than replaced,
+    so an expose list set by the route handler or app CORS layer survives.
+    """
+    merged = with_payment_cors_expose_headers(
+        headers, list(get_header_values(ACCESS_CONTROL_EXPOSE_HEADERS))
+    )
+    for key, value in merged.items():
+        set_header(key, value)
 
 
 def _path_unescape(segment: str) -> str | None:
@@ -953,11 +1027,13 @@ class x402HTTPServerBase:
             )
             return HTTPResponseInstructions(
                 status=402,
-                headers={
-                    "Content-Type": "text/html",
-                    PAYMENT_REQUIRED_HEADER: encode_payment_required_header(payment_required),
-                    "Cache-Control": PAYMENT_REQUIRED_CACHE_CONTROL,
-                },
+                headers=with_payment_cors_expose_headers(
+                    {
+                        "Content-Type": "text/html",
+                        PAYMENT_REQUIRED_HEADER: encode_payment_required_header(payment_required),
+                        "Cache-Control": PAYMENT_REQUIRED_CACHE_CONTROL,
+                    }
+                ),
                 body=html_content,
                 is_html=True,
             )
@@ -972,11 +1048,13 @@ class x402HTTPServerBase:
 
         return HTTPResponseInstructions(
             status=402,
-            headers={
-                "Content-Type": content_type,
-                PAYMENT_REQUIRED_HEADER: encode_payment_required_header(payment_required),
-                "Cache-Control": PAYMENT_REQUIRED_CACHE_CONTROL,
-            },
+            headers=with_payment_cors_expose_headers(
+                {
+                    "Content-Type": content_type,
+                    PAYMENT_REQUIRED_HEADER: encode_payment_required_header(payment_required),
+                    "Cache-Control": PAYMENT_REQUIRED_CACHE_CONTROL,
+                }
+            ),
             body=body,
         )
 
@@ -986,9 +1064,11 @@ class x402HTTPServerBase:
         requirements: PaymentRequirements,
     ) -> dict[str, str]:
         """Create settlement response headers."""
-        return {
-            PAYMENT_RESPONSE_HEADER: encode_payment_response_header(settle_response),
-        }
+        return with_payment_cors_expose_headers(
+            {
+                PAYMENT_RESPONSE_HEADER: encode_payment_response_header(settle_response),
+            }
+        )
 
     def create_completed_settlement_headers(
         self,
@@ -1016,10 +1096,12 @@ class x402HTTPServerBase:
         )
         if receipt is None:
             return None
-        return {
-            PAYMENT_RESPONSE_HEADER: encode_payment_response_header(receipt),
-            "Cache-Control": with_private_cache_control(existing_cache_control),
-        }
+        return with_payment_cors_expose_headers(
+            {
+                PAYMENT_RESPONSE_HEADER: encode_payment_response_header(receipt),
+                "Cache-Control": with_private_cache_control(existing_cache_control),
+            }
+        )
 
     def _echo_or_skip_after_handler_settlement(
         self,

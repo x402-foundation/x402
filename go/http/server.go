@@ -1314,9 +1314,10 @@ func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.Paym
 		return &HTTPResponseInstructions{
 			Status: 402,
 			Headers: map[string]string{
-				"Content-Type":     "text/html",
-				"PAYMENT-REQUIRED": encodedHeader,
-				"Cache-Control":    PaymentRequiredCacheControl,
+				"Content-Type":                   "text/html",
+				"PAYMENT-REQUIRED":               encodedHeader,
+				"Cache-Control":                  PaymentRequiredCacheControl,
+				AccessControlExposeHeadersHeader: WithPaymentCORSExposeHeaders(),
 			},
 			Body:   html,
 			IsHTML: true,
@@ -1335,22 +1336,26 @@ func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.Paym
 	return &HTTPResponseInstructions{
 		Status: 402,
 		Headers: map[string]string{
-			"Content-Type":     contentType,
-			"PAYMENT-REQUIRED": encodedHeader,
-			"Cache-Control":    PaymentRequiredCacheControl,
+			"Content-Type":                   contentType,
+			"PAYMENT-REQUIRED":               encodedHeader,
+			"Cache-Control":                  PaymentRequiredCacheControl,
+			AccessControlExposeHeadersHeader: WithPaymentCORSExposeHeaders(),
 		},
 		Body: body,
 	}, nil
 }
 
-// CreateSettlementHeaders creates settlement response headers.
+// CreateSettlementHeaders creates settlement response headers. The result names
+// the payment headers on Access-Control-Expose-Headers; adapters should write it
+// with ApplyPaymentResponseHeaders so an existing expose list is merged.
 func (s *x402HTTPResourceServer) CreateSettlementHeaders(response *x402.SettleResponse) (map[string]string, error) {
 	encodedHeader, err := encodePaymentResponseHeader(*response)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode payment response header: %w", err)
 	}
 	return map[string]string{
-		"PAYMENT-RESPONSE": encodedHeader,
+		"PAYMENT-RESPONSE":               encodedHeader,
+		AccessControlExposeHeadersHeader: WithPaymentCORSExposeHeaders(),
 	}, nil
 }
 
