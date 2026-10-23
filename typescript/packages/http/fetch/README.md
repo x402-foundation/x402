@@ -38,7 +38,7 @@ const data = await response.json();
 
 ## API
 
-### `wrapFetchWithPayment(fetch, client)`
+### `wrapFetchWithPayment(fetch, client, options?)`
 
 Wraps the native fetch API to handle 402 Payment Required responses automatically.
 
@@ -46,8 +46,27 @@ Wraps the native fetch API to handle 402 Payment Required responses automaticall
 
 - `fetch`: The fetch function to wrap (typically `globalThis.fetch`)
 - `client`: An x402Client instance with registered payment schemes
+- `options.validatePaidResponse`: Optional check of the final non-402 response after a payment attempt on both the ordinary and recovery paths, including HTTP errors and responses without a payment receipt. The callback receives a `Response.clone()`, so the returned response body stays unread. Callback rejection throws `PaidResponseValidationError` — carrying the original response and its `PAYMENT-RESPONSE` header — without paying again. Omit to keep existing behavior.
 
-### `wrapFetchWithPaymentFromConfig(fetch, config)`
+HTTP errors may still have been paid upfront, and a missing receipt does not prove nonpayment. This example leaves HTTP error handling to the caller before validating successful JSON responses.
+
+```typescript
+const fetchWithPayment = wrapFetchWithPayment(fetch, client, {
+  validatePaidResponse: async response => {
+    if (!response.ok) {
+      return;
+    }
+    const body = await response.json();
+    if (!body?.report?.weather) {
+      throw new Error("response body missing report.weather");
+    }
+  },
+});
+```
+
+Validators must release any acquired body reader before validation completes. Do not await body or reader cancellation inside the callback: it can wait for the original response to finish. The wrapper cancels an unlocked clone after validation settles. Reading the entire clone buffers the original body until validation completes.
+
+### `wrapFetchWithPaymentFromConfig(fetch, config, options?)`
 
 Convenience wrapper that creates an x402Client from a configuration object.
 
@@ -60,6 +79,7 @@ Convenience wrapper that creates an x402Client from a configuration object.
     - `client`: The scheme client implementation (e.g., `ExactEvmScheme`, `ExactSvmScheme`)
     - `x402Version`: Optional protocol version (defaults to 2, set to 1 for legacy support)
   - `paymentRequirementsSelector`: Optional function to select payment requirements from multiple options
+- `options.validatePaidResponse`: Optional. Same validator as `wrapFetchWithPayment`.
 
 #### Returns
 
