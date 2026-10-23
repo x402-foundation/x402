@@ -11,6 +11,8 @@ import (
 	x402 "github.com/x402-foundation/x402/go/v2"
 	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
 	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/facilitator"
+	hederamech "github.com/x402-foundation/x402/go/v2/mechanisms/hedera"
+	hedera "github.com/x402-foundation/x402/go/v2/mechanisms/hedera/exact/facilitator"
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
 )
 
@@ -21,20 +23,22 @@ import (
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "eip155" before "solana").
+ * (e.g., "eip155" before "hedera" before "solana").
  */
 
 const (
 	defaultPort = "4022"
 )
 
-func runAllNetworksExample(evmPrivateKey, svmPrivateKey string) error {
+func runAllNetworksExample(evmPrivateKey, svmPrivateKey, hederaAccountID, hederaPrivateKey string) error {
 	// Network configuration
 	evmNetwork := x402.Network("eip155:84532")                            // Base Sepolia
+	hederaNetwork := x402.Network(hederamech.HederaTestnetCAIP2)          // Hedera Testnet
 	svmNetwork := x402.Network("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1") // Solana Devnet
 
 	// Initialize signers based on available keys
 	var evmSigner *facilitatorEvmSigner
+	var hederaSigner hederamech.FacilitatorHederaSigner
 	var svmSigner *facilitatorSvmSigner
 	var err error
 
@@ -42,6 +46,15 @@ func runAllNetworksExample(evmPrivateKey, svmPrivateKey string) error {
 		evmSigner, err = newFacilitatorEvmSigner(evmPrivateKey, DefaultEvmRPC)
 		if err != nil {
 			return fmt.Errorf("failed to create EVM signer: %w", err)
+		}
+	}
+
+	if hederaAccountID != "" && hederaPrivateKey != "" {
+		hederaSigner, err = hederamech.NewPrivateKeyFacilitatorSigner(hederamech.SignerConfig{
+			Operators: []hederamech.OperatorCredentials{{AccountID: hederaAccountID, PrivateKey: hederaPrivateKey}},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create Hedera signer: %w", err)
 		}
 	}
 
@@ -64,6 +77,11 @@ func runAllNetworksExample(evmPrivateKey, svmPrivateKey string) error {
 		}
 		facilitator.Register([]x402.Network{evmNetwork}, evm.NewExactEvmScheme(evmSigner, evmConfig))
 		facilitator.Register([]x402.Network{evmNetwork}, uptoevm.NewUptoEvmScheme(evmSigner, nil))
+	}
+
+	// Register Hedera scheme if signer is available (only explicitly specified networks)
+	if hederaSigner != nil {
+		facilitator.Register([]x402.Network{hederaNetwork}, hedera.NewExactHederaScheme(hederaSigner))
 	}
 
 	// Register SVM scheme if signer is available (only explicitly specified networks)
@@ -150,6 +168,9 @@ func runAllNetworksExample(evmPrivateKey, svmPrivateKey string) error {
 	fmt.Printf("🚀 All Networks Facilitator listening on http://localhost:%s\n", defaultPort)
 	if evmSigner != nil {
 		fmt.Printf("   EVM: %s on %s\n", evmSigner.GetAddresses()[0], evmNetwork)
+	}
+	if hederaSigner != nil {
+		fmt.Printf("   Hedera: %s on %s\n", hederaAccountID, hederaNetwork)
 	}
 	if svmSigner != nil {
 		fmt.Printf("   SVM: %s on %s\n", svmSigner.GetAddresses(context.Background(), string(svmNetwork))[0], svmNetwork)

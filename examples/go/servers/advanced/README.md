@@ -20,6 +20,9 @@ and fill required environment variables:
 
 - `FACILITATOR_URL` - Facilitator endpoint URL
 - `EVM_PAYEE_ADDRESS` - Ethereum address to receive payments
+- `HEDERA_PAYEE_ADDRESS` - Hedera account id (`0.0.XXXXX`) to receive HBAR payments (optional for `all-networks`)
+
+> **Hedera Testnet:** Create an account and get testnet HBAR from the [Hedera Portal faucet](https://portal.hedera.com/faucet).
 
 2. Install dependencies:
 

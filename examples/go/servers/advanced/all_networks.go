@@ -12,6 +12,8 @@ import (
 	x402http "github.com/x402-foundation/x402/go/v2/http"
 	ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
 	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/hedera"
+	hederaserver "github.com/x402-foundation/x402/go/v2/mechanisms/hedera/exact/server"
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
 )
 
@@ -22,7 +24,7 @@ import (
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "eip155" before "solana").
+ * (e.g., "eip155" before "hedera" before "solana").
  */
 
 const (
@@ -34,11 +36,12 @@ func main() {
 
 	// Configuration - optional per network
 	evmAddress := os.Getenv("EVM_PAYEE_ADDRESS")
+	hederaAddress := os.Getenv("HEDERA_PAYEE_ADDRESS")
 	svmAddress := os.Getenv("SVM_PAYEE_ADDRESS")
 
 	// Validate at least one address is provided
-	if evmAddress == "" && svmAddress == "" {
-		fmt.Println("❌ At least one of EVM_PAYEE_ADDRESS or SVM_PAYEE_ADDRESS is required")
+	if evmAddress == "" && hederaAddress == "" && svmAddress == "" {
+		fmt.Println("❌ At least one of EVM_PAYEE_ADDRESS, HEDERA_PAYEE_ADDRESS, or SVM_PAYEE_ADDRESS is required")
 		os.Exit(1)
 	}
 
@@ -51,12 +54,17 @@ func main() {
 
 	// Network configuration
 	evmNetwork := x402.Network("eip155:84532")                            // Base Sepolia
+	hederaNetwork := x402.Network(hedera.HederaTestnetCAIP2)              // Hedera Testnet
 	svmNetwork := x402.Network("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1") // Solana Devnet
 
 	fmt.Printf("🚀 Starting All Networks Server...\n")
 	if evmAddress != "" {
 		fmt.Printf("   EVM Payee address: %s\n", evmAddress)
 		fmt.Printf("   EVM Network: %s\n", evmNetwork)
+	}
+	if hederaAddress != "" {
+		fmt.Printf("   Hedera Payee account: %s\n", hederaAddress)
+		fmt.Printf("   Hedera Network: %s\n", hederaNetwork)
 	}
 	if svmAddress != "" {
 		fmt.Printf("   SVM Payee address: %s\n", svmAddress)
@@ -80,6 +88,15 @@ func main() {
 			Price:   "$0.001",
 			Network: evmNetwork,
 			PayTo:   evmAddress,
+		})
+	}
+	if hederaAddress != "" {
+		paymentOptions = append(paymentOptions, x402http.PaymentOption{
+			Scheme: "exact",
+			// 0.001 HBAR in tinybars; "$0.001" would charge testnet USDC instead.
+			Price:   map[string]interface{}{"amount": "100000", "asset": hedera.HBARAssetID},
+			Network: hederaNetwork,
+			PayTo:   hederaAddress,
 		})
 	}
 	if svmAddress != "" {
@@ -106,6 +123,12 @@ func main() {
 		schemes = append(schemes, ginmw.SchemeConfig{
 			Network: evmNetwork,
 			Server:  evm.NewExactEvmScheme(),
+		})
+	}
+	if hederaAddress != "" {
+		schemes = append(schemes, ginmw.SchemeConfig{
+			Network: hederaNetwork,
+			Server:  hederaserver.NewExactHederaScheme(),
 		})
 	}
 	if svmAddress != "" {
