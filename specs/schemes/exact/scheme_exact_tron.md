@@ -87,6 +87,42 @@ the domain field remains ABI-encoded as `uint256`, not as four bytes or a CAIP-2
 optimized `CHAINID` opcode values. Permit2 uses the domain of its configured deployment; this
 binding requires the same network integer and does not assert how that deployment computes it.
 
+### Exact Proxy Source and Verification (Informative)
+
+The exact proxy source is pinned at BofAI/x402-contracts commit
+[`19b19d5e16e044b4557c4fa70089118f8c66188d`](https://github.com/BofAI/x402-contracts/tree/19b19d5e16e044b4557c4fa70089118f8c66188d):
+
+- [`x402ExactPermit2Proxy.sol`](https://github.com/BofAI/x402-contracts/blob/19b19d5e16e044b4557c4fa70089118f8c66188d/contracts/x402ExactPermit2Proxy.sol)
+  and its inherited [`x402BasePermit2Proxy.sol`](https://github.com/BofAI/x402-contracts/blob/19b19d5e16e044b4557c4fa70089118f8c66188d/contracts/x402BasePermit2Proxy.sol).
+- [Compiler configuration](https://github.com/BofAI/x402-contracts/blob/19b19d5e16e044b4557c4fa70089118f8c66188d/hardhat.config.ts)
+  and [dependency lockfile](https://github.com/BofAI/x402-contracts/blob/19b19d5e16e044b4557c4fa70089118f8c66188d/package-lock.json).
+
+The TRONSCAN verification pages below publish the verified source and compilation settings.
+The constructor's single `_permit2` argument is the corresponding network's Permit2 address in the
+deployment table above, ABI-encoded as its normalized 20-byte address.
+
+| Setting | Value |
+| --- | --- |
+| Solidity version | `0.8.25` |
+| Optimizer | Enabled, `999999` runs |
+| ViaIR | Disabled |
+| VM target | `cancun` |
+| Repository TRON compiler mode | `tronSolc.enable = true` |
+
+| Network | TRONSCAN verified source |
+| --- | --- |
+| Mainnet | [TN49yaJmZMZoEdDCqjB4uPzQLHvYkGw95m](https://tronscan.org/#/contract/TN49yaJmZMZoEdDCqjB4uPzQLHvYkGw95m/code) |
+| Nile | [TFGoaq2KjizijgjtkVxT7yjffW1A5T1j6F](https://nile.tronscan.org/#/contract/TFGoaq2KjizijgjtkVxT7yjffW1A5T1j6F/code) |
+| Shasta | [TGZkC38n14f2GpBWPMQLF2BpmcpWW3QNhg](https://shasta.tronscan.org/#/contract/TGZkC38n14f2GpBWPMQLF2BpmcpWW3QNhg/code) |
+
+The pinned TRON base contract uses OpenZeppelin `ReentrancyGuardTransient`; the Foundation base
+contract at [revision `7f2b2f1f`](https://github.com/x402-foundation/x402/blob/7f2b2f1f77fa5317615735e3378a6fad41cccb4e/contracts/evm/src/x402BasePermit2Proxy.sol)
+uses `ReentrancyGuard`. The matching exact-proxy interface therefore does not imply identical full
+source or runtime bytecode. Reproducing a bytecode match requires the complete verified source,
+dependencies, compiler build and metadata settings, and the network-specific constructor argument;
+runtime comparison must also account for the immutable Permit2 address. Explorer source verification
+is not an independent security audit or proof of conformance to every rule in this binding.
+
 ## Payment Requirements
 
 The common fields follow the [core specification](../../x402-specification-v2.md).
