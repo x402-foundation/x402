@@ -200,9 +200,10 @@ describe("wrapFetchWithPayment()", () => {
 
     mockFetch.mockResolvedValue(createResponse(402, validPaymentRequired));
 
-    await expect(wrappedFetch("https://api.example.com", { method: "GET" })).rejects.toThrow(
-      "Failed to create payment payload: Insufficient funds",
-    );
+    await expect(wrappedFetch("https://api.example.com", { method: "GET" })).rejects.toMatchObject({
+      message: "Failed to create payment payload: Insufficient funds",
+      cause: paymentError,
+    });
   });
 
   it("should reject with generic error message for unknown parsing errors", async () => {
