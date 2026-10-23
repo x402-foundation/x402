@@ -114,10 +114,6 @@ export function wrapFetchWithPayment(
     for (const [key, value] of Object.entries(paymentHeaders)) {
       clonedRequest.headers.set(key, value);
     }
-    clonedRequest.headers.set(
-      "Access-Control-Expose-Headers",
-      "PAYMENT-RESPONSE,X-PAYMENT-RESPONSE",
-    );
 
     // Retry the request with payment
     const secondResponse = await fetch(clonedRequest.clone());
@@ -137,10 +133,6 @@ export function wrapFetchWithPayment(
       for (const [k, v] of Object.entries(retryHeaders)) {
         retryRequest.headers.set(k, v);
       }
-      retryRequest.headers.set(
-        "Access-Control-Expose-Headers",
-        "PAYMENT-RESPONSE,X-PAYMENT-RESPONSE",
-      );
       const retryResponse = await fetch(retryRequest);
       // Fire hooks on retry response — no further recovery to prevent loops
       await httpClient.processPaymentResult(
