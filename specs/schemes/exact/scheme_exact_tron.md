@@ -21,6 +21,12 @@ signed spender MUST match the normalized exact proxy configured for the accepted
 using TIP-712 signatures. The proposal is currently Draft. This binding uses `tip3009` as its
 canonical transfer-method identifier.
 
+Tokens must implement the selected authorization method; publication of TIP-3009 does not add it to
+existing tokens. For deployments such as USDT that do not implement TIP-3009, `permit2` is the
+practical path when the configured Permit2 deployment supports the token and sufficient allowance
+has been granted. Requirements for those tokens MUST explicitly select `permit2`; this does not
+change the default method when `assetTransferMethod` is omitted.
+
 ## Payment Flow and Resource Costs
 
 Both methods are facilitator-submitted and support the `authorization` payment flow
@@ -30,6 +36,20 @@ flows. An absent `extra.paymentFlow` means `authorization`.
 The facilitator submits and pays the Energy/Bandwidth cost of settlement. The payer signs the payment
 authorization off-chain. Permit2's initial TRC-20 approval is a separate payer-signed transaction;
 this binding does not sponsor its resource cost.
+
+### Account Preconditions
+
+The payer MUST have sufficient token balance. For `permit2`, the payer MUST have granted sufficient
+allowance to the configured Permit2 contract, not to the exact proxy. `tip3009` does not require
+this Permit2 allowance. Signing an authorization off-chain does not itself require the payer to
+hold TRX; any initial approval transaction and account activation remain separate prerequisites
+under the applicable network and token rules.
+
+The facilitator's submitting account MUST be activated and able to cover settlement costs through
+available Energy/Bandwidth or the network's TRX payment fallback, with an appropriate transaction
+`fee_limit`. Pre-staked resources are not mandatory. A submitting-account configuration or funding
+failure is a facilitator availability failure, not evidence that the payer lacks tokens. This
+binding does not impose a blanket activation requirement on every token recipient.
 
 | Method | Replay primitive | Bounded validity window |
 | --- | --- | --- |
@@ -54,9 +74,18 @@ reconcile the original transaction as described below instead of treating a retr
 | Nile | `tron:3448148188` | `TYQuuhGbEMxF7nZxUHV3uHJxAVVAegNU9h` | `TFGoaq2KjizijgjtkVxT7yjffW1A5T1j6F` |
 | Shasta | `tron:2494104990` | `TJMkP7a3ucTMkvi17p7ChhTCw6zriFX3tg` | `TGZkC38n14f2GpBWPMQLF2BpmcpWW3QNhg` |
 
+Requirements, the payload's `accepted.network`, and responses MUST use the decimal CAIP-2
+identifiers above. Hexadecimal references such as `tron:0xcd8690dc` are not a wire format defined by
+this binding. An implementation may migrate legacy configuration before constructing requirements;
+it MUST NOT silently rewrite a client's accepted terms during verification.
+
 The numeric TIP-712 `chainId` is the decimal CAIP-2 reference interpreted as an unsigned integer.
-Deprecated hexadecimal CAIP-2 aliases may be accepted as inputs during migration, but requirements
-and responses use the decimal identifiers above.
+For TIP-3009, wallets and verifying token contracts MUST use `block.chainid & 0xffffffff`, as
+specified by TIP-3009. This is the same numeric value as the corresponding network entry above;
+the domain field remains ABI-encoded as `uint256`, not as four bytes or a CAIP-2 string.
+[TIP-474](https://github.com/tronprotocol/tips/blob/master/tip-474.md) describes the historical and
+optimized `CHAINID` opcode values. Permit2 uses the domain of its configured deployment; this
+binding requires the same network integer and does not assert how that deployment computes it.
 
 ## Payment Requirements
 
@@ -183,8 +212,23 @@ This binding supports ordinary secp256k1 account signatures encoded as `0x` plus
 recovery identifiers 0/1 to 27/28 before constructing the payload; other encodings MUST be rejected.
 For TransferWithAuthorization, split these bytes into the contract's `v`, `r`, and `s` arguments.
 For Permit2, pass the same signature bytes to the proxy. In both cases the recovered signer MUST
-match normalized `from`, using the configured contract's signature validity rules. Compact
-signatures, contract-wallet signatures and TRON account-permission multisignatures are outside this
+match normalized `from`, using the configured contract's signature validity rules.
+
+Clients MUST produce canonical low-`s` signatures. In both verification and pre-broadcast
+re-verification, facilitators MUST reject signatures unless `1 <= r < n` and `1 <= s <= floor(n/2)`,
+where `n` is the secp256k1 curve order:
+
+```text
+n          = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141
+floor(n/2) = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0
+```
+
+Recovering the correct payer does not make a high-`s` signature acceptable. Facilitators MUST NOT
+silently normalize a received high-`s` signature and accept it. TIP-3009 requires this rejection in
+the verifying token contract as well; for Permit2, the facilitator check is mandatory regardless
+of whether the configured deployment also enforces low-`s` on-chain.
+
+Compact signatures, contract-wallet signatures and TRON account-permission multisignatures are outside this
 binding; transaction-signing permissions do not replace payment-authorization signature checks.
 
 Amounts and timestamps are decimal integer strings. All `uint256` values MUST be within
@@ -232,12 +276,15 @@ authorization expires; neither outcome changes whether the transaction executed 
 
 The facilitator MUST:
 
-1. Match both schemes and the accepted network, and reject unsupported transfer methods or payment
-   flows. The payload MUST use the transfer method selected by the requirements.
+1. Match both schemes and the accepted network using the canonical identifiers above, and reject
+   unsupported transfer methods or payment flows. Validate the payload structure and the client's
+   accepted terms against the server-selected requirements. The payload MUST use the transfer
+   method selected by the requirements.
 2. Reconstruct typed data using the requirement's network and configured contracts.
 3. Validate the signature encoding and recover the payer specified by `from`, as defined above.
 4. Match recipient, asset, and exact amount.
-5. Apply the activation and remaining-validity checks in Authorization Timing.
+5. Apply the activation and remaining-validity checks in Authorization Timing. Before submission,
+   also satisfy the submitting-account prerequisites in Account Preconditions.
 6. For Permit2, match the exact proxy spender and verify that the payer's token allowance to
    Permit2 covers the required amount.
 7. Verify that the payer's token balance covers the required amount.
@@ -298,11 +345,48 @@ the facilitator MUST obtain transaction information with block inclusion and an 
 TVM execution result (`receipt.result = "SUCCESS"` for these contract calls), using TRON's
 [`gettransactioninfobyid`](https://developers.tron.network/reference/gettransactioninfobyid) response.
 It MUST also establish the expected exact transfer for a configured token with supported transfer
-semantics. For standard TRC-20 tokens, inspect this transaction's `Transfer(address,address,uint256)`
-logs: the emitting contract MUST be the required token, the decoded `from` and `to` MUST match the
-payer and `payTo`, and the transferred value MUST equal `requirements.amount`. A proxy event or a
-same-named event from another contract is insufficient. Logs from tokens with unsupported transfer
-semantics do not establish payment merely because their fields match.
+semantics. For standard TRC-20 tokens, decode this transaction's raw `log` entries according to
+[TRON's event-log format](https://developers.tron.network/docs/event):
+
+1. Normalize `requirements.asset` by validating and decoding its Base58Check address, checking the
+   21-byte result starts with `0x41`, and removing that one network-prefix byte. The log's `address`
+   MUST equal the resulting 20-byte token address. Raw receipt emitters already omit `0x41`; do not
+   remove another byte, even when the 20-byte value itself starts with `41`.
+2. A standard non-anonymous `Transfer(address,address,uint256)` entry MUST have exactly three
+   32-byte topics. `topics[0]` MUST equal the Keccak-256 event signature hash:
+   `ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef`.
+3. `topics[1]` and `topics[2]` MUST each be an ABI address word: twelve zero bytes followed by
+   the 20-byte `from` and `to`, respectively. Neither word contains a TRON network-prefix byte.
+   Compare `from` with `authorization.from` for `tip3009` or `permit2Authorization.from` for
+   `permit2`; compare `to` with `requirements.payTo` normalized as in step 1. Compare address bytes,
+   not the literal Base58 and hex strings.
+4. `data` MUST contain exactly one 32-byte unsigned big-endian integer. Its value MUST equal
+   `requirements.amount` in atomic units, without rounding or floating-point conversion.
+5. There MUST be exactly one matching transfer. Multiple matching entries are ambiguous and MUST
+   NOT establish success; multiple smaller transfers MUST NOT be summed to satisfy the amount.
+   Other logs do not automatically invalidate a payment, but evidence contradicting the exact
+   transfer or facilitator-safety requirements MUST NOT be ignored merely because one entry matches.
+
+Hex letter case and an optional display `0x` prefix may be normalized before validating the byte
+length and comparing values. Implementations MUST NOT truncate malformed values or strip `41`
+from an already 20-byte address. A proxy event or a same-named event from another token is
+insufficient. Logs from tokens with unsupported transfer semantics do not establish payment merely
+because their fields match.
+
+For example, the following synthetic log matches the `tip3009` payload example's token, payer,
+recipient and amount. It illustrates encoding only and is not an on-chain receipt:
+
+```json
+{
+  "address": "5555555555555555555555555555555555555555",
+  "topics": [
+    "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+    "0000000000000000000000001111111111111111111111111111111111111111",
+    "0000000000000000000000004444444444444444444444444444444444444444"
+  ],
+  "data": "00000000000000000000000000000000000000000000000000000000000003e8"
+}
+```
 
 The facilitator MUST document its confirmation policy, including the network, node view and required
 inclusion/finality condition. A FullNode inclusion receipt does not establish solidification; a
@@ -331,6 +415,17 @@ Negative evidence awaiting that confirmation remains pending. A caller MUST reco
 transaction; pending MUST NOT trigger another resource delivery or a newly constructed transaction
 for the same authorization.
 
+Every non-empty `SettleResponse.transaction` MUST be the original txID encoded as exactly 64
+lowercase hexadecimal characters without `0x` (`^[0-9a-f]{64}$`). Success, pending, and terminal
+post-submission failure MUST use that same identity. RPC display prefixes or letter case may be
+normalized; the authorization hash, signature hash, or an event identifier MUST NOT replace txID.
+As permitted by core, a failure known to precede broadcast uses `transaction: ""`. This exception
+does not apply when submission may have occurred but transaction identity is unavailable.
+
+An unavailable or incomplete receipt is unresolved evidence. A complete receipt whose execution
+or transfer evidence contradicts these requirements, including the absence of the required transfer,
+is terminal failure once the confirmation policy is met; it MUST NOT remain pending indefinitely.
+
 | Observed state | Result |
 | --- | --- |
 | Signature or terms invalid, or nonce confirmed consumed/cancelled | Verification failure |
@@ -350,11 +445,68 @@ requires only sufficient allowance and does not require automatic or unlimited a
 
 ## Error Codes
 
-Stable reasons include `invalid_exact_tron_scheme`, `invalid_exact_tron_network_mismatch`,
-`invalid_exact_tron_payload_signature`, `invalid_exact_tron_payload_recipient_mismatch`,
-`invalid_exact_tron_payload_authorization_value_mismatch`, `invalid_permit2_spender`,
-`permit2_amount_mismatch`, `permit2_token_mismatch`, `permit2_allowance_required`,
-`insufficient_funds`, `invalid_transaction_state`, `settlement_pending`, and `transaction_failed`.
+Reasons are stable, machine-readable tokens. A failed `/verify` returns `isValid: false` with
+`invalidReason`. The same check failing during pre-broadcast settlement verification returns
+`success: false` with the same token in `errorReason`. Successful responses omit the failure reason.
+The following table defines their meaning and the corresponding caller action; it does not add
+fields to the core response schemas.
+
+### Verification and Pre-Broadcast Failures
+
+These codes apply to `invalidReason` during verification and `errorReason` before settlement
+submission. None authorizes another resource delivery or permits ignoring an earlier pending
+transaction for the same authorization.
+
+| Reason | Condition | Caller action |
+| --- | --- | --- |
+| `invalid_exact_tron_scheme` | Scheme does not match `exact` | Correct the payment terms |
+| `invalid_exact_tron_network_mismatch` | Network does not match the required canonical network | Correct the network; do not substitute deployments |
+| `invalid_exact_tron_asset_transfer_method` | Method identifier is not defined by this binding | Correct the method |
+| `invalid_exact_tron_unsupported_asset_transfer_method` | Method is defined but unavailable on this facilitator/network | Select a service supporting the required method; no silent fallback |
+| `invalid_payload` | Missing or malformed payload, address, integer, or nonce encoding | Correct the payload |
+| `invalid_payment_requirements` | Malformed requirements or unsupported payment flow | Correct the server requirements |
+| `missing_tip712_domain` | Required token domain name or version is absent | Correct the server requirements |
+| `invalid_exact_tron_payload_signature` | Invalid signature encoding, high-`s`, or recovered payer mismatch, for either method | Obtain a valid signature |
+| `invalid_exact_tron_payload_recipient_mismatch` | Signed recipient differs from `payTo`, for either method | Correct the authorization |
+| `invalid_exact_tron_payload_authorization_value_mismatch` | `tip3009` value differs from the exact amount | Correct the authorization |
+| `permit2_amount_mismatch` | Permit2 permitted amount differs from the exact amount | Correct the authorization |
+| `invalid_exact_tron_payload_asset_mismatch` | Client's accepted asset differs from server requirements | Correct the accepted terms |
+| `permit2_token_mismatch` | Permit2 signed token differs from the required asset | Correct the authorization |
+| `invalid_permit2_spender` | Signed spender is not the configured exact proxy | Correct the authorization |
+| `invalid_exact_tron_payload_authorization_valid_before` / `permit2_deadline_expired` | The respective authorization has expired | Obtain a fresh authorization |
+| `invalid_exact_tron_payload_authorization_valid_after` / `permit2_not_yet_valid` | The respective authorization's lower time bound is not satisfied | Wait and re-verify within the remaining validity window |
+| `authorization_window_insufficient` | Not expired, but insufficient remaining time under the applicable `S`, `B`, and `M` checks | Obtain a fresh authorization; do not reset the old expiry |
+| `invalid_transaction_state` | Authorization nonce is confirmed consumed or cancelled | Do not reuse the authorization; this code MUST NOT represent a failed nonce read |
+| `insufficient_funds` | Required payer token balance is confirmed insufficient | Restore balance and re-verify |
+| `permit2_allowance_required` | Payer's allowance to Permit2 is confirmed insufficient | Establish sufficient allowance and re-verify |
+| `chain_read_failed` | Required chain state cannot be established by successful reads or successful simulation | Retry verification after infrastructure recovery; do not infer invalid nonce or insufficient funds |
+| `chain_time_unavailable` | Required chain-time freshness or clock bounds cannot be established | Restore time evidence and re-verify |
+| `simulation_reverted` | Simulation establishes execution failure without a more specific reason above | Resolve the failure before re-verification; do not broadcast blindly |
+| `facilitator_unavailable` | Submitting account is unactivated, misconfigured, or unable to cover resource costs | Restore facilitator availability and re-verify; do not charge this to payer token balance |
+
+If multiple checks fail, report a specific established cause; do not infer a payment defect from an
+infrastructure exception. For `tip3009`, the token is bound through the reconstructed domain, not a
+`payload.token` field. A signature made for another domain without an explicit accepted-asset
+mismatch fails signature validation; it does not independently reveal the other signed token.
+Simulation unavailability alone is not `simulation_reverted`: successful state reads may still
+establish all mandatory conditions as described in Verification.
+
+Core codes `invalid_x402_version`, `unexpected_verify_error`, and `unexpected_settle_error` apply
+to an invalid protocol version and otherwise unclassified failures in the corresponding stage.
+An unexpected error MUST NOT be used to disguise a possibly submitted transaction as safe to retry.
+
+### Post-Submission Outcomes
+
+| `errorReason` | Condition | Caller action |
+| --- | --- | --- |
+| `settlement_pending` | Submission may have occurred, but execution, exact transfer, or required confirmation remains unresolved | Reconcile the original non-empty `transaction`; do not construct another transaction or deliver the resource again |
+| `transaction_failed` | Confirmation policy is met and execution failed or complete transfer evidence contradicts the requirements | Preserve the original txID and report terminal failure; do not automatically resubmit the authorization |
+
+A successful settlement has `success: true`, the original txID, and no `errorReason`. A possibly
+submitted transaction whose identity was unexpectedly lost follows the infrastructure recovery
+procedure above, outside a normal `SettleResponse`; neither an empty-ID `settlement_pending` nor an
+ordinary retryable error is valid for that case. The pinned downstream implementation is not
+asserted to emit every reason defined here; SDK adaptation remains separate work.
 
 ## Security Considerations
 
