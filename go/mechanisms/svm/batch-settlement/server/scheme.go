@@ -947,6 +947,9 @@ func (s *BatchSvmScheme) commitCharge(
 	patch ...func(ChannelState) ChannelState,
 ) (*ChannelState, error) {
 	var committed ChannelState
+	var completed *BatchOperation
+	// The updater has no persistent side effects: a store may re-run it after a
+	// write conflict, so the operation is completed once the charge is committed.
 	_, err := s.store.Update(request.ChannelID, func(current *ChannelState) (ChannelState, error) {
 		if current == nil || !hasReservation(current, request.PendingID) {
 			return ChannelState{}, errors.New(ChannelBusy)
@@ -963,16 +966,15 @@ func (s *BatchSvmScheme) commitCharge(
 		if err != nil {
 			return ChannelState{}, err
 		}
+		completed = nil
 		if request.RequestID != "" {
-			if err := s.operations.Complete(BatchOperation{
+			completed = &BatchOperation{
 				Status:     operationCompleted,
 				ChannelID:  request.ChannelID,
 				RequestID:  request.RequestID,
 				Ceiling:    reservation.Ceiling,
 				Actual:     actual,
 				Cumulative: cumulative,
-			}); err != nil {
-				return ChannelState{}, err
 			}
 		}
 		next := *current
@@ -993,6 +995,11 @@ func (s *BatchSvmScheme) commitCharge(
 	})
 	if err != nil {
 		return nil, err
+	}
+	if completed != nil {
+		if err := s.operations.Complete(*completed); err != nil {
+			return nil, err
+		}
 	}
 	return &committed, nil
 }

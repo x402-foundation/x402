@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"testing"
 	"time"
@@ -818,6 +819,111 @@ func TestBatchServerVoucherSignerBoundaries(t *testing.T) {
 		require.Equal(t, batchsettlement.ErrOperationCeilingChanged, repricedReplay.Reason)
 	})
 
+	t.Run("completes an operation only after its charge is committed to the channel store", func(t *testing.T) {
+		charge := func(t *testing.T, store *faultyChannelStore, operationStore BatchOperationStore) (*x402.BeforeHookResult, *BatchOperation, *ChannelState) {
+			t.Helper()
+			scheme := NewBatchSvmScheme(&Config{
+				ReceiverAuthorizer: receiverAuthorizer,
+				Operator:           operator,
+				OperationStore:     operationStore,
+				Store:              store,
+			})
+			openPayment := types.PaymentPayload{
+				Accepted:    requirements(),
+				Payload:     mustPayloadMap(t, serverDeposit),
+				X402Version: 2,
+			}
+			openCtx := verifyContext(openPayment, requirements())
+			_, err := scheme.BeforeVerifyHook()(openCtx)
+			require.NoError(t, err)
+			_, err = scheme.AfterVerifyHook()(x402.VerifyResultContext{
+				VerifyContext: openCtx,
+				Result:        &x402.VerifyResponse{IsValid: true, Payer: payer.Address().String()},
+			})
+			require.NoError(t, err)
+			require.NoError(t, scheme.AfterSettleHook()(x402.SettleResultContext{
+				SettleContext: x402.SettleContext{
+					Ctx:          ctx,
+					Payload:      openPayment,
+					Requirements: requirements(),
+					Phase:        x402.SettlePhaseAfterHandler,
+				},
+				Result: &x402.SettleResponse{
+					Extra: map[string]any{
+						"channelState": map[string]any{
+							"balance":             "10000",
+							"totalClaimed":        "0",
+							"withdrawRequestedAt": 0,
+						},
+					},
+					Network:     svm.SolanaDevnetCAIP2,
+					Success:     true,
+					Transaction: "open-signature",
+				},
+			}))
+
+			payment := types.PaymentPayload{
+				Accepted: requirements(),
+				Payload: mustPayloadMap(t, batchsettlement.BatchAuthorizationPayload{
+					Type:          batchsettlement.PayloadTypeAuthorization,
+					ChannelConfig: serverDeposit.ChannelConfig,
+					Authorization: authorizationFor(t, "request-2", 1_000),
+				}),
+				X402Version: 2,
+			}
+			paymentCtx := verifyContext(payment, requirements())
+			verified, err := scheme.BeforeVerifyHook()(paymentCtx)
+			require.NoError(t, err)
+			_, err = scheme.AfterVerifyHook()(x402.VerifyResultContext{
+				VerifyContext: paymentCtx,
+				Result:        verified.SkipVerifyResult,
+			})
+			require.NoError(t, err)
+
+			store.armed = true
+			chargeReq := requirements()
+			chargeReq.Amount = "400"
+			settled, err := scheme.BeforeSettleHook()(x402.SettleContext{
+				Ctx:          ctx,
+				Payload:      payment,
+				Requirements: chargeReq,
+				Phase:        x402.SettlePhaseAfterHandler,
+			})
+			require.NoError(t, err)
+			operation, err := operationStore.Get(channelID, "request-2")
+			require.NoError(t, err)
+			state, err := store.Get(channelID)
+			require.NoError(t, err)
+			return settled, operation, state
+		}
+
+		t.Run("a store that re-runs the updater after a write conflict", func(t *testing.T) {
+			settled, operation, state := charge(t, &faultyChannelStore{MemoryChannelStore: NewMemoryChannelStore(), conflicts: 1}, NewMemoryBatchOperationStore())
+			require.True(t, settled.Skip)
+			require.True(t, settled.SkipResult.Success)
+			require.Equal(t, channelID+":1400", settled.SkipResult.Extra["commitmentId"])
+			require.Equal(t, operationCompleted, operation.Status)
+			require.Equal(t, uint64(1_400), operation.Cumulative)
+			require.Equal(t, uint64(1_400), state.ChargedCumulativeAmount)
+			require.Empty(t, state.Reservations)
+		})
+
+		t.Run("a channel write that fails", func(t *testing.T) {
+			settled, operation, state := charge(t, &faultyChannelStore{MemoryChannelStore: NewMemoryChannelStore(), failWrite: true}, NewMemoryBatchOperationStore())
+			require.True(t, settled.Abort)
+			require.Equal(t, operationReserved, operation.Status)
+			require.Equal(t, uint64(1_000), state.ChargedCumulativeAmount)
+		})
+
+		t.Run("an operation write that fails after the commit keeps the charge and the fence", func(t *testing.T) {
+			settled, operation, state := charge(t, &faultyChannelStore{MemoryChannelStore: NewMemoryChannelStore()}, &failingCompleteStore{MemoryBatchOperationStore: NewMemoryBatchOperationStore(), succeed: 1})
+			require.True(t, settled.Abort)
+			require.Equal(t, operationReserved, operation.Status)
+			require.Equal(t, uint64(1_400), state.ChargedCumulativeAmount)
+			require.Empty(t, state.Reservations)
+		})
+	})
+
 	t.Run("enriches server-mode refunds with the stored operator voucher", func(t *testing.T) {
 		store := NewMemoryChannelStore()
 		scheme := NewBatchSvmScheme(&Config{
@@ -885,6 +991,55 @@ func TestBatchServerVoucherSignerBoundaries(t *testing.T) {
 		require.Equal(t, "2000", voucher["maxClaimableAmount"])
 		require.Equal(t, "stored-operator-sig", voucher["signature"])
 	})
+}
+
+// faultyChannelStore models a durable compare-and-set store once armed: a lost
+// write conflict re-runs the updater, and a failed write discards its result.
+type faultyChannelStore struct {
+	*MemoryChannelStore
+	armed     bool
+	conflicts int
+	failWrite bool
+}
+
+func (s *faultyChannelStore) Update(channelID string, updater func(current *ChannelState) (ChannelState, error)) (ChannelState, error) {
+	if !s.armed {
+		return s.MemoryChannelStore.Update(channelID, updater)
+	}
+	for ; s.conflicts > 0; s.conflicts-- {
+		current, err := s.Get(channelID)
+		if err != nil {
+			return ChannelState{}, err
+		}
+		if _, err := updater(current); err != nil {
+			return ChannelState{}, err
+		}
+	}
+	if !s.failWrite {
+		return s.MemoryChannelStore.Update(channelID, updater)
+	}
+	current, err := s.Get(channelID)
+	if err != nil {
+		return ChannelState{}, err
+	}
+	if _, err := updater(current); err != nil {
+		return ChannelState{}, err
+	}
+	return ChannelState{}, errors.New("channel write failed")
+}
+
+// failingCompleteStore fails every completion after the first `succeed`.
+type failingCompleteStore struct {
+	*MemoryBatchOperationStore
+	succeed int
+}
+
+func (s *failingCompleteStore) Complete(operation BatchOperation) error {
+	if s.succeed == 0 {
+		return errors.New("operation write failed")
+	}
+	s.succeed--
+	return s.MemoryBatchOperationStore.Complete(operation)
 }
 
 func newVoucherSigner(t *testing.T) *batchclient.PrivateKeySigner {

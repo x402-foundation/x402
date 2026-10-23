@@ -768,6 +768,116 @@ describe("batch server voucher signer boundaries", () => {
     });
   });
 
+  it("completes an operation only after its charge is committed to the channel store", async () => {
+    const channelId = serverDeposit.authorization!.channelId;
+    const ceiling = { ...requirements(), amount: "4000" };
+    const setup = async () => {
+      const store = new MemoryChannelStore();
+      const operationStore = new MemoryBatchOperationStore();
+      const server = new BatchServerScheme({ receiverAuthorizer, operator, operationStore, store });
+      const openContext = {
+        declaredExtensions: {},
+        paymentPayload: { accepted: requirements(), payload: serverDeposit, x402Version: 2 },
+        requirements: requirements(),
+      };
+      await server.schemeHooks.onBeforeVerify!(openContext);
+      await server.schemeHooks.onAfterVerify!({
+        ...openContext,
+        result: { isValid: true, payer: payer.address },
+      });
+      await server.schemeHooks.onAfterSettle!({
+        ...openContext,
+        phase: "after-handler",
+        result: {
+          extra: { channelState: { balance: "10000", totalClaimed: "0", withdrawRequestedAt: 0 } },
+          network: SOLANA_DEVNET_CAIP2,
+          success: true,
+          transaction: "open-signature",
+        },
+      });
+      const reserve = async (requestId: string) => {
+        const context = {
+          declaredExtensions: {},
+          paymentPayload: {
+            accepted: ceiling,
+            payload: {
+              authorization: await authorizationFor(requestId, 4_000n),
+              channelConfig: serverDeposit.channelConfig,
+              type: "authorization",
+            },
+            x402Version: 2,
+          },
+          requirements: ceiling,
+        };
+        const verified = await server.schemeHooks.onBeforeVerify!(context);
+        await server.schemeHooks.onAfterVerify!({
+          ...context,
+          result: (verified as { result: { isValid: true; payer: string } }).result,
+        });
+        return (amount: string) =>
+          server.schemeHooks.onBeforeSettle!({
+            ...context,
+            phase: "after-handler",
+            requirements: { ...ceiling, amount },
+          });
+      };
+      return { operationStore, reserve, store };
+    };
+
+    // A compare-and-set store loses the first write to a concurrent charge and
+    // re-runs the updater against the newer state.
+    const raced = await setup();
+    const settleFirst = await raced.reserve("first");
+    const settleSecond = await raced.reserve("second");
+    const update = raced.store.update.bind(raced.store);
+    vi.spyOn(raced.store, "update").mockImplementationOnce(async (id, updater) => {
+      await updater(await raced.store.get(id));
+      await settleSecond("250");
+      return update(id, updater);
+    });
+    await expect(settleFirst("400")).resolves.toMatchObject({
+      result: { extra: { voucher: { maxClaimableAmount: "1650" } }, success: true },
+    });
+    await expect(raced.operationStore.get(channelId, "first")).resolves.toMatchObject({
+      actual: 400n,
+      cumulative: 1_650n,
+      status: "completed",
+    });
+    expect(await raced.store.get(channelId)).toMatchObject({
+      chargedCumulativeAmount: 1_650n,
+      reservations: {},
+    });
+
+    // A failed channel write must not leave a completed operation behind.
+    const failed = await setup();
+    const settle = await failed.reserve("failed-write");
+    vi.spyOn(failed.store, "update").mockImplementationOnce(async (id, updater) => {
+      await updater(await failed.store.get(id));
+      throw new Error("channel write failed");
+    });
+    await expect(settle("400")).resolves.toMatchObject({ abort: true });
+    await expect(failed.operationStore.get(channelId, "failed-write")).resolves.toMatchObject({
+      status: "reserved",
+    });
+    expect((await failed.store.get(channelId))?.chargedCumulativeAmount).toBe(1_000n);
+
+    // A completion that fails after the commit keeps the charge, and the
+    // reserved operation keeps fencing the request id.
+    const incomplete = await setup();
+    const settleIncomplete = await incomplete.reserve("failed-complete");
+    vi.spyOn(incomplete.operationStore, "complete").mockRejectedValueOnce(
+      new Error("operation write failed"),
+    );
+    await expect(settleIncomplete("400")).resolves.toMatchObject({ abort: true });
+    await expect(
+      incomplete.operationStore.get(channelId, "failed-complete"),
+    ).resolves.toMatchObject({ status: "reserved" });
+    expect(await incomplete.store.get(channelId)).toMatchObject({
+      chargedCumulativeAmount: 1_400n,
+      reservations: {},
+    });
+  });
+
   it("enriches server-mode refunds with the stored operator voucher", async () => {
     const store = new MemoryChannelStore();
     const server = new BatchServerScheme({ operator, receiverAuthorizer, store });
