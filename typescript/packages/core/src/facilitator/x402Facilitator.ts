@@ -289,18 +289,16 @@ export class x402Facilitator {
       requirements: paymentRequirements,
     };
 
-    // Execute beforeVerify hooks
+    // Execute beforeVerify hooks. This is a gate phase, so a throwing hook is
+    // deliberately not isolated: verification fails closed instead of
+    // skipping the check.
     for (const hook of this.beforeVerifyHooks) {
-      try {
-        const result = await hook(context);
-        if (result && "abort" in result && result.abort) {
-          return {
-            isValid: false,
-            invalidReason: result.reason,
-          };
-        }
-      } catch (error) {
-        this.warnFacilitatorHookFailure("beforeVerify", error);
+      const result = await hook(context);
+      if (result && "abort" in result && result.abort) {
+        return {
+          isValid: false,
+          invalidReason: result.reason,
+        };
       }
     }
 
@@ -431,17 +429,10 @@ export class x402Facilitator {
       requirements: paymentRequirements,
     };
 
-    // Execute beforeSettle hooks. The hook call and the abort check are
-    // separated so a hook failure is isolated without swallowing the
-    // intentional abort throw.
+    // Execute beforeSettle hooks. Gate phase, like beforeVerify: a throwing
+    // hook stops settlement before the scheme facilitator is called.
     for (const hook of this.beforeSettleHooks) {
-      let result: Awaited<ReturnType<FacilitatorBeforeSettleHook>>;
-      try {
-        result = await hook(context);
-      } catch (error) {
-        this.warnFacilitatorHookFailure("beforeSettle", error);
-        continue;
-      }
+      const result = await hook(context);
       if (result && "abort" in result && result.abort) {
         throw new Error(`Settlement aborted: ${result.reason}`);
       }
@@ -526,9 +517,10 @@ export class x402Facilitator {
   }
 
   /**
-   * Logs a warning when a registered lifecycle hook throws. Hook failures are
-   * isolated so an observer cannot alter the outcome of verification or
-   * settlement, mirroring the resource server's hook handling.
+   * Logs a warning when an advisory lifecycle hook (after* or on*Failure)
+   * throws. These failures are isolated so an observer cannot alter the
+   * outcome of verification or settlement. Gate hooks (before*) are not
+   * isolated: a throw there fails closed.
    *
    * @param phase - Lifecycle phase whose hook threw
    * @param error - Thrown value or rejection reason

@@ -423,43 +423,6 @@ describe("x402Facilitator - Lifecycle Hooks", () => {
       expect(failureHookCalled).toBe(false);
     });
 
-    it("continues verification when a beforeVerify hook throws", async () => {
-      const facilitator = new x402Facilitator();
-      facilitator.register("eip155:8453", new MockSchemeFacilitator());
-
-      const executionOrder: number[] = [];
-      facilitator
-        .onBeforeVerify(async () => {
-          executionOrder.push(1);
-          throw new Error("hook crashed");
-        })
-        .onBeforeVerify(async () => {
-          executionOrder.push(2);
-        });
-
-      const result = await facilitator.verify(buildPaymentPayload(), buildPaymentRequirements());
-
-      expect(result.isValid).toBe(true);
-      expect(executionOrder).toEqual([1, 2]);
-    });
-
-    it("continues settlement when a beforeSettle hook throws, still honoring a later abort", async () => {
-      const facilitator = new x402Facilitator();
-      facilitator.register("eip155:8453", new MockSchemeFacilitator());
-
-      facilitator
-        .onBeforeSettle(async () => {
-          throw new Error("hook crashed");
-        })
-        .onBeforeSettle(async () => {
-          return { abort: true, reason: "blocked" };
-        });
-
-      await expect(
-        facilitator.settle(buildPaymentPayload(), buildPaymentRequirements()),
-      ).rejects.toThrow("Settlement aborted: blocked");
-    });
-
     it("lets a later onVerifyFailure hook recover when an earlier one throws", async () => {
       const facilitator = new x402Facilitator();
       facilitator.register(
@@ -506,6 +469,81 @@ describe("x402Facilitator - Lifecycle Hooks", () => {
       const result = await facilitator.settle(buildPaymentPayload(), buildPaymentRequirements());
 
       expect(result).toEqual(recovered);
+    });
+  });
+
+  describe("gate hook errors", () => {
+    it("fails verification closed when a beforeVerify hook throws", async () => {
+      const facilitator = new x402Facilitator();
+      let schemeVerifyCalled = false;
+      facilitator.register(
+        "eip155:8453",
+        new MockSchemeFacilitator(async () => {
+          schemeVerifyCalled = true;
+          return { isValid: true, payer: "0xMockPayer" };
+        }),
+      );
+
+      const executionOrder: number[] = [];
+      let failureHookCalled = false;
+      facilitator
+        .onBeforeVerify(async () => {
+          executionOrder.push(1);
+          throw new Error("gate check failed");
+        })
+        .onBeforeVerify(async () => {
+          executionOrder.push(2);
+        })
+        .onVerifyFailure(async () => {
+          failureHookCalled = true;
+          return { recovered: true, result: { isValid: true, payer: "0xRecovered" } };
+        });
+
+      // A gate that could not complete its check must not authorize the payment.
+      await expect(
+        facilitator.verify(buildPaymentPayload(), buildPaymentRequirements()),
+      ).rejects.toThrow("gate check failed");
+      expect(executionOrder).toEqual([1]);
+      expect(schemeVerifyCalled).toBe(false);
+      // Recovery hooks cannot override a failed gate.
+      expect(failureHookCalled).toBe(false);
+    });
+
+    it("fails settlement closed when a beforeSettle hook throws", async () => {
+      const facilitator = new x402Facilitator();
+      let schemeSettleCalled = false;
+      facilitator.register(
+        "eip155:8453",
+        new MockSchemeFacilitator(undefined, async () => {
+          schemeSettleCalled = true;
+          return { success: true, transaction: "0xMockTx", network: "eip155:8453" };
+        }),
+      );
+
+      const executionOrder: number[] = [];
+      let failureHookCalled = false;
+      facilitator
+        .onBeforeSettle(async () => {
+          executionOrder.push(1);
+          throw new Error("gate check failed");
+        })
+        .onBeforeSettle(async () => {
+          executionOrder.push(2);
+        })
+        .onSettleFailure(async () => {
+          failureHookCalled = true;
+          return {
+            recovered: true,
+            result: { success: true, transaction: "0xRecoveredTx", network: "eip155:8453" },
+          };
+        });
+
+      await expect(
+        facilitator.settle(buildPaymentPayload(), buildPaymentRequirements()),
+      ).rejects.toThrow("gate check failed");
+      expect(executionOrder).toEqual([1]);
+      expect(schemeSettleCalled).toBe(false);
+      expect(failureHookCalled).toBe(false);
     });
   });
 });
