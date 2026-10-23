@@ -542,6 +542,89 @@ The Cardano implementation supports three asset transfer methods via `extra.asse
 
 For testnet funds, get test ADA from the [Cardano testnets faucet](https://docs.cardano.org/cardano-testnets/tools/faucet/) and preprod tUSDM from the [tUSDM faucet](https://tusdm.moneta.global).
 
+### Stellar Setup
+
+The Stellar implementation uses a fee-sponsored Soroban `transfer` invocation. The client builds and signs the transaction; the facilitator pays the network fee.
+
+Install the Stellar package:
+
+```bash
+npm install @x402/stellar
+```
+
+**Server**
+
+```typescript
+import { x402ResourceServer } from "@x402/core/server";
+import { ExactStellarScheme } from "@x402/stellar/exact/server";
+
+const resourceServer = new x402ResourceServer(facilitatorClient)
+  .register("stellar:testnet", new ExactStellarScheme());
+
+// In your route config:
+{
+  "GET /data": {
+    accepts: [
+      {
+        scheme: "exact",
+        price: "$0.001",
+        network: "stellar:testnet",
+        payTo: "GYourStellarAddress",
+      },
+    ],
+    description: "Data endpoint",
+    mimeType: "application/json",
+  },
+}
+```
+
+**Client**
+
+```typescript
+import { x402Client } from "@x402/core/client";
+import { ExactStellarScheme, createEd25519Signer } from "@x402/stellar";
+
+const stellarSigner = createEd25519Signer(
+  process.env.STELLAR_PRIVATE_KEY!,
+  "stellar:testnet",
+);
+
+const client = new x402Client()
+  .register("stellar:*", new ExactStellarScheme(stellarSigner));
+```
+
+#### Stellar simulation errors
+
+The Stellar client simulates the payment transaction before signing. If simulation fails, the SDK throws a typed error you can catch and handle:
+
+| Error class | Exported from | Description |
+|-------------|---------------|-------------|
+| `SimulationFailedError` | `@x402/stellar` | Base error for any Stellar simulation failure. Includes the raw RPC error in `cause`. |
+| `TrustlineMissingError` | `@x402/stellar` | Thrown when the payer or payee account is missing a trustline for the payment asset. Includes `account` and `asset` fields. |
+| `InsufficientBalanceError` | `@x402/stellar` | Thrown when the payer account has insufficient balance for the payment asset. Includes `account` and `asset` fields. |
+
+`TrustlineMissingError` and `InsufficientBalanceError` both extend `SimulationFailedError`, so you can catch either specifically or fall back to the base class:
+
+```typescript
+import {
+  SimulationFailedError,
+  TrustlineMissingError,
+  InsufficientBalanceError,
+} from "@x402/stellar";
+
+try {
+  const response = await fetchWithPayment("https://api.example.com/data");
+} catch (error) {
+  if (error instanceof TrustlineMissingError) {
+    console.error(`Account ${error.account} needs a trustline for asset ${error.asset}`);
+  } else if (error instanceof InsufficientBalanceError) {
+    console.error(`Account ${error.account} has insufficient balance for asset ${error.asset}`);
+  } else if (error instanceof SimulationFailedError) {
+    console.error(`Stellar simulation failed: ${error.cause}`);
+  }
+}
+```
+
 ### Network Implementations
 
 The `exact` scheme has network specifications for EVM, SVM, AVM, Stellar, Aptos, Casper, Hedera, TON, Cardano, Keeta, Sui, Concordium, NEAR, XRPL, and Bitcoin Lightning (`lnbtc`).
