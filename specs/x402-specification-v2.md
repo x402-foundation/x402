@@ -599,6 +599,7 @@ The x402 protocol defines standard error codes that may be returned by facilitat
 - **`invalid_network`**: Specified blockchain network is not supported
 - **`invalid_payload`**: Payment payload is malformed or contains invalid data
 - **`invalid_payment_requirements`**: Payment requirements object is invalid or malformed
+- **`invalid_self_payment`**: Payer address matches the recipient `payTo` address (self-payment / wash settlement prohibited)
 - **`invalid_scheme`**: Specified payment scheme is not supported
 - **`unsupported_scheme`**: Payment scheme is not supported by the facilitator
 - **`invalid_x402_version`**: Protocol version is not supported
@@ -621,6 +622,13 @@ The x402 protocol implements multiple layers of protection against replay attack
 **10.2 Authentication Integration**
 
 The protocol supports integration with authentication systems (e.g., Sign-In with Ethereum - SIWE) to enable authenticated pricing models where verified users receive discounted rates or special access terms.
+
+**10.3 Facilitator Co-Signing & Anti-Wash-Settlement Guards**
+
+Facilitators MUST enforce the following baseline invariants across all schemes and networks:
+
+- **Self-Payment Prohibition (`payer !== payTo`)**: A facilitator MUST reject any verification or settlement where the resolved `payer` address equals `paymentRequirements.payTo` (case-insensitively normalized) with `invalid_self_payment`. Self-payment transfers zero net economic value and enables circular wash-settlement inflation and settlement-gated catalog self-indexing.
+- **Pre-Signing Multi-Transaction Sponsorship Guards**: For mechanisms where the facilitator co-signs or sponsors a transaction group (e.g., atomic transaction groups), the facilitator MUST validate—**before invoking any private-key signing operation**—that every inner transaction's embedded network/genesis identifier matches `paymentRequirements.network`, every transaction in the group carries a non-null canonical group digest over the ordered group transaction IDs, at most one unsigned facilitator fee-payer transaction is present with bounded aggregate sponsored fees, and no clawback or close-to drain fields (`assetSender`, `closeRemainderTo`, `assetCloseTo`) are set.
 
 **11. Implementation Notes**
 

@@ -332,11 +332,36 @@ export class x402Facilitator {
       }
 
       const facilitatorContext = this.buildFacilitatorContext();
-      const verifyResult = await schemeNetworkFacilitator.verify(
-        paymentPayload,
-        paymentRequirements,
-        facilitatorContext,
-      );
+      const payloadPayer = this.extractPayloadPayer(paymentPayload.payload);
+      let verifyResult: VerifyResponse = this.isSelfPayment(
+        payloadPayer,
+        paymentRequirements.payTo,
+      )
+        ? {
+            isValid: false,
+            invalidReason: "invalid_self_payment",
+            invalidMessage:
+              "Payer address cannot equal payTo recipient address (self-payment prohibited)",
+            payer: payloadPayer,
+          }
+        : await schemeNetworkFacilitator.verify(
+            paymentPayload,
+            paymentRequirements,
+            facilitatorContext,
+          );
+
+      if (
+        verifyResult.isValid &&
+        this.isSelfPayment(verifyResult.payer, paymentRequirements.payTo)
+      ) {
+        verifyResult = {
+          isValid: false,
+          invalidReason: "invalid_self_payment",
+          invalidMessage:
+            "Payer address cannot equal payTo recipient address (self-payment prohibited)",
+          payer: verifyResult.payer,
+        };
+      }
 
       // Check if verification failed (isValid: false)
       if (!verifyResult.isValid) {
@@ -451,11 +476,40 @@ export class x402Facilitator {
       }
 
       const facilitatorContext = this.buildFacilitatorContext();
-      const settleResult = await schemeNetworkFacilitator.settle(
-        paymentPayload,
-        paymentRequirements,
-        facilitatorContext,
-      );
+      const payloadPayer = this.extractPayloadPayer(paymentPayload.payload);
+      let settleResult: SettleResponse = this.isSelfPayment(
+        payloadPayer,
+        paymentRequirements.payTo,
+      )
+        ? {
+            success: false,
+            errorReason: "invalid_self_payment",
+            errorMessage:
+              "Payer address cannot equal payTo recipient address (self-payment prohibited)",
+            payer: payloadPayer,
+            transaction: "",
+            network: paymentRequirements.network,
+          }
+        : await schemeNetworkFacilitator.settle(
+            paymentPayload,
+            paymentRequirements,
+            facilitatorContext,
+          );
+
+      if (
+        settleResult.success &&
+        this.isSelfPayment(settleResult.payer, paymentRequirements.payTo)
+      ) {
+        settleResult = {
+          success: false,
+          errorReason: "invalid_self_payment",
+          errorMessage:
+            "Payer address cannot equal payTo recipient address (self-payment prohibited)",
+          payer: settleResult.payer,
+          transaction: "",
+          network: paymentRequirements.network,
+        };
+      }
 
       // Execute afterSettle hooks
       const resultContext: FacilitatorSettleResultContext = {
@@ -484,6 +538,51 @@ export class x402Facilitator {
 
       throw error;
     }
+  }
+
+  /**
+   * Extracts a top-level or nested authorization payer address from a payment payload when present.
+   *
+   * @param payload - Scheme-specific payload dictionary
+   * @returns Extracted payer address if present, otherwise undefined
+   */
+  private extractPayloadPayer(payload: Record<string, unknown> | undefined): string | undefined {
+    if (!payload || typeof payload !== "object") {
+      return undefined;
+    }
+    if (typeof payload.payer === "string" && payload.payer.trim().length > 0) {
+      return payload.payer;
+    }
+    if (typeof payload.from === "string" && payload.from.trim().length > 0) {
+      return payload.from;
+    }
+    const auth = payload.authorization;
+    if (auth && typeof auth === "object" && !Array.isArray(auth)) {
+      const authRecord = auth as Record<string, unknown>;
+      if (typeof authRecord.from === "string" && authRecord.from.trim().length > 0) {
+        return authRecord.from;
+      }
+      if (typeof authRecord.payer === "string" && authRecord.payer.trim().length > 0) {
+        return authRecord.payer;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Checks whether the resolved payer address matches the recipient payTo address (self-payment).
+   *
+   * @param payer - Resolved payer address
+   * @param payTo - Recipient payTo address from paymentRequirements
+   * @returns True if payer and payTo are non-empty and match (case-insensitively)
+   */
+  private isSelfPayment(payer: string | undefined, payTo: string | undefined): boolean {
+    if (!payer || !payTo) {
+      return false;
+    }
+    const normalizedPayer = payer.trim().toLowerCase();
+    const normalizedPayTo = payTo.trim().toLowerCase();
+    return normalizedPayer.length > 0 && normalizedPayer === normalizedPayTo;
   }
 
   /**
