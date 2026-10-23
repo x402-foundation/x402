@@ -8,6 +8,7 @@
     "dev:all-networks": "tsx all_networks.ts",
     "dev:builder-pattern": "tsx index.ts builder-pattern",
     "dev:hooks": "tsx index.ts hooks",
+    "dev:listing-check": "tsx index.ts listing-check",
     "dev:preferred-network": "tsx index.ts preferred-network",
     "dev:spend-controls": "tsx index.ts spend-controls",
     "format": "prettier -c .prettierrc --write \"**/*.{ts,js,cjs,json,md}\"",

@@ -3,6 +3,7 @@ import { runHooksExample } from "./hooks";
 import { runPreferredNetworkExample } from "./preferred-network";
 import { runBuilderPatternExample } from "./builder-pattern";
 import { runSpendControlsExample } from "./spend-controls";
+import { runListingCheckExample } from "./listing-check";
 
 config();
 
@@ -20,6 +21,7 @@ const url = `${baseURL}${endpointPath}`;
  * - all-networks: All supported networks with optional chain configuration
  * - builder-pattern: Fine-grained control over network registration
  * - hooks: Payment lifecycle hooks for custom logic at different stages
+ * - listing-check: Refuse a payment whose terms differ from your listing (onBeforePaymentCreation)
  * - preferred-network: Client-side payment network preferences
  * - spend-controls: Default $1 USD cap, allowedAssets, and per-asset caps
  *
@@ -31,6 +33,7 @@ const url = `${baseURL}${endpointPath}`;
  *   pnpm start all-networks
  *   pnpm start builder-pattern
  *   pnpm start hooks
+ *   pnpm start listing-check
  *   pnpm start preferred-network
  *   pnpm start spend-controls
  */
@@ -61,6 +64,10 @@ async function main(): Promise<void> {
       await runHooksExample(evmPrivateKey, url);
       break;
 
+    case "listing-check":
+      await runListingCheckExample(evmPrivateKey, url);
+      break;
+
     case "preferred-network":
       if (!svmPrivateKey) {
         console.error("❌ SVM_PRIVATE_KEY environment variable is required for preferred-network");
@@ -76,7 +83,7 @@ async function main(): Promise<void> {
     default:
       console.error(`Unknown pattern: ${pattern}`);
       console.error(
-        "Available patterns: all-networks, builder-pattern, hooks, preferred-network, spend-controls",
+        "Available patterns: all-networks, builder-pattern, hooks, listing-check, preferred-network, spend-controls",
       );
       process.exit(1);
   }
