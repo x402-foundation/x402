@@ -94,6 +94,29 @@ function getHeaderValue(headers: Record<string, string>, headerName: string): st
 }
 
 /**
+ * Serializes a settlement failure body for the onSend payload. String bodies are sent as-is
+ * unless the media type ends in `/json` or `+json`; other bodies are JSON-encoded, or
+ * stringified when `isHtml` is set.
+ *
+ * @param body - Settlement failure response body
+ * @param contentType - Content-Type sent with the response
+ * @param isHtml - Whether the body is an HTML page
+ * @returns The serialized response body
+ */
+function serializeSettlementFailureBody(
+  body: unknown,
+  contentType: string,
+  isHtml?: boolean,
+): string {
+  const mediaType = contentType.split(";")[0].trim().toLowerCase();
+  const isJson = mediaType.endsWith("/json") || mediaType.endsWith("+json");
+  if (typeof body === "string" && !isJson) {
+    return body;
+  }
+  return isHtml ? String(body ?? "") : JSON.stringify(body ?? {});
+}
+
+/**
  * Converts a Fastify onSend payload into the byte representation used for settlement.
  *
  * @param payload - Fastify payload
@@ -515,11 +538,11 @@ export function paymentMiddlewareFromHTTPServer(
           reply.header(key, value);
         }
         reply.status(response.status);
-        reply.type(
+        const contentType =
           getHeaderValue(response.headers, "content-type") ||
-            (response.isHtml ? "text/html" : "application/json"),
-        );
-        return response.isHtml ? String(response.body ?? "") : JSON.stringify(response.body ?? {});
+          (response.isHtml ? "text/html" : "application/json");
+        reply.type(contentType);
+        return serializeSettlementFailureBody(response.body, contentType, response.isHtml);
       }
 
       for (const [key, value] of Object.entries(settleResult.headers)) {
