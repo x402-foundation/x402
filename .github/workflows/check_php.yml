@@ -1,0 +1,56 @@
+name: Check PHP
+on: [pull_request]
+
+permissions:
+  contents: read
+  id-token: none
+
+jobs:
+  test-php:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./php
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2.37.2
+        with:
+          php-version: "8.2"
+          extensions: json, mbstring
+          coverage: none
+
+      - name: Install dependencies
+        uses: ramsey/composer-install@a8d0d959dab41457692a5e2041bd9b757a119e3f # v3.2.1
+        with:
+          working-directory: php
+          # No committed lockfile, as is normal for a library, so resolve rather than install.
+          dependency-versions: highest
+
+      - name: Run tests
+        run: vendor/bin/phpunit
+
+  analyse-php:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./php
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2.37.2
+        with:
+          php-version: "8.2"
+          extensions: json, mbstring
+          coverage: none
+
+      - name: Install dependencies
+        uses: ramsey/composer-install@a8d0d959dab41457692a5e2041bd9b757a119e3f # v3.2.1
+        with:
+          working-directory: php
+          dependency-versions: highest
+
+      - name: Static analysis
+        run: vendor/bin/phpstan analyse --no-progress
