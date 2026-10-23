@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 
 from x402.extensions.bazaar import (
+    AsyncBazaarClientExtension,
+    AsyncBazaarExtendedClient,
+    AsyncBazaarExtension,
     BazaarClientExtension,
     BazaarExtendedClient,
     BazaarExtension,
@@ -22,6 +27,12 @@ from x402.extensions.bazaar.facilitator_client import (
     _parse_discovery_resource_item,
     _parse_list_response,
     _parse_search_response,
+)
+from x402.http import (
+    AuthHeaders,
+    FacilitatorConfig,
+    HTTPFacilitatorClient,
+    HTTPFacilitatorClientSync,
 )
 
 # ---------------------------------------------------------------------------
@@ -519,6 +530,210 @@ class TestSearch:
         assert result.pagination is not None
         assert result.pagination.limit == 10
         assert result.pagination.cursor == cursor
+
+
+# ---------------------------------------------------------------------------
+# Real facilitator clients (not MagicMock)
+# ---------------------------------------------------------------------------
+
+
+class _StaticAuth:
+    """Auth provider that returns one fixed bazaar header."""
+
+    def __init__(self, header: dict[str, str]) -> None:
+        self._header = header
+
+    def get_auth_headers(self) -> AuthHeaders:
+        return AuthHeaders(bazaar=dict(self._header))
+
+
+def _transport_client(
+    handler: Callable[[httpx.Request], httpx.Response],
+    *,
+    sync: bool,
+    auth: _StaticAuth | None = None,
+) -> tuple[BazaarExtendedClient | AsyncBazaarExtendedClient, httpx.Client | httpx.AsyncClient]:
+    """Build a real facilitator client whose HTTP stack never leaves the process."""
+    transport = httpx.MockTransport(handler)
+    config_url = "https://facilitator.example.com"
+    if sync:
+        http_client: httpx.Client | httpx.AsyncClient = httpx.Client(transport=transport)
+        facilitator: HTTPFacilitatorClient | HTTPFacilitatorClientSync = HTTPFacilitatorClientSync(
+            FacilitatorConfig(url=config_url, http_client=http_client, auth_provider=auth)
+        )
+    else:
+        http_client = httpx.AsyncClient(transport=transport)
+        facilitator = HTTPFacilitatorClient(
+            FacilitatorConfig(url=config_url, http_client=http_client, auth_provider=auth)
+        )
+    return with_bazaar(facilitator), http_client
+
+
+class TestRealFacilitatorDiscovery:
+    """The docs construct HTTPFacilitatorClient. Discovery must await that client."""
+
+    @pytest.mark.asyncio
+    async def test_async_client_lists_without_sync_getter(self) -> None:
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json=LIST_RESPONSE_FIXTURE)
+
+        extended, http_client = _transport_client(handler, sync=False)
+        assert isinstance(extended, AsyncBazaarExtendedClient)
+        assert isinstance(extended.extensions, AsyncBazaarClientExtension)
+        assert isinstance(extended.extensions.bazaar, AsyncBazaarExtension)
+        assert not hasattr(extended._client, "_get_client")
+
+        try:
+            result = await extended.extensions.bazaar.list_resources(
+                ListDiscoveryResourcesParams(type="http", limit=10, offset=5)
+            )
+        finally:
+            await http_client.aclose()
+
+        assert isinstance(result, DiscoveryResourcesResponse)
+        assert result.items[0].resource == "https://api.example.com/weather"
+        assert result.pagination.total == 1
+        assert len(seen) == 1
+        assert seen[0].url.path == "/discovery/resources"
+        assert seen[0].url.params["type"] == "http"
+        assert seen[0].url.params["limit"] == "10"
+        assert seen[0].url.params["offset"] == "5"
+
+    @pytest.mark.asyncio
+    async def test_async_search_sends_query_and_auth_header(self) -> None:
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json=SEARCH_RESPONSE_FIXTURE)
+
+        extended, http_client = _transport_client(
+            handler,
+            sync=False,
+            auth=_StaticAuth({"Authorization": "Bearer test-token"}),
+        )
+        try:
+            result = await extended.extensions.bazaar.search(
+                SearchDiscoveryResourcesParams(query="weather APIs", type="http")
+            )
+        finally:
+            await http_client.aclose()
+
+        assert result.resources[0].resource == "https://api.example.com/weather"
+        assert seen[0].url.path == "/discovery/search"
+        assert seen[0].url.params["query"] == "weather APIs"
+        assert seen[0].headers["Authorization"] == "Bearer test-token"
+
+    @pytest.mark.asyncio
+    async def test_async_list_recovers_after_facilitator_error(self) -> None:
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return httpx.Response(503, text="unavailable")
+            return httpx.Response(200, json=LIST_RESPONSE_FIXTURE)
+
+        extended, http_client = _transport_client(handler, sync=False)
+        try:
+            with pytest.raises(ValueError, match="listDiscoveryResources failed \\(503\\)"):
+                await extended.extensions.bazaar.list_resources()
+            result = await extended.extensions.bazaar.list_resources(
+                ListDiscoveryResourcesParams(type="http")
+            )
+        finally:
+            await http_client.aclose()
+
+        assert calls["n"] == 2
+        assert result.pagination.total == 1
+
+    @pytest.mark.asyncio
+    async def test_async_empty_search_does_not_call_facilitator(self) -> None:
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json=SEARCH_RESPONSE_FIXTURE)
+
+        extended, http_client = _transport_client(handler, sync=False)
+        try:
+            with pytest.raises(ValueError, match="search query is required"):
+                await extended.extensions.bazaar.search(SearchDiscoveryResourcesParams(query=""))
+        finally:
+            await http_client.aclose()
+
+        assert seen == []
+
+    @pytest.mark.asyncio
+    async def test_async_search_reports_facilitator_failure(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(500, text="search failed")
+
+        extended, http_client = _transport_client(handler, sync=False)
+        try:
+            with pytest.raises(ValueError, match="searchDiscoveryResources failed \\(500\\)"):
+                await extended.extensions.bazaar.search(
+                    SearchDiscoveryResourcesParams(query="weather")
+                )
+        finally:
+            await http_client.aclose()
+
+    @pytest.mark.asyncio
+    async def test_async_context_delegates_to_facilitator_client(self) -> None:
+        facilitator = HTTPFacilitatorClient(
+            FacilitatorConfig(url="https://facilitator.example.com")
+        )
+        extended = with_bazaar(facilitator)
+        async with extended as ctx:
+            assert ctx is extended
+            assert ctx.url == "https://facilitator.example.com"
+
+    def test_sync_client_still_lists_without_await(self) -> None:
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json=LIST_RESPONSE_FIXTURE)
+
+        extended, http_client = _transport_client(handler, sync=True)
+        assert isinstance(extended, BazaarExtendedClient)
+        assert isinstance(extended.extensions.bazaar, BazaarExtension)
+        assert not hasattr(extended._client, "_get_async_client")
+        try:
+            result = extended.extensions.bazaar.list_resources(
+                ListDiscoveryResourcesParams(type="mcp")
+            )
+        finally:
+            http_client.close()
+
+        assert result.items[0].type == "http"
+        assert seen[0].url.path == "/discovery/resources"
+        assert seen[0].url.params["type"] == "mcp"
+
+    def test_sync_client_recovers_after_facilitator_error(self) -> None:
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return httpx.Response(404, text="not found")
+            return httpx.Response(200, json=SEARCH_RESPONSE_FIXTURE)
+
+        extended, http_client = _transport_client(handler, sync=True)
+        try:
+            with pytest.raises(ValueError, match="searchDiscoveryResources failed \\(404\\)"):
+                extended.extensions.bazaar.search(SearchDiscoveryResourcesParams(query="weather"))
+            result = extended.extensions.bazaar.search(
+                SearchDiscoveryResourcesParams(query="weather")
+            )
+        finally:
+            http_client.close()
+
+        assert calls["n"] == 2
+        assert result.resources[0].resource == "https://api.example.com/weather"
 
 
 class TestParseDiscoveryResourceItem:
