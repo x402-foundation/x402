@@ -1486,6 +1486,49 @@ func TestValidateRouteConfiguration_Success(t *testing.T) {
 	}
 }
 
+func TestValidateRouteConfiguration_WildcardScheme(t *testing.T) {
+	ctx := context.Background()
+
+	routes := RoutesConfig{
+		"GET /api": {
+			Accepts: PaymentOptions{
+				{Scheme: "exact", PayTo: "0xtest", Price: "$1.00", Network: "eip155:8453"},
+			},
+		},
+	}
+
+	mockClient := &mockFacilitatorClient{
+		supported: func(ctx context.Context) (x402.SupportedResponse, error) {
+			return x402.SupportedResponse{
+				Kinds: []x402.SupportedKind{
+					{X402Version: 2, Scheme: "exact", Network: "eip155:8453"},
+				},
+				Extensions: []string{},
+				Signers:    make(map[string][]string),
+			}, nil
+		},
+	}
+
+	server := Newx402HTTPResourceServer(
+		routes,
+		x402.WithFacilitatorClient(mockClient),
+		x402.WithSchemeServer("eip155:*", &mockSchemeServer{scheme: "exact"}),
+	)
+
+	if err := server.Initialize(ctx); err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	result := server.ProcessHTTPRequest(ctx, HTTPRequestContext{
+		Adapter: &mockHTTPAdapter{method: "GET", path: "/api", url: "http://example.com/api", accept: "application/json"},
+		Path:    "/api",
+		Method:  "GET",
+	}, nil)
+	if result.Response == nil || result.Response.Status != 402 {
+		t.Fatalf("Expected 402 response, got %+v", result.Response)
+	}
+}
+
 func TestValidateRouteConfiguration_MissingScheme(t *testing.T) {
 	ctx := context.Background()
 
