@@ -105,6 +105,7 @@ class CatalogRoute:
     settlement_override: dict[str, str] | None
     payment_flow: str | None
     scheme_extra: dict[str, Any] | None = None
+    requirements_extra: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -148,7 +149,7 @@ def _route_filter() -> tuple[set[str], set[str]]:
     return parse("E2E_EXCLUDE_SCHEMES"), parse("E2E_EXCLUDE_NETWORKS")
 
 
-def catalog_routes() -> list[CatalogRoute]:
+def catalog_routes(env: Callable[[str], str | None] = os.getenv) -> list[CatalogRoute]:
     """Routes this SDK implements, after applying the harness exclusions."""
     excluded_schemes, excluded_networks = _route_filter()
     routes: list[CatalogRoute] = []
@@ -158,6 +159,12 @@ def catalog_routes() -> list[CatalogRoute]:
             continue
         network = definition["network"]
         if definition["scheme"] in excluded_schemes or network in excluded_networks:
+            continue
+        required = definition.get("requiresEnv")
+        if required and not (env(required) or "").strip():
+            continue
+        absent = definition.get("requiresEnvAbsent")
+        if absent and (env(absent) or "").strip():
             continue
         routes.append(
             CatalogRoute(
@@ -170,6 +177,7 @@ def catalog_routes() -> list[CatalogRoute]:
                 settlement_override=definition.get("settlementOverride"),
                 payment_flow=definition.get("paymentFlow"),
                 scheme_extra=definition.get("schemeExtra"),
+                requirements_extra=definition.get("requirementsExtra"),
             )
         )
 
@@ -264,16 +272,17 @@ def _resolve_price(
 
 def _merge_route_extra(
     price_extra: dict[str, str] | None,
+    requirements_extra: dict[str, Any] | None,
     payment_flow: str | None,
-) -> dict[str, str] | None:
-    """Merge price-derived extra with catalog paymentFlow.
+) -> dict[str, Any] | None:
+    """Merge price-derived extra with catalog requirementsExtra and paymentFlow.
 
     Authorization is omitted on the wire, matching core applyPaymentFlowWireExtra.
     """
     wire_flow = payment_flow if payment_flow and payment_flow != "authorization" else None
-    if not wire_flow and not price_extra:
+    if not wire_flow and not price_extra and not requirements_extra:
         return None
-    extra = dict(price_extra or {})
+    extra = {**(requirements_extra or {}), **(price_extra or {})}
     if wire_flow:
         extra["paymentFlow"] = wire_flow
     return extra
@@ -288,14 +297,14 @@ def resolve_routes(env: Callable[[str], str | None] = os.getenv) -> list[Resolve
     """
     resolved: list[ResolvedRoute] = []
 
-    for route in catalog_routes():
+    for route in catalog_routes(env):
         pay_to = env(_server_address_env_key(route.network))
         if not pay_to:
             continue
 
         caip2 = network_caip2(route.network, env)
         price, extra = _resolve_price(route, caip2, env)
-        extra = _merge_route_extra(extra, route.payment_flow)
+        extra = _merge_route_extra(extra, route.requirements_extra, route.payment_flow)
         if route.scheme_extra:
             extra = {**(extra or {}), **route.scheme_extra}
 

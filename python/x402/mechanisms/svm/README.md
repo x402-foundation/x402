@@ -1,6 +1,10 @@
 # x402 SVM Mechanism
 
-Solana implementation of the x402 payment protocol using the **Exact** payment scheme with SPL Token transfers.
+Solana implementation of x402 with SPL Token transfers (`exact`) and escrow-backed
+cumulative vouchers (`batch-settlement`).
+
+See the [batch-settlement guide](batch_settlement/README.md) for client payments,
+operator-signed metering, resource-server accounting, and facilitator redemption.
 
 ## Installation
 

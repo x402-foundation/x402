@@ -6,6 +6,7 @@
   "main": "dist/test.js",
   "scripts": {
     "test": "tsx test.ts",
+    "test:unit": "vitest run src",
     "test:watch": "tsc --watch",
     "setup": "./setup.sh",
     "setup:legacy": "./setup.sh --legacy",
