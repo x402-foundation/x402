@@ -5,6 +5,12 @@ EVM (Ethereum Virtual Machine) implementation of the x402 payment protocol using
 ## Installation
 
 ```bash
+npm install @x402/evm viem
+```
+
+`viem` is optional for consumers that import only `@x402/evm/exact/server`:
+
+```bash
 npm install @x402/evm
 ```
 
