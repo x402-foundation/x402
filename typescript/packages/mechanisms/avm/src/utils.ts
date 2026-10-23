@@ -45,6 +45,41 @@ export function normalizeAlgorandNetwork(network: string): Network {
   throw new Error(`Unsupported Algorand network: ${network}`);
 }
 
+const PUBLISHED_ALGORAND_PAIRS = [
+  [ALGORAND_MAINNET_CAIP2, `algorand:${ALGORAND_MAINNET_GENESIS_HASH}`],
+  [ALGORAND_TESTNET_CAIP2, `algorand:${ALGORAND_TESTNET_GENESIS_HASH}`],
+] as const;
+
+/**
+ * Both exact published forms for one Algorand network.
+ * Unknown strings throw. This does not derive a form by cutting a longer identifier.
+ *
+ * @param network - One of the four published Algorand identifiers
+ * @returns The canonical CAIP-2 form and the legacy genesis-hash form
+ */
+export function publishedAlgorandForms(network: string): readonly [string, string] {
+  for (const pair of PUBLISHED_ALGORAND_PAIRS) {
+    if (network === pair[0] || network === pair[1]) return pair;
+  }
+  throw new Error(`Unsupported Algorand network: ${network}`);
+}
+
+/**
+ * Lookup aliases for a network identifier.
+ * Non-Algorand names and unknown Algorand tails stay single-key lookups.
+ *
+ * @param network - Requested network identifier
+ * @returns The published pair, or the input alone
+ */
+export function algorandLookupAliases(network: string): readonly string[] {
+  if (!network.startsWith("algorand:")) return [network];
+  try {
+    return publishedAlgorandForms(network);
+  } catch {
+    return [network];
+  }
+}
+
 /**
  * Encodes transaction bytes to base64 string
  *
