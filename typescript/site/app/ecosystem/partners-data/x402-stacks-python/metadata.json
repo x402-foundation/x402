@@ -1,0 +1,8 @@
+{
+  "name": "x402Stacks Python",
+  "category": "Client-Side Integrations",
+  "logoUrl": "/logos/x402Stacks.svg",
+  "description": "Python SDK for x402 payments on Stacks. Supports STX, sBTC, and USDCx tokens for HTTP 402 payment-gated APIs.",
+  "websiteUrl": "https://stacksx402.com",
+  "githubUrl": "https://github.com/x402Stacks/x402-stacks-python"
+}
