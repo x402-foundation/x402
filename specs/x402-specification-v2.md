@@ -268,6 +268,48 @@ The `VerifyResponse` schema contains the following fields:
 
 Facilitators MAY expose extension outcomes separately from `extensions` as `extensionResponses` (populated from the transport sidechannel; never serialized to buyers). See section 7.2.1.
 
+**5.5 Settlement and Refusal Identity Invariant**
+
+Any artifact used to correlate a request across its settlement, refusal, replay-lookup, and challenge-quote paths — regardless of its name (`attempt_id`, `Idempotency-Key`, idempotency scope, or any scheme-specific field) — MUST be derived **once, at ingress**, from a single immutable snapshot of the request as received by the facilitator, and MUST NOT be re-derived or partially re-derived downstream.
+
+- The **ingress snapshot** is defined here rather than by the implementation. It MUST contain at least the decoded `method`, `path`, the canonical `query`, the decoded `body` (or a digest of it computed after decoding), and the resolved `payTo`, `asset`, `network`, `amount`, and `scheme`. A snapshot that omits any of these is not the snapshot this section requires, whatever the implementation calls it: the word "complete" cannot be satisfied by defining it as what was captured.
+
+- Identity MUST be derived over these **named decoded fields**, and MUST NOT be derived over the transmitted bytes of the request or any encoding that varies between representations of the same request. An attempt is the same attempt whether it arrived with a different key order or different whitespace, and that is what makes settle and refusal agree.
+
+- Normalization MUST be applied to each of these members as specified — `network` in CAIP-2 canonical form, EVM addresses lowercased, timestamps in RFC 3339 `Z` form, `version` as decoded, and URLs not normalized. The set of members requiring normalization is fixed by this section, not by whether an implementation defined a normalizer for them. A missing normalization does not fail alone: a rule whose trigger depends on reading another member correctly inherits that member's correctness, so an unnormalized `network` can silently disable the address rule downstream of it.
+
+- An **absent** member MUST be omitted from the hashed set entirely and MUST NOT be emitted as `null`, empty string, or zero. Absence has two sources and both are covered: a member the request never carried, and a member whose name was destroyed before it was read, so that a value which exists is not reachable by the name the set expects.
+
+- `/settle`, refusal handling ([§9 Error Handling](#9-error-handling)), replay-lookup, and challenge-quote responses all resolve the **same** artifact value. None of them re-reads the request or recomputes the digest **from request content that was not part of the ingress snapshot**. Re-invoking a pure scope function over the already-frozen ingress inputs is permitted and expected — that is a re-evaluation of a deterministic function, not a re-derivation. What the invariant forbids is identity derived from request content the facilitator did not capture at ingress.
+
+- A request whose `amount`, query, or body differs MUST produce a **different** artifact, established **at ingress** by comparing snapshots — not discovered later by comparing two downstream resolutions. A downstream divergence is not an acceptable observable: a second derivation producing a different value for one logical request is a violation, and any event that surfaces it is evidence of that violation rather than a permitted mode of operation. This is written as a prohibition because an obligation to *emit* on divergence is satisfied by never having anything to emit, once no path re-reads the request.
+
+**Countersignature verification (MUST).** Where the artifact is countersigned by a counterparty, that counterparty **MUST** independently recompute the fingerprint from the bytes it observed, and **MUST** refuse to sign if the recomputed value differs from the ingress-derived value. This recomputation is a verification obligation, not a second derivation: it does not create a new identity for the interaction, and on mismatch the interaction **MUST NOT** settle.
+
+Where the counterparty cannot perform the recomputation — because the bytes it needs were never observed, or because a member the comparison reads is absent — it **MUST NOT** sign either, and **MUST** report **which** of the two it is: refused because the values differ, or refused because the comparison could not be made. **Absence is not difference.** A clause that refuses only on mismatch is satisfied by a verifier that never compares, because the condition for refusal is never met; that is the failure this sentence exists to prevent. The two refusals are different facts about the world and MUST NOT be collapsed into one.
+
+**Signed-artifact references: three identifiers, not one.** This invariant constrains the derivation of an attempt's **own** identity, which MUST be derived from named decoded fields and MUST NOT be derived from wire bytes — an attempt is the same attempt whether it arrived with a different key order or different whitespace, and that is what makes settle and refusal agree.
+
+Where an attempt refers to a separately signed artifact, the reference is **not** automatically a digest of the transmitted bytes. What a signature covers is decided by the artifact's own scheme, and it is not the same object for every scheme: a scheme that signs bytes covers the transmitted bytes, while a scheme that signs a structured message — EIP-712 typed fields together with their domain, for example — covers that message, which is unchanged by member order or whitespace. Three identifiers are therefore in play, and an implementation MUST NOT collapse them:
+
+- **operation identity** — the attempt's own identifier, derived as above from named decoded fields;
+- **captured-artifact digest** — a digest of the bytes as transmitted, which identifies one exact capture: two serializations of the same signed content give two different values;
+- **signed-content identifier** — the identifier the scheme actually verifies, computed by that format's declared recipe.
+
+A format MUST declare which of these its reference covers, and MUST declare the input and version of that identifier. A reference MUST NOT be required to be taken over the whole transmitted envelope, and MUST NOT be required to be taken over a canonicalized form. The two errors point in opposite directions: hashing the wire envelope verifies a different object than the one a typed-field scheme signed, and canonicalizing first verifies a different object than the one a byte-signing scheme signed. That is why one digest cannot serve all three.
+
+A useful control: two differently serialized artifacts with identical signed content. Both MUST verify, their capture digests MUST differ, and the signed-content identifier MUST follow the declared recipe.
+
+None of these is a second derivation of the attempt identity.
+
+**Request layer vs. outcome layer.** The ingress snapshot covers **request content** — what the facilitator received when the request arrived. Outcome payloads produced later in the attempt (delivered measurements, readings, result digests) are carried as record content and are **not** folded into the identity artifact; an implementation MUST NOT extend identity derivation with values that did not exist at ingress. Metering data that resolves differently between full and partial delivery belongs to the outcome layer, so that the gap stays visible rather than being absorbed into a re-derived identity.
+
+This invariant is independent of the artifact's name or mechanism. An implementation that already uses `Idempotency-Key` satisfies it by binding that key to the ingress snapshot; an implementation that uses `attempt_id` satisfies it the same way. The requirement is the *discipline* (derive once, resolve identically), not the introduction of a specific field.
+
+**This section's place in the grounding stack.** The invariant and boundary set out here govern the identity-and-binding half of grounding — the part every grounding method must satisfy before a rating can point, verifiably, at the payment that grounds it. It is the coordination point on which the offer-and-receipt extension (#3827/#3830) and any later grounding method compose; the commitment format itself remains owned by those extensions. As the grounding work grows, this section is intended to be the stable base the rest of the stack is built on, so that new methods can be added without re-litigating the identity rule. We invite the spec owners to align their extensions here.
+
+See [§10.1 Replay Attack Prevention](#101-replay-attack-prevention) and the normative conformance tests in the specification repository for the required negative cases.
+
 **6. Payment Schemes (The Logic)**
 
 This section describes the payment schemes supported by the x402 protocol. Payment schemes define how payments are formed, validated, and settled on specific payment networks. Schemes are independent of the underlying transport mechanism.
@@ -399,6 +441,8 @@ Durably commits payment state for the request — establishing finality from the
 > **Note**: While the request structure is identical, some payment schemes may assign different semantics to fields at settlement time versus verification time. For example, in the `upto` scheme, the `amount` field in `paymentRequirements` represents the maximum authorized amount at verification time, but the actual amount to settle at settlement time. See individual scheme specifications for details.
 
 > **Note**: `/settle` MAY be invoked more than once for a single payment (for example, the `escrow` flow settles a deposit before the resource executes and the final charge after). A scheme defining multiple settles MUST specify how the facilitator distinguishes them from payload content. Because the client typically signs a single payload, that distinction is usually server-led (for example, a scheme-specific `step` field), though a facilitator MAY instead infer the step from network-ledger state.
+
+> **Note**: Every settle, refusal, and replay-lookup for a request MUST resolve the same identity artifact derived once at ingress (see [§5.5 Settlement and Refusal Identity Invariant](#55-settlement-and-refusal-identity-invariant)). Distinct settles of one payment (for example, the `escrow` deposit versus the final charge) are distinguished by payload content or ledger state per the rule above — not by re-deriving identity from a different request snapshot mid-attempt.
 
 **Successful Response:**
 
@@ -617,6 +661,7 @@ The x402 protocol implements multiple layers of protection against replay attack
 - **Blockchain Protection**: EIP-3009 contracts inherently prevent nonce reuse at the smart contract level
 - **Time Constraints**: Authorizations have explicit valid time windows to limit their lifetime
 - **Signature Verification**: All authorizations are cryptographically signed by the payer
+- **Ingress Identity Binding**: The artifact used to correlate replays, settles, and refusals ([§5.5 Settlement and Refusal Identity Invariant](#55-settlement-and-refusal-identity-invariant)) is derived once at ingress from the full request snapshot. Replays, settles, and refusals of the same logical request resolve the same artifact; a request whose query or body differs between paths is treated as a distinct request rather than a replay of the original.
 
 **10.2 Authentication Integration**
 
