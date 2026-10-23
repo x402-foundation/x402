@@ -1,4 +1,5 @@
 import type { VerifyResponse, SettleResponse } from "./facilitator";
+import type { PaymentPayload, PaymentRequirements } from "./payments";
 import type {
   PaymentRequiredContext,
   SettleResultContext,
@@ -27,8 +28,22 @@ export type {
   VerifiedPaymentCanceledContext,
 };
 
+export interface FacilitatorSettleContext {
+  paymentPayload: PaymentPayload;
+  requirements: PaymentRequirements;
+}
+
+export interface FacilitatorSettleResultContext extends FacilitatorSettleContext {
+  result: SettleResponse;
+}
+
 export interface FacilitatorExtension {
   key: string;
+  /**
+   * Called after successful settlement. Return value is placed at SettleResponse.extensions[key].
+   * Returning undefined skips the key entirely. Errors are caught and logged — they never fail the settlement.
+   */
+  enrichSettleResponse?: (context: FacilitatorSettleResultContext) => Promise<unknown>;
 }
 
 /**
