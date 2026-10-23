@@ -66,6 +66,7 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "NOTICE"
   ]
 }
