@@ -1,0 +1,21 @@
+{
+  "id": "X4-035",
+  "title": "Negative Amount Payment",
+  "category": "protocol_abuse",
+  "requirement": "HC-25: Servers must reject payments with negative amounts (credit/refund attack)",
+  "method": "GET",
+  "request": {
+    "negative_amounts": [
+      "-1",
+      "-1000000",
+      "-0.01",
+      "-999999999999"
+    ]
+  },
+  "owasp_asi": "ASI03",
+  "severity": "critical",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-035"
+}
