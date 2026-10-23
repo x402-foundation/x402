@@ -31,6 +31,10 @@ from x402.http.types import (
     ProcessSettleResult,
     RouteConfig,
 )
+from x402.http.utils import (
+    decode_payment_required_header,
+    encode_payment_signature_header,
+)
 from x402.schemas import PaymentPayload, PaymentRequirements
 from x402.schemas.errors import FacilitatorCapabilityError
 from x402.schemas.hooks import (
@@ -41,6 +45,7 @@ from x402.schemas.hooks import (
 
 from ....mocks import (
     CashFacilitatorClientSync,
+    CashSchemeNetworkClient,
     CashSchemeNetworkFacilitator,
     CashSchemeNetworkServer,
 )
@@ -1394,6 +1399,48 @@ class TestLiteralRoutePercentEncodedSeparatorBypass:
 
     def test_head_uses_get_payment_rule(self, client) -> None:
         assert client.head("/api/premium").status_code == 402
+
+    def test_head_carrying_payment_is_refused_without_settling(self, client) -> None:
+        """A HEAD response carries no content, so settling on one charges for
+        nothing deliverable.
+
+        HEAD reaches this route through the GET fallback added alongside the
+        test above, which is what closes the unpaid-HEAD bypass. This covers
+        the other half: once HEAD matches a paid route, a HEAD that carries a
+        payment must be refused before settlement rather than charged for a
+        body it can never return.
+
+        The payload below matches the route's requirements, so without the
+        guard the request proceeds to verification and settlement.
+        """
+        requirements = PaymentRequirements(
+            scheme="cash",
+            network="x402:cash",
+            asset="USD",
+            amount="0.01",
+            pay_to="Alice",
+            max_timeout_seconds=300,
+            extra={},
+        )
+        payload = PaymentPayload(
+            x402_version=2,
+            accepted=requirements,
+            payload=CashSchemeNetworkClient("Bob").create_payment_payload(requirements),
+        )
+
+        response = client.head(
+            "/api/premium",
+            headers={"PAYMENT-SIGNATURE": encode_payment_signature_header(payload)},
+        )
+
+        assert response.status_code == 402
+        assert "PAYMENT-RESPONSE" not in response.headers, (
+            "a settlement header means the payment was taken for an empty body"
+        )
+
+        challenge = decode_payment_required_header(response.headers["PAYMENT-REQUIRED"])
+        assert "HEAD" in (challenge.error or "")
+        assert "GET" in (challenge.error or "")
 
     @pytest.mark.parametrize(
         "raw_uri",
