@@ -527,6 +527,112 @@ describe("ExactHedera facilitator scheme", () => {
     expect(settled.errorMessage).toContain("submit failed");
   });
 
+  describe("post-settle record verification", () => {
+    async function settleWithTransfers(transfers: {
+      hbarTransfers: { accountId: string; amount: string }[];
+      tokenTransfers: Record<string, { accountId: string; amount: string }[]>;
+    }) {
+      const signer = createSigner();
+      signer.signAndSubmitTransaction = vi.fn(async () => ({
+        transactionId: "0.0.5001@1700000001.000000000",
+        transfers,
+      }));
+      const scheme = new ExactHederaScheme(signer);
+      const payload: PaymentPayload = {
+        ...basePayload,
+        payload: {
+          transaction: await createTransferTransactionBase64({
+            feePayer: "0.0.5001",
+            payer: "0.0.9001",
+            payTo: "0.0.7001",
+            asset: "0.0.6001",
+            amount: "1000",
+          }),
+        },
+      };
+      return scheme.settle(payload, baseRequirements);
+    }
+
+    it("succeeds when the record credits the payee the full amount", async () => {
+      const settled = await settleWithTransfers({
+        hbarTransfers: [],
+        tokenTransfers: {
+          "0.0.6001": [
+            { accountId: "0.0.9001", amount: "-1000" },
+            { accountId: "0.0.7001", amount: "1000" },
+          ],
+        },
+      });
+      expect(settled.success).toBe(true);
+    });
+
+    it("fails when a custom fee leaves the payee underpaid", async () => {
+      const settled = await settleWithTransfers({
+        hbarTransfers: [],
+        tokenTransfers: {
+          "0.0.6001": [
+            { accountId: "0.0.9001", amount: "-1000" },
+            { accountId: "0.0.7001", amount: "950" },
+            { accountId: "0.0.4242", amount: "50" },
+          ],
+        },
+      });
+      expect(settled.success).toBe(false);
+      expect(settled.errorReason).toBe("settlement_transfer_amount_mismatch");
+      expect(settled.transaction).toBe("0.0.5001@1700000001.000000000");
+    });
+
+    it("fails when the record credits a different account", async () => {
+      const settled = await settleWithTransfers({
+        hbarTransfers: [],
+        tokenTransfers: {
+          "0.0.6001": [
+            { accountId: "0.0.9001", amount: "-1000" },
+            { accountId: "0.0.8888", amount: "1000" },
+          ],
+        },
+      });
+      expect(settled.success).toBe(false);
+      expect(settled.errorReason).toBe("settlement_transfer_amount_mismatch");
+    });
+
+    it("ignores fee legs denominated in a different token", async () => {
+      const settled = await settleWithTransfers({
+        hbarTransfers: [],
+        tokenTransfers: {
+          "0.0.6001": [
+            { accountId: "0.0.9001", amount: "-1000" },
+            { accountId: "0.0.7001", amount: "1000" },
+          ],
+          "0.0.7777": [
+            { accountId: "0.0.9001", amount: "-5" },
+            { accountId: "0.0.4242", amount: "5" },
+          ],
+        },
+      });
+      expect(settled.success).toBe(true);
+    });
+
+    it("succeeds without the check when the signer returns no record transfers", async () => {
+      const signer = createSigner();
+      const scheme = new ExactHederaScheme(signer);
+      const payload: PaymentPayload = {
+        ...basePayload,
+        payload: {
+          transaction: await createTransferTransactionBase64({
+            feePayer: "0.0.5001",
+            payer: "0.0.9001",
+            payTo: "0.0.7001",
+            asset: "0.0.6001",
+            amount: "1000",
+          }),
+        },
+      };
+      const settled = await scheme.settle(payload, baseRequirements);
+      expect(settled.success).toBe(true);
+    });
+  });
+
   it("returns managed signer addresses via getSigners", () => {
     const signer = createSigner();
     const scheme = new ExactHederaScheme(signer);
