@@ -104,9 +104,12 @@ deployment table above, ABI-encoded as its normalized 20-byte address.
 | Setting | Value |
 | --- | --- |
 | Solidity version | `0.8.25` |
+| Independently reproduced compiler build | `0.8.25+commit.b61c2a91` (`solc-js@0.8.25`) |
+| OpenZeppelin dependency | `@openzeppelin/contracts@5.6.1` |
 | Optimizer | Enabled, `999999` runs |
 | ViaIR | Disabled |
 | VM target | `cancun` |
+| Metadata | `useLiteralContent: true`, default IPFS bytecode hash |
 | Repository TRON compiler mode | `tronSolc.enable = true` |
 
 | Network | TRONSCAN verified source |
@@ -118,10 +121,26 @@ deployment table above, ABI-encoded as its normalized 20-byte address.
 The pinned TRON base contract uses OpenZeppelin `ReentrancyGuardTransient`; the Foundation base
 contract at [revision `7f2b2f1f`](https://github.com/x402-foundation/x402/blob/7f2b2f1f77fa5317615735e3378a6fad41cccb4e/contracts/evm/src/x402BasePermit2Proxy.sol)
 uses `ReentrancyGuard`. The matching exact-proxy interface therefore does not imply identical full
-source or runtime bytecode. Reproducing a bytecode match requires the complete verified source,
-dependencies, compiler build and metadata settings, and the network-specific constructor argument;
-runtime comparison must also account for the immutable Permit2 address. Explorer source verification
-is not an independent security audit or proof of conformance to every rule in this binding.
+source or runtime bytecode with that Foundation revision.
+
+An independent recompilation on 2026-10-23 reproduced the full creation and runtime bytecode for
+all three TRON deployments, including metadata. The build uses the pinned repository's three source
+files (`x402ExactPermit2Proxy.sol`, `x402BasePermit2Proxy.sol`, and `interfaces/ISignatureTransfer.sol`)
+and their OpenZeppelin dependencies as separate source units, preserving repository/import paths.
+Flattening the input or omitting `useLiteralContent: true` changes the metadata hash.
+The common creation code is 3772 bytes (3804 with the constructor argument); each runtime is
+3593 bytes. Creation-code comparison includes the network's `_permit2` constructor argument;
+runtime comparison fills the compiler-reported immutable references with that same address before
+comparison with `eth_getCode` and `wallet/getcontractinfo`. No metadata was stripped for the match.
+
+| Network | Full runtime SHA-256 (hex decoded to bytes before hashing) |
+| --- | --- |
+| Mainnet | `a4e90eed8aeb8d7fa165980da56d6533b7fd843f5a2d92f5843ce15c55a29fb0` |
+| Nile | `ec5a9ca782da5dc89cb7a8ddac6b74c661fac312507a5de688492335fa82b3e1` |
+| Shasta | `4c4a88e859a975afeef7d323e5a1f90b0025ff11d55acb203014f1061f22daf8` |
+
+This establishes source-to-bytecode reproducibility for the listed TRON deployments; it is not an
+independent security audit or proof of conformance to every rule in this binding.
 
 ## Payment Requirements
 
