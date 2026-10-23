@@ -108,6 +108,17 @@ const facilitatorClient = new HTTPFacilitatorClient({
 
 **Note:** a timeout during `settle` is an indeterminate outcome — the facilitator may have completed the settlement even though the resource server did not receive a response. Handle `FacilitatorTimeoutError` from `settle` accordingly.
 
+### Facilitator response body limits
+
+The `HTTPFacilitatorClient` buffers facilitator response bodies up to a fixed limit before parsing them. If a facilitator returns a response that exceeds the limit, the client throws a `ResponseBodyTooLargeError` and cancels the stream rather than buffering the rest.
+
+| Response type | Limit |
+| ------------- | ----- |
+| Control-plane (`verify`, `settle`, `getSupported`) | 1 MiB |
+| Bazaar discovery pages | 4 MiB |
+
+These limits protect resource servers from memory exhaustion caused by unexpectedly large or malformed facilitator responses. A `ResponseBodyTooLargeError` from a production facilitator is unusual and likely indicates a misconfigured or misbehaving facilitator endpoint.
+
 ### Duplicate Settlement (Solana)
 
 On Solana, a race condition can occur when the same payment transaction is submitted to a facilitator's `/settle` endpoint multiple times before the first submission is confirmed onchain. Because Solana's RPC returns "success" for duplicate submissions (the network deduplicates at the consensus level), the facilitator may return a successful settlement response for each call. A malicious client could exploit this to access multiple resources while only paying once.
