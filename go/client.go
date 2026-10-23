@@ -259,6 +259,42 @@ func recoverCreationFailure[T any](
 	return zero, false, nil
 }
 
+// finishAfterPaymentCreation surfaces completion-hook errors. Recovery may
+// substitute a payload, but must not recreate or undo the original payment.
+func finishAfterPaymentCreation[T PaymentPayloadView](
+	c *x402Client,
+	ctx context.Context,
+	scheme any,
+	creationCtx PaymentCreationContext,
+	payload T,
+) (T, error) {
+	var zero T
+	var hookErr error
+	for _, hook := range c.afterPaymentCreationHooks {
+		hookErr = hook(PaymentCreatedContext{
+			PaymentCreationContext: creationCtx,
+			Payload:                payload,
+		})
+		if hookErr != nil {
+			break
+		}
+	}
+	if hookErr == nil {
+		return payload, nil
+	}
+	recovered, recoveredOK, recoverErr := recoverCreationFailure[T](c, ctx, scheme, PaymentCreationFailureContext{
+		PaymentCreationContext: creationCtx,
+		Error:                  hookErr,
+	})
+	if recoverErr != nil {
+		return zero, recoverErr
+	}
+	if recoveredOK {
+		return recovered, nil
+	}
+	return zero, hookErr
+}
+
 // HandlePaymentResponse dispatches the OnPaymentResponse lifecycle for a paid
 // response: invokes the scheme's PaymentResponseHandler (if implemented) followed
 // by every user-registered OnPaymentResponseHook. Returns Recovered=true if any
@@ -749,13 +785,7 @@ func (c *x402Client) CreatePaymentPayloadV1(
 		return types.PaymentPayloadV1{}, err
 	}
 
-	for _, hook := range c.afterPaymentCreationHooks {
-		_ = hook(PaymentCreatedContext{
-			PaymentCreationContext: creationCtxV1,
-			Payload:                payload,
-		})
-	}
-	return payload, nil
+	return finishAfterPaymentCreation[types.PaymentPayloadV1](c, ctx, client, creationCtxV1, payload)
 }
 
 // CreatePaymentPayload creates a payment payload (V2, default)
@@ -853,13 +883,7 @@ func (c *x402Client) CreatePaymentPayload(
 		return types.PaymentPayload{}, err
 	}
 
-	for _, hook := range c.afterPaymentCreationHooks {
-		_ = hook(PaymentCreatedContext{
-			PaymentCreationContext: creationCtxV2,
-			Payload:                partial,
-		})
-	}
-	return partial, nil
+	return finishAfterPaymentCreation[types.PaymentPayload](c, ctx, client, creationCtxV2, partial)
 }
 
 // GetRegisteredSchemes returns a list of registered schemes for debugging
