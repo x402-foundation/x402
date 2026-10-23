@@ -79,7 +79,7 @@ func TestDecodePaymentRequiredHeader(t *testing.T) {
 	pr := x402.PaymentRequired{
 		X402Version: 2,
 		Error:       "boom",
-		Accepts:     []types.PaymentRequirements{{Scheme: "batch-settlement"}},
+		Accepts:     []types.PaymentRequirements{{Scheme: "batch-settlement", Network: "eip155:8453"}},
 	}
 	raw, _ := json.Marshal(pr)
 	encoded := base64.StdEncoding.EncodeToString(raw)
@@ -211,7 +211,7 @@ func TestProbeRefundRequirements_MissingHeader(t *testing.T) {
 }
 
 func TestProbeRefundRequirements_NoBatchedScheme(t *testing.T) {
-	pr := x402.PaymentRequired{Accepts: []types.PaymentRequirements{{Scheme: "exact"}}}
+	pr := x402.PaymentRequired{Accepts: []types.PaymentRequirements{{Scheme: "exact", Network: "eip155:8453"}}}
 	raw, _ := json.Marshal(pr)
 	header := base64.StdEncoding.EncodeToString(raw)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -225,7 +225,7 @@ func TestProbeRefundRequirements_NoBatchedScheme(t *testing.T) {
 }
 
 func TestProbeRefundRequirements_MissingReceiverAuthorizer(t *testing.T) {
-	pr := x402.PaymentRequired{Accepts: []types.PaymentRequirements{{Scheme: batchsettlement.SchemeBatched}}}
+	pr := x402.PaymentRequired{Accepts: []types.PaymentRequirements{{Scheme: batchsettlement.SchemeBatched, Network: "eip155:8453"}}}
 	raw, _ := json.Marshal(pr)
 	header := base64.StdEncoding.EncodeToString(raw)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -241,8 +241,9 @@ func TestProbeRefundRequirements_MissingReceiverAuthorizer(t *testing.T) {
 func TestProbeRefundRequirements_OK(t *testing.T) {
 	pr := x402.PaymentRequired{
 		Accepts: []types.PaymentRequirements{{
-			Scheme: batchsettlement.SchemeBatched,
-			Extra:  map[string]interface{}{"receiverAuthorizer": "0x1"},
+			Scheme:  batchsettlement.SchemeBatched,
+			Network: "eip155:8453",
+			Extra:   map[string]interface{}{"receiverAuthorizer": "0x1"},
 		}},
 	}
 	raw, _ := json.Marshal(pr)

@@ -2326,7 +2326,7 @@ func TestBazaarDynamicRoutes(t *testing.T) {
 			"scheme":      "exact",
 			"network":     "eip155:8453",
 			"payload":     map[string]interface{}{},
-			"accepted":    map[string]interface{}{},
+			"accepted":    map[string]interface{}{"scheme": "exact", "network": "eip155:8453"},
 			"resource":    map[string]interface{}{"url": "http://example.com/search?q=test"},
 			"extensions": map[string]interface{}{
 				bazaar.BAZAAR.Key(): extension,
@@ -3060,7 +3060,7 @@ func TestDynamicRoutesCatalogConsolidation(t *testing.T) {
 			"scheme":      "exact",
 			"network":     "eip155:8453",
 			"payload":     map[string]interface{}{},
-			"accepted":    map[string]interface{}{},
+			"accepted":    map[string]interface{}{"scheme": "exact", "network": "eip155:8453"},
 			"resource":    map[string]interface{}{"url": "http://api.example.com/users/" + userID},
 			"extensions": map[string]interface{}{
 				bazaar.BAZAAR.Key(): enrichedExt,

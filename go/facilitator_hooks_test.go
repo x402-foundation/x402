@@ -23,8 +23,8 @@ func TestFacilitatorBeforeVerifyHook_Abort(t *testing.T) {
 	})
 
 	// Try to verify (should be aborted by hook)
-	payload := types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{}}
 	requirements := types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"}
+	payload := types.PaymentPayload{X402Version: 2, Accepted: requirements, Payload: map[string]interface{}{}}
 
 	payloadBytes, _ := json.Marshal(payload)
 	requirementsBytes, _ := json.Marshal(requirements)
@@ -76,8 +76,8 @@ func TestFacilitatorAfterVerifyHook(t *testing.T) {
 	})
 
 	// Verify payment (marshal to bytes for facilitator API)
-	payload := types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{}}
 	requirements := types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"}
+	payload := types.PaymentPayload{X402Version: 2, Accepted: requirements, Payload: map[string]interface{}{}}
 
 	payloadBytes, _ := json.Marshal(payload)
 	requirementsBytes, _ := json.Marshal(requirements)
@@ -127,8 +127,8 @@ func TestFacilitatorOnVerifyFailureHook_Recover(t *testing.T) {
 	})
 
 	// Verify payment (should be recovered by hook)
-	payload := types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{}}
 	requirements := types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"}
+	payload := types.PaymentPayload{X402Version: 2, Accepted: requirements, Payload: map[string]interface{}{}}
 
 	payloadBytes, _ := json.Marshal(payload)
 	requirementsBytes, _ := json.Marshal(requirements)
@@ -165,8 +165,8 @@ func TestFacilitatorBeforeSettleHook_Abort(t *testing.T) {
 	})
 
 	// Try to settle (should be aborted by hook)
-	payload := types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{}}
 	requirements := types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"}
+	payload := types.PaymentPayload{X402Version: 2, Accepted: requirements, Payload: map[string]interface{}{}}
 
 	payloadBytes, _ := json.Marshal(payload)
 	requirementsBytes, _ := json.Marshal(requirements)
@@ -208,8 +208,8 @@ func TestFacilitatorAfterSettleHook(t *testing.T) {
 	})
 
 	// Settle payment
-	payload := types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{}}
 	requirements := types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"}
+	payload := types.PaymentPayload{X402Version: 2, Accepted: requirements, Payload: map[string]interface{}{}}
 
 	payloadBytes, _ := json.Marshal(payload)
 	requirementsBytes, _ := json.Marshal(requirements)
@@ -261,8 +261,8 @@ func TestFacilitatorOnSettleFailureHook_Recover(t *testing.T) {
 	})
 
 	// Settle payment (should be recovered by hook)
-	payload := types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{}}
 	requirements := types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"}
+	payload := types.PaymentPayload{X402Version: 2, Accepted: requirements, Payload: map[string]interface{}{}}
 
 	payloadBytes, _ := json.Marshal(payload)
 	requirementsBytes, _ := json.Marshal(requirements)
@@ -323,8 +323,8 @@ func TestFacilitatorMultipleHooks_ExecutionOrder(t *testing.T) {
 	})
 
 	// Verify payment
-	payload := types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{}}
 	requirements := types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"}
+	payload := types.PaymentPayload{X402Version: 2, Accepted: requirements, Payload: map[string]interface{}{}}
 
 	payloadBytes, _ := json.Marshal(payload)
 	requirementsBytes, _ := json.Marshal(requirements)
