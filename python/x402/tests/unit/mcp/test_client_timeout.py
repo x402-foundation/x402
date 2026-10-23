@@ -86,7 +86,10 @@ async def test_session_paid_timeout_uses_accept_max_timeout_seconds() -> None:
             ]
         )
     )
-    x402_client = SimpleNamespace(create_payment_payload=AsyncMock(return_value=_payload(600)))
+    x402_client = SimpleNamespace(
+        create_payment_payload=AsyncMock(return_value=_payload(600)),
+        handle_payment_response=AsyncMock(return_value=None),
+    )
 
     result = await x402MCPSession(session, x402_client).call_tool("paid_tool", {})
 
@@ -108,7 +111,10 @@ async def test_session_paid_timeout_defaults_to_300s_without_accept() -> None:
         )
     )
     payload = SimpleNamespace(accepted=None, model_dump=lambda **_kwargs: {"payload": {}})
-    x402_client = SimpleNamespace(create_payment_payload=AsyncMock(return_value=payload))
+    x402_client = SimpleNamespace(
+        create_payment_payload=AsyncMock(return_value=payload),
+        handle_payment_response=AsyncMock(return_value=None),
+    )
 
     result = await x402MCPSession(session, x402_client).call_tool("paid_tool", {})
 
@@ -128,7 +134,10 @@ async def test_session_explicit_timeout_overrides_accept() -> None:
             ]
         )
     )
-    x402_client = SimpleNamespace(create_payment_payload=AsyncMock(return_value=_payload(600)))
+    x402_client = SimpleNamespace(
+        create_payment_payload=AsyncMock(return_value=_payload(600)),
+        handle_payment_response=AsyncMock(return_value=None),
+    )
     override = timedelta(seconds=12)
 
     await x402MCPSession(session, x402_client).call_tool(
@@ -198,7 +207,10 @@ def test_sync_client_paid_timeout_uses_accept_max_timeout_seconds() -> None:
             ]
         )
     )
-    mock_payment = SimpleNamespace(create_payment_payload=Mock(return_value=_payload(600)))
+    mock_payment = SimpleNamespace(
+        create_payment_payload=Mock(return_value=_payload(600)),
+        handle_payment_response=Mock(return_value=None),
+    )
 
     result = x402MCPClientSync(mock_mcp, mock_payment).call_tool("paid_tool", {})
 
@@ -219,7 +231,8 @@ async def test_session_paid_timeout_clamps_huge_accept_to_default_cap() -> None:
         )
     )
     x402_client = SimpleNamespace(
-        create_payment_payload=AsyncMock(return_value=_payload(1_000_000))
+        create_payment_payload=AsyncMock(return_value=_payload(1_000_000)),
+        handle_payment_response=AsyncMock(return_value=None),
     )
 
     result = await x402MCPSession(session, x402_client).call_tool("paid_tool", {})
@@ -239,7 +252,10 @@ async def test_session_paid_timeout_under_cap_uses_accept() -> None:
             ]
         )
     )
-    x402_client = SimpleNamespace(create_payment_payload=AsyncMock(return_value=_payload(120)))
+    x402_client = SimpleNamespace(
+        create_payment_payload=AsyncMock(return_value=_payload(120)),
+        handle_payment_response=AsyncMock(return_value=None),
+    )
 
     await x402MCPSession(session, x402_client).call_tool("paid_tool", {})
 
@@ -257,7 +273,10 @@ async def test_session_paid_timeout_honours_raised_cap() -> None:
             ]
         )
     )
-    x402_client = SimpleNamespace(create_payment_payload=AsyncMock(return_value=_payload(900)))
+    x402_client = SimpleNamespace(
+        create_payment_payload=AsyncMock(return_value=_payload(900)),
+        handle_payment_response=AsyncMock(return_value=None),
+    )
 
     await x402MCPSession(session, x402_client, max_request_timeout_seconds=900).call_tool(
         "paid_tool", {}
@@ -314,7 +333,10 @@ def test_sync_client_paid_timeout_clamps_huge_accept() -> None:
             ]
         )
     )
-    mock_payment = SimpleNamespace(create_payment_payload=Mock(return_value=_payload(1_000_000)))
+    mock_payment = SimpleNamespace(
+        create_payment_payload=Mock(return_value=_payload(1_000_000)),
+        handle_payment_response=Mock(return_value=None),
+    )
 
     x402MCPClientSync(mock_mcp, mock_payment).call_tool("paid_tool", {})
 
