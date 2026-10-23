@@ -13,7 +13,7 @@ type HookHandler = (...args: unknown[]) => Promise<unknown>;
  * Captured hooks from a mock Fastify instance.
  */
 interface CapturedHooks {
-  onRequest: HookHandler[];
+  preValidation: HookHandler[];
   onSend: HookHandler[];
 }
 
@@ -23,11 +23,11 @@ interface CapturedHooks {
  * @returns Object containing the mock app and captured hooks.
  */
 function createMockApp(): { app: FastifyInstance; hooks: CapturedHooks } {
-  const hooks: CapturedHooks = { onRequest: [], onSend: [] };
+  const hooks: CapturedHooks = { preValidation: [], onSend: [] };
 
   const app = {
     addHook: vi.fn((name: string, handler: HookHandler) => {
-      if (name === "onRequest") hooks.onRequest.push(handler);
+      if (name === "preValidation") hooks.preValidation.push(handler);
       if (name === "onSend") hooks.onSend.push(handler);
     }),
     decorateRequest: vi.fn(),
@@ -147,7 +147,7 @@ describe("paymentMiddleware malformed path bypass", () => {
       const request = createMockRequest({ url: path });
       const reply = createMockReply();
 
-      await hooks.onRequest[0](request, reply);
+      await hooks.preValidation[0](request, reply);
 
       expect(processSpy).toHaveBeenCalled();
       expect(processSpy.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ path }));
