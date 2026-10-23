@@ -21,7 +21,6 @@ from ....schemas import (
     VerifyResponse,
 )
 from ..constants import (
-    COMPUTE_BUDGET_PROGRAM_ADDRESS,
     ERR_AMOUNT_INSUFFICIENT,
     ERR_DUPLICATE_SETTLEMENT,
     ERR_FEE_PAYER_MISSING,
@@ -29,7 +28,6 @@ from ..constants import (
     ERR_FEE_PAYER_TRANSFERRING,
     ERR_INVALID_COMPUTE_LIMIT,
     ERR_INVALID_COMPUTE_PRICE,
-    ERR_INVALID_INSTRUCTION_COUNT,
     ERR_MEMO_COUNT,
     ERR_MEMO_MISMATCH,
     ERR_MINT_MISMATCH,
@@ -40,16 +38,9 @@ from ..constants import (
     ERR_SIMULATION_FAILED,
     ERR_TRANSACTION_DECODE_FAILED,
     ERR_TRANSACTION_FAILED,
-    ERR_UNKNOWN_FIFTH_INSTRUCTION,
-    ERR_UNKNOWN_FOURTH_INSTRUCTION,
-    ERR_UNKNOWN_SIXTH_INSTRUCTION,
     ERR_UNSUPPORTED_SCHEME,
-    LIGHTHOUSE_PROGRAM_ADDRESS,
     MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
-    MEMO_PROGRAM_ADDRESS,
     SCHEME_EXACT,
-    TOKEN_2022_PROGRAM_ADDRESS,
-    TOKEN_PROGRAM_ADDRESS,
 )
 from ..settlement_cache import SettlementCache
 from ..signer import FacilitatorSvmSigner
@@ -60,6 +51,7 @@ from ..utils import (
     get_token_payer_from_transaction,
     transaction_message_hash,
 )
+from .instruction_layout import InstructionTuple, LayoutError, resolve_protocol_layout
 
 
 class ExactSvmScheme:
@@ -80,6 +72,8 @@ class ExactSvmScheme:
         signer: FacilitatorSvmSigner,
         settlement_cache: SettlementCache | None = None,
         pending_store: PendingSettlementStore | None = None,
+        preflight_instruction_allowlist: list[InstructionTuple] | None = None,
+        postflight_instruction_allowlist: list[InstructionTuple] | None = None,
     ):
         """Create ExactSvmScheme facilitator.
 
@@ -90,11 +84,25 @@ class ExactSvmScheme:
                 transaction reconcile against an already-broadcast signature instead of
                 re-verifying and re-sending (see settlement_pending). Defaults to a fresh
                 in-memory store when omitted.
+            preflight_instruction_allowlist: Instruction tuples that may appear as a
+                contiguous block (guard instructions aside) immediately BEFORE the
+                required protocol instructions. Extension point for prefixing the
+                payment with out-of-band setup. A matched block is fee-payer-isolation
+                checked. Defaults to no allowlisted tuples (current behavior).
+            postflight_instruction_allowlist: Instruction tuples that may appear as a
+                contiguous block (guard instructions aside) immediately AFTER the
+                required protocol instructions. See preflight_instruction_allowlist.
         """
         self._signer = signer
         self._settlement_cache = settlement_cache or SettlementCache()
         self._pending_store: PendingSettlementStore = (
             pending_store or InMemoryPendingSettlementStore()
+        )
+        self._preflight_instruction_allowlist: list[InstructionTuple] = (
+            preflight_instruction_allowlist or []
+        )
+        self._postflight_instruction_allowlist: list[InstructionTuple] = (
+            postflight_instruction_allowlist or []
         )
 
     def get_extra(self, network: Network) -> dict[str, Any] | None:
@@ -138,7 +146,10 @@ class ExactSvmScheme:
 
         Validates:
         - Scheme and network match
-        - Transaction structure (3-6 instructions)
+        - Transaction instructions: ComputeLimit, ComputePrice, TransferChecked, and an
+          optional Memo must appear in that fixed relative order, identified by program
+          ID + instruction discriminator rather than absolute position. Guard
+          instructions (currently only Lighthouse) may appear anywhere in the sequence.
         - Compute budget instructions are valid
         - TransferChecked instruction:
           - Token program is known (Token or Token-2022)
@@ -186,42 +197,38 @@ class ExactSvmScheme:
             )
 
         message = tx.message
-        instructions = message.instructions
         static_accounts = list(message.account_keys)
 
-        # 3-6 instructions: ComputeLimit + ComputePrice + TransferChecked + optional Lighthouse/Memo
-        if len(instructions) < 3 or len(instructions) > 6:
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_INVALID_INSTRUCTION_COUNT, payer=""
+        # Protocol instructions (ComputeLimit, ComputePrice, TransferChecked, and
+        # optional Memo) are identified by program ID + instruction discriminator and
+        # MUST appear in that fixed relative order. Guard instructions (currently only
+        # Lighthouse -- Phantom/Solflare's wallet-protection assertions) may appear
+        # anywhere, since they only assert/abort and never mutate payment-relevant
+        # state. A configured preflight/postflight allowlist block is stripped (and
+        # fee-payer-isolation-checked) first.
+        # See: https://github.com/x402-foundation/x402/issues/828
+        #  and: https://github.com/x402-foundation/x402/issues/2097
+        try:
+            partitioned = resolve_protocol_layout(
+                static_accounts,
+                message.instructions,
+                self._preflight_instruction_allowlist,
+                self._postflight_instruction_allowlist,
+                Pubkey.from_string(fee_payer_str),
             )
+        except LayoutError as e:
+            return VerifyResponse(is_valid=False, invalid_reason=e.reason, payer="")
 
         # Step 3: Verify Compute Budget Instructions
-        compute_budget_program = Pubkey.from_string(COMPUTE_BUDGET_PROGRAM_ADDRESS)
-
-        # Verify compute unit limit instruction (index 0)
-        cu_limit_ix = instructions[0]
-        cu_limit_program = static_accounts[cu_limit_ix.program_id_index]
-        cu_limit_data = bytes(cu_limit_ix.data)
-
-        if cu_limit_program != compute_budget_program or len(cu_limit_data) < 1:
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_INVALID_COMPUTE_LIMIT, payer=""
-            )
-        if cu_limit_data[0] != 2:  # SetComputeUnitLimit discriminator
+        # Roles (discriminators) were established by classification; check payloads.
+        cu_limit_data = bytes(partitioned.compute_limit_ix.data)
+        if len(cu_limit_data) < 5:  # discriminator + u32 units
             return VerifyResponse(
                 is_valid=False, invalid_reason=ERR_INVALID_COMPUTE_LIMIT, payer=""
             )
 
-        # Verify compute unit price instruction (index 1)
-        cu_price_ix = instructions[1]
-        cu_price_program = static_accounts[cu_price_ix.program_id_index]
-        cu_price_data = bytes(cu_price_ix.data)
-
-        if cu_price_program != compute_budget_program or len(cu_price_data) < 9:
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_INVALID_COMPUTE_PRICE, payer=""
-            )
-        if cu_price_data[0] != 3:  # SetComputeUnitPrice discriminator
+        cu_price_data = bytes(partitioned.compute_price_ix.data)
+        if len(cu_price_data) < 9:  # discriminator + u64 microLamports
             return VerifyResponse(
                 is_valid=False, invalid_reason=ERR_INVALID_COMPUTE_PRICE, payer=""
             )
@@ -243,53 +250,17 @@ class ExactSvmScheme:
             )
 
         # Step 4: Verify Transfer Instruction
-        transfer_ix = instructions[2]
+        transfer_ix = partitioned.transfer_ix
         transfer_program = static_accounts[transfer_ix.program_id_index]
         transfer_program_str = str(transfer_program)
 
-        token_program = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
-        token_2022_program = Pubkey.from_string(TOKEN_2022_PROGRAM_ADDRESS)
-
-        if transfer_program != token_program and transfer_program != token_2022_program:
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_NO_TRANSFER_INSTRUCTION, payer=payer
-            )
-
-        # Step 5: Verify optional instructions (if present)
-        optional_instructions = instructions[3:]
-        if optional_instructions:
-            lighthouse_program = Pubkey.from_string(LIGHTHOUSE_PROGRAM_ADDRESS)
-            memo_program = Pubkey.from_string(MEMO_PROGRAM_ADDRESS)
-            invalid_reasons = [
-                ERR_UNKNOWN_FOURTH_INSTRUCTION,
-                ERR_UNKNOWN_FIFTH_INSTRUCTION,
-                ERR_UNKNOWN_SIXTH_INSTRUCTION,
-            ]
-
-            for idx, optional_ix in enumerate(optional_instructions):
-                optional_program = static_accounts[optional_ix.program_id_index]
-                if optional_program in (lighthouse_program, memo_program):
-                    continue
-
-                reason = (
-                    invalid_reasons[idx]
-                    if idx < len(invalid_reasons)
-                    else ERR_UNKNOWN_SIXTH_INSTRUCTION
-                )
-                return VerifyResponse(is_valid=False, invalid_reason=reason, payer=payer)
-
-        # Step 5b: Verify memo content matches extra.memo when present
+        # Step 5: Verify memo content matches extra.memo when present (exactly one
+        # Memo instruction is required in that case).
         expected_memo = extra.get("memo")
         if expected_memo and isinstance(expected_memo, str):
-            memo_program = Pubkey.from_string(MEMO_PROGRAM_ADDRESS)
-            memo_ixs = [
-                ix
-                for ix in optional_instructions
-                if static_accounts[ix.program_id_index] == memo_program
-            ]
-            if len(memo_ixs) != 1:
+            if partitioned.memo_ix is None or partitioned.memo_count != 1:
                 return VerifyResponse(is_valid=False, invalid_reason=ERR_MEMO_COUNT, payer=payer)
-            actual_memo = bytes(memo_ixs[0].data).decode("utf-8")
+            actual_memo = bytes(partitioned.memo_ix.data).decode("utf-8")
             if actual_memo != expected_memo:
                 return VerifyResponse(is_valid=False, invalid_reason=ERR_MEMO_MISMATCH, payer=payer)
 
@@ -298,11 +269,7 @@ class ExactSvmScheme:
         transfer_data = bytes(transfer_ix.data)
 
         # TransferChecked data: [12 (discriminator), u64 amount, u8 decimals]
-        if len(transfer_data) < 10 or transfer_data[0] != 12:
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_NO_TRANSFER_INSTRUCTION, payer=payer
-            )
-
+        # (discriminator and length were established by classification)
         # TransferChecked accounts: [source, mint, destination, owner]
         if len(transfer_accounts) < 4:
             return VerifyResponse(
