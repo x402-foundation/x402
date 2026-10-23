@@ -16,36 +16,32 @@ export const SOLANA_NETWORK_REFS = {
   DEVNET: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
 } as const;
 
-// Algorand Network References (full base64 genesis hash for SDK/RPC routing)
+// Algorand Network References (canonical CAIP-2 references)
 export const ALGORAND_NETWORK_REFS = {
-  MAINNET: "wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=",
-  TESTNET: "SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=",
-} as const;
-
-/** Canonical truncated CAIP-2 references per the Algorand namespace profile. */
-const ALGORAND_CANONICAL_REFS = {
   MAINNET: "wGHE2Pwdvd7S12BL5FaOP20EGYesN73k",
   TESTNET: "SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe",
+} as const;
+
+// Full base64 genesis hashes used by the Algorand SDK and RPC.
+export const ALGORAND_GENESIS_HASHES = {
+  MAINNET: "wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=",
+  TESTNET: "SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=",
 } as const;
 
 /**
  * Resolves a CAIP-2 Algorand network identifier to its full genesis hash reference.
  *
- * @param network - CAIP-2 network identifier (canonical or legacy full-hash form)
+ * @param network - CAIP-2 network identifier
  * @returns Full base64 genesis hash reference
  */
 export function resolveAlgorandGenesisRef(network: string): string {
-  const ref = network.split(":")[1];
-  if (ref === ALGORAND_NETWORK_REFS.MAINNET || ref === ALGORAND_NETWORK_REFS.TESTNET) {
-    return ref;
+  if (network === `algorand:${ALGORAND_NETWORK_REFS.MAINNET}`) {
+    return ALGORAND_GENESIS_HASHES.MAINNET;
   }
-  if (ref === ALGORAND_CANONICAL_REFS.MAINNET) {
-    return ALGORAND_NETWORK_REFS.MAINNET;
+  if (network === `algorand:${ALGORAND_NETWORK_REFS.TESTNET}`) {
+    return ALGORAND_GENESIS_HASHES.TESTNET;
   }
-  if (ref === ALGORAND_CANONICAL_REFS.TESTNET) {
-    return ALGORAND_NETWORK_REFS.TESTNET;
-  }
-  return ref;
+  throw new Error(`Unsupported Algorand network: ${network}`);
 }
 
 /**
@@ -129,7 +125,10 @@ export function isSvmNetwork(network: string): boolean {
  * @returns True if the network is AVM based.
  */
 export function isAvmNetwork(network: string): boolean {
-  return network.startsWith("algorand:");
+  return (
+    network === `algorand:${ALGORAND_NETWORK_REFS.MAINNET}` ||
+    network === `algorand:${ALGORAND_NETWORK_REFS.TESTNET}`
+  );
 }
 
 /**
@@ -160,8 +159,12 @@ export function getNetworkDisplayName(network: string): string {
   }
 
   if (network.startsWith("algorand:")) {
-    const ref = resolveAlgorandGenesisRef(network);
-    return ref === ALGORAND_NETWORK_REFS.TESTNET ? "Algorand Testnet" : "Algorand Mainnet";
+    try {
+      const ref = resolveAlgorandGenesisRef(network);
+      return ref === ALGORAND_GENESIS_HASHES.TESTNET ? "Algorand Testnet" : "Algorand Mainnet";
+    } catch {
+      return network;
+    }
   }
 
   return network;
@@ -187,8 +190,12 @@ export function isTestnetNetwork(network: string): boolean {
   }
 
   if (network.startsWith("algorand:")) {
-    const ref = resolveAlgorandGenesisRef(network);
-    return ref === ALGORAND_NETWORK_REFS.TESTNET;
+    try {
+      const ref = resolveAlgorandGenesisRef(network);
+      return ref === ALGORAND_GENESIS_HASHES.TESTNET;
+    } catch {
+      return false;
+    }
   }
 
   return false;
