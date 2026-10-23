@@ -2381,6 +2381,74 @@ describe("createSIWxResourceServerExtension", () => {
     });
   });
 
+  it("records the server path when the payload resource URL names another route", async () => {
+    const storage = new InMemorySIWxStorage();
+    const extension = createSIWxResourceServerExtension({
+      storage,
+      origin: "https://api.example.com",
+    });
+
+    await extension.hooks!.onAfterSettle!(declareSIWxExtension(), {
+      paymentPayload: {
+        payload: { authorization: { from: "0xABC123" } },
+        resource: { url: "http://example.com/joke" },
+      },
+      requirements: { scheme: "exact", network: "eip155:8453", payTo: "0x0", amount: "1000" },
+      declaredExtensions: declareSIWxExtension(),
+      phase: "after-handler",
+      result: { success: true, payer: "0xABC123" },
+      transportContext: { request: { path: "/weather", method: "GET", adapter: {} } },
+    });
+
+    expect(await storage.hasPaid("/weather", "0xABC123")).toBe(true);
+    expect(await storage.hasPaid("/joke", "0xABC123")).toBe(false);
+  });
+
+  it("does not fall back to the payload URL when the HTTP request has no path", async () => {
+    const storage = new InMemorySIWxStorage();
+    const extension = createSIWxResourceServerExtension({
+      storage,
+      origin: "https://api.example.com",
+    });
+
+    await extension.hooks!.onAfterSettle!(declareSIWxExtension(), {
+      paymentPayload: {
+        payload: {},
+        resource: { url: "http://example.com/joke" },
+      },
+      requirements: { scheme: "exact", network: "eip155:8453", payTo: "0x0", amount: "1000" },
+      declaredExtensions: declareSIWxExtension(),
+      phase: "after-handler",
+      result: { success: true, payer: "0xABC123" },
+      transportContext: { request: { path: "", method: "GET", adapter: {} } },
+    });
+
+    expect(await storage.hasPaid("/joke", "0xABC123")).toBe(false);
+    expect(await storage.hasPaid("/weather", "0xABC123")).toBe(false);
+  });
+
+  it("records the payload pathname when the transport has no HTTP request", async () => {
+    const storage = new InMemorySIWxStorage();
+    const extension = createSIWxResourceServerExtension({
+      storage,
+      origin: "https://api.example.com",
+    });
+
+    await extension.hooks!.onAfterSettle!(declareSIWxExtension(), {
+      paymentPayload: {
+        payload: {},
+        resource: { url: "http://example.com/weather" },
+      },
+      requirements: { scheme: "exact", network: "eip155:8453", payTo: "0x0", amount: "1000" },
+      declaredExtensions: declareSIWxExtension(),
+      phase: "after-handler",
+      result: { success: true, payer: "0xABC123" },
+      transportContext: { toolName: "search", arguments: {} },
+    });
+
+    expect(await storage.hasPaid("/weather", "0xABC123")).toBe(true);
+  });
+
   it("does not record failed settlements through the extension hook", async () => {
     const storage = new InMemorySIWxStorage();
     const extension = createSIWxResourceServerExtension({

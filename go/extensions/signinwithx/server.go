@@ -172,10 +172,7 @@ func (e *ServerExtension) onAfterSettle(ctx x402.SettleResultContext) error {
 		return nil
 	}
 
-	resource, ok := resourcePathFromPayload(ctx.Payload)
-	if !ok {
-		resource, ok = resourcePathFromPayloadBytes(ctx.PayloadBytes)
-	}
+	resource, ok := settledResourcePath(ctx)
 	if !ok {
 		return nil
 	}
@@ -278,6 +275,40 @@ func randomNonce() string {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b[:])
+}
+
+func settledResourcePath(ctx x402.SettleResultContext) (string, bool) {
+	if ctx.TransportContext != nil {
+		if path, ok := httpResourcePath(ctx.TransportContext); ok {
+			return path, true
+		}
+		switch ctx.TransportContext.(type) {
+		case *x402http.HTTPTransportContext, x402http.HTTPTransportContext:
+			return "", false
+		}
+	}
+	if resource, ok := resourcePathFromPayload(ctx.Payload); ok {
+		return resource, true
+	}
+	return resourcePathFromPayloadBytes(ctx.PayloadBytes)
+}
+
+func httpResourcePath(transport interface{}) (string, bool) {
+	var request *x402http.HTTPRequestContext
+	switch tc := transport.(type) {
+	case *x402http.HTTPTransportContext:
+		if tc != nil {
+			request = tc.Request
+		}
+	case x402http.HTTPTransportContext:
+		request = tc.Request
+	default:
+		return "", false
+	}
+	if request == nil || request.Path == "" {
+		return "", false
+	}
+	return request.Path, true
 }
 
 func resourcePathFromPayload(payload x402.PaymentPayloadView) (string, bool) {

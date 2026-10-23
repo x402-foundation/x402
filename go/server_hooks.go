@@ -165,6 +165,29 @@ type SettleContext struct {
 	Phase              SettlePhase
 	PayloadBytes       []byte // Raw bytes for extensions needing full data
 	RequirementsBytes  []byte // Raw bytes for extensions needing full data
+	// TransportContext is the server transport for this settlement, when the
+	// caller has one. Nil for direct SettlePayment callers. HTTP sets it via
+	// WithSettleTransport because SettlePaymentWithExtensions has no transport
+	// argument; hooks must prefer it over client-supplied payload fields.
+	TransportContext interface{}
+}
+
+type settleTransportKey struct{}
+
+// WithSettleTransport returns a context that carries the server transport into
+// settle hooks. The parent context is preserved.
+func WithSettleTransport(ctx context.Context, transport interface{}) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, settleTransportKey{}, transport)
+}
+
+func transportContextFrom(ctx context.Context) interface{} {
+	if ctx == nil {
+		return nil
+	}
+	return ctx.Value(settleTransportKey{})
 }
 
 // SettleResultContext contains settle operation result and context

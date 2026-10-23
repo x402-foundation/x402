@@ -421,6 +421,109 @@ func TestAfterSettleHookRecordsPayment(t *testing.T) {
 	}
 }
 
+func TestAfterSettleHookPrefersServerPath(t *testing.T) {
+	ctx := context.Background()
+	storage := NewInMemoryStorage()
+	ext := MustCreateResourceServerExtension(testServerOptions(storage))
+	payload := types.PaymentPayload{
+		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://api.example.com/joke"},
+	}
+
+	err := ext.ResourceServerExtensionHooks().OnAfterSettle(x402.SettleResultContext{
+		SettleContext: x402.SettleContext{
+			Ctx:     ctx,
+			Payload: payload,
+			TransportContext: &x402http.HTTPTransportContext{
+				Request: &x402http.HTTPRequestContext{Path: "/weather"},
+			},
+		},
+		Result: &x402.SettleResponse{Success: true, Payer: "0xabc0000000000000000000000000000000000000"},
+	})
+	if err != nil {
+		t.Fatalf("OnAfterSettle() error = %v", err)
+	}
+
+	paid, err := storage.HasPaid(ctx, "/weather", "0xabc0000000000000000000000000000000000000")
+	if err != nil {
+		t.Fatalf("HasPaid(weather) error = %v", err)
+	}
+	if !paid {
+		t.Fatal("server path was not recorded")
+	}
+	paid, err = storage.HasPaid(ctx, "/joke", "0xabc0000000000000000000000000000000000000")
+	if err != nil {
+		t.Fatalf("HasPaid(joke) error = %v", err)
+	}
+	if paid {
+		t.Fatal("client resource URL was recorded")
+	}
+}
+
+func TestAfterSettleHookDoesNotFallBackWhenHTTPPathEmpty(t *testing.T) {
+	ctx := context.Background()
+	storage := NewInMemoryStorage()
+	ext := MustCreateResourceServerExtension(testServerOptions(storage))
+	payload := types.PaymentPayload{
+		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://api.example.com/joke"},
+	}
+
+	err := ext.ResourceServerExtensionHooks().OnAfterSettle(x402.SettleResultContext{
+		SettleContext: x402.SettleContext{
+			Ctx:     ctx,
+			Payload: payload,
+			TransportContext: &x402http.HTTPTransportContext{
+				Request: &x402http.HTTPRequestContext{Path: ""},
+			},
+		},
+		Result: &x402.SettleResponse{Success: true, Payer: "0xabc0000000000000000000000000000000000000"},
+	})
+	if err != nil {
+		t.Fatalf("OnAfterSettle() error = %v", err)
+	}
+
+	for _, resource := range []string{"/joke", "/weather"} {
+		paid, err := storage.HasPaid(ctx, resource, "0xabc0000000000000000000000000000000000000")
+		if err != nil {
+			t.Fatalf("HasPaid(%s) error = %v", resource, err)
+		}
+		if paid {
+			t.Fatalf("payment recorded for %s", resource)
+		}
+	}
+}
+
+func TestAfterSettleHookFallsBackForNonHTTPTransport(t *testing.T) {
+	ctx := context.Background()
+	storage := NewInMemoryStorage()
+	ext := MustCreateResourceServerExtension(testServerOptions(storage))
+	payload := types.PaymentPayload{
+		X402Version: 2,
+		Resource:    &types.ResourceInfo{URL: "https://api.example.com/weather"},
+	}
+
+	err := ext.ResourceServerExtensionHooks().OnAfterSettle(x402.SettleResultContext{
+		SettleContext: x402.SettleContext{
+			Ctx:              ctx,
+			Payload:          payload,
+			TransportContext: struct{ ToolName string }{ToolName: "search"},
+		},
+		Result: &x402.SettleResponse{Success: true, Payer: "0xabc0000000000000000000000000000000000000"},
+	})
+	if err != nil {
+		t.Fatalf("OnAfterSettle() error = %v", err)
+	}
+
+	paid, err := storage.HasPaid(ctx, "/weather", "0xabc0000000000000000000000000000000000000")
+	if err != nil {
+		t.Fatalf("HasPaid(weather) error = %v", err)
+	}
+	if !paid {
+		t.Fatal("payload path was not recorded for a non-HTTP transport")
+	}
+}
+
 func TestAfterSettleHookIgnoresUnsuccessfulOrMissingPayer(t *testing.T) {
 	ctx := context.Background()
 	storage := NewInMemoryStorage()
