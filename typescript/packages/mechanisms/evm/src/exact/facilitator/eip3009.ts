@@ -14,6 +14,7 @@ import { getEvmChainId } from "../../utils";
 import { ExactEIP3009Payload } from "../../types";
 import * as Errors from "./errors";
 import { resolveDataSuffix } from "../../shared/extensions";
+import { isContractRevert } from "../../shared/revert";
 import {
   verifyHashSignatureWithCode,
   classifyErc6492Payer,
@@ -300,18 +301,28 @@ export async function verifyEIP3009(
       eip6492Deployment,
     );
     if (!ok) {
-      const diagnosis = await diagnoseEip3009SimulationFailure(
-        signer,
-        erc20Address,
-        eip3009Payload,
-        requirements,
-        requirements.amount,
-      );
+      const reverted = isContractRevert(simError);
+      const mapped = reverted ? parseEip3009TransferError(simError) : undefined;
+      let response: VerifyResponse;
+      if (mapped && mapped !== Errors.ErrTransactionFailed) {
+        response = { isValid: false, invalidReason: mapped, payer };
+      } else if (reverted || !simError) {
+        // Probe unclassified failures only when the node answered, not after transport errors.
+        response = await diagnoseEip3009SimulationFailure(
+          signer,
+          erc20Address,
+          eip3009Payload,
+          requirements,
+          requirements.amount,
+        );
+      } else {
+        response = { isValid: false, invalidReason: Errors.ErrEip3009SimulationFailed, payer };
+      }
       // Carry the raw revert text so the concrete reason survives the mapping to a code.
       const rawMessage =
         simError instanceof Error ? simError.message : simError ? String(simError) : undefined;
       return {
-        response: rawMessage ? { ...diagnosis, invalidMessage: rawMessage } : diagnosis,
+        response: rawMessage ? { ...response, invalidMessage: rawMessage } : response,
         classification,
       };
     }
