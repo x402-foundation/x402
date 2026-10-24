@@ -97,9 +97,14 @@ export function wrapFetchWithPayment(
     try {
       paymentPayload = await client.createPaymentPayload(paymentRequired);
     } catch (error) {
-      throw new Error(
+      // Preserve the typed error (e.g. QuoteMismatchError from spend controls)
+      // on .cause so integrators can handle rejections programmatically
+      // instead of parsing messages.
+      const wrapped = new Error(
         `Failed to create payment payload: ${error instanceof Error ? error.message : "Unknown error"}`,
       );
+      (wrapped as Error & { cause?: unknown }).cause = error;
+      throw wrapped;
     }
 
     // Encode payment header

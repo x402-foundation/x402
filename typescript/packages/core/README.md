@@ -202,6 +202,15 @@ spendControls: {
 | `spendControls: false` | Disable all spend controls (any asset, no caps). Useful for UI-confirmed flows (paywall) and tests. |
 | `maxAmountPerPayment` | USD ceiling on payments in recognized USD-pegged assets (default **`$1`**). Applies to every default asset the registered scheme's `findDefaultAsset` knows about. Set a higher `Money` value to raise the cap, or **`false`** to remove it. |
 | `allowedAssets` | Opt-in for non-default tokens. Omit for default assets only; `true` to allow any asset; or a list of `{ network, asset }` (optional integer atomic `maxAmountPerPayment` per entry, e.g. `"2000000"`, not `"$1"`). `asset` may be an onchain id or a default-asset symbol (e.g. `"PYUSD"`). |
+| `expectedAmount` | Caller-anchored price expectation, enforced **before the signer runs**. A `Money` value (e.g. `'$0.01'`) sets an explicit expectation; `'first-accepted'` anchors on the first quote this client commits to and rejects later drift; **`false`** (default) disables. Mismatches throw `QuoteMismatchError` (fields: `quoteKey`, `expected`, `offered`, `source`, `field`). |
+| `expectedAmountTolerance` | Multiplier on the expectation, default `1.0` (exact match), must be `>= 1.0`. Applies in **both** directions — a mid-session price *drop* beyond the band is also a mismatch (bait pattern). |
+
+**Quote binding.** Expectations anchor per quote key: `(resource url, scheme, network, asset, payTo)`. Each combination anchors independently. Two limitations to be aware of:
+
+- `method` is **not** part of the key — `ResourceInfo` has no method field in v2, so the resource URL is the routing identity. A method change on the same URL creates no new binding.
+- The first `payTo` committed for a `(resource url, scheme, network, asset)` tuple **binds the recipient** in both modes: a substituted recipient on a known quote is rejected pre-signature (`field: "payTo"`). Paying a genuinely new recipient on the same resource requires a fresh client.
+
+**`'first-accepted'` caveat.** The anchor is set at the client's commitment point (successful payload creation) — this mode is **drift protection, not first-contact protection**: the first quote you see can itself be the hike. If the price is known up front, prefer an explicit `Money` expectation.
 
 Network scoping is separate: register only the networks you intend to pay on (e.g. `registerExactEvmScheme(client, { signer, networks: ['eip155:8453'] })`). Unregistered networks are never selected regardless of spend controls.
 

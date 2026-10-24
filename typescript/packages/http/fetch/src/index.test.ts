@@ -205,6 +205,20 @@ describe("wrapFetchWithPayment()", () => {
     );
   });
 
+  it("should preserve the original typed error on .cause when payment payload creation fails", async () => {
+    const paymentError = new Error("quote-check-rejected: quote_mismatch_vs_expected");
+    paymentError.name = "QuoteMismatchError";
+    (mockClient.createPaymentPayload as ReturnType<typeof vi.fn>).mockRejectedValue(paymentError);
+
+    mockFetch.mockResolvedValue(createResponse(402, validPaymentRequired));
+
+    const err = await wrappedFetch("https://api.example.com", { method: "GET" }).catch(e => e);
+    expect(err.message).toBe(
+      "Failed to create payment payload: quote-check-rejected: quote_mismatch_vs_expected",
+    );
+    expect(err.cause).toBe(paymentError);
+  });
+
   it("should reject with generic error message for unknown parsing errors", async () => {
     const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
     (

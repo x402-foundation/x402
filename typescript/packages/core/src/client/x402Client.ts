@@ -190,6 +190,90 @@ export interface SpendControls {
    * - list: defaults plus listed entries; optional integer atomic `maxAmountPerPayment` per entry
    */
   allowedAssets?: true | SpendControlAsset[];
+  /**
+   * Caller's expected price, enforced pre-signature. When set, any offered
+   * requirement whose amount differs from the expectation (beyond
+   * {@link SpendControls.expectedAmountTolerance}) is rejected before signing.
+   *
+   * - Money value (e.g. `"$0.01"`): every offer must match it. Converted to
+   *   atomic units via the requirement's default-asset decimals, like the USD cap.
+   * - `"first-accepted"`: the first requirement this client successfully creates
+   *   a payload for anchors the expectation per quote key (resource url + scheme
+   *   + network + asset + payTo); later offers for the same key must match the
+   *   anchored amount. Anchoring happens at payload creation — the client-side
+   *   commitment point — since the client never observes settlement.
+   * - `false` / unset: no expectation check (default, fully backward compatible).
+   */
+  expectedAmount?: Money | "first-accepted" | false;
+  /**
+   * Repricing tolerance as a multiplier on the expectation. `1.0` = exact match
+   * (both directions: an offer above `expected * tolerance` or below
+   * `expected / tolerance` is rejected). Only meaningful when `expectedAmount`
+   * is set. Must be >= 1.0.
+   *
+   * @default 1.0
+   */
+  expectedAmountTolerance?: number;
+}
+
+/**
+ * Origin of a quote expectation: configured explicitly by the caller, or
+ * anchored by the quote ledger after a first accepted offer.
+ */
+export type QuoteExpectationSource = "caller-config" | "quote-ledger";
+
+/**
+ * Thrown when an offered amount does not match the caller-anchored price
+ * expectation (see {@link SpendControls.expectedAmount}). Fail-closed: the
+ * payment is rejected before payload creation, never silently signed.
+ */
+export class QuoteMismatchError extends Error {
+  /** Quote key tuple (resource url, scheme, network, asset, payTo). */
+  readonly quoteKey: string;
+  /** Expected value, integer atomic string (amount) or address (payTo). */
+  readonly expected: string;
+  /** Offered value, integer atomic string (amount) or address (payTo). */
+  readonly offered: string;
+  /** Where the expectation came from. */
+  readonly source: QuoteExpectationSource;
+  /** Which quote field mismatched. */
+  readonly field: "amount" | "payTo";
+
+  /**
+   * Creates a QuoteMismatchError.
+   *
+   * @param args - Rejection details
+   * @param args.quoteKey - Quote key tuple (resource url, scheme, network, asset, payTo)
+   * @param args.expected - Expected value, integer atomic string (amount) or address (payTo)
+   * @param args.offered - Offered value, integer atomic string (amount) or address (payTo)
+   * @param args.source - Where the expectation came from
+   * @param args.field - Which quote field mismatched (default "amount")
+   */
+  constructor(args: {
+    quoteKey: string;
+    expected: string;
+    offered: string;
+    source: QuoteExpectationSource;
+    field?: "amount" | "payTo";
+  }) {
+    super(
+      args.field === "payTo"
+        ? `quote-check-rejected: quote_recipient_mismatch: payTo ${args.expected} -> ${args.offered} ` +
+            `on a known quote. The server-declared recipient does not match the recipient bound at the ` +
+            `client's first commitment for this resource. Paying a new recipient requires a fresh client ` +
+            `(or spendControls: false) — recipient substitution otherwise stays rejected.`
+        : `quote-check-rejected: quote_mismatch_vs_${args.source === "quote-ledger" ? "accepted" : "expected"}: ` +
+            `amount ${args.expected} -> ${args.offered}. The server-declared amount does not match the ` +
+            `caller-anchored price expectation. Adjust spendControls.expectedAmount, raise ` +
+            `expectedAmountTolerance for legitimate repricing, or set expectedAmount: false to disable.`,
+    );
+    this.name = "QuoteMismatchError";
+    this.quoteKey = args.quoteKey;
+    this.expected = args.expected;
+    this.offered = args.offered;
+    this.source = args.source;
+    this.field = args.field ?? "amount";
+  }
 }
 
 /**
@@ -328,6 +412,14 @@ export class x402Client {
   private readonly policies: PaymentPolicy[] = [];
   private readonly registeredExtensions: Map<string, ClientExtension> = new Map();
   private spendControls: SpendControls | false = {};
+  private readonly quoteLedger: Map<string, { atomic: string; anchoredAt: number }> = new Map();
+  /**
+   * Recipient binding: first payTo per (resource url, scheme, network, asset)
+   * tuple, recorded at the client's commitment point. Enforced in both
+   * expectedAmount modes — a substituted recipient on a known quote is
+   * rejected pre-signature (the A5 flank from #3866).
+   */
+  private readonly recipientLedger: Map<string, string> = new Map();
 
   private beforePaymentCreationHooks: BeforePaymentCreationHook[] = [];
   private afterPaymentCreationHooks: AfterPaymentCreationHook[] = [];
@@ -542,7 +634,15 @@ export class x402Client {
       throw new Error(`No client registered for x402 version: ${paymentRequired.x402Version}`);
     }
 
-    const requirements = this.selectPaymentRequirements(paymentRequired.x402Version, paymentRequired.accepts);
+    const resourceUrl =
+      paymentRequired.x402Version === 1
+        ? (paymentRequired.accepts[0] as unknown as PaymentRequirementsV1 | undefined)?.resource
+        : paymentRequired.resource?.url;
+    const requirements = this.selectPaymentRequirements(
+      paymentRequired.x402Version,
+      paymentRequired.accepts,
+      resourceUrl,
+    );
 
     const context: PaymentCreationContext = {
       paymentRequired,
@@ -579,6 +679,8 @@ export class x402Client {
           ),
         },
       );
+
+      this.anchorQuoteExpectation(paymentRequired.x402Version, resourceUrl, requirements);
 
       let paymentPayload: PaymentPayload;
       if (partialPayload.x402Version == 1) {
@@ -772,9 +874,14 @@ export class x402Client {
    *
    * @param x402Version - The x402 protocol version
    * @param paymentRequirements - Array of available payment requirements
+   * @param resourceUrl - Resource URL for the quote key (v2: PaymentRequired.resource.url)
    * @returns The selected payment requirements
    */
-  private selectPaymentRequirements(x402Version: number, paymentRequirements: PaymentRequirements[]): PaymentRequirements {
+  private selectPaymentRequirements(
+    x402Version: number,
+    paymentRequirements: PaymentRequirements[],
+    resourceUrl?: string,
+  ): PaymentRequirements {
     const clientSchemesByNetwork = this.registeredClientSchemes.get(x402Version);
     if (!clientSchemesByNetwork) {
       throw new Error(`No client registered for x402 version: ${x402Version}`);
@@ -821,6 +928,7 @@ export class x402Client {
       x402Version,
       recognizedFlowRequirements,
       clientSchemesByNetwork,
+      resourceUrl,
     );
 
     // Step 4: Apply all policies in order
@@ -853,12 +961,14 @@ export class x402Client {
    * @param x402Version - Protocol version (v1 uses `maxAmountRequired`)
    * @param requirements - Post scheme/flow filter
    * @param clientSchemesByNetwork - Registered clients for this version
+   * @param resourceUrl - Resource URL for the quote key (v2: PaymentRequired.resource.url)
    * @returns Requirements that pass spend controls
    */
   private applySpendControls(
     x402Version: number,
     requirements: PaymentRequirements[],
     clientSchemesByNetwork: Map<string, Map<string, SchemeNetworkClient>>,
+    resourceUrl?: string,
   ): PaymentRequirements[] {
     const controls = this.spendControls;
     if (controls === false) {
@@ -965,7 +1075,202 @@ export class x402Client {
       );
     }
 
+    return this.applyExpectedAmount(x402Version, filtered, defaultAssetFor, resourceUrl);
+  }
+
+  /**
+   * Enforce the caller-anchored price expectation (spendControls.expectedAmount).
+   * Runs after the asset allowlist and amount caps, still pre-signature. Fail-closed:
+   * a mismatch empties the candidate set and throws {@link QuoteMismatchError}.
+   *
+   * @param x402Version - Protocol version (v1 uses `maxAmountRequired`)
+   * @param requirements - Post allowlist/cap filter
+   * @param defaultAssetFor - Default-asset resolver (for Money -> atomic conversion)
+   * @param resourceUrl - Resource URL for the quote key (v2: PaymentRequired.resource.url)
+   * @returns Requirements matching the expectation within tolerance
+   */
+  private applyExpectedAmount(
+    x402Version: number,
+    requirements: PaymentRequirements[],
+    defaultAssetFor: (requirement: PaymentRequirements) => DefaultAsset | undefined,
+    resourceUrl?: string,
+  ): PaymentRequirements[] {
+    const controls = this.spendControls;
+    if (controls === false || !controls.expectedAmount) {
+      return requirements;
+    }
+
+    const tolerance = controls.expectedAmountTolerance ?? 1.0;
+    if (!(tolerance >= 1.0)) {
+      throw new Error(
+        `spendControls.expectedAmountTolerance must be >= 1.0 (a multiplier on the expectation); got ${tolerance}`,
+      );
+    }
+    const TOL_SCALE = 1_000_000n;
+    const tolScaled = BigInt(Math.round(tolerance * Number(TOL_SCALE)));
+
+    const rawAmountOf = (requirement: PaymentRequirements) =>
+      x402Version === 1
+        ? (requirement as unknown as PaymentRequirementsV1).maxAmountRequired
+        : requirement.amount;
+
+    const mismatches: Array<{
+      requirement: PaymentRequirements;
+      expected: string;
+      source: QuoteExpectationSource;
+      field: "amount" | "payTo";
+    }> = [];
+
+    const filtered = requirements.filter(requirement => {
+      // Recipient binding (both modes): the first payTo committed for this
+      // (resource, scheme, network, asset) tuple sticks; a substituted
+      // recipient on a known quote is a mismatch, regardless of amount.
+      const boundPayTo = this.recipientLedger.get(
+        this.recipientKeyFor(resourceUrl, requirement),
+      );
+      if (boundPayTo !== undefined && boundPayTo !== requirement.payTo) {
+        mismatches.push({
+          requirement,
+          expected: boundPayTo,
+          source: "quote-ledger",
+          field: "payTo",
+        });
+        return false;
+      }
+
+      const rawAmount = rawAmountOf(requirement);
+      if (!isAtomicAmount(rawAmount)) {
+        // Decimal-ledger amounts (e.g. XRPL IOUs): the expectation check only
+        // supports integer atomic amounts; other controls still apply.
+        return true;
+      }
+
+      let expectedAtomic: string | undefined;
+      let source: QuoteExpectationSource;
+      if (controls.expectedAmount === "first-accepted") {
+        source = "quote-ledger";
+        expectedAtomic = this.quoteLedger.get(this.quoteKeyFor(resourceUrl, requirement))?.atomic;
+        if (expectedAtomic === undefined) {
+          // No anchor for this quote key yet: allow; anchored after the next
+          // successful payload creation (see anchorQuoteExpectation).
+          return true;
+        }
+      } else {
+        source = "caller-config";
+        const defaultAsset = defaultAssetFor(requirement);
+        if (!defaultAsset) {
+          // Unknown decimals for a non-default asset: cannot convert the Money
+          // expectation; leave enforcement to the other controls.
+          return true;
+        }
+        expectedAtomic = convertToTokenAmount(
+          parseMoney(controls.expectedAmount as Money).amount,
+          defaultAsset.decimals,
+        );
+      }
+
+      const offered = BigInt(rawAmount);
+      const expected = BigInt(expectedAtomic);
+      const upper = (expected * tolScaled) / TOL_SCALE;
+      const lower = (expected * TOL_SCALE + tolScaled - 1n) / tolScaled;
+      const matches = offered <= upper && offered >= lower;
+      if (!matches) {
+        mismatches.push({ requirement, expected: expectedAtomic, source, field: "amount" });
+      }
+      return matches;
+    });
+
+    if (filtered.length === 0 && mismatches.length > 0) {
+      const first = mismatches[0];
+      throw new QuoteMismatchError({
+        quoteKey: this.quoteKeyFor(resourceUrl, first.requirement),
+        expected: first.expected,
+        offered:
+          first.field === "payTo" ? first.requirement.payTo : rawAmountOf(first.requirement),
+        source: first.source,
+        field: first.field,
+      });
+    }
     return filtered;
+  }
+
+  /**
+   * Quote key for the expectation ledger: resource url + scheme + network +
+   * asset + payTo (the tuple that identifies a recurring price quote).
+   *
+   * @param resourceUrl - Resource URL, when known
+   * @param requirement - Candidate requirement
+   * @returns Stable string key
+   */
+  private quoteKeyFor(resourceUrl: string | undefined, requirement: PaymentRequirements): string {
+    return JSON.stringify([
+      resourceUrl ?? "",
+      requirement.scheme,
+      requirement.network,
+      requirement.asset,
+      requirement.payTo,
+    ]);
+  }
+
+  /**
+   * Recipient key for the recipient ledger: the quote key without payTo, so a
+   * payTo-only change on a known quote is detected as recipient substitution.
+   *
+   * @param resourceUrl - Resource URL, when known
+   * @param requirement - Candidate requirement
+   * @returns Stable string key
+   */
+  private recipientKeyFor(
+    resourceUrl: string | undefined,
+    requirement: PaymentRequirements,
+  ): string {
+    return JSON.stringify([
+      resourceUrl ?? "",
+      requirement.scheme,
+      requirement.network,
+      requirement.asset,
+    ]);
+  }
+
+  /**
+   * Record bindings after a payload is successfully created — the client-side
+   * commitment point (the client never observes settlement):
+   * - recipient ledger (both expectedAmount modes): first payTo per
+   *   (resource, scheme, network, asset) sticks;
+   * - quote ledger ("first-accepted" mode only): first amount per full quote
+   *   key sticks.
+   *
+   * @param x402Version - Protocol version (v1 uses `maxAmountRequired`)
+   * @param resourceUrl - Resource URL for the quote key
+   * @param requirements - The requirement a payload was just created for
+   */
+  private anchorQuoteExpectation(
+    x402Version: number,
+    resourceUrl: string | undefined,
+    requirements: PaymentRequirements,
+  ): void {
+    const controls = this.spendControls;
+    if (controls === false || !controls.expectedAmount) {
+      return;
+    }
+    const rKey = this.recipientKeyFor(resourceUrl, requirements);
+    if (!this.recipientLedger.has(rKey)) {
+      this.recipientLedger.set(rKey, requirements.payTo);
+    }
+    if (controls.expectedAmount !== "first-accepted") {
+      return;
+    }
+    const rawAmount =
+      x402Version === 1
+        ? (requirements as unknown as PaymentRequirementsV1).maxAmountRequired
+        : requirements.amount;
+    if (!isAtomicAmount(rawAmount)) {
+      return;
+    }
+    const key = this.quoteKeyFor(resourceUrl, requirements);
+    if (!this.quoteLedger.has(key)) {
+      this.quoteLedger.set(key, { atomic: rawAmount, anchoredAt: Date.now() });
+    }
   }
 
   /**

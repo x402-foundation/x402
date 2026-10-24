@@ -212,11 +212,14 @@ export function wrapAxiosWithPayment(
         try {
           paymentPayload = await client.createPaymentPayload(paymentRequired);
         } catch (paymentError) {
-          return Promise.reject(
-            new Error(
-              `Failed to create payment payload: ${paymentError instanceof Error ? paymentError.message : "Unknown error"}`,
-            ),
+          // Preserve the typed error (e.g. QuoteMismatchError from spend
+          // controls) on .cause so integrators can handle rejections
+          // programmatically instead of parsing messages.
+          const wrapped = new Error(
+            `Failed to create payment payload: ${paymentError instanceof Error ? paymentError.message : "Unknown error"}`,
           );
+          (wrapped as Error & { cause?: unknown }).cause = paymentError;
+          return Promise.reject(wrapped);
         }
 
         // Encode payment header
