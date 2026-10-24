@@ -18,6 +18,7 @@ from ....evm.signer import (
     ClientEvmSigner,
     ClientEvmSignerWithReadContract,
     ClientEvmSignerWithSignTransaction,
+    warn_cannot_read_for_sponsoring,
 )
 from ...default_assets import find_default_asset
 from ...utils import get_evm_chain_id, normalize_address
@@ -294,6 +295,7 @@ class BatchSettlementEvmScheme:
         if EIP2612_GAS_SPONSORING_KEY not in extensions:
             return None
         if not isinstance(self._signer, ClientEvmSignerWithReadContract):
+            warn_cannot_read_for_sponsoring(str(requirements.network))
             return None
 
         extra = requirements.extra or {}
@@ -353,6 +355,9 @@ class BatchSettlementEvmScheme:
         )
 
         if ERC20_APPROVAL_GAS_SPONSORING_KEY not in extensions:
+            return None
+        if not isinstance(self._signer, ClientEvmSignerWithReadContract):
+            warn_cannot_read_for_sponsoring(str(requirements.network))
             return None
         if not isinstance(self._signer, ClientEvmSignerWithSignTransaction):
             return None
