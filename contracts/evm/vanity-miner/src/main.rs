@@ -3,6 +3,7 @@
 //! ## Batch + deposit collectors (sequential)
 //! `batch-stack` mines `x402BatchSettlement` (...0003), then `ERC3009DepositCollector` (...0004),
 //! then `Permit2DepositCollector` (...0005). Collector init codes depend on the mined batch address.
+//! `upto-erc3009` mines `x402UptoERC3009Proxy` (...0006).
 //!
 //! Refresh `bytecode/*.hex` after contract changes: `forge inspect <Contract> bytecode` (strip `0x`).
 
@@ -23,6 +24,7 @@ const UPTO_SUFFIX: [u8; 2] = [0x00, 0x02]; // ...0002
 const BATCH_SUFFIX: [u8; 2] = [0x00, 0x03]; // ...0003
 const ERC3009_SUFFIX: [u8; 2] = [0x00, 0x04]; // ...0004
 const PERMIT2_COLLECTOR_SUFFIX: [u8; 2] = [0x00, 0x05]; // ...0005
+const UPTO_ERC3009_SUFFIX: [u8; 2] = [0x00, 0x06]; // ...0006
 
 // Creation bytecode (no constructor args) — refresh from forge when sources change
 const ERC3009_CREATION_HEX: &str = include_str!("../bytecode/erc3009_creation.hex");
@@ -40,6 +42,9 @@ const EXACT_INIT_CODE_HASH: [u8; 32] =
 // x402UptoPermit2Proxy (deterministic build, no CBOR metadata)
 const UPTO_INIT_CODE_HASH: [u8; 32] =
     hex_literal::hex!("74f7a29cbc3c55f87cdef7f7c551643189e8bb62eed9de67753aebc402b83797");
+// x402UptoERC3009Proxy (deterministic build, no constructor arguments)
+const UPTO_ERC3009_INIT_CODE_HASH: [u8; 32] =
+    hex_literal::hex!("363e9dbe63e0ee693a6862ecb15776d098496557e92465f8a472ceca5d14c3c4");
 // x402BatchSettlement — keccak256(type(x402BatchSettlement).creationCode) after `forge build`
 const BATCH_INIT_CODE_HASH: [u8; 32] =
     hex_literal::hex!("ed07c0a1aeb6bd4b8e28932959d66e9f2c1a2f6ebb1fd3dc5f3fbcf8135850f6");
@@ -173,7 +178,8 @@ fn mine_vanity(
 }
 
 fn parse_batch_address_from_env() -> [u8; 20] {
-    let s = std::env::var("BATCH_ADDRESS").expect("Set BATCH_ADDRESS=0x... (mined batch settlement)");
+    let s =
+        std::env::var("BATCH_ADDRESS").expect("Set BATCH_ADDRESS=0x... (mined batch settlement)");
     let s = s.trim().trim_start_matches("0x");
     let bytes = hex::decode(s).expect("invalid BATCH_ADDRESS hex");
     assert_eq!(bytes.len(), 20, "BATCH_ADDRESS must be 20 bytes");
@@ -198,6 +204,7 @@ Usage: vanity-miner <COMMAND>
 
   exact                Mine x402ExactPermit2Proxy (...0001)
   upto                 Mine x402UptoPermit2Proxy (...0002)
+  upto-erc3009         Mine x402UptoERC3009Proxy (...0006)
   proxies              Mine exact + upto (Permit2 proxy contracts)
 
 Legacy: some deployments used `batch` for the settlement contract alone — same as `batch` here.
@@ -231,12 +238,7 @@ fn main() {
             let h = keccak256(&init);
             println!("Batch address: 0x{}", hex::encode(batch_addr));
             println!("ERC3009 full init code hash: 0x{}", hex::encode(h));
-            let r = mine_vanity(
-                "ERC3009DepositCollector",
-                &h,
-                &PREFIX,
-                &ERC3009_SUFFIX,
-            );
+            let r = mine_vanity("ERC3009DepositCollector", &h, &PREFIX, &ERC3009_SUFFIX);
             print_salt_output("ERC3009_SALT", r);
         }
         "permit2-collector" => {
@@ -244,7 +246,10 @@ fn main() {
             let init = init_code_permit2_collector(&batch_addr, &PERMIT2);
             let h = keccak256(&init);
             println!("Batch address: 0x{}", hex::encode(batch_addr));
-            println!("Permit2DepositCollector full init code hash: 0x{}", hex::encode(h));
+            println!(
+                "Permit2DepositCollector full init code hash: 0x{}",
+                hex::encode(h)
+            );
             let r = mine_vanity(
                 "Permit2DepositCollector",
                 &h,
@@ -270,6 +275,15 @@ fn main() {
                 &UPTO_SUFFIX,
             );
             print_salt_output("UPTO_SALT", r);
+        }
+        "upto-erc3009" => {
+            let r = mine_vanity(
+                "x402UptoERC3009Proxy",
+                &UPTO_ERC3009_INIT_CODE_HASH,
+                &PREFIX,
+                &UPTO_ERC3009_SUFFIX,
+            );
+            print_salt_output("UPTO_ERC3009_SALT", r);
         }
         "proxies" => {
             let er = mine_vanity(
@@ -390,8 +404,14 @@ fn run_batch_stack() {
     println!("  Address: 0x{}", hex::encode(permit_addr));
 
     println!("\n// Update script/DeployBatchSettlement.s.sol:");
-    println!("bytes32 constant BATCH_SALT = 0x{};", hex::encode(batch_salt));
-    println!("bytes32 constant ERC3009_SALT = 0x{};", hex::encode(erc_salt));
+    println!(
+        "bytes32 constant BATCH_SALT = 0x{};",
+        hex::encode(batch_salt)
+    );
+    println!(
+        "bytes32 constant ERC3009_SALT = 0x{};",
+        hex::encode(erc_salt)
+    );
     println!(
         "bytes32 constant PERMIT2_COLLECTOR_SALT = 0x{};",
         hex::encode(permit_salt)

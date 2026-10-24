@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {Script, console2} from "forge-std/Script.sol";
 
 import {x402ExactPermit2Proxy} from "../src/x402ExactPermit2Proxy.sol";
+import {x402UptoERC3009Proxy} from "../src/x402UptoERC3009Proxy.sol";
 import {x402UptoPermit2Proxy} from "../src/x402UptoPermit2Proxy.sol";
 import {x402BatchSettlement} from "../src/x402BatchSettlement.sol";
 import {ERC3009DepositCollector} from "../src/periphery/ERC3009DepositCollector.sol";
@@ -46,6 +47,10 @@ contract ComputeAddress is Script {
     /// @dev Vanity mined for address 0x4020a4f3b7b90cca423b9fabcc0ce57c6c240002
     bytes32 constant DEFAULT_UPTO_SALT = 0x000000000000000000000000000000000000000000000000b000000001db633d;
 
+    /// @notice Default salt for x402UptoERC3009Proxy
+    /// @dev Vanity mined for address 0x40208cd083acd9559ce44742c4bcd9cf04850006
+    bytes32 constant DEFAULT_UPTO_ERC3009_SALT = 0x499f5f90c3d3a2a7d6d3923352743977103de15c64118ab7ba02679d5efb5e98;
+
     /// @notice Expected initCodeHash for x402ExactPermit2Proxy (pre-built, includes CBOR metadata)
     bytes32 constant EXACT_INIT_CODE_HASH = 0xe774d1d5a07218946ab54efe010b300481478b86861bb17d69c98a57f68a604c;
 
@@ -54,6 +59,29 @@ contract ComputeAddress is Script {
      */
     function run() public view {
         computeAddresses(DEFAULT_EXACT_SALT, DEFAULT_UPTO_SALT);
+        computeUptoERC3009Address(DEFAULT_UPTO_ERC3009_SALT);
+    }
+
+    /**
+     * @notice Computes the CREATE2 address for x402UptoERC3009Proxy
+     * @param salt The salt to use for x402UptoERC3009Proxy
+     */
+    function computeUptoERC3009Address(
+        bytes32 salt
+    ) public view {
+        bytes memory initCode = type(x402UptoERC3009Proxy).creationCode;
+        bytes32 initCodeHash = keccak256(initCode);
+        address expectedAddress = _computeCreate2Addr(salt, initCodeHash, CREATE2_DEPLOYER);
+
+        console2.log("");
+        console2.log("------------------------------------------------------------");
+        console2.log("  x402UptoERC3009Proxy (deterministic build)");
+        console2.log("------------------------------------------------------------");
+        console2.log("  Salt:           ", vm.toString(salt));
+        console2.log("  Init Code Hash: ", vm.toString(initCodeHash));
+        console2.log("  Address:        ", expectedAddress);
+        _logDeployed(expectedAddress);
+        console2.log("");
     }
 
     /**
@@ -61,7 +89,10 @@ contract ComputeAddress is Script {
      * @param exactSalt The salt to use for x402ExactPermit2Proxy
      * @param uptoSalt The salt to use for x402UptoPermit2Proxy
      */
-    function computeAddresses(bytes32 exactSalt, bytes32 uptoSalt) public view {
+    function computeAddresses(
+        bytes32 exactSalt,
+        bytes32 uptoSalt
+    ) public view {
         console2.log("");
         console2.log("============================================================");
         console2.log("  x402 Permit2 Proxy Address Computation");

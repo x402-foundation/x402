@@ -12,11 +12,19 @@ Transfers the **exact** permitted amount (similar to EIP-3009's `transferWithAut
 ### `x402UptoPermit2Proxy`
 Allows the facilitator to transfer **up to** the permitted amount. Useful for scenarios where the actual amount is determined at settlement time.
 
-Both contracts:
+### `x402UptoERC3009Proxy`
+Allows ERC-3009 tokens to use **up to** pricing without a Permit2 approval. It receives the signed
+maximum with `receiveWithAuthorization`, pays the actual amount, and refunds the remainder
+atomically.
+
+The Permit2 contracts:
 - Use the **witness pattern** to cryptographically bind payment destinations
 - Prevent facilitators from redirecting funds
 - Support both standard Permit2 and EIP-2612 flows
 - Deploy to the **same address on all EVM chains** via CREATE2
+
+The ERC-3009 proxy binds its payment destination and selected settler through a typed nonce
+commitment and also deploys deterministically via CREATE2.
 
 ## Canonical Addresses
 
@@ -24,6 +32,7 @@ Both contracts:
 |----------|---------|
 | x402ExactPermit2Proxy | `0x402085c248EeA27D92E8b30b2C58ed07f9E20001` |
 | x402UptoPermit2Proxy | `0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002` |
+| x402UptoERC3009Proxy | `0x40208Cd083acD9559Ce44742c4BcD9Cf04850006` (pre-audit) |
 
 **Batch settlement (CREATE2 vanity `0x4020…`)**
 
@@ -79,7 +88,7 @@ forge build
 
 ## Deploying to a New EVM Chain
 
-Anyone can deploy both contracts to their canonical addresses on any EVM chain.
+Anyone can deploy the proxy contracts to their canonical addresses on any EVM chain.
 No special build environment, private key, or permission is required—only gas on the target chain.
 
 ### How it works
@@ -93,6 +102,7 @@ and `keccak256(initCode)`—not on who sends the transaction.
 |----------|----------------|-----|
 | **Exact** | Pre-built initCode in `script/data/exact-proxy-initcode.hex` | The original build included Solidity CBOR metadata (an IPFS hash that varies per build environment). The committed hex file is the exact initCode from the original deployment, ensuring the same address everywhere. |
 | **Upto** | Compiled from source (`forge build`) | Built with `cbor_metadata = false` so the bytecode is identical on every machine at the same git commit. |
+| **Upto ERC-3009** | Compiled from source (`forge build`) | Has no constructor arguments and uses the same deterministic build settings. |
 
 ### Step-by-step
 
@@ -110,9 +120,10 @@ and `keccak256(initCode)`—not on who sends the transaction.
    You should see:
    - Exact → `0x402085c248EeA27D92E8b30b2C58ed07f9E20001`
    - Upto  → `0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002`
+   - Upto ERC-3009 → `0x40208Cd083acD9559Ce44742c4BcD9Cf04850006`
 
 3. **Check prerequisites on the target chain**
-   - [Permit2](https://github.com/Uniswap/permit2) must be deployed at `0x000000000022D473030F116dDEE9F6B43aC78BA3`
+   - [Permit2](https://github.com/Uniswap/permit2) must be deployed at `0x000000000022D473030F116dDEE9F6B43aC78BA3` when deploying either Permit2 proxy
    - The CREATE2 deployer must exist at `0x4e59b44847b379578588920cA78FbF26c0B4956C`
    - Your wallet needs enough native gas to pay for deployment (~300k gas per contract)
 
@@ -140,8 +151,20 @@ and `keccak256(initCode)`—not on who sends the transaction.
      --verify
    ```
 
+   To deploy only the Upto ERC-3009 proxy:
+
+   ```bash
+   forge script script/Deploy.s.sol \
+     --sig "runUptoERC3009()" \
+     --rpc-url <RPC_URL> \
+     --account x402-deployment-signer \
+     --sender <DEPLOYMENT_SIGNER_ADDRESS> \
+     --broadcast \
+     --verify
+   ```
+
    The default `run()` entry point automatically:
-   - Loads the pre-built initCode for Exact and compiler-derived initCode for Upto
+   - Loads the pre-built initCode for Exact and compiler-derived initCode for both Upto proxies
    - Skips any contract already deployed at the expected address
    - Verifies `PERMIT2()` returns the correct address after deployment
 
@@ -183,6 +206,9 @@ forge test --match-contract X402ExactPermit2ProxyTest
 # Run Upto proxy tests
 forge test --match-contract X402UptoPermit2ProxyTest
 
+# Run Upto ERC-3009 proxy tests
+forge test --match-contract X402UptoERC3009ProxyTest
+
 # Run with gas reporting
 forge test --gas-report
 
@@ -202,11 +228,15 @@ export BASE_SEPOLIA_RPC_URL="https://sepolia.base.org"
 
 forge test --match-contract X402ExactPermit2ProxyForkTest --fork-url $BASE_SEPOLIA_RPC_URL
 forge test --match-contract X402UptoPermit2ProxyForkTest --fork-url $BASE_SEPOLIA_RPC_URL
+
+export BASE_RPC_URL="<Base mainnet RPC URL>"
+forge test --match-contract X402UptoERC3009ProxyForkTest --fork-url $BASE_RPC_URL
 ```
 
 ## Vanity Address Mining
 
 Permit2 proxies use prefix `0x4020` and suffix `…0001` (Exact) or `…0002` (Upto).
+`x402UptoERC3009Proxy` uses the same prefix and suffix `…0006`.
 
 **Batch settlement stack** (`x402BatchSettlement`, `ERC3009DepositCollector`, `Permit2DepositCollector`) uses the same prefix with suffixes `…0003`, `…0004`, and `…0005` respectively. The two deposit collectors take the batch settlement contract address in their constructors, so their CREATE2 `initCode` (and thus the mined salt) **depends on the batch contract address**. Mine **batch first**, then collectors: use `batch-stack` (see below).
 
@@ -231,6 +261,7 @@ cargo run --release -- proxies
 # Single proxy
 cargo run --release -- exact
 cargo run --release -- upto
+cargo run --release -- upto-erc3009
 
 # Batch settlement only (...0003); update BATCH_INIT_CODE_HASH first if batch bytecode changed
 cargo run --release -- batch
@@ -318,7 +349,8 @@ uses a committed initCode hex file instead of compiler-derived bytecode.
 src/
 ├── x402BasePermit2Proxy.sol   # Shared settlement logic and Permit2 interaction
 ├── x402ExactPermit2Proxy.sol  # Exact amount transfers (EIP-3009-like)
-├── x402UptoPermit2Proxy.sol   # Flexible amount transfers (up to permitted)
+├── x402UptoPermit2Proxy.sol   # Flexible Permit2 transfers (up to permitted)
+├── x402UptoERC3009Proxy.sol   # ERC-3009 maximum pull, payment, and refund
 └── interfaces/
     └── ISignatureTransfer.sol # Permit2 SignatureTransfer interface
 
