@@ -802,7 +802,11 @@ func (s *BatchSvmScheme) beforeSettle(ctx x402.SettleContext) (*x402.BeforeHookR
 	requirements := requirementsFromView(ctx.Requirements)
 	committed, err := s.charge(ctx.Ctx, request, parsed, requirements)
 	if err != nil {
-		return abort(err), nil
+		result := abort(err)
+		if cleanupErr := s.clearReservation(ctx.Payload); cleanupErr != nil {
+			result.Message = fmt.Sprintf("%s; reservation cleanup failed: %v", result.Message, cleanupErr)
+		}
+		return result, nil
 	}
 	s.deleteContext(ctx.Payload)
 	return &x402.BeforeHookResult{Skip: true, SkipResult: acceptedResponse(*committed, requirements)}, nil
@@ -1495,8 +1499,8 @@ func (s *BatchSvmScheme) markChannelClosing(payload x402.PaymentPayloadView) err
 
 func (s *BatchSvmScheme) clearReservation(payload x402.PaymentPayloadView) error {
 	request := s.contextFor(payload)
-	s.deleteContext(payload)
 	if request == nil || request.PendingID == "" {
+		s.deleteContext(payload)
 		return nil
 	}
 	_, err := s.store.Update(request.ChannelID, func(current *ChannelState) (ChannelState, error) {
@@ -1514,8 +1518,11 @@ func (s *BatchSvmScheme) clearReservation(payload x402.PaymentPayloadView) error
 		return err
 	}
 	if request.RequestID != "" {
-		return s.operations.Release(request.ChannelID, request.RequestID)
+		if err := s.operations.Release(request.ChannelID, request.RequestID); err != nil {
+			return err
+		}
 	}
+	s.deleteContext(payload)
 	return nil
 }
 
