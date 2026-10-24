@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import { hashTypedData } from "viem";
+import { hashTypedData, HttpRequestError } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   verifyTypedDataSignature,
   verifyHashSignature,
   verifyECDSA,
   verifyERC1271,
+  checkERC1271,
+  checkHashSignature,
+  checkTypedDataSignature,
 } from "../../../src/shared/verifySignature";
 import { isContractRevert } from "../../../src/shared/revert";
 import type { FacilitatorEvmSigner } from "../../../src/signer";
@@ -241,5 +244,94 @@ describe("isContractRevert", () => {
     expect(isContractRevert(new Error("fetch failed"))).toBe(false);
     expect(isContractRevert(new Error("HTTP request failed"))).toBe(false);
     expect(isContractRevert(42)).toBe(false);
+  });
+});
+
+describe("check* helpers: a failed read is not an invalid signature", () => {
+  const CONTRACT = "0x1234567890123456789012345678901234567890" as const;
+  const DIGEST = ("0x" + "0".repeat(64)) as `0x${string}`;
+  const SIG = ("0x" + "f".repeat(130)) as `0x${string}`;
+  const transportFailure = () =>
+    new HttpRequestError({ url: "https://rpc.example/v1?token=secret", status: 503 });
+
+  function signerWith(opts: {
+    getCode?: FacilitatorEvmSigner["getCode"];
+    readContract?: FacilitatorEvmSigner["readContract"];
+  }): FacilitatorEvmSigner {
+    return {
+      getAddresses: () => [],
+      readContract: opts.readContract ?? vi.fn(async () => ERC1271_MAGIC),
+      verifyTypedData: vi.fn(),
+      writeContract: vi.fn(),
+      sendTransaction: vi.fn(),
+      waitForTransactionReceipt: vi.fn(),
+      getCode: opts.getCode ?? vi.fn(async () => "0x6080604052" as `0x${string}`),
+    };
+  }
+
+  it("checkERC1271 reports a transport failure as lookup_failed", async () => {
+    const signer = signerWith({ readContract: vi.fn().mockRejectedValue(transportFailure()) });
+    expect(await checkERC1271(signer, CONTRACT, DIGEST, SIG)).toBe("lookup_failed");
+    // The exported boolean helper is unchanged: false, never a throw.
+    expect(await verifyERC1271(signer, CONTRACT, DIGEST, SIG)).toBe(false);
+  });
+
+  it("checkERC1271 finds a transport failure nested in the cause chain", async () => {
+    const wrapped = Object.assign(new Error("contract call failed"), { cause: transportFailure() });
+    const signer = signerWith({ readContract: vi.fn().mockRejectedValue(wrapped) });
+    expect(await checkERC1271(signer, CONTRACT, DIGEST, SIG)).toBe("lookup_failed");
+  });
+
+  it("checkERC1271 treats a revert, JSON-RPC code 3 and an empty return as invalid", async () => {
+    const cases: unknown[] = [
+      new Error("execution reverted: InvalidSignature"),
+      Object.assign(new Error("contract call failed"), {
+        cause: new Error('The contract function "isValidSignature" reverted.'),
+      }),
+      Object.assign(new Error("call failed"), { code: 3 }),
+      Object.assign(
+        new Error('The contract function "isValidSignature" returned no data ("0x").'),
+        {
+          name: "ContractFunctionZeroDataError",
+        },
+      ),
+    ];
+    for (const error of cases) {
+      const signer = signerWith({ readContract: vi.fn().mockRejectedValue(error) });
+      expect(await checkERC1271(signer, CONTRACT, DIGEST, SIG)).toBe("invalid");
+    }
+  });
+
+  it("checkERC1271 returns valid on the magic value and invalid on anything else", async () => {
+    expect(await checkERC1271(signerWith({}), CONTRACT, DIGEST, SIG)).toBe("valid");
+    const failing = signerWith({ readContract: vi.fn(async () => ERC1271_FAIL) });
+    expect(await checkERC1271(failing, CONTRACT, DIGEST, SIG)).toBe("invalid");
+  });
+
+  it("checkHashSignature reports a failed payer eth_getCode as lookup_failed", async () => {
+    const signer = signerWith({ getCode: vi.fn().mockRejectedValue(transportFailure()) });
+    expect(await checkHashSignature(signer, CONTRACT, DIGEST, SIG)).toBe("lookup_failed");
+    expect(await verifyHashSignature(signer, CONTRACT, DIGEST, SIG)).toBe(false);
+  });
+
+  it("checkTypedDataSignature returns valid for a correct EOA signature", async () => {
+    const account = privateKeyToAccount(ECDSA_KEY);
+    const signature = await account.signTypedData({
+      domain: SAMPLE_DOMAIN,
+      types: SAMPLE_TYPES,
+      primaryType: "TransferWithAuthorization",
+      message: SAMPLE_MESSAGE,
+    });
+    const signer = signerWith({ getCode: vi.fn(async () => "0x" as `0x${string}`) });
+    expect(
+      await checkTypedDataSignature(signer, {
+        address: ECDSA_ADDR,
+        domain: SAMPLE_DOMAIN,
+        types: SAMPLE_TYPES,
+        primaryType: "TransferWithAuthorization",
+        message: SAMPLE_MESSAGE,
+        signature,
+      }),
+    ).toBe("valid");
   });
 });

@@ -8,6 +8,7 @@ import {
   ErrPermit2AmountMismatch,
   ErrUptoAmountExceedsPermitted,
   ErrUptoFacilitatorMismatch,
+  ErrUptoFailedToVerifySignature,
   ErrUptoSettlementExceedsAmount,
   ErrUptoUnauthorizedFacilitator,
   ErrUptoInvalidScheme,
@@ -284,6 +285,21 @@ describe("UptoEvmScheme (Facilitator)", () => {
 
       expect(result.isValid).toBe(false);
       expect(result.invalidReason).toBe("invalid_permit2_signature");
+    });
+
+    it("should report a failed payer lookup as failed_to_verify_signature, not an invalid signature", async () => {
+      const asset = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+      mockSigner.getCode = vi
+        .fn()
+        .mockImplementation(async ({ address }: { address: `0x${string}` }) => {
+          if (address.toLowerCase() === asset.toLowerCase()) return "0x6080604052";
+          throw new Error("HTTP request failed. Status: 503");
+        });
+
+      const result = await scheme.verify(makePayload(), makeRequirements());
+
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe(ErrUptoFailedToVerifySignature);
     });
 
     it("should reject non-Permit2 payload via scheme wrapper with unsupported_payload_type", async () => {

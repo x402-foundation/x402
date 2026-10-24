@@ -15,10 +15,11 @@ import { ExactEIP3009Payload } from "../../types";
 import * as Errors from "./errors";
 import { resolveDataSuffix } from "../../shared/extensions";
 import {
-  verifyHashSignatureWithCode,
+  checkHashSignatureWithCode,
   classifyErc6492Payer,
   payerCodeLookupFailureMessage,
   Erc6492Classification,
+  SignatureCheckResult,
 } from "../../shared/verifySignature";
 import {
   diagnoseEip3009SimulationFailure,
@@ -204,10 +205,10 @@ export async function verifyEIP3009(
     // Reuse the bytecode classifyErc6492Payer already fetched. A second eth_getCode here
     // can fail independently and get reported as an invalid signature, or succeed after
     // the first lookup failed and check a payment we already declined.
-    let isValid = false;
+    let check: SignatureCheckResult = "invalid";
     try {
       const digest = hashTypedData(permitTypedData);
-      isValid = await verifyHashSignatureWithCode(
+      check = await checkHashSignatureWithCode(
         signer,
         eip3009Payload.authorization.from,
         payerCode,
@@ -215,9 +216,22 @@ export async function verifyEIP3009(
         innerSignature,
       );
     } catch {
-      isValid = false;
+      check = "invalid";
     }
-    if (!isValid) {
+    // A contract payer's isValidSignature read failed (transport, timeout, rate limit):
+    // no signature check ran, so report it as retryable, like the payer code lookup above.
+    if (check === "lookup_failed") {
+      return {
+        response: {
+          isValid: false,
+          invalidReason: Errors.ErrFailedToVerifySignature,
+          invalidMessage: "payer isValidSignature call failed",
+          payer,
+        },
+        classification,
+      };
+    }
+    if (check !== "valid") {
       return {
         response: {
           isValid: false,

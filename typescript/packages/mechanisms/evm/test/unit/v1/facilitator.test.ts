@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { concat, encodeAbiParameters } from "viem";
+import { concat, encodeAbiParameters, HttpRequestError } from "viem";
 import { ExactEvmSchemeV1 } from "../../../src/exact/v1/facilitator/scheme";
 import type { FacilitatorEvmSigner } from "../../../src/signer";
 import type { PaymentRequirementsV1 } from "@x402/core/types/v1";
@@ -469,6 +469,50 @@ describe("ExactEvmSchemeV1", () => {
 
       expect(result.success).toBe(false);
       expect(result.errorReason).toBe(Errors.ErrInvalidSignature);
+    });
+
+    it("reports a failed isValidSignature read on a contract payer as failed_to_verify_signature", async () => {
+      const rc = rcWithSig(BigInt("10000000"), "0x1626ba7e");
+      mockSigner.readContract = vi.fn(async (args: { functionName?: string }) => {
+        if (args?.functionName === "isValidSignature") {
+          throw new HttpRequestError({ url: "https://rpc.example", status: 503 });
+        }
+        return rc(args as never);
+      }) as never;
+
+      const facilitator = new ExactEvmSchemeV1(mockSigner);
+
+      const payload: PaymentPayloadV1 = {
+        x402Version: 1,
+        scheme: "exact",
+        network: "base-sepolia",
+        payload: {
+          signature: `0x${"ab".repeat(65)}`,
+          authorization: {
+            from: "0x1234567890123456789012345678901234567890",
+            to: "0x9876543210987654321098765432109876543210",
+            value: "100000",
+            validAfter: (Math.floor(Date.now() / 1000) - 300).toString(),
+            validBefore: (Math.floor(Date.now() / 1000) + 3600).toString(),
+            nonce: "0x0000000000000000000000000000000000000000000000000000000000000000",
+          },
+        },
+      };
+
+      const requirements: PaymentRequirementsV1 = {
+        scheme: "exact",
+        network: "base-sepolia",
+        asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        maxAmountRequired: "100000",
+        payTo: "0x9876543210987654321098765432109876543210",
+        maxTimeoutSeconds: 3600,
+        extra: { name: "USDC", version: "2" },
+      };
+
+      const result = await facilitator.settle(payload as never, requirements as never);
+
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe(Errors.ErrFailedToVerifySignature);
     });
 
     it("should fail settlement when the receipt status is not success", async () => {

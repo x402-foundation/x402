@@ -782,6 +782,24 @@ describe("BatchSettlementEvmScheme (Facilitator) — verifyDeposit", () => {
     expect(result.invalidReason).toBe(Errors.ErrInvalidReceiveAuthorizationSignature);
   });
 
+  it("returns RpcReadFailed, not an invalid signature, when the isValidSignature read fails", async () => {
+    const signer = buildSigner({
+      readContract: vi.fn().mockImplementation(async (args: { functionName: string }) => {
+        if (args.functionName === "isValidSignature") {
+          throw new Error("HTTP request failed. Status: 503");
+        }
+        if (args.functionName === "receivers") return [2500n, 0n];
+        return undefined;
+      }),
+    });
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const { payload } = buildDeposit();
+
+    const result = await scheme.verify(payload, makeRequirements());
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe(Errors.ErrRpcReadFailed);
+  });
+
   it("returns ErrErc3009AuthorizationRequired when authorization is absent", async () => {
     const signer = buildSigner();
     const scheme = new BatchSettlementEvmScheme(signer, authorizer);
@@ -1085,6 +1103,33 @@ describe("BatchSettlementEvmScheme (Facilitator) — verifyDeposit", () => {
     );
     expect(result.isValid).toBe(false);
     expect(result.invalidReason).toBe(Errors.ErrPermit2InvalidSignature);
+  });
+
+  it("returns RpcReadFailed for a Permit2 deposit when the isValidSignature read fails", async () => {
+    const signer = buildSigner({
+      getCode: vi.fn().mockResolvedValue("0x6080604052"),
+      readContract: vi.fn().mockImplementation(args => {
+        if (args.functionName === "isValidSignature") {
+          return Promise.reject(new Error("HTTP request failed. Status: 503"));
+        }
+        return Promise.resolve(undefined);
+      }),
+    });
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const { payload } = buildPermit2Deposit();
+    const result = await scheme.verify(
+      payload,
+      makeRequirements({
+        extra: {
+          assetTransferMethod: "permit2",
+          name: "USDC",
+          version: "2",
+          receiverAuthorizer: RECEIVER_AUTHORIZER,
+        },
+      }),
+    );
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe(Errors.ErrRpcReadFailed);
   });
 
   it("maps an allowance RPC failure to permit2_allowance_required", async () => {
