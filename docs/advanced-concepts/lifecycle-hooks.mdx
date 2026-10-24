@@ -232,6 +232,12 @@ Register hooks on the core client for payment payload creation lifecycle events.
 * **onPaymentCreationFailure** — Runs on failure. Return `{ recovered: true, payload }` to provide fallback.
 * **onPaymentResponse** — Runs after a paid request completes. Return `{ recovered: true }` to tell the transport to retry with a fresh payload.
 
+<Warning>
+  Payment payloads can contain redeemable signatures or authorizations. Log
+  only explicitly selected non-sensitive fields; never log the complete
+  payload.
+</Warning>
+
 For static USD caps and asset allowlists, use [`spendControls`](/getting-started/quickstart-for-buyers#spend-controls) on the client config — it runs before hooks and is the preferred way to enforce spend limits. Use `onBeforePaymentCreation` for dynamic or interactive checks (e.g. prompting the user for approval).
 
 <Tabs>
