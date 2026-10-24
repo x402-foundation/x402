@@ -97,12 +97,13 @@ For `format = "eip712"`, the signing digest is computed using the EIP-712 domain
 
 **3.3 JWS Header Requirements**
 
-For JWS format, the header MUST include:
+For JWS format, the header MUST include `alg` and `kid`, and MAY include `jwk`:
 
-| Field | Type   | Required | Description                                 |
-| ----- | ------ | -------- | ------------------------------------------- |
-| `alg` | string | Yes      | Signing algorithm (e.g., `ES256K`, `EdDSA`) |
-| `kid` | string | Yes      | Key identifier (DID URL) for key lookup     |
+| Field | Type   | Required | Description                                                                                   |
+| ----- | ------ | -------- | --------------------------------------------------------------------------------------------- |
+| `alg` | string | Yes      | Signing algorithm (e.g., `ES256K`, `EdDSA`)                                                   |
+| `kid` | string | Yes      | Key identifier (DID URL) for key lookup                                                       |
+| `jwk` | object | No       | Public key matching `kid`, per [RFC 7515 §4.1.3](https://www.rfc-editor.org/rfc/rfc7515#section-4.1.3). Key material only; see §4.5.1 |
 
 
 **4. Signed Offer**
@@ -228,7 +229,7 @@ For the optional `validUntil` field, implementations MUST set unused fields to `
 1. Parse the JWS compact string from `offer.signature`
 2. Extract `kid` from the JWS header; extract the payload by base64url-decoding the JWS payload component
 3. Check the payload's `version` to determine how to interpret the remaining fields (currently only version `1` is defined)
-4. Resolve `kid` to a public key
+4. Obtain the public key: if `jwk` is present in the header, use it; otherwise resolve `kid`. If `jwk` is present and `kid` resolution succeeds, the two keys MUST match, and the verifier MUST reject the artifact if they differ
 5. Verify the JWS signature over the complete payload
 6. Confirm the key is authorized to sign for the service identified by the payload's `resourceUrl` (see §4.5.1)
 
@@ -244,6 +245,8 @@ Verifiers MUST confirm that the signing key is authorized to act on behalf of th
 - **DID document (`did:web`)**: The service publishes the signing key in a [DID document](https://www.w3.org/TR/did-core/) at `/.well-known/did.json` associated with the `resourceUrl` domain. Verifiers resolve the DID URL in `kid` and confirm the key is listed in `verificationMethod`. See the [W3C DID Core specification](https://www.w3.org/TR/did-core/) and the [did:web method specification](https://w3c-ccg.github.io/did-method-web/).
 - **DNS TXT records**: The service publishes a TXT record at `_controllers.<domain>` binding the signing key to the service domain. The TXT value begins with a version prefix followed by one or more controller identifiers in DID format, separated by semicolons: `v=1;controller=did:pkh:eip155:1:<address>;controller=did:jwk:<base64url-encoded-public-jwk>`. Multiple `controller` values indicate co-controllers. The domain holder SHOULD enable DNSSEC, and verifiers SHOULD validate DNSSEC when available.
 - **External key registry**: An external system (e.g., on-chain attestations, transparency logs, or other key binding mechanisms) maps the signing key or `kid` to the service identity. See the [x402 Offer & Receipt documentation](https://x402.org/extensions/offer-receipt#signer-authorization-approaches) for a comparison of approaches.
+
+A `jwk` in the header supplies key material and nothing else: it is carried by the artifact it verifies, so it demonstrates possession of the signing key and never that the key was authorized to sign for `resourceUrl`. Authorization is established only by a source outside the artifact, as above.
 
 Mutable authorization sources (DID documents, DNS records) reflect current state only. Applications that verify offers or receipts after key rotation SHOULD preserve or reference temporally immutable authorization evidence (e.g., on-chain attestations, transparency logs) to confirm the key was authorized at issuance time.
 
@@ -378,7 +381,7 @@ For the optional `transaction` field, implementations MUST set unused fields to 
 1. Parse the JWS compact string from `receipt.signature`
 2. Extract `kid` from the JWS header; extract the payload by base64url-decoding the JWS payload component
 3. Check the payload's `version` to determine how to interpret the remaining fields (currently only version `1` is defined)
-4. Resolve `kid` to a public key
+4. Obtain the public key: if `jwk` is present in the header, use it; otherwise resolve `kid`. If `jwk` is present and `kid` resolution succeeds, the two keys MUST match, and the verifier MUST reject the artifact if they differ
 5. Verify the JWS signature over the complete payload
 6. Confirm the key is authorized to sign for the service identified by the payload's `resourceUrl` (see §4.5.1)
 7. Confirm `issuedAt` (from the payload) is within acceptable verifier policy
