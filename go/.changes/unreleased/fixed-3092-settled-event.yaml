@@ -1,0 +1,2 @@
+kind: fixed
+body: Fail closed when a batch-settlement settle receipt does not advance receivers.totalSettled (possible no-op early return).

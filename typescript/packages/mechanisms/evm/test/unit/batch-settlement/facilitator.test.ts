@@ -1850,7 +1850,7 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
     expect(settleCall?.[0].gas).toBeGreaterThan(0n);
   });
 
-  it("returns zero amount for no-op settle receipts without a Settled event", async () => {
+  it("fails closed for no-op settle receipts without a Settled event", async () => {
     const signer = buildSigner({
       waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: "success", logs: [] }),
     });
@@ -1864,8 +1864,8 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
       envelopeSettle(sp as unknown as Record<string, unknown>),
       makeRequirements(),
     );
-    expect(result.success).toBe(true);
-    expect(result.amount).toBe("0");
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrSettledEventMismatch);
   });
 
   it("returns ErrNothingToSettle without submitting when receiver has no pending settlement", async () => {
@@ -1892,7 +1892,7 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
     expect(signer.writeContract).not.toHaveBeenCalled();
   });
 
-  it("returns empty amount when settle receipt logs are unavailable", async () => {
+  it("fails closed when settle receipt logs are unavailable", async () => {
     const signer = buildSigner();
     const scheme = new BatchSettlementEvmScheme(signer, authorizer);
     const sp: BatchSettlementSettlePayload = {
@@ -1904,8 +1904,8 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
       envelopeSettle(sp as unknown as Record<string, unknown>),
       makeRequirements(),
     );
-    expect(result.success).toBe(true);
-    expect(result.amount).toBe("");
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrSettledEventMismatch);
   });
 
   it("returns settlement_pending when the settle receipt wait fails", async () => {

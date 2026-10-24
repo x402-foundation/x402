@@ -118,6 +118,7 @@ const (
 	// Settle action errors
 	ErrUnknownSettleAction   = "invalid_batch_settlement_evm_unknown_settle_action"
 	ErrNothingToSettle       = "invalid_batch_settlement_evm_nothing_to_settle"
+	ErrSettledEventMismatch  = "invalid_batch_settlement_evm_settled_event_mismatch"
 	ErrRefundedEventMismatch = "invalid_batch_settlement_evm_refunded_event_mismatch"
 	ErrRefundNoBalance       = batchsettlement.ErrRefundNoBalance
 )
