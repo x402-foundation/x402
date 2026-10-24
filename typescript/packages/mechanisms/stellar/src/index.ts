@@ -10,6 +10,17 @@
 // Exact scheme client
 export { ExactStellarScheme } from "./exact";
 
+// Upto scheme client; the server and facilitator are exported from ./upto/server and ./upto/facilitator
+export { UptoStellarScheme } from "./upto/client";
+export type { UptoStellarExtra, UptoStellarPayload } from "./upto/types";
+export {
+  UPTO_DEPLOYMENTS,
+  UPTO_TESTNET_DEPLOYMENT,
+  uptoStandardCodes,
+  uptoStellarCodes,
+  type UptoContractDeployment,
+} from "./upto";
+
 // Types
 export * from "./types";
 

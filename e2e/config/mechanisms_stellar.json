@@ -27,6 +27,13 @@
       "paymentFlow": "upfront",
       "price": { "usd": "$0.001" },
       "extensions": ["bazaar"]
+    },
+    "/upto/stellar": {
+      "scheme": "upto",
+      "sdks": ["typescript"],
+      "price": { "usd": "$0.002" },
+      "extensions": ["bazaar"],
+      "settlementOverride": { "amount": "50%" }
     }
   }
 }

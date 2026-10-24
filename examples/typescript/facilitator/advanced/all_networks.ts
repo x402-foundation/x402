@@ -70,6 +70,7 @@ import { base58 } from "@scure/base";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/facilitator";
+import { UptoStellarScheme } from "@x402/stellar/upto/facilitator";
 import {
   HighloadV3Config,
   toFacilitatorTvmSigner,
@@ -414,6 +415,7 @@ if (stellarPrivateKey) {
     STELLAR_NETWORK,
     new ExactStellarScheme([stellarSigner]),
   );
+  facilitator.register(STELLAR_NETWORK, new UptoStellarScheme([stellarSigner]));
 }
 
 // Register TVM scheme if private key is provided
