@@ -5,12 +5,14 @@ import x402 "github.com/x402-foundation/x402/go/v2"
 // Facilitator error constants for the exact SVM scheme (V2)
 const (
 	// Verify errors
-	ErrUnsupportedScheme              = "invalid_exact_solana_unsupported_scheme"
-	ErrNetworkMismatch                = "invalid_exact_solana_network_mismatch"
-	ErrMissingFeePayer                = "invalid_exact_solana_payload_missing_fee_payer"
-	ErrFeePayerNotManaged             = "invalid_exact_solana_fee_payer_not_managed_by_facilitator"
-	ErrInvalidPayloadTransaction      = "invalid_exact_solana_payload_transaction"
-	ErrTransactionCouldNotBeDecoded   = "invalid_exact_solana_payload_transaction_could_not_be_decoded"
+	ErrUnsupportedScheme            = "invalid_exact_solana_unsupported_scheme"
+	ErrNetworkMismatch              = "invalid_exact_solana_network_mismatch"
+	ErrMissingFeePayer              = "invalid_exact_solana_payload_missing_fee_payer"
+	ErrFeePayerNotManaged           = "invalid_exact_solana_fee_payer_not_managed_by_facilitator"
+	ErrInvalidPayloadTransaction    = "invalid_exact_solana_payload_transaction"
+	ErrTransactionCouldNotBeDecoded = "invalid_exact_solana_payload_transaction_could_not_be_decoded"
+	// ErrUnsupportedTransactionVersion mirrors svm.ErrUnsupportedTransactionVersion.
+	ErrUnsupportedTransactionVersion  = "unsupported_transaction_version"
 	ErrSignatureInvalid               = "invalid_exact_solana_payload_signature_invalid"
 	ErrExcessiveSigners               = "invalid_exact_solana_payload_excessive_signers"
 	ErrTransactionInstructionsLength  = "invalid_exact_solana_payload_transaction_instructions_length"

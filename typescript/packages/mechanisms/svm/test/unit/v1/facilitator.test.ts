@@ -95,6 +95,11 @@ describe("ExactSvmSchemeV1", () => {
       expect(extra).toBeDefined();
       expect(mockSigner.getAddresses()).toContain(extra!.feePayer);
     });
+
+    it("advertises the accepted transaction message versions in getExtra", () => {
+      const facilitator = new ExactSvmSchemeV1(mockSigner);
+      expect(facilitator.getExtra("solana-devnet")!.transactionVersions).toEqual([0]);
+    });
   });
 
   describe("verify", () => {
