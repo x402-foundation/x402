@@ -58,6 +58,10 @@ Required environment variables:
 Optional environment variables:
 
 - `EVM_RPC_URL` - JSON-RPC endpoint for on-chain reads. Enables gas sponsoring extensions (EIP-2612 and ERC-20 approval). Example: `https://sepolia.base.org`
+- `EXPECTED_AMOUNT_ATOMIC` - the most this client will pay for the resource, in the asset's atomic units (`10000` is $0.01 USDC). The server is the price authority; this pins what you agreed to, so a 402 that asks for more is refused before anything is signed.
+- `EXPECTED_PAY_TO`, `EXPECTED_ASSET` - refuse to sign for any other recipient or asset.
+
+The spend cap (`maxAmountPerPayment`) is a ceiling, not a price check: a server that asks ten times the usual price of a cheap resource stays under $1 and gets paid. The `onBeforePaymentCreation` hook in `index.ts` is where the expectation is enforced.
 
 3. Run the client:
 

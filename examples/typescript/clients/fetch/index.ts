@@ -27,6 +27,9 @@ const url = `${baseURL}${endpointPath}`;
  *
  * Optional environment variables:
  * - EVM_RPC_URL: JSON-RPC endpoint for onchain reads (enables gas sponsoring extensions)
+ * - EXPECTED_AMOUNT_ATOMIC: the most this client will pay for the resource, in the asset's atomic
+ *   units ("10000" is $0.01 USDC). The server sets the price; this pins what you agreed to pay.
+ * - EXPECTED_PAY_TO, EXPECTED_ASSET: refuse to sign for any other recipient or asset
  */
 async function main(): Promise<void> {
   if (!evmPrivateKey && !svmPrivateKey) {
@@ -37,6 +40,27 @@ async function main(): Promise<void> {
   const client = new x402Client();
   client.setSpendControls({
     maxAmountPerPayment: "$1",
+  });
+
+  // A spend cap is a ceiling, not a price check: a server that asks ten times the usual price of a
+  // cheap resource stays under $1 and gets paid. Pin what you expect for this resource and refuse
+  // anything else before the payment is signed.
+  const expectedAmount = process.env.EXPECTED_AMOUNT_ATOMIC;
+  const expectedPayTo = process.env.EXPECTED_PAY_TO?.toLowerCase();
+  const expectedAsset = process.env.EXPECTED_ASSET?.toLowerCase();
+  client.onBeforePaymentCreation(async ({ selectedRequirements: r }) => {
+    if (expectedAmount && BigInt(r.amount) > BigInt(expectedAmount)) {
+      return {
+        abort: true,
+        reason: `asked ${r.amount} atomic units, expected at most ${expectedAmount}`,
+      };
+    }
+    if (expectedPayTo && r.payTo.toLowerCase() !== expectedPayTo) {
+      return { abort: true, reason: `payTo ${r.payTo} is not the expected recipient` };
+    }
+    if (expectedAsset && r.asset.toLowerCase() !== expectedAsset) {
+      return { abort: true, reason: `asset ${r.asset} is not the expected asset` };
+    }
   });
   if (evmPrivateKey) {
     const evmSigner = privateKeyToAccount(evmPrivateKey);
