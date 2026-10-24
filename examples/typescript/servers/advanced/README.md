@@ -84,6 +84,8 @@ and fill required environment variables:
 - `STELLAR_ADDRESS` - Stellar public address (starts with `G`) to receive payments
 - `HEDERA_ACCOUNT_ID` - Hedera account id to receive payments (optional for `all-networks`; format: `0.0.XXXXX`)
 - `KEETA_ADDRESS` - Keeta address (starts with `keeta_`) to receive payments
+- `LNBTC_PAY_TO` and `LNBTC_NWC_URL` - receiver Lightning node public key (66 hex characters) and a Nostr Wallet Connect URL that can make invoices signed by that key
+- `LNBTC_PUBLIC_ORIGIN` - origin clients use to reach this server (defaults to `http://localhost:4021`); Lightning invoices are bound to the request URL
 - `XRPL_ADDRESS` - XRPL classic address (starts with `r`) to receive payments (optional for `all-networks`)
 - `XRPL_NETWORK` - XRPL network CAIP-2 (optional, defaults to `xrpl:1` XRPL Testnet)
 - `XRPL_AMOUNT` - XRPL price in drops (optional, defaults to `1000` = 0.001 XRP)
@@ -133,6 +135,10 @@ To create a Keeta Testnet wallet:
 1. Go to [Keeta Testnet Wallet](https://wallet.test.keeta.com/) and follow the steps to create your wallet. Make sure to save your mnemonic (seed phrase) to keep access to your wallet. To get your Keeta address, click on "Receive" and copy the deposit address (starting with `keeta_`).
 2. Use the [Keeta Testnet Faucet](https://faucet.test.keeta.com/) to send Testnet KTA to your wallet.
 3. To get Testnet USDC on Keeta, go to the "Receive" page in the wallet, click on "Any token from Keeta Testnet", select "USDC from Base (Sepolia) Testnet" and copy the deposit address (starting with `0x`). Then go the [Circle Faucet](https://faucet.circle.com/), select Base network and enter your Base deposit address.
+
+#### Bitcoin Lightning Testnet
+
+The Lightning server issues a fresh BOLT11 invoice per challenge through a [Nostr Wallet Connect](https://nips.nostr.com/47) connection whose `make_invoice` accepts `description_hash` (for example Alby Hub on LDK or LND). `LNBTC_PAY_TO` must be the public key of the node that signs those invoices, and the server must be the only party able to create invoices with that key: a shared custodial wallet is not compatible. The node needs inbound liquidity.
 
 #### Aptos Testnet
 

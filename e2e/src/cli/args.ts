@@ -172,7 +172,7 @@ export function printHelp(): void {
   console.log('  --schemes=<list>           Payment schemes: exact, upto, batch-settlement, auth-capture');
   console.log('  --sdk=<list>               SDK languages: ts, go, python (aliases: typescript, py)');
   console.log('  --paymentflow=<list>       Payment flows: authorization, upfront, escrow');
-  console.log('  --assetTransferMethod=<list>  Asset transfer methods: eip3009, permit2, sequence, ticketSequence');
+  console.log('  --assetTransferMethod=<list>  Asset transfer methods: eip3009, permit2, sequence, ticketSequence, bolt11');
   console.log('  --endpoints=<list>         Comma-separated endpoint paths or regex patterns (auto-anchored)');
   console.log('');
   console.log('Options:');

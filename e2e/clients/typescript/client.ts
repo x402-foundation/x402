@@ -22,6 +22,14 @@ import { createClientHederaSigner, PrivateKey as HederaPrivateKey } from "@x402/
 import { ExactHederaScheme } from "@x402/hedera/exact/client";
 import { ExactKeetaScheme } from "@x402/keeta/exact/client";
 import { toClientKeetaSigner, type ClientKeetaSigner } from "@x402/keeta";
+import { ExactLnbtcScheme } from "@x402/lnbtc/exact/client";
+import {
+  decodeInvoice,
+  httpRequestBinding,
+  type LightningPayer,
+  type RequestBindingProvider,
+} from "@x402/lnbtc";
+import { NWCClient, Nip47WalletError } from "@getalby/sdk";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import { createEd25519Signer, type Ed25519Signer } from "@x402/stellar";
 import { ExactTvmScheme } from "@x402/tvm/exact/client";
@@ -101,12 +109,64 @@ function svmChannelSalt(channelSalt: string): string {
 }
 
 /**
+ * Lightning payer over Nostr Wallet Connect (`pay_invoice`, which returns the
+ * preimage). Only a NIP-47 error response means the wallet did not pay; a
+ * timeout or relay failure leaves the payment unknown, so it is reported in
+ * flight and never retried.
+ *
+ * @param nostrWalletConnectUrl - NWC connection URI with the pay_invoice permission
+ * @returns Payer adapter for the lnbtc client scheme
+ */
+function nwcLightningPayer(nostrWalletConnectUrl: string): LightningPayer {
+  const nwc = new NWCClient({ nostrWalletConnectUrl });
+  return {
+    async payInvoice(invoice) {
+      const { paymentHash, amountMsat } = decodeInvoice(invoice);
+      try {
+        const { preimage } = await nwc.payInvoice({ invoice });
+        return { invoice, paymentHash, amountMsat, status: "paid", preimage };
+      } catch (error) {
+        const status = error instanceof Nip47WalletError ? "unpaid" : "in_flight";
+        console.error(`lnbtc NWC pay_invoice failed (${status}):`, error);
+        return { invoice, paymentHash, amountMsat, status };
+      }
+    },
+  };
+}
+
+/** The URL the harness asks an HTTP client to request: RESOURCE_SERVER_URL + ENDPOINT_PATH. */
+export function e2eRequestUrl(): string {
+  return `${process.env.RESOURCE_SERVER_URL}${process.env.ENDPOINT_PATH}`;
+}
+
+/**
+ * lnbtc binding of a bodiless HTTP request. The e2e servers bind no headers, so
+ * none are bound here either.
+ *
+ * @param request - Method and absolute URL of the request about to be made
+ * @returns Binding provider for {@link E2EClientOptions.lnbtcRequestBinding}
+ */
+export function bindHttpRequest(request: { method: string; url: string }): RequestBindingProvider {
+  return () =>
+    httpRequestBinding({ ...request, boundHeaders: [], getHeader: () => undefined });
+}
+
+export type E2EClientOptions = {
+  /**
+   * Binding of the request the transport is about to make (`httpRequestBinding`
+   * for HTTP, `mcpToolCallBinding` for an MCP tool call). The lnbtc client pays
+   * only invoices bound to exactly this request. Required when
+   * CLIENT_LNBTC_NWC_URL is set.
+   */
+  lnbtcRequestBinding?: RequestBindingProvider;
+};
+
+/**
  * Builds the shared x402 client with all e2e scheme registrations.
  */
-export async function createE2EClient(): Promise<E2EClientContext> {
-  const baseURL = process.env.RESOURCE_SERVER_URL as string;
+export async function createE2EClient(options: E2EClientOptions = {}): Promise<E2EClientContext> {
   const endpointPath = process.env.ENDPOINT_PATH as string;
-  const url = `${baseURL}${endpointPath}`;
+  const url = e2eRequestUrl();
 
   const schemes: SchemeRegistration[] = [];
   let batchSettlementScheme: BatchSettlementScheme | undefined;
@@ -320,6 +380,20 @@ export async function createE2EClient(): Promise<E2EClientContext> {
     schemes.push({
       network: networkCaip2Pattern("keeta"),
       client: new ExactKeetaScheme(keetaSigner),
+    });
+  }
+  if (process.env.CLIENT_LNBTC_NWC_URL) {
+    if (!options.lnbtcRequestBinding) {
+      throw new Error(
+        "CLIENT_LNBTC_NWC_URL is set but this transport passes no lnbtcRequestBinding",
+      );
+    }
+    schemes.push({
+      network: networkCaip2Pattern("lnbtc"),
+      client: new ExactLnbtcScheme({
+        payer: nwcLightningPayer(process.env.CLIENT_LNBTC_NWC_URL),
+        requestBinding: options.lnbtcRequestBinding,
+      }),
     });
   }
   if (stellarSigner) {

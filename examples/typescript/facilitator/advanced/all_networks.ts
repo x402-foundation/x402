@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
+ * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "lnbtc" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
  */
 
 import {
@@ -58,6 +58,8 @@ import {
   FacilitatorKeetaSigner,
 } from "@x402/keeta";
 import { ExactKeetaScheme } from "@x402/keeta/exact/facilitator";
+import { InMemoryReplayStore, LNBTC_TESTNET } from "@x402/lnbtc";
+import { ExactLnbtcScheme } from "@x402/lnbtc/exact/facilitator";
 import {
   createFacilitatorNearSigner,
   NEAR_TESTNET_CAIP2,
@@ -109,6 +111,8 @@ const ccdFacilitatorAddress = process.env.CCD_FACILITATOR_ADDRESS as
   | undefined;
 const evmPrivateKey = process.env.EVM_PRIVATE_KEY as `0x${string}` | undefined;
 const keetaMnemonic = process.env.KEETA_MNEMONIC as string | undefined;
+// Lightning needs no keys: settlement verifies the preimage locally.
+const lnbtcEnabled = process.env.LNBTC_ENABLED === "true";
 const nearRelayerAccountId = process.env.NEAR_RELAYER_ACCOUNT_ID as
   | string
   | undefined;
@@ -136,6 +140,7 @@ if (
   !(ccdFacilitatorPrivateKey && ccdFacilitatorAddress) &&
   !evmPrivateKey &&
   !keetaMnemonic &&
+  !lnbtcEnabled &&
   !(nearRelayerAccountId && nearRelayerPrivateKey) &&
   !svmPrivateKey &&
   !stellarPrivateKey &&
@@ -143,7 +148,7 @@ if (
   !(hederaAccountId && hederaPrivateKey)
 ) {
   console.error(
-    "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CARDANO_MNEMONIC, CASPER_PRIVATE_KEY, CCD_FACILITATOR_PRIVATE_KEY + CCD_FACILITATOR_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_RELAYER_ACCOUNT_ID + NEAR_RELAYER_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, TVM_PRIVATE_KEY, or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY is required",
+    "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CARDANO_MNEMONIC, CASPER_PRIVATE_KEY, CCD_FACILITATOR_PRIVATE_KEY + CCD_FACILITATOR_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, LNBTC_ENABLED=true, NEAR_RELAYER_ACCOUNT_ID + NEAR_RELAYER_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, TVM_PRIVATE_KEY, or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY is required",
   );
   process.exit(1);
 }
@@ -158,6 +163,7 @@ const CCD_NETWORK = CONCORDIUM_TESTNET_CAIP2; // Concordium Testnet
 const EVM_NETWORK = "eip155:84532"; // Base Sepolia
 const HEDERA_NETWORK = "hedera:testnet"; // Hedera Testnet
 const KEETA_NETWORK = KEETA_TESTNET_CAIP2; // Keeta Testnet
+const LNBTC_NETWORK = LNBTC_TESTNET; // Bitcoin Lightning (testnet)
 const NEAR_NETWORK = nearNetwork as Network; // NEAR Testnet
 const SVM_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"; // Solana Devnet
 const STELLAR_NETWORK = "stellar:testnet"; // Stellar Testnet
@@ -377,6 +383,19 @@ if (keetaMnemonic) {
     KEETA_NETWORK,
     new ExactKeetaScheme(keetaSigner, console),
   );
+}
+
+// Register Lightning scheme if enabled
+if (lnbtcEnabled) {
+  facilitator.register(
+    LNBTC_NETWORK,
+    new ExactLnbtcScheme({
+      // For local runs only: production needs a restart-durable replay store shared by
+      // every instance settling for the same receiver.
+      replayStore: new InMemoryReplayStore(),
+    }),
+  );
+  console.info(`Lightning facilitator enabled on ${LNBTC_NETWORK}`);
 }
 
 // Register NEAR scheme if relayer account and private key are provided

@@ -53,6 +53,7 @@ and fill required environment variables:
 - `HEDERA_PRIVATE_KEY` - Hedera **ECDSA** private key (0x-prefixed or DER-encoded) for Hedera payments (optional)
 - `HEDERA_NETWORK` - Hedera network (optional, defaults to `hedera:testnet`)
 - `KEETA_MNEMONIC` - Keeta mnemonic for Keeta payments
+- `LNBTC_NWC_URL` - Nostr Wallet Connect URL of a Bitcoin testnet Lightning wallet for Lightning payments
 - `XRPL_SEED` - XRPL family seed (starts with `s`) for XRPL payments (optional; `all-networks`)
 - `XRPL_NETWORK` - XRPL network CAIP-2 (optional, defaults to `xrpl:1` XRPL Testnet)
 - `XRPL_WS_URL` - Custom XRPL WebSocket endpoint (optional, defaults to the public endpoint for `XRPL_NETWORK`)
@@ -84,6 +85,10 @@ Stellar accounts need to be created and funded with both XLM and USDC. Instructi
 1. Go to [Stellar Laboratory](https://lab.stellar.org/account/create) ➡️ Generate keypair ➡️ Fund account with Friendbot, then copy the `Secret` and `Public` keys so you can use them.
 2. Add USDC trustline (required to transact USDC): go to [Fund Account](https://lab.stellar.org/account/fund) ➡️ Paste your `Public Key` ➡️ Add USDC Trustline ➡️ paste your `Secret key` ➡️ Sign transaction ➡️ Add Trustline.
 3. Get testnet USDC from [Circle Faucet](https://faucet.circle.com/) (select Stellar network).
+
+#### Bitcoin Lightning Testnet
+
+The Lightning client pays BOLT11 invoices through a [Nostr Wallet Connect](https://nips.nostr.com/47) wallet on Bitcoin testnet (for example Alby Hub or LND with an NWC bridge). The wallet must return the payment preimage from `pay_invoice` and needs an outbound channel with enough liquidity. Prices are in millisatoshis; the example server charges 1 sat.
 
 #### Keeta Testnet
 
