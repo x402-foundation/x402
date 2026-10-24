@@ -76,9 +76,21 @@ The `payload` field must contain:
 
 1.  **Verify** the signature is valid and recovers to the `authorization.from` address.
 2.  **Verify** the `client` has sufficient balance of the `asset`.
-3.  **Verify** the authorization parameters (Amount, Validity Window) meet the `PaymentRequirements`.
+3.  **Verify** the authorization parameters satisfy the `PaymentRequirements`: `authorization.value` MUST exactly equal `amount` (see [Verification Rules](#facilitator-verification-rules-must) rule 4), and the validity window MUST be active (rule 3).
 4.  **Verify** the Token and Network match the requirement.
 5.  **Simulate** `token.transferWithAuthorization(...)` to ensure success.
+
+### Facilitator Verification Rules (MUST)
+
+A verifier of an `eip3009` payment MUST enforce all of the following before treating the payment as valid. These rules mirror the on-chain preconditions of `transferWithAuthorization` itself: on a local-verification path, where no facilitator is invoked and no on-chain settlement follows the verify, they are the entire settlement guarantee — anything the token contract would reject at settlement but a lax verifier accepts is a resource released for a payment that can never settle.
+
+1. **Signature canonicality.** Reject any signature where `s > secp256k1n/2` (the low-s rule, [EIP-2](https://eips.ethereum.org/EIPS/eip-2)). A high-s signature is a second valid encoding of the same authorization under `ecrecover`, and EIP-3009 token implementations that enforce canonical signatures (e.g. USDC's `ECRecover`) revert on it at settlement, so accepting it at verification predicts a settlement that fails.
+2. **Signer binding.** The signature MUST recover to `authorization.from` over the token's canonical EIP-712 domain (`name`, `version`, `chainId`, `verifyingContract`). No separate domain check is required: a signature over a different chain or contract recovers to a different address and therefore fails this check.
+3. **Validity window.** Reject any authorization where `now < validAfter` (`invalid_exact_evm_payload_authorization_valid_after`) or `now >= validBefore` (`invalid_exact_evm_payload_authorization_valid_before`), evaluated at verification time.
+4. **Exact value.** Reject any authorization whose `value` does not exactly equal the required `amount` (`invalid_exact_evm_payload_authorization_value_mismatch`). Overpayment is a mismatch, not a margin.
+5. **Replay.** Reject any authorization whose `nonce` is already consumed for `from` on the token contract (`authorizationState(from, nonce) == true`), or already present in the verifier's own pending set. EIP-3009 nonces are scoped per authorizer: the same 32 bytes seen from a different `from` is not a replay. On-chain state is the authoritative check; the verifier's local set is same-verifier defense-in-depth, and on a verify-only path — where nothing consumes the nonce on chain — it is the only replay protection.
+
+Rules 1–4 are stateless (pure signed-input → verdict); rule 5 is the single stateful check.
 
 ### Phase 3: Settlement Logic
 
@@ -186,7 +198,7 @@ The verifier must execute these checks in order:
 
 3.  **Verify** the `client` has sufficient balance of the `asset`.
 
-4.  **Verify** the `permit2Authorization.amount` covers the payment.
+4.  **Verify** the `permit2Authorization.permitted.amount` exactly equals the required `amount`. A mismatch in either direction — overpayment included — MUST be rejected.
 
 5.  **Verify** the `deadline` (not expired) and `witness.validAfter` (active).
 
