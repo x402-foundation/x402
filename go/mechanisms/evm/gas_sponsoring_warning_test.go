@@ -36,6 +36,7 @@ func (s *warningTestSigner) SignTypedData(
 type warningReadSigner struct {
 	*warningTestSigner
 	allowance *big.Int
+	reads     int
 }
 
 func (s *warningReadSigner) ReadContract(
@@ -45,8 +46,17 @@ func (s *warningReadSigner) ReadContract(
 	_ string,
 	_ ...interface{},
 ) (interface{}, error) {
+	s.reads++
 	return s.allowance, nil
 }
+
+// warningProbeSigner is a read signer that also reports HasRPCClient.
+type warningProbeSigner struct {
+	*warningReadSigner
+	hasRPC bool
+}
+
+func (s *warningProbeSigner) HasRPCClient() bool { return s.hasRPC }
 
 type clientWarningCase struct {
 	name         string
@@ -173,25 +183,49 @@ func TestClientGasSponsoringWarnings(t *testing.T) {
 				}
 			})
 
-			t.Run("does not warn when ERC-20 approval is unnecessary", func(t *testing.T) {
-				logs := captureClientWarningLogs(t)
-				scheme := tc.newScheme(&warningReadSigner{
-					warningTestSigner: &warningTestSigner{},
-					allowance:         big.NewInt(1_000_000),
-				})
-				payloadCtx := x402.PaymentPayloadContext{Extensions: map[string]interface{}{
-					erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key(): map[string]interface{}{},
-				}}
+			t.Run("allowance short-circuit", func(t *testing.T) {
+				boolPtr := func(b bool) *bool { return &b }
+				cases := []struct {
+					name        string
+					hasRPC      *bool // nil: signer has no HasRPCClient probe
+					wantReads   int
+					wantWarning bool
+				}{
+					{name: "reads allowance without probe", wantReads: 1},
+					{name: "reads allowance when HasRPCClient is true", hasRPC: boolPtr(true), wantReads: 1},
+					{name: "skips allowance read when HasRPCClient is false", hasRPC: boolPtr(false), wantWarning: true},
+				}
+				for _, c := range cases {
+					t.Run(c.name, func(t *testing.T) {
+						logs := captureClientWarningLogs(t)
+						reader := &warningReadSigner{
+							warningTestSigner: &warningTestSigner{},
+							allowance:         big.NewInt(1_000_000),
+						}
+						var signer evm.ClientEvmSigner = reader
+						if c.hasRPC != nil {
+							signer = &warningProbeSigner{warningReadSigner: reader, hasRPC: *c.hasRPC}
+						}
+						scheme := tc.newScheme(signer)
+						payloadCtx := x402.PaymentPayloadContext{Extensions: map[string]interface{}{
+							erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key(): map[string]interface{}{},
+						}}
 
-				payload, err := scheme.CreatePaymentPayload(context.Background(), tc.requirements, payloadCtx)
-				if err != nil {
-					t.Fatalf("CreatePaymentPayload failed: %v", err)
-				}
-				if payload.Extensions != nil {
-					t.Fatalf("expected no extension with sufficient allowance, got %+v", payload.Extensions)
-				}
-				if strings.Contains(logs.String(), erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key()) {
-					t.Fatalf("expected no warning when approval is unnecessary, got %q", logs.String())
+						payload, err := scheme.CreatePaymentPayload(context.Background(), tc.requirements, payloadCtx)
+						if err != nil {
+							t.Fatalf("CreatePaymentPayload failed: %v", err)
+						}
+						if payload.Extensions != nil {
+							t.Fatalf("expected no extension, got %+v", payload.Extensions)
+						}
+						if reader.reads != c.wantReads {
+							t.Fatalf("expected %d allowance reads, got %d", c.wantReads, reader.reads)
+						}
+						warned := strings.Contains(logs.String(), erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key())
+						if warned != c.wantWarning {
+							t.Fatalf("warning emitted=%v, want %v: %q", warned, c.wantWarning, logs.String())
+						}
+					})
 				}
 			})
 		})

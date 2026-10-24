@@ -3,16 +3,14 @@ package client
 import (
 	"context"
 	"fmt"
-	"math/big"
 	"time"
-
-	"github.com/ethereum/go-ethereum/common"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/extensions/eip2612gassponsor"
 	"github.com/x402-foundation/x402/go/v2/extensions/erc20approvalgassponsor"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 	exactclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/internal/clientutil"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
@@ -158,7 +156,7 @@ func (c *BatchSettlementEvmScheme) trySignEip2612Permit(
 	// Allowance short-circuit: if the user has already approved Permit2 for
 	// at least the deposit amount, no permit is needed. The downstream
 	// facilitator simulation will succeed without the EIP-2612 segment.
-	if hasSufficientPermit2Allowance(ctx, readSigner, tokenAddress, c.signer.Address(), depositAmount) {
+	if clientutil.HasSufficientPermit2Allowance(ctx, readSigner, tokenAddress, c.signer.Address(), depositAmount) {
 		return nil, nil
 	}
 
@@ -227,7 +225,7 @@ func (c *BatchSettlementEvmScheme) trySignErc20Approval(
 		// requirements.Amount` always holds for batched flows. Skip the
 		// short-circuit when no per-request amount is available.
 		if requirements.Amount != "" &&
-			hasSufficientPermit2Allowance(ctx, readSigner, tokenAddress, c.signer.Address(), requirements.Amount) {
+			clientutil.HasSufficientPermit2Allowance(ctx, readSigner, tokenAddress, c.signer.Address(), requirements.Amount) {
 			return nil, nil
 		}
 	}
@@ -261,37 +259,4 @@ func (c *BatchSettlementEvmScheme) trySignErc20Approval(
 			"info": info,
 		},
 	}, nil
-}
-
-// hasSufficientPermit2Allowance returns true when `owner` has already
-// approved at least `requiredAmount` to Permit2 for `tokenAddress`. Returns
-// false on any RPC error so we conservatively sign an extension rather than
-// silently skipping when the allowance cannot be confirmed.
-func hasSufficientPermit2Allowance(
-	ctx context.Context,
-	readSigner evm.ClientEvmSignerWithReadContract,
-	tokenAddress string,
-	owner string,
-	requiredAmount string,
-) bool {
-	allowanceResult, err := readSigner.ReadContract(
-		ctx,
-		tokenAddress,
-		evm.ERC20AllowanceABI,
-		"allowance",
-		common.HexToAddress(owner),
-		common.HexToAddress(evm.PERMIT2Address),
-	)
-	if err != nil {
-		return false
-	}
-	allowanceBig, ok := allowanceResult.(*big.Int)
-	if !ok {
-		return false
-	}
-	required, ok := new(big.Int).SetString(requiredAmount, 10)
-	if !ok {
-		return false
-	}
-	return allowanceBig.Cmp(required) >= 0
 }

@@ -1,0 +1,3 @@
+kind: changed
+body: Route the ERC-20 allowance short-circuit in the exact and upto clients through ResolveReadSigner so it honors HasRPCClient() and the configured RPCURL/RPCByChainID fallback, and share the Permit2 allowance check across exact, upto, and batch-settlement.
+time: 2026-10-24T08:53:15.000000+09:00

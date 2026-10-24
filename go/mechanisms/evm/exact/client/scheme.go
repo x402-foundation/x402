@@ -6,8 +6,6 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common"
-
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/extensions/eip2612gassponsor"
 	"github.com/x402-foundation/x402/go/v2/extensions/erc20approvalgassponsor"
@@ -130,21 +128,8 @@ func (c *ExactEvmScheme) trySignEip2612Permit(
 	}
 
 	// Check if user already has sufficient Permit2 allowance
-	allowanceResult, err := readSigner.ReadContract(
-		ctx,
-		tokenAddress,
-		evm.ERC20AllowanceABI,
-		"allowance",
-		common.HexToAddress(c.signer.Address()),
-		common.HexToAddress(evm.PERMIT2Address),
-	)
-	if err == nil {
-		if allowanceBig, ok := allowanceResult.(*big.Int); ok {
-			requiredAmount, ok := new(big.Int).SetString(requirements.Amount, 10)
-			if ok && allowanceBig.Cmp(requiredAmount) >= 0 {
-				return nil, nil // Already approved
-			}
-		}
+	if clientutil.HasSufficientPermit2Allowance(ctx, readSigner, tokenAddress, c.signer.Address(), requirements.Amount) {
+		return nil, nil // Already approved
 	}
 
 	// Determine deadline from Permit2 authorization
@@ -191,24 +176,11 @@ func (c *ExactEvmScheme) trySignErc20Approval(
 
 	tokenAddress := evm.NormalizeAddress(requirements.Asset)
 
-	// If read capability exists, skip signing when Permit2 allowance is already sufficient.
-	if readSigner, hasRead := c.signer.(evm.ClientEvmSignerWithReadContract); hasRead {
-		allowanceResult, err := readSigner.ReadContract(
-			ctx,
-			tokenAddress,
-			evm.ERC20AllowanceABI,
-			"allowance",
-			common.HexToAddress(c.signer.Address()),
-			common.HexToAddress(evm.PERMIT2Address),
-		)
-		if err == nil {
-			if allowanceBig, ok := allowanceResult.(*big.Int); ok {
-				requiredAmount, ok := new(big.Int).SetString(requirements.Amount, 10)
-				if ok && allowanceBig.Cmp(requiredAmount) >= 0 {
-					return nil, nil // Already approved
-				}
-			}
-		}
+	// Skip signing when Permit2 allowance is already sufficient. Best-effort: a signer
+	// resolution error falls through to the approval path, which reports missing capability.
+	if readSigner, _ := c.resolveReadSigner(ctx, requirements.Network); readSigner != nil &&
+		clientutil.HasSufficientPermit2Allowance(ctx, readSigner, tokenAddress, c.signer.Address(), requirements.Amount) {
+		return nil, nil // Already approved
 	}
 
 	txSigner, err := c.resolveTxSigner(ctx, requirements.Network)
