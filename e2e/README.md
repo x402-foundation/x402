@@ -351,6 +351,24 @@ only an e2e fixture; it is not a default asset in the XRPL SDK.
 See the [XRPL Testnet faucet](https://xrpl.org/resources/dev-tools/xrp-faucets)
 and [issued-token setup](https://xrpl.org/docs/tutorials/tokens/fungible-tokens/issue-a-fungible-token).
 
+#### Canton DevNet
+
+The client and the facilitator use a Canton participant (JSON Ledger API) whose
+ledger user can act as the client party and as the facilitator party, and, for
+`pnpm canton:setup`, as the payee (`SERVER_CANTON_ADDRESS`). The client and the
+payee are external parties with Ed25519 keys.
+
+1. Fund the client and the payee with DevNet Canton Coin from a DevNet tap (see
+   [performing a CC tap](https://docs.canton.network/sdks-tools/sdks/wallet-sdk/guides/performing-a-cc-tap)).
+2. Give the payee the `TransferPreapproval` the scheme requires to settle in one
+   transaction. The setup script creates it, or renews it when it expires within a
+   week, signing with `SERVER_CANTON_PRIVATE_KEY`; the payee pays the small fee:
+
+```bash
+pnpm canton:setup
+pnpm test --testnet --min --families=canton --versions=2
+```
+
 #### Stellar Testnet
 
 You need **three separate Stellar accounts** for e2e tests (client, server, facilitator):

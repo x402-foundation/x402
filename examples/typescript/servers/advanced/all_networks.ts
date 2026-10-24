@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
+ * (e.g., "algorand" before "aptos" before "canton" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
  */
 
 import { config } from "dotenv";
@@ -17,6 +17,7 @@ import { ExactAvmScheme } from "@x402/avm/exact/server";
 import { ALGORAND_TESTNET_CAIP2 } from "@x402/avm";
 import { ExactCardanoScheme } from "@x402/cardano/exact/server";
 import { ExactCasperScheme } from "@x402/casper/exact/server";
+import { ExactCantonScheme } from "@x402/canton/exact/server";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
@@ -39,6 +40,12 @@ const avmAddress = process.env.AVM_ADDRESS as string | undefined;
 const cardanoAddress = process.env.CARDANO_ADDRESS as string | undefined;
 const aptosAddress = process.env.APTOS_ADDRESS as string | undefined;
 const casperAddress = process.env.CASPER_ADDRESS as string | undefined;
+// Canton: the merchant party to be paid, the instrument admin (DSO for Canton
+// Coin), and the synchronizer the payment settles on.
+const cantonAddress = process.env.CANTON_ADDRESS as string | undefined;
+const cantonInstrumentAdmin = process.env.CANTON_INSTRUMENT_ADMIN as string | undefined;
+const cantonSynchronizerId = process.env.CANTON_SYNCHRONIZER_ID as string | undefined;
+const cantonConfigured = Boolean(cantonAddress && cantonInstrumentAdmin && cantonSynchronizerId);
 const ccdAddress = process.env.CCD_ADDRESS as string | undefined;
 const evmAddress = process.env.EVM_ADDRESS as `0x${string}` | undefined;
 const hederaAddress = process.env.HEDERA_ACCOUNT_ID as string | undefined;
@@ -55,6 +62,7 @@ if (
   !cardanoAddress &&
   !aptosAddress &&
   !casperAddress &&
+  !cantonConfigured &&
   !ccdAddress &&
   !evmAddress &&
   !svmAddress &&
@@ -66,7 +74,7 @@ if (
   !xrplAddress
 ) {
   console.error(
-    "❌ At least one of AVM_ADDRESS, APTOS_ADDRESS, CARDANO_ADDRESS, CASPER_ADDRESS, CCD_ADDRESS, EVM_ADDRESS, KEETA_ADDRESS, NEAR_ADDRESS, SVM_ADDRESS, STELLAR_ADDRESS, HEDERA_ACCOUNT_ID, TVM_ADDRESS, or XRPL_ADDRESS is required",
+    "❌ At least one of AVM_ADDRESS, APTOS_ADDRESS, CARDANO_ADDRESS, CASPER_ADDRESS, CANTON_ADDRESS + CANTON_INSTRUMENT_ADMIN + CANTON_SYNCHRONIZER_ID, CCD_ADDRESS, EVM_ADDRESS, KEETA_ADDRESS, NEAR_ADDRESS, SVM_ADDRESS, STELLAR_ADDRESS, HEDERA_ACCOUNT_ID, TVM_ADDRESS, or XRPL_ADDRESS is required",
   );
   process.exit(1);
 }
@@ -87,6 +95,9 @@ const CASPER_ASSET = (process.env.CASPER_ASSET ||
   "0cb6f94834c60510d532b0ae077b18b4100874a4c867396d61c2b13c790ead52") as string; // Defaults to Casper WCSPR CEP-18
 const CASPER_TOKEN_NAME = (process.env.CASPER_TOKEN_NAME || "csprUSD") as string; // Casper CEP-18 token name (e.g., "csprUSD")
 const CASPER_TOKEN_VERSION = (process.env.CASPER_TOKEN_VERSION || "1") as string; // Casper CEP-18 token version
+// Canton CAIP-2 tier (canton:mainnet | canton:devnet); the synchronizer/domain
+// travels separately (signer config + extra.synchronizerId), not in the network id.
+const CANTON_NETWORK = (process.env.CANTON_NETWORK || "canton:mainnet") as Network;
 const CCD_NETWORK = "ccd:4221332d34e1694168c2a0c0b3fd0f27" as const; // Concordium Testnet
 const EVM_NETWORK = "eip155:84532" as const; // Base Sepolia
 const HEDERA_NETWORK = "hedera:testnet" as const; // Hedera Testnet
@@ -156,6 +167,21 @@ if (casperAddress) {
   });
 }
 
+if (cantonConfigured) {
+  accepts.push({
+    scheme: "exact",
+    // Canton prices are explicit AssetAmounts; the instrument admin (DSO for
+    // Canton Coin) travels in `extra.instrumentId`. feePayer + synchronizerId are
+    // merged from the facilitator's /supported by the server scheme.
+    price: {
+      amount: "100000000", // 0.01 CC (atomic: 1 CC = 1e10)
+      asset: "CC",
+      extra: { instrumentId: { admin: cantonInstrumentAdmin!, id: "Amulet" } },
+    },
+    network: CANTON_NETWORK,
+    payTo: cantonAddress!,
+  });
+}
 if (ccdAddress) {
   accepts.push({
     scheme: "exact",
@@ -254,6 +280,9 @@ if (cardanoAddress) {
 }
 if (casperAddress) {
   server.register(CASPER_NETWORK, new ExactCasperScheme());
+}
+if (cantonConfigured) {
+  server.register(CANTON_NETWORK, new ExactCantonScheme());
 }
 if (ccdAddress) {
   server.register(CCD_NETWORK, new ExactConcordiumScheme());

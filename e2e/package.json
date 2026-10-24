@@ -16,6 +16,7 @@
     "permit2:approve": "tsx scripts/permit2-approval.ts approve",
     "permit2:revoke": "tsx scripts/permit2-approval.ts revoke",
     "swig:setup": "tsx scripts/swig-setup.ts",
+    "canton:setup": "tsx scripts/canton-setup.ts",
     "xrpl:iou:setup": "tsx scripts/xrpl-iou-setup.ts",
     "wallet:status": "tsx scripts/print-wallet-status.ts",
     "results:summary": "tsx scripts/print-e2e-summary.ts"
@@ -32,6 +33,7 @@
     "@swig-wallet/lib": "^2.0.0",
     "@x402/aptos": "workspace:*",
     "@x402/avm": "workspace:*",
+    "@x402/canton": "workspace:*",
     "@x402/cardano": "workspace:*",
     "@x402/casper": "workspace:*",
     "casper-js-sdk": "5.1.1",
