@@ -102,6 +102,71 @@ describe("wrapFetchWithPayment()", () => {
     wrappedFetch = wrapFetchWithPayment(mockFetch, mockClient);
   });
 
+  it("surfaces a parse error when the hook retry 402 cannot be parsed (#3582)", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    (MockX402HTTPClient.prototype.getPaymentRequiredResponse as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce(validPaymentRequired)
+      .mockImplementationOnce(() => {
+        throw new Error("bad requirements");
+      });
+    (
+      MockX402HTTPClient.prototype.handlePaymentRequired as ReturnType<typeof vi.fn>
+    ).mockResolvedValue({ "X-Alt-Auth": "token" });
+    mockFetch
+      .mockResolvedValueOnce(
+        createResponse(402, validPaymentRequired, { "PAYMENT-REQUIRED": "first" }),
+      )
+      .mockResolvedValueOnce(
+        new Response("not-json", {
+          status: 402,
+          statusText: "Payment Required",
+          headers: new Headers({ "PAYMENT-REQUIRED": "second" }),
+        }),
+      );
+
+    await expect(wrappedFetch("https://api.example.com", { method: "GET" })).rejects.toThrow(
+      "Failed to parse payment requirements",
+    );
+  });
+
+  it("uses the updated 402 requirements after an onPaymentRequired hook retry (#3582)", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+
+    const updatedPaymentRequired: PaymentRequired = {
+      ...validPaymentRequired,
+      accepts: [{ ...validPaymentRequired.accepts[0], amount: "2000000" } as PaymentRequirements],
+    };
+
+    (MockX402HTTPClient.prototype.getPaymentRequiredResponse as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce(validPaymentRequired)
+      .mockImplementationOnce((getHeader: (name: string) => string | null) => {
+        // The wrapper hands getPaymentRequiredResponse an accessor over the hook
+        // retry's 402 headers; exercise it so the re-decode path is covered.
+        expect(getHeader("PAYMENT-REQUIRED")).toBe("second");
+        return updatedPaymentRequired;
+      });
+    (
+      MockX402HTTPClient.prototype.handlePaymentRequired as ReturnType<typeof vi.fn>
+    ).mockResolvedValue({ "X-Alt-Auth": "token" });
+
+    const successResponse = createResponse(200, { data: "success" });
+    mockFetch
+      .mockResolvedValueOnce(
+        createResponse(402, validPaymentRequired, { "PAYMENT-REQUIRED": "first" }),
+      )
+      .mockResolvedValueOnce(
+        createResponse(402, updatedPaymentRequired, { "PAYMENT-REQUIRED": "second" }),
+      )
+      .mockResolvedValueOnce(successResponse);
+
+    const result = await wrappedFetch("https://api.example.com", { method: "GET" });
+
+    expect(result).toBe(successResponse);
+    expect(MockX402HTTPClient.prototype.getPaymentRequiredResponse).toHaveBeenCalledTimes(2);
+    expect(mockClient.createPaymentPayload).toHaveBeenCalledWith(updatedPaymentRequired);
+    expect(mockClient.createPaymentPayload).not.toHaveBeenCalledWith(validPaymentRequired);
+  });
+
   it("should return the original response for non-402 status codes", async () => {
     const successResponse = createResponse(200, { data: "success" });
     mockFetch.mockResolvedValue(successResponse);
