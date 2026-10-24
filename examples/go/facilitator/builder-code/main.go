@@ -121,7 +121,7 @@ func main() {
 
 		result, err := facilitator.Settle(ctx, reqBody.PaymentPayload, reqBody.PaymentRequirements)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			writeSettleError(c, err)
 			return
 		}
 
