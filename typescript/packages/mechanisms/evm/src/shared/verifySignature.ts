@@ -7,6 +7,7 @@ import {
 } from "viem";
 import type { TypedDataDomain } from "viem";
 import type { FacilitatorEvmSigner } from "../signer";
+import { isContractRevert } from "./revert";
 
 /**
  * Parsed ERC-6492 classification for a payer address.
@@ -280,5 +281,83 @@ export async function verifyERC1271(
     return result.toLowerCase().startsWith(ERC1271_MAGIC_VALUE);
   } catch {
     return false;
+  }
+}
+
+/**
+ * Outcome of {@link checkTypedDataSignature}. `unverifiable` means an RPC call the check needed
+ * failed, so nothing was decided about the signature.
+ */
+export type SignatureCheckResult =
+  | { status: "valid" }
+  | { status: "invalid" }
+  | { status: "unverifiable"; error: unknown };
+
+/**
+ * Same routing as {@link verifyTypedDataSignature}, but keeps RPC failures apart from invalid
+ * signatures instead of folding both into `false`.
+ *
+ * - The address's `eth_getCode` fails: `unverifiable`.
+ * - No code: ecrecover decides `valid` or `invalid`.
+ * - Code: `isValidSignature` returning the magic value is `valid`; a revert or any other return
+ *   is `invalid`; a failure that is not a revert (transport, timeout) is `unverifiable`.
+ *
+ * @param signer - Facilitator signer used for `eth_getCode` and `isValidSignature` calls.
+ * @param params - Typed-data verification parameters.
+ * @param params.address - The address that is expected to have signed the data.
+ * @param params.domain - EIP-712 domain.
+ * @param params.types - EIP-712 type definitions.
+ * @param params.primaryType - The primary type to hash.
+ * @param params.message - The typed-data message.
+ * @param params.signature - The signature to verify.
+ * @returns The check outcome; `unverifiable` carries the RPC error.
+ */
+export async function checkTypedDataSignature(
+  signer: FacilitatorEvmSigner,
+  params: {
+    address: `0x${string}`;
+    domain: TypedDataDomain;
+    types: Record<string, readonly { name: string; type: string }[]>;
+    primaryType: string;
+    message: Record<string, unknown>;
+    signature: `0x${string}`;
+  },
+): Promise<SignatureCheckResult> {
+  let digest: `0x${string}`;
+  try {
+    digest = hashTypedData({
+      domain: params.domain,
+      types: params.types,
+      primaryType: params.primaryType,
+      message: params.message,
+    });
+  } catch {
+    return { status: "invalid" };
+  }
+
+  let code: `0x${string}` | undefined;
+  try {
+    code = await signer.getCode({ address: params.address });
+  } catch (error) {
+    return { status: "unverifiable", error };
+  }
+
+  if (!code || code === "0x") {
+    const valid = await verifyECDSA(params.address, digest, params.signature);
+    return { status: valid ? "valid" : "invalid" };
+  }
+
+  try {
+    const result = (await signer.readContract({
+      address: params.address,
+      abi: ERC1271_ABI,
+      functionName: "isValidSignature",
+      args: [digest, params.signature],
+    })) as `0x${string}` | undefined;
+    const valid =
+      typeof result === "string" && result.toLowerCase().startsWith(ERC1271_MAGIC_VALUE);
+    return { status: valid ? "valid" : "invalid" };
+  } catch (error) {
+    return isContractRevert(error) ? { status: "invalid" } : { status: "unverifiable", error };
   }
 }

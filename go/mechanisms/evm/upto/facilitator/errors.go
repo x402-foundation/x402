@@ -38,6 +38,8 @@ const (
 	ErrPermit2ProxyNotDeployed    = evm.ErrPermit2ProxyNotDeployed
 	ErrPermit2AllowanceRequired   = evm.ErrPermit2AllowanceRequired
 
+	ErrPermit2FailedToVerifySignature = evm.ErrPermit2FailedToVerifySignature
+
 	ErrErc20ApprovalTxFailed        = evm.ErrErc20ApprovalTxFailed
 	ErrErc20ApprovalInsufficientEth = evm.ErrErc20ApprovalInsufficientEth
 	ErrErc20ApprovalBroadcastFailed = evm.ErrErc20ApprovalBroadcastFailed

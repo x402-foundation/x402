@@ -14,6 +14,11 @@ from .constants import EIP1271_MAGIC_VALUE, IS_VALID_SIGNATURE_ABI
 from .erc6492 import has_deployment_info, parse_erc6492_signature
 from .signer import FacilitatorEvmSigner
 from .types import ERC6492SignatureData, TypedDataDomain, TypedDataField
+from .utils import is_contract_revert
+
+
+class SignatureCheckUnavailableError(Exception):
+    """An RPC call a signature check needed failed, so nothing was decided about the signature."""
 
 
 def verify_eoa_signature(
@@ -71,6 +76,7 @@ def verify_eip1271_signature(
     wallet: str,
     hash: bytes,
     signature: bytes,
+    raise_unavailable: bool = False,
 ) -> bool:
     """Verify EIP-1271 smart contract wallet signature.
 
@@ -81,6 +87,8 @@ def verify_eip1271_signature(
         wallet: Smart wallet address.
         hash: 32-byte message hash.
         signature: Signature bytes (format is wallet-specific).
+        raise_unavailable: Raise SignatureCheckUnavailableError when the call fails without
+            reverting (transport, timeout) instead of returning False.
 
     Returns:
         True if contract returns magic value 0x1626ba7e.
@@ -102,7 +110,9 @@ def verify_eip1271_signature(
             return result_bytes[:4] == EIP1271_MAGIC_VALUE
 
         return False
-    except Exception:
+    except Exception as e:
+        if raise_unavailable and not is_contract_revert(e):
+            raise SignatureCheckUnavailableError(str(e)) from e
         return False
 
 
@@ -241,6 +251,8 @@ def verify_typed_data_strict(
     primary_type: str,
     message: dict[str, Any],
     signature: bytes,
+    code: bytes | None = None,
+    raise_unavailable: bool = False,
 ) -> bool:
     """Strict typed-data signature verification that mirrors on-chain SignatureChecker.
 
@@ -258,6 +270,9 @@ def verify_typed_data_strict(
         primary_type: Primary type name.
         message: Message data.
         signature: Signature bytes.
+        code: Bytecode already fetched for ``address``; when given, no ``eth_getCode`` is issued.
+        raise_unavailable: Raise SignatureCheckUnavailableError when an EIP-1271 call fails
+            without reverting, instead of returning False.
 
     Returns:
         True iff on-chain SignatureChecker would accept the signature.
@@ -267,7 +282,8 @@ def verify_typed_data_strict(
     except Exception:
         return False
 
-    code = signer.get_code(address)
+    if code is None:
+        code = signer.get_code(address)
     if not code:
         # EOA path: pure ecrecover. On-chain ecrecover never reverts — invalid
         # signatures (wrong length, bad encoding) return address(0), so we mirror
@@ -277,4 +293,6 @@ def verify_typed_data_strict(
         except ValueError:
             return False
     # Has code (contract or ERC-7702 delegation): strict EIP-1271, no ECDSA fallback
-    return verify_eip1271_signature(signer, address, digest, signature)
+    return verify_eip1271_signature(
+        signer, address, digest, signature, raise_unavailable=raise_unavailable
+    )

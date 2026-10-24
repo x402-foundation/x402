@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { hashTypedData } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import {
+  checkTypedDataSignature,
   verifyTypedDataSignature,
   verifyHashSignature,
   verifyECDSA,
@@ -45,10 +46,13 @@ function mockSigner(opts: {
   code: `0x${string}` | undefined;
   isValidSignatureResult?: `0x${string}`;
   isValidSignatureThrows?: boolean;
+  isValidSignatureError?: Error;
+  getCodeError?: Error;
 }): FacilitatorEvmSigner {
   return {
     getAddresses: () => [],
     readContract: vi.fn(async () => {
+      if (opts.isValidSignatureError) throw opts.isValidSignatureError;
       if (opts.isValidSignatureThrows) throw new Error("revert");
       return opts.isValidSignatureResult ?? ERC1271_FAIL;
     }),
@@ -56,7 +60,10 @@ function mockSigner(opts: {
     writeContract: vi.fn(),
     sendTransaction: vi.fn(),
     waitForTransactionReceipt: vi.fn(),
-    getCode: vi.fn(async () => opts.code),
+    getCode: vi.fn(async () => {
+      if (opts.getCodeError) throw opts.getCodeError;
+      return opts.code;
+    }),
   };
 }
 
@@ -218,6 +225,84 @@ describe("verifyTypedDataSignature (code-routed)", () => {
       signature,
     });
     expect(ok).toBe(false);
+  });
+});
+
+describe("checkTypedDataSignature (RPC failures kept apart)", () => {
+  const params = (address: `0x${string}`, signature: `0x${string}`) => ({
+    address,
+    domain: SAMPLE_DOMAIN,
+    types: SAMPLE_TYPES,
+    primaryType: "TransferWithAuthorization",
+    message: SAMPLE_MESSAGE,
+    signature,
+  });
+
+  it("plain EOA + valid sig → valid", async () => {
+    const account = privateKeyToAccount(ECDSA_KEY);
+    const signer = mockSigner({ code: undefined });
+    const { signature } = await buildSignatureFor(account);
+    const result = await checkTypedDataSignature(signer, params(account.address, signature));
+    expect(result).toEqual({ status: "valid" });
+    expect(signer.readContract).not.toHaveBeenCalled();
+  });
+
+  it("plain EOA + invalid sig → invalid", async () => {
+    const signer = mockSigner({ code: "0x" });
+    const result = await checkTypedDataSignature(
+      signer,
+      params(
+        "0x1234567890123456789012345678901234567890",
+        ("0x" + "f".repeat(130)) as `0x${string}`,
+      ),
+    );
+    expect(result).toEqual({ status: "invalid" });
+  });
+
+  it("eth_getCode failure → unverifiable, carrying the error", async () => {
+    const rpcError = new Error("HTTP request failed. Status: 503");
+    const signer = mockSigner({ code: undefined, getCodeError: rpcError });
+    const account = privateKeyToAccount(ECDSA_KEY);
+    const { signature } = await buildSignatureFor(account);
+    const result = await checkTypedDataSignature(signer, params(account.address, signature));
+    expect(result).toEqual({ status: "unverifiable", error: rpcError });
+    expect(signer.readContract).not.toHaveBeenCalled();
+  });
+
+  it("contract that returns ERC-1271 magic → valid", async () => {
+    const signer = mockSigner({ code: "0x6080604052", isValidSignatureResult: ERC1271_MAGIC });
+    const account = privateKeyToAccount(ECDSA_KEY);
+    const { signature } = await buildSignatureFor(account);
+    const result = await checkTypedDataSignature(signer, params(account.address, signature));
+    expect(result).toEqual({ status: "valid" });
+  });
+
+  it("contract whose 1271 returns failure → invalid (no ECDSA fallback)", async () => {
+    const signer = mockSigner({ code: "0x6080604052", isValidSignatureResult: ERC1271_FAIL });
+    const account = privateKeyToAccount(ECDSA_KEY);
+    const { signature } = await buildSignatureFor(account);
+    const result = await checkTypedDataSignature(signer, params(account.address, signature));
+    expect(result).toEqual({ status: "invalid" });
+  });
+
+  it("contract whose 1271 reverts → invalid", async () => {
+    const signer = mockSigner({
+      code: "0x6080604052",
+      isValidSignatureError: new Error('The contract function "isValidSignature" reverted.'),
+    });
+    const account = privateKeyToAccount(ECDSA_KEY);
+    const { signature } = await buildSignatureFor(account);
+    const result = await checkTypedDataSignature(signer, params(account.address, signature));
+    expect(result).toEqual({ status: "invalid" });
+  });
+
+  it("contract whose 1271 read fails without a revert → unverifiable", async () => {
+    const rpcError = new Error("HTTP request failed. Status: 503");
+    const signer = mockSigner({ code: "0x6080604052", isValidSignatureError: rpcError });
+    const account = privateKeyToAccount(ECDSA_KEY);
+    const { signature } = await buildSignatureFor(account);
+    const result = await checkTypedDataSignature(signer, params(account.address, signature));
+    expect(result).toEqual({ status: "unverifiable", error: rpcError });
   });
 });
 

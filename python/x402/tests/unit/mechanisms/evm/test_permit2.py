@@ -15,6 +15,7 @@ from x402.mechanisms.evm.constants import (
     ERR_PERMIT2_ALLOWANCE_REQUIRED,
     ERR_PERMIT2_AMOUNT_MISMATCH,
     ERR_PERMIT2_DEADLINE_EXPIRED,
+    ERR_PERMIT2_FAILED_TO_VERIFY_SIGNATURE,
     ERR_PERMIT2_INVALID_SIGNATURE,
     ERR_PERMIT2_INVALID_SPENDER,
     ERR_PERMIT2_NOT_YET_VALID,
@@ -198,6 +199,38 @@ class _CountingAssetCodeSigner(MockFacilitatorSigner):
     def get_code(self, address: str) -> bytes:
         if address.lower() == TOKEN_ADDRESS.lower():
             self.asset_get_code_calls += 1
+        return super().get_code(address)
+
+
+class _PayerCodeFailingSigner(MockFacilitatorSigner):
+    """Fails get_code for the payer, the way an overloaded RPC node fails a single call."""
+
+    def get_code(self, address: str) -> bytes:
+        if address.lower() == PAYER.lower():
+            raise ConnectionError("HTTP request failed. Status: 503")
+        return super().get_code(address)
+
+
+class _ContractPayerSigner(MockFacilitatorSigner):
+    """Payer is a deployed contract whose isValidSignature call raises ``is_valid_signature_error``.
+
+    Also counts get_code calls for the payer.
+    """
+
+    def __init__(self, *args, is_valid_signature_error: Exception | None = None, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._is_valid_signature_error = is_valid_signature_error
+        self.payer_get_code_calls = 0
+
+    def read_contract(self, address: str, abi: list[dict], function_name: str, *args) -> Any:
+        if function_name == "isValidSignature" and self._is_valid_signature_error:
+            raise self._is_valid_signature_error
+        return super().read_contract(address, abi, function_name, *args)
+
+    def get_code(self, address: str) -> bytes:
+        if address.lower() == PAYER.lower():
+            self.payer_get_code_calls += 1
+            return b"\x60"
         return super().get_code(address)
 
 
@@ -413,6 +446,30 @@ class TestVerifyPermit2:
             result = self._verify(facilitator)
         assert result.is_valid is False
         assert result.invalid_reason == ERR_INSUFFICIENT_BALANCE
+
+    def test_verify_reports_failed_payer_code_lookup(self):
+        # A failed payer code lookup decided nothing about the signature
+        facilitator = ExactEvmFacilitatorScheme(_PayerCodeFailingSigner())
+        result = self._verify(facilitator)
+        assert result.is_valid is False
+        assert result.invalid_reason == ERR_PERMIT2_FAILED_TO_VERIFY_SIGNATURE
+        assert "503" in (result.invalid_message or "")
+
+    def test_verify_reports_unavailable_is_valid_signature_call(self):
+        # An isValidSignature call that fails without reverting is an RPC failure
+        signer = _ContractPayerSigner(
+            is_valid_signature_error=ConnectionError("HTTP request failed. Status: 503")
+        )
+        result = self._verify(ExactEvmFacilitatorScheme(signer))
+        assert result.is_valid is False
+        assert result.invalid_reason == ERR_PERMIT2_FAILED_TO_VERIFY_SIGNATURE
+        assert signer.payer_get_code_calls == 1
+
+    def test_verify_rejects_reverting_is_valid_signature_call(self):
+        signer = _ContractPayerSigner(is_valid_signature_error=Exception("execution reverted"))
+        result = self._verify(ExactEvmFacilitatorScheme(signer))
+        assert result.is_valid is False
+        assert result.invalid_reason == ERR_PERMIT2_INVALID_SIGNATURE
 
     def test_verify_rejects_eoa_asset(self):
         # Asset address with no bytecode must be rejected after signature work.
