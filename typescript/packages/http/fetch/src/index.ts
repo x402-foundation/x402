@@ -1,4 +1,5 @@
 import { x402Client, x402ClientConfig, x402HTTPClient } from "@x402/core/client";
+import { getResponseHeadersOverflowError } from "@x402/core/http";
 import { type PaymentRequired } from "@x402/core/types";
 
 /**
@@ -42,12 +43,19 @@ export function wrapFetchWithPayment(
   client: x402Client | x402HTTPClient,
 ) {
   const httpClient = client instanceof x402HTTPClient ? client : new x402HTTPClient(client);
+  const fetchWithDiagnostics = async (request: Request) => {
+    try {
+      return await fetch(request);
+    } catch (error) {
+      throw getResponseHeadersOverflowError(error) ?? error;
+    }
+  };
 
   return async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     const clonedRequest = request.clone();
 
-    const response = await fetch(request);
+    const response = await fetchWithDiagnostics(request);
 
     if (response.status !== 402) {
       return response;
@@ -85,7 +93,7 @@ export function wrapFetchWithPayment(
       for (const [key, value] of Object.entries(hookHeaders)) {
         hookRequest.headers.set(key, value);
       }
-      const hookResponse = await fetch(hookRequest);
+      const hookResponse = await fetchWithDiagnostics(hookRequest);
       if (hookResponse.status !== 402) {
         return hookResponse; // Hook succeeded
       }
@@ -120,7 +128,7 @@ export function wrapFetchWithPayment(
     );
 
     // Retry the request with payment
-    const secondResponse = await fetch(clonedRequest.clone());
+    const secondResponse = await fetchWithDiagnostics(clonedRequest.clone());
 
     // Fire payment response hooks and handle recovery
     const result = await httpClient.processPaymentResult(
@@ -141,7 +149,7 @@ export function wrapFetchWithPayment(
         "Access-Control-Expose-Headers",
         "PAYMENT-RESPONSE,X-PAYMENT-RESPONSE",
       );
-      const retryResponse = await fetch(retryRequest);
+      const retryResponse = await fetchWithDiagnostics(retryRequest);
       // Fire hooks on retry response — no further recovery to prevent loops
       await httpClient.processPaymentResult(
         freshPayload,

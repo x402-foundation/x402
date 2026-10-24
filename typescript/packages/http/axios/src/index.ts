@@ -1,6 +1,7 @@
 import { x402Client, x402ClientConfig, x402HTTPClient } from "@x402/core/client";
+import { getResponseHeadersOverflowError } from "@x402/core/http";
 import { type PaymentRequired } from "@x402/core/types";
-import { type AxiosInstance, type AxiosError, type InternalAxiosRequestConfig } from "axios";
+import { AxiosError, type AxiosInstance, type InternalAxiosRequestConfig } from "axios";
 
 type X402RetryConfig = InternalAxiosRequestConfig & { __is402Retry?: boolean };
 type AxiosHeaderValue = string | string[];
@@ -154,6 +155,18 @@ export function wrapAxiosWithPayment(
   axiosInstance.interceptors.response.use(
     response => response,
     async (error: AxiosError) => {
+      const overflowError = getResponseHeadersOverflowError(error);
+      if (overflowError) {
+        const diagnostic = AxiosError.from(
+          error,
+          error.code,
+          error.config,
+          error.request,
+          error.response,
+        );
+        diagnostic.message = overflowError.message;
+        return Promise.reject(diagnostic);
+      }
       if (!error.response || error.response.status !== 402) {
         return Promise.reject(error);
       }

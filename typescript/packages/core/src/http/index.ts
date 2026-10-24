@@ -122,6 +122,7 @@ export {
   getFacilitatorResponseError,
 } from "../types";
 export { attachBackgroundInitHandler, isFatalStartupInitError } from "./backgroundInit";
+export { getResponseHeadersOverflowError } from "./headerErrors";
 export {
   MAX_CONTROL_PLANE_RESPONSE_BYTES,
   ResponseBodyTooLargeError,
