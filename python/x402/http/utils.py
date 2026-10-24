@@ -36,6 +36,8 @@ def decode_payment_signature_header(
     """Decode a base64 payment signature header into a PaymentPayload."""
     json_str = safe_base64_decode(header_value)
     data = json.loads(json_str)
+    if not isinstance(data, dict):
+        raise ValueError("Payment signature header must decode to a JSON object")
 
     # Detect version
     version = data.get("x402Version", 2)
@@ -57,6 +59,8 @@ def decode_payment_required_header(
     """Decode a base64 payment required header into a PaymentRequired object."""
     json_str = safe_base64_decode(header_value)
     data = json.loads(json_str)
+    if not isinstance(data, dict):
+        raise ValueError("Payment required header must decode to a JSON object")
 
     # Detect version
     version = data.get("x402Version", 2)
