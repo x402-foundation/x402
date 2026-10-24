@@ -1,0 +1,3 @@
+kind: Fixed
+body: Retain unresolved SVM distribution batches across redemption passes, with an injectable durable job journal for restart recovery.
+time: 2026-10-24T00:00:00Z

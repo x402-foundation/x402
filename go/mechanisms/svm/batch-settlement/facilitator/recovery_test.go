@@ -17,6 +17,7 @@ import (
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement/server"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels/generated"
 	"github.com/x402-foundation/x402/go/v2/types"
@@ -917,6 +918,149 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 		require.False(t, matched)
 		require.Equal(t, int32(8), waits.Load())
 	})
+	t.Run("pending distribution batch identity", func(t *testing.T) {
+		for _, regroup := range []bool{false, true} {
+			name := "stable batch recovers the original transaction"
+			if regroup {
+				name = "recovers the original transaction before changing batches"
+			}
+			t.Run(name, func(t *testing.T) {
+				ctx := context.Background()
+				secondID := mint
+				secondConfig := channelConfig
+				secondConfig.Salt = "1"
+				pending := x402.NewInMemoryPendingSettlementStore()
+				originalKey := "batch:distribute:" + network + ":" + mint + ":" + receiver + ":" + channelID
+				require.NoError(t, pending.Set(ctx, originalKey, tx))
+				inner := newScriptedSigner(t, 1)
+				inner.keys[0] = feePayer
+				inner.confirmErr = errors.New("confirmation not yet visible")
+				secondSig := solana.Signature{8}.String()
+				var recorded []string
+				var amounts []string
+				transport := &capabilitySigner{
+					scriptedSigner: inner,
+					confirmed: func(_ context.Context, signature solana.Signature, _ string) (*svm.FacilitatorConfirmedTransaction, error) {
+						if signature.String() == tx {
+							return payoutEvidence(t, "200", "1000"), nil
+						}
+						require.Equal(t, secondSig, signature.String())
+						evidence := payoutEvidence(t, "1000", "2000")
+						escrow, err := paymentchannels.FindATA(solana.MustPublicKeyFromBase58(secondID), solana.MustPublicKeyFromBase58(mint), solana.MustPublicKeyFromBase58(svm.TokenProgramAddress))
+						require.NoError(t, err)
+						evidence.AccountKeys[1] = escrow.String()
+						evidence.Meta.PreTokenBalances[1].Owner = secondID
+						evidence.Meta.PreTokenBalances[1].UITokenAmount.Amount = "10000"
+						evidence.Meta.PostTokenBalances[1].Owner = secondID
+						return evidence, nil
+					},
+				}
+				scheme := newScheme(t, transport, pending, func(_ context.Context, response *x402.SettleResponse, _ types.PaymentRequirements) error {
+					recorded = append(recorded, response.Transaction)
+					amounts = append(amounts, response.Amount)
+					return nil
+				})
+				configure(scheme)
+				scheme.hooks.deriveChannelID = func(_ context.Context, config batchsettlement.BatchChannelConfig, _ string) (string, error) {
+					if config.Salt == "1" {
+						return secondID, nil
+					}
+					return channelID, nil
+				}
+				var submits int
+				read := func(_ context.Context, _ string, id string) (*generated.Channel, error) {
+					return channel(func(ch *generated.Channel) {
+						ch.Settlement = generated.SettlementWatermarks{Settled: 1000, PayoutWatermark: 1000}
+						if id == secondID {
+							ch.Salt = 1
+							if submits == 0 {
+								ch.Settlement.PayoutWatermark = 0
+							}
+						}
+					}), nil
+				}
+				scheme.hooks.fetchChannel = read
+				scheme.hooks.readChannel = read
+				scheme.hooks.submitRedemption = func(context.Context, string, string, []solana.Instruction, string, string) (durableResult, error) {
+					submits++
+					return durableResult{OK: true, Signature: secondSig}, nil
+				}
+				local := server.NewMemoryChannelStore()
+				makeLocal := func(id string, config batchsettlement.BatchChannelConfig, paid uint64) server.ChannelState {
+					return server.ChannelState{
+						ChannelID: id, ChannelConfig: config, Payer: payer.PublicKey().String(), Receiver: receiver,
+						FeePayer: feePayer.PublicKey().String(), Mint: mint, TokenProgram: svm.TokenProgramAddress,
+						PayerAuthorizer: payer.PublicKey().String(), WithdrawDelay: 900, OpenSlot: 1,
+						Deposit: 10000, ChargedCumulativeAmount: 1000, SignedMaxClaimable: 1000,
+						Settled: 1000, PayoutWatermark: paid, Status: server.ChannelStatusOpen,
+					}
+				}
+				require.NoError(t, local.Put(makeLocal(channelID, channelConfig, 200)))
+				var requested [][]string
+				options := server.BatchChannelManagerConfig{
+					Store: local, Requirements: requirements,
+					ReadPayoutWatermark: func(context.Context, string) (uint64, bool, error) { return 1000, true, nil },
+					Settle: func(ctx context.Context, request server.RedemptionRequest, _ types.PaymentRequirements) (*x402.SettleResponse, error) {
+						payload, ok := request.Payload.(batchsettlement.BatchSettlePayload)
+						require.True(t, ok)
+						ids := make([]string, len(payload.Channels))
+						for i, entry := range payload.Channels {
+							ids[i] = entry.ChannelID
+						}
+						requested = append(requested, ids)
+						return scheme.Settle(ctx, types.PaymentPayload{X402Version: 2, Payload: asMap(t, payload)}, requirements, nil)
+					},
+				}
+				manager := server.NewBatchChannelManager(options)
+				first, err := manager.Redeem(ctx)
+				require.NoError(t, err)
+				require.Empty(t, first.Distributed)
+				require.Empty(t, recorded)
+				_, exists, err := pending.Get(ctx, originalKey)
+				require.NoError(t, err)
+				require.True(t, exists)
+				inner.confirmErr = nil
+				if regroup {
+					require.NoError(t, local.Put(makeLocal(secondID, secondConfig, 0)))
+				}
+				second, err := manager.Redeem(ctx)
+				require.NoError(t, err)
+				_, exists, err = pending.Get(ctx, originalKey)
+				require.NoError(t, err)
+				if regroup {
+					require.ElementsMatch(t, []string{channelID, secondID}, second.Distributed)
+					require.Equal(t, []string{tx, secondSig}, recorded)
+					require.Equal(t, []string{"800", "1000"}, amounts)
+					require.False(t, exists)
+					require.Equal(t, 1, submits)
+					require.Equal(t, []string{channelID}, requested[1])
+					require.Equal(t, []string{secondID}, requested[2])
+				} else {
+					require.Equal(t, []string{channelID}, second.Distributed)
+					require.Equal(t, []string{tx}, recorded)
+					require.Equal(t, []string{"800"}, amounts)
+					require.False(t, exists)
+					require.Zero(t, submits)
+				}
+				state, err := local.Get(channelID)
+				require.NoError(t, err)
+				require.Equal(t, uint64(1000), state.PayoutWatermark)
+				third, err := manager.Redeem(ctx)
+				require.NoError(t, err)
+				require.Empty(t, third.Distributed)
+				if regroup {
+					require.Len(t, requested, 3)
+				} else {
+					require.Len(t, requested, 2)
+				}
+				_, exists, err = pending.Get(ctx, originalKey)
+				require.NoError(t, err)
+				require.False(t, exists)
+				t.Logf("regroup=%v original_pending=%v callbacks=%v amounts=%v replacement_submissions=%d", regroup, exists, recorded, amounts, submits)
+			})
+		}
+	})
+
 }
 
 type slotAccountSigner struct {

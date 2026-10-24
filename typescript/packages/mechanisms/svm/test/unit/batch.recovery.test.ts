@@ -97,7 +97,7 @@ function signer(confirmTransaction = vi.fn().mockResolvedValue(undefined)) {
   return {
     confirmTransaction,
     getAccountInfo: vi.fn(),
-    getConfirmedTransaction: vi.fn(() => payoutEvidence()),
+    getConfirmedTransaction: vi.fn((_signature: string, _network: string) => payoutEvidence()),
     getAddresses: vi.fn(() => [feePayer.address]),
     getLatestBlockhash: vi.fn(),
     getSigner: vi.fn(() => feePayer),
@@ -783,3 +783,104 @@ async function payoutEvidence(before = "200", after = "1000") {
     },
   };
 }
+
+it("recovers the original pending payout before regrouping with newly payable channels", async () => {
+  const { BatchChannelManager } = await import("../../src/batch-settlement/server/channelManager");
+  const { MemoryChannelStore } = await import("../../src/batch-settlement/server/storage");
+  const originalTx =
+    "97oQ1XTamJ6rQzNGcikXEKXuu3kHVgdnuAfgd4FsVV6oMUGMJPbcFKc9cMzg3LZJzLMtGN8ytkx3n78fVeF6eqd";
+  const secondTx =
+    "AH4K1boxACFyUR8jhpiTGDtuAmZtze1ctLLMRds8zQq4G7JYVAFhHNGK8Gi4BxVe8XQsJZShASNV2qSL8srFkF9";
+  const secondId = MINT;
+  const secondConfig = { ...channelConfig, salt: "1" };
+  const pending = new InMemoryBatchPendingSettlementStore();
+  const originalKey = `batch:distribute:${NETWORK}:${MINT}:${RECEIVER}:${channelId}`;
+  await pending.set(originalKey, originalTx);
+  const record = vi.fn().mockResolvedValue(undefined);
+  const transport = signer(
+    vi
+      .fn()
+      .mockRejectedValueOnce(new Error("confirmation not yet visible"))
+      .mockResolvedValue(undefined),
+  );
+  const scheme = new BatchSvmScheme(transport as never, {
+    channelStorage: new InMemoryPaymentChannelStorage(),
+    pendingSettlementStore: pending,
+    onDistributionConfirmed: record,
+  });
+  const api = configure(scheme);
+  api.deriveChannelId.mockImplementation(async (config: BatchChannelConfig) =>
+    config.salt === "1" ? secondId : channelId,
+  );
+  api.fetchChannel = vi.fn().mockImplementation(async (_network: string, id: string) =>
+    channel({
+      salt: id === secondId ? 1n : 0n,
+      settlement: { settled: 1000n, payoutWatermark: id === secondId ? 0n : 1000n },
+    }),
+  );
+  api.readChannel = api.fetchChannel;
+  api.submitRedemption = vi.fn().mockResolvedValue({ ok: true, signature: secondTx });
+  const local = new MemoryChannelStore();
+  const makeLocal = (id: string, config: BatchChannelConfig, paid: bigint) => ({
+    channelId: id,
+    channelConfig: config,
+    payer: payer.address,
+    receiver: RECEIVER,
+    feePayer: feePayer.address,
+    mint: MINT,
+    tokenProgram: TOKEN_PROGRAM_ADDRESS,
+    payerAuthorizer: payer.address,
+    withdrawDelay: 900,
+    salt: BigInt(config.salt),
+    openSlot: 1n,
+    deposit: 10000n,
+    chargedCumulativeAmount: 1000n,
+    signedMaxClaimable: 1000n,
+    settled: 1000n,
+    payoutWatermark: paid,
+    status: "open" as const,
+  });
+  await local.put(makeLocal(channelId, channelConfig, 200n));
+  const requestedBatches: string[][] = [];
+  const manager = new BatchChannelManager({
+    store: local,
+    requirements: requirements(),
+    readPayoutWatermark: async () => 1000n,
+    settle: async request => {
+      const payload = request.payload as BatchSettlePayload;
+      requestedBatches.push(payload.channels.map(c => c.channelId));
+      return scheme.settleDistributions(payment(payload), payload, requirements());
+    },
+  });
+  expect((await manager.redeem()).distributed).toEqual([]);
+  expect(record).not.toHaveBeenCalled();
+  expect(await pending.get(originalKey)).toBe(originalTx);
+
+  // The first payout has now confirmed; a second channel becomes payable before the next pass.
+  await local.put(makeLocal(secondId, secondConfig, 0n));
+  const evidence = await payoutEvidence("1000", "2000");
+  const [secondEscrow] = await findAssociatedTokenPda({
+    mint: address(MINT),
+    owner: address(secondId),
+    tokenProgram: TOKEN_PROGRAM_ADDRESS,
+  });
+  evidence.transaction.message.accountKeys[1] = secondEscrow;
+  evidence.meta.preTokenBalances[1]!.owner = secondId;
+  evidence.meta.preTokenBalances[1]!.uiTokenAmount.amount = "10000";
+  evidence.meta.postTokenBalances[1]!.owner = secondId;
+  const originalEvidence = await payoutEvidence("200", "1000");
+  transport.getConfirmedTransaction.mockImplementation(async signature => {
+    if (signature === originalTx) return originalEvidence;
+    expect(signature).toBe(secondTx);
+    return evidence;
+  });
+  expect((await manager.redeem()).distributed).toEqual([channelId, secondId]);
+  expect((await local.get(channelId))?.payoutWatermark).toBe(1000n);
+  expect(record.mock.calls.map(call => call[0].transaction)).toEqual([originalTx, secondTx]);
+  expect(record.mock.calls.map(call => call[0].amount)).toEqual(["800", "1000"]);
+  expect(await pending.get(originalKey)).toBeUndefined();
+  expect(requestedBatches).toEqual([[channelId], [channelId], [secondId]]);
+  expect((await manager.redeem()).distributed).toEqual([]);
+  expect(requestedBatches).toHaveLength(3);
+  expect(await pending.get(originalKey)).toBeUndefined();
+});

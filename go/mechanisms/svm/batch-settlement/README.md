@@ -142,6 +142,26 @@ manager, err := scheme.CreateChannelManager(facilitatorClient, requirements, bat
 
 `requirements` must include `extra.feePayer` from the facilitator's supported kind. Claim promptly: if the facilitator or payer forces a close before the latest voucher is claimed, unclaimed value returns to the payer.
 
+
+#### Pending distributions and restart recovery
+
+The worker journals each distribution request before calling the facilitator. Unresolved jobs retain their original channels and complete requirements; their members are excluded from new groups for that pass while unrelated payouts can progress. Confirmed facilitator success retires the job despite partial local watermark failures or reclaimed accounts. `OnSettle` is a best-effort notification after retirement.
+
+`DistributionJobStore` defaults to a memory-only store created once per manager. Recreating the manager loses unresolved jobs unless a shared journal is supplied. Production restart recovery requires a durable implementation in addition to durable channel and facilitator pending-settlement storage:
+
+```go
+manager, err := scheme.CreateChannelManager(facilitatorClient, requirements, batchserver.BatchChannelManagerConfig{
+    DistributionJobStore: durableDistributionJobs, // implements batchserver.DistributionJobStore
+    OnError: func(err error) { log.Print(err) },
+})
+```
+
+`List` must return every saved, undeleted job, including committed writes whose acknowledgement was lost. `Save` must persist before returning, preserve existing IDs, and allow identical retries. `Delete` removes only that globally unique generation. Persist the full JSON-compatible job and preserve JSON number precision when decoding nested extras (for example, `json.Decoder.UseNumber`). Serialization failures must surface; do not fall back to memory. Ordinary channel enumeration can remain weakly consistent; journal enumeration cannot.
+
+Run one active redemption owner per journal/scope, coordinated externally during replica or restart handoff. Concurrent paid-request handlers remain supported. Pricing and batch-size changes do not rewrite retained requests. Reconcile old jobs under their original terms before rotating the scheme, network, asset, receiver, fee payer, token program, authorizer or server-mode operator. Invalid or overlapping jobs block fresh sends for explicit repair. The added configuration field may affect positional Go struct literals.
+
+Failures retain jobs conservatively; permanently ambiguous attribution can require operator reconciliation. Pre-upgrade orphaned transactions are not discovered. Facilitator accounting callbacks must atomically deduplicate by `(network, transaction)`: a retained channel-set queue can sweep newer earnings on replay. No exactly-once transaction or notification guarantee is added.
+
 ## Facilitator Usage
 
 ```go
