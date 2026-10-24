@@ -867,90 +867,15 @@ func (f *BatchSvmScheme) attributeDistribution(ctx context.Context, key, signatu
 		}
 		return &stored, nil
 	}
-	reader, ok := f.raw.(svm.FacilitatorConfirmedTransactionReader)
-	if !ok {
-		return nil, fmt.Errorf("getConfirmedTransaction is required for payout accounting")
-	}
-	parsed, err := solana.SignatureFromBase58(signature)
+	paid, err := f.readDistributionAmount(ctx, key, signature, prepared, requirements)
 	if err != nil {
 		return nil, err
-	}
-	var evidence *svm.FacilitatorConfirmedTransaction
-	for attempt := 0; attempt < ChannelReadAttempts; attempt++ {
-		evidence, err = reader.GetConfirmedTransaction(ctx, parsed, requirements.Network)
-		if err == nil && evidence != nil && evidence.Meta != nil && evidence.Meta.PreTokenBalances != nil && evidence.Meta.PostTokenBalances != nil {
-			break
-		}
-		if attempt+1 < ChannelReadAttempts {
-			if err := f.waitForChannelRead(ctx, attempt); err != nil {
-				return nil, err
-			}
-		}
-	}
-	if evidence == nil || evidence.Meta == nil || evidence.Meta.PreTokenBalances == nil || evidence.Meta.PostTokenBalances == nil {
-		return nil, fmt.Errorf("payout transaction metadata is not visible yet")
-	}
-	if evidence.Meta.Err != nil {
-		return nil, &svm.TransactionOnchainFailureError{Message: "distribution transaction failed onchain"}
-	}
-	f.rememberSlot(requirements.Network, evidence.Slot)
-	if err := f.pendingStore.Set(ctx, key+":slot", strconv.FormatUint(evidence.Slot, 10)); err != nil {
-		return nil, err
-	}
-	tokenProgram, err := solana.PublicKeyFromBase58(prepared[0].Terms.TokenProgram)
-	if err != nil {
-		return nil, err
-	}
-	mint, err := solana.PublicKeyFromBase58(requirements.Asset)
-	if err != nil {
-		return nil, err
-	}
-	payTo, err := solana.PublicKeyFromBase58(requirements.PayTo)
-	if err != nil {
-		return nil, err
-	}
-	recipient, err := paymentchannels.FindATA(payTo, mint, tokenProgram)
-	if err != nil {
-		return nil, err
-	}
-	recipientIndex := indexOf(evidence.AccountKeys, recipient.String())
-	if recipientIndex < 0 {
-		return nil, fmt.Errorf("recipient is absent from distribution transaction")
-	}
-	for _, item := range prepared {
-		owner, err := solana.PublicKeyFromBase58(item.ChannelID)
-		if err != nil {
-			return nil, err
-		}
-		escrow, err := paymentchannels.FindATA(owner, mint, tokenProgram)
-		if err != nil {
-			return nil, err
-		}
-		escrowIndex := indexOf(evidence.AccountKeys, escrow.String())
-		if escrowIndex < 0 {
-			continue
-		}
-		if !balanceHasAccount(evidence.Meta.PostTokenBalances, escrowIndex) &&
-			(item.ChannelConfig.Payer == requirements.PayTo || paymentchannels.TreasuryOwner(requirements.Network).String() == requirements.PayTo) {
-			return nil, &PayoutAttributionAmbiguousError{}
-		}
-	}
-	pre, err := tokenBalance(evidence.Meta.PreTokenBalances, recipientIndex, requirements)
-	if err != nil {
-		return nil, err
-	}
-	post, err := tokenBalance(evidence.Meta.PostTokenBalances, recipientIndex, requirements)
-	if err != nil {
-		return nil, err
-	}
-	if post < pre {
-		return nil, fmt.Errorf("negative recipient payout")
 	}
 	response := &x402.SettleResponse{
 		Success:     true,
 		Network:     x402.Network(requirements.Network),
 		Transaction: signature,
-		Amount:      strconv.FormatUint(post-pre, 10),
+		Amount:      strconv.FormatUint(paid, 10),
 		Extra:       map[string]any{"channels": channelIDs(prepared)},
 	}
 	encoded, err := json.Marshal(response)
@@ -972,6 +897,97 @@ func (f *BatchSvmScheme) attributeDistribution(ctx context.Context, key, signatu
 		return nil, err
 	}
 	return response, nil
+}
+
+// readDistributionAmount attributes only the recipient transfer in the confirmed
+// transaction and retains its confirmation slot for subsequent channel reads.
+func (f *BatchSvmScheme) readDistributionAmount(ctx context.Context, key, signature string, prepared []PreparedDistribution, requirements types.PaymentRequirements) (uint64, error) {
+	reader, ok := f.raw.(svm.FacilitatorConfirmedTransactionReader)
+	if !ok {
+		return 0, fmt.Errorf("getConfirmedTransaction is required for payout accounting")
+	}
+	parsed, err := solana.SignatureFromBase58(signature)
+	if err != nil {
+		return 0, err
+	}
+	var evidence *svm.FacilitatorConfirmedTransaction
+	for attempt := 0; attempt < ChannelReadAttempts; attempt++ {
+		evidence, err = reader.GetConfirmedTransaction(ctx, parsed, requirements.Network)
+		if err == nil && evidence != nil && evidence.Meta != nil && evidence.Meta.PreTokenBalances != nil && evidence.Meta.PostTokenBalances != nil {
+			break
+		}
+		if attempt+1 < ChannelReadAttempts {
+			if err := f.waitForChannelRead(ctx, attempt); err != nil {
+				return 0, err
+			}
+		}
+	}
+	if err != nil {
+		return 0, err
+	}
+	if evidence == nil || evidence.Meta == nil || evidence.Meta.PreTokenBalances == nil || evidence.Meta.PostTokenBalances == nil {
+		return 0, fmt.Errorf("payout transaction metadata is not visible yet")
+	}
+	if evidence.Meta.Err != nil {
+		return 0, &svm.TransactionOnchainFailureError{Message: "distribution transaction failed onchain"}
+	}
+	f.rememberSlot(requirements.Network, evidence.Slot)
+	if err := f.pendingStore.Set(ctx, key+":slot", strconv.FormatUint(evidence.Slot, 10)); err != nil {
+		return 0, err
+	}
+	tokenProgram, err := solana.PublicKeyFromBase58(prepared[0].Terms.TokenProgram)
+	if err != nil {
+		return 0, err
+	}
+	mint, err := solana.PublicKeyFromBase58(requirements.Asset)
+	if err != nil {
+		return 0, err
+	}
+	payTo, err := solana.PublicKeyFromBase58(requirements.PayTo)
+	if err != nil {
+		return 0, err
+	}
+	recipient, err := paymentchannels.FindATA(payTo, mint, tokenProgram)
+	if err != nil {
+		return 0, err
+	}
+	recipientIndex := indexOf(evidence.AccountKeys, recipient.String())
+	if recipientIndex < 0 {
+		return 0, fmt.Errorf("recipient is absent from distribution transaction")
+	}
+	for _, item := range prepared {
+		owner, err := solana.PublicKeyFromBase58(item.ChannelID)
+		if err != nil {
+			return 0, err
+		}
+		escrow, err := paymentchannels.FindATA(owner, mint, tokenProgram)
+		if err != nil {
+			return 0, err
+		}
+		escrowIndex := indexOf(evidence.AccountKeys, escrow.String())
+		if escrowIndex < 0 {
+			continue
+		}
+		if !balanceHasAccount(evidence.Meta.PostTokenBalances, escrowIndex) &&
+			(item.ChannelConfig.Payer == requirements.PayTo || paymentchannels.TreasuryOwner(requirements.Network).String() == requirements.PayTo) {
+			return 0, &PayoutAttributionAmbiguousError{}
+		}
+	}
+	if !balanceHasAccount(evidence.Meta.PostTokenBalances, recipientIndex) {
+		return 0, fmt.Errorf("recipient token balance is absent from payout transaction metadata")
+	}
+	pre, err := tokenBalance(evidence.Meta.PreTokenBalances, recipientIndex, requirements)
+	if err != nil {
+		return 0, err
+	}
+	post, err := tokenBalance(evidence.Meta.PostTokenBalances, recipientIndex, requirements)
+	if err != nil {
+		return 0, err
+	}
+	if post < pre {
+		return 0, fmt.Errorf("negative recipient payout")
+	}
+	return post - pre, nil
 }
 
 func (f *BatchSvmScheme) settleRefund(ctx context.Context, payload batchsettlement.BatchRefundPayload, requirements types.PaymentRequirements, facilitatorContext any) (*x402.SettleResponse, error) {

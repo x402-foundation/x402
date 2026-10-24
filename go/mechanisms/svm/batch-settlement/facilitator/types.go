@@ -130,5 +130,8 @@ type ReceiverBindingHistoryReader interface {
 	GetTransaction(ctx context.Context, network, signature string) (string, error)
 }
 
-// OnDistributionConfirmed runs before a payout is marked complete. Implementations must deduplicate by transaction.
+// OnDistributionConfirmed records a confirmed merchant payout before accounting is marked complete.
+// It also runs for seal and cooperative refund, with Amount set to the merchant payout.
+// Calls may repeat after storage failures or across replicas; implementations must
+// atomically deduplicate their ledger write by network and transaction.
 type OnDistributionConfirmed func(ctx context.Context, response *x402.SettleResponse, requirements types.PaymentRequirements) error
