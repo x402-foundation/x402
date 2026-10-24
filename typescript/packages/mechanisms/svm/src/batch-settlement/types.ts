@@ -6,6 +6,8 @@ import { BatchError } from "./errors";
 export { BATCH_SETTLEMENT_SCHEME } from "./constants";
 
 export type BatchExtra = {
+  /** Selected payer-proof format; omitted means legacy binary. Server mode only. */
+  authorizationFormat?: BatchAuthorizationFormat | undefined;
   paymentFlow?: "authorization" | undefined;
   minDeposit?: string | undefined;
   feePayer: string;
@@ -30,8 +32,13 @@ export type BatchExtra = {
 
 export type BatchVoucherSigner = "client" | "server";
 
+/** Versioned encoding of the offchain payer authorization. */
+export type BatchAuthorizationFormat = "binary" | "text-v1";
+
 export type BatchAuthorization = {
   type: "proof";
+  /** Omitted for existing binary proofs. */
+  format?: BatchAuthorizationFormat | undefined;
   channelId: string;
   payer: string;
   requestId: string;
@@ -291,6 +298,7 @@ function isBatchAuthorization(value: unknown): value is BatchAuthorization {
   return (
     isRecord(value) &&
     value.type === "proof" &&
+    (value.format === undefined || value.format === "binary" || value.format === "text-v1") &&
     typeof value.channelId === "string" &&
     typeof value.payer === "string" &&
     typeof value.requestId === "string" &&

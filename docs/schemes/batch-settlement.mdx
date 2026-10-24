@@ -574,6 +574,12 @@ Two voucher modes are supported:
 
 In server mode the channel's onchain `authorized_signer` is the operator, who could claim the full unspent deposit. Clients enter that mode only for operator keys they have explicitly trusted out of band.
 
+#### Browser wallet authorizations (TypeScript draft)
+
+Some browser wallets reject binary server-mode payer proofs or sign different bytes. The TypeScript SDK proposes an opt-in `text-v1` proof for readable prompts. Enable `authorizationFormats: ["binary", "text-v1"]` in the facilitator before configuring `authorizationFormat: "text-v1"` on the resource server. The client follows the advertised format; existing integrations keep binary by default. This changes the payer proof only, and retains the operator trust requirement above.
+
+Use `toBatchClientSigner(connectedKitSigner)` with the shared browser client to verify wallet signatures against the original message bytes. See the [browser integration and expired-proof diagnostic](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/solana-batch-wallet) and [proposed SVM proof specification](https://github.com/x402-foundation/x402/blob/main/specs/schemes/batch-settlement/scheme_batch_settlement_svm.md#proposed-readable-payer-proofs-text-v1). Wallet-signing compatibility and funded channel lifecycle validation are separate checks.
+
 #### Server Setup (SVM)
 
 Every channel is bound at open to a `receiverAuthorizer` key that signs cooperative close authorizations. Pass `receiverAuthorizer` to self-manage closes (recommended), or omit it to delegate to the facilitator's advertised key.
@@ -866,3 +872,5 @@ Register `BatchSvmScheme` for `solana:*`. The SDK opens or tops up the channel o
 * [Payment schemes overview](/schemes/overview)
 * [Exact](/schemes/exact)
 * [Upto](/schemes/upto)
+
+The browser client selects the channel’s advertised refund format before prompting the wallet, including after a restart. Native off-chain signing remains a future compatibility option: the tested installed MetaMask and Phantom wallets did not expose `solana:signOffchainMessage`, and an OCMS v1 envelope through `solana:signMessage` failed. See the [browser diagnostic and signing evidence](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/solana-batch-wallet). Signing tests do not establish full payment lifecycle compatibility.

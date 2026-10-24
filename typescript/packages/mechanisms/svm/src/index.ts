@@ -54,6 +54,7 @@ export type { DiscoveredChannel } from "./payment-channels/discovery";
 export type {
   BatchExtra,
   BatchAuthorization,
+  BatchAuthorizationFormat,
   BatchAuthorizationPayload,
   BatchVoucherSigner,
   BatchVoucher,
@@ -106,3 +107,5 @@ export {
   USDC_TESTNET_ADDRESS,
   type SvmDefaultAsset,
 } from "./defaultAssets";
+
+export { toBatchClientSigner } from "./batch-settlement/client/signer";

@@ -28,6 +28,8 @@ import { BINDING_HISTORY_PAGE_LIMIT } from "./constants";
 
 /** Optional configuration for the batch-settlement SVM facilitator. */
 export interface BatchSvmFacilitatorConfig {
+  /** Explicitly enabled payer proof formats. Omitted means binary only. */
+  authorizationFormats?: readonly import("../types").BatchAuthorizationFormat[] | undefined;
   /**
    * Durable record of pending signatures and completed operation outcomes, so
    * retries — including after a restart — reconcile instead of rebroadcasting.

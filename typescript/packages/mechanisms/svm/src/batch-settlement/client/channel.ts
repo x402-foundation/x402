@@ -16,6 +16,7 @@ import { CLIENT_VOUCHER_EXPIRES_AT, FULL_SPLIT_BPS } from "../constants";
 import { encodeReceiverBindingMemo } from "../receiverBinding";
 import type {
   BatchAuthorization,
+  BatchAuthorizationFormat,
   BatchChannelConfig,
   BatchDepositPayload,
   BatchRefundPayload,
@@ -84,12 +85,14 @@ export class BatchChannelTracker {
    * @param requestId - Single-use request identifier
    * @param authorizedAmount - Maximum charge in atomic units
    * @param expiresAt - Unix timestamp after which the proof is invalid
+   * @param format - Payer-proof encoding selected in payment requirements
    * @returns Expiring bearer proof
    */
   async authorization(
     requestId: string,
     authorizedAmount: bigint,
     expiresAt: number,
+    format: BatchAuthorizationFormat = "binary",
   ): Promise<BatchAuthorization> {
     if (this.channelConfig.voucherSigner !== "server") {
       throw new Error("client-signed channels do not use server authorization");
@@ -101,6 +104,7 @@ export class BatchChannelTracker {
       requestId,
       authorizedAmount,
       expiresAt,
+      format,
     );
   }
 
@@ -151,14 +155,22 @@ export async function credentialFor(
   mode: "server",
   tracker: BatchChannelTracker,
   charge: bigint,
-  authorization: { requestId: string; expiresAt: number },
+  authorization: {
+    requestId: string;
+    expiresAt: number;
+    format?: BatchAuthorizationFormat | undefined;
+  },
   refund?: boolean,
 ): Promise<{ authorization: BatchAuthorization }>;
 export async function credentialFor(
   mode: "client" | "server",
   tracker: BatchChannelTracker,
   charge: bigint,
-  authorization?: { requestId: string; expiresAt: number },
+  authorization?: {
+    requestId: string;
+    expiresAt: number;
+    format?: BatchAuthorizationFormat | undefined;
+  },
   refund = false,
 ): Promise<{ voucher: BatchVoucher } | { authorization: BatchAuthorization }> {
   switch (mode) {
@@ -175,6 +187,7 @@ export async function credentialFor(
           authorization.requestId,
           charge,
           authorization.expiresAt,
+          authorization.format,
         ),
       };
     }
@@ -203,6 +216,7 @@ export interface BuildDepositArgs {
   voucherSigner?: "client" | "server" | undefined;
   operator?: string | undefined;
   authorizationExpiresAt?: number | undefined;
+  authorizationFormat?: BatchAuthorizationFormat | undefined;
 }
 
 export interface BuiltDeposit {
@@ -222,7 +236,9 @@ export async function buildDepositPayload(args: BuildDepositArgs): Promise<Built
   const authorizedSigner = voucherSigner === "server" ? args.operator : args.payer.address;
   if (!authorizedSigner) throw new Error("operator is required for operator voucher signing");
   const authorizationExpiresAt = args.authorizationExpiresAt;
-  let pendingAuthorization: { requestId: string; expiresAt: number } | undefined;
+  let pendingAuthorization:
+    | { requestId: string; expiresAt: number; format?: BatchAuthorizationFormat | undefined }
+    | undefined;
   if (voucherSigner === "server") {
     if (
       authorizationExpiresAt === undefined ||
@@ -231,7 +247,11 @@ export async function buildDepositPayload(args: BuildDepositArgs): Promise<Built
     ) {
       throw new Error("authorizationExpiresAt is required for operator voucher signing");
     }
-    pendingAuthorization = { requestId: crypto.randomUUID(), expiresAt: authorizationExpiresAt };
+    pendingAuthorization = {
+      requestId: crypto.randomUUID(),
+      expiresAt: authorizationExpiresAt,
+      format: args.authorizationFormat,
+    };
   }
   const open = await buildOpenPaymentChannelTransaction({
     authorizedSigner,

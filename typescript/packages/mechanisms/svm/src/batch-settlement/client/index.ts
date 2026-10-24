@@ -23,3 +23,5 @@ export {
   refundBatchChannel,
   type RefundPayloadOptions,
 } from "./refund";
+
+export { toBatchClientSigner } from "./signer";

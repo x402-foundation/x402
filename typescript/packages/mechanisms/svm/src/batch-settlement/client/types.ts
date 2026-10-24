@@ -1,6 +1,6 @@
 import type { SchemeClientHooks } from "@x402/core/types";
 
-import type { BatchPayload } from "../types";
+import type { BatchPayload, BatchAuthorizationFormat } from "../types";
 import type { BatchChannelTracker } from "./channel";
 import type { ResolvedServerSignedTrust } from "./trust";
 
@@ -40,6 +40,7 @@ export type ResolvedTerms = {
   withdrawDelay: number;
   memo?: string | undefined;
   voucherSigner: "client" | "server";
+  authorizationFormat: BatchAuthorizationFormat;
   operator?: string | undefined;
   /** Grant under which server mode was allowed; absent in client mode. */
   trust?: ResolvedServerSignedTrust | undefined;

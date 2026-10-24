@@ -1,8 +1,14 @@
 import { generateKeyPairSigner } from "@solana/kit";
 import { fetchMint } from "@solana-program/token-2022";
 import type { PaymentRequirements } from "@x402/core/types";
+import {
+  decodePaymentSignatureHeader,
+  encodePaymentRequiredHeader,
+  encodePaymentResponseHeader,
+} from "@x402/core/http";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { verifyBatchAuthorization } from "../../src/batch-settlement/authorization";
 import { BatchChannelTracker } from "../../src/batch-settlement/client/channel";
 import { NoBatchChannelToRefundError } from "../../src/batch-settlement/client/refund";
 import {
@@ -99,9 +105,231 @@ function internals(client: BatchSvmScheme): ClientInternals {
 }
 
 describe("batch client lifecycle", () => {
-  it.each([false, true])(
-    "commits a signed server voucher without allocating again (restart=%s)",
-    async restart => {
+  it.each(["client-text", "missing-operator"])(
+    "does not let a later malformed %s accept hide a discoverable channel",
+    async invalidKind => {
+      const operator = await generateKeyPairSigner();
+      const valid = requirements({
+        extra: {
+          ...requirements().extra,
+          voucherSigner: "server",
+          operator: operator.address,
+          authorizationFormat: "text-v1",
+        },
+      });
+      const invalid = {
+        ...valid,
+        extra: {
+          ...valid.extra,
+          operator: undefined,
+          voucherSigner: invalidKind === "client-text" ? "client" : "server",
+        },
+      };
+      const client = new BatchSvmScheme(payer, {
+        channelStorage: memoryStorage().storage,
+        serverSignedChannelsPolicy: { allowedOperators: [operator.address] },
+      });
+      const config: BatchChannelConfig = {
+        openSlot: 123,
+        payer: payer.address,
+        payerAuthorizer: operator.address,
+        receiver: RECEIVER,
+        receiverAuthorizer: receiverAuthorizer.address,
+        salt: "0",
+        token: MINT,
+        voucherSigner: "server",
+        withdrawDelay: 900,
+      };
+      internals(client).discoverChannel = vi.fn(async (_requirements, terms) =>
+        (terms as { voucherSigner: string }).voucherSigner === "server"
+          ? { deposit: 5000n, tracker: new BatchChannelTracker(RECEIVER, config, payer, 1000n) }
+          : undefined,
+      );
+      const refund = await client.createRefundPayload(2, valid, { accepts: [valid, invalid] });
+      expect(refund.payload).toMatchObject({
+        type: "refund",
+        authorization: { format: "text-v1", authorizedAmount: "0" },
+      });
+      const proof = (
+        refund.payload as { authorization: Parameters<typeof verifyBatchAuthorization>[0] }
+      ).authorization;
+      expect(await verifyBatchAuthorization(proof, operator.address)).toBe(true);
+      vi.mocked(fetchMint).mockClear();
+      vi.mocked(fetchMint).mockRejectedValueOnce(new Error("temporary mint read failure"));
+      await expect(
+        client.createRefundPayload(2, valid, { accepts: [valid, invalid] }),
+      ).rejects.toThrow("temporary mint read failure");
+      expect(fetchMint).toHaveBeenCalledTimes(1);
+      await expect(
+        client.createRefundPayload(2, valid, { accepts: [valid, invalid] }),
+      ).resolves.toMatchObject({
+        payload: { type: "refund", authorization: { format: "text-v1" } },
+      });
+      expect(fetchMint).toHaveBeenCalledTimes(2);
+      await expect(client.createRefundPayload(2, invalid)).rejects.toThrow(
+        invalidKind === "client-text" ? /text authorization requires/ : /operator is required/,
+      );
+    },
+  );
+
+  it.each(
+    [false, true].flatMap(restart =>
+      [false, true].flatMap(serverFirst =>
+        [false, true].map(forcedClose => ({ restart, serverFirst, forcedClose })),
+      ),
+    ),
+  )(
+    "selects readable refund requirements before signing (restart=$restart, serverFirst=$serverFirst, forcedClose=$forcedClose)",
+    async ({ restart, serverFirst, forcedClose }) => {
+      const operator = await generateKeyPairSigner();
+      const { records, storage } = memoryStorage();
+      const getProgramAccounts = vi.fn(() => ({ send: vi.fn().mockResolvedValue([]) }));
+      vi.mocked(createRpcClient).mockReturnValue({ getProgramAccounts } as never);
+      const prompts: string[] = [];
+      const wallet = {
+        ...payer,
+        signMessages: async (...args: Parameters<typeof payer.signMessages>) => {
+          const readable = new TextDecoder()
+            .decode(args[0][0].content)
+            .startsWith("x402-batch-authorization-text-v1\n");
+          prompts.push(readable ? "text-v1" : "binary");
+          if (!readable) throw new Error("wallet fixture rejects binary messages");
+          return payer.signMessages(...args);
+        },
+      };
+      const client = new BatchSvmScheme(wallet, {
+        channelStorage: storage,
+        serverSignedChannelsPolicy: { allowedOperators: [operator.address] },
+      });
+      const clientRequirements = requirements();
+      const serverRequirements = requirements({
+        extra: {
+          ...clientRequirements.extra,
+          voucherSigner: "server",
+          operator: operator.address,
+          authorizationFormat: "text-v1",
+        },
+      });
+      const config: BatchChannelConfig = {
+        openSlot: 123,
+        payer: payer.address,
+        payerAuthorizer: operator.address,
+        receiver: RECEIVER,
+        receiverAuthorizer: receiverAuthorizer.address,
+        salt: "0",
+        token: MINT,
+        voucherSigner: "server",
+        withdrawDelay: 900,
+      };
+      const key = internals(client).channelKey(serverRequirements, feePayer.address, 900);
+      if (restart) {
+        records.set(key, {
+          channelConfig: config,
+          channelId: RECEIVER,
+          chargedCumulativeAmount: "1000",
+          deposit: "5000",
+        });
+      } else {
+        internals(client).channels.set(key, {
+          deposit: 5000n,
+          tracker: new BatchChannelTracker(RECEIVER, config, wallet, 1000n),
+        });
+      }
+      const unknown = {
+        ...serverRequirements,
+        extra: { ...serverRequirements.extra, authorizationFormat: "future-format" },
+      };
+      const accepts = serverFirst
+        ? [unknown, serverRequirements, clientRequirements]
+        : [clientRequirements, unknown, serverRequirements];
+      let sends = 0;
+      const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        const credential = new Headers(init?.headers).get("PAYMENT-SIGNATURE");
+        if (!credential) {
+          return new Response("", {
+            status: 402,
+            headers: {
+              "PAYMENT-REQUIRED": encodePaymentRequiredHeader({
+                x402Version: 2,
+                resource: { url: "https://example.test/paid", description: "", mimeType: "" },
+                accepts,
+              }),
+            },
+          });
+        }
+        sends++;
+        const payment = decodePaymentSignatureHeader(credential);
+        expect(payment.accepted).toEqual(serverRequirements);
+        const proof = (
+          payment.payload as { authorization: Parameters<typeof verifyBatchAuthorization>[0] }
+        ).authorization;
+        expect(proof.format).toBe("text-v1");
+        expect(proof.authorizedAmount).toBe("0");
+        expect(await verifyBatchAuthorization(proof, operator.address)).toBe(true);
+        if (forcedClose && sends === 1) {
+          return new Response("", {
+            status: 402,
+            headers: {
+              "PAYMENT-RESPONSE": encodePaymentResponseHeader({
+                success: false,
+                network: NETWORK,
+                transaction: "",
+                errorReason: "invalid_batch_settlement_svm_receiver_binding_unavailable",
+              }),
+            },
+          });
+        }
+        if (forcedClose) expect(payment.payload).toHaveProperty("transaction");
+        return new Response("", {
+          headers: {
+            "PAYMENT-RESPONSE": encodePaymentResponseHeader({
+              success: true,
+              network: NETWORK,
+              transaction: "offline-close",
+            }),
+          },
+        });
+      });
+      await expect(
+        client.refund("https://example.test/paid", { fetch: fetchImpl }),
+      ).resolves.toMatchObject({ success: true });
+      expect(prompts).toEqual(forcedClose ? ["text-v1", "text-v1"] : ["text-v1"]);
+      expect(sends).toBe(forcedClose ? 2 : 1);
+      expect(fetchImpl).toHaveBeenCalledTimes(forcedClose ? 3 : 2);
+      expect(getProgramAccounts).not.toHaveBeenCalled();
+    },
+  );
+
+  it("scans once per refund after exhausting saved channels across repeated accepts", async () => {
+    vi.mocked(fetchMint).mockClear();
+    const operator = await generateKeyPairSigner();
+    const getProgramAccounts = vi.fn(() => ({ send: vi.fn().mockResolvedValue([]) }));
+    vi.mocked(createRpcClient).mockReturnValue({ getProgramAccounts } as never);
+    const client = new BatchSvmScheme(payer, {
+      channelStorage: memoryStorage().storage,
+      serverSignedChannelsPolicy: { allowedOperators: [operator.address] },
+    });
+    const binary = requirements({
+      extra: { ...requirements().extra, voucherSigner: "server", operator: operator.address },
+    });
+    const text = { ...binary, extra: { ...binary.extra, authorizationFormat: "text-v1" } };
+    const accepts = [requirements(), binary, text, requirements(), binary, text];
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      await expect(client.createRefundPayload(2, accepts[0], { accepts })).rejects.toBeInstanceOf(
+        NoBatchChannelToRefundError,
+      );
+      expect(getProgramAccounts).toHaveBeenCalledTimes(attempt);
+      expect(fetchMint).toHaveBeenCalledTimes(attempt);
+    }
+  });
+
+  it.each(
+    [false, true].flatMap(restart =>
+      (["binary", "text-v1"] as const).map(format => ({ restart, format })),
+    ),
+  )(
+    "commits a signed server voucher without allocating again (restart=$restart, format=$format)",
+    async ({ restart, format }) => {
       const operator = await generateKeyPairSigner();
       const { records, storage } = memoryStorage();
       const trust = { allowedOperators: [operator.address] };
@@ -116,11 +344,19 @@ describe("batch client lifecycle", () => {
           ...requirements().extra,
           operator: operator.address,
           voucherSigner: "server",
+          ...(format === "text-v1" ? { authorizationFormat: format } : {}),
         },
       });
       const opened = await client.createPaymentPayload(2, serverRequirements);
       expect(opened.payload).toMatchObject({ type: "deposit" });
       expect("maxClaimableAmount" in opened.payload).toBe(false);
+      const assertProof = async (payment: typeof opened, amount: string) => {
+        const proof = payment.payload.authorization!;
+        expect(proof.format).toBe(format === "text-v1" ? format : undefined);
+        expect(proof.authorizedAmount).toBe(amount);
+        expect(await verifyBatchAuthorization(proof, operator.address)).toBe(true);
+      };
+      await assertProof(opened, "1000");
       const channelId = opened.payload.authorization!.channelId;
       const signature = await signVoucher(operator, {
         channelId,
@@ -158,6 +394,7 @@ describe("batch client lifecycle", () => {
         /pending request/,
       );
       expect(first.payload).toMatchObject({ type: "authorization" });
+      await assertProof(first, "1000");
       if (first.payload.type !== "authorization") {
         throw new Error("expected server-mode authorization payload");
       }
@@ -202,6 +439,18 @@ describe("batch client lifecycle", () => {
         settleResponse: await response(900n, 300n, 1_200n),
       } as never);
       expect([...records.values()][0]).toMatchObject({ chargedCumulativeAmount: "1200" });
+      const topUpRequirements = { ...serverRequirements, amount: "2000" };
+      const topUp = await client.createPaymentPayload(2, topUpRequirements);
+      expect(topUp.payload).toMatchObject({ type: "deposit" });
+      await assertProof(topUp, "2000");
+      await client.schemeHooks.onPaymentResponse!({
+        paymentPayload: { accepted: topUpRequirements, ...topUp },
+        requirements: topUpRequirements,
+        settleResponse: await response(1_200n, 2_000n, 3_200n),
+      } as never);
+      const refund = await client.createRefundPayload(2, serverRequirements);
+      expect(refund.payload).toMatchObject({ type: "refund" });
+      await assertProof(refund, "0");
     },
   );
 

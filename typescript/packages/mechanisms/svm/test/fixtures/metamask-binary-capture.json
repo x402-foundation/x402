@@ -1,0 +1,17 @@
+{
+  "provenance": "Blockrun supplied actual Wallet Standard capture; Ed25519 independently checked. Extension 13.53.0 is tester-reported, not read from the capture. No runtime Snap version was captured. Expired proof, no transaction.",
+  "captureSha256": "8d6d56dc8d77b2a20bf5b25df7d533d2098ac635d4f4d178c332bff1a1d5f092",
+  "capturedAt": "2026-10-23T03:10:55.997Z",
+  "fields": {
+    "payer": "7KY7mRGBLbB7yW2DBDYUKK9o8pc4BsQTNU7e16sPutrz",
+    "channelId": "48ngvFzpHopwe4npza9H433a3rRdbzxmw1ixZrwDx7Ge",
+    "operator": "CowW1cy2MHKJ2ox8pW6b5dHZHUSZGY77mKuzjJB55RH9",
+    "requestId": "payai-wallet-byte-diagnostic-54f2766c-ac80-431c-b5e4-fe1e0161b74e",
+    "authorizedAmount": "1000",
+    "expiresAt": 1
+  },
+  "originalHex": "783430322d62617463682d617574686f72697a6174696f6e2d76322e91c94b6559d5f2b6147ae1f08fccb2160ccccf0ced21dd4636f60590a410bb5de5c2845feafa8ade757cdd4f612873446455e0e2de8de7ad8f655f83ffc67faf76e59f50d0a422e1dd5d02d1f38e6f8e9e74f110f06a2cf00378190b88e068410070617961692d77616c6c65742d627974652d646961676e6f737469632d35346632373636632d616338302d343331632d623565342d666531653031363162373465e8030000000000000100000000000000",
+  "returnedHex": "783430322d62617463682d617574686f72697a6174696f6e2d76322e91c94b6559d5f2b6147ae1f08fccb2160ccccf0ced21dd4636f60590a410bb5de5c2845feafa8ade757cdd4f612873446455e0e2de8de7ad8f655f83ffc67faf76e59f50d0a422e1dd5d02d1f38e6f8e9e74f110f06a2cf00378190b88e068410070617961692d77616c6c65742d627974652d646961676e6f737469632d35346632373636632d616338302d343331632d623565342d666531653031363162373465e8030000000000000100000000000000",
+  "utf8CandidateHex": "783430322d62617463682d617574686f72697a6174696f6e2d76322eefbfbdefbfbd4b6559efbfbdefbfbd147aefbfbdefbfbdefbfbdccb2160cefbfbdefbfbd0cefbfbd21efbfbd4636efbfbd05efbfbdefbfbd10efbfbd5defbfbdc2845fefbfbdefbfbdefbfbdefbfbd757cefbfbd4f612873446455efbfbdefbfbdde8de7ad8f655fefbfbdefbfbdefbfbd7fefbfbd76efbfbd50d0a422efbfbdefbfbd5d02efbfbdefbfbd6fefbfbdefbfbd74efbfbd10efbfbd6a2cefbfbd0378190befbfbdefbfbd684170617961692d77616c6c65742d627974652d646961676e6f737469632d35346632373636632d616338302d343331632d623565342d666531653031363162373465efbfbd0301",
+  "signatureBase58": "2RKiTCCGd9awPLPijWF2WHyWuojE5hqiDGGQ3H3fb9dHDE7sDcYSBGdVpHzF3sjyGJ9PSynEDAhn17Qjt8R4QNmL"
+}

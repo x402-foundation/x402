@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Solana batch wallet compatibility</title>
+  <body>
+    <h1>Solana batch wallet compatibility</h1>
+    <p>
+      This diagnostic signs an expired authorization for a random nonexistent channel. It makes no
+      payment or RPC calls and constructs no transaction.
+    </p>
+    <label
+      >Wallet
+      <select id="wallet"></select
+    ></label>
+    <button id="connect">Connect</button>
+    <p>
+      <label
+        >Extension version <input id="extension" placeholder="Enter from wallet settings"
+      /></label>
+      <label
+        >Solana Snap version (MetaMask) <input id="snap" placeholder="Enter installed version"
+      /></label>
+    </p>
+    <button id="binary" disabled>Sign expired binary proof</button>
+    <button id="text" disabled>Sign expired readable proof</button>
+    <button id="download" disabled>Download capture</button>
+    <pre id="result" role="status">Select a wallet and connect to begin.</pre>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

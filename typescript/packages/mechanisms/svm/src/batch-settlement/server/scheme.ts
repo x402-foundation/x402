@@ -48,11 +48,13 @@ import {
   MIN_WITHDRAW_DELAY,
 } from "../constants";
 import { BatchError } from "../errors";
-import { verifyBatchAuthorization } from "../authorization";
+import { verifyBatchAuthorization, resolveBatchAuthorizationFormat } from "../authorization";
+import { assertBatchAuthorizationFormat } from "../authorizationPolicy";
 import { signCloseAuthorization } from "../closeAuthorization";
 import { encodeReceiverBindingMemo } from "../receiverBinding";
 import type {
   BatchAuthorization,
+  BatchAuthorizationFormat,
   BatchChannelConfig,
   BatchPayload,
   BatchProof,
@@ -71,6 +73,8 @@ import {
 import type { ChannelState, ChannelStore, RequestContext, VerifiedChannelState } from "./types";
 
 export interface BatchSvmServerConfig {
+  /** Opt in to readable payer proofs; the facilitator must advertise support. */
+  authorizationFormat?: BatchAuthorizationFormat | undefined;
   withdrawDelay?: number | undefined;
   /**
    * Receiver-authorizer signer. Advertised as `extra.receiverAuthorizer`,
@@ -125,6 +129,7 @@ export class BatchSvmScheme implements SchemeNetworkServer {
    * @param config - Channel store, operator, receiver authorizer, and hook options
    */
   constructor(private readonly config: BatchSvmServerConfig) {
+    resolveBatchAuthorizationFormat(config.authorizationFormat);
     this.store = config.store ?? new MemoryChannelStore();
     this.operationStore = config.operationStore ?? new MemoryBatchOperationStore();
     this.schemeHooks = {
@@ -374,6 +379,27 @@ export class BatchSvmScheme implements SchemeNetworkServer {
       throw new Error(BatchError.WITHDRAW_DELAY_OUT_OF_RANGE);
     }
     const serverSigned = this.isServerSigned(paymentRequirements);
+    const authorizationFormat = resolveBatchAuthorizationFormat(
+      paymentRequirements.extra?.authorizationFormat !== undefined
+        ? paymentRequirements.extra.authorizationFormat
+        : serverSigned
+          ? this.config.authorizationFormat
+          : undefined,
+    );
+    if (
+      authorizationFormat !== "binary" &&
+      (!serverSigned || this.config.authorizationFormat !== authorizationFormat)
+    ) {
+      throw new Error("readable authorizations require an enabled server-signed route");
+    }
+    const supportedFormats = supportedKind.extra?.authorizationFormats;
+    if (
+      supportedFormats === undefined
+        ? authorizationFormat !== "binary"
+        : !Array.isArray(supportedFormats) || !supportedFormats.includes(authorizationFormat)
+    ) {
+      throw new Error("facilitator does not advertise the selected authorization format");
+    }
     // A route may pin itself to client mode with `extra.voucherSigner:
     // "client"` even when an operator is configured, so one route can offer
     // both a server-signed accept (metered) and a client-signed accept (the
@@ -393,6 +419,7 @@ export class BatchSvmScheme implements SchemeNetworkServer {
       extra: {
         ...routeExtra,
         ...supportedKind.extra,
+        ...(authorizationFormat !== "binary" ? { authorizationFormat } : {}),
         tokenProgram: getStablecoinTokenProgram(
           paymentRequirements.asset,
           paymentRequirements.network,
@@ -1012,6 +1039,10 @@ export class BatchSvmScheme implements SchemeNetworkServer {
     raw: BatchPayload,
     requirements: PaymentRequirements,
   ): Promise<string> {
+    assertBatchAuthorizationFormat(raw, requirements, [
+      "binary",
+      this.config.authorizationFormat ?? "binary",
+    ]);
     const extra = requirements.extra;
     if (!extra || (extra.paymentFlow !== undefined && extra.paymentFlow !== "authorization")) {
       throw new Error(BatchError.PAYMENT_FLOW);
