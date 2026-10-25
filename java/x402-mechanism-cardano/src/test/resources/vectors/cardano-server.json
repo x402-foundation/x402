@@ -1,0 +1,622 @@
+{
+  "generatedFrom": "typescript/packages/mechanisms/cardano",
+  "tsCommit": "f8f83309706b14cc696962f0a002eeeb66c3dc26",
+  "parsePrice": [
+    {
+      "price": "$0.50",
+      "network": "cardano:preprod",
+      "result": {
+        "amount": "500000",
+        "asset": "e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d",
+        "extra": {}
+      }
+    },
+    {
+      "price": "0.50",
+      "network": "cardano:mainnet",
+      "result": {
+        "amount": "500000",
+        "asset": "c48cbb3d5e57ed56e276bc45f99ab39abe94e6cd7ac39fb402da47ad.0014df105553444d",
+        "extra": {}
+      }
+    },
+    {
+      "price": "1 USDM",
+      "network": "cardano:preprod",
+      "result": {
+        "amount": "1000000",
+        "asset": "e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d",
+        "extra": {}
+      }
+    },
+    {
+      "price": "0.1234567 USD",
+      "network": "cardano:mainnet",
+      "result": {
+        "amount": "123456",
+        "asset": "c48cbb3d5e57ed56e276bc45f99ab39abe94e6cd7ac39fb402da47ad.0014df105553444d",
+        "extra": {}
+      }
+    },
+    {
+      "price": "$1",
+      "network": "cardano:preview",
+      "error": "No default asset configured for network cardano:preview"
+    },
+    {
+      "price": "1.5 ADA",
+      "network": "cardano:preprod",
+      "error": "No ADA default asset configured for network cardano:preprod"
+    },
+    {
+      "price": "$0.50",
+      "network": "cip34:0-1",
+      "result": {
+        "amount": "500000",
+        "asset": "e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d",
+        "extra": {}
+      }
+    },
+    {
+      "price": {
+        "amount": "1500000",
+        "asset": "lovelace"
+      },
+      "network": "cardano:preprod",
+      "result": {
+        "amount": "1500000",
+        "asset": "lovelace",
+        "extra": {}
+      }
+    },
+    {
+      "price": {
+        "amount": "1500000",
+        "asset": "e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d",
+        "extra": {
+          "note": "x"
+        }
+      },
+      "network": "cardano:preprod",
+      "result": {
+        "amount": "1500000",
+        "asset": "e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d",
+        "extra": {
+          "note": "x"
+        }
+      }
+    },
+    {
+      "price": {
+        "amount": "1500000",
+        "asset": "E675B46E4D2242C991A8932A99DB3044E80515AE14B4C4CCF6B3F4C9.0014DF10745553444D"
+      },
+      "network": "cardano:preprod",
+      "error": "AssetAmount asset must use canonical lowercase Cardano form: E675B46E4D2242C991A8932A99DB3044E80515AE14B4C4CCF6B3F4C9.0014DF10745553444D"
+    },
+    {
+      "price": {
+        "amount": "01",
+        "asset": "lovelace"
+      },
+      "network": "cardano:preprod",
+      "error": "AssetAmount amount must be a positive canonical integer: 01"
+    },
+    {
+      "price": {
+        "amount": "0",
+        "asset": "lovelace"
+      },
+      "network": "cardano:preprod",
+      "error": "AssetAmount amount must be a positive canonical integer: 0"
+    },
+    {
+      "price": "abc",
+      "network": "cardano:preprod",
+      "error": "Invalid money format: abc"
+    }
+  ],
+  "getAssetDecimals": [
+    {
+      "asset": "e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d",
+      "network": "cardano:preprod",
+      "result": 6
+    },
+    {
+      "asset": "E675B46E4D2242C991A8932A99DB3044E80515AE14B4C4CCF6B3F4C9.0014DF10745553444D",
+      "network": "cardano:preprod",
+      "result": 6
+    },
+    {
+      "asset": "c48cbb3d5e57ed56e276bc45f99ab39abe94e6cd7ac39fb402da47ad.0014df105553444d",
+      "network": "cardano:mainnet",
+      "result": 6
+    },
+    {
+      "asset": "c48cbb3d5e57ed56e276bc45f99ab39abe94e6cd7ac39fb402da47ad.0014df105553444d",
+      "network": "cardano:preprod",
+      "result": null
+    },
+    {
+      "asset": "lovelace",
+      "network": "cardano:preprod",
+      "result": null
+    },
+    {
+      "asset": "e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d",
+      "network": "cardano:preview",
+      "result": null
+    }
+  ],
+  "enhance": [
+    {
+      "name": "no-advertisement",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "1000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "supportedKind": {
+        "x402Version": 2,
+        "scheme": "exact",
+        "network": "cardano:preprod"
+      },
+      "result": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "1000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      }
+    },
+    {
+      "name": "full-advertisement",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "1000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "default"
+        }
+      },
+      "supportedKind": {
+        "x402Version": 2,
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "extra": {
+          "assetTransferMethods": [
+            "default",
+            "masumi",
+            "script"
+          ],
+          "areFeesSponsored": false,
+          "l1Confirmations": {
+            "minimum": 0,
+            "maximum": 20
+          }
+        }
+      },
+      "result": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "1000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "default",
+          "areFeesSponsored": false
+        }
+      }
+    },
+    {
+      "name": "sponsored-not-boolean",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "1000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "supportedKind": {
+        "x402Version": 2,
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "extra": {
+          "assetTransferMethods": [
+            "default",
+            "masumi",
+            "script"
+          ],
+          "areFeesSponsored": "no",
+          "l1Confirmations": {
+            "minimum": 0,
+            "maximum": 20
+          }
+        }
+      },
+      "result": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "1000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      }
+    },
+    {
+      "name": "method-missing",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "1000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "script"
+        }
+      },
+      "supportedKind": {
+        "x402Version": 2,
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "extra": {
+          "assetTransferMethods": [
+            "default"
+          ],
+          "areFeesSponsored": false,
+          "l1Confirmations": {
+            "minimum": 0,
+            "maximum": 20
+          }
+        }
+      },
+      "error": "Cardano facilitator does not support assetTransferMethod script"
+    },
+    {
+      "name": "no-methods",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "1000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "supportedKind": {
+        "x402Version": 2,
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "extra": {
+          "l1Confirmations": {
+            "minimum": 0,
+            "maximum": 20
+          }
+        }
+      },
+      "error": "Cardano facilitator did not advertise assetTransferMethods"
+    },
+    {
+      "name": "depth-out-of-range",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "1000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "confirmationPolicy": {
+            "l1Confirmations": 3
+          }
+        }
+      },
+      "supportedKind": {
+        "x402Version": 2,
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "extra": {
+          "assetTransferMethods": [
+            "default",
+            "masumi",
+            "script"
+          ],
+          "areFeesSponsored": false,
+          "l1Confirmations": {
+            "minimum": 0,
+            "maximum": 0
+          }
+        }
+      },
+      "error": "Cardano facilitator confirmation range does not include 3"
+    },
+    {
+      "name": "mempool-allowed",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "1000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "confirmationPolicy": {
+            "l1Confirmations": -1
+          }
+        }
+      },
+      "supportedKind": {
+        "x402Version": 2,
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "extra": {
+          "assetTransferMethods": [
+            "default",
+            "masumi",
+            "script"
+          ],
+          "areFeesSponsored": false,
+          "l1Confirmations": {
+            "minimum": -1,
+            "maximum": 20
+          }
+        }
+      },
+      "result": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "1000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "confirmationPolicy": {
+            "l1Confirmations": -1
+          },
+          "areFeesSponsored": false
+        }
+      }
+    },
+    {
+      "name": "bad-policy",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "1000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "confirmationPolicy": {
+            "l1Confirmations": 1,
+            "x": 1
+          }
+        }
+      },
+      "supportedKind": {
+        "x402Version": 2,
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "extra": {
+          "assetTransferMethods": [
+            "default",
+            "masumi",
+            "script"
+          ],
+          "areFeesSponsored": false,
+          "l1Confirmations": {
+            "minimum": 0,
+            "maximum": 20
+          }
+        }
+      },
+      "error": "Cardano requirements carry an invalid confirmation policy"
+    },
+    {
+      "name": "no-range",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "1000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "supportedKind": {
+        "x402Version": 2,
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "extra": {
+          "assetTransferMethods": [
+            "default"
+          ]
+        }
+      },
+      "error": "Cardano facilitator did not advertise an l1Confirmations range"
+    },
+    {
+      "name": "masumi-issued",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "5000000",
+        "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "masumi",
+          "inputCommitment": {
+            "version": "1",
+            "algorithm": "sha256",
+            "parts": [
+              {
+                "name": "body",
+                "canonicalization": "jcs",
+                "mediaType": "application/json",
+                "content": {
+                  "days": 3,
+                  "units": "metric"
+                },
+                "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+              }
+            ],
+            "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+          },
+          "terms": {
+            "version": "1",
+            "paymentType": "Web3CardanoV2",
+            "sellerAddress": "addr_test1vpe6c4xkpsdcsyd566jhuz6ykmra2e9vg8r3m79376eqrhgfchug4",
+            "sellerNonce": "abababababababababababababababababababababababababababababababab",
+            "buyerNonce": "",
+            "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+            "payByTime": "1791819208923",
+            "submitResultTime": "1791819508923",
+            "unlockTime": "1791820408923",
+            "externalDisputeUnlockTime": "1791821308923"
+          },
+          "referenceKey": "a4010103272006215820fef991fc60b9f76a24ea087c6efc9b3b545ae7ea6649e4fffbc09bad191459c3",
+          "referenceSignature": "84582aa201276761646472657373581d6073ac54d60c1b8811b4d6a57e0b44b6c7d564ac41c71df8b1f6b201dda166686173686564f4582045f8171b121013014cd7acf4b96b396b17b92138c8b8c691f925ae9909787e08584038d1a015a32b821c7227b0f358278cfe8b20f02494ff86d0a566a2140ed93967e30c1461c4d69d61b49fb6134f4c6db119e4915104cd1f0c1f35d18f57e2fc07",
+          "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545bc00632c18791012441a3424248cac058053222030610940792e58ea08c24b7700666840963944316e5d82d4a94d25126c9f33ac7b1e22d94eb8932125256520c012e72412f10004e2b5678f37238dc12563401334cca588b58dc2c604558d8a258f2347265341c0c220cae12605222d65c4934ad5c0a102263561c0a4ce345336263225c0c588c63534a2e22054742127ac52e58c4ea4550f17a4339589e5958e30d74b9f0c5f31258c519922c60f0a6c9f101ac26b463255c63008f8c8603d582c176a3088444a1a486fd453194a16012f0e2c62a210308a169555188812c440ac103088a8a6ab011c3347bcc2e40a27009a796c2c404ac10570b80027003e8005d1400677e49000ee002f217632862c25600016006b3162825001b01008005662d88016cb800370023911b9e6a1401cc001e940952b58186011a000efcab70158c60f400edd8628c15a800"
+        }
+      },
+      "supportedKind": {
+        "x402Version": 2,
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "extra": {
+          "assetTransferMethods": [
+            "default",
+            "masumi",
+            "script"
+          ],
+          "areFeesSponsored": false,
+          "l1Confirmations": {
+            "minimum": 0,
+            "maximum": 20
+          }
+        }
+      },
+      "result": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "5000000",
+        "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "masumi",
+          "inputCommitment": {
+            "version": "1",
+            "algorithm": "sha256",
+            "parts": [
+              {
+                "name": "body",
+                "canonicalization": "jcs",
+                "mediaType": "application/json",
+                "content": {
+                  "days": 3,
+                  "units": "metric"
+                },
+                "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+              }
+            ],
+            "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+          },
+          "terms": {
+            "version": "1",
+            "paymentType": "Web3CardanoV2",
+            "sellerAddress": "addr_test1vpe6c4xkpsdcsyd566jhuz6ykmra2e9vg8r3m79376eqrhgfchug4",
+            "sellerNonce": "abababababababababababababababababababababababababababababababab",
+            "buyerNonce": "",
+            "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+            "payByTime": "1791819208923",
+            "submitResultTime": "1791819508923",
+            "unlockTime": "1791820408923",
+            "externalDisputeUnlockTime": "1791821308923"
+          },
+          "referenceKey": "a4010103272006215820fef991fc60b9f76a24ea087c6efc9b3b545ae7ea6649e4fffbc09bad191459c3",
+          "referenceSignature": "84582aa201276761646472657373581d6073ac54d60c1b8811b4d6a57e0b44b6c7d564ac41c71df8b1f6b201dda166686173686564f4582045f8171b121013014cd7acf4b96b396b17b92138c8b8c691f925ae9909787e08584038d1a015a32b821c7227b0f358278cfe8b20f02494ff86d0a566a2140ed93967e30c1461c4d69d61b49fb6134f4c6db119e4915104cd1f0c1f35d18f57e2fc07",
+          "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545bc00632c18791012441a3424248cac058053222030610940792e58ea08c24b7700666840963944316e5d82d4a94d25126c9f33ac7b1e22d94eb8932125256520c012e72412f10004e2b5678f37238dc12563401334cca588b58dc2c604558d8a258f2347265341c0c220cae12605222d65c4934ad5c0a102263561c0a4ce345336263225c0c588c63534a2e22054742127ac52e58c4ea4550f17a4339589e5958e30d74b9f0c5f31258c519922c60f0a6c9f101ac26b463255c63008f8c8603d582c176a3088444a1a486fd453194a16012f0e2c62a210308a169555188812c440ac103088a8a6ab011c3347bcc2e40a27009a796c2c404ac10570b80027003e8005d1400677e49000ee002f217632862c25600016006b3162825001b01008005662d88016cb800370023911b9e6a1401cc001e940952b58186011a000efcab70158c60f400edd8628c15a800",
+          "areFeesSponsored": false
+        }
+      }
+    },
+    {
+      "name": "masumi-template-without-issuer",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "1000000",
+        "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "masumi"
+        }
+      },
+      "supportedKind": {
+        "x402Version": 2,
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "extra": {
+          "assetTransferMethods": [
+            "default",
+            "masumi",
+            "script"
+          ],
+          "areFeesSponsored": false,
+          "l1Confirmations": {
+            "minimum": 0,
+            "maximum": 20
+          }
+        }
+      },
+      "error": "Masumi requirements must carry seller-signed terms unless ExactCardanoScheme is configured with a `masumi` issuer"
+    },
+    {
+      "name": "non-cardano-kind",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "1000000",
+        "payTo": "addr_test1qq9lafv5q6tzm0hj7dhwn9sw3pt8at7utl72lmk4xqcjts2k34ky8776vzes76ae0hhdful5l3ejn2teha8pgsz4jyxquttlcd",
+        "maxTimeoutSeconds": 600,
+        "extra": {}
+      },
+      "supportedKind": {
+        "x402Version": 2,
+        "scheme": "exact",
+        "network": "eip155:8453",
+        "extra": {
+          "assetTransferMethods": [
+            "default",
+            "masumi",
+            "script"
+          ],
+          "areFeesSponsored": false,
+          "l1Confirmations": {
+            "minimum": 0,
+            "maximum": 20
+          }
+        }
+      },
+      "error": "Unsupported Cardano network: eip155:8453"
+    }
+  ]
+}

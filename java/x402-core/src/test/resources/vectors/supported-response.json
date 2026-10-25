@@ -1,0 +1,44 @@
+{
+  "generatedFrom": "typescript/packages/core",
+  "tsCommit": "f8f83309706b14cc696962f0a002eeeb66c3dc26",
+  "cases": [
+    {
+      "name": "kinds-extensions-signers",
+      "value": {
+        "kinds": [
+          {
+            "x402Version": 2,
+            "scheme": "exact",
+            "network": "cardano:preprod",
+            "extra": {
+              "assetTransferMethods": [
+                "default",
+                "masumi",
+                "script"
+              ],
+              "areFeesSponsored": false,
+              "l1Confirmations": {
+                "minimum": 0,
+                "maximum": 20
+              }
+            }
+          },
+          {
+            "x402Version": 1,
+            "scheme": "exact",
+            "network": "cardano:mainnet"
+          }
+        ],
+        "extensions": [
+          "bazaar"
+        ],
+        "signers": {
+          "cardano:*": [
+            "addr_test1vz09v9yfxguvlp0zsnrpa3tdtm7el8xufp3m5lsm7qxzclgmzkket"
+          ]
+        }
+      },
+      "json": "{\"kinds\":[{\"x402Version\":2,\"scheme\":\"exact\",\"network\":\"cardano:preprod\",\"extra\":{\"assetTransferMethods\":[\"default\",\"masumi\",\"script\"],\"areFeesSponsored\":false,\"l1Confirmations\":{\"minimum\":0,\"maximum\":20}}},{\"x402Version\":1,\"scheme\":\"exact\",\"network\":\"cardano:mainnet\"}],\"extensions\":[\"bazaar\"],\"signers\":{\"cardano:*\":[\"addr_test1vz09v9yfxguvlp0zsnrpa3tdtm7el8xufp3m5lsm7qxzclgmzkket\"]}}"
+    }
+  ]
+}

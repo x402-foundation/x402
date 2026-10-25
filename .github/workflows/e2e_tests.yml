@@ -64,6 +64,7 @@ jobs:
             echo "SERVER_NEAR_ADDRESS=${{ secrets.SERVER_NEAR_ADDRESS }}"
             echo "SERVER_XRPL_ADDRESS=${{ secrets.SERVER_XRPL_ADDRESS }}"
             echo "SERVER_CARDANO_ADDRESS=${{ secrets.SERVER_CARDANO_ADDRESS }}"
+            echo "SERVER_CARDANO_SELLER_MNEMONIC=${{ secrets.SERVER_CARDANO_SELLER_MNEMONIC }}"
             echo "CLIENT_EVM_PRIVATE_KEY=${{ secrets.CLIENT_EVM_PRIVATE_KEY }}"
             echo "CLIENT_SVM_PRIVATE_KEY=${{ secrets.CLIENT_SVM_PRIVATE_KEY }}"
             echo "CLIENT_AVM_PRIVATE_KEY=${{ secrets.CLIENT_AVM_PRIVATE_KEY }}"
@@ -151,6 +152,15 @@ jobs:
       - name: Install Python
         if: steps.families.outputs.configured == 'true'
         run: uv python install 3.10
+
+      # Java e2e components (e2e/*/java): setup.sh installs the java/ reactor once, then builds each.
+      - name: Setup Java
+        if: steps.families.outputs.configured == 'true'
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          java-version: "17"
+          distribution: temurin
+          cache: maven
 
       - name: Install and build TypeScript SDK
         if: steps.families.outputs.configured == 'true'

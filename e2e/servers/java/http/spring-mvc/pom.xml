@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!-- e2e server; not part of the java/ reactor. build.sh installs the reactor first. -->
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.5.16</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>org.x402.e2e</groupId>
+  <artifactId>spring-mvc</artifactId>
+  <version>0.0.0</version>
+  <name>x402 e2e server (spring-mvc)</name>
+
+  <properties>
+    <java.version>17</java.version>
+    <x402.version>2.0.0-SNAPSHOT</x402.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.x402</groupId>
+      <artifactId>x402-spring-boot-starter</artifactId>
+      <version>${x402.version}</version>
+    </dependency>
+    <!-- The payment mechanism: the starter brings none, you add the chains you accept. -->
+    <dependency>
+      <groupId>org.x402</groupId>
+      <artifactId>x402-mechanism-cardano</artifactId>
+      <version>${x402.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>app</finalName>
+    <plugins>
+      <!-- Shared e2e server sources (catalog → x402 properties) at e2e/servers/java/src. -->
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>build-helper-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>shared-sources</id>
+            <phase>generate-sources</phase>
+            <goals>
+              <goal>add-source</goal>
+            </goals>
+            <configuration>
+              <sources>
+                <source>${project.basedir}/../../src/main/java</source>
+              </sources>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+</project>

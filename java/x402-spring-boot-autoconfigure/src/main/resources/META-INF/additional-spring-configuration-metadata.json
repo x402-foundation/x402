@@ -1,0 +1,352 @@
+{
+  "properties": [
+    {
+      "name": "x402.facilitators[].url",
+      "type": "java.lang.String",
+      "description": "Facilitator base URL. None configured = https://x402.org/facilitator."
+    },
+    {
+      "name": "x402.facilitators[].identifier",
+      "type": "java.lang.String",
+      "description": "Name used in logs, health and pins; defaults to the url (trailing slashes removed). \"local\" is reserved."
+    },
+    {
+      "name": "x402.facilitators[].timeout",
+      "type": "java.time.Duration",
+      "description": "Settle and /supported timeout; must exceed the facilitator's confirmation wait.",
+      "defaultValue": "90s"
+    },
+    {
+      "name": "x402.facilitators[].verify-timeout",
+      "type": "java.time.Duration",
+      "description": "/verify timeout (Java); bounds the extra hop when failover is on.",
+      "defaultValue": "15s"
+    },
+    {
+      "name": "x402.facilitators[].headers.verify",
+      "type": "java.util.Map<java.lang.String,java.lang.String>",
+      "description": "Static headers for POST /verify."
+    },
+    {
+      "name": "x402.facilitators[].headers.settle",
+      "type": "java.util.Map<java.lang.String,java.lang.String>",
+      "description": "Static headers for POST /settle."
+    },
+    {
+      "name": "x402.facilitators[].headers.supported",
+      "type": "java.util.Map<java.lang.String,java.lang.String>",
+      "description": "Static headers for GET /supported."
+    },
+    {
+      "name": "x402.facilitators[].auth-ref",
+      "type": "java.lang.String",
+      "description": "Bean name of an X402FacilitatorAuthProvider; replaces headers."
+    },
+    {
+      "name": "x402.accounts.*.network",
+      "type": "java.lang.String",
+      "description": "CAIP-2 network of the account (required), e.g. cardano:preprod. Account names match [a-z0-9-]+."
+    },
+    {
+      "name": "x402.accounts.*.pay-to",
+      "type": "java.lang.String",
+      "description": "Receiving address."
+    },
+    {
+      "name": "x402.accounts.*.pay-to-ref",
+      "type": "java.lang.String",
+      "description": "Bean name of an X402DynamicPayTo resolving the address per request."
+    },
+    {
+      "name": "x402.accounts.*.scheme",
+      "type": "java.lang.String",
+      "description": "Scheme for this account's options; else x402.defaults.scheme."
+    },
+    {
+      "name": "x402.accounts.*.max-timeout-seconds",
+      "type": "java.lang.Integer",
+      "description": "Payment timeout for this account's options; else x402.defaults.max-timeout-seconds."
+    },
+    {
+      "name": "x402.accounts.*.extra",
+      "type": "java.util.Map<java.lang.String,java.lang.Object>",
+      "description": "Scheme data merged under each option's extra (e.g. assetTransferMethod). Set from YAML, not plain env vars (keys are case-sensitive)."
+    },
+    {
+      "name": "x402.accounts.*.facilitator",
+      "type": "java.lang.String",
+      "description": "Pins every option of this account to a facilitator identifier."
+    },
+    {
+      "name": "x402.routes.*.path",
+      "type": "java.lang.String",
+      "description": "x402 route pattern (syntax: *, :param, [param]; {var} is rejected) protecting matching requests without an annotation, e.g. \"GET /report/*\"."
+    },
+    {
+      "name": "x402.routes.*.description",
+      "type": "java.lang.String",
+      "description": "Resource description in PAYMENT-REQUIRED."
+    },
+    {
+      "name": "x402.routes.*.mime-type",
+      "type": "java.lang.String",
+      "description": "Response MIME type in PAYMENT-REQUIRED."
+    },
+    {
+      "name": "x402.routes.*.resource",
+      "type": "java.lang.String",
+      "description": "Fixed resource URL; default is the request URL."
+    },
+    {
+      "name": "x402.routes.*.service-name",
+      "type": "java.lang.String",
+      "description": "Service name in PAYMENT-REQUIRED."
+    },
+    {
+      "name": "x402.routes.*.tags",
+      "type": "java.util.List<java.lang.String>",
+      "description": "Discovery tags."
+    },
+    {
+      "name": "x402.routes.*.icon-url",
+      "type": "java.lang.String",
+      "description": "Icon URL."
+    },
+    {
+      "name": "x402.routes.*.custom-paywall-html",
+      "type": "java.lang.String",
+      "description": "Fixed HTML paywall page for browsers."
+    },
+    {
+      "name": "x402.routes.*.failover",
+      "type": "java.lang.Boolean",
+      "description": "Verify failover for unpinned options; absent inherits x402.defaults.failover."
+    },
+    {
+      "name": "x402.routes.*.extensions",
+      "type": "java.util.Map<java.lang.String,java.lang.Object>",
+      "description": "Extension declarations, e.g. bazaar."
+    },
+    {
+      "name": "x402.routes.*.accepts[].account",
+      "type": "java.lang.String",
+      "description": "Account supplying network and receiver; not together with network."
+    },
+    {
+      "name": "x402.routes.*.accepts[].network",
+      "type": "java.lang.String",
+      "description": "Network of an inline option (no account); needs pay-to or pay-to-ref."
+    },
+    {
+      "name": "x402.routes.*.accepts[].scheme",
+      "type": "java.lang.String",
+      "description": "Scheme; else the account's, else x402.defaults.scheme."
+    },
+    {
+      "name": "x402.routes.*.accepts[].pay-to",
+      "type": "java.lang.String",
+      "description": "Receiving address; replaces the account's receiver."
+    },
+    {
+      "name": "x402.routes.*.accepts[].pay-to-ref",
+      "type": "java.lang.String",
+      "description": "Bean name of an X402DynamicPayTo."
+    },
+    {
+      "name": "x402.routes.*.accepts[].price",
+      "type": "org.x402.spring.properties.PriceSpec",
+      "description": "Money string (\"$0.50\" = 0.50 of the network's default stablecoin, \"0.50 USDM\") or {amount, asset, extra} in atomic units. Not with price-ref."
+    },
+    {
+      "name": "x402.routes.*.accepts[].price.amount",
+      "type": "java.lang.String",
+      "description": "Amount in atomic units (object form)."
+    },
+    {
+      "name": "x402.routes.*.accepts[].price.asset",
+      "type": "java.lang.String",
+      "description": "Asset identifier (object form), e.g. lovelace."
+    },
+    {
+      "name": "x402.routes.*.accepts[].price.extra",
+      "type": "java.util.Map<java.lang.String,java.lang.Object>",
+      "description": "Asset data merged below the account's and option's extra."
+    },
+    {
+      "name": "x402.routes.*.accepts[].price-ref",
+      "type": "java.lang.String",
+      "description": "Bean name of an X402DynamicPrice evaluated per request."
+    },
+    {
+      "name": "x402.routes.*.accepts[].max-timeout-seconds",
+      "type": "java.lang.Integer",
+      "description": "Payment timeout."
+    },
+    {
+      "name": "x402.routes.*.accepts[].extra",
+      "type": "java.util.Map<java.lang.String,java.lang.Object>",
+      "description": "Scheme data; wins over the account's (an inherited assetTransferMethod may not change)."
+    },
+    {
+      "name": "x402.routes.*.accepts[].facilitator",
+      "type": "java.lang.String",
+      "description": "Pins the option to a facilitator identifier."
+    },
+    {
+      "name": "x402.client.spend-controls.allowed-assets[].network",
+      "type": "java.lang.String",
+      "description": "Network or pattern, e.g. cardano:*."
+    },
+    {
+      "name": "x402.client.spend-controls.allowed-assets[].asset",
+      "type": "java.lang.String",
+      "description": "Asset identifier, e.g. lovelace."
+    },
+    {
+      "name": "x402.client.spend-controls.allowed-assets[].max-amount-per-payment",
+      "type": "java.lang.String",
+      "description": "Cap in atomic units."
+    },
+    {
+      "name": "x402.client.cardano.mnemonic",
+      "type": "java.lang.String",
+      "description": "Default wallet mnemonic for every Cardano network the client pays on; a network's own mnemonic overrides it."
+    },
+    {
+      "name": "x402.client.cardano.networks[].network",
+      "type": "java.lang.String",
+      "description": "Cardano network, e.g. cardano:preprod."
+    },
+    {
+      "name": "x402.client.cardano.networks[].mnemonic",
+      "type": "java.lang.String",
+      "description": "Per-network buyer mnemonic; else x402.client.cardano.mnemonic."
+    },
+    {
+      "name": "x402.client.cardano.networks[].blockfrost.project-id",
+      "type": "java.lang.String",
+      "description": "Blockfrost project id for this network."
+    },
+    {
+      "name": "x402.client.cardano.networks[].blockfrost.base-url",
+      "type": "java.lang.String",
+      "description": "Blockfrost base URL; defaults per network."
+    },
+    {
+      "name": "x402.accounts.*.cardano.l1-confirmations",
+      "type": "java.lang.Integer",
+      "description": "Confirmation depth -1..20 for this account's Cardano options; becomes extra.confirmationPolicy unless the option sets one."
+    },
+    {
+      "name": "x402.accounts.*.cardano.masumi.seller-mnemonic",
+      "type": "java.lang.String",
+      "description": "Signs Masumi quotes on the account's network; a CardanoSellerSigner bean wins. One value per network."
+    },
+    {
+      "name": "x402.accounts.*.cardano.masumi.seller-return-address",
+      "type": "java.lang.String",
+      "description": "Optional key-credential payout address for Masumi quotes on the network."
+    },
+    {
+      "name": "x402.accounts.*.cardano.masumi.agent-identifier",
+      "type": "java.lang.String",
+      "description": "Optional Masumi registry asset id signed into quotes on the network."
+    },
+    {
+      "name": "x402.accounts.*.cardano.masumi.deployment.required-admins",
+      "type": "java.lang.String",
+      "description": "Non-canonical Masumi escrow deployment: required admin signatures (required on Preview)."
+    },
+    {
+      "name": "x402.accounts.*.cardano.masumi.deployment.admin-vkeys",
+      "type": "java.util.List<java.lang.String>",
+      "description": "Non-canonical Masumi escrow deployment: admin key hashes, in order."
+    },
+    {
+      "name": "x402.accounts.*.cardano.masumi.deployment.cooldown-period",
+      "type": "java.lang.String",
+      "description": "Non-canonical Masumi escrow deployment: cooldown in ms."
+    },
+    {
+      "name": "x402.facilitator-server.cardano.networks[].network",
+      "type": "java.lang.String",
+      "description": "Cardano network served by the facilitator, e.g. cardano:preprod."
+    },
+    {
+      "name": "x402.facilitator-server.cardano.networks[].blockfrost.project-id",
+      "type": "java.lang.String",
+      "description": "Blockfrost project id for this network."
+    },
+    {
+      "name": "x402.facilitator-server.cardano.networks[].blockfrost.base-url",
+      "type": "java.lang.String",
+      "description": "Blockfrost base URL; defaults per network."
+    },
+    {
+      "name": "x402.facilitator-server.cardano.networks[].mnemonic",
+      "type": "java.lang.String",
+      "description": "Optional facilitator mnemonic (address shown in /supported); provider-only without it."
+    },
+    {
+      "name": "x402.facilitator-server.cardano.networks[].slot-config.zero-time",
+      "type": "java.lang.Long",
+      "description": "POSIX milliseconds of zero-slot; with zero-slot and slot-length, replaces the network's built-in slot configuration (e.g. a private testnet)."
+    },
+    {
+      "name": "x402.facilitator-server.cardano.networks[].slot-config.zero-slot",
+      "type": "java.lang.Long",
+      "description": "First slot of the slot configuration."
+    },
+    {
+      "name": "x402.facilitator-server.cardano.networks[].slot-config.slot-length",
+      "type": "java.lang.Integer",
+      "description": "Milliseconds per slot."
+    },
+    {
+      "name": "x402.facilitator-server.cardano.networks[].network-magic",
+      "type": "java.lang.Integer",
+      "description": "Genesis network magic the provider must report; defaults to the public network's (764824073, 1, 2)."
+    },
+    {
+      "name": "x402.facilitator-server.cardano.networks[].evaluation",
+      "type": "java.lang.Boolean",
+      "defaultValue": true,
+      "description": "Whether the provider offers transaction evaluation; false (e.g. yaci-store) skips verify's dry-run."
+    },
+    {
+      "name": "x402.facilitator-server.cardano.networks[].masumi-allowed-script-hashes",
+      "type": "java.util.List<java.lang.String>",
+      "description": "Masumi escrow script hashes (28-byte hex) accepted on the network; when set, every other escrow, the canonical one included, is refused."
+    },
+    {
+      "name": "x402.facilitator-server.cardano.max-tx-bytes",
+      "type": "java.lang.Integer",
+      "defaultValue": 65536,
+      "description": "The largest transaction verify accepts, in bytes (at most 65536); the protocol's maxTxSize lowers it further."
+    },
+    {
+      "name": "x402.facilitator-server.cardano.script-datum-policy",
+      "type": "org.x402.mechanisms.cardano.exact.facilitator.ScriptDatumPolicy",
+      "defaultValue": "reference",
+      "description": "How strictly a script payment's datum is checked: reference (refuses only a Plutus V1 inline datum), strict, or v3-optional."
+    },
+    {
+      "name": "x402.facilitator-server.cardano.max-tip-age",
+      "type": "java.time.Duration",
+      "defaultValue": "5m",
+      "description": "How far a provider's latest block may lag the wall clock before chain reads are refused."
+    },
+    {
+      "name": "x402.facilitator-server.cardano.lookup-timeout",
+      "type": "java.time.Duration",
+      "defaultValue": "10s",
+      "description": "Bound on the chain lookups of one verification; past it the verdict is chain_lookup_failed."
+    },
+    {
+      "name": "x402.facilitator-server.cardano.max-input-lookups",
+      "type": "java.lang.Integer",
+      "defaultValue": 64,
+      "description": "How many inputs one verification resolves on chain; a transaction with more is chain_lookup_failed."
+    }
+  ]
+}

@@ -165,7 +165,7 @@ process_role_v2() {
     local language
     language=$(basename "$language_dir")
     case "$language" in
-      typescript|go|python) ;;
+      typescript|go|python|java) ;;
       *) continue ;;
     esac
 
@@ -234,6 +234,17 @@ process_directory_flat() {
 echo "======================================================="
 echo "Starting Setup Process"
 echo "======================================================="
+
+# The Java components all build on the java/ reactor (org.x402:*:2.0.0-SNAPSHOT): install it
+# once here; each component's build.sh then only packages itself.
+if command -v mvn > /dev/null 2>&1 \
+    && [ -n "$(find servers clients facilitators -path '*/java/*' -name build.sh -print -quit 2>/dev/null)" ]; then
+  echo ""
+  echo "☕ Java SDK reactor (java/)"
+  if run_step "Install" "../java" mvn -q -B install -DskipTests; then
+    export X402_JAVA_REACTOR_READY=1
+  fi
+fi
 
 process_role_v2 "servers" "server"
 process_role_v2 "clients" "client"

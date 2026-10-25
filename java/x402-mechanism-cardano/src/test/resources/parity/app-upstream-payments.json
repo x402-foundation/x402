@@ -1,0 +1,1505 @@
+{
+  "upstreamCommit": "6323ec74c85607e706e0722dd294365a7fb57768",
+  "cardanoVersion": "2.26.0",
+  "clockMillis": "1789992000000",
+  "payments": [
+    {
+      "name": "ada",
+      "currentSlot": "134308800",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "3000000",
+        "payTo": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "default",
+          "areFeesSponsored": false,
+          "confirmationPolicy": {
+            "l1Confirmations": 1
+          }
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAGCglgdYFfjv5+TwBBDyjOSsbLJ4JYDIHWIgWjKu4mqubUaAC3GwIJYOQAP3HgAI9i+fJ/zpr3A2NOyY70MwSRIxAlI779C5VeJA1IJXxz2/St9Gijjw8sCn0jPNP+JCijRdhoBmW+7AhoAAo0FAxoIAWTsoQDZAQKBglggfqCaNK67E8mEHHE5exyr/sXd+VBAUpPe5JbKwvQ3SApYQFZvlSm8GprAuhHQFo6CEmSw1QCELx/+kWMoptairyzyHtq2fUyxvhJJqLkgtHmiMJWL4TPBM0IyUZDGFY8MaQ/19g==",
+          "nonce": "0000000000000000000000000000000000000000000000000000000000000001#0"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "3000000",
+          "payTo": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "default",
+            "areFeesSponsored": false,
+            "confirmationPolicy": {
+              "l1Confirmations": 1
+            }
+          }
+        },
+        "resource": {
+          "url": "https://interop.invalid/ada"
+        }
+      },
+      "payer": "addr_test1qq8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mqkt5dmn",
+      "txHash": "3771415ef55f1a51a4268ef8bcf219a3df3de475a2d513c864c7eb1d441fc529",
+      "inputs": {
+        "0000000000000000000000000000000000000000000000000000000000000001#0": {
+          "exists": true,
+          "address": "addr_test1qq8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mqkt5dmn",
+          "coin": "30000000",
+          "assets": {}
+        }
+      }
+    },
+    {
+      "name": "token",
+      "currentSlot": "134308800",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd.74657374",
+        "amount": "7",
+        "payTo": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "default",
+          "areFeesSponsored": false,
+          "confirmationPolicy": {
+            "l1Confirmations": 1
+          }
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAGCglgdYFfjv5+TwBBDyjOSsbLJ4JYDIHWIgWjKu4mqubWCGgAehIChWBzNzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3NoUR0ZXN0B4JYOQAP3HgAI9i+fJ/zpr3A2NOyY70MwSRIxAlI779C5VeJA1IJXxz2/St9Gijjw8sCn0jPNP+JCijRdhoBqKtHAhoAApO5AxoIAWTsoQDZAQKBglggfqCaNK67E8mEHHE5exyr/sXd+VBAUpPe5JbKwvQ3SApYQCm4DfESLCUbyKkQxPTFK1KE6MM8cKzKXjcl5pd27PvZOUZ4WmVw0/iEgpLcUtEiEXTkhqaxih7ydYpg5ieL3wP19g==",
+          "nonce": "0000000000000000000000000000000000000000000000000000000000000002#0"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd.74657374",
+          "amount": "7",
+          "payTo": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "default",
+            "areFeesSponsored": false,
+            "confirmationPolicy": {
+              "l1Confirmations": 1
+            }
+          }
+        },
+        "resource": {
+          "url": "https://interop.invalid/token"
+        }
+      },
+      "payer": "addr_test1qq8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mqkt5dmn",
+      "txHash": "0601c81b89f05a2dbabc35d1cac95cb9f38a75bbb0b37f0426f42c384ec26859",
+      "inputs": {
+        "0000000000000000000000000000000000000000000000000000000000000002#0": {
+          "exists": true,
+          "address": "addr_test1qq8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mqkt5dmn",
+          "coin": "30000000",
+          "assets": {
+            "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd.74657374": "7"
+          }
+        }
+      }
+    },
+    {
+      "name": "script",
+      "currentSlot": "134308800",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "3000000",
+        "payTo": "addr_test1wp8l7eylksmjas7ypzm0q35dwnjdxxvsfn0z0lflqzgs55stpd682",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "script",
+          "areFeesSponsored": false,
+          "confirmationPolicy": {
+            "l1Confirmations": 1
+          },
+          "script": {
+            "type": "plutusV3",
+            "code": "4d01000033222220051200120011"
+          },
+          "datum": "d87980"
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAGCowBYHXBP/2SftDcuw8QItvBGjXTk0xmQTN4n/T8AkQpSARoALcbAAoIB2BhD2HmAglg5AA/ceAAj2L58n/OmvcDY07JjvQzBJEjECUjvv0LlV4kDUglfHPb9K30aKOPDywKfSM80/4kKKNF2GgGZbdcCGgACjukDGggBZOyhANkBAoGCWCB+oJo0rrsTyYQccTl7HKv+xd35UEBSk97klsrC9DdIClhAIeNHasMdI5Ej6hcxAECi6/fL+BN8nt3h5zG1j0RlIhOr6c/yyhMnPriOvfGHz08uPQxNmdK8Lj0O+GA0APxHCvX2",
+          "nonce": "0000000000000000000000000000000000000000000000000000000000000003#0"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "3000000",
+          "payTo": "addr_test1wp8l7eylksmjas7ypzm0q35dwnjdxxvsfn0z0lflqzgs55stpd682",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "script",
+            "areFeesSponsored": false,
+            "confirmationPolicy": {
+              "l1Confirmations": 1
+            },
+            "script": {
+              "type": "plutusV3",
+              "code": "4d01000033222220051200120011"
+            },
+            "datum": "d87980"
+          }
+        },
+        "resource": {
+          "url": "https://interop.invalid/script"
+        }
+      },
+      "payer": "addr_test1qq8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mqkt5dmn",
+      "txHash": "321b7fa2024cdf0c070934a7cbf89dd722c774af6231ffde83c4be6066c6a7c7",
+      "inputs": {
+        "0000000000000000000000000000000000000000000000000000000000000003#0": {
+          "exists": true,
+          "address": "addr_test1qq8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mqkt5dmn",
+          "coin": "30000000",
+          "assets": {}
+        }
+      }
+    },
+    {
+      "name": "masumi-ada",
+      "currentSlot": "134308800",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "3000000",
+        "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "masumi",
+          "confirmationPolicy": {
+            "l1Confirmations": 1
+          },
+          "inputCommitment": {
+            "version": "1",
+            "algorithm": "sha256",
+            "parts": [
+              {
+                "name": "body",
+                "canonicalization": "jcs",
+                "content": {
+                  "units": "metric",
+                  "days": 3
+                },
+                "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+              }
+            ],
+            "digest": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea"
+          },
+          "terms": {
+            "version": "1",
+            "paymentType": "Web3CardanoV2",
+            "sellerAddress": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+            "sellerNonce": "0000000000000000000000000000000000000000000000000000000000000004",
+            "buyerNonce": "",
+            "inputHash": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea",
+            "payByTime": "1789992600000",
+            "submitResultTime": "1789993800000",
+            "unlockTime": "1789994700000",
+            "externalDisputeUnlockTime": "1789995600000"
+          },
+          "referenceKey": "a401010327200621582017cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce",
+          "referenceSignature": "84582aa201276761646472657373581d6057e3bf9f93c01043ca3392b1b2c9e096032075888168cabb89aab9b5a166686173686564f458203b33aabb96cea60b86f35425717666b5a969584f738a856c0b0d8887c300858958405621924f2a50d0fa1fcc3517500019c16bf4a149c2288f6b813027bd9078dc8df9c36f7509e0d5c418f94e2d8cf79c04e5e8e209fbb1bb3f47bfc186ce167b0a",
+          "blockchainIdentifier": "030d7c6574d40b00e8100e381599026021b73c0119301d8036320d2e2b8cd4b58819898c0804d4e01814d1808c019804e618c031a16071c76468c8663e04fa63143bb0219d1be62199324ac8c763e7d910dc7c85f34d92a952c9481264fe9501e8b307e72af5a918b7362739a900a31a1c26032ba3a92db61690861c00933236321a10701f301b01b23118a3080e459a5729260102ba4e1a217000bd8098995a2bb3483d58a5209c3d9c1098a6260180a261b9491f1b10b031321b18aaf099445ea6869b1a189c0132309c372611588658d4b71a373239e68099b29f2317b12080f3b06517f01b0086c1c124045f091f0c05a81030f857188f8c4110a8f8477c00914046e189e8dc2390956a40d320548f59809b8056c70d41c0643c9ccf763bd380c1605b0d80027003e8005db800673e41000ee002f4159d48a2b51a00016006b51771c5001b4e800ad4542002d9b0006e0047601734d8280398003d48e2c5631860680039f22db2012ba0076cc515c02d4000"
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAGCowBYHXChXOnYLS9nZF/GJOLtrAPG8cEG0K0a9YFaOxStARoAQ60eAoIB2BhZAcbYeZ/YeZ/YeZ9YHA/ceAAj2L58n/OmvcDY07JjvQzBJEjECUjvv0L/2Hmf2Hmf2HmfWBzlV4kDUglfHPb9K30aKOPDywKfSM80/4kKKNF2/////9h6gNh5n9h5n1gcV+O/n5PAEEPKM5KxssnglgMgdYiBaMq7iaq5tf/YeoD/2HqAWCqkAQEDJyAGIVggF8t5+ytBIPKx7GXkGY1uCLKOgT/rAeSkAIObheGAgM5fWECEWCqiASdnYWRkcmVzc1gdYFfjv5+TwBBDyjOSsbLJ4JYDIHWIgWjKu4mqubWhZmhhc2hlZPRYIDszqruWzqYLWECG81QlcXZmtalpWE9zioVsCw2Ih8MAhYlYQFYhkk8qUND6H8w1F1AAGcFr9KFJwiiPa4EwJ72QeNyN+cNvdQngWBrVxBj5Ti2M95wE5ejiCfuxuz9Hv8GGzhZ7Cv9YIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEQEAaABXmXlggoE5iYEu2en4dwGkmoNbQQP2NYMwosstfuUr8//XXvOpAGwAAAaDD34HAGwAAAaDD8dFAGwAAAaDD/4zgGwAAAaDEDUiAAADYeYD/glg5AA/ceAAj2L58n/OmvcDY07JjvQzBJEjECUjvv0LlV4kDUglfHPb9K30aKOPDywKfSM80/4kKKNF2GgGDOZ0CGgAC3MUDGggBZOyhANkBAoGCWCB+oJo0rrsTyYQccTl7HKv+xd35UEBSk97klsrC9DdIClhAnzPc5FHMqyrk3vPkvXvXnOoaRTJ2ulFKwIfvqvxLQGZIR/LNW5EOpNoXHtYvMF7C9IsrcKPqU0/0aKBc5d63CPX2",
+          "nonce": "0000000000000000000000000000000000000000000000000000000000000004#0"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "3000000",
+          "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "masumi",
+            "confirmationPolicy": {
+              "l1Confirmations": 1
+            },
+            "inputCommitment": {
+              "version": "1",
+              "algorithm": "sha256",
+              "parts": [
+                {
+                  "name": "body",
+                  "canonicalization": "jcs",
+                  "content": {
+                    "units": "metric",
+                    "days": 3
+                  },
+                  "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+                }
+              ],
+              "digest": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea"
+            },
+            "terms": {
+              "version": "1",
+              "paymentType": "Web3CardanoV2",
+              "sellerAddress": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+              "sellerNonce": "0000000000000000000000000000000000000000000000000000000000000004",
+              "buyerNonce": "",
+              "inputHash": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea",
+              "payByTime": "1789992600000",
+              "submitResultTime": "1789993800000",
+              "unlockTime": "1789994700000",
+              "externalDisputeUnlockTime": "1789995600000"
+            },
+            "referenceKey": "a401010327200621582017cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce",
+            "referenceSignature": "84582aa201276761646472657373581d6057e3bf9f93c01043ca3392b1b2c9e096032075888168cabb89aab9b5a166686173686564f458203b33aabb96cea60b86f35425717666b5a969584f738a856c0b0d8887c300858958405621924f2a50d0fa1fcc3517500019c16bf4a149c2288f6b813027bd9078dc8df9c36f7509e0d5c418f94e2d8cf79c04e5e8e209fbb1bb3f47bfc186ce167b0a",
+            "blockchainIdentifier": "030d7c6574d40b00e8100e381599026021b73c0119301d8036320d2e2b8cd4b58819898c0804d4e01814d1808c019804e618c031a16071c76468c8663e04fa63143bb0219d1be62199324ac8c763e7d910dc7c85f34d92a952c9481264fe9501e8b307e72af5a918b7362739a900a31a1c26032ba3a92db61690861c00933236321a10701f301b01b23118a3080e459a5729260102ba4e1a217000bd8098995a2bb3483d58a5209c3d9c1098a6260180a261b9491f1b10b031321b18aaf099445ea6869b1a189c0132309c372611588658d4b71a373239e68099b29f2317b12080f3b06517f01b0086c1c124045f091f0c05a81030f857188f8c4110a8f8477c00914046e189e8dc2390956a40d320548f59809b8056c70d41c0643c9ccf763bd380c1605b0d80027003e8005db800673e41000ee002f4159d48a2b51a00016006b51771c5001b4e800ad4542002d9b0006e0047601734d8280398003d48e2c5631860680039f22db2012ba0076cc515c02d4000"
+          }
+        },
+        "resource": {
+          "url": "https://interop.invalid/masumi-ada"
+        }
+      },
+      "payer": "addr_test1qq8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mqkt5dmn",
+      "txHash": "07051738a2e4d0a7bbeb4b28f0110a647c3dee40d5894efd1b434e34ebe04cd8",
+      "inputs": {
+        "0000000000000000000000000000000000000000000000000000000000000004#0": {
+          "exists": true,
+          "address": "addr_test1qq8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mqkt5dmn",
+          "coin": "30000000",
+          "assets": {}
+        }
+      },
+      "signedTerms": {
+        "version": "1",
+        "paymentType": "Web3CardanoV2",
+        "sellerAddress": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+        "sellerNonce": "0000000000000000000000000000000000000000000000000000000000000004",
+        "buyerNonce": "",
+        "inputHash": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea",
+        "payByTime": "1789992600000",
+        "submitResultTime": "1789993800000",
+        "unlockTime": "1789994700000",
+        "externalDisputeUnlockTime": "1789995600000",
+        "scheme": "exact",
+        "assetTransferMethod": "masumi",
+        "network": "cardano:preprod",
+        "contractAddress": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+        "amount": "3000000",
+        "asset": "lovelace",
+        "maxTimeoutSeconds": 600
+      },
+      "termsDigest": "3b33aabb96cea60b86f35425717666b5a969584f738a856c0b0d8887c3008589",
+      "inputHash": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea"
+    },
+    {
+      "name": "masumi-token",
+      "currentSlot": "134308800",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd.74657374",
+        "amount": "7",
+        "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "masumi",
+          "confirmationPolicy": {
+            "l1Confirmations": 1
+          },
+          "inputCommitment": {
+            "version": "1",
+            "algorithm": "sha256",
+            "parts": [
+              {
+                "name": "body",
+                "canonicalization": "jcs",
+                "content": {
+                  "units": "metric",
+                  "days": 3
+                },
+                "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+              }
+            ],
+            "digest": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea"
+          },
+          "terms": {
+            "version": "1",
+            "paymentType": "Web3CardanoV2",
+            "sellerAddress": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+            "sellerNonce": "0000000000000000000000000000000000000000000000000000000000000005",
+            "buyerNonce": "",
+            "inputHash": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea",
+            "payByTime": "1789992600000",
+            "submitResultTime": "1789993800000",
+            "unlockTime": "1789994700000",
+            "externalDisputeUnlockTime": "1789995600000"
+          },
+          "referenceKey": "a401010327200621582017cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce",
+          "referenceSignature": "84582aa201276761646472657373581d6057e3bf9f93c01043ca3392b1b2c9e096032075888168cabb89aab9b5a166686173686564f458202e44fcfda62fdd4673a8a743600662b56ae1c93952d4a5abe17f643a879b8b5b5840f96bcdbe1e23b357569aac1fb2f55732b4fdea7956e9f5b3a773733dbeb91f4d2833e5f5fab311a5dd0f2a6bcbb4df87c479f2c6e03f52d9fb0ed55cfcb13e09",
+          "blockchainIdentifier": "030d7c6574d42b00e8100e00b1d9026021b73c0119301d8036320d352b8cd4b98819898c0804d4e01814d1808c019804e618c031a160a9c76468c8663e04fa63143bb0219d1be62199324ac8c763e7d910dc7c85f38d92a952c9481264fe9501e8b304cdd52a0098809b362926085b35133632363134a73023a29c293637011abc9c2614761d9f26710095232c710db22dad9a3030a91f189b114137263f23031a65b61881008a809c030e9f205b373c509a77089c1f39711313230b773580ea1b26321cb71c30c0a9a30101015b1b3d4e235899b6c0b23118aa2540aaa906a330de489f30370d823609dc088c0d10810d85424808c01d2d040e102061f0ae3b9bc54e32235c94dc313d1fc0421320381a6aaedb8866f86d08fe68480f6553826590c036589b850cb8009c00fa00176e0019c0504003b800bd85a86e291c56a380002c00d6e2ee24a00366231000adc542002d9b0006e0047600f32dc280398003d48929563150d8134001c0536d9008bd003b6638b5036a0000"
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFAAGCowBYHXChXOnYLS9nZF/GJOLtrAPG8cEG0K0a9YFaOxStAYIaADiwlKFYHM3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc2hRHRlc3QHAoIB2BhZAcbYeZ/YeZ/YeZ9YHA/ceAAj2L58n/OmvcDY07JjvQzBJEjECUjvv0L/2Hmf2Hmf2HmfWBzlV4kDUglfHPb9K30aKOPDywKfSM80/4kKKNF2/////9h6gNh5n9h5n1gcV+O/n5PAEEPKM5KxssnglgMgdYiBaMq7iaq5tf/YeoD/2HqAWCqkAQEDJyAGIVggF8t5+ytBIPKx7GXkGY1uCLKOgT/rAeSkAIObheGAgM5fWECEWCqiASdnYWRkcmVzc1gdYFfjv5+TwBBDyjOSsbLJ4JYDIHWIgWjKu4mqubWhZmhhc2hlZPRYIC5E/P2mL91GWEBzqKdDYAZitWrhyTlS1KWr4X9kOoebi1tYQPlrzb4eI7NXVpqsH7L1VzK0/ep5Vun1s6dzcz2+uR9NKDPl9fqzWBoRpd0PKmvLtN+HxHnyxuA/Utn7DtVc/LE+Cf9YIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFQEAaADiwlFggoE5iYEu2en4dwGkmoNbQQP2NYMwosstfuUr8//XXvOpAGwAAAaDD34HAGwAAAaDD8dFAGwAAAaDD/4zgGwAAAaDEDUiAAADYeYD/glg5AA/ceAAj2L58n/OmvcDY07JjvQzBJEjECUjvv0LlV4kDUglfHPb9K30aKOPDywKfSM80/4kKKNF2GgGOL3MCGgAC43kDGggBZOyhANkBAoGCWCB+oJo0rrsTyYQccTl7HKv+xd35UEBSk97klsrC9DdIClhAEOXUO9uvEmEtbAaZrpkdl4ryuVSD4NNFAF2aEoJvbjiAjnW5TuvzlFUXgeRM+YzWKzT3e597dB16CJZtRGkXAvX2",
+          "nonce": "0000000000000000000000000000000000000000000000000000000000000005#0"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd.74657374",
+          "amount": "7",
+          "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "masumi",
+            "confirmationPolicy": {
+              "l1Confirmations": 1
+            },
+            "inputCommitment": {
+              "version": "1",
+              "algorithm": "sha256",
+              "parts": [
+                {
+                  "name": "body",
+                  "canonicalization": "jcs",
+                  "content": {
+                    "units": "metric",
+                    "days": 3
+                  },
+                  "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+                }
+              ],
+              "digest": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea"
+            },
+            "terms": {
+              "version": "1",
+              "paymentType": "Web3CardanoV2",
+              "sellerAddress": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+              "sellerNonce": "0000000000000000000000000000000000000000000000000000000000000005",
+              "buyerNonce": "",
+              "inputHash": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea",
+              "payByTime": "1789992600000",
+              "submitResultTime": "1789993800000",
+              "unlockTime": "1789994700000",
+              "externalDisputeUnlockTime": "1789995600000"
+            },
+            "referenceKey": "a401010327200621582017cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce",
+            "referenceSignature": "84582aa201276761646472657373581d6057e3bf9f93c01043ca3392b1b2c9e096032075888168cabb89aab9b5a166686173686564f458202e44fcfda62fdd4673a8a743600662b56ae1c93952d4a5abe17f643a879b8b5b5840f96bcdbe1e23b357569aac1fb2f55732b4fdea7956e9f5b3a773733dbeb91f4d2833e5f5fab311a5dd0f2a6bcbb4df87c479f2c6e03f52d9fb0ed55cfcb13e09",
+            "blockchainIdentifier": "030d7c6574d42b00e8100e00b1d9026021b73c0119301d8036320d352b8cd4b98819898c0804d4e01814d1808c019804e618c031a160a9c76468c8663e04fa63143bb0219d1be62199324ac8c763e7d910dc7c85f38d92a952c9481264fe9501e8b304cdd52a0098809b362926085b35133632363134a73023a29c293637011abc9c2614761d9f26710095232c710db22dad9a3030a91f189b114137263f23031a65b61881008a809c030e9f205b373c509a77089c1f39711313230b773580ea1b26321cb71c30c0a9a30101015b1b3d4e235899b6c0b23118aa2540aaa906a330de489f30370d823609dc088c0d10810d85424808c01d2d040e102061f0ae3b9bc54e32235c94dc313d1fc0421320381a6aaedb8866f86d08fe68480f6553826590c036589b850cb8009c00fa00176e0019c0504003b800bd85a86e291c56a380002c00d6e2ee24a00366231000adc542002d9b0006e0047600f32dc280398003d48929563150d8134001c0536d9008bd003b6638b5036a0000"
+          }
+        },
+        "resource": {
+          "url": "https://interop.invalid/masumi-token"
+        }
+      },
+      "payer": "addr_test1qq8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mqkt5dmn",
+      "txHash": "1649ee2f755ad1e97ebf7a897a56fe11cbe5f9b9e35b143e6c987862102f713c",
+      "inputs": {
+        "0000000000000000000000000000000000000000000000000000000000000005#0": {
+          "exists": true,
+          "address": "addr_test1qq8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mqkt5dmn",
+          "coin": "30000000",
+          "assets": {
+            "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd.74657374": "7"
+          }
+        }
+      },
+      "signedTerms": {
+        "version": "1",
+        "paymentType": "Web3CardanoV2",
+        "sellerAddress": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+        "sellerNonce": "0000000000000000000000000000000000000000000000000000000000000005",
+        "buyerNonce": "",
+        "inputHash": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea",
+        "payByTime": "1789992600000",
+        "submitResultTime": "1789993800000",
+        "unlockTime": "1789994700000",
+        "externalDisputeUnlockTime": "1789995600000",
+        "scheme": "exact",
+        "assetTransferMethod": "masumi",
+        "network": "cardano:preprod",
+        "contractAddress": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+        "amount": "7",
+        "asset": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd.74657374",
+        "maxTimeoutSeconds": 600
+      },
+      "termsDigest": "2e44fcfda62fdd4673a8a743600662b56ae1c93952d4a5abe17f643a879b8b5b",
+      "inputHash": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea"
+    },
+    {
+      "name": "mainnet-offline",
+      "currentSlot": "198425709",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:mainnet",
+        "asset": "lovelace",
+        "amount": "3000000",
+        "payTo": "addr1v9t780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndgpghdc4",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "default",
+          "areFeesSponsored": false,
+          "confirmationPolicy": {
+            "l1Confirmations": 1
+          }
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGAAGCglgdYVfjv5+TwBBDyjOSsbLJ4JYDIHWIgWjKu4mqubUaAC3GwIJYOQEP3HgAI9i+fJ/zpr3A2NOyY70MwSRIxAlI779C5VeJA1IJXxz2/St9Gijjw8sCn0jPNP+JCijRdhoBmW+7AhoAAo0FAxoL072ZoQDZAQKBglggfqCaNK67E8mEHHE5exyr/sXd+VBAUpPe5JbKwvQ3SApYQGewyTlf42uW1AmT4jNjk+LsSuWEMtK1bfFh9uX+NN76RWJbdwH4T7hPHHfNbqemo254csVFoB1yuFVH/O/feAD19g==",
+          "nonce": "0000000000000000000000000000000000000000000000000000000000000006#0"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:mainnet",
+          "asset": "lovelace",
+          "amount": "3000000",
+          "payTo": "addr1v9t780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndgpghdc4",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "default",
+            "areFeesSponsored": false,
+            "confirmationPolicy": {
+              "l1Confirmations": 1
+            }
+          }
+        },
+        "resource": {
+          "url": "https://interop.invalid/mainnet-offline"
+        }
+      },
+      "payer": "addr1qy8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mq4afdhv",
+      "txHash": "56c324ed101a479d94cc9cc1a3c2e160c5e15f74b650647f3717e7466d644c75",
+      "inputs": {
+        "0000000000000000000000000000000000000000000000000000000000000006#0": {
+          "exists": true,
+          "address": "addr1qy8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mq4afdhv",
+          "coin": "30000000",
+          "assets": {}
+        }
+      }
+    },
+    {
+      "name": "preview-offline",
+      "currentSlot": "123336000",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preview",
+        "asset": "lovelace",
+        "amount": "3000000",
+        "payTo": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "default",
+          "areFeesSponsored": false,
+          "confirmationPolicy": {
+            "l1Confirmations": 1
+          }
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHAAGCglgdYFfjv5+TwBBDyjOSsbLJ4JYDIHWIgWjKu4mqubUaAC3GwIJYOQAP3HgAI9i+fJ/zpr3A2NOyY70MwSRIxAlI779C5VeJA1IJXxz2/St9Gijjw8sCn0jPNP+JCijRdhoBmW+7AhoAAo0FAxoHWfZsoQDZAQKBglggfqCaNK67E8mEHHE5exyr/sXd+VBAUpPe5JbKwvQ3SApYQHlddncmrvbdyqXOcVtVhnK0WJJbk8yT2L9lKA7Fl+fsxxq3jhq1N/8w46OAZUMAj0QhzEFuL61cw5onMhbPLA319g==",
+          "nonce": "0000000000000000000000000000000000000000000000000000000000000007#0"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preview",
+          "asset": "lovelace",
+          "amount": "3000000",
+          "payTo": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "default",
+            "areFeesSponsored": false,
+            "confirmationPolicy": {
+              "l1Confirmations": 1
+            }
+          }
+        },
+        "resource": {
+          "url": "https://interop.invalid/preview-offline"
+        }
+      },
+      "payer": "addr_test1qq8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mqkt5dmn",
+      "txHash": "700cdc34dc572895624297af40b71c798802eeb43c270a661f2266287a7a4384",
+      "inputs": {
+        "0000000000000000000000000000000000000000000000000000000000000007#0": {
+          "exists": true,
+          "address": "addr_test1qq8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mqkt5dmn",
+          "coin": "30000000",
+          "assets": {}
+        }
+      }
+    },
+    {
+      "name": "preprod-alias",
+      "currentSlot": "134308800",
+      "requirements": {
+        "scheme": "exact",
+        "network": "cip34:0-1",
+        "asset": "lovelace",
+        "amount": "3000000",
+        "payTo": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "default",
+          "areFeesSponsored": false,
+          "confirmationPolicy": {
+            "l1Confirmations": 1
+          }
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAGCglgdYFfjv5+TwBBDyjOSsbLJ4JYDIHWIgWjKu4mqubUaAC3GwIJYOQAP3HgAI9i+fJ/zpr3A2NOyY70MwSRIxAlI779C5VeJA1IJXxz2/St9Gijjw8sCn0jPNP+JCijRdhoBmW+7AhoAAo0FAxoIAWTsoQDZAQKBglggfqCaNK67E8mEHHE5exyr/sXd+VBAUpPe5JbKwvQ3SApYQGGXg62CTZrElhNALoznOStW7ym3DYDoV6gUBChg6SwYn9xIMsV9WLlbr8n1Lno+U4Xsmt2Q5cKXA4tSAoM+Kwv19g==",
+          "nonce": "0000000000000000000000000000000000000000000000000000000000000008#0"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cip34:0-1",
+          "asset": "lovelace",
+          "amount": "3000000",
+          "payTo": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "default",
+            "areFeesSponsored": false,
+            "confirmationPolicy": {
+              "l1Confirmations": 1
+            }
+          }
+        },
+        "resource": {
+          "url": "https://interop.invalid/preprod-alias"
+        }
+      },
+      "payer": "addr_test1qq8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mqkt5dmn",
+      "txHash": "e3b8aaa0ab9f3bbd951aaa151f5997d17b588eba9bfe66782d7af2112aa63391",
+      "inputs": {
+        "0000000000000000000000000000000000000000000000000000000000000008#0": {
+          "exists": true,
+          "address": "addr_test1qq8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mqkt5dmn",
+          "coin": "30000000",
+          "assets": {}
+        }
+      }
+    }
+  ],
+  "invalidPayments": [
+    {
+      "name": "leading-zero-amount",
+      "payload": {
+        "x402Version": 2,
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAGCglgdYFfjv5+TwBBDyjOSsbLJ4JYDIHWIgWjKu4mqubUaAC3GwIJYOQAP3HgAI9i+fJ/zpr3A2NOyY70MwSRIxAlI779C5VeJA1IJXxz2/St9Gijjw8sCn0jPNP+JCijRdhoBmW+7AhoAAo0FAxoIAWTsoQDZAQKBglggfqCaNK67E8mEHHE5exyr/sXd+VBAUpPe5JbKwvQ3SApYQFZvlSm8GprAuhHQFo6CEmSw1QCELx/+kWMoptairyzyHtq2fUyxvhJJqLkgtHmiMJWL4TPBM0IyUZDGFY8MaQ/19g==",
+          "nonce": "0000000000000000000000000000000000000000000000000000000000000001#0"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "03000000",
+          "payTo": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "default",
+            "areFeesSponsored": false,
+            "confirmationPolicy": {
+              "l1Confirmations": 1
+            }
+          }
+        },
+        "resource": {
+          "url": "https://interop.invalid/ada"
+        }
+      },
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "03000000",
+        "payTo": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "default",
+          "areFeesSponsored": false,
+          "confirmationPolicy": {
+            "l1Confirmations": 1
+          }
+        }
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_requirements",
+        "invalidMessage": "amount and asset must use their positive canonical wire forms",
+        "payer": ""
+      }
+    },
+    {
+      "name": "uppercase-asset",
+      "payload": {
+        "x402Version": 2,
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAGCglgdYFfjv5+TwBBDyjOSsbLJ4JYDIHWIgWjKu4mqubWCGgAehIChWBzNzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3NoUR0ZXN0B4JYOQAP3HgAI9i+fJ/zpr3A2NOyY70MwSRIxAlI779C5VeJA1IJXxz2/St9Gijjw8sCn0jPNP+JCijRdhoBqKtHAhoAApO5AxoIAWTsoQDZAQKBglggfqCaNK67E8mEHHE5exyr/sXd+VBAUpPe5JbKwvQ3SApYQCm4DfESLCUbyKkQxPTFK1KE6MM8cKzKXjcl5pd27PvZOUZ4WmVw0/iEgpLcUtEiEXTkhqaxih7ydYpg5ieL3wP19g==",
+          "nonce": "0000000000000000000000000000000000000000000000000000000000000002#0"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "CDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCD.74657374",
+          "amount": "7",
+          "payTo": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "default",
+            "areFeesSponsored": false,
+            "confirmationPolicy": {
+              "l1Confirmations": 1
+            }
+          }
+        },
+        "resource": {
+          "url": "https://interop.invalid/token"
+        }
+      },
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "CDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCD.74657374",
+        "amount": "7",
+        "payTo": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "default",
+          "areFeesSponsored": false,
+          "confirmationPolicy": {
+            "l1Confirmations": 1
+          }
+        }
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_requirements",
+        "invalidMessage": "amount and asset must use their positive canonical wire forms",
+        "payer": ""
+      }
+    },
+    {
+      "name": "null-confirmation-policy",
+      "payload": {
+        "x402Version": 2,
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAGCglgdYFfjv5+TwBBDyjOSsbLJ4JYDIHWIgWjKu4mqubUaAC3GwIJYOQAP3HgAI9i+fJ/zpr3A2NOyY70MwSRIxAlI779C5VeJA1IJXxz2/St9Gijjw8sCn0jPNP+JCijRdhoBmW+7AhoAAo0FAxoIAWTsoQDZAQKBglggfqCaNK67E8mEHHE5exyr/sXd+VBAUpPe5JbKwvQ3SApYQFZvlSm8GprAuhHQFo6CEmSw1QCELx/+kWMoptairyzyHtq2fUyxvhJJqLkgtHmiMJWL4TPBM0IyUZDGFY8MaQ/19g==",
+          "nonce": "0000000000000000000000000000000000000000000000000000000000000001#0"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "3000000",
+          "payTo": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "default",
+            "areFeesSponsored": false,
+            "confirmationPolicy": null
+          }
+        },
+        "resource": {
+          "url": "https://interop.invalid/ada"
+        }
+      },
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "3000000",
+        "payTo": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "default",
+          "areFeesSponsored": false,
+          "confirmationPolicy": null
+        }
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_requirements_policy",
+        "payer": ""
+      }
+    },
+    {
+      "name": "closed-confirmation-policy",
+      "payload": {
+        "x402Version": 2,
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAGCglgdYFfjv5+TwBBDyjOSsbLJ4JYDIHWIgWjKu4mqubUaAC3GwIJYOQAP3HgAI9i+fJ/zpr3A2NOyY70MwSRIxAlI779C5VeJA1IJXxz2/St9Gijjw8sCn0jPNP+JCijRdhoBmW+7AhoAAo0FAxoIAWTsoQDZAQKBglggfqCaNK67E8mEHHE5exyr/sXd+VBAUpPe5JbKwvQ3SApYQFZvlSm8GprAuhHQFo6CEmSw1QCELx/+kWMoptairyzyHtq2fUyxvhJJqLkgtHmiMJWL4TPBM0IyUZDGFY8MaQ/19g==",
+          "nonce": "0000000000000000000000000000000000000000000000000000000000000001#0"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "3000000",
+          "payTo": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "default",
+            "areFeesSponsored": false,
+            "confirmationPolicy": {
+              "l1Confirmations": 1,
+              "settlementLayer": "l1"
+            }
+          }
+        },
+        "resource": {
+          "url": "https://interop.invalid/ada"
+        }
+      },
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "3000000",
+        "payTo": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "default",
+          "areFeesSponsored": false,
+          "confirmationPolicy": {
+            "l1Confirmations": 1,
+            "settlementLayer": "l1"
+          }
+        }
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_requirements_policy",
+        "payer": ""
+      }
+    },
+    {
+      "name": "missing-masumi-identifier",
+      "payload": {
+        "x402Version": 2,
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAGCowBYHXChXOnYLS9nZF/GJOLtrAPG8cEG0K0a9YFaOxStARoAQ60eAoIB2BhZAcbYeZ/YeZ/YeZ9YHA/ceAAj2L58n/OmvcDY07JjvQzBJEjECUjvv0L/2Hmf2Hmf2HmfWBzlV4kDUglfHPb9K30aKOPDywKfSM80/4kKKNF2/////9h6gNh5n9h5n1gcV+O/n5PAEEPKM5KxssnglgMgdYiBaMq7iaq5tf/YeoD/2HqAWCqkAQEDJyAGIVggF8t5+ytBIPKx7GXkGY1uCLKOgT/rAeSkAIObheGAgM5fWECEWCqiASdnYWRkcmVzc1gdYFfjv5+TwBBDyjOSsbLJ4JYDIHWIgWjKu4mqubWhZmhhc2hlZPRYIDszqruWzqYLWECG81QlcXZmtalpWE9zioVsCw2Ih8MAhYlYQFYhkk8qUND6H8w1F1AAGcFr9KFJwiiPa4EwJ72QeNyN+cNvdQngWBrVxBj5Ti2M95wE5ejiCfuxuz9Hv8GGzhZ7Cv9YIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEQEAaABXmXlggoE5iYEu2en4dwGkmoNbQQP2NYMwosstfuUr8//XXvOpAGwAAAaDD34HAGwAAAaDD8dFAGwAAAaDD/4zgGwAAAaDEDUiAAADYeYD/glg5AA/ceAAj2L58n/OmvcDY07JjvQzBJEjECUjvv0LlV4kDUglfHPb9K30aKOPDywKfSM80/4kKKNF2GgGDOZ0CGgAC3MUDGggBZOyhANkBAoGCWCB+oJo0rrsTyYQccTl7HKv+xd35UEBSk97klsrC9DdIClhAnzPc5FHMqyrk3vPkvXvXnOoaRTJ2ulFKwIfvqvxLQGZIR/LNW5EOpNoXHtYvMF7C9IsrcKPqU0/0aKBc5d63CPX2",
+          "nonce": "0000000000000000000000000000000000000000000000000000000000000004#0"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "3000000",
+          "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "masumi",
+            "confirmationPolicy": {
+              "l1Confirmations": 1
+            },
+            "inputCommitment": {
+              "version": "1",
+              "algorithm": "sha256",
+              "parts": [
+                {
+                  "name": "body",
+                  "canonicalization": "jcs",
+                  "content": {
+                    "units": "metric",
+                    "days": 3
+                  },
+                  "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+                }
+              ],
+              "digest": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea"
+            },
+            "terms": {
+              "version": "1",
+              "paymentType": "Web3CardanoV2",
+              "sellerAddress": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+              "sellerNonce": "0000000000000000000000000000000000000000000000000000000000000004",
+              "buyerNonce": "",
+              "inputHash": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea",
+              "payByTime": "1789992600000",
+              "submitResultTime": "1789993800000",
+              "unlockTime": "1789994700000",
+              "externalDisputeUnlockTime": "1789995600000"
+            },
+            "referenceKey": "a401010327200621582017cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce",
+            "referenceSignature": "84582aa201276761646472657373581d6057e3bf9f93c01043ca3392b1b2c9e096032075888168cabb89aab9b5a166686173686564f458203b33aabb96cea60b86f35425717666b5a969584f738a856c0b0d8887c300858958405621924f2a50d0fa1fcc3517500019c16bf4a149c2288f6b813027bd9078dc8df9c36f7509e0d5c418f94e2d8cf79c04e5e8e209fbb1bb3f47bfc186ce167b0a"
+          }
+        },
+        "resource": {
+          "url": "https://interop.invalid/masumi-ada"
+        }
+      },
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "3000000",
+        "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "masumi",
+          "confirmationPolicy": {
+            "l1Confirmations": 1
+          },
+          "inputCommitment": {
+            "version": "1",
+            "algorithm": "sha256",
+            "parts": [
+              {
+                "name": "body",
+                "canonicalization": "jcs",
+                "content": {
+                  "units": "metric",
+                  "days": 3
+                },
+                "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+              }
+            ],
+            "digest": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea"
+          },
+          "terms": {
+            "version": "1",
+            "paymentType": "Web3CardanoV2",
+            "sellerAddress": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+            "sellerNonce": "0000000000000000000000000000000000000000000000000000000000000004",
+            "buyerNonce": "",
+            "inputHash": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea",
+            "payByTime": "1789992600000",
+            "submitResultTime": "1789993800000",
+            "unlockTime": "1789994700000",
+            "externalDisputeUnlockTime": "1789995600000"
+          },
+          "referenceKey": "a401010327200621582017cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce",
+          "referenceSignature": "84582aa201276761646472657373581d6057e3bf9f93c01043ca3392b1b2c9e096032075888168cabb89aab9b5a166686173686564f458203b33aabb96cea60b86f35425717666b5a969584f738a856c0b0d8887c300858958405621924f2a50d0fa1fcc3517500019c16bf4a149c2288f6b813027bd9078dc8df9c36f7509e0d5c418f94e2d8cf79c04e5e8e209fbb1bb3f47bfc186ce167b0a"
+        }
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_requirements_masumi_schema",
+        "invalidMessage": "extra.blockchainIdentifier must be non-empty lowercase even-length hex",
+        "payer": "addr_test1qq8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mqkt5dmn"
+      }
+    },
+    {
+      "name": "removed-masumi-submission-policy",
+      "payload": {
+        "x402Version": 2,
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAGCowBYHXChXOnYLS9nZF/GJOLtrAPG8cEG0K0a9YFaOxStARoAQ60eAoIB2BhZAcbYeZ/YeZ/YeZ9YHA/ceAAj2L58n/OmvcDY07JjvQzBJEjECUjvv0L/2Hmf2Hmf2HmfWBzlV4kDUglfHPb9K30aKOPDywKfSM80/4kKKNF2/////9h6gNh5n9h5n1gcV+O/n5PAEEPKM5KxssnglgMgdYiBaMq7iaq5tf/YeoD/2HqAWCqkAQEDJyAGIVggF8t5+ytBIPKx7GXkGY1uCLKOgT/rAeSkAIObheGAgM5fWECEWCqiASdnYWRkcmVzc1gdYFfjv5+TwBBDyjOSsbLJ4JYDIHWIgWjKu4mqubWhZmhhc2hlZPRYIDszqruWzqYLWECG81QlcXZmtalpWE9zioVsCw2Ih8MAhYlYQFYhkk8qUND6H8w1F1AAGcFr9KFJwiiPa4EwJ72QeNyN+cNvdQngWBrVxBj5Ti2M95wE5ejiCfuxuz9Hv8GGzhZ7Cv9YIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEQEAaABXmXlggoE5iYEu2en4dwGkmoNbQQP2NYMwosstfuUr8//XXvOpAGwAAAaDD34HAGwAAAaDD8dFAGwAAAaDD/4zgGwAAAaDEDUiAAADYeYD/glg5AA/ceAAj2L58n/OmvcDY07JjvQzBJEjECUjvv0LlV4kDUglfHPb9K30aKOPDywKfSM80/4kKKNF2GgGDOZ0CGgAC3MUDGggBZOyhANkBAoGCWCB+oJo0rrsTyYQccTl7HKv+xd35UEBSk97klsrC9DdIClhAnzPc5FHMqyrk3vPkvXvXnOoaRTJ2ulFKwIfvqvxLQGZIR/LNW5EOpNoXHtYvMF7C9IsrcKPqU0/0aKBc5d63CPX2",
+          "nonce": "0000000000000000000000000000000000000000000000000000000000000004#0"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "3000000",
+          "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "masumi",
+            "confirmationPolicy": {
+              "l1Confirmations": 1
+            },
+            "inputCommitment": {
+              "version": "1",
+              "algorithm": "sha256",
+              "parts": [
+                {
+                  "name": "body",
+                  "canonicalization": "jcs",
+                  "content": {
+                    "units": "metric",
+                    "days": 3
+                  },
+                  "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+                }
+              ],
+              "digest": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea"
+            },
+            "terms": {
+              "version": "1",
+              "paymentType": "Web3CardanoV2",
+              "sellerAddress": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+              "sellerNonce": "0000000000000000000000000000000000000000000000000000000000000004",
+              "buyerNonce": "",
+              "inputHash": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea",
+              "payByTime": "1789992600000",
+              "submitResultTime": "1789993800000",
+              "unlockTime": "1789994700000",
+              "externalDisputeUnlockTime": "1789995600000"
+            },
+            "referenceKey": "a401010327200621582017cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce",
+            "referenceSignature": "84582aa201276761646472657373581d6057e3bf9f93c01043ca3392b1b2c9e096032075888168cabb89aab9b5a166686173686564f458203b33aabb96cea60b86f35425717666b5a969584f738a856c0b0d8887c300858958405621924f2a50d0fa1fcc3517500019c16bf4a149c2288f6b813027bd9078dc8df9c36f7509e0d5c418f94e2d8cf79c04e5e8e209fbb1bb3f47bfc186ce167b0a",
+            "blockchainIdentifier": "030d7c6574d40b00e8100e381599026021b73c0119301d8036320d2e2b8cd4b58819898c0804d4e01814d1808c019804e618c031a16071c76468c8663e04fa63143bb0219d1be62199324ac8c763e7d910dc7c85f34d92a952c9481264fe9501e8b307e72af5a918b7362739a900a31a1c26032ba3a92db61690861c00933236321a10701f301b01b23118a3080e459a5729260102ba4e1a217000bd8098995a2bb3483d58a5209c3d9c1098a6260180a261b9491f1b10b031321b18aaf099445ea6869b1a189c0132309c372611588658d4b71a373239e68099b29f2317b12080f3b06517f01b0086c1c124045f091f0c05a81030f857188f8c4110a8f8477c00914046e189e8dc2390956a40d320548f59809b8056c70d41c0643c9ccf763bd380c1605b0d80027003e8005db800673e41000ee002f4159d48a2b51a00016006b51771c5001b4e800ad4542002d9b0006e0047601734d8280398003d48e2c5631860680039f22db2012ba0076cc515c02d4000",
+            "submissionPolicy": "server"
+          }
+        },
+        "resource": {
+          "url": "https://interop.invalid/masumi-ada"
+        }
+      },
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "3000000",
+        "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "masumi",
+          "confirmationPolicy": {
+            "l1Confirmations": 1
+          },
+          "inputCommitment": {
+            "version": "1",
+            "algorithm": "sha256",
+            "parts": [
+              {
+                "name": "body",
+                "canonicalization": "jcs",
+                "content": {
+                  "units": "metric",
+                  "days": 3
+                },
+                "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+              }
+            ],
+            "digest": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea"
+          },
+          "terms": {
+            "version": "1",
+            "paymentType": "Web3CardanoV2",
+            "sellerAddress": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+            "sellerNonce": "0000000000000000000000000000000000000000000000000000000000000004",
+            "buyerNonce": "",
+            "inputHash": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea",
+            "payByTime": "1789992600000",
+            "submitResultTime": "1789993800000",
+            "unlockTime": "1789994700000",
+            "externalDisputeUnlockTime": "1789995600000"
+          },
+          "referenceKey": "a401010327200621582017cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce",
+          "referenceSignature": "84582aa201276761646472657373581d6057e3bf9f93c01043ca3392b1b2c9e096032075888168cabb89aab9b5a166686173686564f458203b33aabb96cea60b86f35425717666b5a969584f738a856c0b0d8887c300858958405621924f2a50d0fa1fcc3517500019c16bf4a149c2288f6b813027bd9078dc8df9c36f7509e0d5c418f94e2d8cf79c04e5e8e209fbb1bb3f47bfc186ce167b0a",
+          "blockchainIdentifier": "030d7c6574d40b00e8100e381599026021b73c0119301d8036320d2e2b8cd4b58819898c0804d4e01814d1808c019804e618c031a16071c76468c8663e04fa63143bb0219d1be62199324ac8c763e7d910dc7c85f34d92a952c9481264fe9501e8b307e72af5a918b7362739a900a31a1c26032ba3a92db61690861c00933236321a10701f301b01b23118a3080e459a5729260102ba4e1a217000bd8098995a2bb3483d58a5209c3d9c1098a6260180a261b9491f1b10b031321b18aaf099445ea6869b1a189c0132309c372611588658d4b71a373239e68099b29f2317b12080f3b06517f01b0086c1c124045f091f0c05a81030f857188f8c4110a8f8477c00914046e189e8dc2390956a40d320548f59809b8056c70d41c0643c9ccf763bd380c1605b0d80027003e8005db800673e41000ee002f4159d48a2b51a00016006b51771c5001b4e800ad4542002d9b0006e0047601734d8280398003d48e2c5631860680039f22db2012ba0076cc515c02d4000",
+          "submissionPolicy": "server"
+        }
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_requirements_masumi_schema",
+        "invalidMessage": "extra has unknown field submissionPolicy",
+        "payer": "addr_test1qq8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mqkt5dmn"
+      }
+    },
+    {
+      "name": "changed-masumi-commitment",
+      "payload": {
+        "x402Version": 2,
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAGCowBYHXChXOnYLS9nZF/GJOLtrAPG8cEG0K0a9YFaOxStARoAQ60eAoIB2BhZAcbYeZ/YeZ/YeZ9YHA/ceAAj2L58n/OmvcDY07JjvQzBJEjECUjvv0L/2Hmf2Hmf2HmfWBzlV4kDUglfHPb9K30aKOPDywKfSM80/4kKKNF2/////9h6gNh5n9h5n1gcV+O/n5PAEEPKM5KxssnglgMgdYiBaMq7iaq5tf/YeoD/2HqAWCqkAQEDJyAGIVggF8t5+ytBIPKx7GXkGY1uCLKOgT/rAeSkAIObheGAgM5fWECEWCqiASdnYWRkcmVzc1gdYFfjv5+TwBBDyjOSsbLJ4JYDIHWIgWjKu4mqubWhZmhhc2hlZPRYIDszqruWzqYLWECG81QlcXZmtalpWE9zioVsCw2Ih8MAhYlYQFYhkk8qUND6H8w1F1AAGcFr9KFJwiiPa4EwJ72QeNyN+cNvdQngWBrVxBj5Ti2M95wE5ejiCfuxuz9Hv8GGzhZ7Cv9YIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEQEAaABXmXlggoE5iYEu2en4dwGkmoNbQQP2NYMwosstfuUr8//XXvOpAGwAAAaDD34HAGwAAAaDD8dFAGwAAAaDD/4zgGwAAAaDEDUiAAADYeYD/glg5AA/ceAAj2L58n/OmvcDY07JjvQzBJEjECUjvv0LlV4kDUglfHPb9K30aKOPDywKfSM80/4kKKNF2GgGDOZ0CGgAC3MUDGggBZOyhANkBAoGCWCB+oJo0rrsTyYQccTl7HKv+xd35UEBSk97klsrC9DdIClhAnzPc5FHMqyrk3vPkvXvXnOoaRTJ2ulFKwIfvqvxLQGZIR/LNW5EOpNoXHtYvMF7C9IsrcKPqU0/0aKBc5d63CPX2",
+          "nonce": "0000000000000000000000000000000000000000000000000000000000000004#0"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "3000000",
+          "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "masumi",
+            "confirmationPolicy": {
+              "l1Confirmations": 1
+            },
+            "inputCommitment": {
+              "version": "1",
+              "algorithm": "sha256",
+              "parts": [
+                {
+                  "name": "body",
+                  "canonicalization": "jcs",
+                  "content": {
+                    "units": "metric",
+                    "days": 4
+                  },
+                  "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+                }
+              ],
+              "digest": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea"
+            },
+            "terms": {
+              "version": "1",
+              "paymentType": "Web3CardanoV2",
+              "sellerAddress": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+              "sellerNonce": "0000000000000000000000000000000000000000000000000000000000000004",
+              "buyerNonce": "",
+              "inputHash": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea",
+              "payByTime": "1789992600000",
+              "submitResultTime": "1789993800000",
+              "unlockTime": "1789994700000",
+              "externalDisputeUnlockTime": "1789995600000"
+            },
+            "referenceKey": "a401010327200621582017cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce",
+            "referenceSignature": "84582aa201276761646472657373581d6057e3bf9f93c01043ca3392b1b2c9e096032075888168cabb89aab9b5a166686173686564f458203b33aabb96cea60b86f35425717666b5a969584f738a856c0b0d8887c300858958405621924f2a50d0fa1fcc3517500019c16bf4a149c2288f6b813027bd9078dc8df9c36f7509e0d5c418f94e2d8cf79c04e5e8e209fbb1bb3f47bfc186ce167b0a",
+            "blockchainIdentifier": "030d7c6574d40b00e8100e381599026021b73c0119301d8036320d2e2b8cd4b58819898c0804d4e01814d1808c019804e618c031a16071c76468c8663e04fa63143bb0219d1be62199324ac8c763e7d910dc7c85f34d92a952c9481264fe9501e8b307e72af5a918b7362739a900a31a1c26032ba3a92db61690861c00933236321a10701f301b01b23118a3080e459a5729260102ba4e1a217000bd8098995a2bb3483d58a5209c3d9c1098a6260180a261b9491f1b10b031321b18aaf099445ea6869b1a189c0132309c372611588658d4b71a373239e68099b29f2317b12080f3b06517f01b0086c1c124045f091f0c05a81030f857188f8c4110a8f8477c00914046e189e8dc2390956a40d320548f59809b8056c70d41c0643c9ccf763bd380c1605b0d80027003e8005db800673e41000ee002f4159d48a2b51a00016006b51771c5001b4e800ad4542002d9b0006e0047601734d8280398003d48e2c5631860680039f22db2012ba0076cc515c02d4000"
+          }
+        },
+        "resource": {
+          "url": "https://interop.invalid/masumi-ada"
+        }
+      },
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "3000000",
+        "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "masumi",
+          "confirmationPolicy": {
+            "l1Confirmations": 1
+          },
+          "inputCommitment": {
+            "version": "1",
+            "algorithm": "sha256",
+            "parts": [
+              {
+                "name": "body",
+                "canonicalization": "jcs",
+                "content": {
+                  "units": "metric",
+                  "days": 4
+                },
+                "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+              }
+            ],
+            "digest": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea"
+          },
+          "terms": {
+            "version": "1",
+            "paymentType": "Web3CardanoV2",
+            "sellerAddress": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+            "sellerNonce": "0000000000000000000000000000000000000000000000000000000000000004",
+            "buyerNonce": "",
+            "inputHash": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea",
+            "payByTime": "1789992600000",
+            "submitResultTime": "1789993800000",
+            "unlockTime": "1789994700000",
+            "externalDisputeUnlockTime": "1789995600000"
+          },
+          "referenceKey": "a401010327200621582017cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce",
+          "referenceSignature": "84582aa201276761646472657373581d6057e3bf9f93c01043ca3392b1b2c9e096032075888168cabb89aab9b5a166686173686564f458203b33aabb96cea60b86f35425717666b5a969584f738a856c0b0d8887c300858958405621924f2a50d0fa1fcc3517500019c16bf4a149c2288f6b813027bd9078dc8df9c36f7509e0d5c418f94e2d8cf79c04e5e8e209fbb1bb3f47bfc186ce167b0a",
+          "blockchainIdentifier": "030d7c6574d40b00e8100e381599026021b73c0119301d8036320d2e2b8cd4b58819898c0804d4e01814d1808c019804e618c031a16071c76468c8663e04fa63143bb0219d1be62199324ac8c763e7d910dc7c85f34d92a952c9481264fe9501e8b307e72af5a918b7362739a900a31a1c26032ba3a92db61690861c00933236321a10701f301b01b23118a3080e459a5729260102ba4e1a217000bd8098995a2bb3483d58a5209c3d9c1098a6260180a261b9491f1b10b031321b18aaf099445ea6869b1a189c0132309c372611588658d4b71a373239e68099b29f2317b12080f3b06517f01b0086c1c124045f091f0c05a81030f857188f8c4110a8f8477c00914046e189e8dc2390956a40d320548f59809b8056c70d41c0643c9ccf763bd380c1605b0d80027003e8005db800673e41000ee002f4159d48a2b51a00016006b51771c5001b4e800ad4542002d9b0006e0047601734d8280398003d48e2c5631860680039f22db2012ba0076cc515c02d4000"
+        }
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_requirements_masumi_commitment",
+        "invalidMessage": "part body digest mismatch",
+        "payer": "addr_test1qq8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mqkt5dmn"
+      }
+    },
+    {
+      "name": "surrogate-masumi-content",
+      "payload": {
+        "x402Version": 2,
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAGCowBYHXChXOnYLS9nZF/GJOLtrAPG8cEG0K0a9YFaOxStARoAQ60eAoIB2BhZAcbYeZ/YeZ/YeZ9YHA/ceAAj2L58n/OmvcDY07JjvQzBJEjECUjvv0L/2Hmf2Hmf2HmfWBzlV4kDUglfHPb9K30aKOPDywKfSM80/4kKKNF2/////9h6gNh5n9h5n1gcV+O/n5PAEEPKM5KxssnglgMgdYiBaMq7iaq5tf/YeoD/2HqAWCqkAQEDJyAGIVggF8t5+ytBIPKx7GXkGY1uCLKOgT/rAeSkAIObheGAgM5fWECEWCqiASdnYWRkcmVzc1gdYFfjv5+TwBBDyjOSsbLJ4JYDIHWIgWjKu4mqubWhZmhhc2hlZPRYIDszqruWzqYLWECG81QlcXZmtalpWE9zioVsCw2Ih8MAhYlYQFYhkk8qUND6H8w1F1AAGcFr9KFJwiiPa4EwJ72QeNyN+cNvdQngWBrVxBj5Ti2M95wE5ejiCfuxuz9Hv8GGzhZ7Cv9YIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEQEAaABXmXlggoE5iYEu2en4dwGkmoNbQQP2NYMwosstfuUr8//XXvOpAGwAAAaDD34HAGwAAAaDD8dFAGwAAAaDD/4zgGwAAAaDEDUiAAADYeYD/glg5AA/ceAAj2L58n/OmvcDY07JjvQzBJEjECUjvv0LlV4kDUglfHPb9K30aKOPDywKfSM80/4kKKNF2GgGDOZ0CGgAC3MUDGggBZOyhANkBAoGCWCB+oJo0rrsTyYQccTl7HKv+xd35UEBSk97klsrC9DdIClhAnzPc5FHMqyrk3vPkvXvXnOoaRTJ2ulFKwIfvqvxLQGZIR/LNW5EOpNoXHtYvMF7C9IsrcKPqU0/0aKBc5d63CPX2",
+          "nonce": "0000000000000000000000000000000000000000000000000000000000000004#0"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "3000000",
+          "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "masumi",
+            "confirmationPolicy": {
+              "l1Confirmations": 1
+            },
+            "inputCommitment": {
+              "version": "1",
+              "algorithm": "sha256",
+              "parts": [
+                {
+                  "name": "body",
+                  "canonicalization": "jcs",
+                  "content": {
+                    "units": "metric",
+                    "days": 3,
+                    "note": "\ud800"
+                  },
+                  "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+                }
+              ],
+              "digest": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea"
+            },
+            "terms": {
+              "version": "1",
+              "paymentType": "Web3CardanoV2",
+              "sellerAddress": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+              "sellerNonce": "0000000000000000000000000000000000000000000000000000000000000004",
+              "buyerNonce": "",
+              "inputHash": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea",
+              "payByTime": "1789992600000",
+              "submitResultTime": "1789993800000",
+              "unlockTime": "1789994700000",
+              "externalDisputeUnlockTime": "1789995600000"
+            },
+            "referenceKey": "a401010327200621582017cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce",
+            "referenceSignature": "84582aa201276761646472657373581d6057e3bf9f93c01043ca3392b1b2c9e096032075888168cabb89aab9b5a166686173686564f458203b33aabb96cea60b86f35425717666b5a969584f738a856c0b0d8887c300858958405621924f2a50d0fa1fcc3517500019c16bf4a149c2288f6b813027bd9078dc8df9c36f7509e0d5c418f94e2d8cf79c04e5e8e209fbb1bb3f47bfc186ce167b0a",
+            "blockchainIdentifier": "030d7c6574d40b00e8100e381599026021b73c0119301d8036320d2e2b8cd4b58819898c0804d4e01814d1808c019804e618c031a16071c76468c8663e04fa63143bb0219d1be62199324ac8c763e7d910dc7c85f34d92a952c9481264fe9501e8b307e72af5a918b7362739a900a31a1c26032ba3a92db61690861c00933236321a10701f301b01b23118a3080e459a5729260102ba4e1a217000bd8098995a2bb3483d58a5209c3d9c1098a6260180a261b9491f1b10b031321b18aaf099445ea6869b1a189c0132309c372611588658d4b71a373239e68099b29f2317b12080f3b06517f01b0086c1c124045f091f0c05a81030f857188f8c4110a8f8477c00914046e189e8dc2390956a40d320548f59809b8056c70d41c0643c9ccf763bd380c1605b0d80027003e8005db800673e41000ee002f4159d48a2b51a00016006b51771c5001b4e800ad4542002d9b0006e0047601734d8280398003d48e2c5631860680039f22db2012ba0076cc515c02d4000"
+          }
+        },
+        "resource": {
+          "url": "https://interop.invalid/masumi-ada"
+        }
+      },
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "3000000",
+        "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "masumi",
+          "confirmationPolicy": {
+            "l1Confirmations": 1
+          },
+          "inputCommitment": {
+            "version": "1",
+            "algorithm": "sha256",
+            "parts": [
+              {
+                "name": "body",
+                "canonicalization": "jcs",
+                "content": {
+                  "units": "metric",
+                  "days": 3,
+                  "note": "\ud800"
+                },
+                "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+              }
+            ],
+            "digest": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea"
+          },
+          "terms": {
+            "version": "1",
+            "paymentType": "Web3CardanoV2",
+            "sellerAddress": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+            "sellerNonce": "0000000000000000000000000000000000000000000000000000000000000004",
+            "buyerNonce": "",
+            "inputHash": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea",
+            "payByTime": "1789992600000",
+            "submitResultTime": "1789993800000",
+            "unlockTime": "1789994700000",
+            "externalDisputeUnlockTime": "1789995600000"
+          },
+          "referenceKey": "a401010327200621582017cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce",
+          "referenceSignature": "84582aa201276761646472657373581d6057e3bf9f93c01043ca3392b1b2c9e096032075888168cabb89aab9b5a166686173686564f458203b33aabb96cea60b86f35425717666b5a969584f738a856c0b0d8887c300858958405621924f2a50d0fa1fcc3517500019c16bf4a149c2288f6b813027bd9078dc8df9c36f7509e0d5c418f94e2d8cf79c04e5e8e209fbb1bb3f47bfc186ce167b0a",
+          "blockchainIdentifier": "030d7c6574d40b00e8100e381599026021b73c0119301d8036320d2e2b8cd4b58819898c0804d4e01814d1808c019804e618c031a16071c76468c8663e04fa63143bb0219d1be62199324ac8c763e7d910dc7c85f34d92a952c9481264fe9501e8b307e72af5a918b7362739a900a31a1c26032ba3a92db61690861c00933236321a10701f301b01b23118a3080e459a5729260102ba4e1a217000bd8098995a2bb3483d58a5209c3d9c1098a6260180a261b9491f1b10b031321b18aaf099445ea6869b1a189c0132309c372611588658d4b71a373239e68099b29f2317b12080f3b06517f01b0086c1c124045f091f0c05a81030f857188f8c4110a8f8477c00914046e189e8dc2390956a40d320548f59809b8056c70d41c0643c9ccf763bd380c1605b0d80027003e8005db800673e41000ee002f4159d48a2b51a00016006b51771c5001b4e800ad4542002d9b0006e0047601734d8280398003d48e2c5631860680039f22db2012ba0076cc515c02d4000"
+        }
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_requirements_masumi_commitment",
+        "invalidMessage": "JCS cannot serialize a string containing an unpaired surrogate",
+        "payer": "addr_test1qq8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mqkt5dmn"
+      }
+    },
+    {
+      "name": "surrogate-masumi-part-name",
+      "payload": {
+        "x402Version": 2,
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAGCowBYHXChXOnYLS9nZF/GJOLtrAPG8cEG0K0a9YFaOxStARoAQ60eAoIB2BhZAcbYeZ/YeZ/YeZ9YHA/ceAAj2L58n/OmvcDY07JjvQzBJEjECUjvv0L/2Hmf2Hmf2HmfWBzlV4kDUglfHPb9K30aKOPDywKfSM80/4kKKNF2/////9h6gNh5n9h5n1gcV+O/n5PAEEPKM5KxssnglgMgdYiBaMq7iaq5tf/YeoD/2HqAWCqkAQEDJyAGIVggF8t5+ytBIPKx7GXkGY1uCLKOgT/rAeSkAIObheGAgM5fWECEWCqiASdnYWRkcmVzc1gdYFfjv5+TwBBDyjOSsbLJ4JYDIHWIgWjKu4mqubWhZmhhc2hlZPRYIDszqruWzqYLWECG81QlcXZmtalpWE9zioVsCw2Ih8MAhYlYQFYhkk8qUND6H8w1F1AAGcFr9KFJwiiPa4EwJ72QeNyN+cNvdQngWBrVxBj5Ti2M95wE5ejiCfuxuz9Hv8GGzhZ7Cv9YIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEQEAaABXmXlggoE5iYEu2en4dwGkmoNbQQP2NYMwosstfuUr8//XXvOpAGwAAAaDD34HAGwAAAaDD8dFAGwAAAaDD/4zgGwAAAaDEDUiAAADYeYD/glg5AA/ceAAj2L58n/OmvcDY07JjvQzBJEjECUjvv0LlV4kDUglfHPb9K30aKOPDywKfSM80/4kKKNF2GgGDOZ0CGgAC3MUDGggBZOyhANkBAoGCWCB+oJo0rrsTyYQccTl7HKv+xd35UEBSk97klsrC9DdIClhAnzPc5FHMqyrk3vPkvXvXnOoaRTJ2ulFKwIfvqvxLQGZIR/LNW5EOpNoXHtYvMF7C9IsrcKPqU0/0aKBc5d63CPX2",
+          "nonce": "0000000000000000000000000000000000000000000000000000000000000004#0"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "3000000",
+          "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "masumi",
+            "confirmationPolicy": {
+              "l1Confirmations": 1
+            },
+            "inputCommitment": {
+              "version": "1",
+              "algorithm": "sha256",
+              "parts": [
+                {
+                  "name": "\ud800",
+                  "canonicalization": "jcs",
+                  "content": {
+                    "units": "metric",
+                    "days": 3
+                  },
+                  "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+                }
+              ],
+              "digest": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea"
+            },
+            "terms": {
+              "version": "1",
+              "paymentType": "Web3CardanoV2",
+              "sellerAddress": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+              "sellerNonce": "0000000000000000000000000000000000000000000000000000000000000004",
+              "buyerNonce": "",
+              "inputHash": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea",
+              "payByTime": "1789992600000",
+              "submitResultTime": "1789993800000",
+              "unlockTime": "1789994700000",
+              "externalDisputeUnlockTime": "1789995600000"
+            },
+            "referenceKey": "a401010327200621582017cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce",
+            "referenceSignature": "84582aa201276761646472657373581d6057e3bf9f93c01043ca3392b1b2c9e096032075888168cabb89aab9b5a166686173686564f458203b33aabb96cea60b86f35425717666b5a969584f738a856c0b0d8887c300858958405621924f2a50d0fa1fcc3517500019c16bf4a149c2288f6b813027bd9078dc8df9c36f7509e0d5c418f94e2d8cf79c04e5e8e209fbb1bb3f47bfc186ce167b0a",
+            "blockchainIdentifier": "030d7c6574d40b00e8100e381599026021b73c0119301d8036320d2e2b8cd4b58819898c0804d4e01814d1808c019804e618c031a16071c76468c8663e04fa63143bb0219d1be62199324ac8c763e7d910dc7c85f34d92a952c9481264fe9501e8b307e72af5a918b7362739a900a31a1c26032ba3a92db61690861c00933236321a10701f301b01b23118a3080e459a5729260102ba4e1a217000bd8098995a2bb3483d58a5209c3d9c1098a6260180a261b9491f1b10b031321b18aaf099445ea6869b1a189c0132309c372611588658d4b71a373239e68099b29f2317b12080f3b06517f01b0086c1c124045f091f0c05a81030f857188f8c4110a8f8477c00914046e189e8dc2390956a40d320548f59809b8056c70d41c0643c9ccf763bd380c1605b0d80027003e8005db800673e41000ee002f4159d48a2b51a00016006b51771c5001b4e800ad4542002d9b0006e0047601734d8280398003d48e2c5631860680039f22db2012ba0076cc515c02d4000"
+          }
+        },
+        "resource": {
+          "url": "https://interop.invalid/masumi-ada"
+        }
+      },
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "3000000",
+        "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "masumi",
+          "confirmationPolicy": {
+            "l1Confirmations": 1
+          },
+          "inputCommitment": {
+            "version": "1",
+            "algorithm": "sha256",
+            "parts": [
+              {
+                "name": "\ud800",
+                "canonicalization": "jcs",
+                "content": {
+                  "units": "metric",
+                  "days": 3
+                },
+                "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+              }
+            ],
+            "digest": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea"
+          },
+          "terms": {
+            "version": "1",
+            "paymentType": "Web3CardanoV2",
+            "sellerAddress": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+            "sellerNonce": "0000000000000000000000000000000000000000000000000000000000000004",
+            "buyerNonce": "",
+            "inputHash": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea",
+            "payByTime": "1789992600000",
+            "submitResultTime": "1789993800000",
+            "unlockTime": "1789994700000",
+            "externalDisputeUnlockTime": "1789995600000"
+          },
+          "referenceKey": "a401010327200621582017cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce",
+          "referenceSignature": "84582aa201276761646472657373581d6057e3bf9f93c01043ca3392b1b2c9e096032075888168cabb89aab9b5a166686173686564f458203b33aabb96cea60b86f35425717666b5a969584f738a856c0b0d8887c300858958405621924f2a50d0fa1fcc3517500019c16bf4a149c2288f6b813027bd9078dc8df9c36f7509e0d5c418f94e2d8cf79c04e5e8e209fbb1bb3f47bfc186ce167b0a",
+          "blockchainIdentifier": "030d7c6574d40b00e8100e381599026021b73c0119301d8036320d2e2b8cd4b58819898c0804d4e01814d1808c019804e618c031a16071c76468c8663e04fa63143bb0219d1be62199324ac8c763e7d910dc7c85f34d92a952c9481264fe9501e8b307e72af5a918b7362739a900a31a1c26032ba3a92db61690861c00933236321a10701f301b01b23118a3080e459a5729260102ba4e1a217000bd8098995a2bb3483d58a5209c3d9c1098a6260180a261b9491f1b10b031321b18aaf099445ea6869b1a189c0132309c372611588658d4b71a373239e68099b29f2317b12080f3b06517f01b0086c1c124045f091f0c05a81030f857188f8c4110a8f8477c00914046e189e8dc2390956a40d320548f59809b8056c70d41c0643c9ccf763bd380c1605b0d80027003e8005db800673e41000ee002f4159d48a2b51a00016006b51771c5001b4e800ad4542002d9b0006e0047601734d8280398003d48e2c5631860680039f22db2012ba0076cc515c02d4000"
+        }
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_payload_verification_error",
+        "invalidMessage": "JCS cannot serialize a string containing an unpaired surrogate",
+        "payer": ""
+      }
+    },
+    {
+      "name": "surrogate-masumi-media-type",
+      "payload": {
+        "x402Version": 2,
+        "payload": {
+          "transaction": "hKQA2QECgYJYIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAGCowBYHXChXOnYLS9nZF/GJOLtrAPG8cEG0K0a9YFaOxStARoAQ60eAoIB2BhZAcbYeZ/YeZ/YeZ9YHA/ceAAj2L58n/OmvcDY07JjvQzBJEjECUjvv0L/2Hmf2Hmf2HmfWBzlV4kDUglfHPb9K30aKOPDywKfSM80/4kKKNF2/////9h6gNh5n9h5n1gcV+O/n5PAEEPKM5KxssnglgMgdYiBaMq7iaq5tf/YeoD/2HqAWCqkAQEDJyAGIVggF8t5+ytBIPKx7GXkGY1uCLKOgT/rAeSkAIObheGAgM5fWECEWCqiASdnYWRkcmVzc1gdYFfjv5+TwBBDyjOSsbLJ4JYDIHWIgWjKu4mqubWhZmhhc2hlZPRYIDszqruWzqYLWECG81QlcXZmtalpWE9zioVsCw2Ih8MAhYlYQFYhkk8qUND6H8w1F1AAGcFr9KFJwiiPa4EwJ72QeNyN+cNvdQngWBrVxBj5Ti2M95wE5ejiCfuxuz9Hv8GGzhZ7Cv9YIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEQEAaABXmXlggoE5iYEu2en4dwGkmoNbQQP2NYMwosstfuUr8//XXvOpAGwAAAaDD34HAGwAAAaDD8dFAGwAAAaDD/4zgGwAAAaDEDUiAAADYeYD/glg5AA/ceAAj2L58n/OmvcDY07JjvQzBJEjECUjvv0LlV4kDUglfHPb9K30aKOPDywKfSM80/4kKKNF2GgGDOZ0CGgAC3MUDGggBZOyhANkBAoGCWCB+oJo0rrsTyYQccTl7HKv+xd35UEBSk97klsrC9DdIClhAnzPc5FHMqyrk3vPkvXvXnOoaRTJ2ulFKwIfvqvxLQGZIR/LNW5EOpNoXHtYvMF7C9IsrcKPqU0/0aKBc5d63CPX2",
+          "nonce": "0000000000000000000000000000000000000000000000000000000000000004#0"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "lovelace",
+          "amount": "3000000",
+          "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+          "maxTimeoutSeconds": 600,
+          "extra": {
+            "assetTransferMethod": "masumi",
+            "confirmationPolicy": {
+              "l1Confirmations": 1
+            },
+            "inputCommitment": {
+              "version": "1",
+              "algorithm": "sha256",
+              "parts": [
+                {
+                  "name": "body",
+                  "canonicalization": "jcs",
+                  "content": {
+                    "units": "metric",
+                    "days": 3
+                  },
+                  "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440",
+                  "mediaType": "\udc00"
+                }
+              ],
+              "digest": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea"
+            },
+            "terms": {
+              "version": "1",
+              "paymentType": "Web3CardanoV2",
+              "sellerAddress": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+              "sellerNonce": "0000000000000000000000000000000000000000000000000000000000000004",
+              "buyerNonce": "",
+              "inputHash": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea",
+              "payByTime": "1789992600000",
+              "submitResultTime": "1789993800000",
+              "unlockTime": "1789994700000",
+              "externalDisputeUnlockTime": "1789995600000"
+            },
+            "referenceKey": "a401010327200621582017cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce",
+            "referenceSignature": "84582aa201276761646472657373581d6057e3bf9f93c01043ca3392b1b2c9e096032075888168cabb89aab9b5a166686173686564f458203b33aabb96cea60b86f35425717666b5a969584f738a856c0b0d8887c300858958405621924f2a50d0fa1fcc3517500019c16bf4a149c2288f6b813027bd9078dc8df9c36f7509e0d5c418f94e2d8cf79c04e5e8e209fbb1bb3f47bfc186ce167b0a",
+            "blockchainIdentifier": "030d7c6574d40b00e8100e381599026021b73c0119301d8036320d2e2b8cd4b58819898c0804d4e01814d1808c019804e618c031a16071c76468c8663e04fa63143bb0219d1be62199324ac8c763e7d910dc7c85f34d92a952c9481264fe9501e8b307e72af5a918b7362739a900a31a1c26032ba3a92db61690861c00933236321a10701f301b01b23118a3080e459a5729260102ba4e1a217000bd8098995a2bb3483d58a5209c3d9c1098a6260180a261b9491f1b10b031321b18aaf099445ea6869b1a189c0132309c372611588658d4b71a373239e68099b29f2317b12080f3b06517f01b0086c1c124045f091f0c05a81030f857188f8c4110a8f8477c00914046e189e8dc2390956a40d320548f59809b8056c70d41c0643c9ccf763bd380c1605b0d80027003e8005db800673e41000ee002f4159d48a2b51a00016006b51771c5001b4e800ad4542002d9b0006e0047601734d8280398003d48e2c5631860680039f22db2012ba0076cc515c02d4000"
+          }
+        },
+        "resource": {
+          "url": "https://interop.invalid/masumi-ada"
+        }
+      },
+      "requirements": {
+        "scheme": "exact",
+        "network": "cardano:preprod",
+        "asset": "lovelace",
+        "amount": "3000000",
+        "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+        "maxTimeoutSeconds": 600,
+        "extra": {
+          "assetTransferMethod": "masumi",
+          "confirmationPolicy": {
+            "l1Confirmations": 1
+          },
+          "inputCommitment": {
+            "version": "1",
+            "algorithm": "sha256",
+            "parts": [
+              {
+                "name": "body",
+                "canonicalization": "jcs",
+                "content": {
+                  "units": "metric",
+                  "days": 3
+                },
+                "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440",
+                "mediaType": "\udc00"
+              }
+            ],
+            "digest": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea"
+          },
+          "terms": {
+            "version": "1",
+            "paymentType": "Web3CardanoV2",
+            "sellerAddress": "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs",
+            "sellerNonce": "0000000000000000000000000000000000000000000000000000000000000004",
+            "buyerNonce": "",
+            "inputHash": "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea",
+            "payByTime": "1789992600000",
+            "submitResultTime": "1789993800000",
+            "unlockTime": "1789994700000",
+            "externalDisputeUnlockTime": "1789995600000"
+          },
+          "referenceKey": "a401010327200621582017cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce",
+          "referenceSignature": "84582aa201276761646472657373581d6057e3bf9f93c01043ca3392b1b2c9e096032075888168cabb89aab9b5a166686173686564f458203b33aabb96cea60b86f35425717666b5a969584f738a856c0b0d8887c300858958405621924f2a50d0fa1fcc3517500019c16bf4a149c2288f6b813027bd9078dc8df9c36f7509e0d5c418f94e2d8cf79c04e5e8e209fbb1bb3f47bfc186ce167b0a",
+          "blockchainIdentifier": "030d7c6574d40b00e8100e381599026021b73c0119301d8036320d2e2b8cd4b58819898c0804d4e01814d1808c019804e618c031a16071c76468c8663e04fa63143bb0219d1be62199324ac8c763e7d910dc7c85f34d92a952c9481264fe9501e8b307e72af5a918b7362739a900a31a1c26032ba3a92db61690861c00933236321a10701f301b01b23118a3080e459a5729260102ba4e1a217000bd8098995a2bb3483d58a5209c3d9c1098a6260180a261b9491f1b10b031321b18aaf099445ea6869b1a189c0132309c372611588658d4b71a373239e68099b29f2317b12080f3b06517f01b0086c1c124045f091f0c05a81030f857188f8c4110a8f8477c00914046e189e8dc2390956a40d320548f59809b8056c70d41c0643c9ccf763bd380c1605b0d80027003e8005db800673e41000ee002f4159d48a2b51a00016006b51771c5001b4e800ad4542002d9b0006e0047601734d8280398003d48e2c5631860680039f22db2012ba0076cc515c02d4000"
+        }
+      },
+      "expected": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_payload_verification_error",
+        "invalidMessage": "JCS cannot serialize a string containing an unpaired surrogate",
+        "payer": ""
+      }
+    }
+  ],
+  "jcs": [
+    {
+      "content": null,
+      "canonical": "null",
+      "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+    },
+    {
+      "content": {
+        "z": 1e+30,
+        "a": 0.000001,
+        "b": 1e-7
+      },
+      "canonical": "{\"a\":0.000001,\"b\":1e-7,\"z\":1e+30}",
+      "digest": "260cbeeadeaf9be55ddaf50a4819955936ad3d8a050e9344ffee0d3d6589577b"
+    },
+    {
+      "content": {
+        "€": "😀",
+        "a": "\n",
+        "é": true
+      },
+      "canonical": "{\"a\":\"\\n\",\"é\":true,\"€\":\"😀\"}",
+      "digest": "1abc2f3b027b59c7aa4759234a35ed17fb7dba95dfa740e0f967c9e62de45744"
+    },
+    {
+      "content": {
+        "nested": [
+          null,
+          true,
+          "",
+          0,
+          1.25
+        ]
+      },
+      "canonical": "{\"nested\":[null,true,\"\",0,1.25]}",
+      "digest": "05430d85bf0e54b77fd2ff2984e25f245e4fef84d22781bfc8f7d7bf7332a3ed"
+    }
+  ]
+}
