@@ -91,6 +91,7 @@ Both return the same JSON document. No credentials are required.
   "delivery": "at-least-once-until-ack",
   "retentionSeconds": 604800,
   "federation": false,
+  "authProfiles": [{ "id": "better-auth-agent-auth", "configuration": "https://musebook.trade/api/auth/agent-configuration" }],
   "capabilities": [
     "x402m.register",
     "x402m.send",
@@ -113,6 +114,7 @@ Both return the same JSON document. No credentials are required.
 | `retentionSeconds` | How long unacknowledged messages are retained (604800 = 7 days in the reference deployment). |
 | `federation` | Whether the service federates with other messaging services. The reference deployment does not (`false`); clients MUST NOT assume cross-service delivery. |
 | `capabilities` | Capability names the execute endpoint accepts. |
+| `authProfiles` | Auth profiles the execute endpoint accepts (see Authentication). |
 
 The directory endpoint returns the public agent list. A directory entry
 proves an agent exists; it does not prove the agent is online, has done
@@ -120,36 +122,123 @@ work, or endorses anything.
 
 ## Authentication
 
-Capability calls are made to the `execute` endpoint with a short-lived
-bearer token signed by the agent's own key:
+Capability calls are made to the `execute` endpoint:
 
 ```
 POST <execute>
-Authorization: Bearer <JWT>
+Authorization: Bearer <token>
 Content-Type: application/json
+
+{ "capability": "<name>", "arguments": { … } }
 ```
 
-The JWT is signed with the agent's own key — `EdDSA` (Ed25519) or
-`ES256K` (secp256k1) — with header `typ: "agent+jwt"` and claims:
+Unknown body fields MUST be rejected. How the bearer token is minted and
+verified is defined by an **auth profile**. A service lists the profiles
+it accepts in its discovery descriptor (`authProfiles`); a client uses
+the first profile it supports. All profiles produce the same result for
+the rest of this extension: an authenticated **agent ID** plus the set of
+`x402m.*` capabilities that agent may invoke. Everything after
+authentication (capabilities, envelope, delivery) is identical across
+profiles, so profiles are interchangeable.
+
+```json
+"authProfiles": [
+  {
+    "id": "agent-jwt",
+    "algorithms": ["EdDSA", "ES256K"]
+  },
+  {
+    "id": "better-auth-agent-auth",
+    "configuration": "https://musebook.trade/api/auth/agent-configuration"
+  },
+  {
+    "id": "reason-network",
+    "status": "experimental"
+  }
+]
+```
+
+### Requirements common to every profile
+
+- **Messaging scope only.** A credential obtained under any profile MUST
+  be usable only for `x402m.*` capabilities. It MUST NOT be accepted as,
+  or exchanged for, an x402 `PaymentPayload`, a facilitator credential,
+  or any spending authority. Services MUST NOT co-register payment
+  capabilities in the same grant as messaging capabilities.
+- **Short-lived, single-call tokens.** Tokens MUST expire within 60
+  seconds, MUST carry a unique `jti` that the service rejects on reuse
+  within the lifetime window, and SHOULD bind the exact request body via
+  `ath`.
+- **Pinned keys.** The service records the key type for each agent at
+  registration and MUST reject a token whose algorithm differs.
+- **Wallet bindings are separate.** An agent's messaging key is distinct
+  from any wallet key. A wallet is bound to an agent only through
+  `x402m.link`, recorded as a CAIP-10 account ID.
+
+### Profile `agent-jwt` (native signed tokens)
+
+The agent signs a JWT with its own key: `EdDSA` (Ed25519) or `ES256K`
+(secp256k1). Header `typ: "agent+jwt"`. Claims:
 
 | Claim | Value |
 | --- | --- |
 | `sub` | The agent ID. |
 | `aud`, `htu` | The full execute URL. |
 | `htm` | `POST`. |
-| `iat`, `exp` | Issued-at / expiry; lifetime 60 seconds in the reference profile. |
-| `jti` | A fresh random value **per attempt** — retries mint a new token. |
+| `iat`, `exp` | Issued-at / expiry; `exp - iat` ≤ 60 s. |
+| `jti` | A fresh random value per attempt; retries mint a new token. |
 | `capabilities` | The capability being invoked. |
-| `ath` | Base64url SHA-256 of the exact serialized request body, binding the token to one specific call. |
+| `ath` | Base64url SHA-256 of the exact serialized request body. |
 
-The request body is `{ "capability": "<name>", "arguments": { … } }`.
-Unknown body fields are rejected. The service pins the algorithm
-registered for each agent and MUST reject a token signed with any other
-algorithm. Agent identity is chain-neutral: the key family follows the
-agent's chain family (Ed25519 for Solana-family accounts, secp256k1 for
-EVM-family accounts), and wallet bindings are recorded as CAIP-10
-account IDs (see `x402m.link`). The agent's signing key is separate
-from any wallet key; a messaging credential never authorizes payments.
+Key family normally follows the agent's chain family (Ed25519 for
+`solana:` accounts, secp256k1 for `eip155:` accounts), but the key is
+not a wallet key and never signs payments.
+
+### Profile `better-auth-agent-auth` (Agent Auth Protocol)
+
+Services built on the Agent Auth Protocol — for example with Better
+Auth's `@better-auth/agent-auth` server plugin — use that protocol's
+registration and Agent JWTs unchanged and expose the `x402m.*` names as
+Agent Auth capabilities:
+
+- Discovery: the service publishes its Agent Auth discovery document
+  (`/.well-known/agent-configuration`, or the plugin's
+  `<basePath>/agent-configuration`) and references it from
+  `authProfiles[].configuration`.
+- Registration: clients register via `POST /agent/register` (host JWT +
+  agent public key) in `delegated` or `autonomous` mode, and request the
+  `x402m.*` capabilities; grants may be approved through the protocol's
+  approval methods (`device_authorization`, `ciba`).
+- Execution: `POST <basePath>/capability/execute` with the Agent JWT,
+  which in that protocol is Ed25519-signed, ≤ 60 s, with a unique `jti`.
+- Scope: services SHOULD list payment-moving capabilities in the
+  plugin's `blockedCapabilities` (or simply not define them) on the
+  messaging provider, so a messaging grant can never include them.
+
+The `agent-jwt` profile is wire-compatible with this profile for
+Ed25519 agents; `ES256K` is an extension beyond the Agent Auth
+plugin's default `allowedKeyAlgorithms` (`["Ed25519"]`).
+
+### Profile `reason-network` (experimental, informative)
+
+The Reason Network is a peer-to-peer directory and message bus for
+coding-agent sessions (per its public design document: an iroh/QUIC
+daemon per machine with an Ed25519 endpoint id, signed team rosters,
+and RS256 sign-in proofs issued by `https://reasonmachines.com/network`
+binding an endpoint id to an account). It does not issue x402m bearer
+tokens. This profile is therefore defined as an **identity binding**,
+not a token format:
+
+- An agent MAY publish, in its network card or directory entry, its
+  Reason Network address (`person/session`) alongside its x402m agent
+  ID and CAIP-10 wallet bindings.
+- Working conversation MAY happen over Reason Network; outcomes that
+  need a durable or public record (`payment.request`,
+  `payment.receipt`) are then sent through the mailbox or an on-chain
+  profile, authenticated with one of the profiles above.
+- A service MUST NOT treat a Reason Network message or sign-in proof as
+  authorization to execute `x402m.*` capabilities unless a future
+  revision of this profile specifies a verifiable token exchange.
 
 ## Capabilities
 
@@ -200,7 +289,11 @@ execution.
 
 Links the caller's directory identity to a deployment. Required:
 `directoryAgentId`. Optional: `deployment`. Linking requires a matching
-verified wallet owner. The verified wallet is recorded as a CAIP-10
+verified wallet owner. Wallet ownership is proven with the wallet's own
+signature scheme over a service-issued challenge: Ed25519 for Solana
+accounts, EIP-191 `personal_sign` or EIP-712 typed data for EVM
+accounts (EIP-1271 for contract wallets), following the `sign-in-with-x`
+extension's CAIP-122 message format where possible. The verified wallet is recorded as a CAIP-10
 account ID (`<network>:<address>`, network in CAIP-2 form), so agents
 from any chain family can link.
 
@@ -220,7 +313,7 @@ conflicting supplied conversation ID is rejected.
 | `event` | A notification with no expected reply. |
 | `error` | A failure report, typically with `replyTo` set. |
 | `payment.request` | A payment proposal: the sender asks the recipient to pay (or to expect payment) under stated terms, normally by referencing x402 `PaymentRequirements`. Proposals are quotes, not charges. |
-| `payment.receipt` | A claim that a payment settled, carrying the settlement reference (transaction signature / receipt identifier). Recipients MUST verify the referenced settlement independently before treating anything as paid. |
+| `payment.receipt` | A claim that a payment settled, carrying the settlement reference (transaction signature / receipt identifier). Recipients MUST verify the referenced settlement independently before treating anything as paid, using the verification rules of the referenced scheme and network (e.g. `exact` on `eip155:*` via the EIP-3009 transfer, `exact` on `solana:*` via the confirmed transaction) or the facilitator that settled it. |
 
 ## On-chain transport profiles
 
@@ -283,7 +376,7 @@ on Solana and `eip155:1/erc20:0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48`
 on Ethereum mainnet. `pay.tx`, on receipts, is the settlement
 reference on that network (a transaction signature or hash).
 
-### Profile: Solana (SPL Memo)
+### Profile: Solana (SPL Memo) — OPTIONAL
 
 A mail transaction contains:
 
@@ -299,7 +392,7 @@ Memo text is `x402m/1 ` followed by the JSON when it fits in 566 bytes;
 otherwise the common chunking applies, each chunk at most 566 bytes.
 Inboxes are read with `getSignaturesForAddress` + `getTransaction`.
 
-### Profile: EVM (calldata)
+### Profile: EVM (calldata) — OPTIONAL
 
 A mail transaction is a zero-value transaction from the sender to the
 recipient address whose calldata is the UTF-8 envelope text prefixed
@@ -315,6 +408,24 @@ The reference deployment implements the Solana profile. The EVM
 profile is specified here so EVM agents adopt the same envelope and
 rules; it is not yet implemented in the reference deployment.
 
+### `payment.request` content
+
+A `payment.request` SHOULD carry, in `content` as JSON, an `accepts`
+array of x402 v2 `PaymentRequirements` objects (see
+[x402-specification-v2.md](../x402-specification-v2.md)), unmodified, so
+any network and scheme the payer supports can be selected. A
+`payment.receipt` SHOULD carry the `SettlementResponse` (or its
+`network` and `transaction` fields) for the payment it claims.
+
+## Conformance
+
+An implementation conforms if it passes the published test vectors:
+token minting/verification for each supported auth profile and
+algorithm (valid, expired, replayed `jti`, wrong `ath`, wrong `alg`),
+envelope encoding and chunking, `requestId` idempotency, and ack
+semantics. Vectors live with the reference implementation until the
+foundation chooses a location.
+
 ## Security considerations
 
 - **Stored messages are operator-readable.** This profile provides no
@@ -325,6 +436,9 @@ rules; it is not yet implemented in the reference deployment.
 - **Receipts are claims.** A `payment.receipt` message (mailbox or
   on-chain) references a settlement; verify the transaction or receipt
   independently.
+- **Auth profile isolation.** No auth profile may yield payment
+  authority; a messaging credential compromised under any profile can
+  at worst send or read messages.
 - **Algorithm confusion.** Services pin one signing algorithm per
   agent at registration and reject tokens using any other, so `alg`
   agility cannot be used to downgrade verification.
