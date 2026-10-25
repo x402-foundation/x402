@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import inspect
 import warnings
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from ..schemas import PaymentPayload, PaymentRequired
+from ..schemas import PaymentPayload, PaymentRequired, PaymentResponseContext
 from .types import (
     AfterPaymentContext,
     MCPToolCallResult,
@@ -254,10 +255,20 @@ class x402MCPClient:
         Returns:
             Tool call result with payment metadata
         """
+        return await self._call_tool_with_payment(name, args, payload, kwargs, True)
+
+    async def _call_tool_with_payment(
+        self,
+        name: str,
+        args: dict[str, Any],
+        payload: PaymentPayload,
+        kwargs: dict[str, Any],
+        allow_recovery: bool,
+    ) -> MCPToolCallResult:
         # Build call params with payment in _meta
         call_params = attach_payment_to_meta({"name": name, "arguments": args}, payload)
 
-        accepted = payload.accepted
+        accepted = getattr(payload, "accepted", None)
         max_timeout_seconds = accepted.max_timeout_seconds if accepted is not None else None
         paid_timeout = paid_read_timeout_seconds(
             kwargs.get("read_timeout_seconds"),
@@ -281,8 +292,59 @@ class x402MCPClient:
         )
         for hook in self._after_payment_hooks:
             result_or_coro = hook(after_context)
-            if hasattr(result_or_coro, "__await__"):
+            if inspect.isawaitable(result_or_coro):
                 await result_or_coro
+
+        corrective = extract_payment_required_from_result(result)
+        recovery = None
+        if accepted is not None:
+            recovery = self._payment_client.handle_payment_response(
+                PaymentResponseContext(
+                    payment_payload=payload,
+                    requirements=accepted,
+                    settle_response=settle_response,
+                    payment_required=corrective,
+                )
+            )
+            if inspect.isawaitable(recovery):
+                recovery = await recovery
+        if (
+            allow_recovery
+            and recovery is not None
+            and recovery.recovered
+            and corrective is not None
+        ):
+            context = PaymentRequiredContext(name, args, corrective)
+            corrected_payload = None
+            for required_hook in self._payment_required_hooks:
+                decision = required_hook(context)
+                if inspect.isawaitable(decision):
+                    decision = await decision
+                if decision:
+                    if decision.abort:
+                        raise PaymentRequiredError("Payment aborted by hook", corrective)
+                    if decision.payment:
+                        corrected_payload = decision.payment
+                        break
+            if corrected_payload is None:
+                if not self._auto_payment:
+                    raise PaymentRequiredError(
+                        "Payment required but auto_payment is disabled", corrective
+                    )
+                if self._on_payment_requested:
+                    approved = self._on_payment_requested(context)
+                    if inspect.isawaitable(approved):
+                        approved = await approved
+                    if not approved:
+                        raise PaymentRequiredError("Payment request denied", corrective)
+                for before_hook in self._before_payment_hooks:
+                    before_result = before_hook(context)
+                    if inspect.isawaitable(before_result):
+                        await before_result
+                corrected_payload = self._payment_client.create_payment_payload(corrective)
+                if inspect.isawaitable(corrected_payload):
+                    corrected_payload = await corrected_payload
+            return await self._call_tool_with_payment(name, args, corrected_payload, kwargs, False)
 
         return MCPToolCallResult(
             content=result.content,

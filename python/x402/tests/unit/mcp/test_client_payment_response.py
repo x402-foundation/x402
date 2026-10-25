@@ -1,10 +1,12 @@
 """Paid MCP results reach payment response hooks, including one recovery retry."""
 
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 
+from x402.client import x402ClientSync
 from x402.mcp.client import x402MCPClientSync, x402MCPSession
 from x402.mcp.constants import MCP_PAYMENT_META_KEY, MCP_PAYMENT_RESPONSE_META_KEY
 from x402.mcp.types import PaymentRequiredError, PaymentRequiredHookResult
@@ -46,7 +48,9 @@ def _payload(required: PaymentRequired, signature: str) -> PaymentPayload:
 
 
 def _result(
-    *, required: PaymentRequired | None = None, settlement: SettleResponse | None = None
+    *,
+    required: PaymentRequired | PaymentRequiredV1 | None = None,
+    settlement: SettleResponse | None = None,
 ) -> SimpleNamespace:
     meta = (
         {MCP_PAYMENT_RESPONSE_META_KEY: settlement.model_dump(by_alias=True)}
@@ -67,7 +71,7 @@ def _assert_context(
     payload: PaymentPayload,
     *,
     settlement: SettleResponse | None = None,
-    required: PaymentRequired | None = None,
+    required: PaymentRequired | PaymentRequiredV1 | None = None,
 ) -> None:
     assert ctx.payment_payload is payload
     assert ctx.requirements is payload.accepted
@@ -76,13 +80,15 @@ def _assert_context(
 
 
 @pytest.mark.asyncio
-async def test_session_dispatches_successful_payment_response(payment_required, settlement):
+async def test_session_dispatches_successful_payment_response(
+    payment_required: PaymentRequired, settlement: SettleResponse
+) -> None:
     payload = _payload(payment_required, "0x123")
     final = _result(settlement=settlement)
     session = SimpleNamespace(
         call_tool=AsyncMock(side_effect=[_result(required=payment_required), final])
     )
-    payment_client = SimpleNamespace(
+    payment_client: Any = SimpleNamespace(
         create_payment_payload=AsyncMock(return_value=payload),
         handle_payment_response=AsyncMock(return_value=None),
     )
@@ -100,13 +106,15 @@ async def test_session_dispatches_successful_payment_response(payment_required, 
     assert result.is_error is False
 
 
-def test_sync_client_dispatches_successful_payment_response(payment_required, settlement):
+def test_sync_client_dispatches_successful_payment_response(
+    payment_required: PaymentRequired, settlement: SettleResponse
+) -> None:
     payload = _payload(payment_required, "0x123")
     final = _result(settlement=settlement)
     mcp_client = SimpleNamespace(
         call_tool=Mock(side_effect=[_result(required=payment_required), final])
     )
-    payment_client = SimpleNamespace(
+    payment_client: Any = SimpleNamespace(
         create_payment_payload=Mock(return_value=payload),
         handle_payment_response=Mock(return_value=None),
     )
@@ -124,10 +132,12 @@ def test_sync_client_dispatches_successful_payment_response(payment_required, se
     assert result.is_error is False
 
 
-def test_sync_explicit_paid_call_dispatches_payment_response(payment_required, settlement):
+def test_sync_explicit_paid_call_dispatches_payment_response(
+    payment_required: PaymentRequired, settlement: SettleResponse
+) -> None:
     payload = _payload(payment_required, "0x123")
     mcp_client = SimpleNamespace(call_tool=Mock(return_value=_result(settlement=settlement)))
-    payment_client = SimpleNamespace(handle_payment_response=Mock(return_value=None))
+    payment_client: Any = SimpleNamespace(handle_payment_response=Mock(return_value=None))
 
     result = x402MCPClientSync(mcp_client, payment_client).call_tool_with_payment(
         "paid_tool", {}, payload
@@ -142,7 +152,9 @@ def test_sync_explicit_paid_call_dispatches_payment_response(payment_required, s
 
 
 @pytest.mark.asyncio
-async def test_session_recovers_once_and_dispatches_retry_response(payment_required, settlement):
+async def test_session_recovers_once_and_dispatches_retry_response(
+    payment_required: PaymentRequired, settlement: SettleResponse
+) -> None:
     corrective = payment_required.model_copy(
         update={
             "error": "corrective payment required",
@@ -157,7 +169,7 @@ async def test_session_recovers_once_and_dispatches_retry_response(payment_requi
             side_effect=[_result(required=payment_required), _result(required=corrective), final]
         )
     )
-    payment_client = SimpleNamespace(
+    payment_client: Any = SimpleNamespace(
         create_payment_payload=AsyncMock(side_effect=[payload, fresh_payload]),
         handle_payment_response=AsyncMock(side_effect=[RecoveredResponseResult(), None]),
     )
@@ -187,7 +199,9 @@ async def test_session_recovers_once_and_dispatches_retry_response(payment_requi
     assert result.is_error is False
 
 
-def test_sync_client_recovers_once_and_dispatches_retry_response(payment_required, settlement):
+def test_sync_client_recovers_once_and_dispatches_retry_response(
+    payment_required: PaymentRequired, settlement: SettleResponse
+) -> None:
     corrective = payment_required.model_copy(
         update={
             "error": "corrective payment required",
@@ -202,7 +216,7 @@ def test_sync_client_recovers_once_and_dispatches_retry_response(payment_require
             side_effect=[_result(required=payment_required), _result(required=corrective), final]
         )
     )
-    payment_client = SimpleNamespace(
+    payment_client: Any = SimpleNamespace(
         create_payment_payload=Mock(side_effect=[payload, fresh_payload]),
         handle_payment_response=Mock(side_effect=[RecoveredResponseResult(), None]),
     )
@@ -233,7 +247,9 @@ def test_sync_client_recovers_once_and_dispatches_retry_response(payment_require
     assert result.is_error is False
 
 
-def test_sync_client_does_not_retry_a_second_corrective_402(payment_required):
+def test_sync_client_does_not_retry_a_second_corrective_402(
+    payment_required: PaymentRequired,
+) -> None:
     corrective = payment_required.model_copy(
         update={
             "error": "corrective payment required",
@@ -251,7 +267,7 @@ def test_sync_client_does_not_retry_a_second_corrective_402(payment_required):
             ]
         )
     )
-    payment_client = SimpleNamespace(
+    payment_client: Any = SimpleNamespace(
         create_payment_payload=Mock(side_effect=[payload, fresh_payload]),
         handle_payment_response=Mock(
             side_effect=[RecoveredResponseResult(), RecoveredResponseResult()]
@@ -267,7 +283,9 @@ def test_sync_client_does_not_retry_a_second_corrective_402(payment_required):
 
 
 @pytest.mark.asyncio
-async def test_session_does_not_retry_a_second_corrective_402(payment_required):
+async def test_session_does_not_retry_a_second_corrective_402(
+    payment_required: PaymentRequired,
+) -> None:
     corrective = payment_required.model_copy(
         update={
             "error": "corrective payment required",
@@ -285,7 +303,7 @@ async def test_session_does_not_retry_a_second_corrective_402(payment_required):
             ]
         )
     )
-    payment_client = SimpleNamespace(
+    payment_client: Any = SimpleNamespace(
         create_payment_payload=AsyncMock(side_effect=[payload, fresh_payload]),
         handle_payment_response=AsyncMock(
             side_effect=[RecoveredResponseResult(), RecoveredResponseResult()]
@@ -300,7 +318,9 @@ async def test_session_does_not_retry_a_second_corrective_402(payment_required):
     assert result.is_error is True
 
 
-def test_sync_client_rechecks_all_payment_gates_before_corrective_retry(payment_required):
+def test_sync_client_rechecks_all_payment_gates_before_corrective_retry(
+    payment_required: PaymentRequired,
+) -> None:
     corrective = payment_required.model_copy(
         update={
             "error": "corrective payment required",
@@ -318,35 +338,38 @@ def test_sync_client_rechecks_all_payment_gates_before_corrective_retry(payment_
         ]
     )
 
-    def call_tool(params, **_kwargs):
+    def call_tool(params: Any, **_kwargs: Any) -> SimpleNamespace:
         events.append("paid-call" if "_meta" in params else "probe")
         return next(results)
 
-    def payment_required_hook(ctx):
+    def payment_required_hook(ctx: Any) -> PaymentRequiredHookResult:
         events.append(f"payment-required:{ctx.payment_required.accepts[0].amount}")
         return PaymentRequiredHookResult()
 
-    def payment_requested_hook(ctx):
+    def payment_requested_hook(ctx: Any) -> bool:
         events.append(f"payment-requested:{ctx.payment_required.accepts[0].amount}")
         return True
 
-    def before_payment_hook(ctx):
+    def before_payment_hook(ctx: Any) -> None:
         events.append(f"before-payment:{ctx.payment_required.accepts[0].amount}")
 
-    def create_payment_payload(required):
+    def create_payment_payload(required: Any) -> PaymentPayload:
         events.append(f"create-payload:{required.accepts[0].amount}")
         return payload if required is payment_required else fresh_payload
 
-    def handle_payment_response(ctx):
+    def handle_payment_response(ctx: Any) -> RecoveredResponseResult | None:
         amount = ctx.payment_required.accepts[0].amount if ctx.payment_required else "none"
         events.append(f"payment-response:{amount}")
         return RecoveredResponseResult() if ctx.payment_required else None
 
     client = x402MCPClientSync(
         SimpleNamespace(call_tool=Mock(side_effect=call_tool)),
-        SimpleNamespace(
-            create_payment_payload=Mock(side_effect=create_payment_payload),
-            handle_payment_response=Mock(side_effect=handle_payment_response),
+        cast(
+            x402ClientSync,
+            SimpleNamespace(
+                create_payment_payload=Mock(side_effect=create_payment_payload),
+                handle_payment_response=Mock(side_effect=handle_payment_response),
+            ),
         ),
         on_payment_requested=payment_requested_hook,
     )
@@ -378,7 +401,9 @@ def test_sync_client_rechecks_all_payment_gates_before_corrective_retry(payment_
 
 
 @pytest.mark.parametrize("rejection", ["payment-requested", "payment-required"])
-def test_sync_client_rejection_prevents_corrective_payment(payment_required, rejection):
+def test_sync_client_rejection_prevents_corrective_payment(
+    payment_required: PaymentRequired, rejection: str
+) -> None:
     corrective = payment_required.model_copy(
         update={
             "error": "corrective payment required",
@@ -394,11 +419,12 @@ def test_sync_client_rejection_prevents_corrective_payment(payment_required, rej
             side_effect=[_result(required=payment_required), _result(required=corrective)]
         )
     )
-    payment_client = SimpleNamespace(
+    payment_client: Any = SimpleNamespace(
         create_payment_payload=Mock(return_value=payload),
         handle_payment_response=Mock(return_value=RecoveredResponseResult()),
     )
-    def on_payment_requested(ctx):
+
+    def on_payment_requested(ctx: Any) -> bool:
         nonlocal requested_hook_calls
         requested_hook_calls += 1
         calls.append(f"requested:{ctx.payment_required.accepts[0].amount}")
@@ -409,7 +435,8 @@ def test_sync_client_rejection_prevents_corrective_payment(payment_required, rej
     )
 
     if rejection == "payment-required":
-        def payment_required_hook(ctx):
+
+        def payment_required_hook(ctx: Any) -> PaymentRequiredHookResult:
             nonlocal required_hook_calls
             required_hook_calls += 1
             calls.append(f"required:{ctx.payment_required.accepts[0].amount}")
@@ -417,7 +444,9 @@ def test_sync_client_rejection_prevents_corrective_payment(payment_required, rej
 
         client.on_payment_required(payment_required_hook)
 
-    client.on_before_payment(lambda ctx: calls.append(f"before:{ctx.payment_required.accepts[0].amount}"))
+    client.on_before_payment(
+        lambda ctx: calls.append(f"before:{ctx.payment_required.accepts[0].amount}")
+    )
 
     with pytest.raises(PaymentRequiredError):
         client.call_tool("paid_tool", {})
@@ -428,7 +457,9 @@ def test_sync_client_rejection_prevents_corrective_payment(payment_required, rej
     assert not any(event == "before:2000" for event in calls)
 
 
-def test_sync_client_uses_corrective_custom_payment_payload(payment_required):
+def test_sync_client_uses_corrective_custom_payment_payload(
+    payment_required: PaymentRequired,
+) -> None:
     corrective = payment_required.model_copy(
         update={
             "error": "corrective payment required",
@@ -438,9 +469,15 @@ def test_sync_client_uses_corrective_custom_payment_payload(payment_required):
     payload = _payload(payment_required, "0x123")
     custom_payload = _payload(corrective, "0xcustom")
     mcp_client = SimpleNamespace(
-        call_tool=Mock(side_effect=[_result(required=payment_required), _result(required=corrective), _result()])
+        call_tool=Mock(
+            side_effect=[
+                _result(required=payment_required),
+                _result(required=corrective),
+                _result(),
+            ]
+        )
     )
-    payment_client = SimpleNamespace(
+    payment_client: Any = SimpleNamespace(
         create_payment_payload=Mock(return_value=payload),
         handle_payment_response=Mock(side_effect=[RecoveredResponseResult(), None]),
     )
@@ -448,7 +485,7 @@ def test_sync_client_uses_corrective_custom_payment_payload(payment_required):
     hook_calls = []
     required_hook_calls = 0
 
-    def payment_required_hook(ctx):
+    def payment_required_hook(ctx: Any) -> PaymentRequiredHookResult:
         nonlocal required_hook_calls
         required_hook_calls += 1
         hook_calls.append(ctx.payment_required.accepts[0].amount)
@@ -472,8 +509,56 @@ def test_sync_client_uses_corrective_custom_payment_payload(payment_required):
     assert result.is_error is False
 
 
+def test_sync_client_does_not_auto_sign_corrective_terms_when_disabled(
+    payment_required: PaymentRequired,
+) -> None:
+    corrective = payment_required.model_copy(
+        update={
+            "error": "corrective payment required",
+            "accepts": [payment_required.accepts[0].model_copy(update={"amount": "2000"})],
+        }
+    )
+    custom_payload = _payload(payment_required, "0xcustom")
+    mcp_client = SimpleNamespace(
+        call_tool=Mock(
+            side_effect=[_result(required=payment_required), _result(required=corrective)]
+        )
+    )
+    payment_client: Any = SimpleNamespace(
+        create_payment_payload=Mock(),
+        handle_payment_response=Mock(return_value=RecoveredResponseResult()),
+    )
+    on_payment_requested = Mock(return_value=True)
+    client = x402MCPClientSync(
+        mcp_client,
+        payment_client,
+        auto_payment=False,
+        on_payment_requested=on_payment_requested,
+    )
+    hook_calls = 0
+
+    def payment_required_hook(_ctx: Any) -> PaymentRequiredHookResult:
+        nonlocal hook_calls
+        hook_calls += 1
+        return (
+            PaymentRequiredHookResult(payment=custom_payload)
+            if hook_calls == 1
+            else PaymentRequiredHookResult()
+        )
+
+    client.on_payment_required(payment_required_hook)
+
+    with pytest.raises(PaymentRequiredError):
+        client.call_tool("paid_tool", {})
+
+    assert mcp_client.call_tool.call_count == 2
+    payment_client.create_payment_payload.assert_not_called()
+    payment_client.handle_payment_response.assert_called_once()
+    on_payment_requested.assert_not_called()
+
+
 @pytest.mark.asyncio
-async def test_session_skips_response_handling_without_accepted_requirements():
+async def test_session_skips_response_handling_without_accepted_requirements() -> None:
     required = PaymentRequiredV1(
         accepts=[
             PaymentRequirementsV1(
@@ -493,7 +578,7 @@ async def test_session_skips_response_handling_without_accepted_requirements():
     session = SimpleNamespace(
         call_tool=AsyncMock(side_effect=[_result(required=required), _result(required=required)])
     )
-    payment_client = SimpleNamespace(
+    payment_client: Any = SimpleNamespace(
         create_payment_payload=AsyncMock(return_value=payload),
         handle_payment_response=AsyncMock(),
     )
@@ -506,7 +591,7 @@ async def test_session_skips_response_handling_without_accepted_requirements():
     assert result.is_error is True
 
 
-def test_sync_client_skips_response_handling_without_accepted_requirements():
+def test_sync_client_skips_response_handling_without_accepted_requirements() -> None:
     required = PaymentRequiredV1(
         accepts=[
             PaymentRequirementsV1(
@@ -526,7 +611,7 @@ def test_sync_client_skips_response_handling_without_accepted_requirements():
     mcp_client = SimpleNamespace(
         call_tool=Mock(side_effect=[_result(required=required), _result(required=required)])
     )
-    payment_client = SimpleNamespace(
+    payment_client: Any = SimpleNamespace(
         create_payment_payload=Mock(return_value=payload),
         handle_payment_response=Mock(),
     )
@@ -540,12 +625,14 @@ def test_sync_client_skips_response_handling_without_accepted_requirements():
 
 
 @pytest.mark.asyncio
-async def test_session_propagates_payment_response_handler_failure(payment_required):
+async def test_session_propagates_payment_response_handler_failure(
+    payment_required: PaymentRequired,
+) -> None:
     payload = _payload(payment_required, "0x123")
     session = SimpleNamespace(
         call_tool=AsyncMock(side_effect=[_result(required=payment_required), _result()])
     )
-    payment_client = SimpleNamespace(
+    payment_client: Any = SimpleNamespace(
         create_payment_payload=AsyncMock(return_value=payload),
         handle_payment_response=AsyncMock(side_effect=RuntimeError("response hook failed")),
     )
@@ -557,12 +644,14 @@ async def test_session_propagates_payment_response_handler_failure(payment_requi
     payment_client.handle_payment_response.assert_awaited_once()
 
 
-def test_sync_client_propagates_payment_response_handler_failure(payment_required):
+def test_sync_client_propagates_payment_response_handler_failure(
+    payment_required: PaymentRequired,
+) -> None:
     payload = _payload(payment_required, "0x123")
     mcp_client = SimpleNamespace(
         call_tool=Mock(side_effect=[_result(required=payment_required), _result()])
     )
-    payment_client = SimpleNamespace(
+    payment_client: Any = SimpleNamespace(
         create_payment_payload=Mock(return_value=payload),
         handle_payment_response=Mock(side_effect=RuntimeError("response hook failed")),
     )
@@ -575,12 +664,12 @@ def test_sync_client_propagates_payment_response_handler_failure(payment_require
 
 
 @pytest.mark.asyncio
-async def test_session_propagates_paid_call_timeout(payment_required):
+async def test_session_propagates_paid_call_timeout(payment_required: PaymentRequired) -> None:
     payload = _payload(payment_required, "0x123")
     session = SimpleNamespace(
         call_tool=AsyncMock(side_effect=[_result(required=payment_required), TimeoutError])
     )
-    payment_client = SimpleNamespace(create_payment_payload=AsyncMock(return_value=payload))
+    payment_client: Any = SimpleNamespace(create_payment_payload=AsyncMock(return_value=payload))
 
     with pytest.raises(TimeoutError):
         await x402MCPSession(session, payment_client).call_tool("paid_tool", {})
@@ -588,14 +677,43 @@ async def test_session_propagates_paid_call_timeout(payment_required):
     assert session.call_tool.await_count == 2
 
 
-def test_sync_client_propagates_paid_call_timeout(payment_required):
+def test_sync_client_propagates_paid_call_timeout(payment_required: PaymentRequired) -> None:
     payload = _payload(payment_required, "0x123")
     mcp_client = SimpleNamespace(
         call_tool=Mock(side_effect=[_result(required=payment_required), TimeoutError])
     )
-    payment_client = SimpleNamespace(create_payment_payload=Mock(return_value=payload))
+    payment_client: Any = SimpleNamespace(create_payment_payload=Mock(return_value=payload))
 
     with pytest.raises(TimeoutError):
         x402MCPClientSync(mcp_client, payment_client).call_tool("paid_tool", {})
 
     assert mcp_client.call_tool.call_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_public_async_corrective_authorization(
+    payment_required: PaymentRequired, enabled: bool
+) -> None:
+    from x402.mcp.client_async import x402MCPClient
+
+    payload = _payload(payment_required, "first")
+    transport = SimpleNamespace(
+        call_tool=AsyncMock(side_effect=[_result(required=payment_required), _result()])
+    )
+    payer: Any = SimpleNamespace(
+        handle_payment_response=AsyncMock(return_value=RecoveredResponseResult()),
+        create_payment_payload=AsyncMock(return_value=payload),
+    )
+    approval = Mock(return_value=True)
+    client = x402MCPClient(transport, payer, auto_payment=enabled, on_payment_requested=approval)
+    if enabled:
+        await client.call_tool_with_payment("paid", {}, payload)
+        assert transport.call_tool.await_count == 2
+        assert payer.handle_payment_response.await_count == 2
+        approval.assert_called_once()
+    else:
+        with pytest.raises(PaymentRequiredError):
+            await client.call_tool_with_payment("paid", {}, payload)
+        payer.create_payment_payload.assert_not_awaited()
+        assert transport.call_tool.await_count == 1
