@@ -139,6 +139,10 @@ class x402HTTPAdapter(HTTPAdapter):
                 resp.headers.pop(name, None)
             return resp
 
+        # A 402 response requires replaying the request with payment headers.
+        # Buffer streaming bodies before the first send so retries preserve them.
+        _buffer_body(request)
+
         # Make initial request (always stream so 402 bodies can be capped before buffering)
         response = super().send(request, **send_kwargs)
 
@@ -231,6 +235,30 @@ class x402HTTPAdapter(HTTPAdapter):
             raise
         except Exception as e:
             raise PaymentError(f"Failed to handle payment: {e}") from e
+
+
+def _buffer_body(request: requests.PreparedRequest) -> None:
+    """Replace a one-shot body (file or generator) with its bytes, in place.
+
+    request.copy() only copies the reference to the body, so a file or
+    generator consumed by the first send would go out empty on the retry.
+    """
+    body = getattr(request, "body", None)
+    if body is None or isinstance(body, (bytes, str)):
+        return
+
+    if hasattr(body, "read"):
+        data = body.read()
+    else:
+        data = b"".join(
+            chunk.encode("utf-8") if isinstance(chunk, str) else chunk for chunk in body
+        )
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+
+    request.body = data
+    request.headers.pop("Transfer-Encoding", None)
+    request.headers["Content-Length"] = str(len(data))
 
 
 def x402_http_adapter(
