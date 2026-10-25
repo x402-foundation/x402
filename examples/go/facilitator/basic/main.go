@@ -118,13 +118,9 @@ func main() {
 		// Verify payment
 		result, err := facilitator.Verify(ctx, reqBody.PaymentPayload, reqBody.PaymentRequirements)
 		if err != nil {
-			// All failures (business logic and system errors) are returned as errors
-			// You can extract structured information from VerifyError if needed:
-			// if ve, ok := err.(*x402.VerifyError); ok {
-			//     log.Printf("Verification failed: reason=%s, payer=%s, network=%s",
-			//                ve.Reason, ve.Payer, ve.Network)
-			// }
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			// Invalid payments come back as *x402.VerifyError and are answered with
+			// 200 {"isValid": false, ...}; any other error is a facilitator failure (500).
+			writeVerifyError(c, err)
 			return
 		}
 

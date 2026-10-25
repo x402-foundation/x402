@@ -103,7 +103,7 @@ func main() {
 		}
 		result, err := facilitator.Verify(ctx, payload, requirements)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			writeVerifyError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, result)

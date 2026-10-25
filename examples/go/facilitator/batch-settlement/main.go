@@ -189,7 +189,7 @@ func main() {
 		result, err := facilitator.Verify(ctx, payload, requirements)
 		if err != nil {
 			fmt.Printf("Verify error: %v\n", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeVerifyError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, result)

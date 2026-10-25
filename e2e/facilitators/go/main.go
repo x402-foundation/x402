@@ -1297,9 +1297,7 @@ func main() {
 		)
 		if err != nil {
 			log.Printf("Verify error: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": err.Error(),
-			})
+			writeVerifyError(c, err)
 			return
 		}
 

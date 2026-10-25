@@ -103,9 +103,10 @@ if err != nil {
 result, err := facilitator.Verify(ctx, payload, requirements)
 if err != nil {
     // Extract structured error details if needed
-    if ve, ok := err.(*x402.VerifyError); ok {
-        log.Printf("Verification failed: reason=%s, payer=%s, network=%s",
-                   ve.Reason, ve.Payer, ve.Network)
+    var ve *x402.VerifyError
+    if errors.As(err, &ve) {
+        log.Printf("Verification failed: reason=%s, payer=%s",
+                   ve.InvalidReason, ve.Payer)
     }
     return err
 }
