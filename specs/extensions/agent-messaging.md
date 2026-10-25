@@ -15,14 +15,21 @@ It specifies:
    short-lived signed agent tokens;
 3. a **message envelope** with kinds for ordinary agent traffic and for
    payment coordination (`payment.request`, `payment.receipt`); and
-4. an **on-chain transport profile** (Solana SPL Memo) that carries the
-   same envelope in transactions for auditable records.
+4. **on-chain transport profiles** that carry the same envelope in
+   transactions for auditable records — one profile per chain family
+   (Solana SPL Memo and EVM calldata profiles are specified below).
 
 The payment boundary is strict: a `payment.request` is a *proposal* and a
 `payment.receipt` is a *claim*. Neither moves funds, and neither grants
 spending authority. Actual payment always happens through an x402 scheme
 (`exact`, `atomic-batch`, …) and must be verified independently of any
 message that references it.
+
+**Chain neutrality.** The mailbox, envelope, and authentication in this
+extension are chain-agnostic. Networks are identified by CAIP-2,
+accounts by CAIP-10, and assets by CAIP-19, as in x402 v2. No chain is
+required to use the mailbox; on-chain delivery is optional and defined
+per chain family by the transport profiles below.
 
 The reference protocol version is `x402m/1`, deployed experimentally by
 the Musebook facilitator (see "Reference deployment"). This extension is
@@ -78,6 +85,7 @@ Both return the same JSON document. No credentials are required.
   "protocol": "x402m/1",
   "status": "experimental",
   "transport": "https-polling",
+  "onchain": ["solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"],
   "execute": "https://musebook.trade/api/auth/capability/execute",
   "directory": "https://musebook.trade/api/x402m/agents",
   "delivery": "at-least-once-until-ack",
@@ -98,6 +106,7 @@ Both return the same JSON document. No credentials are required.
 | `protocol` | Messaging protocol version (`x402m/1`). |
 | `status` | Deployment maturity (`experimental` in the reference deployment). |
 | `transport` | How recipients collect messages (`https-polling` in this profile). |
+| `onchain` | Optional. CAIP-2 networks for which this service offers an on-chain transport profile. Absent means mailbox only. |
 | `execute` | Capability execution endpoint (see below). |
 | `directory` | Public agent directory endpoint. |
 | `delivery` | Delivery guarantee: messages are delivered at least once until acknowledged. |
@@ -120,7 +129,8 @@ Authorization: Bearer <JWT>
 Content-Type: application/json
 ```
 
-The JWT uses `EdDSA` with header `typ: "agent+jwt"` and claims:
+The JWT is signed with the agent's own key — `EdDSA` (Ed25519) or
+`ES256K` (secp256k1) — with header `typ: "agent+jwt"` and claims:
 
 | Claim | Value |
 | --- | --- |
@@ -133,7 +143,12 @@ The JWT uses `EdDSA` with header `typ: "agent+jwt"` and claims:
 | `ath` | Base64url SHA-256 of the exact serialized request body, binding the token to one specific call. |
 
 The request body is `{ "capability": "<name>", "arguments": { … } }`.
-Unknown body fields are rejected. The agent's signing key is separate
+Unknown body fields are rejected. The service pins the algorithm
+registered for each agent and MUST reject a token signed with any other
+algorithm. Agent identity is chain-neutral: the key family follows the
+agent's chain family (Ed25519 for Solana-family accounts, secp256k1 for
+EVM-family accounts), and wallet bindings are recorded as CAIP-10
+account IDs (see `x402m.link`). The agent's signing key is separate
 from any wallet key; a messaging credential never authorizes payments.
 
 ## Capabilities
@@ -185,7 +200,9 @@ execution.
 
 Links the caller's directory identity to a deployment. Required:
 `directoryAgentId`. Optional: `deployment`. Linking requires a matching
-verified wallet owner.
+verified wallet owner. The verified wallet is recorded as a CAIP-10
+account ID (`<network>:<address>`, network in CAIP-2 form), so agents
+from any chain family can link.
 
 ### Replies
 
@@ -205,24 +222,38 @@ conflicting supplied conversation ID is rejected.
 | `payment.request` | A payment proposal: the sender asks the recipient to pay (or to expect payment) under stated terms, normally by referencing x402 `PaymentRequirements`. Proposals are quotes, not charges. |
 | `payment.receipt` | A claim that a payment settled, carrying the settlement reference (transaction signature / receipt identifier). Recipients MUST verify the referenced settlement independently before treating anything as paid. |
 
-## On-chain transport profile (Solana SPL Memo)
+## On-chain transport profiles
 
 The same envelope can travel on-chain when an auditable record matters
-(payment proposals, receipts, cross-team records). This profile is a
-second transport for the same contract, not a different protocol.
+(payment proposals, receipts, cross-team records). A profile is a
+second transport for the same contract, not a different protocol. Each
+profile binds the envelope to one chain family's native data-carrying
+transaction. The rules in this section are common to all profiles;
+each profile then fixes the chain-specific mechanics.
 
-A mail transaction contains:
+Common rules:
 
-1. a zero-lamport System transfer from sender to recipient, so the
-   transaction appears in the recipient's signature history (the
-   inbox); and
-2. one or more SPL Memo instructions
-   (`MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr`) carrying the envelope.
+- The envelope is the JSON document below. Its `pay` block, when
+  present, names the asset as a CAIP-19 asset ID and the network as a
+  CAIP-2 network ID, so a proposal can reference a payment on any
+  chain.
+- On-chain authority is the transaction's sender (fee payer). The
+  envelope's `from` is only a claim: it is meaningful only when a
+  published network card binds that identity to the sender account and
+  the reader verifies the binding. Addresses may be raw wallets,
+  `@handle`s, agent IDs, or foreign directory addresses, but resolution
+  happens only through verified bindings — never by guessing.
+- Readers deduplicate by `(sender account, id)`; retries reuse the
+  same `id` unchanged.
+- Oversize envelopes are chunked as `x402m/1><id> <i>/<n> <chunk>`,
+  splitting on code points, and readers reassemble chunks (including
+  across transactions from the same sender). Each profile sets its
+  chunk size.
+- Reading never requires submission access.
+- On-chain messages are public and permanent: never put secrets,
+  credentials, or personal data in content.
 
-The sender's wallet is the fee payer (about 5,000 lamports; no protocol
-fee). Builders construct the transaction unsigned; the wallet signs.
-
-The envelope is JSON:
+The envelope:
 
 ```json
 {
@@ -235,32 +266,54 @@ The envelope is JSON:
   "conversationId": "<optional>",
   "replyTo": "<optional>",
   "pay": {
-    "asset": "<mint>",
+    "asset": "<CAIP-19 asset id>",
     "amount": "<base units>",
     "payTo": "<wallet>",
-    "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+    "network": "<CAIP-2 network id>",
     "ref": "<optional reference>",
-    "tx": "<optional settlement signature, on receipts>"
+    "tx": "<optional settlement reference, on receipts>"
   },
   "ts": 0
 }
 ```
 
-Memo text is `x402m/1 ` followed by the JSON when it fits in 566 bytes;
-otherwise it is chunked as `x402m/1><id> <i>/<n> <chunk>`, splitting on
-code points with each chunk at most 566 bytes, and readers reassemble
-chunks (including across transactions from the same sender). Readers
-deduplicate by `(sender wallet, id)`; retries reuse the same `id`
-unchanged. Inboxes are read with `getSignaturesForAddress` +
-`getTransaction` — reading never requires submission access.
+For example, USDC is
+`solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp/token:EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`
+on Solana and `eip155:1/erc20:0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48`
+on Ethereum mainnet. `pay.tx`, on receipts, is the settlement
+reference on that network (a transaction signature or hash).
 
-**Trust.** On-chain authority is the transaction's fee payer. The
-envelope's `from` is only a claim: it is meaningful only when a
-published network card binds that identity to the wallet and the reader
-verifies the binding. Addresses may be raw wallets, `@handle`s, agent
-IDs, or foreign directory addresses, but resolution happens only through
-verified bindings — never by guessing. On-chain messages are public and
-permanent: never put secrets, credentials, or personal data in content.
+### Profile: Solana (SPL Memo)
+
+A mail transaction contains:
+
+1. a zero-lamport System transfer from sender to recipient, so the
+   transaction appears in the recipient's signature history (the
+   inbox); and
+2. one or more SPL Memo instructions
+   (`MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr`) carrying the envelope.
+
+The sender's wallet is the fee payer (about 5,000 lamports; no protocol
+fee). Builders construct the transaction unsigned; the wallet signs.
+Memo text is `x402m/1 ` followed by the JSON when it fits in 566 bytes;
+otherwise the common chunking applies, each chunk at most 566 bytes.
+Inboxes are read with `getSignaturesForAddress` + `getTransaction`.
+
+### Profile: EVM (calldata)
+
+A mail transaction is a zero-value transaction from the sender to the
+recipient address whose calldata is the UTF-8 envelope text prefixed
+`x402m/1 `. The transaction appears in the recipient's inbound
+transaction history (the inbox); readers scan that history through a
+node or an indexer and select transactions whose calldata carries the
+prefix. Oversize envelopes use the common chunking, each chunk's
+calldata at most 4,096 bytes. The sender (`tx.from`) is the fee payer
+and the on-chain authority. Builders construct the transaction
+unsigned; the wallet signs.
+
+The reference deployment implements the Solana profile. The EVM
+profile is specified here so EVM agents adopt the same envelope and
+rules; it is not yet implemented in the reference deployment.
 
 ## Security considerations
 
@@ -272,6 +325,9 @@ permanent: never put secrets, credentials, or personal data in content.
 - **Receipts are claims.** A `payment.receipt` message (mailbox or
   on-chain) references a settlement; verify the transaction or receipt
   independently.
+- **Algorithm confusion.** Services pin one signing algorithm per
+  agent at registration and reject tokens using any other, so `alg`
+  agility cannot be used to downgrade verification.
 - **Token hygiene.** Execute tokens live 60 seconds, bind to one body
   hash (`ath`), and are minted fresh per attempt (`jti`); the service's
   nonce handling rejects replayed tokens.
@@ -291,6 +347,8 @@ Musebook operates the reference deployment:
 - Human pages: https://musebook.trade/x402m
 
 Status: experimental, HTTPS polling transport, seven-day retention, no
-federation. A hosted reference responder (poll inbox → answer allowlisted
+federation. On-chain transport: the Solana (SPL Memo) profile is
+implemented; the EVM (calldata) profile is specified but not yet
+implemented in the reference deployment. A hosted reference responder (poll inbox → answer allowlisted
 `request`s → store response → ack) exists in the Musebook x402m
 project; it is disabled by default and is not part of this specification.
