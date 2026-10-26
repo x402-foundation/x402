@@ -38,6 +38,7 @@ Signer interfaces differ between client and facilitator roles:
 **Example interfaces defined by mechanisms:**
 - `mechanisms/evm.ClientEvmSigner` - EIP-712 signing
 - `mechanisms/svm.ClientSvmSigner` - Ed25519 transaction signing
+- `mechanisms/casper.ClientCasperSigner` - EIP-712 signing with Casper-formatted addresses
 
 #### Facilitator Signers
 
@@ -50,6 +51,7 @@ Signer interfaces differ between client and facilitator roles:
 **Example interfaces defined by mechanisms:**
 - `mechanisms/evm.FacilitatorEvmSigner` - Verify EIP-712, submit EIP-3009 transactions
 - `mechanisms/svm.FacilitatorSvmSigner` - Verify transactions, submit to Solana
+- `mechanisms/casper.FacilitatorCasperSigner` - Verify EIP-712 signatures, submit Casper transactions, poll for execution
 
 The facilitator signer interface is **significantly more complex** than the client signer interface because it must interact with the blockchain.
 
@@ -59,7 +61,7 @@ This package provides **helper implementations** of mechanism-defined signer int
 
 ### Current Helpers
 
-**Client Signers Only** (currently available):
+**Client Signers**:
 
 - **`signers/evm`** - Implements `mechanisms/evm.ClientEvmSigner` interface
   - Helper: `NewClientSignerFromPrivateKey(hexKey)` - Creates EVM client signer
@@ -68,6 +70,15 @@ This package provides **helper implementations** of mechanism-defined signer int
 - **`signers/svm`** - Implements `mechanisms/svm.ClientSvmSigner` interface
   - Helper: `NewClientSignerFromPrivateKey(base58Key)` - Creates SVM client signer
   - Eliminates: ~70 lines of Ed25519 signing code
+
+- **`signers/casper`** - Implements `mechanisms/casper.ClientCasperSigner` interface
+  - Helpers: `NewClientSignerFromKeyFile(path, algo)` and `NewClientSignerFromSecret(hex, algo)` - Creates Casper client signer (ed25519 or secp256k1)
+  - Eliminates: ~60 lines of EIP-712 signing and address-formatting code
+
+**Facilitator Signers**:
+
+- **`signers/casper`** - Implements `mechanisms/casper.FacilitatorCasperSigner` interface
+  - Helper: `NewFacilitatorSigner(FacilitatorSignerConfig)` - Manages a per-network registry of keys and RPC URLs; verifies signatures, signs transactions, submits via `PutTransaction`, and polls for execution via `WaitForTransaction`
 
 ### Future Helpers
 
@@ -119,6 +130,8 @@ The architecture flows from mechanisms to signers:
 | **EVM Facilitator Signer** | `mechanisms/evm` package | Application (or future helper) |
 | **SVM Client Signer** | `mechanisms/svm` package | `signers/svm` package (helper) |
 | **SVM Facilitator Signer** | `mechanisms/svm` package | Application (or future helper) |
+| **Casper Client Signer** | `mechanisms/casper` package | `signers/casper` package (helper) |
+| **Casper Facilitator Signer** | `mechanisms/casper` package | `signers/casper` package (helper) |
 
 Applications can always implement mechanism interfaces directly if the helpers don't meet their needs.
 
@@ -133,10 +146,16 @@ signers/
 │   ├── client_test.go  - Tests
 │   └── README.md       - EVM-specific documentation
 │
-└── svm/                - SVM signer helpers
-    ├── client.go       - Implements mechanisms/svm.ClientSvmSigner
+├── svm/                - SVM signer helpers
+│   ├── client.go       - Implements mechanisms/svm.ClientSvmSigner
+│   ├── client_test.go  - Tests
+│   └── README.md       - SVM-specific documentation
+│
+└── casper/             - Casper signer helpers
+    ├── client.go       - Implements mechanisms/casper.ClientCasperSigner
+    ├── facilitator.go  - Implements mechanisms/casper.FacilitatorCasperSigner
     ├── client_test.go  - Tests
-    └── README.md       - SVM-specific documentation
+    └── README.md       - Casper-specific documentation
 ```
 
 ## Usage
@@ -157,6 +176,49 @@ import svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
 
 signer, _ := svmsigners.NewClientSignerFromPrivateKey("5J...")
 // Returns: mechanisms/svm.ClientSvmSigner implementation
+```
+
+### Casper Client Signer
+
+```go
+import caspersigners "github.com/x402-foundation/x402/go/v2/signers/casper"
+
+// From a PEM file (ed25519)
+signer, _ := caspersigners.NewClientSignerFromKeyFile("/path/to/secret_key.pem", "ed25519")
+// Returns: mechanisms/casper.ClientCasperSigner implementation
+
+// From a hex secret (secp256k1)
+signer, _ := caspersigners.NewClientSignerFromSecret(os.Getenv("CASPER_PRIVATE_KEY"), "secp256k1")
+```
+
+### Casper Facilitator Signer
+
+```go
+import (
+    caspersigners "github.com/x402-foundation/x402/go/v2/signers/casper"
+    "github.com/make-software/casper-go-sdk/v2/types/keypair"
+)
+
+mainnetKey, _ := keypair.NewPrivateKeyFromFile("/path/to/mainnet.pem", keypair.ED25519)
+testnetKey, _ := keypair.NewPrivateKeyFromFile("/path/to/testnet.pem", keypair.ED25519)
+
+signer := caspersigners.NewFacilitatorSigner(
+    caspersigners.FacilitatorSignerConfig{
+        Keys: map[string]keypair.PrivateKey{
+            "casper:casper":      mainnetKey,
+            "casper:casper-test": testnetKey,
+        },
+        RpcURLs: map[string]string{
+            "casper:casper":      "https://node.cspr.cloud",
+            "casper:casper-test": "https://node.testnet.cspr.cloud",
+        },
+        SpeculativeRpcURLs: map[string]string{
+            "casper:casper":      "https://speculative.cspr.cloud",
+            "casper:casper-test": "https://speculative.testnet.cspr.cloud",
+        },
+    },
+)
+// Returns: mechanisms/casper.FacilitatorCasperSigner implementation
 ```
 
 ## Helper Philosophy
@@ -185,6 +247,7 @@ The signers package is here to help, but it doesn't constrain what mechanisms ca
 
 - **[EVM Signers](evm/README.md)** - EVM-specific signer helpers
 - **[SVM Signers](svm/README.md)** - SVM-specific signer helpers
+- **[Casper Signers](casper/README.md)** - Casper-specific signer helpers (client + facilitator)
 - **[Mechanisms](../mechanisms/README.md)** - Mechanism implementations that define signer interfaces
 - **[CLIENT.md](../CLIENT.md)** - Using client signers
 - **[FACILITATOR.md](../FACILITATOR.md)** - Facilitator signer requirements

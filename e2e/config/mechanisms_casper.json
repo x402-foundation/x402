@@ -75,7 +75,8 @@
     "/exact/casper": {
       "scheme": "exact",
       "sdks": [
-        "typescript"
+        "typescript",
+        "go"
       ],
       "price": {
         "amount": "10000000",

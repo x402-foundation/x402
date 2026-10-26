@@ -16,8 +16,8 @@ Facilitators allow clients to create payments without needing to interact with t
 
 - **Basic Facilitator Setup**: Creating and configuring a facilitator
 - **Payment Verification**: Verifying client payment signatures with idiomatic error handling
-- **On-chain Settlement**: Submitting transactions to the blockchain (EVM + SVM)
-- **Facilitator Signer Implementation**: See `signer.go` for EVM and SVM signer examples
+- **On-chain Settlement**: Submitting transactions to the blockchain (EVM, SVM and Casper)
+- **Facilitator Signer Implementation**: See `signer.go` for EVM and SVM signer examples; Casper uses the ready-made `signers/casper` facilitator signer
 - **Lifecycle Hooks**: Logging verification and settlement operations
 - **HTTP Endpoints**: Exposing /verify, /settle, and /supported APIs
 
@@ -66,6 +66,7 @@ For production deployments with additional features (Bazaar discovery, multiple 
 - Go 1.24 or higher
 - EVM private key with Base Sepolia ETH for transaction fees
 - SVM private key with Solana Devnet SOL for transaction fees (optional)
+- Casper private key with Casper Testnet CSPR for transaction fees (optional)
 
 ## Setup
 
@@ -74,9 +75,16 @@ For production deployments with additional features (Bazaar discovery, multiple 
 ```bash
 EVM_PRIVATE_KEY=<your-evm-private-key>
 SVM_PRIVATE_KEY=<your-svm-private-key>
+
+# Optional: Casper Testnet
+CASPER_PRIVATE_KEY=<your-casper-private-key-hex>
+CASPER_PRIVATE_KEY_ALGORITHM=ed25519 # ed25519 (default) or secp256k1
+CASPER_SPECULATIVE_RPC_URL=          # Optional speculative_exec endpoint used during verify
 ```
 
-**⚠️ Security Note:** The facilitator private key needs ETH/SOL for gas fees. Use a dedicated testnet account.
+Without `CASPER_SPECULATIVE_RPC_URL`, Casper verification checks the token contract, payer balance and nonce over the regular RPC endpoint instead of simulating the transfer.
+
+**⚠️ Security Note:** The facilitator private key needs ETH/SOL/CSPR for gas fees. Use a dedicated testnet account.
 
 2. Install dependencies and run:
 
@@ -136,6 +144,11 @@ Returns supported networks and schemes.
       "x402Version": 2,
       "scheme": "exact",
       "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
+    },
+    {
+      "x402Version": 2,
+      "scheme": "exact",
+      "network": "casper:casper-test"
     }
   ]
 }
@@ -238,9 +251,14 @@ Register additional schemes for other networks:
 
 ```go
 import (
+    "os"
+
+    "github.com/make-software/casper-go-sdk/v2/types/keypair"
     x402 "github.com/x402-foundation/x402/go/v2"
     evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
     svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
+    casperfacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/casper/exact/facilitator"
+    caspersigners "github.com/x402-foundation/x402/go/v2/signers/casper"
 )
 
 facilitator := x402.Newx402Facilitator()
@@ -253,6 +271,14 @@ facilitator.Register([]x402.Network{"eip155:84532"}, evm.NewExactEvmScheme(evmSi
 
 // Register SVM scheme
 facilitator.Register([]x402.Network{"solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"}, svm.NewExactSvmScheme(svmSigner))
+
+// Register Casper scheme
+casperKey, _ := caspersigners.NewPrivateKeyFromSecret(os.Getenv("CASPER_PRIVATE_KEY"), "ed25519")
+casperSigner := caspersigners.NewFacilitatorSigner(caspersigners.FacilitatorSignerConfig{
+    Keys:    map[string]keypair.PrivateKey{"casper:casper-test": *casperKey},
+    RpcURLs: map[string]string{"casper:casper-test": "https://node.testnet.casper.network/rpc"},
+})
+facilitator.Register([]x402.Network{"casper:casper-test"}, casperfacilitator.NewExactCasperScheme(casperSigner, nil))
 ```
 
 ### Payment Identifier (Idempotency)
@@ -351,3 +377,5 @@ Networks use [CAIP-2](https://github.com/ChainAgnostic/CAIPs/blob/main/CAIPs/cai
 - `eip155:8453` — Base Mainnet
 - `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` — Solana Devnet
 - `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` — Solana Mainnet
+- `casper:casper-test` — Casper Testnet
+- `casper:casper` — Casper Mainnet
