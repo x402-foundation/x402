@@ -558,4 +558,90 @@ describe("x402Facilitator", () => {
       expect(patternFacilitator.verifyCalls.length).toBe(0);
     });
   });
+
+  describe("Self-payment prohibition (invalid_self_payment)", () => {
+    it("should reject verify when scheme-resolved payer equals payTo (case-insensitive)", async () => {
+      const facilitator = new x402Facilitator();
+      const selfPayFacilitator = new TestFacilitator("exact", {
+        isValid: true,
+        payer: "0xAbCdEf1234567890AbCdEf1234567890AbCdEf12",
+      });
+
+      facilitator.register("eip155:8453" as Network, selfPayFacilitator);
+
+      let failureHookReason: string | undefined;
+      facilitator.onVerifyFailure(async ctx => {
+        failureHookReason = ctx.error.message;
+      });
+
+      const payload = buildPaymentPayload({ x402Version: 2 });
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        payTo: "0xabcdef1234567890abcdef1234567890abcdef12",
+      });
+
+      const result = await facilitator.verify(payload, requirements);
+
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe("invalid_self_payment");
+      expect(result.payer).toBe("0xAbCdEf1234567890AbCdEf1234567890AbCdEf12");
+      expect(failureHookReason).toContain("invalid_self_payment");
+    });
+
+    it("should reject verify pre-scheme when payload.from equals payTo", async () => {
+      const facilitator = new x402Facilitator();
+      const schemeFacilitator = new TestFacilitator("exact", { isValid: true });
+
+      facilitator.register("eip155:8453" as Network, schemeFacilitator);
+
+      const payload = buildPaymentPayload({
+        x402Version: 2,
+        payload: {
+          signature: "test_sig",
+          from: "merchant_self_wash_addr",
+        },
+      });
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        payTo: "MERCHANT_SELF_WASH_ADDR",
+      });
+
+      const result = await facilitator.verify(payload, requirements);
+
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe("invalid_self_payment");
+      expect(schemeFacilitator.verifyCalls).toHaveLength(0);
+    });
+
+    it("should reject settle when payload or scheme-resolved payer equals payTo", async () => {
+      const facilitator = new x402Facilitator();
+      const selfSettleFacilitator = new TestFacilitator(
+        "exact",
+        { isValid: true },
+        {
+          success: true,
+          payer: "self_merchant_wallet",
+          transaction: "0xWashTx",
+          network: "eip155:8453",
+        },
+      );
+
+      facilitator.register("eip155:8453" as Network, selfSettleFacilitator);
+
+      const payload = buildPaymentPayload({ x402Version: 2 });
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        payTo: "self_merchant_wallet",
+      });
+
+      const result = await facilitator.settle(payload, requirements);
+
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe("invalid_self_payment");
+      expect(result.transaction).toBe("");
+    });
+  });
 });
