@@ -940,7 +940,7 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
     );
 
     expect(result.isValid).toBe(false);
-    expect(result.invalidReason).toBe("invalid_exact_svm_payload_no_transfer_instruction");
+    expect(result.invalidReason).toBe("invalid_exact_svm_payload_unknown_instruction");
   });
 
   it("verify does NOT fall through to Path 2 on a semantic (amount mismatch) failure", async () => {
@@ -1103,7 +1103,7 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
     // Lighthouse assertions in the optional tail = 7 instructions total (see #2097).
     const lighthouse: IInstruction = {
       programAddress: LIGHTHOUSE_PROGRAM_ADDRESS as Address,
-      data: new Uint8Array([0]),
+      data: new Uint8Array([2]),
     };
     const txBase64 = await buildStaticTransferPayload({
       feePayer: feePayer.address,

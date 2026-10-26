@@ -170,31 +170,32 @@ func TestExactSvmScheme_LookupTableRejectedWithoutCapabilities(t *testing.T) {
 	assert.Contains(t, ve.InvalidReason, ErrSmartWalletAltResolutionUnavailable)
 }
 
-func TestExactSvmScheme_Path1AcceptsSevenLighthouseInstructions(t *testing.T) {
-	f := buildExactFixtureWithOptional(t,
-		lighthouseInstruction(),
-		lighthouseInstruction(),
-		lighthouseInstruction(),
-		lighthouseInstruction(),
-	)
-	require.Equal(t, 7, len(f.tx.Message.Instructions))
+func TestExactSvmScheme_Path1RejectsDuplicateTransferInstruction(t *testing.T) {
+	f := buildExactFixture(t)
+	dup := f.tx.Message.Instructions[2]
+	f.tx.Message.Instructions = append(f.tx.Message.Instructions, dup)
+	signTransaction(t, f.tx, f.ownerKey)
+	encoded, err := svm.EncodeTransaction(f.tx)
+	require.NoError(t, err)
+	f.payload.Payload = (&svm.ExactSvmPayload{Transaction: encoded}).ToMap()
 
 	signer := &mockExactSvmSigner{addresses: []solana.PublicKey{f.facilitatorAddr}}
 	scheme := NewExactSvmScheme(signer)
-	resp, err := scheme.Verify(context.Background(), f.payload, f.requirements, nil)
-	require.NoError(t, err)
-	assert.True(t, resp.IsValid)
+	_, err = scheme.Verify(context.Background(), f.payload, f.requirements, nil)
+	var ve *x402.VerifyError
+	require.Error(t, err)
+	require.True(t, errors.As(err, &ve))
+	assert.Equal(t, ErrProtocolInstructionOrder, ve.InvalidReason)
 }
 
-func TestExactSvmScheme_Path1RejectsEightInstructions(t *testing.T) {
+func TestExactSvmScheme_Path1RejectsUnknownProgramAnywhere(t *testing.T) {
 	f := buildExactFixtureWithOptional(t,
-		lighthouseInstruction(),
-		lighthouseInstruction(),
-		lighthouseInstruction(),
-		lighthouseInstruction(),
-		lighthouseInstruction(),
+		solana.NewInstruction(
+			solana.SystemProgramID,
+			solana.AccountMetaSlice{},
+			[]byte{0x00},
+		),
 	)
-	require.Equal(t, 8, len(f.tx.Message.Instructions))
 
 	signer := &mockExactSvmSigner{addresses: []solana.PublicKey{f.facilitatorAddr}}
 	scheme := NewExactSvmScheme(signer)
@@ -202,7 +203,7 @@ func TestExactSvmScheme_Path1RejectsEightInstructions(t *testing.T) {
 	var ve *x402.VerifyError
 	require.Error(t, err)
 	require.True(t, errors.As(err, &ve))
-	assert.Equal(t, ErrTransactionInstructionsLength, ve.InvalidReason)
+	assert.Equal(t, ErrUnknownInstruction, ve.InvalidReason)
 }
 
 func TestExactSvmScheme_Path1RejectsOverpayment(t *testing.T) {
