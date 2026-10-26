@@ -14,7 +14,7 @@ This scheme facilitates payments of a specific amount of XRP or an issued curren
 | ------------------------- | ---------------------------------------------------------------------------- |
 | **Payment authorization** | The payer signs a standard XRPL `Payment` transaction                        |
 | **Settlement**            | The facilitator submits the signed transaction to XRPL                       |
-| **Fee payer**             | The payer pays the XRPL transaction fee embedded in the signed transaction   |
+| **Fee payer**             | The payer pays the XRPL transaction fee embedded in the signed transaction (overridden by the facilitator when an active `xrplFeeSponsoring` extension applies) |
 
 XRPL charges the transaction fee to the transaction `Account`. This exact scheme therefore does not support facilitator-sponsored network fees for the signed `Payment` transaction. Supporting fee sponsorship would require a different payment model, not only a facilitator implementation change. The [`xrplFeeSponsoring`](../../extensions/xrpl_fee_sponsoring.md) extension defines that payment model via the XLS-68 `Sponsor` amendment, on networks where that amendment is enabled.
 

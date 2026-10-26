@@ -38,11 +38,16 @@ enabled (currently Devnet; not Mainnet).
 ## `PaymentRequired`
 
 A facilitator advertises support by including the `xrplFeeSponsoring` key in
-the `extensions` object of the `402 Payment Required` response.
+the `extensions` object of the `402 Payment Required` response, providing both
+its sponsorship `info` configuration and a JSON Schema `schema` block.
 
 ```json
 {
   "x402Version": 2,
+  "resource": {
+    "url": "https://api.example.com/data",
+    "description": "Premium data endpoint"
+  },
   "accepts": [
     {
       "scheme": "exact",
@@ -65,6 +70,35 @@ the `extensions` object of the `402 Payment Required` response.
         "sponsor": "rSponsor1VktvzBz8JF2oJC6qaww6RZ7Lw",
         "mode": "cosigned",
         "maxFee": "1000"
+      },
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "sponsor": {
+            "type": "string",
+            "pattern": "^r[1-9A-HJ-NP-Za-km-z]{25,34}$",
+            "description": "Classic XRPL address of the fee sponsor."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "cosigned",
+              "prefunded"
+            ],
+            "description": "Fee sponsorship operating mode."
+          },
+          "maxFee": {
+            "type": "string",
+            "pattern": "^[0-9]+$",
+            "description": "Maximum sponsored transaction fee in drops."
+          }
+        },
+        "required": [
+          "sponsor",
+          "mode",
+          "maxFee"
+        ]
       }
     }
   }
@@ -91,19 +125,46 @@ blob as in the base scheme.
   the payer's signature — and the facilitator cannot alter any other field
   without invalidating it.
 
-The client MUST echo the extension key in `PaymentPayload.extensions`. The
-echo — not the mere presence of sponsorship fields in the decoded blob — is
-what activates this extension's verification deltas for a given payload, so
-a payload carrying sponsorship fields without the echo fails the base
+The client MUST echo the extension key in `PaymentPayload.extensions`. In
+accordance with core v2 extension rules, the client SHOULD include the received
+`info` object under the extension key; facilitators MUST treat either the
+echoed `info` or an empty object `{}` as a valid opt-in signal activating the
+extension. The echo — not the mere presence of sponsorship fields in the decoded
+blob — is what activates this extension's verification deltas for a given payload,
+so a payload carrying sponsorship fields without the echo fails the base
 scheme's §9 check deterministically instead of being inferred into the
 extension path.
 
 ```json
 {
   "x402Version": 2,
-  "resource": { "url": "https://api.example.com/data" },
-  "payload": { "signedTxBlob": "..." },
-  "extensions": { "xrplFeeSponsoring": {} }
+  "resource": {
+    "url": "https://api.example.com/data"
+  },
+  "accepted": {
+    "scheme": "exact",
+    "network": "xrpl:2",
+    "asset": "524C555344000000000000000000000000000000",
+    "payTo": "rN7n3473SaZBCG4dFL83w7a1RXtXtbk2D9",
+    "amount": "2.5",
+    "maxTimeoutSeconds": 600,
+    "extra": {
+      "areFeesSponsored": true,
+      "issuer": "rMwjYedjc7qqtKYVLiAccJSmCwih4LnE2q"
+    }
+  },
+  "payload": {
+    "signedTxBlob": "120000228000000024000000036840000000000000C732103AB40A0490F9B7ED8DF29D246BF2D6269820A0EE7742ACDD457BEA7C7D0931EDB74473045022100..."
+  },
+  "extensions": {
+    "xrplFeeSponsoring": {
+      "info": {
+        "sponsor": "rSponsor1VktvzBz8JF2oJC6qaww6RZ7Lw",
+        "mode": "cosigned",
+        "maxFee": "1000"
+      }
+    }
+  }
 }
 ```
 
