@@ -6,6 +6,7 @@
 
 // Export V2 implementations (default)
 export { ExactSvmScheme } from "./exact";
+export type { ExactSvmClientConfig } from "./exact/client/scheme";
 export type { ExactSvmSchemeOptions } from "./exact/facilitator/scheme";
 export { UptoSvmScheme } from "./upto";
 export { BatchSvmScheme } from "./batch-settlement";

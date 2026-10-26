@@ -31,7 +31,8 @@ This package provides three main components for handling x402 payments on Solana
 - `ExactSvmScheme` - V2 exact client using SPL Token
 - `toClientSvmSigner(keypair)` - Converts Solana keypairs to x402 signers
 - `ClientSvmSigner` - TypeScript type for client signers
-- `ClientSvmConfig` - Optional RPC configuration
+- `ClientSvmConfig` - Optional RPC URL configuration
+- `ExactSvmClientConfig` - V2 exact client configuration, including a custom RPC client
 
 **Facilitator:**
 - `ExactSvmScheme` - V2 exact facilitator for payment verification and settlement
@@ -171,6 +172,27 @@ const client = new x402Client()
   .registerSchemeV1("solana-devnet", new ExactSvmSchemeV1(signer))
   .registerSchemeV1("solana", new ExactSvmSchemeV1(signer));
 ```
+
+#### Custom RPC transport (v2 exact)
+
+Pass an existing Solana Kit RPC client to use your application's transport, including its retry, throttling or failover policy. Given your `signer` and a Kit `RpcTransport` named `transport`:
+
+```typescript
+import { createSolanaRpcFromTransport } from "@solana/kit";
+import { x402Client } from "@x402/core/client";
+import { SOLANA_DEVNET_CAIP2 } from "@x402/svm";
+import { ExactSvmScheme } from "@x402/svm/exact/client";
+
+const rpc = createSolanaRpcFromTransport(transport);
+const client = new x402Client().register(
+  SOLANA_DEVNET_CAIP2,
+  new ExactSvmScheme(signer, { rpc }),
+);
+```
+
+The injected `rpc` takes precedence over `rpcUrl`. Without it, the existing URL-based configuration and network defaults apply. Transport errors propagate to the caller; the scheme does not fall back to another RPC client.
+
+The RPC must serve the registered payment network. Use separate scheme instances and explicit registrations for different networks; the scheme validates supported network identifiers but does not check the RPC's cluster or route requests between clusters. This option applies to the v2 exact client.
 
 ### 3. Using Config (Flexible)
 

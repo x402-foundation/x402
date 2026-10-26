@@ -8,6 +8,8 @@ import {
   getTransactionDecoder,
   getCompiledTransactionMessageDecoder,
   type Blockhash,
+  type GetLatestBlockhashApi,
+  type Rpc,
   type Transaction,
   createSolanaRpc,
   devnet,
@@ -166,7 +168,7 @@ export function createRpcClient(
  * @returns The blockhash and its last-valid block height
  */
 export async function resolveBlockhash(
-  rpc: ReturnType<typeof createRpcClient>,
+  rpc: Rpc<GetLatestBlockhashApi>,
   requirements: PaymentRequirements,
 ): Promise<{ blockhash: Blockhash; lastValidBlockHeight: bigint }> {
   const provided = requirements.extra?.recentBlockhash;

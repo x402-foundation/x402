@@ -80,7 +80,7 @@ export function normalizeNetwork(network: string): string {
   }
 
   const caip2Network = V1_TO_V2_NETWORK_MAP[network];
-  if (!caip2Network) {
+  if (!Object.prototype.hasOwnProperty.call(V1_TO_V2_NETWORK_MAP, network) || !caip2Network) {
     throw new Error(`Unsupported SVM network: ${network}`);
   }
   return caip2Network;

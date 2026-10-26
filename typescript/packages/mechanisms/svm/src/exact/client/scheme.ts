@@ -18,6 +18,9 @@ import {
   setTransactionMessageFeePayer,
   setTransactionMessageLifetimeUsingBlockhash,
   type Address,
+  type GetAccountInfoApi,
+  type GetLatestBlockhashApi,
+  type Rpc,
 } from "@solana/kit";
 import type { PaymentPayload, PaymentRequirements, SchemeNetworkClient } from "@x402/core/types";
 import {
@@ -25,12 +28,24 @@ import {
   DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
   MAX_MEMO_BYTES,
   MEMO_PROGRAM_ADDRESS,
+  normalizeNetwork,
 } from "../../constants";
 import type { ClientSvmConfig, ClientSvmSigner } from "../../signer";
 import type { ExactSvmPayloadV2 } from "../../types";
 import { createRpcClient, resolveBlockhash } from "../../utils";
 import { getCachedMintMetadata, type MintMetadataCache } from "../../mint-cache";
 import { findDefaultAsset } from "../../defaultAssets";
+
+/**
+ * Configuration for the v2 exact SVM client.
+ */
+export type ExactSvmClientConfig = ClientSvmConfig & {
+  /**
+   * Optional RPC client, taking precedence over rpcUrl. It must connect to the
+   * payment requirements' network; use separate scheme registrations per network.
+   */
+  rpc?: Rpc<GetAccountInfoApi & GetLatestBlockhashApi>;
+};
 
 /**
  * SVM client implementation for the Exact payment scheme.
@@ -44,12 +59,12 @@ export class ExactSvmScheme implements SchemeNetworkClient {
    * Creates a new ExactSvmClient instance.
    *
    * @param signer - The SVM signer for client operations
-   * @param config - Optional configuration with custom RPC URL
+   * @param config - Optional configuration with a custom RPC client or URL
    * @returns ExactSvmClient instance
    */
   constructor(
     private readonly signer: ClientSvmSigner,
-    private readonly config?: ClientSvmConfig,
+    private readonly config?: ExactSvmClientConfig,
   ) {}
 
   /**
@@ -63,7 +78,9 @@ export class ExactSvmScheme implements SchemeNetworkClient {
     x402Version: number,
     paymentRequirements: PaymentRequirements,
   ): Promise<Pick<PaymentPayload, "x402Version" | "payload">> {
-    const rpc = createRpcClient(paymentRequirements.network, this.config?.rpcUrl);
+    normalizeNetwork(paymentRequirements.network);
+    const rpc =
+      this.config?.rpc ?? createRpcClient(paymentRequirements.network, this.config?.rpcUrl);
 
     const mintMetadata = await getCachedMintMetadata(
       rpc,
