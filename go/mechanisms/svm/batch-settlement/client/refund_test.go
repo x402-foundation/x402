@@ -25,6 +25,7 @@ func TestBatchSettlementRefundDriver(t *testing.T) {
 			sent = append(sent, r.Header.Clone())
 			if r.Header.Get("PAYMENT-SIGNATURE") == "" {
 				return headerResponse(402, "PAYMENT-REQUIRED", encodeRequired(t, x402.PaymentRequired{
+					Resource:    &x402.ResourceInfo{URL: "https://example.com/resource"},
 					Accepts:     []types.PaymentRequirements{req},
 					X402Version: 2,
 				}))
@@ -64,6 +65,7 @@ func TestBatchSettlementRefundDriver(t *testing.T) {
 		client := scriptedClient(func(r *http.Request) *http.Response {
 			if r.Header.Get("PAYMENT-SIGNATURE") == "" {
 				return headerResponse(402, "PAYMENT-REQUIRED", encodeRequired(t, x402.PaymentRequired{
+					Resource:    &x402.ResourceInfo{URL: "https://example.com/resource"},
 					Accepts:     []types.PaymentRequirements{serverSigned, clientSigned},
 					X402Version: 2,
 				}))
@@ -104,6 +106,7 @@ func TestBatchSettlementRefundDriver(t *testing.T) {
 			payloads = append(payloads, decodeSignature(t, r.Header.Get("PAYMENT-SIGNATURE"))["payload"].(map[string]any))
 			if len(payloads) == 1 {
 				return headerResponse(402, "PAYMENT-REQUIRED", encodeRequired(t, x402.PaymentRequired{
+					Resource:    &x402.ResourceInfo{URL: "https://example.com/resource"},
 					Accepts:     []types.PaymentRequirements{req},
 					Error:       batchsettlement.ErrReceiverBindingUnavailable,
 					X402Version: 2,
@@ -128,6 +131,7 @@ func TestBatchSettlementRefundDriver(t *testing.T) {
 	t.Run("surfaces the server's reason when the close is refused", func(t *testing.T) {
 		client := scriptedClient(func(r *http.Request) *http.Response {
 			return headerResponse(402, "PAYMENT-REQUIRED", encodeRequired(t, x402.PaymentRequired{
+				Resource:    &x402.ResourceInfo{URL: "https://example.com/resource"},
 				Accepts:     []types.PaymentRequirements{req},
 				Error:       "invalid_batch_settlement_svm_close_state",
 				X402Version: 2,
@@ -165,6 +169,7 @@ func TestBatchSettlementRefundDriverEdgeCases(t *testing.T) {
 		evm.Network = "eip155:84532"
 		client := scriptedClient(func(r *http.Request) *http.Response {
 			return headerResponse(402, "PAYMENT-REQUIRED", encodeRequired(t, x402.PaymentRequired{
+				Resource:    &x402.ResourceInfo{URL: "https://example.com/resource"},
 				Accepts:     []types.PaymentRequirements{evm, req},
 				X402Version: 2,
 			}))
@@ -180,6 +185,7 @@ func TestBatchSettlementRefundDriverEdgeCases(t *testing.T) {
 		exact.Scheme = "exact"
 		client := scriptedClient(func(r *http.Request) *http.Response {
 			return headerResponse(402, "PAYMENT-REQUIRED", encodeRequired(t, x402.PaymentRequired{
+				Resource:    &x402.ResourceInfo{URL: "https://example.com/resource"},
 				Accepts:     []types.PaymentRequirements{exact},
 				X402Version: 2,
 			}))
@@ -225,6 +231,7 @@ func TestBatchSettlementRefundDriverEdgeCases(t *testing.T) {
 	t.Run("reports a refusal whose 402 header carries no error field", func(t *testing.T) {
 		client := scriptedClient(func(r *http.Request) *http.Response {
 			return headerResponse(402, "PAYMENT-REQUIRED", encodeRequired(t, x402.PaymentRequired{
+				Resource:    &x402.ResourceInfo{URL: "https://example.com/resource"},
 				Accepts:     []types.PaymentRequirements{req},
 				X402Version: 2,
 			}))

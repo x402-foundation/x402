@@ -1403,6 +1403,7 @@ func TestOnPaymentResponse_CorrectiveMismatchSignalsRecovered(t *testing.T) {
 		Requirements: defaultRequirements(),
 		PaymentRequired: &types.PaymentRequired{
 			X402Version: 2,
+			Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 			Error:       batchsettlement.ErrCumulativeAmountMismatch,
 			Accepts:     []types.PaymentRequirements{defaultRequirements()},
 		},
@@ -1421,6 +1422,7 @@ func TestOnPaymentResponse_CorrectiveUnknownErrorDoesNotRecover(t *testing.T) {
 		Requirements: defaultRequirements(),
 		PaymentRequired: &types.PaymentRequired{
 			X402Version: 2,
+			Resource:    &types.ResourceInfo{URL: "https://example.com/resource"},
 			Error:       "some_other_error",
 			Accepts:     []types.PaymentRequirements{defaultRequirements()},
 		},

@@ -17,7 +17,13 @@ from x402.http.types import (
 )
 from x402.http.utils import encode_payment_signature_header
 from x402.http.x402_http_server import x402HTTPResourceServer
-from x402.schemas import PaymentPayload, PaymentRequirements, SettleResponse, VerifyResponse
+from x402.schemas import (
+    PaymentPayload,
+    PaymentRequirements,
+    ResourceInfo,
+    SettleResponse,
+    VerifyResponse,
+)
 from x402.schemas.hooks import (
     AbortProtectedRequestResult,
     GrantAccessResult,
@@ -130,6 +136,7 @@ class TestOnProtectedRequest:
             _requirements, _resource, error, _extensions, **_kwargs
         ):
             return PaymentRequired(
+                resource=ResourceInfo(url="https://example.com/resource"),
                 x402_version=2,
                 error=error,
                 accepts=requirements,
@@ -282,7 +289,12 @@ class TestV1PayloadRejected:
         async def mock_create_payment_required(
             _requirements, _resource, error, _extensions, **_kwargs
         ):
-            return PaymentRequired(x402_version=2, error=error, accepts=requirements)
+            return PaymentRequired(
+                x402_version=2,
+                error=error,
+                resource=ResourceInfo(url="https://example.com/resource"),
+                accepts=requirements,
+            )
 
         server.create_payment_required_response = AsyncMock(
             side_effect=mock_create_payment_required

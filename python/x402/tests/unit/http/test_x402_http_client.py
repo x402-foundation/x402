@@ -25,6 +25,7 @@ from x402.schemas import (
     PaymentPayload,
     PaymentRequired,
     PaymentRequirements,
+    ResourceInfo,
     SettleResponse,
 )
 from x402.schemas.hooks import RecoveredResponseResult
@@ -138,7 +139,11 @@ class TestX402HTTPClientBase:
         """Test extracting PaymentRequired from V2 header."""
         base = x402HTTPClientBase()
         requirements = make_payment_requirements()
-        payment_required = PaymentRequired(x402_version=2, accepts=[requirements])
+        payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
+            x402_version=2,
+            accepts=[requirements],
+        )
         encoded = encode_payment_required_header(payment_required)
 
         def get_header(name: str) -> str | None:
@@ -286,6 +291,7 @@ class TestX402HTTPClient:
         http_client = x402HTTPClient(mock_client)
 
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )
@@ -304,6 +310,7 @@ class TestX402HTTPClient:
 
         # Create encoded payment required header
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )
@@ -332,6 +339,7 @@ class TestX402HTTPClientSync:
         http_client = x402HTTPClientSync(mock_client)
 
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )
@@ -347,6 +355,7 @@ class TestX402HTTPClientSync:
         http_client = x402HTTPClientSync(mock_client)
 
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )
@@ -418,6 +427,7 @@ class TestProcessPaymentResult:
         http_client = x402HTTPClient(mock_client)
         payload = make_v2_payload()
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )
@@ -502,6 +512,7 @@ class TestPaymentRoundTripper:
         tripper = PaymentRoundTripper(http_client)
 
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )
@@ -534,6 +545,7 @@ class TestPaymentRoundTripper:
         tripper = PaymentRoundTripper(http_client)
 
         payment_required = PaymentRequired(
+            resource=ResourceInfo(url="https://example.com/resource"),
             x402_version=2,
             accepts=[make_payment_requirements()],
         )
