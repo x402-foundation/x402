@@ -9,6 +9,7 @@ This directory contains **mechanism implementations** for the x402 protocol.
 For example:
 - The **exact** scheme on **EVM** networks uses EIP-3009 for USDC transfers
 - The **exact** scheme on **SVM** networks uses Solana token transfers
+- The **exact** scheme on **Hedera** networks uses partially signed `TransferTransaction`s (HBAR or HTS)
 
 ## Directory Structure
 
@@ -22,8 +23,14 @@ mechanisms/
 │       ├── server/         - Server-side: verify payments
 │       └── facilitator/    - Facilitator-side: settle payments
 │
-└── svm/                    - Solana Virtual Machine networks
-    └── exact/              - Exact payment scheme for SVM
+├── svm/                    - Solana Virtual Machine networks
+│   └── exact/              - Exact payment scheme for SVM
+│       ├── client/         - Client-side: create payments
+│       ├── server/         - Server-side: verify payments
+│       └── facilitator/    - Facilitator-side: settle payments
+│
+└── hedera/                 - Hedera networks
+    └── exact/              - Exact payment scheme for Hedera
         ├── client/         - Client-side: create payments
         ├── server/         - Server-side: verify payments
         └── facilitator/    - Facilitator-side: settle payments
@@ -70,6 +77,12 @@ Ethereum-based exact payments using EIP-3009.
 Solana-based exact payments using token transfers.
 
 **See:** [svm/README.md](svm/README.md)
+
+### Hedera - Exact
+
+Hedera-based exact payments using HBAR / HTS `TransferTransaction`s with a facilitator fee payer.
+
+**See:** [hedera/README.md](hedera/README.md)
 
 ## Future Mechanisms
 
@@ -125,4 +138,5 @@ For questions about contributing mechanisms, please:
 
 - **[EVM Mechanisms](evm/README.md)** - Ethereum Virtual Machine payment schemes
 - **[SVM Mechanisms](svm/README.md)** - Solana Virtual Machine payment schemes
+- **[Hedera Mechanisms](hedera/README.md)** - Hedera payment schemes
 

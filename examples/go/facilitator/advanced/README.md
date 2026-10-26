@@ -66,6 +66,7 @@ For production deployments with additional features (Bazaar discovery, multiple 
 - Go 1.24 or higher
 - EVM private key with Base Sepolia ETH for transaction fees
 - SVM private key with Solana Devnet SOL for transaction fees (optional)
+- Hedera account id + private key with testnet HBAR for transaction fees (optional, `all-networks` only; [Hedera Portal faucet](https://portal.hedera.com/faucet))
 
 ## Setup
 
@@ -74,9 +75,11 @@ For production deployments with additional features (Bazaar discovery, multiple 
 ```bash
 EVM_PRIVATE_KEY=<your-evm-private-key>
 SVM_PRIVATE_KEY=<your-svm-private-key>
+HEDERA_ACCOUNT_ID=0.0.XXXXX
+HEDERA_PRIVATE_KEY=<your-hedera-private-key>
 ```
 
-**⚠️ Security Note:** The facilitator private key needs ETH/SOL for gas fees. Use a dedicated testnet account.
+**⚠️ Security Note:** The facilitator private key needs ETH/SOL/HBAR for gas fees. Use a dedicated testnet account.
 
 2. Install dependencies and run:
 

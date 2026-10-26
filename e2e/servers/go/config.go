@@ -11,6 +11,7 @@ import (
 	batchedserver "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/server"
 	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
 	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/server"
+	hedera "github.com/x402-foundation/x402/go/v2/mechanisms/hedera/exact/server"
 	batchsvmserver "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement/server"
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
 	uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/server"
@@ -110,6 +111,8 @@ func SchemeBindings(cfg Config) []SchemeBinding {
 		exactSVM *svm.ExactSvmScheme
 		uptoSVM  *uptosvm.UptoSvmScheme
 		batchSVM *batchsvmserver.BatchSvmScheme
+
+		exactHedera *hedera.ExactHederaScheme
 	)
 
 	schemeFor := func(networkID, scheme string) x402.SchemeNetworkServer {
@@ -215,6 +218,13 @@ func SchemeBindings(cfg Config) []SchemeBinding {
 					batchSVM = batchsvmserver.NewBatchSvmScheme(batchCfg)
 				}
 				return batchSVM
+			}
+		case "hedera":
+			if scheme == "exact" {
+				if exactHedera == nil {
+					exactHedera = hedera.NewExactHederaScheme()
+				}
+				return exactHedera
 			}
 		}
 		return nil
