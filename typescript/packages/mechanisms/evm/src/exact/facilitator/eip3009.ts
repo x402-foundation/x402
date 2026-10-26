@@ -17,6 +17,7 @@ import { resolveDataSuffix } from "../../shared/extensions";
 import {
   verifyHashSignatureWithCode,
   classifyErc6492Payer,
+  isPlainNonCanonicalEcdsaSignature,
   payerCodeLookupFailureMessage,
   Erc6492Classification,
 } from "../../shared/verifySignature";
@@ -166,6 +167,19 @@ export async function verifyEIP3009(
         isValid: false,
         invalidReason: Errors.ErrFailedToVerifySignature,
         invalidMessage,
+        payer,
+      },
+      classification,
+    };
+  }
+
+  // Reject malleable high-s EOA signatures before broadcast instead of relying on the
+  // token's on-chain InvalidSignatureS revert, which not every ERC-3009 token enforces.
+  if (isPlainNonCanonicalEcdsaSignature(signature, classification.isDeployedAtPayer)) {
+    return {
+      response: {
+        isValid: false,
+        invalidReason: Errors.ErrInvalidSignatureS,
         payer,
       },
       classification,

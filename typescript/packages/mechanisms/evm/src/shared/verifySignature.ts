@@ -4,8 +4,9 @@ import {
   isAddressEqual,
   getAddress,
   parseErc6492Signature,
+  size,
 } from "viem";
-import type { TypedDataDomain } from "viem";
+import type { Hex, TypedDataDomain } from "viem";
 import type { FacilitatorEvmSigner } from "../signer";
 
 /**
@@ -46,6 +47,44 @@ export function payerCodeLookupFailureMessage(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   const stripped = raw.replace(URL_IN_TEXT, "[redacted-url]").replace(/\s+/g, " ").trim();
   return stripped.length > 0 ? stripped.slice(0, 200) : "payer eth_getCode failed";
+}
+
+// secp256k1 group order N halved: the EIP-2 / SEC1 §4.1.4 low-s upper bound.
+// Mirrors Go `secp256k1HalfN` in `evm.IsCanonicalECDSASignature`.
+const SECP256K1_N_HALF = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0n;
+
+/**
+ * Report whether a 65-byte ECDSA signature uses a low-s value (`s <= n/2`, EIP-2).
+ * Any other length is not a plain ECDSA signature and returns false.
+ * Mirrors Go `evm.IsCanonicalECDSASignature`.
+ *
+ * @param signature - The r || s || v signature to inspect.
+ * @returns True for a canonical low-s 65-byte signature; false otherwise.
+ */
+export function isCanonicalEcdsaSignature(signature: Hex): boolean {
+  if (size(signature) !== 65) return false;
+  // Read s (bytes [32, 64)) directly. viem `parseSignature` also validates v and would
+  // throw on a malformed v, which belongs to the later signature check.
+  const s = BigInt(`0x${signature.slice(2 + 64, 2 + 128)}`);
+  return s <= SECP256K1_N_HALF;
+}
+
+/**
+ * Report whether `signature` is a high-s plain EOA signature that verify must reject.
+ * Only a 65-byte signature from a payer with no bytecode qualifies: ERC-1271 / ERC-6492
+ * wrappers have other lengths, and a deployed wallet decides malleability itself.
+ * Mirrors Go `IsPlainNonCanonicalECDSASignature`.
+ *
+ * @param signature - The full payload signature (not the ERC-6492 inner signature).
+ * @param isDeployedAtPayer - Whether the payer has bytecode, from {@link classifyErc6492Payer}.
+ * @returns True when the signature is a non-canonical EOA signature.
+ */
+export function isPlainNonCanonicalEcdsaSignature(
+  signature: Hex,
+  isDeployedAtPayer: boolean,
+): boolean {
+  if (size(signature) !== 65 || isCanonicalEcdsaSignature(signature)) return false;
+  return !isDeployedAtPayer;
 }
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;

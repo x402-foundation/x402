@@ -11,6 +11,7 @@ import { resolveDataSuffix } from "../../../shared/extensions";
 import {
   verifyHashSignatureWithCode,
   classifyErc6492Payer,
+  isPlainNonCanonicalEcdsaSignature,
   payerCodeLookupFailureMessage,
 } from "../../../shared/verifySignature";
 import { PaymentRequirementsV1 } from "@x402/core/types/v1";
@@ -356,6 +357,7 @@ export class ExactEvmSchemeV1 implements SchemeNetworkFacilitator {
     const {
       isCounterfactual,
       innerSignature,
+      isDeployedAtPayer,
       eip6492Deployment: classification6492,
       payerCode,
       codeLookupError,
@@ -367,6 +369,15 @@ export class ExactEvmSchemeV1 implements SchemeNetworkFacilitator {
         isValid: false,
         invalidReason: Errors.ErrFailedToVerifySignature,
         invalidMessage,
+        payer,
+      };
+    }
+
+    // Reject malleable high-s EOA signatures before broadcast (see verifyEIP3009).
+    if (isPlainNonCanonicalEcdsaSignature(signature, isDeployedAtPayer)) {
+      return {
+        isValid: false,
+        invalidReason: Errors.ErrInvalidSignatureS,
         payer,
       };
     }
