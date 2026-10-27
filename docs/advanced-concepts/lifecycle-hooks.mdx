@@ -365,8 +365,12 @@ Register hooks for HTTP-specific payment required handling. Use cases include tr
 
 Register hooks on the facilitator for verification and settlement lifecycle events. Use cases include populating a bazaar discovery catalog, compliance checks or collecting metrics across all processed payments.
 
-* **onBeforeVerify / onAfterVerify / onVerifyFailure** — Same pattern as server hooks.
-* **onBeforeSettle / onAfterSettle / onSettleFailure** — Same pattern as server hooks.
+* **onBeforeVerify** — Runs before payment verification. Return `{ abort: true, reason }` to reject.
+* **onAfterVerify** — Runs after verification returns a result, including when verify returns `isValid: false`. A thrown verification error uses `onVerifyFailure` instead.
+* **onVerifyFailure** — Runs when verification throws. It does not run for a result with `isValid: false` — use `onAfterVerify` for that case. Return `{ recovered: true, result }` to override.
+* **onBeforeSettle** — Runs before settlement. Return `{ abort: true, reason }` to reject.
+* **onAfterSettle** — Runs after successful settlement.
+* **onSettleFailure** — Runs on settlement failure. Return `{ recovered: true, result }` to override.
 
 <Tabs>
   <Tab title="TypeScript">
