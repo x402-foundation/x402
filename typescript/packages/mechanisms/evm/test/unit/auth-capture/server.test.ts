@@ -393,18 +393,23 @@ describe("AuthCaptureEvmScheme", () => {
         network: "eip155:84532" as const,
       };
 
-      const now = Math.floor(Date.now() / 1000);
-      const bucketStart = Math.floor(now / 60) * 60;
-      const result = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
+      const bucketStart = 1_700_000_040;
+      vi.useFakeTimers();
+      vi.setSystemTime(bucketStart * 1000);
+      try {
+        const result = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
 
-      const captureDeadline = result.extra?.captureDeadline as number;
-      const refundDeadline = result.extra?.refundDeadline as number;
+        const captureDeadline = result.extra?.captureDeadline as number;
+        const refundDeadline = result.extra?.refundDeadline as number;
 
-      expect(captureDeadline).toBe(bucketStart + 600);
-      expect(refundDeadline).toBe(bucketStart + 1200);
+        expect(captureDeadline).toBe(bucketStart + 600);
+        expect(refundDeadline).toBe(bucketStart + 1200);
 
-      expect(result.extra).not.toHaveProperty("captureDeadlineSeconds");
-      expect(result.extra).not.toHaveProperty("refundDeadlineSeconds");
+        expect(result.extra).not.toHaveProperty("captureDeadlineSeconds");
+        expect(result.extra).not.toHaveProperty("refundDeadlineSeconds");
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("should throw when mixing an absolute deadline with a relative offset", async () => {
@@ -490,12 +495,23 @@ describe("AuthCaptureEvmScheme", () => {
         network: "eip155:84532" as const,
       };
 
-      const first = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
-      await new Promise(resolve => setTimeout(resolve, 1100));
-      const second = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
+      // Last two seconds of a 60s bucket. A wall-clock sleep here used to cross
+      // the boundary and shift both deadlines by exactly one bucket.
+      const bucketStart = 1_700_000_040;
+      vi.useFakeTimers();
+      vi.setSystemTime((bucketStart + 58) * 1000);
+      try {
+        const first = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
+        vi.setSystemTime((bucketStart + 59) * 1000);
+        const second = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
 
-      expect(second.extra?.captureDeadline).toBe(first.extra?.captureDeadline);
-      expect(second.extra?.refundDeadline).toBe(first.extra?.refundDeadline);
+        expect(first.extra?.captureDeadline).toBe(bucketStart + 1);
+        expect(first.extra?.refundDeadline).toBe(bucketStart + 2);
+        expect(second.extra?.captureDeadline).toBe(first.extra?.captureDeadline);
+        expect(second.extra?.refundDeadline).toBe(first.extra?.refundDeadline);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("should align relative deadlines to the offset bucket start", async () => {
@@ -513,12 +529,17 @@ describe("AuthCaptureEvmScheme", () => {
         network: "eip155:84532" as const,
       };
 
-      const now = Math.floor(Date.now() / 1000);
-      const bucketStart = Math.floor(now / 60) * 60;
-      const result = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
+      const bucketStart = 1_700_000_040;
+      vi.useFakeTimers();
+      vi.setSystemTime(bucketStart * 1000);
+      try {
+        const result = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
 
-      expect(result.extra?.captureDeadline).toBe(bucketStart + 600);
-      expect(result.extra?.refundDeadline).toBe(bucketStart + 1_200);
+        expect(result.extra?.captureDeadline).toBe(bucketStart + 600);
+        expect(result.extra?.refundDeadline).toBe(bucketStart + 1_200);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("should throw on non-positive captureDeadlineSeconds", async () => {
@@ -609,15 +630,20 @@ describe("AuthCaptureEvmScheme", () => {
         },
       };
 
-      const now = Math.floor(Date.now() / 1000);
-      const bucketStart = Math.floor(now / 60) * 60;
-      const result = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
+      const bucketStart = 1_700_000_040;
+      vi.useFakeTimers();
+      vi.setSystemTime(bucketStart * 1000);
+      try {
+        const result = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
 
-      const captureDeadline = result.extra?.captureDeadline as number;
-      const refundDeadline = result.extra?.refundDeadline as number;
+        const captureDeadline = result.extra?.captureDeadline as number;
+        const refundDeadline = result.extra?.refundDeadline as number;
 
-      expect(captureDeadline).toBe(bucketStart + 600);
-      expect(refundDeadline).toBe(bucketStart + 1200);
+        expect(captureDeadline).toBe(bucketStart + 600);
+        expect(refundDeadline).toBe(bucketStart + 1200);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
