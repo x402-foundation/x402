@@ -8,6 +8,7 @@ import {
 } from "viem";
 import type { Hex, TypedDataDomain } from "viem";
 import type { FacilitatorEvmSigner } from "../signer";
+import { isContractRevert } from "./revert";
 
 /**
  * Parsed ERC-6492 classification for a payer address.
@@ -177,7 +178,57 @@ const ERC1271_ABI = [
 ] as const;
 
 /**
+ * Outcome of a signature check that keeps a failed RPC read apart from a bad signature.
+ *
+ * - `valid`: ecrecover matched, or the wallet's `isValidSignature` returned the magic value.
+ * - `invalid`: the signature does not check out. For a contract wallet this includes a revert,
+ *   an empty return and a non-magic return: the wallet answered and did not accept it.
+ * - `lookup_failed`: the payer `eth_getCode` or the `isValidSignature` call itself failed
+ *   (transport error, timeout, rate limit), so no signature check ran. Callers should report a
+ *   retryable failed-to-verify reason, not an invalid signature.
+ */
+export type SignatureCheckResult = "valid" | "invalid" | "lookup_failed";
+
+/**
+ * Errors that mean the contract answered `isValidSignature` without a usable result: an empty
+ * return (the contract has no such function) or bytes that do not decode as `bytes4`.
+ */
+const NO_USABLE_ANSWER_ERRORS = new Set([
+  "ContractFunctionZeroDataError",
+  "AbiDecodingZeroDataError",
+  "AbiDecodingDataSizeTooSmallError",
+  "AbiDecodingDataSizeInvalidError",
+  "PositionOutOfBoundsError",
+]);
+
+/**
+ * Whether a thrown `isValidSignature` call is the contract rejecting the signature rather than a
+ * failed read: a revert ({@link isContractRevert}, at any level of the `cause` chain where viem
+ * puts the underlying error), JSON-RPC code 3 ("execution reverted"), or a call that returned no
+ * usable data. Anything else (an HTTP error, a timeout, a rate limit, a signer that threw before
+ * reaching the node) is a failed read.
+ *
+ * @param error - The value thrown by `readContract`.
+ * @returns `true` when the contract answered and did not accept, `false` for a failed read.
+ */
+function isContractRejection(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; current && depth < 8; depth++) {
+    if (isContractRevert(current)) return true;
+    const e = current as { name?: unknown; code?: unknown; message?: unknown; cause?: unknown };
+    if (typeof e.name === "string" && NO_USABLE_ANSWER_ERRORS.has(e.name)) return true;
+    if (e.code === 3) return true;
+    if (typeof e.message === "string" && /returned no data/i.test(e.message)) return true;
+    current = e.cause;
+  }
+  return false;
+}
+
+/**
  * Verify a typed-data signature using strict on-chain SignatureChecker semantics.
+ *
+ * Returns a boolean: a failed RPC read and a bad signature both read as `false`. Callers that
+ * report a reason should use {@link checkTypedDataSignature}, which keeps them apart.
  *
  * @param signer - Facilitator signer used for `eth_getCode` and `isValidSignature` calls.
  * @param params - Typed-data verification parameters.
@@ -200,6 +251,34 @@ export async function verifyTypedDataSignature(
     signature: `0x${string}`;
   },
 ): Promise<boolean> {
+  return (await checkTypedDataSignature(signer, params)) === "valid";
+}
+
+/**
+ * Like {@link verifyTypedDataSignature}, but reports a failed RPC read as `lookup_failed`
+ * instead of folding it into an invalid signature.
+ *
+ * @param signer - Facilitator signer used for `eth_getCode` and `isValidSignature` calls.
+ * @param params - Typed-data verification parameters.
+ * @param params.address - The address that is expected to have signed the data.
+ * @param params.domain - EIP-712 domain.
+ * @param params.types - EIP-712 type definitions.
+ * @param params.primaryType - The primary type to hash.
+ * @param params.message - The typed-data message.
+ * @param params.signature - The signature to verify.
+ * @returns `valid`, `invalid`, or `lookup_failed` when no signature check could run.
+ */
+export async function checkTypedDataSignature(
+  signer: FacilitatorEvmSigner,
+  params: {
+    address: `0x${string}`;
+    domain: TypedDataDomain;
+    types: Record<string, readonly { name: string; type: string }[]>;
+    primaryType: string;
+    message: Record<string, unknown>;
+    signature: `0x${string}`;
+  },
+): Promise<SignatureCheckResult> {
   let digest: `0x${string}`;
   try {
     digest = hashTypedData({
@@ -211,9 +290,9 @@ export async function verifyTypedDataSignature(
   } catch {
     // Malformed typed data (e.g. non-checksummed address that viem rejects).
     // Treat as an invalid signature rather than propagating the error.
-    return false;
+    return "invalid";
   }
-  return verifyHashSignature(signer, params.address, digest, params.signature);
+  return checkHashSignature(signer, params.address, digest, params.signature);
 }
 
 /**
@@ -231,16 +310,34 @@ export async function verifyHashSignature(
   digest: `0x${string}`,
   signature: `0x${string}`,
 ): Promise<boolean> {
-  // getCode must be guarded: a transient RPC error should return false (invalid sig
-  // semantics) rather than propagating as an unhandled rejection. All callers rely on
-  // this function returning a boolean, never throwing.
+  // Never throws: a transient RPC error reads as false. Callers that report a reason should
+  // use checkHashSignature, which returns lookup_failed for it.
+  return (await checkHashSignature(signer, address, digest, signature)) === "valid";
+}
+
+/**
+ * Like {@link verifyHashSignature}, but reports a failed payer `eth_getCode` or a failed
+ * `isValidSignature` read as `lookup_failed`. Never throws.
+ *
+ * @param signer - Facilitator signer used for `eth_getCode` and `isValidSignature` calls.
+ * @param address - The address that is expected to have produced the signature.
+ * @param digest - The EIP-191 / EIP-712 message hash to verify against.
+ * @param signature - The signature to verify.
+ * @returns `valid`, `invalid`, or `lookup_failed` when no signature check could run.
+ */
+export async function checkHashSignature(
+  signer: FacilitatorEvmSigner,
+  address: `0x${string}`,
+  digest: `0x${string}`,
+  signature: `0x${string}`,
+): Promise<SignatureCheckResult> {
   let code: `0x${string}` | undefined;
   try {
     code = await signer.getCode({ address });
   } catch {
-    return false;
+    return "lookup_failed";
   }
-  return verifyHashSignatureWithCode(signer, address, code, digest, signature);
+  return checkHashSignatureWithCode(signer, address, code, digest, signature);
 }
 
 /**
@@ -264,10 +361,33 @@ export function verifyHashSignatureWithCode(
   digest: `0x${string}`,
   signature: `0x${string}`,
 ): Promise<boolean> {
+  return checkHashSignatureWithCode(signer, address, code, digest, signature).then(
+    result => result === "valid",
+  );
+}
+
+/**
+ * Like {@link verifyHashSignatureWithCode}, but reports a failed `isValidSignature` read as
+ * `lookup_failed`. The ECDSA path makes no RPC call, so it is only ever `valid` or `invalid`.
+ *
+ * @param signer - Facilitator signer used for `isValidSignature` calls on deployed contracts.
+ * @param address - The address that is expected to have produced the signature.
+ * @param code - Pre-fetched bytecode at `address`; `undefined` or `"0x"` takes the ECDSA path.
+ * @param digest - The message hash to verify against.
+ * @param signature - The signature to verify.
+ * @returns `valid`, `invalid`, or `lookup_failed` when the `isValidSignature` read failed.
+ */
+export async function checkHashSignatureWithCode(
+  signer: FacilitatorEvmSigner,
+  address: `0x${string}`,
+  code: `0x${string}` | undefined,
+  digest: `0x${string}`,
+  signature: `0x${string}`,
+): Promise<SignatureCheckResult> {
   if (!code || code === "0x") {
-    return verifyECDSA(address, digest, signature);
+    return (await verifyECDSA(address, digest, signature)) ? "valid" : "invalid";
   }
-  return verifyERC1271(signer, address, digest, signature);
+  return checkERC1271(signer, address, digest, signature);
 }
 
 /**
@@ -308,16 +428,36 @@ export async function verifyERC1271(
   digest: `0x${string}`,
   signature: `0x${string}`,
 ): Promise<boolean> {
+  return (await checkERC1271(signer, address, digest, signature)) === "valid";
+}
+
+/**
+ * Like {@link verifyERC1271}, but keeps a failed read apart from a rejection: a revert, an
+ * empty return or a non-magic return is `invalid`; a transport failure is `lookup_failed`.
+ *
+ * @param signer - Facilitator signer used to call `isValidSignature` on the contract.
+ * @param address - The contract address whose `isValidSignature` is called.
+ * @param digest - The hash passed as the first argument to `isValidSignature`.
+ * @param signature - The signature bytes passed as the second argument.
+ * @returns `valid`, `invalid`, or `lookup_failed` when the call did not reach an answer.
+ */
+export async function checkERC1271(
+  signer: FacilitatorEvmSigner,
+  address: `0x${string}`,
+  digest: `0x${string}`,
+  signature: `0x${string}`,
+): Promise<SignatureCheckResult> {
+  let result: unknown;
   try {
-    const result = (await signer.readContract({
+    result = await signer.readContract({
       address,
       abi: ERC1271_ABI,
       functionName: "isValidSignature",
       args: [digest, signature],
-    })) as `0x${string}` | undefined;
-    if (typeof result !== "string") return false;
-    return result.toLowerCase().startsWith(ERC1271_MAGIC_VALUE);
-  } catch {
-    return false;
+    });
+  } catch (error) {
+    return isContractRejection(error) ? "invalid" : "lookup_failed";
   }
+  if (typeof result !== "string") return "invalid";
+  return result.toLowerCase().startsWith(ERC1271_MAGIC_VALUE) ? "valid" : "invalid";
 }

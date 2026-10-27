@@ -9,7 +9,7 @@ import { NETWORKS } from "../../../src/v1";
 import { x402ExactPermit2ProxyAddress, PERMIT2_ADDRESS } from "../../../src/constants";
 import { ERC20_APPROVAL_GAS_SPONSORING_KEY } from "../../../src/exact/extensions";
 import { MULTICALL3_ADDRESS } from "../../../src/multicall";
-import { concat, encodeAbiParameters } from "viem";
+import { concat, encodeAbiParameters, HttpRequestError } from "viem";
 import * as Errors from "../../../src/exact/facilitator/errors";
 import { resetAssetContractCache } from "../../../src/assetCache";
 import {
@@ -790,6 +790,50 @@ describe("ExactEvmScheme (Facilitator)", () => {
       expect(result.errorReason).toBe("invalid_permit2_signature");
       expect(result.payer).toBe(mockClientSigner.address);
     });
+
+    it("should report a failed payer lookup on Permit2 as failed_to_verify_signature, not an invalid signature", async () => {
+      const asset = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+      const requirements: PaymentRequirements = {
+        scheme: "exact",
+        network: "eip155:84532",
+        amount: "1000000",
+        asset,
+        payTo: "0x742D35CC6634c0532925A3b844BC9E7595F0BEb0",
+        maxTimeoutSeconds: 300,
+        extra: { name: "USDC", version: "2", assetTransferMethod: "permit2" },
+      };
+
+      // The asset lookup answers; the payer eth_getCode fails, so no signature check can run.
+      mockFacilitatorSigner.getCode = vi
+        .fn()
+        .mockImplementation(async ({ address }: { address: `0x${string}` }) => {
+          if (address.toLowerCase() === asset.toLowerCase()) return "0x6080604052";
+          throw new HttpRequestError({ url: "https://rpc.example", status: 503 });
+        });
+
+      const permit2Payload: PaymentPayload = {
+        x402Version: 2,
+        payload: {
+          signature: "0xmocksignature",
+          permit2Authorization: {
+            from: mockClientSigner.address,
+            permitted: { token: requirements.asset, amount: requirements.amount },
+            spender: x402ExactPermit2ProxyAddress,
+            nonce: "12345",
+            deadline: "999999999999",
+            witness: { to: requirements.payTo, validAfter: "0" },
+          },
+        },
+        accepted: requirements,
+        resource: { url: "", description: "", mimeType: "" },
+      };
+
+      const result = await facilitator.settle(permit2Payload, requirements);
+
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe(Errors.ErrFailedToVerifySignature);
+      expect(result.payer).toBe(mockClientSigner.address);
+    });
   });
 
   describe("EIP-3009 settlement", () => {
@@ -1387,6 +1431,22 @@ describe("ExactEvmScheme (Facilitator)", () => {
       // matches what on-chain SignatureChecker.isValidSignatureNow would return.
       expect(result.isValid).toBe(false);
       expect(result.invalidReason).toBe(Errors.ErrInvalidSignature);
+    });
+
+    it("should report a failed isValidSignature read on a deployed wallet as failed_to_verify_signature", async () => {
+      mockFacilitatorSigner.getCode = vi.fn().mockResolvedValue("0x6080604052");
+      // The call never reached the wallet: no signature check ran.
+      mockFacilitatorSigner.readContract = vi
+        .fn()
+        .mockRejectedValue(new HttpRequestError({ url: "https://rpc.example", status: 503 }));
+
+      const result = await cfFacilitator.verify(
+        makeERC6492Payload(erc6492Sig),
+        erc6492Requirements,
+      );
+
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe(Errors.ErrFailedToVerifySignature);
     });
   });
 

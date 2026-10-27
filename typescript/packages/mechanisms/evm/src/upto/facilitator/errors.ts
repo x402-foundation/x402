@@ -50,3 +50,5 @@ export const ErrUptoSettlementExceedsAmount = "invalid_upto_evm_payload_settleme
 export const ErrUptoAmountExceedsPermitted = "upto_amount_exceeds_permitted";
 export const ErrUptoUnauthorizedFacilitator = "upto_unauthorized_facilitator";
 export const ErrUptoFacilitatorMismatch = "upto_facilitator_mismatch";
+/** Payer `eth_getCode` or `isValidSignature` read failed, so no signature check ran. Retryable. */
+export const ErrUptoFailedToVerifySignature = "invalid_upto_evm_failed_to_verify_signature";

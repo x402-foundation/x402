@@ -9,10 +9,11 @@ import {
 } from "@x402/core/types";
 import { resolveDataSuffix } from "../../../shared/extensions";
 import {
-  verifyHashSignatureWithCode,
+  checkHashSignatureWithCode,
   classifyErc6492Payer,
   isPlainNonCanonicalEcdsaSignature,
   payerCodeLookupFailureMessage,
+  SignatureCheckResult,
 } from "../../../shared/verifySignature";
 import { PaymentRequirementsV1 } from "@x402/core/types/v1";
 import { getAddress, hashTypedData, Hex, isAddressEqual, parseErc6492Signature } from "viem";
@@ -408,10 +409,10 @@ export class ExactEvmSchemeV1 implements SchemeNetworkFacilitator {
       // Non-counterfactual path: verify using the strict primitive that mirrors
       // on-chain SignatureChecker semantics (ecrecover for EOAs, strict EIP-1271
       // for any address with code). No ECDSA fallback for code addresses.
-      let isValid = false;
+      let check: SignatureCheckResult = "invalid";
       try {
         const digest = hashTypedData(permitTypedData);
-        isValid = await verifyHashSignatureWithCode(
+        check = await checkHashSignatureWithCode(
           this.signer,
           payer,
           payerCode,
@@ -419,9 +420,18 @@ export class ExactEvmSchemeV1 implements SchemeNetworkFacilitator {
           innerSignature,
         );
       } catch {
-        isValid = false;
+        check = "invalid";
       }
-      if (!isValid) {
+      // A failed isValidSignature read on a contract payer is not an invalid signature.
+      if (check === "lookup_failed") {
+        return {
+          isValid: false,
+          invalidReason: Errors.ErrFailedToVerifySignature,
+          invalidMessage: "payer isValidSignature call failed",
+          payer,
+        };
+      }
+      if (check !== "valid") {
         return {
           isValid: false,
           invalidReason: Errors.ErrInvalidSignature,
