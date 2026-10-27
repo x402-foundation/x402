@@ -60,6 +60,9 @@ from .facilitator import (
     validate_discovery_extension_spec,
 )
 from .facilitator_client import (
+    AsyncBazaarClientExtension,
+    AsyncBazaarExtendedClient,
+    AsyncBazaarExtension,
     BazaarClientExtension,
     BazaarExtendedClient,
     BazaarExtension,
@@ -142,6 +145,9 @@ __all__ = [
     "Pagination",
     "SearchDiscoveryResourcesResponse",
     "SearchPagination",
+    "AsyncBazaarClientExtension",
+    "AsyncBazaarExtension",
+    "AsyncBazaarExtendedClient",
     "BazaarClientExtension",
     "BazaarExtension",
     "BazaarExtendedClient",

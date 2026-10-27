@@ -7,10 +7,9 @@ client with discovery query functionality.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any, overload
 
-if TYPE_CHECKING:
-    from x402.http.facilitator_client import HTTPFacilitatorClient
+from x402.http.facilitator_client import HTTPFacilitatorClient, HTTPFacilitatorClientSync
 
 
 @dataclass
@@ -183,18 +182,77 @@ class SearchDiscoveryResourcesResponse:
     """Optional pagination details for paginated responses."""
 
 
-class BazaarExtension:
-    """Bazaar extension providing discovery list and search functionality.
+def _discovery_headers(client: Any) -> dict[str, str]:
+    """Build discovery headers, including bazaar auth when a provider is set."""
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if client._auth_provider:
+        auth = client._auth_provider.get_auth_headers()
+        headers.update(auth.bazaar)
+    return headers
 
-    This extension is attached to a facilitator client via `with_bazaar()`
-    and provides methods to query discovery resources from the facilitator.
+
+def _list_query_params(params: ListDiscoveryResourcesParams) -> dict[str, str]:
+    """Build the list-resources query string."""
+    query_params: dict[str, str] = {}
+    if params.type is not None:
+        query_params["type"] = params.type
+    if params.pay_to is not None:
+        query_params["payTo"] = params.pay_to
+    if params.scheme is not None:
+        query_params["scheme"] = params.scheme
+    if params.network is not None:
+        query_params["network"] = params.network
+    if params.extensions is not None:
+        query_params["extensions"] = params.extensions
+    if params.limit is not None:
+        query_params["limit"] = str(params.limit)
+    if params.offset is not None:
+        query_params["offset"] = str(params.offset)
+    return query_params
+
+
+def _search_query_params(params: SearchDiscoveryResourcesParams) -> dict[str, str]:
+    """Build the search query string. Caller must reject an empty query first."""
+    query_params: dict[str, str] = {"query": params.query}
+    if params.type is not None:
+        query_params["type"] = params.type
+    if params.pay_to is not None:
+        query_params["payTo"] = params.pay_to
+    if params.scheme is not None:
+        query_params["scheme"] = params.scheme
+    if params.network is not None:
+        query_params["network"] = params.network
+    if params.extensions is not None:
+        query_params["extensions"] = params.extensions
+    if params.limit is not None:
+        query_params["limit"] = str(params.limit)
+    if params.cursor is not None:
+        query_params["cursor"] = params.cursor
+    return query_params
+
+
+def _require_discovery_json(response: Any, operation: str) -> dict[str, Any]:
+    """Return JSON from a discovery response, or raise the facilitator error."""
+    if response.status_code != 200:
+        raise ValueError(
+            f"Facilitator {operation} failed ({response.status_code}): {response.text}"
+        )
+    data = response.json()
+    return data
+
+
+class BazaarExtension:
+    """Synchronous bazaar discovery for `HTTPFacilitatorClientSync`.
+
+    Attached by `with_bazaar()`. The async facilitator client uses
+    `AsyncBazaarExtension` instead, because it has no sync `_get_client()`.
     """
 
-    def __init__(self, client: HTTPFacilitatorClient) -> None:
+    def __init__(self, client: HTTPFacilitatorClientSync) -> None:
         """Initialize the bazaar extension.
 
         Args:
-            client: The facilitator client to use for requests.
+            client: The sync facilitator client to use for requests.
         """
         self._client = client
 
@@ -215,10 +273,10 @@ class BazaarExtension:
 
         Example:
             ```python
-            from x402.http import HTTPFacilitatorClient
-            from x402.extensions.bazaar import with_bazaar
+            from x402.http import HTTPFacilitatorClientSync
+            from x402.extensions.bazaar import with_bazaar, ListDiscoveryResourcesParams
 
-            client = with_bazaar(HTTPFacilitatorClient())
+            client = with_bazaar(HTTPFacilitatorClientSync())
             resources = client.extensions.bazaar.list_resources(
                 ListDiscoveryResourcesParams(type="http", limit=10)
             )
@@ -227,46 +285,12 @@ class BazaarExtension:
             ```
         """
         params = params or ListDiscoveryResourcesParams()
-
-        headers: dict[str, str] = {"Content-Type": "application/json"}
-
-        if self._client._auth_provider:
-            auth = self._client._auth_provider.get_auth_headers()
-            headers.update(auth.bazaar)
-
-        query_params: dict[str, str] = {}
-        if params.type is not None:
-            query_params["type"] = params.type
-        if params.pay_to is not None:
-            query_params["payTo"] = params.pay_to
-        if params.scheme is not None:
-            query_params["scheme"] = params.scheme
-        if params.network is not None:
-            query_params["network"] = params.network
-        if params.extensions is not None:
-            query_params["extensions"] = params.extensions
-        if params.limit is not None:
-            query_params["limit"] = str(params.limit)
-        if params.offset is not None:
-            query_params["offset"] = str(params.offset)
-
-        endpoint = f"{self._client.url}/discovery/resources"
-
-        http_client = self._client._get_client()  # type: ignore[attr-defined]
-
-        response = http_client.get(
-            endpoint,
-            headers=headers,
-            params=query_params if query_params else None,
+        response = self._client._get_client().get(
+            f"{self._client.url}/discovery/resources",
+            headers=_discovery_headers(self._client),
+            params=_list_query_params(params) or None,
         )
-
-        if response.status_code != 200:
-            raise ValueError(
-                f"Facilitator listDiscoveryResources failed ({response.status_code}): {response.text}"
-            )
-
-        data = response.json()
-        return _parse_list_response(data)
+        return _parse_list_response(_require_discovery_json(response, "listDiscoveryResources"))
 
     def search(
         self,
@@ -288,14 +312,14 @@ class BazaarExtension:
 
         Example:
             ```python
-            from x402.http import HTTPFacilitatorClient
+            from x402.http import HTTPFacilitatorClientSync
             from x402.extensions.bazaar import with_bazaar, SearchDiscoveryResourcesParams
 
-            client = with_bazaar(HTTPFacilitatorClient())
+            client = with_bazaar(HTTPFacilitatorClientSync())
             results = client.extensions.bazaar.search(
                 SearchDiscoveryResourcesParams(query="weather APIs", type="http")
             )
-            if results.cursor is not None:
+            if results.pagination is not None and results.pagination.cursor is not None:
                 # facilitator returned continuation cursor for the next page
                 pass
             ```
@@ -303,71 +327,110 @@ class BazaarExtension:
         if not params.query:
             raise ValueError("search query is required")
 
-        headers: dict[str, str] = {"Content-Type": "application/json"}
-
-        if self._client._auth_provider:
-            auth = self._client._auth_provider.get_auth_headers()
-            headers.update(auth.bazaar)
-
-        query_params: dict[str, str] = {"query": params.query}
-        if params.type is not None:
-            query_params["type"] = params.type
-        if params.pay_to is not None:
-            query_params["payTo"] = params.pay_to
-        if params.scheme is not None:
-            query_params["scheme"] = params.scheme
-        if params.network is not None:
-            query_params["network"] = params.network
-        if params.extensions is not None:
-            query_params["extensions"] = params.extensions
-        if params.limit is not None:
-            query_params["limit"] = str(params.limit)
-        if params.cursor is not None:
-            query_params["cursor"] = params.cursor
-
-        endpoint = f"{self._client.url}/discovery/search"
-
-        http_client = self._client._get_client()  # type: ignore[attr-defined]
-
-        response = http_client.get(
-            endpoint,
-            headers=headers,
-            params=query_params,
+        response = self._client._get_client().get(
+            f"{self._client.url}/discovery/search",
+            headers=_discovery_headers(self._client),
+            params=_search_query_params(params),
         )
+        return _parse_search_response(_require_discovery_json(response, "searchDiscoveryResources"))
 
-        if response.status_code != 200:
-            raise ValueError(
-                f"Facilitator searchDiscoveryResources failed ({response.status_code}): {response.text}"
-            )
 
-        data = response.json()
-        return _parse_search_response(data)
+class AsyncBazaarExtension:
+    """Asynchronous bazaar discovery for `HTTPFacilitatorClient`.
+
+    Uses `_get_async_client()` and must be awaited. A sync `_get_client()` call
+    on this client raises AttributeError before any request is sent.
+    """
+
+    def __init__(self, client: HTTPFacilitatorClient) -> None:
+        """Initialize the async bazaar extension.
+
+        Args:
+            client: The async facilitator client to use for requests.
+        """
+        self._client = client
+
+    async def list_resources(
+        self,
+        params: ListDiscoveryResourcesParams | None = None,
+    ) -> DiscoveryResourcesResponse:
+        """List x402 discovery resources from the bazaar.
+
+        Args:
+            params: Optional filtering and pagination parameters.
+
+        Returns:
+            A response containing the discovery resources.
+
+        Raises:
+            ValueError: If the request fails.
+        """
+        params = params or ListDiscoveryResourcesParams()
+        response = await self._client._get_async_client().get(
+            f"{self._client.url}/discovery/resources",
+            headers=_discovery_headers(self._client),
+            params=_list_query_params(params) or None,
+        )
+        return _parse_list_response(_require_discovery_json(response, "listDiscoveryResources"))
+
+    async def search(
+        self,
+        params: SearchDiscoveryResourcesParams,
+    ) -> SearchDiscoveryResourcesResponse:
+        """Search x402 discovery resources using a natural-language query.
+
+        Args:
+            params: Search parameters including the required query string.
+
+        Returns:
+            A response containing matched discovery resources and optional pagination hints.
+
+        Raises:
+            ValueError: If query is empty or the request fails.
+        """
+        if not params.query:
+            raise ValueError("search query is required")
+
+        response = await self._client._get_async_client().get(
+            f"{self._client.url}/discovery/search",
+            headers=_discovery_headers(self._client),
+            params=_search_query_params(params),
+        )
+        return _parse_search_response(_require_discovery_json(response, "searchDiscoveryResources"))
 
 
 class BazaarClientExtension:
     """Bazaar client extension interface providing discovery query functionality."""
 
-    def __init__(self, client: HTTPFacilitatorClient) -> None:
+    def __init__(self, client: HTTPFacilitatorClientSync) -> None:
         """Initialize the bazaar client extension.
 
         Args:
-            client: The facilitator client to use.
+            client: The sync facilitator client to use.
         """
         self.bazaar = BazaarExtension(client)
 
 
-class BazaarExtendedClient:
-    """A facilitator client extended with bazaar discovery capabilities.
-
-    This class wraps an HTTPFacilitatorClient and adds an `extensions`
-    attribute containing bazaar functionality.
-    """
+class AsyncBazaarClientExtension:
+    """Async bazaar client extension interface."""
 
     def __init__(self, client: HTTPFacilitatorClient) -> None:
+        """Initialize the async bazaar client extension.
+
+        Args:
+            client: The async facilitator client to use.
+        """
+        self.bazaar = AsyncBazaarExtension(client)
+
+
+class BazaarExtendedClient:
+    """A sync facilitator client extended with bazaar discovery capabilities."""
+
+    def __init__(self, client: HTTPFacilitatorClientSync) -> None:
         """Initialize the extended client.
 
         Args:
-            client: The base facilitator client to extend.
+            client: The base sync facilitator client to extend.
         """
         self._client = client
         self.extensions = BazaarClientExtension(client)
@@ -377,15 +440,52 @@ class BazaarExtendedClient:
         return getattr(self._client, name)
 
     def __enter__(self) -> BazaarExtendedClient:
-        self._client.__enter__()  # type: ignore[attr-defined]
+        self._client.__enter__()
         return self
 
     def __exit__(self, *args: Any) -> None:
-        self._client.__exit__(*args)  # type: ignore[attr-defined]
+        self._client.__exit__(*args)
 
 
-def with_bazaar(client: HTTPFacilitatorClient) -> BazaarExtendedClient:
+class AsyncBazaarExtendedClient:
+    """An async facilitator client extended with bazaar discovery capabilities."""
+
+    def __init__(self, client: HTTPFacilitatorClient) -> None:
+        """Initialize the extended client.
+
+        Args:
+            client: The base async facilitator client to extend.
+        """
+        self._client = client
+        self.extensions = AsyncBazaarClientExtension(client)
+
+    def __getattr__(self, name: str) -> Any:
+        """Delegate attribute access to the wrapped client."""
+        return getattr(self._client, name)
+
+    async def __aenter__(self) -> AsyncBazaarExtendedClient:
+        await self._client.__aenter__()
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        await self._client.__aexit__(*args)
+
+
+@overload
+def with_bazaar(client: HTTPFacilitatorClient) -> AsyncBazaarExtendedClient: ...
+
+
+@overload
+def with_bazaar(client: HTTPFacilitatorClientSync) -> BazaarExtendedClient: ...
+
+
+def with_bazaar(
+    client: HTTPFacilitatorClient | HTTPFacilitatorClientSync,
+) -> AsyncBazaarExtendedClient | BazaarExtendedClient:
     """Extend a facilitator client with Bazaar discovery query functionality.
+
+    `HTTPFacilitatorClient` gets async `list_resources` and `search` methods.
+    `HTTPFacilitatorClientSync` keeps the synchronous methods.
 
     Args:
         client: The facilitator client to extend.
@@ -395,22 +495,26 @@ def with_bazaar(client: HTTPFacilitatorClient) -> BazaarExtendedClient:
 
     Example:
         ```python
+        import asyncio
+
         from x402.http import HTTPFacilitatorClient, FacilitatorConfig
         from x402.extensions.bazaar import with_bazaar, ListDiscoveryResourcesParams
 
-        # List resources
-        client = with_bazaar(HTTPFacilitatorClient())
-        resources = client.extensions.bazaar.list_resources()
+        async def main() -> None:
+            async with with_bazaar(
+                HTTPFacilitatorClient(FacilitatorConfig(url="https://x402.org/facilitator"))
+            ) as client:
+                resources = await client.extensions.bazaar.list_resources(
+                    ListDiscoveryResourcesParams(type="http")
+                )
+                for resource in resources.items:
+                    print(resource.resource)
 
-        # Search resources
-        results = client.extensions.bazaar.search(
-            SearchDiscoveryResourcesParams(query="weather APIs", limit=10)
-        )
-
-        # Access wrapped client methods
-        supported = client.get_supported()
+        asyncio.run(main())
         ```
     """
+    if isinstance(client, HTTPFacilitatorClient):
+        return AsyncBazaarExtendedClient(client)
     return BazaarExtendedClient(client)
 
 
