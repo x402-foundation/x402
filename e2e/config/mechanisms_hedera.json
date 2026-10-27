@@ -6,7 +6,14 @@
     "FACILITATOR_HEDERA_ACCOUNT_ID": { "required": true, "roles": ["facilitator"] },
     "FACILITATOR_HEDERA_PRIVATE_KEY": { "required": true, "roles": ["facilitator"] },
     "HEDERA_AMOUNT": { "required": false, "roles": ["server"] },
-    "HEDERA_ASSET": { "required": false, "roles": ["server"] }
+    "HEDERA_ASSET": { "required": false, "roles": ["server"] },
+    "HEDERA_TE_EXECUTOR_ID": { "required": false, "roles": ["server", "client", "facilitator"] },
+    "HEDERA_TE_AUTHORIZATION": { "required": false, "roles": ["client"] },
+    "HEDERA_TE_PAYER_ACCOUNT_ID": { "required": false, "roles": ["client"] },
+    "HEDERA_TE_AMOUNT": { "required": false, "roles": ["server"] },
+    "HEDERA_TE_ASSET": { "required": false, "roles": ["server"] },
+    "HEDERA_TE_GAS_LIMIT": { "required": false, "roles": ["facilitator"] },
+    "HEDERA_MIRROR_NODE_URL": { "required": false, "roles": ["facilitator"] }
   },
   "testnet": {
     "name": "Hedera Testnet",
@@ -39,6 +46,33 @@
         "amountEnv": "HEDERA_AMOUNT",
         "asset": "0.0.0",
         "assetEnv": "HEDERA_ASSET"
+      },
+      "extensions": ["bazaar"]
+    },
+    "/exact/hedera/transferExecutor": {
+      "scheme": "exact",
+      "assetTransferMethod": "transferExecutor",
+      "requiresEnv": "HEDERA_TE_EXECUTOR_ID",
+      "sdks": ["typescript"],
+      "price": {
+        "amount": "100000",
+        "amountEnv": "HEDERA_TE_AMOUNT",
+        "asset": "0.0.0",
+        "assetEnv": "HEDERA_TE_ASSET"
+      },
+      "extensions": ["bazaar"]
+    },
+    "/exact/hedera/transferExecutor/upfront": {
+      "scheme": "exact",
+      "assetTransferMethod": "transferExecutor",
+      "requiresEnv": "HEDERA_TE_EXECUTOR_ID",
+      "sdks": ["typescript"],
+      "paymentFlow": "upfront",
+      "price": {
+        "amount": "100000",
+        "amountEnv": "HEDERA_TE_AMOUNT",
+        "asset": "0.0.0",
+        "assetEnv": "HEDERA_TE_ASSET"
       },
       "extensions": ["bazaar"]
     }
