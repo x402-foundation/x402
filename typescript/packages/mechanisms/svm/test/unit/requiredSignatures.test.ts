@@ -4,8 +4,11 @@ import {
   compileTransactionMessage,
   createTransactionMessage,
   generateKeyPairSigner,
+  getBase64Codec,
   getBase64EncodedWireTransaction,
+  getCompiledTransactionMessageDecoder,
   getCompiledTransactionMessageEncoder,
+  getTransactionDecoder,
   pipe,
   setTransactionMessageFeePayer,
   setTransactionMessageLifetimeUsingBlockhash,
@@ -17,7 +20,11 @@ import { ExactSvmScheme } from "../../src/exact/facilitator/scheme";
 import { SOLANA_DEVNET_CAIP2 } from "../../src/constants";
 import { USDC_DEVNET_ADDRESS } from "../../src/defaultAssets";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
-import { encodeSignedTransaction, placeholderFeePayerSignature } from "./helpers/signedTransaction";
+import {
+  buildExactPaymentTransaction,
+  encodeSignedTransaction,
+  placeholderFeePayerSignature,
+} from "./helpers/signedTransaction";
 import * as Errors from "../../src/exact/facilitator/errors";
 
 const COMPUTE_BUDGET_PROGRAM = "ComputeBudget111111111111111111111111111111" as Address;
@@ -276,6 +283,29 @@ describe("verifyRequiredSignatures", () => {
       feePayer,
     );
     expect(result).toEqual({ ok: false, invalidReason: Errors.ErrSignatureInvalid });
+  });
+
+  it("accepts a valid version 0 client signature with Kit 8.5", async () => {
+    const { verifyRequiredSignatures } = await import(
+      "../../src/exact/facilitator/signatureVerification"
+    );
+    const feePayer = await generateKeyPairSigner();
+    const payer = await generateKeyPairSigner();
+    const payTo = await generateKeyPairSigner();
+    const transaction = await buildExactPaymentTransaction({
+      amount: 1000n,
+      feePayer: feePayer.address,
+      mint: USDC_DEVNET_ADDRESS as Address,
+      payTo: payTo.address,
+      payer,
+      version: 0,
+    });
+    const decoded = getTransactionDecoder().decode(getBase64Codec().encode(transaction));
+    const compiled = getCompiledTransactionMessageDecoder().decode(decoded.messageBytes);
+
+    await expect(verifyRequiredSignatures(decoded, compiled, feePayer.address)).resolves.toEqual({
+      ok: true,
+    });
   });
 
   it("treats an unimportable signer public key as an invalid signature", async () => {
