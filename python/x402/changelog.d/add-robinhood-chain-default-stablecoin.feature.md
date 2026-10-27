@@ -1,0 +1,1 @@
+Add Robinhood Chain mainnet (chain ID 4663) with Global Dollar (USDG) as the default stablecoin. USDG implements EIP-3009 `transferWithAuthorization`; its EIP-712 domain is name `Global Dollar`, version `1`.
