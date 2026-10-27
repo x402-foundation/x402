@@ -838,8 +838,10 @@ func (f *BatchSvmScheme) sealDependencies() SealDependencies {
 
 func (f *BatchSvmScheme) defaultSealDependencies() SealDependencies {
 	return SealDependencies{
-		PendingStore: f.pendingStore,
-		ResolveTerms: f.resolveTerms,
+		ReadDistributionAmount:  f.readDistributionAmount,
+		OnDistributionConfirmed: f.config.OnDistributionConfirmed,
+		PendingStore:            f.pendingStore,
+		ResolveTerms:            f.resolveTerms,
 		ReadBinding: func(ctx context.Context, network, channelID string) (ChannelBinding, error) {
 			return ReadReceiverAuthorizer(ctx, f.channelStorage, f.history, network, channelID, nil)
 		},

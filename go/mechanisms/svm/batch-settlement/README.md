@@ -162,6 +162,18 @@ cleanup := scheme.CreateRentCleanupManager(svm.SolanaDevnetCAIP2)
 
 `GetExtra` advertises `feePayer` and, when idle cleanup is enabled, `maxIdleSecs`. It advertises `receiverAuthorizer` only when `DelegatedReceiverAuth` is set. `withdrawDelay` comes from the server. Production deployments should use a durable pending-settlement store and shared channel storage when running multiple replicas.
 
+### Payout accounting
+
+Set `Config.OnDistributionConfirmed` to record merchant payouts from sweeps, `seal`, and cooperative `refund`. Close accounting requires the signer's `GetConfirmedTransaction` capability: it attributes the merchant transfer from confirmed token balances, independently of the payer's refund and any intervening sweep. The callback receives that transfer in `response.Amount`, including zero; the outward refund amount remains unchanged. Attributed close responses store string `extra.paidToReceiver`. The callback gets a struct copy; maps such as `Extra` remain shared and should be read-only.
+
+The facilitator saves a preliminary confirmed-close response under `:close` before attribution. It then saves the verified amount under `:payout`, writes the attributed `:result`, invokes the hook, and writes `:recorded` only after success. Preliminary writes cannot replace attributed results, and replay prefers `:result` over `:close`. Missing or ambiguous evidence, callback errors, and accounting-store failures return `settlement_pending` with the original signature. Authenticated replay uses the saved close result without fetching the closed account or submitting another transaction. Once `:payout` exists, retries no longer need transaction metadata. Without a hook, existing close-response behavior is preserved and no transaction reader or accounting marker is required.
+
+Unrecorded older results are reattributed from transaction evidence; their existing `amount` or `paidToReceiver` may reflect a stale channel snapshot. If that evidence is no longer available, reconciliation is required. Already-recorded results are not recorded again.
+
+Callbacks must atomically deduplicate ledger writes by `(network, transaction)`: a crash after a ledger write, a failed marker write, or another process may repeat the callback. Accounting is coalesced only within one process for schemes using the same store object. Canceling a waiter does not cancel the owner.
+
+Recovery requires a saved close result and valid close authentication. The existing window between broadcast completion and saving that result remains outside this accounting recovery.
+
 ## Supported Networks
 
 Works on Solana networks where the payment-channels program is deployed:

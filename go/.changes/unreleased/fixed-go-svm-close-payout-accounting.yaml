@@ -1,0 +1,3 @@
+kind: fixed
+body: Record SVM batch seal and cooperative-refund merchant payouts through OnDistributionConfirmed, attribute their amounts from confirmed transaction balances, and retry failed accounting without resubmitting the payment.
+time: 2026-10-24T12:00:00Z
