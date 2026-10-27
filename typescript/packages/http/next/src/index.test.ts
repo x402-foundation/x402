@@ -1196,14 +1196,9 @@ describe("pre-registered bazaar extension", () => {
     vi.mocked(checkIfBazaarNeeded).mockReturnValue(false);
   });
 
-  /**
-   * Sends one protected request with bazaar already registered.
-   *
-   * @param run - Calls a wrapper and returns the response status
-   */
-  async function expectNoBazaarImport(
+  const expectNoBazaarImport = async (
     run: (httpServer: x402HTTPResourceServer) => Promise<number>,
-  ): Promise<void> {
+  ): Promise<void> => {
     vi.mocked(checkIfBazaarNeeded).mockReturnValue(true);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const httpServer = createMockHttpServer({ type: "no-payment-required" });
@@ -1226,7 +1221,7 @@ describe("pre-registered bazaar extension", () => {
     });
     expect(status).toBe(200);
     consoleError.mockRestore();
-  }
+  };
 
   it("paymentProxyFromHTTPServer does not import @x402/extensions/bazaar or log when bazaar is already registered", async () => {
     await expectNoBazaarImport(async httpServer => {
