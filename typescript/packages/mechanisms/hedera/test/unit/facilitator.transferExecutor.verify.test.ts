@@ -335,7 +335,6 @@ describe("transferExecutor verify: requirement rules", () => {
     ["an alias payTo under the reject policy", { payTo: "0x1234" }, ErrInvalidPaymentRequirements],
     ["an unsupported network", { network: "hedera:previewnet" as const }, ErrInvalidNetwork],
     ["a non-integer amount", { amount: "1.5" }, ErrInvalidPaymentRequirements],
-    ["an amount above uint256", { amount: (2n ** 256n).toString() }, ErrInvalidPaymentRequirements],
     ["a scheme other than exact", { scheme: "upto" }, ErrInvalidScheme],
   ])(
     "rejects %s with a standard code",
@@ -353,6 +352,44 @@ describe("transferExecutor verify: requirement rules", () => {
       expect(signer.simulateContractCall).not.toHaveBeenCalled();
     },
   );
+
+  it.each([
+    ["Number.MAX_SAFE_INTEGER", (2n ** 53n).toString()],
+    ["uint256", (2n ** 256n).toString()],
+  ])(
+    "rejects an amount above %s with invalid_payment_requirements, before any I/O",
+    async (_, amount) => {
+      const signer = createSigner();
+      const scheme = new ExactHederaScheme(signer, createConfig());
+      const requirements = createRequirements({ amount });
+
+      const result = await scheme.verify(
+        createPaymentPayload(requirements, createTransferExecutorPayload()),
+        requirements,
+      );
+
+      expect(result).toEqual({
+        isValid: false,
+        invalidReason: ErrInvalidPaymentRequirements,
+        invalidMessage: `amount ${amount} is above 9007199254740991, the largest the mirror node reports exactly`,
+        payer: "",
+      });
+      expect(signer.resolveEvmAddress).not.toHaveBeenCalled();
+      expect(signer.simulateContractCall).not.toHaveBeenCalled();
+    },
+  );
+
+  it("accepts an amount of exactly Number.MAX_SAFE_INTEGER", async () => {
+    const scheme = new ExactHederaScheme(createSigner(), createConfig());
+    const requirements = createRequirements({ amount: "9007199254740991" });
+
+    const result = await scheme.verify(
+      createPaymentPayload(requirements, createTransferExecutorPayload()),
+      requirements,
+    );
+
+    expect(result).toEqual({ isValid: true, payer: PAYER });
+  });
 
   it.each([
     ["a non-empty array", [{ payTo: "0.0.7002", amount: "100" }]],
@@ -479,10 +516,49 @@ describe("transferExecutor verify: method support", () => {
         invalidReason: ErrUnsupportedAssetTransferMethod,
         payer: PAYER,
       });
-      expect(signer.getTokenCustomFees).not.toHaveBeenCalled();
       expect(signer.simulateContractCall).not.toHaveBeenCalled();
     },
   );
+
+  it.each(disabledCases)(
+    "checks custom fees before method support when the signer can read them, given $name",
+    async ({ signer: makeSigner, config }) => {
+      const signer = makeSigner();
+      signer.getTokenCustomFees.mockResolvedValue({
+        fixedFeeCount: 1,
+        fractionalFeeCount: 0,
+        royaltyFeeCount: 0,
+      });
+      const scheme = new ExactHederaScheme(signer, config);
+      const requirements = createRequirements({ asset: TOKEN });
+
+      const result = await scheme.verify(
+        createPaymentPayload(requirements, createTransferExecutorPayload()),
+        requirements,
+      );
+
+      expect(result).toEqual({ isValid: false, invalidReason: ErrCustomFeeAsset, payer: PAYER });
+      expect(signer.getTokenCustomFees).toHaveBeenCalledWith({ tokenId: TOKEN, network: TESTNET });
+    },
+  );
+
+  it("checks method support first when the signer cannot read custom fees", async () => {
+    const signer: FacilitatorHederaSigner = createSigner();
+    delete signer.getTokenCustomFees;
+    const scheme = new ExactHederaScheme(signer, createConfig());
+    const requirements = createRequirements({ asset: TOKEN });
+
+    const result = await scheme.verify(
+      createPaymentPayload(requirements, createTransferExecutorPayload()),
+      requirements,
+    );
+
+    expect(result).toEqual({
+      isValid: false,
+      invalidReason: ErrUnsupportedAssetTransferMethod,
+      payer: PAYER,
+    });
+  });
 });
 
 describe("transferExecutor verify: in-flight check", () => {

@@ -141,6 +141,11 @@ exactly as before. The normative rules are in the
   custom fees are rejected.
 - The payer and `payTo` resolve to EVM addresses on the mirror node. Where an
   account has an alias, the facilitator uses the alias address.
+- `amount` is at most 9,007,199,254,740,991 base units
+  (`Number.MAX_SAFE_INTEGER`). The mirror node reports transfers as JSON
+  numbers, which can't hold a larger amount exactly, so the settlement record
+  could never be matched. The facilitator rejects such a quote with
+  `invalid_payment_requirements` before submitting anything.
 
 ### Client
 
@@ -320,8 +325,10 @@ the instance still accepts `transferExecutor` payments under its options.
   node over a JSON-RPC relay for the state a payment depends on, so no relay
   adapter ships. To use another channel, supply your own `simulateContractCall`.
 - Each verification picks its fee payer at random among `getAddresses()`, as
-  `/supported` picks the `feePayer` it advertises. Settlement simulates and
-  submits from the account its own verification picked. Like
+  `/supported` picks the `feePayer` it advertises. A payer that is one of
+  those accounts pays its own fee instead: the record checks let a facilitator
+  account lose `amount` only when it is also the fee payer. Settlement
+  simulates and submits from the account its own verification picked. Like
   `createHederaSignAndSubmitTransaction`, `createHederaSubmitContractExecute`
   signs with one key: with several accounts, they must share it, or supply a
   `submitContractExecute` that signs for the `feePayer` it is given.

@@ -7,7 +7,7 @@ import {
 } from "../../internal";
 import type { FacilitatorHederaSigner } from "../../signer";
 import type { ExactHederaTransferExecutorPayload } from "../../types";
-import { isHbarAsset } from "../../utils";
+import { hederaAccountIdsEqual, isHbarAsset } from "../../utils";
 import {
   isExecutorAdmitted,
   isTransferExecutorEnabled,
@@ -32,7 +32,6 @@ import {
 } from "./errors";
 import {
   encodeExecuteTransferCall,
-  isUint256,
   toEvmAssetAddress,
   toLongZeroAddress,
 } from "./executeTransferCall";
@@ -128,9 +127,14 @@ export async function verifyTransferExecutor(
       "transferExecutor does not implement extra.splits",
     );
   }
-  // A bad requirement, not an infrastructure fault: rejected before encoding.
-  if (!isUint256(BigInt(requirements.amount))) {
-    return invalid(ErrInvalidPaymentRequirements, "");
+  // The mirror node reports transfers as JSON numbers, so a larger amount could
+  // settle without its record ever matching. Rejected before anything is submitted.
+  if (BigInt(requirements.amount) > BigInt(Number.MAX_SAFE_INTEGER)) {
+    return invalid(
+      ErrInvalidPaymentRequirements,
+      "",
+      `amount ${requirements.amount} is above ${Number.MAX_SAFE_INTEGER}, the largest the mirror node reports exactly`,
+    );
   }
 
   const parsed = parseTransferExecutorPayload(payload.payload);
@@ -147,17 +151,66 @@ export async function verifyTransferExecutor(
     return invalid(ErrInvalidPayload, payer, "payload already in flight");
   }
 
-  // Runs before the custom-fee read, which needs a transferExecutor capability.
-  if (config === undefined || !isTransferExecutorEnabled(signer, config, network)) {
-    return invalid(ErrUnsupportedAssetTransferMethod, payer);
-  }
-
   try {
+    // The custom-fee rule belongs to the shape checks, so it runs before method
+    // support. A signer that can't read fees leaves the method off, so method
+    // support rejects first there.
+    if (!isHbarAsset(requirements.asset) && canReadCustomFees(signer)) {
+      const tokenFailure = await checkTokenCustomFees(signer, requirements, payer);
+      if (tokenFailure !== undefined) {
+        return tokenFailure;
+      }
+    }
+    if (config === undefined || !isTransferExecutorEnabled(signer, config, network)) {
+      return invalid(ErrUnsupportedAssetTransferMethod, payer);
+    }
     return await verifyEnabledTransfer(signer, config, requirements, transfer);
   } catch (error) {
     // Transport and infrastructure failures are never blamed on the payer.
     return invalid(ErrUnexpectedVerifyError, payer, errorMessage(error));
   }
+}
+
+/**
+ * Returns true when the signer can read a token's custom fees.
+ *
+ * @param signer - Facilitator signer
+ * @returns True when `getTokenCustomFees` is implemented
+ */
+function canReadCustomFees(
+  signer: FacilitatorHederaSigner,
+): signer is FacilitatorHederaSigner &
+  Required<Pick<FacilitatorHederaSigner, "getTokenCustomFees">> {
+  return typeof signer.getTokenCustomFees === "function";
+}
+
+/**
+ * Rejects an HTS asset that is not a fungible token on the network, or that
+ * carries a custom fee. Throws on transport errors.
+ *
+ * @param signer - Signer that can read custom fees
+ * @param requirements - Validated requirements with an HTS asset
+ * @param payer - Payer to report
+ * @returns The failure, or undefined when the token passes
+ */
+async function checkTokenCustomFees(
+  signer: Required<Pick<FacilitatorHederaSigner, "getTokenCustomFees">>,
+  requirements: PaymentRequirements,
+  payer: string,
+): Promise<TransferExecutorVerification | undefined> {
+  const { network, asset } = requirements;
+  const fees = await signer.getTokenCustomFees({ tokenId: asset, network });
+  if (fees === undefined) {
+    return invalid(
+      ErrInvalidPaymentRequirements,
+      payer,
+      `asset ${asset} is not a fungible token on ${network}`,
+    );
+  }
+  if (fees.fixedFeeCount + fees.fractionalFeeCount + fees.royaltyFeeCount !== 0) {
+    return invalid(ErrCustomFeeAsset, payer);
+  }
+  return undefined;
 }
 
 /**
@@ -179,20 +232,6 @@ async function verifyEnabledTransfer(
   const { network, asset } = requirements;
   const { payer } = transfer;
 
-  if (!isHbarAsset(asset)) {
-    const fees = await signer.getTokenCustomFees({ tokenId: asset, network });
-    if (fees === undefined) {
-      return invalid(
-        ErrInvalidPaymentRequirements,
-        payer,
-        `asset ${asset} is not a fungible token on ${network}`,
-      );
-    }
-    if (fees.fixedFeeCount + fees.fractionalFeeCount + fees.royaltyFeeCount !== 0) {
-      return invalid(ErrCustomFeeAsset, payer);
-    }
-  }
-
   // Judged against the facilitator's own list, whatever the requirements name.
   if (!isExecutorAdmitted(config, network, transfer.executor)) {
     return invalid(ErrExecutorNotAdmitted, payer);
@@ -212,10 +251,14 @@ async function verifyEnabledTransfer(
     );
   }
   // Drawn per call, as `/supported` draws its advertised `feePayer`; enablement
-  // checked there is one. Settle submits from the account simulated here. It is
-  // our own account, so a failure to resolve it is misconfiguration.
+  // checked there is one. A payer we control pays its own fee: the settlement
+  // checks let our account lose `amount` only when it is the fee payer too.
+  // Settle submits from the account simulated here. It is our own account, so a
+  // failure to resolve it is misconfiguration.
   const addresses = signer.getAddresses();
-  const feePayer = addresses[Math.floor(Math.random() * addresses.length)];
+  const feePayer =
+    addresses.find(address => hederaAccountIdsEqual(address, payer)) ??
+    addresses[Math.floor(Math.random() * addresses.length)];
   const feePayerAddress = await signer.resolveEvmAddress({ account: feePayer, network });
   if (feePayerAddress === undefined) {
     throw new Error(`fee payer ${feePayer} has no EVM address`);

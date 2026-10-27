@@ -197,7 +197,8 @@ function checkPayeeCredit(
 
 /**
  * Facilitator safety over the lists: a facilitator account loses at most the fee
- * in HBAR when it is the fee payer, plus `amount` in `asset` when it is the payer.
+ * in HBAR when it is the fee payer, plus `amount` in `asset` when it is also the
+ * payer. Any other facilitator account loses nothing, even when it is the payer.
  *
  * @param merged - Merged record
  * @param payment - Expected payment
@@ -210,9 +211,12 @@ function checkFacilitatorDebits(
   for (const [list, net] of merged.lists) {
     for (const account of payment.facilitatorAccounts) {
       const debit = -netOf(net, account);
+      const isFeePayer = account === payment.feePayer;
       const allowed =
-        (list === HBAR_LIST && account === payment.feePayer ? payment.fee : 0n) +
-        (list === payment.assetList && account === payment.payer ? payment.amount : 0n);
+        (list === HBAR_LIST && isFeePayer ? payment.fee : 0n) +
+        (list === payment.assetList && isFeePayer && account === payment.payer
+          ? payment.amount
+          : 0n);
       if (debit <= allowed) {
         continue;
       }

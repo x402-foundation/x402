@@ -8,7 +8,7 @@ import { HEDERA_CRYPTO_TRANSFER_METHOD, HEDERA_TRANSFER_EXECUTOR_METHOD } from "
 import type { ClientHederaSigner } from "../../signer";
 import { findDefaultAsset } from "../../defaultAssets";
 import { executorListAdmits, isStringArray, parseTransferExecutorPayload } from "../../internal";
-import type { ExactHederaPayloadV2 } from "../../types";
+import type { ExactHederaPayloadV2, HederaAssetTransferMethod } from "../../types";
 import {
   assertSupportedHederaNetwork,
   isValidHederaEntityId,
@@ -16,11 +16,28 @@ import {
 } from "../../utils";
 
 /**
+ * Builds the payment payload for one asset transfer method.
+ */
+type PaymentPayloadBuilder = (
+  x402Version: number,
+  paymentRequirements: PaymentRequirements,
+) => Promise<PaymentPayloadResult>;
+
+/**
  * Hedera client implementation for the Exact payment scheme.
  */
 export class ExactHederaScheme implements SchemeNetworkClient {
   readonly scheme = "exact";
   findDefaultAsset = findDefaultAsset;
+  /**
+   * One builder per method, so adding a method without handling it fails to compile.
+   */
+  private readonly methods: Record<HederaAssetTransferMethod, PaymentPayloadBuilder> = {
+    [HEDERA_CRYPTO_TRANSFER_METHOD]: (x402Version, paymentRequirements) =>
+      this.createCryptoTransferPayload(x402Version, paymentRequirements),
+    [HEDERA_TRANSFER_EXECUTOR_METHOD]: (x402Version, paymentRequirements) =>
+      this.createTransferExecutorPayload(x402Version, paymentRequirements),
+  };
 
   /**
    * Creates a new ExactHederaScheme instance.
@@ -48,16 +65,12 @@ export class ExactHederaScheme implements SchemeNetworkClient {
     assertSupportedHederaNetwork(paymentRequirements.network);
 
     const method = resolveHederaAssetTransferMethod(paymentRequirements.extra);
-    switch (method) {
-      case null:
-        throw new Error(
-          `Unsupported assetTransferMethod for Hedera exact: ${JSON.stringify(paymentRequirements.extra?.assetTransferMethod)}`,
-        );
-      case HEDERA_CRYPTO_TRANSFER_METHOD:
-        return this.createCryptoTransferPayload(x402Version, paymentRequirements);
-      case HEDERA_TRANSFER_EXECUTOR_METHOD:
-        return this.createTransferExecutorPayload(x402Version, paymentRequirements);
+    if (method === null) {
+      throw new Error(
+        `Unsupported assetTransferMethod for Hedera exact: ${JSON.stringify(paymentRequirements.extra?.assetTransferMethod)}`,
+      );
     }
+    return this.methods[method](x402Version, paymentRequirements);
   }
 
   /**

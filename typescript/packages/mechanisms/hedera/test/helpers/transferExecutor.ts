@@ -3,7 +3,7 @@
  */
 import { vi } from "vitest";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
-import type { FacilitatorHederaSigner } from "../../src/signer";
+import type { FacilitatorHederaSigner, HederaTokenCustomFees } from "../../src/signer";
 import type { HederaTransactionRecordEntry, HederaTransferEntry } from "../../src/types";
 
 /**
@@ -28,6 +28,8 @@ export function createPaymentPayload(
 /**
  * Builds a facilitator signer whose capabilities are bare spies: enough for
  * `transferExecutor` to count as enabled, and for checks that end before any I/O.
+ * The custom-fee read, which runs before method support, reports a token
+ * without custom fees.
  *
  * @param addresses - Fee payer account ids
  * @returns Signer with every capability
@@ -39,7 +41,13 @@ export function createStubTransferExecutorSigner(addresses: readonly string[] = 
     verifyPayerSignature: vi.fn(),
     preflightTransfer: vi.fn(),
     resolveEvmAddress: vi.fn(),
-    getTokenCustomFees: vi.fn(),
+    getTokenCustomFees: vi.fn(
+      async (): Promise<HederaTokenCustomFees | undefined> => ({
+        fixedFeeCount: 0,
+        fractionalFeeCount: 0,
+        royaltyFeeCount: 0,
+      }),
+    ),
     simulateContractCall: vi.fn(),
     submitContractExecute: vi.fn(),
     getTransactionRecord: vi.fn(),

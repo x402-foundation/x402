@@ -270,6 +270,57 @@ describe("transferExecutor settle: submission", () => {
     expect(signer.submitContractExecute.mock.calls[0][0].feePayer).toBe(otherFeePayer);
     expect(result).toEqual({ success: true, transaction: TX_ID, network: TESTNET, payer: PAYER });
   });
+
+  it.each([0, 0.75])(
+    "makes a payer the facilitator controls its own fee payer, whatever the draw (%d)",
+    async draw => {
+      const signer = createSigner([FEE_PAYER, PAYER]);
+      signer.getTransactionRecord.mockResolvedValue(
+        createRecord({
+          parent: recordEntry({
+            chargedFee: FEE.toString(),
+            hbarTransfers: [transferEntry(FEE_COLLECTOR, FEE), transferEntry(PAYER, -FEE)],
+          }),
+        }),
+      );
+      vi.spyOn(Math, "random").mockReturnValue(draw);
+      const scheme = new ExactHederaScheme(signer, createConfig());
+      const requirements = createRequirements();
+
+      const result = await scheme.settle(createPaymentPayload(requirements), requirements);
+
+      expect(signer.simulateContractCall.mock.calls[0][0].from).toBe(PAYER_EVM);
+      expect(signer.submitContractExecute.mock.calls[0][0].feePayer).toBe(PAYER);
+      expect(result).toEqual({ success: true, transaction: TX_ID, network: TESTNET, payer: PAYER });
+    },
+  );
+
+  it("recognizes the payer among the facilitator's accounts however its id is written", async () => {
+    const payerWithLeadingZero = "0.0.09001";
+    const signer = createSigner([FEE_PAYER, payerWithLeadingZero]);
+    const resolve = signer.resolveEvmAddress.getMockImplementation()!;
+    signer.resolveEvmAddress.mockImplementation(async params =>
+      params.account === payerWithLeadingZero
+        ? { accountId: payerWithLeadingZero, evmAddress: PAYER_EVM }
+        : resolve(params),
+    );
+    signer.getTransactionRecord.mockResolvedValue(
+      createRecord({
+        parent: recordEntry({
+          chargedFee: FEE.toString(),
+          hbarTransfers: [transferEntry(FEE_COLLECTOR, FEE), transferEntry(PAYER, -FEE)],
+        }),
+      }),
+    );
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const scheme = new ExactHederaScheme(signer, createConfig());
+    const requirements = createRequirements();
+
+    const result = await scheme.settle(createPaymentPayload(requirements), requirements);
+
+    expect(signer.submitContractExecute.mock.calls[0][0].feePayer).toBe(payerWithLeadingZero);
+    expect(result).toEqual({ success: true, transaction: TX_ID, network: TESTNET, payer: PAYER });
+  });
 });
 
 describe("transferExecutor settle: admission re-check", () => {
@@ -356,6 +407,21 @@ describe("transferExecutor settle: before broadcast", () => {
       errorReason: ErrInvalidPaymentRequirements,
       errorMessage: "transferExecutor does not implement extra.splits",
       payer: "",
+    });
+    expect(signer.submitContractExecute).not.toHaveBeenCalled();
+  });
+
+  it("rejects an amount the mirror node can't report exactly and submits nothing", async () => {
+    const signer = createSigner();
+    const scheme = new ExactHederaScheme(signer, createConfig());
+    const requirements = createRequirements({ amount: (2n ** 53n).toString() });
+
+    const result = await scheme.settle(createPaymentPayload(requirements), requirements);
+
+    expect(result).toMatchObject({
+      success: false,
+      transaction: "",
+      errorReason: ErrInvalidPaymentRequirements,
     });
     expect(signer.submitContractExecute).not.toHaveBeenCalled();
   });

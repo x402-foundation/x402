@@ -654,22 +654,29 @@ describe("checkTransferExecutorSettlement", () => {
           },
         },
       ],
-    ])("accepts a facilitator account as payer debited the amount in %s", (_, asset, lists) => {
-      const verdict = checkTransferExecutorSettlement(
-        record({ children: [recordEntry(lists)] }),
-        expectation({ asset, payer: OTHER_FACILITATOR, ...twoAccounts }),
-      );
-      expect(verdict).toEqual({ ok: true });
-    });
+    ])(
+      "fails a facilitator account as payer debited the amount in %s when it is not the fee payer",
+      (_, asset, lists) => {
+        const verdict = checkTransferExecutorSettlement(
+          record({ children: [recordEntry(lists)] }),
+          expectation({ asset, payer: OTHER_FACILITATOR, ...twoAccounts }),
+        );
+        expect(verdict).toMatchObject({ ok: false, errorReason: "settlement_unexpected_transfer" });
+        const message = verdict.ok === false ? verdict.errorMessage : "";
+        expect(message).toContain(OTHER_FACILITATOR);
+        expect(message).toContain(`debited ${AMOUNT}`);
+      },
+    );
 
-    it("fails a facilitator account as payer debited more than the amount in the token", () => {
+    it("fails a payer that is the fee payer debited more than the amount in the token", () => {
       const verdict = checkTransferExecutorSettlement(
         record({
+          parent: feeParent(PAYER),
           children: [
             recordEntry({
               tokenTransfers: {
                 [TOKEN]: [
-                  transferEntry(OTHER_FACILITATOR, -(AMOUNT + 1n)),
+                  transferEntry(PAYER, -(AMOUNT + 1n)),
                   transferEntry(PAY_TO, AMOUNT),
                   transferEntry(THIRD_PARTY, 1n),
                 ],
@@ -677,9 +684,10 @@ describe("checkTransferExecutorSettlement", () => {
             }),
           ],
         }),
-        expectation({ asset: TOKEN, payer: OTHER_FACILITATOR, ...twoAccounts }),
+        expectation({ asset: TOKEN, feePayer: PAYER, facilitatorAccounts: [PAYER] }),
       );
       expect(verdict).toMatchObject({ ok: false, errorReason: "settlement_unexpected_transfer" });
+      expect(verdict.ok === false && verdict.errorMessage).toContain(`debited ${AMOUNT + 1n}`);
     });
   });
 
