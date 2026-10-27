@@ -1,7 +1,14 @@
 import type { Network } from "@x402/core/types";
 import { AccountId, Transaction, TransferTransaction } from "@hiero-ledger/sdk";
-import { HBAR_ASSET_ID, HEDERA_ENTITY_ID_REGEX, SUPPORTED_HEDERA_NETWORKS } from "./constants";
+import {
+  HBAR_ASSET_ID,
+  HEDERA_ASSET_TRANSFER_METHODS,
+  HEDERA_DEFAULT_ASSET_TRANSFER_METHOD,
+  HEDERA_ENTITY_ID_REGEX,
+  SUPPORTED_HEDERA_NETWORKS,
+} from "./constants";
 import type {
+  HederaAssetTransferMethod,
   HederaTransferEntry,
   ExactHederaPayloadV2,
   InspectedHederaTransaction,
@@ -15,6 +22,18 @@ import type {
  */
 export function isValidHederaEntityId(entityId: string): boolean {
   return HEDERA_ENTITY_ID_REGEX.test(entityId);
+}
+
+const HEX_BYTES_REGEX = /^0x([0-9a-fA-F]{2})*$/;
+
+/**
+ * Validate a `0x`-prefixed hex string of opaque bytes (even length, `0x` alone allowed).
+ *
+ * @param value - Value to validate
+ * @returns True when the value is a string of `0x`-prefixed hex bytes
+ */
+export function isValidHexBytes(value: unknown): value is string {
+  return typeof value === "string" && HEX_BYTES_REGEX.test(value);
 }
 
 /**
@@ -58,6 +77,23 @@ export function isHbarAsset(asset: string): boolean {
  */
 export function isValidHederaAsset(asset: string): boolean {
   return isHbarAsset(asset) || isValidHederaEntityId(asset);
+}
+
+/**
+ * Resolve the asset transfer method named by payment requirements `extra`.
+ *
+ * @param extra - Payment requirements `extra`
+ * @returns The default method when `assetTransferMethod` is absent or null (as core treats
+ * it), the method when it is one this mechanism defines, otherwise null
+ */
+export function resolveHederaAssetTransferMethod(
+  extra: Record<string, unknown> | undefined,
+): HederaAssetTransferMethod | null {
+  const method = extra?.assetTransferMethod;
+  if (method === undefined || method === null) {
+    return HEDERA_DEFAULT_ASSET_TRANSFER_METHOD;
+  }
+  return HEDERA_ASSET_TRANSFER_METHODS.find(defined => defined === method) ?? null;
 }
 
 /**
