@@ -81,15 +81,11 @@ export function paymentProxyFromHTTPServer(
   const { init } = prepareHttpServer(httpServer, paywall, syncFacilitatorOnStart);
 
   let bazaarPromise: Promise<void> | null = null;
-  if (checkIfBazaarNeeded(httpServer.routes)) {
-    if (!httpServer.server.hasExtension("bazaar")) {
-      bazaarPromise = import(/* webpackIgnore: true */ "@x402/extensions/bazaar").then(
-        ({ bazaarResourceServerExtension }) => {
-          httpServer.server.registerExtension(bazaarResourceServerExtension);
-        },
-      );
-    }
-    bazaarPromise = (bazaarPromise ?? Promise.resolve())
+  if (checkIfBazaarNeeded(httpServer.routes) && !httpServer.server.hasExtension("bazaar")) {
+    bazaarPromise = import(/* webpackIgnore: true */ "@x402/extensions/bazaar")
+      .then(({ bazaarResourceServerExtension }) => {
+        httpServer.server.registerExtension(bazaarResourceServerExtension);
+      })
       .then(() => import(/* webpackIgnore: true */ "@x402/extensions/bazaar"))
       .then(({ validateBazaarRouteExtensions }) => {
         validateBazaarRouteExtensions(httpServer.routes);
@@ -287,15 +283,11 @@ export function withX402FromHTTPServer<T = unknown>(
   const { init } = prepareHttpServer(httpServer, paywall, syncFacilitatorOnStart);
 
   let bazaarPromise: Promise<void> | null = null;
-  if (checkIfBazaarNeeded(httpServer.routes)) {
-    if (!httpServer.server.hasExtension("bazaar")) {
-      bazaarPromise = import(/* webpackIgnore: true */ "@x402/extensions/bazaar").then(
-        ({ bazaarResourceServerExtension }) => {
-          httpServer.server.registerExtension(bazaarResourceServerExtension);
-        },
-      );
-    }
-    bazaarPromise = (bazaarPromise ?? Promise.resolve())
+  if (checkIfBazaarNeeded(httpServer.routes) && !httpServer.server.hasExtension("bazaar")) {
+    bazaarPromise = import(/* webpackIgnore: true */ "@x402/extensions/bazaar")
+      .then(({ bazaarResourceServerExtension }) => {
+        httpServer.server.registerExtension(bazaarResourceServerExtension);
+      })
       .then(() => import(/* webpackIgnore: true */ "@x402/extensions/bazaar"))
       .then(({ validateBazaarRouteExtensions }) => {
         validateBazaarRouteExtensions(httpServer.routes);
