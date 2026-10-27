@@ -1,5 +1,6 @@
 """Unit tests for x402.http.clients.requests - requests adapter wrapper."""
 
+import io
 import json
 from unittest.mock import MagicMock, patch
 
@@ -175,6 +176,57 @@ class TestX402HTTPAdapter:
         assert response.status_code == 200
         assert len(mock_client.create_calls) == 1
         assert call_count[0] == 2
+
+    @pytest.mark.parametrize(
+        "make_body",
+        [
+            pytest.param(lambda: (chunk for chunk in [b'{"tool":', b'"paid"}']), id="generator"),
+            pytest.param(lambda: io.BytesIO(b'{"tool":"paid"}'), id="file"),
+        ],
+    )
+    def test_one_shot_body_is_replayed_on_payment_retry(self, make_body):
+        """File and generator bodies are identical on the initial send and retry."""
+        mock_client = MockX402ClientSync()
+        adapter = x402HTTPAdapter(mock_client)
+        payment_required = PaymentRequired(
+            x402_version=2,
+            accepts=[make_payment_requirements()],
+        )
+        encoded = encode_payment_required_header(payment_required)
+
+        request = requests.Request(
+            "POST", "https://api.example.com/upload", data=make_body()
+        ).prepare()
+
+        mock_402_response = MagicMock(spec=requests.Response)
+        mock_402_response.status_code = 402
+        mock_402_response.headers = {"PAYMENT-REQUIRED": encoded}
+        mock_402_response.content = b"{}"
+        mock_402_response.url = "https://api.example.com/upload"
+
+        mock_200_response = MagicMock(spec=requests.Response)
+        mock_200_response.status_code = 200
+        mock_200_response.headers = {}
+
+        sent = []
+
+        def mock_send(req, **kwargs):
+            body = req.body
+            if hasattr(body, "read"):
+                body = body.read()
+            elif body is not None and not isinstance(body, bytes):
+                body = b"".join(body)
+            sent.append(
+                (body, req.headers.get("Content-Length"), req.headers.get("Transfer-Encoding"))
+            )
+            return mock_402_response if len(sent) == 1 else mock_200_response
+
+        with patch.object(requests.adapters.HTTPAdapter, "send", side_effect=mock_send):
+            response = adapter.send(request)
+
+        assert response.status_code == 200
+        assert [body for body, _, _ in sent] == [b'{"tool":"paid"}', b'{"tool":"paid"}']
+        assert all(length == "15" and te is None for _, length, te in sent)
 
     def test_send_adds_payment_headers_on_retry(self):
         """Test that retry request includes payment headers."""
