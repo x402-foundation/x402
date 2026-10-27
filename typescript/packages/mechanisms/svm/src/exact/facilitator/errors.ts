@@ -1,9 +1,8 @@
 /**
  * Named error reason constants for the exact SVM facilitator.
  *
- * These strings must be character-for-character identical to the Go
- * constants in go/mechanisms/svm/exact/facilitator/errors.go to maintain
- * cross-SDK parity.
+ * Scheme-specific TypeScript codes use `invalid_exact_svm`; the Go
+ * facilitator uses `invalid_exact_solana`.
  */
 
 // Verify errors
@@ -14,6 +13,7 @@ export const ErrFeePayerNotManaged = "invalid_exact_svm_fee_payer_not_managed_by
 export const ErrInvalidPayloadTransaction = "invalid_exact_svm_payload_transaction";
 export const ErrTransactionCouldNotBeDecoded =
   "invalid_exact_svm_payload_transaction_could_not_be_decoded";
+export const ErrUnsupportedTransactionVersion = "unsupported_transaction_version";
 export const ErrSignatureInvalid = "invalid_exact_svm_payload_signature_invalid";
 export const ErrExcessiveSigners = "invalid_exact_svm_payload_excessive_signers";
 export const ErrTransactionInstructionsLength =
@@ -41,6 +41,9 @@ export const ErrAmountMismatch = "invalid_exact_svm_payload_amount_mismatch";
 export const ErrInvalidFeePayer = "invalid_exact_svm_invalid_fee_payer";
 export const ErrTransactionSigningFailed = "invalid_exact_svm_transaction_signing_failed";
 export const ErrTransactionSimulationFailed = "invalid_exact_svm_transaction_simulation_failed";
+export const ErrRecipientATAMissing = "invalid_exact_svm_recipient_ata_missing";
+export const ErrRecipientATAWrongProgramOwner =
+  "invalid_exact_svm_recipient_ata_wrong_program_owner";
 
 // Memo verification errors
 export const ErrMemoMismatch = "invalid_exact_svm_payload_memo_mismatch";

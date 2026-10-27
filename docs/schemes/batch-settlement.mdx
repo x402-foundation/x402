@@ -482,6 +482,79 @@ The server validates this configuration at startup. If no `receiverAuthorizerSig
 
 On the facilitator side, the `authorizerSigner` passed to `BatchSettlementEvmScheme` is optional. When provided, the facilitator advertises its address as `receiverAuthorizer` in `/supported` and signs missing authorizer signatures. When omitted, no `receiverAuthorizer` is advertised and servers must supply their own `receiverAuthorizerSigner`.
 
+### Facilitator-managed custody (Go)
+
+By default, the server owns the voucher store, per-channel locks, and the claim/settle/refund schedule (`VoucherStoreMode: "self"`). In facilitator-managed mode (`VoucherStoreMode: "facilitator"`), the facilitator takes over that responsibility. The server becomes a pass-through: it calls `/verify` then `/settle` for every request (including voucher payloads), and the facilitator's channel manager handles batched claims, settlements, and refunds.
+
+Use facilitator-managed custody when you want to centralize channel operations at the facilitator, or when your server is stateless and cannot run a background channel manager.
+
+#### Server configuration
+
+Set `VoucherStoreMode: server.VoucherStoreModeFacilitator`. The server no longer runs a channel manager for claims or refunds. `Storage` is a post-settle replica only — it is never read on the hot path.
+
+For cooperative refunds, choose one of:
+
+- **`RefundAuthorizerSigner`** — the server's own refund EOA. The 402 carries `extra.refundAuthorizer`; the client packs it into the channel salt; the facilitator verifies the server's signature before executing the refund.
+- **Facilitator `delegatedRefund`** — omit `RefundAuthorizerSigner` and rely on the facilitator advertising `delegatedRefund: true` in `/supported`. The 402 omits `extra.refundAuthorizer` and the facilitator authenticates the caller identity instead.
+
+```go
+scheme := server.NewBatchSettlementEvmScheme(receiverAddress, &server.BatchSettlementEvmSchemeServerConfig{
+    VoucherStoreMode:       server.VoucherStoreModeFacilitator,
+    RefundAuthorizerSigner: refundAuthorizerSigner, // omit when relying on facilitator delegatedRefund
+    Storage: server.NewFileChannelStorage(batchsettlement.FileChannelStorageOptions{
+        Directory: "./channels", // replica only
+    }),
+})
+```
+
+<Callout type="warning">
+`ReceiverAuthorizerSigner` cannot be combined with `VoucherStoreMode: "facilitator"`. The facilitator owns the `receiverAuthorizer` in this mode.
+</Callout>
+
+#### Facilitator configuration
+
+Enable the voucher store by passing a `VoucherStore` config to `NewBatchSettlementEvmSchemeWithConfig`. This requires `authorizerSigner`. The facilitator then advertises `voucherManager: ["server", "facilitator"]` and `delegatedRefund` in `/supported`.
+
+```go
+import (
+    "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/facilitator"
+)
+
+scheme, err := facilitator.NewBatchSettlementEvmSchemeWithConfig(evmSigner, authorizerSigner, &facilitator.BatchSettlementEvmSchemeConfig{
+    VoucherStore: &facilitator.VoucherStoreConfig{
+        Storage: facilitator.NewFileChannelStorage(batchsettlement.FileChannelStorageOptions{
+            Directory: "./voucher-store",
+        }),
+        // LockStorage is inferred when storage implements ChannelLockStorage.
+        // WithdrawDelay defaults to 900 seconds.
+    },
+    // Optional: authenticate /settle callers so the facilitator can authorize
+    // cooperative refunds by caller identity (delegatedRefund: true).
+    // ResolveCallerIdentity: resolveCallerIdentity,
+    // DelegatedAuthStore:    delegatedAuthStore, // required with ResolveCallerIdentity
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+manager, err := scheme.CreateChannelManager(fctx)
+if err != nil {
+    log.Fatal(err)
+}
+claimSecs, settleSecs, refundSecs, refundIdle := 60, 300, 3600, 3600
+manager.Start(facilitator.FacilitatorAutoConfig{
+    ClaimIntervalSecs:  &claimSecs,
+    SettleIntervalSecs: &settleSecs,
+    RefundIntervalSecs: &refundSecs,
+    RefundIdleSecs:     &refundIdle,
+    MaxClaimsPerBatch:  100,
+})
+```
+
+`delegatedRefund` is `true` only when `ResolveCallerIdentity` is configured. Without it, servers must supply a `RefundAuthorizerSigner` for cooperative refunds.
+
+See the [Go facilitator example](https://github.com/x402-foundation/x402/tree/main/examples/go/facilitator/batch-settlement) and [Go server example](https://github.com/x402-foundation/x402/tree/main/examples/go/servers/batch-settlement) for a working pair.
+
 ### Facilitator Setup
 
 The batch-settlement facilitator scheme accepts an optional `authorizerSigner`. Pass one to enable facilitator-delegated authorization; omit it to require servers to supply their own.

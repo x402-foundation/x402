@@ -1277,15 +1277,44 @@ describe("batch-settlement SVM", () => {
     });
   });
 
+  describe("client transaction version negotiation", () => {
+    it.each([[[1]], [["legacy", 0]], ["0"]])(
+      "fails closed before any channel work when transactionVersions is %j",
+      async transactionVersions => {
+        const client = new BatchClientScheme(await generateKeyPairSigner());
+        const requirements = {
+          scheme: "batch-settlement",
+          network: SOLANA_DEVNET_CAIP2,
+          asset: USDC_DEVNET_ADDRESS,
+          amount: "1000",
+          payTo: USDC_DEVNET_ADDRESS,
+          maxTimeoutSeconds: 300,
+          extra: { transactionVersions },
+        } as never;
+        await expect(client.createPaymentPayload(2, requirements)).rejects.toThrow(
+          /^unsupported_transaction_version/,
+        );
+        await expect(client.createRefundPayload(2, requirements)).rejects.toThrow(
+          /^unsupported_transaction_version/,
+        );
+      },
+    );
+  });
+
   describe("facilitator registration surface", () => {
     it("advertises one managed fee payer without a paymentFlow override", () => {
       const facilitator = new BatchFacilitatorScheme(toFacilitatorSvmSigner(feePayer), {
         channelStorage: new InMemoryPaymentChannelStorage(),
       });
-      expect(facilitator.getExtra(SOLANA_DEVNET_CAIP2)).toEqual({
+      const extra = facilitator.getExtra(SOLANA_DEVNET_CAIP2);
+      expect(extra).toEqual({
         feePayer: feePayer.address,
         maxIdleSecs: 604_800,
+        transactionVersions: [0],
       });
+      // The advertised list is a copy, so mutating one response cannot change the next.
+      (extra.transactionVersions as number[])[0] = 1;
+      expect(facilitator.getExtra(SOLANA_DEVNET_CAIP2).transactionVersions).toEqual([0]);
       expect(facilitator.getSigners(SOLANA_DEVNET_CAIP2)).toEqual([feePayer.address]);
     });
 
@@ -1299,7 +1328,10 @@ describe("batch-settlement SVM", () => {
         channelStorage: new InMemoryPaymentChannelStorage(),
         maxIdleSecs: 0,
       });
-      expect(disabled.getExtra(SOLANA_DEVNET_CAIP2)).toEqual({ feePayer: feePayer.address });
+      expect(disabled.getExtra(SOLANA_DEVNET_CAIP2)).toEqual({
+        feePayer: feePayer.address,
+        transactionVersions: [0],
+      });
       expect(
         () =>
           new BatchFacilitatorScheme(toFacilitatorSvmSigner(feePayer), {

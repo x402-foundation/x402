@@ -652,6 +652,15 @@ func TestGetPaymentRequiredResponse(t *testing.T) {
 		t.Errorf("Expected version 1, got %d", result.X402Version)
 	}
 
+	v1LegacyBody := []byte(`{"x402Version":1,"accepts":[{"scheme":"exact","network":"base-sepolia","maxAmountRequired":"10000","resource":"https://api.example.com/premium-data","payTo":"0xrecipient","maxTimeoutSeconds":60,"asset":"0x036CbD53842c5426634e7929541eC2318f3dCF7e"}]}`)
+	result, err = client.GetPaymentRequiredResponse(map[string]string{}, v1LegacyBody)
+	if err != nil {
+		t.Fatalf("Unexpected error for v1 legacy network: %v", err)
+	}
+	if result.X402Version != 1 || len(result.Accepts) != 1 || result.Accepts[0].Network != "base-sepolia" {
+		t.Fatalf("decoded v1 legacy network: %+v", result)
+	}
+
 	// Test no payment required found
 	_, err = client.GetPaymentRequiredResponse(map[string]string{}, nil)
 	if err == nil {

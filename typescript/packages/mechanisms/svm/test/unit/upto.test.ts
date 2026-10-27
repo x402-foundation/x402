@@ -1,5 +1,9 @@
 import {
   address,
+  appendTransactionMessageInstructions,
+  compileTransaction,
+  createTransactionMessage,
+  decompileTransactionMessage,
   generateKeyPairSigner,
   getBase58Decoder,
   getBase58Encoder,
@@ -7,8 +11,14 @@ import {
   getBase64EncodedWireTransaction,
   getCompiledTransactionMessageDecoder,
   getCompiledTransactionMessageEncoder,
+  getInstructionsFromCompiledTransactionMessage,
   getTransactionDecoder,
+  getTransactionEncoder,
   partiallySignTransaction,
+  pipe,
+  setTransactionMessageConfig,
+  setTransactionMessageFeePayerSigner,
+  setTransactionMessageLifetimeUsingBlockhash,
   type KeyPairSigner,
 } from "@solana/kit";
 import { fetchMint } from "@solana-program/token-2022";
@@ -38,6 +48,7 @@ import {
 import { USDC_DEVNET_ADDRESS, USDC_MAINNET_ADDRESS } from "../../src/defaultAssets";
 import {
   buildEd25519VerifyInstruction,
+  buildReclaimInstruction,
   buildSettleAndSealInstructions,
   getPaymentChannelsTreasuryOwner,
 } from "../../src/payment-channels/onchain";
@@ -58,8 +69,11 @@ import { resolveUptoSvmPaymentChannelConfig } from "../../src/upto/shared";
 import { UptoSvmScheme as UptoServerScheme } from "../../src/upto/server/scheme";
 import {
   DEFAULT_SETTLE_COMPUTE_UNIT_LIMIT,
+  DEFAULT_SETTLE_LOADED_ACCOUNTS_DATA_SIZE_LIMIT,
+  facilitatorV1TransactionFits,
   getChannelDistributionHash,
   reclaimComputeUnitLimit,
+  reclaimLoadedAccountsDataSizeLimit,
   broadcastOpen,
   ChannelBroadcastConfirmationError as ChannelOpenConfirmationError,
   simulateOpenSettleDistribute,
@@ -74,6 +88,7 @@ import {
 import { toFacilitatorSvmSigner } from "../../src/signer";
 import { type UptoSvmPayloadV2 } from "../../src/types";
 import { resolveOpenSlot } from "../../src/utils";
+import { buildVersion0WireTransaction } from "./helpers/signedTransaction";
 
 // A valid 32-byte base58 pubkey reused as a deterministic blockhash in tests.
 const DUMMY_BLOCKHASH = USDC_MAINNET_ADDRESS;
@@ -163,10 +178,21 @@ function decodeTopLevelInstructions(txBase64: string): { program: string; data: 
   const compiled = getCompiledTransactionMessageDecoder().decode(
     getTransactionDecoder().decode(getBase64Codec().encode(txBase64)).messageBytes,
   );
-  return compiled.instructions.map(ix => ({
-    program: compiled.staticAccounts[ix.programAddressIndex]!,
+  return getInstructionsFromCompiledTransactionMessage(compiled).map(ix => ({
+    program: ix.programAddress,
     data: new Uint8Array(ix.data ?? []),
   }));
+}
+
+/** Decode a facilitator transaction's named v1 config. */
+function decodeV1Config(txBase64: string) {
+  const compiled = getCompiledTransactionMessageDecoder().decode(
+    getTransactionDecoder().decode(getBase64Codec().encode(txBase64)).messageBytes,
+  );
+  expect(compiled.version).toBe(1);
+  const message = decompileTransactionMessage(compiled);
+  if (message.version !== 1) throw new Error("expected transaction v1");
+  return message.config;
 }
 
 /** Reads the u32 LE units of a SetComputeUnitLimit instruction data. */
@@ -289,6 +315,28 @@ describe("upto SVM scheme", () => {
         tokenProgram: TOKEN_PROGRAM_ADDRESS,
         withdrawDelay: WITHDRAW_DELAY,
       });
+    });
+
+    it("forwards the facilitator's transactionVersions to the client", async () => {
+      const result = await server.enhancePaymentRequirements(
+        {
+          scheme: "upto",
+          network: SOLANA_DEVNET_CAIP2,
+          asset: MINT,
+          amount: "1000000",
+          payTo: PAY_TO,
+          maxTimeoutSeconds: 300,
+          extra: {},
+        } as PaymentRequirements,
+        {
+          x402Version: 2,
+          scheme: "upto",
+          network: SOLANA_DEVNET_CAIP2,
+          extra: { feePayer: "FeePayer1111111111111111111111111111", transactionVersions: [0] },
+        },
+        [],
+      );
+      expect(result.extra.transactionVersions).toEqual([0]);
     });
 
     it("rejects a facilitator without a valid feePayer", () => {
@@ -2465,7 +2513,7 @@ describe("upto SVM scheme", () => {
     });
   });
 
-  describe("facilitator.submitSettle compute budget", () => {
+  describe("facilitator.submitSettle v1 config", () => {
     const SIG =
       "5VERYvERYVeryvERYVERYVeryVeryVeRYvERYveRYVeRYVerYVERYveryVERYVERYVeryVERYVERYVeryv";
 
@@ -2501,23 +2549,27 @@ describe("upto SVM scheme", () => {
       const feePayer = await generateKeyPairSigner();
       const { signer, simulateTransaction, sendTransaction } = makeSettleSigner();
 
-      const signature = await submitSettle(feePayer, signer as never, SOLANA_DEVNET_CAIP2, [
-        memoIx,
-      ]);
+      const signature = await submitSettle(
+        feePayer,
+        signer as never,
+        SOLANA_DEVNET_CAIP2,
+        [memoIx],
+        { useTransactionV1: true },
+      );
       expect(signature).toBe(SIG);
       expect(simulateTransaction).toHaveBeenCalledTimes(1);
       expect(sendTransaction).toHaveBeenCalledTimes(1);
 
-      // Broadcast: static limit + default price, then the payload ix.
+      // Facilitator settlement uses v1 inline config, independently of the
+      // client's v0 open transaction.
       const wire = sendTransaction.mock.calls[0]![0] as string;
       const instructions = decodeTopLevelInstructions(wire);
-      expect(instructions[0]!.program).toBe(COMPUTE_BUDGET_PROGRAM_ADDRESS);
-      expect(readComputeLimitData(instructions[0]!.data)).toBe(DEFAULT_SETTLE_COMPUTE_UNIT_LIMIT);
-      expect(instructions[1]!.program).toBe(COMPUTE_BUDGET_PROGRAM_ADDRESS);
-      expect(readComputePriceData(instructions[1]!.data)).toBe(
-        BigInt(DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS),
-      );
-      expect(instructions[2]!.program).toBe(MEMO_PROGRAM_ADDRESS);
+      expect(instructions.map(ix => ix.program)).toEqual([MEMO_PROGRAM_ADDRESS]);
+      expect(decodeV1Config(wire)).toEqual({
+        computeUnitLimit: DEFAULT_SETTLE_COMPUTE_UNIT_LIMIT,
+        loadedAccountsDataSizeLimit: DEFAULT_SETTLE_LOADED_ACCOUNTS_DATA_SIZE_LIMIT,
+        priorityFeeLamports: 1n,
+      });
     });
 
     it("rethrows a definite onchain confirmation failure", async () => {
@@ -2529,7 +2581,9 @@ describe("upto SVM scheme", () => {
       );
 
       await expect(
-        submitSettle(feePayer, signer as never, SOLANA_DEVNET_CAIP2, [memoIx]),
+        submitSettle(feePayer, signer as never, SOLANA_DEVNET_CAIP2, [memoIx], {
+          useTransactionV1: true,
+        }),
       ).rejects.toThrow(TransactionOnchainFailureError);
       expect(sendTransaction).toHaveBeenCalledTimes(1);
     });
@@ -2540,7 +2594,9 @@ describe("upto SVM scheme", () => {
       signer.confirmTransaction.mockRejectedValue(new Error("rpc timeout"));
 
       await expect(
-        submitSettle(feePayer, signer as never, SOLANA_DEVNET_CAIP2, [memoIx]),
+        submitSettle(feePayer, signer as never, SOLANA_DEVNET_CAIP2, [memoIx], {
+          useTransactionV1: true,
+        }),
       ).rejects.toBeInstanceOf(SettlementConfirmationTimeoutError);
     });
 
@@ -2550,7 +2606,9 @@ describe("upto SVM scheme", () => {
       signer.simulateTransaction.mockRejectedValue(new Error("sim failed"));
 
       await expect(
-        submitSettle(feePayer, signer as never, SOLANA_DEVNET_CAIP2, [memoIx]),
+        submitSettle(feePayer, signer as never, SOLANA_DEVNET_CAIP2, [memoIx], {
+          useTransactionV1: true,
+        }),
       ).rejects.toThrow("sim failed");
       expect(sendTransaction).not.toHaveBeenCalled();
     });
@@ -2561,10 +2619,11 @@ describe("upto SVM scheme", () => {
 
       await submitSettle(feePayer, signer as never, SOLANA_DEVNET_CAIP2, [memoIx], {
         computeUnitLimit: 222_222,
+        useTransactionV1: true,
       });
 
       const wire = sendTransaction.mock.calls[0]![0] as string;
-      expect(readComputeLimitData(decodeTopLevelInstructions(wire)[0]!.data)).toBe(222_222);
+      expect(decodeV1Config(wire).computeUnitLimit).toBe(222_222);
     });
 
     it("honors the compute-unit price option, omitting the instruction at 0", async () => {
@@ -2572,19 +2631,21 @@ describe("upto SVM scheme", () => {
       const priced = makeSettleSigner();
       await submitSettle(feePayer, priced.signer as never, SOLANA_DEVNET_CAIP2, [memoIx], {
         computeUnitPriceMicroLamports: 250,
+        useTransactionV1: true,
       });
-      const pricedIxs = decodeTopLevelInstructions(priced.sendTransaction.mock.calls[0]![0]);
-      expect(readComputePriceData(pricedIxs[1]!.data)).toBe(250n);
+      const pricedConfig = decodeV1Config(priced.sendTransaction.mock.calls[0]![0]);
+      expect(pricedConfig.priorityFeeLamports).toBe(25n);
 
       const unpriced = makeSettleSigner();
       await submitSettle(feePayer, unpriced.signer as never, SOLANA_DEVNET_CAIP2, [memoIx], {
         computeUnitPriceMicroLamports: 0,
+        useTransactionV1: true,
       });
-      const unpricedIxs = decodeTopLevelInstructions(unpriced.sendTransaction.mock.calls[0]![0]);
-      expect(unpricedIxs.filter(ix => ix.program === COMPUTE_BUDGET_PROGRAM_ADDRESS)).toHaveLength(
-        1,
-      );
-      expect(readComputeLimitData(unpricedIxs[0]!.data)).toBe(DEFAULT_SETTLE_COMPUTE_UNIT_LIMIT);
+      const unpricedWire = unpriced.sendTransaction.mock.calls[0]![0];
+      expect(decodeTopLevelInstructions(unpricedWire).map(ix => ix.program)).toEqual([
+        MEMO_PROGRAM_ADDRESS,
+      ]);
+      expect(decodeV1Config(unpricedWire).priorityFeeLamports).toBeUndefined();
     });
 
     it("reclaimComputeUnitLimit scales with batch size and clamps to the tx max", () => {
@@ -2592,6 +2653,75 @@ describe("upto SVM scheme", () => {
       expect(reclaimComputeUnitLimit(2)).toBe(35_000);
       expect(reclaimComputeUnitLimit(8)).toBe(65_000);
       expect(reclaimComputeUnitLimit(1_000_000)).toBe(1_400_000);
+    });
+
+    it("packs against the v1 account, instruction, and serialized-size limits", async () => {
+      const feePayer = await generateKeyPairSigner();
+      const reclaims = [];
+      for (let i = 0; i < 63; i++) {
+        const channel = await generateKeyPairSigner();
+        reclaims.push(
+          buildReclaimInstruction({
+            channelId: channel.address,
+            rentPayer: feePayer.address,
+          }),
+        );
+      }
+      const optsFor = (count: number) => ({
+        computeUnitLimit: reclaimComputeUnitLimit(count),
+        loadedAccountsDataSizeLimit: reclaimLoadedAccountsDataSizeLimit(count),
+      });
+      expect(facilitatorV1TransactionFits(feePayer, reclaims.slice(0, 62), optsFor(62))).toBe(true);
+      expect(facilitatorV1TransactionFits(feePayer, reclaims, optsFor(63))).toBe(false);
+
+      const tinyMemos = Array.from({ length: 65 }, () => memoIx);
+      expect(facilitatorV1TransactionFits(feePayer, tinyMemos.slice(0, 64))).toBe(true);
+      expect(facilitatorV1TransactionFits(feePayer, tinyMemos)).toBe(false);
+      expect(
+        facilitatorV1TransactionFits(feePayer, [{ ...memoIx, data: new Uint8Array(4_000) }]),
+      ).toBe(false);
+    });
+
+    it("flips exactly where the serialized v1 transaction exceeds 4096 bytes", async () => {
+      const feePayer = await generateKeyPairSigner();
+      const options = {
+        computeUnitLimit: 200_000,
+        loadedAccountsDataSizeLimit: 65_536,
+        computeUnitPriceMicroLamports: 0,
+      };
+      const withData = (length: number) => [{ ...memoIx, data: new Uint8Array(length) }];
+      const wireSize = (length: number) =>
+        getTransactionEncoder().encode(
+          compileTransaction(
+            pipe(
+              createTransactionMessage({ version: 1 }),
+              m =>
+                setTransactionMessageConfig(
+                  {
+                    computeUnitLimit: options.computeUnitLimit,
+                    loadedAccountsDataSizeLimit: options.loadedAccountsDataSizeLimit,
+                  },
+                  m,
+                ),
+              m => setTransactionMessageFeePayerSigner(feePayer, m),
+              m =>
+                setTransactionMessageLifetimeUsingBlockhash(
+                  {
+                    blockhash: "11111111111111111111111111111111" as never,
+                    lastValidBlockHeight: 0n,
+                  },
+                  m,
+                ),
+              m => appendTransactionMessageInstructions(withData(length), m),
+            ),
+          ),
+        ).length;
+
+      let largest = 3_800;
+      expect(facilitatorV1TransactionFits(feePayer, withData(largest), options)).toBe(true);
+      while (facilitatorV1TransactionFits(feePayer, withData(largest + 1), options)) largest++;
+      expect(wireSize(largest)).toBe(4_096);
+      expect(wireSize(largest + 1)).toBe(4_097);
     });
   });
 
@@ -2992,7 +3122,12 @@ describe("upto SVM scheme", () => {
           .mockRejectedValue(new TransactionOnchainFailureError("Transaction failed onchain: {}")),
       };
       await expect(
-        broadcastOpen(facilitator, PAY_TO as never, SOLANA_DEVNET_CAIP2, "open"),
+        broadcastOpen(
+          facilitator,
+          PAY_TO as never,
+          SOLANA_DEVNET_CAIP2,
+          buildVersion0WireTransaction(address(PAY_TO)),
+        ),
       ).rejects.toBeInstanceOf(TransactionOnchainFailureError);
     });
 
@@ -3003,7 +3138,12 @@ describe("upto SVM scheme", () => {
         confirmTransaction: vi.fn().mockRejectedValue(new Error("rpc timeout")),
       };
       await expect(
-        broadcastOpen(facilitator, PAY_TO as never, SOLANA_DEVNET_CAIP2, "open"),
+        broadcastOpen(
+          facilitator,
+          PAY_TO as never,
+          SOLANA_DEVNET_CAIP2,
+          buildVersion0WireTransaction(address(PAY_TO)),
+        ),
       ).rejects.toBeInstanceOf(ChannelOpenConfirmationError);
     });
 
@@ -3014,7 +3154,12 @@ describe("upto SVM scheme", () => {
         confirmTransaction: vi.fn().mockResolvedValue(undefined),
       };
       await expect(
-        broadcastOpen(facilitator, PAY_TO as never, SOLANA_DEVNET_CAIP2, "open"),
+        broadcastOpen(
+          facilitator,
+          PAY_TO as never,
+          SOLANA_DEVNET_CAIP2,
+          buildVersion0WireTransaction(address(PAY_TO)),
+        ),
       ).resolves.toBe("openSig");
       expect(facilitator.confirmTransaction).toHaveBeenCalledWith("openSig", SOLANA_DEVNET_CAIP2);
     });
@@ -3089,7 +3234,10 @@ describe("upto SVM scheme", () => {
     it("exposes only feePayer from a single signer", async () => {
       const feePayer = await generateKeyPairSigner();
       const facilitator = new UptoFacilitatorScheme(toFacilitatorSvmSigner(feePayer));
-      expect(facilitator.getExtra(SOLANA_DEVNET_CAIP2)).toEqual({ feePayer: feePayer.address });
+      expect(facilitator.getExtra(SOLANA_DEVNET_CAIP2)).toEqual({
+        feePayer: feePayer.address,
+        transactionVersions: [0],
+      });
       expect(facilitator.getSigners(SOLANA_DEVNET_CAIP2)).toEqual([feePayer.address]);
     });
 
@@ -3123,9 +3271,15 @@ describe("upto SVM scheme", () => {
       const randomSpy = vi.spyOn(Math, "random");
       try {
         randomSpy.mockReturnValueOnce(0);
-        expect(facilitator.getExtra(SOLANA_DEVNET_CAIP2)).toEqual({ feePayer: feePayerA.address });
+        expect(facilitator.getExtra(SOLANA_DEVNET_CAIP2)).toEqual({
+          feePayer: feePayerA.address,
+          transactionVersions: [0],
+        });
         randomSpy.mockReturnValueOnce(0.99);
-        expect(facilitator.getExtra(SOLANA_DEVNET_CAIP2)).toEqual({ feePayer: feePayerB.address });
+        expect(facilitator.getExtra(SOLANA_DEVNET_CAIP2)).toEqual({
+          feePayer: feePayerB.address,
+          transactionVersions: [0],
+        });
       } finally {
         randomSpy.mockRestore();
       }

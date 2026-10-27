@@ -1,0 +1,3 @@
+kind: fixed
+body: Bazaar enrichment advertises an HTTP method that fits the declared input, and narrows the schema enum to that method, when a verbless route is probed with a conflicting method.
+time: 2026-10-22T07:30:00Z

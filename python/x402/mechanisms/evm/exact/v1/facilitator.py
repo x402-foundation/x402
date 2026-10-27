@@ -13,6 +13,7 @@ from ...constants import (
     ERR_FAILED_TO_GET_NETWORK_CONFIG,
     ERR_FAILED_TO_VERIFY_SIGNATURE,
     ERR_INVALID_SIGNATURE,
+    ERR_INVALID_SIGNATURE_S,
     ERR_MISSING_EIP712_DOMAIN,
     ERR_NETWORK_MISMATCH,
     ERR_RECIPIENT_MISMATCH,
@@ -35,6 +36,7 @@ from ..eip3009_utils import (
     classify_eip3009_signature,
     diagnose_eip3009_simulation_failure,
     execute_transfer_with_authorization,
+    is_plain_non_canonical_ecdsa_signature,
     parse_eip3009_authorization,
     parse_eip3009_transfer_error,
     simulate_eip3009_transfer,
@@ -211,6 +213,13 @@ class ExactEvmSchemeV1:
 
         try:
             signature = hex_to_bytes(evm_payload.signature)
+            payer_code = self._signer.get_code(payer)
+            if is_plain_non_canonical_ecdsa_signature(signature, len(payer_code) > 0):
+                return VerifyResponse(
+                    is_valid=False,
+                    invalid_reason=ERR_INVALID_SIGNATURE_S,
+                    payer=payer,
+                )
             classification = classify_eip3009_signature(
                 self._signer,
                 evm_payload.authorization,
@@ -219,6 +228,7 @@ class ExactEvmSchemeV1:
                 token_address,
                 extra["name"],
                 extra["version"],
+                payer_code,
             )
             if not classification.valid and classification.is_undeployed:
                 if not has_deployment_info(classification.sig_data):

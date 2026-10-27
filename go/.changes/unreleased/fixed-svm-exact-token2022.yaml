@@ -1,0 +1,6 @@
+kind: fixed
+body: >-
+  Use the mint's token program when deriving source and destination associated
+  token accounts and building TransferChecked instructions in the SVM exact
+  client, fixing payment construction for Token-2022 mints.
+time: 2026-10-25T06:00:00Z

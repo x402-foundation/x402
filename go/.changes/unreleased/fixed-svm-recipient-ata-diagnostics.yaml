@@ -1,0 +1,5 @@
+kind: fixed
+body: >-
+  Added optional recipient ATA diagnostics after failed exact payment simulation,
+  preserving the original failure when account lookup is unavailable.
+time: 2026-10-26T16:34:51.373679+00:00

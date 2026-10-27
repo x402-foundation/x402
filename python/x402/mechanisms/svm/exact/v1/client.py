@@ -8,7 +8,6 @@ from typing import Any
 try:
     from solana.rpc.api import Client as SolanaClient
     from solders.instruction import AccountMeta, Instruction
-    from solders.message import MessageV0
     from solders.pubkey import Pubkey
     from solders.signature import Signature
     from solders.transaction import VersionedTransaction
@@ -30,7 +29,13 @@ from ...default_assets import find_default_asset
 from ...mint_cache import MintMetadataCache, get_cached_mint_metadata
 from ...signer import ClientSvmSigner
 from ...types import ExactSvmPayload
-from ...utils import derive_ata, get_network_config, normalize_network
+from ...utils import (
+    compile_payment_message,
+    derive_ata,
+    get_network_config,
+    normalize_network,
+    resolve_transaction_version,
+)
 
 
 class ExactSvmSchemeV1:
@@ -102,10 +107,11 @@ class ExactSvmSchemeV1:
             ValueError: If feePayer is missing or invalid.
         """
         network = requirements.network
+        extra = requirements.extra or {}
+        transaction_version = resolve_transaction_version(extra)
         client = self._get_client(network)
 
         # Facilitator must provide feePayer to cover transaction fees
-        extra = requirements.extra or {}
         fee_payer_str = extra.get("feePayer")
         if not fee_payer_str:
             raise ValueError("feePayer is required in requirements.extra for SVM transactions")
@@ -181,10 +187,10 @@ class ExactSvmSchemeV1:
         blockhash = blockhash_resp.value.blockhash
 
         # Build message
-        message = MessageV0.try_compile(
+        message = compile_payment_message(
+            transaction_version,
             payer=fee_payer,
             instructions=[set_cu_limit_ix, set_cu_price_ix, transfer_ix, memo_ix],
-            address_lookup_table_accounts=[],
             recent_blockhash=blockhash,
         )
 

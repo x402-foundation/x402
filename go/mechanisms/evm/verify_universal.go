@@ -45,18 +45,26 @@ func VerifyUniversalSignature(
 	signature []byte,
 	allowUndeployed bool,
 ) (bool, *ERC6492SignatureData, error) {
-	// Step 1: Parse ERC-6492 wrapper if present
-	sigData, err := ParseERC6492Signature(signature)
+	code, err := facilitatorSigner.GetCode(ctx, signerAddress)
 	if err != nil {
 		return false, nil, err
 	}
+	return VerifyUniversalSignatureWithCode(
+		ctx, facilitatorSigner, signerAddress, hash, signature, allowUndeployed, code,
+	)
+}
 
-	// Step 2: Always fetch code first. Routing is determined by whether the address
-	// has bytecode — matching on-chain SignatureChecker (Permit2, USDC v2.2, OZ).
-	// We no longer fast-path to ECDSA before GetCode: for ERC-7702 delegated EOAs,
-	// the address has code (the delegation designation) and the on-chain verifier
-	// routes to isValidSignature, not ecrecover. Pre-verify must do the same.
-	code, err := facilitatorSigner.GetCode(ctx, signerAddress)
+// VerifyUniversalSignatureWithCode verifies a signature with bytecode the caller already fetched.
+func VerifyUniversalSignatureWithCode(
+	ctx context.Context,
+	facilitatorSigner FacilitatorEvmSigner,
+	signerAddress string,
+	hash [32]byte,
+	signature []byte,
+	allowUndeployed bool,
+	code []byte,
+) (bool, *ERC6492SignatureData, error) {
+	sigData, err := ParseERC6492Signature(signature)
 	if err != nil {
 		return false, nil, err
 	}
@@ -65,7 +73,6 @@ func VerifyUniversalSignature(
 	sigData.CodeDeployed = isDeployed
 	zeroFactory := [20]byte{}
 
-	// Step 5: Handle undeployed address
 	if !isDeployed {
 		// Check if there's ERC-6492 deployment information
 		hasDeploymentInfo := sigData.Factory != zeroFactory &&
@@ -76,8 +83,6 @@ func VerifyUniversalSignature(
 			if !allowUndeployed {
 				return false, nil, errors.New(ErrUndeployedSmartWallet + ": undeployed not allowed")
 			}
-			// Preserve deployment info for callers, but require a later simulation
-			// to prove the inner signature would succeed onchain.
 			return false, sigData, nil
 		}
 
@@ -91,7 +96,6 @@ func VerifyUniversalSignature(
 		return valid, sigData, nil
 	}
 
-	// Step 6: Deployed smart contract - use EIP-1271 verification
 	valid, err := VerifyEIP1271Signature(
 		ctx,
 		facilitatorSigner,

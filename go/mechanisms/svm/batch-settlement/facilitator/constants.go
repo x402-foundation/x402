@@ -28,11 +28,12 @@ const (
 
 // Rent-cleanup defaults re-exported for batch operators.
 const (
-	DefaultAbandonGraceSecs = paymentchannels.DefaultAbandonGraceSecs
-	DefaultMaxIdleSecs      = paymentchannels.DefaultMaxIdleSecs
-	DefaultMaxReclaimsPerTx = paymentchannels.DefaultMaxReclaimsPerTx
-	MaxSafeReclaimsPerTx    = paymentchannels.MaxSafeReclaimsPerTx
-	DefaultMaxTxsPerRun     = paymentchannels.DefaultMaxTxsPerRun
-	DefaultMaxTxsPerSigner  = paymentchannels.DefaultMaxTxsPerSigner
-	DefaultMaxClosesPerRun  = paymentchannels.DefaultMaxClosesPerRun
+	DefaultAbandonGraceSecs   = paymentchannels.DefaultAbandonGraceSecs
+	DefaultMaxIdleSecs        = paymentchannels.DefaultMaxIdleSecs
+	DefaultMaxReclaimsPerTx   = paymentchannels.DefaultMaxReclaimsPerTx
+	DefaultMaxReclaimsPerTxV1 = paymentchannels.DefaultMaxReclaimsPerTxV1
+	MaxSafeReclaimsPerTx      = paymentchannels.MaxSafeReclaimsPerTx
+	DefaultMaxTxsPerRun       = paymentchannels.DefaultMaxTxsPerRun
+	DefaultMaxTxsPerSigner    = paymentchannels.DefaultMaxTxsPerSigner
+	DefaultMaxClosesPerRun    = paymentchannels.DefaultMaxClosesPerRun
 )

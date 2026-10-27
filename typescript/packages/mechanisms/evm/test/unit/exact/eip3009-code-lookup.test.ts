@@ -6,6 +6,7 @@ import { verifyEIP3009 } from "../../../src/exact/facilitator/eip3009";
 import {
   ErrFailedToVerifySignature,
   ErrInvalidSignature,
+  ErrInvalidSignatureS,
 } from "../../../src/exact/facilitator/errors";
 import type { ExactEIP3009Payload } from "../../../src/types";
 
@@ -131,5 +132,62 @@ describe("verifyEIP3009 payer eth_getCode failure", () => {
     expect(payerLookups).toBe(1);
     expect(response.invalidReason).not.toBe(ErrInvalidSignature);
     expect(response.invalidReason).not.toBe(ErrFailedToVerifySignature);
+  });
+});
+
+const N_HALF = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0n;
+
+function sigWithS(s: bigint): `0x${string}` {
+  return `0x${"11".repeat(32)}${s.toString(16).padStart(64, "0")}1b`;
+}
+
+function payerGetCodeCalls(getCode: ReturnType<typeof vi.fn>, payer: string): number {
+  return getCode.mock.calls.filter(
+    call => (call[0] as { address: string }).address.toLowerCase() === payer.toLowerCase(),
+  ).length;
+}
+
+describe("verifyEIP3009 canonical-s gate", () => {
+  const req = requirements();
+  const body = payload(req);
+
+  function run(signature: `0x${string}`, payerCode: `0x${string}`) {
+    const getCode = vi.fn(async ({ address }: { address: `0x${string}` }) =>
+      address.toLowerCase() === PAYER.toLowerCase() ? payerCode : ("0x6080604052" as const),
+    );
+    const payment = eip3009();
+    payment.signature = signature;
+    return verifyEIP3009(signer(getCode), body, req, payment).then(result => ({
+      response: result.response,
+      payerCalls: payerGetCodeCalls(getCode, PAYER),
+    }));
+  }
+
+  it("rejects a high-s EOA signature after one payer code lookup", async () => {
+    const { response, payerCalls } = await run(sigWithS(N_HALF + 1n), "0x");
+    expect(response).toMatchObject({
+      isValid: false,
+      invalidReason: ErrInvalidSignatureS,
+      payer: PAYER,
+    });
+    expect(payerCalls).toBe(1);
+  });
+
+  it("accepts a low-s EOA signature after one payer code lookup", async () => {
+    const { response, payerCalls } = await run(sigWithS(N_HALF), "0x");
+    expect(response.invalidReason).not.toBe(ErrInvalidSignatureS);
+    expect(payerCalls).toBe(1);
+  });
+
+  it("does not reject a deployed wallet high-s signature, and looks up code once", async () => {
+    const { response, payerCalls } = await run(sigWithS(N_HALF + 1n), "0x6080604052");
+    expect(response.invalidReason).not.toBe(ErrInvalidSignatureS);
+    expect(payerCalls).toBe(1);
+  });
+
+  it("does not reject a non-65-byte signature, and looks up code once", async () => {
+    const { response, payerCalls } = await run("0x010203", "0x");
+    expect(response.invalidReason).not.toBe(ErrInvalidSignatureS);
+    expect(payerCalls).toBe(1);
   });
 });

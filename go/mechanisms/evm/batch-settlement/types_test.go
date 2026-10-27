@@ -685,6 +685,101 @@ func TestChannelStateRequirements_FromMapAndToMap(t *testing.T) {
 	}
 }
 
+func TestPaymentResponseExtra_ChargeCountRoundTrip(t *testing.T) {
+	count := 4
+	e := &BatchSettlementPaymentResponseExtra{ChargeCount: &count}
+	out := e.ToMap()
+	if out["chargeCount"] != 4 {
+		t.Fatalf("ToMap chargeCount = %v", out["chargeCount"])
+	}
+	parsed, err := PaymentResponseExtraFromMap(out)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if parsed.ChargeCount == nil || *parsed.ChargeCount != 4 {
+		t.Fatalf("parsed ChargeCount = %+v", parsed.ChargeCount)
+	}
+
+	zero := 0
+	e.ChargeCount = &zero
+	out = e.ToMap()
+	if out["chargeCount"] != 0 {
+		t.Fatalf("zero ChargeCount omitted: %+v", out)
+	}
+}
+
+func TestEnrichedPayloads_PendingIdAndCancelRoundTrip(t *testing.T) {
+	deposit := validDepositPayloadMap()
+	deposit["pendingId"] = "0xpending"
+	deposit["cancel"] = true
+	dp, err := DepositPayloadFromMap(deposit)
+	if err != nil {
+		t.Fatalf("deposit: %v", err)
+	}
+	if dp.PendingId != "0xpending" || !dp.Cancel {
+		t.Fatalf("deposit parsed = %+v", dp)
+	}
+	out := dp.ToMap()
+	if out["pendingId"] != "0xpending" || out["cancel"] != true {
+		t.Fatalf("deposit ToMap = %+v", out)
+	}
+
+	voucher := validVoucherPayloadMap()
+	voucher["pendingId"] = "0xpending"
+	vp, err := VoucherPayloadFromMap(voucher)
+	if err != nil {
+		t.Fatalf("voucher: %v", err)
+	}
+	if vp.PendingId != "0xpending" {
+		t.Fatalf("voucher parsed = %+v", vp)
+	}
+	if _, has := vp.ToMap()["cancel"]; has {
+		t.Fatal("cancel should be omitted when false")
+	}
+
+	refund := validRefundPayloadMap()
+	refund["amount"] = "100"
+	refund["refundNonce"] = "0"
+	refund["claims"] = []interface{}{}
+	refund["pendingId"] = "0xpending"
+	refund["cancel"] = true
+	rp, err := EnrichedRefundPayloadFromMap(refund)
+	if err != nil {
+		t.Fatalf("refund: %v", err)
+	}
+	if rp.PendingId != "0xpending" || !rp.Cancel {
+		t.Fatalf("refund parsed = %+v", rp)
+	}
+	rout := rp.ToMap()
+	if rout["pendingId"] != "0xpending" || rout["cancel"] != true {
+		t.Fatalf("refund ToMap = %+v", rout)
+	}
+}
+
+func TestClientVsEnrichedPayloadGuards(t *testing.T) {
+	deposit := validDepositPayloadMap()
+	deposit["pendingId"] = "0xpending"
+	deposit["cancel"] = true
+	if !IsDepositPayload(deposit) {
+		t.Fatal("enriched deposit should still be a deposit")
+	}
+
+	voucher := validVoucherPayloadMap()
+	voucher["pendingId"] = "0xpending"
+	if !IsVoucherPayload(voucher) {
+		t.Fatal("enriched voucher should still be a voucher")
+	}
+
+	refund := validRefundPayloadMap()
+	refund["amount"] = "100"
+	refund["refundNonce"] = "0"
+	refund["claims"] = []interface{}{}
+	refund["pendingId"] = "0xpending"
+	if !IsRefundPayload(refund) || !IsEnrichedRefundPayload(refund) {
+		t.Fatal("enriched refund should pass both refund guards")
+	}
+}
+
 func TestVoucherStateRequirements_FromMapAndToMap(t *testing.T) {
 	in := map[string]interface{}{
 		"signedMaxClaimable": "1000",

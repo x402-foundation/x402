@@ -35,7 +35,11 @@ export interface BatchSvmFacilitatorConfig {
    * shared durable store whose TTL covers their client retry window.
    */
   pendingSettlementStore?: BatchPendingSettlementStore | undefined;
-  /** Called before completing a payout; implementations must deduplicate by transaction. */
+  /**
+   * Called before completing a payout. Implementations must atomically
+   * deduplicate by transaction, including concurrent calls from separate
+   * processes and retries after a crash before the recording marker is saved.
+   */
   onDistributionConfirmed?: (
     response: SettleResponse,
     requirements: PaymentRequirements,

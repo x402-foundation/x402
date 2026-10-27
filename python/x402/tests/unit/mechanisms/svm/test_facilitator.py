@@ -1,8 +1,13 @@
 """Tests for ExactSvmScheme facilitator."""
 
+import hashlib
 from unittest.mock import patch
 
 import pytest
+from solders.hash import Hash
+from solders.instruction import Instruction
+from solders.message import MessageV0
+from solders.pubkey import Pubkey
 
 from x402.mechanisms.svm import (
     SOLANA_DEVNET_CAIP2,
@@ -303,7 +308,7 @@ class TestSettle:
                 mime_type="application/json",
             ),
             accepted=requirements,
-            payload={"transaction": "pendingTransaction=="},
+            payload={"transaction": "AAAA"},
         )
 
         with patch(
@@ -321,9 +326,7 @@ class TestSettle:
         assert result.error_reason == "settlement_pending"
         assert result.transaction == "mockSignature123"
         assert (
-            facilitator._pending_store.get(
-                transaction_message_hash(_FakeTx("pendingTransaction=="))
-            )
+            facilitator._pending_store.get(transaction_message_hash(_FakeTx("AAAA")))
             == "mockSignature123"
         )
 
@@ -542,21 +545,17 @@ class TestFacilitatorSchemeAttributes:
         assert result == addresses
 
 
-class _FakeMsg:
-    """Fake Solana message whose bytes() are derived from the transaction string."""
-
-    def __init__(self, data: bytes) -> None:
-        self._data = data
-
-    def __bytes__(self) -> bytes:
-        return self._data
-
-
 class _FakeTx:
-    """Fake VersionedTransaction for cache-key tests that don't need real binary."""
+    """Transaction-shaped fixture with a distinct, valid v0 message per input string."""
 
     def __init__(self, transaction_str: str) -> None:
-        self.message = _FakeMsg(transaction_str.encode())
+        payer = Pubkey.from_bytes(hashlib.sha256(transaction_str.encode()).digest())
+        instruction = Instruction(
+            Pubkey.from_string("11111111111111111111111111111111"),
+            transaction_str.encode(),
+            [],
+        )
+        self.message = MessageV0.try_compile(payer, [instruction], [], Hash.default())
 
 
 class TestDuplicateSettlementCache:

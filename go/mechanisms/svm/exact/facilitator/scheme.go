@@ -11,6 +11,7 @@ import (
 
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/programs/token"
+	"github.com/gagliardetto/solana-go/rpc"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
@@ -119,7 +120,8 @@ func (f *ExactSvmScheme) GetExtra(network x402.Network) map[string]interface{} {
 	randomIndex := rand.IntN(len(addresses))
 
 	extra := map[string]interface{}{
-		"feePayer": addresses[randomIndex].String(),
+		"feePayer":                   addresses[randomIndex].String(),
+		svm.ExtraTransactionVersions: append([]int(nil), svm.AdvertisedTransactionVersions...),
 	}
 	if f.config.EnableSmartWalletVerification {
 		extra["features"] = map[string]interface{}{
@@ -213,6 +215,12 @@ func (f *ExactSvmScheme) verify(
 	tx, err := svm.DecodeTransaction(solanaPayload.Transaction)
 	if err != nil {
 		return nil, x402.NewVerifyError(ErrTransactionCouldNotBeDecoded, "", err.Error())
+	}
+
+	// Message version gate, before any signature or instruction check: every
+	// check below reads its sponsorship policy from version-specific structure.
+	if !svm.IsAcceptedTransactionVersion(tx.Message.GetVersion()) {
+		return nil, x402.NewVerifyError(ErrUnsupportedTransactionVersion, "", fmt.Sprintf("unsupported transaction message version %d", int(tx.Message.GetVersion())-1))
 	}
 
 	if f.config.MaxRequiredSignatures != nil && tx.Message.Header.NumRequiredSignatures > *f.config.MaxRequiredSignatures {
@@ -392,7 +400,8 @@ func (f *ExactSvmScheme) verifyStaticPath(
 	}
 
 	// Step 4: Verify Transfer Instruction
-	if err := f.verifyTransferInstruction(tx, tx.Message.Instructions[2], reqStruct, signerAddressStrs); err != nil {
+	transfer, err := f.verifyTransferInstruction(tx, tx.Message.Instructions[2], reqStruct, signerAddressStrs)
+	if err != nil {
 		return x402.NewVerifyError(err.Error(), payer, err.Error())
 	}
 
@@ -457,7 +466,27 @@ func (f *ExactSvmScheme) verifyStaticPath(
 	// CRITICAL: Simulation proves transaction will succeed (catches insufficient balance, invalid accounts, etc)
 	// Signatures are verified locally; the fee-payer slot is unsigned until settle.
 	if err := f.signer.SimulateTransaction(ctx, tx, string(requirements.Network), nil); err != nil {
-		return x402.NewVerifyError(ErrTransactionSimulationFailed, payer, err.Error())
+		failure := x402.NewVerifyError(ErrTransactionSimulationFailed, payer, err.Error())
+		reader, ok := f.signer.(interface {
+			GetAccountInfo(context.Context, solana.PublicKey, string, *rpc.GetAccountInfoOpts) (*rpc.GetAccountInfoResult, error)
+		})
+		if !ok {
+			return failure
+		}
+		destination := transfer.destination
+		program := transfer.programID
+		account, readErr := reader.GetAccountInfo(ctx, destination, string(requirements.Network), &rpc.GetAccountInfoOpts{
+			Commitment: rpc.CommitmentConfirmed,
+		})
+		switch {
+		case errors.Is(readErr, rpc.ErrNotFound) || (readErr == nil && account != nil && account.Value == nil):
+			failure.InvalidReason = ErrRecipientATAMissing
+			failure.InvalidMessage = fmt.Sprintf("%s; recipient ATA %s was not found during diagnostic lookup", err.Error(), destination)
+		case readErr == nil && account != nil && account.Value != nil && account.Value.Owner != program:
+			failure.InvalidReason = ErrRecipientATAWrongProgramOwner
+			failure.InvalidMessage = fmt.Sprintf("%s; recipient ATA %s has program owner %s, expected %s", err.Error(), destination, account.Value.Owner, program)
+		}
+		return failure
 	}
 
 	return nil
@@ -483,6 +512,9 @@ func (f *ExactSvmScheme) Settle(
 	tx, err := svm.DecodeTransaction(solanaPayload.Transaction)
 	if err != nil {
 		return nil, x402.NewSettleError(ErrInvalidPayloadTransaction, "", network, "", err.Error())
+	}
+	if !svm.IsAcceptedTransactionVersion(tx.Message.GetVersion()) {
+		return nil, x402.NewSettleError(ErrUnsupportedTransactionVersion, "", network, "", fmt.Sprintf("unsupported transaction message version %d", int(tx.Message.GetVersion())-1))
 	}
 	// Keyed on message hash (immune to mutable fee-payer sig at slot 0); shared
 	// by the duplicate-settlement check and the PendingSettlementStore below.
@@ -748,40 +780,40 @@ func (f *ExactSvmScheme) verifyComputePriceInstruction(tx *solana.Transaction, i
 	return nil
 }
 
-// verifyTransferInstruction verifies the transfer instruction
+// verifyTransferInstruction returns the validated transfer details.
 func (f *ExactSvmScheme) verifyTransferInstruction(
 	tx *solana.Transaction,
 	inst solana.CompiledInstruction,
 	requirements x402.PaymentRequirements,
 	signerAddresses []string,
-) error {
+) (*transferCheckedInfo, error) {
 	progID, err := tx.Message.Program(inst.ProgramIDIndex)
 	if err != nil {
-		return errors.New(ErrNoTransferInstruction)
+		return nil, errors.New(ErrNoTransferInstruction)
 	}
 
 	// Must be Token Program or Token-2022 Program
 	if progID != solana.TokenProgramID && progID != solana.Token2022ProgramID {
-		return errors.New(ErrNoTransferInstruction)
+		return nil, errors.New(ErrNoTransferInstruction)
 	}
 
 	accounts, err := inst.ResolveInstructionAccounts(&tx.Message)
 	if err != nil {
-		return errors.New(ErrNoTransferInstruction)
+		return nil, errors.New(ErrNoTransferInstruction)
 	}
 
 	if len(accounts) < 4 {
-		return errors.New(ErrNoTransferInstruction)
+		return nil, errors.New(ErrNoTransferInstruction)
 	}
 
 	decoded, err := token.DecodeInstruction(accounts, inst.Data)
 	if err != nil {
-		return errors.New(ErrNoTransferInstruction)
+		return nil, errors.New(ErrNoTransferInstruction)
 	}
 
 	transferChecked, ok := decoded.Impl.(*token.TransferChecked)
 	if !ok {
-		return errors.New(ErrNoTransferInstruction)
+		return nil, errors.New(ErrNoTransferInstruction)
 	}
 
 	// SECURITY: Verify that the facilitator's signers are not transferring their own funds
@@ -789,46 +821,52 @@ func (f *ExactSvmScheme) verifyTransferInstruction(
 	authorityAddr := accounts[3].PublicKey.String() // TransferChecked: [source, mint, destination, authority, ...]
 	for _, signerAddr := range signerAddresses {
 		if authorityAddr == signerAddr {
-			return errors.New(ErrFeePayerTransferringFunds)
+			return nil, errors.New(ErrFeePayerTransferringFunds)
 		}
 	}
 
 	// Verify mint address
 	mintAddr := accounts[1].PublicKey.String()
 	if mintAddr != requirements.Asset {
-		return errors.New(ErrMintMismatch)
+		return nil, errors.New(ErrMintMismatch)
 	}
 
 	// Verify destination ATA
 	payToPubkey, err := solana.PublicKeyFromBase58(requirements.PayTo)
 	if err != nil {
-		return errors.New(ErrRecipientMismatch)
+		return nil, errors.New(ErrRecipientMismatch)
 	}
 
 	mintPubkey, err := solana.PublicKeyFromBase58(requirements.Asset)
 	if err != nil {
-		return errors.New(ErrMintMismatch)
+		return nil, errors.New(ErrMintMismatch)
 	}
 
 	expectedDestATA, err := findATA(payToPubkey, mintPubkey, progID)
 	if err != nil {
-		return errors.New(ErrRecipientMismatch)
+		return nil, errors.New(ErrRecipientMismatch)
 	}
 
 	destATA := transferChecked.GetDestinationAccount().PublicKey
 	if destATA.String() != expectedDestATA.String() {
-		return errors.New(ErrRecipientMismatch)
+		return nil, errors.New(ErrRecipientMismatch)
 	}
 
 	// Verify amount
 	requiredAmount, err := strconv.ParseUint(requirements.Amount, 10, 64)
 	if err != nil {
-		return errors.New(ErrAmountMismatch)
+		return nil, errors.New(ErrAmountMismatch)
 	}
 
 	if *transferChecked.Amount != requiredAmount {
-		return errors.New(ErrAmountMismatch)
+		return nil, errors.New(ErrAmountMismatch)
 	}
 
-	return nil
+	return &transferCheckedInfo{
+		programID:   progID,
+		amount:      *transferChecked.Amount,
+		mint:        mintPubkey,
+		destination: destATA,
+		authority:   accounts[3].PublicKey,
+	}, nil
 }

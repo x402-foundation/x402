@@ -124,12 +124,12 @@ class x402ResourceServer(x402ResourceServerBase):
         return self
 
     def on_after_verify(self, hook: AfterVerifyHook) -> Self:
-        """Register hook after successful verification."""
+        """Register hook after verification returns a result, including is_valid false."""
         self._after_verify_hooks.append(hook)
         return self
 
     def on_verify_failure(self, hook: OnVerifyFailureHook) -> Self:
-        """Register hook on verification failure. Return RecoveredVerifyResult to recover."""
+        """Register hook when verification raises. Return RecoveredVerifyResult to recover."""
         self._on_verify_failure_hooks.append(hook)
         return self
 
@@ -463,12 +463,12 @@ class x402ResourceServerSync(x402ResourceServerBase):
         return self
 
     def on_after_verify(self, hook: SyncAfterVerifyHook) -> Self:
-        """Register hook after successful verification."""
+        """Register hook after verification returns a result, including is_valid false."""
         self._after_verify_hooks.append(hook)
         return self
 
     def on_verify_failure(self, hook: SyncOnVerifyFailureHook) -> Self:
-        """Register hook on verification failure. Return RecoveredVerifyResult to recover."""
+        """Register hook when verification raises. Return RecoveredVerifyResult to recover."""
         self._on_verify_failure_hooks.append(hook)
         return self
 

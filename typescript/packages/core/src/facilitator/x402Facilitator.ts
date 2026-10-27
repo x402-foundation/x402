@@ -150,8 +150,8 @@ export class x402Facilitator {
   }
 
   /**
-   * Register a hook to execute after successful facilitator payment verification (isValid: true).
-   * This hook is NOT called when verification fails (isValid: false) - use onVerifyFailure for that.
+   * Register a hook to execute after verification returns a result, including
+   * `isValid: false`. A thrown verification error uses `onVerifyFailure` instead.
    *
    * @param hook - The hook function to register
    * @returns The x402Facilitator instance for chaining
@@ -162,8 +162,8 @@ export class x402Facilitator {
   }
 
   /**
-   * Register a hook to execute when facilitator payment verification fails.
-   * Called when: verification returns isValid: false, or an exception is thrown during verification.
+   * Register a hook to execute when verification throws.
+   * It does not run for a result with `isValid: false`. Use `onAfterVerify` for that rejection.
    * Can recover from failure by returning { recovered: true, result: VerifyResponse }
    *
    * @param hook - The hook function to register
@@ -340,43 +340,6 @@ export class x402Facilitator {
         facilitatorContext,
       );
 
-      // Check if verification failed (isValid: false)
-      if (!verifyResult.isValid) {
-        const reason = verifyResult.invalidReason || "Verification failed";
-        const detail = verifyResult.invalidMessage;
-        const failureContext: FacilitatorVerifyFailureContext = {
-          ...context,
-          error: new Error(detail ? `${reason}: ${detail}` : reason),
-        };
-
-        // Execute onVerifyFailure hooks
-        for (const hook of this.onVerifyFailureHooks) {
-          try {
-            const result = await hook(failureContext);
-            if (result && "recovered" in result && result.recovered) {
-              // If recovered, execute afterVerify hooks with recovered result
-              const recoveredContext: FacilitatorVerifyResultContext = {
-                ...context,
-                result: result.result,
-              };
-              for (const afterHook of this.afterVerifyHooks) {
-                try {
-                  await afterHook(recoveredContext);
-                } catch (error) {
-                  this.warnFacilitatorHookFailure("afterVerify", error);
-                }
-              }
-              return result.result;
-            }
-          } catch (error) {
-            this.warnFacilitatorHookFailure("onVerifyFailure", error);
-          }
-        }
-
-        return verifyResult;
-      }
-
-      // Execute afterVerify hooks only for successful verification
       const resultContext: FacilitatorVerifyResultContext = {
         ...context,
         result: verifyResult,
@@ -565,12 +528,39 @@ export class x402Facilitator {
     }
     const schemeDataArray = this.registeredFacilitatorSchemes.get(x402Version)!;
 
-    // Add new scheme data (supports multiple facilitators with same scheme name)
-    schemeDataArray.push({
-      facilitator,
-      networks: new Set(networks),
-      pattern: this.derivePattern(networks),
-    });
+    // One SchemeData entry per CAIP-2 namespace present in `networks`, not
+    // one entry for the whole (possibly mixed-namespace) list: a single
+    // `pattern` can only ever be a wildcard for ONE namespace at a time
+    // (derivePattern's own contract), so a mixed-namespace registration
+    // (e.g. ["stellar:testnet", "eip155:8453"]) needs one wildcard per
+    // namespace it actually covers, not a single pattern collapsed onto
+    // the first network's namespace, which previously provided no
+    // wildcard coverage in ANY namespace involved: it just duplicated the
+    // exact-match Set's own coverage of that one network. Each entry's
+    // `networks` is scoped to its OWN namespace's networks (not the full,
+    // possibly mixed-namespace set): every network is still found in its
+    // own namespace's entry, so exact matching (checked first in
+    // verify()/settle()'s dispatch loop, before pattern matching) stays
+    // correct, and getSupported() no longer walks the same network once
+    // per namespace entry and advertises duplicate kinds for it.
+    const networksByNamespace = new Map<string, Network[]>();
+    for (const network of networks) {
+      const namespace = network.split(":")[0];
+      const existing = networksByNamespace.get(namespace);
+      if (existing) {
+        existing.push(network);
+      } else {
+        networksByNamespace.set(namespace, [network]);
+      }
+    }
+
+    for (const namespaceNetworks of networksByNamespace.values()) {
+      schemeDataArray.push({
+        facilitator,
+        networks: new Set(namespaceNetworks),
+        pattern: this.derivePattern(namespaceNetworks),
+      });
+    }
 
     return this;
   }

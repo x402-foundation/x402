@@ -279,8 +279,15 @@ func TestBatchSettlementSVM(t *testing.T) {
 		require.Equal(t, map[string]any{
 			batchsettlement.ExtraFeePayer:    feePayer.Address().String(),
 			batchsettlement.ExtraMaxIdleSecs: paymentchannels.DefaultMaxIdleSecs,
+			svm.ExtraTransactionVersions:     []int{0},
 		}, extra)
 		require.Equal(t, []string{feePayer.Address().String()}, facilitator.GetSigners(svm.SolanaDevnetCAIP2))
+
+		// The advertised list is a copy, so a caller mutating it cannot change
+		// what the next /supported response advertises.
+		extra[svm.ExtraTransactionVersions].([]int)[0] = 1
+		require.Equal(t, []int{0}, facilitator.GetExtra(svm.SolanaDevnetCAIP2)[svm.ExtraTransactionVersions])
+		require.Equal(t, []int{0}, svm.AdvertisedTransactionVersions)
 	})
 
 	t.Run("advertises the configured idle window and omits a disabled one", func(t *testing.T) {
@@ -291,6 +298,7 @@ func TestBatchSettlementSVM(t *testing.T) {
 		disabled := newFacilitator(t, context.Background(), feePayer, &disabledIdle)
 		require.Equal(t, map[string]any{
 			batchsettlement.ExtraFeePayer: feePayer.Address().String(),
+			svm.ExtraTransactionVersions:  []int{0},
 		}, disabled.GetExtra(svm.SolanaDevnetCAIP2))
 		require.Panics(t, func() {
 			negative := int64(-1)

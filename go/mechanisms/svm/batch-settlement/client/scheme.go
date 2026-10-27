@@ -100,6 +100,11 @@ func (s *BatchSvmScheme) CreatePaymentPayload(
 	requirements types.PaymentRequirements,
 	payloadCtx x402.PaymentPayloadContext,
 ) (types.PaymentPayload, error) {
+	// Fail closed before any channel work when the facilitator accepts no
+	// transaction version this client can build (deposit, top-up, close).
+	if _, err := svm.ResolveTransactionVersion(requirements.Extra); err != nil {
+		return types.PaymentPayload{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.creationContexts[requirementsFingerprint(requirements)] = payloadCtx
@@ -118,6 +123,11 @@ func (s *BatchSvmScheme) CreateRefundPayload(
 	requirements types.PaymentRequirements,
 	options RefundPayloadOptions,
 ) (types.PaymentPayload, error) {
+	// Fail closed before any channel work when the facilitator accepts no
+	// transaction version this client can build (deposit, top-up, close).
+	if _, err := svm.ResolveTransactionVersion(requirements.Extra); err != nil {
+		return types.PaymentPayload{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.createRefundPayload(ctx, x402Version, requirements, options)

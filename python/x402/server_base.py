@@ -1433,40 +1433,6 @@ class x402ResourceServerBase:
                 ("verify", payload, requirements),
             )
 
-            # Check if verification failed
-            if not verify_result.is_valid:
-                failure_context = VerifyFailureContext(
-                    payment_payload=payload,
-                    requirements=requirements,
-                    payload_bytes=payload_bytes,
-                    requirements_bytes=requirements_bytes,
-                    declared_extensions=declared_extensions or {},
-                    transport_context=transport_context,
-                    error=Exception(verify_result.invalid_reason or "Verification failed"),
-                )
-                for _label, hook in get_labeled_server_hooks(
-                    "on_verify_failure",
-                    self,
-                    extension_keys,
-                    matched_scheme,
-                ):
-                    result = yield ("failure", hook, failure_context)
-                    if isinstance(result, RecoveredVerifyResult):
-                        verify_response = yield from self._run_after_verify_hooks(
-                            payload,
-                            requirements,
-                            payload_bytes,
-                            requirements_bytes,
-                            declared_extensions,
-                            transport_context,
-                            result.result,
-                            matched_scheme,
-                            extension_keys,
-                        )
-                        return verify_response
-
-                return ResourceVerifyResponse(verify=verify_result)
-
             verify_response = yield from self._run_after_verify_hooks(
                 payload,
                 requirements,

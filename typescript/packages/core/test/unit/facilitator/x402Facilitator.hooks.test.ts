@@ -189,55 +189,30 @@ describe("x402Facilitator - Lifecycle Hooks", () => {
   });
 
   describe("onVerifyFailure", () => {
-    it("should run failure hooks when verification returns isValid false", async () => {
+    it("runs afterVerify when verification returns isValid false", async () => {
       const facilitator = new x402Facilitator();
       facilitator.register(
         "eip155:8453",
         new MockSchemeFacilitator(async () => ({
           isValid: false,
-          invalidReason: "invalid_signature",
-          invalidMessage: "bad secp256k1 signature",
+          invalidReason: "mismatch",
         })),
       );
 
-      let capturedError: Error | undefined;
-      facilitator.onVerifyFailure(async context => {
-        capturedError = context.error;
+      const onVerifyFailure = vi.fn();
+      let sawInvalidResult = false;
+      facilitator.onAfterVerify(async context => {
+        sawInvalidResult =
+          context.result.isValid === false && context.result.invalidReason === "mismatch";
       });
+      facilitator.onVerifyFailure(onVerifyFailure);
 
       const result = await facilitator.verify(buildPaymentPayload(), buildPaymentRequirements());
 
       expect(result.isValid).toBe(false);
-      expect(result.invalidReason).toBe("invalid_signature");
-      expect(capturedError?.message).toBe("invalid_signature: bad secp256k1 signature");
-    });
-
-    it("should recover from isValid false and run afterVerify with the recovered result", async () => {
-      const facilitator = new x402Facilitator();
-      facilitator.register(
-        "eip155:8453",
-        new MockSchemeFacilitator(async () => ({
-          isValid: false,
-          invalidReason: "stale_nonce",
-        })),
-      );
-
-      const afterVerify = vi.fn();
-      facilitator
-        .onVerifyFailure(async () => ({
-          recovered: true,
-          result: { isValid: true, payer: "0xRecoveredFromInvalid" },
-        }))
-        .onAfterVerify(afterVerify);
-
-      const result = await facilitator.verify(buildPaymentPayload(), buildPaymentRequirements());
-
-      expect(result).toEqual({ isValid: true, payer: "0xRecoveredFromInvalid" });
-      expect(afterVerify).toHaveBeenCalledWith(
-        expect.objectContaining({
-          result: { isValid: true, payer: "0xRecoveredFromInvalid" },
-        }),
-      );
+      expect(result.invalidReason).toBe("mismatch");
+      expect(sawInvalidResult).toBe(true);
+      expect(onVerifyFailure).not.toHaveBeenCalled();
     });
 
     it("should execute hook when verification fails", async () => {
@@ -427,7 +402,9 @@ describe("x402Facilitator - Lifecycle Hooks", () => {
       const facilitator = new x402Facilitator();
       facilitator.register(
         "eip155:8453",
-        new MockSchemeFacilitator(async () => ({ isValid: false, invalidReason: "bad payment" })),
+        new MockSchemeFacilitator(async () => {
+          throw new Error("verification rpc error");
+        }),
       );
 
       const recovered: VerifyResponse = { isValid: true, payer: "0xRecovered" };

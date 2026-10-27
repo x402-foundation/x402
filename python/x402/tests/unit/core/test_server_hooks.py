@@ -319,6 +319,34 @@ class TestOnVerifyFailureRecovery:
         assert cancel_reasons == ["after_verify_aborted"]
 
 
+class TestAfterVerifyOnFacilitatorRejection:
+    def test_runs_after_verify_on_facilitator_rejection(self, server):
+        resource_server, client = server
+        client.verify_result = VerifyResponse(is_valid=False, invalid_reason="mismatch")
+        after_called = False
+        failure_called = False
+
+        def after_hook(ctx):
+            nonlocal after_called
+            after_called = True
+            assert ctx.result is not None
+            assert ctx.result.is_valid is False
+
+        def failure_hook(_ctx):
+            nonlocal failure_called
+            failure_called = True
+
+        resource_server.on_after_verify(after_hook)
+        resource_server.on_verify_failure(failure_hook)
+
+        result = _verify(resource_server, build_payload(), build_requirements())
+
+        assert result.is_valid is False
+        assert result.invalid_reason == "mismatch"
+        assert after_called is True
+        assert failure_called is False
+
+
 class TestBeforeSettleSkip:
     def test_skips_facilitator_settlement(self, server):
         resource_server, client = server

@@ -1,6 +1,7 @@
 package evm
 
 import (
+	"math/big"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -138,6 +139,65 @@ func TestVerifyEOASignature_VValueAdjustment(t *testing.T) {
 		}
 		if !got {
 			t.Error("VerifyEOASignature() with v=27/28 should be valid")
+		}
+	})
+}
+
+func signatureWithS(s *big.Int) []byte {
+	sig := make([]byte, 65)
+	s.FillBytes(sig[32:64])
+	sig[64] = 27
+	return sig
+}
+
+func TestIsCanonicalECDSASignature(t *testing.T) {
+	halfN := new(big.Int).Rsh(crypto.S256().Params().N, 1)
+
+	t.Run("accepts low-s signature", func(t *testing.T) {
+		if !IsCanonicalECDSASignature(signatureWithS(halfN)) {
+			t.Fatal("expected half-order s to be canonical")
+		}
+	})
+
+	t.Run("rejects high-s signature", func(t *testing.T) {
+		highS := new(big.Int).Add(new(big.Int).Set(halfN), big.NewInt(1))
+		if IsCanonicalECDSASignature(signatureWithS(highS)) {
+			t.Fatal("expected high-s signature to be non-canonical")
+		}
+	})
+
+	t.Run("rejects malformed length", func(t *testing.T) {
+		if IsCanonicalECDSASignature([]byte{1, 2, 3}) {
+			t.Fatal("expected malformed signature to be non-canonical")
+		}
+	})
+}
+
+func TestIsPlainNonCanonicalECDSASignature(t *testing.T) {
+	halfN := new(big.Int).Rsh(crypto.S256().Params().N, 1)
+	highS := new(big.Int).Add(new(big.Int).Set(halfN), big.NewInt(1))
+
+	t.Run("rejects high-s EOA signature", func(t *testing.T) {
+		if !IsPlainNonCanonicalECDSASignature(signatureWithS(highS), false) {
+			t.Fatal("expected high-s EOA signature to be non-canonical")
+		}
+	})
+
+	t.Run("allows low-s EOA signature", func(t *testing.T) {
+		if IsPlainNonCanonicalECDSASignature(signatureWithS(halfN), false) {
+			t.Fatal("expected low-s signature to be allowed")
+		}
+	})
+
+	t.Run("allows high-s deployed wallet signature", func(t *testing.T) {
+		if IsPlainNonCanonicalECDSASignature(signatureWithS(highS), true) {
+			t.Fatal("expected deployed wallet signature to be allowed")
+		}
+	})
+
+	t.Run("allows non-65-byte signatures", func(t *testing.T) {
+		if IsPlainNonCanonicalECDSASignature([]byte{1, 2, 3}, false) {
+			t.Fatal("expected non-65-byte signature to be allowed")
 		}
 	})
 }

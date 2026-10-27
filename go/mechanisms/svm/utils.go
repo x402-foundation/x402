@@ -278,6 +278,138 @@ func DecodeTransaction(base64Tx string) (*solana.Transaction, error) {
 	return tx, nil
 }
 
+// ErrUnsupportedTransactionVersion is the verify/settle reason returned when a
+// client-supplied transaction uses a message version the SVM schemes do not
+// accept. Every scheme shares this code so operators see one reason across
+// exact, upto and payment-channels regardless of which verifier rejected it.
+const ErrUnsupportedTransactionVersion = "unsupported_transaction_version"
+
+// ExtraTransactionVersions is the PaymentRequirements.Extra key (copied by the
+// server from the facilitator's /supported extra) that lists the transaction
+// message versions the facilitator accepts, in the Wallet Standard
+// supportedTransactionVersions vocabulary ("legacy", 0, 1).
+const ExtraTransactionVersions = "transactionVersions"
+
+// AdvertisedTransactionVersions is the value facilitators publish as
+// extra.transactionVersions in /supported. Only version 0 is advertised:
+// legacy messages are still accepted for backward compatibility (see
+// IsAcceptedTransactionVersion) but are deprecated and never offered to
+// clients, and version 1 (SIMD-0385) is not modelled by this SDK yet.
+var AdvertisedTransactionVersions = []int{0}
+
+// ClientSupportedTransactionVersions lists message versions this client can
+// construct. Negotiation selects the highest value shared with the
+// facilitator's advertised set.
+var ClientSupportedTransactionVersions = []int{0}
+
+// IsAcceptedTransactionVersion reports whether a decoded message version is one
+// the SVM verifiers know how to police. This is an allowlist of legacy and v0,
+// not a comparison against a maximum: every acceptance check derives its
+// sponsorship policy from version-specific structure (compute budget arrives as
+// ComputeBudget instructions on legacy and v0, but as an inline message config
+// on transaction v1), so an unmodelled version must be rejected before any
+// instruction-scanning check can pass vacuously.
+func IsAcceptedTransactionVersion(version solana.MessageVersion) bool {
+	return version == solana.MessageVersionLegacy || version == solana.MessageVersionV0
+}
+
+// ResolveTransactionVersion picks the message version a client must build from
+// requirements.Extra["transactionVersions"]. It selects the highest version
+// shared by the facilitator advertisement and this client's supported-version
+// set. An absent field means the facilitator predates advertisement and
+// accepts v0.
+func ResolveTransactionVersion(extra map[string]interface{}) (solana.MessageVersion, error) {
+	selected, err := selectTransactionVersion(extra)
+	if err != nil {
+		return 0, err
+	}
+	return messageVersionForWire(selected)
+}
+
+// messageVersionForWire maps a wire version number to solana-go's
+// MessageVersion. The two do not line up (MessageVersionLegacy is 0 and
+// MessageVersionV0 is 1), and SetVersion panics on a value solana-go does not
+// model, so every buildable version is mapped explicitly.
+func messageVersionForWire(version int) (solana.MessageVersion, error) {
+	switch version {
+	case 0:
+		return solana.MessageVersionV0, nil
+	default:
+		return 0, fmt.Errorf("%s: this client cannot build transaction version %d", ErrUnsupportedTransactionVersion, version)
+	}
+}
+
+// selectTransactionVersion returns the highest wire version shared by the
+// advertisement in extra and ClientSupportedTransactionVersions.
+func selectTransactionVersion(extra map[string]interface{}) (int, error) {
+	raw := interface{}([]int{0})
+	if extra != nil {
+		if value, ok := extra[ExtraTransactionVersions]; ok {
+			raw = value
+		}
+	}
+	// The field holds only the integers 0 and 1. Any other entry, including
+	// Wallet Standard's "legacy" or a stringified version, invalidates the
+	// whole field rather than being skipped.
+	var entries []interface{}
+	switch typed := raw.(type) {
+	case []interface{}:
+		entries = typed
+	// Typed slices appear when the requirements were built in-process
+	// rather than decoded from JSON.
+	case []int:
+		for _, v := range typed {
+			entries = append(entries, v)
+		}
+	case []float64:
+		for _, v := range typed {
+			entries = append(entries, v)
+		}
+	default:
+		return 0, fmt.Errorf("%s: transactionVersions must be an array, got %T", ErrUnsupportedTransactionVersion, raw)
+	}
+	advertised := make([]int, 0, len(entries))
+	for _, entry := range entries {
+		version, ok := transactionVersionEntry(entry)
+		if !ok {
+			return 0, fmt.Errorf("%s: transactionVersions entries must be the integers 0 or 1, got %v (%T)", ErrUnsupportedTransactionVersion, entry, entry)
+		}
+		advertised = append(advertised, version)
+	}
+	selected := -1
+	for _, supported := range ClientSupportedTransactionVersions {
+		for _, offered := range advertised {
+			if supported == offered && supported > selected {
+				selected = supported
+			}
+		}
+	}
+	if selected >= 0 {
+		return selected, nil
+	}
+	return 0, fmt.Errorf("%s: facilitator accepts none of the transaction versions this client can build: %v", ErrUnsupportedTransactionVersion, raw)
+}
+
+// transactionVersionEntry reports whether entry is the integer 0 or 1. JSON
+// decoding yields float64, so an integral float64 is accepted.
+func transactionVersionEntry(entry interface{}) (int, bool) {
+	switch v := entry.(type) {
+	case float64:
+		if v == 0 || v == 1 {
+			return int(v), true
+		}
+	case int:
+		if v == 0 || v == 1 {
+			return v, true
+		}
+	case int64:
+		if v == 0 || v == 1 {
+			return int(v), true
+		}
+	}
+	return 0, false
+}
+
 // GetTokenPayerFromTransaction extracts the token payer (owner) address from a transaction
 // This looks for the TransferChecked instruction and returns the owner/authority address
 func GetTokenPayerFromTransaction(tx *solana.Transaction) (string, error) {

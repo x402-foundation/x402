@@ -1,0 +1,3 @@
+kind: fixed
+body: Include the payment rejection reason in the JSON 402 body for non-browser clients, and return settlement_failed when settlement fails.
+time: 2026-10-22T07:30:00Z

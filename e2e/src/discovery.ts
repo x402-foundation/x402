@@ -12,10 +12,31 @@ import {
   DiscoveredClient,
   DiscoveredFacilitator,
   TestScenario,
+  TestEndpoint,
   ProtocolFamily,
   endpointAssetTransferMethod,
   endpointPaymentScheme,
 } from './types';
+
+/**
+ * Catalog `sdks` lists languages that implement the route for every role.
+ * `clientSdks` lists client-only languages. Legacy endpoints omit both and stay unrestricted.
+ */
+function roleImplementsEndpoint(
+  language: string,
+  endpoint: TestEndpoint,
+  role: 'client' | 'facilitator',
+): boolean {
+  const listed = endpoint.sdks;
+  const clientOnly = endpoint.clientSdks;
+  if ((!listed || listed.length === 0) && (!clientOnly || clientOnly.length === 0)) {
+    return true;
+  }
+  if (listed?.includes(language)) {
+    return true;
+  }
+  return role === 'client' && (clientOnly?.includes(language) ?? false);
+}
 
 export class TestDiscovery {
   private baseDir: string;
@@ -238,6 +259,10 @@ export class TestDiscovery {
             verboseLog(`  ⚠️  Skipping ${client.name}: No language specified`);
             continue;
           }
+          if (!roleImplementsEndpoint(clientLanguage, endpoint, 'client')) {
+            verboseLog(`  ⚠️  Skipping ${client.name} ↔ ${server.name} ${endpoint.path}: ${clientLanguage} is not a client SDK for this route`);
+            continue;
+          }
           const clientSchemesForFamily = schemesForComponent(
             clientLanguage,
             endpointProtocolFamily,
@@ -267,6 +292,7 @@ export class TestDiscovery {
             const supportsVersion = f.config.x402Versions?.includes(serverVersion);
             const facilLanguage = f.config.language;
             if (!facilLanguage) return false;
+            if (!roleImplementsEndpoint(facilLanguage, endpoint, 'facilitator')) return false;
             const clientFacilitators = client.config.facilitators;
             if (clientFacilitators && !clientFacilitators.includes(f.name)) {
               return false;

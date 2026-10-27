@@ -20,8 +20,10 @@ import (
 
 	"github.com/joho/godotenv"
 	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/buildercode"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 	batchedfac "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/facilitator"
+	channelstorage "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/storage"
 	batchsvmfac "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement/facilitator"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
 )
@@ -35,6 +37,14 @@ func main() {
 	_ = godotenv.Load()
 
 	port := envOr("PORT", defaultPort)
+	voucherStoreEnabled := envFlag("VOUCHER_STORE")
+	voucherStoreDir := strings.TrimSpace(os.Getenv("VOUCHER_STORE_DIR"))
+	voucherStoreWithdrawDelay := 900
+	if v := strings.TrimSpace(os.Getenv("VOUCHER_STORE_WITHDRAW_DELAY_SECONDS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			voucherStoreWithdrawDelay = n
+		}
+	}
 
 	evmPrivateKey := strings.TrimSpace(os.Getenv("EVM_PRIVATE_KEY"))
 	svmPrivateKey := strings.TrimSpace(os.Getenv("SVM_PRIVATE_KEY"))
@@ -53,6 +63,26 @@ func main() {
 	channelStorage := paymentchannels.NewInMemoryPaymentChannelStorage()
 
 	facilitator := x402.Newx402Facilitator()
+
+	var fctx *x402.FacilitatorContext
+	// Claim charge counts ride in the ERC-8021 `m` field. That only reuses the suffix format, so the
+	// extension is registered without a builder code whenever the voucher store is enabled.
+	builderCode := strings.TrimSpace(os.Getenv("FACILITATOR_BUILDER_CODE"))
+	if builderCode != "" || voucherStoreEnabled {
+		ext := &buildercode.BuilderCodeFacilitatorExtension{BuilderCode: builderCode}
+		facilitator.RegisterExtension(ext)
+		fctx = x402.NewFacilitatorContext(map[string]x402.FacilitatorExtension{
+			ext.Key(): ext,
+		})
+		if builderCode != "" {
+			fmt.Printf("Facilitator builder code: %s\n", builderCode)
+		} else {
+			fmt.Println("Facilitator builder code: none (suffix carries charge counts only)")
+		}
+	}
+
+	var channelManager *batchedfac.FacilitatorChannelManager
+
 	facilitator.OnAfterVerify(func(ctx x402.FacilitatorVerifyResultContext) error {
 		if ctx.Result == nil {
 			return nil
@@ -104,17 +134,95 @@ func main() {
 			}
 		}
 
+		if voucherStoreEnabled && authorizer == nil {
+			fmt.Println("VOUCHER_STORE requires EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY (facilitator-managed custody)")
+			os.Exit(1)
+		}
+
 		fmt.Printf("EVM Facilitator account: %s\n", evmSigner.GetAddresses()[0])
 		if authorizer != nil {
 			fmt.Printf("EVM Receiver Authorizer: %s\n", authorizer.Address())
 		} else {
 			fmt.Println("EVM Receiver Authorizer: not configured")
 		}
+		if voucherStoreEnabled {
+			backend := "in-memory"
+			if voucherStoreDir != "" {
+				backend = fmt.Sprintf("file (%s)", voucherStoreDir)
+			}
+			fmt.Printf(
+				"Facilitator voucher store: enabled (%s, withdrawDelay %ds)\n",
+				backend,
+				voucherStoreWithdrawDelay,
+			)
+		} else {
+			fmt.Println("Facilitator voucher store: disabled (self-managed server custody)")
+		}
 
-		facilitator.Register(
-			[]x402.Network{evmNetwork},
-			batchedfac.NewBatchSettlementEvmScheme(evmSigner, authorizer),
-		)
+		var batchScheme *batchedfac.BatchSettlementEvmScheme
+		if voucherStoreEnabled {
+			var store channelstorage.ChannelStorage[*batchedfac.FacilitatorChannel]
+			if voucherStoreDir != "" {
+				store = batchedfac.NewFileChannelStorage(batchsettlement.FileChannelStorageOptions{
+					Directory: voucherStoreDir,
+				})
+			} else {
+				store = channelstorage.NewInMemoryChannelStorage[*batchedfac.FacilitatorChannel]()
+			}
+			batchScheme, err = batchedfac.NewBatchSettlementEvmSchemeWithConfig(evmSigner, authorizer, &batchedfac.BatchSettlementEvmSchemeConfig{
+				VoucherStore: &batchedfac.VoucherStoreConfig{
+					Storage:             store,
+					WithdrawDelay:       voucherStoreWithdrawDelay,
+					SettleTargetStorage: channelstorage.NewInMemorySettleTargetStorage(),
+				},
+			})
+			if err != nil {
+				fmt.Printf("Failed to create batch-settlement scheme: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			batchScheme = batchedfac.NewBatchSettlementEvmScheme(evmSigner, authorizer)
+		}
+
+		facilitator.Register([]x402.Network{evmNetwork}, batchScheme)
+
+		if voucherStoreEnabled {
+			channelManager, err = batchScheme.CreateChannelManager(fctx)
+			if err != nil {
+				fmt.Printf("Failed to create voucher-store channel manager: %v\n", err)
+				os.Exit(1)
+			}
+			claimSecs, settleSecs, refundSecs, refundIdle := 60, 120, 180, 180
+			channelManager.Start(batchedfac.FacilitatorAutoConfig{
+				ClaimIntervalSecs:  &claimSecs,
+				SettleIntervalSecs: &settleSecs,
+				RefundIntervalSecs: &refundSecs,
+				RefundIdleSecs:     &refundIdle,
+				MaxClaimsPerBatch:  100,
+				OnClaim: func(r batchedfac.FacilitatorClaimResult) {
+					fmt.Printf("[voucher store] Claimed %d vouchers (tx: %s)\n", r.Vouchers, r.Transaction)
+					go func() {
+						ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+						defer cancel()
+						logClaimAttestation(ctx, r, evmSigner)
+					}()
+				},
+				OnSettle: func(r batchedfac.FacilitatorSettleResult) {
+					fmt.Printf("[voucher store] Settled %s (tx: %s)\n", r.Receiver, r.Transaction)
+				},
+				OnRefund: func(r batchedfac.FacilitatorRefundResult) {
+					fmt.Printf("[voucher store] Refunded channel %s (tx: %s)\n", r.Channel, r.Transaction)
+					go func() {
+						ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+						defer cancel()
+						logRefundSettlementAttestation(ctx, r, evmSigner)
+					}()
+				},
+				OnError: func(e error) {
+					fmt.Printf("[voucher store] Settlement error: %v\n", e)
+				},
+			})
+		}
 		enabled = append(enabled, "EVM (Base Sepolia)")
 	}
 
@@ -240,6 +348,14 @@ func main() {
 		signals := make(chan os.Signal, 1)
 		signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 		<-signals
+		if channelManager != nil {
+			fmt.Println("Shutting down — flushing voucher-store claims…")
+			stopCtx, stopCancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer stopCancel()
+			if err := channelManager.Stop(stopCtx, true); err != nil {
+				fmt.Printf("Channel manager stop: %v\n", err)
+			}
+		}
 		if stopRentCleanup != nil {
 			stopRentCleanup()
 		}
@@ -257,6 +373,11 @@ func main() {
 		fmt.Printf("Server error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func envFlag(name string) bool {
+	raw := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+	return raw == "1" || raw == "true" || raw == "yes"
 }
 
 func envOr(key, def string) string {

@@ -134,6 +134,9 @@ func (f *BatchSvmScheme) getExtra(ctx context.Context, network x402.Network) map
 	addresses := f.raw.GetAddresses(ctx, string(network))
 	extra := map[string]any{
 		batchsettlement.ExtraFeePayer: addresses[mrand.IntN(len(addresses))].String(),
+		// Transaction message versions accepted in client-built deposit,
+		// top-up, and close transactions. Servers copy it into the 402.
+		svm.ExtraTransactionVersions: append([]int(nil), svm.AdvertisedTransactionVersions...),
 	}
 	if f.maxIdleSecs > 0 {
 		extra[batchsettlement.ExtraMaxIdleSecs] = f.maxIdleSecs

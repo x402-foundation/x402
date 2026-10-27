@@ -286,8 +286,9 @@ export type FacilitatorSvmSigner = {
   ): Promise<Record<string, string[]>>;
 
   /**
-   * Fetch one account's onchain data. Optional — required by the `upto` scheme;
-   * {@link toFacilitatorSvmSigner} provides an implementation.
+   * Fetch one account's onchain data. Optional — required by the `upto` scheme
+   * and used for best-effort recipient ATA diagnostics after failed exact
+   * simulation. {@link toFacilitatorSvmSigner} provides an implementation.
    */
   getAccountInfo?(
     accountAddress: string,

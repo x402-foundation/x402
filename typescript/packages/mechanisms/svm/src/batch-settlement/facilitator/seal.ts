@@ -40,8 +40,12 @@ import {
   type BatchSealPayload,
   type BatchVoucher,
 } from "../types";
-import { requireReceiverAuthorizer, type ChannelBinding } from "./bindingSource";
-import type { BatchPendingSettlementStore } from "./recovery";
+import {
+  requireReceiverAuthorizer,
+  type BatchSvmFacilitatorConfig,
+  type ChannelBinding,
+} from "./bindingSource";
+import { distributionsForStore, type BatchPendingSettlementStore } from "./recovery";
 import {
   CHANNEL_BUSY,
   refundResponse,
@@ -72,6 +76,7 @@ export interface PreparedRefund {
 
 /** Scheme internals the seal path borrows, so it can live outside the scheme file. */
 export interface SealDependencies {
+  onDistributionConfirmed?: BatchSvmFacilitatorConfig["onDistributionConfirmed"];
   pendingStore: BatchPendingSettlementStore;
   settlementCache: SettlementCache;
   resolveTerms(
@@ -117,6 +122,79 @@ export interface SealDependencies {
     payer: string,
   ): Promise<SettleResponse | undefined>;
   nowSeconds(): number;
+}
+
+/**
+ * Notify the operator unless the durable close result is already recorded.
+ *
+ * @param deps - Scheme internals containing the optional payout callback
+ * @param key - Durable close operation key
+ * @param response - Confirmed close response containing the receiver payout
+ * @param requirements - Payment requirements identifying the payout recipient and asset
+ * @param intent - Close operation kind, used to safely read older seal results
+ */
+async function notifySealDistribution(
+  deps: SealDependencies,
+  key: string,
+  response: SettleResponse,
+  requirements: PaymentRequirements,
+  intent: CloseIntent,
+): Promise<void> {
+  if (!deps.onDistributionConfirmed) return;
+  const recordedKey = `${key}:recorded`;
+  if (await deps.pendingStore.get(recordedKey)) return;
+  const storedPaidToReceiver = response.extra?.paidToReceiver;
+  const paidToReceiver =
+    typeof storedPaidToReceiver === "string"
+      ? storedPaidToReceiver
+      : intent === "seal"
+        ? response.amount
+        : undefined;
+  if (paidToReceiver === undefined) {
+    throw new Error("durable refund response is missing extra.paidToReceiver");
+  }
+  await deps.onDistributionConfirmed({ ...response, amount: paidToReceiver }, requirements);
+  await deps.pendingStore.set(recordedKey, "1");
+}
+
+/**
+ * Finish accounting for a close that is already confirmed onchain.
+ *
+ * @param deps - Scheme internals containing payout persistence
+ * @param key - Durable close operation key
+ * @param response - Confirmed close response returned to the payer
+ * @param requirements - Payment requirements identifying the receiver
+ * @param intent - Close operation kind
+ * @returns The confirmed result, or a retryable pending result if recording failed
+ */
+async function completeSealDistribution(
+  deps: SealDependencies,
+  key: string,
+  response: SettleResponse,
+  requirements: PaymentRequirements,
+  intent: CloseIntent,
+): Promise<SettleResponse> {
+  // Share in-flight accounting across schemes using this store, as for sweeps.
+  // Cross-process retries still require transaction-idempotent callbacks.
+  const passes = distributionsForStore(deps.pendingStore);
+  const active = passes.get(key);
+  if (active) return active;
+  const pass = notifySealDistribution(deps, key, response, requirements, intent).then(
+    () => response,
+    error =>
+      settlementPending(
+        response.network,
+        response.payer ?? "",
+        response.transaction,
+        String(error),
+      ),
+  );
+  passes.set(key, pass);
+  try {
+    return await pass;
+  } finally {
+    if (passes.get(key) === pass) passes.delete(key);
+  }
 }
 
 /**
@@ -181,7 +259,10 @@ export async function settleSeal(
   // Namespace from spec Phase 5: ("close", channelId, maxClaimableAmount).
   const key = `batch:${intent}:${network}:${channelId}:${cumulative}`;
   const previous = await deps.pendingStore.get(`${key}:result`);
-  if (previous) return JSON.parse(previous) as SettleResponse;
+  if (previous) {
+    const response = JSON.parse(previous) as SettleResponse;
+    return completeSealDistribution(deps, key, response, requirements, intent);
+  }
 
   const channel = await deps.fetchChannel(network, channelId);
   const requiredStatus = intent === "seal" ? ChannelStatus.Closing : ChannelStatus.Open;
@@ -253,8 +334,10 @@ export async function settleSeal(
   });
   const response =
     intent === "refund" ? { ...sealed, amount: (channel.deposit - cumulative).toString() } : sealed;
+  // Persist the confirmed response first so a callback failure can retry the
+  // same payout without reading a channel the seal may have deallocated.
   await deps.pendingStore.set(`${key}:result`, JSON.stringify(response));
-  return response;
+  return completeSealDistribution(deps, key, response, requirements, intent);
 }
 
 /**

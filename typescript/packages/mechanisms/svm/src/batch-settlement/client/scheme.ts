@@ -16,7 +16,12 @@ import { encodeVoucherMessageBytes, verifyVoucherSignature } from "../../payment
 import { discoverChannelsByPayer, type ProgramAccountScan } from "../../payment-channels/discovery";
 import { ChannelStatus } from "../../payment-channels/generated/types/channelStatus";
 import type { ClientSvmConfig } from "../../signer";
-import { createRpcClient, resolveBlockhash, resolveOpenSlot } from "../../utils";
+import {
+  createRpcClient,
+  resolveBlockhash,
+  resolveOpenSlot,
+  resolveTransactionVersion,
+} from "../../utils";
 import { MAX_WITHDRAW_DELAY, MIN_WITHDRAW_DELAY } from "../constants";
 import { BatchError } from "../errors";
 import {
@@ -184,6 +189,9 @@ export class BatchSvmScheme implements SchemeNetworkClient {
     context?: PaymentPayloadContext,
   ): Promise<Pick<PaymentPayload, "x402Version" | "payload">> {
     if (context) this.creationContexts.set(requirements, context);
+    // Fail closed before any channel work when the facilitator accepts no
+    // transaction version this client can build (deposit, top-up, close).
+    resolveTransactionVersion(requirements.extra);
     const terms = await this.resolveTerms(requirements);
     const charge = parseU64(requirements.amount, "amount");
     const authorizationExpiresAt =
@@ -398,6 +406,9 @@ export class BatchSvmScheme implements SchemeNetworkClient {
     requirements: PaymentRequirements,
     options?: RefundPayloadOptions,
   ): Promise<Pick<PaymentPayload, "x402Version" | "payload">> {
+    // Fail closed before any channel work when the facilitator accepts no
+    // transaction version this client can build (deposit, top-up, close).
+    resolveTransactionVersion(requirements.extra);
     const cached = this.findCachedChannelForRoute(requirements);
     const located = await this.locateRefundChannel(requirements, cached);
     if (!located) throw new NoBatchChannelToRefundError();

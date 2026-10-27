@@ -817,6 +817,30 @@ describe("x402ResourceServer", () => {
     });
 
     describe("onAfterVerify", () => {
+      it("runs afterVerify when the facilitator returns isValid false", async () => {
+        const onVerifyFailure = vi.fn();
+        mockClient.setVerifyResponse(
+          buildVerifyResponse({ isValid: false, invalidReason: "mismatch" }),
+        );
+
+        let sawInvalidResult = false;
+        server.onAfterVerify(async context => {
+          sawInvalidResult =
+            context.result.isValid === false && context.result.invalidReason === "mismatch";
+        });
+        server.onVerifyFailure(onVerifyFailure);
+
+        const result = await server.verifyPayment(
+          buildPaymentPayload(),
+          buildPaymentRequirements(),
+        );
+
+        expect(result.isValid).toBe(false);
+        expect(result.invalidReason).toBe("mismatch");
+        expect(sawInvalidResult).toBe(true);
+        expect(onVerifyFailure).not.toHaveBeenCalled();
+      });
+
       it("should execute hook after successful verification", async () => {
         let hookExecuted = false;
         let hookResult: any;

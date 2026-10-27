@@ -1,0 +1,3 @@
+kind: fixed
+body: Reject V2 network identifiers that do not match CAIP-2 syntax. Messages with x402Version 1 keep their existing network strings.
+time: 2026-10-22T07:15:00Z

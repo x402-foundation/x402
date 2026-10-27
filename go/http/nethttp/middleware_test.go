@@ -393,8 +393,8 @@ func TestPaymentMiddleware_Returns402JSONForPaymentError(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatalf("Failed to parse response: %v", err)
 	}
-	if len(response) != 0 {
-		t.Errorf("Expected empty body {}, got %v", response)
+	if response["error"] != "Payment required" {
+		t.Errorf("Expected body {error: Payment required}, got %v", response)
 	}
 }
 
@@ -707,13 +707,12 @@ func TestPaymentMiddleware_Returns402WhenSettlementFails(t *testing.T) {
 		t.Errorf("Expected status 402, got %d", w.Code)
 	}
 
-	// Empty body by default on settlement failure
 	var response map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatalf("Failed to parse response: %v", err)
 	}
-	if len(response) != 0 {
-		t.Errorf("Expected empty body {}, got %v", response)
+	if response["error"] != "settlement_failed" {
+		t.Errorf("Expected body {error: settlement_failed}, got %v", response)
 	}
 
 	// PAYMENT-RESPONSE header must be included on settlement failure

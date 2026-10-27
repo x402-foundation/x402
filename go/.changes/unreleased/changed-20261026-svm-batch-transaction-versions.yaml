@@ -1,0 +1,3 @@
+kind: changed
+body: 'SVM batch-settlement: the facilitator advertises transactionVersions ([0]) in /supported, and the client refuses to build deposits, top-ups, or refunds with unsupported_transaction_version when the advertised set excludes every version it can build. The upto facilitator now advertises a copy of the version list instead of the shared slice.'
+time: 2026-10-26T12:00:00Z

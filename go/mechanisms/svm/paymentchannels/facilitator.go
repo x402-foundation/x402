@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	solana "github.com/gagliardetto/solana-go"
@@ -28,11 +29,20 @@ const (
 	// DefaultChannelReadBackoffStep is the linear delay added per attempt.
 	DefaultChannelReadBackoffStep = 200 * time.Millisecond
 
-	// DefaultSettleComputeUnitLimit is the default SetComputeUnitLimit for
+	// DefaultSettleComputeUnitLimit is the default inline v1 compute limit for
 	// facilitator-submitted settlement transactions. A measured claim with a
 	// warm recipient ATA consumes ~21.6k CU; a distribute that must recreate a
 	// closed recipient ATA adds ~25k. 100k keeps headroom over that worst case.
 	DefaultSettleComputeUnitLimit uint32 = 100_000
+
+	// DefaultSettleLoadedAccountsDataSizeLimit is the inline v1 account-data
+	// budget for normal settlement. Four MiB covers the mainnet Token-2022
+	// program-data account (about 1.4 MiB) with room for the remaining programs
+	// and accounts loaded by a settlement.
+	DefaultSettleLoadedAccountsDataSizeLimit uint32 = 4_194_304
+
+	ReclaimLoadedAccountsDataSizeBase       uint32 = 262_144
+	ReclaimLoadedAccountsDataSizePerChannel uint32 = 1_024
 
 	// ReclaimComputeUnitBase is the base SetComputeUnitLimit for a reclaim batch.
 	ReclaimComputeUnitBase uint32 = 25_000
@@ -49,6 +59,12 @@ func ReclaimComputeUnitLimit(channelCount int) uint32 {
 		return maxTransactionComputeUnits
 	}
 	return limit
+}
+
+// ReclaimLoadedAccountsDataSizeLimit returns the inline v1 account-data budget
+// for a reclaim batch.
+func ReclaimLoadedAccountsDataSizeLimit(channelCount int) uint32 {
+	return ReclaimLoadedAccountsDataSizeBase + ReclaimLoadedAccountsDataSizePerChannel*uint32(channelCount)
 }
 
 // ChannelReadPolicy bounds how long FetchAndVerifyOpenChannel waits for a
@@ -238,6 +254,9 @@ func BroadcastOpen(
 	if err != nil {
 		return "", err
 	}
+	if !svm.IsAcceptedTransactionVersion(tx.Message.GetVersion()) {
+		return "", fmt.Errorf("%s: unsupported transaction message version %d", svm.ErrUnsupportedTransactionVersion, int(tx.Message.GetVersion())-1)
+	}
 	if err := signer.SignTransaction(ctx, tx, feePayer, network); err != nil {
 		return "", err
 	}
@@ -301,6 +320,9 @@ func SimulateOpenSettleDistribute(
 	if err != nil {
 		return err
 	}
+	if !svm.IsAcceptedTransactionVersion(openTx.Message.GetVersion()) {
+		return fmt.Errorf("%s: unsupported transaction message version %d", svm.ErrUnsupportedTransactionVersion, int(openTx.Message.GetVersion())-1)
+	}
 	computeLimitIx, err := computebudget.NewSetComputeUnitLimitInstructionBuilder().
 		SetUnits(maxTransactionComputeUnits).
 		ValidateAndBuild()
@@ -361,11 +383,14 @@ func SimulateOpenSettleDistribute(
 	return nil
 }
 
-// SubmitSettleOptions configures the ComputeBudget prefix and broadcast hooks.
+// SubmitSettleOptions configures the inline v1 resource budget and broadcast hooks.
 type SubmitSettleOptions struct {
-	ComputeUnitLimit *uint32
-	// ComputeUnitPriceMicroLamports overrides SetComputeUnitPrice. Nil uses the
-	// package default; 0 omits the instruction.
+	ComputeUnitLimit            *uint32
+	LoadedAccountsDataSizeLimit *uint32
+	// UseTransactionV1 opts facilitator-owned submissions into the v1 message
+	// format. The zero value preserves the existing v0 wire format.
+	UseTransactionV1 bool
+	// ComputeUnitPriceMicroLamports is converted to v1's total priority fee.
 	ComputeUnitPriceMicroLamports *uint64
 	// LatestBlockhash, when set, skips a blockhash fetch.
 	LatestBlockhash *solana.Hash
@@ -571,6 +596,16 @@ func compileChannelTransaction(
 	instructions []solana.Instruction,
 	opts SubmitSettleOptions,
 ) (*solana.Transaction, error) {
+	if opts.UseTransactionV1 {
+		tx, err := buildSettleTransaction(feePayerKey, blockhash, instructions, opts)
+		if err != nil {
+			return nil, err
+		}
+		if err := feePayer.SignTransaction(ctx, tx, feePayerKey, network); err != nil {
+			return nil, err
+		}
+		return tx, nil
+	}
 	budget, err := buildSettleComputeBudget(opts)
 	if err != nil {
 		return nil, err
@@ -602,6 +637,86 @@ func buildSettleComputeBudget(opts SubmitSettleOptions) ([]solana.Instruction, e
 	return append(instructions, priceIx), nil
 }
 
+func priorityFeeLamports(computeUnitLimit uint32, microLamports uint64) (uint64, error) {
+	whole := microLamports / 1_000_000
+	if computeUnitLimit > 0 && whole > math.MaxUint64/uint64(computeUnitLimit) {
+		return 0, fmt.Errorf("priority fee overflows uint64")
+	}
+	fee := whole * uint64(computeUnitLimit)
+	remainder := microLamports % 1_000_000
+	fraction := (remainder*uint64(computeUnitLimit) + 999_999) / 1_000_000
+	if fee > math.MaxUint64-fraction {
+		return 0, fmt.Errorf("priority fee overflows uint64")
+	}
+	return fee + fraction, nil
+}
+
+func buildSettleTransactionConfig(opts SubmitSettleOptions) (solana.TransactionConfig, error) {
+	limit := DefaultSettleComputeUnitLimit
+	if opts.ComputeUnitLimit != nil {
+		limit = *opts.ComputeUnitLimit
+	}
+	loadedLimit := DefaultSettleLoadedAccountsDataSizeLimit
+	if opts.LoadedAccountsDataSizeLimit != nil {
+		loadedLimit = *opts.LoadedAccountsDataSizeLimit
+	}
+	config := solana.TransactionConfig{}.
+		WithComputeUnitLimit(limit).
+		WithLoadedAccountsDataSizeLimit(loadedLimit)
+	price := uint64(svm.DefaultComputeUnitPriceMicrolamports)
+	if opts.ComputeUnitPriceMicroLamports != nil {
+		price = *opts.ComputeUnitPriceMicroLamports
+	}
+	if price == 0 {
+		return config, nil
+	}
+	fee, err := priorityFeeLamports(limit, price)
+	if err != nil {
+		return solana.TransactionConfig{}, err
+	}
+	return config.WithPriorityFee(fee), nil
+}
+
+func buildSettleTransaction(
+	feePayer solana.PublicKey,
+	blockhash solana.Hash,
+	instructions []solana.Instruction,
+	opts SubmitSettleOptions,
+) (*solana.Transaction, error) {
+	config, err := buildSettleTransactionConfig(opts)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := solana.NewTransaction(
+		instructions,
+		blockhash,
+		solana.TransactionPayer(feePayer),
+		solana.TransactionV1Config(config),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build transaction: %w", err)
+	}
+	tx.Signatures = make([]solana.Signature, tx.Message.Header.NumRequiredSignatures)
+	return tx, nil
+}
+
+// FacilitatorV1TransactionFits checks every v1 envelope limit against an encoded candidate.
+func FacilitatorV1TransactionFits(
+	feePayer solana.PublicKey,
+	instructions []solana.Instruction,
+	opts SubmitSettleOptions,
+) bool {
+	tx, err := buildSettleTransaction(feePayer, simPlaceholderBlockhash, instructions, opts)
+	if err != nil {
+		return false
+	}
+	if len(tx.Message.AccountKeys) > solana.MaxAddressesV1 || len(tx.Message.Instructions) > solana.MaxInstructionsV1 {
+		return false
+	}
+	wire, err := tx.MarshalBinary()
+	return err == nil && len(wire) <= solana.MaxTransactionSizeV1
+}
+
 func buildSignedTransaction(
 	ctx context.Context,
 	signer svm.FacilitatorSvmSigner,
@@ -618,7 +733,9 @@ func buildSignedTransaction(
 	if err != nil {
 		return nil, fmt.Errorf("failed to build transaction: %w", err)
 	}
-	tx.Message.SetVersion(solana.MessageVersionV0)
+	if _, err := tx.Message.SetVersion(solana.MessageVersionV0); err != nil {
+		return nil, fmt.Errorf("failed to set transaction version: %w", err)
+	}
 	tx.Signatures = make([]solana.Signature, tx.Message.Header.NumRequiredSignatures)
 	if err := signer.SignTransaction(ctx, tx, feePayer, network); err != nil {
 		return nil, err

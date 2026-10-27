@@ -581,7 +581,8 @@ export class x402ResourceServer {
   }
 
   /**
-   * Register a hook to execute after successful payment verification.
+   * Register a hook to execute after verification returns a result, including
+   * a facilitator response with `isValid: false`.
    *
    * @param hook - The hook function to register
    * @returns The x402ResourceServer instance for chaining
@@ -592,7 +593,8 @@ export class x402ResourceServer {
   }
 
   /**
-   * Register a hook to execute when payment verification fails.
+   * Register a hook to execute when payment verification throws.
+   * It does not run for a facilitator response with `isValid: false`.
    * Can recover from failure by returning { recovered: true, result: VerifyResponse }
    *
    * @param hook - The hook function to register
