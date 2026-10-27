@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math/big"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/facilitator"
 )
 
 // fakeFacilitator records Settle/Verify calls and returns canned responses.
@@ -543,18 +546,6 @@ func TestRunClaimJob_FiresOnClaim(t *testing.T) {
 	}
 }
 
-func TestRunSettleJob_NoOpUnlessPendingSettle(t *testing.T) {
-	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	f := &fakeFacilitator{}
-	m := newManager(s, f)
-	m.autoSettleConfig = AutoSettlementConfig{}
-	// pendingSettle = false → runSettleJob is a no-op.
-	m.runSettleJob(context.Background())
-	if f.settleCalls != 0 {
-		t.Fatalf("expected no settle when nothing pending, got %d", f.settleCalls)
-	}
-}
-
 func TestRunSettleJob_FiresOnSettle(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
 	f := &fakeFacilitator{}
@@ -701,5 +692,213 @@ func TestGetWithdrawalPendingSessions(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].ChannelId != testChB {
 		t.Fatalf("got %+v", got)
+	}
+}
+
+// chainFacilitator tracks claimed and settled totals like the contract's
+// `receivers(receiver, token)`: claims (alone or inside a refund) add to the
+// claimed total, and settle fails with ErrNothingToSettle unless something is
+// claimed but not yet settled. Assumes each channel is claimed once, from zero.
+type chainFacilitator struct {
+	fakeFacilitator
+	claimed int64
+	settled int64
+	// nothingToSettleAsError mimics HTTPFacilitatorClient, which returns a
+	// *x402.SettleError when the facilitator replies with a non-2xx status.
+	nothingToSettleAsError bool
+	payloadTypes           []string
+}
+
+func (f *chainFacilitator) Settle(_ context.Context, payloadBytes []byte, _ []byte) (*x402.SettleResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var env struct {
+		Payload struct {
+			Type   string `json:"type"`
+			Claims []struct {
+				TotalClaimed string `json:"totalClaimed"`
+			} `json:"claims"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(payloadBytes, &env); err != nil {
+		return nil, err
+	}
+	f.payloadTypes = append(f.payloadTypes, env.Payload.Type)
+	network := x402.Network("eip155:8453")
+	if env.Payload.Type == "settle" {
+		if f.claimed <= f.settled {
+			if f.nothingToSettleAsError {
+				return nil, x402.NewSettleError(facilitator.ErrNothingToSettle, "", network, "", "facilitator returned 400")
+			}
+			return &x402.SettleResponse{
+				Success:      false,
+				ErrorReason:  facilitator.ErrNothingToSettle,
+				ErrorMessage: "nothing to settle for receiver and token",
+				Network:      network,
+			}, nil
+		}
+		f.settled = f.claimed
+		return &x402.SettleResponse{Success: true, Transaction: "0xsettle", Network: network}, nil
+	}
+	for _, c := range env.Payload.Claims {
+		amount, ok := new(big.Int).SetString(c.TotalClaimed, 10)
+		if !ok {
+			return nil, errors.New("bad totalClaimed")
+		}
+		f.claimed += amount.Int64()
+	}
+	return &x402.SettleResponse{Success: true, Transaction: "0x" + env.Payload.Type, Network: network}, nil
+}
+
+func newChainManager(s *BatchSettlementEvmScheme, f *chainFacilitator) *BatchSettlementChannelManager {
+	return NewBatchSettlementChannelManager(ChannelManagerConfig{
+		Scheme:      s,
+		Facilitator: f,
+		Receiver:    "0xreceiver",
+		Token:       "0xtoken",
+		Network:     x402.Network("eip155:8453"),
+	})
+}
+
+// storeChargedSession stores a channel with 3000 charged but unclaimed and
+// refundable balance left over.
+func storeChargedSession(t *testing.T, s *BatchSettlementEvmScheme) {
+	t.Helper()
+	sess := sampleSession(testChA, "3000")
+	sess.Balance = "10000"
+	sess.SignedMaxClaimable = "3000"
+	sess.TotalClaimed = "0"
+	if err := s.UpdateSession(testChA, sess); err != nil {
+		t.Fatalf("store session: %v", err)
+	}
+}
+
+// autoSettleRecorder collects OnSettle and OnError callbacks.
+type autoSettleRecorder struct {
+	settles []SettleResult
+	errs    []error
+}
+
+func (r *autoSettleRecorder) config() AutoSettlementConfig {
+	return AutoSettlementConfig{
+		OnSettle: func(res SettleResult) { r.settles = append(r.settles, res) },
+		OnError:  func(err error) { r.errs = append(r.errs, err) },
+	}
+}
+
+func TestSettle_NothingToSettleReturnsEmptyTransaction(t *testing.T) {
+	m := newChainManager(NewBatchSettlementEvmScheme("0xreceiver", nil), &chainFacilitator{})
+	res, err := m.Settle(context.Background())
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if res == nil || res.Transaction != "" {
+		t.Fatalf("expected empty transaction, got %+v", res)
+	}
+}
+
+func TestRunSettleJob_SettlesClaimsSubmittedByRefund(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	storeChargedSession(t, s)
+	f := &chainFacilitator{}
+	m := newChainManager(s, f)
+
+	if _, err := m.Refund(context.Background(), nil); err != nil {
+		t.Fatalf("refund: %v", err)
+	}
+
+	rec := &autoSettleRecorder{}
+	m.autoSettleConfig = rec.config()
+	for i := 0; i < 3; i++ {
+		m.runSettleJob(context.Background())
+	}
+
+	if len(rec.settles) != 1 || rec.settles[0].Transaction != "0xsettle" {
+		t.Fatalf("expected one OnSettle with 0xsettle, got %+v", rec.settles)
+	}
+	if len(rec.errs) != 0 {
+		t.Fatalf("expected no OnError, got %v", rec.errs)
+	}
+	want := []string{"refund", "settle", "settle", "settle"}
+	if !reflect.DeepEqual(f.payloadTypes, want) {
+		t.Fatalf("payload types = %v, want %v", f.payloadTypes, want)
+	}
+	if f.settled != 3000 {
+		t.Fatalf("settled = %d, want 3000", f.settled)
+	}
+}
+
+func TestRunSettleJob_SettlesClaimsLeftByPreviousProcess(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	storeChargedSession(t, s)
+	f := &chainFacilitator{}
+
+	// Claims, then stops before its settle timer fires.
+	if _, err := newChainManager(s, f).Claim(context.Background(), nil); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+
+	m := newChainManager(s, f)
+	rec := &autoSettleRecorder{}
+	m.autoSettleConfig = rec.config()
+	m.runSettleJob(context.Background())
+
+	if len(rec.settles) != 1 || rec.settles[0].Transaction != "0xsettle" {
+		t.Fatalf("expected one OnSettle with 0xsettle, got %+v", rec.settles)
+	}
+	if len(rec.errs) != 0 {
+		t.Fatalf("expected no OnError, got %v", rec.errs)
+	}
+	if f.settled != 3000 {
+		t.Fatalf("settled = %d, want 3000", f.settled)
+	}
+}
+
+func TestStop_FlushSettlesClaimsSubmittedByRefund(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	storeChargedSession(t, s)
+	f := &chainFacilitator{}
+	m := newChainManager(s, f)
+
+	if _, err := m.Refund(context.Background(), nil); err != nil {
+		t.Fatalf("refund: %v", err)
+	}
+	m.Start(AutoSettlementConfig{ClaimIntervalSecs: 3600, SettleIntervalSecs: 3600})
+	if err := m.Stop(context.Background(), &StopOptions{Flush: true}); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+
+	want := []string{"refund", "settle"}
+	if !reflect.DeepEqual(f.payloadTypes, want) {
+		t.Fatalf("payload types = %v, want %v", f.payloadTypes, want)
+	}
+	if f.settled != 3000 {
+		t.Fatalf("settled = %d, want 3000", f.settled)
+	}
+}
+
+func TestSettle_NothingToSettleSettleErrorIsNoOp(t *testing.T) {
+	f := &chainFacilitator{nothingToSettleAsError: true}
+	m := newChainManager(NewBatchSettlementEvmScheme("0xreceiver", nil), f)
+
+	res, err := m.Settle(context.Background())
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if res == nil || res.Transaction != "" {
+		t.Fatalf("expected empty transaction, got %+v", res)
+	}
+
+	rec := &autoSettleRecorder{}
+	m.autoSettleConfig = rec.config()
+	m.runSettleJob(context.Background())
+	if len(rec.settles) != 0 || len(rec.errs) != 0 {
+		t.Fatalf("expected no callbacks, got settles=%+v errs=%v", rec.settles, rec.errs)
+	}
+	m.mu.Lock()
+	lastSettleTime := m.lastSettleTime
+	m.mu.Unlock()
+	if lastSettleTime != 0 {
+		t.Fatalf("expected lastSettleTime unchanged, got %d", lastSettleTime)
 	}
 }

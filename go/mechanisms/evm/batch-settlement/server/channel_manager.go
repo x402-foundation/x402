@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -13,6 +14,7 @@ import (
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/facilitator"
 )
 
 // ChannelManagerConfig wires the channel manager to its dependencies.
@@ -44,7 +46,9 @@ type AutoSettlementContext struct {
 type ClaimChannelSelector func(channels []*ChannelSession, ctx AutoSettlementContext) ([]*ChannelSession, error)
 
 // ShouldSettleFunc decides whether a settle pass should fire for this tick.
-// Return false to skip; the next interval will re-evaluate.
+// Return false to skip; the next interval will re-evaluate. It is called even
+// when ctx.PendingSettle is false, since claims submitted by refunds or by an
+// earlier process are not tracked in memory.
 type ShouldSettleFunc func(ctx AutoSettlementContext) (bool, error)
 
 // RefundChannelSelector picks idle channels for cooperative refund.
@@ -214,13 +218,26 @@ func (m *BatchSettlementChannelManager) Claim(ctx context.Context, opts *ClaimOp
 }
 
 // Settle transfers claimed funds to the receiver via a `settle(receiver, token)` call.
+// It returns an empty Transaction when nothing is claimed but unsettled.
 func (m *BatchSettlementChannelManager) Settle(ctx context.Context) (*SettleResult, error) {
 	payload := m.buildSettlePaymentPayloadMap()
 	resp, err := m.facilitatorSettle(ctx, payload)
 	if err != nil {
-		return nil, err
+		// HTTPFacilitatorClient returns a *x402.SettleError when the facilitator
+		// replies with a non-2xx status.
+		var settleErr *x402.SettleError
+		if !errors.As(err, &settleErr) || settleErr.ErrorReason != facilitator.ErrNothingToSettle {
+			return nil, err
+		}
+		resp = &x402.SettleResponse{ErrorReason: settleErr.ErrorReason, Network: settleErr.Network}
 	}
 	if !resp.Success {
+		if resp.ErrorReason == facilitator.ErrNothingToSettle {
+			m.mu.Lock()
+			m.pendingSettle = false
+			m.mu.Unlock()
+			return &SettleResult{}, nil
+		}
 		return nil, fmt.Errorf("%s", formatFacilitatorFailure("Settle", resp))
 	}
 	m.mu.Lock()
@@ -324,7 +341,8 @@ func (m *BatchSettlementChannelManager) Start(config AutoSettlementConfig) {
 }
 
 // Stop halts auto-settlement. When opts.Flush is true, runs a final
-// ClaimAndSettle before returning.
+// ClaimAndSettle before returning, and settles even when it claimed nothing
+// (claims from refunds or earlier processes may be unsettled).
 type StopOptions struct {
 	Flush bool
 }
@@ -347,10 +365,16 @@ func (m *BatchSettlementChannelManager) Stop(ctx context.Context, opts *StopOpti
 	m.wg.Wait()
 
 	if opts != nil && opts.Flush {
-		_, _, err := m.ClaimAndSettle(ctx, &ClaimOptions{
+		_, settle, err := m.ClaimAndSettle(ctx, &ClaimOptions{
 			MaxClaimsPerBatch:   m.autoSettleConfig.MaxClaimsPerBatch,
 			SelectClaimChannels: m.autoSettleConfig.SelectClaimChannels,
 		})
+		if err != nil {
+			return err
+		}
+		if settle == nil {
+			_, err = m.Settle(ctx)
+		}
 		return err
 	}
 	return nil
@@ -465,12 +489,12 @@ func (m *BatchSettlementChannelManager) runClaimJob(ctx context.Context) {
 	}
 }
 
+// runSettleJob runs even when pendingSettle is false, since claims submitted by
+// refunds or by an earlier process are not tracked in memory; the facilitator
+// answers nothing-to-settle from onchain state.
 func (m *BatchSettlementChannelManager) runSettleJob(ctx context.Context) {
 	cfg := m.snapshotAutoSettlementConfig()
 	autoCtx := m.buildAutoSettlementContext(time.Now().UnixMilli())
-	if !autoCtx.PendingSettle {
-		return
-	}
 	if cfg.ShouldSettle != nil {
 		ok, err := cfg.ShouldSettle(autoCtx)
 		if err != nil {
@@ -490,10 +514,13 @@ func (m *BatchSettlementChannelManager) runSettleJob(ctx context.Context) {
 		}
 		return
 	}
+	if result.Transaction == "" {
+		return
+	}
 	m.mu.Lock()
 	m.lastSettleTime = time.Now().UnixMilli()
 	m.mu.Unlock()
-	if result != nil && cfg.OnSettle != nil {
+	if cfg.OnSettle != nil {
 		cfg.OnSettle(*result)
 	}
 }
@@ -758,6 +785,11 @@ func (m *BatchSettlementChannelManager) refundChannel(ctx context.Context, targe
 	}
 	if !resp.Success {
 		return nil, fmt.Errorf("%s", formatFacilitatorFailure("Refund", resp))
+	}
+	if len(claims) > 0 {
+		m.mu.Lock()
+		m.pendingSettle = true
+		m.mu.Unlock()
 	}
 
 	// Drop the session so it doesn't churn through future refund cycles.
