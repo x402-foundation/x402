@@ -5,13 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	x402 "github.com/x402-foundation/x402/go/v2"
+	cardano "github.com/x402-foundation/x402/go/v2/mechanisms/cardano/exact/facilitator"
 	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
 	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/facilitator"
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
+	cardanosigners "github.com/x402-foundation/x402/go/v2/signers/cardano"
 )
 
 /**
@@ -30,6 +33,7 @@ const (
 
 func runAllNetworksExample(evmPrivateKey, svmPrivateKey string) error {
 	// Network configuration
+	cardanoNetwork := x402.Network("cardano:preprod")
 	evmNetwork := x402.Network("eip155:84532")                            // Base Sepolia
 	svmNetwork := x402.Network("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1") // Solana Devnet
 
@@ -54,6 +58,27 @@ func runAllNetworksExample(evmPrivateKey, svmPrivateKey string) error {
 
 	// Create facilitator
 	facilitator := x402.Newx402Facilitator()
+
+	// Register Cardano when a Blockfrost project is configured. The facilitator
+	// only submits client-signed transactions, so it needs no wallet.
+	if projectID := os.Getenv("BLOCKFROST_PROJECT_ID"); projectID != "" {
+		baseURL, err := cardanosigners.DefaultBlockfrostURL(string(cardanoNetwork))
+		if err != nil {
+			return err
+		}
+		cardanoSigner, err := cardanosigners.NewFacilitatorSigner(cardanosigners.FacilitatorSignerConfig{
+			Network:  string(cardanoNetwork),
+			Provider: cardanosigners.NewBlockfrost(baseURL, projectID, 0),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create Cardano signer: %w", err)
+		}
+		// Stay within the 60s /settle timeout below; a slower confirmation
+		// returns settlement_pending and the resource server's retry resumes it.
+		facilitator.Register([]x402.Network{cardanoNetwork}, cardano.NewExactCardanoScheme(cardanoSigner, &cardano.Config{
+			ConfirmationTimeout: 50 * time.Second,
+		}))
+	}
 
 	// Register EVM scheme if signer is available (only explicitly specified networks)
 	if evmSigner != nil {
@@ -153,6 +178,9 @@ func runAllNetworksExample(evmPrivateKey, svmPrivateKey string) error {
 	}
 	if svmSigner != nil {
 		fmt.Printf("   SVM: %s on %s\n", svmSigner.GetAddresses(context.Background(), string(svmNetwork))[0], svmNetwork)
+	}
+	if os.Getenv("BLOCKFROST_PROJECT_ID") != "" {
+		fmt.Printf("   Cardano: %s via Blockfrost\n", cardanoNetwork)
 	}
 	fmt.Println()
 

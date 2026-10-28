@@ -59,6 +59,16 @@ export class GenericClientProxy extends BaseProxy implements ClientProxy {
       const result = await this.runOneShotProcess(runConfig);
 
       // Convert ProcessResult to ClientCallResult
+      // A client that never got an HTTP response reports success:false with
+      // no status code; that is a failure, not a pass.
+      if (result.success && result.data?.success === false && result.data.status_code === undefined) {
+        return {
+          success: false,
+          error: result.data.error || 'client reported failure without a response',
+          exitCode: result.exitCode,
+        };
+      }
+
       if (result.success && result.data) {
         return {
           success: true,

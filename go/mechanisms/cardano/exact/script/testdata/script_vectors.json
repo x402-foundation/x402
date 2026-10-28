@@ -1,0 +1,131 @@
+[
+ {
+  "name": "no params",
+  "type": "plutusV3",
+  "code": "4d01000033222220051200120011",
+  "scriptHash": "4fff649fb4372ec3c408b6f0468d74e4d319904cde27fd3f00910a52"
+ },
+ {
+  "name": "double wrapped",
+  "type": "plutusV3",
+  "code": "4e4d01000033222220051200120011",
+  "scriptHash": "4fff649fb4372ec3c408b6f0468d74e4d319904cde27fd3f00910a52"
+ },
+ {
+  "name": "unwrapped flat",
+  "type": "plutusV3",
+  "code": "01000033222220051200120011",
+  "scriptHash": "4fff649fb4372ec3c408b6f0468d74e4d319904cde27fd3f00910a52"
+ },
+ {
+  "name": "plutusV2",
+  "type": "plutusV2",
+  "code": "4d01000033222220051200120011",
+  "scriptHash": "793f8c8cffba081b2a56462fc219cc8fe652d6a338b62c7b134876e7"
+ },
+ {
+  "name": "bigint 42",
+  "type": "plutusV3",
+  "code": "4d01000033222220051200120011",
+  "parameters": {
+   "p1": {
+    "type": "bigint",
+    "value": "42"
+   }
+  },
+  "scriptHash": "7bfdc59e675e288dc869395143d2ed2d227bd23f0663449c847f6fcc"
+ },
+ {
+  "name": "negative integer",
+  "type": "plutusV3",
+  "code": "4d01000033222220051200120011",
+  "parameters": {
+   "p1": {
+    "type": "integer",
+    "value": "-42"
+   }
+  },
+  "scriptHash": "1d5d4d7d73ca38a2ca11c819707ec8bda0fb6baf1ce066c1e9943794"
+ },
+ {
+  "name": "huge integer",
+  "type": "plutusV3",
+  "code": "4d01000033222220051200120011",
+  "parameters": {
+   "p1": {
+    "type": "integer",
+    "value": "123456789012345678901234567890"
+   }
+  },
+  "scriptHash": "aaf6d5dec58fcc3a27e2bb5eb672e5514870280208dc4dce6b53c4e6"
+ },
+ {
+  "name": "bytes + bool",
+  "type": "plutusV3",
+  "code": "4d01000033222220051200120011",
+  "parameters": {
+   "a": {
+    "type": "bytes",
+    "value": "deadbeef"
+   },
+   "b": {
+    "type": "boolean",
+    "value": true
+   }
+  },
+  "scriptHash": "a187f932e7ec2d5e958917a9f7364bec5612a9459601059fbc2982a8"
+ },
+ {
+  "name": "string + false",
+  "type": "plutusV3",
+  "code": "4d01000033222220051200120011",
+  "parameters": {
+   "a": {
+    "type": "string",
+    "value": "Hello World"
+   },
+   "b": {
+    "type": "boolean",
+    "value": false
+   }
+  },
+  "scriptHash": "c01db3b4dc8700c1f5cbd79467b955a1161f351bd33cfd61c6e96023"
+ },
+ {
+  "name": "long bytes chunked",
+  "type": "plutusV3",
+  "code": "4d01000033222220051200120011",
+  "parameters": {
+   "a": {
+    "type": "bytes",
+    "value": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+   }
+  },
+  "scriptHash": "4094961ab8a3813cc33c2e3b660f8dd52a21b1a52c9e5935875b5e39"
+ },
+ {
+  "name": "integer keys ordered numerically",
+  "type": "plutusV3",
+  "code": "4d01000033222220051200120011",
+  "parameters": {
+   "2": {
+    "type": "integer",
+    "value": "2"
+   },
+   "10": {
+    "type": "integer",
+    "value": "10"
+   },
+   "z": {
+    "type": "integer",
+    "value": "26"
+   }
+  },
+  "scriptHash": "3b525cab64eb7506a25543d10503317d956c47dfcb6a3320dfddd7c2"
+ },
+ {
+  "name": "script address",
+  "address": "addr_test1wp8l7eylksmjas7ypzm0q35dwnjdxxvsfn0z0lflqzgs55stpd682",
+  "scriptHash": "4fff649fb4372ec3c408b6f0468d74e4d319904cde27fd3f00910a52"
+ }
+]

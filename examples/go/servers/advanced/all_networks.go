@@ -11,6 +11,7 @@ import (
 	x402 "github.com/x402-foundation/x402/go/v2"
 	x402http "github.com/x402-foundation/x402/go/v2/http"
 	ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
+	cardano "github.com/x402-foundation/x402/go/v2/mechanisms/cardano/exact/server"
 	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
 )
@@ -33,12 +34,13 @@ func main() {
 	godotenv.Load()
 
 	// Configuration - optional per network
+	cardanoAddress := os.Getenv("CARDANO_PAYEE_ADDRESS")
 	evmAddress := os.Getenv("EVM_PAYEE_ADDRESS")
 	svmAddress := os.Getenv("SVM_PAYEE_ADDRESS")
 
 	// Validate at least one address is provided
-	if evmAddress == "" && svmAddress == "" {
-		fmt.Println("❌ At least one of EVM_PAYEE_ADDRESS or SVM_PAYEE_ADDRESS is required")
+	if cardanoAddress == "" && evmAddress == "" && svmAddress == "" {
+		fmt.Println("❌ At least one of CARDANO_PAYEE_ADDRESS, EVM_PAYEE_ADDRESS or SVM_PAYEE_ADDRESS is required")
 		os.Exit(1)
 	}
 
@@ -50,10 +52,15 @@ func main() {
 	}
 
 	// Network configuration
+	cardanoNetwork := x402.Network("cardano:preprod")
 	evmNetwork := x402.Network("eip155:84532")                            // Base Sepolia
 	svmNetwork := x402.Network("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1") // Solana Devnet
 
 	fmt.Printf("🚀 Starting All Networks Server...\n")
+	if cardanoAddress != "" {
+		fmt.Printf("   Cardano Payee address: %s\n", cardanoAddress)
+		fmt.Printf("   Cardano Network: %s\n", cardanoNetwork)
+	}
 	if evmAddress != "" {
 		fmt.Printf("   EVM Payee address: %s\n", evmAddress)
 		fmt.Printf("   EVM Network: %s\n", evmNetwork)
@@ -74,6 +81,16 @@ func main() {
 
 	// Build accepts array dynamically based on configured addresses
 	paymentOptions := x402http.PaymentOptions{}
+	if cardanoAddress != "" {
+		paymentOptions = append(paymentOptions, x402http.PaymentOption{
+			Scheme:  "exact",
+			Price:   "$0.001",
+			Network: cardanoNetwork,
+			PayTo:   cardanoAddress,
+			// Cardano blocks take ~20s; leave room to sign, submit and confirm.
+			MaxTimeoutSeconds: 600,
+		})
+	}
 	if evmAddress != "" {
 		paymentOptions = append(paymentOptions, x402http.PaymentOption{
 			Scheme:  "exact",
@@ -102,6 +119,15 @@ func main() {
 
 	// Build scheme config dynamically based on configured addresses
 	schemes := []ginmw.SchemeConfig{}
+	timeout := 30 * time.Second
+	if cardanoAddress != "" {
+		schemes = append(schemes, ginmw.SchemeConfig{
+			Network: cardanoNetwork,
+			Server:  cardano.NewExactCardanoScheme(),
+		})
+		// Cardano settlement may wait for a block confirmation (twice on retry).
+		timeout = 200 * time.Second
+	}
 	if evmAddress != "" {
 		schemes = append(schemes, ginmw.SchemeConfig{
 			Network: evmNetwork,
@@ -120,7 +146,7 @@ func main() {
 		Routes:      routes,
 		Facilitator: facilitatorClient,
 		Schemes:     schemes,
-		Timeout:     30 * time.Second,
+		Timeout:     timeout,
 	}))
 
 	// Protected endpoint - requires payment

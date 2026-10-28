@@ -44,6 +44,7 @@ type AggregateResult struct {
 	Data            interface{} `json:"data,omitempty"`
 	StatusCode      int         `json:"status_code,omitempty"`
 	PaymentResponse interface{} `json:"payment_response,omitempty"`
+	Error           string      `json:"error,omitempty"`
 }
 
 // SettleResponseExtractor reads PAYMENT-RESPONSE headers.
@@ -78,8 +79,9 @@ type PaymentClientContext struct {
 func BuildPaymentClient() *PaymentClientContext {
 	evmPrivateKey := os.Getenv("CLIENT_EVM_PRIVATE_KEY")
 	svmPrivateKey := os.Getenv("CLIENT_SVM_PRIVATE_KEY")
-	if evmPrivateKey == "" && svmPrivateKey == "" {
-		log.Fatal("At least one of CLIENT_EVM_PRIVATE_KEY or CLIENT_SVM_PRIVATE_KEY is required")
+	cardanoMnemonic := cardanoClientMnemonic()
+	if evmPrivateKey == "" && svmPrivateKey == "" && cardanoMnemonic == "" {
+		log.Fatal("At least one of CLIENT_EVM_PRIVATE_KEY, CLIENT_SVM_PRIVATE_KEY or CLIENT_CARDANO_MNEMONIC (with CARDANO_RPC_URL and BLOCKFROST_PROJECT_ID) is required")
 	}
 
 	x402Client := x402.Newx402Client().DisableSpendControls()
@@ -189,6 +191,10 @@ func BuildPaymentClient() *PaymentClientContext {
 		}
 	}
 
+	if cardanoMnemonic != "" {
+		x402Client.Register(x402.Network(networkCaip2Pattern("cardano")), newCardanoClientScheme(cardanoMnemonic))
+	}
+
 	batchPhase := strings.TrimSpace(os.Getenv("BATCH_SETTLEMENT_PHASE"))
 	if batchPhase == "" {
 		batchPhase = strings.TrimSpace(os.Getenv("EVM_BATCH_SETTLEMENT_PHASE"))
@@ -288,7 +294,9 @@ func RunPhasedScenario(
 			"refund":  refundResult,
 		}))
 	case "":
-		Emit(ToAggregate(issueRequest(ctx)))
+		result := issueRequest(ctx)
+		awaitCardanoWalletSettled(ctx, result)
+		Emit(ToAggregate(result))
 	default:
 		OutputError(fmt.Sprintf("Unknown BATCH_SETTLEMENT_PHASE: %s", batchPhase))
 	}
@@ -501,6 +509,7 @@ func ToAggregate(s StepResult) AggregateResult {
 		Data:            s.Data,
 		StatusCode:      s.StatusCode,
 		PaymentResponse: s.PaymentResponse,
+		Error:           s.Error,
 	}
 }
 

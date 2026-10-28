@@ -1,0 +1,3 @@
+kind: changed
+body: 'The Go SDK now requires Go 1.26.10 or newer: the gouroboros, plutigo and Apollo Cardano libraries need Go 1.26.8, and 1.26.10 fixes a standard-library x509 vulnerability.'
+time: 2026-10-19T00:00:00.000000+00:00
