@@ -139,7 +139,7 @@ Launches an interactive CLI where you can select:
 - **Protocols** - EVM, SVM, AVM, Aptos, Concordium, Hedera, NEAR, Stellar, and/or TVM networks
 - **Payment schemes** (when multiple apply) - `exact`, `upto`, `batch-settlement`, or `auth-capture`
 - **Payment flows** (when multiple apply) - `authorization`, `upfront`, or `escrow`
-- **Asset transfer methods** (when multiple apply) - `eip3009`, `permit2`, `sequence`, or `ticketSequence`
+- **Asset transfer methods** (when multiple apply) - `eip3009`, `permit2`, `sequence`, `ticketSequence`, `cryptoTransfer`, or `transferExecutor`
 
 Every valid combination of your selections will be tested. For example, selecting 2 facilitators, 3 servers, and 2 clients will generate and run all compatible test scenarios.
 
@@ -355,6 +355,23 @@ XRPL_IOU_PAYER_BALANCE=1000       # Target payer balance maintained by setup
 XRPL_IOU_TRUST_LIMIT=1000000      # Payer/payee trust-line limit
 ```
 
+Optional environment variables for the Hedera `transferExecutor` routes
+(`/exact/hedera/transferExecutor` and `/exact/hedera/transferExecutor/upfront`). Both routes
+are omitted unless `HEDERA_TE_EXECUTOR_ID` is set (`requiresEnv`), and the TypeScript
+facilitator turns `transferExecutor` on from the same variable, so the existing Hedera routes
+run unchanged without them. See [Hedera transferExecutor](#hedera-transferexecutor) before
+setting them:
+
+```bash
+HEDERA_TE_EXECUTOR_ID=0.0....       # Executor contract id (ITransferExecutor); the facilitator admits only this one
+HEDERA_TE_AUTHORIZATION=0x...       # Hex authorization the executor validates. Single-use: one value pays one scenario
+HEDERA_TE_PAYER_ACCOUNT_ID=0.0....  # Optional: account the executor debits (payload.payer); defaults to CLIENT_HEDERA_ACCOUNT_ID
+HEDERA_TE_AMOUNT=100000             # Optional: amount in the asset's smallest unit (default 100000 tinybars)
+HEDERA_TE_ASSET=0.0.0               # Optional: 0.0.0 (HBAR, default) or an HTS token id
+HEDERA_TE_GAS_LIMIT=400000          # Optional: gas for the facilitator's simulation and submission (default 400000)
+HEDERA_MIRROR_NODE_URL=https://...  # Optional: mirror node for the facilitator's transferExecutor checks (default: public mirror)
+```
+
 ### Account Setup Instructions
 
 #### XRPL Testnet Issued Currency
@@ -374,6 +391,29 @@ only an e2e fixture; it is not a default asset in the XRPL SDK.
 
 See the [XRPL Testnet faucet](https://xrpl.org/resources/dev-tools/xrp-faucets)
 and [issued-token setup](https://xrpl.org/docs/tutorials/tokens/fungible-tokens/issue-a-fungible-token).
+
+#### Hedera transferExecutor
+
+The suite never builds a `transferExecutor` authorization: its format belongs to the
+executor. Prepare one outside the suite, for exactly the payer
+(`HEDERA_TE_PAYER_ACCOUNT_ID`), asset, `payTo` (`SERVER_HEDERA_ADDRESS`) and amount the route
+quotes, and keep it valid for the whole run. The
+[`@x402/hedera` README](../typescript/packages/mechanisms/hedera/README.md#transferexecutor-live-test)
+covers the prerequisites, funding (the facilitator pays the contract call fee in HBAR; the
+payer funds the executor or grants it an allowance), and an example for the reference executor.
+
+An authorization settles once: the executor consumes it. Every scenario that pays a
+`transferExecutor` route spends it, so run exactly one scenario per authorization and prepare a
+fresh one before each run. A second scenario reusing a spent authorization fails in the
+facilitator's simulation:
+
+```bash
+pnpm test --testnet --families=hedera --assetTransferMethod=transferExecutor --paymentflow=authorization \
+  --facilitators=typescript --servers=typescript/http/express --clients=typescript/http/fetch
+```
+
+Use `--paymentflow=upfront` for `/exact/hedera/transferExecutor/upfront`. The routes are
+TypeScript only. CI does not set `HEDERA_TE_*`, so they never run there.
 
 #### Stellar Testnet
 

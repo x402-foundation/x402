@@ -44,6 +44,7 @@ import { keyPairFromSeed, type KeyPair } from "@ton/crypto";
 import { x402Client, type SchemeRegistration } from "@x402/core/client";
 import type { SettleResponse } from "@x402/core/types";
 import { networkCaip2Pattern, resolveNetworkCaip2 } from "./catalog-network.ts";
+import { withTransferExecutorAuthorization } from "./hedera-transfer-executor.ts";
 
 export type RequestResult = {
   success: boolean;
@@ -240,13 +241,15 @@ export async function createE2EClient(): Promise<E2EClientContext> {
 
   let hederaClientSigner: ReturnType<typeof createClientHederaSigner> | undefined;
   if (process.env.CLIENT_HEDERA_ACCOUNT_ID && process.env.CLIENT_HEDERA_PRIVATE_KEY) {
-    hederaClientSigner = createClientHederaSigner(
-      process.env.CLIENT_HEDERA_ACCOUNT_ID,
-      HederaPrivateKey.fromStringECDSA(process.env.CLIENT_HEDERA_PRIVATE_KEY),
-      {
-        network: resolveNetworkCaip2("hedera"),
-        nodeUrl: process.env.HEDERA_RPC_URL || undefined,
-      },
+    hederaClientSigner = withTransferExecutorAuthorization(
+      createClientHederaSigner(
+        process.env.CLIENT_HEDERA_ACCOUNT_ID,
+        HederaPrivateKey.fromStringECDSA(process.env.CLIENT_HEDERA_PRIVATE_KEY),
+        {
+          network: resolveNetworkCaip2("hedera"),
+          nodeUrl: process.env.HEDERA_RPC_URL || undefined,
+        },
+      ),
     );
   }
 

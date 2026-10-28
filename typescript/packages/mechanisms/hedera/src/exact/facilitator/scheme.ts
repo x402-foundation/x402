@@ -5,35 +5,75 @@ import type {
   SettleResponse,
   VerifyResponse,
 } from "@x402/core/types";
-import type { FacilitatorHederaSigner } from "../../signer";
-import type {
-  ExactHederaPayloadV2,
-  HederaTransferEntry,
-  InspectedHederaTransaction,
-} from "../../types";
 import {
-  assertSupportedHederaNetwork,
-  extractTransactionFromPayload,
-  getPositiveReceivers,
-  hederaAccountIdsEqual,
-  inspectHederaTransaction,
-  isHbarAsset,
-  isValidHederaAsset,
-  isValidHederaEntityId,
-  sumTransfers,
-} from "../../utils";
+  HEDERA_CRYPTO_TRANSFER_METHOD,
+  HEDERA_TRANSFER_EXECUTOR_METHOD,
+  SUPPORTED_HEDERA_NETWORKS,
+} from "../../constants";
+import type { FacilitatorHederaSigner } from "../../signer";
+import type { HederaAssetTransferMethod, HederaSupportedKindExtra } from "../../types";
+import { isSupportedHederaNetwork, resolveHederaAssetTransferMethod } from "../../utils";
+import {
+  admitsAnyExecutor,
+  getAdmittedExecutors,
+  isTransferExecutorEnabled,
+  parseTransferExecutorConfig,
+  type HederaFacilitatorConfig,
+  type HederaTransferExecutorConfig,
+} from "./config";
+import { settleCryptoTransfer, verifyCryptoTransfer } from "./cryptoTransfer";
+import { ErrInvalidAssetTransferMethod, ErrInvalidPayload } from "./errors";
+import { InFlightGuard, transferExecutorInFlightKey } from "./inFlightGuard";
+import { CRYPTO_TRANSFER_REQUIREMENT_CODES } from "./requirements";
+import {
+  settleTransferExecutor,
+  type PendingTransferExecutorSettlement,
+  type TransferExecutorSettleContext,
+} from "./transferExecutorSettle";
+import { verifyTransferExecutor } from "./transferExecutorVerify";
 
 /**
- * Alias handling behavior for payTo checks.
+ * Outcome of selecting the asset transfer method for a payment.
  */
-export type HederaAliasPolicy = "reject" | "allow";
+type AssetTransferMethodSelection =
+  | { method: HederaAssetTransferMethod }
+  | { method: null; invalidReason: string };
 
 /**
- * Facilitator options for exact Hedera verification.
+ * Verify and settle for one asset transfer method.
  */
-export type HederaFacilitatorConfig = {
-  aliasPolicy?: HederaAliasPolicy;
+type AssetTransferMethodHandler = {
+  verify(payload: PaymentPayload, requirements: PaymentRequirements): Promise<VerifyResponse>;
+  settle(payload: PaymentPayload, requirements: PaymentRequirements): Promise<SettleResponse>;
 };
+
+/**
+ * Selects the asset transfer method named by the requirements and checks that
+ * `accepted` names the same one. An absent method counts as `cryptoTransfer`
+ * on both sides. Synchronous, so settle dispatches before its first await.
+ *
+ * @param payload - Payment payload
+ * @param requirements - Matched requirements
+ * @returns The method, or the reason no method applies
+ */
+function selectAssetTransferMethod(
+  payload: PaymentPayload,
+  requirements: PaymentRequirements,
+): AssetTransferMethodSelection {
+  const method = resolveHederaAssetTransferMethod(requirements.extra);
+  const accepted = resolveHederaAssetTransferMethod(payload.accepted.extra);
+  if (method === null || accepted === null) {
+    return { method: null, invalidReason: ErrInvalidAssetTransferMethod };
+  }
+  if (accepted !== method) {
+    const invalidReason =
+      method === HEDERA_TRANSFER_EXECUTOR_METHOD
+        ? ErrInvalidPayload
+        : CRYPTO_TRANSFER_REQUIREMENT_CODES.mismatch;
+    return { method: null, invalidReason };
+  }
+  return { method };
+}
 
 /**
  * Hedera facilitator implementation for the Exact payment scheme.
@@ -41,34 +81,103 @@ export type HederaFacilitatorConfig = {
 export class ExactHederaScheme implements SchemeNetworkFacilitator {
   readonly scheme = "exact";
   readonly caipFamily = "hedera:*";
-  private readonly aliasPolicy: HederaAliasPolicy;
+  private readonly transferExecutor: TransferExecutorSettleContext;
+  /**
+   * The options as constructed, kept after a pattern registration turns the method off.
+   */
+  private readonly transferExecutorOptions: HederaTransferExecutorConfig | undefined;
+  /**
+   * One handler per method, so adding a method without handling it fails to compile.
+   */
+  private readonly methods: Record<HederaAssetTransferMethod, AssetTransferMethodHandler>;
 
   /**
    * Creates a new facilitator scheme.
    *
    * @param signer - Facilitator signer implementation
    * @param config - Optional behavior config
+   * @throws Error when `config.transferExecutor` is invalid
    */
   constructor(
     private readonly signer: FacilitatorHederaSigner,
     config: HederaFacilitatorConfig = {},
   ) {
-    this.aliasPolicy = config.aliasPolicy ?? "reject";
+    const aliasPolicy = config.aliasPolicy ?? "reject";
+    const guard = new InFlightGuard<PendingTransferExecutorSettlement>();
+    this.transferExecutorOptions = parseTransferExecutorConfig(config.transferExecutor);
+    const transferExecutor: TransferExecutorSettleContext = {
+      signer,
+      config: this.transferExecutorOptions,
+      aliasPolicy,
+      guard,
+    };
+    this.transferExecutor = transferExecutor;
+    this.methods = {
+      [HEDERA_CRYPTO_TRANSFER_METHOD]: {
+        verify: (payload, requirements) =>
+          verifyCryptoTransfer(signer, payload, requirements, aliasPolicy),
+        settle: (payload, requirements) =>
+          settleCryptoTransfer(signer, payload, requirements, aliasPolicy),
+      },
+      [HEDERA_TRANSFER_EXECUTOR_METHOD]: {
+        verify: async (payload, requirements) => {
+          const verification = await verifyTransferExecutor(
+            {
+              ...transferExecutor,
+              // Read-only: only settle takes the guard.
+              isInFlight: (network, transfer) =>
+                guard.isHeld(transferExecutorInFlightKey(network, transfer)),
+            },
+            payload,
+            requirements,
+          );
+          return verification.response;
+        },
+        settle: (payload, requirements) =>
+          settleTransferExecutor(transferExecutor, payload, requirements),
+      },
+    };
   }
 
   /**
    * Returns mechanism-specific `extra` data.
    *
-   * @param _ - Network identifier
-   * @returns Extra object with feePayer
+   * Called with a network pattern such as `"hedera:*"`, it turns
+   * `transferExecutor` off on this instance: core then advertises one kind for
+   * the pattern, which cannot list each network's executors, and a facilitator
+   * must reject executors it does not advertise. It throws when the options
+   * admit an executor, and returns `{ feePayer }` otherwise.
+   *
+   * @param network - Network identifier, or the pattern the scheme was registered under
+   * @returns Extra object with feePayer, plus the methods and executors when
+   *          `transferExecutor` is enabled on `network`
+   * @throws Error when `network` is not a concrete supported network and
+   *         `transferExecutor` admits an executor
    */
-  getExtra(_: string): Record<string, unknown> | undefined {
+  getExtra(network: string): Record<string, unknown> | undefined {
+    if (!isSupportedHederaNetwork(network)) {
+      this.transferExecutor.config = undefined;
+      if (admitsAnyExecutor(this.transferExecutorOptions)) {
+        throw new Error(
+          `transferExecutor admits executors, but ExactHederaScheme is registered for "${network}". ` +
+            `Register it for concrete networks (${SUPPORTED_HEDERA_NETWORKS.join(", ")}), or admit no executors.`,
+        );
+      }
+    }
     const addresses = this.signer.getAddresses();
     if (addresses.length === 0) {
       return undefined;
     }
     const randomIndex = Math.floor(Math.random() * addresses.length);
-    return { feePayer: addresses[randomIndex] };
+    const extra: HederaSupportedKindExtra = { feePayer: addresses[randomIndex] };
+    const { config } = this.transferExecutor;
+    if (isTransferExecutorEnabled(this.signer, config, network)) {
+      // The methods enabled here, not every defined method: a new method must
+      // be enabled before it is advertised.
+      extra.assetTransferMethods = [HEDERA_CRYPTO_TRANSFER_METHOD, HEDERA_TRANSFER_EXECUTOR_METHOD];
+      extra.executors = [...getAdmittedExecutors(config, network)];
+    }
+    return extra;
   }
 
   /**
@@ -92,134 +201,11 @@ export class ExactHederaScheme implements SchemeNetworkFacilitator {
     payload: PaymentPayload,
     requirements: PaymentRequirements,
   ): Promise<VerifyResponse> {
-    // Phase 1: requirements and accepted parity checks
-    const requirementsValidation = this.validateRequirements(payload, requirements);
-    if (requirementsValidation !== null) {
-      return requirementsValidation;
+    const selection = selectAssetTransferMethod(payload, requirements);
+    if (selection.method === null) {
+      return { isValid: false, invalidReason: selection.invalidReason, payer: "" };
     }
-    const feePayer = requirements.extra.feePayer as string;
-
-    // Phase 2: decode and inspect transaction
-    const exactPayload = payload.payload as ExactHederaPayloadV2;
-    let transactionBase64 = "";
-    try {
-      transactionBase64 = extractTransactionFromPayload(exactPayload);
-    } catch {
-      return {
-        isValid: false,
-        invalidReason: "invalid_exact_hedera_payload_transaction_could_not_be_decoded",
-        payer: "",
-      };
-    }
-
-    let inspected;
-    try {
-      inspected = inspectHederaTransaction(transactionBase64);
-    } catch {
-      return {
-        isValid: false,
-        invalidReason: "invalid_exact_hedera_payload_transaction_could_not_be_decoded",
-        payer: "",
-      };
-    }
-    const inspectedValidation = this.validateInspectedTransaction(inspected);
-    if (inspectedValidation !== null) {
-      return { isValid: false, invalidReason: inspectedValidation, payer: "" };
-    }
-
-    // Phase 3: structural and transfer checks
-    const transferValidation = this.validateTransferSemantics(inspected, requirements, feePayer);
-    if (transferValidation !== null) {
-      return transferValidation;
-    }
-    const payerTransfers = this.getAssetTransfers(
-      inspected.tokenTransfers,
-      inspected.hbarTransfers,
-      requirements,
-    ) as HederaTransferEntry[];
-    const payers = this.inferPayers(payerTransfers);
-    const payer = payers[0]?.accountId ?? "";
-
-    // Phase 4: alias policy check
-    const payToValidation = await this.validatePayToPolicy(requirements);
-    if (payToValidation !== null) {
-      return payToValidation;
-    }
-
-    // Phase 5: payer signature verification (fail-closed), checked before
-    // preflight so an unsigned/wrong-key payload is rejected first.
-    // Spec §4 allows multiple sending accounts, so every debited sender must
-    // have signed. Precondition: Phase 3 transfer-semantics guarantees at
-    // least one debited account for `asset`, so `payers` is non-empty.
-    for (const sender of payers) {
-      let signature: { ok: boolean; reason?: string; message?: string };
-      try {
-        signature = await this.signer.verifyPayerSignature({
-          payer: sender.accountId,
-          transaction: transactionBase64,
-          network: requirements.network,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return {
-          isValid: false,
-          invalidReason: "invalid_exact_hedera_payload_signature_invalid",
-          invalidMessage: message,
-          payer,
-        };
-      }
-      if (!signature.ok) {
-        const invalidMessage = signature.reason
-          ? `${signature.reason}${signature.message ? `: ${signature.message}` : ""}`
-          : signature.message;
-        return {
-          isValid: false,
-          invalidReason: "invalid_exact_hedera_payload_signature_invalid",
-          invalidMessage,
-          payer,
-        };
-      }
-    }
-
-    // Phase 6: onchain preflight (balance + token association), fail-closed.
-    // Each sender only funds their own debited portion, so preflight runs per sender with that sender's amount.
-    for (const sender of payers) {
-      let preflight: { ok: boolean; reason?: string; message?: string };
-      try {
-        preflight = await this.signer.preflightTransfer({
-          payer: sender.accountId,
-          payTo: requirements.payTo,
-          asset: requirements.asset,
-          amount: sender.amount,
-          network: requirements.network,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return {
-          isValid: false,
-          invalidReason: "invalid_exact_hedera_payload_preflight_failed",
-          invalidMessage: message,
-          payer,
-        };
-      }
-      if (!preflight.ok) {
-        const invalidMessage = preflight.reason
-          ? `${preflight.reason}${preflight.message ? `: ${preflight.message}` : ""}`
-          : preflight.message;
-        return {
-          isValid: false,
-          invalidReason: "invalid_exact_hedera_payload_preflight_failed",
-          invalidMessage,
-          payer,
-        };
-      }
-    }
-
-    return {
-      isValid: true,
-      invalidReason: undefined,
-      payer,
-    };
+    return this.methods[selection.method].verify(payload, requirements);
   }
 
   /**
@@ -233,376 +219,16 @@ export class ExactHederaScheme implements SchemeNetworkFacilitator {
     payload: PaymentPayload,
     requirements: PaymentRequirements,
   ): Promise<SettleResponse> {
-    const valid = await this.verify(payload, requirements);
-    if (!valid.isValid) {
+    const selection = selectAssetTransferMethod(payload, requirements);
+    if (selection.method === null) {
       return {
         success: false,
         network: requirements.network,
         transaction: "",
-        errorReason: valid.invalidReason ?? "verification_failed",
-        errorMessage: valid.invalidMessage,
-        payer: valid.payer || "",
-      };
-    }
-
-    const feePayer = requirements.extra?.feePayer as string;
-    const exactPayload = payload.payload as ExactHederaPayloadV2;
-    const transactionBase64 = extractTransactionFromPayload(exactPayload);
-    try {
-      const settled = await this.signer.signAndSubmitTransaction(
-        transactionBase64,
-        feePayer,
-        requirements.network,
-      );
-
-      return {
-        success: true,
-        network: requirements.network,
-        payer: valid.payer || feePayer,
-        transaction: settled.transactionId,
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return {
-        success: false,
-        network: requirements.network,
-        transaction: "",
-        errorReason: "transaction_failed",
-        errorMessage: message,
-        payer: valid.payer || feePayer,
-      };
-    }
-  }
-
-  /**
-   * Returns the transfer list for requested asset.
-   *
-   * @param tokenTransfers - Token transfers grouped by token id
-   * @param hbarTransfers - Native hbar transfers
-   * @param requirements - Payment requirements
-   * @returns Transfer list or null when invalid
-   */
-  private getAssetTransfers(
-    tokenTransfers: Record<string, HederaTransferEntry[]>,
-    hbarTransfers: HederaTransferEntry[],
-    requirements: PaymentRequirements,
-  ): HederaTransferEntry[] | null {
-    if (isHbarAsset(requirements.asset)) {
-      if (Object.keys(tokenTransfers).length > 0) {
-        return null;
-      }
-      return hbarTransfers;
-    }
-
-    const tokenIds = Object.keys(tokenTransfers);
-    if (tokenIds.length !== 1 || tokenIds[0] !== requirements.asset) {
-      return null;
-    }
-
-    return tokenTransfers[requirements.asset] ?? null;
-  }
-
-  /**
-   * Returns true when account has a negative transfer entry.
-   *
-   * @param transfers - Transfer list
-   * @param accountId - Account id
-   * @returns Whether account is debited
-   */
-  private hasNegativeTransfer(transfers: HederaTransferEntry[], accountId: string): boolean {
-    return transfers.some(
-      entry => hederaAccountIdsEqual(entry.accountId, accountId) && BigInt(entry.amount) < 0n,
-    );
-  }
-
-  /**
-   * Infers every debited sender from the asset transfers, summing each
-   * account's debited magnitude. Spec §4 permits multiple sending accounts,
-   * so all of them are returned (each funds only their own portion).
-   *
-   * @param transfers - Asset transfers
-   * @returns Distinct debited accounts with their absolute debited amount
-   */
-  private inferPayers(
-    transfers: HederaTransferEntry[],
-  ): Array<{ accountId: string; amount: string }> {
-    const debited = new Map<string, bigint>();
-    for (const entry of transfers) {
-      const amount = BigInt(entry.amount);
-      if (amount < 0n) {
-        debited.set(entry.accountId, (debited.get(entry.accountId) ?? 0n) + amount);
-      }
-    }
-    return [...debited.entries()].map(([accountId, amount]) => ({
-      accountId,
-      amount: (-amount).toString(),
-    }));
-  }
-
-  /**
-   * Validates the basic structure returned by transaction inspection.
-   *
-   * @param inspected - Parsed transaction details
-   * @returns Null when valid, otherwise invalid reason code
-   */
-  private validateInspectedTransaction(inspected: unknown): string | null {
-    if (!inspected || typeof inspected !== "object") {
-      return "invalid_exact_hedera_payload_transaction_invalid_shape";
-    }
-    const candidate = inspected as Partial<InspectedHederaTransaction>;
-    if (
-      typeof candidate.transactionType !== "string" ||
-      typeof candidate.transactionId !== "string" ||
-      typeof candidate.transactionIdAccountId !== "string" ||
-      typeof candidate.hasNonTransferOperations !== "boolean" ||
-      !Array.isArray(candidate.hbarTransfers) ||
-      !candidate.tokenTransfers ||
-      typeof candidate.tokenTransfers !== "object"
-    ) {
-      return "invalid_exact_hedera_payload_transaction_invalid_shape";
-    }
-    if (candidate.transactionId.length === 0 || candidate.transactionIdAccountId.length === 0) {
-      return "invalid_exact_hedera_payload_transaction_invalid_shape";
-    }
-    if (!isValidHederaEntityId(candidate.transactionIdAccountId)) {
-      return "invalid_exact_hedera_payload_transaction_invalid_shape";
-    }
-
-    const allTransferLists = [
-      candidate.hbarTransfers,
-      ...Object.values(candidate.tokenTransfers as Record<string, HederaTransferEntry[]>),
-    ];
-    for (const transferList of allTransferLists) {
-      if (!Array.isArray(transferList)) {
-        return "invalid_exact_hedera_payload_transaction_invalid_shape";
-      }
-      for (const transfer of transferList) {
-        if (
-          !transfer ||
-          typeof transfer.accountId !== "string" ||
-          typeof transfer.amount !== "string" ||
-          transfer.accountId.trim().length === 0
-        ) {
-          return "invalid_exact_hedera_payload_transaction_invalid_shape";
-        }
-        try {
-          BigInt(transfer.amount);
-        } catch {
-          return "invalid_exact_hedera_payload_transaction_invalid_shape";
-        }
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * Validates request requirements and parity with payload.accepted.
-   *
-   * @param payload - Payment payload
-   * @param requirements - Matched requirements
-   * @returns Failed verify response or null
-   */
-  private validateRequirements(
-    payload: PaymentPayload,
-    requirements: PaymentRequirements,
-  ): VerifyResponse | null {
-    if (payload.accepted.scheme !== "exact" || requirements.scheme !== "exact") {
-      return { isValid: false, invalidReason: "unsupported_scheme", payer: "" };
-    }
-    if (payload.accepted.network !== requirements.network) {
-      return { isValid: false, invalidReason: "network_mismatch", payer: "" };
-    }
-    if (
-      payload.accepted.asset !== requirements.asset ||
-      payload.accepted.amount !== requirements.amount ||
-      payload.accepted.payTo !== requirements.payTo ||
-      payload.accepted.maxTimeoutSeconds !== requirements.maxTimeoutSeconds ||
-      payload.accepted.extra?.feePayer !== requirements.extra?.feePayer
-    ) {
-      return { isValid: false, invalidReason: "accepted_payment_requirements_mismatch", payer: "" };
-    }
-
-    try {
-      assertSupportedHederaNetwork(requirements.network);
-    } catch {
-      return { isValid: false, invalidReason: "network_mismatch", payer: "" };
-    }
-    if (!isValidHederaAsset(requirements.asset)) {
-      return { isValid: false, invalidReason: "invalid_asset", payer: "" };
-    }
-    if (!this.isValidPayToFormatForPolicy(requirements.payTo)) {
-      return { isValid: false, invalidReason: "invalid_exact_hedera_payload_pay_to", payer: "" };
-    }
-    if (!/^\d+$/.test(requirements.amount)) {
-      return { isValid: false, invalidReason: "invalid_amount", payer: "" };
-    }
-
-    const feePayer = requirements.extra?.feePayer;
-    if (typeof feePayer !== "string" || !isValidHederaEntityId(feePayer)) {
-      return {
-        isValid: false,
-        invalidReason: "invalid_exact_hedera_payload_missing_fee_payer",
+        errorReason: selection.invalidReason,
         payer: "",
       };
     }
-    const managedSigners = this.signer.getAddresses();
-    if (!managedSigners.includes(feePayer)) {
-      return { isValid: false, invalidReason: "fee_payer_not_managed_by_facilitator", payer: "" };
-    }
-
-    return null;
-  }
-
-  /**
-   * Validates transfer semantics from inspected transaction details.
-   *
-   * @param inspected - Parsed transaction details
-   * @param requirements - Matched requirements
-   * @param feePayer - Fee payer account id
-   * @returns Failed verify response or null
-   */
-  private validateTransferSemantics(
-    inspected: InspectedHederaTransaction,
-    requirements: PaymentRequirements,
-    feePayer: string,
-  ): VerifyResponse | null {
-    if (inspected.transactionIdAccountId !== feePayer) {
-      return {
-        isValid: false,
-        invalidReason: "invalid_exact_hedera_payload_fee_payer_mismatch",
-        payer: "",
-      };
-    }
-    if (inspected.hasNonTransferOperations) {
-      return {
-        isValid: false,
-        invalidReason: "invalid_exact_hedera_payload_contains_non_transfer_ops",
-        payer: "",
-      };
-    }
-    if (sumTransfers(inspected.hbarTransfers) !== 0n) {
-      return {
-        isValid: false,
-        invalidReason: "invalid_exact_hedera_payload_hbar_sum_non_zero",
-        payer: "",
-      };
-    }
-    if (this.hasNegativeTransfer(inspected.hbarTransfers, feePayer)) {
-      return {
-        isValid: false,
-        invalidReason: "invalid_exact_hedera_payload_fee_payer_transferring_hbar",
-        payer: "",
-      };
-    }
-    if (!isHbarAsset(requirements.asset) && inspected.hbarTransfers.length > 0) {
-      return {
-        isValid: false,
-        invalidReason: "invalid_exact_hedera_payload_unexpected_hbar_transfers",
-        payer: "",
-      };
-    }
-
-    const payerTransfers = this.getAssetTransfers(
-      inspected.tokenTransfers,
-      inspected.hbarTransfers,
-      requirements,
-    );
-    if (payerTransfers === null) {
-      return {
-        isValid: false,
-        invalidReason: "invalid_exact_hedera_payload_asset_mismatch",
-        payer: "",
-      };
-    }
-
-    if (sumTransfers(payerTransfers) !== 0n) {
-      return {
-        isValid: false,
-        invalidReason: "invalid_exact_hedera_payload_asset_sum_non_zero",
-        payer: "",
-      };
-    }
-    if (this.hasNegativeTransfer(payerTransfers, feePayer)) {
-      return {
-        isValid: false,
-        invalidReason: "invalid_exact_hedera_payload_fee_payer_transferring_funds",
-        payer: "",
-      };
-    }
-
-    const requiredAmount = BigInt(requirements.amount);
-    const netToPayTo = payerTransfers
-      .filter(entry => hederaAccountIdsEqual(entry.accountId, requirements.payTo))
-      .reduce((sum, entry) => sum + BigInt(entry.amount), 0n);
-    if (netToPayTo !== requiredAmount) {
-      return {
-        isValid: false,
-        invalidReason: "invalid_exact_hedera_payload_amount_mismatch",
-        payer: "",
-      };
-    }
-
-    const positiveReceivers = getPositiveReceivers(payerTransfers);
-    if (
-      positiveReceivers.some(accountId => !hederaAccountIdsEqual(accountId, requirements.payTo))
-    ) {
-      return {
-        isValid: false,
-        invalidReason: "invalid_exact_hedera_payload_extra_positive_transfers",
-        payer: "",
-      };
-    }
-
-    return null;
-  }
-
-  /**
-   * Validates payTo destination based on alias policy and optional resolver.
-   *
-   * @param requirements - Matched requirements
-   * @returns Failed verify response or null
-   */
-  private async validatePayToPolicy(
-    requirements: PaymentRequirements,
-  ): Promise<VerifyResponse | null> {
-    if (this.aliasPolicy === "allow") {
-      return null;
-    }
-    if (!isValidHederaEntityId(requirements.payTo)) {
-      return {
-        isValid: false,
-        invalidReason: "invalid_exact_hedera_payload_pay_to_alias_not_allowed",
-        payer: "",
-      };
-    }
-    if (typeof this.signer.resolveAccount !== "function") {
-      return null;
-    }
-    const resolved = await this.signer.resolveAccount(requirements.payTo, requirements.network);
-    if (!resolved.exists || resolved.isAlias) {
-      return {
-        isValid: false,
-        invalidReason: "invalid_exact_hedera_payload_pay_to_alias_not_allowed",
-        payer: "",
-      };
-    }
-    return null;
-  }
-
-  /**
-   * Validates payTo format based on alias policy.
-   *
-   * @param payTo - Destination account/alias value
-   * @returns True when payTo has acceptable format
-   */
-  private isValidPayToFormatForPolicy(payTo: string): boolean {
-    if (typeof payTo !== "string" || payTo.trim().length === 0) {
-      return false;
-    }
-    if (this.aliasPolicy === "allow") {
-      return true;
-    }
-    return isValidHederaEntityId(payTo);
+    return this.methods[selection.method].settle(payload, requirements);
   }
 }

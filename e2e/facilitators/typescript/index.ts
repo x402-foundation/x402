@@ -60,8 +60,13 @@ import {
   Client as HederaClient,
   PrivateKey as HederaPrivateKey,
   createHederaClient,
+  createHederaGetTokenCustomFees,
+  createHederaGetTransactionRecord,
   createHederaPreflightTransfer,
+  createHederaResolveEvmAddress,
   createHederaSignAndSubmitTransaction,
+  createHederaSimulateContractCall,
+  createHederaSubmitContractExecute,
   createHederaVerifyPayerSignature,
   toFacilitatorHederaSigner,
 } from "@x402/hedera";
@@ -125,6 +130,7 @@ import { resolveNetworkCaip2 } from "./catalog-network.js";
 import { toFacilitatorCardanoSigner } from "@x402/cardano";
 import { ExactCardanoScheme as ExactCardanoFacilitatorScheme } from "@x402/cardano/exact/facilitator";
 import { BazaarCatalog } from "./bazaar.js";
+import { hederaTransferExecutorOptions } from "./hedera-transfer-executor.js";
 
 dotenv.config();
 
@@ -315,6 +321,8 @@ if (process.env.FACILITATOR_CASPER_PRIVATE_KEY) {
 
 // Initialize the Hedera signer from account + private key (optional)
 let hederaSigner: ReturnType<typeof toFacilitatorHederaSigner> | undefined;
+// transferExecutor is on only when HEDERA_TE_EXECUTOR_ID is set; it admits that one executor.
+const hederaTransferExecutor = hederaTransferExecutorOptions(HEDERA_NETWORK);
 if (
   process.env.FACILITATOR_HEDERA_ACCOUNT_ID &&
   process.env.FACILITATOR_HEDERA_PRIVATE_KEY
@@ -323,6 +331,10 @@ if (
   const hederaKey = HederaPrivateKey.fromStringECDSA(
     process.env.FACILITATOR_HEDERA_PRIVATE_KEY,
   );
+
+  const hederaMirror = {
+    mirrorNodeUrl: process.env.HEDERA_MIRROR_NODE_URL || undefined,
+  };
 
   const buildHederaClient = (network: string): HederaClient => {
     const client = createHederaClient(network, HEDERA_RPC_URL);
@@ -338,8 +350,22 @@ if (
     ),
     verifyPayerSignature: createHederaVerifyPayerSignature(),
     preflightTransfer: createHederaPreflightTransfer(),
+    // transferExecutor capabilities, unused unless hederaTransferExecutor is set
+    resolveEvmAddress: createHederaResolveEvmAddress(hederaMirror),
+    getTokenCustomFees: createHederaGetTokenCustomFees(hederaMirror),
+    simulateContractCall: createHederaSimulateContractCall(hederaMirror),
+    submitContractExecute: createHederaSubmitContractExecute(
+      buildHederaClient,
+      hederaKey,
+    ),
+    getTransactionRecord: createHederaGetTransactionRecord(hederaMirror),
   });
   console.info(`Hedera Facilitator account: ${hederaAccountId}`);
+  if (hederaTransferExecutor) {
+    console.info(
+      `Hedera transferExecutor executor: ${process.env.HEDERA_TE_EXECUTOR_ID}`,
+    );
+  }
 }
 
 let keetaSigner: FacilitatorKeetaSigner | undefined;
@@ -776,7 +802,9 @@ if (casperFacilitatorSigner) {
 if (hederaSigner) {
   facilitator.register(
     HEDERA_NETWORK as Network,
-    new ExactHederaScheme(hederaSigner),
+    new ExactHederaScheme(hederaSigner, {
+      transferExecutor: hederaTransferExecutor,
+    }),
   );
 }
 if (keetaSigner) {

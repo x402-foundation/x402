@@ -18,6 +18,7 @@ import {
 } from "@hiero-ledger/sdk";
 import { HEDERA_MAINNET_CAIP2, HEDERA_TESTNET_CAIP2 } from "./constants";
 import { fetchJson, mirrorNodeUrlForNetwork } from "./preflight";
+import type { HederaTransactionRecord, HederaTransferExecutorAuthorization } from "./types";
 import { assertSupportedHederaNetwork, isHbarAsset } from "./utils";
 
 /**
@@ -37,6 +38,24 @@ export type ClientHederaSigner = {
    * @returns Base64 transaction
    */
   createPartiallySignedTransferTransaction(requirements: PaymentRequirements): Promise<string>;
+
+  /**
+   * Optional hook that obtains an executor authorization for a
+   * `transferExecutor` payment. Without it the client cannot pay
+   * `transferExecutor` requirements.
+   *
+   * The package never builds authorizations itself: their format belongs to
+   * each executor. `executor` must be one of `requirements.extra.executors`
+   * (a `"*"` entry allows any), and `authorization` is the 0x-hex value that
+   * executor validates. Where the authorization embeds an expiry, it SHOULD be
+   * bounded by `requirements.maxTimeoutSeconds`.
+   *
+   * @param requirements - Chosen `transferExecutor` payment requirements
+   * @returns Executor contract id and its authorization
+   */
+  createTransferExecutorAuthorization?(
+    requirements: PaymentRequirements,
+  ): Promise<HederaTransferExecutorAuthorization>;
 };
 
 /**
@@ -45,6 +64,109 @@ export type ClientHederaSigner = {
 export type HederaAccountResolution = {
   exists: boolean;
   isAlias: boolean;
+};
+
+/**
+ * EVM address of a Hedera account.
+ */
+export type HederaEvmAddressResolution = {
+  /**
+   * Hedera account id in `shard.realm.num` form.
+   */
+  accountId: string;
+  /**
+   * Lowercase 0x-hex EVM address. The account's alias when it has one,
+   * otherwise its long-zero address.
+   */
+  evmAddress: string;
+};
+
+/**
+ * Counts of the custom fees in a token's fee schedule.
+ */
+export type HederaTokenCustomFees = {
+  fixedFeeCount: number;
+  fractionalFeeCount: number;
+  royaltyFeeCount: number;
+};
+
+/**
+ * Parameters for simulating a contract call.
+ */
+export type HederaContractCallSimulationParams = {
+  /**
+   * CAIP-2 network identifier.
+   */
+  network: string;
+  /**
+   * 0x-hex EVM address the call is simulated from.
+   */
+  from: string;
+  /**
+   * 0x-hex EVM address of the called contract.
+   */
+  to: string;
+  /**
+   * 0x-hex calldata.
+   */
+  data: string;
+  /**
+   * Gas limit of the simulated call.
+   */
+  gas: number;
+  /**
+   * When true, the result carries a gas estimate.
+   */
+  estimate: boolean;
+};
+
+/**
+ * Outcome of a simulated contract call. `gasEstimate` is set when the call
+ * was simulated with `estimate: true`.
+ */
+export type HederaContractCallSimulationResult =
+  | { reverted: false; gasEstimate?: number }
+  | { reverted: true; reason: string };
+
+/**
+ * Parameters for submitting a `ContractExecuteTransaction`.
+ */
+export type HederaContractExecuteParams = {
+  /**
+   * CAIP-2 network identifier.
+   */
+  network: string;
+  /**
+   * Account that pays for and signs the transaction.
+   */
+  feePayer: string;
+  /**
+   * Called contract id.
+   */
+  contractId: string;
+  /**
+   * 0x-hex calldata.
+   */
+  functionParameters: string;
+  /**
+   * Gas limit of the transaction.
+   */
+  gas: number;
+};
+
+/**
+ * Result of a broadcast `ContractExecuteTransaction`.
+ */
+export type HederaContractExecuteResult = {
+  /**
+   * Transaction id in the SDK `0.0.x@seconds.nanos` form.
+   */
+  transactionId: string;
+  /**
+   * Receipt status name, or undefined when the receipt could not be
+   * obtained after broadcast.
+   */
+  receiptStatus?: string;
 };
 
 /**
@@ -134,6 +256,82 @@ export type FacilitatorHederaSigner = {
     amount: string;
     network: string;
   }): Promise<{ ok: boolean; reason?: string; message?: string }>;
+
+  /**
+   * Optional `transferExecutor` capability: resolves an account to its EVM
+   * address, preferring the alias.
+   *
+   * Throws only on a transport or infrastructure failure.
+   *
+   * @param params - Resolution parameters
+   * @param params.account - Hedera account id or alias
+   * @param params.network - CAIP-2 network identifier
+   * @returns The resolution, or undefined when the account is not found or
+   *          has no EVM address
+   */
+  resolveEvmAddress?(params: {
+    account: string;
+    network: string;
+  }): Promise<HederaEvmAddressResolution | undefined>;
+
+  /**
+   * Optional `transferExecutor` capability: reads a fungible token's custom
+   * fee schedule.
+   *
+   * Throws only on a transport or infrastructure failure.
+   *
+   * @param params - Lookup parameters
+   * @param params.tokenId - HTS token id
+   * @param params.network - CAIP-2 network identifier
+   * @returns Counts of each custom fee kind, or undefined when no fungible
+   *          token has this id on the network
+   */
+  getTokenCustomFees?(params: {
+    tokenId: string;
+    network: string;
+  }): Promise<HederaTokenCustomFees | undefined>;
+
+  /**
+   * Optional `transferExecutor` capability: simulates a contract call.
+   *
+   * A revert resolves `{ reverted: true }`. Throws only on a transport or
+   * infrastructure failure.
+   *
+   * @param params - Simulation parameters
+   * @returns Revert reason, or success with a gas estimate when requested
+   */
+  simulateContractCall?(
+    params: HederaContractCallSimulationParams,
+  ): Promise<HederaContractCallSimulationResult>;
+
+  /**
+   * Optional `transferExecutor` capability: signs and submits a
+   * `ContractExecuteTransaction` from `params.feePayer`.
+   *
+   * Throws only when nothing was broadcast. Once the transaction is
+   * broadcast it resolves with its id, even when the receipt is unavailable.
+   *
+   * @param params - Submission parameters
+   * @returns Transaction id and receipt status
+   */
+  submitContractExecute?(params: HederaContractExecuteParams): Promise<HederaContractExecuteResult>;
+
+  /**
+   * Optional `transferExecutor` capability: fetches a transaction's consensus
+   * record with child records and contract logs, nested calls included.
+   *
+   * Throws only on a transport or infrastructure failure.
+   *
+   * @param params - Lookup parameters
+   * @param params.transactionId - Transaction id in the SDK `@` form
+   * @param params.network - CAIP-2 network identifier
+   * @returns The record, or undefined when it was not available within the
+   *          implementation's bounded wait
+   */
+  getTransactionRecord?(params: {
+    transactionId: string;
+    network: string;
+  }): Promise<HederaTransactionRecord | undefined>;
 };
 
 /**
