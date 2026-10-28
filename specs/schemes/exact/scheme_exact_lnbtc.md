@@ -703,7 +703,8 @@ held while querying MUST be released before any result other than success is
 returned, and MUST be bounded by a lease so that an abnormally terminated attempt
 cannot hold it indefinitely; lease expiry MUST NOT let two attempts both succeed.
 An entry recorded under `invoice` MUST be marked as such, because only a
-`bolt11` entry is backed by a self-verifying proof.
+`bolt11` entry is backed by a self-verifying proof. An unmarked entry is a
+`bolt11` settlement.
 
 The replay entry MUST remain until at least one hour after
 `invoice_end + skew`. It MUST NOT be removed while the invoice can still pass
