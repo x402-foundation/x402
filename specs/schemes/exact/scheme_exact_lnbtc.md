@@ -408,6 +408,9 @@ below. No additional challenge identifier or request copy is required.
 
 ## Request Binding Test Vectors
 
+[`vectors/exact_lnbtc.json`](vectors/exact_lnbtc.json) carries these cases and
+further binding, client, and settlement cases in machine-readable form.
+
 ### HTTP
 
 The examples above describe `GET https://api.example.com/article/A` with an empty
