@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
+	"github.com/google/uuid"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
@@ -50,6 +52,10 @@ type WatermarkReader func(ctx context.Context, channelID string) (amount uint64,
 
 // BatchChannelManagerConfig configures autonomous redemption.
 type BatchChannelManagerConfig struct {
+	// DistributionJobStore must enumerate completely; inject durable storage for
+	// restart recovery. Nil uses a memory-only journal owned by this manager.
+	// Run one active redemption owner per journal/scope.
+	DistributionJobStore DistributionJobStore
 	Store                ChannelStore
 	Settle               RedemptionSettler
 	Requirements         types.PaymentRequirements
@@ -78,20 +84,26 @@ type StopOptions struct {
 
 // BatchChannelManager claims accumulated vouchers and distributes what they settle.
 type BatchChannelManager struct {
-	config       BatchChannelManagerConfig
-	passMu       sync.Mutex
-	lifeMu       sync.Mutex
-	running      bool
-	stop         chan struct{}
-	loop         chan struct{}
-	graceElapsed map[string]struct{}
+	config           BatchChannelManagerConfig
+	passMu           sync.Mutex
+	lifeMu           sync.Mutex
+	running          bool
+	stop             chan struct{}
+	loop             chan struct{}
+	graceElapsed     map[string]struct{}
+	distributionJobs DistributionJobStore
 }
 
 // NewBatchChannelManager builds a worker over a store and a way to submit redemption payloads.
 func NewBatchChannelManager(config BatchChannelManagerConfig) *BatchChannelManager {
+	journal := config.DistributionJobStore
+	if journal == nil {
+		journal = NewMemoryDistributionJobStore()
+	}
 	return &BatchChannelManager{
-		config:       config,
-		graceElapsed: map[string]struct{}{},
+		distributionJobs: journal,
+		config:           config,
+		graceElapsed:     map[string]struct{}{},
 	}
 }
 
@@ -157,23 +169,34 @@ func (m *BatchChannelManager) runPass(ctx context.Context) (RedemptionResult, er
 	if !ok {
 		return RedemptionResult{}, errors.New("batch channel manager requires a channel store that can list its channels")
 	}
+
+	var passErr error
 	channels, err := lister.List()
 	if err != nil {
-		return RedemptionResult{}, err
+		passErr = errors.Join(passErr, err)
 	}
 	claimed, sealed, err := m.claim(ctx, channels)
 	if err != nil {
+		passErr = errors.Join(passErr, err)
+	}
+	jobs, err := m.distributionJobs.List(ctx)
+	if err != nil {
+		return RedemptionResult{Claimed: claimed, Sealed: sealed}, errors.Join(passErr, err)
+	}
+	if err := m.validateDistributionJobs(jobs); err != nil {
+		return RedemptionResult{Claimed: claimed, Sealed: sealed}, errors.Join(passErr, err)
+	}
+	if err := ctx.Err(); err != nil {
 		return RedemptionResult{}, err
 	}
 	channels, err = lister.List()
 	if err != nil {
-		return RedemptionResult{}, err
+		passErr = errors.Join(passErr, err)
+		channels = nil
 	}
-	distributed, err := m.distribute(ctx, channels)
-	if err != nil {
-		return RedemptionResult{}, err
-	}
-	return RedemptionResult{Claimed: claimed, Distributed: distributed, Sealed: sealed}, nil
+	distributed, err := m.distribute(ctx, channels, jobs)
+	passErr = errors.Join(passErr, err)
+	return RedemptionResult{Claimed: claimed, Distributed: distributed, Sealed: sealed}, passErr
 }
 
 func (m *BatchChannelManager) claim(ctx context.Context, channels []ChannelState) ([]string, []string, error) {
@@ -193,21 +216,29 @@ func (m *BatchChannelManager) claim(ctx context.Context, channels []ChannelState
 		}
 	}
 	result := &passOutcome{claimed: []string{}, sealed: []string{}}
+	var firstErr error
 	for _, batch := range chunk(claimable, m.batchSize()) {
+		if err := ctx.Err(); err != nil {
+			return result.claimed, result.sealed, err
+		}
 		if err := m.claimBatch(ctx, batch, result); err != nil {
-			return nil, nil, err
+			firstErr = errors.Join(firstErr, err)
 		}
 	}
 	for _, channel := range closing {
+		if err := ctx.Err(); err != nil {
+			return result.claimed, result.sealed, err
+		}
 		sealed, err := m.seal(ctx, channel)
 		if err != nil {
-			return nil, nil, err
+			firstErr = errors.Join(firstErr, err)
+			continue
 		}
 		if sealed {
 			result.sealed = append(result.sealed, channel.ChannelID)
 		}
 	}
-	return result.claimed, result.sealed, nil
+	return result.claimed, result.sealed, firstErr
 }
 
 type passOutcome struct {
@@ -236,12 +267,14 @@ func (m *BatchChannelManager) claimBatch(ctx context.Context, batch []ChannelSta
 	if !response.Success {
 		if response.ErrorReason == batchsettlement.ErrChannelClosing {
 			if len(batch) > 1 {
+				var firstErr error
 				for _, channel := range batch {
-					if err := m.claimBatch(ctx, []ChannelState{channel}, result); err != nil {
+					if err := ctx.Err(); err != nil {
 						return err
 					}
+					firstErr = errors.Join(firstErr, m.claimBatch(ctx, []ChannelState{channel}, result))
 				}
-				return nil
+				return firstErr
 			}
 			sealed, err := m.seal(ctx, batch[0])
 			if err != nil {
@@ -379,67 +412,200 @@ func (m *BatchChannelManager) seal(ctx context.Context, channel ChannelState) (b
 	return true, nil
 }
 
-func (m *BatchChannelManager) distribute(ctx context.Context, channels []ChannelState) ([]string, error) {
-	var payable []ChannelState
-	for _, channel := range channels {
-		if channel.Status == ChannelStatusOpen && channel.Settled > channel.PayoutWatermark {
-			payable = append(payable, channel)
+func (m *BatchChannelManager) distribute(ctx context.Context, channels []ChannelState, jobs []DistributionJob) ([]string, error) {
+	fenced := map[string]struct{}{}
+	for _, job := range jobs {
+		for _, channel := range job.Channels {
+			fenced[channel.ChannelID] = struct{}{}
 		}
 	}
 	distributed := []string{}
+	var firstErr error
+	for _, job := range jobs {
+		if err := ctx.Err(); err != nil {
+			return distributed, err
+		}
+		completed, err := m.distributeJob(ctx, job)
+		distributed = append(distributed, completed...)
+		firstErr = errors.Join(firstErr, err)
+	}
+	var payable []ChannelState
+	for _, channel := range channels {
+		_, blocked := fenced[channel.ChannelID]
+		if !blocked && channel.Status == ChannelStatusOpen && channel.Settled > channel.PayoutWatermark {
+			payable = append(payable, channel)
+		}
+	}
+	var fresh []DistributionJob
 	for _, batch := range chunk(payable, m.batchSize()) {
+		if err := ctx.Err(); err != nil {
+			return distributed, err
+		}
 		entries := make([]batchsettlement.BatchSettleChannel, 0, len(batch))
 		for _, channel := range batch {
-			entries = append(entries, batchsettlement.BatchSettleChannel{
-				ChannelID:     channel.ChannelID,
-				ChannelConfig: channel.ChannelConfig,
-			})
+			entries = append(entries, batchsettlement.BatchSettleChannel{ChannelID: channel.ChannelID, ChannelConfig: channel.ChannelConfig})
 		}
-		response, err := m.submit(ctx, batchsettlement.BatchSettlePayload{Type: batchsettlement.PayloadTypeSettle, Channels: entries})
+		id, err := uuid.NewRandom()
 		if err != nil {
-			return nil, err
-		}
-		if !response.Success {
-			m.report(fmt.Errorf("%s distribute failed: %s", batchsettlement.Scheme, reasonOrUnknown(response.ErrorReason)))
+			firstErr = errors.Join(firstErr, err)
 			continue
 		}
-		if string(response.Network) != m.config.Requirements.Network {
-			m.report(fmt.Errorf("%s distribute response bound to another network", batchsettlement.Scheme))
+		job, err := cloneDistributionJob(DistributionJob{Version: 1, ID: id.String(), Channels: entries, Requirements: m.config.Requirements})
+		if err != nil {
+			firstErr = errors.Join(firstErr, err)
 			continue
 		}
-		if listed, present := extraField(response.Extra, "channels"); present && !distributeChannelsMatch(listed, batch) {
-			m.report(fmt.Errorf("%s distribute response channel mismatch", batchsettlement.Scheme))
+		fresh = append(fresh, job)
+	}
+	if err := m.validateDistributionJobs(fresh); err != nil {
+		return distributed, errors.Join(firstErr, err)
+	}
+	for _, job := range fresh {
+		if err := ctx.Err(); err != nil {
+			return distributed, errors.Join(firstErr, err)
+		}
+		if err := m.distributionJobs.Save(ctx, job); err != nil {
+			firstErr = errors.Join(firstErr, err)
 			continue
 		}
-		distributedInBatch := 0
-		for _, channel := range batch {
-			paid, ok, err := m.readPayoutWatermark(ctx, channel.ChannelID)
-			if err != nil {
-				m.report(err)
-				continue
-			}
-			if !ok || paid > channel.Deposit {
-				m.report(errors.New("confirmed payout watermark unavailable or invalid"))
-				continue
-			}
-			if err := m.record(channel.ChannelID, func(state ChannelState) ChannelState {
-				if state.PayoutWatermark < paid {
-					state.PayoutWatermark = paid
-				}
-				state.OnchainSyncedAt = time.Now().UnixMilli()
-				return state
-			}); err != nil {
-				m.report(err)
-				continue
-			}
-			if paid >= channel.Settled {
-				distributed = append(distributed, channel.ChannelID)
-				distributedInBatch++
+		completed, err := m.distributeJob(ctx, job)
+		distributed = append(distributed, completed...)
+		firstErr = errors.Join(firstErr, err)
+	}
+	return distributed, firstErr
+}
+
+func (m *BatchChannelManager) validateDistributionJobs(jobs []DistributionJob) error {
+	scope := func(terms types.PaymentRequirements, serverMode bool) (string, error) {
+		var operator any
+		if serverMode {
+			operator = terms.Extra[batchsettlement.ExtraOperator]
+		}
+		encoded, err := json.Marshal([]any{terms.Scheme, terms.Network, terms.Asset, terms.PayTo,
+			terms.Extra[batchsettlement.ExtraFeePayer], terms.Extra[batchsettlement.ExtraTokenProgram],
+			terms.Extra[batchsettlement.ExtraReceiverAuthorizer], operator,
+			terms.Extra[batchsettlement.ExtraWithdrawDelay]})
+		return string(encoded), err
+	}
+	ids := map[string]struct{}{}
+	members := map[string]struct{}{}
+	for _, job := range jobs {
+		serverMode := false
+		for _, channel := range job.Channels {
+			if channel.ChannelConfig.VoucherSigner == batchsettlement.VoucherSignerServer {
+				serverMode = true
 			}
 		}
-		if distributedInBatch > 0 && m.config.OnSettle != nil {
-			m.config.OnSettle(SettleResult{Transaction: response.Transaction})
+		expected, err := scope(m.config.Requirements, serverMode)
+		if err != nil {
+			return err
 		}
+		binding, err := scope(job.Requirements, serverMode)
+		_, duplicate := ids[job.ID]
+		if err != nil || binding != expected || job.Version != 1 || job.ID == "" || duplicate || len(job.Channels) < 1 || len(job.Channels) > maxChannelsPerBatch {
+			return errors.New("invalid or differently bound distribution journal")
+		}
+		ids[job.ID] = struct{}{}
+		authorizer, _ := job.Requirements.Extra[batchsettlement.ExtraReceiverAuthorizer].(string)
+		delay, _ := asRequirementInt(job.Requirements.Extra[batchsettlement.ExtraWithdrawDelay])
+		for _, channel := range job.Channels {
+			_, duplicate := members[channel.ChannelID]
+			config := channel.ChannelConfig
+			validMode := config.VoucherSigner == "" || config.VoucherSigner == batchsettlement.VoucherSignerClient || config.VoucherSigner == batchsettlement.VoucherSignerServer
+			validOperator := config.VoucherSigner != batchsettlement.VoucherSignerServer || config.PayerAuthorizer == extraString(job.Requirements.Extra, batchsettlement.ExtraOperator)
+			if channel.ChannelID == "" || duplicate || config.Payer == "" || config.PayerAuthorizer == "" ||
+				config.Salt == "" || config.OpenSlot < 0 || config.WithdrawDelay < 0 || !validMode || !validOperator ||
+				config.Receiver != job.Requirements.PayTo || config.Token != job.Requirements.Asset ||
+				config.ReceiverAuthorizer != authorizer || int64(config.WithdrawDelay) != delay {
+				return errors.New("invalid or overlapping distribution journal membership")
+			}
+			members[channel.ChannelID] = struct{}{}
+		}
+	}
+	return nil
+}
+
+func (m *BatchChannelManager) distributeJob(ctx context.Context, job DistributionJob) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	request, err := cloneDistributionJob(job)
+	if err != nil {
+		return nil, err
+	}
+	response, err := m.config.Settle(ctx, RedemptionRequest{X402Version: 2,
+		Payload:  batchsettlement.BatchSettlePayload{Type: batchsettlement.PayloadTypeSettle, Channels: request.Channels},
+		Accepted: request.Requirements}, request.Requirements)
+	if err != nil {
+		return nil, err
+	}
+	if response == nil {
+		return nil, errors.New("distribution response missing")
+	}
+	if !response.Success {
+		m.report(fmt.Errorf("%s distribute failed: %s", batchsettlement.Scheme, reasonOrUnknown(response.ErrorReason)))
+		return nil, nil
+	}
+	if string(response.Network) != job.Requirements.Network {
+		m.report(fmt.Errorf("%s distribute response bound to another network", batchsettlement.Scheme))
+		return nil, nil
+	}
+	batch := make([]ChannelState, 0, len(job.Channels))
+	for _, channel := range job.Channels {
+		batch = append(batch, ChannelState{ChannelID: channel.ChannelID})
+	}
+	if listed, present := extraField(response.Extra, "channels"); present && !distributeChannelsMatch(listed, batch) {
+		m.report(fmt.Errorf("%s distribute response channel mismatch", batchsettlement.Scheme))
+		return nil, nil
+	}
+	distributed := []string{}
+	var reconciliationErrors []error
+	for _, channel := range job.Channels {
+		if err := ctx.Err(); err != nil {
+			return distributed, err
+		}
+		state, err := m.config.Store.Get(channel.ChannelID)
+		if err != nil {
+			reconciliationErrors = append(reconciliationErrors, err)
+			continue
+		}
+		if state == nil {
+			reconciliationErrors = append(reconciliationErrors, fmt.Errorf("channel %s vanished mid-redemption", channel.ChannelID))
+			continue
+		}
+		paid, ok, err := m.readPayoutWatermark(ctx, channel.ChannelID)
+		if err != nil {
+			reconciliationErrors = append(reconciliationErrors, err)
+			continue
+		}
+		if !ok || paid > state.Deposit {
+			reconciliationErrors = append(reconciliationErrors, errors.New("confirmed payout watermark unavailable or invalid"))
+			continue
+		}
+		if err := m.record(channel.ChannelID, func(current ChannelState) ChannelState {
+			if current.PayoutWatermark < paid {
+				current.PayoutWatermark = paid
+			}
+			current.OnchainSyncedAt = time.Now().UnixMilli()
+			return current
+		}); err != nil {
+			reconciliationErrors = append(reconciliationErrors, err)
+			continue
+		}
+		if paid >= state.Settled {
+			distributed = append(distributed, channel.ChannelID)
+		}
+	}
+	// Facilitator accounting succeeded; absent/stale local accounts cannot retain
+	// the job forever, and application notification happens only after retirement.
+	if err := m.distributionJobs.Delete(ctx, job.ID); err != nil {
+		return distributed, err
+	}
+	for _, err := range reconciliationErrors {
+		m.report(err)
+	}
+	if len(distributed) > 0 && m.config.OnSettle != nil {
+		m.config.OnSettle(SettleResult{Transaction: response.Transaction})
 	}
 	return distributed, nil
 }

@@ -206,6 +206,26 @@ manager.start(60); // seconds between passes
 
 Claim promptly: if the facilitator or payer forces a close before your latest voucher is claimed, unclaimed value returns to the payer.
 
+
+#### Pending distributions and restart recovery
+
+The manager journals each distribution request before calling the facilitator. It retries unresolved requests with their original channel membership and requirements before grouping new payouts. Only those channels are held out of new groups; unrelated payouts can progress. Confirmed success retires the job even when a local watermark read fails or the channel account has closed. `onSettle` remains a best-effort notification and runs after retirement.
+
+`distributionJobStore` defaults to a memory-only `MemoryDistributionJobStore` created once per manager. Recreating that manager loses its unresolved jobs, even if its channel store survives. Production restart recovery requires an explicitly supplied durable `DistributionJobStore`, alongside durable channel and facilitator pending-settlement storage:
+
+```typescript
+const manager = batchedSvmScheme.createChannelManager(facilitatorClient, requirements, {
+  distributionJobStore: durableDistributionJobs, // implements DistributionJobStore
+  onError: console.error,
+});
+```
+
+The journal must completely enumerate saved, undeleted jobs, including writes whose acknowledgement was lost. `save` must persist before returning and never replace different contents under an existing ID; identical retries are idempotent. `delete` targets that exact unique generation. Serialize the full JSON-compatible job, including nested requirements extras. Channel-store enumeration may remain weakly consistent; journal enumeration may not.
+
+Run one active redemption owner per journal and requirements scope, with external ownership coordination for replicas or restart handoff. This does not restrict concurrent paid-request handlers. Pricing and batch-size changes preserve retained requests; changing the scheme, network, asset, receiver, fee payer, token program, authorizer or server-mode operator requires reconciling old jobs under their original terms first. Invalid or overlapping journals block fresh sends for repair.
+
+Failures retain jobs conservatively, including terminal attribution errors that require operator reconciliation. This does not discover transactions orphaned before the journal was introduced. Facilitator accounting callbacks must still atomically deduplicate by `(network, transaction)`; replaying a retained channel-set queue can also sweep newer earnings. Neither callback delivery nor transaction execution is promised exactly once.
+
 ## Facilitator Usage
 
 For custom facilitator implementations:

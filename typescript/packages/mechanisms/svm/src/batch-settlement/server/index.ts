@@ -13,3 +13,6 @@ export {
   type SealResult,
   type SettleResult,
 } from "./channelManager";
+
+export { MemoryDistributionJobStore } from "./distributionJobStore";
+export type { DistributionJob, DistributionJobStore } from "./distributionJobStore";

@@ -16,7 +16,12 @@ function requirements(): PaymentRequirements {
   return {
     amount: "1000",
     asset: USDC_DEVNET_ADDRESS,
-    extra: { feePayer: RECEIVER, tokenProgram: TOKEN_PROGRAM_ADDRESS, withdrawDelay: 900 },
+    extra: {
+      feePayer: RECEIVER,
+      receiverAuthorizer: receiverAuthorizer.address,
+      tokenProgram: TOKEN_PROGRAM_ADDRESS,
+      withdrawDelay: 900,
+    },
     maxTimeoutSeconds: 300,
     network: SOLANA_DEVNET_CAIP2,
     payTo: RECEIVER,
@@ -31,6 +36,7 @@ function channel(id: string, overrides: Partial<ChannelState> = {}): ChannelStat
       payer: USDC_DEVNET_ADDRESS,
       payerAuthorizer: USDC_DEVNET_ADDRESS,
       receiver: RECEIVER,
+      receiverAuthorizer: receiverAuthorizer.address,
       salt: "0",
       token: USDC_DEVNET_ADDRESS,
       withdrawDelay: 900,
