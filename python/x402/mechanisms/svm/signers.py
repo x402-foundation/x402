@@ -291,14 +291,14 @@ class FacilitatorKeypairSigner:
 
             if result.value and result.value[0]:
                 status = result.value[0]
+                if status.err is not None:
+                    raise RuntimeError(f"Transaction failed: {status.err}")
                 # confirmation_status is an enum, compare properly
                 if status.confirmation_status in [
                     TransactionConfirmationStatus.Confirmed,
                     TransactionConfirmationStatus.Finalized,
                 ]:
                     return
-                if status.err:
-                    raise RuntimeError(f"Transaction failed: {status.err}")
 
             time.sleep(1)
 
