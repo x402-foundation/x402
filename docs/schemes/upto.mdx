@@ -346,6 +346,10 @@ For custom facilitator implementations, use `UptoSvmScheme` from the facilitator
       // Raise these on RPC providers with slower replica convergence.
       // channelReadMaxAttempts: 6,
       // channelReadBackoffStepMs: 200,
+      // Optional: message version (0 or 1) for facilitator-built transactions
+      // (claim, cancel, rent-cleanup). Does not affect client-built transactions.
+      // Default: 1
+      // facilitatorTransactionVersion: 1,
     });
 
     facilitator.register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", svmUptoScheme);
