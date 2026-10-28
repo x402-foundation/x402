@@ -254,11 +254,21 @@ async function verifyEnabledTransfer(
   // checked there is one. A payer we control pays its own fee: the settlement
   // checks let our account lose `amount` only when it is the fee payer too.
   // Settle submits from the account simulated here. It is our own account, so a
-  // failure to resolve it is misconfiguration.
-  const addresses = signer.getAddresses();
+  // failure to resolve it is misconfiguration. payTo never pays the fee: it would
+  // net amount - fee, which fails the settlement's payee credit check.
+  const feePayers = signer
+    .getAddresses()
+    .filter(address => !hederaAccountIdsEqual(address, payToAddress.accountId));
+  if (feePayers.length === 0) {
+    return invalid(
+      ErrInvalidPaymentRequirements,
+      payer,
+      `payTo ${requirements.payTo} is the facilitator's only account, so it would pay the fee and be credited amount - fee`,
+    );
+  }
   const feePayer =
-    addresses.find(address => hederaAccountIdsEqual(address, payer)) ??
-    addresses[Math.floor(Math.random() * addresses.length)];
+    feePayers.find(address => hederaAccountIdsEqual(address, payer)) ??
+    feePayers[Math.floor(Math.random() * feePayers.length)];
   const feePayerAddress = await signer.resolveEvmAddress({ account: feePayer, network });
   if (feePayerAddress === undefined) {
     throw new Error(`fee payer ${feePayer} has no EVM address`);

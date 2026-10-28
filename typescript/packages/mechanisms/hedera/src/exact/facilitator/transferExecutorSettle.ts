@@ -109,7 +109,11 @@ export async function settleTransferExecutor(
     const fail = failureFor(requirements.network, parsed.payload.payer);
     return fail(ErrInvalidPayload, "payload already in flight");
   }
-  return settleUnder(ctx.guard, hold, settleHeld(ctx, payload, requirements));
+  return settleUnder(
+    ctx.guard,
+    hold,
+    settleHeld(ctx, payload, requirements, () => ctx.guard.renew(hold)),
+  );
 }
 
 /**
@@ -142,12 +146,14 @@ async function settleUnder(
  * @param ctx - Signer, config and alias policy
  * @param payload - Payment payload
  * @param requirements - Matched requirements
+ * @param renewHold - Restarts the hold's expiry; absent when no hold was taken
  * @returns Settlement outcome
  */
 async function settleHeld(
   ctx: TransferExecutorContext,
   payload: PaymentPayload,
   requirements: PaymentRequirements,
+  renewHold?: () => void,
 ): Promise<SettleOutcome> {
   const { network } = requirements;
   // isInFlight stays unset: this settle holds the key it would find.
@@ -177,6 +183,8 @@ async function settleHeld(
   if (!isExecutorAdmitted(ctx.config, network, call.executor)) {
     return { response: fail(ErrExecutorNotAdmitted) };
   }
+  // The transaction's valid duration starts here, so the key's TTL does too.
+  renewHold?.();
   let submitted: HederaContractExecuteResult;
   try {
     // Exactly as simulated, and the only transaction this method signs.

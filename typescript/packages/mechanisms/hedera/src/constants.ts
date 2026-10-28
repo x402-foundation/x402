@@ -100,7 +100,8 @@ export const HEDERA_STAKING_REWARD_ACCOUNT = "0.0.800";
 
 /**
  * How long a pending `transferExecutor` settlement keeps its in-flight key.
- * Covers Hedera's maximum transaction valid duration of 180 seconds, so the
- * key outlives any submission that can still reach consensus.
+ * Covers Hedera's maximum transaction valid duration of 180 seconds, counted
+ * from just before submission, so the key outlives any submission that can
+ * still reach consensus.
  */
 export const HEDERA_TRANSFER_EXECUTOR_IN_FLIGHT_TTL_MS = 180_000;

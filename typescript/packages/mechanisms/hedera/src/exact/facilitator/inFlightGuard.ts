@@ -46,8 +46,8 @@ type InFlightEntry<Pending> = {
 
 /**
  * In-memory set of payload keys being settled. A key expires
- * `HEDERA_TRANSFER_EXECUTOR_IN_FLIGHT_TTL_MS` after it was taken, even if never
- * released. Check and insert are synchronous, so callers that acquire before
+ * `HEDERA_TRANSFER_EXECUTOR_IN_FLIGHT_TTL_MS` after it was taken or last
+ * renewed, even if never released. Check and insert are synchronous, so callers that acquire before
  * their first `await` need no lock.
  */
 export class InFlightGuard<Pending> {
@@ -73,8 +73,26 @@ export class InFlightGuard<Pending> {
   }
 
   /**
+   * Restarts a key's expiry just before its settle submits, so the key covers
+   * the transaction's valid duration however long verification took. A hold
+   * that lost its key takes it again, unless another settle holds it.
+   *
+   * @param hold - The settle's hold
+   */
+  renew(hold: InFlightHold): void {
+    this.prune();
+    const entry = this.entries.get(hold.key);
+    if (entry !== undefined && entry.hold !== hold) {
+      return;
+    }
+    // Re-inserted, so insertion order stays expiry order.
+    this.entries.delete(hold.key);
+    this.entries.set(hold.key, { hold, acquiredAt: Date.now() });
+  }
+
+  /**
    * Keeps a key for a pending settlement. While the hold is current, the expiry
-   * stays where `tryAcquire` set it. A settle that outlived the TTL lost its
+   * stays where `tryAcquire` or `renew` set it. A settle that outlived the TTL lost its
    * key, but the transaction it broadcast may still land, so the key is taken
    * again, with a fresh expiry.
    *

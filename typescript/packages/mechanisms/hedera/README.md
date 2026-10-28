@@ -191,6 +191,10 @@ const client = new x402Client().register("hedera:testnet", new ExactHederaScheme
   `ClientHederaSigner`. A signer that only pays with `transferExecutor` can
   implement it by throwing: it is only called for `cryptoTransfer` quotes.
 - `extra.feePayer` is not used: the client builds no Hedera transaction.
+- Core's client pays the first entry it supports, so a signer without the hook
+  throws when that entry is a `transferExecutor` one. To pay such quotes with
+  `cryptoTransfer`, drop those entries with a policy:
+  `client.registerPolicy((_, accepts) => accepts.filter(r => r.extra?.assetTransferMethod !== "transferExecutor"))`.
 
 ### Resource server
 
@@ -217,6 +221,10 @@ const routes = {
 - Quote each method in its own `accepts[]` entry. A client pays the method the
   entry names, and the facilitator requires `accepted` to name the same one, so
   a `cryptoTransfer` client cannot pay a `transferExecutor` entry.
+- When you offer both methods, list the `cryptoTransfer` entry first. Core's
+  client takes the first entry it supports and does not skip one its signer
+  can't pay, so a client without the `transferExecutor` hook throws on a
+  `transferExecutor` entry listed first.
 - The server copies `extra.executors` from the facilitator's `/supported` kind
   for the network. A route's own `executors` list narrows it and can never
   widen it: every entry must be one the facilitator advertises (any entry does
@@ -284,7 +292,7 @@ const facilitator = new x402Facilitator().register(
 | --- | --- |
 | `executors` | Admitted executor contract ids (`0.0.x`) per CAIP-2 network. A network that is omitted, or whose list is empty, admits nothing. `"*"` admits any contract: it is never implied, must be written out, and is NOT RECOMMENDED. The scheme reads `executors` from the `transferExecutor` object you passed on every request, so editing its lists, or assigning a new `executors` object to it, takes effect on the next request. Replacing the whole `transferExecutor` object has no effect. Settlement re-checks admission just before submitting. |
 | `gasLimit` | Required. An integer from 1 to 15,000,000 (the mirror node's `contracts/call` cap). The same value is used for the simulation and for the submitted transaction. Fixed when the scheme is constructed: later edits are ignored. |
-| `simulationGasCeiling` | Optional, at most `gasLimit`, off by default, and fixed when the scheme is constructed. When set, verification makes a second mirror `contracts/call` with `estimate: true` and rejects with `simulation_gas_exceeded` when the estimate is above the ceiling. Without it, the gas limit alone bounds the call: an over-budget call reverts in simulation (`simulation_reverted`). |
+| `simulationGasCeiling` | Optional, at most `gasLimit`, off by default, and fixed when the scheme is constructed. When set, verification makes a second mirror `contracts/call` with `estimate: true` and rejects with `simulation_gas_exceeded` when the estimate is above the ceiling. Without it, the gas limit alone bounds the call: an over-budget call reverts in simulation (`simulation_reverted`). The scheme spec says a facilitator that can measure simulated usage SHOULD reject an unexpectedly high figure, and the default `createHederaSimulateContractCall` can, so set a ceiling in production. |
 
 The constructor throws on invalid options. `transferExecutor` is enabled on a
 network only when the options are set, the network's executor list is not empty,
@@ -327,8 +335,11 @@ the instance still accepts `transferExecutor` payments under its options.
 - Each verification picks its fee payer at random among `getAddresses()`, as
   `/supported` picks the `feePayer` it advertises. A payer that is one of
   those accounts pays its own fee instead: the record checks let a facilitator
-  account lose `amount` only when it is also the fee payer. Settlement
-  simulates and submits from the account its own verification picked. Like
+  account lose `amount` only when it is also the fee payer. A `payTo` that is
+  one of those accounts never pays the fee, because it would net `amount` minus
+  the fee. When it is the only account, verification rejects the payment with
+  `invalid_payment_requirements`. Settlement simulates and submits from the
+  account its own verification picked. Like
   `createHederaSignAndSubmitTransaction`, `createHederaSubmitContractExecute`
   signs with one key: with several accounts, they must share it, or supply a
   `submitContractExecute` that signs for the `feePayer` it is given.
@@ -355,10 +366,10 @@ Operator notes:
   identical concurrent settle gets `invalid_payload` ("payload already in
   flight"), and `/verify` rejects a payload whose key is held. The key is
   released on a definite outcome. On `settlement_pending` it is kept until 180
-  seconds after it was taken (Hedera's maximum transaction valid duration), so a
-  retry cannot submit a second contract call. A settle that outlives those 180
-  seconds keeps its pending key for another 180 seconds, and never frees a key
-  that a later settle took. Meanwhile an identical settle with the same
+  seconds after the contract call was submitted (Hedera's maximum transaction
+  valid duration), so a retry cannot submit a second contract call. A settle
+  that outlives those 180 seconds keeps its pending key for another 180 seconds,
+  and never frees a key that a later settle took. Meanwhile an identical settle with the same
   requirements, such as core's single retry of a `settlement_pending`, submits
   nothing: it reads the record of the transaction already submitted and runs
   the settlement checks on it. It reports success or a failure with that

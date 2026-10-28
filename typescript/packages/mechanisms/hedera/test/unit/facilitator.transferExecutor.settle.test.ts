@@ -271,6 +271,40 @@ describe("transferExecutor settle: submission", () => {
     expect(result).toEqual({ success: true, transaction: TX_ID, network: TESTNET, payer: PAYER });
   });
 
+  it("never picks a payTo the facilitator controls as the fee payer", async () => {
+    const otherFeePayer = "0.0.5002";
+    const otherFeePayerEvm = "0x4444444444444444444444444444444444444444";
+    const signer = createSigner([FEE_PAYER, otherFeePayer]);
+    const resolve = signer.resolveEvmAddress.getMockImplementation()!;
+    signer.resolveEvmAddress.mockImplementation(async params =>
+      params.account === otherFeePayer
+        ? { accountId: otherFeePayer, evmAddress: otherFeePayerEvm }
+        : resolve(params),
+    );
+    signer.getTransactionRecord.mockResolvedValue(
+      createRecord({
+        parent: recordEntry({
+          chargedFee: FEE.toString(),
+          hbarTransfers: [transferEntry(FEE_COLLECTOR, FEE), transferEntry(otherFeePayer, -FEE)],
+        }),
+        children: [
+          recordEntry({
+            hbarTransfers: [transferEntry(PAYER, -AMOUNT), transferEntry(FEE_PAYER, AMOUNT)],
+          }),
+        ],
+      }),
+    );
+    // A draw over every account would pick the first, which is payTo.
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const scheme = new ExactHederaScheme(signer, createConfig());
+    const requirements = createRequirements({ payTo: FEE_PAYER });
+
+    const result = await scheme.settle(createPaymentPayload(requirements), requirements);
+
+    expect(signer.submitContractExecute.mock.calls[0][0].feePayer).toBe(otherFeePayer);
+    expect(result).toEqual({ success: true, transaction: TX_ID, network: TESTNET, payer: PAYER });
+  });
+
   it.each([0, 0.75])(
     "makes a payer the facilitator controls its own fee payer, whatever the draw (%d)",
     async draw => {
@@ -422,6 +456,34 @@ describe("transferExecutor settle: before broadcast", () => {
       success: false,
       transaction: "",
       errorReason: ErrInvalidPaymentRequirements,
+    });
+    expect(signer.submitContractExecute).not.toHaveBeenCalled();
+  });
+
+  it("rejects a payTo that is the facilitator's only account and submits nothing", async () => {
+    const signer = createSigner();
+    // What the chain records if it submits: payTo also pays the fee, so it nets amount - fee.
+    signer.getTransactionRecord.mockResolvedValue(
+      createRecord({
+        children: [
+          recordEntry({
+            hbarTransfers: [transferEntry(PAYER, -AMOUNT), transferEntry(FEE_PAYER, AMOUNT)],
+          }),
+        ],
+      }),
+    );
+    const scheme = new ExactHederaScheme(signer, createConfig());
+    const requirements = createRequirements({ payTo: FEE_PAYER });
+
+    const result = await scheme.settle(createPaymentPayload(requirements), requirements);
+
+    expect(result).toEqual({
+      success: false,
+      network: TESTNET,
+      transaction: "",
+      errorReason: ErrInvalidPaymentRequirements,
+      errorMessage: `payTo ${FEE_PAYER} is the facilitator's only account, so it would pay the fee and be credited amount - fee`,
+      payer: PAYER,
     });
     expect(signer.submitContractExecute).not.toHaveBeenCalled();
   });
@@ -902,7 +964,29 @@ describe("transferExecutor settle: in-flight guard", () => {
     expect(signer.submitContractExecute).toHaveBeenCalledTimes(2);
   });
 
-  it("counts the TTL from when the key was taken, not from the pending result", async () => {
+  it("restarts the TTL at submission, so a slow verification doesn't shorten it", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const signer = createSigner();
+    const verification = 60_000;
+    signer.simulateContractCall.mockImplementationOnce(async () => {
+      vi.advanceTimersByTime(verification);
+      return { reverted: false };
+    });
+    signer.getTransactionRecord.mockResolvedValueOnce(undefined);
+    const scheme = new ExactHederaScheme(signer, createConfig());
+    const requirements = createRequirements();
+    const payload = createPaymentPayload(requirements);
+
+    expect((await scheme.settle(payload, requirements)).errorReason).toBe(ErrSettlementPending);
+    // The TTL has passed since the key was taken, but not since submission.
+    vi.advanceTimersByTime(HEDERA_TRANSFER_EXECUTOR_IN_FLIGHT_TTL_MS - verification);
+    const duplicate = await scheme.settle(payload, requirements);
+
+    expect(duplicate).toMatchObject({ success: true, transaction: TX_ID });
+    expect(signer.submitContractExecute).toHaveBeenCalledTimes(1);
+  });
+
+  it("counts the TTL from submission, not from the pending result", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const signer = createSigner();
     signer.getTransactionRecord.mockImplementationOnce(async () => {
