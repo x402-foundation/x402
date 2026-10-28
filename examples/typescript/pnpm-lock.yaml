@@ -2402,6 +2402,25 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  clients/solana-batch-wallet:
+    dependencies:
+      '@solana/kit':
+        specifier: ^8.0.0
+        version: 8.5.0(bufferutil@4.0.9)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)(utf-8-validate@5.0.10)
+      '@wallet-standard/app':
+        specifier: ^1.1.0
+        version: 1.1.0
+      '@x402/svm':
+        specifier: workspace:*
+        version: link:../../../../typescript/packages/mechanisms/svm
+    devDependencies:
+      esbuild:
+        specifier: ^0.27.2
+        version: 0.27.7
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   facilitator/advanced:
     dependencies:
       '@aptos-labs/ts-sdk':

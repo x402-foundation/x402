@@ -19,7 +19,6 @@ import {
 import { getChannelDecoder, type Channel } from "../../payment-channels/generated/accounts/channel";
 import { AccountDiscriminator } from "../../payment-channels/generated/types/accountDiscriminator";
 import {
-  buildDistributeInstruction,
   buildSettleInstructions,
   ChannelStatus,
   getPaymentChannelsTreasuryOwner,
@@ -152,6 +151,10 @@ import {
   proofOf,
 } from "../types";
 
+import { resolveBatchAuthorizationFormat } from "../authorization";
+import { assertBatchAuthorizationFormat } from "../authorizationPolicy";
+import { buildBatchDistributeInstruction } from "./distributionInstruction";
+
 type DurablePhase = "completed" | "pending" | "broadcast";
 
 type DurableObservation<T> = { ok: true; channel: T } | { ok: false; response: SettleResponse };
@@ -176,10 +179,14 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
   private readonly receiverBindingHistoryReader: BatchReceiverBindingHistoryReader | undefined;
   private readonly delegatedReceiverAuth: BatchDelegatedReceiverAuth | undefined;
 
+  private distributeInstruction = buildBatchDistributeInstruction;
+
   constructor(
     signer: FacilitatorSvmSigner,
     private readonly config: BatchSvmFacilitatorConfig = {},
   ) {
+    for (const format of config.authorizationFormats ?? ["binary"])
+      resolveBatchAuthorizationFormat(format);
     assertPaymentChannelFacilitatorSigner(signer, "BatchSvmScheme");
     if (signer.getAddresses().length === 0) {
       throw new Error("BatchSvmScheme requires at least one fee payer signer");
@@ -199,6 +206,9 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     return {
       feePayer: addresses[Math.floor(Math.random() * addresses.length)],
       transactionVersions: [...ADVERTISED_TRANSACTION_VERSIONS],
+      ...(this.config.authorizationFormats
+        ? { authorizationFormats: [...this.config.authorizationFormats] }
+        : {}),
       // Copied into the 402: how long servers have to claim before an idle close.
       ...(this.maxIdleSecs > 0 ? { maxIdleSecs: this.maxIdleSecs } : {}),
       ...(this.delegatedReceiverAuth
@@ -256,6 +266,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     }
 
     try {
+      assertBatchAuthorizationFormat(payload, requirements, this.config.authorizationFormats);
       switch (payload.type) {
         case "deposit": {
           const validated = await this.validateDeposit(payload, requirements, "exact");
@@ -367,6 +378,9 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       return settleFailure(payment.accepted.network, BatchError.PAYLOAD_TYPE, "");
     }
     try {
+      if (isBatchPayload(payload)) {
+        assertBatchAuthorizationFormat(payload, requirements, this.config.authorizationFormats);
+      }
       switch (payload.type) {
         case "deposit":
           return await this.settleDeposit(payment, payload, requirements, context);
@@ -1895,24 +1909,6 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     ) {
       throw new Error(BatchError.CHANNEL_STATE);
     }
-  }
-
-  private async distributeInstruction(
-    channelId: string,
-    channel: Channel,
-    terms: BatchTerms,
-    requirements: PaymentRequirements,
-  ): Promise<ServerInstruction> {
-    return buildDistributeInstruction({
-      channelId,
-      mint: channel.mint,
-      network: requirements.network,
-      payee: channel.payee,
-      payer: channel.payer,
-      rentPayer: channel.rentPayer,
-      splits: [{ bps: FULL_SPLIT_BPS, recipient: requirements.payTo }],
-      tokenProgram: terms.tokenProgram,
-    });
   }
 
   private sealDependencies(): SealDependencies {

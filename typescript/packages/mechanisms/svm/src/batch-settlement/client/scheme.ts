@@ -52,6 +52,7 @@ import {
   NoBatchChannelToRefundError,
   type RefundPayloadOptions,
   refundBatchChannel,
+  selectRefundAccept,
 } from "./refund";
 import {
   type BatchServerSignedChannelsPolicy,
@@ -66,6 +67,16 @@ import type {
   PendingPayment,
   ResolvedTerms,
 } from "./types";
+
+import { resolveBatchAuthorizationFormat } from "../authorization";
+
+type ChannelDiscoveryCache = Map<string, ReturnType<typeof discoverChannelsByPayer>>;
+type MintCache = Map<string, ReturnType<typeof fetchMint>>;
+type RefundLookupOptions = {
+  discover: boolean;
+  discoveryCache: ChannelDiscoveryCache;
+  mintCache: MintCache;
+};
 
 /** A serializable, confirmed client channel allocation. */
 export interface BatchClientChannelRecord {
@@ -233,6 +244,7 @@ export class BatchSvmScheme implements SchemeNetworkClient {
                   await credentialFor("server", existing.tracker, charge, {
                     requestId,
                     expiresAt: authorizationExpiresAt,
+                    format: terms.authorizationFormat,
                   })
                 ).authorization,
                 channelConfig: existing.tracker.channelConfig,
@@ -284,6 +296,7 @@ export class BatchSvmScheme implements SchemeNetworkClient {
           ? await credentialFor("server", existing.tracker, charge, {
               requestId: topUpRequestId,
               expiresAt: authorizationExpiresAt,
+              format: terms.authorizationFormat,
             })
           : await credentialFor("client", existing.tracker, charge);
       const payment: PendingPayment = {
@@ -352,6 +365,7 @@ export class BatchSvmScheme implements SchemeNetworkClient {
       tokenProgram: terms.tokenProgram,
       withdrawDelay: terms.withdrawDelay,
       voucherSigner: terms.voucherSigner,
+      authorizationFormat: terms.authorizationFormat,
       ...(terms.voucherSigner === "server" ? { authorizationExpiresAt } : {}),
       ...(terms.operator ? { operator: terms.operator } : {}),
     });
@@ -409,10 +423,55 @@ export class BatchSvmScheme implements SchemeNetworkClient {
     // Fail closed before any channel work when the facilitator accepts no
     // transaction version this client can build (deposit, top-up, close).
     resolveTransactionVersion(requirements.extra);
-    const cached = this.findCachedChannelForRoute(requirements);
-    const located = await this.locateRefundChannel(requirements, cached);
-    if (!located) throw new NoBatchChannelToRefundError();
-    const { existing, lookupRequirements, terms } = located;
+    const candidates = options?.accepts?.filter(
+      accept =>
+        accept.scheme === BATCH_SETTLEMENT_SCHEME &&
+        accept.network === requirements.network &&
+        accept.asset === requirements.asset &&
+        accept.payTo === requirements.payTo &&
+        (accept.extra?.authorizationFormat === undefined ||
+          accept.extra.authorizationFormat === "binary" ||
+          accept.extra.authorizationFormat === "text-v1"),
+    ) ?? [requirements];
+    let located: Awaited<ReturnType<BatchSvmScheme["locateRefundChannel"]>> = undefined;
+    const discoveryCache: ChannelDiscoveryCache = new Map();
+    const mintCache: MintCache = new Map();
+    // Exhaust cached/stored channels before scanning. Reuse one payer-account
+    // snapshot for every candidate in this refund, rather than scanning per accept.
+    const passes = this.config.discoverChannels === false ? [false] : [false, true];
+    let lookupFailure: { error: unknown } | undefined;
+    for (const discover of passes) {
+      for (const candidate of candidates) {
+        try {
+          const cached = this.findCachedChannelForRoute(candidate);
+          located = await this.locateRefundChannel(candidate, cached, {
+            discover,
+            discoveryCache,
+            mintCache,
+          });
+        } catch (error) {
+          // A malformed later accept must not prevent discovery for an earlier
+          // compatible one. Preserve the first error if no channel can be found.
+          lookupFailure ??= { error };
+        }
+        if (located) break;
+      }
+      if (located) break;
+    }
+    if (!located) {
+      if (lookupFailure) throw lookupFailure.error;
+      throw new NoBatchChannelToRefundError();
+    }
+    const { existing } = located;
+    // A probe may list client mode first even when the open channel uses server
+    // mode. Select its actual advertised format before prompting the wallet.
+    const lookupRequirements = options?.accepts
+      ? selectRefundAccept(candidates, existing.tracker.channelConfig)
+      : located.lookupRequirements;
+    resolveTransactionVersion(lookupRequirements.extra);
+    const terms = options?.accepts
+      ? await this.resolveRefundTerms(lookupRequirements, existing, mintCache)
+      : located.terms;
     const blockhash = options?.withTransaction
       ? await resolveBlockhash(
           createRpcClient(lookupRequirements.network, this.config.rpcUrl),
@@ -425,6 +484,7 @@ export class BatchSvmScheme implements SchemeNetworkClient {
       ? await credentialFor("server", existing.tracker, 0n, {
           requestId: crypto.randomUUID(),
           expiresAt,
+          format: terms.authorizationFormat,
         })
       : await credentialFor("client", existing.tracker, 0n, undefined, true);
     return {
@@ -552,10 +612,12 @@ export class BatchSvmScheme implements SchemeNetworkClient {
    * @param terms.receiverAuthorizer
    * @param terms.voucherSigner
    * @param terms.operator
+   * @param cache - Optional payer-scan snapshot shared within one refund
    */
   private async discoverChannel(
     requirements: PaymentRequirements,
     terms: ResolvedTerms,
+    cache?: ChannelDiscoveryCache,
   ): Promise<OpenChannel | undefined> {
     if (this.config.discoverChannels === false) return undefined;
     const rpc = createRpcClient(requirements.network, this.config.rpcUrl);
@@ -569,7 +631,12 @@ export class BatchSvmScheme implements SchemeNetworkClient {
         .send()) as never;
     let found;
     try {
-      found = await discoverChannelsByPayer(scan, this.signer.address);
+      let snapshot = cache?.get(requirements.network);
+      if (!snapshot) {
+        snapshot = discoverChannelsByPayer(scan, this.signer.address);
+        cache?.set(requirements.network, snapshot);
+      }
+      found = await snapshot;
     } catch {
       // Discovery is an optimization over opening a new channel, never a
       // precondition for paying.
@@ -942,33 +1009,32 @@ export class BatchSvmScheme implements SchemeNetworkClient {
    *
    * @param probed
    * @param cached
+   * @param mintCache - Mint snapshot shared only within this refund build
    */
   private async resolveRefundTerms(
     probed: PaymentRequirements,
     cached?: OpenChannel,
+    mintCache?: MintCache,
   ): Promise<ResolvedTerms> {
     if (cached?.tracker.channelConfig.voucherSigner === "server") {
-      const clientProbed: PaymentRequirements = {
-        ...probed,
-        extra: {
-          ...probed.extra,
-          operator: undefined,
-          voucherSigner: "client",
-        },
-      };
-      const terms = await this.resolveTerms(clientProbed);
+      const authorizationFormat = resolveBatchAuthorizationFormat(
+        probed.extra?.authorizationFormat,
+      );
+      const terms = await this.resolveTerms(clientSignedRefundRequirements(probed), mintCache);
       return {
         ...terms,
+        authorizationFormat,
         operator: cached.tracker.channelConfig.payerAuthorizer,
         voucherSigner: "server",
       };
     }
-    return this.resolveTerms(probed);
+    return this.resolveTerms(probed, mintCache);
   }
 
   private async locateRefundChannel(
     requirements: PaymentRequirements,
-    cached?: OpenChannel,
+    cached: OpenChannel | undefined,
+    options: RefundLookupOptions,
   ): Promise<
     | { existing: OpenChannel; lookupRequirements: PaymentRequirements; terms: ResolvedTerms }
     | undefined
@@ -981,23 +1047,33 @@ export class BatchSvmScheme implements SchemeNetworkClient {
       searchLookup = clientSignedRefundRequirements(searchLookup);
     }
 
-    let terms = await this.resolveRefundTerms(searchLookup, cached);
-    let existing = (await this.loadRefundChannel(searchLookup, terms, cached)) ?? undefined;
+    let terms = await this.resolveRefundTerms(searchLookup, cached, options.mintCache);
+    let existing =
+      (await this.loadRefundChannel(searchLookup, terms, cached, options)) ?? undefined;
     if (existing) {
       if (!cached) {
         lookupRequirements = this.requirementsForRefund(requirements, existing);
-        terms = await this.resolveRefundTerms(lookupRequirements, existing);
+        terms = await this.resolveRefundTerms(lookupRequirements, existing, options.mintCache);
       }
       return { existing, lookupRequirements, terms };
     }
 
     if (!cached && (requirements.extra?.voucherSigner ?? "client") === "server") {
       try {
-        const serverTerms = await this.resolveTerms(requirements);
-        const serverChannel = await this.loadRefundChannel(requirements, serverTerms);
+        const serverTerms = await this.resolveTerms(requirements, options.mintCache);
+        const serverChannel = await this.loadRefundChannel(
+          requirements,
+          serverTerms,
+          undefined,
+          options,
+        );
         if (serverChannel) {
           lookupRequirements = this.requirementsForRefund(requirements, serverChannel);
-          terms = await this.resolveRefundTerms(lookupRequirements, serverChannel);
+          terms = await this.resolveRefundTerms(
+            lookupRequirements,
+            serverChannel,
+            options.mintCache,
+          );
           return { existing: serverChannel, lookupRequirements, terms };
         }
       } catch (error) {
@@ -1012,12 +1088,15 @@ export class BatchSvmScheme implements SchemeNetworkClient {
     lookupRequirements: PaymentRequirements,
     terms: ResolvedTerms,
     cached?: OpenChannel,
+    options?: RefundLookupOptions,
   ): Promise<OpenChannel | null> {
     const key = this.channelKey(lookupRequirements, terms.feePayer, terms.withdrawDelay);
     return (
       (await this.loadChannel(key)) ??
       cached ??
-      (await this.discoverChannel(lookupRequirements, terms)) ??
+      (options?.discover !== false
+        ? await this.discoverChannel(lookupRequirements, terms, options?.discoveryCache)
+        : undefined) ??
       null
     );
   }
@@ -1060,7 +1139,10 @@ export class BatchSvmScheme implements SchemeNetworkClient {
     ].join(":");
   }
 
-  private async resolveTerms(requirements: PaymentRequirements): Promise<ResolvedTerms> {
+  private async resolveTerms(
+    requirements: PaymentRequirements,
+    mintCache?: MintCache,
+  ): Promise<ResolvedTerms> {
     const extra = requirements.extra;
     if (!extra) throw new Error("requirements.extra is required");
     if (extra.paymentFlow !== undefined && extra.paymentFlow !== "authorization") {
@@ -1085,7 +1167,15 @@ export class BatchSvmScheme implements SchemeNetworkClient {
       "extra.tokenProgram is not a supported SPL token program",
     );
     const rpc = createRpcClient(requirements.network, this.config.rpcUrl);
-    const mint = await fetchMint(rpc, requirements.asset as Address);
+    const mintKey = `${requirements.network}:${requirements.asset}`;
+    let mintPromise = mintCache?.get(mintKey);
+    if (!mintPromise) {
+      mintPromise = fetchMint(rpc, requirements.asset as Address);
+      mintCache?.set(mintKey, mintPromise);
+    }
+    // A failed snapshot also belongs to this build. All candidates share the
+    // same route asset; a later refund attempt gets a fresh map and can retry.
+    const mint = await mintPromise;
     if (mint.programAddress.toString() !== tokenProgram) {
       throw new Error("extra.tokenProgram does not own requirements.asset");
     }
@@ -1100,6 +1190,10 @@ export class BatchSvmScheme implements SchemeNetworkClient {
     const voucherSigner = extra.voucherSigner ?? "client";
     if (voucherSigner !== "client" && voucherSigner !== "server") {
       throw new Error('extra.voucherSigner must be "client" or "server"');
+    }
+    const authorizationFormat = resolveBatchAuthorizationFormat(extra.authorizationFormat);
+    if (voucherSigner !== "server" && authorizationFormat !== "binary") {
+      throw new Error("text authorization requires server-signed channels");
     }
     const operator = extra.operator;
     if (voucherSigner === "server" && (typeof operator !== "string" || operator.length === 0)) {
@@ -1120,6 +1214,7 @@ export class BatchSvmScheme implements SchemeNetworkClient {
       tokenProgram,
       withdrawDelay,
       voucherSigner,
+      authorizationFormat,
       ...(typeof operator === "string" ? { operator } : {}),
       ...(trust ? { trust } : {}),
     };

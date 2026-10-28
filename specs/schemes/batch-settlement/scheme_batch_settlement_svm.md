@@ -439,6 +439,29 @@ for each HTTP request. The request and amount bindings limit a leaked proof to
 one bounded request; expiry limits how long it can be presented. None of these
 fields revoke the operator's onchain authority to sign vouchers for the channel.
 
+#### Proposed readable payer proofs (`text-v1`)
+
+This opt-in extension is a draft for browser-wallet interoperability. The existing binary proof is the default. A facilitator that enables it MUST advertise `extra.authorizationFormats` containing `"text-v1"` in `/supported`. A resource server selecting it MUST set `PaymentRequirements.extra.authorizationFormat` to `"text-v1"`. The payer proof MUST carry `format: "text-v1"`. Unknown formats, mismatches, and formats not enabled locally MUST be rejected. Absence of either selection or proof format means `"binary"`; validators MUST NOT guess from the signature or retry another format.
+
+A text proof signs these eight lines, separated by LF (`0x0a`) with no trailing newline:
+
+```text
+x402-batch-authorization-text-v1
+<purpose>
+Payer: <payer>
+Channel: <channelId>
+Operator: <extra.operator>
+Maximum amount (atomic units): <authorizedAmount>
+Request ID (JSON string): <escapedRequestId>
+Expires at (Unix seconds): <expiresAt>
+```
+
+`<purpose>` is exactly `Request refund of unused channel funds.` when the amount is zero; otherwise it is `Authorize a charge up to the amount below.` Addresses retain the existing 32-byte Base58 validation. Amount is canonical unsigned decimal within u64; expiry is canonical positive decimal within the JavaScript safe-integer range. Request ID retains the existing 1–256 UTF-8-byte bound. `escapedRequestId` is its JSON string literal (including quotes), with every remaining non-ASCII UTF-16 code unit replaced by a lowercase four-digit `\uXXXX` escape. JSON control-character, quote and backslash escaping applies first. No trimming, normalization, extra whitespace, or line-ending conversion is permitted. All signed message bytes are ASCII.
+
+Validators reconstruct these bytes from validated fields rather than accepting wallet-supplied text. Signature, payer, channel, operator, expiry, amount ceilings, request uniqueness, replay handling, and channel-state checks apply exactly as for binary proofs. The operator-signed onchain voucher and close authorization formats are independent and unchanged. Supporting this format does not make an operator trustless or make old deployments accept text proofs.
+
+A browser adapter MUST independently verify the signature against its original message bytes before returning a payer proof; comparing only the wallet's `signedMessage` is insufficient. A wallet that signs other bytes MUST fail clearly. Applications MUST NOT verify the lossy UTF-8 conversion of a binary authorization: that conversion is not one-to-one and can erase distinctions between authorized amounts.
+
 `CloseAuthorization`:
 
 | Field | Type | Notes |

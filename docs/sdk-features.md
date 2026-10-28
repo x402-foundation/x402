@@ -71,6 +71,10 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | auth-capture | evm | `eip3009` | ✅ | ✅ | ❌ |
 | auth-capture | evm | `permit2` | ✅ | ✅ | ❌ |
 
+### Solana batch browser authorizations
+
+The TypeScript SDK adds an opt-in `text-v1` payer-proof format and a Kit browser signer adapter that checks the returned signature against the original bytes. Binary remains the default. This draft requires matching client, resource-server, and facilitator support; current wallet versions still require independent compatibility captures. Go and Python do not implement this text format. See the [SVM batch specification](https://github.com/x402-foundation/x402/blob/main/specs/schemes/batch-settlement/scheme_batch_settlement_svm.md) and [browser example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/solana-batch-wallet).
+
 ## Extensions
 
 | Extension | TypeScript | Go | Python |
@@ -174,3 +178,5 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | Feature | TypeScript | Go | Python |
 |---------|------------|-----|--------|
 | spendControls (asset allowlist + USD cap) | ✅ | ✅ | ✅ |
+
+The proposed TypeScript Solana `text-v1` browser integration selects refund requirements before requesting a signature, including after channel restoration. The adapter exposes only its verified message-signing path. Installed-wallet OCMS envelope tests do not replace this opt-in format; see the [browser diagnostic evidence](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/solana-batch-wallet#standard-off-chain-envelope-tests-october-23-2026).
