@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -120,7 +121,17 @@ func main() {
 		if err != nil {
 			// Invalid payments come back as *x402.VerifyError and are answered with
 			// 200 {"isValid": false, ...}; any other error is a facilitator failure (500).
-			writeVerifyError(c, err)
+			var verifyErr *x402.VerifyError
+			if errors.As(err, &verifyErr) {
+				c.JSON(http.StatusOK, x402.VerifyResponse{
+					IsValid:        false,
+					InvalidReason:  verifyErr.InvalidReason,
+					InvalidMessage: verifyErr.InvalidMessage,
+					Payer:          verifyErr.Payer,
+				})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 

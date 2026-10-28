@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -87,7 +88,17 @@ func runGasExtensionsExample(evmPrivateKey string) error {
 
 		result, err := facilitator.Verify(ctx, reqBody.PaymentPayload, reqBody.PaymentRequirements)
 		if err != nil {
-			writeVerifyError(c, err)
+			var verifyErr *x402.VerifyError
+			if errors.As(err, &verifyErr) {
+				c.JSON(http.StatusOK, x402.VerifyResponse{
+					IsValid:        false,
+					InvalidReason:  verifyErr.InvalidReason,
+					InvalidMessage: verifyErr.InvalidMessage,
+					Payer:          verifyErr.Payer,
+				})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
