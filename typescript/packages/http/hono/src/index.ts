@@ -13,6 +13,7 @@ import {
   SettlementOverrides,
   checkIfBazaarNeeded,
   withPrivateCacheControl,
+  applyPaymentResponseHeaders,
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
 import { Context, MiddlewareHandler } from "hono";
@@ -240,9 +241,11 @@ export function paymentMiddlewareFromHTTPServer(
       case "payment-error":
         // Payment required but not provided or invalid
         const { response } = result;
-        Object.entries(response.headers).forEach(([key, value]) => {
-          c.header(key, value);
-        });
+        applyPaymentResponseHeaders(
+          response.headers,
+          name => c.res.headers.get(name),
+          (name, value) => c.header(name, value),
+        );
         if (response.isHtml) {
           return c.html(response.body as string, response.status as 402);
         } else {
@@ -278,9 +281,11 @@ export function paymentMiddlewareFromHTTPServer(
             res.headers.get("Cache-Control"),
           );
           if (failureHeaders) {
-            Object.entries(failureHeaders).forEach(([key, value]) => {
-              res.headers.set(key, value);
-            });
+            applyPaymentResponseHeaders(
+              failureHeaders,
+              name => res.headers.get(name),
+              (name, value) => res.headers.set(name, value),
+            );
           }
           c.res = res;
           return;
@@ -303,9 +308,11 @@ export function paymentMiddlewareFromHTTPServer(
             res.headers.get("Cache-Control"),
           );
           if (failureHeaders) {
-            Object.entries(failureHeaders).forEach(([key, value]) => {
-              res.headers.set(key, value);
-            });
+            applyPaymentResponseHeaders(
+              failureHeaders,
+              name => res.headers.get(name),
+              (name, value) => res.headers.set(name, value),
+            );
           }
           return;
         }
@@ -345,9 +352,11 @@ export function paymentMiddlewareFromHTTPServer(
             res = new Response(responseBody, { status: res.status, headers: res.headers });
             res.headers.delete("transfer-encoding");
             // Settlement succeeded - add headers to response
-            Object.entries(settleResult.headers).forEach(([key, value]) => {
-              res.headers.set(key, value);
-            });
+            applyPaymentResponseHeaders(
+              settleResult.headers,
+              name => res.headers.get(name),
+              (name, value) => res.headers.set(name, value),
+            );
             res.headers.set(
               "Cache-Control",
               withPrivateCacheControl(res.headers.get("Cache-Control")),

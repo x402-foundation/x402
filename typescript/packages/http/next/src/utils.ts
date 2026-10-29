@@ -13,6 +13,7 @@ import {
   CompletedSettlement,
   SETTLEMENT_OVERRIDES_HEADER,
   withPrivateCacheControl,
+  applyPaymentResponseHeaders,
 } from "@x402/core/server";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { NextAdapter } from "./adapter";
@@ -231,9 +232,11 @@ export async function handleSettlement(
       response.headers.get("Cache-Control"),
     );
     if (failureHeaders) {
-      Object.entries(failureHeaders).forEach(([key, value]) => {
-        response.headers.set(key, value);
-      });
+      applyPaymentResponseHeaders(
+        failureHeaders,
+        name => response.headers.get(name),
+        (name, value) => response.headers.set(name, value),
+      );
     }
     return response;
   }
@@ -272,9 +275,11 @@ export async function handleSettlement(
       headers: response.headers,
     });
     settled.headers.delete("transfer-encoding");
-    Object.entries(result.headers).forEach(([key, value]) => {
-      settled.headers.set(key, value);
-    });
+    applyPaymentResponseHeaders(
+      result.headers,
+      name => settled.headers.get(name),
+      (name, value) => settled.headers.set(name, value),
+    );
     settled.headers.set(
       "Cache-Control",
       withPrivateCacheControl(settled.headers.get("Cache-Control")),
