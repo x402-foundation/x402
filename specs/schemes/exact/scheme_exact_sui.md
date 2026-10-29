@@ -21,6 +21,22 @@ from an address balance, `Coin<T>` objects, a swap, a contract withdrawal, or an
   budget.
 - **`Pure` input**: A transaction input of raw bytes; it is unused when no command references it.
 
+## Asset Transfer Method
+
+Sui has one method, in the facilitator-submitted family of [`exact`](./scheme_exact.md#asset-transfer-method-families):
+
+- **Fee payer**: the payer, or the facilitator when it sponsors gas. A gasless transfer pays no fee.
+  See [Gas](#gas).
+- **Replay primitive**: the transaction digest, which is exclusive to the payment. The chain
+  executes a transaction at most once. The funds are not reserved, though. If the payer spends the
+  same balance or coins elsewhere after verify, settle fails even though the resource handler has
+  already run.
+- **Validity window**: bounded by the required [expiration](#expiration), at most two epochs (about
+  48 hours on mainnet).
+- **Duplicate submission**: indistinguishable. Re-submitting an executed transaction returns its
+  original effects as a success, so the facilitator deduplicates by digest (see
+  [Settlement deduplication](#settlement-deduplication)).
+
 ## Protocol Sequencing
 
 1. Client requests a resource and receives a `402 Payment Required` response with the
@@ -36,8 +52,9 @@ from an address balance, `Coin<T>` objects, a swap, a contract withdrawal, or an
 8. Facilitator submits the transaction, waits for finality, and reports the result.
 9. Resource server returns the response to the client.
 
-Because Sui finality is sub-second, a resource server MAY settle before step 6 when the work is
-costly.
+This is the `authorization` payment flow, and it is the default. Sui also supports `upfront`, where
+the resource server settles before step 6. Finality is sub-second, so `upfront` costs little, and a
+resource server MAY use it when the work is costly.
 
 ## Network Format
 
@@ -305,12 +322,12 @@ success at most once per transaction:
    returns the same failure, so a retry cannot turn it into a success.
 5. A successful claim MUST be kept until at least one epoch after `maxEpoch` has ended. A node that
    lags by an epoch would otherwise accept a re-settle of an evicted claim.
-6. A single process MAY keep claims in memory. After a restart, the only protection against
-   re-settling a payment the store has forgotten is verify's best-effort
-   [digest lookup](#verification), which the standard resource server flow always runs first. A
-   facilitator whose settle can be called without verify, or that runs several instances, SHOULD use
-   a shared, durable claim store. Two facilitators that do not share a claim store can each report
-   the same payment as settled.
+6. When several processes serve `/settle`, they MUST share one claim store. A single process MAY
+   keep claims in memory. After a restart, the only protection against re-settling a payment the
+   store has forgotten is verify's best-effort [digest lookup](#verification), which the standard
+   resource server flow always runs first. A facilitator whose settle can be called without verify
+   SHOULD use a durable claim store. Two facilitators that do not share a claim store can each
+   report the same payment as settled.
 7. `duplicate_settlement` therefore means the payment has already settled successfully or a settle
    for it is in progress.
 
@@ -350,7 +367,7 @@ Replay and repeat settlement are covered under [Expiration](#expiration) and
 | `invalid_exact_sui_payload_simulation_failed`                | verify          | Simulation failed, including for an expired transaction.                                    |
 | `invalid_exact_sui_payload_transfer_mismatch`                | verify          | Simulated effects do not credit `payTo` with exactly `amount`.                              |
 | `invalid_exact_sui_payload_verification_error`               | verify          | Unexpected error or RPC failure during verification.                                        |
-| `invalid_payment_requirements`                               | verify / settle | The requirements' `amount` is not a positive integer.                                       |
+| `invalid_payment_requirements`                               | verify / settle | `amount` is not a positive integer.                                                         |
 | `sponsor_rejected`                                           | settle          | The sponsor declined the transaction.                                                       |
 | `duplicate_settlement`                                       | settle          | The transaction has already settled successfully, or a settle for it is in progress.        |
 | `transaction_failed`                                         | settle          | Execution failed or outcome unknown, balance changes missing, or a signature check errored. |
