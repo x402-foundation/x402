@@ -991,8 +991,11 @@ export class x402ResourceServer {
       response.extensions = { ...extensions };
     }
 
-    for (let i = 0; i < workingAccepts.length; i++) {
-      const accept = workingAccepts[i];
+    const enrichedSchemes = new Set<string>();
+    for (const accept of acceptsClone) {
+      const schemeKey = JSON.stringify([accept.scheme, accept.network]);
+      if (enrichedSchemes.has(schemeKey)) continue;
+      enrichedSchemes.add(schemeKey);
       const scheme = findByNetworkAndScheme(
         this.registeredServerSchemes,
         accept.scheme,

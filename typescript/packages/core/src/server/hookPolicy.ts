@@ -106,7 +106,8 @@ export function assertAcceptsAllowlistedAfterExtensionEnrich(
 }
 
 /**
- * Ensures scheme 402 enrichment only adds `extra` keys to matching accepts.
+ * Ensures scheme 402 enrichment only adds `extra` keys to matching accepts, or
+ * omits matching accepts the scheme cannot currently offer.
  * **`extra.paymentFlow`** and **`extra.assetTransferMethod`** are protocol-reserved on every
  * accept: their presence and values must match the baseline (enrichment must not add or
  * rewrite them).
@@ -122,16 +123,26 @@ export function assertAcceptsAdditiveExtraAfterSchemeEnrich(
   scheme: string,
   network: string,
 ): void {
-  if (baseline.length !== current.length) {
-    throw new Error(
-      `[x402] scheme "${scheme}" violated accepts mutation policy: accepts length changed (${baseline.length} → ${current.length})`,
-    );
-  }
-
+  let j = 0;
   for (let i = 0; i < baseline.length; i++) {
     const b = baseline[i];
-    const c = current[i];
+    const c = current[j];
     const isMatchingAccept = b.scheme === scheme && b.network === network;
+
+    // A matching accept counts as omitted when no live entry is left for it, or
+    // when the next live entry retains a later baseline entry instead.
+    if (
+      isMatchingAccept &&
+      (c === undefined ||
+        baseline.slice(i + 1).some(later => isRetainedRequirement(later, c, scheme, network)))
+    ) {
+      continue;
+    }
+    if (c === undefined) {
+      throw new Error(
+        `[x402] scheme "${scheme}" violated accepts mutation policy: only matching accepts may be omitted (index ${i})`,
+      );
+    }
 
     if (b.scheme !== c.scheme || b.network !== c.network) {
       throw new Error(
@@ -177,7 +188,57 @@ export function assertAcceptsAdditiveExtraAfterSchemeEnrich(
         );
       }
     }
+    j++;
   }
+
+  if (j !== current.length) {
+    throw new Error(
+      `[x402] scheme "${scheme}" violated accepts mutation policy: accepts may not be added (${baseline.length} → ${current.length})`,
+    );
+  }
+}
+
+/**
+ * Tests whether a live accept is an allowed enrichment of a baseline accept.
+ *
+ * @param baseline - Accept before the scheme enrich step
+ * @param current - Candidate accept after the scheme enrich step
+ * @param scheme - Scheme whose hook was invoked
+ * @param network - Network whose hook was invoked
+ * @returns Whether `current` keeps the terms and `extra` of `baseline`
+ */
+function isRetainedRequirement(
+  baseline: PaymentRequirements,
+  current: PaymentRequirements,
+  scheme: string,
+  network: string,
+): boolean {
+  if (
+    baseline.scheme !== current.scheme ||
+    baseline.network !== current.network ||
+    baseline.maxTimeoutSeconds !== current.maxTimeoutSeconds ||
+    baseline.payTo !== current.payTo ||
+    baseline.amount !== current.amount ||
+    baseline.asset !== current.asset
+  ) {
+    return false;
+  }
+  for (const [key, value] of Object.entries(baseline.extra)) {
+    if (!Object.prototype.hasOwnProperty.call(current.extra, key)) return false;
+    if (!deepEqual(current.extra[key], value)) return false;
+  }
+  for (const key of RESERVED_PAYMENT_FLOW_EXTRA_KEYS) {
+    if (
+      Object.prototype.hasOwnProperty.call(baseline.extra, key) !==
+      Object.prototype.hasOwnProperty.call(current.extra, key)
+    ) {
+      return false;
+    }
+  }
+  const isMatchingAccept = baseline.scheme === scheme && baseline.network === network;
+  return (
+    isMatchingAccept || Object.keys(current.extra).length === Object.keys(baseline.extra).length
+  );
 }
 
 /**

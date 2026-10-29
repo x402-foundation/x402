@@ -1,0 +1,30 @@
+---
+title: "Work"
+description: "Pay for an x402 resource with a provider-issued proof-of-work solution."
+---
+
+The `work` scheme prices a request in expected proof evaluations. A profile
+defines its native job, proof, solution, and source submission. Settlement
+succeeds when the solution meets the amount-derived payment target.
+
+### Server Setup
+
+Register `WorkServerScheme` with a profile issuer, then price the route with an
+explicit hash amount and profile. Native source credentials remain private.
+
+### Client Setup
+
+Register `WorkClientScheme` with a solver for each accepted profile. Solvers
+receive the job, derived target, and deadline `AbortSignal`.
+
+### Facilitator Setup
+
+Register `WorkFacilitatorScheme` with verifier profiles and a durable shared
+replay store. Verification never submits. Settlement re-verifies and consumes
+the payment share. If that share also meets the native source target, the
+profile may submit it for native credit.
+
+### Specs
+
+- [`work` scheme](https://github.com/x402-foundation/x402/blob/main/specs/schemes/work/scheme_work.md)
+- [Quai work profiles](https://github.com/x402-foundation/x402/blob/main/specs/schemes/work/scheme_work_quai.md)

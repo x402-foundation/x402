@@ -16,7 +16,7 @@ import {
   buildVerifyResponse,
   buildSettleResponse,
 } from "../../mocks";
-import { Network } from "../../../src/types";
+import { Network, type SchemePaymentRequiredContext } from "../../../src/types";
 import { FacilitatorCapabilityError, type SettleResponse } from "../../../src/types/facilitator";
 import { HTTPFacilitatorClient } from "../../../src/http/httpFacilitatorClient";
 
@@ -3049,6 +3049,34 @@ describe("x402ResourceServer", () => {
 
       expect(enrich).toHaveBeenCalledTimes(1);
       expect(result.accepts[0].extra.ChannelState).toEqual({ channelId: "0x123" });
+    });
+
+    it("continues after a scheme omits its unavailable offer", async () => {
+      const server = new x402ResourceServer();
+      const first = Object.assign(new MockSchemeNetworkServer("work"), {
+        enrichPaymentRequiredResponse: async (ctx: SchemePaymentRequiredContext) =>
+          ctx.requirements.filter(requirement => requirement.scheme !== "work"),
+      });
+      const enrichSecond = vi.fn(async (ctx: SchemePaymentRequiredContext) => {
+        ctx.requirements[0].extra.ready = true;
+      });
+      const second = Object.assign(new MockSchemeNetworkServer("exact"), {
+        enrichPaymentRequiredResponse: enrichSecond,
+      });
+      server.register("test:network" as Network, first).register("test:network" as Network, second);
+
+      const result = await server.createPaymentRequiredResponse(
+        [
+          buildPaymentRequirements({ scheme: "work" }),
+          buildPaymentRequirements({ scheme: "exact" }),
+        ],
+        { url: "https://example.com", description: "", mimeType: "" },
+      );
+
+      expect(enrichSecond).toHaveBeenCalledOnce();
+      expect(result.accepts).toEqual([
+        expect.objectContaining({ scheme: "exact", extra: { ready: true } }),
+      ]);
     });
 
     it("rejects scheme response enrichment that overwrites baseline terms", async () => {

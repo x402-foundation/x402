@@ -68,6 +68,7 @@ PUBLISH_WORKFLOWS = [
             ("@x402/near", "Publish @x402/near package to NPM"),
             ("@x402/concordium", "Publish @x402/concordium package to NPM"),
             ("@x402/xrpl", "Publish @x402/xrpl package to NPM"),
+            ("@x402/work", "Publish @x402/work package to NPM"),
         ],
     ),
     ("@x402/paywall", "Publish @x402/paywall package to NPM"),
