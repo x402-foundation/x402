@@ -814,6 +814,9 @@ Register `BatchSvmScheme` for `solana:*`. The SDK opens or tops up the channel o
     client.register("solana:*", new BatchSvmScheme(signer, {
       depositPolicy: { depositMultiplier: 5 },
       rpcUrl: process.env.SVM_RPC_URL,
+      // Optional: restrict to version-0 transactions only (e.g. for signers that
+      // cannot sign version-1). Default: build the highest version the facilitator supports.
+      // transactionVersions: [0],
     }));
     ```
 
