@@ -86,6 +86,8 @@ and fill required environment variables:
 - `EVM_ADDRESS` - Ethereum address to receive payments
 - `SVM_ADDRESS` - Solana address to receive payments (optional for `all-networks`)
 - `STELLAR_ADDRESS` - Stellar public address (starts with `G`) to receive payments
+- `SUI_ADDRESS` - Sui address (`0x...`) to receive USDC payments (optional for `all-networks`)
+- `SUI_NETWORK` - Sui network CAIP-2 (optional, defaults to `sui:testnet`)
 - `HEDERA_ACCOUNT_ID` - Hedera account id to receive payments (optional for `all-networks`; format: `0.0.XXXXX`)
 - `KEETA_ADDRESS` - Keeta address (starts with `keeta_`) to receive payments
 - `XRPL_ADDRESS` - XRPL classic address (starts with `r`) to receive payments (optional for `all-networks`)
