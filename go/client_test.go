@@ -545,7 +545,10 @@ func (m *mockFailableV1) CreatePaymentPayload(
 	return types.PaymentPayloadV1{}, nil
 }
 
-type mockFailableV2 struct{ fail bool }
+type mockFailableV2 struct {
+	fail  bool
+	calls int
+}
 
 func (m *mockFailableV2) Scheme() string { return "mock" }
 func (m *mockFailableV2) CreatePaymentPayload(
@@ -553,10 +556,23 @@ func (m *mockFailableV2) CreatePaymentPayload(
 	_ types.PaymentRequirements,
 	_ PaymentPayloadContext,
 ) (types.PaymentPayload, error) {
+	m.calls++
 	if m.fail {
 		return types.PaymentPayload{}, fmt.Errorf("fail")
 	}
-	return types.PaymentPayload{}, nil
+	return types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{"from": "created"}}, nil
+}
+
+type countingV1 struct{ calls int }
+
+func (m *countingV1) Scheme() string { return "mock" }
+func (m *countingV1) CreatePaymentPayload(
+	_ context.Context,
+	_ types.PaymentRequirementsV1,
+	_ PaymentPayloadContext,
+) (types.PaymentPayloadV1, error) {
+	m.calls++
+	return types.PaymentPayloadV1{X402Version: 1}, nil
 }
 
 func TestPaymentHooksOrder_V1_vs_V2(t *testing.T) {
@@ -1290,5 +1306,53 @@ func TestSchemePaymentCreationFailureHandlerRunsAfterUserHooks(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, requirements, payload.Accepted)
 		require.Equal(t, []string{"failure"}, calls)
+	})
+}
+
+var errAfterHook = fmt.Errorf("after hook failed")
+
+func TestAfterPaymentCreationHookErrorIsObservable(t *testing.T) {
+	requirements := types.PaymentRequirements{Scheme: "mock", Network: "test", Amount: "1"}
+
+	t.Run("v2 hook error without recovery", func(t *testing.T) {
+		scheme := &mockFailableV2{}
+		client := Newx402Client()
+		client.Register(Network("test"), scheme)
+		client.OnAfterPaymentCreation(func(PaymentCreatedContext) error {
+			return errAfterHook
+		})
+		_, err := client.CreatePaymentPayload(context.Background(), requirements, nil, nil)
+		require.ErrorIs(t, err, errAfterHook)
+		require.Equal(t, 1, scheme.calls)
+	})
+
+	t.Run("v2 hook error can recover without recreating", func(t *testing.T) {
+		scheme := &mockFailableV2{}
+		client := Newx402Client()
+		client.Register(Network("test"), scheme)
+		client.OnAfterPaymentCreation(func(PaymentCreatedContext) error {
+			return errAfterHook
+		})
+		recovered := types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{"from": "recovered"}}
+		client.OnPaymentCreationFailure(func(ctx PaymentCreationFailureContext) (*PaymentCreationFailureHookResult, error) {
+			require.ErrorIs(t, ctx.Error, errAfterHook)
+			return &PaymentCreationFailureHookResult{Recovered: true, Payload: recovered}, nil
+		})
+		payload, err := client.CreatePaymentPayload(context.Background(), requirements, nil, nil)
+		require.NoError(t, err)
+		require.Equal(t, "recovered", payload.Payload["from"])
+		require.Equal(t, 1, scheme.calls)
+	})
+
+	t.Run("v1 hook error propagates", func(t *testing.T) {
+		scheme := &countingV1{}
+		client := Newx402Client()
+		client.RegisterV1(Network("test"), scheme)
+		client.OnAfterPaymentCreation(func(PaymentCreatedContext) error {
+			return errAfterHook
+		})
+		_, err := client.CreatePaymentPayloadV1(context.Background(), types.PaymentRequirementsV1{Scheme: "mock", Network: "test"})
+		require.ErrorIs(t, err, errAfterHook)
+		require.Equal(t, 1, scheme.calls)
 	})
 }
