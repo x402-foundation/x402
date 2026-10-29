@@ -215,7 +215,7 @@ export class ExactXrplScheme implements SchemeNetworkClient {
           getMaxLastLedgerSequence(currentLedgerIndex, requirements),
       };
 
-      return client.autofill(paymentWithExpiry);
+      return await client.autofill(paymentWithExpiry);
     } finally {
       await client.disconnect();
     }

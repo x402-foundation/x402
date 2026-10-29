@@ -636,6 +636,34 @@ describe("ExactXrplScheme client", () => {
     expect(decoded.LastLedgerSequence).toBe(994);
   });
 
+  it("keeps the client connected until default autofill resolves", async () => {
+    let connected = false;
+    const fakeClient = {
+      connect: vi.fn(async () => {
+        connected = true;
+      }),
+      disconnect: vi.fn(async () => {
+        connected = false;
+      }),
+      autofill: vi.fn(async (transaction: Transaction) => {
+        await new Promise(resolve => setTimeout(resolve, 0));
+        if (!connected) throw new Error("websocket was closed");
+        return { ...transaction, Fee: "12", Sequence: 1 };
+      }),
+    } as unknown as Client;
+    const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
+      getCurrentLedgerIndex: async () => 980,
+      clientFactory: () => fakeClient,
+    });
+
+    const result = await client.createPaymentPayload(2, baseXrpRequirements);
+    const decoded = decode(String(result.payload.signedTxBlob)) as Payment;
+
+    expect(decoded.Sequence).toBe(1);
+    expect(decoded.LastLedgerSequence).toBe(994);
+    expect(fakeClient.disconnect).toHaveBeenCalledOnce();
+  });
+
   it("creates a signed IOU payment payload with SendMax and destination tag", async () => {
     const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
       getCurrentLedgerIndex: async () => 980,
