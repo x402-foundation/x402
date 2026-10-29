@@ -884,6 +884,17 @@ Register `BatchSvmScheme` for `solana:*`. The SDK opens or tops up the channel o
 
     const scheme = new BatchSvmScheme(svmSigner, {
       channelStorage: new InMemoryBatchChannelStorage(),
+      // Optional: accepted transaction versions (default [0, 1]).
+      // Pass [0] to reject version-1 client transactions.
+      // transactionVersions: [0, 1],
+      // Optional: message version (0 or 1) for facilitator-built redemption transactions
+      // (claim, settle, seal, refund, rent cleanup). Default: 1.
+      // Version 1 supports up to 18 claim channels and 13 settle channels per batch;
+      // version 0 supports 4 of each.
+      // facilitatorTransactionVersion: 1,
+      // Optional: override the treasury owner the payment-channels program was built with.
+      // Useful when running against a custom or local program build.
+      // paymentChannelsTreasuryOwner: "YourTreasuryOwnerPubkey",
     });
 
     facilitator.register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", scheme);
