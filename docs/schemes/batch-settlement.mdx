@@ -763,6 +763,10 @@ Every channel is bound at open to a `receiverAuthorizer` key that signs cooperat
   </Tab>
 </Tabs>
 
+#### Batch Capacity (SVM)
+
+The facilitator builds its redemption transactions (claim, settle, seal, refund, rent cleanup) as Solana transaction v1 by default. Version 1 supports up to **18 claim channels** and **13 settle channels** per transaction; version 0 supports 4 of each. The facilitator advertises these limits as `extra.maxClaimChannels` and `extra.maxSettleChannels` in its `/supported` response, and the server uses them to size its claim and settle batches. A claim or settle request that exceeds the advertised capacity is rejected with `invalid_batch_settlement_svm_payload_type`.
+
 #### Redemption Worker (SVM)
 
 Start `BatchChannelManager` outside the request path to claim batches and distribute payouts:
