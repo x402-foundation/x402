@@ -271,8 +271,12 @@ Register the `upto` scheme alongside `exact` if your client may call both fixed-
     }
 
     x402Client := x402.Newx402Client().
-        Register("solana:*", exactsvm.NewExactSvmScheme(svmSigner)).      // fixed-price services
-        Register("solana:*", uptosvm.NewUptoSvmScheme(svmSigner, nil))    // usage-based services
+        Register("solana:*", exactsvm.NewExactSvmScheme(svmSigner)).   // fixed-price services
+        Register("solana:*", uptosvm.NewUptoSvmScheme(svmSigner, &uptosvm.ClientConfig{
+            // Optional: restrict to version-0 transactions only (e.g. for signers that
+            // cannot sign version-1). Default: build the highest version the facilitator supports.
+            // TransactionVersions: []int{0},
+        }))  // usage-based services
     ```
   </Tab>
   <Tab title="Python">
