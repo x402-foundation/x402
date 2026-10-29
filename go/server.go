@@ -346,11 +346,7 @@ func (s *x402ResourceServer) GetRegisteredScheme(network Network, scheme string)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	networkSchemes, ok := s.schemes[network]
-	if !ok {
-		return nil
-	}
-	return networkSchemes[scheme]
+	return findByNetworkAndScheme(s.schemes, scheme, network)
 }
 
 // GetPaymentFlow resolves the payment flow name for requirements from the
@@ -601,16 +597,19 @@ func (s *x402ResourceServer) OnVerifiedPaymentCanceled(hook OnVerifiedPaymentCan
 	return s
 }
 
-// matchedSchemeHooks returns the per-(network, scheme) hook handles for the
-// scheme that matched the current request, or nil when no scheme is registered
-// for that pair. Caller must hold s.mu (read).
+// matchedSchemeHooks returns the per-(network, scheme) hook handles of the
+// registration that serves the current request, or nil when no scheme is
+// registered for that pair or that registration has no hooks. Caller must hold
+// s.mu (read).
 func (s *x402ResourceServer) matchedSchemeHooks(network Network, scheme string) *hookAdapterHandles {
-	if byScheme, ok := s.schemeHookAdapters[network]; ok {
-		if h, ok := byScheme[scheme]; ok {
-			return h
-		}
+	// Resolve the registration in s.schemes: the hook map has no entry for a
+	// registration without hooks, so a lookup there could fall through to a
+	// wildcard registration's hooks
+	registeredNetwork, ok := findRegisteredNetwork(s.schemes, scheme, network)
+	if !ok {
+		return nil
 	}
-	return nil
+	return s.schemeHookAdapters[registeredNetwork][scheme]
 }
 
 // orderedHooks returns the hooks for `phase` in the canonical execution order:
@@ -812,7 +811,7 @@ func (s *x402ResourceServer) BuildPaymentRequirements(
 	scheme := config.Scheme
 	network := config.Network
 
-	schemeServer := s.schemes[network][scheme]
+	schemeServer := findByNetworkAndScheme(s.schemes, scheme, network)
 	if schemeServer == nil {
 		return types.PaymentRequirements{}, &PaymentError{
 			Code:    ErrCodeUnsupportedScheme,
@@ -1570,7 +1569,7 @@ func (s *x402ResourceServer) SettlePaymentWithExtensions(
 	// avoids mutating the caller's object so a second settle (escrow) can
 	// re-enrich the same keys.
 	s.mu.RLock()
-	matchedSchemeServer := s.schemes[network][scheme]
+	matchedSchemeServer := findByNetworkAndScheme(s.schemes, scheme, network)
 	s.mu.RUnlock()
 	settlePayload := payload
 	if enricher, ok := matchedSchemeServer.(EnrichSettlementPayloadProvider); ok {
@@ -1735,14 +1734,7 @@ func (s *x402ResourceServer) CreatePaymentRequiredResponseWithPayload(
 	defer s.mu.RUnlock()
 
 	for i := range requirements {
-		networkSchemes, ok := s.schemes[Network(requirements[i].Network)]
-		if !ok {
-			continue
-		}
-		scheme, ok := networkSchemes[requirements[i].Scheme]
-		if !ok {
-			continue
-		}
+		scheme := findByNetworkAndScheme(s.schemes, requirements[i].Scheme, Network(requirements[i].Network))
 		enricher, ok := scheme.(PaymentRequiredEnricher)
 		if !ok {
 			continue
@@ -1777,7 +1769,7 @@ func (s *x402ResourceServer) BuildPaymentRequirementsFromConfig(ctx context.Cont
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	schemeServer := s.schemes[config.Network][config.Scheme]
+	schemeServer := findByNetworkAndScheme(s.schemes, config.Scheme, config.Network)
 	if schemeServer == nil {
 		return nil, fmt.Errorf("no scheme server for %s on %s", config.Scheme, config.Network)
 	}

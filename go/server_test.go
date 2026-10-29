@@ -485,6 +485,120 @@ func TestGetPaymentFlow_UnregisteredScheme(t *testing.T) {
 	}
 }
 
+type mockBeforeVerifyScheme struct {
+	mockSchemeNetworkServer
+	calls int
+}
+
+func (m *mockBeforeVerifyScheme) BeforeVerifyHook() BeforeVerifyHook {
+	return func(VerifyContext) (*BeforeHookResult, error) {
+		m.calls++
+		return nil, nil
+	}
+}
+
+func TestServerWildcardSchemeRegistration(t *testing.T) {
+	ctx := context.Background()
+	scheme := &mockBeforeVerifyScheme{mockSchemeNetworkServer: mockSchemeNetworkServer{scheme: "exact"}}
+	server := Newx402ResourceServer(
+		WithFacilitatorClient(&mockServerFacilitatorClient{
+			kinds: []SupportedKind{{X402Version: 2, Scheme: "exact", Network: "eip155:8453"}},
+		}),
+		WithSchemeServer("eip155:*", scheme),
+	)
+	if err := server.Initialize(ctx); err != nil {
+		t.Fatalf("Failed to initialize server: %v", err)
+	}
+
+	if !server.HasRegisteredScheme("eip155:8453", "exact") {
+		t.Fatal("Expected eip155:* registration to cover eip155:8453")
+	}
+
+	requirements, err := server.BuildPaymentRequirementsFromConfig(ctx, ResourceConfig{
+		Scheme:  "exact",
+		PayTo:   "0xrecipient",
+		Price:   "$1.00",
+		Network: "eip155:8453",
+	})
+	if err != nil {
+		t.Fatalf("Failed to build requirements: %v", err)
+	}
+
+	payload := types.PaymentPayload{
+		X402Version: 2,
+		Accepted:    requirements[0],
+		Payload:     map[string]interface{}{},
+	}
+	result, err := server.VerifyPayment(ctx, payload, requirements[0])
+	if err != nil || !result.IsValid {
+		t.Fatalf("Expected verify to succeed, got %v, %v", result, err)
+	}
+	if scheme.calls != 1 {
+		t.Fatalf("Expected scheme BeforeVerify hook to run once, got %d", scheme.calls)
+	}
+}
+
+func TestServerExactSchemeWithoutHooksOverridesWildcardHooks(t *testing.T) {
+	tests := []struct {
+		name  string
+		order []string
+	}{
+		{name: "wildcard registered first", order: []string{"wildcard", "exact"}},
+		{name: "exact registered first", order: []string{"exact", "wildcard"}},
+		{name: "exact re-registered without hooks", order: []string{"wildcard", "hookedExact", "exact"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			wildcard := &mockBeforeVerifyScheme{mockSchemeNetworkServer: mockSchemeNetworkServer{scheme: "exact"}}
+			hookedExact := &mockBeforeVerifyScheme{mockSchemeNetworkServer: mockSchemeNetworkServer{scheme: "exact"}}
+			exact := &mockSchemeNetworkServer{scheme: "exact"}
+			server := Newx402ResourceServer(WithFacilitatorClient(&mockServerFacilitatorClient{
+				kinds: []SupportedKind{{X402Version: 2, Scheme: "exact", Network: "eip155:8453"}},
+			}))
+			registrations := map[string]func(){
+				"wildcard":    func() { server.Register("eip155:*", wildcard) },
+				"hookedExact": func() { server.Register("eip155:8453", hookedExact) },
+				"exact":       func() { server.Register("eip155:8453", exact) },
+			}
+			for _, name := range tt.order {
+				registrations[name]()
+			}
+			if err := server.Initialize(ctx); err != nil {
+				t.Fatalf("Failed to initialize server: %v", err)
+			}
+
+			if got := server.GetRegisteredScheme("eip155:8453", "exact"); got != exact {
+				t.Fatalf("Expected the eip155:8453 registration, got %v", got)
+			}
+
+			requirements, err := server.BuildPaymentRequirementsFromConfig(ctx, ResourceConfig{
+				Scheme:  "exact",
+				PayTo:   "0xrecipient",
+				Price:   "$1.00",
+				Network: "eip155:8453",
+			})
+			if err != nil {
+				t.Fatalf("Failed to build requirements: %v", err)
+			}
+
+			payload := types.PaymentPayload{
+				X402Version: 2,
+				Accepted:    requirements[0],
+				Payload:     map[string]interface{}{},
+			}
+			result, err := server.VerifyPayment(ctx, payload, requirements[0])
+			if err != nil || !result.IsValid {
+				t.Fatalf("Expected verify to succeed, got %v, %v", result, err)
+			}
+			if wildcard.calls != 0 || hookedExact.calls != 0 {
+				t.Fatalf("Expected no BeforeVerify hook to run, got wildcard %d, replaced exact %d", wildcard.calls, hookedExact.calls)
+			}
+		})
+	}
+}
+
 func TestServerCreatePaymentRequiredResponse(t *testing.T) {
 	server := Newx402ResourceServer()
 
