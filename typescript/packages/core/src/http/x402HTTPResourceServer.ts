@@ -31,6 +31,44 @@ export const SETTLEMENT_OVERRIDES_HEADER = "Settlement-Overrides";
 export const PAYMENT_REQUIRED_CACHE_CONTROL = "no-store";
 
 /**
+ * Split a Cache-Control value on commas that are outside quoted strings.
+ * Commas inside quotes (including escaped quotes) are part of the value.
+ *
+ * @param value - Raw Cache-Control header value
+ * @returns Directives split only on unquoted commas
+ */
+export function splitCacheControlDirectives(value: string): string[] {
+  const directives: string[] = [];
+  let current = "";
+  let quoted = false;
+
+  for (let i = 0; i < value.length; i++) {
+    const char = value[i];
+    if (char === "\\" && quoted) {
+      current += char;
+      if (i + 1 < value.length) {
+        current += value[i + 1];
+        i++;
+      }
+      continue;
+    }
+    if (char === '"') {
+      quoted = !quoted;
+      current += char;
+      continue;
+    }
+    if (char === "," && !quoted) {
+      directives.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  directives.push(current);
+  return directives;
+}
+
+/**
  * Appends the `private` directive to an existing Cache-Control header value.
  * Shared caches must not store responses with user-specific settlement metadata.
  *
@@ -42,8 +80,14 @@ export function withPrivateCacheControl(value: string | null): string {
     return "private";
   }
 
-  const directives = value.split(",").map(directive => directive.trim().toLowerCase());
-  if (directives.includes("private")) {
+  // Only an unqualified `private` token marks the whole response private.
+  // RFC 9111 §5.2.2.7: private="field-name" is field-qualified and still
+  // leaves the rest of the response cacheable by a shared cache.
+  const hasUnqualifiedPrivate = splitCacheControlDirectives(value).some(directive => {
+    const name = directive.trim().toLowerCase();
+    return !name.includes("=") && name === "private";
+  });
+  if (hasUnqualifiedPrivate) {
     return value;
   }
 
