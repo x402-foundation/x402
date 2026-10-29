@@ -379,6 +379,14 @@ For custom facilitator implementations, use `UptoSvmScheme` from the facilitator
         // },
         // Optional: shared store for multi-replica facilitators. Default is in-memory.
         // DelegatedAuthStore: sharedRedisDelegatedAuthStore,
+        // Optional: accepted transaction versions (default [0, 1]).
+        // Pass []int{0} to reject version-1 client transactions.
+        // TransactionVersions: []int{0, 1},
+        // Optional: message version for facilitator-built transactions (0 or 1). Default: 1.
+        // FacilitatorTransactionVersion: 1,
+        // Optional: override the treasury owner the payment-channels program was built with.
+        // Useful when running against a custom or local program build.
+        // PaymentChannelsTreasuryOwner: "YourTreasuryOwnerPubkey",
     })
     facilitator.Register([]x402.Network{network}, scheme)
 
