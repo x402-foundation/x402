@@ -719,8 +719,9 @@ Additional options:
     | `smartWalletMaxPriorityFeeMicroLamports` | `number` | `50000` | Maximum priority fee in microlamports for smart wallet transactions. |
     | `smartWalletAllowedPrograms` | `string[]` | Built-in list | Allowed smart wallet program addresses. Only transactions invoking a program in this list reach simulation-based verification. |
     | `maxPriorityFeeMicroLamports` | `number` | `5000000` | Maximum compute unit price in microlamports accepted on the static path. The facilitator pays the transaction fee, so this bounds the priority fee a payer can make it pay. |
-    | `maxComputeUnits` | `number` | No limit | Maximum compute unit limit accepted on the static path. An SPL transfer with a memo uses ~20k CU; a low ceiling still leaves ample headroom for wallet-injected instructions. |
-    | `maxRequiredSignatures` | `number` | No limit | Maximum number of required signatures. Every signature adds 5,000 lamports of base fee paid by the facilitator. A typical x402 payment needs two (payer + fee payer). |
+    | `maxComputeUnits` | `number` | `400000` | Maximum compute unit limit accepted on the static path. An SPL transfer with a memo uses ~20k CU; a low ceiling still leaves ample headroom for wallet-injected instructions. |
+    | `maxRequiredSignatures` | `number` | `2` | Maximum number of required signatures. Every signature adds 5,000 lamports of base fee paid by the facilitator. A typical x402 payment needs two (payer + fee payer). |
+    | `transactionVersions` | `number[]` | `[0, 1]` | Accepted Solana transaction message versions. Advertised as `extra.transactionVersions` in `/supported`. Pass `[0]` to reject version-1 transactions (e.g. when your RPC does not support them). |
   </Tab>
   <Tab title="Go">
     | Field | Type | Default | Description |
@@ -730,8 +731,9 @@ Additional options:
     | `SmartWalletMaxPriorityFeeMicroLamports` | `*uint64` | `50000` | Maximum priority fee in microlamports for smart wallet transactions. |
     | `SmartWalletAllowedPrograms` | `[]string` | Built-in list | Allowed smart wallet program addresses. Only transactions invoking a program in this list reach simulation-based verification. |
     | `MaxPriorityFeeMicroLamports` | `*uint64` | `5000000` | Maximum compute unit price in microlamports accepted on the static path. |
-    | `MaxComputeUnits` | `*uint32` | No limit | Maximum compute unit limit accepted on the static path. |
-    | `MaxRequiredSignatures` | `*uint8` | No limit | Maximum number of required signatures. Every signature adds 5,000 lamports of base fee paid by the facilitator. |
+    | `MaxComputeUnits` | `*uint32` | `400000` | Maximum compute unit limit accepted on the static path. |
+    | `MaxRequiredSignatures` | `*uint8` | `2` | Maximum number of required signatures. Every signature adds 5,000 lamports of base fee paid by the facilitator. |
+    | `TransactionVersions` | `[]int` | `[0, 1]` | Accepted Solana transaction message versions. Advertised as `extra.transactionVersions` in `/supported`. Pass `[]int{0}` to reject version-1 transactions. |
     | `SettlementCache` | `*SettlementCache` | New cache | Shared settlement cache for duplicate detection. Pass the same instance to V1 and V2 SVM schemes. |
   </Tab>
 </Tabs>
