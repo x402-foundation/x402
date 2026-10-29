@@ -19,6 +19,7 @@
       "@x402/keeta",
       "@x402/near",
       "@x402/concordium",
+      "@x402/sui",
       "@x402/xrpl",
       "@x402/canton",
       "@x402/express",

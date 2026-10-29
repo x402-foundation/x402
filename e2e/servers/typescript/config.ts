@@ -15,6 +15,7 @@ import { ExactKeetaScheme } from "@x402/keeta/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { ExactTvmScheme } from "@x402/tvm/exact/server";
 import { ExactNearScheme } from "@x402/near/exact/server";
+import { ExactSuiScheme } from "@x402/sui/exact/server";
 import { ExactXrplScheme } from "@x402/xrpl/exact/server";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/server";
 import { ExactCardanoScheme } from "@x402/cardano/exact/server";
@@ -187,6 +188,9 @@ async function registerFamilySchemes(
       return;
     case "near":
       server.register(pattern, new ExactNearScheme());
+      return;
+    case "sui":
+      server.register(pattern, new ExactSuiScheme());
       return;
     case "xrpl":
       server.register(pattern, new ExactXrplScheme());
