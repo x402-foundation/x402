@@ -847,6 +847,9 @@ Register `BatchSvmScheme` for `solana:*`. The SDK opens or tops up the channel o
     batch, err := batchclient.NewBatchSvmScheme(svmSigner, &batchclient.BatchSvmClientConfig{
         DepositPolicy: &batchclient.DepositPolicy{DepositMultiplier: &multiplier},
         RPCURL:        os.Getenv("SVM_RPC_URL"),
+        // Optional: restrict to version-0 transactions only (e.g. for signers that
+        // cannot sign version-1). Default: build the highest version the facilitator supports.
+        // TransactionVersions: []int{0},
     })
 
     x402Client := x402.Newx402Client().
