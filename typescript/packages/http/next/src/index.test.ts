@@ -9,6 +9,7 @@ import type {
 import {
   checkIfBazaarNeeded,
   FacilitatorResponseError,
+  checkIfBazaarNeeded,
   x402ResourceServer,
   x402HTTPResourceServer,
 } from "@x402/core/server";
@@ -24,6 +25,15 @@ import {
 } from "./index";
 
 import { createHttpServer } from "./utils";
+
+const bazaarModule = vi.hoisted(() => ({
+  loads: 0,
+}));
+
+vi.mock("@x402/extensions/bazaar", () => {
+  bazaarModule.loads += 1;
+  throw new Error("Cannot find module '@x402/extensions/bazaar'");
+});
 
 // Mock utils
 vi.mock("./utils", async () => {
@@ -1177,5 +1187,63 @@ describe("paymentProxyFromConfig", () => {
     paymentProxyFromConfig(mockRoutes, undefined, undefined, paywallConfig, paywall, false);
 
     expect(x402HTTPResourceServer).toHaveBeenCalledWith(expect.anything(), mockRoutes);
+  });
+});
+
+describe("pre-registered bazaar extension", () => {
+  beforeEach(() => {
+    bazaarModule.loads = 0;
+    vi.mocked(checkIfBazaarNeeded).mockReturnValue(false);
+  });
+
+  const expectNoBazaarImport = async (
+    run: (httpServer: x402HTTPResourceServer) => Promise<number>,
+  ): Promise<void> => {
+    vi.mocked(checkIfBazaarNeeded).mockReturnValue(true);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const httpServer = createMockHttpServer({ type: "no-payment-required" });
+    const resourceServer = httpServer.server as unknown as {
+      hasExtension: ReturnType<typeof vi.fn>;
+      registerExtension: ReturnType<typeof vi.fn>;
+    };
+    resourceServer.hasExtension.mockReturnValue(true);
+
+    const status = await run(httpServer);
+
+    expect({
+      loads: bazaarModule.loads,
+      errors: consoleError.mock.calls.map(call => String(call[0])),
+      registered: resourceServer.registerExtension.mock.calls.length,
+    }).toEqual({
+      loads: 0,
+      errors: [],
+      registered: 0,
+    });
+    expect(status).toBe(200);
+    consoleError.mockRestore();
+  };
+
+  it("paymentProxyFromHTTPServer does not import @x402/extensions/bazaar or log when bazaar is already registered", async () => {
+    await expectNoBazaarImport(async httpServer => {
+      const proxy = paymentProxyFromHTTPServer(httpServer, undefined, undefined, false);
+      const response = await proxy(createMockRequest());
+      return response.status;
+    });
+  });
+
+  it("withX402FromHTTPServer does not import @x402/extensions/bazaar or log when bazaar is already registered", async () => {
+    await expectNoBazaarImport(async httpServer => {
+      const handler = vi.fn().mockResolvedValue(NextResponse.json({ data: "protected" }));
+      const wrappedHandler = withX402FromHTTPServer(
+        handler,
+        httpServer,
+        undefined,
+        undefined,
+        false,
+      );
+      const response = await wrappedHandler(createMockRequest());
+      expect(handler).toHaveBeenCalledOnce();
+      return response.status;
+    });
   });
 });
