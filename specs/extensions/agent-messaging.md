@@ -315,7 +315,7 @@ conflicting supplied conversation ID is rejected.
 | `request` | A request for work, data, or a quote. |
 | `response` | A response to a `request`. |
 | `event` | A notification with no expected reply. |
-| `error` | A failure report, typically with `replyTo` set. `content` is JSON with a `code`; this extension reserves `unsupported_profile` (see Content profiles). |
+| `error` | A failure report, typically with `replyTo` set. This extension reserves the JSON error code `unsupported_profile` (see Content profiles). |
 | `payment.request` | A payment proposal: the sender asks the recipient to pay (or to expect payment) under stated terms, normally by referencing x402 `PaymentRequirements`. Proposals are quotes, not charges. |
 | `payment.receipt` | A claim that a payment settled, carrying the settlement reference (transaction signature / receipt identifier). Recipients MUST verify the referenced settlement independently before treating anything as paid, using the verification rules of the referenced scheme and network (e.g. `exact` on `eip155:*` via the EIP-3009 transfer, `exact` on `solana:*` via the confirmed transaction) or the facilitator that settled it. |
 
@@ -325,7 +325,7 @@ This section reserves names only. The mailbox carries content; it does
 not interpret it. What a profile means is defined in its own spec.
 
 - `contentProfile` is a string identifier `<name>/v<major>`, for example
-  `x402m.offer/v1`. `<name>` is a short name or an absolute URI. Major
+  `x402m.offer/v1`. Major
   versions are not compatible with each other; a profile spec defines
   its must-understand fields and what minor changes may add.
 - Services advertise accepted identifiers in the discovery descriptor's
@@ -341,15 +341,9 @@ not interpret it. What a profile means is defined in its own spec.
   x402 `PaymentRequirements` (see `payment.request` content), and a
   receipt is a claim until settlement is verified independently.
 
-A first offer/quote profile for API and data services (resource
-identifier, input and output schema references, pricing unit, amount and
-asset as CAIP-19, quote expiry) is left to a separate follow-up spec.
-That spec is expected to reference the
-[Offer and Receipt extension](./extension-offer-and-receipt.md) for
-server-signed offers and receipts rather than redefine signatures: an
-offer/quote profile describes what is offered between agents, the Offer
-and Receipt extension lets a resource server sign the terms it presents
-in `accepts[]`.
+An offer/quote profile is left to a follow-up spec, which is expected to
+reference the [Offer and Receipt extension](./extension-offer-and-receipt.md)
+for server-signed terms rather than redefine signatures.
 
 ## On-chain transport profiles
 
