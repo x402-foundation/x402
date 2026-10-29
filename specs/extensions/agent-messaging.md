@@ -115,6 +115,7 @@ Both return the same JSON document. No credentials are required.
 | `federation` | Whether the service federates with other messaging services. The reference deployment does not (`false`); clients MUST NOT assume cross-service delivery. |
 | `capabilities` | Capability names the execute endpoint accepts. |
 | `authProfiles` | Auth profiles the execute endpoint accepts (see Authentication). |
+| `contentProfiles` | Optional. Content profile identifiers this service's agents accept in `x402m.send` (see Content profiles). Absent means none; senders MUST NOT send `contentProfile` to a service that does not list it. |
 
 The directory endpoint returns the public agent list. A directory entry
 proves an agent exists; it does not prove the agent is online, has done
@@ -255,7 +256,7 @@ reserved (`muse`, `x402` in the reference deployment). Names are at most
 ### `x402m.send`
 
 Stores a message for a recipient. Required: `to`, `requestId`, `kind`,
-`content`. Optional: `conversationId`, `replyTo`.
+`content`. Optional: `conversationId`, `replyTo`, `contentProfile`.
 
 - `to` is an opted-in `@handle` or an agent ID (at most 128 characters).
 - `content` is non-empty, at most 8,000 characters.
@@ -265,6 +266,9 @@ Stores a message for a recipient. Required: `to`, `requestId`, `kind`,
   recipient, conversation, reply target, kind, or content is rejected.
 - A successful send returns the message ID and `state: "accepted"`,
   which means *stored*, not delivered or read.
+- `contentProfile`, when present, names the application profile that
+  `content` follows (see Content profiles). It is part of the payload
+  for `requestId` idempotency.
 - Reference rate limit: 60 new sends per minute per agent.
 
 ### `x402m.inbox`
@@ -311,9 +315,41 @@ conflicting supplied conversation ID is rejected.
 | `request` | A request for work, data, or a quote. |
 | `response` | A response to a `request`. |
 | `event` | A notification with no expected reply. |
-| `error` | A failure report, typically with `replyTo` set. |
+| `error` | A failure report, typically with `replyTo` set. `content` is JSON with a `code`; this extension reserves `unsupported_profile` (see Content profiles). |
 | `payment.request` | A payment proposal: the sender asks the recipient to pay (or to expect payment) under stated terms, normally by referencing x402 `PaymentRequirements`. Proposals are quotes, not charges. |
 | `payment.receipt` | A claim that a payment settled, carrying the settlement reference (transaction signature / receipt identifier). Recipients MUST verify the referenced settlement independently before treating anything as paid, using the verification rules of the referenced scheme and network (e.g. `exact` on `eip155:*` via the EIP-3009 transfer, `exact` on `solana:*` via the confirmed transaction) or the facilitator that settled it. |
+
+## Content profiles (informative)
+
+This section reserves names only. The mailbox carries content; it does
+not interpret it. What a profile means is defined in its own spec.
+
+- `contentProfile` is a string identifier `<name>/v<major>`, for example
+  `x402m.offer/v1`. `<name>` is a short name or an absolute URI. Major
+  versions are not compatible with each other; a profile spec defines
+  its must-understand fields and what minor changes may add.
+- Services advertise accepted identifiers in the discovery descriptor's
+  `contentProfiles`.
+- A recipient that receives a profile it does not support replies with
+  kind `error`, `replyTo` set, and content
+  `{"code":"unsupported_profile","profile":"<received>","supported":["<id>", …]}`.
+  A service MAY reject the send itself with the same code. Neither side
+  silently reinterprets content under a different profile; an adapter
+  between profiles either preserves the must-understand fields or rejects.
+- Understanding a profile does not change the payment rules above. A
+  quote in any profile is a non-binding proposal; payment uses unmodified
+  x402 `PaymentRequirements` (see `payment.request` content), and a
+  receipt is a claim until settlement is verified independently.
+
+A first offer/quote profile for API and data services (resource
+identifier, input and output schema references, pricing unit, amount and
+asset as CAIP-19, quote expiry) is left to a separate follow-up spec.
+That spec is expected to reference the
+[Offer and Receipt extension](./extension-offer-and-receipt.md) for
+server-signed offers and receipts rather than redefine signatures: an
+offer/quote profile describes what is offered between agents, the Offer
+and Receipt extension lets a resource server sign the terms it presents
+in `accepts[]`.
 
 ## On-chain transport profiles
 
@@ -423,7 +459,9 @@ An implementation conforms if it passes the published test vectors:
 token minting/verification for each supported auth profile and
 algorithm (valid, expired, replayed `jti`, wrong `ath`, wrong `alg`),
 envelope encoding and chunking, `requestId` idempotency, and ack
-semantics. Vectors live with the reference implementation until the
+semantics. Implementations that accept `contentProfile` also pass the
+`unsupported_profile` vectors (unknown profile, unsupported major
+version). Vectors live with the reference implementation until the
 foundation chooses a location.
 
 ## Security considerations
