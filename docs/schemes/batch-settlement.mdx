@@ -920,6 +920,17 @@ Register `BatchSvmScheme` for `solana:*`. The SDK opens or tops up the channel o
 
     scheme := batchfacilitator.NewBatchSvmScheme(context.Background(), svmSigner, &batchfacilitator.Config{
         // ChannelStorage defaults to in-memory; inject a durable store for production
+        // Optional: accepted transaction versions (default [0, 1]).
+        // Pass []int{0} to reject version-1 client transactions.
+        // TransactionVersions: []int{0, 1},
+        // Optional: message version (0 or 1) for facilitator-built redemption transactions
+        // (claim, settle, seal, refund, rent cleanup). Default: 1.
+        // Version 1 supports up to 18 claim channels and 13 settle channels per batch;
+        // version 0 supports 4 of each.
+        // FacilitatorTransactionVersion: 1,
+        // Optional: override the treasury owner the payment-channels program was built with.
+        // Useful when running against a custom or local program build.
+        // PaymentChannelsTreasuryOwner: "YourTreasuryOwnerPubkey",
     })
 
     facilitator.Register([]x402.Network{svmmech.SolanaDevnetCAIP2}, scheme)
