@@ -230,7 +230,11 @@ Register the `upto` scheme alongside `exact` if your client may call both fixed-
 
     const client = new x402Client();
     client.register("solana:*", new ExactSvmScheme(signer)); // fixed-price services
-    client.register("solana:*", new UptoSvmScheme(signer));  // usage-based services
+    client.register("solana:*", new UptoSvmScheme(signer, {
+      // Optional: restrict to version-0 transactions only (e.g. for signers that
+      // cannot sign version-1). Default: build the highest version the facilitator supports.
+      // transactionVersions: [0],
+    }));  // usage-based services
     ```
   </Tab>
   <Tab title="Go (EVM)">
