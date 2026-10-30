@@ -18,6 +18,7 @@ from .types import (
 from .utils import (
     attach_payment_to_meta,
     convert_mcp_result,
+    extract_payment_required_from_error,
     extract_payment_required_from_result,
     extract_payment_response_from_meta,
     paid_read_timeout_seconds,
@@ -171,18 +172,24 @@ class x402MCPClient:
             kwargs.get("read_timeout_seconds"), self._max_request_timeout_seconds
         )
         probe_kwargs = {**kwargs, "read_timeout_seconds": probe_timeout}
-        result = await self._call_mcp_tool(call_params, **probe_kwargs)
+        try:
+            result = await self._call_mcp_tool(call_params, **probe_kwargs)
+        except Exception as exc:
+            # Payment challenges can also arrive as a raised JSON-RPC error
+            payment_required = extract_payment_required_from_error(exc)
+            if payment_required is None:
+                raise
+        else:
+            # Check if this is a payment required response
+            payment_required = extract_payment_required_from_result(result)
 
-        # Check if this is a payment required response
-        payment_required = extract_payment_required_from_result(result)
-
-        if payment_required is None:
-            # Free tool - return as-is
-            return MCPToolCallResult(
-                content=result.content,
-                is_error=result.is_error,
-                payment_made=False,
-            )
+            if payment_required is None:
+                # Free tool - return as-is
+                return MCPToolCallResult(
+                    content=result.content,
+                    is_error=result.is_error,
+                    payment_made=False,
+                )
 
         # Payment required - run hooks first
         payment_required_context = PaymentRequiredContext(
@@ -310,7 +317,13 @@ class x402MCPClient:
             PaymentRequired if found, None otherwise
         """
         call_params = {"name": name, "arguments": args}
-        result = await self._call_mcp_tool(call_params, **kwargs)
+        try:
+            result = await self._call_mcp_tool(call_params, **kwargs)
+        except Exception as exc:
+            payment_required = extract_payment_required_from_error(exc)
+            if payment_required is None:
+                raise
+            return payment_required
         return extract_payment_required_from_result(result)
 
     async def _call_mcp_tool(self, params: dict[str, Any], **kwargs: Any) -> MCPToolResult:

@@ -18,6 +18,7 @@ from .constants import (
     MAX_READ_TIMEOUT_SECONDS,
 )
 from .types import (
+    JSONRPC_PAYMENT_REQUIRED_CODE,
     MCP_PAYMENT_META_KEY,
     MCP_PAYMENT_REQUIRED_CODE,
     MCP_PAYMENT_RESPONSE_META_KEY,
@@ -370,14 +371,16 @@ def create_payment_required_error(
 def extract_payment_required_from_error(error: Any) -> PaymentRequired | PaymentRequiredV1 | None:
     """Extract PaymentRequired from an MCP JSON-RPC error.
 
-    This function checks if the error is a 402 payment required error and extracts
-    the PaymentRequired data from the error's data field.
+    This function checks if the error is a 402 or -32042 (SEP-1036) payment required
+    error and extracts the PaymentRequired data from the error's data field, either
+    directly or under ``data.x402``.
 
     Args:
-        error: The error object from a JSON-RPC response
+        error: The error object from a JSON-RPC response, or a raised exception.
+            The MCP SDK's ``McpError`` stores its ``ErrorData`` under ``.error``.
 
     Returns:
-        PaymentRequired if this is a 402 error, None otherwise
+        PaymentRequired if this is a payment required error, None otherwise
 
     Example:
         ```python
@@ -392,18 +395,28 @@ def extract_payment_required_from_error(error: Any) -> PaymentRequired | Payment
                 pass
         ```
     """
-    if not is_object(error):
+    if isinstance(error, Exception):
+        details = getattr(error, "error", error)
+        code = getattr(details, "code", None)
+        data = getattr(details, "data", None)
+    elif is_object(error):
+        code = error.get("code")
+        data = error.get("data")
+    else:
         return None
 
-    # Check if this is a 402 payment required error
-    code = error.get("code")
-    if code != MCP_PAYMENT_REQUIRED_CODE:
+    # Check if this is a payment required error
+    if type(code) is not int or code not in (
+        MCP_PAYMENT_REQUIRED_CODE,
+        JSONRPC_PAYMENT_REQUIRED_CODE,
+    ):
         return None
 
     # Extract and validate the data field
-    data = error.get("data")
     if not is_object(data):
         return None
+    if is_object(data.get("x402")):
+        data = data["x402"]
 
     # Normalize camelCase to snake_case for Pydantic
     normalized_data = {("x402_version" if k == "x402Version" else k): v for k, v in data.items()}

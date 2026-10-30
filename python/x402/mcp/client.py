@@ -46,6 +46,7 @@ from .utils import (
     _extract_payment_required_from_object,
     attach_payment_to_meta,
     convert_mcp_result,
+    extract_payment_required_from_error,
     extract_payment_required_from_result,
     extract_payment_response_from_meta,
     paid_read_timeout_seconds,
@@ -134,23 +135,33 @@ class x402MCPSession:
             read_timeout_seconds, self._max_request_timeout_seconds
         )
         # First call without payment
-        result = await self._session.call_tool(
-            name=name,
-            arguments=arguments or {},
-            read_timeout_seconds=probe_timeout,
-        )
+        try:
+            result = await self._session.call_tool(
+                name=name,
+                arguments=arguments or {},
+                read_timeout_seconds=probe_timeout,
+            )
+        except Exception as exc:
+            # Payment challenges can also arrive as a raised JSON-RPC error
+            payment_required = extract_payment_required_from_error(exc)
+            if payment_required is None:
+                raise
+            if not self._auto_payment:
+                raise PaymentRequiredError(
+                    "Payment required but auto_payment is disabled", payment_required
+                ) from exc
+        else:
+            # If no error, return directly
+            if not result.isError:
+                return self._build_result(result, payment_made=False)
 
-        # If no error, return directly
-        if not result.isError:
-            return self._build_result(result, payment_made=False)
+            # Try to extract payment required from error content
+            payment_required = self._extract_payment_required(result)
+            if payment_required is None:
+                return self._build_result(result, payment_made=False)
 
-        # Try to extract payment required from error content
-        payment_required = self._extract_payment_required(result)
-        if payment_required is None:
-            return self._build_result(result, payment_made=False)
-
-        if not self._auto_payment:
-            return self._build_result(result, payment_made=False)
+            if not self._auto_payment:
+                return self._build_result(result, payment_made=False)
 
         # Create payment payload using the x402 client
         payment_payload = await self._x402_client.create_payment_payload(payment_required)
@@ -344,12 +355,18 @@ class x402MCPClientSync:
         )
         probe_kwargs = {**kwargs, "read_timeout_seconds": probe_timeout}
 
-        result = self._mcp_client.call_tool(params, **probe_kwargs)
-        mcp_result = convert_mcp_result(result)
-
-        payment_required = extract_payment_required_from_result(mcp_result)
-        if payment_required is None:
-            return self._build_result(mcp_result, payment_made=False)
+        try:
+            result = self._mcp_client.call_tool(params, **probe_kwargs)
+        except Exception as exc:
+            # Payment challenges can also arrive as a raised JSON-RPC error
+            payment_required = extract_payment_required_from_error(exc)
+            if payment_required is None:
+                raise
+        else:
+            mcp_result = convert_mcp_result(result)
+            payment_required = extract_payment_required_from_result(mcp_result)
+            if payment_required is None:
+                return self._build_result(mcp_result, payment_made=False)
 
         payment_required_context = PaymentRequiredContext(
             tool_name=name,
@@ -444,7 +461,13 @@ class x402MCPClientSync:
             PaymentRequired if found, None otherwise
         """
         params = {"name": name, "arguments": args or {}}
-        result = self._mcp_client.call_tool(params, **kwargs)
+        try:
+            result = self._mcp_client.call_tool(params, **kwargs)
+        except Exception as exc:
+            payment_required = extract_payment_required_from_error(exc)
+            if payment_required is None:
+                raise
+            return payment_required
         return extract_payment_required_from_result(convert_mcp_result(result))
 
     def _build_result(self, mcp_result: Any, payment_made: bool) -> MCPToolCallResult:
