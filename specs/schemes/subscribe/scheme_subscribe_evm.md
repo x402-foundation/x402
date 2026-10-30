@@ -1663,14 +1663,17 @@ Facilitators supporting the `subscribe` scheme MUST include the following in the
 
 ```json
 {
-  "supported": [
+  "kinds": [
     {
       "x402Version": 2,
       "scheme": "subscribe",
       "network": "eip155:8453"
     }
   ],
-  "extensions": ["subscription"]
+  "extensions": ["subscription"],
+  "signers": {
+    "eip155:*": ["0x1234567890abcdef1234567890abcdef12345678"]
+  }
 }
 ```
 
