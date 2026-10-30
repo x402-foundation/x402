@@ -25,7 +25,7 @@ The `upto` scheme MUST enforce the following properties across ALL network imple
 Each authorization MUST be settled at most once. After settlement (regardless of amount), the authorization is consumed and cannot be reused.
 
 - Rationale: Provides a clear audit trail, simpler mental model, and matches x402's request-response pattern.
-- Implementation: On EVM, Permit2's nonce mechanism enforces this. Other networks MUST implement equivalent replay protection.
+- Implementation: On EVM, Permit2's nonce mechanism enforces this. The EIP-3009 path consumes the token authorization nonce instead. Other networks MUST implement equivalent replay protection.
 
 ### 2. Time-Bound Authorization
 
@@ -35,14 +35,14 @@ Each authorization MUST have explicit validity time constraints:
 - **End time** (`deadline`): Authorization expires after this timestamp
 
 - Rationale: Limits exposure window for unused authorizations and ensures timely settlement.
-- Implementation: On EVM, Permit2's `deadline` and witness `validAfter` enforce this. Other networks MUST implement equivalent time bounds.
+- Implementation: On EVM, Permit2 uses `deadline` and witness `validAfter`. The EIP-3009 path uses the token authorization's `validAfter` and `validBefore`. Other networks MUST implement equivalent time bounds.
 
 ### 3. Recipient Binding
 
 The authorization MUST cryptographically bind the recipient address. The server/facilitator cannot redirect funds to a different address than what the client signed.
 
 - Rationale: Prevents malicious facilitators from stealing funds.
-- Implementation: On EVM, the Permit2 witness pattern binds `witness.to`. Other networks MUST implement equivalent recipient binding.
+- Implementation: On EVM, the Permit2 witness pattern binds `witness.to`. The EIP-3009 path binds `payTo` inside the signed nonce. Other networks MUST implement equivalent recipient binding.
 
 ### 4. Maximum Amount Enforcement
 
@@ -61,7 +61,7 @@ In the x402 protocol, the verify and settle requests share the same `PaymentPayl
 The actual settled amount is communicated by the resource server to the facilitator via the `amount` field in the settlement-time `PaymentRequirements`. This allows the resource server to determine the final charge based on actual resource consumption (e.g., tokens generated, bytes transferred) and communicate it to the facilitator without requiring additional fields or a separate settlement type.
 
 - Rationale: Reusing the existing `PaymentRequirements` type for both phases keeps the protocol simple and avoids introducing settlement-specific message types. The `amount` field naturally maps to "how much" in both contexts — "how much is authorized" at verification time and "how much to charge" at settlement time.
-- Implementation: The resource server MUST set the `amount` field in the `PaymentRequirements` passed to the facilitator's settle endpoint to the desired settlement amount. The facilitator MUST verify that this amount does not exceed the authorized maximum from the client's signed authorization. **Critically, the facilitator MUST re-verify the client's signature using the authorized maximum (`permitted.amount`), not the settlement-time `requirements.amount`.** See network-specific specs (e.g., [EVM — Settle-Time Verification](./scheme_upto_evm.md#settle-time-verification)) for the exact procedure.
+- Implementation: The resource server MUST set the `amount` field in the `PaymentRequirements` passed to the facilitator's settle endpoint to the desired settlement amount. The facilitator MUST verify that this amount does not exceed the authorized maximum from the client's signed authorization. **Critically, the facilitator MUST re-verify the client's signature using the signed maximum, not the settlement-time `requirements.amount`.** On EVM that maximum is Permit2 `permitted.amount` or EIP-3009 `authorization.value`. See network-specific specs (e.g., [EVM Permit2 settle-time verification](./scheme_upto_evm.md#settle-time-verification) and [EVM EIP-3009 settlement](./scheme_upto_evm.md#phase-3-settlement-logic)) for the exact procedure.
 
 ## Out of Scope
 

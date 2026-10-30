@@ -314,7 +314,7 @@ Setting the amount to `"0"` means no charge for that request. On SVM, a zero-amo
 
 ### EVM Implementation
 
-`upto` on EVM uses Permit2 because the settled amount is not known when the buyer signs. The facilitator advertises a `facilitatorAddress` in the payment requirements, and the client binds the authorization to that facilitator.
+`upto` on EVM has two asset transfer methods, because the settled amount is not known when the buyer signs. The reference SDKs settle through Permit2: the facilitator advertises a `facilitatorAddress`, and the client binds the authorization to that facilitator. The [EVM spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/upto/scheme_upto_evm.md) also defines `eip3009` for tokens such as USDC. That path pulls the signed maximum through `x402UptoERC3009Proxy` and refunds the unused amount. The SDK examples on this page do not register it yet.
 
 ### SVM Implementation
 
