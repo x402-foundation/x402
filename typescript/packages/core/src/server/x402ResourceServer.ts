@@ -396,6 +396,7 @@ type ResourceServerManualHookArrayKey = `${ResourceServerHookPhase}Hooks`;
 export class x402ResourceServer {
   private facilitatorClients: FacilitatorClient[];
   private registeredServerSchemes: Map<string, Map<string, SchemeNetworkServer>> = new Map();
+  private networkEquivalentFns: Array<(network: string) => readonly string[]> = [];
   private schemeHookAdapters: Map<string, Map<string, SchemeAdapterHandles>> = new Map();
   private supportedResponsesMap: Map<number, Map<string, Map<string, SupportedResponse>>> =
     new Map();
@@ -433,6 +434,36 @@ export class x402ResourceServer {
   }
 
   /**
+   * Scheme and supported-kind lookup using aliases registered by mechanisms.
+   * No registered hook keeps exact identity lookup.
+   */
+  private lookup<T>(
+    map: Map<string, Map<string, T>>,
+    scheme: string,
+    network: Network,
+  ): T | undefined {
+    return findByNetworkAndScheme(map, scheme, network, (value) => this.equivalentNames(value));
+  }
+
+  private equivalentNames(network: string): readonly string[] {
+    const names: string[] = [];
+    const add = (name: string) => {
+      if (!names.includes(name)) names.push(name);
+    };
+    add(network);
+    for (const fn of this.networkEquivalentFns) {
+      for (const name of fn(network)) add(name);
+    }
+    return names;
+  }
+
+  private rememberEquivalents(fn: ((network: string) => readonly string[]) | undefined): void {
+    if (typeof fn === "function" && !this.networkEquivalentFns.includes(fn)) {
+      this.networkEquivalentFns.push(fn);
+    }
+  }
+
+  /**
    * Register a scheme/network server implementation.
    *
    * @param network - The network identifier
@@ -446,6 +477,7 @@ export class x402ResourceServer {
 
     const serverByScheme = this.registeredServerSchemes.get(network)!;
     serverByScheme.set(server.scheme, server);
+    this.rememberEquivalents(server.networkEquivalents);
 
     if (!this.schemeHookAdapters.has(network)) {
       this.schemeHookAdapters.set(network, new Map());
@@ -486,7 +518,7 @@ export class x402ResourceServer {
    * @returns True if the scheme is registered for the network, false otherwise
    */
   hasRegisteredScheme(network: Network, scheme: string): boolean {
-    return !!findByNetworkAndScheme(this.registeredServerSchemes, scheme, network);
+    return !!this.lookup(this.registeredServerSchemes, scheme, network);
   }
 
   /**
@@ -497,7 +529,7 @@ export class x402ResourceServer {
    * @returns The registered scheme, or undefined if none is registered
    */
   getRegisteredScheme(network: Network, scheme: string): SchemeNetworkServer | undefined {
-    return findByNetworkAndScheme(this.registeredServerSchemes, scheme, network);
+    return this.lookup(this.registeredServerSchemes, scheme, network);
   }
 
   /**
@@ -510,7 +542,7 @@ export class x402ResourceServer {
    * @returns The number of decimal places for the asset
    */
   getAssetDecimalsForRequirements(requirements: PaymentRequirements): number {
-    const scheme = findByNetworkAndScheme(
+    const scheme = this.lookup(
       this.registeredServerSchemes,
       requirements.scheme,
       requirements.network as Network,
@@ -796,14 +828,24 @@ export class x402ResourceServer {
     const versionMap = this.supportedResponsesMap.get(x402Version);
     if (!versionMap) return undefined;
 
-    const supportedResponse = findByNetworkAndScheme(versionMap, scheme, network);
+    const supportedResponse = this.lookup(versionMap, scheme, network);
     if (!supportedResponse) return undefined;
 
-    // Find the specific kind from the response (kinds are flat array with version in each element)
-    return supportedResponse.kinds.find(
+    // The requested raw form wins, including when both published forms are listed.
+    const exact = supportedResponse.kinds.find(
       kind =>
         kind.x402Version === x402Version && kind.network === network && kind.scheme === scheme,
     );
+    if (exact) return exact;
+    const names = new Set(this.equivalentNames(network));
+    const aliased = supportedResponse.kinds.filter(
+      (kind) =>
+        kind.x402Version === x402Version &&
+        kind.scheme === scheme &&
+        kind.network !== network &&
+        names.has(kind.network),
+    );
+    return aliased.length === 1 ? aliased[0] : undefined;
   }
 
   /**
@@ -818,7 +860,7 @@ export class x402ResourceServer {
     const versionMap = this.supportedResponsesMap.get(x402Version);
     if (!versionMap) return [];
 
-    const supportedResponse = findByNetworkAndScheme(versionMap, scheme, network);
+    const supportedResponse = this.lookup(versionMap, scheme, network);
     return supportedResponse?.extensions || [];
   }
 
@@ -833,7 +875,7 @@ export class x402ResourceServer {
 
     // Find the matching server implementation
     const scheme = resourceConfig.scheme;
-    const SchemeNetworkServer = findByNetworkAndScheme(
+    const SchemeNetworkServer = this.lookup(
       this.registeredServerSchemes,
       scheme,
       resourceConfig.network,
@@ -993,7 +1035,7 @@ export class x402ResourceServer {
 
     for (let i = 0; i < workingAccepts.length; i++) {
       const accept = workingAccepts[i];
-      const scheme = findByNetworkAndScheme(
+      const scheme = this.lookup(
         this.registeredServerSchemes,
         accept.scheme,
         accept.network as Network,
@@ -1208,7 +1250,7 @@ export class x402ResourceServer {
     _payload: DeepReadonly<PaymentPayload>,
     requirements: DeepReadonly<PaymentRequirements>,
   ): PaymentFlowName {
-    const scheme = findByNetworkAndScheme(
+    const scheme = this.lookup(
       this.registeredServerSchemes,
       requirements.scheme,
       requirements.network as Network,
@@ -1288,7 +1330,7 @@ export class x402ResourceServer {
       // not force a decimals lookup (unknown custom mints would otherwise fail).
       let decimals: number | undefined;
       if (/^\$\d+(?:\.\d+)?$/.test(settlementOverrides.amount)) {
-        const scheme = findByNetworkAndScheme(
+        const scheme = this.lookup(
           this.registeredServerSchemes,
           requirements.scheme,
           requirements.network as Network,
@@ -1366,7 +1408,7 @@ export class x402ResourceServer {
     }
 
     try {
-      const scheme = findByNetworkAndScheme(
+      const scheme = this.lookup(
         this.registeredServerSchemes,
         matchedScheme.scheme,
         matchedScheme.network,
@@ -1602,7 +1644,7 @@ export class x402ResourceServer {
         // The client may include additive scheme-specific metadata under `accepted.extra`.
         // Scheme-declared dynamicExtraFields are omitted from the extra comparison
         return availableRequirements.find(paymentRequirements => {
-          const scheme = findByNetworkAndScheme(
+          const scheme = this.lookup(
             this.registeredServerSchemes,
             paymentRequirements.scheme,
             paymentRequirements.network,
@@ -1823,7 +1865,7 @@ export class x402ResourceServer {
       }
     }
 
-    const scheme = findByNetworkAndScheme(
+    const scheme = this.lookup(
       this.registeredServerSchemes,
       matchedScheme.scheme,
       matchedScheme.network,
@@ -1894,7 +1936,7 @@ export class x402ResourceServer {
       }
     }
 
-    const scheme = findByNetworkAndScheme(
+    const scheme = this.lookup(
       this.registeredServerSchemes,
       matchedScheme.scheme,
       matchedScheme.network,
@@ -2001,7 +2043,7 @@ export class x402ResourceServer {
     });
 
     if (matchedScheme) {
-      const schemeHandles = findByNetworkAndScheme(
+      const schemeHandles = this.lookup(
         this.schemeHookAdapters,
         matchedScheme.scheme,
         matchedScheme.network,
@@ -2044,7 +2086,7 @@ export class x402ResourceServer {
     if (!versionMap) return undefined;
 
     // Use findByNetworkAndScheme for pattern matching
-    return findByNetworkAndScheme(versionMap, scheme, network);
+    return this.lookup(versionMap, scheme, network);
   }
 }
 
