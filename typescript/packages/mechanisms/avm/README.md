@@ -50,6 +50,42 @@ Networks are identified via CAIP-2 per the [Algorand namespace profile](https://
 - `algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe` - Testnet
 - `algorand:*` - Wildcard (matches all Algorand networks)
 
+### Identifier compatibility and migration
+
+Use the canonical identifiers in new payment requirements, payloads, settlement responses, and facilitator advertisements. The legacy aliases below are historical wire values; the full genesis hash remains unchanged in transaction `gh` fields and Algod responses.
+
+| Network | Canonical `network` | Legacy full-hash alias |
+| --- | --- | --- |
+| Mainnet | `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k` | `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=` |
+| Testnet | `algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe` | `algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=` |
+
+The [maintainer's migration note](https://github.com/x402-foundation/x402/pull/3894#issuecomment-6349824187) identifies the release boundary. Compatibility below is checked as of **2026-10-26**; released packages and unreleased `main` changes are listed separately.
+
+| Component / version | Canonical identifiers | Legacy full-hash identifiers |
+| --- | --- | --- |
+| `@x402/avm` 2.10.0–2.19.0 | Not emitted by exported network constants | Emitted by exported network constants |
+| `@x402/avm` 2.20.0–2.28.0 | Emitted by exported network constants | Recognized by the AVM normalizer introduced in [#2931](https://github.com/x402-foundation/x402/pull/2931) |
+| `@x402/core` 2.28.0 | Accepted by the V2 schema | Accepted by the V2 schema |
+| [`main` at `4241d56c`](https://github.com/x402-foundation/x402/tree/4241d56cae2fb7ed06cd18e3a9ff2a3457b1ce54), after [#3893](https://github.com/x402-foundation/x402/pull/3893) | Emitted by AVM; accepted by core | Temporarily accepted by core and AVM |
+| [#3894](https://github.com/x402-foundation/x402/pull/3894), open proposal on 2026-10-26 | Retained | Proposes rejection in core, AVM, and paywall routing; no release version assigned |
+
+On `main`, [#3285](https://github.com/x402-foundation/x402/pull/3285) enforced CAIP-2 syntax before #3893 restored the temporary Algorand exception. AVM normalization alone cannot bypass core schema validation or a facilitator's exact-string network matching.
+
+| Facilitator endpoint | Observation date (UTC) | Advertised V2 `exact` networks |
+| --- | --- | --- |
+| [GoPlausible `/supported`](https://facilitator.goplausible.xyz/supported) | 2026-10-26 | Canonical Mainnet and Testnet first, followed by both legacy aliases |
+
+The operator's [2026-10-25 update](https://github.com/x402-foundation/x402/pull/3894#issuecomment-6395714303) reports verify/settle support for both forms during migration, with canonical identifiers stored and reported. Recheck `/supported` before deployment; discovery advertisements and successful verification/settlement are separate checks.
+
+To migrate an integration:
+
+1. Upgrade clients, resource servers, and facilitators to compatible SDK releases with `@x402/avm` >= 2.20.0. Use `ALGORAND_MAINNET_CAIP2` and `ALGORAND_TESTNET_CAIP2` instead of hardcoded network strings.
+2. Update producers of `PaymentRequired.accepts[].network`, `PaymentPayload.accepted.network`, settlement `network`, and facilitator `/supported` kinds to use the canonical values. Keep the complete genesis hash in transaction `gh` fields.
+3. Advertise canonical facilitator kinds and move resource-server offers to canonical identifiers before deploying clients that reject legacy aliases. Coordinate removal of legacy endpoint support with merchants and follow #3894 for the proposed SDK removal.
+4. For a legacy challenge, request a fresh canonical challenge from the updated producer before creating and signing a payment. Do not silently rewrite received challenges or existing signed payloads to pass validation.
+
+See the [Algorand scheme specification](../../../../specs/schemes/exact/scheme_exact_algo.md#network-identifiers-caip-2) for the canonical wire format.
+
 ## Signer Implementation
 
 Use the built-in helper functions to create signers from a Base64-encoded private key. These use `generateAddressWithSigners` from `@algorandfoundation/algokit-utils` internally for canonical Ed25519 signing.

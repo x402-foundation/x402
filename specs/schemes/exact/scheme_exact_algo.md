@@ -194,6 +194,12 @@ Algorand `network` values **MUST** use CAIP-2 identifiers in the `algorand` name
 
 See the [Algorand CAIP-2 namespace profile](https://namespaces.chainagnostic.org/algorand/caip2) for the encoding rules.
 
+### Legacy identifier migration
+
+Earlier x402 AVM releases emitted `algorand:<full-genesis-hash>` as `network`. Migrate producers of payment requirements, payloads, settlement responses, and facilitator advertisements to the canonical values above while retaining the complete genesis hash in transaction `gh` fields.
+
+The [AVM SDK compatibility and migration guide](../../../typescript/packages/mechanisms/avm/README.md#identifier-compatibility-and-migration) provides the exact legacy aliases, SDK version matrix, dated facilitator observations, and migration steps.
+
 ## Additional Considerations
 
 ### Assets
