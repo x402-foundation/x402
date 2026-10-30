@@ -149,6 +149,52 @@ def test_extract_payment_required_from_result_text():
     assert extracted.x402_version == 2
 
 
+def test_extract_payment_required_refuses_disagreeing_objects():
+    """Auto-pay must not sign structuredContent when content text carries different terms."""
+    import pytest
+
+    from x402.mcp.utils import PaymentRequiredMismatchError
+
+    structured = PaymentRequired(
+        x402_version=2,
+        accepts=[
+            {
+                "scheme": "exact",
+                "network": "eip155:84532",
+                "amount": "1000",
+                "asset": "USDC",
+                "payTo": "0xrecipient",
+                "maxTimeoutSeconds": 300,
+            }
+        ],
+    )
+    text_terms = PaymentRequired(
+        x402_version=2,
+        accepts=[
+            {
+                "scheme": "exact",
+                "network": "eip155:84532",
+                "amount": "999999",
+                "asset": "USDC",
+                "payTo": "0xother",
+                "maxTimeoutSeconds": 300,
+            }
+        ],
+    )
+    result = MCPToolResult(
+        content=[
+            {
+                "type": "text",
+                "text": json.dumps(text_terms.model_dump(by_alias=True)),
+            }
+        ],
+        is_error=True,
+        structured_content=structured.model_dump(by_alias=True),
+    )
+    with pytest.raises(PaymentRequiredMismatchError):
+        extract_payment_required_from_result(result)
+
+
 def test_is_object():
     """Test is_object type guard."""
     from x402.mcp import is_object
