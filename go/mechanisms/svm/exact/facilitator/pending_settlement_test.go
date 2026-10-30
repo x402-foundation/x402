@@ -367,3 +367,106 @@ func messageHashForPayload(t *testing.T, payload types.PaymentPayload) string {
 	require.NoError(t, err)
 	return key
 }
+
+// readErrorPendingStore models a transient read failure independently of writes.
+type readErrorPendingStore struct {
+	x402.PendingSettlementStore
+	readErr    error
+	partialHit bool
+	deletes    int
+	writes     int
+}
+
+func (s *readErrorPendingStore) Get(ctx context.Context, key string) (string, bool, error) {
+	if s.readErr != nil {
+		if s.partialHit {
+			signature, hit, _ := s.PendingSettlementStore.Get(ctx, key)
+			return signature, hit, s.readErr
+		}
+		return "", false, s.readErr
+	}
+	return s.PendingSettlementStore.Get(ctx, key)
+}
+
+func (s *readErrorPendingStore) Set(ctx context.Context, key, signature string) error {
+	s.writes++
+	return s.PendingSettlementStore.Set(ctx, key, signature)
+}
+
+func (s *readErrorPendingStore) Delete(ctx context.Context, key string) error {
+	s.deletes++
+	return s.PendingSettlementStore.Delete(ctx, key)
+}
+
+func TestExactSettle_PendingStoreReadError(t *testing.T) {
+	for _, partialHit := range []bool{false, true} {
+		name := "no result"
+		if partialHit {
+			name = "partial result with error"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			payload, requirements, facilitatorAddr := buildValidExactSvmFixture(t)
+			signer := &mockExactSvmSigner{addresses: []solana.PublicKey{facilitatorAddr}}
+			scheme := NewExactSvmScheme(signer)
+			readErr := errors.New("pending store unavailable")
+			backing := x402.NewInMemoryPendingSettlementStore()
+			store := &readErrorPendingStore{PendingSettlementStore: backing, readErr: readErr, partialHit: partialHit}
+			scheme.SetPendingSettlementStore(store)
+			key := messageHashForPayload(t, payload)
+			prior := solana.SignatureFromBytes(append([]byte{7}, make([]byte, 63)...)).String()
+			require.NoError(t, backing.Set(ctx, key, prior))
+
+			response, err := scheme.Settle(ctx, payload, requirements, nil)
+			assert.ErrorIs(t, err, readErr)
+			assert.Nil(t, response)
+			assert.Zero(t, signer.simulateCalls)
+			assert.Zero(t, signer.signCalls)
+			assert.Zero(t, signer.sendCalls)
+			assert.Zero(t, signer.confirmCalls)
+			assert.Zero(t, store.deletes)
+			assert.Zero(t, store.writes)
+			signature, hit, err := backing.Get(ctx, key)
+			require.NoError(t, err)
+			assert.True(t, hit)
+			assert.Equal(t, prior, signature)
+
+			store.readErr = nil
+			response, err = scheme.Settle(ctx, payload, requirements, nil)
+			require.NoError(t, err)
+			require.NotNil(t, response)
+			assert.True(t, response.Success)
+			assert.Equal(t, prior, response.Transaction)
+			assert.Zero(t, signer.sendCalls)
+		})
+	}
+}
+
+func TestExactSettle_PendingStoreReadErrorPreservesExistingLock(t *testing.T) {
+	ctx := context.Background()
+	payload, requirements, facilitatorAddr := buildValidExactSvmFixture(t)
+	signer := &mockExactSvmSigner{
+		addresses:     []solana.PublicKey{facilitatorAddr},
+		sendSignature: solana.SignatureFromBytes(append([]byte{8}, make([]byte, 63)...)),
+		confirmErr:    errors.New("confirmation timeout"),
+	}
+	scheme := NewExactSvmScheme(signer)
+	store := &readErrorPendingStore{PendingSettlementStore: x402.NewInMemoryPendingSettlementStore()}
+	scheme.SetPendingSettlementStore(store)
+	_, err := scheme.Settle(ctx, payload, requirements, nil)
+	require.ErrorContains(t, err, "settlement_pending")
+	readErr := errors.New("pending store unavailable")
+	store.readErr = readErr
+	_, err = scheme.Settle(ctx, payload, requirements, nil)
+	assert.ErrorIs(t, err, readErr)
+	assert.Equal(t, 1, signer.sendCalls)
+	assert.True(t, scheme.settlementCache.IsDuplicate(messageHashForPayload(t, payload)))
+	store.readErr = nil
+	signer.confirmErr = nil
+	response, err := scheme.Settle(ctx, payload, requirements, nil)
+	require.NoError(t, err)
+	require.NotNil(t, response)
+	assert.True(t, response.Success)
+	assert.Equal(t, signer.sendSignature.String(), response.Transaction)
+	assert.Equal(t, 1, signer.sendCalls)
+}

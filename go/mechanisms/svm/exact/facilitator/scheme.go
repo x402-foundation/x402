@@ -640,7 +640,11 @@ func (f *ExactSvmScheme) Settle(
 	// and if the original actually did land, a second verify's balance-based
 	// simulation could now spuriously fail (funds already moved).
 	if f.pendingStore != nil {
-		if sigStr, hit, _ := f.pendingStore.Get(ctx, txKey); hit {
+		sigStr, hit, err := f.pendingStore.Get(ctx, txKey)
+		if err != nil {
+			return nil, err
+		}
+		if hit {
 			// Remove before reconciling (rather than after) so a concurrent
 			// retry of the same payload misses here instead of also
 			// reconciling: it falls through to the settlementCache dedup check

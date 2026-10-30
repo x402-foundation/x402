@@ -433,7 +433,17 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     // and if the original actually did land, a second verify's balance-based
     // simulation could now spuriously fail (funds already moved).
     if (txKey) {
-      const cachedSignature = await this.pendingStore.get(txKey);
+      let cachedSignature: string | undefined;
+      try {
+        cachedSignature = await this.pendingStore.get(txKey);
+      } catch (error) {
+        // A failed lookup must leave this request retryable without releasing
+        // a duplicate entry held by another in-flight settlement.
+        if (!isCachedDuplicate) {
+          this.settlementCache.delete(txKey);
+        }
+        throw error;
+      }
       if (cachedSignature) {
         // Remove before reconciling (rather than after) so a concurrent
         // retry of the same payload misses here instead of also
