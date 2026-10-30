@@ -446,6 +446,7 @@ func buildMCPToolCallResultFromSDK(result *mcp.CallToolResult, paymentMade bool)
 		IsError:         result.IsError,
 		PaymentResponse: paymentResponse,
 		PaymentMade:     paymentMade,
+		RawResult:       result,
 	}
 }
 

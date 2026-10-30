@@ -83,9 +83,14 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
-    fmt.Println(result)
+    fmt.Println(result.RawResult.Content)
 }
 ```
+
+`RawResult` is the original SDK result, including image/audio/resource content,
+`StructuredContent` and metadata. It shares the SDK result's data; it is not a
+copy. `Content` remains the text-only projection. Hook result projections are
+unchanged.
 
 ## API Reference
 
