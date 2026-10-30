@@ -24,14 +24,20 @@ from __future__ import annotations
 import json
 import re
 import warnings
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
 
 from ..client import x402Client, x402ClientSync
-from ..schemas import PaymentPayload, PaymentRequired
+from ..schemas import (
+    PaymentPayload,
+    PaymentPayloadV1,
+    PaymentRequired,
+    PaymentRequiredV1,
+    PaymentResponseContext,
+)
 from ..schemas.responses import SettleResponse
 from .constants import MCP_PAYMENT_META_KEY, MCP_PAYMENT_RESPONSE_META_KEY
 from .types import (
@@ -75,7 +81,7 @@ class MCPToolCallResult:
 
     content: list[Any] = field(default_factory=list)
     is_error: bool = False
-    payment_response: SettleResponse | dict | None = None
+    payment_response: SettleResponse | dict[str, Any] | None = None
     payment_made: bool = False
     raw_result: Any = None
 
@@ -155,26 +161,56 @@ class x402MCPSession:
         # Create payment payload using the x402 client
         payment_payload = await self._x402_client.create_payment_payload(payment_required)
 
-        # Serialize for transmission
-        payload_dict = payment_payload.model_dump(by_alias=True)
+        for attempt in range(2):
+            payload_dict = payment_payload.model_dump(by_alias=True)
+            accepted = getattr(payment_payload, "accepted", None)
+            max_timeout_seconds = accepted.max_timeout_seconds if accepted is not None else None
+            paid_timeout = paid_read_timeout_seconds(
+                read_timeout_seconds,
+                max_timeout_seconds,
+                self._max_request_timeout_seconds,
+            )
+            result = await self._session.call_tool(
+                name=name,
+                arguments=arguments or {},
+                meta={MCP_PAYMENT_META_KEY: payload_dict},
+                read_timeout_seconds=paid_timeout,
+            )
+            paid_result = self._build_result(result, payment_made=True)
 
-        accepted = payment_payload.accepted
-        max_timeout_seconds = accepted.max_timeout_seconds if accepted is not None else None
-        paid_timeout = paid_read_timeout_seconds(
-            read_timeout_seconds,
-            max_timeout_seconds,
-            self._max_request_timeout_seconds,
-        )
+            if accepted is None:
+                return paid_result
 
-        # Retry with payment in _meta
-        result = await self._session.call_tool(
-            name=name,
-            arguments=arguments or {},
-            meta={MCP_PAYMENT_META_KEY: payload_dict},
-            read_timeout_seconds=paid_timeout,
-        )
+            corrective_payment_required = (
+                self._extract_payment_required(result) if result.isError else None
+            )
+            settle_response = (
+                paid_result.payment_response
+                if isinstance(paid_result.payment_response, SettleResponse)
+                else None
+            )
+            recovery_result = await self._x402_client.handle_payment_response(
+                PaymentResponseContext(
+                    payment_payload=payment_payload,
+                    requirements=accepted,
+                    settle_response=settle_response,
+                    payment_required=corrective_payment_required,
+                )
+            )
 
-        return self._build_result(result, payment_made=True)
+            if (
+                attempt == 1
+                or recovery_result is None
+                or not recovery_result.recovered
+                or corrective_payment_required is None
+            ):
+                return paid_result
+
+            payment_payload = await self._x402_client.create_payment_payload(
+                corrective_payment_required
+            )
+
+        return paid_result
 
     def _build_result(self, result: Any, payment_made: bool) -> MCPToolCallResult:
         """Convert MCP result to MCPToolCallResult."""
@@ -196,7 +232,7 @@ class x402MCPSession:
             raw_result=result,
         )
 
-    def _extract_payment_required(self, result: Any) -> Any:
+    def _extract_payment_required(self, result: Any) -> PaymentRequired | PaymentRequiredV1 | None:
         """Extract PaymentRequired (x402 v1 or v2) from an error result.
 
         Prefers ``structuredContent`` (per spec), falls back to parsing
@@ -357,8 +393,8 @@ class x402MCPClientSync:
             payment_required=payment_required,
         )
 
-        for hook in self._payment_required_hooks:
-            hook_result = hook(payment_required_context)
+        for payment_required_hook in self._payment_required_hooks:
+            hook_result = payment_required_hook(payment_required_context)
             if hook_result:
                 if hook_result.abort:
                     raise PaymentRequiredError("Payment aborted by hook", payment_required)
@@ -376,8 +412,8 @@ class x402MCPClientSync:
         if self._on_payment_requested and not self._on_payment_requested(payment_required_context):
             raise PaymentRequiredError("Payment request denied", payment_required)
 
-        for hook in self._before_payment_hooks:
-            hook(payment_required_context)
+        for before_payment_hook in self._before_payment_hooks:
+            before_payment_hook(payment_required_context)
 
         payment_payload = self._payment_client.create_payment_payload(payment_required)
         return self.call_tool_with_payment(name, args, payment_payload, **kwargs)
@@ -386,7 +422,7 @@ class x402MCPClientSync:
         self,
         name: str,
         args: dict[str, Any],
-        payload: PaymentPayload,
+        payload: PaymentPayload | PaymentPayloadV1,
         **kwargs: Any,
     ) -> MCPToolCallResult:
         """Call a tool with an explicit payment payload (sync).
@@ -400,9 +436,19 @@ class x402MCPClientSync:
         Returns:
             MCPToolCallResult with content, payment info, and error status
         """
-        params = attach_payment_to_meta({"name": name, "arguments": args}, payload)
+        return self._call_tool_with_payment(name, args, payload, kwargs, allow_recovery=True)
 
-        accepted = payload.accepted
+    def _call_tool_with_payment(
+        self,
+        name: str,
+        args: dict[str, Any],
+        payload: PaymentPayload | PaymentPayloadV1,
+        kwargs: dict[str, Any],
+        *,
+        allow_recovery: bool,
+    ) -> MCPToolCallResult:
+        params = attach_payment_to_meta({"name": name, "arguments": args}, payload)
+        accepted = getattr(payload, "accepted", None)
         max_timeout_seconds = accepted.max_timeout_seconds if accepted is not None else None
         paid_timeout = paid_read_timeout_seconds(
             kwargs.get("read_timeout_seconds"),
@@ -414,23 +460,93 @@ class x402MCPClientSync:
         mcp_result = convert_mcp_result(result)
         call_result = self._build_result(mcp_result, payment_made=True)
 
+        settle_response = (
+            call_result.payment_response
+            if isinstance(call_result.payment_response, SettleResponse)
+            else None
+        )
         after_context = AfterPaymentContext(
             tool_name=name,
             payment_payload=payload,
             result=mcp_result,
-            settle_response=call_result.payment_response,
+            settle_response=settle_response,
         )
-        for hook in self._after_payment_hooks:
-            hook(after_context)
+        for after_payment_hook in self._after_payment_hooks:
+            after_payment_hook(after_context)
 
-        return call_result
+        if accepted is None:
+            return call_result
+
+        corrective_payment_required = extract_payment_required_from_result(mcp_result)
+        recovery_result = self._payment_client.handle_payment_response(
+            PaymentResponseContext(
+                payment_payload=payload,
+                requirements=accepted,
+                settle_response=settle_response,
+                payment_required=corrective_payment_required,
+            )
+        )
+
+        if (
+            not allow_recovery
+            or recovery_result is None
+            or not recovery_result.recovered
+            or corrective_payment_required is None
+        ):
+            return call_result
+
+        payment_required_context = PaymentRequiredContext(
+            tool_name=name,
+            arguments=args,
+            payment_required=corrective_payment_required,
+        )
+        corrective_payload: PaymentPayload | PaymentPayloadV1 | None = None
+        for payment_required_hook in self._payment_required_hooks:
+            hook_result = payment_required_hook(payment_required_context)
+            if hook_result:
+                if hook_result.abort:
+                    raise PaymentRequiredError(
+                        "Payment aborted by hook", corrective_payment_required
+                    )
+                if hook_result.payment:
+                    corrective_payload = hook_result.payment
+                    break
+
+        if corrective_payload is None:
+            if not self._auto_payment:
+                raise PaymentRequiredError(
+                    "Payment required but auto_payment is disabled and no "
+                    "payment_required hook handled the request. Enable "
+                    "auto_payment or register a hook via on_payment_required().",
+                    corrective_payment_required,
+                )
+
+            if self._on_payment_requested and not self._on_payment_requested(
+                payment_required_context
+            ):
+                raise PaymentRequiredError("Payment request denied", corrective_payment_required)
+
+            for before_payment_hook in self._before_payment_hooks:
+                before_payment_hook(payment_required_context)
+
+            corrective_payload = self._payment_client.create_payment_payload(
+                corrective_payment_required
+            )
+
+        return self._call_tool_with_payment(
+            name,
+            args,
+            corrective_payload,
+            kwargs,
+            allow_recovery=False,
+        )
 
     def get_tool_payment_requirements(
         self,
         name: str,
         args: dict[str, Any] | None = None,
         **kwargs: Any,
-    ) -> PaymentRequired | None:
+    ) -> PaymentRequired | PaymentRequiredV1 | None:
         """Probe a tool to discover its payment requirements (sync).
 
         WARNING: This actually calls the tool, so it may have side effects.
@@ -466,7 +582,7 @@ async def create_x402_mcp_client(
     *,
     auto_payment: bool = True,
     max_request_timeout_seconds: int | None = None,
-):
+) -> AsyncIterator[x402MCPSession]:
     """Create an MCP client session with automatic x402 payment handling.
 
     This is an async context manager that connects to an MCP server via SSE
@@ -507,7 +623,7 @@ async def create_x402_mcp_client(
             yield mcp_session
 
 
-def _try_extract_payment_json(text: str) -> dict | None:
+def _try_extract_payment_json(text: str) -> dict[str, Any] | None:
     """Try to extract payment required JSON from text.
 
     Handles both raw JSON and FastMCP-wrapped error format like:
@@ -539,7 +655,7 @@ def wrap_mcp_client_with_payment_sync(
     payment_client: x402ClientSync,
     *,
     auto_payment: bool = True,
-    on_payment_requested: Any = None,
+    on_payment_requested: Callable[[PaymentRequiredContext], bool] | None = None,
     max_request_timeout_seconds: int | None = None,
 ) -> x402MCPClientSync:
     """Wrap an existing sync MCP client with x402 payment handling."""

@@ -27,6 +27,7 @@ class MockPaymentClient:
     def __init__(self):
         """Initialize mock client."""
         self.create_payment_payload = Mock()
+        self.handle_payment_response = Mock(return_value=None)
 
 
 def test_x402_mcp_client_free_tool():
