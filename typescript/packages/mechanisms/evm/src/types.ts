@@ -1,3 +1,5 @@
+import { getAddress } from "viem";
+
 /**
  * Asset transfer methods for the exact EVM scheme.
  * - eip3009: Uses transferWithAuthorization (USDC, etc.) - recommended for compatible tokens
@@ -67,7 +69,7 @@ export type ExactEvmPayloadV2 = ExactEIP3009Payload | ExactPermit2Payload;
  * @returns True if the payload is a Permit2 payload, false otherwise.
  */
 export function isPermit2Payload(payload: ExactEvmPayloadV2): payload is ExactPermit2Payload {
-  return "permit2Authorization" in payload;
+  return hasPermit2Authorization(payload);
 }
 
 /**
@@ -79,6 +81,208 @@ export function isPermit2Payload(payload: ExactEvmPayloadV2): payload is ExactPe
  */
 export function isEIP3009Payload(payload: ExactEvmPayloadV2): payload is ExactEIP3009Payload {
   return "authorization" in payload;
+}
+
+const UINT256_MAX = (1n << 256n) - 1n;
+const UINT256_DECIMAL = /^[0-9]{1,78}$/;
+const BYTES32_HEX = /^(?:0x)?[0-9a-fA-F]{64}$/;
+
+/**
+ * True for a non-null, non-array object.
+ *
+ * @param value - Candidate value
+ * @returns Whether `value` is a record
+ */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Require a decimal string in the uint256 range.
+ *
+ * @param path - Field path named in the message
+ * @param value - Candidate value
+ * @returns A field message, or undefined when `value` is a uint256 decimal string
+ */
+function uint256Message(path: string, value: unknown): string | undefined {
+  if (typeof value === "string" && UINT256_DECIMAL.test(value) && BigInt(value) <= UINT256_MAX) {
+    return undefined;
+  }
+  return `${path} must be a uint256 decimal string`;
+}
+
+/**
+ * Require a string address.
+ *
+ * @param path - Field path named in the message
+ * @param value - Candidate address field
+ * @returns A field message, or undefined when `value` is an EVM address
+ */
+function addressMessage(path: string, value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return `${path} must be a string`;
+  }
+  try {
+    getAddress(value);
+  } catch {
+    return `${path} must be an address`;
+  }
+  return undefined;
+}
+
+/**
+ * True when the raw payload carries a Permit2 authorization.
+ *
+ * @param payload - Raw object
+ * @returns Whether `permit2Authorization` is present
+ */
+function hasPermit2Authorization(payload: object): boolean {
+  return "permit2Authorization" in payload;
+}
+
+/**
+ * Require a string signature.
+ *
+ * @param payload - Raw payload object
+ * @returns A field message, or undefined when `signature` is a string
+ */
+function signatureMessage(payload: Record<string, unknown>): string | undefined {
+  if (typeof payload.signature !== "string") {
+    return "signature must be a string";
+  }
+  return undefined;
+}
+
+/**
+ * Check EIP-3009 authorization field types.
+ *
+ * @param authorization - Candidate authorization
+ * @returns A field message, or undefined when the authorization is well-formed
+ */
+function eip3009AuthorizationMessage(authorization: unknown): string | undefined {
+  if (!isRecord(authorization)) {
+    return "authorization must be an object";
+  }
+  const fromError = addressMessage("authorization.from", authorization.from);
+  if (fromError) {
+    return fromError;
+  }
+  const toError = addressMessage("authorization.to", authorization.to);
+  if (toError) {
+    return toError;
+  }
+  if (typeof authorization.nonce !== "string" || !BYTES32_HEX.test(authorization.nonce)) {
+    return "authorization.nonce must be a 32-byte hex string";
+  }
+  const valueError = uint256Message("authorization.value", authorization.value);
+  if (valueError) {
+    return valueError;
+  }
+  const validAfterError = uint256Message("authorization.validAfter", authorization.validAfter);
+  if (validAfterError) {
+    return validAfterError;
+  }
+  const validBeforeError = uint256Message("authorization.validBefore", authorization.validBefore);
+  if (validBeforeError) {
+    return validBeforeError;
+  }
+  return undefined;
+}
+
+/**
+ * Check exact Permit2 authorization field types.
+ *
+ * @param authorization - Candidate authorization
+ * @returns A field message, or undefined when the authorization is well-formed
+ */
+function permit2AuthorizationMessage(authorization: unknown): string | undefined {
+  if (!isRecord(authorization)) {
+    return "permit2Authorization must be an object";
+  }
+  if (!isRecord(authorization.permitted)) {
+    return "permit2Authorization.permitted must be an object";
+  }
+  if (!isRecord(authorization.witness)) {
+    return "permit2Authorization.witness must be an object";
+  }
+  const permitted = authorization.permitted;
+  const witness = authorization.witness;
+  const fromError = addressMessage("permit2Authorization.from", authorization.from);
+  if (fromError) {
+    return fromError;
+  }
+  const spenderError = addressMessage("permit2Authorization.spender", authorization.spender);
+  if (spenderError) {
+    return spenderError;
+  }
+  const tokenError = addressMessage("permit2Authorization.permitted.token", permitted.token);
+  if (tokenError) {
+    return tokenError;
+  }
+  const witnessToError = addressMessage("permit2Authorization.witness.to", witness.to);
+  if (witnessToError) {
+    return witnessToError;
+  }
+  const nonceError = uint256Message("permit2Authorization.nonce", authorization.nonce);
+  if (nonceError) {
+    return nonceError;
+  }
+  const deadlineError = uint256Message("permit2Authorization.deadline", authorization.deadline);
+  if (deadlineError) {
+    return deadlineError;
+  }
+  const amountError = uint256Message("permit2Authorization.permitted.amount", permitted.amount);
+  if (amountError) {
+    return amountError;
+  }
+  return uint256Message("permit2Authorization.witness.validAfter", witness.validAfter);
+}
+
+/**
+ * Check that a raw EIP-3009 payload has the field types verify and settle parse.
+ *
+ * @param payload - Raw payload
+ * @returns Undefined if well-formed, otherwise a message naming the first malformed field
+ */
+export function validateEip3009Payload(payload: unknown): string | undefined {
+  if (!isRecord(payload)) {
+    return "payload must be an object";
+  }
+  return signatureMessage(payload) ?? eip3009AuthorizationMessage(payload.authorization);
+}
+
+/**
+ * Check that a raw exact EVM payload has the field types verify and settle parse.
+ *
+ * @param payload - Raw payload
+ * @returns Undefined if well-formed, otherwise a message naming the first malformed field
+ */
+export function validateExactEvmPayload(payload: unknown): string | undefined {
+  if (!isRecord(payload)) {
+    return "payload must be an object";
+  }
+  if (hasPermit2Authorization(payload)) {
+    return signatureMessage(payload) ?? permit2AuthorizationMessage(payload.permit2Authorization);
+  }
+  return validateEip3009Payload(payload);
+}
+
+/**
+ * Read `from` without validating the rest of the payload.
+ *
+ * @param payload - Raw exact EVM payload
+ * @returns The authorization `from` value when it is a string
+ */
+export function getExactEvmPayloadPayer(payload: unknown): string | undefined {
+  if (!isRecord(payload)) {
+    return undefined;
+  }
+  const key = hasPermit2Authorization(payload) ? "permit2Authorization" : "authorization";
+  const authorization = payload[key];
+  if (!isRecord(authorization) || typeof authorization.from !== "string") {
+    return undefined;
+  }
+  return authorization.from;
 }
 
 /**

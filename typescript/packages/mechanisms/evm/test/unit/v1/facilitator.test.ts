@@ -96,6 +96,7 @@ describe("ExactEvmSchemeV1", () => {
         scheme: "wrong",
         network: "base-sepolia",
         payload: {
+          signature: "0x00",
           authorization: {
             from: "0x1234567890123456789012345678901234567890",
             to: "0x9876543210987654321098765432109876543210",
@@ -361,6 +362,7 @@ describe("ExactEvmSchemeV1", () => {
         scheme: "exact",
         network: "unknown-network",
         payload: {
+          signature: "0x00",
           authorization: {
             from: "0x1234567890123456789012345678901234567890",
             to: "0x9876543210987654321098765432109876543210",
@@ -823,5 +825,149 @@ describe("ExactEvmSchemeV1 canonical-s gate", () => {
     const response = await scheme.verify(payload("0x010203"), requirements);
     expect(response.invalidReason).not.toBe(Errors.ErrInvalidSignatureS);
     expect(payerCalls()).toBe(1);
+  });
+});
+
+const V1_MISSING = Symbol("missing");
+const V1_UINT256_PLUS_ONE = (1n << 256n).toString();
+
+describe("ExactEvmSchemeV1 malformed payload", () => {
+  const payer = "0x1234567890123456789012345678901234567890";
+  const recipient = "0x0987654321098765432109876543210987654321";
+  const network = "base-sepolia";
+
+  const cases: { name: string; parent?: string; key: string; value: unknown }[] = [
+    { name: "authorization missing", key: "authorization", value: V1_MISSING },
+    { name: "authorization not object", key: "authorization", value: "oops" },
+    { name: "signature not string", key: "signature", value: 123 },
+    { name: "from missing", parent: "authorization", key: "from", value: V1_MISSING },
+    { name: "from not an address", parent: "authorization", key: "from", value: "not-an-address" },
+    { name: "value missing", parent: "authorization", key: "value", value: V1_MISSING },
+    { name: "value not numeric", parent: "authorization", key: "value", value: "abc" },
+    { name: "value null", parent: "authorization", key: "value", value: null },
+    { name: "value json number", parent: "authorization", key: "value", value: 100000 },
+    { name: "value negative", parent: "authorization", key: "value", value: "-1" },
+    {
+      name: "value over digit limit",
+      parent: "authorization",
+      key: "value",
+      value: "1".repeat(5000),
+    },
+    {
+      name: "value above uint256",
+      parent: "authorization",
+      key: "value",
+      value: V1_UINT256_PLUS_ONE,
+    },
+    { name: "validBefore missing", parent: "authorization", key: "validBefore", value: V1_MISSING },
+    {
+      name: "validBefore too long",
+      parent: "authorization",
+      key: "validBefore",
+      value: "9".repeat(79),
+    },
+    { name: "validAfter not string", parent: "authorization", key: "validAfter", value: [] },
+    { name: "to not string", parent: "authorization", key: "to", value: 123 },
+    { name: "nonce not string", parent: "authorization", key: "nonce", value: 123 },
+    { name: "nonce not hex", parent: "authorization", key: "nonce", value: "zz" },
+    { name: "nonce not 32 bytes", parent: "authorization", key: "nonce", value: "0x0001" },
+  ];
+
+  function body(): Record<string, unknown> {
+    return {
+      signature: `0x${"00".repeat(65)}`,
+      authorization: {
+        from: payer,
+        to: recipient,
+        value: "100000",
+        validAfter: "0",
+        validBefore: "9999999999",
+        nonce: `0x${"11".repeat(32)}`,
+      },
+    };
+  }
+
+  function apply(
+    payload: Record<string, unknown>,
+    parent: string | undefined,
+    key: string,
+    value: unknown,
+  ) {
+    const target = parent === undefined ? payload : (payload[parent] as Record<string, unknown>);
+    if (value === V1_MISSING) {
+      delete target[key];
+      return;
+    }
+    target[key] = value;
+  }
+
+  function payment(payloadBody: Record<string, unknown>): PaymentPayloadV1 {
+    return {
+      x402Version: 1,
+      scheme: "exact",
+      network,
+      payload: payloadBody as PaymentPayloadV1["payload"],
+    };
+  }
+
+  function requirements(): PaymentRequirementsV1 {
+    return {
+      scheme: "exact",
+      network,
+      asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      maxAmountRequired: "100000",
+      payTo: recipient,
+      maxTimeoutSeconds: 3600,
+      extra: { name: "USDC", version: "2" },
+    };
+  }
+
+  function fieldPath(parent: string | undefined, key: string): string {
+    return parent === undefined ? key : `${parent}.${key}`;
+  }
+
+  function signer(): FacilitatorEvmSigner {
+    return {
+      readContract: vi.fn(),
+      verifyTypedData: vi.fn(),
+      writeContract: vi.fn(),
+      sendTransaction: vi.fn(),
+      waitForTransactionReceipt: vi.fn(),
+      getCode: vi.fn(),
+      getAddresses: () => [],
+    };
+  }
+
+  it.each(cases)("verify rejects $name", async ({ parent, key, value }) => {
+    const payloadBody = body();
+    apply(payloadBody, parent, key, value);
+    const evmSigner = signer();
+    const scheme = new ExactEvmSchemeV1(evmSigner);
+    const result = await scheme.verify(payment(payloadBody) as never, requirements() as never);
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe("invalid_exact_evm_payload");
+    expect(result.invalidMessage?.startsWith(`${fieldPath(parent, key)} must be `)).toBe(true);
+    expect(evmSigner.getCode).not.toHaveBeenCalled();
+  });
+
+  it("verify reports payer when from is readable", async () => {
+    const payloadBody = body();
+    apply(payloadBody, "authorization", "value", "abc");
+    const scheme = new ExactEvmSchemeV1(signer());
+    const result = await scheme.verify(payment(payloadBody) as never, requirements() as never);
+    expect(result.invalidReason).toBe("invalid_exact_evm_payload");
+    expect(result.payer).toBe(payer);
+  });
+
+  it.each(cases)("settle rejects $name", async ({ parent, key, value }) => {
+    const payloadBody = body();
+    apply(payloadBody, parent, key, value);
+    const evmSigner = signer();
+    const scheme = new ExactEvmSchemeV1(evmSigner);
+    const result = await scheme.settle(payment(payloadBody) as never, requirements() as never);
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe("invalid_exact_evm_payload");
+    expect(result.errorMessage?.startsWith(`${fieldPath(parent, key)} must be `)).toBe(true);
+    expect(evmSigner.writeContract).not.toHaveBeenCalled();
   });
 });

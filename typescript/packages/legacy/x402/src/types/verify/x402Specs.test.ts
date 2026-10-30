@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   ListDiscoveryResourcesResponseSchema,
   SupportedPaymentKindsResponseSchema,
+  VerifyResponseSchema,
   x402ResponseSchema,
 } from "./x402Specs";
 
@@ -178,6 +179,16 @@ describe("x402Specs Regex Patterns", () => {
         expect(Evm6492SignatureRegex.test(signature)).toBe(true);
       });
     });
+  });
+});
+
+describe("ErrorReasons", () => {
+  it("accepts invalid_exact_evm_payload on a verify response", () => {
+    const result = VerifyResponseSchema.safeParse({
+      isValid: false,
+      invalidReason: "invalid_exact_evm_payload",
+    });
+    expect(result.success).toBe(true);
   });
 });
 

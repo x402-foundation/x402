@@ -170,7 +170,7 @@ describe("ExactEvmScheme (Facilitator)", () => {
             value: requirements.amount,
             validAfter: "0",
             validBefore: "999999999999",
-            nonce: "0x00",
+            nonce: `0x${"00".repeat(32)}`,
           },
           signature: "0x",
         },
@@ -845,7 +845,7 @@ describe("ExactEvmScheme (Facilitator)", () => {
             value: requirements.amount,
             validAfter: "0",
             validBefore: "999999999999",
-            nonce: "0x00",
+            nonce: `0x${"00".repeat(32)}`,
           },
           signature: "0xinvalid", // Invalid signature
         },
@@ -853,7 +853,7 @@ describe("ExactEvmScheme (Facilitator)", () => {
         resource: { url: "", description: "", mimeType: "" },
       };
 
-      // Mock verifyTypedData to return false for invalid signature
+      mockFacilitatorSigner.getCode = vi.fn().mockResolvedValue("0x");
       mockFacilitatorSigner.verifyTypedData = vi.fn().mockResolvedValue(false);
 
       const result = await facilitator.verify(payload, requirements);
@@ -3061,21 +3061,283 @@ describe("x402Facilitator malformed exact EVM payloads", () => {
     };
   }
 
-  it.each(cases)("verify returns invalid_payload for $name", async ({ payload: body }) => {
-    const { facilitator, getCode } = makeFacilitator();
+  it.each(cases)(
+    "verify returns invalid_exact_evm_payload for $name",
+    async ({ payload: body }) => {
+      const { facilitator, getCode } = makeFacilitator();
+      const result = await facilitator.verify(payment(body), requirements);
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe("invalid_exact_evm_payload");
+      expect(getCode).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(cases)(
+    "settle returns invalid_exact_evm_payload for $name",
+    async ({ payload: body }) => {
+      const { facilitator, getCode } = makeFacilitator();
+      const result = await facilitator.settle(payment(body), requirements);
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe("invalid_exact_evm_payload");
+      expect(result.transaction).toBe("");
+      expect(result.network).toBe(network);
+      expect(getCode).not.toHaveBeenCalled();
+    },
+  );
+});
+
+const MISSING = Symbol("missing");
+const UINT256_PLUS_ONE = (1n << 256n).toString();
+
+function fieldPath(parent: string | undefined, key: string): string {
+  return parent === undefined ? key : `${parent}.${key}`;
+}
+
+function applyField(
+  payload: Record<string, unknown>,
+  parent: string | undefined,
+  key: string,
+  value: unknown,
+): void {
+  const target = parent === undefined ? payload : (payload[parent] as Record<string, unknown>);
+  if (value === MISSING) {
+    delete target[key];
+    return;
+  }
+  target[key] = value;
+}
+
+function setPath(root: Record<string, unknown>, path: string[], value: unknown): void {
+  let cursor = root;
+  for (const key of path.slice(0, -1)) {
+    cursor = cursor[key] as Record<string, unknown>;
+  }
+  const leaf = path[path.length - 1];
+  if (value === MISSING) {
+    delete cursor[leaf];
+    return;
+  }
+  cursor[leaf] = value;
+}
+
+describe("exact EVM malformed payload field errors", () => {
+  const network = "eip155:84532";
+  const payer = "0x1234567890123456789012345678901234567890";
+  const recipient = "0x0987654321098765432109876543210987654321";
+  const asset = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+  const nonce = `0x${"11".repeat(32)}`;
+  const requirements: PaymentRequirements = {
+    scheme: "exact",
+    network,
+    amount: "100000",
+    asset,
+    payTo: recipient,
+    maxTimeoutSeconds: 3600,
+    extra: { name: "USD Coin", version: "2" },
+  };
+
+  const eip3009Cases: { name: string; parent?: string; key: string; value: unknown }[] = [
+    { name: "authorization missing", key: "authorization", value: MISSING },
+    { name: "authorization not object", key: "authorization", value: "oops" },
+    { name: "signature not string", key: "signature", value: 123 },
+    { name: "from missing", parent: "authorization", key: "from", value: MISSING },
+    { name: "from not an address", parent: "authorization", key: "from", value: "not-an-address" },
+    { name: "value missing", parent: "authorization", key: "value", value: MISSING },
+    { name: "value not numeric", parent: "authorization", key: "value", value: "abc" },
+    { name: "value null", parent: "authorization", key: "value", value: null },
+    { name: "value json number", parent: "authorization", key: "value", value: 100000 },
+    { name: "value negative", parent: "authorization", key: "value", value: "-1" },
+    {
+      name: "value over digit limit",
+      parent: "authorization",
+      key: "value",
+      value: "1".repeat(5000),
+    },
+    { name: "value above uint256", parent: "authorization", key: "value", value: UINT256_PLUS_ONE },
+    { name: "validBefore missing", parent: "authorization", key: "validBefore", value: MISSING },
+    {
+      name: "validBefore too long",
+      parent: "authorization",
+      key: "validBefore",
+      value: "9".repeat(79),
+    },
+    { name: "validAfter not string", parent: "authorization", key: "validAfter", value: [] },
+    { name: "to not string", parent: "authorization", key: "to", value: 123 },
+    { name: "nonce not string", parent: "authorization", key: "nonce", value: 123 },
+    { name: "nonce not hex", parent: "authorization", key: "nonce", value: "zz" },
+    { name: "nonce not 32 bytes", parent: "authorization", key: "nonce", value: "0x0001" },
+  ];
+
+  const permit2Cases: { name: string; path: string[]; value: unknown }[] = [
+    { name: "authorization not object", path: ["permit2Authorization"], value: "oops" },
+    { name: "permitted not object", path: ["permit2Authorization", "permitted"], value: null },
+    { name: "witness not object", path: ["permit2Authorization", "witness"], value: [] },
+    { name: "from not string", path: ["permit2Authorization", "from"], value: 123 },
+    { name: "spender missing", path: ["permit2Authorization", "spender"], value: MISSING },
+    { name: "token not string", path: ["permit2Authorization", "permitted", "token"], value: null },
+    { name: "witness to not string", path: ["permit2Authorization", "witness", "to"], value: 123 },
+    { name: "nonce not numeric", path: ["permit2Authorization", "nonce"], value: "abc" },
+    {
+      name: "nonce above uint256",
+      path: ["permit2Authorization", "nonce"],
+      value: UINT256_PLUS_ONE,
+    },
+    { name: "deadline missing", path: ["permit2Authorization", "deadline"], value: MISSING },
+    {
+      name: "deadline over digit limit",
+      path: ["permit2Authorization", "deadline"],
+      value: "1".repeat(5000),
+    },
+    { name: "amount negative", path: ["permit2Authorization", "permitted", "amount"], value: "-1" },
+    {
+      name: "amount json number",
+      path: ["permit2Authorization", "permitted", "amount"],
+      value: 1000,
+    },
+    { name: "validAfter list", path: ["permit2Authorization", "witness", "validAfter"], value: [] },
+    { name: "signature not string", path: ["signature"], value: 123 },
+  ];
+
+  function eip3009Body(): Record<string, unknown> {
+    return {
+      signature: `0x${"00".repeat(65)}`,
+      authorization: {
+        from: payer,
+        to: recipient,
+        value: "100000",
+        validAfter: "0",
+        validBefore: "9999999999",
+        nonce,
+      },
+    };
+  }
+
+  function permit2Body(): Record<string, unknown> {
+    return {
+      signature: `0x${"aa".repeat(65)}`,
+      permit2Authorization: {
+        from: payer,
+        permitted: { token: asset, amount: "1000" },
+        spender: x402ExactPermit2ProxyAddress,
+        nonce: "12345678901234567890",
+        deadline: "9999999999",
+        witness: { to: recipient, validAfter: "0" },
+      },
+    };
+  }
+
+  function payment(body: Record<string, unknown>): PaymentPayload {
+    return {
+      x402Version: 2,
+      payload: body,
+      accepted: requirements,
+      resource: { url: "https://example.com", description: "", mimeType: "" },
+    };
+  }
+
+  function facilitatorWithWrite() {
+    const getCode = vi.fn().mockResolvedValue("0x6080604052" as `0x${string}`);
+    const writeContract = vi.fn();
+    const signer: FacilitatorEvmSigner = {
+      getAddresses: () => [recipient as `0x${string}`],
+      readContract: vi.fn().mockResolvedValue("0x1626ba7e"),
+      verifyTypedData: vi.fn().mockResolvedValue(true),
+      writeContract,
+      sendTransaction: vi.fn(),
+      waitForTransactionReceipt: vi.fn(),
+      getCode,
+    };
+    const facilitator = registerExactEvmScheme(new x402Facilitator(), {
+      signer,
+      networks: network,
+    });
+    return { facilitator, getCode, writeContract };
+  }
+
+  it.each(eip3009Cases)(
+    "verify rejects malformed EIP-3009 payload: $name",
+    async ({ parent, key, value }) => {
+      const body = eip3009Body();
+      applyField(body, parent, key, value);
+      const { facilitator, getCode } = facilitatorWithWrite();
+      const result = await facilitator.verify(payment(body), requirements);
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe("invalid_exact_evm_payload");
+      expect(result.invalidMessage?.startsWith(`${fieldPath(parent, key)} must be `)).toBe(true);
+      expect(getCode).not.toHaveBeenCalled();
+    },
+  );
+
+  it("verify reports payer for a malformed EIP-3009 payload with a readable from", async () => {
+    const body = eip3009Body();
+    applyField(body, "authorization", "value", "abc");
+    const { facilitator } = facilitatorWithWrite();
     const result = await facilitator.verify(payment(body), requirements);
-    expect(result.isValid).toBe(false);
-    expect(result.invalidReason).toBe(Errors.ErrInvalidPayload);
-    expect(getCode).not.toHaveBeenCalled();
+    expect(result.invalidReason).toBe("invalid_exact_evm_payload");
+    expect(result.payer).toBe(payer);
   });
 
-  it.each(cases)("settle returns invalid_payload for $name", async ({ payload: body }) => {
-    const { facilitator, getCode } = makeFacilitator();
+  it.each(eip3009Cases)(
+    "settle rejects malformed EIP-3009 payload: $name",
+    async ({ parent, key, value }) => {
+      const body = eip3009Body();
+      applyField(body, parent, key, value);
+      const { facilitator, writeContract } = facilitatorWithWrite();
+      const result = await facilitator.settle(payment(body), requirements);
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe("invalid_exact_evm_payload");
+      expect(result.errorMessage?.startsWith(`${fieldPath(parent, key)} must be `)).toBe(true);
+      expect(result.network).toBe(network);
+      expect(result.transaction).toBe("");
+      expect(writeContract).not.toHaveBeenCalled();
+    },
+  );
+
+  it("settle reports payer for a malformed EIP-3009 payload with a readable from", async () => {
+    const body = eip3009Body();
+    applyField(body, "authorization", "value", "abc");
+    const { facilitator } = facilitatorWithWrite();
     const result = await facilitator.settle(payment(body), requirements);
-    expect(result.success).toBe(false);
-    expect(result.errorReason).toBe(Errors.ErrInvalidPayload);
-    expect(result.transaction).toBe("");
-    expect(result.network).toBe(network);
-    expect(getCode).not.toHaveBeenCalled();
+    expect(result.errorReason).toBe("invalid_exact_evm_payload");
+    expect(result.payer).toBe(payer);
   });
+
+  it.each(permit2Cases)(
+    "verify rejects malformed Permit2 payload: $name",
+    async ({ path, value }) => {
+      const body = permit2Body();
+      setPath(body, path, value);
+      const { facilitator, getCode } = facilitatorWithWrite();
+      const result = await facilitator.verify(payment(body), requirements);
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe("invalid_exact_evm_payload");
+      expect(result.invalidMessage?.startsWith(`${path.join(".")} must be `)).toBe(true);
+      expect(getCode).not.toHaveBeenCalled();
+    },
+  );
+
+  it("verify reports payer for a malformed Permit2 payload with a readable from", async () => {
+    const body = permit2Body();
+    setPath(body, ["permit2Authorization", "deadline"], "abc");
+    const { facilitator } = facilitatorWithWrite();
+    const result = await facilitator.verify(payment(body), requirements);
+    expect(result.invalidReason).toBe("invalid_exact_evm_payload");
+    expect(result.payer).toBe(payer);
+  });
+
+  it.each(permit2Cases)(
+    "settle rejects malformed Permit2 payload: $name",
+    async ({ path, value }) => {
+      const body = permit2Body();
+      setPath(body, path, value);
+      const { facilitator, writeContract } = facilitatorWithWrite();
+      const result = await facilitator.settle(payment(body), requirements);
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe("invalid_exact_evm_payload");
+      expect(result.errorMessage?.startsWith(`${path.join(".")} must be `)).toBe(true);
+      expect(result.network).toBe(network);
+      expect(result.transaction).toBe("");
+      expect(writeContract).not.toHaveBeenCalled();
+    },
+  );
 });

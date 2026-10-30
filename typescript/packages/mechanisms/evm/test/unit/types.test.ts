@@ -5,7 +5,12 @@ import type {
   ExactEIP3009Payload,
   ExactPermit2Payload,
 } from "../../src/types";
-import { isPermit2Payload, isEIP3009Payload } from "../../src/types";
+import {
+  isPermit2Payload,
+  isEIP3009Payload,
+  validateEip3009Payload,
+  validateExactEvmPayload,
+} from "../../src/types";
 
 describe("EVM Types", () => {
   describe("ExactEvmPayloadV1", () => {
@@ -138,5 +143,43 @@ describe("EVM Types", () => {
         expect(isPermit2Payload(eip3009Payload)).toBe(false);
       });
     });
+  });
+});
+
+describe("validateExactEvmPayload", () => {
+  function eip3009(authorization: Record<string, unknown> = {}) {
+    return {
+      signature: `0x${"00".repeat(65)}`,
+      authorization: {
+        from: "0x1234567890123456789012345678901234567890",
+        to: "0x0987654321098765432109876543210987654321",
+        value: "1000000",
+        validAfter: "0",
+        validBefore: "1000003600",
+        nonce: `0x${"00".repeat(32)}`,
+        ...authorization,
+      },
+    };
+  }
+
+  it("accepts a well-formed EIP-3009 payload", () => {
+    expect(validateExactEvmPayload(eip3009())).toBeUndefined();
+  });
+
+  it("accepts the largest uint256 value", () => {
+    expect(
+      validateExactEvmPayload(eip3009({ value: ((1n << 256n) - 1n).toString() })),
+    ).toBeUndefined();
+  });
+
+  it("accepts a nonce without a 0x prefix", () => {
+    expect(validateExactEvmPayload(eip3009({ nonce: "ab".repeat(32) }))).toBeUndefined();
+  });
+
+  it("names a non-object root as the payload", () => {
+    for (const root of ["not-an-object", null, []]) {
+      expect(validateExactEvmPayload(root)).toBe("payload must be an object");
+      expect(validateEip3009Payload(root)).toBe("payload must be an object");
+    }
   });
 });
