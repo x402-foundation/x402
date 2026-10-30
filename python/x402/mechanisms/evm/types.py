@@ -396,6 +396,68 @@ def get_payload_payer(payload: dict[str, Any]) -> str | None:
     return payer if isinstance(payer, str) else None
 
 
+def _validate_upto_permit2_authorization(authorization: Any) -> str | None:
+    if not isinstance(authorization, dict):
+        return "permit2Authorization must be an object"
+    permitted = authorization.get("permitted")
+    if not isinstance(permitted, dict):
+        return "permit2Authorization.permitted must be an object"
+    witness = authorization.get("witness")
+    if not isinstance(witness, dict):
+        return "permit2Authorization.witness must be an object"
+    strings = {
+        "from": authorization.get("from"),
+        "spender": authorization.get("spender"),
+        "permitted.token": permitted.get("token"),
+        "witness.to": witness.get("to"),
+        "witness.facilitator": witness.get("facilitator"),
+    }
+    for name, value in strings.items():
+        if not isinstance(value, str):
+            return f"permit2Authorization.{name} must be a string"
+    numbers = {
+        "nonce": authorization.get("nonce"),
+        "deadline": authorization.get("deadline"),
+        "permitted.amount": permitted.get("amount"),
+        "witness.validAfter": witness.get("validAfter"),
+    }
+    for name, value in numbers.items():
+        if not _is_uint256_string(value):
+            return f"permit2Authorization.{name} must be a uint256 decimal string"
+    return None
+
+
+def validate_upto_permit2_payload(payload: dict[str, Any]) -> str | None:
+    """Check that a raw upto Permit2 payload has the field types verify and settle parse.
+
+    The payload is client-supplied, so malformed input must be rejected as invalid
+    instead of raising, matching the Go facilitator's payload parsing.
+
+    Args:
+        payload: Raw payload dictionary.
+
+    Returns:
+        None if well-formed, otherwise a message naming the first malformed field.
+    """
+    return _validate_signature(payload) or _validate_upto_permit2_authorization(
+        payload.get("permit2Authorization")
+    )
+
+
+def get_upto_payload_payer(payload: dict[str, Any]) -> str | None:
+    """Get the payer address from a raw upto Permit2 payload without validating it.
+
+    Args:
+        payload: Raw payload dictionary.
+
+    Returns:
+        The authorization's ``from`` value if it is a string, otherwise None.
+    """
+    authorization = payload.get("permit2Authorization")
+    payer = authorization.get("from") if isinstance(authorization, dict) else None
+    return payer if isinstance(payer, str) else None
+
+
 @dataclass
 class TypedDataDomain:
     """EIP-712 domain separator."""
