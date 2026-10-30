@@ -1,0 +1,73 @@
+{
+  "x402Version": 2,
+  "error": "PAYMENT-SIGNATURE header required. $0.005 USDC on Base.",
+  "resource": {
+    "url": "https://getgofetch.dev/v1/fees/base-exact",
+    "description": "PayAI exact-scheme settle fee on Base",
+    "mimeType": "application/json",
+    "serviceName": "gofetch",
+    "tags": [
+      "fees",
+      "payai",
+      "base",
+      "x402",
+      "ticker"
+    ]
+  },
+  "accepts": [
+    {
+      "scheme": "exact",
+      "network": "eip155:8453",
+      "amount": "5000",
+      "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "payTo": "0x714F69Aef602c76543AdED914Ea4Eb23fE9F8527",
+      "maxTimeoutSeconds": 60,
+      "extra": {
+        "name": "USD Coin",
+        "version": "2"
+      }
+    }
+  ],
+  "extensions": {
+    "bazaar": {
+      "info": {
+        "input": {
+          "type": "http",
+          "method": "GET"
+        },
+        "output": {
+          "type": "json",
+          "example": {
+            "ok": true,
+            "network": "Base",
+            "credits_per_settle": 2.12,
+            "usd_per_settle": 0.00212
+          }
+        }
+      },
+      "schema": {
+        "type": "object",
+        "required": [
+          "info"
+        ],
+        "properties": {
+          "info": {
+            "type": "object",
+            "required": [
+              "input",
+              "output"
+            ],
+            "properties": {
+              "input": {
+                "type": "object"
+              },
+              "output": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
