@@ -123,11 +123,26 @@ Each `PaymentRequirements` object in the `accepts` array contains:
 | ------------------- | -------- | -------- |---------------------------------------------------------------------------------------------------------------------------|
 | `scheme`            | `string` | Required | Payment scheme identifier (e.g., "exact")                                                                                 |
 | `network`           | `string` | Required | Blockchain network identifier in CAIP-2 format (e.g., "eip155:84532")                                                     |
-| `amount`            | `string` | Required | Required payment amount in atomic token units                                                                             |
+| `amount`            | `string` | Required | Required payment amount; units and encoding follow the scheme's network implementation (see Amount Encoding below)       |
 | `asset`             | `string` | Required | Token contract address or ISO 4217 currency code for fiat     |
 | `payTo`             | `string` | Required | Recipient wallet address or role constant (e.g., "merchant")                                                              |
 | `maxTimeoutSeconds` | `number` | Required | Maximum time allowed for payment completion                                                                               |
 | `extra`             | `object` | Optional | Additional information. Reserved protocol keys: `assetTransferMethod`, `paymentFlow` (section 6.1); other keys are scheme-specific |
+
+**Amount Encoding**
+
+`amount` MUST be a string whose units and numeric representation conform to the selected scheme's network implementation for the asset.
+
+- For implementations that express amounts in atomic token units, including `exact` EVM and SVM, `amount` MUST match `^[0-9]+$`: one or more ASCII digits, with no sign, decimal point, exponent, separators, or whitespace. Any implementation-specific range or value constraints also apply.
+- A network implementation MAY explicitly define a different representation. For example, [`exact` XRPL](schemes/exact/scheme_exact_xrpl.md#amount-formatting) uses integer drops for native XRP and a decimal issued-currency `value` string for IOUs. The IOU representation MUST NOT be rejected merely because it contains a decimal point.
+
+Clients MUST validate an amount according to the supported implementation before constructing a payment. They MUST NOT round or rescale an advertised amount to make it fit a different representation. An unsupported or invalid offer MAY be skipped in favor of another supported, valid offer in `accepts`.
+
+| Implementation / asset | Example `amount` | Format |
+| ---------------------- | ---------------- | ------ |
+| Atomic-unit implementation | `"111000"` | Valid integer string; other scheme constraints still apply |
+| Atomic-unit implementation | `"0.111"` | Invalid: decimal point |
+| `exact` XRPL / IOU | `"10.5"` | Decimal ledger value; XRPL rules apply |
 
 The `ResourceInfo` object contains:
 
