@@ -45,7 +45,7 @@ The client signs once; the facilitator submits periodic charges with Merkle proo
 
 | Role | Responsibility |
 |:-----|:---------------|
-| **Client** | Builds Merkle tree from advertised terms; signs EIP-712 commitment over `{root, subscriber, asset, payTo, registry, chainId, tierId, start, expiry, maxPerPeriod}`; grants standing ERC-20 allowance to registry (gaslessly via EIP-2612 permit where supported, or direct approve) |
+| **Client** | Builds Merkle tree from advertised terms; signs the EIP-712 `SubscriptionCommitment` (§3.2); grants standing ERC-20 allowance to registry (gaslessly via EIP-2612 permit where supported, or direct approve) |
 | **Facilitator** | Maintains the Merkle tree and proofs off-chain; submits `subscribe()` with commitment + allowance signature; submits `chargePeriod()` with Merkle proofs at each billing boundary; trusted for **liveness only** |
 | **Registry** | Immutable on-chain contract; verifies EIP-712 commitment signature; enforces monotonic cursor, per-period cap (`fee <= maxPerPeriod`), time windows (`validFrom <= now <= validTo + gracePeriodSeconds`), expiry, and cancel; calls `transferFrom(subscriber, payTo, fee)` on success |
 | **Token** | Any ERC-20; EIP-2612 support enables gasless allowance approval |
@@ -127,7 +127,8 @@ const commitmentTypes = {
     { name: "start", type: "uint256" },
     { name: "expiry", type: "uint256" },
     { name: "maxPerPeriod", type: "uint256" },
-    { name: "gracePeriodSeconds", type: "uint256" }
+    { name: "gracePeriodSeconds", type: "uint256" },
+    { name: "replaces", type: "bytes32" }
   ]
 };
 ```
@@ -147,8 +148,51 @@ const commitmentTypes = {
 | `expiry` | `uint256` | Unix timestamp after which no charges are valid |
 | `maxPerPeriod` | `uint256` | Maximum fee per charge (safety cap) |
 | `gracePeriodSeconds` | `uint256` | Retry window after `validTo` for failed charges |
+| `replaces` | `bytes32` | `subscriptionId` this commitment replaces (`update-root`); `0x00…00` for a new subscription |
 
-The `subscriptionId` is derived as `keccak256(abi.encode(commitmentStructHash))`, binding all parameters in one identifier.
+### 3.4 Subscription Identifier
+
+This section is the normative definition of `subscriptionId`. Other sections reference it.
+
+The `subscriptionId` is the EIP-712 struct hash of the commitment (the value passed to `_hashTypedDataV4`, without the domain separator):
+
+```
+subscriptionId = keccak256(abi.encode(
+  COMMITMENT_TYPEHASH,
+  root, subscriber, asset, payTo, registry, chainId,
+  keccak256(bytes(tierId)),
+  start, expiry, maxPerPeriod, gracePeriodSeconds, replaces
+))
+```
+
+This equals viem's `hashStruct({ types: commitmentTypes, primaryType: "SubscriptionCommitment", data: commitment })`.
+
+- **Computable before submission.** Clients and facilitators derive the ID from the signed commitment without waiting for the transaction, which makes `subscribe` retries idempotent (§10.2).
+- **Independent of the signature.** Signature malleability cannot produce a second ID for the same terms.
+- **Unique across deployments.** The struct hash excludes the EIP-712 domain, so uniqueness across chains and registries relies on `registry` and `chainId` being commitment fields. Implementations MUST NOT remove them from `SubscriptionCommitment`.
+- **One registration per commitment.** Re-registering an identical commitment reverts with `SubscriptionAlreadyExists`. A client re-subscribing after cancellation signs a new commitment (a new `start` yields a new ID).
+
+**Test vector:**
+
+```
+COMMITMENT_TYPEHASH = keccak256("SubscriptionCommitment(bytes32 root,address subscriber,address asset,address payTo,address registry,uint256 chainId,string tierId,uint256 start,uint256 expiry,uint256 maxPerPeriod,uint256 gracePeriodSeconds,bytes32 replaces)")
+                    = 0xad591d3c2d951bd01507966d80cc378aa2b2211d1ef97613e559dc7bbc04a74b
+
+root               = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+subscriber         = 0x857b06519E91e3A54538791bDbb0E22373e36b66
+asset              = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+payTo              = 0x209693Bc6afc0C5328bA36FaF03C514EF312287C
+registry           = 0x0000000000000000000000000000000000000402
+chainId            = 8453
+tierId             = "pro"
+start              = 1740672089
+expiry             = 1772208089
+maxPerPeriod       = 5000000
+gracePeriodSeconds = 86400
+replaces           = 0x0000000000000000000000000000000000000000000000000000000000000000
+
+subscriptionId     = 0xa2a6ec7395ef161c556d0a0c12877a11d008a84163e25d0475115fa5361dd7c5
+```
 
 ---
 
@@ -201,7 +245,8 @@ When subscribing, the client sends a `PaymentPayload` with the schedule commitme
       "start": "1740672089",
       "expiry": "1772208089",
       "maxPerPeriod": "5000000",
-      "gracePeriodSeconds": "86400"
+      "gracePeriodSeconds": "86400",
+      "replaces": "0x0000000000000000000000000000000000000000000000000000000000000000"
     },
     "commitmentSignature": "0x...",
     "allowanceMethod": "eip2612-permit",
@@ -307,13 +352,13 @@ To change tiers, extend a subscription, or modify the schedule, the client signs
         "tierName": "Enterprise Plan",
         "billingCycle": "monthly",
         "billingCycleSeconds": 2592000,
-        "periodCount": 12
+        "periodCount": 12,
+        "gracePeriodSeconds": 86400
       }
     }
   },
   "payload": {
     "action": "update-root",
-    "previousSubscriptionId": "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
     "commitment": {
       "root": "0xfedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321",
       "subscriber": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
@@ -324,7 +369,9 @@ To change tiers, extend a subscription, or modify the schedule, the client signs
       "tierId": "enterprise",
       "start": "1772208089",
       "expiry": "1803744089",
-      "maxPerPeriod": "10000000"
+      "maxPerPeriod": "10000000",
+      "gracePeriodSeconds": "86400",
+      "replaces": "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
     },
     "commitmentSignature": "0x...",
     "allowanceMethod": "eip2612-permit",
@@ -341,8 +388,7 @@ To change tiers, extend a subscription, or modify the schedule, the client signs
 | Field | Type | Required | Description |
 |:------|:-----|:---------|:------------|
 | `action` | `string` | Required | `"update-root"` |
-| `previousSubscriptionId` | `string` | Optional | Links to previous subscription (for tier migration) |
-| `commitment` | `object` | Required | New EIP-712 commitment struct |
+| `commitment` | `object` | Required | New EIP-712 commitment struct; `commitment.replaces` MUST be the `subscriptionId` being replaced |
 | `commitmentSignature` | `string` | Required | EIP-712 signature over the new commitment |
 | `allowanceMethod` | `string` | Required | How allowance is established for new schedule |
 | `allowanceSignature` | `string` | Conditional | Required if gasless allowance method |
@@ -427,7 +473,7 @@ The server advertises the `subscription` extension with a schema; the client ech
 
 ```typescript
 export interface SubscriptionInfo {
-  /** The subscription ID (bytes32 hex, from commitment struct hash) */
+  /** The subscription ID (bytes32 hex, §3.4) */
   subscriptionId: `0x${string}`;
 
   /** Unix timestamp (seconds) when the proof was signed */
@@ -888,6 +934,7 @@ The facilitator MUST perform these checks in order:
    - `commitment.registry` == `accepted.extra.registry`
    - `commitment.chainId` == chain ID from `accepted.network`
    - `commitment.tierId` == `accepted.extra.subscriptionDetails.tierId`
+   - `commitment.replaces` == `0x00…00` (replacements use `update-root`)
 
 4. **Verify** allowance:
    - If `allowanceMethod` is `"eip2612-permit"`: validate permit signature
@@ -1037,7 +1084,7 @@ contract x402SubscriptionRegistry is EIP712, ReentrancyGuard {
     // ============ Constants ============
 
     bytes32 public constant COMMITMENT_TYPEHASH = keccak256(
-        "SubscriptionCommitment(bytes32 root,address subscriber,address asset,address payTo,address registry,uint256 chainId,string tierId,uint256 start,uint256 expiry,uint256 maxPerPeriod,uint256 gracePeriodSeconds)"
+        "SubscriptionCommitment(bytes32 root,address subscriber,address asset,address payTo,address registry,uint256 chainId,string tierId,uint256 start,uint256 expiry,uint256 maxPerPeriod,uint256 gracePeriodSeconds,bytes32 replaces)"
     );
 
     bytes32 public constant CANCELLATION_TYPEHASH = keccak256(
@@ -1058,6 +1105,7 @@ contract x402SubscriptionRegistry is EIP712, ReentrancyGuard {
         uint256 expiry;
         uint256 maxPerPeriod;
         uint256 gracePeriodSeconds;
+        bytes32 replaces;
     }
 
     struct Leaf {
@@ -1156,6 +1204,7 @@ contract x402SubscriptionRegistry is EIP712, ReentrancyGuard {
     error InvalidRegistry();
     error InvalidChainId();
     error AssetNotContract();
+    error InvalidReplaces();
 
     // ============ Modifiers ============
 
@@ -1182,11 +1231,11 @@ contract x402SubscriptionRegistry is EIP712, ReentrancyGuard {
      * @notice Create a new subscription from a signed commitment.
      * @dev subscribe() may register during pause but must not move funds.
      *      If initialProof is provided while paused, reverts ChargePaused.
-     * @param commitment The subscription commitment struct (includes gracePeriodSeconds).
+     * @param commitment The subscription commitment struct; `replaces` MUST be zero.
      * @param signature EIP-712 signature over the commitment, by commitment.subscriber.
      * @param initialLeaf Optional: leaf for period 0 to charge immediately.
      * @param initialProof Optional: Merkle proof for initialLeaf.
-     * @return subscriptionId The unique subscription identifier.
+     * @return subscriptionId The unique subscription identifier (§3.4).
      */
     function subscribe(
         Commitment calldata commitment,
@@ -1194,6 +1243,30 @@ contract x402SubscriptionRegistry is EIP712, ReentrancyGuard {
         Leaf calldata initialLeaf,
         bytes32[] calldata initialProof
     ) external nonReentrant returns (bytes32 subscriptionId) {
+        if (commitment.replaces != bytes32(0)) revert InvalidReplaces();
+
+        subscriptionId = _subscribe(commitment, signature);
+
+        // Optionally charge period 0 immediately (respects pause via _chargePeriod)
+        // NOTE: A single-period schedule has an empty Merkle proof by construction
+        // (the root IS the leaf hash). The `initialProof.length > 0` gate therefore
+        // skips the initial charge for single-period subscriptions when called with
+        // an empty proof array. The charge remains submittable via chargePeriod()
+        // afterward. Reference implementations MAY use an explicit boolean parameter
+        // (e.g., `chargeInitialPeriod`) instead of proof-length detection.
+        if (initialProof.length > 0) {
+            _chargePeriod(subscriptionId, initialLeaf, initialProof);
+        }
+    }
+
+    /**
+     * @dev Shared by subscribe() and updateRoot(). Internal so updateRoot() does
+     *      not re-enter the nonReentrant external subscribe().
+     */
+    function _subscribe(
+        Commitment calldata commitment,
+        bytes calldata signature
+    ) internal returns (bytes32 subscriptionId) {
         // Validate commitment binds to this registry and chain
         if (commitment.registry != address(this)) revert InvalidRegistry();
         if (commitment.chainId != block.chainid) revert InvalidChainId();
@@ -1203,7 +1276,7 @@ contract x402SubscriptionRegistry is EIP712, ReentrancyGuard {
         // would misread as a USDT-style successful transfer. Checked once at registration.
         if (commitment.asset.code.length == 0) revert AssetNotContract();
 
-        // Derive subscriptionId from commitment struct hash
+        // subscriptionId is the commitment struct hash (§3.4)
         bytes32 structHash = _hashCommitment(commitment);
         subscriptionId = structHash;
 
@@ -1241,19 +1314,6 @@ contract x402SubscriptionRegistry is EIP712, ReentrancyGuard {
             commitment.tierId,
             commitment.expiry
         );
-
-        // Optionally charge period 0 immediately (respects pause via _chargePeriod)
-        // NOTE: A single-period schedule has an empty Merkle proof by construction
-        // (the root IS the leaf hash). The `initialProof.length > 0` gate therefore
-        // skips the initial charge for single-period subscriptions when called with
-        // an empty proof array. The charge remains submittable via chargePeriod()
-        // afterward. Reference implementations MAY use an explicit boolean parameter
-        // (e.g., `chargeInitialPeriod`) instead of proof-length detection.
-        if (initialProof.length > 0) {
-            _chargePeriod(subscriptionId, initialLeaf, initialProof);
-        }
-
-        return subscriptionId;
     }
 
     /**
@@ -1317,18 +1377,20 @@ contract x402SubscriptionRegistry is EIP712, ReentrancyGuard {
 
     /**
      * @notice Replace a subscription with a new commitment (tier change, extension).
-     * @dev The old subscription is cancelled; a new subscriptionId is derived from
-     *      the new commitment. Cursor resets to 0 for the new schedule.
-     * @param oldSubscriptionId The subscription being replaced.
-     * @param newCommitment The new commitment struct (includes gracePeriodSeconds).
+     * @dev Cancels newCommitment.replaces. That field is signed, so the subscriber's
+     *      signature authorizes cancelling exactly that subscription and no other.
+     *      Cursor resets to 0 for the new schedule.
+     * @param newCommitment The new commitment struct; `replaces` names the old subscription.
      * @param signature EIP-712 signature over newCommitment, by newCommitment.subscriber.
      * @return newSubscriptionId The new subscription identifier.
      */
     function updateRoot(
-        bytes32 oldSubscriptionId,
         Commitment calldata newCommitment,
         bytes calldata signature
     ) external nonReentrant returns (bytes32 newSubscriptionId) {
+        bytes32 oldSubscriptionId = newCommitment.replaces;
+        if (oldSubscriptionId == bytes32(0)) revert InvalidReplaces();
+
         // Validate old subscription exists and belongs to the same subscriber
         Subscription storage oldSub = subscriptions[oldSubscriptionId];
         if (oldSub.subscriber == address(0)) revert SubscriptionNotFound();
@@ -1342,18 +1404,10 @@ contract x402SubscriptionRegistry is EIP712, ReentrancyGuard {
             emit SubscriptionCancelled(oldSubscriptionId, block.timestamp);
         }
 
-        // Create new subscription via full commitment verification
+        // Create new subscription via full commitment verification (reverts the
+        // cancellation above if the signature is invalid).
         // Cursor resets to 0; new periodIndex space starts fresh
-        Leaf memory emptyLeaf;
-        bytes32[] memory emptyProof;
-        newSubscriptionId = this.subscribe(
-            newCommitment,
-            signature,
-            emptyLeaf,
-            emptyProof
-        );
-
-        return newSubscriptionId;
+        newSubscriptionId = _subscribe(newCommitment, signature);
     }
 
     // ============ Guardian Functions ============
@@ -1535,7 +1589,8 @@ contract x402SubscriptionRegistry is EIP712, ReentrancyGuard {
             c.start,
             c.expiry,
             c.maxPerPeriod,
-            c.gracePeriodSeconds
+            c.gracePeriodSeconds,
+            c.replaces
         ));
     }
 
@@ -1612,7 +1667,7 @@ The `subscribe` scheme uses the standard V2 facilitator interface. No new normat
 **`/verify` Steps (in order):**
 
 1. **Commitment signature**: Verify the EIP-712 `commitmentSignature` recovers to `commitment.subscriber`
-2. **Terms match requirements**: Confirm `commitment.{asset, payTo, registry, chainId, tierId}` match the corresponding `PaymentRequirements` fields
+2. **Terms match requirements**: Confirm `commitment.{asset, payTo, registry, chainId, tierId}` match the corresponding `PaymentRequirements` fields, and `commitment.replaces` is zero
 3. **Schedule/root recomputation**: Rebuild the Merkle tree from the `schedule` array; confirm computed root equals `commitment.root`
 4. **Allowance path validity**:
    - If `allowanceMethod` is `"eip2612-permit"`: validate the permit signature parameters (owner, spender, value, deadline)
@@ -1624,6 +1679,8 @@ The `subscribe` scheme uses the standard V2 facilitator interface. No new normat
 1. If `allowanceMethod` is `"eip2612-permit"`: execute `permit()` on the token contract
 2. Execute `registry.subscribe(commitment, signature, initialLeaf?, initialProof?)` on-chain
 3. Return `SettlementResponse` with `subscriptionId`, `transaction`, status
+
+**Idempotent retry:** Before submitting, and on a `SubscriptionAlreadyExists` revert, compute `subscriptionId` (§3.4) and read `getSubscription(subscriptionId)`. A stored subscription for this ID is the same signed commitment (the ID binds every field), whether submitted by an earlier attempt or by a third party replaying the client's signature. Treat it as subscribed; if `cursor == 0`, charge period 0 via `chargePeriod()`.
 
 ### 10.3 Action: `cancel`
 
@@ -1643,10 +1700,10 @@ The `subscribe` scheme uses the standard V2 facilitator interface. No new normat
 
 **`/verify` Steps:**
 
-1. **Previous subscription exists**: Confirm `getSubscription(previousSubscriptionId).subscriber != address(0)`
-2. **Subscriber match**: Confirm `previousSubscription.subscriber == newCommitment.subscriber`
-3. **New commitment signature**: Verify the EIP-712 `commitmentSignature` over `newCommitment` recovers to `newCommitment.subscriber`
-4. **Terms match requirements**: Same as `subscribe` action
+1. **Replaced subscription exists**: Confirm `newCommitment.replaces != 0x00…00` and `getSubscription(newCommitment.replaces).subscriber != address(0)`
+2. **Subscriber match**: Confirm the replaced subscription's `subscriber == newCommitment.subscriber`
+3. **New commitment signature**: Verify the EIP-712 `commitmentSignature` over `newCommitment` recovers to `newCommitment.subscriber`. Because `replaces` is a signed field, this signature is the subscriber's authorization to cancel exactly that subscription.
+4. **Terms match requirements**: Same as `subscribe` action, except `replaces` is non-zero
 5. **Schedule/root recomputation**: Same as `subscribe` action
 6. **Allowance path validity**: Same as `subscribe` action
 7. **Simulation**: Dry-run `updateRoot()` call
@@ -1654,7 +1711,7 @@ The `subscribe` scheme uses the standard V2 facilitator interface. No new normat
 **`/settle` Steps:**
 
 1. If gasless allowance: execute permit
-2. Execute `registry.updateRoot(oldSubscriptionId, newCommitment, signature)` on-chain
+2. Execute `registry.updateRoot(newCommitment, signature)` on-chain
 3. Return `SettlementResponse` with new `subscriptionId`
 
 ### 10.5 GET /supported
@@ -1775,8 +1832,9 @@ Clients MUST recompute the Merkle root from the advertised `schedule` array befo
 **Commitment domain separation:**
 
 - The EIP-712 domain binds `{name: "x402SubscriptionRegistry", version: "1", chainId, verifyingContract}`
-- The `subscriptionId` is the commitment struct hash — unique per `(root, subscriber, asset, payTo, registry, chainId, tierId, start, expiry, maxPerPeriod, gracePeriodSeconds)` tuple
+- The `subscriptionId` is the commitment struct hash (§3.4), unique per signed commitment
 - Duplicate commitments are rejected (`SubscriptionAlreadyExists`)
+- `update-root` cancels only `commitment.replaces`, a signed field; a signed commitment cannot be redirected to cancel a different subscription
 
 **Merkle leaf double-hashing:**
 

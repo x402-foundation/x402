@@ -190,10 +190,11 @@ SubscriptionCommitment {
   uint256 expiry;
   uint256 maxPerPeriod;
   uint256 gracePeriodSeconds;
+  bytes32 replaces;  // subscriptionId being replaced (update-root); zero for a new subscription
 }
 ```
 
-The `subscriptionId` is the keccak256 hash of the ABI-encoded commitment struct, ensuring uniqueness and binding all parameters. Note that `gracePeriodSeconds` is client-signed because it extends the chargeable window and thus affects fund exposure.
+The `subscriptionId` uniquely identifies a subscription and is bound to the terms the client authorized. Each network profile defines how it is derived. On EVM it is the EIP-712 struct hash of this commitment, so it binds every field above; see [`scheme_subscribe_evm.md` §3.4](./scheme_subscribe_evm.md#34-subscription-identifier). Note that `gracePeriodSeconds` is client-signed because it extends the chargeable window and thus affects fund exposure.
 
 ### Funding: Standing Allowance
 
@@ -358,7 +359,9 @@ When subscribing, the client sends a `PaymentPayload` with the schedule commitme
       "tierId": "pro",
       "start": "1740672089",
       "expiry": "1772208089",
-      "maxPerPeriod": "5000000"
+      "maxPerPeriod": "5000000",
+      "gracePeriodSeconds": "86400",
+      "replaces": "0x0000000000000000000000000000000000000000000000000000000000000000"
     },
     "commitmentSignature": "0x...",
     "allowanceMethod": "eip2612-permit",
@@ -371,8 +374,8 @@ When subscribing, the client sends a `PaymentPayload` with the schedule commitme
 
 | Field Name | Type | Required | Description |
 |------------|------|----------|-------------|
-| `action` | `string` | Required | `"subscribe"`, `"cancel"`, or `"updateRoot"` |
-| `commitment` | `object` | Required | The EIP-712 commitment struct (for subscribe/updateRoot) |
+| `action` | `string` | Required | `"subscribe"`, `"cancel"`, or `"update-root"` |
+| `commitment` | `object` | Required | The EIP-712 commitment struct (for subscribe/update-root) |
 | `commitmentSignature` | `string` | Required | EIP-712 signature over the commitment |
 | `allowanceMethod` | `string` | Required | `"eip2612-permit"`, `"permit2"`, or `"direct-approve"` |
 | `bundledPermitSignature` | `string` | Conditional | Required if `allowanceMethod` is `"eip2612-permit"` or `"permit2"` |
