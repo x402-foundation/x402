@@ -27,6 +27,19 @@ class TestFindDefaultAsset:
     def test_resolves_v1_legacy_network_name_base(self):
         assert find_default_asset(BASE_USDC["asset"], "base") == BASE_USDC
 
+    def test_finds_usds_on_arbitrum_as_permit2_without_eip2612(self):
+        usds = find_default_asset("0xd74f5255d557944cf7dd0e45ff521520002d5748", "eip155:42161")
+        assert usds is not None
+        assert usds["symbol"] == "USDs"
+        assert usds["name"] == "Sperax USD"
+        assert usds["decimals"] == 18
+        assert usds["asset_transfer_method"] == "permit2"
+        assert "supports_eip2612" not in usds
+
+    def test_keeps_usdc_as_arbitrum_default(self):
+        assert get_default_asset("eip155:42161")["symbol"] == "USDC"
+        assert get_default_asset("eip155:42161", "USDs")["decimals"] == 18
+
     def test_finds_18_decimal_musd_on_mezo_testnet(self):
         assert find_default_asset(MEZO_TESTNET_MUSD["asset"], "eip155:31611") == MEZO_TESTNET_MUSD
         assert MEZO_TESTNET_MUSD["decimals"] == 18
