@@ -13,6 +13,7 @@ import { ExactCasperScheme } from "@x402/casper/exact/server";
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
 import { ExactKeetaScheme } from "@x402/keeta/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
+import { UptoStellarScheme } from "@x402/stellar/upto/server";
 import { ExactTvmScheme } from "@x402/tvm/exact/server";
 import { ExactNearScheme } from "@x402/near/exact/server";
 import { ExactXrplScheme } from "@x402/xrpl/exact/server";
@@ -181,6 +182,7 @@ async function registerFamilySchemes(
       return;
     case "stellar":
       server.register(pattern, new ExactStellarScheme());
+      server.register(pattern, new UptoStellarScheme());
       return;
     case "tvm":
       server.register(pattern, new ExactTvmScheme());

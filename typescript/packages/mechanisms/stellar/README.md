@@ -1,6 +1,6 @@
 # `@x402/stellar` [![npm version](https://img.shields.io/npm/v/%40x402%2Fstellar.svg)](https://www.npmjs.com/package/@x402/stellar)
 
-Stellar implementation of the x402 payment protocol using the **Exact** payment scheme with [Soroban token](https://stellar.org/protocol/sep-41) transfers.
+Stellar implementation of the x402 payment protocol using the **Exact** and **Upto** payment schemes with [Soroban token](https://stellar.org/protocol/sep-41) transfers.
 
 ## Installation
 
@@ -69,6 +69,9 @@ This package provides three main components for handling x402 payments on Stella
 - `@x402/stellar/exact/client` - `ExactStellarScheme` (client)
 - `@x402/stellar/exact/server` - `ExactStellarScheme` (server)
 - `@x402/stellar/exact/facilitator` - `ExactStellarScheme` (facilitator)
+- `@x402/stellar/upto/client` - `UptoStellarScheme` (client)
+- `@x402/stellar/upto/server` - `UptoStellarScheme` (server)
+- `@x402/stellar/upto/facilitator` - `UptoStellarScheme` (facilitator)
 
 ## Supported Networks
 
@@ -123,6 +126,37 @@ const facilitator = new x402Facilitator().register(
 );
 ```
 
+## Upto Scheme
+
+The `upto` scheme charges the actual usage after the request is served, up to a maximum the client authorizes. The client signs one Soroban authorization entry over the terms — recipient, token, maximum, expiration and the facilitator's settlement authority — for the `x402-upto-stellar` settlement contract ([source](../../../../contracts/stellar/upto)). The amount is not part of what the client signs: the facilitator settles `settle(payer, terms, amount)` as the settlement authority, the contract enforces `0 ≤ amount ≤ maximum`, and the Soroban host enforces the signature, the expiration and single use. The payload is `{ authorization, signerAuthorizations? }`.
+
+```typescript
+// Client
+import { UptoStellarScheme } from "@x402/stellar/upto/client";
+const client = new x402Client().register("stellar:*", new UptoStellarScheme(signer));
+
+// Resource server: the price is the maximum; set the actual charge after serving the request
+import { UptoStellarScheme } from "@x402/stellar/upto/server";
+server.register("stellar:*", new UptoStellarScheme());
+setSettlementOverrides(res, { amount: "50%" }); // atomic units, a percentage of the maximum, or "$0.001"
+
+// Facilitator: channel accounts as transaction sources; the settlement authority defaults to the first signer
+import { UptoStellarScheme } from "@x402/stellar/upto/facilitator";
+facilitator.register("stellar:testnet", new UptoStellarScheme([signer], { feeBumpSigner: sponsor }));
+```
+
+- The settlement contract is built in for `stellar:testnet` (`UPTO_TESTNET_DEPLOYMENT`). Other networks need the `contracts` option (by network) on the client and the facilitator.
+- `/supported` advertises `extra: { areFeesSponsored: true, facilitatorAddress }`; the server copies both into the requirements.
+- A zero amount is settled on-chain: it uses up the authorization and moves nothing.
+- A repeat of a settlement returns its result, also shortly after the authorization expires, and a repeat for another amount is refused. These records live in the memory of one process. A settlement that may have been broadcast is answered `settlement_pending` with its hash.
+- The client signs for at most 300 seconds (`maxTimeoutSeconds` option), and only for a `G…` settlement authority. The facilitator accepts a `maxTimeoutSeconds` from 15 to 300 seconds (`maxTimeoutSeconds` option).
+- Contract-account payers pass an `authorizeEntry` signer to the client, which may also return `signerAuthorizations`.
+- `maxTransactionFeeStroops` defaults to 500,000 stroops for `upto` and counts the fee bump's own inclusion fee. Smart-account payers and first payments through a contract token can cost more; size it for the payers you serve.
+- Concurrent settlements need several signers (transaction sources), used in turn.
+- Every refusal has a stable code; `uptoStellarCodes` lists them with a default reason.
+
+> **For the verification rules, the settlement transaction and the security model, see the [Upto Scheme Specification](../../../../specs/schemes/upto/scheme_upto_stellar.md).**
+
 ## Development
 
 ```bash
@@ -150,6 +184,8 @@ FACILITATOR_PRIVATE_KEY=S...      # Facilitator's secret key
 FACILITATOR_ADDRESS=G...          # Facilitator's public address
 RESOURCE_SERVER_ADDRESS=G...      # Resource server's public address
 ```
+
+The `upto` integration test (`test/integrations/upto-stellar.test.ts`) uses the same four accounts and settles on the testnet deployment of the settlement contract. It runs when the variables are set and is skipped otherwise.
 
 ### Stellar Testnet Account Setup
 

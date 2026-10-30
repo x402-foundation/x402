@@ -40,6 +40,7 @@ import {
 } from "@x402/near";
 import { ExactNearScheme } from "@x402/near/exact/client";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
+import { UptoStellarScheme } from "@x402/stellar/upto/client";
 import { ExactTvmScheme } from "@x402/tvm/exact/client";
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactHederaScheme } from "@x402/hedera/exact/client";
@@ -287,6 +288,7 @@ async function main(): Promise<void> {
   if (stellarPrivateKey) {
     const stellarSigner = createEd25519Signer(stellarPrivateKey);
     client.register("stellar:*", new ExactStellarScheme(stellarSigner));
+    client.register("stellar:*", new UptoStellarScheme(stellarSigner));
     console.log(`Initialized Stellar account: ${stellarSigner.address}`);
   }
 

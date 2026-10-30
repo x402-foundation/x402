@@ -23,6 +23,7 @@ import { ExactHederaScheme } from "@x402/hedera/exact/client";
 import { ExactKeetaScheme } from "@x402/keeta/exact/client";
 import { toClientKeetaSigner, type ClientKeetaSigner } from "@x402/keeta";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
+import { UptoStellarScheme } from "@x402/stellar/upto/client";
 import { createEd25519Signer, type Ed25519Signer } from "@x402/stellar";
 import { ExactTvmScheme } from "@x402/tvm/exact/client";
 import { toClientTvmSigner, TVM_PROVIDER_TONAPI, TVM_PROVIDER_TONCENTER } from "@x402/tvm";
@@ -351,10 +352,16 @@ export async function createE2EClient(options: E2EClientOptions = {}): Promise<E
     });
   }
   if (stellarSigner) {
-    schemes.push({
-      network: networkCaip2Pattern("stellar"),
-      client: new ExactStellarScheme(stellarSigner),
-    });
+    schemes.push(
+      {
+        network: networkCaip2Pattern("stellar"),
+        client: new ExactStellarScheme(stellarSigner),
+      },
+      {
+        network: networkCaip2Pattern("stellar"),
+        client: new UptoStellarScheme(stellarSigner),
+      },
+    );
   }
   if (avmSigner) {
     schemes.push({
