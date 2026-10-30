@@ -188,7 +188,9 @@ verify all of the following:
 6. The BOLT11 creation time is not later than the server's validation time plus
    its configured non-negative clock-skew allowance, whose default MUST be 60
    seconds. Equality at this boundary is valid.
-7. The invoice has not expired at the server's validation time.
+7. The invoice has not expired at the server's validation time: that time is not
+   later than the invoice creation time plus its expiry. Equality at this
+   boundary is valid.
 
 The server MUST NOT reuse an invoice across clients or challenges.
 
@@ -507,6 +509,28 @@ from the actual call, leaving the accepted invoice unchanged unless stated.
 | Omit a profile or required parameter, use an unknown profile, or include `x402/payment` or `progressToken` in the metadata list. | `invalid_exact_lnbtc_request_binding`. |
 | With a separately issued invoice binding a metadata value, change that value (including absent to null) and echo the new digest. | `invalid_exact_lnbtc_invoice_request_mismatch`. |
 
+## Strict Invoice Decoding
+
+"Strictly decode" in this document means decoding under the
+[BOLT11 reader requirements](https://github.com/lightning/bolts/blob/master/11-payment-encoding.md#requirements),
+including:
+
+- A `p`, `h`, `s`, or `n` field whose data length is not 52, 52, 52, or 53 words
+  MUST cause rejection. BOLT11's "fields which must be ignored" example predates
+  this reader requirement; the requirement applies.
+- An invoice without exactly one `p` field and exactly one `s` field MUST be
+  rejected, as MUST an invoice with more than one `n` or `x` field.
+- If an `n` field is present, the signature MUST verify against it and MUST be
+  low-S. Otherwise the signing key is recovered, and both high-S and low-S
+  signatures are accepted.
+- Unknown fields are skipped.
+
+Feature bits govern whether a payer can pay an invoice; BOLT11's rule to fail on
+unknown even feature bits applies to the payer. A client MAY refuse such an
+invoice before paying. Servers and facilitators MUST NOT reject an accepted
+invoice because of its feature bits: the payment already completed, and the
+payer node enforced the features it required.
+
 ## Client Payment Construction
 
 Before paying, a client MUST:
@@ -530,7 +554,9 @@ Before paying, a client MUST:
 8. Require the invoice expiry to equal `maxTimeoutSeconds` and its creation time to
    be no later than the client's validation time plus its configured non-negative
    clock-skew allowance, whose default MUST be 60 seconds.
-9. Require the invoice to be unexpired at the client's validation time.
+9. Require the invoice to be unexpired at the client's validation time: that time
+   is not later than the invoice creation time plus its expiry. Equality at this
+   boundary is valid.
 10. Ask its payer adapter to pay the invoice on the selected network.
 
 The payer result MUST report `paid` and identify the same invoice, payment hash,
@@ -542,7 +568,11 @@ construct a `PaymentPayload` if a check fails.
 
 ## Facilitator Validation
 
-The `upfront` flow does not invoke facilitator `/verify`. The facilitator's
+The `upfront` flow does not invoke facilitator `/verify`. A facilitator that
+receives `/verify` for this scheme MUST return `isValid: false` with
+`invalid_exact_lnbtc_payment_flow` without validating or recording the proof,
+because a positive result could let a resource server process the request
+before the replay insert. The facilitator's
 `/settle` endpoint MUST treat the payload and echoed requirements as untrusted and
 perform the following checks in order before it records the payment hash:
 
@@ -618,6 +648,11 @@ that case, the facilitator MUST return `duplicate_settlement`. The resource serv
 MUST NOT process the protected request until the insert succeeds. The same hash
 on different networks produces different keys.
 
+If the replay store cannot complete the insert (for example, it is unreachable),
+the facilitator MUST NOT report success and MUST return
+`exact_lnbtc_replay_store_unavailable`. The proof is not consumed: the client may
+present it again, subject to the expiry policy.
+
 The replay entry MUST remain until at least one hour after
 `invoice_end + skew`. It MUST NOT be removed while the invoice can still pass
 validation.
@@ -654,7 +689,7 @@ MUST preserve the validation reason when validation fails.
 | `invalid_exact_lnbtc_request_binding` | A request hash, profile, or parameter object is missing or malformed, or a profile is unsupported. |
 | `invalid_exact_lnbtc_request_mismatch` | The accepted request hash, profile, or parameters differ from the requirement. |
 | `invalid_exact_lnbtc_asset_transfer_method` | Either explicit asset transfer method is not `bolt11`. |
-| `invalid_exact_lnbtc_payment_flow` | Either payment flow is missing or not `upfront`. |
+| `invalid_exact_lnbtc_payment_flow` | Either payment flow is missing or not `upfront`, or `/verify` was called for the `upfront` flow. |
 | `invalid_exact_lnbtc_invoice_missing` | Either required invoice field is absent. |
 | `invalid_exact_lnbtc_invoice_decode_failed` | Strict BOLT11 decoding, signature validation, or integral-msat validation failed. |
 | `invalid_exact_lnbtc_invoice_description` | The invoice does not contain exactly one description hash or contains an inline description. |
@@ -666,6 +701,7 @@ MUST preserve the validation reason when validation fails.
 | `invalid_exact_lnbtc_invoice_expiry_mismatch` | BOLT11 expiry does not equal `maxTimeoutSeconds`. |
 | `invalid_exact_lnbtc_invoice_created_in_future` | BOLT11 creation time exceeds validation time plus the clock-skew allowance. |
 | `duplicate_settlement` | The network and payment-hash pair is already used or lost an atomic settlement race. |
+| `exact_lnbtc_replay_store_unavailable` | The replay store could not record the payment hash; the proof was not consumed. |
 | `invalid_exact_lnbtc_preimage_missing` | `payload.preimage` is absent. |
 | `invalid_exact_lnbtc_preimage_malformed` | Preimage contains non-lowercase-hex characters. |
 | `invalid_exact_lnbtc_preimage_length` | Decoded preimage is not exactly 32 bytes. |
