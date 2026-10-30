@@ -15,7 +15,8 @@ pytest.importorskip("flask")
 from flask import Flask, redirect
 from werkzeug.datastructures import Headers, ImmutableMultiDict
 
-from x402 import x402FacilitatorSync, x402ResourceServerSync
+from x402 import x402ClientSync, x402FacilitatorSync, x402ResourceServerSync
+from x402.http import x402HTTPClientSync
 from x402.http.facilitator_client_base import FacilitatorResponseError
 from x402.http.middleware.flask import (
     FlaskAdapter,
@@ -41,6 +42,7 @@ from x402.schemas.hooks import (
 
 from ....mocks import (
     CashFacilitatorClientSync,
+    CashSchemeNetworkClient,
     CashSchemeNetworkFacilitator,
     CashSchemeNetworkServer,
 )
@@ -1501,3 +1503,152 @@ class TestLiteralRoutePercentEncodedSeparatorBypass:
 
     def test_unrelated_path_is_not_gated(self, client) -> None:
         assert client.get("/health").status_code == 404
+
+
+class TestPaymentCorsExposeHeaders:
+    """Browsers can only read PAYMENT-REQUIRED / PAYMENT-RESPONSE cross-origin when
+    the response names them on Access-Control-Expose-Headers.
+
+    PaymentMiddleware replaces ``app.wsgi_app``, so the 402 it builds never reaches
+    Flask's ``after_request`` hooks (which is where flask-cors writes its headers).
+    The 402 must therefore carry the expose list itself, and on paid responses an
+    expose list written by an ``after_request`` hook must be merged, not replaced.
+    """
+
+    ORIGIN = "https://app.example"
+
+    @staticmethod
+    def _routes() -> dict[str, RouteConfig]:
+        option = PaymentOption(
+            scheme="cash",
+            pay_to="merchant@example.com",
+            price="$0.10",
+            network="x402:cash",
+        )
+        return {"GET /api/paid": RouteConfig(accepts=option)}
+
+    @staticmethod
+    def _cash_server() -> x402ResourceServerSync:
+        facilitator = x402FacilitatorSync().register(
+            ["x402:cash"],
+            CashSchemeNetworkFacilitator(),
+        )
+        server = x402ResourceServerSync(CashFacilitatorClientSync(facilitator))
+        server.register("x402:cash", CashSchemeNetworkServer())
+        server.initialize()
+        return server
+
+    def _app(self, *, app_cors_hook: bool = False, outer_wsgi_cors: bool = False) -> Flask:
+        app = Flask(__name__)
+
+        @app.route("/api/paid")
+        def paid() -> dict[str, str]:
+            return {"ok": "paid"}
+
+        if app_cors_hook:
+            # What flask-cors does: write CORS headers from an after_request hook.
+            @app.after_request
+            def add_cors(response):
+                response.headers["Access-Control-Allow-Origin"] = self.ORIGIN
+                response.headers["Access-Control-Expose-Headers"] = "X-Request-Id, payment-required"
+                response.headers.add("Access-Control-Expose-Headers", "X-Trace")
+                return response
+
+        PaymentMiddleware(app, self._routes(), self._cash_server())
+
+        if outer_wsgi_cors:
+            # WSGI-level CORS wrapped after PaymentMiddleware, so it also sees the 402.
+            inner = app.wsgi_app
+            origin = self.ORIGIN
+
+            def cors_wsgi(environ, start_response):
+                def start(status, headers, exc_info=None):
+                    if not any(k.lower() == "access-control-allow-origin" for k, _ in headers):
+                        headers = [*headers, ("Access-Control-Allow-Origin", origin)]
+                    return start_response(status, headers, exc_info)
+
+                return inner(environ, start)
+
+            app.wsgi_app = cors_wsgi  # type: ignore[method-assign]
+        return app
+
+    @staticmethod
+    def _payment_headers(response) -> dict[str, str]:
+        payer = x402HTTPClientSync(
+            x402ClientSync()
+            .register("x402:cash", CashSchemeNetworkClient("John"))
+            .set_spend_controls(False)
+        )
+        payment_required = payer.get_payment_required_response(
+            lambda name: response.headers.get(name), response.get_json()
+        )
+        payload = payer.create_payment_payload(payment_required)
+        return payer.encode_payment_signature_header(payload)
+
+    def test_402_exposes_payment_headers_without_after_request_hooks(self) -> None:
+        client = self._app(app_cors_hook=True).test_client()
+        response = client.get("/api/paid", headers={"Origin": self.ORIGIN})
+
+        assert response.status_code == 402
+        assert response.headers.getlist("Access-Control-Expose-Headers") == [
+            "PAYMENT-REQUIRED, PAYMENT-RESPONSE"
+        ]
+        # after_request hooks (flask-cors) never ran, and the SDK does not set it.
+        assert "Access-Control-Allow-Origin" not in response.headers
+
+    def test_402_behind_outer_wsgi_cors_is_readable(self) -> None:
+        client = self._app(outer_wsgi_cors=True).test_client()
+        response = client.get("/api/paid", headers={"Origin": self.ORIGIN})
+
+        assert response.status_code == 402
+        assert response.headers.getlist("Access-Control-Allow-Origin") == [self.ORIGIN]
+        assert response.headers.getlist("Access-Control-Expose-Headers") == [
+            "PAYMENT-REQUIRED, PAYMENT-RESPONSE"
+        ]
+
+    def test_settled_response_exposes_payment_headers(self) -> None:
+        client = self._app().test_client()
+        unpaid = client.get("/api/paid", headers={"Origin": self.ORIGIN})
+        response = client.get(
+            "/api/paid",
+            headers={"Origin": self.ORIGIN, **self._payment_headers(unpaid)},
+        )
+
+        assert response.status_code == 200
+        assert response.headers.get("PAYMENT-RESPONSE")
+        assert response.headers.getlist("Access-Control-Expose-Headers") == [
+            "PAYMENT-REQUIRED, PAYMENT-RESPONSE"
+        ]
+        assert "Access-Control-Allow-Origin" not in response.headers
+
+    def test_settled_response_merges_after_request_expose_list(self) -> None:
+        client = self._app(app_cors_hook=True).test_client()
+        unpaid = client.get("/api/paid", headers={"Origin": self.ORIGIN})
+        response = client.get(
+            "/api/paid",
+            headers={"Origin": self.ORIGIN, **self._payment_headers(unpaid)},
+        )
+
+        assert response.status_code == 200
+        assert response.headers.get("PAYMENT-RESPONSE")
+        assert response.headers.getlist("Access-Control-Expose-Headers") == [
+            "X-Request-Id, payment-required, X-Trace, PAYMENT-RESPONSE"
+        ]
+        assert response.headers.getlist("Access-Control-Allow-Origin") == [self.ORIGIN]
+
+    def test_flask_cors_hook_and_outer_wsgi_cors_send_one_allow_origin(self) -> None:
+        client = self._app(app_cors_hook=True, outer_wsgi_cors=True).test_client()
+        unpaid = client.get("/api/paid", headers={"Origin": self.ORIGIN})
+        paid = client.get(
+            "/api/paid",
+            headers={"Origin": self.ORIGIN, **self._payment_headers(unpaid)},
+        )
+
+        for response in (unpaid, paid):
+            assert response.headers.getlist("Access-Control-Allow-Origin") == [self.ORIGIN]
+        assert unpaid.headers.getlist("Access-Control-Expose-Headers") == [
+            "PAYMENT-REQUIRED, PAYMENT-RESPONSE"
+        ]
+        assert paid.headers.getlist("Access-Control-Expose-Headers") == [
+            "X-Request-Id, payment-required, X-Trace, PAYMENT-RESPONSE"
+        ]
