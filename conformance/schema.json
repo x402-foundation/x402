@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "x402 conformance vector",
+  "description": "A single x402 conformance vector: a normative requirement plus the request that exercises it.",
+  "type": "object",
+  "required": ["id", "title", "category", "requirement", "method", "request", "normative", "expected"],
+  "additionalProperties": true,
+  "properties": {
+    "id": { "type": "string", "pattern": "^X4-[0-9]+$" },
+    "title": { "type": "string" },
+    "category": { "type": "string" },
+    "requirement": {
+      "type": "string",
+      "description": "The normative conformance requirement this vector exercises."
+    },
+    "method": {
+      "type": "string",
+      "enum": ["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"]
+    },
+    "request": {
+      "type": "object",
+      "description": "The request that exercises the requirement.",
+      "properties": {
+        "path": { "type": "string" },
+        "headers": { "type": "object" },
+        "body": {}
+      }
+    },
+    "owasp_asi": { "type": "string" },
+    "severity": { "type": "string" },
+    "impact": { "type": "string" },
+    "normative": { "type": "string", "enum": ["MUST", "SHOULD"] },
+    "expected": {
+      "type": "string",
+      "description": "What a conformant implementation does; a divergent response is a finding."
+    },
+    "source": { "type": "string" }
+  }
+}

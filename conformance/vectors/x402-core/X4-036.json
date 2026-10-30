@@ -1,0 +1,22 @@
+{
+  "id": "X4-036",
+  "title": "Max uint256 Overflow Attack",
+  "category": "protocol_abuse",
+  "requirement": "HC-26: Servers must validate amounts fit within uint256 and reject overflows",
+  "method": "GET",
+  "request": {
+    "overflow_variants": [
+      "uint256_max",
+      "uint256_max_plus_one",
+      "uint256_double",
+      "negative_overflow",
+      "huge_decimal"
+    ]
+  },
+  "owasp_asi": "ASI03",
+  "severity": "critical",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-036"
+}

@@ -1,0 +1,16 @@
+{
+  "id": "X4-007",
+  "title": "Session Token Security Check",
+  "category": "session_security",
+  "requirement": "Harm Test: session tokens must not leak sensitive data",
+  "method": "GET",
+  "request": {
+    "authorization": "fake_payment_auth"
+  },
+  "owasp_asi": "ASI03",
+  "severity": "medium",
+  "impact": "session_hijack",
+  "normative": "SHOULD",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-007"
+}
