@@ -428,6 +428,18 @@ When a facilitator receives a `PaymentPayload` containing the `bazaar` extension
 
 How a facilitator stores, indexes, and exposes discovered resources is an implementation detail. Facilitators may choose to catalog resources in a database, expose them via a discovery API, or process them in any manner they see fit.
 
+Discovery metadata **MUST NOT** affect payment verification or settlement.
+Cataloging and payment are independent: a field that fails a validation rule, a
+field that has no rule (such as `description`), and a `bazaar` block rejected in
+full are all cataloging outcomes, and the payment is verified and settled on its
+own terms regardless. Facilitators **MUST NOT** return a payment error for a
+metadata problem.
+
+The reason is that the seller cannot tell the difference. A verify-side
+rejection, an invalid signature, and an unfunded payer all surface as the same
+fast `402`, so a resource refused over its metadata looks to its operator like an
+outage with no cause — and to a buyer like a broken endpoint.
+
 ### Optional Discovery Endpoints
 
 Facilitators that implement Bazaar discovery may expose discovery APIs to let clients browse and search cataloged resources.
@@ -515,6 +527,12 @@ EXTENSION-RESPONSES: eyJiYXphYXIiOnsic3RhdHVzIjoicmVqZWN0ZWQiLCJyZWplY3RlZFJlYXN
 ```
 *(base64 of `{"bazaar":{"status":"rejected","rejectedReason":"info failed schema validation"}}`)*
 
+
+A facilitator that rejects discovery info **SHOULD** emit this header with
+`status: "rejected"` and a `rejectedReason`. Without it, rejection is silent:
+the resource never appears in the catalog and its operator has no signal to act
+on. This is the only place in the flow where a cataloging failure can be
+reported, because per the rule above it must not be reported as a payment error.
 
 ---
 
