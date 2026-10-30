@@ -460,7 +460,7 @@ associations for future HTS tokens.
 The integration suite supports an env-gated live Hedera test in
 `test/integrations/exact-hedera.test.ts`.
 
-- Create or update `typescript/packages/mechanisms/hedera/.env.test`.
+- Create or update `typescript/packages/mechanisms/hedera/.env.local`.
 - This live suite currently assumes **ECDSA** private keys for both client and facilitator.
 - Use `0x`-prefixed ECDSA key strings in:
   - `HEDERA_CLIENT_PRIVATE_KEY`
@@ -522,3 +522,30 @@ Run it alone with:
 ```bash
 pnpm exec vitest run --config vitest.integration.config.ts test/integrations/exact-hedera.transferExecutor.test.ts
 ```
+
+### transferExecutor corner cases
+
+Two env-gated live suites run the facilitator against test-only executors on testnet. They are
+**not** reference executors and not representative of a real one (see
+[`test/integrations/mock-executor/README.md`](test/integrations/mock-executor/README.md)).
+
+- `exact-hedera.transferExecutor.cornerCases.test.ts` uses `MockTransferExecutor`, whose
+  `authorization` picks a misbehaviour: a reverting, expired, mismatched or consumed
+  authorization, an executor that burns gas, a SUCCESS receipt that moves nothing, an over- or
+  underpayment, an extra credit, a log that names the facilitator, and a replay. It needs
+  `HEDERA_FACILITATOR_*`, `HEDERA_RESOURCE_SERVER_ACCOUNT_ID` and `HEDERA_TE_MOCK_EXECUTOR_ID`.
+- `exact-hedera.transferExecutor.signedOwner.test.ts` uses `SignedOwnerExecutor`, which checks an
+  owner signature through HAS `isAuthorized` and spends a HIP-336 allowance: a valid signature, a
+  wrong key, a signature over another amount, an expired authorization, a missing allowance, and a
+  key rotation. It also needs `HEDERA_TE_SIGNED_EXECUTOR_ID`.
+- `exact-hedera.transferExecutor.hts.test.ts` pays an HTS fungible token through
+  `MockTransferExecutor`: it creates a token and a payee on each run and funds the mock with it. It
+  covers a token settlement and its replay, an over- and an underpayment judged on the token
+  transfer lists, a token with a custom fee, an asset that is not a token, and a payer holding too
+  little. It needs the same variables as the corner cases.
+
+Copy `.env.example` to `.env.local` and follow the mock-executor README to deploy the contracts.
+
+A live run with `RECORD_FIXTURES=1` records the Mirror Node responses and outcomes of each case to
+`test/fixtures/transferExecutor`. `test/unit/transferExecutor.recorded.test.ts` replays them, so the
+findings stay under test in the unit suite, and so in CI, without a network or credentials.

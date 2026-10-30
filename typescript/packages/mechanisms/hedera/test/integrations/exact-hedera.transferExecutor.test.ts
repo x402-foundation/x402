@@ -2,7 +2,7 @@
  * Env-gated live `transferExecutor` settlement on Hedera testnet.
  *
  * The suite is skipped unless every required variable below is set, in the
- * shell or in `.env.test` (see README "Live Integration Testing"). When it is
+ * shell or in `.env.local` (see README "Live Integration Testing"). When it is
  * skipped, no Hedera client is built and no request is sent.
  *
  * Required:
@@ -22,7 +22,7 @@
  *
  * On success it prints the Hashscan link of the settlement transaction.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { x402Client } from "@x402/core/client";
 import { x402Facilitator } from "@x402/core/facilitator";
 import { x402ResourceServer, FacilitatorClient } from "@x402/core/server";
@@ -55,6 +55,9 @@ import { ExactHederaScheme as ExactHederaFacilitator } from "../../src/exact/fac
 import { HBAR_ASSET_ID } from "../../src/constants";
 
 const DEFAULT_GAS_LIMIT = 400_000;
+
+// A live settlement waits for consensus and mirror node ingestion, far past vitest's 5s default.
+vi.setConfig({ testTimeout: 120_000 });
 
 class HederaFacilitatorClient implements FacilitatorClient {
   /**
