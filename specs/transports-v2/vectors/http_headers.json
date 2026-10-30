@@ -1,0 +1,240 @@
+{
+  "fixture_version": 1,
+  "spec": "specs/transports-v2/http.md",
+  "decode": [
+    {
+      "id": "spec-payment-required",
+      "note": "The PAYMENT-REQUIRED example in http.md (no padding).",
+      "headers": ["PAYMENT-REQUIRED"],
+      "value": "eyJ4NDAyVmVyc2lvbiI6MiwiZXJyb3IiOiJQQVlNRU5ULVNJR05BVFVSRSBoZWFkZXIgaXMgcmVxdWlyZWQiLCJyZXNvdXJjZSI6eyJ1cmwiOiJodHRwczovL2FwaS5leGFtcGxlLmNvbS9wcmVtaXVtLWRhdGEiLCJkZXNjcmlwdGlvbiI6IkFjY2VzcyB0byBwcmVtaXVtIG1hcmtldCBkYXRhIiwibWltZVR5cGUiOiJhcHBsaWNhdGlvbi9qc29uIn0sImFjY2VwdHMiOlt7InNjaGVtZSI6ImV4YWN0IiwibmV0d29yayI6ImVpcDE1NTo4NDUzMiIsImFtb3VudCI6IjEwMDAwIiwiYXNzZXQiOiIweDAzNkNiRDUzODQyYzU0MjY2MzRlNzkyOTU0MWVDMjMxOGYzZENGN2UiLCJwYXlUbyI6IjB4MjA5NjkzQmM2YWZjMEM1MzI4YkEzNkZhRjAzQzUxNEVGMzEyMjg3QyIsIm1heFRpbWVvdXRTZWNvbmRzIjo2MCwiZXh0cmEiOnsibmFtZSI6IlVTREMiLCJ2ZXJzaW9uIjoiMiJ9fV19",
+      "expect": {
+        "json": {
+          "x402Version": 2,
+          "error": "PAYMENT-SIGNATURE header is required",
+          "resource": {
+            "url": "https://api.example.com/premium-data",
+            "description": "Access to premium market data",
+            "mimeType": "application/json"
+          },
+          "accepts": [
+            {
+              "scheme": "exact",
+              "network": "eip155:84532",
+              "amount": "10000",
+              "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+              "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+              "maxTimeoutSeconds": 60,
+              "extra": {
+                "name": "USDC",
+                "version": "2"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "spec-payment-signature",
+      "note": "The PAYMENT-SIGNATURE example in http.md (one '=' of padding).",
+      "headers": ["PAYMENT-SIGNATURE"],
+      "value": "eyJ4NDAyVmVyc2lvbiI6MiwicmVzb3VyY2UiOnsidXJsIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS5jb20vcHJlbWl1bS1kYXRhIiwiZGVzY3JpcHRpb24iOiJBY2Nlc3MgdG8gcHJlbWl1bSBtYXJrZXQgZGF0YSIsIm1pbWVUeXBlIjoiYXBwbGljYXRpb24vanNvbiJ9LCJhY2NlcHRlZCI6eyJzY2hlbWUiOiJleGFjdCIsIm5ldHdvcmsiOiJlaXAxNTU6ODQ1MzIiLCJhbW91bnQiOiIxMDAwMCIsImFzc2V0IjoiMHgwMzZDYkQ1Mzg0MmM1NDI2NjM0ZTc5Mjk1NDFlQzIzMThmM2RDRjdlIiwicGF5VG8iOiIweDIwOTY5M0JjNmFmYzBDNTMyOGJBMzZGYUYwM0M1MTRFRjMxMjI4N0MiLCJtYXhUaW1lb3V0U2Vjb25kcyI6NjAsImV4dHJhIjp7Im5hbWUiOiJVU0RDIiwidmVyc2lvbiI6IjIifX0sInBheWxvYWQiOnsic2lnbmF0dXJlIjoiMHgyZDZhNzU4OGQ2YWNjYTUwNWNiZjBkOWE0YTIyN2UwYzUyYzZjMzQwMDhjOGU4OTg2YTEyODMyNTk3NjQxNzM2MDhhMmNlNjQ5NjY0MmUzNzdkNmRhOGRiYmY1ODM2ZTliZDE1MDkyZjllY2FiMDVkZWQzZDYyOTNhZjE0OGI1NzFjIiwiYXV0aG9yaXphdGlvbiI6eyJmcm9tIjoiMHg4NTdiMDY1MTlFOTFlM0E1NDUzODc5MWJEYmIwRTIyMzczZTM2YjY2IiwidG8iOiIweDIwOTY5M0JjNmFmYzBDNTMyOGJBMzZGYUYwM0M1MTRFRjMxMjI4N0MiLCJ2YWx1ZSI6IjEwMDAwIiwidmFsaWRBZnRlciI6IjE3NDA2NzIwODkiLCJ2YWxpZEJlZm9yZSI6IjE3NDA2NzIxNTQiLCJub25jZSI6IjB4ZjM3NDY2MTNjMmQ5MjBiNWZkYWJjMDg1NmYyYWViMmQ0Zjg4ZWU2MDM3YjhjYzVkMDRhNzFhNDQ2MmYxMzQ4MCJ9fX0=",
+      "expect": {
+        "json": {
+          "x402Version": 2,
+          "resource": {
+            "url": "https://api.example.com/premium-data",
+            "description": "Access to premium market data",
+            "mimeType": "application/json"
+          },
+          "accepted": {
+            "scheme": "exact",
+            "network": "eip155:84532",
+            "amount": "10000",
+            "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+            "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+            "maxTimeoutSeconds": 60,
+            "extra": {
+              "name": "USDC",
+              "version": "2"
+            }
+          },
+          "payload": {
+            "signature": "0x2d6a7588d6acca505cbf0d9a4a227e0c52c6c34008c8e8986a1283259764173608a2ce6496642e377d6da8dbbf5836e9bd15092f9ecab05ded3d6293af148b571c",
+            "authorization": {
+              "from": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
+              "to": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+              "value": "10000",
+              "validAfter": "1740672089",
+              "validBefore": "1740672154",
+              "nonce": "0xf3746613c2d920b5fdabc0856f2aeb2d4f88ee6037b8cc5d04a71a4462f13480"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "spec-payment-response-success",
+      "note": "The successful PAYMENT-RESPONSE example in http.md.",
+      "headers": ["PAYMENT-RESPONSE"],
+      "value": "eyJzdWNjZXNzIjp0cnVlLCJ0cmFuc2FjdGlvbiI6IjB4MTIzNDU2Nzg5MGFiY2RlZjEyMzQ1Njc4OTBhYmNkZWYxMjM0NTY3ODkwYWJjZGVmMTIzNDU2Nzg5MGFiY2RlZiIsIm5ldHdvcmsiOiJlaXAxNTU6ODQ1MzIiLCJwYXllciI6IjB4ODU3YjA2NTE5RTkxZTNBNTQ1Mzg3OTFiRGJiMEUyMjM3M2UzNmI2NiJ9",
+      "expect": {
+        "json": {
+          "success": true,
+          "transaction": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+          "network": "eip155:84532",
+          "payer": "0x857b06519E91e3A54538791bDbb0E22373e36b66"
+        }
+      }
+    },
+    {
+      "id": "spec-payment-response-failure",
+      "note": "The failed PAYMENT-RESPONSE example in http.md.",
+      "headers": ["PAYMENT-RESPONSE"],
+      "value": "eyJzdWNjZXNzIjpmYWxzZSwiZXJyb3JSZWFzb24iOiJpbnN1ZmZpY2llbnRfZnVuZHMiLCJ0cmFuc2FjdGlvbiI6IiIsIm5ldHdvcmsiOiJlaXAxNTU6ODQ1MzIiLCJwYXllciI6IjB4ODU3YjA2NTE5RTkxZTNBNTQ1Mzg3OTFiRGJiMEUyMjM3M2UzNmI2NiJ9",
+      "expect": {
+        "json": {
+          "success": false,
+          "errorReason": "insufficient_funds",
+          "transaction": "",
+          "network": "eip155:84532",
+          "payer": "0x857b06519E91e3A54538791bDbb0E22373e36b66"
+        }
+      }
+    },
+    {
+      "id": "utf8-text",
+      "note": "The PAYMENT-REQUIRED example with a non-ASCII description in raw UTF-8 (2-, 3- and 4-byte sequences). JSON text exchanged between systems that are not part of a closed ecosystem MUST be UTF-8 (RFC 8259 section 8.1).",
+      "headers": ["PAYMENT-REQUIRED"],
+      "value": "eyJ4NDAyVmVyc2lvbiI6MiwiZXJyb3IiOiJQQVlNRU5ULVNJR05BVFVSRSBoZWFkZXIgaXMgcmVxdWlyZWQiLCJyZXNvdXJjZSI6eyJ1cmwiOiJodHRwczovL2FwaS5leGFtcGxlLmNvbS9wcmVtaXVtLWRhdGEiLCJkZXNjcmlwdGlvbiI6IkRvbm7DqWVzIGRlIG1hcmNow6kg4oCUIOW4guWcuuaVsOaNriDwn5OIIiwibWltZVR5cGUiOiJhcHBsaWNhdGlvbi9qc29uIn0sImFjY2VwdHMiOlt7InNjaGVtZSI6ImV4YWN0IiwibmV0d29yayI6ImVpcDE1NTo4NDUzMiIsImFtb3VudCI6IjEwMDAwIiwiYXNzZXQiOiIweDAzNkNiRDUzODQyYzU0MjY2MzRlNzkyOTU0MWVDMjMxOGYzZENGN2UiLCJwYXlUbyI6IjB4MjA5NjkzQmM2YWZjMEM1MzI4YkEzNkZhRjAzQzUxNEVGMzEyMjg3QyIsIm1heFRpbWVvdXRTZWNvbmRzIjo2MCwiZXh0cmEiOnsibmFtZSI6IlVTREMiLCJ2ZXJzaW9uIjoiMiJ9fV19",
+      "expect": {
+        "json": {
+          "x402Version": 2,
+          "error": "PAYMENT-SIGNATURE header is required",
+          "resource": {
+            "url": "https://api.example.com/premium-data",
+            "description": "Données de marché — 市场数据 📈",
+            "mimeType": "application/json"
+          },
+          "accepts": [
+            {
+              "scheme": "exact",
+              "network": "eip155:84532",
+              "amount": "10000",
+              "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+              "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+              "maxTimeoutSeconds": 60,
+              "extra": {
+                "name": "USDC",
+                "version": "2"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "json-whitespace",
+      "note": "The successful PAYMENT-RESPONSE example, indented, with whitespace before and after the object (RFC 8259 section 2).",
+      "headers": ["PAYMENT-RESPONSE"],
+      "value": "CiB7CiAgInN1Y2Nlc3MiOiB0cnVlLAogICJ0cmFuc2FjdGlvbiI6ICIweDEyMzQ1Njc4OTBhYmNkZWYxMjM0NTY3ODkwYWJjZGVmMTIzNDU2Nzg5MGFiY2RlZjEyMzQ1Njc4OTBhYmNkZWYiLAogICJuZXR3b3JrIjogImVpcDE1NTo4NDUzMiIsCiAgInBheWVyIjogIjB4ODU3YjA2NTE5RTkxZTNBNTQ1Mzg3OTFiRGJiMEUyMjM3M2UzNmI2NiIKfQo=",
+      "expect": {
+        "json": {
+          "success": true,
+          "transaction": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+          "network": "eip155:84532",
+          "payer": "0x857b06519E91e3A54538791bDbb0E22373e36b66"
+        }
+      }
+    },
+    {
+      "id": "json-null",
+      "note": "JSON null.",
+      "headers": ["PAYMENT-REQUIRED", "PAYMENT-SIGNATURE", "PAYMENT-RESPONSE"],
+      "value": "bnVsbA==",
+      "expect": {
+        "reject": true
+      }
+    },
+    {
+      "id": "json-array",
+      "note": "JSON [].",
+      "headers": ["PAYMENT-REQUIRED", "PAYMENT-SIGNATURE", "PAYMENT-RESPONSE"],
+      "value": "W10=",
+      "expect": {
+        "reject": true
+      }
+    },
+    {
+      "id": "json-string",
+      "note": "JSON \"x402\".",
+      "headers": ["PAYMENT-REQUIRED", "PAYMENT-SIGNATURE", "PAYMENT-RESPONSE"],
+      "value": "Ing0MDIi",
+      "expect": {
+        "reject": true
+      }
+    },
+    {
+      "id": "json-number",
+      "note": "JSON 2.",
+      "headers": ["PAYMENT-REQUIRED", "PAYMENT-SIGNATURE", "PAYMENT-RESPONSE"],
+      "value": "Mg==",
+      "expect": {
+        "reject": true
+      }
+    },
+    {
+      "id": "json-true",
+      "note": "JSON true.",
+      "headers": ["PAYMENT-REQUIRED", "PAYMENT-SIGNATURE", "PAYMENT-RESPONSE"],
+      "value": "dHJ1ZQ==",
+      "expect": {
+        "reject": true
+      }
+    },
+    {
+      "id": "json-false",
+      "note": "JSON false.",
+      "headers": ["PAYMENT-REQUIRED", "PAYMENT-SIGNATURE", "PAYMENT-RESPONSE"],
+      "value": "ZmFsc2U=",
+      "expect": {
+        "reject": true
+      }
+    },
+    {
+      "id": "json-truncated",
+      "note": "Truncated JSON: {\"x402Version\":2,",
+      "headers": ["PAYMENT-REQUIRED", "PAYMENT-SIGNATURE", "PAYMENT-RESPONSE"],
+      "value": "eyJ4NDAyVmVyc2lvbiI6Miw=",
+      "expect": {
+        "reject": true
+      }
+    },
+    {
+      "id": "alphabet-space",
+      "note": "The PAYMENT-SIGNATURE example with a space after character 40. Skipping the space would recover the example.",
+      "headers": ["PAYMENT-SIGNATURE"],
+      "value": "eyJ4NDAyVmVyc2lvbiI6MiwicmVzb3VyY2UiOnsi dXJsIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS5jb20vcHJlbWl1bS1kYXRhIiwiZGVzY3JpcHRpb24iOiJBY2Nlc3MgdG8gcHJlbWl1bSBtYXJrZXQgZGF0YSIsIm1pbWVUeXBlIjoiYXBwbGljYXRpb24vanNvbiJ9LCJhY2NlcHRlZCI6eyJzY2hlbWUiOiJleGFjdCIsIm5ldHdvcmsiOiJlaXAxNTU6ODQ1MzIiLCJhbW91bnQiOiIxMDAwMCIsImFzc2V0IjoiMHgwMzZDYkQ1Mzg0MmM1NDI2NjM0ZTc5Mjk1NDFlQzIzMThmM2RDRjdlIiwicGF5VG8iOiIweDIwOTY5M0JjNmFmYzBDNTMyOGJBMzZGYUYwM0M1MTRFRjMxMjI4N0MiLCJtYXhUaW1lb3V0U2Vjb25kcyI6NjAsImV4dHJhIjp7Im5hbWUiOiJVU0RDIiwidmVyc2lvbiI6IjIifX0sInBheWxvYWQiOnsic2lnbmF0dXJlIjoiMHgyZDZhNzU4OGQ2YWNjYTUwNWNiZjBkOWE0YTIyN2UwYzUyYzZjMzQwMDhjOGU4OTg2YTEyODMyNTk3NjQxNzM2MDhhMmNlNjQ5NjY0MmUzNzdkNmRhOGRiYmY1ODM2ZTliZDE1MDkyZjllY2FiMDVkZWQzZDYyOTNhZjE0OGI1NzFjIiwiYXV0aG9yaXphdGlvbiI6eyJmcm9tIjoiMHg4NTdiMDY1MTlFOTFlM0E1NDUzODc5MWJEYmIwRTIyMzczZTM2YjY2IiwidG8iOiIweDIwOTY5M0JjNmFmYzBDNTMyOGJBMzZGYUYwM0M1MTRFRjMxMjI4N0MiLCJ2YWx1ZSI6IjEwMDAwIiwidmFsaWRBZnRlciI6IjE3NDA2NzIwODkiLCJ2YWxpZEJlZm9yZSI6IjE3NDA2NzIxNTQiLCJub25jZSI6IjB4ZjM3NDY2MTNjMmQ5MjBiNWZkYWJjMDg1NmYyYWViMmQ0Zjg4ZWU2MDM3YjhjYzVkMDRhNzFhNDQ2MmYxMzQ4MCJ9fX0=",
+      "expect": {
+        "reject": true
+      }
+    },
+    {
+      "id": "alphabet-percent-encoded-pad",
+      "note": "The PAYMENT-SIGNATURE example with its '=' percent-encoded as %3D.",
+      "headers": ["PAYMENT-SIGNATURE"],
+      "value": "eyJ4NDAyVmVyc2lvbiI6MiwicmVzb3VyY2UiOnsidXJsIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS5jb20vcHJlbWl1bS1kYXRhIiwiZGVzY3JpcHRpb24iOiJBY2Nlc3MgdG8gcHJlbWl1bSBtYXJrZXQgZGF0YSIsIm1pbWVUeXBlIjoiYXBwbGljYXRpb24vanNvbiJ9LCJhY2NlcHRlZCI6eyJzY2hlbWUiOiJleGFjdCIsIm5ldHdvcmsiOiJlaXAxNTU6ODQ1MzIiLCJhbW91bnQiOiIxMDAwMCIsImFzc2V0IjoiMHgwMzZDYkQ1Mzg0MmM1NDI2NjM0ZTc5Mjk1NDFlQzIzMThmM2RDRjdlIiwicGF5VG8iOiIweDIwOTY5M0JjNmFmYzBDNTMyOGJBMzZGYUYwM0M1MTRFRjMxMjI4N0MiLCJtYXhUaW1lb3V0U2Vjb25kcyI6NjAsImV4dHJhIjp7Im5hbWUiOiJVU0RDIiwidmVyc2lvbiI6IjIifX0sInBheWxvYWQiOnsic2lnbmF0dXJlIjoiMHgyZDZhNzU4OGQ2YWNjYTUwNWNiZjBkOWE0YTIyN2UwYzUyYzZjMzQwMDhjOGU4OTg2YTEyODMyNTk3NjQxNzM2MDhhMmNlNjQ5NjY0MmUzNzdkNmRhOGRiYmY1ODM2ZTliZDE1MDkyZjllY2FiMDVkZWQzZDYyOTNhZjE0OGI1NzFjIiwiYXV0aG9yaXphdGlvbiI6eyJmcm9tIjoiMHg4NTdiMDY1MTlFOTFlM0E1NDUzODc5MWJEYmIwRTIyMzczZTM2YjY2IiwidG8iOiIweDIwOTY5M0JjNmFmYzBDNTMyOGJBMzZGYUYwM0M1MTRFRjMxMjI4N0MiLCJ2YWx1ZSI6IjEwMDAwIiwidmFsaWRBZnRlciI6IjE3NDA2NzIwODkiLCJ2YWxpZEJlZm9yZSI6IjE3NDA2NzIxNTQiLCJub25jZSI6IjB4ZjM3NDY2MTNjMmQ5MjBiNWZkYWJjMDg1NmYyYWViMmQ0Zjg4ZWU2MDM3YjhjYzVkMDRhNzFhNDQ2MmYxMzQ4MCJ9fX0%3D",
+      "expect": {
+        "reject": true
+      }
+    },
+    {
+      "id": "alphabet-base64url",
+      "note": "The PAYMENT-SIGNATURE example with its description changed to 'Access to premium market data >>> ??? 0' so the encoding needs '+' and '/', then encoded with the base64url alphabet ('-' and '_', RFC 4648 section 5).",
+      "headers": ["PAYMENT-SIGNATURE"],
+      "value": "eyJ4NDAyVmVyc2lvbiI6MiwicmVzb3VyY2UiOnsidXJsIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS5jb20vcHJlbWl1bS1kYXRhIiwiZGVzY3JpcHRpb24iOiJBY2Nlc3MgdG8gcHJlbWl1bSBtYXJrZXQgZGF0YSA-Pj4gPz8_IDAiLCJtaW1lVHlwZSI6ImFwcGxpY2F0aW9uL2pzb24ifSwiYWNjZXB0ZWQiOnsic2NoZW1lIjoiZXhhY3QiLCJuZXR3b3JrIjoiZWlwMTU1Ojg0NTMyIiwiYW1vdW50IjoiMTAwMDAiLCJhc3NldCI6IjB4MDM2Q2JENTM4NDJjNTQyNjYzNGU3OTI5NTQxZUMyMzE4ZjNkQ0Y3ZSIsInBheVRvIjoiMHgyMDk2OTNCYzZhZmMwQzUzMjhiQTM2RmFGMDNDNTE0RUYzMTIyODdDIiwibWF4VGltZW91dFNlY29uZHMiOjYwLCJleHRyYSI6eyJuYW1lIjoiVVNEQyIsInZlcnNpb24iOiIyIn19LCJwYXlsb2FkIjp7InNpZ25hdHVyZSI6IjB4MmQ2YTc1ODhkNmFjY2E1MDVjYmYwZDlhNGEyMjdlMGM1MmM2YzM0MDA4YzhlODk4NmExMjgzMjU5NzY0MTczNjA4YTJjZTY0OTY2NDJlMzc3ZDZkYThkYmJmNTgzNmU5YmQxNTA5MmY5ZWNhYjA1ZGVkM2Q2MjkzYWYxNDhiNTcxYyIsImF1dGhvcml6YXRpb24iOnsiZnJvbSI6IjB4ODU3YjA2NTE5RTkxZTNBNTQ1Mzg3OTFiRGJiMEUyMjM3M2UzNmI2NiIsInRvIjoiMHgyMDk2OTNCYzZhZmMwQzUzMjhiQTM2RmFGMDNDNTE0RUYzMTIyODdDIiwidmFsdWUiOiIxMDAwMCIsInZhbGlkQWZ0ZXIiOiIxNzQwNjcyMDg5IiwidmFsaWRCZWZvcmUiOiIxNzQwNjcyMTU0Iiwibm9uY2UiOiIweGYzNzQ2NjEzYzJkOTIwYjVmZGFiYzA4NTZmMmFlYjJkNGY4OGVlNjAzN2I4Y2M1ZDA0YTcxYTQ0NjJmMTM0ODAifX19",
+      "expect": {
+        "reject": true
+      }
+    }
+  ]
+}

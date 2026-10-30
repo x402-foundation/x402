@@ -30,7 +30,8 @@ specs/
 ├── transports-v2/             # (transports-v1/ kept alongside)
 │   ├── http.md
 │   ├── mcp.md
-│   └── a2a.md
+│   ├── a2a.md
+│   └── vectors/               # shared test vectors for http.md
 ├── scheme_template.md         # Template for new schemes
 ├── scheme_impl_template.md    # Template for chain implementations
 └── transport_template.md      # Template for new transports
