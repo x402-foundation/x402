@@ -1,0 +1,1 @@
+Fixed FastMCP payment wrappers dropping content blocks and structured results or failing on non-text content. Tool results and execution hooks now retain the complete result while successful settlement adds the payment receipt without mutating handler metadata.
