@@ -179,7 +179,7 @@ COMMITMENT_TYPEHASH = keccak256("SubscriptionCommitment(bytes32 root,address sub
                     = 0xad591d3c2d951bd01507966d80cc378aa2b2211d1ef97613e559dc7bbc04a74b
 
 root               = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
-subscriber         = 0x857b06519E91e3A54538791bDbb0E22373e36b66
+subscriber         = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266  (Anvil/Hardhat account #0)
 asset              = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
 payTo              = 0x209693Bc6afc0C5328bA36FaF03C514EF312287C
 registry           = 0x0000000000000000000000000000000000000402
@@ -191,7 +191,7 @@ maxPerPeriod       = 5000000
 gracePeriodSeconds = 86400
 replaces           = 0x0000000000000000000000000000000000000000000000000000000000000000
 
-subscriptionId     = 0xa2a6ec7395ef161c556d0a0c12877a11d008a84163e25d0475115fa5361dd7c5
+subscriptionId     = 0xf42d7ecce37501e5834d0e005d404bd49f34ee1d6daf98eeb89b6b4f1f574328
 ```
 
 ---
@@ -554,7 +554,7 @@ The resource server advertises that it accepts the `subscription` extension for 
 
 ### 6.6 Client Echo (PaymentPayload.extensions)
 
-The client echoes the extension with a fresh possession proof. The server MUST verify the signature and check on-chain state before granting access.
+The client echoes the extension with a fresh possession proof. The server MUST verify the signature and check on-chain state before granting access. Values match the active fixture in §6.10.
 
 ```json
 {
@@ -565,10 +565,10 @@ The client echoes the extension with a fresh possession proof. The server MUST v
   "extensions": {
     "subscription": {
       "info": {
-        "subscriptionId": "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+        "subscriptionId": "0xf42d7ecce37501e5834d0e005d404bd49f34ee1d6daf98eeb89b6b4f1f574328",
         "issuedAt": 1740672089,
         "audience": "https://api.example.com",
-        "signature": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1b"
+        "signature": "0x80dbccd360f9685374ae61b4fb95dea1d91698c2665c897a04f49bca0f6628fc0fe2086f8f5184b6540fde2259d7c276a9767f6334abd96e221049970cc7181f1c"
       }
     }
   }
@@ -711,150 +711,178 @@ When subscription verification fails, the server MUST return a `402 Payment Requ
 
 ### 6.10 Request/Response Fixtures
 
+These fixtures are reproducible test vectors. All signatures are real EIP-712 signatures and every header decodes to the JSON shown.
+
+**Inputs:**
+
+| Item | Value |
+|:-----|:------|
+| Subscriber key | Anvil/Hardhat default account #0: `0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80` → `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266` |
+| Wrong key | Anvil/Hardhat default account #1: `0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d` → `0x70997970C51812dc3A010C7d01b50e0d17dc79C8` |
+| Registry (placeholder) | `0x0000000000000000000000000000000000000402` |
+| EIP-712 domain | `{ name: "x402SubscriptionRegistry", version: "1", chainId: 8453, verifyingContract: 0x0000000000000000000000000000000000000402 }` |
+| Request time | `now = issuedAt = 1740672089` |
+
+These are public test keys. Never use them on a live network.
+
+**Subscriptions (IDs per §3.4):**
+
+| Fixture | Commitment | `subscriptionId` |
+|:--------|:-----------|:-----------------|
+| Active | §3.4 test vector (`start = 1740672089`, `expiry = 1772208089`) | `0xf42d7ecce37501e5834d0e005d404bd49f34ee1d6daf98eeb89b6b4f1f574328` |
+| Lapsed | Same, except `root = 0x9876543210fedcba9876543210fedcba9876543210fedcba9876543210fedcba`, `start = 1706048089`, `expiry = 1737584089` | `0x5d675a3aa0b4f71d18deb21ef8b0ddea1f56b040b46524dfbc25ff53cc0fbb26` |
+
 #### Active Subscriber — Access Granted (200 OK)
+
+The subscriber signs `SubscriptionAccess { subscriptionId: 0xf42d7ecc…, issuedAt: 1740672089, audience: "https://api.example.com" }` with account #0.
 
 **Request:**
 
 ```http
-GET /api/premium-data HTTP/1.1
+GET /premium-data HTTP/1.1
 Host: api.example.com
-X-PAYMENT-SIGNATURE: <base64-encoded payload below>
+PAYMENT-SIGNATURE: eyJ4NDAyVmVyc2lvbiI6MiwicmVzb3VyY2UiOnsidXJsIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS5jb20vcHJlbWl1bS1kYXRhIiwiZGVzY3JpcHRpb24iOiJSZWFsLXRpbWUgbWFya2V0IGRhdGEgQVBJIiwibWltZVR5cGUiOiJhcHBsaWNhdGlvbi9qc29uIn0sImFjY2VwdGVkIjp7InNjaGVtZSI6InN1YnNjcmliZSIsIm5ldHdvcmsiOiJlaXAxNTU6ODQ1MyIsImFtb3VudCI6IjUwMDAwMDAiLCJhc3NldCI6IjB4ODMzNTg5ZkNENmVEYjZFMDhmNGM3QzMyRDRmNzFiNTRiZEEwMjkxMyIsInBheVRvIjoiMHgyMDk2OTNCYzZhZmMwQzUzMjhiQTM2RmFGMDNDNTE0RUYzMTIyODdDIiwibWF4VGltZW91dFNlY29uZHMiOjMwMCwiZXh0cmEiOnsibmFtZSI6IlVTREMiLCJ2ZXJzaW9uIjoiMiIsInJlZ2lzdHJ5IjoiMHgwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwNDAyIiwic3Vic2NyaXB0aW9uRGV0YWlscyI6eyJ0aWVySWQiOiJwcm8iLCJ0aWVyTmFtZSI6IlBybyBQbGFuIiwiYmlsbGluZ0N5Y2xlIjoibW9udGhseSIsImJpbGxpbmdDeWNsZVNlY29uZHMiOjI1OTIwMDAsInBlcmlvZENvdW50IjoxMiwiZ3JhY2VQZXJpb2RTZWNvbmRzIjo4NjQwMCwiY2FuY2VsbGF0aW9uUG9saWN5IjoiZW5kX29mX2N5Y2xlIn19fSwicGF5bG9hZCI6e30sImV4dGVuc2lvbnMiOnsic3Vic2NyaXB0aW9uIjp7ImluZm8iOnsic3Vic2NyaXB0aW9uSWQiOiIweGY0MmQ3ZWNjZTM3NTAxZTU4MzRkMGUwMDVkNDA0YmQ0OWYzNGVlMWQ2ZGFmOThlZWI4OWI2YjRmMWY1NzQzMjgiLCJpc3N1ZWRBdCI6MTc0MDY3MjA4OSwiYXVkaWVuY2UiOiJodHRwczovL2FwaS5leGFtcGxlLmNvbSIsInNpZ25hdHVyZSI6IjB4ODBkYmNjZDM2MGY5Njg1Mzc0YWU2MWI0ZmI5NWRlYTFkOTE2OThjMjY2NWM4OTdhMDRmNDliY2EwZjY2MjhmYzBmZTIwODZmOGY1MTg0YjY1NDBmZGUyMjU5ZDdjMjc2YTk3NjdmNjMzNGFiZDk2ZTIyMTA0OTk3MGNjNzE4MWYxYyJ9fX19
 ```
 
-**Decoded X-PAYMENT-SIGNATURE payload:**
+**Decoded `PAYMENT-SIGNATURE`:**
 
 ```json
 {
   "x402Version": 2,
-  "resource": { "url": "https://api.example.com/premium-data" },
-  "accepted": { "scheme": "subscribe" },
+  "resource": {
+    "url": "https://api.example.com/premium-data",
+    "description": "Real-time market data API",
+    "mimeType": "application/json"
+  },
+  "accepted": {
+    "scheme": "subscribe",
+    "network": "eip155:8453",
+    "amount": "5000000",
+    "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+    "maxTimeoutSeconds": 300,
+    "extra": {
+      "name": "USDC",
+      "version": "2",
+      "registry": "0x0000000000000000000000000000000000000402",
+      "subscriptionDetails": {
+        "tierId": "pro",
+        "tierName": "Pro Plan",
+        "billingCycle": "monthly",
+        "billingCycleSeconds": 2592000,
+        "periodCount": 12,
+        "gracePeriodSeconds": 86400,
+        "cancellationPolicy": "end_of_cycle"
+      }
+    }
+  },
   "payload": {},
   "extensions": {
     "subscription": {
       "info": {
-        "subscriptionId": "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+        "subscriptionId": "0xf42d7ecce37501e5834d0e005d404bd49f34ee1d6daf98eeb89b6b4f1f574328",
         "issuedAt": 1740672089,
         "audience": "https://api.example.com",
-        "signature": "0x1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b1b"
+        "signature": "0x80dbccd360f9685374ae61b4fb95dea1d91698c2665c897a04f49bca0f6628fc0fe2086f8f5184b6540fde2259d7c276a9767f6334abd96e221049970cc7181f1c"
       }
     }
   }
 }
 ```
 
-**Server verification:**
+**Server verification (§6.7):**
 
-1. Calls `getSubscription(0xabcdef...)` → returns `{ subscriber: 0x857b06519E91e3A54538791bDbb0E22373e36b66, tierId: "pro", ... }`
-2. Recovers signer from `SubscriptionAccess(subscriptionId, issuedAt, audience)` signature → `0x857b06519E91e3A54538791bDbb0E22373e36b66`
+1. `getSubscription(0xf42d7ecc…)` → `{ subscriber: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, tierId: "pro", expiry: 1772208089, ... }`
+2. Recovered `SubscriptionAccess` signer → `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266`
 3. Signer matches stored subscriber ✓
-4. `|now - 1740672089| <= 60` (fresh) ✓
+4. `|now - 1740672089| = 0 <= 60` ✓
 5. `audience` matches served origin ✓
-6. `isActive(subscriptionId)` → true ✓
-7. `tierId` in `acceptedTiers` ✓
+6. `isActive(0xf42d7ecc…)` → true ✓
+7. `"pro"` is in `acceptedTiers` ✓
 
 **Response:**
 
 ```http
 HTTP/1.1 200 OK
 Content-Type: application/json
-X-PAYMENT-RESPONSE: eyJzdWJzY3JpcHRpb24iOnsic3RhdHVzIjoiYWN0aXZlIiwiY3VycmVudFBlcmlvZEVuZCI6IjE3NDMyNjQwODkifX0=
 
 {"data": "premium content here"}
 ```
 
-**Decoded X-PAYMENT-RESPONSE:**
-
-```json
-{
-  "subscription": {
-    "status": "active",
-    "currentPeriodEnd": "1743264089"
-  }
-}
-```
+No `PAYMENT-RESPONSE` header: access with an existing subscription settles nothing, and `PAYMENT-RESPONSE` carries a `SettlementResponse`.
 
 #### Wrong-Key Signature — Payment Required (402)
 
-**Request:** Valid-looking echo with signature from the wrong key.
+Same `SubscriptionAccess` message as the active fixture, signed with account #1 instead of the subscriber's key.
+
+**Request:**
+
+```http
+GET /premium-data HTTP/1.1
+Host: api.example.com
+PAYMENT-SIGNATURE: eyJ4NDAyVmVyc2lvbiI6MiwicmVzb3VyY2UiOnsidXJsIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS5jb20vcHJlbWl1bS1kYXRhIiwiZGVzY3JpcHRpb24iOiJSZWFsLXRpbWUgbWFya2V0IGRhdGEgQVBJIiwibWltZVR5cGUiOiJhcHBsaWNhdGlvbi9qc29uIn0sImFjY2VwdGVkIjp7InNjaGVtZSI6InN1YnNjcmliZSIsIm5ldHdvcmsiOiJlaXAxNTU6ODQ1MyIsImFtb3VudCI6IjUwMDAwMDAiLCJhc3NldCI6IjB4ODMzNTg5ZkNENmVEYjZFMDhmNGM3QzMyRDRmNzFiNTRiZEEwMjkxMyIsInBheVRvIjoiMHgyMDk2OTNCYzZhZmMwQzUzMjhiQTM2RmFGMDNDNTE0RUYzMTIyODdDIiwibWF4VGltZW91dFNlY29uZHMiOjMwMCwiZXh0cmEiOnsibmFtZSI6IlVTREMiLCJ2ZXJzaW9uIjoiMiIsInJlZ2lzdHJ5IjoiMHgwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwNDAyIiwic3Vic2NyaXB0aW9uRGV0YWlscyI6eyJ0aWVySWQiOiJwcm8iLCJ0aWVyTmFtZSI6IlBybyBQbGFuIiwiYmlsbGluZ0N5Y2xlIjoibW9udGhseSIsImJpbGxpbmdDeWNsZVNlY29uZHMiOjI1OTIwMDAsInBlcmlvZENvdW50IjoxMiwiZ3JhY2VQZXJpb2RTZWNvbmRzIjo4NjQwMCwiY2FuY2VsbGF0aW9uUG9saWN5IjoiZW5kX29mX2N5Y2xlIn19fSwicGF5bG9hZCI6e30sImV4dGVuc2lvbnMiOnsic3Vic2NyaXB0aW9uIjp7ImluZm8iOnsic3Vic2NyaXB0aW9uSWQiOiIweGY0MmQ3ZWNjZTM3NTAxZTU4MzRkMGUwMDVkNDA0YmQ0OWYzNGVlMWQ2ZGFmOThlZWI4OWI2YjRmMWY1NzQzMjgiLCJpc3N1ZWRBdCI6MTc0MDY3MjA4OSwiYXVkaWVuY2UiOiJodHRwczovL2FwaS5leGFtcGxlLmNvbSIsInNpZ25hdHVyZSI6IjB4NmQ4Yzc2YTU3ZmY5ZDIzOThhZTFkYmZiOTI1NzZjMGI5OTAyZDcwY2ZiNDc2NTY5OGU4ODYyYTcxYzQ5NGM4MDYwNmJhMDdjNjFmNzk0M2EwYzE5NDc1YmY5MzE3ZDc3M2U5NDFhMGM3OTUwNGMwMTE5ZjcwMjgxMDAwOWRlZjIxYiJ9fX19
+```
+
+**Decoded `PAYMENT-SIGNATURE`:** identical to the active fixture except `extensions.subscription.info.signature`:
 
 ```json
-{
-  "x402Version": 2,
-  "resource": { "url": "https://api.example.com/premium-data" },
-  "accepted": { "scheme": "subscribe" },
-  "payload": {},
-  "extensions": {
-    "subscription": {
-      "info": {
-        "subscriptionId": "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
-        "issuedAt": 1740672089,
-        "audience": "https://api.example.com",
-        "signature": "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbe1c"
-      }
-    }
-  }
+"signature": "0x6d8c76a57ff9d2398ae1dbfb92576c0b9902d70cfb4765698e8862a71c494c80606ba07c61f7943a0c19475bf9317d773e941a0c79504c0119f702810009def21b"
+```
+
+**Server verification:**
+
+1. `getSubscription(0xf42d7ecc…)` → `{ subscriber: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, ... }`
+2. Recovered `SubscriptionAccess` signer → `0x70997970C51812dc3A010C7d01b50e0d17dc79C8`
+3. Signer does NOT match stored subscriber ✗ → `invalid_access_signature`
+
+**Response:**
+
+```http
+HTTP/1.1 402 Payment Required
+PAYMENT-REQUIRED: eyJ4NDAyVmVyc2lvbiI6MiwiZXJyb3IiOiJBY2Nlc3Mgc2lnbmF0dXJlIGludmFsaWQiLCJyZXNvdXJjZSI6eyJ1cmwiOiJodHRwczovL2FwaS5leGFtcGxlLmNvbS9wcmVtaXVtLWRhdGEiLCJkZXNjcmlwdGlvbiI6IlJlYWwtdGltZSBtYXJrZXQgZGF0YSBBUEkiLCJtaW1lVHlwZSI6ImFwcGxpY2F0aW9uL2pzb24ifSwiYWNjZXB0cyI6W3sic2NoZW1lIjoiZXhhY3QiLCJuZXR3b3JrIjoiZWlwMTU1Ojg0NTMiLCJhbW91bnQiOiIxMDAwIiwiYXNzZXQiOiIweDgzMzU4OWZDRDZlRGI2RTA4ZjRjN0MzMkQ0ZjcxYjU0YmRBMDI5MTMiLCJwYXlUbyI6IjB4MjA5NjkzQmM2YWZjMEM1MzI4YkEzNkZhRjAzQzUxNEVGMzEyMjg3QyIsIm1heFRpbWVvdXRTZWNvbmRzIjo2MCwiZXh0cmEiOnsibmFtZSI6IlVTREMiLCJ2ZXJzaW9uIjoiMiJ9fSx7InNjaGVtZSI6InN1YnNjcmliZSIsIm5ldHdvcmsiOiJlaXAxNTU6ODQ1MyIsImFtb3VudCI6IjUwMDAwMDAiLCJhc3NldCI6IjB4ODMzNTg5ZkNENmVEYjZFMDhmNGM3QzMyRDRmNzFiNTRiZEEwMjkxMyIsInBheVRvIjoiMHgyMDk2OTNCYzZhZmMwQzUzMjhiQTM2RmFGMDNDNTE0RUYzMTIyODdDIiwibWF4VGltZW91dFNlY29uZHMiOjMwMCwiZXh0cmEiOnsibmFtZSI6IlVTREMiLCJ2ZXJzaW9uIjoiMiIsInJlZ2lzdHJ5IjoiMHgwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwNDAyIiwic3Vic2NyaXB0aW9uRGV0YWlscyI6eyJ0aWVySWQiOiJwcm8iLCJ0aWVyTmFtZSI6IlBybyBQbGFuIiwiYmlsbGluZ0N5Y2xlIjoibW9udGhseSIsImJpbGxpbmdDeWNsZVNlY29uZHMiOjI1OTIwMDAsInBlcmlvZENvdW50IjoxMiwiZ3JhY2VQZXJpb2RTZWNvbmRzIjo4NjQwMCwiY2FuY2VsbGF0aW9uUG9saWN5IjoiZW5kX29mX2N5Y2xlIn19fV0sImV4dGVuc2lvbnMiOnsic3Vic2NyaXB0aW9uIjp7ImluZm8iOnsicmVxdWlyZWQiOmZhbHNlLCJhY2NlcHRlZFRpZXJzIjpbInBybyIsImVudGVycHJpc2UiXX0sInNjaGVtYSI6eyIkc2NoZW1hIjoiaHR0cHM6Ly9qc29uLXNjaGVtYS5vcmcvZHJhZnQvMjAyMC0xMi9zY2hlbWEiLCJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJzdWJzY3JpcHRpb25JZCI6eyJ0eXBlIjoic3RyaW5nIiwicGF0dGVybiI6Il4weFthLWZBLUYwLTldezY0fSQiLCJkZXNjcmlwdGlvbiI6IlRoZSBzdWJzY3JpcHRpb24gSUQgKGJ5dGVzMzIgaGV4KSJ9LCJpc3N1ZWRBdCI6eyJ0eXBlIjoiaW50ZWdlciIsIm1pbmltdW0iOjAsImRlc2NyaXB0aW9uIjoiVW5peCB0aW1lc3RhbXAgKHNlY29uZHMpIHdoZW4gdGhlIHByb29mIHdhcyBzaWduZWQifSwiYXVkaWVuY2UiOnsidHlwZSI6InN0cmluZyIsImRlc2NyaXB0aW9uIjoiT3B0aW9uYWw6IHJlcXVlc3Qgb3JpZ2luIG9yIFVSTCBwcmVmaXggdGhpcyBwcm9vZiBpcyBzY29wZWQgdG8ifSwic2lnbmF0dXJlIjp7InR5cGUiOiJzdHJpbmciLCJwYXR0ZXJuIjoiXjB4W2EtZkEtRjAtOV17MTMwfSQiLCJkZXNjcmlwdGlvbiI6IkVJUC03MTIgc2lnbmF0dXJlIG92ZXIgU3Vic2NyaXB0aW9uQWNjZXNzICg2NSBieXRlcywgaGV4KSJ9fSwicmVxdWlyZWQiOlsic3Vic2NyaXB0aW9uSWQiLCJpc3N1ZWRBdCIsInNpZ25hdHVyZSJdfX19fQ==
+```
+
+**Decoded `PAYMENT-REQUIRED`:** identical to the lapsed fixture's below except `"error": "Access signature invalid"`.
+
+#### Lapsed Subscriber — Payment Required (402)
+
+The subscription's `expiry` (1737584089) is before `now`. The echo omits `audience`, so the subscriber signs `SubscriptionAccess { subscriptionId: 0x5d675a3a…, issuedAt: 1740672089, audience: "" }` (§6.4 empty-audience rule).
+
+**Request:**
+
+```http
+GET /premium-data HTTP/1.1
+Host: api.example.com
+PAYMENT-SIGNATURE: eyJ4NDAyVmVyc2lvbiI6MiwicmVzb3VyY2UiOnsidXJsIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS5jb20vcHJlbWl1bS1kYXRhIiwiZGVzY3JpcHRpb24iOiJSZWFsLXRpbWUgbWFya2V0IGRhdGEgQVBJIiwibWltZVR5cGUiOiJhcHBsaWNhdGlvbi9qc29uIn0sImFjY2VwdGVkIjp7InNjaGVtZSI6InN1YnNjcmliZSIsIm5ldHdvcmsiOiJlaXAxNTU6ODQ1MyIsImFtb3VudCI6IjUwMDAwMDAiLCJhc3NldCI6IjB4ODMzNTg5ZkNENmVEYjZFMDhmNGM3QzMyRDRmNzFiNTRiZEEwMjkxMyIsInBheVRvIjoiMHgyMDk2OTNCYzZhZmMwQzUzMjhiQTM2RmFGMDNDNTE0RUYzMTIyODdDIiwibWF4VGltZW91dFNlY29uZHMiOjMwMCwiZXh0cmEiOnsibmFtZSI6IlVTREMiLCJ2ZXJzaW9uIjoiMiIsInJlZ2lzdHJ5IjoiMHgwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwNDAyIiwic3Vic2NyaXB0aW9uRGV0YWlscyI6eyJ0aWVySWQiOiJwcm8iLCJ0aWVyTmFtZSI6IlBybyBQbGFuIiwiYmlsbGluZ0N5Y2xlIjoibW9udGhseSIsImJpbGxpbmdDeWNsZVNlY29uZHMiOjI1OTIwMDAsInBlcmlvZENvdW50IjoxMiwiZ3JhY2VQZXJpb2RTZWNvbmRzIjo4NjQwMCwiY2FuY2VsbGF0aW9uUG9saWN5IjoiZW5kX29mX2N5Y2xlIn19fSwicGF5bG9hZCI6e30sImV4dGVuc2lvbnMiOnsic3Vic2NyaXB0aW9uIjp7ImluZm8iOnsic3Vic2NyaXB0aW9uSWQiOiIweDVkNjc1YTNhYTBiNGY3MWQxOGRlYjIxZWY4YjBkZGVhMWY1NmIwNDBiNDY1MjRkZmJjMjVmZjUzY2MwZmJiMjYiLCJpc3N1ZWRBdCI6MTc0MDY3MjA4OSwic2lnbmF0dXJlIjoiMHg1ZjA0YmEwZTU3Y2IyYzJhYmFiOGE0NTM1ODQ1NGFmMWU0NDdhZTg5MWMzZTYyNThhZTc0MzBiNDRjMTYwN2RiM2QyNzk5ZTEwZmYyMGEyYmY5MWI0OTk1OGEyNDFmZDIxMGJhMzgwOTUyZGIzZGM2NDhkNTM3NWNjYmU3ODY0NjFjIn19fX0=
+```
+
+**Decoded `PAYMENT-SIGNATURE`:** identical to the active fixture except `extensions.subscription.info`:
+
+```json
+"info": {
+  "subscriptionId": "0x5d675a3aa0b4f71d18deb21ef8b0ddea1f56b040b46524dfbc25ff53cc0fbb26",
+  "issuedAt": 1740672089,
+  "signature": "0x5f04ba0e57cb2c2abab8a45358454af1e447ae891c3e6258ae7430b44c1607db3d2799e10ff20a2bf91b49958a241fd210ba380952db3dc648d5375ccbe786461c"
 }
 ```
 
 **Server verification:**
 
-1. Calls `getSubscription(0xabcdef...)` → returns `{ subscriber: 0x857b06519E91e3A54538791bDbb0E22373e36b66, ... }`
-2. Recovers signer from signature → `0xAttacker1234567890123456789012345678901234` (different address)
-3. Signer does NOT match stored subscriber ✗ → **invalid_access_signature**
+1. `getSubscription(0x5d675a3a…)` → `{ subscriber: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, expiry: 1737584089, ... }`
+2. Recovered signer → `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266` ✓
+3. Fresh ✓ (no `audience` to check)
+4. `isActive(0x5d675a3a…)` → false ✗ → `subscription_not_active`
 
 **Response:**
 
 ```http
 HTTP/1.1 402 Payment Required
-Content-Type: application/json
-
-{
-  "x402Version": 2,
-  "error": "Access signature invalid",
-  "resource": { "url": "https://api.example.com/premium-data" },
-  "accepts": [
-    { "scheme": "exact", "amount": "1000", "..." : "..." },
-    { "scheme": "subscribe", "amount": "5000000", "..." : "..." }
-  ]
-}
+PAYMENT-REQUIRED: eyJ4NDAyVmVyc2lvbiI6MiwiZXJyb3IiOiJTdWJzY3JpcHRpb24gZXhwaXJlZCIsInJlc291cmNlIjp7InVybCI6Imh0dHBzOi8vYXBpLmV4YW1wbGUuY29tL3ByZW1pdW0tZGF0YSIsImRlc2NyaXB0aW9uIjoiUmVhbC10aW1lIG1hcmtldCBkYXRhIEFQSSIsIm1pbWVUeXBlIjoiYXBwbGljYXRpb24vanNvbiJ9LCJhY2NlcHRzIjpbeyJzY2hlbWUiOiJleGFjdCIsIm5ldHdvcmsiOiJlaXAxNTU6ODQ1MyIsImFtb3VudCI6IjEwMDAiLCJhc3NldCI6IjB4ODMzNTg5ZkNENmVEYjZFMDhmNGM3QzMyRDRmNzFiNTRiZEEwMjkxMyIsInBheVRvIjoiMHgyMDk2OTNCYzZhZmMwQzUzMjhiQTM2RmFGMDNDNTE0RUYzMTIyODdDIiwibWF4VGltZW91dFNlY29uZHMiOjYwLCJleHRyYSI6eyJuYW1lIjoiVVNEQyIsInZlcnNpb24iOiIyIn19LHsic2NoZW1lIjoic3Vic2NyaWJlIiwibmV0d29yayI6ImVpcDE1NTo4NDUzIiwiYW1vdW50IjoiNTAwMDAwMCIsImFzc2V0IjoiMHg4MzM1ODlmQ0Q2ZURiNkUwOGY0YzdDMzJENGY3MWI1NGJkQTAyOTEzIiwicGF5VG8iOiIweDIwOTY5M0JjNmFmYzBDNTMyOGJBMzZGYUYwM0M1MTRFRjMxMjI4N0MiLCJtYXhUaW1lb3V0U2Vjb25kcyI6MzAwLCJleHRyYSI6eyJuYW1lIjoiVVNEQyIsInZlcnNpb24iOiIyIiwicmVnaXN0cnkiOiIweDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA0MDIiLCJzdWJzY3JpcHRpb25EZXRhaWxzIjp7InRpZXJJZCI6InBybyIsInRpZXJOYW1lIjoiUHJvIFBsYW4iLCJiaWxsaW5nQ3ljbGUiOiJtb250aGx5IiwiYmlsbGluZ0N5Y2xlU2Vjb25kcyI6MjU5MjAwMCwicGVyaW9kQ291bnQiOjEyLCJncmFjZVBlcmlvZFNlY29uZHMiOjg2NDAwLCJjYW5jZWxsYXRpb25Qb2xpY3kiOiJlbmRfb2ZfY3ljbGUifX19XSwiZXh0ZW5zaW9ucyI6eyJzdWJzY3JpcHRpb24iOnsiaW5mbyI6eyJyZXF1aXJlZCI6ZmFsc2UsImFjY2VwdGVkVGllcnMiOlsicHJvIiwiZW50ZXJwcmlzZSJdfSwic2NoZW1hIjp7IiRzY2hlbWEiOiJodHRwczovL2pzb24tc2NoZW1hLm9yZy9kcmFmdC8yMDIwLTEyL3NjaGVtYSIsInR5cGUiOiJvYmplY3QiLCJwcm9wZXJ0aWVzIjp7InN1YnNjcmlwdGlvbklkIjp7InR5cGUiOiJzdHJpbmciLCJwYXR0ZXJuIjoiXjB4W2EtZkEtRjAtOV17NjR9JCIsImRlc2NyaXB0aW9uIjoiVGhlIHN1YnNjcmlwdGlvbiBJRCAoYnl0ZXMzMiBoZXgpIn0sImlzc3VlZEF0Ijp7InR5cGUiOiJpbnRlZ2VyIiwibWluaW11bSI6MCwiZGVzY3JpcHRpb24iOiJVbml4IHRpbWVzdGFtcCAoc2Vjb25kcykgd2hlbiB0aGUgcHJvb2Ygd2FzIHNpZ25lZCJ9LCJhdWRpZW5jZSI6eyJ0eXBlIjoic3RyaW5nIiwiZGVzY3JpcHRpb24iOiJPcHRpb25hbDogcmVxdWVzdCBvcmlnaW4gb3IgVVJMIHByZWZpeCB0aGlzIHByb29mIGlzIHNjb3BlZCB0byJ9LCJzaWduYXR1cmUiOnsidHlwZSI6InN0cmluZyIsInBhdHRlcm4iOiJeMHhbYS1mQS1GMC05XXsxMzB9JCIsImRlc2NyaXB0aW9uIjoiRUlQLTcxMiBzaWduYXR1cmUgb3ZlciBTdWJzY3JpcHRpb25BY2Nlc3MgKDY1IGJ5dGVzLCBoZXgpIn19LCJyZXF1aXJlZCI6WyJzdWJzY3JpcHRpb25JZCIsImlzc3VlZEF0Iiwic2lnbmF0dXJlIl19fX19
 ```
 
-#### Lapsed Subscriber — Payment Required (402)
-
-**Request:**
-
-```http
-GET /api/premium-data HTTP/1.1
-Host: api.example.com
-X-PAYMENT-SIGNATURE: <base64-encoded payload below>
-```
-
-**Decoded X-PAYMENT-SIGNATURE payload (expired subscription):**
+**Decoded `PAYMENT-REQUIRED`:**
 
 ```json
-{
-  "x402Version": 2,
-  "resource": { "url": "https://api.example.com/premium-data" },
-  "accepted": { "scheme": "subscribe" },
-  "payload": {},
-  "extensions": {
-    "subscription": {
-      "info": {
-        "subscriptionId": "0xdeadbeef0000000000000000000000000000000000000000000000000000000",
-        "issuedAt": 1740672089,
-        "signature": "0x1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b1b"
-      }
-    }
-  }
-}
-```
-
-**Response:**
-
-```http
-HTTP/1.1 402 Payment Required
-Content-Type: application/json
-
 {
   "x402Version": 2,
   "error": "Subscription expired",
@@ -871,7 +899,10 @@ Content-Type: application/json
       "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
       "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
       "maxTimeoutSeconds": 60,
-      "extra": { "name": "USDC", "version": "2" }
+      "extra": {
+        "name": "USDC",
+        "version": "2"
+      }
     },
     {
       "scheme": "subscribe",
@@ -883,7 +914,7 @@ Content-Type: application/json
       "extra": {
         "name": "USDC",
         "version": "2",
-        "registry": "0x402SubscriptionRegistryAddress",
+        "registry": "0x0000000000000000000000000000000000000402",
         "subscriptionDetails": {
           "tierId": "pro",
           "tierName": "Pro Plan",
@@ -898,16 +929,42 @@ Content-Type: application/json
   ],
   "extensions": {
     "subscription": {
-      "info": { "required": false, "acceptedTiers": ["pro", "enterprise"] },
+      "info": {
+        "required": false,
+        "acceptedTiers": [
+          "pro",
+          "enterprise"
+        ]
+      },
       "schema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
         "properties": {
-          "subscriptionId": { "type": "string", "pattern": "^0x[a-fA-F0-9]{64}$" },
-          "subscriber": { "type": "string", "pattern": "^0x[a-fA-F0-9]{40}$" },
-          "tierId": { "type": "string" }
+          "subscriptionId": {
+            "type": "string",
+            "pattern": "^0x[a-fA-F0-9]{64}$",
+            "description": "The subscription ID (bytes32 hex)"
+          },
+          "issuedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Unix timestamp (seconds) when the proof was signed"
+          },
+          "audience": {
+            "type": "string",
+            "description": "Optional: request origin or URL prefix this proof is scoped to"
+          },
+          "signature": {
+            "type": "string",
+            "pattern": "^0x[a-fA-F0-9]{130}$",
+            "description": "EIP-712 signature over SubscriptionAccess (65 bytes, hex)"
+          }
         },
-        "required": ["subscriptionId", "subscriber"]
+        "required": [
+          "subscriptionId",
+          "issuedAt",
+          "signature"
+        ]
       }
     }
   }
