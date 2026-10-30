@@ -34,6 +34,7 @@ import {
 import { findAssociatedTokenPda } from "@solana-program/token-2022";
 
 import {
+  ADVERTISED_TRANSACTION_VERSIONS,
   COMPUTE_BUDGET_PROGRAM_ADDRESS,
   DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
   LIGHTHOUSE_PROGRAM_ADDRESS,
@@ -1428,7 +1429,7 @@ export function parseU64(value: bigint | number | string, name: string): bigint 
  * @returns The versions, with legacy named where version 0 admits it
  */
 function acceptedVersionsLabel(accepted: readonly number[] | undefined): string {
-  const versions = accepted ?? [0, 1];
+  const versions = accepted ?? ADVERTISED_TRANSACTION_VERSIONS;
   return [...(versions.includes(0) ? ["legacy"] : []), ...versions.map(String)].join(", ");
 }
 

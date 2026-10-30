@@ -145,7 +145,11 @@ export function isAcceptedTransactionVersion(
   accepted: readonly number[] = ADVERTISED_TRANSACTION_VERSIONS,
 ): boolean {
   if (version === "legacy") return accepted.includes(0);
-  return ACCEPTED_TRANSACTION_VERSIONS.includes(version) && accepted.includes(version as number);
+  return (
+    ACCEPTED_TRANSACTION_VERSIONS.includes(version) &&
+    typeof version === "number" &&
+    accepted.includes(version)
+  );
 }
 
 /**

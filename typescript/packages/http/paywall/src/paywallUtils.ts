@@ -159,12 +159,9 @@ export function getNetworkDisplayName(network: string): string {
   }
 
   if (network.startsWith("algorand:")) {
-    try {
-      const ref = resolveAlgorandGenesisRef(network);
-      return ref === ALGORAND_GENESIS_HASHES.TESTNET ? "Algorand Testnet" : "Algorand Mainnet";
-    } catch {
-      return network;
-    }
+    if (!isAvmNetwork(network)) return network;
+    const ref = resolveAlgorandGenesisRef(network);
+    return ref === ALGORAND_GENESIS_HASHES.TESTNET ? "Algorand Testnet" : "Algorand Mainnet";
   }
 
   return network;
@@ -190,12 +187,9 @@ export function isTestnetNetwork(network: string): boolean {
   }
 
   if (network.startsWith("algorand:")) {
-    try {
-      const ref = resolveAlgorandGenesisRef(network);
-      return ref === ALGORAND_GENESIS_HASHES.TESTNET;
-    } catch {
-      return false;
-    }
+    if (!isAvmNetwork(network)) return false;
+    const ref = resolveAlgorandGenesisRef(network);
+    return ref === ALGORAND_GENESIS_HASHES.TESTNET;
   }
 
   return false;

@@ -166,7 +166,7 @@ export async function buildBatchTopUpPayload(
     ));
   const topUp = await buildTopUpPaymentChannelTransaction({
     amount,
-    blockhash: blockhash as Parameters<typeof buildTopUpPaymentChannelTransaction>[0]["blockhash"],
+    blockhash,
     channelId: resolved.channelId,
     feePayer: resolved.feePayer,
     memo: resolved.memo,

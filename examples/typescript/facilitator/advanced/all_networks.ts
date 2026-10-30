@@ -115,13 +115,20 @@ const cantonSynchronizerId = process.env.CANTON_SYNCHRONIZER_ID as
 const cantonFacilitatorParty = process.env.CANTON_FACILITATOR_PARTY as
   | string
   | undefined;
-const cantonConfigured = Boolean(
+const cantonConfig =
   cantonParticipantUrl &&
-    cantonToken &&
-    cantonUserId &&
-    cantonSynchronizerId &&
-    cantonFacilitatorParty,
-);
+  cantonToken &&
+  cantonUserId &&
+  cantonSynchronizerId &&
+  cantonFacilitatorParty
+    ? {
+        participantUrl: cantonParticipantUrl,
+        token: cantonToken,
+        userId: cantonUserId,
+        synchronizerId: cantonSynchronizerId,
+        facilitatorParty: cantonFacilitatorParty,
+      }
+    : undefined;
 const ccdFacilitatorPrivateKey = process.env.CCD_FACILITATOR_PRIVATE_KEY as
   | string
   | undefined;
@@ -154,7 +161,7 @@ if (
   !cardanoMnemonic &&
   !aptosPrivateKey &&
   !casperPrivateKey &&
-  !cantonConfigured &&
+  !cantonConfig &&
   !(ccdFacilitatorPrivateKey && ccdFacilitatorAddress) &&
   !evmPrivateKey &&
   !keetaMnemonic &&
@@ -288,23 +295,23 @@ if (casperPrivateKey) {
 }
 
 // Register Canton scheme if a participant + facilitator party are provided.
-if (cantonConfigured) {
+if (cantonConfig) {
   const cantonSigner = toFacilitatorCantonSigner({
-    participantUrl: cantonParticipantUrl!,
-    token: cantonToken!,
-    userId: cantonUserId!,
-    synchronizerId: cantonSynchronizerId!,
-    facilitatorParties: [cantonFacilitatorParty!],
+    participantUrl: cantonConfig.participantUrl,
+    token: cantonConfig.token,
+    userId: cantonConfig.userId,
+    synchronizerId: cantonConfig.synchronizerId,
+    facilitatorParties: [cantonConfig.facilitatorParty],
   });
   facilitator.register(
     CANTON_NETWORK,
     new ExactCantonScheme(cantonSigner, {
-      synchronizerId: cantonSynchronizerId!,
+      synchronizerId: cantonConfig.synchronizerId,
       networks: [CANTON_NETWORK],
     }),
   );
   console.info(
-    `Canton Facilitator party: ${cantonFacilitatorParty} on ${CANTON_NETWORK}`,
+    `Canton Facilitator party: ${cantonConfig.facilitatorParty} on ${CANTON_NETWORK}`,
   );
 }
 

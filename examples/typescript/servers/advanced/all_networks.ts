@@ -45,7 +45,10 @@ const casperAddress = process.env.CASPER_ADDRESS as string | undefined;
 const cantonAddress = process.env.CANTON_ADDRESS as string | undefined;
 const cantonInstrumentAdmin = process.env.CANTON_INSTRUMENT_ADMIN as string | undefined;
 const cantonSynchronizerId = process.env.CANTON_SYNCHRONIZER_ID as string | undefined;
-const cantonConfigured = Boolean(cantonAddress && cantonInstrumentAdmin && cantonSynchronizerId);
+const cantonConfig =
+  cantonAddress && cantonInstrumentAdmin && cantonSynchronizerId
+    ? { address: cantonAddress, instrumentAdmin: cantonInstrumentAdmin }
+    : undefined;
 const ccdAddress = process.env.CCD_ADDRESS as string | undefined;
 const evmAddress = process.env.EVM_ADDRESS as `0x${string}` | undefined;
 const hederaAddress = process.env.HEDERA_ACCOUNT_ID as string | undefined;
@@ -62,7 +65,7 @@ if (
   !cardanoAddress &&
   !aptosAddress &&
   !casperAddress &&
-  !cantonConfigured &&
+  !cantonConfig &&
   !ccdAddress &&
   !evmAddress &&
   !svmAddress &&
@@ -167,7 +170,7 @@ if (casperAddress) {
   });
 }
 
-if (cantonConfigured) {
+if (cantonConfig) {
   accepts.push({
     scheme: "exact",
     // Canton prices are explicit AssetAmounts; the instrument admin (DSO for
@@ -176,10 +179,10 @@ if (cantonConfigured) {
     price: {
       amount: "100000000", // 0.01 CC (atomic: 1 CC = 1e10)
       asset: "CC",
-      extra: { instrumentId: { admin: cantonInstrumentAdmin!, id: "Amulet" } },
+      extra: { instrumentId: { admin: cantonConfig.instrumentAdmin, id: "Amulet" } },
     },
     network: CANTON_NETWORK,
-    payTo: cantonAddress!,
+    payTo: cantonConfig.address,
   });
 }
 if (ccdAddress) {
@@ -281,7 +284,7 @@ if (cardanoAddress) {
 if (casperAddress) {
   server.register(CASPER_NETWORK, new ExactCasperScheme());
 }
-if (cantonConfigured) {
+if (cantonConfig) {
   server.register(CANTON_NETWORK, new ExactCantonScheme());
 }
 if (ccdAddress) {

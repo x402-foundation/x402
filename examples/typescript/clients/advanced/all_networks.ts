@@ -76,15 +76,6 @@ const cantonScanUrl = process.env.CANTON_SCAN_URL as string | undefined;
 const cantonParty = process.env.CANTON_PARTY as string | undefined;
 const cantonPrivateKeyPem = process.env.CANTON_PRIVATE_KEY as string | undefined;
 const cantonNetwork = (process.env.CANTON_NETWORK || "canton:mainnet") as Network;
-const cantonConfigured = Boolean(
-  cantonParticipantUrl &&
-    cantonToken &&
-    cantonUserId &&
-    cantonSynchronizerId &&
-    cantonScanUrl &&
-    cantonParty &&
-    cantonPrivateKeyPem,
-);
 const ccdPrivateKey = process.env.CCD_PRIVATE_KEY as string | undefined;
 const ccdAddress = process.env.CCD_ADDRESS as string | undefined;
 const evmPrivateKey = process.env.EVM_PRIVATE_KEY as `0x${string}` | undefined;
@@ -211,15 +202,23 @@ async function main(): Promise<void> {
   }
 
   // Register Canton scheme if a participant + Scan + payer key are provided
-  if (cantonConfigured) {
+  if (
+    cantonParticipantUrl &&
+    cantonToken &&
+    cantonUserId &&
+    cantonSynchronizerId &&
+    cantonScanUrl &&
+    cantonParty &&
+    cantonPrivateKeyPem
+  ) {
     const cantonSigner = toClientCantonSigner({
-      participantUrl: cantonParticipantUrl!,
-      token: cantonToken!,
-      userId: cantonUserId!,
-      synchronizerId: cantonSynchronizerId!,
-      scanUrl: cantonScanUrl!,
-      party: cantonParty!,
-      privateKeyPem: cantonPrivateKeyPem!,
+      participantUrl: cantonParticipantUrl,
+      token: cantonToken,
+      userId: cantonUserId,
+      synchronizerId: cantonSynchronizerId,
+      scanUrl: cantonScanUrl,
+      party: cantonParty,
+      privateKeyPem: cantonPrivateKeyPem,
     });
     client.register(cantonNetwork, new ExactCantonScheme(cantonSigner));
     console.log(`Initialized Canton party: ${cantonParty} on ${cantonNetwork}`);

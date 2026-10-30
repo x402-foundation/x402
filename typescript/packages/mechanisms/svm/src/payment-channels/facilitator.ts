@@ -955,16 +955,6 @@ export function getChannelDistributionHash(splits: readonly ChannelSplit[]): Uin
 }
 
 /**
- * Partially sign and simulate a facilitator-built instruction list without
- * broadcasting. Always uses `sigVerify: false` (sims are never landed; the
- * open composite may carry a noop payer) and `replaceRecentBlockhash: true`.
- *
- * @param feePayer - The fee-payer signer
- * @param rpc - The RPC client
- * @param instructions - Instructions to simulate
- */
-/** Simulate through the facilitator signer's transport (upto / batch deposit path). */
-/**
  * The message a readiness simulation runs: version 0 with the instructions as
  * given (they carry their own ComputeBudget prefix), or version 1 with the
  * simulation's compute and loaded-account-data budget in the message config.
@@ -1007,6 +997,7 @@ function simulationMessage(
   );
 }
 
+/** Simulate through the facilitator signer's transport (upto / batch deposit path). */
 async function simulateInstructionsViaSigner(
   feePayer: PaymentChannelSvmSigner,
   signer: Pick<FacilitatorSvmSigner, "simulateTransaction">,
@@ -1031,6 +1022,15 @@ async function simulateInstructionsViaSigner(
   }
 }
 
+/**
+ * Partially sign and simulate a facilitator-built instruction list without
+ * broadcasting. Always uses `sigVerify: false` (sims are never landed; the
+ * open composite may carry a noop payer) and `replaceRecentBlockhash: true`.
+ *
+ * @param feePayer - The fee-payer signer
+ * @param rpc - The RPC client
+ * @param instructions - Instructions to simulate
+ */
 async function simulateInstructions(
   feePayer: PaymentChannelSvmSigner,
   rpc: ChannelRpc,
