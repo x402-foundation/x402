@@ -34,7 +34,8 @@ from typing import Any
 
 from ..hook_policy import snapshot_payment_requirements_list
 from ..schemas.errors import PaymentAbortedError, VerifyError
-from ..schemas.payments import PaymentPayload, PaymentRequirements, ResourceInfo
+from ..schemas.hooks import SkipHandlerDirective, VerifiedPaymentCancelOptions
+from ..schemas.payments import PaymentPayload, PaymentRequired, PaymentRequirements, ResourceInfo
 from ..schemas.responses import SettleResponse, VerifyResponse
 from .constants import MCP_PAYMENT_META_KEY, MCP_PAYMENT_RESPONSE_META_KEY
 from .types import (
@@ -43,7 +44,7 @@ from .types import (
     ServerHookContext,
     SettlementContext,
 )
-from .utils import post_enrichment_accepts
+from .utils import metered_payment_requirements, post_enrichment_accepts
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,8 @@ def create_payment_wrapper(
             Defaults to ``mcp://tool/{function_name}``.
         hooks: Optional ``PaymentWrapperHooks`` for on_before_execution,
             on_after_execution, on_after_settlement (matches server_async).
+            on_after_execution may set its request-local payment_requirements.amount
+            for metered settlement within the verified ceiling.
         extensions: Optional x402 extensions to include in PaymentRequired responses.
             Use this to attach Bazaar discovery metadata so facilitators can index
             the tool. Example: ``declare_mcp_discovery_extension(config)``
@@ -114,6 +117,46 @@ def create_payment_wrapper(
             mime_type="application/json",
         )
 
+        async def payment_required_result(
+            error: str,
+            payload: PaymentPayload | None = None,
+        ) -> CallToolResult:
+            # The core enriches corrective responses using this request's payload.
+            requirements = snapshot_payment_requirements_list(accepts)
+            try:
+                response = resource_server.create_payment_required_response(
+                    requirements,
+                    tool_resource,
+                    error,
+                    extensions,
+                    payment_payload=payload,
+                )
+            except TypeError:
+                response = resource_server.create_payment_required_response(
+                    requirements,
+                    tool_resource,
+                    error,
+                    extensions,
+                )
+            if inspect.isawaitable(response):
+                response = await response
+            if isinstance(response, PaymentRequired):
+                data = response.model_dump(by_alias=True, exclude_none=True)
+            elif isinstance(response, dict):
+                data = response
+            else:
+                return _create_payment_required_result(
+                    requirements,
+                    tool_resource,
+                    error,
+                    extensions,
+                )
+            return CallToolResult(
+                content=[TextContent(type="text", text=json.dumps(data))],
+                structuredContent=data,
+                isError=True,
+            )
+
         # Track whether we've warned about missing context injection
         _ctx_warning_issued = False
 
@@ -139,9 +182,7 @@ def create_payment_wrapper(
             payment_data = _extract_payment_from_context(ctx)
 
             if not payment_data:
-                return _create_payment_required_result(
-                    accepts, tool_resource, "Payment Required", extensions
-                )
+                return await payment_required_result("Payment Required")
 
             # Parse payment payload
             try:
@@ -149,19 +190,17 @@ def create_payment_wrapper(
                     payment_data = json.loads(payment_data)
                 payload = PaymentPayload.model_validate(payment_data)
             except Exception as e:
-                return _create_payment_required_result(
-                    accepts, tool_resource, f"Invalid payment payload: {e}", extensions
-                )
+                return await payment_required_result(f"Invalid payment payload: {e}")
 
             # Match the payload against post-enrichment accepts
             try:
                 payment_required_for_match = (
                     await resource_server.create_payment_required_response(
-                        accepts, tool_resource, None, extensions
+                        snapshot_payment_requirements_list(accepts), tool_resource, None, extensions
                     )
                     if asyncio.iscoroutinefunction(resource_server.create_payment_required_response)
                     else resource_server.create_payment_required_response(
-                        accepts, tool_resource, None, extensions
+                        snapshot_payment_requirements_list(accepts), tool_resource, None, extensions
                     )
                 )
                 if asyncio.iscoroutine(payment_required_for_match):
@@ -173,23 +212,18 @@ def create_payment_wrapper(
                 match_accepts, payload
             )
             if payment_requirements is None:
-                return _create_payment_required_result(
-                    accepts,
-                    tool_resource,
-                    "No matching payment requirements found",
-                    extensions,
+                return await payment_required_result(
+                    "No matching payment requirements found", payload
                 )
 
             validate_extensions = getattr(resource_server, "validate_extensions", None)
             if callable(validate_extensions) and payment_required_for_match is not None:
                 extension_result = validate_extensions(payment_required_for_match, payload)
                 if not getattr(extension_result, "valid", True):
-                    return _create_payment_required_result(
-                        accepts,
-                        tool_resource,
+                    return await payment_required_result(
                         getattr(extension_result, "invalid_reason", None)
                         or "Payment verification failed",
-                        extensions,
+                        payload,
                     )
 
             try:
@@ -202,65 +236,141 @@ def create_payment_wrapper(
                         resource_server.verify_payment, payload, payment_requirements
                     )
             except Exception as e:
-                return _create_payment_required_result(
-                    accepts,
-                    tool_resource,
+                return await payment_required_result(
                     _payment_required_error_from_verify(e, None),
-                    extensions,
+                    payload,
                 )
             if not verify_result.is_valid:
-                return _create_payment_required_result(
-                    accepts,
-                    tool_resource,
+                return await payment_required_result(
                     _payment_required_error_from_verify(None, verify_result),
-                    extensions,
+                    payload,
                 )
 
-            # OnBeforeExecution hook
-            if hooks and hooks.on_before_execution:
-                hook_ctx = ServerHookContext(
-                    tool_name=tool_name,
-                    arguments=kwargs,
-                    payment_requirements=payment_requirements,
-                    payment_payload=payload,
-                )
-                proceed = hooks.on_before_execution(hook_ctx)
-                if asyncio.iscoroutine(proceed):
-                    proceed = await proceed
-                if not proceed:
-                    return _create_payment_required_result(
-                        accepts,
-                        tool_resource,
-                        "Execution blocked by hook",
-                        extensions,
-                    )
+            async def cancel_verified(options: VerifiedPaymentCancelOptions) -> bool:
+                """Cancel the verified payment. Return False when the outcome is unknown."""
+                factory = getattr(resource_server, "create_payment_cancellation_dispatcher", None)
+                if not callable(factory):
+                    return True
+                dispatcher = factory(payload, payment_requirements, extensions)
+                try:
+                    if inspect.iscoroutinefunction(resource_server.verify_payment):
+                        result = dispatcher.cancel(options)
+                    else:
+                        result = await asyncio.to_thread(dispatcher.cancel_sync, options)
+                    if inspect.isawaitable(result):
+                        await result
+                except Exception:
+                    return False
+                # FastMCP never settles before the handler, so a cancel receipt
+                # is not surfaced (see resolve_failure_path_settlement).
+                return True
 
-            # Execute the original handler
-            try:
-                if is_async:
-                    result = await handler(**kwargs)
-                else:
-                    result = handler(**kwargs)
-            except Exception as e:
+            def cancellation_unknown(base: CallToolResult) -> CallToolResult:
+                # The authorization may still be open: report the failure without
+                # a payment-required offer that invites another payment.
                 return CallToolResult(
-                    content=[TextContent(type="text", text=f"Tool execution error: {e}")],
+                    content=[
+                        *base.content,
+                        TextContent(type="text", text="Payment cancellation outcome unknown"),
+                    ],
+                    structuredContent=base.structuredContent,
                     isError=True,
+                    _meta=base.meta,
                 )
 
-            # Convert handler result to text content
-            result_meta: dict[str, Any] = {}
-            is_handler_error = False
-            if isinstance(result, dict):
-                result_text = json.dumps(result)
-            elif isinstance(result, str):
-                result_text = result
-            elif isinstance(result, CallToolResult):
-                result_text = result.content[0].text if result.content else ""
-                if isinstance(result.meta, dict):
-                    result_meta = result.meta.copy()
-                is_handler_error = bool(result.isError)
+            def error_result(text: str) -> CallToolResult:
+                return CallToolResult(content=[TextContent(type="text", text=text)], isError=True)
+
+            settlement_requirements = payment_requirements.model_copy(deep=True)
+            skip_handler = getattr(verify_result, "skip_handler", None)
+            if not isinstance(skip_handler, SkipHandlerDirective):
+                skip_handler = None
+            if skip_handler is not None:
+                result = getattr(skip_handler, "body", None) or {}
             else:
-                result_text = str(result)
+                # OnBeforeExecution hook
+                if hooks and hooks.on_before_execution:
+                    hook_ctx = ServerHookContext(
+                        tool_name=tool_name,
+                        arguments=kwargs,
+                        payment_requirements=settlement_requirements,
+                        payment_payload=payload,
+                    )
+                    try:
+                        proceed = hooks.on_before_execution(hook_ctx)
+                        if inspect.isawaitable(proceed):
+                            proceed = await proceed
+                    except Exception as error:
+                        await cancel_verified(
+                            VerifiedPaymentCancelOptions(
+                                reason="after_verify_aborted",
+                                error=error,
+                            )
+                        )
+                        raise
+                    if not proceed:
+                        if not await cancel_verified(
+                            VerifiedPaymentCancelOptions(
+                                reason="after_verify_aborted",
+                            )
+                        ):
+                            return cancellation_unknown(error_result("Execution blocked by hook"))
+                        return await payment_required_result("Execution blocked by hook", payload)
+
+                    try:
+                        settlement_requirements = metered_payment_requirements(
+                            payment_requirements, hook_ctx.payment_requirements.amount
+                        )
+                    except ValueError as error:
+                        if not await cancel_verified(
+                            VerifiedPaymentCancelOptions(reason="after_verify_aborted", error=error)
+                        ):
+                            return cancellation_unknown(error_result("Payment metering failed"))
+                        return _create_settlement_failed_result(
+                            accepts,
+                            tool_resource,
+                            "Payment metering failed",
+                            extensions,
+                            network=payment_requirements.network,
+                        )
+
+                # Execute the original handler
+                try:
+                    if is_async:
+                        result = await handler(**kwargs)
+                    else:
+                        result = handler(**kwargs)
+                except Exception as e:
+                    failed = error_result(f"Tool execution error: {e}")
+                    if not await cancel_verified(
+                        VerifiedPaymentCancelOptions(reason="handler_threw", error=e)
+                    ):
+                        return cancellation_unknown(failed)
+                    return failed
+
+            try:
+                # Convert handler result to text content
+                result_meta: dict[str, Any] = {}
+                is_handler_error = False
+                if isinstance(result, dict):
+                    result_text = json.dumps(result)
+                elif isinstance(result, str):
+                    result_text = result
+                elif isinstance(result, CallToolResult):
+                    result_text = result.content[0].text if result.content else ""
+                    if isinstance(result.meta, dict):
+                        result_meta = result.meta.copy()
+                    is_handler_error = bool(result.isError)
+                else:
+                    result_text = str(result)
+
+            except Exception as error:
+                failed = error_result(f"Tool execution error: {error}")
+                if not await cancel_verified(
+                    VerifiedPaymentCancelOptions(reason="handler_threw", error=error)
+                ):
+                    return cancellation_unknown(failed)
+                return failed
 
             # Build MCPToolResult for hooks
             from .types import MCPToolResult as MCPToolResultType
@@ -274,33 +384,49 @@ def create_payment_wrapper(
                 structured_content=None,
             )
 
-            # OnAfterExecution hook (before the is_error branch)
-            if hooks and hooks.on_after_execution:
-                after_ctx = AfterExecutionContext(
-                    tool_name=tool_name,
-                    arguments=kwargs,
-                    payment_requirements=payment_requirements,
-                    payment_payload=payload,
-                    result=mcp_result,
-                )
-                try:
+            # Metering hooks receive a request-local copy. Only the amount is
+            # applied to settlement, bounded by the verified ceiling.
+            try:
+                if skip_handler is None and hooks and hooks.on_after_execution:
+                    after_ctx = AfterExecutionContext(
+                        tool_name=tool_name,
+                        arguments=kwargs,
+                        payment_requirements=settlement_requirements,
+                        payment_payload=payload,
+                        result=mcp_result,
+                    )
                     coro = hooks.on_after_execution(after_ctx)
-                    if asyncio.iscoroutine(coro):
+                    if inspect.isawaitable(coro):
                         await coro
-                except Exception:
-                    pass
+                settlement_requirements = metered_payment_requirements(
+                    payment_requirements, settlement_requirements.amount
+                )
+            except Exception as error:
+                if not await cancel_verified(
+                    VerifiedPaymentCancelOptions(reason="after_verify_aborted", error=error)
+                ):
+                    return cancellation_unknown(error_result("Payment metering failed"))
+                return _create_settlement_failed_result(
+                    accepts,
+                    tool_resource,
+                    "Payment metering failed",
+                    extensions,
+                    network=payment_requirements.network,
+                )
 
             if is_handler_error:
+                if not await cancel_verified(VerifiedPaymentCancelOptions(reason="handler_failed")):
+                    return cancellation_unknown(result)
                 return result
 
             try:
                 if asyncio.iscoroutinefunction(resource_server.settle_payment):
                     settle_result = await resource_server.settle_payment(
-                        payload, payment_requirements
+                        payload, settlement_requirements
                     )
                 else:
                     settle_result = await asyncio.to_thread(
-                        resource_server.settle_payment, payload, payment_requirements
+                        resource_server.settle_payment, payload, settlement_requirements
                     )
                 if not settle_result.success:
                     return _create_settlement_failed_result(
@@ -312,6 +438,10 @@ def create_payment_wrapper(
                         settle_response=settle_result,
                     )
             except Exception as e:
+                if isinstance(e, PaymentAbortedError) and not await cancel_verified(
+                    VerifiedPaymentCancelOptions(reason="after_verify_aborted", error=e)
+                ):
+                    return cancellation_unknown(error_result(f"Payment settlement failed: {e}"))
                 return _create_settlement_failed_result(
                     accepts,
                     tool_resource,
@@ -325,7 +455,7 @@ def create_payment_wrapper(
                 settlement_ctx = SettlementContext(
                     tool_name=tool_name,
                     arguments=kwargs,
-                    payment_requirements=payment_requirements,
+                    payment_requirements=settlement_requirements,
                     payment_payload=payload,
                     settlement=settle_result,
                 )
@@ -470,6 +600,11 @@ def _create_settlement_failed_result(
             "network": network or accepts[0].network,
         },
     }
+    if settle_response is not None:
+        error_data[MCP_PAYMENT_RESPONSE_META_KEY] = settle_response.model_dump(
+            by_alias=True,
+            exclude_none=True,
+        )
     if extensions:
         error_data["extensions"] = extensions
     meta = (
