@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { Mock } from "vitest";
 import { wrapFetchWithPayment, wrapFetchWithPaymentFromConfig } from "./index";
 import type { x402Client, x402HTTPClient, x402ClientConfig } from "@x402/core/client";
 import type { PaymentPayload, PaymentRequired, PaymentRequirements } from "@x402/core/types";
@@ -25,7 +26,7 @@ vi.mock("@x402/core/client", () => {
 });
 
 describe("wrapFetchWithPayment()", () => {
-  let mockFetch: ReturnType<typeof vi.fn>;
+  let mockFetch: Mock<typeof globalThis.fetch>;
   let mockClient: x402Client;
   let wrappedFetch: ReturnType<typeof wrapFetchWithPayment>;
 
@@ -71,7 +72,7 @@ describe("wrapFetchWithPayment()", () => {
   beforeEach(async () => {
     vi.resetAllMocks();
 
-    mockFetch = vi.fn();
+    mockFetch = vi.fn<typeof globalThis.fetch>();
 
     // Create mock client
     const { x402Client: MockX402Client, x402HTTPClient: MockX402HTTPClient } = await import(
@@ -442,7 +443,8 @@ describe("wrapFetchWithPayment()", () => {
     const observedBodies: string[] = [];
     const successResponse = createResponse(200, { data: "success" });
 
-    mockFetch.mockImplementation(async (request: Request) => {
+    mockFetch.mockImplementation(async request => {
+      if (!(request instanceof Request)) throw new TypeError("Expected a Request");
       observedBodies.push(await request.text());
       if (observedBodies.length < 3) {
         return createResponse(402, validPaymentRequired);
@@ -729,12 +731,12 @@ describe("wrapFetchWithPayment()", () => {
 });
 
 describe("wrapFetchWithPaymentFromConfig()", () => {
-  let mockFetch: ReturnType<typeof vi.fn>;
+  let mockFetch: Mock<typeof globalThis.fetch>;
 
   beforeEach(async () => {
     vi.resetAllMocks();
 
-    mockFetch = vi.fn();
+    mockFetch = vi.fn<typeof globalThis.fetch>();
 
     const { x402Client: MockX402Client, x402HTTPClient: MockX402HTTPClient } = await import(
       "@x402/core/client"
