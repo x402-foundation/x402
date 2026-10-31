@@ -295,6 +295,17 @@ class TestChannelStateExtra:
 
 
 class TestPaymentRequirementsExtra:
+    def test_managed_refund_consent_survives_wire_conversion(self):
+        wire = {
+            "receiverAuthorizer": "0x" + "44" * 20,
+            "withdrawDelay": 900,
+            "name": "USDC",
+            "version": "2",
+            "voucherManager": "facilitator",
+            "refundAuthorizer": "0x" + "55" * 20,
+        }
+        assert PaymentRequirementsExtra.from_dict(wire).to_dict() == wire
+
     def test_round_trip_minimal(self):
         r = PaymentRequirementsExtra(
             receiver_authorizer="0x" + "44" * 20,
@@ -322,6 +333,10 @@ class TestPaymentRequirementsExtra:
 
 
 class TestPaymentResponseExtra:
+    def test_managed_charge_count_survives_wire_conversion(self):
+        wire = {"chargedAmount": "100", "chargeCount": 2}
+        assert PaymentResponseExtra.from_dict(wire).to_dict() == wire
+
     def test_round_trip(self):
         r = PaymentResponseExtra(
             charged_amount="100",

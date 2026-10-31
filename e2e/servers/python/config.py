@@ -11,16 +11,6 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
-from x402.extensions.bazaar import (
-    DeclareMcpDiscoveryConfig,
-    declare_discovery_extension,
-    declare_mcp_discovery_extension,
-    OutputConfig,
-)
-from x402.extensions.eip2612_gas_sponsoring import declare_eip2612_gas_sponsoring_extension
-from x402.extensions.erc20_approval_gas_sponsoring import (
-    declare_erc20_approval_gas_sponsoring_extension,
-)
 from catalog import (
     ResolvedRoute,
     catalog_network_ids,
@@ -29,6 +19,18 @@ from catalog import (
     resolve_routes,
     route_discovery_output,
     server_address_env_key,
+)
+from x402.extensions.bazaar import (
+    DeclareMcpDiscoveryConfig,
+    OutputConfig,
+    declare_discovery_extension,
+    declare_mcp_discovery_extension,
+)
+from x402.extensions.eip2612_gas_sponsoring import (
+    declare_eip2612_gas_sponsoring_extension,
+)
+from x402.extensions.erc20_approval_gas_sponsoring import (
+    declare_erc20_approval_gas_sponsoring_extension,
 )
 
 
@@ -69,16 +71,20 @@ def load_server_config() -> ServerConfig:
 
 def configure_resource_server(server: Any, cfg: ServerConfig) -> None:
     """Register schemes for configured catalog networks + bazaar on a resource server."""
-    from x402.mechanisms.evm.exact import register_exact_evm_server
-    from x402.mechanisms.evm.upto import UptoEvmServerScheme
-    from x402.mechanisms.evm.batch_settlement.authorizer_signer import LocalAuthorizerSigner
+    from x402.extensions.bazaar import bazaar_resource_server_extension
+    from x402.mechanisms.evm.batch_settlement.authorizer_signer import (
+        LocalAuthorizerSigner,
+    )
     from x402.mechanisms.evm.batch_settlement.server import (
         BatchSettlementEvmScheme as BatchSettlementServerScheme,
+    )
+    from x402.mechanisms.evm.batch_settlement.server import (
         BatchSettlementEvmSchemeServerConfig,
     )
+    from x402.mechanisms.evm.exact import register_exact_evm_server
+    from x402.mechanisms.evm.upto import UptoEvmServerScheme
     from x402.mechanisms.svm.exact import register_exact_svm_server
     from x402.mechanisms.tvm.exact import ExactTvmServerScheme
-    from x402.extensions.bazaar import bazaar_resource_server_extension
 
     if cfg.payee("evm"):
         evm_pattern = network_caip2_pattern("evm")
@@ -93,6 +99,12 @@ def configure_resource_server(server: Any, cfg: ServerConfig) -> None:
             BatchSettlementServerScheme(
                 cfg.payee("evm"),
                 BatchSettlementEvmSchemeServerConfig(
+                    voucher_store_mode=(
+                        "facilitator"
+                        if os.getenv("E2E_BATCH_SERVER_ROLE") == "managed-batch"
+                        else "server"
+                    ),
+                    refund_authorizer_signer=batch_settlement_authorizer_signer,
                     receiver_authorizer_signer=batch_settlement_authorizer_signer,
                 ),
             ),

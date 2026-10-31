@@ -22,7 +22,7 @@ from ....evm.signer import ClientEvmSigner, ClientEvmSignerWithReadContract
 from ..abi import BATCH_SETTLEMENT_ABI
 from ..constants import BATCH_SETTLEMENT_ADDRESS, MIN_WITHDRAW_DELAY
 from ..types import ChannelConfig
-from ..utils import compute_channel_id
+from ..utils import compute_channel_id, pack_refund_authorizer_salt, parse_channel_salt
 from .storage import BatchSettlementClientContext, ClientChannelStorage
 
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
@@ -86,6 +86,12 @@ def build_channel_config(
     if not isinstance(withdraw_delay, int) or isinstance(withdraw_delay, bool):
         withdraw_delay = MIN_WITHDRAW_DELAY
 
+    salt = parse_channel_salt(deps.salt)
+    refund_authorizer = extra.get("refundAuthorizer")
+    if extra.get("voucherManager") == "facilitator" and refund_authorizer:
+        if to_checksum_address(refund_authorizer) != ZERO_ADDRESS:
+            salt = pack_refund_authorizer_salt(salt, refund_authorizer)
+
     return ChannelConfig(
         payer=to_checksum_address(deps.signer.address),
         payer_authorizer=to_checksum_address(payer_authorizer),
@@ -93,7 +99,7 @@ def build_channel_config(
         receiver_authorizer=to_checksum_address(receiver_authorizer),
         token=to_checksum_address(requirements.asset),
         withdraw_delay=int(withdraw_delay),
-        salt=deps.salt,
+        salt=salt,
     )
 
 

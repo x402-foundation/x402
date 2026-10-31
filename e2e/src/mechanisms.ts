@@ -121,6 +121,8 @@ export type RouteDefinition = {
   sdks: SdkId[];
   /** SDKs that implement only the client role. Servers and facilitators never see them. */
   clientSdks?: SdkId[];
+  /** SDKs implementing the resource-server role without the facilitator role. */
+  serverSdks?: SdkId[];
   schemeOptions?: Record<string, boolean>;
   /** Every route declares its own price. */
   price: PriceSpec;
@@ -199,6 +201,8 @@ type EndpointLike = {
   sdks?: SdkId[];
   /** Catalog SDKs that implement only the client role. */
   clientSdks?: SdkId[];
+  /** SDKs implementing the resource-server role without the facilitator role. */
+  serverSdks?: SdkId[];
   health?: boolean;
   close?: boolean;
   /** MCP tool name, equal to `path` for MCP endpoints (`method: 'tool'`). */
@@ -294,13 +298,14 @@ export function getRouteDefinition(path: string): RouteDefinition {
   return def;
 }
 
-/** Routes an SDK implements. With `role: 'client'`, routes it implements only as a client are included. */
+/** Routes an SDK implements, including optional role-specific eligibility. */
 export function sdkRoutesFor(sdk: string, role?: ConfigRole): SdkRoute[] {
   return Object.entries(catalog.routes)
     .filter(
       ([, def]) =>
         def.sdks.includes(sdk as SdkId) ||
-        (role === 'client' && def.clientSdks?.includes(sdk as SdkId)),
+        (role === 'client' && def.clientSdks?.includes(sdk as SdkId)) ||
+        (role === 'server' && def.serverSdks?.includes(sdk as SdkId)),
     )
     .map(([path, def]) => ({ path, ...def }));
 }
@@ -414,6 +419,7 @@ export function sdkRouteToEndpoint(route: SdkRoute, transport: RouteTransport = 
       extensions: route.extensions,
       sdks: route.sdks,
       ...(route.clientSdks ? { clientSdks: route.clientSdks } : {}),
+      ...(route.serverSdks ? { serverSdks: route.serverSdks } : {}),
       ...(route.schemeExtra ? { schemeExtra: route.schemeExtra } : {}),
     };
   }
@@ -431,6 +437,7 @@ export function sdkRouteToEndpoint(route: SdkRoute, transport: RouteTransport = 
     extensions: route.extensions,
     sdks: route.sdks,
     ...(route.clientSdks ? { clientSdks: route.clientSdks } : {}),
+    ...(route.serverSdks ? { serverSdks: route.serverSdks } : {}),
     ...(route.schemeExtra ? { schemeExtra: route.schemeExtra } : {}),
   };
 }
@@ -622,7 +629,7 @@ export function sdkRoutesToEndpoints(
   env: EnvLookup = key => process.env[key],
   filter?: RouteFilter,
 ): EndpointLike[] {
-  return availableRoutes(sdkRoutesFor(sdk), env, filter).map(route => sdkRouteToEndpoint(route));
+  return availableRoutes(sdkRoutesFor(sdk, 'server'), env, filter).map(route => sdkRouteToEndpoint(route));
 }
 
 /**
@@ -638,7 +645,7 @@ export function sdkRoutesToEndpoints(
  */
 export function extensionsForSdk(sdk: string, role: ConfigRole): string[] {
   const extensions = new Set<string>();
-  for (const route of sdkRoutesFor(sdk)) {
+  for (const route of sdkRoutesFor(sdk, role)) {
     for (const ext of route.extensions ?? []) {
       if (role === 'client' && ext === 'bazaar') continue;
       extensions.add(ext);
@@ -771,7 +778,10 @@ export function enrichConfigFromMechanisms(
     excludeSchemes: config.excludeSchemes as string[] | undefined,
     excludeNetworks: config.excludeNetworks as string[] | undefined,
   };
-  const routes = availableRoutes(sdkRoutesFor(sdk, type), key => process.env[key], filter);
+  const routes = availableRoutes(sdkRoutesFor(sdk, type), key => process.env[key], filter).filter(
+    // Python managed custody currently targets the HTTP lifecycle.
+    route => !(sdk === 'python' && config.transport === 'mcp' && route.schemeOptions?.facilitatorManaged),
+  );
 
   const fromCatalog = NETWORK_IDS.filter(id => routes.some(route => route.network === id));
   const protocolFamilies =
@@ -1127,7 +1137,7 @@ export function resolvePaymentRoutes(
 ): ResolvedRoute[] {
   const resolved: ResolvedRoute[] = [];
 
-  for (const route of availableRoutes(sdkRoutesFor(sdk), env, filter)) {
+  for (const route of availableRoutes(sdkRoutesFor(sdk, 'server'), env, filter)) {
     const def = getNetworkDefinition(route.network);
     const serverPayTo = env(serverAddressEnvKey(route.network));
     if (!serverPayTo) continue;

@@ -111,6 +111,35 @@ def coerce_bytes32(value: str | bytes) -> bytes:
     return bytes.fromhex(raw)
 
 
+def parse_channel_salt(value: str) -> str:
+    """Normalize a Go-compatible decimal channel index or bytes32 hex salt."""
+    value = value.strip()
+    if not value:
+        number = 0
+    elif value[:2].lower() == "0x":
+        raw = value[2:]
+        if not raw or re.fullmatch(r"[0-9a-fA-F]+", raw) is None:
+            raise ValueError("invalid channel salt")
+        number = int(raw, 16)
+    elif re.fullmatch(r"[0-9]+", value):
+        number = int(value)
+        if number > 2**53 - 1:
+            raise ValueError("decimal channel salt exceeds safe integer; use hex")
+    else:
+        raise ValueError("invalid channel salt")
+    if number >= 1 << 256:
+        raise ValueError("channel salt exceeds uint256")
+    return "0x" + number.to_bytes(32, "big").hex()
+
+
+def pack_refund_authorizer_salt(salt: str, authorizer: str) -> str:
+    """Bind refund consent to channel identity using the spec's 12+20 byte layout."""
+    raw = bytes.fromhex(parse_channel_salt(salt)[2:])
+    entropy = raw[20:] if raw[:12] == bytes(12) else raw[:12]
+    address = bytes.fromhex(to_checksum_address(authorizer)[2:])
+    return "0x" + (entropy + address).hex()
+
+
 def compute_channel_id(config: ChannelConfig, network_or_chain_id: str | int) -> str:
     """Compute the chain-bound channel id for a `ChannelConfig`.
 
@@ -149,4 +178,6 @@ __all__ = [
     "is_canonical_channel_id",
     "normalize_channel_id",
     "channel_id_binding_error",
+    "parse_channel_salt",
+    "pack_refund_authorizer_salt",
 ]

@@ -173,6 +173,12 @@
       },
       "extensions": [
         "bazaar"
+      ],
+      "clientSdks": [
+        "python"
+      ],
+      "serverSdks": [
+        "python"
       ]
     },
     "/batch-settlement-managed/evm/permit2": {
@@ -192,6 +198,12 @@
       },
       "extensions": [
         "bazaar"
+      ],
+      "clientSdks": [
+        "python"
+      ],
+      "serverSdks": [
+        "python"
       ]
     },
     "/batch-settlement-managed/evm/permit2-eip2612GasSponsoring": {
@@ -211,6 +223,12 @@
       "extensions": [
         "bazaar",
         "eip2612GasSponsoring"
+      ],
+      "clientSdks": [
+        "python"
+      ],
+      "serverSdks": [
+        "python"
       ]
     },
     "/batch-settlement-managed/evm/permit2-erc20ApprovalGasSponsoring": {
@@ -230,6 +248,12 @@
       "extensions": [
         "bazaar",
         "erc20ApprovalGasSponsoring"
+      ],
+      "clientSdks": [
+        "python"
+      ],
+      "serverSdks": [
+        "python"
       ]
     },
     "/exact/evm/eip3009": {

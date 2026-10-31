@@ -55,6 +55,7 @@ from .schemas import (
     SchemeNotFoundError,
     ServerPaymentRequiredContext,
     SettleContext,
+    SettleError,
     SettleFailureContext,
     SettlePhase,
     SettleResponse,
@@ -1354,6 +1355,7 @@ class x402ResourceServerBase:
             error=options.error,
             response_status=options.response_status,
             settled_phases=tuple(settled_phases or ()),
+            verify_result=options.verify_result,
         )
 
     # ========================================================================
@@ -1532,7 +1534,9 @@ class x402ResourceServerBase:
             if isinstance(hook_result, AbortResult):
                 yield (
                     "dispatch_cancel",
-                    VerifiedPaymentCancelOptions(reason="after_verify_aborted"),
+                    VerifiedPaymentCancelOptions(
+                        reason="after_verify_aborted", verify_result=verify_result
+                    ),
                     (payload, requirements, declared_extensions, transport_context),
                 )
                 return ResourceVerifyResponse(
@@ -1592,7 +1596,14 @@ class x402ResourceServerBase:
             if isinstance(result, AbortResult):
                 from .schemas import PaymentAbortedError
 
-                raise PaymentAbortedError(result.reason)
+                error = PaymentAbortedError(result.reason)
+                if phase != "cancel":
+                    yield (
+                        "dispatch_cancel",
+                        VerifiedPaymentCancelOptions(reason="settlement_failed", error=error),
+                        (payload, requirements, declared_extensions, transport_context),
+                    )
+                raise error
             if isinstance(result, SkipSettleResult):
                 result_context = SettleResultContext(
                     payment_payload=payload,
@@ -1616,6 +1627,7 @@ class x402ResourceServerBase:
                         break
                 return result.result
 
+        facilitator_settle_started = False
         try:
             # Get scheme and network
             scheme = payload.get_scheme()
@@ -1641,6 +1653,8 @@ class x402ResourceServerBase:
             if client is None:
                 raise SchemeNotFoundError(scheme, network)
 
+            # A thrown client call may already have committed; never auto-cancel it.
+            facilitator_settle_started = True
             # Yield for facilitator call (caller handles sync/async)
             settle_result: SettleResponse = yield (
                 "call_facilitator",
@@ -1737,4 +1751,17 @@ class x402ResourceServerBase:
                 if isinstance(result, RecoveredSettleResult):
                     return result.result
 
+            if (
+                not facilitator_settle_started
+                and phase != "cancel"
+                and not (
+                    isinstance(e, SettleError)
+                    and (e.transaction or e.error_reason == ERR_SETTLEMENT_PENDING)
+                )
+            ):
+                yield (
+                    "dispatch_cancel",
+                    VerifiedPaymentCancelOptions(reason="settlement_failed", error=e),
+                    (payload, requirements, declared_extensions, transport_context),
+                )
             raise

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import re
 import threading
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 try:
     from eth_utils import to_checksum_address
@@ -44,10 +45,11 @@ from ...default_assets import find_default_asset, get_default_asset
 from ...utils import get_asset_info, parse_amount
 from ..constants import (
     DEFAULT_SERVER_MIN_DEPOSIT_MULTIPLIER,
+    MAX_WITHDRAW_DELAY,
     MIN_WITHDRAW_DELAY,
     SCHEME_BATCH_SETTLEMENT,
 )
-from ..types import AuthorizerSigner
+from ..types import AuthorizerSigner, ChannelStateExtra, VoucherStateExtra
 from .storage import Channel, ChannelStorage, InMemoryChannelStorage
 
 MoneyParser = Callable[[str | int | float, str], AssetAmount | None]
@@ -63,6 +65,8 @@ class BatchSettlementEvmSchemeServerConfig:
     withdraw_delay: int | None = None
     onchain_state_ttl_ms: int | None = None
     enforce_min_deposit: bool | None = None
+    voucher_store_mode: Literal["server", "facilitator"] = "server"
+    refund_authorizer_signer: AuthorizerSigner | None = None
 
 
 @dataclass
@@ -72,6 +76,8 @@ class BatchSettlementRequestContext:
     channel_snapshot: Channel | None = None
     local_verify: bool = False
     reservation_committed: bool = False
+    corrective_channel_state: ChannelStateExtra | None = None
+    corrective_voucher_state: VoucherStateExtra | None = None
 
 
 def _default_onchain_state_ttl_ms(withdraw_delay_seconds: int) -> int:
@@ -102,6 +108,10 @@ class BatchSettlementEvmScheme:
     ):
         self._receiver_address = to_checksum_address(receiver_address)
         cfg = config or BatchSettlementEvmSchemeServerConfig()
+        if cfg.voucher_store_mode not in ("server", "facilitator"):
+            raise ValueError("voucher_store_mode must be server or facilitator")
+        self._voucher_store_mode = cfg.voucher_store_mode
+        self._refund_authorizer_signer = cfg.refund_authorizer_signer
         self._storage: ChannelStorage = cfg.storage or InMemoryChannelStorage()
         self._receiver_authorizer_signer = cfg.receiver_authorizer_signer
         self._withdraw_delay = (
@@ -117,6 +127,15 @@ class BatchSettlementEvmScheme:
 
         self._request_lock = threading.Lock()
         self._request_contexts: dict[int, BatchSettlementRequestContext] = {}
+        self._request_payload_refs: dict[int, weakref.ReferenceType[PaymentPayload]] = {}
+
+    def is_facilitator_managed(self) -> bool:
+        return self._voucher_store_mode == "facilitator"
+
+    def get_refund_authorizer_signer(self) -> AuthorizerSigner | None:
+        if self.is_facilitator_managed():
+            return self._refund_authorizer_signer
+        return self._receiver_authorizer_signer
 
     def get_storage(self) -> ChannelStorage:
         return self._storage
@@ -155,6 +174,12 @@ class BatchSettlementEvmScheme:
             existing = self._request_contexts.get(key)
             if existing is None:
                 self._request_contexts[key] = context
+                if self.is_facilitator_managed():
+                    # Application hooks can stop terminal scheme hooks. Do not
+                    # retain an observational context beyond its request object.
+                    self._request_payload_refs[key] = weakref.ref(
+                        payload, lambda _: self._discard_request_context(key)
+                    )
                 return
             if context.channel_id is not None:
                 existing.channel_id = context.channel_id
@@ -164,6 +189,10 @@ class BatchSettlementEvmScheme:
                 existing.channel_snapshot = context.channel_snapshot
             if context.local_verify:
                 existing.local_verify = context.local_verify
+            if context.corrective_channel_state is not None:
+                existing.corrective_channel_state = context.corrective_channel_state
+            if context.corrective_voucher_state is not None:
+                existing.corrective_voucher_state = context.corrective_voucher_state
             if context.reservation_committed:
                 existing.reservation_committed = True
 
@@ -173,7 +202,13 @@ class BatchSettlementEvmScheme:
 
     def take_request_context(self, payload: PaymentPayload) -> BatchSettlementRequestContext | None:
         with self._request_lock:
+            self._request_payload_refs.pop(id(payload), None)
             return self._request_contexts.pop(id(payload), None)
+
+    def _discard_request_context(self, key: int) -> None:
+        with self._request_lock:
+            self._request_contexts.pop(key, None)
+            self._request_payload_refs.pop(key, None)
 
     def remember_channel_snapshot(self, payload: PaymentPayload, channel: Channel) -> None:
         self.merge_request_context(
@@ -256,6 +291,31 @@ class BatchSettlementEvmScheme:
 
         extra = dict(requirements.extra or {})
 
+        if self.is_facilitator_managed():
+            problem = self.validate_facilitator_support(requirements.network, supported_kind, [])
+            if problem:
+                raise ValueError(problem)
+            advertised = supported_kind.extra or {}
+            extra["voucherManager"] = "facilitator"
+            extra["receiverAuthorizer"] = to_checksum_address(advertised["receiverAuthorizer"])
+            extra["withdrawDelay"] = advertised["withdrawDelay"]
+            extra.pop("refundAuthorizer", None)
+            if self._refund_authorizer_signer is not None:
+                extra["refundAuthorizer"] = to_checksum_address(
+                    self._refund_authorizer_signer.address
+                )
+            extra["minDeposit"] = self.resolve_min_deposit_hint(requirements)
+            if asset_info is not None:
+                extra.setdefault("name", asset_info["name"])
+                extra.setdefault("version", asset_info["version"])
+                if asset_info.get("asset_transfer_method"):
+                    extra.setdefault("assetTransferMethod", asset_info["asset_transfer_method"])
+            requirements.extra = extra
+            return requirements
+
+        modes = (supported_kind.extra or {}).get("voucherManager", ["server"])
+        if not isinstance(modes, list) or "server" not in modes:
+            raise ValueError("facilitator does not support server voucher custody")
         receiver_authorizer = None
         if self._receiver_authorizer_signer is not None:
             receiver_authorizer = self._receiver_authorizer_signer.address
@@ -343,10 +403,31 @@ class BatchSettlementEvmScheme:
         Returns:
             A problem message when delegation is impossible, or None when valid.
         """
+        extra = supported_kind.extra or {}
+        modes = extra.get("voucherManager", ["server"])
+        if not isinstance(modes, list) or self._voucher_store_mode not in modes:
+            return f"facilitator does not advertise {self._voucher_store_mode} voucher custody on {network}"
+        if self.is_facilitator_managed():
+            advertised = extra.get("receiverAuthorizer")
+            try:
+                valid_authorizer = (
+                    isinstance(advertised, str) and to_checksum_address(advertised) != _ZERO_ADDRESS
+                )
+            except ValueError:
+                valid_authorizer = False
+            if not valid_authorizer:
+                return "managed custody requires a non-zero advertised receiverAuthorizer"
+            delay = extra.get("withdrawDelay")
+            if type(delay) is not int or not MIN_WITHDRAW_DELAY <= delay <= MAX_WITHDRAW_DELAY:
+                return "managed custody requires an in-range advertised withdrawDelay"
+            if self._refund_authorizer_signer is None and extra.get("delegatedRefund") is not True:
+                return "managed custody requires refund_authorizer_signer or delegatedRefund: true"
+            return None
         if self._receiver_authorizer_signer is not None:
             return None
+        if extra.get("delegatedRefund") is False:
+            return "delegated receiver authorizer does not support refunds"
 
-        extra = supported_kind.extra or {}
         advertised = extra.get("receiverAuthorizer")
         if isinstance(advertised, str) and to_checksum_address(advertised) != _ZERO_ADDRESS:
             return None
@@ -369,37 +450,77 @@ class BatchSettlementEvmScheme:
         return AssetAmount(amount=str(token_amount), asset=asset["asset"], extra=extra)
 
     def before_verify(self, context: VerifyContext) -> AbortResult | SkipVerifyResult | None:
+        from . import managed
+
+        mismatch = managed.mode_mismatch(self, context)
+        if mismatch is not None:
+            return mismatch
+        if self.is_facilitator_managed():
+            return managed.handle_before_verify(self, context)
+
         from .verify import handle_before_verify
 
         return handle_before_verify(self, context)
 
     def after_verify(self, context: VerifyResultContext) -> AbortResult | SkipHandlerResult | None:
+        from . import managed
+
+        if self.is_facilitator_managed():
+            return managed.handle_after_verify(self, context)
+
         from .verify import handle_after_verify
 
         return handle_after_verify(self, context)
 
     def on_verify_failure(self, context: VerifyFailureContext) -> RecoveredVerifyResult | None:
+        from . import managed
+
+        if self.is_facilitator_managed():
+            return managed.handle_verify_failure(self, context)
+
         from .verify import handle_verify_failure
 
         handle_verify_failure(self, context)
         return None
 
     def on_verified_payment_canceled(self, context: VerifiedPaymentCanceledContext) -> None:
+        from . import managed
+
+        if self.is_facilitator_managed():
+            return managed.handle_verified_payment_canceled(self, context)
+
         from .verify import handle_verified_payment_canceled
 
         handle_verified_payment_canceled(self, context)
 
     def before_settle(self, context: SettleContext) -> AbortResult | SkipSettleResult | None:
+        from . import managed
+
+        mismatch = managed.mode_mismatch(self, context)
+        if mismatch is not None:
+            return mismatch
+        if self.is_facilitator_managed():
+            return managed.handle_before_settle(self, context)
+
         from .settle import handle_before_settle
 
         return handle_before_settle(self, context)
 
     def after_settle(self, context: SettleResultContext) -> None:
+        from . import managed
+
+        if self.is_facilitator_managed():
+            return managed.handle_after_settle(self, context)
+
         from .settle import handle_after_settle
 
         handle_after_settle(self, context)
 
     def on_settle_failure(self, context: SettleFailureContext) -> RecoveredSettleResult | None:
+        if self.is_facilitator_managed():
+            # An unsuccessful or uncertain settlement still needs its admission identity.
+            return None
+
         from .settle import handle_settle_failure
 
         handle_settle_failure(self, context)
@@ -408,19 +529,47 @@ class BatchSettlementEvmScheme:
     def enrich_payment_required_response(
         self, context: SchemePaymentRequiredContext
     ) -> list[PaymentRequirements] | None:
+        from . import managed
+
+        if self.is_facilitator_managed():
+            return managed.handle_enrich_payment_required_response(self, context)
+
         from .verify import handle_enrich_payment_required_response
 
         return handle_enrich_payment_required_response(self, context)
 
     def enrich_settlement_payload(self, context: SettleContext) -> dict[str, Any] | None:
+        from . import managed
+
+        if self.is_facilitator_managed():
+            return managed.handle_enrich_settlement_payload(self, context)
+
         from .settle import handle_enrich_settlement_payload
 
         return handle_enrich_settlement_payload(self, context)
 
     def enrich_settlement_response(self, context: SettleResultContext) -> dict[str, Any] | None:
+        from . import managed
+
+        if self.is_facilitator_managed():
+            return managed.handle_enrich_settlement_response(self, context)
+
         from .settle import handle_enrich_settlement_response
 
         return handle_enrich_settlement_response(self, context)
+
+    def settle_on_cancel(
+        self, context: VerifiedPaymentCanceledContext
+    ) -> PaymentRequirements | None:
+        if not self.is_facilitator_managed():
+            return None
+        request = self.read_request_context(context.payment_payload)
+        if request is None or not request.pending_id:
+            self.take_request_context(context.payment_payload)
+            return None
+        from .managed import handle_settle_on_cancel
+
+        return handle_settle_on_cancel(context)
 
     def create_channel_manager(
         self,

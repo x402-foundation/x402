@@ -295,6 +295,11 @@ class x402ResourceServer(x402ResourceServerBase):
                         result = await target.verify(p, r)
                     else:
                         result = await settle_with_pending_retry_async(target, p, r)
+                elif phase_cmd == "dispatch_cancel":
+                    p, r, declared, tc = ctx
+                    result = await self._dispatch_verified_payment_canceled(
+                        p, r, declared, target, tc
+                    )
                 else:
                     try:
                         result = await self._execute_hook(target, ctx)
@@ -621,6 +626,11 @@ class x402ResourceServerSync(x402ResourceServerBase):
                         result = target.verify(p, r)
                     else:
                         result = settle_with_pending_retry(target, p, r)
+                elif phase_cmd == "dispatch_cancel":
+                    p, r, declared, tc = ctx
+                    result = self._dispatch_verified_payment_canceled_sync(
+                        p, r, declared, target, tc
+                    )
                 else:
                     try:
                         result = self._execute_hook_sync(target, ctx)

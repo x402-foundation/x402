@@ -109,7 +109,7 @@ class SkipHandlerResult:
 
 
 VerifiedPaymentCancellationReason = Literal[
-    "handler_threw", "handler_failed", "after_verify_aborted"
+    "handler_threw", "handler_failed", "after_verify_aborted", "settlement_failed"
 ]
 
 SettlePhase = Literal["before-handler", "after-handler", "cancel"]
@@ -117,11 +117,16 @@ SettlePhase = Literal["before-handler", "after-handler", "cancel"]
 
 @dataclass
 class VerifiedPaymentCancelOptions:
-    """Options passed when canceling a verified payment attempt."""
+    """Options passed when canceling a verified payment attempt.
+
+    The core supplies ``verify_result`` when an after-verify hook aborts, so
+    cancellation can use admission data even if later scheme hooks did not run.
+    """
 
     reason: VerifiedPaymentCancellationReason
     error: Any = None
     response_status: int | None = None
+    verify_result: VerifyResponse | None = None
 
 
 @dataclass
@@ -351,6 +356,7 @@ class VerifiedPaymentCanceledContext(SettleContext):
     error: Any = None
     response_status: int | None = None
     settled_phases: tuple[SettlePhase, ...] = ()
+    verify_result: VerifyResponse | None = None
 
     def __post_init__(self) -> None:
         if self.reason is None:
