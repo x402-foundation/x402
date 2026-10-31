@@ -40,7 +40,7 @@ This package provides three main components for handling x402 payments on Stella
 - `FacilitatorStellarSigner` - TypeScript type for facilitator signers
 
 > [!NOTE]
-> Facilitators currently always sponsor transaction fees (`areFeesSponsored: true`). Settlement fees are derived from the settle-time simulation (`simulationResourceFee + inclusionBuffer`); `maxTransactionFeeStroops` is a safety ceiling, not a per-transaction budget. A non-sponsored flow will be added later. See [spec](../../../specs/schemes/exact/scheme_exact_stellar.md#paymentrequirements-for-exact) for details.
+> Facilitators currently always sponsor transaction fees (`areFeesSponsored: true`). Settlement fees are derived from the settle-time simulation (`simulationResourceFee + inclusionBuffer`); `maxTransactionFeeStroops` is a safety ceiling, not a per-transaction budget. It defaults to 50,000 stroops (0.005 XLM) and is published in the facilitator's `/supported` response as `extra.maxTransactionFeeStroops`. Verification rejects payments whose simulated fee is above it, so smart-account payers with heavy `__check_auth` logic may need a higher value. A non-sponsored flow will be added later. See [spec](../../../specs/schemes/exact/scheme_exact_stellar.md#paymentrequirements-for-exact) for details.
 
 **Server:**
 

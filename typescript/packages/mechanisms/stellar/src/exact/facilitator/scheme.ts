@@ -167,14 +167,16 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
   /**
    * Get mechanism-specific extra data for the supported kinds endpoint.
    * For Stellar, returns `areFeesSponsored` indicating to clients if they can expect fees to be sponsored.
-   * As of now, the spec only supports `areFeesSponsored: true`.
+   * As of now, the spec only supports `areFeesSponsored: true`. Also returns the
+   * `maxTransactionFeeStroops` ceiling that verify enforces on the simulation-derived fee.
    *
    * @param _ - The network identifier (unused, offset is network-agnostic)
-   * @returns Extra data with the `areFeesSponsored` flag
+   * @returns Extra data with the `areFeesSponsored` flag and the fee ceiling
    */
   getExtra(_: Network): Record<string, unknown> | undefined {
     return {
       areFeesSponsored: this.areFeesSponsored,
+      maxTransactionFeeStroops: this.maxTransactionFeeStroops,
     };
   }
 
