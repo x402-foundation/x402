@@ -1,17 +1,23 @@
 """Tests for ExactEvmScheme client."""
 
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+import pytest
+
 try:
     from eth_account import Account
     from eth_account.signers.base import BaseAccount
     from eth_account.signers.local import LocalAccount
 except ImportError:
-    import pytest
-
     pytest.skip("EVM client requires eth_account", allow_module_level=True)
 
+from x402.extensions.erc20_approval_gas_sponsoring import ERC20_APPROVAL_GAS_SPONSORING_KEY
 from x402.mechanisms.evm.exact import ExactEvmClientScheme
-from x402.mechanisms.evm.signer import _reset_sponsoring_warnings
+from x402.mechanisms.evm.signer import RPCChainConfig, RPCConfig, _reset_sponsoring_warnings
 from x402.mechanisms.evm.signers import EthAccountSigner
+from x402.mechanisms.evm.upto import UptoEvmClientScheme
 from x402.mechanisms.evm.utils import get_asset_info
 from x402.schemas import PaymentRequirements
 
@@ -304,6 +310,7 @@ def _permit2_requirements(
     *,
     name: str | None = "USDC",
     version: str | None = "2",
+    network: str = "eip155:84532",
 ) -> PaymentRequirements:
     extra: dict = {"assetTransferMethod": "permit2"}
     if name is not None:
@@ -312,7 +319,7 @@ def _permit2_requirements(
         extra["version"] = version
     return PaymentRequirements(
         scheme="exact",
-        network="eip155:84532",
+        network=network,
         amount="1000",
         asset="0x036CbD53842c5426634e7929541eC2318f3dCF7e",
         pay_to="0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0",
@@ -358,6 +365,8 @@ class TestGasSponsoringReadWarning:
         message = warnings[0].getMessage()
         assert "cannot read the chain" in message
         assert "rpc_url" in message
+        assert "rpc_by_chain_id" in message
+        assert "RPCConfig" in message
         assert "read_contract" in message
 
         _reset_sponsoring_warnings()
@@ -401,3 +410,161 @@ class TestGasSponsoringReadWarning:
 
         assert "__extensions" not in result
         assert _sponsoring_warnings(caplog) == []
+
+
+def _upto_permit2_requirements() -> PaymentRequirements:
+    return PaymentRequirements(
+        scheme="upto",
+        network="eip155:8453",
+        amount="1000",
+        asset="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        pay_to="0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0",
+        max_timeout_seconds=60,
+        extra={
+            "assetTransferMethod": "permit2",
+            "facilitatorAddress": "0x4444444444444444444444444444444444444444",
+        },
+    )
+
+
+_CLIENT_WARNING_CASES = [
+    pytest.param(ExactEvmClientScheme, _permit2_requirements(network="eip155:8453"), id="exact"),
+    pytest.param(UptoEvmClientScheme, _upto_permit2_requirements(), id="upto"),
+]
+
+
+class _AllowanceRPCHandler(BaseHTTPRequestHandler):
+    def do_POST(self) -> None:
+        request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        response: dict = {"jsonrpc": "2.0", "id": request["id"]}
+        if request["method"] == "eth_call":
+            self.server.eth_calls += 1
+            response["result"] = f"0x{self.server.allowance:064x}"
+        elif request["method"] == "eth_chainId":
+            response["result"] = hex(8453)
+        else:
+            response["error"] = {"code": -32601, "message": "method not found"}
+        body = json.dumps(response).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args: object) -> None:
+        pass
+
+
+class _AllowanceRPCServer(HTTPServer):
+    """Serves eth_call with an ABI-encoded uint256 allowance and counts the calls.
+
+    Also answers eth_chainId, which web3's validation middleware sends before eth_call.
+    """
+
+    def __init__(self, allowance: int) -> None:
+        super().__init__(("127.0.0.1", 0), _AllowanceRPCHandler)
+        self.allowance = allowance
+        self.eth_calls = 0
+
+    @property
+    def url(self) -> str:
+        return f"http://127.0.0.1:{self.server_port}"
+
+
+@pytest.fixture
+def allowance_rpc_server():
+    server = _AllowanceRPCServer(1_000_000)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
+    thread.start()
+    yield server
+    server.shutdown()
+    server.server_close()
+
+
+class _AllowanceSigner(EthAccountSigner):
+    def __init__(self, allowance: int) -> None:
+        super().__init__(Account.create())
+        self.allowance = allowance
+        self.reads = 0
+        self.signed_transactions = 0
+
+    def read_contract(self, address: str, abi: list, function_name: str, *args: object) -> int:
+        self.reads += 1
+        return self.allowance
+
+    def sign_transaction(self, tx: dict) -> str:
+        self.signed_transactions += 1
+        return "0x02ab"
+
+    def get_transaction_count(self, address: str) -> int:
+        return 0
+
+
+class _ProbeAllowanceSigner(_AllowanceSigner):
+    def __init__(self, allowance: int, has_rpc_client: bool) -> None:
+        super().__init__(allowance)
+        self._has_rpc_client = has_rpc_client
+
+    def has_rpc_client(self) -> bool:
+        return self._has_rpc_client
+
+
+@pytest.mark.parametrize(("scheme_cls", "requirements"), _CLIENT_WARNING_CASES)
+class TestAllowanceShortCircuit:
+    @pytest.mark.parametrize(
+        ("has_rpc_client", "rpc_config", "want_reads", "want_rpc_calls", "want_warning"),
+        [
+            pytest.param(None, None, 1, 0, False, id="reads allowance without probe"),
+            pytest.param(True, None, 1, 0, False, id="reads allowance when has_rpc_client is true"),
+            pytest.param(
+                False, None, 0, 0, True, id="skips allowance read when has_rpc_client is false"
+            ),
+            pytest.param(
+                False,
+                lambda url: RPCConfig(rpc_url=url),
+                0,
+                1,
+                False,
+                id="reads allowance via rpc_url when has_rpc_client is false",
+            ),
+            pytest.param(
+                False,
+                lambda url: RPCConfig(rpc_by_chain_id={8453: RPCChainConfig(rpc_url=url)}),
+                0,
+                1,
+                False,
+                id="reads allowance via rpc_by_chain_id when has_rpc_client is false",
+            ),
+        ],
+    )
+    def test_erc20_approval_skipped_when_allowance_sufficient(
+        self,
+        scheme_cls,
+        requirements,
+        has_rpc_client,
+        rpc_config,
+        want_reads,
+        want_rpc_calls,
+        want_warning,
+        allowance_rpc_server,
+        caplog,
+    ):
+        _reset_sponsoring_warnings()
+        if has_rpc_client is None:
+            signer = _AllowanceSigner(1_000_000)
+        else:
+            signer = _ProbeAllowanceSigner(1_000_000, has_rpc_client)
+        config = rpc_config(allowance_rpc_server.url) if rpc_config else None
+        client = scheme_cls(signer, config)
+        advertised = {ERC20_APPROVAL_GAS_SPONSORING_KEY: {}}
+
+        with caplog.at_level("WARNING", logger="x402.mechanisms.evm.signer"):
+            result = client.create_payment_payload(requirements, advertised)
+
+        assert "__extensions" not in result
+        assert signer.signed_transactions == 0
+        assert allowance_rpc_server.eth_calls == want_rpc_calls
+        assert signer.reads == want_reads
+        assert bool(_sponsoring_warnings(caplog)) is want_warning

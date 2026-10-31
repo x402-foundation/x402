@@ -10,7 +10,17 @@ try:
 except ImportError:
     pytest.skip("EVM signers require eth_account", allow_module_level=True)
 
+from x402.mechanisms.evm.constants import ERC20_ALLOWANCE_ABI, PERMIT2_ADDRESS
+from x402.mechanisms.evm.signer import (
+    RPCChainConfig,
+    RPCConfig,
+    has_sufficient_permit2_allowance,
+    resolve_rpc_url,
+)
 from x402.mechanisms.evm.signers import EthAccountSigner, FacilitatorWeb3Signer
+
+ALLOWANCE_TEST_TOKEN = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+ALLOWANCE_TEST_OWNER = "0x1234567890123456789012345678901234567890"
 
 
 class _RecordingEth:
@@ -261,3 +271,53 @@ class TestSignerProtocols:
         signer.wait_for_transaction_receipt("0x" + "ab" * 32)
 
         assert signer._w3.eth.timeout == 25
+
+
+class TestHasSufficientPermit2Allowance:
+    """Test has_sufficient_permit2_allowance."""
+
+    @pytest.mark.parametrize(
+        ("result", "error", "required", "want"),
+        [
+            pytest.param(100, None, "100", True, id="allowance equals required"),
+            pytest.param(101, None, "100", True, id="allowance exceeds required"),
+            pytest.param(99, None, "100", False, id="allowance below required"),
+            pytest.param(None, RuntimeError("rpc down"), "100", False, id="read error"),
+            pytest.param("100", None, "100", False, id="unexpected result type"),
+            pytest.param(100, None, "", False, id="empty required amount"),
+            pytest.param(100, None, "abc", False, id="non-numeric required amount"),
+        ],
+    )
+    def test_has_sufficient_permit2_allowance(self, result, error, required, want):
+        signer = Mock()
+        signer.read_contract.return_value = result
+        signer.read_contract.side_effect = error
+
+        got = has_sufficient_permit2_allowance(
+            signer, ALLOWANCE_TEST_TOKEN, ALLOWANCE_TEST_OWNER, required
+        )
+
+        assert got is want
+        signer.read_contract.assert_called_once_with(
+            ALLOWANCE_TEST_TOKEN,
+            ERC20_ALLOWANCE_ABI,
+            "allowance",
+            ALLOWANCE_TEST_OWNER,
+            PERMIT2_ADDRESS,
+        )
+
+
+class TestResolveRPCURL:
+    """Test resolve_rpc_url."""
+
+    def test_chain_specific_rpc_wins_over_default(self):
+        config = RPCConfig(
+            rpc_url="https://default.example",
+            rpc_by_chain_id={8453: RPCChainConfig(rpc_url="https://base.example")},
+        )
+
+        assert resolve_rpc_url(config, "eip155:8453") == "https://base.example"
+        assert resolve_rpc_url(config, "eip155:137") == "https://default.example"
+
+    def test_returns_empty_string_without_config(self):
+        assert resolve_rpc_url(None, "eip155:8453") == ""

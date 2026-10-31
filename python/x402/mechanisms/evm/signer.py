@@ -1,9 +1,12 @@
 """EVM signer protocol definitions."""
 
 import logging
+from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+from .constants import ERC20_ALLOWANCE_ABI, PERMIT2_ADDRESS
 from .types import TransactionReceipt, TypedDataDomain, TypedDataField
+from .utils import get_evm_chain_id
 
 
 class ClientEvmSigner(Protocol):
@@ -237,6 +240,59 @@ class ClientEvmSignerWithSignTransaction(Protocol):
         ...
 
 
+@dataclass
+class RPCChainConfig:
+    """RPC settings for a single chain."""
+
+    rpc_url: str = ""
+
+
+@dataclass
+class RPCConfig:
+    """RPC settings for EVM clients that need onchain reads.
+
+    Used when the signer cannot read the chain itself. Entries in
+    ``rpc_by_chain_id`` take precedence over the top-level ``rpc_url``.
+    """
+
+    rpc_url: str = ""
+    rpc_by_chain_id: dict[int, RPCChainConfig] = field(default_factory=dict)
+
+
+def resolve_rpc_url(config: RPCConfig | None, network: str) -> str:
+    """Return the RPC URL for a network, or an empty string when none is configured."""
+    if config is None:
+        return ""
+    chain_config = config.rpc_by_chain_id.get(get_evm_chain_id(network))
+    if chain_config is not None and chain_config.rpc_url:
+        return chain_config.rpc_url
+    return config.rpc_url
+
+
+def has_sufficient_permit2_allowance(
+    read_signer: ClientEvmSignerWithReadContract,
+    token_address: str,
+    owner: str,
+    required_amount: str,
+) -> bool:
+    """Return True when owner already approved at least required_amount to Permit2.
+
+    Returns False on any read or parse failure so callers conservatively attach
+    an approval extension.
+    """
+    try:
+        allowance = read_signer.read_contract(
+            token_address,
+            ERC20_ALLOWANCE_ABI,
+            "allowance",
+            owner,
+            PERMIT2_ADDRESS,
+        )
+        return isinstance(allowance, int) and allowance >= int(required_amount)
+    except Exception:
+        return False
+
+
 _logger = logging.getLogger(__name__)
 _warned_sponsoring_networks: set[str] = set()
 
@@ -249,7 +305,8 @@ def warn_cannot_read_for_sponsoring(network: str) -> None:
         "[x402] gas sponsoring is advertised for %s but the client cannot read the chain, "
         "so the sponsored permit/approval will not be signed and a wallet with no Permit2 "
         "allowance is rejected with permit2_allowance_required. Use a signer with "
-        "read_contract, for example EthAccountSignerWithRPC(account, rpc_url=...).",
+        "read_contract, for example EthAccountSignerWithRPC(account, rpc_url=...), or "
+        "configure rpc_url or rpc_by_chain_id on the scheme's RPCConfig.",
         network,
     )
 
