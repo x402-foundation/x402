@@ -6,8 +6,6 @@ from typing import Any
 
 from ....schemas import PaymentRequirements
 from ..constants import (
-    ERC20_ALLOWANCE_ABI,
-    PERMIT2_ADDRESS,
     SCHEME_UPTO,
     UPTO_PERMIT2_WITNESS_TYPES,
     X402_UPTO_PERMIT2_PROXY_ADDRESS,
@@ -17,8 +15,12 @@ from ..signer import (
     ClientEvmSigner,
     ClientEvmSignerWithReadContract,
     ClientEvmSignerWithSignTransaction,
+    RPCConfig,
+    has_sufficient_permit2_allowance,
+    resolve_rpc_url,
     warn_cannot_read_for_sponsoring,
 )
+from ..signers import resolve_read_signer
 from ..types import (
     ExactPermit2TokenPermissions,
     TypedDataField,
@@ -59,8 +61,21 @@ class UptoEvmScheme:
     scheme = SCHEME_UPTO
     find_default_asset = staticmethod(find_default_asset)
 
-    def __init__(self, signer: ClientEvmSigner):
+    def __init__(self, signer: ClientEvmSigner, config: RPCConfig | None = None):
+        """Create UptoEvmScheme.
+
+        Args:
+            signer: EVM signer for payment authorizations. Can also be an
+                eth_account LocalAccount, which will be auto-wrapped in
+                EthAccountSigner.
+            config: Optional RPC settings used for onchain reads when the signer
+                cannot read the chain itself.
+        """
         self._signer = _wrap_if_local_account(signer)
+        self._config = config
+
+    def _resolve_read_signer(self, network: str) -> ClientEvmSignerWithReadContract | None:
+        return resolve_read_signer(self._signer, resolve_rpc_url(self._config, network))
 
     def create_payment_payload(
         self,
@@ -108,7 +123,8 @@ class UptoEvmScheme:
         if EIP2612_GAS_SPONSORING_KEY not in extensions:
             return None
 
-        if not isinstance(self._signer, ClientEvmSignerWithReadContract):
+        read_signer = self._resolve_read_signer(str(requirements.network))
+        if read_signer is None:
             warn_cannot_read_for_sponsoring(str(requirements.network))
             return None
 
@@ -121,18 +137,10 @@ class UptoEvmScheme:
         chain_id = get_evm_chain_id(str(requirements.network))
         token_address = normalize_address(requirements.asset)
 
-        try:
-            allowance = self._signer.read_contract(
-                token_address,
-                ERC20_ALLOWANCE_ABI,
-                "allowance",
-                self._signer.address,
-                PERMIT2_ADDRESS,
-            )
-            if int(allowance) >= int(requirements.amount):
-                return None
-        except Exception:
-            pass
+        if has_sufficient_permit2_allowance(
+            read_signer, token_address, self._signer.address, requirements.amount
+        ):
+            return None
 
         permit2_auth = result.get("permit2Authorization", {})
         deadline = permit2_auth.get("deadline", "")
@@ -142,7 +150,7 @@ class UptoEvmScheme:
             deadline = str(int(time.time()) + (requirements.max_timeout_seconds or 3600))
 
         info = sign_eip2612_permit(
-            self._signer,
+            read_signer,
             token_address,
             token_name,
             token_version,
@@ -168,7 +176,8 @@ class UptoEvmScheme:
         if ERC20_APPROVAL_GAS_SPONSORING_KEY not in extensions:
             return None
 
-        if not isinstance(self._signer, ClientEvmSignerWithReadContract):
+        read_signer = self._resolve_read_signer(str(requirements.network))
+        if read_signer is None:
             warn_cannot_read_for_sponsoring(str(requirements.network))
             return None
 
@@ -178,19 +187,10 @@ class UptoEvmScheme:
         chain_id = get_evm_chain_id(str(requirements.network))
         token_address = normalize_address(requirements.asset)
 
-        if isinstance(self._signer, ClientEvmSignerWithReadContract):
-            try:
-                allowance = self._signer.read_contract(
-                    token_address,
-                    ERC20_ALLOWANCE_ABI,
-                    "allowance",
-                    self._signer.address,
-                    PERMIT2_ADDRESS,
-                )
-                if int(allowance) >= int(requirements.amount):
-                    return None
-            except Exception:
-                pass
+        if has_sufficient_permit2_allowance(
+            read_signer, token_address, self._signer.address, requirements.amount
+        ):
+            return None
 
         info = sign_erc20_approval_transaction(
             self._signer,

@@ -133,6 +133,9 @@ class TestCreatePaymentPayload:
             record for record in caplog.records if "cannot read the chain" in record.getMessage()
         ]
         assert len(warnings) == 1
+        message = warnings[0].getMessage()
+        assert "rpc_url" in message
+        assert "rpc_by_chain_id" in message
 
 
 class TestLocalAccountAutoWrap:
