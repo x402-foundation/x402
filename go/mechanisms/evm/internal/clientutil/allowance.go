@@ -9,9 +9,6 @@ import (
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
-// HasSufficientPermit2Allowance reports whether owner has already approved at
-// least requiredAmount of tokenAddress to Permit2. It returns false on any read
-// or parse failure so callers conservatively attach an approval extension.
 func HasSufficientPermit2Allowance(
 	ctx context.Context,
 	readSigner evm.ClientEvmSignerWithReadContract,
