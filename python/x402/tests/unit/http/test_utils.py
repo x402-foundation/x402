@@ -357,6 +357,11 @@ class TestDetectPaymentRequiredVersion:
         with pytest.raises(ValueError, match="Could not detect x402 version"):
             detect_payment_required_version(headers, body)
 
+    @pytest.mark.parametrize("body", [b"[]", b'"s"', b"1", b"null", b"true", b"false"])
+    def test_raises_on_non_object_body(self, body: bytes) -> None:
+        with pytest.raises(ValueError, match="Could not detect x402 version"):
+            detect_payment_required_version({}, body)
+
 
 class TestHtmlsafeJsonDumps:
     """Tests for HTML-safe JSON serialization (XSS prevention)."""

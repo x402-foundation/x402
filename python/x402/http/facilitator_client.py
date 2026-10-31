@@ -98,6 +98,13 @@ def _decode_error_body(body: bytes) -> str:
     return body.decode("utf-8", errors="replace")
 
 
+def _load_requirements(requirements_bytes: bytes) -> dict[str, Any]:
+    requirements = json.loads(requirements_bytes)
+    if not isinstance(requirements, dict):
+        raise ValueError("Payment requirements must be a JSON object")
+    return requirements
+
+
 def _read_sync_response_body(response: Any) -> bytes:
     try:
         return read_limited_body(response.iter_bytes())
@@ -283,7 +290,7 @@ class HTTPFacilitatorClient(HTTPFacilitatorClientBase):
 
         version = detect_version(payload_bytes)
         payload_dict = json.loads(payload_bytes)
-        requirements_dict = json.loads(requirements_bytes)
+        requirements_dict = _load_requirements(requirements_bytes)
 
         return await self._verify_http(version, payload_dict, requirements_dict)
 
@@ -307,7 +314,7 @@ class HTTPFacilitatorClient(HTTPFacilitatorClientBase):
 
         version = detect_version(payload_bytes)
         payload_dict = json.loads(payload_bytes)
-        requirements_dict = json.loads(requirements_bytes)
+        requirements_dict = _load_requirements(requirements_bytes)
 
         return await self._settle_http(version, payload_dict, requirements_dict)
 
@@ -511,7 +518,7 @@ class HTTPFacilitatorClientSync(HTTPFacilitatorClientBase):
 
         version = detect_version(payload_bytes)
         payload_dict = json.loads(payload_bytes)
-        requirements_dict = json.loads(requirements_bytes)
+        requirements_dict = _load_requirements(requirements_bytes)
 
         return self._verify_http(version, payload_dict, requirements_dict)
 
@@ -535,7 +542,7 @@ class HTTPFacilitatorClientSync(HTTPFacilitatorClientBase):
 
         version = detect_version(payload_bytes)
         payload_dict = json.loads(payload_bytes)
-        requirements_dict = json.loads(requirements_bytes)
+        requirements_dict = _load_requirements(requirements_bytes)
 
         return self._settle_http(version, payload_dict, requirements_dict)
 
