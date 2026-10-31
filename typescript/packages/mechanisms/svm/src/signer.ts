@@ -16,6 +16,7 @@ import {
   TransactionOnchainFailureError,
 } from "./utils";
 import { ErrSmartWalletAltResolutionFailed } from "./exact/facilitator/errors";
+import type { PaymentRequirements } from "@x402/core/types";
 
 /**
  * Client-side signer for creating and signing Solana transactions
@@ -38,6 +39,21 @@ export type ClientSvmConfig = {
    * (such as a wallet) that cannot sign version-1 transactions.
    */
   transactionVersions?: readonly (0 | 1)[];
+
+  /**
+   * Consent hook for multi-payee splits (scheme_exact_svm.md §5.6). Called
+   * before signing whenever the requirements carry a non-empty `extra.splits`,
+   * with the splits and the primary remainder reaching `payTo`. Return `true`
+   * only when every recipient, amount and memo matches the terms you agreed to;
+   * show any `memo` alongside its `payTo`, never in place of it.
+   *
+   * When unset, requirements with splits are refused: a server could otherwise
+   * inject recipients and divert part of the payment.
+   */
+  approveSplits?: (
+    splits: ReadonlyArray<{ payTo: string; amount: string; memo?: string }>,
+    context: { payTo: string; primaryAmount: string; requirements: PaymentRequirements },
+  ) => boolean | Promise<boolean>;
 };
 
 /**

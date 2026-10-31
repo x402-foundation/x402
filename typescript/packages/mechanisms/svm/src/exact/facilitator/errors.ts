@@ -71,6 +71,17 @@ export const ErrRecipientATAWrongProgramOwner =
 export const ErrMemoMismatch = "invalid_exact_svm_payload_memo_mismatch";
 export const ErrMemoCount = "invalid_exact_svm_payload_memo_count";
 
+// Multi-payee split errors (scheme_exact_svm.md §5). The bare `split_*` codes
+// are the names the spec defines; Go has no split support yet, so these have
+// no Go counterpart.
+export const ErrSplitsInvalid = "invalid_exact_svm_splits_invalid";
+export const ErrSplitCountExceeded = "split_count_exceeded";
+export const ErrSplitAtaCreationNotAuthorized = "split_ata_creation_not_authorized";
+export const ErrSplitRemainderNotPositive = "split_remainder_not_positive";
+export const ErrSplitLegUnmatched = "split_leg_unmatched";
+export const ErrSplitUnexpectedTransfer = "split_unexpected_transfer";
+export const ErrSplitAuthorityMismatch = "invalid_exact_svm_payload_split_authority_mismatch";
+
 // Settle errors
 export const ErrVerificationFailed = "invalid_exact_svm_verification_failed";
 export const ErrFeePayerMismatch = "invalid_exact_svm_fee_payer_mismatch";

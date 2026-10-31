@@ -22,11 +22,14 @@ from ....schemas import (
     VerifyResponse,
 )
 from ..constants import (
+    ERR_ALT_RESOLUTION_NOT_AVAILABLE,
     ERR_AMOUNT_INSUFFICIENT,
+    ERR_AMOUNT_MISMATCH,
     ERR_DUPLICATE_SETTLEMENT,
     ERR_FEE_PAYER_MISSING,
     ERR_FEE_PAYER_NOT_MANAGED,
     ERR_FEE_PAYER_TRANSFERRING,
+    ERR_INVALID_INSTRUCTION_COUNT,
     ERR_MEMO_COUNT,
     ERR_MEMO_MISMATCH,
     ERR_MINT_MISMATCH,
@@ -37,16 +40,20 @@ from ..constants import (
     ERR_RECIPIENT_MISMATCH,
     ERR_SETTLEMENT_PENDING,
     ERR_SIMULATION_FAILED,
+    ERR_SPLIT_AUTHORITY_MISMATCH,
+    ERR_SPLIT_LEG_UNMATCHED,
     ERR_TRANSACTION_DECODE_FAILED,
     ERR_TRANSACTION_FAILED,
     ERR_TRANSACTION_SIZE_EXCEEDED,
     ERR_UNKNOWN_FIFTH_INSTRUCTION,
     ERR_UNKNOWN_FOURTH_INSTRUCTION,
+    ERR_UNKNOWN_OPTIONAL_INSTRUCTION,
     ERR_UNKNOWN_SEVENTH_INSTRUCTION,
     ERR_UNKNOWN_SIXTH_INSTRUCTION,
     ERR_UNSUPPORTED_SCHEME,
     ERR_UNSUPPORTED_TRANSACTION_VERSION,
     LIGHTHOUSE_PROGRAM_ADDRESS,
+    MAX_SPLITS,
     MEMO_PROGRAM_ADDRESS,
     SCHEME_EXACT,
     TOKEN_2022_PROGRAM_ADDRESS,
@@ -56,9 +63,11 @@ from ..settlement_cache import SettlementCache
 from ..signer import FacilitatorSvmSigner, FacilitatorSvmSignerWithGetAccountInfo
 from ..types import ExactSvmPayload
 from ..utils import (
+    check_exact_budget,
     check_exact_compute_budget,
     decode_transaction_from_payload,
     derive_ata,
+    exact_budget_prefix_length,
     get_token_payer_from_transaction,
     get_transaction_version,
     is_accepted_transaction_version,
@@ -68,6 +77,41 @@ from ..utils import (
     transaction_size_exceeded,
     validate_svm_address,
 )
+from .splits import (
+    InstructionView,
+    PaymentLeg,
+    SplitCapabilities,
+    SplitsError,
+    assert_fee_payer_isolated_with_ata_creation,
+    assert_within_capabilities,
+    is_ata_program_instruction,
+    parse_payment_legs,
+    uses_split_terms,
+)
+
+_TRANSFER_PROGRAMS = (TOKEN_PROGRAM_ADDRESS, TOKEN_2022_PROGRAM_ADDRESS)
+_OPTIONAL_PROGRAMS = (LIGHTHOUSE_PROGRAM_ADDRESS, MEMO_PROGRAM_ADDRESS)
+
+
+def _expected_memo_error(
+    optional_instructions: list[InstructionView], extra: dict[str, Any]
+) -> str | None:
+    """Check that exactly one Memo instruction carries ``extra.memo`` when set.
+
+    Returns:
+        An error reason, or None when the memo is valid.
+    """
+    expected_memo = extra.get("memo")
+    if not expected_memo or not isinstance(expected_memo, str):
+        return None
+    memo_ixs = [ix for ix in optional_instructions if ix.program == MEMO_PROGRAM_ADDRESS]
+    if len(memo_ixs) != 1:
+        return ERR_MEMO_COUNT
+    try:
+        actual_memo = memo_ixs[0].data.decode("utf-8")
+    except UnicodeDecodeError:
+        return ERR_MEMO_MISMATCH
+    return None if actual_memo == expected_memo else ERR_MEMO_MISMATCH
 
 
 class ExactSvmScheme:
@@ -89,6 +133,8 @@ class ExactSvmScheme:
         settlement_cache: SettlementCache | None = None,
         pending_store: PendingSettlementStore | None = None,
         transaction_versions: Sequence[int] | None = None,
+        max_splits: int = 0,
+        ata_creation_sponsored: bool = False,
     ):
         """Create ExactSvmScheme facilitator.
 
@@ -105,11 +151,33 @@ class ExactSvmScheme:
                 is accepted exactly when 0 is. Narrow it to ``[0]`` for a sponsor
                 whose signer or RPC does not yet handle version 1. Defaults to
                 ``[0, 1]``.
+            max_splits: Maximum number of ``extra.splits`` entries accepted
+                (scheme_exact_svm.md §5), 0-8. Advertised as ``maxSplits`` in
+                ``/supported``; requirements with more splits are rejected with
+                ``split_count_exceeded``. Default 0: splits are not accepted.
+            ata_creation_sponsored: Whether the fee payer funds
+                ``CreateIdempotent`` for recipients marked
+                ``ataCreationRequired`` (about 0.002 SOL of rent each).
+                Advertised as ``ataCreationSponsored``. Rent is not bounded over
+                time: an owner can close its ATA and the next charge pays again,
+                so operators enabling this should rate-limit or price sponsored
+                creations. Default False.
+
 
         Raises:
             ValueError: If ``transaction_versions`` is empty or holds anything
-                but 0 and 1.
+                but 0 and 1, or if max_splits is not an int in 0-8.
         """
+        if (
+            not isinstance(max_splits, int)
+            or isinstance(max_splits, bool)
+            or not 0 <= max_splits <= MAX_SPLITS
+        ):
+            raise ValueError(
+                f"max_splits must be an integer from 0 to {MAX_SPLITS}, received {max_splits!r}"
+            )
+        self._max_splits = max_splits
+        self._ata_creation_sponsored = ata_creation_sponsored is True
         self._signer = signer
         self._transaction_versions = normalize_accepted_transaction_versions(transaction_versions)
         self._settlement_cache = settlement_cache or SettlementCache()
@@ -136,10 +204,16 @@ class ExactSvmScheme:
         addresses = self._signer.get_addresses()
         fee_payer = random.choice(addresses)
 
-        return {
+        extra: dict[str, Any] = {
             "feePayer": fee_payer,
             "transactionVersions": list(self._transaction_versions),
         }
+        # Split capabilities fail closed: absent keys mean no support (§5.5).
+        if self._max_splits > 0:
+            extra["maxSplits"] = self._max_splits
+        if self._ata_creation_sponsored:
+            extra["ataCreationSponsored"] = True
+        return extra
 
     def get_signers(self, network: Network) -> list[str]:
         """Get facilitator wallet addresses.
@@ -203,6 +277,24 @@ class ExactSvmScheme:
                 is_valid=False, invalid_reason=ERR_FEE_PAYER_NOT_MANAGED, payer=""
             )
 
+        # Splits (§5): validate the terms and check them against what this
+        # facilitator advertises before looking at the transaction.
+        legs: list[PaymentLeg] | None = None
+        if uses_split_terms(requirements):
+            try:
+                legs = parse_payment_legs(requirements)
+                assert_within_capabilities(
+                    legs,
+                    SplitCapabilities(
+                        max_splits=self._max_splits,
+                        ata_creation_sponsored=self._ata_creation_sponsored,
+                    ),
+                )
+            except SplitsError as e:
+                return VerifyResponse(
+                    is_valid=False, invalid_reason=e.reason, invalid_message=str(e), payer=""
+                )
+
         # Step 2: Parse and Validate Transaction Structure
         # Read the version from the raw bytes first so a newer wire format is
         # reported as unsupported however the installed solders handles it.
@@ -234,6 +326,11 @@ class ExactSvmScheme:
         if transaction_size_exceeded(svm_payload.transaction, version):
             return VerifyResponse(
                 is_valid=False, invalid_reason=ERR_TRANSACTION_SIZE_EXCEEDED, payer=""
+            )
+
+        if legs is not None:
+            return self._verify_static_split_path(
+                tx, svm_payload.transaction, requirements, signer_addresses, legs, fee_payer_str
             )
 
         message = tx.message
@@ -404,6 +501,129 @@ class ExactSvmScheme:
                 invalid_message=invalid_message,
                 payer=payer,
             )
+
+        return VerifyResponse(is_valid=True, payer=payer)
+
+    def _verify_static_split_path(
+        self,
+        tx: Any,
+        tx_base64: str,
+        requirements: PaymentRequirements,
+        signer_addresses: list[str],
+        legs: list[PaymentLeg],
+        fee_payer: str,
+    ) -> VerifyResponse:
+        """Path 1 for split charges (scheme_exact_svm.md §5.7).
+
+        Layout: on legacy and version 0 a compute limit + compute price prefix
+        (version 1 carries its budget in the message config instead), ``K``
+        fee-payer-funded CreateIdempotent for marked recipients, one
+        TransferChecked for the primary remainder, one per split in
+        ``extra.splits`` order, then up to four Lighthouse / Memo instructions. There is no simulation-based
+        fallback in this SDK, so any layout failure is a rejection.
+        """
+        network = str(requirements.network)
+
+        def fail(reason: str, payer: str = "", message: str | None = None) -> VerifyResponse:
+            return VerifyResponse(
+                is_valid=False, invalid_reason=reason, invalid_message=message, payer=payer
+            )
+
+        message = tx.message
+        # Accounts loaded from lookup tables cannot be resolved here, and the
+        # isolation check must see every account (§2.1.2).
+        if getattr(message, "address_table_lookups", None):
+            return fail(ERR_ALT_RESOLUTION_NOT_AVAILABLE)
+        static_accounts = [str(key) for key in message.account_keys]
+        instructions: list[InstructionView] = []
+        for ix in message.instructions:
+            indexes = [ix.program_id_index, *ix.accounts]
+            if any(i >= len(static_accounts) for i in indexes):
+                return fail(ERR_TRANSACTION_DECODE_FAILED)
+            instructions.append(
+                InstructionView(
+                    program=static_accounts[ix.program_id_index],
+                    accounts=[static_accounts[i] for i in ix.accounts],
+                    data=bytes(ix.data),
+                )
+            )
+
+        prefix_length = exact_budget_prefix_length(message)
+        create_count = 0
+        while prefix_length + create_count < len(instructions) and is_ata_program_instruction(
+            instructions[prefix_length + create_count]
+        ):
+            create_count += 1
+        first_transfer = prefix_length + create_count
+        first_optional = first_transfer + len(legs)
+        if len(instructions) < first_optional or len(instructions) > first_optional + 4:
+            return fail(ERR_INVALID_INSTRUCTION_COUNT)
+
+        compute_budget_error = check_exact_budget(message)
+        if compute_budget_error:
+            return fail(compute_budget_error)
+
+        # Positional transfers: the primary remainder, then each split in order.
+        payer = ""
+        token_program: str | None = None
+        for i, leg in enumerate(legs):
+            transfer_ix = instructions[first_transfer + i]
+            # Exactly 10 data bytes and 4 accounts: trailing multisig signer
+            # accounts would let the transfer's authority be something other
+            # than the account the payer signed with.
+            if (
+                transfer_ix.program not in _TRANSFER_PROGRAMS
+                or len(transfer_ix.data) != 10
+                or transfer_ix.data[0] != 12  # TransferChecked discriminator
+                or len(transfer_ix.accounts) != 4
+            ):
+                return fail(ERR_NO_TRANSFER_INSTRUCTION, payer)
+            if token_program and transfer_ix.program != token_program:
+                return fail(ERR_SPLIT_LEG_UNMATCHED, payer, "legs use different token programs")
+            token_program = transfer_ix.program
+
+            # TransferChecked accounts: [source, mint, destination, authority]
+            _source, mint, destination, authority = transfer_ix.accounts
+            if authority in signer_addresses:
+                return fail(ERR_FEE_PAYER_TRANSFERRING, authority)
+            if payer and authority != payer:
+                return fail(ERR_SPLIT_AUTHORITY_MISMATCH, payer)
+            payer = authority
+
+            if mint != requirements.asset:
+                return fail(ERR_MINT_MISMATCH, payer)
+            if destination != derive_ata(leg.owner, requirements.asset, token_program):
+                return fail(ERR_RECIPIENT_MISMATCH, payer)
+            if int.from_bytes(transfer_ix.data[1:9], "little") != leg.amount:
+                return fail(ERR_AMOUNT_MISMATCH, payer)
+
+        optional_instructions = instructions[first_optional:]
+        if any(ix.program not in _OPTIONAL_PROGRAMS for ix in optional_instructions):
+            return fail(ERR_UNKNOWN_OPTIONAL_INSTRUCTION, payer)
+
+        # Fee payer isolation with the bounded CreateIdempotent exception
+        # (§2.1.1); this also validates every creation against §5.4.
+        try:
+            assert_fee_payer_isolated_with_ata_creation(
+                instructions,
+                fee_payer,
+                asset=requirements.asset,
+                marked_owners={leg.owner for leg in legs if leg.ata_creation_required},
+                token_program=token_program,
+            )
+        except SplitsError as e:
+            return fail(e.reason, payer, str(e))
+
+        memo_error = _expected_memo_error(optional_instructions, requirements.extra or {})
+        if memo_error:
+            return fail(memo_error, payer)
+
+        # Sign and simulate: simulation proves the transaction would succeed.
+        try:
+            fully_signed_tx = self._signer.sign_transaction(tx_base64, fee_payer, network)
+            self._signer.simulate_transaction(fully_signed_tx, network)
+        except Exception as e:
+            return fail(ERR_SIMULATION_FAILED, payer, str(e))
 
         return VerifyResponse(is_valid=True, payer=payer)
 

@@ -1,6 +1,9 @@
 package facilitator
 
-import x402 "github.com/x402-foundation/x402/go/v2"
+import (
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+)
 
 // Facilitator error constants for the exact SVM scheme (V2)
 const (
@@ -46,6 +49,19 @@ const (
 	// Memo verification errors
 	ErrMemoMismatch = "invalid_exact_solana_payload_memo_mismatch"
 	ErrMemoCount    = "invalid_exact_solana_payload_memo_count"
+
+	// Multi-payee split errors (scheme_exact_svm.md §5). The bare `split_*`
+	// codes are the names the spec defines. Unlike the codes above, these use
+	// the TypeScript SDK's strings verbatim (including its invalid_exact_svm_
+	// prefix). They are defined in the svm package so the client and server
+	// can report them without importing this package.
+	ErrSplitsInvalid                 = svm.ErrSplitsInvalid                 // "invalid_exact_svm_splits_invalid"
+	ErrSplitCountExceeded            = svm.ErrSplitCountExceeded            // "split_count_exceeded"
+	ErrSplitAtaCreationNotAuthorized = svm.ErrSplitAtaCreationNotAuthorized // "split_ata_creation_not_authorized"
+	ErrSplitRemainderNotPositive     = svm.ErrSplitRemainderNotPositive     // "split_remainder_not_positive"
+	ErrSplitLegUnmatched             = svm.ErrSplitLegUnmatched             // "split_leg_unmatched"
+	ErrSplitUnexpectedTransfer       = svm.ErrSplitUnexpectedTransfer       // "split_unexpected_transfer"
+	ErrSplitAuthorityMismatch        = svm.ErrSplitAuthorityMismatch        // "invalid_exact_svm_payload_split_authority_mismatch"
 
 	// Settle errors
 	ErrVerificationFailed                 = "invalid_exact_solana_verification_failed"

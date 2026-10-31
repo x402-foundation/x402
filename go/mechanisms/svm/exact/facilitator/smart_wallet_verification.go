@@ -37,6 +37,17 @@ var defaultSmartWalletAllowedPrograms = []string{
 	svm.LighthouseProgramAddress,                   // Phantom wallet-protection assertions
 }
 
+// smartWalletResult is a successful Path 2 verification.
+type smartWalletResult struct {
+	payer string
+	// matched is the transfer paying a single-payee charge.
+	matched *transferCheckedInfo
+	// legTransfers is, with splits, the transfer matched to each leg in leg order.
+	legTransfers []transferCheckedInfo
+	// topLevel is, with splits, the transfers invoked at the top level.
+	topLevel []transferCheckedInfo
+}
+
 type transferCheckedInfo struct {
 	programID   solana.PublicKey
 	amount      uint64
@@ -249,8 +260,21 @@ func verifySmartWalletTransaction(
 	signerAddresses []string,
 	maxCU uint32,
 	maxPriorityFee uint64,
-) (*transferCheckedInfo, error) {
-	if err := assertFeePayerIsolated(tx, feePayer); err != nil {
+	legs []svm.PaymentLeg,
+) (*smartWalletResult, error) {
+	// 1. Fee payer must not appear in any instruction's accounts. With splits,
+	// the bounded CreateIdempotent exception of §2.1.1 applies.
+	var asset solana.PublicKey
+	if legs != nil {
+		var err error
+		asset, err = solana.PublicKeyFromBase58(requirements.Asset)
+		if err != nil {
+			return nil, x402.NewVerifyError(ErrSmartWalletCannotDeriveATA, "", err.Error())
+		}
+		if err := assertFeePayerIsolatedWithAtaCreation(tx, feePayer, asset, markedOwners(legs), nil); err != nil {
+			return nil, splitVerifyError(err, "")
+		}
+	} else if err := assertFeePayerIsolated(tx, feePayer); err != nil {
 		return nil, x402.NewVerifyError(err.Error(), "", err.Error())
 	}
 	if err := validateComputeBudgetLimits(tx, maxCU, maxPriorityFee); err != nil {
@@ -271,7 +295,8 @@ func verifySmartWalletTransaction(
 		return nil, x402.NewVerifyError(err.Error(), "", err.Error())
 	}
 
-	transfers := extractTopLevelTransfers(tx)
+	topLevel := extractTopLevelTransfers(tx)
+	transfers := append([]transferCheckedInfo{}, topLevel...)
 	transfers = append(transfers, extractTransfersFromInnerInstructions(inner, tx.Message.AccountKeys)...)
 
 	signerSet := make(map[string]struct{}, len(signerAddresses))
@@ -282,6 +307,24 @@ func verifySmartWalletTransaction(
 		if _, ok := signerSet[t.authority.String()]; ok {
 			return nil, x402.NewVerifyError(ErrFeePayerTransferringFunds, t.authority.String(), ErrFeePayerTransferringFunds)
 		}
+	}
+
+	// With splits: every asset transfer must pay exactly one leg and every leg
+	// must be paid exactly once (§5.3, §5.5).
+	if legs != nil {
+		destinations, err := deriveLegDestinations(legs, asset)
+		if err != nil {
+			return nil, x402.NewVerifyError(err.Error(), "", err.Error())
+		}
+		matched, err := matchTransfersToLegs(transfers, destinations, asset)
+		if err != nil {
+			return nil, splitVerifyError(err, "")
+		}
+		return &smartWalletResult{
+			payer:        matched[0].authority.String(),
+			legTransfers: matched,
+			topLevel:     topLevel,
+		}, nil
 	}
 
 	payTo, err := solana.PublicKeyFromBase58(requirements.PayTo)
@@ -324,7 +367,7 @@ func verifySmartWalletTransaction(
 	if len(matching) > 1 {
 		return nil, x402.NewVerifyError(ErrSmartWalletMultipleMatchingTransfers, matching[0].authority.String(), ErrSmartWalletMultipleMatchingTransfers)
 	}
-	return &matching[0], nil
+	return &smartWalletResult{payer: matching[0].authority.String(), matched: &matching[0]}, nil
 }
 
 func parseUintAmount(amount string) (uint64, error) {

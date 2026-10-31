@@ -18,12 +18,17 @@ export {
   extractTransfersFromInnerInstructions,
   verifySmartWalletTransaction,
   verifyPostSettlement,
+  verifyPostSettlementLegs,
 } from "./exact/facilitator/smartWalletVerification";
 export type {
   SmartWalletLimits,
   SmartWalletOptions,
   TransferCheckedInfo,
 } from "./exact/facilitator/smartWalletVerification";
+
+// Export multi-payee split helpers (scheme_exact_svm.md §5)
+export { getSplitCapabilities, parsePaymentLegs, SplitsError } from "./exact/splits";
+export type { ExactSvmSplit, PaymentLeg, SplitCapabilities } from "./exact/splits";
 
 // Export signer utilities and types
 export { toClientSvmSigner, toFacilitatorSvmSigner } from "./signer";

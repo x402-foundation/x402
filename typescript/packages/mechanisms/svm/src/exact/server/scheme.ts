@@ -10,6 +10,12 @@ import type {
 import { convertToTokenAmount, parseMoney } from "@x402/core/utils";
 import { findDefaultAsset, getDefaultAsset } from "../../defaultAssets";
 import { createRpcClient } from "../../utils";
+import {
+  assertWithinCapabilities,
+  getSplitCapabilities,
+  parsePaymentLegs,
+  usesSplitTerms,
+} from "../splits";
 
 /** Options for the server-side {@link ExactSvmScheme}. */
 export interface ExactSvmServerOptions {
@@ -139,6 +145,16 @@ export class ExactSvmScheme implements SchemeNetworkServer {
     if (supportedKind.extra && "transactionVersions" in supportedKind.extra) {
       const versions = supportedKind.extra.transactionVersions;
       extra.transactionVersions = Array.isArray(versions) ? [...versions] : versions;
+    }
+
+    // A server MUST NOT issue splits the selected facilitator does not
+    // advertise (§5.5), so a misconfigured route fails here rather than as a
+    // verify rejection after the client has signed.
+    if (usesSplitTerms(paymentRequirements)) {
+      assertWithinCapabilities(
+        parsePaymentLegs(paymentRequirements),
+        getSplitCapabilities(supportedKind.extra),
+      );
     }
 
     // When an RPC is configured, embed a fresh blockhash in the challenge so

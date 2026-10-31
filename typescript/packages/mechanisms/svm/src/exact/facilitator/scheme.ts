@@ -31,10 +31,12 @@ import {
   type PendingSettlementStore,
 } from "@x402/core/facilitator";
 import {
+  ASSOCIATED_TOKEN_PROGRAM_ADDRESS,
   DEFAULT_MAX_COMPUTE_UNITS,
   DEFAULT_MAX_REQUIRED_SIGNATURES,
   LIGHTHOUSE_PROGRAM_ADDRESS,
   MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
+  MAX_SPLITS,
   MEMO_PROGRAM_ADDRESS,
 } from "../../constants";
 import { SettlementCache } from "../../settlement-cache";
@@ -58,14 +60,27 @@ import {
 import {
   assertSmartWalletLimits,
   assertSmartWalletVerifySigner,
+  extractTopLevelTransfers,
   resolveAccountKeys,
   verifySmartWalletTransaction,
   verifyPostSettlement,
+  verifyPostSettlementLegs,
   type DecodedTransactionView,
   type SmartWalletVerifySigner,
   type TransferCheckedInfo,
 } from "./smartWalletVerification";
 import { verifyRequiredSignatures } from "./signatureVerification";
+import {
+  assertFeePayerIsolatedWithAtaCreation,
+  assertWithinCapabilities,
+  deriveAta,
+  deriveLegDestinations,
+  isAtaProgramInstruction,
+  parsePaymentLegs,
+  SplitsError,
+  usesSplitTerms,
+  type PaymentLeg,
+} from "../splits";
 import * as Errors from "./errors";
 
 const compiledMessageDecoder = getCompiledTransactionMessageDecoder();
@@ -102,6 +117,10 @@ type VerifyResult = {
   response: VerifyResponse;
   verificationPath: VerificationPath | null;
   matchedTransfer?: TransferCheckedInfo;
+  /** With splits on Path 2: the transfer matched to each leg, in leg order. */
+  matchedTransfers?: TransferCheckedInfo[];
+  /** With splits on Path 2: transfers invoked at the top level. */
+  topLevelTransfers?: TransferCheckedInfo[];
 };
 
 /**
@@ -241,6 +260,26 @@ export type ExactSvmSchemeOptions = {
    * replica still reconciles correctly.
    */
   pendingSettlementStore?: PendingSettlementStore;
+
+  /**
+   * Maximum number of `extra.splits` entries accepted (scheme_exact_svm.md
+   * §5), 0–8. Advertised as `maxSplits` in `/supported`; requirements with
+   * more splits are rejected with `split_count_exceeded`.
+   *
+   * Default: 0 (splits are not accepted and not advertised)
+   */
+  maxSplits?: number;
+
+  /**
+   * Whether the fee payer funds `CreateIdempotent` for recipients marked
+   * `ataCreationRequired` (≈0.002 SOL of rent each). Advertised as
+   * `ataCreationSponsored` in `/supported`. Rent is not bounded over time: an
+   * owner can close its ATA and the next charge pays again, so operators
+   * enabling this should rate-limit or price sponsored creations.
+   *
+   * Default: false
+   */
+  ataCreationSponsored?: boolean;
 };
 
 /**
@@ -309,6 +348,12 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     // A ceiling below 1 would reject every transaction: the fee payer alone
     // always requires one signature.
     assertLimit("maxRequiredSignatures", this.options?.maxRequiredSignatures, 1);
+    assertLimit("maxSplits", this.options?.maxSplits, 0);
+    if ((this.options?.maxSplits ?? 0) > MAX_SPLITS) {
+      throw new Error(
+        `maxSplits must be at most ${MAX_SPLITS}, received ${this.options?.maxSplits}`,
+      );
+    }
     this.transactionVersions = normalizeAcceptedTransactionVersions(
       this.options?.transactionVersions,
     );
@@ -344,6 +389,13 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     };
     if (this.options?.enableSmartWalletVerification) {
       extra.features = { smartWalletSupported: true };
+    }
+    // Split capabilities fail closed: absent keys mean no support (§5.5).
+    if ((this.options?.maxSplits ?? 0) > 0) {
+      extra.maxSplits = this.options!.maxSplits;
+    }
+    if (this.options?.ataCreationSponsored) {
+      extra.ataCreationSponsored = true;
     }
     return extra;
   }
@@ -462,6 +514,7 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
           requirements.network,
           isSmartWalletSettlement,
           requirements,
+          decodedTransaction,
         );
       }
     }
@@ -486,6 +539,8 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
       response: valid,
       verificationPath,
       matchedTransfer,
+      matchedTransfers,
+      topLevelTransfers,
     } = await this._verify(payload, requirements);
     if (!valid.isValid) {
       if (txKey) {
@@ -519,6 +574,7 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     let balanceBefore: bigint | null = null;
     let knownDestinationAta: string | null = matchedTransfer?.destination ?? null;
     let balanceBeforeTokenProgram: string | null = matchedTransfer?.programId ?? null;
+    let legBalancesBefore: { ata: string; before: bigint | null }[] | null = null;
     try {
       // Extract feePayer from requirements (already validated in verify)
       const feePayer = requirements.extra.feePayer as Address;
@@ -531,15 +587,36 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
       );
       const balancePromise =
         isSmartWalletSettlement &&
+        !matchedTransfers &&
         knownDestinationAta &&
         typeof this.signer.getTokenAccountBalance === "function"
           ? this.signer
               .getTokenAccountBalance(knownDestinationAta, requirements.network)
               .catch(() => null)
           : Promise.resolve(null);
+      // With splits, snapshot every leg's ATA for the balance-delta fallback.
+      const legBalancesPromise =
+        isSmartWalletSettlement &&
+        matchedTransfers &&
+        typeof this.signer.getTokenAccountBalance === "function"
+          ? Promise.all(
+              matchedTransfers.map(async t => ({
+                ata: t.destination,
+                before: await this.signer.getTokenAccountBalance!(
+                  t.destination,
+                  requirements.network,
+                ).catch(() => null),
+              })),
+            )
+          : Promise.resolve(null);
 
-      const [fullySignedTransaction, preBalance] = await Promise.all([signPromise, balancePromise]);
+      const [fullySignedTransaction, preBalance, preLegBalances] = await Promise.all([
+        signPromise,
+        balancePromise,
+        legBalancesPromise,
+      ]);
       balanceBefore = preBalance;
+      legBalancesBefore = preLegBalances;
 
       // Send transaction to network
       signature = await this.signer.sendTransaction(fullySignedTransaction, requirements.network);
@@ -603,16 +680,27 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     // Confirms the TransferChecked actually executed on-chain (TOCTOU defense).
     if (isSmartWalletSettlement) {
       const signerAddresses = this.signer.getAddresses().map(a => a.toString());
-      const postVerify = await verifyPostSettlement(
-        this.signer,
-        signature,
-        requirements.network,
-        requirements,
-        signerAddresses,
-        balanceBefore,
-        balanceBeforeTokenProgram,
-        knownDestinationAta,
-      );
+      const postVerify = usesSplitTerms(requirements)
+        ? await verifyPostSettlementLegs(
+            this.signer,
+            signature,
+            requirements.network,
+            await deriveLegDestinations(parsePaymentLegs(requirements), requirements.asset),
+            requirements.asset,
+            signerAddresses,
+            topLevelTransfers ?? [],
+            legBalancesBefore,
+          )
+        : await verifyPostSettlement(
+            this.signer,
+            signature,
+            requirements.network,
+            requirements,
+            signerAddresses,
+            balanceBefore,
+            balanceBeforeTokenProgram,
+            knownDestinationAta,
+          );
 
       if (!postVerify.verified) {
         return {
@@ -650,6 +738,7 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
    *   runs on its non-cached path
    * @param requirements - Payment requirements, needed by {@link verifyPostSettlement}
    *   when isSmartWalletSettlement is true
+   * @param transaction - The decoded transaction, used to find top-level split legs
    * @returns Promise resolving to the reconciled settlement response
    */
   private async reconcilePendingSettlement(
@@ -659,6 +748,7 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     network: PaymentRequirements["network"],
     isSmartWalletSettlement: boolean,
     requirements: PaymentRequirements,
+    transaction?: Transaction,
   ): Promise<SettleResponse> {
     try {
       await this.signer.confirmTransaction(cachedSignature, network);
@@ -698,17 +788,28 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
 
     if (isSmartWalletSettlement) {
       const signerAddresses = this.signer.getAddresses().map(a => a.toString());
-      const postVerify = await verifyPostSettlement(
-        this.signer,
-        cachedSignature,
-        network,
-        requirements,
-        signerAddresses,
-        // No pre-broadcast balance snapshot is available here, so only the
-        // innerInstructions method applies; the balance-delta fallback is skipped.
-        null,
-        null,
-      );
+      // No pre-broadcast balance snapshot is available here, so only the
+      // innerInstructions method applies; the balance-delta fallback is skipped.
+      const postVerify = usesSplitTerms(requirements)
+        ? await verifyPostSettlementLegs(
+            this.signer,
+            cachedSignature,
+            network,
+            await deriveLegDestinations(parsePaymentLegs(requirements), requirements.asset),
+            requirements.asset,
+            signerAddresses,
+            this.topLevelTransfersOf(transaction),
+            null,
+          )
+        : await verifyPostSettlement(
+            this.signer,
+            cachedSignature,
+            network,
+            requirements,
+            signerAddresses,
+            null,
+            null,
+          );
       if (!postVerify.verified) {
         return {
           success: false,
@@ -754,6 +855,43 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     }
     const ixData = transferIx.data;
     return !!ixData && ixData.length >= 10 && ixData[0] === IX_TOKEN_TRANSFER_CHECKED;
+  }
+
+  /**
+   * Top-level TransferChecked instructions of a decoded transaction. Returns
+   * an empty list when the transaction cannot be decompiled locally (for
+   * example when it uses Address Lookup Tables), so callers fall back to the
+   * confirmed CPI trace.
+   *
+   * @param transaction - Decoded transaction, if available
+   * @returns The top-level transfers
+   */
+  private topLevelTransfersOf(transaction?: Transaction): TransferCheckedInfo[] {
+    if (!transaction) return [];
+    try {
+      const compiled = compiledMessageDecoder.decode(transaction.messageBytes);
+      return extractTopLevelTransfers(decompileTransactionMessage(compiled).instructions ?? []);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Payment legs of a split charge, checked against the capabilities this
+   * facilitator advertises.
+   *
+   * @param requirements - The payment requirements
+   * @returns The legs, or undefined when the requirements carry no split terms
+   * @throws SplitsError when the terms are invalid or exceed the capabilities
+   */
+  private splitLegs(requirements: PaymentRequirements): PaymentLeg[] | undefined {
+    if (!usesSplitTerms(requirements)) return undefined;
+    const legs = parsePaymentLegs(requirements);
+    assertWithinCapabilities(legs, {
+      maxSplits: this.options?.maxSplits ?? 0,
+      ataCreationSponsored: this.options?.ataCreationSponsored === true,
+    });
+    return legs;
   }
 
   /**
@@ -806,6 +944,24 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
         response: {
           isValid: false,
           invalidReason: Errors.ErrFeePayerNotManaged,
+          payer: "",
+        },
+        verificationPath: null,
+      };
+    }
+
+    // Splits (§5): validate the terms and check them against what this
+    // facilitator advertises before looking at the transaction.
+    let legs: PaymentLeg[] | undefined;
+    try {
+      legs = this.splitLegs(requirements);
+    } catch (error) {
+      if (!(error instanceof SplitsError)) throw error;
+      return {
+        response: {
+          isValid: false,
+          invalidReason: error.reason,
+          invalidMessage: error.message,
           payer: "",
         },
         verificationPath: null,
@@ -983,14 +1139,23 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     };
 
     // ─── Path 1: Static validation (standard wallets) ───────────────────
-    const staticResult = await this.verifyStaticPath(
-      transaction,
-      compiled,
-      decompiled,
-      exactSvmPayload,
-      requirements,
-      signerAddresses,
-    );
+    const staticResult = legs
+      ? await this.verifyStaticSplitPath(
+          compiled,
+          decompiled,
+          exactSvmPayload,
+          requirements,
+          signerAddresses,
+          legs,
+        )
+      : await this.verifyStaticPath(
+          transaction,
+          compiled,
+          decompiled,
+          exactSvmPayload,
+          requirements,
+          signerAddresses,
+        );
 
     if (staticResult.isValid) {
       return { response: staticResult, verificationPath: "static" };
@@ -1038,6 +1203,11 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
         if (addr === COMPUTE_BUDGET_PROGRAM_ADDRESS.toString() || addr === MEMO_PROGRAM_ADDRESS) {
           continue;
         }
+        // With splits, the ATA program is exempt too (§2.2.2); every one of its
+        // instructions is then validated as a §5.4 CreateIdempotent.
+        if (legs && addr === ASSOCIATED_TOKEN_PROGRAM_ADDRESS) {
+          continue;
+        }
         topLevelPrograms.push(addr);
       }
 
@@ -1069,12 +1239,16 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
           maxPriorityFeeMicroLamports: this.options.smartWalletMaxPriorityFeeMicroLamports,
         },
         decodedView,
+        legs,
       );
-      const { matchedTransfer, ...response } = smartWalletResult;
+      const { matchedTransfer, matchedTransfers, topLevelTransfers, ...response } =
+        smartWalletResult;
       return {
         response,
         verificationPath: smartWalletResult.isValid ? "smartWallet" : null,
         matchedTransfer,
+        matchedTransfers,
+        topLevelTransfers,
       };
     }
 
@@ -1105,27 +1279,9 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     const instructions = decompiled.instructions ?? [];
     const transferIndex = staticTransferIndex(compiled.version);
 
-    // Version 1 carries its compute budget in the message config, so it is
-    // checked there, and a ComputeBudget instruction anywhere is rejected.
-    if (compiled.version === 1) {
-      const violation = checkTransactionV1Budget(
-        readTransactionV1Config(compiled),
-        (instructions as ReadonlyArray<{ programAddress: Address }>).map(ix =>
-          ix.programAddress.toString(),
-        ),
-        {
-          maxComputeUnits: this.maxComputeUnits,
-          maxPriceMicroLamports:
-            this.options?.maxPriorityFeeMicroLamports ?? MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
-        },
-      );
-      if (violation) {
-        return {
-          isValid: false,
-          invalidReason: Errors.TRANSACTION_V1_BUDGET_REASONS[violation],
-          payer: "",
-        };
-      }
+    const budgetViolation = this.checkV1Budget(compiled, instructions);
+    if (budgetViolation) {
+      return { isValid: false, invalidReason: budgetViolation, payer: "" };
     }
 
     // Allow the transfer plus up to four optional instructions. Legacy and
@@ -1296,27 +1452,13 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     }
 
     // Step 5b: Verify memo content matches extra.memo when present
-    const expectedMemo = requirements.extra?.memo as string | undefined;
-    if (expectedMemo) {
-      const memoInstructions = optionalInstructions.filter(
-        ix => ix.programAddress.toString() === MEMO_PROGRAM_ADDRESS,
-      );
-      if (memoInstructions.length !== 1) {
-        return {
-          isValid: false,
-          invalidReason: Errors.ErrMemoCount,
-          payer,
-        };
-      }
-      const memoData = memoInstructions[0].data;
-      const actualMemo = memoData ? new TextDecoder().decode(new Uint8Array(memoData)) : "";
-      if (actualMemo !== expectedMemo) {
-        return {
-          isValid: false,
-          invalidReason: Errors.ErrMemoMismatch,
-          payer,
-        };
-      }
+    const memoError = this.verifyExpectedMemo(optionalInstructions, requirements);
+    if (memoError) {
+      return {
+        isValid: false,
+        invalidReason: memoError,
+        payer,
+      };
     }
 
     // Step 6: Simulate Transaction
@@ -1357,6 +1499,226 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
       invalidReason: undefined,
       payer,
     };
+  }
+
+  /**
+   * Checks that exactly one Memo instruction carries `extra.memo` when the
+   * requirements set one.
+   *
+   * @param optionalInstructions - The optional trailing instructions
+   * @param requirements - Payment requirements
+   * @returns An error reason, or undefined when the memo is valid
+   */
+  private verifyExpectedMemo(
+    optionalInstructions: ReadonlyArray<{
+      programAddress: { toString(): string };
+      data?: ArrayLike<number>;
+    }>,
+    requirements: PaymentRequirements,
+  ): string | undefined {
+    const expectedMemo = requirements.extra?.memo as string | undefined;
+    if (!expectedMemo) return undefined;
+    const memoInstructions = optionalInstructions.filter(
+      ix => ix.programAddress.toString() === MEMO_PROGRAM_ADDRESS,
+    );
+    if (memoInstructions.length !== 1) {
+      return Errors.ErrMemoCount;
+    }
+    const memoData = memoInstructions[0].data;
+    const actualMemo = memoData ? new TextDecoder().decode(new Uint8Array(memoData)) : "";
+    return actualMemo === expectedMemo ? undefined : Errors.ErrMemoMismatch;
+  }
+
+  /**
+   * Path 1 for split charges (scheme_exact_svm.md §5.7): on legacy and
+   * version 0 a compute limit + compute price prefix (version 1 carries its
+   * budget in the message config instead), `K` fee-payer-funded
+   * CreateIdempotent for marked recipients, one TransferChecked for the
+   * primary remainder, one per split in `extra.splits` order, then up to four
+   * Lighthouse / Memo instructions.
+   *
+   * @param compiled - Compiled message, whose version selects the layout and budget checks
+   * @param decompiled - Pre-decompiled message (lookups already resolved)
+   * @param exactSvmPayload - The raw SVM payload containing the base64 transaction
+   * @param requirements - Payment requirements to verify against
+   * @param signerAddresses - Facilitator signer addresses (for self-spend protection)
+   * @param legs - Payment legs from the requirements
+   * @returns Verification result
+   */
+  private async verifyStaticSplitPath(
+    compiled: ReturnType<typeof compiledMessageDecoder.decode>,
+    decompiled: ReturnType<typeof decompileTransactionMessage>,
+    exactSvmPayload: ExactSvmPayloadV2,
+    requirements: PaymentRequirements,
+    signerAddresses: string[],
+    legs: readonly PaymentLeg[],
+  ): Promise<VerifyResponse> {
+    const instructions = decompiled.instructions ?? [];
+    const fail = (invalidReason: string, payer = "", invalidMessage?: string): VerifyResponse => ({
+      isValid: false,
+      invalidReason,
+      invalidMessage,
+      payer,
+    });
+
+    const prefixLength = staticTransferIndex(compiled.version);
+
+    const budgetViolation = this.checkV1Budget(compiled, instructions);
+    if (budgetViolation) {
+      return fail(budgetViolation);
+    }
+
+    let createCount = 0;
+    while (
+      prefixLength + createCount < instructions.length &&
+      isAtaProgramInstruction(instructions[prefixLength + createCount])
+    ) {
+      createCount += 1;
+    }
+    const firstTransfer = prefixLength + createCount;
+    const firstOptional = firstTransfer + legs.length;
+    if (instructions.length < firstOptional || instructions.length > firstOptional + 4) {
+      return fail(Errors.ErrTransactionInstructionsLength);
+    }
+
+    if (prefixLength === 2) {
+      try {
+        this.verifyComputeLimitInstruction(instructions[0] as never);
+        this.verifyComputePriceInstruction(instructions[1] as never);
+      } catch (error) {
+        return fail(error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    // Positional transfers: the primary remainder, then each split in order.
+    let payer = "";
+    let tokenProgram: string | undefined;
+    for (let i = 0; i < legs.length; i += 1) {
+      const leg = legs[i];
+      const transferIx = instructions[firstTransfer + i];
+      const programAddress = transferIx.programAddress.toString();
+      const ixData = transferIx.data;
+      // Exactly 10 data bytes and 4 accounts: trailing multisig signer
+      // accounts would let the transfer's authority be something other than
+      // the account the payer signed with.
+      if (
+        (programAddress !== TOKEN_PROGRAM_ADDRESS.toString() &&
+          programAddress !== TOKEN_2022_PROGRAM_ADDRESS.toString()) ||
+        !ixData ||
+        ixData.length !== 10 ||
+        ixData[0] !== IX_TOKEN_TRANSFER_CHECKED ||
+        (transferIx.accounts ?? []).length !== 4
+      ) {
+        return fail(Errors.ErrNoTransferInstruction, payer);
+      }
+      if (tokenProgram && programAddress !== tokenProgram) {
+        return fail(Errors.ErrSplitLegUnmatched, payer, "legs use different token programs");
+      }
+      tokenProgram = programAddress;
+
+      let parsedTransfer;
+      try {
+        parsedTransfer =
+          programAddress === TOKEN_PROGRAM_ADDRESS.toString()
+            ? parseTransferCheckedInstructionToken(transferIx as never)
+            : parseTransferCheckedInstruction2022(transferIx as never);
+      } catch {
+        return fail(Errors.ErrNoTransferInstruction, payer);
+      }
+
+      const authority = parsedTransfer.accounts.authority.address.toString();
+      if (signerAddresses.includes(authority)) {
+        return fail(Errors.ErrFeePayerTransferringFunds, authority);
+      }
+      if (payer && authority !== payer) {
+        return fail(Errors.ErrSplitAuthorityMismatch, payer);
+      }
+      payer = authority;
+
+      if (parsedTransfer.accounts.mint.address.toString() !== requirements.asset) {
+        return fail(Errors.ErrMintMismatch, payer);
+      }
+      const expectedAta = await deriveAta(leg.owner, requirements.asset, programAddress);
+      if (parsedTransfer.accounts.destination.address.toString() !== expectedAta) {
+        return fail(Errors.ErrRecipientMismatch, payer);
+      }
+      if (parsedTransfer.data.amount !== leg.amount) {
+        return fail(Errors.ErrAmountMismatch, payer);
+      }
+    }
+
+    const optionalInstructions = instructions.slice(firstOptional);
+    for (const ix of optionalInstructions) {
+      const programAddress = ix.programAddress.toString();
+      if (
+        programAddress !== LIGHTHOUSE_PROGRAM_ADDRESS &&
+        programAddress !== MEMO_PROGRAM_ADDRESS
+      ) {
+        return fail(Errors.ErrUnknownOptionalInstruction, payer);
+      }
+    }
+
+    // Fee payer isolation with the bounded CreateIdempotent exception
+    // (§2.1.1); this also validates every creation against §5.4.
+    try {
+      await assertFeePayerIsolatedWithAtaCreation(
+        instructions,
+        requirements.extra.feePayer as string,
+        {
+          asset: requirements.asset,
+          markedOwners: new Set(legs.filter(l => l.ataCreationRequired).map(l => l.owner)),
+          tokenProgram,
+        },
+      );
+    } catch (error) {
+      if (error instanceof SplitsError) {
+        return fail(error.reason, payer, error.message);
+      }
+      return fail(error instanceof Error ? error.message : String(error), payer);
+    }
+
+    const memoError = this.verifyExpectedMemo(optionalInstructions, requirements);
+    if (memoError) {
+      return fail(memoError, payer);
+    }
+
+    try {
+      await this.signer.simulateTransaction(exactSvmPayload.transaction, requirements.network);
+    } catch (error) {
+      return fail(
+        Errors.ErrTransactionSimulationFailed,
+        payer,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+
+    return { isValid: true, invalidReason: undefined, payer };
+  }
+
+  /**
+   * Version 1 carries its compute budget in the message config, so it is
+   * checked there, and a ComputeBudget instruction anywhere is rejected.
+   * Legacy and version 0 are checked on their instruction prefix instead.
+   *
+   * @param compiled - Compiled message
+   * @param instructions - Its decompiled instructions
+   * @returns The invalid reason, or undefined when the budget is acceptable
+   */
+  private checkV1Budget(
+    compiled: ReturnType<typeof compiledMessageDecoder.decode>,
+    instructions: ReadonlyArray<{ programAddress: Address }>,
+  ): string | undefined {
+    if (compiled.version !== 1) return undefined;
+    const violation = checkTransactionV1Budget(
+      readTransactionV1Config(compiled),
+      instructions.map(ix => ix.programAddress.toString()),
+      {
+        maxComputeUnits: this.maxComputeUnits,
+        maxPriceMicroLamports:
+          this.options?.maxPriorityFeeMicroLamports ?? MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
+      },
+    );
+    return violation ? Errors.TRANSACTION_V1_BUDGET_REASONS[violation] : undefined;
   }
 
   /**
