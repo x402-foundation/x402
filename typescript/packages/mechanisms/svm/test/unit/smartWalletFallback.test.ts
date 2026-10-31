@@ -11,6 +11,7 @@ import {
   type IInstruction,
 } from "@solana/kit";
 import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
+import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import {
   LIGHTHOUSE_PROGRAM_ADDRESS,
   MEMO_PROGRAM_ADDRESS,
@@ -119,6 +120,8 @@ async function buildSmartWalletPayloadWithMemos(
  * real TransferChecked) so static verification proceeds past layout checks and
  * reaches the semantic amount/mint/recipient checks. Used to prove that a
  * semantic failure (e.g. wrong amount) does NOT fall through to Path 2.
+ * `omitComputeLimit`, `discriminator` and `tokenProgram` break that shape on
+ * purpose to reproduce layout rejections Path 1 owns.
  */
 async function buildStaticTransferPayload(args: {
   feePayer: Address;
@@ -128,6 +131,8 @@ async function buildStaticTransferPayload(args: {
   authority: { address: Address; signMessages: (messages: never[]) => Promise<unknown[]> };
   amount: bigint;
   discriminator?: number;
+  omitComputeLimit?: boolean;
+  tokenProgram?: Address;
   trailing?: IInstruction[];
 }) {
   const data = new Uint8Array(10);
@@ -136,10 +141,12 @@ async function buildStaticTransferPayload(args: {
   data[9] = 6; // decimals
 
   const tx = await buildTransaction(args.feePayer, [
-    { programAddress: COMPUTE_BUDGET_PROGRAM, data: new Uint8Array([2, 160, 134, 1, 0]) },
+    ...(args.omitComputeLimit
+      ? []
+      : [{ programAddress: COMPUTE_BUDGET_PROGRAM, data: new Uint8Array([2, 160, 134, 1, 0]) }]),
     { programAddress: COMPUTE_BUDGET_PROGRAM, data: new Uint8Array([3, 16, 39, 0, 0, 0, 0, 0, 0]) },
     {
-      programAddress: TOKEN_PROGRAM_ADDRESS,
+      programAddress: args.tokenProgram ?? TOKEN_PROGRAM_ADDRESS,
       accounts: [
         { address: args.source, role: 1 },
         { address: args.mint, role: 0 },
@@ -951,7 +958,62 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
     expect(result.invalidReason).toBe("invalid_exact_svm_payload_no_transfer_instruction");
   });
 
-  it("verify does NOT fall through to Path 2 on a semantic (amount mismatch) failure", async () => {
+  // Lighthouse assertion (discriminator 2); MemoryWrite (0) is not a pure assertion.
+  const lighthouseInstruction: IInstruction = {
+    programAddress: LIGHTHOUSE_PROGRAM_ADDRESS as Address,
+    data: new Uint8Array([2]),
+  };
+
+  // A direct token transfer has no wrapper for Path 2 to simulate, so it keeps
+  // its Path 1 reason instead of smart_wallet_program_not_allowed naming the
+  // token program (#3268). The last two rows pin the boundaries around that.
+  it.each<{
+    name: string;
+    amount: bigint;
+    expectedReason: string;
+    discriminator?: number;
+    omitComputeLimit?: boolean;
+    tokenProgram?: Address;
+    allowedPrograms?: string[];
+    trailing?: IInstruction[];
+  }>([
+    // Structurally valid tx, but the on-chain transfer amount (1) does not match
+    // the required amount (100000). Path 1 must reject with amount_mismatch.
+    {
+      name: "verify does NOT fall through to Path 2 on a semantic (amount mismatch) failure",
+      amount: 1n,
+      expectedReason: Errors.ErrAmountMismatch,
+    },
+    {
+      name: "a direct SPL transfer missing the compute limit keeps its Path 1 reason",
+      amount: 100000n,
+      expectedReason: Errors.ErrComputeLimitInstruction,
+      omitComputeLimit: true,
+      trailing: [lighthouseInstruction],
+    },
+    {
+      name: "an unchecked Token-2022 transfer keeps its Path 1 reason",
+      amount: 100000n,
+      expectedReason: Errors.ErrNoTransferInstruction,
+      discriminator: 3,
+      tokenProgram: TOKEN_2022_PROGRAM_ADDRESS,
+    },
+    {
+      name: "a Lighthouse instruction outside a custom allowlist keeps the allowlist error",
+      amount: 100000n,
+      expectedReason: `${Errors.ErrSmartWalletProgramNotAllowed}: ${TOKEN_PROGRAM}`,
+      omitComputeLimit: true,
+      allowedPrograms: [],
+      trailing: [lighthouseInstruction],
+    },
+    {
+      name: "an allowlisted wallet program beside the token program keeps the allowlist error",
+      amount: 100000n,
+      expectedReason: `${Errors.ErrSmartWalletProgramNotAllowed}: ${TOKEN_PROGRAM}`,
+      omitComputeLimit: true,
+      trailing: [{ programAddress: SWIG_PROGRAM, data: new Uint8Array([0]) }],
+    },
+  ])("$name", async testCase => {
     const { ExactSvmScheme } = await import("../../src/exact/facilitator/scheme");
 
     const feePayer = await generateKeyPairSigner();
@@ -962,15 +1024,17 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
     const expectedAta = payTo.address;
     mockAtaMap[payTo.address] = expectedAta;
 
-    // Structurally valid tx, but the on-chain transfer amount (1) does not match
-    // the required amount (100000). Path 1 must reject with amount_mismatch.
     const txBase64 = await buildStaticTransferPayload({
       feePayer: feePayer.address,
       source: source.address,
       mint: USDC_DEVNET_ADDRESS as Address,
       destination: expectedAta,
       authority: payer,
-      amount: 1n,
+      amount: testCase.amount,
+      discriminator: testCase.discriminator,
+      omitComputeLimit: testCase.omitComputeLimit,
+      tokenProgram: testCase.tokenProgram,
+      trailing: testCase.trailing,
     });
 
     const mockSigner = {
@@ -990,6 +1054,7 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
 
     const scheme = new ExactSvmScheme(mockSigner as never, undefined, {
       enableSmartWalletVerification: true,
+      smartWalletAllowedPrograms: testCase.allowedPrograms,
     });
 
     const accepted = {
@@ -1012,10 +1077,9 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
       accepted as never,
     );
 
-    // Must surface the real Path-1 reason, NOT a misleading smart_wallet_* code.
     expect(result.isValid).toBe(false);
-    expect(result.invalidReason).toBe("invalid_exact_svm_payload_amount_mismatch");
-    // Path 2 must never have run for a semantic failure.
+    expect(result.invalidReason).toBe(testCase.expectedReason);
+    // Path 2 must never have run.
     expect(mockSigner.simulateTransactionWithInnerInstructions).not.toHaveBeenCalled();
   });
 

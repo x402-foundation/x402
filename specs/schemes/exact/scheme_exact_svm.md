@@ -354,7 +354,7 @@ Sponsors SHOULD maintain an allowlist of programs permitted to reach simulation-
 | Metaplex Core | `CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d` |
 | Lighthouse (Phantom assertions) | `L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95` |
 
-The ComputeBudget and SPL Memo programs are **category-exempt** — they are not wallet programs and are permitted independently of the allowlist (ComputeBudget is bounded by §2.2.1; Memo is enforced in §3.2). The Associated Token Account program (`ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL`) is exempt on the same basis, but only for `CreateIdempotent` instructions that satisfy §5.4. Any other top-level program not on the allowlist SHOULD be rejected (`smart_wallet_program_not_allowed`). Operators MAY override the allowlist.
+The ComputeBudget and SPL Memo programs are **category-exempt** — they are not wallet programs and are permitted independently of the allowlist (ComputeBudget is bounded by §2.2.1; Memo is enforced in §3.2). The Associated Token Account program (`ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL`) is exempt on the same basis, but only for `CreateIdempotent` instructions that satisfy §5.4. Any other top-level program not on the allowlist SHOULD be rejected (`smart_wallet_program_not_allowed`), except when the only rejected program is SPL Token or Token-2022 and no non-exempt program other than Lighthouse appears beside it. Such a direct token transfer has no wrapper to simulate, so the Path 1 reason SHOULD be returned instead. Operators MAY override the allowlist.
 
 #### 2.2.3 Simulation-Based Rejection (SHOULD)
 

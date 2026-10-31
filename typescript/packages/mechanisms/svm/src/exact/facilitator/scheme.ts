@@ -1045,6 +1045,23 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
       if (defaultCapExceeded && (disallowedProgram || topLevelPrograms.length === 0)) {
         return { response: staticResult, verificationPath: null };
       }
+
+      // A direct token transfer (a rejected token program with nothing beside it
+      // but allowlisted Lighthouse assertions) has no wrapper for Path 2 to verify,
+      // so return the Path 1 reason rather than an allowlist error naming the
+      // token program (#3268).
+      if (
+        (disallowedProgram === TOKEN_PROGRAM_ADDRESS.toString() ||
+          disallowedProgram === TOKEN_2022_PROGRAM_ADDRESS.toString()) &&
+        topLevelPrograms.every(
+          addr =>
+            addr === disallowedProgram ||
+            (addr === LIGHTHOUSE_PROGRAM_ADDRESS && allowedPrograms.has(addr)),
+        )
+      ) {
+        return { response: staticResult, verificationPath: null };
+      }
+
       if (disallowedProgram) {
         return {
           response: {
