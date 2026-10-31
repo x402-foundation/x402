@@ -7,15 +7,24 @@ Python field names use snake_case.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, runtime_checkable
 
+from ..types import is_bytes32_hex, is_uint256_string
 from .constants import (
     PAYLOAD_TYPE_CLAIM,
     PAYLOAD_TYPE_DEPOSIT,
     PAYLOAD_TYPE_REFUND,
     PAYLOAD_TYPE_SETTLE,
     PAYLOAD_TYPE_VOUCHER,
+)
+from .errors import (
+    ERR_CLAIM_PAYLOAD,
+    ERR_DEPOSIT_PAYLOAD,
+    ERR_REFUND_PAYLOAD,
+    ERR_SETTLE_PAYLOAD,
+    ERR_VOUCHER_PAYLOAD,
 )
 
 
@@ -473,6 +482,265 @@ def is_settle_payload(payload: dict[str, Any]) -> bool:
 
 def is_enriched_refund_payload(payload: dict[str, Any]) -> bool:
     return is_refund_payload(payload) and "refundNonce" in payload and "claims" in payload
+
+
+# --- Validation -----------------------------------------------------------------------
+# Payloads arrive as untrusted JSON, so verify and settle check the fields that
+# `from_dict` and the handlers parse; malformed input is rejected instead of raising.
+
+_HEX_BYTES_RE = re.compile(r"(0x)?(?:[0-9a-fA-F]{2})*")
+_ADDRESS_RE = re.compile(r"0x[0-9a-fA-F]{40}")
+_UINT256_HEX_RE = re.compile(r"0x[0-9a-fA-F]{1,64}")
+# Canonical bytes32 channel id: 0x followed by exactly 64 hex digits.
+_CHANNEL_ID_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
+_UINT40_MAX = 2**40 - 1
+_UINT128_MAX = 2**128 - 1
+
+
+def is_canonical_channel_id(value: object) -> bool:
+    """Return True when value is a canonical `0x` + 64-hex-digit channel id."""
+    return isinstance(value, str) and _CHANNEL_ID_RE.fullmatch(value) is not None
+
+
+def _is_uint128_string(value: Any) -> bool:
+    return is_uint256_string(value) and int(value) <= _UINT128_MAX
+
+
+def _is_address(value: Any) -> bool:
+    return isinstance(value, str) and _ADDRESS_RE.fullmatch(value) is not None
+
+
+def _is_hex(value: Any) -> bool:
+    return isinstance(value, str) and _HEX_BYTES_RE.fullmatch(value) is not None
+
+
+def _validate_channel_config(config: Any, path: str) -> str | None:
+    if not isinstance(config, dict):
+        return f"{path} must be an object"
+    for key in ("payer", "payerAuthorizer", "receiver", "receiverAuthorizer", "token"):
+        if not _is_address(config.get(key)):
+            return f"{path}.{key} must be a 20-byte hex address"
+    withdraw_delay = config.get("withdrawDelay")
+    if (
+        not isinstance(withdraw_delay, int)
+        or isinstance(withdraw_delay, bool)
+        or not 0 <= withdraw_delay <= _UINT40_MAX
+    ):
+        return f"{path}.withdrawDelay must be a uint40 integer"
+    if not is_bytes32_hex(config.get("salt")):
+        return f"{path}.salt must be a 32-byte hex string"
+    return None
+
+
+def _validate_voucher_fields(voucher: Any) -> str | None:
+    if not isinstance(voucher, dict):
+        return "voucher must be an object"
+    if not is_canonical_channel_id(voucher.get("channelId")):
+        return "voucher.channelId must be 0x followed by 64 hex digits"
+    if not _is_hex(voucher.get("signature")):
+        return "voucher.signature must be a hex string"
+    if not is_uint256_string(voucher.get("maxClaimableAmount")):
+        return "voucher.maxClaimableAmount must be a uint256 decimal string"
+    return None
+
+
+def _validate_voucher(payload: dict[str, Any]) -> str | None:
+    return _validate_channel_config(
+        payload.get("channelConfig"), "channelConfig"
+    ) or _validate_voucher_fields(payload.get("voucher"))
+
+
+def _validate_deposit_erc3009_authorization(authorization: Any) -> str | None:
+    path = "deposit.authorization.erc3009Authorization"
+    if not isinstance(authorization, dict):
+        return f"{path} must be an object"
+    # The salt is a uint256; the deposit encoders read it as hex only when it is 0x-prefixed.
+    salt = authorization.get("salt")
+    if not (isinstance(salt, str) and _UINT256_HEX_RE.fullmatch(salt)):
+        return f"{path}.salt must be 0x followed by 1 to 64 hex digits"
+    if not isinstance(authorization.get("signature"), str):
+        return f"{path}.signature must be a string"
+    for key in ("validAfter", "validBefore"):
+        if not is_uint256_string(authorization.get(key)):
+            return f"{path}.{key} must be a uint256 decimal string"
+    return None
+
+
+def _validate_deposit_permit2_authorization(authorization: Any) -> str | None:
+    path = "deposit.authorization.permit2Authorization"
+    if not isinstance(authorization, dict):
+        return f"{path} must be an object"
+    permitted = authorization.get("permitted")
+    if not isinstance(permitted, dict):
+        return f"{path}.permitted must be an object"
+    witness = authorization.get("witness")
+    if not isinstance(witness, dict):
+        return f"{path}.witness must be an object"
+    addresses = {
+        "from": authorization.get("from"),
+        "spender": authorization.get("spender"),
+        "permitted.token": permitted.get("token"),
+    }
+    for name, value in addresses.items():
+        if not _is_address(value):
+            return f"{path}.{name} must be a 20-byte hex address"
+    strings = {
+        "signature": authorization.get("signature"),
+        "witness.channelId": witness.get("channelId"),
+    }
+    for name, value in strings.items():
+        if not isinstance(value, str):
+            return f"{path}.{name} must be a string"
+    numbers = {
+        "nonce": authorization.get("nonce"),
+        "deadline": authorization.get("deadline"),
+        "permitted.amount": permitted.get("amount"),
+    }
+    for name, value in numbers.items():
+        if not is_uint256_string(value):
+            return f"{path}.{name} must be a uint256 decimal string"
+    return None
+
+
+def _validate_deposit(payload: dict[str, Any]) -> str | None:
+    error = _validate_voucher(payload)
+    if error:
+        return error
+    deposit = payload.get("deposit")
+    if not isinstance(deposit, dict):
+        return "deposit must be an object"
+    if not is_uint256_string(deposit.get("amount")):
+        return "deposit.amount must be a uint256 decimal string"
+    authorization = deposit.get("authorization")
+    if not isinstance(authorization, dict):
+        return "deposit.authorization must be an object"
+    # Same truthiness as DepositAuthorization.from_dict, which ignores an empty authorization.
+    erc3009 = authorization.get("erc3009Authorization")
+    if erc3009:
+        error = _validate_deposit_erc3009_authorization(erc3009)
+        if error:
+            return error
+    permit2 = authorization.get("permit2Authorization")
+    if permit2:
+        return _validate_deposit_permit2_authorization(permit2)
+    return None
+
+
+def _validate_refund(payload: dict[str, Any]) -> str | None:
+    error = _validate_voucher(payload)
+    if error:
+        return error
+    amount = payload.get("amount")
+    if amount is not None and not is_uint256_string(amount):
+        return "amount must be a uint256 decimal string"
+    return None
+
+
+def _validate_claims(claims: Any) -> str | None:
+    if not isinstance(claims, list):
+        return "claims must be a list"
+    for index, claim in enumerate(claims):
+        path = f"claims[{index}]"
+        if not isinstance(claim, dict):
+            return f"{path} must be an object"
+        if not _is_hex(claim.get("signature")):
+            return f"{path}.signature must be a hex string"
+        # The ClaimBatch authorization signs both amounts as uint128.
+        if not _is_uint128_string(claim.get("totalClaimed")):
+            return f"{path}.totalClaimed must be a uint128 decimal string"
+        voucher = claim.get("voucher")
+        if not isinstance(voucher, dict):
+            return f"{path}.voucher must be an object"
+        if not _is_uint128_string(voucher.get("maxClaimableAmount")):
+            return f"{path}.voucher.maxClaimableAmount must be a uint128 decimal string"
+        error = _validate_channel_config(voucher.get("channel"), f"{path}.voucher.channel")
+        if error:
+            return error
+    return None
+
+
+def _validate_authorizer_signatures(payload: dict[str, Any], keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        value = payload.get(key)
+        if value is not None and not _is_hex(value):
+            return f"{key} must be a hex string"
+    return None
+
+
+def _validate_claim(payload: dict[str, Any]) -> str | None:
+    return _validate_claims(payload.get("claims")) or _validate_authorizer_signatures(
+        payload, ("claimAuthorizerSignature",)
+    )
+
+
+def _validate_enriched_refund(payload: dict[str, Any]) -> str | None:
+    error = _validate_channel_config(payload.get("channelConfig"), "channelConfig")
+    if error:
+        return error
+    # The refund handler never reads the voucher; from_dict only needs its keys.
+    voucher = payload.get("voucher")
+    if not isinstance(voucher, dict):
+        return "voucher must be an object"
+    for key in ("channelId", "maxClaimableAmount", "signature"):
+        if key not in voucher:
+            return f"voucher.{key} is required"
+    for key in ("amount", "refundNonce"):
+        if not is_uint256_string(payload.get(key)):
+            return f"{key} must be a uint256 decimal string"
+    return _validate_claims(payload.get("claims")) or _validate_authorizer_signatures(
+        payload, ("refundAuthorizerSignature", "claimAuthorizerSignature")
+    )
+
+
+def _validate_settle(payload: dict[str, Any]) -> str | None:
+    for key in ("receiver", "token"):
+        if not _is_address(payload.get(key)):
+            return f"{key} must be a 20-byte hex address"
+    return None
+
+
+def _with_reason(reason: str, message: str | None) -> tuple[str, str] | None:
+    return (reason, message) if message else None
+
+
+def validate_batch_settlement_payload(payload: dict[str, Any]) -> tuple[str, str] | None:
+    """Check the fields of a client payload (deposit, voucher or refund) before verify parses it.
+
+    Args:
+        payload: Raw payload dictionary.
+
+    Returns:
+        None if well-formed or not a client payload type, otherwise the payload type's
+        error reason and a message naming the first malformed field.
+    """
+    if is_deposit_payload(payload):
+        return _with_reason(ERR_DEPOSIT_PAYLOAD, _validate_deposit(payload))
+    if is_voucher_payload(payload):
+        return _with_reason(ERR_VOUCHER_PAYLOAD, _validate_voucher(payload))
+    if is_refund_payload(payload):
+        return _with_reason(ERR_REFUND_PAYLOAD, _validate_refund(payload))
+    return None
+
+
+def validate_batch_settlement_settle_payload(payload: dict[str, Any]) -> tuple[str, str] | None:
+    """Check the fields of a settle payload (deposit, claim, refund or settle) before parsing it.
+
+    Args:
+        payload: Raw payload dictionary.
+
+    Returns:
+        None if well-formed or not a settle payload type, otherwise the payload type's
+        error reason and a message naming the first malformed field.
+    """
+    if is_deposit_payload(payload):
+        return _with_reason(ERR_DEPOSIT_PAYLOAD, _validate_deposit(payload))
+    if is_claim_payload(payload):
+        return _with_reason(ERR_CLAIM_PAYLOAD, _validate_claim(payload))
+    if is_enriched_refund_payload(payload):
+        return _with_reason(ERR_REFUND_PAYLOAD, _validate_enriched_refund(payload))
+    if is_settle_payload(payload):
+        return _with_reason(ERR_SETTLE_PAYLOAD, _validate_settle(payload))
+    return None
 
 
 # --- Per-extension snapshots (PaymentRequirements.extra / settle response extra) ------

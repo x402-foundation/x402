@@ -33,6 +33,8 @@ from ..types import (
     is_refund_payload,
     is_settle_payload,
     is_voucher_payload,
+    validate_batch_settlement_payload,
+    validate_batch_settlement_settle_payload,
 )
 
 
@@ -113,6 +115,11 @@ class BatchSettlementEvmFacilitator:
         if payload.accepted.network != requirements.network:
             return VerifyResponse(is_valid=False, invalid_reason=ERR_NETWORK_MISMATCH)
 
+        payload_error = validate_batch_settlement_payload(raw)
+        if payload_error:
+            reason, message = payload_error
+            return VerifyResponse(is_valid=False, invalid_reason=reason, invalid_message=message)
+
         if is_deposit_payload(raw):
             from .deposit import verify_deposit
 
@@ -148,6 +155,17 @@ class BatchSettlementEvmFacilitator:
     ) -> SettleResponse:
         raw = payload.payload
         network = str(requirements.network)
+
+        payload_error = validate_batch_settlement_settle_payload(raw)
+        if payload_error:
+            reason, message = payload_error
+            return SettleResponse(
+                success=False,
+                error_reason=reason,
+                error_message=message,
+                transaction="",
+                network=network,
+            )
 
         # Resolved once and appended to whichever settlement calldata is broadcast.
         data_suffix = resolve_data_suffix(context, payload, requirements)

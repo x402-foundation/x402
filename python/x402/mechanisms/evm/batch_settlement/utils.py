@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 try:
@@ -21,15 +20,7 @@ from .constants import (
     CHANNEL_CONFIG_TYPES,
 )
 from .errors import ERR_CHANNEL_ID_MISMATCH, ERR_INVALID_CHANNEL_ID
-from .types import ChannelConfig
-
-# Canonical bytes32 channel id: 0x followed by exactly 64 hex digits.
-_CHANNEL_ID_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
-
-
-def is_canonical_channel_id(value: object) -> bool:
-    """Return True when value is a canonical `0x` + 64-hex-digit channel id."""
-    return isinstance(value, str) and _CHANNEL_ID_RE.fullmatch(value) is not None
+from .types import ChannelConfig, is_canonical_channel_id
 
 
 def normalize_channel_id(channel_id: str) -> str:
