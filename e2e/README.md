@@ -69,6 +69,7 @@ These keep local `test.config.json` overlays and/or special orchestration — no
 | Batch-settlement facilitator-managed custody | Managed catalog routes `/batch-settlement-managed/evm/*` (`schemeOptions.facilitatorManaged: true`, go only) + dual servers (`E2E_BATCH_SERVER_ROLE=standard\|managed-batch`, `EVM_BATCH_SETTLEMENT_VOUCHER_STORE_MODE=self\|facilitator`) + one facilitator with `E2E_FACILITATOR_VOUCHER_STORE=true` (advertises `delegatedRefund: true`; optionally `SERVER_EVM_BATCH_SETTLEMENT_REFUND_AUTHORIZER_PRIVATE_KEY` for the server-owned key path); override one side with `--batchVoucherStore=self\|facilitator` |
 | Gas sponsoring / Permit2 coldstart | Route `schemeOptions.coldstart` + declared gas `extensions` + fund/revoke/drain in `test.ts` + facilitator extension registration |
 | Swig smart wallet | Client overlay [`clients/typescript/http/svm-smart-wallet/test.config.json`](clients/typescript/http/svm-smart-wallet/test.config.json) (`protocolFamilies`, `facilitators`, Swig env) + [`scripts/swig-setup.ts`](scripts/swig-setup.ts); uses catalog route `/exact/svm` |
+| Solana transaction v0 | SVM-only client overlays `clients/{typescript,go,python}/http/svm-v0/test.config.json` (`protocolFamilies: ["svm"]`). Clients build the highest Solana transaction version the facilitator advertises in `extra.transactionVersions`, so every other client builds v1 against facilitators advertising `[0, 1]`; these narrow the SVM schemes to `transactionVersions: [0]` (Go `PaymentClientOptions`, Python `create_e2e_client(svm_transaction_versions=...)`) to keep v0 covered. TS and Go cover exact, upto and batch-settlement; Python covers exact |
 | Legacy (v1) | `legacy/` trees only — separate configs; do not extend the mechanisms catalog for v1 |
 
 If an SDK implements a route end-to-end (client + server + facilitator), list it in that route’s `sdks`. Omit only when the mechanism package is missing (e.g. Go has no TVM; Python/Go have no AVM/NEAR/XRPL; Python has no SVM upto). Where an SDK has only a client, list it in `clientSdks`.
@@ -374,6 +375,24 @@ only an e2e fixture; it is not a default asset in the XRPL SDK.
 
 See the [XRPL Testnet faucet](https://xrpl.org/resources/dev-tools/xrp-faucets)
 and [issued-token setup](https://xrpl.org/docs/tutorials/tokens/fungible-tokens/issue-a-fungible-token).
+
+#### Canton DevNet
+
+The client and the facilitator use a Canton participant (JSON Ledger API) whose
+ledger user can act as the client party and as the facilitator party, and, for
+`pnpm canton:setup`, as the payee (`SERVER_CANTON_ADDRESS`). The client and the
+payee are external parties with Ed25519 keys.
+
+1. Fund the client and the payee with DevNet Canton Coin from a DevNet tap (see
+   [performing a CC tap](https://docs.canton.network/sdks-tools/sdks/wallet-sdk/guides/performing-a-cc-tap)).
+2. Give the payee the `TransferPreapproval` the scheme requires to settle in one
+   transaction. The setup script creates it, or renews it when it expires within a
+   week, signing with `SERVER_CANTON_PRIVATE_KEY`; the payee pays the small fee:
+
+```bash
+pnpm canton:setup
+pnpm test --testnet --min --families=canton --versions=2
+```
 
 #### Stellar Testnet
 

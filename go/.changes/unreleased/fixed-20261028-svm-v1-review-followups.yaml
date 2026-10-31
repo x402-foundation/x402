@@ -1,0 +1,3 @@
+kind: fixed
+body: 'SVM transaction v1 follow-ups. svm.ConfirmedTransactionInnerInstructions and the payment-channels history reader request MaxSupportedTransactionVersion 1 (svm.MaxSupportedTxVersion), so the smart-wallet post-settle check and the receiver-binding history reader handle v1 transactions instead of failing on them. The x402 v1 exact facilitator gains NewExactSvmSchemeV1WithConfig with Config.TransactionVersions (default [0, 1]; invalid values panic), advertised and enforced like the v2 facilitator''s. The batch-settlement channel manager clamps the advertised maxClaimChannels / maxSettleChannels to V1MaxClaimChannels / V1MaxSettleChannels.'
+time: 2026-10-28T20:00:00Z

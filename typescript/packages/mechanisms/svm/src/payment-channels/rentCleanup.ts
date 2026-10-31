@@ -26,6 +26,7 @@ import type { FacilitatorSigningCapabilities, FacilitatorSvmSigner } from "../si
 import { BASIS_POINTS_DENOMINATOR, SLOT_COMMITMENT, STATE_COMMITMENT } from "./commitments";
 import { discoverChannelsByRentPayer } from "./discovery";
 import {
+  type FacilitatorTransactionVersion,
   type PaymentChannelSvmSigner,
   facilitatorV1TransactionFits,
   reclaimComputeUnitLimit,
@@ -357,6 +358,8 @@ export interface PaymentChannelRentCleanupManagerConfig {
   signer: FacilitatorSvmSigner;
   storage: PaymentChannelStorage;
   network: Network;
+  /** Treasury owner override, as `DistributeBuildArgs.treasuryOwner`. */
+  treasuryOwner?: string | undefined;
   /**
    * `SetComputeUnitPrice` (microlamports per compute unit) attached to cleanup
    * transactions; `0` omits the instruction. Defaults to
@@ -378,8 +381,11 @@ export interface PaymentChannelRentCleanupManagerConfig {
    * derive their own budget per channel.
    */
   settleLoadedAccountsDataSizeLimit?: number;
-  /** Use transaction v1 for facilitator-owned cleanup submissions. */
-  useTransactionV1?: boolean;
+  /**
+   * Message version (0 or 1) of the cleanup transactions the facilitator
+   * builds itself. Defaults to 0.
+   */
+  facilitatorTransactionVersion?: FacilitatorTransactionVersion;
   /**
    * Default idle window for passes that do not set
    * {@link RentCleanupOptions.maxIdleSecs}. Facilitator schemes pass the value
@@ -415,10 +421,11 @@ export class PaymentChannelRentCleanupManager {
   private readonly getKitSigner: (feePayer: Address) => FacilitatorSigningCapabilities;
   private readonly storage: PaymentChannelStorage;
   private readonly network: Network;
+  private readonly treasuryOwner: string | undefined;
   private readonly computeUnitPriceMicroLamports: number | undefined;
   private readonly settleComputeUnitLimit: number | undefined;
   private readonly settleLoadedAccountsDataSizeLimit: number | undefined;
-  private readonly useTransactionV1: boolean;
+  private readonly facilitatorTransactionVersion: FacilitatorTransactionVersion;
   private readonly maxIdleSecs: number | undefined;
   private readonly abandonPolicy: OpenAbandonPolicy;
   private readonly sealClosingChannels: boolean;
@@ -466,10 +473,11 @@ export class PaymentChannelRentCleanupManager {
     this.signer = config.signer;
     this.storage = config.storage;
     this.network = config.network;
+    this.treasuryOwner = config.treasuryOwner;
     this.computeUnitPriceMicroLamports = config.computeUnitPriceMicroLamports;
     this.settleComputeUnitLimit = config.settleComputeUnitLimit;
     this.settleLoadedAccountsDataSizeLimit = config.settleLoadedAccountsDataSizeLimit;
-    this.useTransactionV1 = config.useTransactionV1 ?? false;
+    this.facilitatorTransactionVersion = config.facilitatorTransactionVersion ?? 0;
     this.maxIdleSecs = config.maxIdleSecs;
     this.abandonPolicy = config.abandonPolicy ?? "idle";
     this.sealClosingChannels = config.sealClosingChannels ?? true;
@@ -583,8 +591,10 @@ export class PaymentChannelRentCleanupManager {
     const maxIdleSecs = resolveMaxIdleSecs(opts.maxIdleSecs ?? this.maxIdleSecs);
     const maxReclaimsPerTx = resolveCleanupCount(
       opts.maxReclaimsPerTx,
-      this.useTransactionV1 ? DEFAULT_MAX_RECLAIMS_PER_TX_V1 : DEFAULT_MAX_RECLAIMS_PER_TX,
-      this.useTransactionV1 ? undefined : MAX_SAFE_RECLAIMS_PER_TX,
+      this.facilitatorTransactionVersion === 1
+        ? DEFAULT_MAX_RECLAIMS_PER_TX_V1
+        : DEFAULT_MAX_RECLAIMS_PER_TX,
+      this.facilitatorTransactionVersion === 1 ? undefined : MAX_SAFE_RECLAIMS_PER_TX,
     );
     const maxTxsPerRun = resolveCleanupCount(opts.maxTxsPerRun, DEFAULT_MAX_TXS_PER_RUN);
     const maxTxsPerSigner = resolveCleanupCount(opts.maxTxsPerSigner, DEFAULT_MAX_TXS_PER_SIGNER);
@@ -843,6 +853,7 @@ export class PaymentChannelRentCleanupManager {
       rentPayer: live.rentPayer,
       splits,
       tokenProgram: record.tokenProgram,
+      treasuryOwner: this.treasuryOwner,
     });
 
     let instructions: ServerInstruction[];
@@ -869,7 +880,7 @@ export class PaymentChannelRentCleanupManager {
         computeUnitLimit: this.settleComputeUnitLimit,
         loadedAccountsDataSizeLimit: this.settleLoadedAccountsDataSizeLimit,
         computeUnitPriceMicroLamports: this.computeUnitPriceMicroLamports,
-        useTransactionV1: this.useTransactionV1,
+        facilitatorTransactionVersion: this.facilitatorTransactionVersion,
       },
     );
   }
@@ -985,7 +996,7 @@ export class PaymentChannelRentCleanupManager {
       return;
     }
 
-    if (!this.useTransactionV1) {
+    if (this.facilitatorTransactionVersion !== 1) {
       for (let i = 0; i < group.length; i += opts.maxReclaimsPerTx) {
         if (budget.remaining <= 0 || opts.abort.aborted()) return;
         budget.remaining -= 1;
@@ -1110,7 +1121,7 @@ export class PaymentChannelRentCleanupManager {
             computeUnitLimit: reclaimComputeUnitLimit(packed.length),
             loadedAccountsDataSizeLimit: reclaimLoadedAccountsDataSizeLimit(packed.length),
             computeUnitPriceMicroLamports: this.computeUnitPriceMicroLamports,
-            useTransactionV1: this.useTransactionV1,
+            facilitatorTransactionVersion: this.facilitatorTransactionVersion,
           },
         );
         opts.onReclaim?.({

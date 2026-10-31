@@ -1,0 +1,3 @@
+kind: changed
+body: 'SVM payment channels: the open + settle + distribute readiness simulation runs in the open''s own message version, so a version-1 open is simulated as version 1 with no ComputeBudget instructions.'
+time: 2026-10-26T22:00:00Z

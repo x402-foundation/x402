@@ -1,6 +1,6 @@
 """SVM signer protocol definitions."""
 
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 try:
     from solders.keypair import Keypair
@@ -124,5 +124,16 @@ class FacilitatorSvmSigner(Protocol):
 
         Raises:
             RuntimeError: If confirmation fails or times out.
+        """
+        ...
+
+
+@runtime_checkable
+class FacilitatorSvmSignerWithGetAccountInfo(Protocol):
+    def get_account_info(self, address: str, network: str) -> str | None:
+        """Return the account owner at confirmed commitment.
+
+        None when the account does not exist. Owner base58 text when it does.
+        Raise when the read fails.
         """
         ...

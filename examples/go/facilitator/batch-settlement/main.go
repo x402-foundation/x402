@@ -297,6 +297,16 @@ func main() {
 		result, err := facilitator.Verify(ctx, payload, requirements)
 		if err != nil {
 			fmt.Printf("Verify error: %v\n", err)
+			var verifyErr *x402.VerifyError
+			if errors.As(err, &verifyErr) {
+				writeJSON(w, http.StatusOK, x402.VerifyResponse{
+					IsValid:        false,
+					InvalidReason:  verifyErr.InvalidReason,
+					InvalidMessage: verifyErr.InvalidMessage,
+					Payer:          verifyErr.Payer,
+				})
+				return
+			}
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}

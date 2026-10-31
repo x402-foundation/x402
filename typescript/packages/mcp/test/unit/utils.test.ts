@@ -364,6 +364,19 @@ describe("extractPaymentRequiredFromError", () => {
       }),
     ).toBeNull();
   });
+
+  it("should return null when 402 data fails schema parsing", () => {
+    expect(
+      extractPaymentRequiredFromError({
+        code: 402,
+        message: "Payment required",
+        data: {
+          x402Version: 2,
+          accepts: [{ scheme: "exact" }],
+        },
+      }),
+    ).toBeNull();
+  });
 });
 
 // ============================================================================
@@ -371,6 +384,11 @@ describe("extractPaymentRequiredFromError", () => {
 // ============================================================================
 
 describe("isPaymentRequiredError", () => {
+  it("should reject non-object errors", () => {
+    expect(isPaymentRequiredError(null)).toBe(false);
+    expect(isPaymentRequiredError(undefined)).toBe(false);
+  });
+
   it("should accept a legacy 402 error with PaymentRequired data", () => {
     expect(
       isPaymentRequiredError({
@@ -408,6 +426,23 @@ describe("isPaymentRequiredError", () => {
     ).toBe(false);
   });
 
+  it("should accept -32042 errors with PaymentRequired in data", () => {
+    expect(
+      isPaymentRequiredError({
+        code: JSONRPC_PAYMENT_REQUIRED_CODE,
+        message: "elicitation required",
+        data: mockPaymentRequired,
+      }),
+    ).toBe(true);
+    expect(
+      isPaymentRequiredError({
+        code: JSONRPC_PAYMENT_REQUIRED_CODE,
+        message: "elicitation required",
+        data: { x402: mockPaymentRequired, challenges: [] },
+      }),
+    ).toBe(true);
+  });
+
   it("should reject -32042 errors that do not carry PaymentRequired", () => {
     expect(
       isPaymentRequiredError({
@@ -421,6 +456,16 @@ describe("isPaymentRequiredError", () => {
         code: JSONRPC_PAYMENT_REQUIRED_CODE,
         message: "elicitation required",
         data: { x402: { accepts: [] } },
+      }),
+    ).toBe(false);
+  });
+
+  it("should reject unrelated error codes", () => {
+    expect(
+      isPaymentRequiredError({
+        code: -32603,
+        message: "internal error",
+        data: mockPaymentRequired,
       }),
     ).toBe(false);
   });

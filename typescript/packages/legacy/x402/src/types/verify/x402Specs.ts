@@ -5,6 +5,7 @@ import { Base64EncodedRegex } from "../../shared/base64";
 
 // Constants
 const EvmMaxAtomicUnits = 18;
+const maxListEntries = 1024;
 const EvmAddressRegex = /^0x[0-9a-fA-F]{40}$/;
 const MixedAddressRegex = /^0x[a-fA-F0-9]{40}|[A-Za-z0-9][A-Za-z0-9-]{0,34}[A-Za-z0-9]$/;
 const HexEncoded64ByteRegex = /^0x[0-9a-fA-F]{64}$/;
@@ -76,11 +77,11 @@ export const PaymentRequirementsSchema = z.object({
   resource: z.string().url(),
   description: z.string(),
   mimeType: z.string(),
-  outputSchema: z.record(z.any()).optional(),
+  outputSchema: z.record(z.string(), z.any()).optional(),
   payTo: EvmOrSvmAddress,
   maxTimeoutSeconds: z.number().int(),
   asset: mixedAddressOrSvmAddress,
-  extra: z.record(z.any()).optional(),
+  extra: z.record(z.string(), z.any()).optional(),
 });
 export type PaymentRequirements = z.infer<typeof PaymentRequirementsSchema>;
 
@@ -123,7 +124,7 @@ export type UnsignedPaymentPayload = Omit<PaymentPayload, "payload"> & {
 export const x402ResponseSchema = z.object({
   x402Version: z.number().refine(val => x402Versions.includes(val as 1)),
   error: z.enum(ErrorReasons).optional(),
-  accepts: z.array(PaymentRequirementsSchema).optional(),
+  accepts: z.array(PaymentRequirementsSchema).max(maxListEntries).optional(),
   payer: z.string().regex(MixedAddressRegex).optional(),
 });
 export type x402Response = z.infer<typeof x402ResponseSchema>;
@@ -172,9 +173,9 @@ export const DiscoveredResourceSchema = z.object({
   resource: z.string(),
   type: z.enum(["http"]),
   x402Version: z.number().refine(val => x402Versions.includes(val as 1)),
-  accepts: z.array(PaymentRequirementsSchema),
+  accepts: z.array(PaymentRequirementsSchema).max(maxListEntries),
   lastUpdated: z.date(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.any()).optional(),
 });
 export type DiscoveredResource = z.infer<typeof DiscoveredResourceSchema>;
 
@@ -221,7 +222,7 @@ export type ListDiscoveryResourcesRequest = z.infer<typeof ListDiscoveryResource
 // x402ListDiscoveryResourcesResponse
 export const ListDiscoveryResourcesResponseSchema = z.object({
   x402Version: z.number().refine(val => x402Versions.includes(val as 1)),
-  items: z.array(DiscoveredResourceSchema),
+  items: z.array(DiscoveredResourceSchema).max(maxListEntries),
   pagination: z.object({
     limit: z.number(),
     offset: z.number(),
@@ -235,13 +236,13 @@ export const SupportedPaymentKindSchema = z.object({
   x402Version: z.number().refine(val => x402Versions.includes(val as 1)),
   scheme: z.enum(schemes),
   network: NetworkSchema,
-  extra: z.record(z.any()).optional(),
+  extra: z.record(z.string(), z.any()).optional(),
 });
 export type SupportedPaymentKind = z.infer<typeof SupportedPaymentKindSchema>;
 
 // x402SupportedPaymentKindsResponse
 export const SupportedPaymentKindsResponseSchema = z.object({
-  kinds: z.array(SupportedPaymentKindSchema),
+  kinds: z.array(SupportedPaymentKindSchema).max(maxListEntries),
 });
 export type SupportedPaymentKindsResponse = z.infer<typeof SupportedPaymentKindsResponseSchema>;
 

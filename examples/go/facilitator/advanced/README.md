@@ -63,7 +63,7 @@ For production deployments with additional features (Bazaar discovery, multiple 
 
 ## Prerequisites
 
-- Go 1.24 or higher
+- Go 1.26.10 or higher
 - EVM private key with Base Sepolia ETH for transaction fees
 - SVM private key with Solana Devnet SOL for transaction fees (optional)
 
@@ -103,9 +103,10 @@ if err != nil {
 result, err := facilitator.Verify(ctx, payload, requirements)
 if err != nil {
     // Extract structured error details if needed
-    if ve, ok := err.(*x402.VerifyError); ok {
-        log.Printf("Verification failed: reason=%s, payer=%s, network=%s",
-                   ve.Reason, ve.Payer, ve.Network)
+    var ve *x402.VerifyError
+    if errors.As(err, &ve) {
+        log.Printf("Verification failed: reason=%s, payer=%s",
+                   ve.InvalidReason, ve.Payer)
     }
     return err
 }

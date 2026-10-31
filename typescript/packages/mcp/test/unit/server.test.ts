@@ -749,6 +749,59 @@ describe("createPaymentWrapper", () => {
       expect(cancel).toHaveBeenCalledTimes(1);
     });
 
+    it("should settle skipHandler under upfront without re-settling when handler is skipped", async () => {
+      mockResourceServer.getPaymentFlow.mockReturnValue("upfront");
+      mockResourceServer.verifyPayment.mockResolvedValueOnce({
+        isValid: true,
+        skipHandler: { body: { refunded: true } },
+      });
+      const paid = createPaymentWrapper(
+        mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+        {
+          accepts: [mockPaymentRequirements],
+        },
+      );
+      const handler = vi.fn();
+      const wrappedHandler = paid(handler);
+
+      const result = await wrappedHandler(
+        { test: "arg" },
+        { _meta: { "x402/payment": mockPaymentPayload } },
+      );
+
+      expect(handler).not.toHaveBeenCalled();
+      expect(mockResourceServer.settlePayment).not.toHaveBeenCalled();
+      expect(result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toBeUndefined();
+    });
+
+    it("should call onAfterSettlement after a successful upfront payment", async () => {
+      mockResourceServer.getPaymentFlow.mockReturnValue("upfront");
+      const settlementHook = vi.fn();
+      const paid = createPaymentWrapper(
+        mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+        {
+          accepts: [mockPaymentRequirements],
+          hooks: { onAfterSettlement: settlementHook },
+        },
+      );
+      const handler = vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: "success" }],
+        _meta: { traceId: "upfront_ok" },
+      });
+      const wrappedHandler = paid(handler);
+
+      const result = await wrappedHandler(
+        { test: "arg" },
+        { _meta: { "x402/payment": mockPaymentPayload } },
+      );
+
+      expect(result._meta?.traceId).toBe("upfront_ok");
+      expect(result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toEqual(mockSettleResponse);
+      expect(settlementHook).toHaveBeenCalledWith(
+        expect.objectContaining({ settlement: mockSettleResponse }),
+      );
+    });
+
     it("should settle skipHandler responses without executing the tool", async () => {
       mockResourceServer.verifyPayment.mockResolvedValueOnce({
         isValid: true,
@@ -1064,6 +1117,53 @@ describe("createPaymentWrapper", () => {
       await wrappedHandler({ test: "arg" }, { _meta: { "x402/payment": mockPaymentPayload } });
 
       expect(callOrder).toEqual(["before", "handler", "after", "settlement"]);
+    });
+  });
+
+  describe("payment matching", () => {
+    it("should return 402 when no payment requirement matches the payload", async () => {
+      mockResourceServer.findMatchingRequirements.mockReturnValueOnce(null);
+      const paid = createPaymentWrapper(
+        mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+        {
+          accepts: [mockPaymentRequirements],
+        },
+      );
+      const handler = vi.fn();
+      const wrappedHandler = paid(handler);
+
+      const result = await wrappedHandler(
+        { test: "arg" },
+        { _meta: { "x402/payment": mockPaymentPayload } },
+      );
+
+      expect(result.isError).toBe(true);
+      expect(handler).not.toHaveBeenCalled();
+      expect(mockResourceServer.verifyPayment).not.toHaveBeenCalled();
+    });
+
+    it("should return 402 when extension validation fails", async () => {
+      mockResourceServer.validateExtensions.mockReturnValueOnce({
+        valid: false,
+        invalidReason: "bazaar extension mismatch",
+      });
+      const paid = createPaymentWrapper(
+        mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+        {
+          accepts: [mockPaymentRequirements],
+        },
+      );
+      const handler = vi.fn();
+      const wrappedHandler = paid(handler);
+
+      const result = await wrappedHandler(
+        { test: "arg" },
+        { _meta: { "x402/payment": mockPaymentPayload } },
+      );
+
+      expect(result.isError).toBe(true);
+      expect(handler).not.toHaveBeenCalled();
+      expect(mockResourceServer.verifyPayment).not.toHaveBeenCalled();
     });
   });
 

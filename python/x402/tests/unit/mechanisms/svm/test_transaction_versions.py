@@ -13,7 +13,7 @@ import pytest
 from solders.hash import Hash
 from solders.instruction import Instruction
 from solders.keypair import Keypair
-from solders.message import Message, MessageV0
+from solders.message import Message, MessageV0, MessageV1
 from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
 
@@ -26,6 +26,7 @@ from x402.mechanisms.svm import (
     USDC_DEVNET_ADDRESS,
     get_transaction_version,
     is_accepted_transaction_version,
+    normalize_accepted_transaction_versions,
     peek_wire_transaction_version,
     resolve_transaction_version,
 )
@@ -34,6 +35,7 @@ from x402.mechanisms.svm.exact import (
     ExactSvmFacilitatorScheme,
     ExactSvmServerScheme,
 )
+from x402.mechanisms.svm.exact.register import register_exact_svm_facilitator
 from x402.mechanisms.svm.exact.v1 import ExactSvmSchemeV1Client, ExactSvmSchemeV1Facilitator
 from x402.mechanisms.svm.signers import KeypairSigner
 from x402.mechanisms.svm.utils import compile_payment_message, transaction_message_hash
@@ -89,19 +91,19 @@ def _tx_base64(tx: VersionedTransaction) -> str:
     return base64.b64encode(bytes(tx)).decode()
 
 
-def _retagged_v1_wire() -> str:
-    """A signed v0 transaction with its message prefix replaced by 0x81, as the Go tests do."""
+def _retagged_v2_wire() -> str:
+    """A signed v0 transaction with its message prefix replaced by 0x82 (version 2)."""
     raw = bytearray(bytes(_v0_tx()))
     offset = 1 + 64 * raw[0]
     assert raw[offset] == 0x80
-    raw[offset] = 0x81
+    raw[offset] = 0x82
     return base64.b64encode(bytes(raw)).decode()
 
 
-def _simd0385_v1_wire() -> str:
-    """A version 1 wire transaction in the SIMD-0385 layout: message first, signatures last."""
+def _message_first_v2_wire() -> str:
+    """A SIMD-0385-shaped wire (message first, signatures last) tagged as version 2."""
     raw = bytearray(1 + 3 + 4 + 32 + 1 + 1 + 32 + 64)
-    raw[0:4] = bytes([0x81, 1, 0, 0])
+    raw[0:4] = bytes([0x82, 1, 0, 0])
     raw[40] = 0  # NumInstructions
     raw[41] = 1  # NumAddresses (the fee payer)
     raw[42:74] = bytes([7] * 32)
@@ -124,9 +126,10 @@ class CountingFacilitatorSigner(MockFacilitatorSigner):
 
 class TestConstants:
     def test_legacy_is_accepted_but_never_advertised(self):
-        assert ADVERTISED_TRANSACTION_VERSIONS == [0]
+        assert ADVERTISED_TRANSACTION_VERSIONS == [0, 1]
         assert "legacy" in ACCEPTED_TRANSACTION_VERSIONS
         assert 0 in ACCEPTED_TRANSACTION_VERSIONS
+        assert 1 in ACCEPTED_TRANSACTION_VERSIONS
         assert "legacy" not in ADVERTISED_TRANSACTION_VERSIONS
         assert set(ADVERTISED_TRANSACTION_VERSIONS) <= set(ACCEPTED_TRANSACTION_VERSIONS)
 
@@ -149,11 +152,11 @@ class TestGetTransactionVersion:
 
 
 class TestIsAcceptedTransactionVersion:
-    @pytest.mark.parametrize("version", ["legacy", 0])
-    def test_accepts_legacy_and_v0(self, version):
+    @pytest.mark.parametrize("version", ["legacy", 0, 1])
+    def test_accepts_legacy_v0_and_v1(self, version):
         assert is_accepted_transaction_version(version) is True
 
-    @pytest.mark.parametrize("version", [1, 2, -1, "1", False, True, None])
+    @pytest.mark.parametrize("version", [2, -1, "1", False, True, None])
     def test_rejects_everything_else(self, version):
         assert is_accepted_transaction_version(version) is False
 
@@ -168,21 +171,28 @@ class TestResolveTransactionVersion:
         with pytest.raises(ValueError, match=f"^{ERR_UNSUPPORTED_TRANSACTION_VERSION}"):
             resolve_transaction_version({"transactionVersions": advertised})
 
-    @pytest.mark.parametrize("advertised", [[0], [0, 1], [1, 0]])
-    def test_picks_v0_when_advertised(self, advertised):
-        assert resolve_transaction_version({"transactionVersions": advertised}) == 0
+    def test_picks_v0_when_only_v0_advertised(self):
+        assert resolve_transaction_version({"transactionVersions": [0]}) == 0
 
-    def test_picks_highest_mutually_supported_version(self, monkeypatch):
-        monkeypatch.setattr(
-            "x402.mechanisms.svm.utils.CLIENT_SUPPORTED_TRANSACTION_VERSIONS",
-            [0, 1],
-        )
-        assert resolve_transaction_version({"transactionVersions": [0, 1]}) == 1
+    @pytest.mark.parametrize("advertised", [[0, 1], [1, 0], [1]])
+    def test_picks_highest_mutually_supported_version(self, advertised):
+        assert resolve_transaction_version({"transactionVersions": advertised}) == 1
+
+    def test_client_restriction_caps_the_version(self):
+        assert resolve_transaction_version({"transactionVersions": [0, 1]}, [0]) == 0
+        with pytest.raises(ValueError, match=f"^{ERR_UNSUPPORTED_TRANSACTION_VERSION}"):
+            resolve_transaction_version({"transactionVersions": [1]}, [0])
+        with pytest.raises(ValueError, match=f"^{ERR_UNSUPPORTED_TRANSACTION_VERSION}"):
+            resolve_transaction_version({"transactionVersions": [0]}, [1])
+
+    @pytest.mark.parametrize("supported", [[], ["legacy"], [2], [True], "0"])
+    def test_rejects_an_invalid_client_restriction(self, supported):
+        with pytest.raises(ValueError, match=f"^{ERR_UNSUPPORTED_TRANSACTION_VERSION}"):
+            resolve_transaction_version({"transactionVersions": [0, 1]}, supported)
 
     @pytest.mark.parametrize(
         "advertised",
         [
-            [1],
             ["legacy"],
             [],
             [False],
@@ -194,7 +204,7 @@ class TestResolveTransactionVersion:
             [True, 0],
         ],
     )
-    def test_raises_when_v0_not_advertised_or_field_invalid(self, advertised):
+    def test_raises_when_nothing_buildable_or_field_invalid(self, advertised):
         with pytest.raises(ValueError, match=f"^{ERR_UNSUPPORTED_TRANSACTION_VERSION}"):
             resolve_transaction_version({"transactionVersions": advertised})
 
@@ -210,11 +220,22 @@ class TestCompilePaymentMessage:
         )
         assert get_transaction_version(message) == 0
 
+    def test_compiles_v1(self):
+        kp = Keypair()
+        message = compile_payment_message(
+            1,
+            payer=kp.pubkey(),
+            instructions=[_noop_instruction(kp.pubkey())],
+            recent_blockhash=Hash.from_string(FIXED_BLOCKHASH),
+        )
+        assert isinstance(message, MessageV1)
+        assert get_transaction_version(message) == 1
+
     def test_refuses_a_version_it_cannot_build(self):
         kp = Keypair()
         with pytest.raises(ValueError, match=f"^{ERR_UNSUPPORTED_TRANSACTION_VERSION}"):
             compile_payment_message(
-                1,
+                2,
                 payer=kp.pubkey(),
                 instructions=[_noop_instruction(kp.pubkey())],
                 recent_blockhash=Hash.from_string(FIXED_BLOCKHASH),
@@ -227,21 +248,21 @@ class TestFacilitatorSupportedExtra:
         extra = facilitator.get_extra(SOLANA_DEVNET_CAIP2)
         assert extra is not None
         assert extra["feePayer"] == FEE_PAYER
-        assert extra["transactionVersions"] == [0]
+        assert extra["transactionVersions"] == [0, 1]
 
     def test_v1_facilitator_advertises_transaction_versions(self):
         facilitator = ExactSvmSchemeV1Facilitator(MockFacilitatorSigner())
         extra = facilitator.get_extra("solana-devnet")
         assert extra is not None
         assert extra["feePayer"] == FEE_PAYER
-        assert extra["transactionVersions"] == [0]
+        assert extra["transactionVersions"] == [0, 1]
 
     def test_advertised_list_is_a_copy(self):
         facilitator = ExactSvmFacilitatorScheme(MockFacilitatorSigner())
         extra = facilitator.get_extra(SOLANA_DEVNET_CAIP2)
         assert extra is not None
-        extra["transactionVersions"].append(1)
-        assert ADVERTISED_TRANSACTION_VERSIONS == [0]
+        extra["transactionVersions"].append(2)
+        assert ADVERTISED_TRANSACTION_VERSIONS == [0, 1]
 
 
 class TestServerCopiesTransactionVersions:
@@ -346,9 +367,7 @@ class TestClientBuildsAdvertisedVersion:
         assert isinstance(transaction, str)
         return VersionedTransaction.from_bytes(base64.b64decode(transaction))
 
-    @pytest.mark.parametrize(
-        "extra", [{}, {"transactionVersions": [0]}, {"transactionVersions": [0, 1]}]
-    )
+    @pytest.mark.parametrize("extra", [{}, {"transactionVersions": [0]}])
     def test_v2_client_builds_v0(self, extra):
         client = ExactSvmClientScheme(KeypairSigner(Keypair.from_seed(bytes([1] * 32))))
         with patch.object(client, "_get_client", return_value=self._mock_rpc_client()):
@@ -356,6 +375,26 @@ class TestClientBuildsAdvertisedVersion:
         tx = self._decode(payload)
         assert isinstance(tx.message, MessageV0)
         assert get_transaction_version(tx.message) == 0
+
+    @pytest.mark.parametrize(
+        "extra", [{"transactionVersions": [0, 1]}, {"transactionVersions": [1]}]
+    )
+    def test_v2_client_builds_v1_when_advertised(self, extra):
+        client = ExactSvmClientScheme(KeypairSigner(Keypair.from_seed(bytes([1] * 32))))
+        with patch.object(client, "_get_client", return_value=self._mock_rpc_client()):
+            payload = client.create_payment_payload(self._v2_requirements(extra))
+        tx = self._decode(payload)
+        assert isinstance(tx.message, MessageV1)
+
+    def test_v2_client_restricted_to_v0_builds_v0(self):
+        client = ExactSvmClientScheme(
+            KeypairSigner(Keypair.from_seed(bytes([1] * 32))), transaction_versions=[0]
+        )
+        with patch.object(client, "_get_client", return_value=self._mock_rpc_client()):
+            payload = client.create_payment_payload(
+                self._v2_requirements({"transactionVersions": [0, 1]})
+            )
+        assert isinstance(self._decode(payload).message, MessageV0)
 
     @pytest.mark.parametrize("extra", [{}, {"transactionVersions": [0]}])
     def test_v1_client_builds_v0(self, extra):
@@ -365,8 +404,23 @@ class TestClientBuildsAdvertisedVersion:
         tx = self._decode(payload)
         assert isinstance(tx.message, MessageV0)
 
-    @pytest.mark.parametrize("advertised", [[1], ["legacy"]])
-    def test_v2_client_refuses_when_v0_not_advertised(self, advertised):
+    def test_v1_client_builds_v1_when_advertised(self):
+        client = ExactSvmSchemeV1Client(KeypairSigner(Keypair.from_seed(bytes([1] * 32))))
+        with patch.object(client, "_get_client", return_value=self._mock_rpc_client()):
+            payload = client.create_payment_payload(
+                self._v1_requirements({"transactionVersions": [0, 1]})
+            )
+        assert isinstance(self._decode(payload).message, MessageV1)
+
+    def test_client_rejects_an_invalid_restriction_at_construction(self):
+        signer = KeypairSigner(Keypair.from_seed(bytes([1] * 32)))
+        with pytest.raises(ValueError, match=f"^{ERR_UNSUPPORTED_TRANSACTION_VERSION}"):
+            ExactSvmClientScheme(signer, transaction_versions=[2])
+        with pytest.raises(ValueError, match=f"^{ERR_UNSUPPORTED_TRANSACTION_VERSION}"):
+            ExactSvmSchemeV1Client(signer, transaction_versions=[])
+
+    @pytest.mark.parametrize("advertised", [[2], ["legacy"]])
+    def test_v2_client_refuses_when_nothing_buildable_is_advertised(self, advertised):
         client = ExactSvmClientScheme(KeypairSigner(Keypair.from_seed(bytes([1] * 32))))
         with (
             patch.object(client, "_get_client") as get_client,
@@ -377,8 +431,10 @@ class TestClientBuildsAdvertisedVersion:
             )
         get_client.assert_not_called()
 
-    def test_v1_client_refuses_when_v0_not_advertised(self):
-        client = ExactSvmSchemeV1Client(KeypairSigner(Keypair.from_seed(bytes([1] * 32))))
+    def test_v1_client_restricted_to_v0_refuses_v1_only(self):
+        client = ExactSvmSchemeV1Client(
+            KeypairSigner(Keypair.from_seed(bytes([1] * 32))), transaction_versions=[0]
+        )
         with (
             patch.object(client, "_get_client") as get_client,
             pytest.raises(ValueError, match=f"^{ERR_UNSUPPORTED_TRANSACTION_VERSION}"),
@@ -390,8 +446,8 @@ class TestClientBuildsAdvertisedVersion:
 class TestFacilitatorGate:
     """The verifier rejects any message version it does not model.
 
-    Real version 1 wire bytes are rejected from their raw version byte before
-    solders decodes them. The patched tests simulate an SDK that decodes the
+    Wire bytes of an unmodelled version (2) are rejected from their raw
+    version byte before solders decodes them. The patched tests simulate an SDK that decodes the
     message and reports an unmodelled version.
     """
 
@@ -442,7 +498,7 @@ class TestFacilitatorGate:
         )
         return payload, requirements
 
-    @pytest.mark.parametrize("version", [1, 2, -1])
+    @pytest.mark.parametrize("version", [2, -1])
     def test_v2_verify_rejects_unmodelled_version_before_instruction_checks(self, version):
         facilitator = ExactSvmFacilitatorScheme(MockFacilitatorSigner())
         payload, requirements = self._v2_pair(_v0_tx())
@@ -464,7 +520,7 @@ class TestFacilitatorGate:
         payload, requirements = self._v2_pair(tx)
         with patch(
             "x402.mechanisms.svm.exact.facilitator.get_transaction_version",
-            return_value=1,
+            return_value=2,
         ):
             result = facilitator.settle(payload, requirements)
         assert result.success is False
@@ -479,7 +535,7 @@ class TestFacilitatorGate:
         assert result.is_valid is False
         assert result.invalid_reason != ERR_UNSUPPORTED_TRANSACTION_VERSION
 
-    @pytest.mark.parametrize("version", [1, -1])
+    @pytest.mark.parametrize("version", [2, -1])
     def test_v1_verify_rejects_unmodelled_version(self, version):
         facilitator = ExactSvmSchemeV1Facilitator(MockFacilitatorSigner())
         payload, requirements = self._v1_pair(_v0_tx())
@@ -496,18 +552,18 @@ class TestFacilitatorGate:
         payload, requirements = self._v1_pair(_v0_tx())
         with patch(
             "x402.mechanisms.svm.exact.v1.facilitator.get_transaction_version",
-            return_value=1,
+            return_value=2,
         ):
             result = facilitator.settle(payload, requirements)
         assert result.success is False
         assert result.error_reason == ERR_UNSUPPORTED_TRANSACTION_VERSION
 
     @pytest.mark.parametrize(
-        "wire", [_retagged_v1_wire, _simd0385_v1_wire], ids=["retagged-0x81", "simd-0385"]
+        "wire", [_retagged_v2_wire, _message_first_v2_wire], ids=["retagged-0x82", "message-first"]
     )
-    def test_real_v1_wire_reports_unsupported_before_signing(self, wire):
+    def test_unmodelled_wire_reports_unsupported_before_signing(self, wire):
         transaction = wire()
-        assert peek_wire_transaction_version(transaction) == 1
+        assert peek_wire_transaction_version(transaction) == 2
 
         signer = CountingFacilitatorSigner()
         facilitator = ExactSvmFacilitatorScheme(signer)
@@ -544,3 +600,67 @@ class TestFacilitatorGate:
         result = facilitator.verify(payload, requirements)
         assert result.is_valid is False
         assert result.invalid_reason != ERR_UNSUPPORTED_TRANSACTION_VERSION
+
+
+class TestConfiguredFacilitatorTransactionVersions:
+    """A facilitator's transaction_versions option narrows what it advertises and accepts."""
+
+    def test_normalizes_the_option(self):
+        assert normalize_accepted_transaction_versions(None) == [0, 1]
+        assert normalize_accepted_transaction_versions([1, 0, 1]) == [0, 1]
+        for invalid in ([], [2], ["legacy"], [True]):
+            with pytest.raises(ValueError):
+                normalize_accepted_transaction_versions(invalid)
+
+    def test_polices_legacy_as_version_0(self):
+        assert is_accepted_transaction_version("legacy", [0]) is True
+        assert is_accepted_transaction_version("legacy", [1]) is False
+        assert is_accepted_transaction_version(1, [0]) is False
+        assert is_accepted_transaction_version(2, [0, 1]) is False
+
+    @pytest.mark.parametrize(
+        "scheme_class", [ExactSvmFacilitatorScheme, ExactSvmSchemeV1Facilitator]
+    )
+    def test_advertises_the_configured_set(self, scheme_class):
+        facilitator = scheme_class(MockFacilitatorSigner(), transaction_versions=[0])
+        assert facilitator.get_extra(SOLANA_DEVNET_CAIP2)["transactionVersions"] == [0]
+        with pytest.raises(ValueError):
+            scheme_class(MockFacilitatorSigner(), transaction_versions=[])
+
+    def test_v2_facilitator_restricted_to_v0_refuses_version_1(self):
+        facilitator = ExactSvmFacilitatorScheme(MockFacilitatorSigner(), transaction_versions=[0])
+        payload, requirements = TestFacilitatorGate._v2_pair(_v0_tx())
+        with patch("x402.mechanisms.svm.exact.facilitator.get_transaction_version", return_value=1):
+            verified = facilitator.verify(payload, requirements)
+            settled = facilitator.settle(payload, requirements)
+        assert verified.invalid_reason == ERR_UNSUPPORTED_TRANSACTION_VERSION
+        assert settled.error_reason == ERR_UNSUPPORTED_TRANSACTION_VERSION
+
+    def test_v1_facilitator_restricted_to_v0_refuses_version_1(self):
+        facilitator = ExactSvmSchemeV1Facilitator(MockFacilitatorSigner(), transaction_versions=[0])
+        payload, requirements = TestFacilitatorGate._v1_pair(_v0_tx())
+        with patch(
+            "x402.mechanisms.svm.exact.v1.facilitator.get_transaction_version", return_value=1
+        ):
+            result = facilitator.verify(payload, requirements)
+        assert result.invalid_reason == ERR_UNSUPPORTED_TRANSACTION_VERSION
+
+    @pytest.mark.parametrize("build", [_legacy_tx, _v0_tx], ids=["legacy", "v0"])
+    def test_facilitator_restricted_to_v1_refuses_legacy_and_v0(self, build):
+        facilitator = ExactSvmFacilitatorScheme(MockFacilitatorSigner(), transaction_versions=[1])
+        payload, requirements = TestFacilitatorGate._v2_pair(build())
+        result = facilitator.verify(payload, requirements)
+        assert result.invalid_reason == ERR_UNSUPPORTED_TRANSACTION_VERSION
+
+    def test_register_applies_the_option_to_both_schemes(self):
+        from x402 import x402Facilitator
+
+        facilitator = register_exact_svm_facilitator(
+            x402Facilitator(),
+            MockFacilitatorSigner(),
+            SOLANA_DEVNET_CAIP2,
+            transaction_versions=[0],
+        )
+        kinds = facilitator.get_supported().kinds
+        assert len(kinds) > 1
+        assert all(kind.extra["transactionVersions"] == [0] for kind in kinds)
