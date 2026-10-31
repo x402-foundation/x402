@@ -5,6 +5,7 @@ Contains shared logic for facilitator implementations.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable, Generator
 from dataclasses import dataclass
 from typing import Any, Generic, Literal, TypeVar
@@ -38,6 +39,8 @@ from .schemas import (
     derive_network_pattern,
     matches_network_pattern,
 )
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # Type Aliases - Support both sync and async hooks
@@ -387,6 +390,13 @@ class x402FacilitatorBase:
     # ========================================================================
     # Core Logic Generators (shared between async/sync)
     # ========================================================================
+
+    def _warn_hook_failure(self, operation: str, phase: HookPhase, error: Exception) -> None:
+        """Log a throwing advisory hook (after/failure phase) so it is skipped, not raised.
+
+        Before hooks are gates and are not isolated: a throw there fails closed.
+        """
+        logger.warning("[x402] Facilitator %s %s hook threw: %s", operation, phase, error)
 
     def _verify_core(
         self,

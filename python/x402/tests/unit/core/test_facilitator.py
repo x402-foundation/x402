@@ -1,12 +1,18 @@
 """Unit tests for x402Facilitator and x402FacilitatorSync."""
 
+import logging
+
 import pytest
 
 from x402 import x402Facilitator, x402FacilitatorSync
 from x402.interfaces import FacilitatorExtension
 from x402.schemas import (
+    AbortResult,
+    PaymentAbortedError,
     PaymentPayload,
     PaymentRequirements,
+    RecoveredSettleResult,
+    RecoveredVerifyResult,
     SchemeNotFoundError,
     SettleResponse,
     VerifyResponse,
@@ -494,3 +500,282 @@ class TestMixedNamespaceRegistration:
         facilitator.verify(_payload(stellar), stellar)
         evm = _requirements("eip155:8453")
         facilitator.verify(_payload(evm), evm)
+
+
+# =============================================================================
+# Hook Error Isolation Tests
+# =============================================================================
+
+
+class FailingSchemeNetworkFacilitator(MockSchemeNetworkFacilitator):
+    """Mock scheme whose verify and settle raise."""
+
+    def verify(self, payload, requirements, context=None) -> VerifyResponse:
+        self.verify_calls.append((payload, requirements))
+        raise RuntimeError("verification rpc error")
+
+    def settle(self, payload, requirements, context=None) -> SettleResponse:
+        self.settle_calls.append((payload, requirements))
+        raise RuntimeError("settlement rpc error")
+
+
+RECOVERED_VERIFY = VerifyResponse(is_valid=True, payer="0xRecovered")
+RECOVERED_SETTLE = SettleResponse(success=True, transaction="0xRecoveredTx", network="eip155:8453")
+
+
+def _crash(ctx):
+    raise RuntimeError("observer crashed")
+
+
+async def _async_crash(ctx):
+    raise RuntimeError("observer crashed")
+
+
+class TestX402FacilitatorHookErrorIsolation:
+    """A throwing advisory hook must not change the verify/settle outcome."""
+
+    @pytest.mark.asyncio
+    async def test_settle_resolves_when_after_settle_hook_throws(self, caplog):
+        facilitator = x402Facilitator()
+        facilitator.register(["eip155:8453"], MockSchemeNetworkFacilitator("exact"))
+        requirements = _requirements("eip155:8453")
+
+        failure_hook_called = False
+
+        def on_failure(ctx):
+            nonlocal failure_hook_called
+            failure_hook_called = True
+
+        facilitator.on_after_settle(_async_crash)
+        facilitator.on_settle_failure(on_failure)
+
+        with caplog.at_level(logging.WARNING):
+            result = await facilitator.settle(_payload(requirements), requirements)
+
+        # Settlement already executed onchain: the caller must still receive it.
+        assert result.success is True
+        assert result.transaction == "0xmock"
+        # A throwing observer is not a settlement failure.
+        assert failure_hook_called is False
+        assert "Facilitator settle after hook threw: observer crashed" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_verify_resolves_when_after_verify_hook_throws(self):
+        facilitator = x402Facilitator()
+        facilitator.register(["eip155:8453"], MockSchemeNetworkFacilitator("exact"))
+        requirements = _requirements("eip155:8453")
+
+        failure_hook_called = False
+
+        def on_failure(ctx):
+            nonlocal failure_hook_called
+            failure_hook_called = True
+
+        facilitator.on_after_verify(_async_crash)
+        facilitator.on_verify_failure(on_failure)
+
+        result = await facilitator.verify(_payload(requirements), requirements)
+
+        assert result.is_valid is True
+        assert failure_hook_called is False
+
+    @pytest.mark.asyncio
+    async def test_later_verify_failure_hook_recovers_when_earlier_one_throws(self):
+        facilitator = x402Facilitator()
+        facilitator.register(["eip155:8453"], FailingSchemeNetworkFacilitator("exact"))
+        requirements = _requirements("eip155:8453")
+
+        facilitator.on_verify_failure(_async_crash).on_verify_failure(
+            lambda ctx: RecoveredVerifyResult(result=RECOVERED_VERIFY)
+        )
+
+        result = await facilitator.verify(_payload(requirements), requirements)
+
+        assert result == RECOVERED_VERIFY
+
+    @pytest.mark.asyncio
+    async def test_later_settle_failure_hook_recovers_when_earlier_one_throws(self):
+        facilitator = x402Facilitator()
+        facilitator.register(["eip155:8453"], FailingSchemeNetworkFacilitator("exact"))
+        requirements = _requirements("eip155:8453")
+
+        facilitator.on_settle_failure(_async_crash).on_settle_failure(
+            lambda ctx: RecoveredSettleResult(result=RECOVERED_SETTLE)
+        )
+
+        result = await facilitator.settle(_payload(requirements), requirements)
+
+        assert result == RECOVERED_SETTLE
+
+    @pytest.mark.asyncio
+    async def test_original_error_is_raised_when_failure_hooks_throw_without_recovering(self):
+        facilitator = x402Facilitator()
+        facilitator.register(["eip155:8453"], FailingSchemeNetworkFacilitator("exact"))
+        requirements = _requirements("eip155:8453")
+
+        facilitator.on_verify_failure(_async_crash)
+        facilitator.on_settle_failure(_async_crash)
+
+        with pytest.raises(RuntimeError, match="verification rpc error"):
+            await facilitator.verify(_payload(requirements), requirements)
+        with pytest.raises(RuntimeError, match="settlement rpc error"):
+            await facilitator.settle(_payload(requirements), requirements)
+
+
+class TestX402FacilitatorGateHookErrors:
+    """Gate hooks (before_*) keep failing closed."""
+
+    @pytest.mark.asyncio
+    async def test_verify_fails_closed_when_before_verify_hook_throws(self):
+        facilitator = x402Facilitator()
+        scheme = MockSchemeNetworkFacilitator("exact")
+        facilitator.register(["eip155:8453"], scheme)
+        requirements = _requirements("eip155:8453")
+
+        execution_order = []
+        failure_hook_called = False
+
+        def first_gate(ctx):
+            execution_order.append(1)
+            raise RuntimeError("gate check failed")
+
+        def second_gate(ctx):
+            execution_order.append(2)
+
+        def on_failure(ctx):
+            nonlocal failure_hook_called
+            failure_hook_called = True
+            return RecoveredVerifyResult(result=RECOVERED_VERIFY)
+
+        facilitator.on_before_verify(first_gate).on_before_verify(second_gate)
+        facilitator.on_verify_failure(on_failure)
+
+        # A gate that could not complete its check must not authorize the payment.
+        with pytest.raises(RuntimeError, match="gate check failed"):
+            await facilitator.verify(_payload(requirements), requirements)
+        assert execution_order == [1]
+        assert scheme.verify_calls == []
+        # Recovery hooks cannot override a failed gate.
+        assert failure_hook_called is False
+
+    @pytest.mark.asyncio
+    async def test_settle_fails_closed_when_before_settle_hook_throws(self):
+        facilitator = x402Facilitator()
+        scheme = MockSchemeNetworkFacilitator("exact")
+        facilitator.register(["eip155:8453"], scheme)
+        requirements = _requirements("eip155:8453")
+
+        execution_order = []
+        failure_hook_called = False
+
+        def first_gate(ctx):
+            execution_order.append(1)
+            raise RuntimeError("gate check failed")
+
+        def second_gate(ctx):
+            execution_order.append(2)
+
+        def on_failure(ctx):
+            nonlocal failure_hook_called
+            failure_hook_called = True
+            return RecoveredSettleResult(result=RECOVERED_SETTLE)
+
+        facilitator.on_before_settle(first_gate).on_before_settle(second_gate)
+        facilitator.on_settle_failure(on_failure)
+
+        with pytest.raises(RuntimeError, match="gate check failed"):
+            await facilitator.settle(_payload(requirements), requirements)
+        assert execution_order == [1]
+        assert scheme.settle_calls == []
+        assert failure_hook_called is False
+
+    @pytest.mark.asyncio
+    async def test_before_hook_abort_still_raises(self):
+        facilitator = x402Facilitator()
+        scheme = MockSchemeNetworkFacilitator("exact")
+        facilitator.register(["eip155:8453"], scheme)
+        requirements = _requirements("eip155:8453")
+
+        facilitator.on_before_verify(lambda ctx: AbortResult(reason="blocked"))
+        facilitator.on_before_settle(lambda ctx: AbortResult(reason="blocked"))
+
+        with pytest.raises(PaymentAbortedError):
+            await facilitator.verify(_payload(requirements), requirements)
+        with pytest.raises(PaymentAbortedError):
+            await facilitator.settle(_payload(requirements), requirements)
+        assert scheme.verify_calls == []
+        assert scheme.settle_calls == []
+
+
+class TestX402FacilitatorSyncHookErrorIsolation:
+    """Sync facilitator mirrors the async isolation and gate behavior."""
+
+    def test_settle_resolves_when_after_settle_hook_throws(self, caplog):
+        facilitator = x402FacilitatorSync()
+        facilitator.register(["eip155:8453"], MockSchemeNetworkFacilitator("exact"))
+        requirements = _requirements("eip155:8453")
+
+        failure_hook_called = False
+
+        def on_failure(ctx):
+            nonlocal failure_hook_called
+            failure_hook_called = True
+
+        facilitator.on_after_settle(_crash)
+        facilitator.on_settle_failure(on_failure)
+
+        with caplog.at_level(logging.WARNING):
+            result = facilitator.settle(_payload(requirements), requirements)
+
+        assert result.success is True
+        assert failure_hook_called is False
+        assert "Facilitator settle after hook threw: observer crashed" in caplog.text
+
+    def test_verify_resolves_when_after_verify_hook_throws(self):
+        facilitator = x402FacilitatorSync()
+        facilitator.register(["eip155:8453"], MockSchemeNetworkFacilitator("exact"))
+        requirements = _requirements("eip155:8453")
+
+        facilitator.on_after_verify(_crash)
+
+        result = facilitator.verify(_payload(requirements), requirements)
+
+        assert result.is_valid is True
+
+    def test_later_failure_hooks_recover_when_earlier_one_throws(self):
+        facilitator = x402FacilitatorSync()
+        facilitator.register(["eip155:8453"], FailingSchemeNetworkFacilitator("exact"))
+        requirements = _requirements("eip155:8453")
+
+        facilitator.on_verify_failure(_crash).on_verify_failure(
+            lambda ctx: RecoveredVerifyResult(result=RECOVERED_VERIFY)
+        )
+        facilitator.on_settle_failure(_crash).on_settle_failure(
+            lambda ctx: RecoveredSettleResult(result=RECOVERED_SETTLE)
+        )
+
+        assert facilitator.verify(_payload(requirements), requirements) == RECOVERED_VERIFY
+        assert facilitator.settle(_payload(requirements), requirements) == RECOVERED_SETTLE
+
+    def test_gate_hooks_fail_closed_when_before_hook_throws(self):
+        facilitator = x402FacilitatorSync()
+        scheme = MockSchemeNetworkFacilitator("exact")
+        facilitator.register(["eip155:8453"], scheme)
+        requirements = _requirements("eip155:8453")
+
+        failure_hook_called = False
+
+        def on_failure(ctx):
+            nonlocal failure_hook_called
+            failure_hook_called = True
+
+        facilitator.on_before_verify(_crash).on_before_settle(_crash)
+        facilitator.on_verify_failure(on_failure).on_settle_failure(on_failure)
+
+        with pytest.raises(RuntimeError, match="observer crashed"):
+            facilitator.verify(_payload(requirements), requirements)
+        with pytest.raises(RuntimeError, match="observer crashed"):
+            facilitator.settle(_payload(requirements), requirements)
+        assert scheme.verify_calls == []
+        assert scheme.settle_calls == []
+        assert failure_hook_called is False
