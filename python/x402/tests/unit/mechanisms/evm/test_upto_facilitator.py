@@ -12,6 +12,7 @@ from x402.mechanisms.evm.constants import (
     ERR_ERC20_APPROVAL_BROADCAST_FAILED,
     ERR_PERMIT2_AMOUNT_MISMATCH,
     ERR_PERMIT2_DEADLINE_EXPIRED,
+    ERR_PERMIT2_FAILED_TO_VERIFY_SIGNATURE,
     ERR_PERMIT2_INSUFFICIENT_BALANCE,
     ERR_PERMIT2_INVALID_SPENDER,
     ERR_PERMIT2_NOT_YET_VALID,
@@ -463,6 +464,20 @@ class TestVerify:
         ):
             with pytest.raises(RuntimeError, match="rpc: connection refused"):
                 facilitator.verify(make_payment_payload(), make_requirements())
+
+    def test_reports_failed_payer_code_lookup(self):
+        # A failed payer code lookup decided nothing about the signature
+        class _PayerCodeFailingSigner(MockFacilitatorSigner):
+            def get_code(self, address: str) -> bytes:
+                if address.lower() == PAYER.lower():
+                    raise ConnectionError("HTTP request failed. Status: 503")
+                return super().get_code(address)
+
+        facilitator = UptoEvmFacilitatorScheme(_PayerCodeFailingSigner())
+        result = facilitator.verify(make_payment_payload(), make_requirements())
+        assert result.is_valid is False
+        assert result.invalid_reason == ERR_PERMIT2_FAILED_TO_VERIFY_SIGNATURE
+        assert "503" in (result.invalid_message or "")
 
 
 class TestSettle:

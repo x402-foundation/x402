@@ -30,6 +30,7 @@ from ..constants import (  # noqa: E402
     ERR_ERC20_APPROVAL_TX_FAILED,
     ERR_PERMIT2_AMOUNT_MISMATCH,
     ERR_PERMIT2_DEADLINE_EXPIRED,
+    ERR_PERMIT2_FAILED_TO_VERIFY_SIGNATURE,
     ERR_PERMIT2_INSUFFICIENT_BALANCE,
     ERR_PERMIT2_INVALID_DESTINATION,
     ERR_PERMIT2_INVALID_OWNER,
@@ -221,6 +222,18 @@ def verify_upto_permit2(
             is_valid=False, invalid_reason=ERR_PERMIT2_INVALID_SIGNATURE, payer=payer
         )
 
+    # One payer code lookup serves the signature check and the deployed-contract fallback.
+    # A lookup that fails is an RPC failure, not an invalid signature.
+    try:
+        payer_code = signer.get_code(payer)
+    except Exception as e:
+        return VerifyResponse(
+            is_valid=False,
+            invalid_reason=ERR_PERMIT2_FAILED_TO_VERIFY_SIGNATURE,
+            invalid_message=truncate_error_message(str(e)),
+            payer=payer,
+        )
+
     try:
         sig_bytes = hex_to_bytes(permit2_payload.signature)
         is_valid_sig = _verify_upto_permit2_signature(
@@ -229,10 +242,10 @@ def verify_upto_permit2(
             permit2_payload.permit2_authorization,
             chain_id,
             sig_bytes,
+            code=payer_code,
         )
         if not is_valid_sig:
-            code = signer.get_code(payer)
-            if len(code) == 0:
+            if len(payer_code) == 0:
                 return VerifyResponse(
                     is_valid=False, invalid_reason=ERR_PERMIT2_INVALID_SIGNATURE, payer=payer
                 )
@@ -853,8 +866,9 @@ def _verify_upto_permit2_signature(
     permit2_authorization,
     chain_id: int,
     signature: bytes,
+    code: bytes | None = None,
 ) -> bool:
-    """Verify an upto Permit2 EIP-712 signature."""
+    """Verify an upto Permit2 EIP-712 signature, reusing ``code`` when the caller already fetched it."""
     domain_dict, typed_fields, primary_type, message = _build_upto_permit2_typed_data(
         permit2_authorization, chain_id
     )
@@ -868,6 +882,7 @@ def _verify_upto_permit2_signature(
         primary_type,
         message,
         signature,
+        code=code,
     )
 
 

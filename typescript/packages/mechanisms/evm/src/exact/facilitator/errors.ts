@@ -41,6 +41,8 @@ export const ErrPermit2NotYetValid = "permit2_not_yet_valid";
 export const ErrPermit2AmountMismatch = "permit2_amount_mismatch";
 export const ErrPermit2TokenMismatch = "permit2_token_mismatch";
 export const ErrPermit2InvalidSignature = "invalid_permit2_signature";
+/** An RPC call the Permit2 signature check needed failed, so the signature was not checked. */
+export const ErrPermit2FailedToVerifySignature = "invalid_permit2_failed_to_verify_signature";
 export const ErrPermit2AllowanceRequired = "permit2_allowance_required";
 export const ErrPermit2SimulationFailed = "permit2_simulation_failed";
 export const ErrPermit2InsufficientBalance = "permit2_insufficient_balance";

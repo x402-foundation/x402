@@ -28,9 +28,14 @@ import * as Errors from "./errors";
 import { FacilitatorEvmSigner } from "../../signer";
 import { ExactPermit2Payload } from "../../types";
 import { startAssetContractCheck } from "../../assetCache";
-import { finalHashFromTwoRequestSend, getEvmChainId, isValidTxHash } from "../../utils";
+import {
+  finalHashFromTwoRequestSend,
+  getEvmChainId,
+  isValidTxHash,
+  truncateErrorMessage,
+} from "../../utils";
 import { validateErc20ApprovalForPayment } from "./erc20approval";
-import { verifyTypedDataSignature } from "../../shared/verifySignature";
+import { checkTypedDataSignature } from "../../shared/verifySignature";
 import {
   simulatePermit2Settle,
   simulatePermit2SettleWithPermit,
@@ -202,7 +207,7 @@ export async function verifyPermit2(
   // when it does. No ECDSA fallback for addresses with code — that fallback
   // would accept signatures Permit2 rejects on-chain (notably for ERC-7702
   // EOAs whose delegate doesn't accept raw owner ECDSA).
-  const signatureValid = await verifyTypedDataSignature(signer, {
+  const signatureCheck = await checkTypedDataSignature(signer, {
     address: payer,
     ...permit2TypedData,
     signature: permit2Payload.signature,
@@ -213,7 +218,18 @@ export async function verifyPermit2(
     return { isValid: false, invalidReason: assetReason, payer };
   }
 
-  if (!signatureValid) {
+  // An RPC failure during the check is not an invalid signature
+  if (signatureCheck.status === "unverifiable") {
+    const { error } = signatureCheck;
+    return {
+      isValid: false,
+      invalidReason: Errors.ErrPermit2FailedToVerifySignature,
+      invalidMessage: truncateErrorMessage(error instanceof Error ? error.message : String(error)),
+      payer,
+    };
+  }
+
+  if (signatureCheck.status === "invalid") {
     return {
       isValid: false,
       invalidReason: Errors.ErrPermit2InvalidSignature,
