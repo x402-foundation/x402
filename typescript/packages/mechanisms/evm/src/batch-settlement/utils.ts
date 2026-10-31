@@ -8,6 +8,24 @@ import { getEvmChainId } from "../utils";
 const CHANNEL_ID_RE = /^0x[0-9a-fA-F]{64}$/;
 
 /**
+ * Packs a managed channel's refund key after its 12-byte entropy prefix.
+ * Small index-style salts use their low 96 bits, matching the Go client.
+ *
+ * @param salt - Base channel salt.
+ * @param refundAuthorizer - Server-owned refund authorizer.
+ * @returns The channel's packed bytes32 salt.
+ */
+export function packRefundAuthorizerSalt(
+  salt: `0x${string}`,
+  refundAuthorizer: `0x${string}`,
+): `0x${string}` {
+  if (!CHANNEL_ID_RE.test(salt)) throw new Error("Channel salt must be bytes32");
+  const high = salt.slice(2, 26);
+  const entropy = BigInt(`0x${high}`) === 0n ? salt.slice(-24) : high;
+  return `0x${entropy}${getAddress(refundAuthorizer).slice(2)}`.toLowerCase() as `0x${string}`;
+}
+
+/**
  * Narrows an untrusted value to a canonical `bytes32` channel id string.
  *
  * @param value - The value to test.

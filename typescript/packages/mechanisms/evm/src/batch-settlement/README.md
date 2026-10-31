@@ -210,6 +210,26 @@ const scheme = new BatchSettlementEvmScheme(receiverAddress, {
 
 When enabled, deposits below the resolved hint abort verify with `invalid_batch_settlement_evm_deposit_below_min_deposit`. The facilitator never enforces this — it remains server-local policy.
 
+### Facilitator-managed vouchers
+
+To use a managed-custody facilitator, configure the resource server explicitly:
+
+```typescript
+const scheme = new BatchSettlementEvmScheme(receiverAddress, {
+  voucherManager: "facilitator",
+  refundAuthorizerSigner, // server-owned EOA used only to consent to refunds
+});
+resourceServer.register("eip155:84532", scheme);
+```
+
+The facilitator must advertise `voucherManager: ["server", "facilitator"]`, a non-zero `receiverAuthorizer`, and `withdrawDelay`. The server copies those terms rather than choosing its own delay. It advertises the server's refund key as `refundAuthorizer`; the client packs that key into the channel salt. Rotating the refund key creates a different channel. When `refundAuthorizerSigner` is omitted, the facilitator must advertise `delegatedRefund: true` and authenticate the resource server on settlement calls.
+
+Every deposit, voucher and refund is verified and settled through the facilitator. The facilitator holds the authoritative cumulative amount and voucher, and its redemption worker runs claims and payouts. A local server channel store is a replica only: its contents never drive managed admission or corrective responses, so servers do not need a shared authoritative voucher store. Failed handlers release the facilitator reservation with a zero-charge cancel settle, including verify-only requests.
+
+A successful receipt updates the local replica. If that write fails, the server warns and preserves the facilitator's successful receipt so clients can adopt the committed watermark. The replica is optional and can be rebuilt from subsequent receipts. Standard corrective recovery still requires the client's signed voucher proof.
+
+This TypeScript client/resource-server mode interoperates with the Go managed facilitator. The TypeScript facilitator does not implement managed custody, and the server-side `BatchSettlementChannelManager` is unavailable in managed mode. Use the Go facilitator's worker for redemption. Omitting `voucherManager` retains server-managed behavior.
+
 ## Facilitator Usage
 
 ```typescript

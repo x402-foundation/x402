@@ -160,9 +160,12 @@ const SETTLEMENT_PENDING_REASON = "settlement_pending";
 export type VerifiedPaymentCancellationReason =
   | "handler_threw"
   | "handler_failed"
-  | "after_verify_aborted";
+  | "after_verify_aborted"
+  | "settlement_failed";
 
 export interface VerifiedPaymentCanceledContext extends SettleContext {
+  /** Trusted verification result, available when an afterVerify hook aborts. */
+  readonly verifyResult?: DeepReadonly<VerifyResponse>;
   reason: VerifiedPaymentCancellationReason;
   error?: unknown;
   responseStatus?: number;
@@ -1316,6 +1319,24 @@ export class x402ResourceServer {
       scheme: effectiveRequirements.scheme,
     };
 
+    // Only cancel failures known to precede a facilitator settlement attempt.
+    // A receipt-bearing hook error can describe an already submitted payment.
+    const cancelBeforeSettlement = async (error: unknown): Promise<void> => {
+      if (
+        phase === "cancel" ||
+        (error instanceof SettleError &&
+          (error.transaction || error.errorReason === SETTLEMENT_PENDING_REASON))
+      )
+        return;
+      await this.dispatchVerifiedPaymentCanceled(
+        paymentPayload,
+        effectiveRequirements,
+        resolvedDeclaredExtensions,
+        { reason: "settlement_failed", error },
+        transportContext,
+      );
+    };
+
     for (const { label, hook } of this.getLabeledHooks(
       "beforeSettle",
       extensionKeysInUse,
@@ -1324,13 +1345,15 @@ export class x402ResourceServer {
       try {
         const result = await hook(context);
         if (result && "abort" in result && result.abort) {
-          throw new SettleError(400, {
+          const error = new SettleError(400, {
             success: false,
             errorReason: result.reason,
             errorMessage: result.message,
             transaction: "",
             network: requirements.network,
           });
+          await cancelBeforeSettlement(error);
+          throw error;
         }
         if (result && "skip" in result && result.skip) {
           const settleResult = result.result;
@@ -1365,6 +1388,7 @@ export class x402ResourceServer {
       }
     }
 
+    let facilitatorSettleStarted = false;
     try {
       const scheme = findByNetworkAndScheme(
         this.registeredServerSchemes,
@@ -1403,6 +1427,7 @@ export class x402ResourceServer {
 
         for (const client of this.facilitatorClients) {
           try {
+            facilitatorSettleStarted = true;
             settleResult = await this.settleWithPendingRetry(
               client,
               settlePayload,
@@ -1424,6 +1449,7 @@ export class x402ResourceServer {
         }
       } else {
         // Use the specific facilitator that supports this payment
+        facilitatorSettleStarted = true;
         settleResult = await this.settleWithPendingRetry(
           facilitatorClient,
           settlePayload,
@@ -1508,6 +1534,7 @@ export class x402ResourceServer {
         }
       }
 
+      if (!facilitatorSettleStarted) await cancelBeforeSettlement(error);
       throw error;
     }
   }
@@ -1768,6 +1795,7 @@ export class x402ResourceServer {
             { reason: "after_verify_aborted" },
             context.transportContext,
             [],
+            verifyResult,
           );
           return {
             isValid: false,
@@ -1855,6 +1883,7 @@ export class x402ResourceServer {
    * @param options - Cancellation reason and optional diagnostics
    * @param fallbackTransportContext - Optional transport-specific context
    * @param settledPhases - Settle phases that already completed for this payment
+   * @param verifyResult - Trusted verification response when an afterVerify hook aborts
    * @returns Cancel settle response when the scheme provides settleOnCancel requirements, otherwise undefined
    */
   private async dispatchVerifiedPaymentCanceled(
@@ -1864,6 +1893,7 @@ export class x402ResourceServer {
     options: VerifiedPaymentCancelOptions,
     fallbackTransportContext?: unknown,
     settledPhases: readonly SettlePhase[] = [],
+    verifyResult?: DeepReadonly<VerifyResponse>,
   ): Promise<SettleResponse | void> {
     const extensionKeysInUse = Object.keys(declaredExtensions);
     const matchedScheme = {
@@ -1880,6 +1910,7 @@ export class x402ResourceServer {
       error: options.error,
       responseStatus: options.responseStatus,
       settledPhases,
+      verifyResult,
     };
 
     for (const { label, hook } of this.getLabeledHooks(

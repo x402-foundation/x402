@@ -1,4 +1,4 @@
-import type { SettleResponse } from "@x402/core/types";
+import type { Network, SettleResponse } from "@x402/core/types";
 import { AfterSettleAbortError } from "@x402/core/server";
 import type { SettleContext, SettleFailureContext, SettleResultContext } from "@x402/core/server";
 import { signClaimBatch, signRefund } from "../authorizerSigner";
@@ -7,7 +7,12 @@ import {
   isBatchSettlementRefundPayload,
   isBatchSettlementVoucherPayload,
 } from "../types";
-import type { BatchSettlementPaymentResponseExtra, BatchSettlementVoucherClaim } from "../types";
+import type {
+  AuthorizerSigner,
+  BatchSettlementRefundPayload,
+  BatchSettlementPaymentResponseExtra,
+  BatchSettlementVoucherClaim,
+} from "../types";
 import { computeChannelId } from "../utils";
 import * as Errors from "../errors";
 import type { BatchSettlementEvmScheme } from "./scheme";
@@ -198,7 +203,45 @@ export async function handleEnrichSettlementPayload(
     throw new Error(Errors.ErrInvalidVoucherSignature);
   }
 
+  scheme.rememberChannelSnapshot(paymentPayload, channel);
+  return buildRefundSettlementFields({
+    channel,
+    payload: raw,
+    network: requirements.network,
+    signer: scheme.getReceiverAuthorizerSigner(),
+    includeClaimAuthorizerSignature: true,
+  });
+}
+
+/**
+ * Builds the same refund amount and consent fields for either voucher custodian.
+ *
+ * @param args - Verified channel, refund request and server signing policy.
+ * @param args.channel - Latest authoritative channel snapshot.
+ * @param args.payload - Payer's zero-charge refund voucher.
+ * @param args.network - Channel network.
+ * @param args.signer - Server refund-consent signer, when configured.
+ * @param args.includeClaimAuthorizerSignature - Whether the server owns claim authority.
+ * @param args.nonce - Exact facilitator nonce, avoiding a numeric replica conversion.
+ * @returns Server-authored refund settlement fields.
+ */
+export async function buildRefundSettlementFields({
+  channel,
+  payload: raw,
+  network,
+  signer,
+  includeClaimAuthorizerSignature,
+  nonce: suppliedNonce,
+}: {
+  channel: Channel;
+  payload: BatchSettlementRefundPayload;
+  network: Network;
+  signer?: AuthorizerSigner;
+  includeClaimAuthorizerSignature: boolean;
+  nonce?: string;
+}): Promise<Record<string, unknown>> {
   const config = raw.channelConfig;
+  const channelId = raw.voucher.channelId;
 
   const claimEntry: BatchSettlementVoucherClaim = {
     voucher: {
@@ -227,25 +270,16 @@ export async function handleEnrichSettlementPayload(
   }
 
   const refundAmount = refundAmountBig.toString();
-  const nonce = String(channel.refundNonce ?? 0);
+  const nonce = suppliedNonce ?? String(channel.refundNonce ?? 0);
 
-  const receiverAuthorizerSigner = scheme.getReceiverAuthorizerSigner();
-
-  const refundAuthorizerSignature = receiverAuthorizerSigner
-    ? await signRefund(
-        receiverAuthorizerSigner,
-        channelId as `0x${string}`,
-        refundAmount,
-        nonce,
-        requirements.network,
-      )
+  const refundAuthorizerSignature = signer
+    ? await signRefund(signer, channelId as `0x${string}`, refundAmount, nonce, network)
     : undefined;
 
-  const claimAuthorizerSignature = receiverAuthorizerSigner
-    ? await signClaimBatch(receiverAuthorizerSigner, [claimEntry], requirements.network)
-    : undefined;
-
-  scheme.rememberChannelSnapshot(paymentPayload, channel);
+  const claimAuthorizerSignature =
+    signer && includeClaimAuthorizerSignature
+      ? await signClaimBatch(signer, [claimEntry], network)
+      : undefined;
 
   return {
     ...(raw.amount === undefined ? { amount: refundAmount } : {}),

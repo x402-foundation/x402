@@ -946,7 +946,10 @@ describe("x402ResourceServer", () => {
         expect(laterHook).not.toHaveBeenCalled();
         expect(cancellationHook).toHaveBeenCalledTimes(1);
         expect(cancellationHook).toHaveBeenCalledWith(
-          expect.objectContaining({ reason: "after_verify_aborted" }),
+          expect.objectContaining({
+            reason: "after_verify_aborted",
+            verifyResult: expect.objectContaining({ isValid: true }),
+          }),
         );
       });
 
