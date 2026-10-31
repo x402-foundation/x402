@@ -51,6 +51,12 @@ export type ClientEvmSigner = {
    * Required for ERC-20 approval gas sponsoring.
    */
   estimateFeesPerGas?(): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }>;
+  /**
+   * Optional probe for whether `readContract` and `getTransactionCount` can reach
+   * a chain. When this returns false, those methods are treated as absent and a
+   * configured `rpcUrl` is used instead. Signers that omit the probe are trusted.
+   */
+  hasRpcClient?(): boolean;
 };
 
 /**
