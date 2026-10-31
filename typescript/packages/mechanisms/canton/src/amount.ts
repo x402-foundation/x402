@@ -59,15 +59,6 @@ export function atomicToDecimalCC(atomic: string): string {
  * identically — the off-by-10^10 firewall.
  * ------------------------------------------------------------------------- */
 
-/** True iff this x402 scheme string carries the amount in ATOMIC integer units
- *  on the wire. The only scheme is "exact", which is atomic; any other string is
- *
- * @param scheme
- *  - not recognized (and the validated path never reaches here with one). */
-export function schemeIsAtomic(scheme: string): boolean {
-  return scheme === "exact";
-}
-
 /**
  * Convert an x402 WIRE amount to the on-ledger Daml **Decimal** it denotes.
  * Under scheme "exact" (atomic) this is `atomicToDecimalCC`; any unrecognized
@@ -80,5 +71,5 @@ export function schemeIsAtomic(scheme: string): boolean {
  * @param wireAmount
  */
 export function wireAmountToLedgerDecimal(scheme: string, wireAmount: string): string {
-  return schemeIsAtomic(scheme) ? atomicToDecimalCC(wireAmount) : wireAmount;
+  return scheme === "exact" ? atomicToDecimalCC(wireAmount) : wireAmount;
 }
