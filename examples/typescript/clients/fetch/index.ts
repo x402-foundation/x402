@@ -8,6 +8,7 @@ import { UptoSvmScheme } from "@x402/svm/upto/client";
 import { privateKeyToAccount } from "viem/accounts";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { base58 } from "@scure/base";
+import { expectationFromEnv, refusalReason } from "./expectation";
 
 config();
 
@@ -27,6 +28,11 @@ const url = `${baseURL}${endpointPath}`;
  *
  * Optional environment variables:
  * - EVM_RPC_URL: JSON-RPC endpoint for onchain reads (enables gas sponsoring extensions)
+ * - EXPECTED_AMOUNT_ATOMIC: the most this client will pay for the resource, in the selected asset's
+ *   atomic units ("10000" is $0.01 USDC). A higher price is refused; a lower one signs.
+ * - EXPECTED_NETWORK: CAIP-2 network id (e.g. eip155:8453); required with the two below
+ * - EXPECTED_PAY_TO, EXPECTED_ASSET: refuse to sign for any other recipient or asset, compared by
+ *   the network's rules (EVM ignores letter case; Solana compares the decoded bytes)
  */
 async function main(): Promise<void> {
   if (!evmPrivateKey && !svmPrivateKey) {
@@ -37,6 +43,18 @@ async function main(): Promise<void> {
   const client = new x402Client();
   client.setSpendControls({
     maxAmountPerPayment: "$1",
+  });
+
+  // A spend cap is a ceiling, not a price check: a server that asks ten times the usual price of a
+  // cheap resource stays under $1 and gets paid. Pin the most you will pay for this resource, and
+  // the network, recipient and asset you expect; a higher price or any other network, recipient or
+  // asset is refused before the payment is signed. A lower price signs.
+  const expected = expectationFromEnv(process.env);
+  client.onBeforePaymentCreation(async ({ selectedRequirements }) => {
+    const reason = refusalReason(selectedRequirements, expected);
+    if (reason) {
+      return { abort: true, reason };
+    }
   });
   if (evmPrivateKey) {
     const evmSigner = privateKeyToAccount(evmPrivateKey);

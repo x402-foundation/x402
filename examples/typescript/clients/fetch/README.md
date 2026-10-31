@@ -58,6 +58,11 @@ Required environment variables:
 Optional environment variables:
 
 - `EVM_RPC_URL` - JSON-RPC endpoint for on-chain reads. Enables gas sponsoring extensions (EIP-2612 and ERC-20 approval). Example: `https://sepolia.base.org`
+- `EXPECTED_AMOUNT_ATOMIC` - the most this client will pay for the resource, in the selected asset's atomic units (`10000` is $0.01 USDC). It is a maximum, not an exact price: a 402 that asks for more is refused before anything is signed, and a lower price signs. An amount that is not a whole number of atomic units is refused. Atomic units depend on the asset, so pin the asset and network with it when the server offers more than one.
+- `EXPECTED_NETWORK` - the CAIP-2 network you expect to pay on, e.g. `eip155:8453`. Required with either of the two below, because the same address text can name a different account or token on another network.
+- `EXPECTED_PAY_TO`, `EXPECTED_ASSET` - refuse to sign for any other recipient or asset. Addresses are compared by the network's rules: on EVM networks letter case is only a checksum and is ignored; Solana addresses are Base58, where case changes the value, so their decoded bytes are compared. On any other network a pinned recipient or asset never matches, so the payment is refused.
+
+The spend cap (`maxAmountPerPayment`) is a ceiling, not a price check: a server that asks ten times the usual price of a cheap resource stays under $1 and gets paid. The `onBeforePaymentCreation` hook in `index.ts` enforces the expectation; the check itself is in `expectation.ts`, with tests in `expectation.test.ts` (`pnpm test`).
 
 3. Run the client:
 
