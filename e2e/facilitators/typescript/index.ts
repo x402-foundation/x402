@@ -106,6 +106,10 @@ import {
 } from "@x402/near";
 import { ExactNearScheme as ExactNearFacilitatorScheme } from "@x402/near/exact/facilitator";
 import { ExactXrplScheme as ExactXrplFacilitatorScheme } from "@x402/xrpl/exact/facilitator";
+import { SuiGrpcClient } from "@mysten/sui/grpc";
+import { Ed25519Keypair as SuiEd25519Keypair } from "@mysten/sui/keypairs/ed25519";
+import { getSuiNetworkName, SUI_FULLNODE_URLS, type SuiExecutor } from "@x402/sui";
+import { ExactSuiScheme as ExactSuiFacilitatorScheme } from "@x402/sui/exact/facilitator";
 import * as KeetaNet from "@keetanetwork/keetanet-client";
 import crypto from "crypto";
 import dotenv from "dotenv";
@@ -146,6 +150,8 @@ const CASPER_NETWORK = resolveNetworkCaip2("casper");
 const NEAR_RPC_URL = process.env.NEAR_RPC_URL;
 const XRPL_NETWORK = resolveNetworkCaip2("xrpl");
 const XRPL_RPC_URL = process.env.XRPL_RPC_URL;
+const SUI_NETWORK = resolveNetworkCaip2("sui");
+const SUI_RPC_URL = process.env.SUI_RPC_URL;
 const CCD_NETWORK = resolveNetworkCaip2("ccd");
 const CARDANO_NETWORK = resolveNetworkCaip2("cardano");
 const CARDANO_RPC_URL = process.env.CARDANO_RPC_URL;
@@ -211,6 +217,7 @@ const hasFacilitatorCredential = [
   process.env.FACILITATOR_CCD_PRIVATE_KEY &&
     process.env.FACILITATOR_CCD_ADDRESS,
   process.env.XRPL_NETWORK, // keyless XRPL facilitator
+  process.env.SUI_NETWORK, // keyless Sui facilitator; FACILITATOR_SUI_PRIVATE_KEY adds gas sponsorship
   process.env.BLOCKFROST_PROJECT_ID, // Cardano runs provider-only without a mnemonic
   process.env.FACILITATOR_CANTON_PARTY && process.env.CANTON_PARTICIPANT_URL,
 ].some(Boolean);
@@ -852,6 +859,37 @@ if (process.env.XRPL_NETWORK) {
     `XRPL facilitator enabled on ${XRPL_NETWORK} (payer-signed; no facilitator signer)`,
   );
 }
+if (process.env.SUI_NETWORK) {
+  const suiClient = new SuiGrpcClient({
+    network: getSuiNetworkName(SUI_NETWORK as Network),
+    baseUrl: SUI_RPC_URL || SUI_FULLNODE_URLS[SUI_NETWORK],
+  });
+  const sponsor = process.env.FACILITATOR_SUI_PRIVATE_KEY
+    ? SuiEd25519Keypair.fromSecretKey(process.env.FACILITATOR_SUI_PRIVATE_KEY)
+    : undefined;
+  // The sponsor co-signs and submits; its gas comes from its address balance.
+  const executeTransaction: SuiExecutor | undefined = sponsor
+    ? async ({ transaction, signatures }) => {
+        const { signature } = await sponsor.signTransaction(transaction);
+        return suiClient.core.executeTransaction({
+          transaction,
+          signatures: [...signatures, signature],
+        });
+      }
+    : undefined;
+  facilitator.register(
+    SUI_NETWORK as Network,
+    new ExactSuiFacilitatorScheme({
+      clients: { [SUI_NETWORK]: suiClient },
+      ...(sponsor ? { feePayer: sponsor.toSuiAddress(), executeTransaction } : {}),
+    }),
+  );
+  console.info(
+    sponsor
+      ? `Sui facilitator enabled on ${SUI_NETWORK}, sponsoring gas from ${sponsor.toSuiAddress()}`
+      : `Sui facilitator enabled on ${SUI_NETWORK} (payer-signed; no facilitator signer)`,
+  );
+}
 if (concordiumSigner) {
   facilitator.register(
     CCD_NETWORK as Network,
@@ -1222,6 +1260,7 @@ app.get("/health", (req, res) => {
     stellarNetwork: stellarSigner ? STELLAR_NETWORK : "(not configured)",
     nearNetwork: nearSigner ? NEAR_NETWORK : "(not configured)",
     xrplNetwork: process.env.XRPL_NETWORK ? XRPL_NETWORK : "(not configured)",
+    suiNetwork: process.env.SUI_NETWORK ? SUI_NETWORK : "(not configured)",
     ccdNetwork: concordiumSigner ? CCD_NETWORK : "(not configured)",
     cardanoNetwork: cardanoSigner ? CARDANO_NETWORK : "(not configured)",
     facilitator: "typescript",

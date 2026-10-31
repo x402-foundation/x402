@@ -218,6 +218,7 @@ CLIENT_TVM_PRIVATE_KEY=...          # TVM private key for client payments
 CLIENT_NEAR_ACCOUNT_ID=...          # NEAR payer account id that owns the access key
 CLIENT_NEAR_PRIVATE_KEY=ed25519:... # NEAR private key for that payer account
 CLIENT_XRPL_SEED=s...               # XRPL seed for client payments (payer signs and pays fees)
+CLIENT_SUI_PRIVATE_KEY=suiprivkey1... # Sui Ed25519 key for client payments
 
 # Server payment addresses
 SERVER_EVM_ADDRESS=0x...            # Where servers receive EVM payments
@@ -232,6 +233,7 @@ SERVER_STELLAR_ADDRESS=...          # Where servers receive Stellar payments
 SERVER_TVM_ADDRESS=...              # Where servers receive TVM payments
 SERVER_NEAR_ADDRESS=...             # Where servers receive NEAR payments (merchant account)
 SERVER_XRPL_ADDRESS=r...            # Where servers receive XRPL payments
+SERVER_SUI_ADDRESS=0x...            # Where servers receive Sui payments
 
 # Facilitator wallets (⚠️ TEST WALLETS ONLY — used to fund/drain client between tests)
 FACILITATOR_EVM_PRIVATE_KEY=0x...   # EVM private key for facilitator
@@ -251,6 +253,7 @@ FACILITATOR_NEAR_ACCOUNT_ID=...     # NEAR relayer account id (submits meta-tx, 
 FACILITATOR_NEAR_PRIVATE_KEY=ed25519:... # NEAR relayer private key
 FACILITATOR_CARDANO_MNEMONIC=...    # Optional: the Cardano facilitator only broadcasts, so it runs provider-only without a mnemonic
 # XRPL needs no facilitator wallet — the facilitator is keyless (payer signs and pays fees)
+FACILITATOR_SUI_PRIVATE_KEY=suiprivkey1... # Optional: Sui gas sponsor; without it the payer pays gas
 
 # Casper CEP-18 support
 CASPER_ASSET=...                    # CEP-18 contract package hash (64 hex chars, no 0x/hash-)
@@ -375,6 +378,21 @@ only an e2e fixture; it is not a default asset in the XRPL SDK.
 
 See the [XRPL Testnet faucet](https://xrpl.org/resources/dev-tools/xrp-faucets)
 and [issued-token setup](https://xrpl.org/docs/tutorials/tokens/fungible-tokens/issue-a-fungible-token).
+
+#### Sui Testnet
+
+The Sui routes charge 1000 MIST of SUI by default. Fund the client from the
+[Sui faucet](https://faucet.sui.io/) (or `requestSuiFromFaucetV3` in `@mysten/sui/faucet`).
+To pay in USDC instead, get testnet USDC from the [Circle faucet](https://faucet.circle.com/) and set
+`SERVER_SUI_ASSET=0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC`
+(and `SERVER_SUI_AMOUNT`, in atomic units).
+
+The facilitator needs no key. With `FACILITATOR_SUI_PRIVATE_KEY` set it sponsors gas for every Sui
+payment, paying from the SUI in its address balance (faucet payouts land there).
+
+```bash
+pnpm test --testnet --min --families=sui --versions=2
+```
 
 #### Canton DevNet
 

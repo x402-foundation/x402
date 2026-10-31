@@ -31,6 +31,10 @@ import { ExactNearScheme as ExactNearClientScheme } from "@x402/near/exact/clien
 import { createXrplWalletSigner } from "@x402/xrpl";
 import { ExactXrplScheme as ExactXrplClientScheme } from "@x402/xrpl/exact/client";
 import { Wallet } from "xrpl";
+import { SuiGrpcClient } from "@mysten/sui/grpc";
+import { Ed25519Keypair as SuiEd25519Keypair } from "@mysten/sui/keypairs/ed25519";
+import { getSuiNetworkName } from "@x402/sui";
+import { ExactSuiScheme as ExactSuiClientScheme } from "@x402/sui/exact/client";
 import { ExactAvmScheme as ExactAvmClientScheme } from "@x402/avm/exact/client";
 import { toClientAvmSigner } from "@x402/avm";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/client";
@@ -44,7 +48,7 @@ import { base58 } from "@scure/base";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { keyPairFromSeed, type KeyPair } from "@ton/crypto";
 import { x402Client, type SchemeRegistration } from "@x402/core/client";
-import type { SettleResponse } from "@x402/core/types";
+import type { Network, SettleResponse } from "@x402/core/types";
 import { networkCaip2Pattern, resolveNetworkCaip2 } from "./catalog-network.ts";
 
 export type RequestResult = {
@@ -428,6 +432,26 @@ export async function createE2EClient(options: E2EClientOptions = {}): Promise<E
           ? { registryTrustedParties: JSON.parse(process.env.CANTON_REGISTRY_TRUSTED_PARTIES) }
           : {}),
       }),
+    });
+  }
+  if (wants("sui") && process.env.CLIENT_SUI_PRIVATE_KEY) {
+    const suiNetwork = resolveNetworkCaip2("sui") as Network;
+    const suiKeypair = SuiEd25519Keypair.fromSecretKey(process.env.CLIENT_SUI_PRIVATE_KEY);
+    schemes.push({
+      network: networkCaip2Pattern("sui"),
+      client: new ExactSuiClientScheme(
+        suiKeypair,
+        process.env.SUI_RPC_URL
+          ? {
+              clients: {
+                [suiNetwork]: new SuiGrpcClient({
+                  network: getSuiNetworkName(suiNetwork),
+                  baseUrl: process.env.SUI_RPC_URL,
+                }),
+              },
+            }
+          : {},
+      ),
     });
   }
   if (wants("xrpl") && process.env.CLIENT_XRPL_SEED) {

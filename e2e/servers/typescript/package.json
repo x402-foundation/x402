@@ -27,6 +27,7 @@
     "@x402/mcp": "workspace:*",
     "@x402/near": "workspace:*",
     "@x402/stellar": "workspace:*",
+    "@x402/sui": "workspace:*",
     "@x402/svm": "workspace:*",
     "@x402/tvm": "workspace:*",
     "@x402/xrpl": "workspace:*",

@@ -1,0 +1,4 @@
+# build output
+dist/
+node_modules/
+coverage/

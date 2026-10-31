@@ -25,6 +25,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.0
         version: 1.32.2(zod@4.6.7)
+      '@mysten/sui':
+        specifier: ^2.37.0
+        version: 2.38.0(typescript@5.8.3)
       '@scure/base':
         specifier: ^1.2.6
         version: 1.2.6
@@ -76,6 +79,9 @@ importers:
       '@x402/stellar':
         specifier: workspace:*
         version: link:../typescript/packages/mechanisms/stellar
+      '@x402/sui':
+        specifier: workspace:*
+        version: link:../typescript/packages/mechanisms/sui
       '@x402/svm':
         specifier: workspace:*
         version: link:../typescript/packages/mechanisms/svm
@@ -2016,6 +2022,67 @@ importers:
         specifier: ^4.1.12
         version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.16.0)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.16.0)(jiti@1.21.7)(tsx@4.21.0))
 
+  ../typescript/packages/mechanisms/sui:
+    dependencies:
+      '@mysten/sui':
+        specifier: ^2.37.0
+        version: 2.38.0(typescript@5.8.3)
+      '@x402/core':
+        specifier: workspace:~
+        version: link:../../core
+    devDependencies:
+      '@eslint/js':
+        specifier: ^9.24.0
+        version: 9.38.0
+      '@types/node':
+        specifier: ^22.13.4
+        version: 22.16.0
+      '@typescript-eslint/eslint-plugin':
+        specifier: ^8.29.1
+        version: 8.48.0(@typescript-eslint/parser@8.48.0(eslint@9.38.0(jiti@1.21.7))(typescript@5.8.3))(eslint@9.38.0(jiti@1.21.7))(typescript@5.8.3)
+      '@typescript-eslint/parser':
+        specifier: ^8.29.1
+        version: 8.48.0(eslint@9.38.0(jiti@1.21.7))(typescript@5.8.3)
+      '@vitest/coverage-v8':
+        specifier: ^4.1.12
+        version: 4.1.12(vitest@4.1.12)
+      eslint:
+        specifier: ^9.24.0
+        version: 9.38.0(jiti@1.21.7)
+      eslint-plugin-import:
+        specifier: ^2.31.0
+        version: 2.32.0(@typescript-eslint/parser@8.48.0(eslint@9.38.0(jiti@1.21.7))(typescript@5.8.3))(eslint-import-resolver-typescript@3.10.1)(eslint@9.38.0(jiti@1.21.7))
+      eslint-plugin-jsdoc:
+        specifier: ^50.6.9
+        version: 50.8.0(eslint@9.38.0(jiti@1.21.7))
+      eslint-plugin-prettier:
+        specifier: ^5.2.6
+        version: 5.5.4(eslint@9.38.0(jiti@1.21.7))(prettier@3.5.2)
+      eslint-plugin-sonarjs:
+        specifier: ^3.0.7
+        version: 3.0.7(eslint@9.38.0(jiti@1.21.7))
+      prettier:
+        specifier: 3.5.2
+        version: 3.5.2
+      tsup:
+        specifier: ^8.4.0
+        version: 8.5.0(jiti@1.21.7)(postcss@8.5.23)(tsx@4.21.0)(typescript@5.8.3)
+      tsx:
+        specifier: ^4.21.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.3
+        version: 5.8.3
+      vite:
+        specifier: ^6.4.5
+        version: 6.4.5(@types/node@22.16.0)(jiti@1.21.7)(tsx@4.21.0)
+      vite-tsconfig-paths:
+        specifier: ^5.1.4
+        version: 5.1.4(typescript@5.8.3)(vite@6.4.5(@types/node@22.16.0)(jiti@1.21.7)(tsx@4.21.0))
+      vitest:
+        specifier: ^4.1.12
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.16.0)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.16.0)(jiti@1.21.7)(tsx@4.21.0))
+
   ../typescript/packages/mechanisms/svm:
     dependencies:
       '@noble/hashes':
@@ -2234,6 +2301,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.0
         version: 1.32.2(zod@4.6.7)
+      '@mysten/sui':
+        specifier: ^2.37.0
+        version: 2.38.0(typescript@5.8.3)
       '@scure/base':
         specifier: ^1.2.6
         version: 1.2.6
@@ -2303,6 +2373,9 @@ importers:
       '@x402/stellar':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/stellar
+      '@x402/sui':
+        specifier: workspace:*
+        version: link:../../../typescript/packages/mechanisms/sui
       '@x402/svm':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/svm
@@ -2346,6 +2419,9 @@ importers:
       '@keetanetwork/keetanet-client':
         specifier: ^0.18.1
         version: 0.18.1
+      '@mysten/sui':
+        specifier: ^2.37.0
+        version: 2.38.0(typescript@5.8.3)
       '@scure/base':
         specifier: ^1.2.6
         version: 1.2.6
@@ -2391,6 +2467,9 @@ importers:
       '@x402/stellar':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/stellar
+      '@x402/sui':
+        specifier: workspace:*
+        version: link:../../../typescript/packages/mechanisms/sui
       '@x402/svm':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/svm
@@ -2763,6 +2842,9 @@ importers:
       '@x402/stellar':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/stellar
+      '@x402/sui':
+        specifier: workspace:*
+        version: link:../../../typescript/packages/mechanisms/sui
       '@x402/svm':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/svm
@@ -2842,6 +2924,9 @@ importers:
       '@x402/stellar':
         specifier: workspace:*
         version: link:../../../../../typescript/packages/mechanisms/stellar
+      '@x402/sui':
+        specifier: workspace:*
+        version: link:../../../../../typescript/packages/mechanisms/sui
       '@x402/svm':
         specifier: workspace:*
         version: link:../../../../../typescript/packages/mechanisms/svm
@@ -2878,6 +2963,20 @@ importers:
         version: 5.8.3
 
 packages:
+
+  '@0no-co/graphql.web@1.3.4':
+    resolution: {integrity: sha512-imSwulOeDQodRy/olQmVEo2PiY6ntjkZ9eiGdw6lMYylh/tay9b7MusyJBmEnkL8GiKRKr6ltr+D42mY5bd8Bg==}
+    peerDependencies:
+      graphql: ^14.0.0 || ^15.0.0 || ^16.0.0 || ^17.0.0
+    peerDependenciesMeta:
+      graphql:
+        optional: true
+
+  '@0no-co/graphqlsp@1.18.0':
+    resolution: {integrity: sha512-A6ZId4J6l4KxN5ZtTFZaPtZcU0ikx9mB3kTzEVP3ui5c8srtPA1cGXqjhHFBsKt1ZP839RIHy//LrZMmbE4VAw==}
+    peerDependencies:
+      graphql: ^15.5.0 || ^16.0.0 || ^17.0.0
+      typescript: ^5.0.0 || ^6.0.0
 
   '@adraffy/ens-normalize@1.10.1':
     resolution: {integrity: sha512-96Z2IP3mYmF1Xg2cDm8f1gWGf/HUVedQ3FMifV4kG/PQ4yEP51xDtRAEfhVNt5f/uzpNkZHwWQuUcu6D6K+Ekw==}
@@ -4261,6 +4360,26 @@ packages:
     resolution: {integrity: sha512-G/FQx5cE/+DqBbOpA5jKsegGwdPniU6PuIEMt+qxWgFxvxuFOzVmp6zYchtYuwAWV5/8Dgs0yAmjvNZv3uXLQg==}
     engines: {node: '>=18'}
 
+  '@gql.tada/cli-utils@1.9.4':
+    resolution: {integrity: sha512-xQ9M+2Xxjxhz9IJi+7IMU/aOsEtuSiSNb4OgDMBUC/8AcSpo2vDtx71Aodsaif4qSwuTb0YFVfDwC+ESqiZSHg==}
+    peerDependencies:
+      '@0no-co/graphqlsp': ^1.16.0
+      '@gql.tada/svelte-support': 1.0.3
+      '@gql.tada/vue-support': 1.0.3
+      graphql: ^15.5.0 || ^16.0.0 || ^17.0.0
+      typescript: ^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0
+    peerDependenciesMeta:
+      '@gql.tada/svelte-support':
+        optional: true
+      '@gql.tada/vue-support':
+        optional: true
+
+  '@gql.tada/internal@1.2.2':
+    resolution: {integrity: sha512-4lZcElPP6MC8Ct8KN70LR2WQsHjbAsyAmTGG09VsOPhx738UFIYaL0S1XiI2pqq2tj/sDs/y3b9jvKoWGL7iuQ==}
+    peerDependencies:
+      graphql: ^15.5.0 || ^16.0.0 || ^17.0.0
+      typescript: ^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0
+
   '@graphql-typed-document-node/core@3.2.0':
     resolution: {integrity: sha512-mB9oAsNCm9aM3/SOv4YtBMqZbYj10R7dkq8byBqxGY/ncFwhf2oQzMV+LCRlWoDSEBJ3COiR1yeDvMtsoOsuFQ==}
     peerDependencies:
@@ -4837,6 +4956,16 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@mysten/bcs@2.1.3':
+    resolution: {integrity: sha512-sg3hstwDLQQmQTpiX8Vzs13bEEGTqnhp1gUzBLlVQ493xyTTCDwB/jXGzT0g2I/GXd2o1B3s7Bd67Ua3VZo+Jw==}
+
+  '@mysten/sui@2.38.0':
+    resolution: {integrity: sha512-j/uG+waSo62eWH0c3+a/3V8tnsAUTKfe7OIXtIDmhPLQcWnPCchf0R5WjxMx904Vh61qfYmrySFYoAau2+7bwA==}
+    engines: {node: '>=22'}
+
+  '@mysten/utils@0.4.2':
+    resolution: {integrity: sha512-K/5eBuYKxUFCrYcic1lvYvWE9OVSH581cjVjwsSJGUqPit91nZq2acUwes+B4lo98VE/CILIUeBcyEIvuNxMhA==}
+
   '@napi-rs/wasm-runtime@0.2.12':
     resolution: {integrity: sha512-ZVWUcfwY4E/yPitQJl481FjFo3K22D6qF0DuFH6Y/nbnE11GY5uguDxZMGXPQ8WQ0128MXQD7TnfHyK4oWoIJQ==}
 
@@ -5015,6 +5144,10 @@ packages:
     resolution: {integrity: sha512-Z6pjIZ/8IJcCGzb2S/0Px5J81yij85xASuk1teLNeg75bfT07MV3a/O2Mtn1I2se43k3lkVEcFaR10N4cgQcZA==}
     engines: {node: '>= 20.19.0'}
 
+  '@noble/ciphers@2.4.0':
+    resolution: {integrity: sha512-AnjFn0Jv92laAkvMrghlFZq4qQCIN/4DxFV/eooqtC2YTjB7kBeLMS2T9KJX4Dn+ZVXLOwK0lSgqDtx9gvxtiw==}
+    engines: {node: '>= 20.19.0'}
+
   '@noble/curves@1.2.0':
     resolution: {integrity: sha512-oYclrNgRaM9SsBUBVbb8M6DTV7ZHRTKugureoYEncY5c65HOmRzvSiTE3y5CYaPYJA/GVkrhXEoF0M3Ya9PMnw==}
 
@@ -5047,6 +5180,10 @@ packages:
 
   '@noble/curves@2.3.0':
     resolution: {integrity: sha512-v7cY+4oWYPQszRj6ZFGzTVL7uP2TaLo1xMhWHzYC5wj0ZhOXQ5x+sBre8rF3hi8cAoi0bh1qXoovoOkdFtvqEg==}
+    engines: {node: '>= 20.19.0'}
+
+  '@noble/curves@2.4.0':
+    resolution: {integrity: sha512-P4/62zrgfH33CneE3Dn4WhJVA22YUU0eR51wKIan4NVRvwsA0YnPTwWGpNbpuacSujmSFLvyzpyuR30+fbq2Ew==}
     engines: {node: '>= 20.19.0'}
 
   '@noble/ed25519@1.7.5':
@@ -5091,6 +5228,14 @@ packages:
 
   '@noble/hashes@2.3.0':
     resolution: {integrity: sha512-oN+QwyX7VSHotibwubG3kpzbwKrfnyR6OOO+3Nk/53ADL7FmgHHz4TgrbaYKvvOw09u6QTx0oiH1cNCIOuN0CQ==}
+    engines: {node: '>= 20.19.0'}
+
+  '@noble/hashes@2.4.0':
+    resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
+    engines: {node: '>= 20.19.0'}
+
+  '@noble/post-quantum@0.7.1':
+    resolution: {integrity: sha512-+P9981IiAnVh+rmcubozzVwrEy3XsN/tMhTnvsjV9VDaYpOnNCqWqKo2FLWxbu92YHfjGIlE5XnW175UK+ln+Q==}
     engines: {node: '>= 20.19.0'}
 
   '@noble/secp256k1@1.7.2':
@@ -8987,6 +9132,12 @@ packages:
     resolution: {integrity: sha512-6tfZ91bOr7bOXnK7PRDCGBLa1H4U080YHNaAQ2KsMGlLEzRbk44nsZF2E1IeRc3vtJHPVbKCYgdFbaGO2ljd8g==}
     engines: {node: '>=10.19.0'}
 
+  gql.tada@1.11.4:
+    resolution: {integrity: sha512-UQnhJUhSM0MV8cpcgjci/7ET8LnmHx9o9FtZqU4sH+ILiBVG5rnfXJzNdzTN+Y7MuCz6Pp3XE/VPEVqmO969jw==}
+    hasBin: true
+    peerDependencies:
+      typescript: ^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0
+
   graphemer@1.4.0:
     resolution: {integrity: sha512-EtKwoO6kxCL9WO5xipiHTZlSzBm7WLT627TqC/uVRd0HKmq8NXyebnNYxDoBi7wt8eTWrUrKXCOVaFq9x1kgag==}
 
@@ -8998,6 +9149,10 @@ packages:
   graphql@16.11.0:
     resolution: {integrity: sha512-mS1lbMsxgQj6hge1XZ6p7GPhbrtFwUFYi3wRzXAC/FmYnyXMTvvI3td3rjmQ2u8ewXueaSvRPWaEcgVVOT9Jnw==}
     engines: {node: ^12.22.0 || ^14.16.0 || ^16.0.0 || >=17.0.0}
+
+  graphql@17.0.2:
+    resolution: {integrity: sha512-FRWbddMxfkjiB7z+aQDWIR+E34xo9I8c9mtK2RPv8PmMzKRvrdsreHL/Ui/TmwHJfhHChEtsFPyMHKI+xuarQQ==}
+    engines: {node: ^22.0.0 || ^24.0.0 || ^25.0.0 || >=26.0.0}
 
   gtoken@7.1.0:
     resolution: {integrity: sha512-pCcEwRi+TKpMlxAQObHDQ56KawURgyAf6jtIY046fJ5tIv3zDe/LEIubckAO8fj6JnAxLdmWkUfNyulQ2iKdEw==}
@@ -10224,6 +10379,9 @@ packages:
   poseidon-lite@0.2.1:
     resolution: {integrity: sha512-xIr+G6HeYfOhCuswdqcFpSX47SPhm0EpisWJ6h7fHlWwaVIvH3dLnejpatrtw6Xc6HaLrpq05y7VRfvDmDGIog==}
 
+  poseidon-lite@0.3.0:
+    resolution: {integrity: sha512-ilJj4MIve4uBEG7SrtPqUUNkvpJ/pLVbndxa0WvebcQqeIhe+h72JR4g0EvwchUzm9sOQDlOjiDNmRAgxNZl4A==}
+
   possible-typed-array-names@1.1.0:
     resolution: {integrity: sha512-/+5VFTchJDoVj3bhoqi6UeymcD00DAwb1nJwamzPvHEszJ4FpF6SNNbUbOS8yI56qHzdV8eK0qEfOSiodkTdxg==}
     engines: {node: '>= 0.4'}
@@ -11389,6 +11547,14 @@ packages:
     deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
     hasBin: true
 
+  valibot@1.5.0:
+    resolution: {integrity: sha512-nil6AkP2TChWL43Z5uJ6GTxX01CUA+g8LWUM+N/rB9NBbkUMaUsi9PUNzlUPgoKASgmx9f7eGOYpJ04/fSa6FQ==}
+    peerDependencies:
+      typescript: '>=5'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+
   valtio@1.13.2:
     resolution: {integrity: sha512-Qik0o+DSy741TmkqmRfjq+0xpZBXi/Y6+fXZLn0xNF1z/waFMbE3rkivv5Zcf9RrMUp6zswf2J7sbh2KBlba5A==}
     engines: {node: '>=12.20.0'}
@@ -11807,6 +11973,16 @@ packages:
         optional: true
 
 snapshots:
+
+  '@0no-co/graphql.web@1.3.4(graphql@17.0.2)':
+    optionalDependencies:
+      graphql: 17.0.2
+
+  '@0no-co/graphqlsp@1.18.0(graphql@17.0.2)(typescript@5.8.3)':
+    dependencies:
+      '@gql.tada/internal': 1.2.2(graphql@17.0.2)(typescript@5.8.3)
+      graphql: 17.0.2
+      typescript: 5.8.3
 
   '@adraffy/ens-normalize@1.10.1': {}
 
@@ -13443,9 +13619,26 @@ snapshots:
   '@google-cloud/promisify@4.1.0':
     optional: true
 
+  '@gql.tada/cli-utils@1.9.4(@0no-co/graphqlsp@1.18.0(graphql@17.0.2)(typescript@5.8.3))(graphql@17.0.2)(typescript@5.8.3)':
+    dependencies:
+      '@0no-co/graphqlsp': 1.18.0(graphql@17.0.2)(typescript@5.8.3)
+      '@gql.tada/internal': 1.2.2(graphql@17.0.2)(typescript@5.8.3)
+      graphql: 17.0.2
+      typescript: 5.8.3
+
+  '@gql.tada/internal@1.2.2(graphql@17.0.2)(typescript@5.8.3)':
+    dependencies:
+      '@0no-co/graphql.web': 1.3.4(graphql@17.0.2)
+      graphql: 17.0.2
+      typescript: 5.8.3
+
   '@graphql-typed-document-node/core@3.2.0(graphql@16.11.0)':
     dependencies:
       graphql: 16.11.0
+
+  '@graphql-typed-document-node/core@3.2.0(graphql@17.0.2)':
+    dependencies:
+      graphql: 17.0.2
 
   '@grpc/grpc-js@1.13.6':
     dependencies:
@@ -13976,7 +14169,7 @@ snapshots:
       '@types/debug': 4.1.12
       debug: 4.4.3
       pony-cause: 2.1.11
-      semver: 7.7.4
+      semver: 7.8.5
       uuid: 9.0.1
     transitivePeerDependencies:
       - supports-color
@@ -13990,7 +14183,7 @@ snapshots:
       '@types/debug': 4.1.12
       debug: 4.4.3
       pony-cause: 2.1.11
-      semver: 7.7.4
+      semver: 7.8.5
       uuid: 9.0.1
     transitivePeerDependencies:
       - supports-color
@@ -14036,6 +14229,36 @@ snapshots:
 
   '@msgpackr-extract/msgpackr-extract-win32-x64@3.0.4':
     optional: true
+
+  '@mysten/bcs@2.1.3':
+    dependencies:
+      '@mysten/utils': 0.4.2
+      '@scure/base': 2.3.0
+
+  '@mysten/sui@2.38.0(typescript@5.8.3)':
+    dependencies:
+      '@graphql-typed-document-node/core': 3.2.0(graphql@17.0.2)
+      '@mysten/bcs': 2.1.3
+      '@mysten/utils': 0.4.2
+      '@noble/curves': 2.3.0
+      '@noble/hashes': 2.3.0
+      '@noble/post-quantum': 0.7.1
+      '@protobuf-ts/grpcweb-transport': 2.11.1
+      '@protobuf-ts/runtime': 2.11.1
+      '@protobuf-ts/runtime-rpc': 2.11.1
+      '@scure/base': 2.3.0
+      '@scure/bip32': 2.3.0
+      '@scure/bip39': 2.3.0
+      gql.tada: 1.11.4(graphql@17.0.2)(typescript@5.8.3)
+      graphql: 17.0.2
+      poseidon-lite: 0.3.0
+      valibot: 1.5.0(typescript@5.8.3)
+    transitivePeerDependencies:
+      - '@gql.tada/svelte-support'
+      - '@gql.tada/vue-support'
+      - typescript
+
+  '@mysten/utils@0.4.2': {}
 
   '@napi-rs/wasm-runtime@0.2.12':
     dependencies:
@@ -14162,6 +14385,8 @@ snapshots:
 
   '@noble/ciphers@2.2.0': {}
 
+  '@noble/ciphers@2.4.0': {}
+
   '@noble/curves@1.2.0':
     dependencies:
       '@noble/hashes': 1.3.2
@@ -14198,6 +14423,10 @@ snapshots:
     dependencies:
       '@noble/hashes': 2.3.0
 
+  '@noble/curves@2.4.0':
+    dependencies:
+      '@noble/hashes': 2.4.0
+
   '@noble/ed25519@1.7.5': {}
 
   '@noble/ed25519@2.3.0': {}
@@ -14221,6 +14450,14 @@ snapshots:
   '@noble/hashes@2.2.0': {}
 
   '@noble/hashes@2.3.0': {}
+
+  '@noble/hashes@2.4.0': {}
+
+  '@noble/post-quantum@0.7.1':
+    dependencies:
+      '@noble/ciphers': 2.4.0
+      '@noble/curves': 2.4.0
+      '@noble/hashes': 2.4.0
 
   '@noble/secp256k1@1.7.2': {}
 
@@ -20649,6 +20886,18 @@ snapshots:
       p-cancelable: 2.1.1
       responselike: 2.0.1
 
+  gql.tada@1.11.4(graphql@17.0.2)(typescript@5.8.3):
+    dependencies:
+      '@0no-co/graphql.web': 1.3.4(graphql@17.0.2)
+      '@0no-co/graphqlsp': 1.18.0(graphql@17.0.2)(typescript@5.8.3)
+      '@gql.tada/cli-utils': 1.9.4(@0no-co/graphqlsp@1.18.0(graphql@17.0.2)(typescript@5.8.3))(graphql@17.0.2)(typescript@5.8.3)
+      '@gql.tada/internal': 1.2.2(graphql@17.0.2)(typescript@5.8.3)
+      typescript: 5.8.3
+    transitivePeerDependencies:
+      - '@gql.tada/svelte-support'
+      - '@gql.tada/vue-support'
+      - graphql
+
   graphemer@1.4.0: {}
 
   graphql-request@6.1.0(graphql@16.11.0):
@@ -20660,6 +20909,8 @@ snapshots:
       - encoding
 
   graphql@16.11.0: {}
+
+  graphql@17.0.2: {}
 
   gtoken@7.1.0:
     dependencies:
@@ -21992,6 +22243,8 @@ snapshots:
 
   poseidon-lite@0.2.1: {}
 
+  poseidon-lite@0.3.0: {}
+
   possible-typed-array-names@1.1.0: {}
 
   postcss-import@15.1.0(postcss@8.5.6):
@@ -22634,7 +22887,7 @@ snapshots:
     dependencies:
       '@img/colour': 1.0.0
       detect-libc: 2.1.2
-      semver: 7.7.4
+      semver: 7.8.5
     optionalDependencies:
       '@img/sharp-darwin-arm64': 0.34.5
       '@img/sharp-darwin-x64': 0.34.5
@@ -23360,6 +23613,10 @@ snapshots:
   uuid@8.3.2: {}
 
   uuid@9.0.1: {}
+
+  valibot@1.5.0(typescript@5.8.3):
+    optionalDependencies:
+      typescript: 5.8.3
 
   valtio@1.13.2(@types/react@19.2.2)(react@19.2.0):
     dependencies:
