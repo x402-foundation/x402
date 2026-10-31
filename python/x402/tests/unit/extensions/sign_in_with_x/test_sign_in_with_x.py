@@ -615,6 +615,76 @@ class TestRequestHook:
         result = await hook(ctx, route)
         assert isinstance(result, GrantAccessResult)
 
+    @pytest.mark.asyncio
+    async def test_records_nonce_and_rejects_replay(self):
+        class _NonceTrackingStorage(InMemorySIWxStorage):
+            def __init__(self) -> None:
+                super().__init__()
+                self.recorded_nonces: list[str] = []
+
+            def has_used_nonce(self, nonce: str) -> bool:
+                return nonce in self.recorded_nonces
+
+            def record_nonce(self, nonce: str) -> None:
+                self.recorded_nonces.append(nonce)
+
+        storage = _NonceTrackingStorage()
+        account = Account.create()
+        storage.record_payment("/resource", account.address)
+        challenge = _test_challenge(
+            domain="example.com",
+            resource_uri="http://example.com/resource",
+            network="eip155:8453",
+        )
+        ext = challenge[SIGN_IN_WITH_X]
+        complete = {
+            **ext["info"],
+            "chainId": ext["supportedChains"][0]["chainId"],
+            "type": "eip191",
+        }
+        payload = await create_siwx_payload(complete, account, _bound_request_url(complete))
+        header = encode_siwx_header(payload)
+        hook = create_siwx_request_hook(
+            CreateSIWxRequestHookOptions(storage=storage, origin=EXAMPLE_ORIGIN)
+        )
+
+        class _Adapter:
+            def get_header(self, name: str) -> str | None:
+                if name in (SIGN_IN_WITH_X, SIGN_IN_WITH_X.lower()):
+                    return header
+                return None
+
+            def get_url(self) -> str:
+                return "http://example.com/resource"
+
+        ctx = HTTPRequestContext(adapter=_Adapter(), method="GET", path="/resource")
+        route = RouteConfig(
+            accepts=PaymentOption(
+                scheme="exact",
+                price="$0.001",
+                network="eip155:8453",
+                pay_to="0x0",
+            )
+        )
+        result = await hook(ctx, route)
+        assert isinstance(result, GrantAccessResult)
+        assert storage.recorded_nonces == [payload.nonce]
+        assert await hook(ctx, route) is None
+        assert storage.recorded_nonces == [payload.nonce]
+
+    def test_rejects_record_nonce_without_has_used_nonce(self):
+        class _RecordOnlyStorage(InMemorySIWxStorage):
+            def record_nonce(self, _nonce: str) -> None:
+                pass
+
+        with pytest.raises(ValueError, match="requires both has_used_nonce and record_nonce"):
+            create_siwx_request_hook(
+                CreateSIWxRequestHookOptions(
+                    storage=_RecordOnlyStorage(),
+                    origin=EXAMPLE_ORIGIN,
+                )
+            )
+
 
 class TestRequestHookOriginBinding:
     @pytest.mark.asyncio
