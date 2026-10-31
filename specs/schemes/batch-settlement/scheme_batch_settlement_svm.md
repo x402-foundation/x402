@@ -7,6 +7,14 @@
 
 ## 1. Purpose
 
+For the proposed opt-in conversation-budget authorization mode and recovery via
+the existing refund flow, see the [draft supplement](scheme_batch_settlement_svm_conversation_budget.md).
+For `extra.authorizationMode: "conversation-budget-v1"`, that supplement defines
+the exceptions to this binding's flow, client/facilitator payload variants,
+request proof, seller Memo and retry rules. Other rules still apply. Absence of
+`authorizationMode` retains the
+behavior below. The proposal contains no implementation.
+
 `batch-settlement` is the high-throughput x402 scheme: a client deposits once
 into an escrow channel, then authorizes cumulative Ed25519 vouchers for
 individual requests. By default the client signs each voucher. An optional
@@ -239,7 +247,8 @@ and `SettlementResponse` types are defined in
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `paymentFlow` | string | no | When present, MUST be `"authorization"`. The scheme resolves to the protocol-default `authorization` flow: read-only verification runs before the resource handler, and `/settle` commits the voucher — and broadcasts any `deposit` transaction — after it. |
+| `paymentFlow` | string | no | Defaults to `"authorization"`. MUST be absent or `"authorization"` in legacy mode. For `authorizationMode == "conversation-budget-v1"`, MUST be `"escrow"` with `voucherSigner == "server"`; the supplement defines before-handler funding/reservation and after-handler charging. |
+| `authorizationMode` | string | no | Absence selects legacy behavior. `"conversation-budget-v1"` selects the draft supplement. Clients MUST skip unsupported modes when choosing among accepts, and MUST NOT reinterpret one as legacy authorization. Selecting an unsupported mode fails closed. |
 | `feePayer` | string | yes | Base58 sponsor key set as channel `rent_payer` and zero-share `payee`. Co-signs setup/top-up transactions as transaction fee payer and signs channel lifecycle transactions. |
 | `receiverAuthorizer` | string | yes | Base58 server-controlled Ed25519 key (section 3). Not a payment-channel account field. |
 | `voucherSigner` | string | no | Voucher-signing mode: `"client"` (default) or `"server"`. A client MUST NOT act on a `"server"` accept unless it has trusted that operator out of band (section 8); a server advertising `"server"` SHOULD list a `"client"` accept for the same resource alongside it so clients that do not extend that trust can still pay. |
@@ -484,6 +493,13 @@ The client payload is a tagged union on `payload.type`. `/verify` accepts all
 four variants. `/settle` accepts `deposit` and `refund` directly. The server
 enriches `refund` with a `CloseAuthorization` before forwarding it as
 specified in section 4.5. A `voucher` is accepted offchain by the server.
+
+The selected `conversation-budget-v1` mode replaces the paid client variants
+with the supplement's `budget-deposit` and merchant-only `budget-authorization`.
+Its public, merchant-sanitized `budget-deposit` is also accepted by facilitator
+`/verify` (read-only) and `/settle` (`open` only). `budget-authorization` MUST NOT
+be sent to or accepted by those facilitator endpoints. Refund retains its
+existing payload under the conventional authorization accept.
 
 **`deposit`** opens a channel or tops up an existing channel and authorizes the
 current request:
@@ -739,7 +755,10 @@ The standard x402 `POST /verify` and `POST /settle` request envelope contains
 #### `POST /verify`
 
 `paymentPayload.payload` MUST be one of the client-authored `deposit`, `voucher`,
-`authorization`, or `refund` variants in section 4.3. The facilitator validates the wire fields,
+`authorization`, or `refund` variants in section 4.3, or the public
+`budget-deposit` under the selected mode. That variant uses the supplement's
+native opening proof and validation rules instead of `BatchAuthorization`;
+verification remains read-only. The facilitator validates the wire fields,
 voucher signature, derived channel PDA, and onchain channel state and, for
 `deposit` and `refund`, the client-signed transaction. For `authorization`, and
 for a `deposit` whose `channelConfig` selects server mode, it MUST also verify
@@ -790,6 +809,7 @@ instruction it invokes:
 | Wire `payload.type` | Author | Effect | SVM program instruction |
 |---|---|---|---|
 | `deposit` | Client | Open a channel or add escrow. | `open` / `top_up` |
+| `budget-deposit` | Client, merchant-sanitized | Selected `conversation-budget-v1` mode only: fund the dedicated approved budget under the supplement's opening/Memo rules. | `open` only |
 | `voucher` | Client | Accept an offchain authorization; no funds move. | None |
 | `authorization` | Client | Ask the operator to accept and sign the next cumulative voucher; no funds move. | None |
 | `claim` | Server | Advance accounting; no funds move to the receiver. | `settle` |
@@ -1183,10 +1203,13 @@ capacity (four when absent), then
 set `extra.tokenProgram` from the selected asset's verified mint owner. A
 server SHOULD claim every channel well inside `maxIdleSecs`, because the
 facilitator may close an idle channel at its onchain `settled` watermark and
-any voucher value above it is then forfeited. The scheme resolves to the
+any voucher value above it is then forfeited. Legacy mode resolves to the
 protocol-default `authorization` payment flow, so `extra.paymentFlow` is
-normally omitted; when either party emits it, the value MUST be
-`"authorization"`. The server MUST set `extra.receiverAuthorizer` (section 3):
+normally omitted; when emitted for that mode, it MUST be `"authorization"`.
+A facilitator supporting the draft budget-opening path advertises
+`extra.authorizationModes` containing `"conversation-budget-v1"`; only that
+selected mode uses `"escrow"` as defined in the supplement. The server MUST set
+`extra.receiverAuthorizer` (section 3):
 its own signer when it self-manages closes, otherwise the facilitator's
 advertised key:
 
@@ -1405,8 +1428,10 @@ The top-level instructions MUST consist only of the following ordered regions:
    (`MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr`) and at most three Lighthouse
    instructions (`L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95`). The Memo data
    MUST be `extra.memo` as UTF-8 when supplied, or otherwise a random nonce of
-   at least 16 bytes encoded as hexadecimal text. An `open` suffix also carries
-   exactly one binding Memo from section 3. The signed transaction is subject
+   at least 16 bytes encoded as hexadecimal text. For a `budget-deposit` under
+   `authorizationMode == "conversation-budget-v1"`, replace only this Memo data
+   rule with the supplement's exact reconstructed budget Memo. An `open` suffix
+   also carries exactly one binding Memo from section 3. The signed transaction is subject
    to the version-specific size limit above.
 
 No other top-level instruction or program is allowed. In particular, a
@@ -1436,9 +1461,12 @@ overflow. A version-1 transaction that contains a Compute Budget instruction
 MUST be rejected (an x402 sponsor rule; the runtime treats such instructions as
 no-ops).
 Lighthouse and Memo instructions are allowed only in the final suffix and
-MUST NOT reference `extra.feePayer` as an account or as the invoked program. If
-`extra.memo` is present, the facilitator MUST require exactly one Memo besides
-the binding Memo and an exact UTF-8 data match. A sponsor MAY reject all optional Lighthouse
+MUST NOT reference `extra.feePayer` as an account or as the invoked program.
+In legacy mode, when `extra.memo` is present, the facilitator MUST require
+exactly one Memo besides the binding Memo and an exact UTF-8 data match.
+For the selected budget-opening mode, that Memo instead matches the canonical
+budget Memo and `extra.memo` is bound through its seller-reference digest; it
+MUST NOT add a second seller Memo. A sponsor MAY reject all optional Lighthouse
 instructions, but MUST NOT reject the required Memo or admit instructions
 outside this allowlist.
 
@@ -1789,7 +1817,7 @@ that advertises `extra.maxIdleSecs` MAY, once an `Open` channel has seen no
 facilitator-visible lifecycle activity for that many seconds, close it at the
 current onchain `settled` watermark with `settle_and_seal` (`has_voucher =
 0`), then `distribute` and `reclaim`. Facilitator-visible activity is any
-`deposit`, `claim` or `settle` the facilitator processed for the channel;
+`deposit`, `budget-deposit`, `claim` or `settle` the facilitator processed for the channel;
 offchain voucher acceptance on the server does not reset the clock. Closing at
 the watermark forfeits every voucher the server has not claimed, so the server
 MUST treat `maxIdleSecs` as a second clock it races against, and SHOULD claim
@@ -1951,7 +1979,10 @@ Standard x402 codes apply. The facilitator reports verification failures in
 - `invalid_batch_settlement_svm_payload_type` - payload `type` is not valid for
   the current verify or settle operation.
 - `invalid_batch_settlement_svm_payment_flow` - `extra.paymentFlow` is present
-  and is not `"authorization"`.
+  and is invalid for the selected authorization mode: legacy mode permits only
+  `"authorization"`; `"conversation-budget-v1"` requires `"escrow"` and server
+  voucher signing. Unknown selected modes fail closed with
+  `invalid_batch_settlement_svm_budget_mode`.
 - `invalid_batch_settlement_svm_token_program` - `extra.tokenProgram` is not a
   supported SPL token program or does not own the selected mint.
 - `invalid_batch_settlement_svm_voucher_signature` - signature invalid or
