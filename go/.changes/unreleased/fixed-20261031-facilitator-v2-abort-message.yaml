@@ -1,0 +1,3 @@
+kind: fixed
+body: 'Facilitator: preserve V2 abort-hook messages in verify and settle errors.'
+time: 2026-10-31T00:00:00Z

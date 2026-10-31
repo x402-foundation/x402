@@ -253,7 +253,7 @@ func (f *x402Facilitator) Verify(ctx context.Context, payloadBytes []byte, requi
 				return nil, err
 			}
 			if result != nil && result.Abort {
-				return nil, NewVerifyError(result.Reason, "", "")
+				return nil, NewVerifyError(result.Reason, "", result.Message)
 			}
 		}
 
@@ -380,7 +380,7 @@ func (f *x402Facilitator) Settle(ctx context.Context, payloadBytes []byte, requi
 				return nil, err
 			}
 			if result != nil && result.Abort {
-				return nil, NewSettleError(result.Reason, "", "", "", "")
+				return nil, NewSettleError(result.Reason, "", "", "", result.Message)
 			}
 		}
 
