@@ -36,6 +36,7 @@ If you are evaluating a mainnet EVM route, decide on your production facilitator
 | [Solvador](https://solvador.com) | Multi-network facilitator with broad mainnet coverage across EVM plus Solana and NEAR, supporting multiple schemes and extensions |
 | [Sui Facilitator (UIG Studios)](https://github.com/DrVelvetFog/sui-x402-facilitator) | Non-custodial, zero-fee x402 facilitator for Sui mainnet and testnet with USDC support |
 | [T54 XRPL Facilitator](https://xrpl-x402.t54.ai) | Production-grade x402 facilitator for the XRP Ledger, covering mainnet and testnet with XRP and RLUSD support |
+| [Ultravioleta DAO Facilitator](https://facilitator.ultravioletadao.xyz) | Open-source Rust facilitator for EVM chains, Solana, Fogo, NEAR, Stellar, Algorand, Sui, XRPL and Hedera, with `exact` on each chain family and `upto` (Permit2) on selected EVM chains. No API key or account required; `exact` and `upto` carry no facilitator fee ([source](https://github.com/UltravioletaDAO/x402-rs)) |
 | [X Pay](https://x-pay.llc/) | x402 v2 facilitator for exact USDC payments on Base mainnet via EIP-3009; merchant API key required for verification and settlement ([capabilities](https://facilitator-xpay.llc/supported)) |
 | [TRDEFI Arc Facilitator](https://trdefi-arc-facilitator.netlify.app) | Free, public x402 facilitator for Arc (eip155:5042), settling exact USDC via EIP-3009. Source: https://github.com/TRDEFI/arc-x402-facilitator |
 
