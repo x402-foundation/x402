@@ -41,7 +41,7 @@ from x402.extensions.sign_in_with_x import (
     verify_siwx_signature,
     verify_solana_signature,
 )
-from x402.http.types import HTTPRequestContext, PaymentOption, RouteConfig
+from x402.http.types import HTTPRequestContext, HTTPTransportContext, PaymentOption, RouteConfig
 from x402.schemas import (
     PaymentPayload,
     PaymentRequired,
@@ -559,6 +559,81 @@ class TestSettleHook:
 
         await hook(_Ctx())
         assert storage.has_paid("/weather", "0xABC123")
+
+    @pytest.mark.asyncio
+    async def test_records_server_path_not_payload_url(self):
+        storage = InMemorySIWxStorage()
+        hook = create_siwx_settle_hook(CreateSIWxSettleHookOptions(storage=storage))
+
+        class _Ctx:
+            class _Payload:
+                class _Resource:
+                    url = "http://example.com/joke"
+
+                resource = _Resource()
+
+            class _Result:
+                success = True
+                payer = "0xABC123"
+
+            payment_payload = _Payload()
+            result = _Result()
+            transport_context = HTTPTransportContext(
+                request=HTTPRequestContext(adapter=object(), path="/weather", method="GET")
+            )
+
+        await hook(_Ctx())
+        assert storage.has_paid("/weather", "0xABC123") is True
+        assert storage.has_paid("/joke", "0xABC123") is False
+
+    @pytest.mark.asyncio
+    async def test_does_not_fall_back_when_http_path_is_empty(self):
+        storage = InMemorySIWxStorage()
+        hook = create_siwx_settle_hook(CreateSIWxSettleHookOptions(storage=storage))
+
+        class _Ctx:
+            class _Payload:
+                class _Resource:
+                    url = "http://example.com/joke"
+
+                resource = _Resource()
+
+            class _Result:
+                success = True
+                payer = "0xABC123"
+
+            payment_payload = _Payload()
+            result = _Result()
+            transport_context = HTTPTransportContext(
+                request=HTTPRequestContext(adapter=object(), path="", method="GET")
+            )
+
+        await hook(_Ctx())
+        assert storage.has_paid("/joke", "0xABC123") is False
+        assert storage.has_paid("/weather", "0xABC123") is False
+
+    @pytest.mark.asyncio
+    async def test_records_payload_path_for_non_http_transport(self):
+        storage = InMemorySIWxStorage()
+        hook = create_siwx_settle_hook(CreateSIWxSettleHookOptions(storage=storage))
+
+        class _Ctx:
+            class _Payload:
+                class _Resource:
+                    url = "http://example.com/weather"
+
+                resource = _Resource()
+
+            class _Result:
+                success = True
+                payer = "0xABC123"
+
+            payment_payload = _Payload()
+            result = _Result()
+            transport_context = {"toolName": "search", "arguments": {}}
+
+        await hook(_Ctx())
+        assert storage.has_paid("/weather", "0xABC123") is True
 
 
 class TestRequestHook:

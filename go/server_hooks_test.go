@@ -537,6 +537,51 @@ func TestAfterSettleHook(t *testing.T) {
 	}
 }
 
+type settleParentKey struct{}
+
+func TestWithSettleTransportReachesAfterSettleHook(t *testing.T) {
+	server := Newx402ResourceServer()
+	transport := &struct{ Path string }{Path: "/weather"}
+	var seen interface{}
+	var parent interface{}
+	server.OnAfterSettle(func(ctx SettleResultContext) error {
+		seen = ctx.TransportContext
+		if ctx.Ctx != nil {
+			parent = ctx.Ctx.Value(settleParentKey{})
+		}
+		return nil
+	})
+	server.facilitatorClients[Network("eip155:8453")] = map[string]FacilitatorClient{
+		"exact": &mockFacilitatorClient{
+			settle: func(ctx context.Context, payload []byte, reqs []byte) (*SettleResponse, error) {
+				return &SettleResponse{
+					Success:     true,
+					Transaction: "0xabc123",
+					Network:     "eip155:8453",
+					Payer:       "0xpayer",
+				}, nil
+			},
+		},
+	}
+
+	ctx := WithSettleTransport(context.WithValue(context.Background(), settleParentKey{}, "kept"), transport)
+	_, err := server.SettlePayment(
+		ctx,
+		types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{}},
+		types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("SettlePayment() error = %v", err)
+	}
+	if seen != transport {
+		t.Fatalf("TransportContext = %#v, want the HTTP transport", seen)
+	}
+	if parent != "kept" {
+		t.Fatalf("parent context value = %#v, want kept", parent)
+	}
+}
+
 // Test OnSettleFailure hook - recovery
 func TestOnSettleFailureHook_Recover(t *testing.T) {
 	server := Newx402ResourceServer()
