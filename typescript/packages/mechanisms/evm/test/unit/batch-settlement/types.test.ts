@@ -14,6 +14,8 @@ import type {
   BatchSettlementRefundPayload,
   BatchSettlementClaimPayload,
   BatchSettlementSettlePayload,
+  BatchSettlementEnrichedDepositPayload,
+  BatchSettlementEnrichedVoucherPayload,
   BatchSettlementEnrichedRefundPayload,
 } from "../../../src/batch-settlement/types";
 
@@ -114,11 +116,23 @@ const VALID_SETTLE_PAYLOAD: BatchSettlementSettlePayload = {
   token: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
 };
 
+const VALID_ENRICHED_DEPOSIT_PAYLOAD: BatchSettlementEnrichedDepositPayload = {
+  ...VALID_DEPOSIT_PAYLOAD,
+  pendingId: "0xpending",
+  cancel: true,
+};
+
+const VALID_ENRICHED_VOUCHER_PAYLOAD: BatchSettlementEnrichedVoucherPayload = {
+  ...VALID_VOUCHER_PAYLOAD,
+  pendingId: "0xpending",
+};
+
 const VALID_ENRICHED_REFUND_PAYLOAD: BatchSettlementEnrichedRefundPayload = {
   ...VALID_REFUND_PAYLOAD,
   amount: "100000",
   refundNonce: "0",
   claims: [],
+  pendingId: "0xpending",
 };
 
 describe("isBatchSettlementDepositPayload", () => {
@@ -276,6 +290,14 @@ describe("isBatchSettlementSettlePayload (specific fields)", () => {
     const { token, ...rest } = VALID_SETTLE_PAYLOAD;
     void token;
     expect(isBatchSettlementSettlePayload(rest as unknown as Record<string, unknown>)).toBe(false);
+  });
+});
+
+describe("client vs enriched payload guards", () => {
+  it("treats server-stamped deposit and voucher payloads as their client shapes", () => {
+    expect(isBatchSettlementDepositPayload(VALID_ENRICHED_DEPOSIT_PAYLOAD)).toBe(true);
+    expect(isBatchSettlementVoucherPayload(VALID_ENRICHED_VOUCHER_PAYLOAD)).toBe(true);
+    expect(isBatchSettlementRefundPayload(VALID_ENRICHED_REFUND_PAYLOAD)).toBe(true);
   });
 });
 

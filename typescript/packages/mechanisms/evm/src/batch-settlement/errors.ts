@@ -81,3 +81,14 @@ export const ErrMissingChannel = "invalid_batch_settlement_evm_missing_channel";
 export const ErrRefundNoBalance = "invalid_batch_settlement_evm_refund_no_balance";
 export const ErrRefundedEventMismatch = "invalid_batch_settlement_evm_refunded_event_mismatch";
 export const ErrRefundAmountInvalid = "invalid_batch_settlement_evm_refund_amount_invalid";
+export const ErrRefundAuthorizerMismatch =
+  "invalid_batch_settlement_evm_refund_authorizer_mismatch";
+export const ErrRefundAuthorizerSignature =
+  "invalid_batch_settlement_evm_refund_authorizer_signature";
+export const ErrVoucherStoreModeMismatch =
+  "invalid_batch_settlement_evm_voucher_store_mode_mismatch";
+export const ErrUnexpectedPendingId = "invalid_batch_settlement_evm_unexpected_pending_id";
+export const ErrUnexpectedCancel = "invalid_batch_settlement_evm_unexpected_cancel";
+export const ErrPendingIdMismatch = "invalid_batch_settlement_evm_pending_id_mismatch";
+export const ErrDelegatedSettleUnauthenticated =
+  "invalid_batch_settlement_evm_delegated_settle_unauthenticated";

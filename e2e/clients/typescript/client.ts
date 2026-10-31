@@ -52,9 +52,32 @@ export type RequestResult = {
   data: unknown;
   status_code: number;
   payment_response?: unknown;
+  error?: string;
 };
 
 export type BatchSettlementPhase = "initial" | "recovery-refund" | "full";
+
+function refundResult(settleResponse: SettleResponse): RequestResult {
+  const success = settleResponse.success;
+  return {
+    success,
+    data: { refund: success },
+    status_code: success ? 200 : 500,
+    payment_response: settleResponse,
+    ...(success
+      ? {}
+      : { error: `Refund failed: ${settleResponse.errorReason ?? "settle unsuccessful"}` }),
+  };
+}
+
+function refundErrorResult(error: unknown): RequestResult {
+  return {
+    success: false,
+    data: { refund: false },
+    status_code: 500,
+    error: error instanceof Error ? error.message : String(error),
+  };
+}
 
 /**
  * Parses the TVM private key accepted by e2e env fixtures.
@@ -465,7 +488,9 @@ function aggregateBatchResult(
   results: RequestResult[],
   details: Record<string, RequestResult>,
 ) {
+  const firstFailure = results.find(result => !result.success);
   const last = results[results.length - 1]!;
+  const statusSource = firstFailure ?? last;
   return {
     success: results.every(result => result.success),
     data: {
@@ -475,8 +500,8 @@ function aggregateBatchResult(
         ...details,
       },
     },
-    status_code: last.status_code,
-    payment_response: last.payment_response,
+    status_code: statusSource.status_code,
+    payment_response: statusSource.payment_response,
   };
 }
 
@@ -558,13 +583,12 @@ export async function runClientScenario(deps: ClientScenarioDeps): Promise<void>
 
   if (batchSettlementPhase === "recovery-refund") {
     const recoveryVoucher = await issueRequest();
-    const refundSettle = await sendRefund();
-    const refund = {
-      success: refundSettle.success,
-      data: { refund: true },
-      status_code: 200,
-      payment_response: refundSettle,
-    };
+    let refund: RequestResult;
+    try {
+      refund = refundResult(await sendRefund());
+    } catch (error) {
+      refund = refundErrorResult(error);
+    }
     console.log(
       JSON.stringify(
         aggregateBatchResult("recovery-refund", [recoveryVoucher, refund], {
@@ -579,13 +603,12 @@ export async function runClientScenario(deps: ClientScenarioDeps): Promise<void>
   if (batchSettlementPhase === "full") {
     const deposit = await issueRequest();
     const voucher = await issueRequest();
-    const refundSettle = await sendRefund();
-    const refund = {
-      success: refundSettle.success,
-      data: { refund: true },
-      status_code: 200,
-      payment_response: refundSettle,
-    };
+    let refund: RequestResult;
+    try {
+      refund = refundResult(await sendRefund());
+    } catch (error) {
+      refund = refundErrorResult(error);
+    }
     console.log(
       JSON.stringify(
         aggregateBatchResult("full", [deposit, voucher, refund], { deposit, voucher, refund }),

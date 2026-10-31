@@ -28,7 +28,10 @@ Every SDK reads this same set of files. The harness ([`src/mechanisms.ts`](src/m
 
 Resource servers resolve the same data at boot — payment middleware config **and** route handlers — through a per-language loader: [`servers/typescript/catalog.ts`](servers/typescript/catalog.ts), [`servers/python/catalog.py`](servers/python/catalog.py), [`servers/go/catalog.go`](servers/go/catalog.go). No framework entrypoint hardcodes a path, price, or extension; each loops over its resolved routes. The harness passes the catalog directory in `E2E_MECHANISMS_CATALOG`, and each loader falls back to walking up to `e2e/config/` so a server still runs standalone from its own directory.
 
-Route support is **listed** on each route via `sdks` (and `clientSdks` for SDKs that implement only the client role), never inferred from a cartesian product. Scheme **registration** stays in the language-root client/server modules and facilitator mains.
+Route support is **listed** on each route via `sdks`, with `clientSdks` and
+`facilitatorSdks` narrowing role-specific support when needed, never inferred
+from a cartesian product. Scheme **registration** stays in the language-root
+client/server modules and facilitator mains.
 
 ## Add a mechanism
 
@@ -66,13 +69,13 @@ These keep local `test.config.json` overlays and/or special orchestration — no
 | Flow | Where it lives |
 |------|----------------|
 | Batch-settlement multi-phase | Catalog `routes` entries + orchestration in [`test.ts`](test.ts) + shared scheme registration |
-| Batch-settlement facilitator-managed custody | Managed catalog routes `/batch-settlement-managed/evm/*` (`schemeOptions.facilitatorManaged: true`, go only) + dual servers (`E2E_BATCH_SERVER_ROLE=standard\|managed-batch`, `EVM_BATCH_SETTLEMENT_VOUCHER_STORE_MODE=self\|facilitator`) + one facilitator with `E2E_FACILITATOR_VOUCHER_STORE=true` (advertises `delegatedRefund: true`; optionally `SERVER_EVM_BATCH_SETTLEMENT_REFUND_AUTHORIZER_PRIVATE_KEY` for the server-owned key path); override one side with `--batchVoucherStore=self\|facilitator` |
+| Batch-settlement facilitator-managed custody | Managed catalog routes `/batch-settlement-managed/evm/*` (`schemeOptions.facilitatorManaged: true`, ts/go; the voucher-store facilitator is go only) + dual servers (`E2E_BATCH_SERVER_ROLE=standard\|managed-batch`, `EVM_BATCH_SETTLEMENT_VOUCHER_STORE_MODE=self\|facilitator`) + one facilitator with `E2E_FACILITATOR_VOUCHER_STORE=true` (advertises `delegatedRefund: true`; optionally `SERVER_EVM_BATCH_SETTLEMENT_REFUND_AUTHORIZER_PRIVATE_KEY` for the server-owned key path); override one side with `--batchVoucherStore=self\|facilitator` |
 | Gas sponsoring / Permit2 coldstart | Route `schemeOptions.coldstart` + declared gas `extensions` + fund/revoke/drain in `test.ts` + facilitator extension registration |
 | Swig smart wallet | Client overlay [`clients/typescript/http/svm-smart-wallet/test.config.json`](clients/typescript/http/svm-smart-wallet/test.config.json) (`protocolFamilies`, `facilitators`, Swig env) + [`scripts/swig-setup.ts`](scripts/swig-setup.ts); uses catalog route `/exact/svm` |
 | Solana transaction v0 | SVM-only client overlays `clients/{typescript,go,python}/http/svm-v0/test.config.json` (`protocolFamilies: ["svm"]`). Clients build the highest Solana transaction version the facilitator advertises in `extra.transactionVersions`, so every other client builds v1 against facilitators advertising `[0, 1]`; these narrow the SVM schemes to `transactionVersions: [0]` (Go `PaymentClientOptions`, Python `create_e2e_client(svm_transaction_versions=...)`) to keep v0 covered. TS and Go cover exact, upto and batch-settlement; Python covers exact |
 | Legacy (v1) | `legacy/` trees only — separate configs; do not extend the mechanisms catalog for v1 |
 
-If an SDK implements a route end-to-end (client + server + facilitator), list it in that route’s `sdks`. Omit only when the mechanism package is missing (e.g. Go has no TVM; Python/Go have no AVM/NEAR/XRPL; Python has no SVM upto). Where an SDK has only a client, list it in `clientSdks`.
+If an SDK implements a route end-to-end (client + server + facilitator), list it in that route’s `sdks`. Omit only when the mechanism package is missing (e.g. Go has no TVM; Python/Go have no AVM/NEAR/XRPL; Python has no SVM upto). Where an SDK has only a client, list it in `clientSdks`; use `facilitatorSdks` when facilitator support is narrower than client/server support.
 
 ## Legacy
 
@@ -335,6 +338,9 @@ pnpm test --testnet --min --families=evm --schemes=batch-settlement --sdk=go
 # Optional: only one custody side (skips second server / halves scenarios)
 pnpm test --testnet --min --families=evm --schemes=batch-settlement --sdk=go --batchVoucherStore=self
 pnpm test --testnet --min --families=evm --schemes=batch-settlement --sdk=go --batchVoucherStore=facilitator
+
+# TypeScript client and server against the Go voucher-store facilitator
+pnpm test --testnet --min --families=evm --schemes=batch-settlement --transport=http --sdk=ts --facilitators=go
 ```
 
 Why two servers, one facilitator: one `BatchSettlementEvmScheme` has one

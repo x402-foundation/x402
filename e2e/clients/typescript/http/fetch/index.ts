@@ -20,9 +20,35 @@ const httpClient = new x402HTTPClient(client);
 async function issueRequest(): Promise<RequestResult> {
   const response = await fetchWithPayment(url, { method: "GET" });
   const data = await response.json();
-  const paymentResponse = httpClient.getPaymentSettleResponse(name => response.headers.get(name));
+  let paymentResponse;
+  try {
+    paymentResponse = httpClient.getPaymentSettleResponse(name => response.headers.get(name));
+  } catch {
+    paymentResponse = undefined;
+  }
 
   if (!paymentResponse) {
+    if (response.status === 402) {
+      const bodyError = (data as { error?: unknown })?.error;
+      return {
+        success: false,
+        data,
+        status_code: response.status,
+        error: typeof bodyError === "string" && bodyError ? `Payment failed (402): ${bodyError}` : `Payment failed (402): ${JSON.stringify(data)}`,
+      };
+    }
+    if (!response.ok) {
+      const bodyError = (data as { error?: unknown })?.error;
+      return {
+        success: false,
+        data,
+        status_code: response.status,
+        error:
+          typeof bodyError === "string" && bodyError
+            ? `Request failed (${response.status}): ${bodyError}`
+            : `Request failed (${response.status}): ${JSON.stringify(data)}`,
+      };
+    }
     return { success: true, data, status_code: response.status };
   }
 
@@ -31,6 +57,7 @@ async function issueRequest(): Promise<RequestResult> {
     data,
     status_code: response.status,
     payment_response: paymentResponse,
+    ...(paymentResponse.success ? {} : { error: `Payment failed: ${paymentResponse.errorReason ?? "settle unsuccessful"}` }),
   };
 }
 

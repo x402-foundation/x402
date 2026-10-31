@@ -7,11 +7,14 @@ import {
   isBatchSettlementRefundPayload,
   isBatchSettlementVoucherPayload,
 } from "../types";
-import type { BatchSettlementPaymentResponseExtra, BatchSettlementVoucherClaim } from "../types";
+import type { BatchSettlementVoucherClaim } from "../types";
 import { computeChannelId } from "../utils";
 import * as Errors from "../errors";
+import { channelStateExtra, commitVoucherCharge, paymentResponseExtra } from "../voucherStore";
+import type { AuthorizerSigner } from "../types";
 import type { BatchSettlementEvmScheme } from "./scheme";
 import type { Channel } from "./storage";
+import { rethrowLockImplementationError } from "./storage";
 import {
   parseRefundSettlementSnapshot,
   readChannelStateExtra,
@@ -19,37 +22,47 @@ import {
   readExtraString,
 } from "./utils";
 
+type AdmissionHold = "self" | "other" | "none";
+
 /**
- * Converts stored channel state into the public response snapshot shape.
+ * Inspects the admission lock for this request.
  *
- * @param channel - Stored channel state.
- * @param chargedCumulativeAmount - Optional current charged cumulative amount.
- * @returns Response-ready channel snapshot.
+ * Used for deposit/refund holder checks and snapshot recovery. This request
+ * proceeds when it holds the lock or no lock is present (lost/expired).
+ * Lock-store I/O failures are optimistic (`none`). Implementation/parse
+ * errors fail closed and propagate to the caller.
+ *
+ * @param scheme - Owning scheme for lock-store access.
+ * @param channelId - Channel to inspect.
+ * @param pendingId - This request's lock owner, if any.
+ * @returns `self` when `pendingId` holds; `other` when a different holder is live; `none` otherwise.
  */
-function channelStateExtra(
-  channel: Pick<
-    Channel,
-    "channelId" | "balance" | "totalClaimed" | "withdrawRequestedAt" | "refundNonce"
-  >,
-  chargedCumulativeAmount?: string,
-): NonNullable<BatchSettlementPaymentResponseExtra["channelState"]> {
-  return {
-    channelId: channel.channelId as `0x${string}`,
-    balance: channel.balance,
-    totalClaimed: channel.totalClaimed,
-    withdrawRequestedAt: channel.withdrawRequestedAt,
-    refundNonce: String(channel.refundNonce),
-    ...(chargedCumulativeAmount !== undefined ? { chargedCumulativeAmount } : {}),
-  };
+async function inspectAdmission(
+  scheme: BatchSettlementEvmScheme,
+  channelId: string,
+  pendingId: string | undefined,
+): Promise<AdmissionHold> {
+  try {
+    const locks = scheme.getLockStorage();
+    if (!locks) {
+      return "none";
+    }
+    if (pendingId && (await locks.isHeld(channelId, pendingId))) {
+      return "self";
+    }
+    return (await locks.isHeld(channelId)) ? "other" : "none";
+  } catch (err) {
+    rethrowLockImplementationError(err);
+    return "none";
+  }
 }
 
 /**
  * Lifecycle hook: runs before the facilitator settles a payment.
  *
- * For voucher payloads the server does NOT trigger an onchain settle.  Instead, it
- * increments the local `chargedCumulativeAmount` and returns a `skip` result so the
- * middleware responds immediately. Cooperative refund payloads proceed to settlement
- * enrichment before facilitator settlement.
+ * Voucher payloads increment `chargedCumulativeAmount` locally and return `skip` so
+ * the middleware responds without an onchain settle. Refund and deposit payloads
+ * fall through to facilitator settlement; their durable rows update in `afterSettle`.
  *
  * @param scheme - Owning `BatchSettlementEvmScheme` instance for storage access.
  * @param ctx - Settle lifecycle context (payload and requirements).
@@ -72,51 +85,40 @@ export async function handleBeforeSettle(
 
   const { voucher } = raw;
   const channelId = voucher.channelId;
-  const pendingId = scheme.readRequestContext(paymentPayload)?.pendingId;
+  const requestContext = scheme.readRequestContext(paymentPayload);
+  const snapshot = requestContext?.channelSnapshot;
+  const localVerify = requestContext?.localVerify === true;
+  const now = Date.now();
 
   const increment = BigInt(requirements.amount);
   const signedCap = BigInt(voucher.maxClaimableAmount);
-  let outcome:
-    | { status: "missing" }
-    | { status: "pending_mismatch" }
-    | { status: "cap_exceeded"; charged: string }
-    | { status: "committed"; previous: Channel; current: Channel }
-    | undefined;
-
-  const updateResult = await storage.updateChannel(channelId, current => {
-    if (!current) {
-      outcome = { status: "missing" };
-      return current;
-    }
-
-    if (!pendingId || current.pendingRequest?.pendingId !== pendingId) {
-      outcome = { status: "pending_mismatch" };
-      return current;
-    }
-
-    const newCharged = BigInt(current.chargedCumulativeAmount) + increment;
-    if (newCharged > signedCap) {
-      outcome = { status: "cap_exceeded", charged: newCharged.toString() };
-      return {
-        ...current,
-        pendingRequest: undefined,
-      };
-    }
-
-    const updatedChannel: Channel = {
-      ...current,
-      chargedCumulativeAmount: newCharged.toString(),
-      signedMaxClaimable: voucher.maxClaimableAmount,
-      signature: voucher.signature,
-      lastRequestTimestamp: Date.now(),
-      pendingRequest: undefined,
-    };
-    outcome = { status: "committed", previous: current, current: updatedChannel };
-    return updatedChannel;
+  let outcome = await commitVoucherCharge(storage, channelId, {
+    increment,
+    signedCap,
+    voucher,
+    snapshot,
+    recoverFromSnapshot: false,
+    now,
+    localVerify,
   });
+  if (
+    outcome.status === "missing" &&
+    snapshot &&
+    (await inspectAdmission(scheme, channelId, requestContext?.pendingId)) === "self"
+  ) {
+    outcome = await commitVoucherCharge(storage, channelId, {
+      increment,
+      signedCap,
+      voucher,
+      snapshot,
+      now,
+      localVerify,
+    });
+  }
 
-  if (outcome?.status === "missing") {
-    scheme.takeRequestContext(paymentPayload);
+  await scheme.clearPendingRequest(paymentPayload);
+
+  if (outcome.status === "missing") {
     return {
       abort: true,
       reason: Errors.ErrMissingChannel,
@@ -124,8 +126,7 @@ export async function handleBeforeSettle(
     };
   }
 
-  if (outcome?.status === "cap_exceeded") {
-    scheme.takeRequestContext(paymentPayload);
+  if (outcome.status === "cap_exceeded") {
     return {
       abort: true,
       reason: Errors.ErrChargeExceedsSignedCumulative,
@@ -133,20 +134,18 @@ export async function handleBeforeSettle(
     };
   }
 
-  if (updateResult.status !== "updated" || outcome?.status !== "committed") {
-    scheme.takeRequestContext(paymentPayload);
+  if (outcome.status !== "committed") {
     return {
       abort: true,
       reason: Errors.ErrChannelBusy,
       message: "Concurrent request modified channel state",
     };
   }
-  scheme.takeRequestContext(paymentPayload);
 
-  const skipExtra: BatchSettlementPaymentResponseExtra = {
-    channelState: channelStateExtra(outcome.previous, outcome.current.chargedCumulativeAmount),
+  const skipExtra = paymentResponseExtra({
+    channelState: channelStateExtra(outcome.current, outcome.current.chargedCumulativeAmount),
     chargedAmount: requirements.amount,
-  };
+  });
 
   return {
     skip: true,
@@ -183,12 +182,26 @@ export async function handleEnrichSettlementPayload(
     throw new Error("refund channelId does not match channelConfig");
   }
 
-  const channel = await scheme.getStorage().get(channelId);
+  const requestContext = scheme.readRequestContext(paymentPayload);
+  const snapshot = requestContext?.channelSnapshot;
+  const stored = await scheme.getStorage().get(channelId);
+  const pendingId = requestContext?.pendingId;
+  const hold = await inspectAdmission(scheme, channelId, pendingId);
+  if (!stored && snapshot && hold !== "self") {
+    throw new Error(Errors.ErrMissingChannel);
+  }
+  const channel: Channel | undefined = snapshot
+    ? {
+        ...(stored ?? snapshot),
+        ...snapshot,
+        chargedCumulativeAmount:
+          stored?.chargedCumulativeAmount ?? snapshot.chargedCumulativeAmount,
+      }
+    : stored;
   if (!channel) {
     throw new Error(Errors.ErrMissingChannel);
   }
-  const pendingId = scheme.readRequestContext(paymentPayload)?.pendingId;
-  if (!pendingId || channel.pendingRequest?.pendingId !== pendingId) {
+  if (hold === "other") {
     throw new Error(Errors.ErrChannelBusy);
   }
   if (BigInt(raw.voucher.maxClaimableAmount) !== BigInt(channel.chargedCumulativeAmount)) {
@@ -198,28 +211,68 @@ export async function handleEnrichSettlementPayload(
     throw new Error(Errors.ErrInvalidVoucherSignature);
   }
 
-  const config = raw.channelConfig;
+  const fields = await buildRefundSettlementFields({
+    channel,
+    raw,
+    channelId,
+    network: requirements.network,
+    refundSigner: scheme.getReceiverAuthorizerSigner(),
+    includeClaimAuthorizerSignature: true,
+  });
 
+  scheme.rememberChannelSnapshot(paymentPayload, channel);
+  return fields;
+}
+
+/**
+ * Builds facilitator settlement fields for a cooperative refund.
+ *
+ * @param opts - Refund channel, payload, signer, and signature options.
+ * @param opts.channel - Stored channel snapshot.
+ * @param opts.raw - Refund payload.
+ * @param opts.raw.channelConfig - Channel config for the claim entry.
+ * @param opts.raw.voucher - Zero-charge refund voucher.
+ * @param opts.raw.voucher.maxClaimableAmount - Signed cumulative ceiling.
+ * @param opts.raw.voucher.signature - Client voucher signature.
+ * @param opts.raw.amount - Optional requested refund amount.
+ * @param opts.channelId - Canonical channel id.
+ * @param opts.network - CAIP-2 network for EIP-712 signatures.
+ * @param opts.refundSigner - Optional refund authorizer.
+ * @param opts.includeClaimAuthorizerSignature - Whether to sign the claim batch.
+ * @returns Additive refund settlement fields.
+ */
+export async function buildRefundSettlementFields(opts: {
+  channel: Channel;
+  raw: {
+    channelConfig: Channel["channelConfig"];
+    voucher: { maxClaimableAmount: string; signature: `0x${string}` };
+    amount?: string;
+  };
+  channelId: string;
+  network: string;
+  refundSigner?: AuthorizerSigner;
+  includeClaimAuthorizerSignature: boolean;
+}): Promise<Record<string, unknown>> {
   const claimEntry: BatchSettlementVoucherClaim = {
     voucher: {
-      channel: config,
-      maxClaimableAmount: raw.voucher.maxClaimableAmount,
+      channel: opts.raw.channelConfig,
+      maxClaimableAmount: opts.raw.voucher.maxClaimableAmount,
     },
-    signature: raw.voucher.signature,
-    totalClaimed: channel.chargedCumulativeAmount,
+    signature: opts.raw.voucher.signature,
+    totalClaimed: opts.channel.chargedCumulativeAmount,
   };
 
-  const remainder = BigInt(channel.balance) - BigInt(channel.chargedCumulativeAmount);
+  const remainder = BigInt(opts.channel.balance) - BigInt(opts.channel.chargedCumulativeAmount);
   if (remainder <= 0n) {
     throw new Error(Errors.ErrRefundNoBalance);
   }
 
   let refundAmountBig = remainder;
-  if (raw.amount !== undefined) {
-    if (!/^\d+$/.test(raw.amount)) {
+  if (opts.raw.amount !== undefined) {
+    if (!/^\d+$/.test(opts.raw.amount)) {
       throw new Error(Errors.ErrRefundAmountInvalid);
     }
-    const requested = BigInt(raw.amount);
+    const requested = BigInt(opts.raw.amount);
     if (requested <= 0n) {
       throw new Error(Errors.ErrRefundAmountInvalid);
     }
@@ -227,28 +280,25 @@ export async function handleEnrichSettlementPayload(
   }
 
   const refundAmount = refundAmountBig.toString();
-  const nonce = String(channel.refundNonce ?? 0);
+  const nonce = String(opts.channel.refundNonce ?? 0);
 
-  const receiverAuthorizerSigner = scheme.getReceiverAuthorizerSigner();
-
-  const refundAuthorizerSignature = receiverAuthorizerSigner
+  const refundAuthorizerSignature = opts.refundSigner
     ? await signRefund(
-        receiverAuthorizerSigner,
-        channelId as `0x${string}`,
+        opts.refundSigner,
+        opts.channelId as `0x${string}`,
         refundAmount,
         nonce,
-        requirements.network,
+        opts.network,
       )
     : undefined;
 
-  const claimAuthorizerSignature = receiverAuthorizerSigner
-    ? await signClaimBatch(receiverAuthorizerSigner, [claimEntry], requirements.network)
-    : undefined;
-
-  scheme.rememberChannelSnapshot(paymentPayload, channel);
+  const claimAuthorizerSignature =
+    opts.includeClaimAuthorizerSignature && opts.refundSigner
+      ? await signClaimBatch(opts.refundSigner, [claimEntry], opts.network)
+      : undefined;
 
   return {
-    ...(raw.amount === undefined ? { amount: refundAmount } : {}),
+    ...(opts.raw.amount === undefined ? { amount: refundAmount } : {}),
     refundNonce: nonce,
     claims: [claimEntry],
     refundAuthorizerSignature,
@@ -262,12 +312,15 @@ export async function handleEnrichSettlementPayload(
  * Updates channel state to reflect the settlement outcome — adjusting charged amounts,
  * balances, and handling cooperative-refund cleanup (channel record deletion).
  *
+ * A self-managed deposit persist failure throws {@link AfterSettleAbortError} so core
+ * flips the onchain success to `success: false` without releasing the resource.
+ * Refund persist failures throw a plain error (logged and ignored by core).
+ *
  * @param scheme - Owning `BatchSettlementEvmScheme` instance for storage access.
  * @param ctx - Post-settle lifecycle context.
  * @param ctx.paymentPayload - Payment payload that was settled (possibly rewritten).
  * @param ctx.requirements - Requirements used for settlement.
  * @param ctx.result - Facilitator settle response.
- * @returns Resolves when session updates are complete (no return value).
  */
 export async function handleAfterSettle(
   scheme: BatchSettlementEvmScheme,
@@ -287,29 +340,43 @@ export async function handleAfterSettle(
     const now = Date.now();
 
     const snapshot = parseRefundSettlementSnapshot(result.extra);
-    const updateResult = await storage.updateChannel(channelId, current => {
-      if (!current) {
-        return current;
-      }
-      if (!pendingId || current.pendingRequest?.pendingId !== pendingId) {
-        return current;
-      }
-      if (BigInt(snapshot.balance) <= BigInt(current.chargedCumulativeAmount)) {
-        return undefined;
-      }
-      return {
-        ...current,
-        ...snapshot,
-        onchainSyncedAt: now,
-        lastRequestTimestamp: now,
-        pendingRequest: undefined,
-      };
-    });
-    if (updateResult.status === "unchanged") {
+    const recovered = scheme.readRequestContext(paymentPayload)?.channelSnapshot;
+    const hold = await inspectAdmission(scheme, channelId, pendingId);
+    if (hold === "other") {
       throw new Error(Errors.ErrChannelBusy);
     }
-    if (!updateResult.channel) {
-      return;
+    try {
+      const updateResult = await storage.updateChannel(channelId, current => {
+        const existing = current ?? (hold === "self" ? recovered : undefined);
+        if (!existing) {
+          return current;
+        }
+        if (BigInt(snapshot.balance) <= BigInt(existing.chargedCumulativeAmount)) {
+          return undefined;
+        }
+        return {
+          ...existing,
+          ...snapshot,
+          onchainSyncedAt: now,
+          lastRequestTimestamp: now,
+        };
+      });
+      switch (updateResult.status) {
+        case "updated":
+        case "deleted":
+          break;
+        case "unchanged":
+        case "conflict":
+          throw new Error(Errors.ErrChannelBusy);
+        default: {
+          const exhaustive: never = updateResult.status;
+          throw exhaustive;
+        }
+      }
+    } finally {
+      if (hold === "self") {
+        await scheme.releasePendingRequest(paymentPayload);
+      }
     }
     return;
   }
@@ -327,18 +394,23 @@ export async function handleAfterSettle(
     const signedMaxClaimable = raw.voucher.maxClaimableAmount;
     const now = Date.now();
 
+    const hold = await inspectAdmission(scheme, channelId, pendingId);
+    if (hold === "other") {
+      throw new AfterSettleAbortError(Errors.ErrChannelBusy);
+    }
+    const recovered = scheme.readRequestContext(paymentPayload)?.channelSnapshot;
     let missingRow = false;
-    const updateResult = await storage
-      .updateChannel(channelId, current => {
-        if (!current) {
-          missingRow = true;
-          return current;
-        }
-        if (!pendingId || current.pendingRequest?.pendingId !== pendingId) {
+    let abortReason: string | undefined;
+    let abortMessage: string | undefined;
+    try {
+      const updateResult = await storage.updateChannel(channelId, current => {
+        const existing = current ?? (hold === "self" ? recovered : undefined);
+        if (!existing) {
+          missingRow = missingRow || current === undefined;
           return current;
         }
         const chargedActual = (
-          BigInt(current.chargedCumulativeAmount) + BigInt(requirements.amount)
+          BigInt(existing.chargedCumulativeAmount) + BigInt(requirements.amount)
         ).toString();
         return {
           channelId,
@@ -346,30 +418,48 @@ export async function handleAfterSettle(
           chargedCumulativeAmount: chargedActual,
           signedMaxClaimable,
           signature: raw.voucher.signature,
-          balance: readExtraString(channelState, "balance", current.balance),
-          totalClaimed: readExtraString(channelState, "totalClaimed", current.totalClaimed),
+          balance: readExtraString(channelState, "balance", existing.balance),
+          totalClaimed: readExtraString(channelState, "totalClaimed", existing.totalClaimed),
           withdrawRequestedAt: readExtraNumber(
             channelState,
             "withdrawRequestedAt",
-            current.withdrawRequestedAt,
+            existing.withdrawRequestedAt,
           ),
-          refundNonce: readExtraNumber(channelState, "refundNonce", current.refundNonce),
+          refundNonce: readExtraNumber(channelState, "refundNonce", existing.refundNonce),
           onchainSyncedAt: now,
           lastRequestTimestamp: now,
         };
-      })
-      .catch((error: unknown) => {
-        throw new AfterSettleAbortError(
-          Errors.ErrVoucherStoreUnavailable,
-          error instanceof Error ? error.message : String(error),
-        );
       });
-    if (updateResult.status === "updated" && updateResult.channel) {
-      scheme.rememberChannelSnapshot(paymentPayload, updateResult.channel);
-      return;
+      switch (updateResult.status) {
+        case "updated":
+          if (updateResult.channel) {
+            scheme.rememberChannelSnapshot(paymentPayload, updateResult.channel);
+          } else {
+            abortReason = Errors.ErrChannelBusy;
+          }
+          break;
+        case "unchanged":
+        case "conflict":
+        case "deleted":
+          abortReason = missingRow ? Errors.ErrMissingChannel : Errors.ErrChannelBusy;
+          break;
+        default: {
+          const exhaustive: never = updateResult.status;
+          throw exhaustive;
+        }
+      }
+    } catch (err) {
+      rethrowLockImplementationError(err);
+      abortReason = Errors.ErrVoucherStoreUnavailable;
+      abortMessage = err instanceof Error ? err.message : String(err);
+    } finally {
+      if (hold === "self") {
+        await scheme.releasePendingRequest(paymentPayload);
+      }
     }
-    scheme.takeRequestContext(paymentPayload);
-    throw new AfterSettleAbortError(missingRow ? Errors.ErrMissingChannel : Errors.ErrChannelBusy);
+    if (abortReason) {
+      throw new AfterSettleAbortError(abortReason, abortMessage);
+    }
   }
 }
 
@@ -407,14 +497,6 @@ export async function handleEnrichSettlementResponse(
     return;
   }
 
-  if (isBatchSettlementRefundPayload(raw)) {
-    return {
-      channelState: {
-        chargedCumulativeAmount: channel.chargedCumulativeAmount,
-      },
-    };
-  }
-
   if (isBatchSettlementDepositPayload(raw)) {
     return {
       channelState: {
@@ -423,6 +505,7 @@ export async function handleEnrichSettlementResponse(
       chargedAmount: ctx.requirements.amount,
     };
   }
+
   return {
     channelState: {
       chargedCumulativeAmount: channel.chargedCumulativeAmount,

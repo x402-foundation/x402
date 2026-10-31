@@ -1,10 +1,16 @@
-import { describe, it, expect } from "vitest";
-import { decodeAbiParameters } from "viem";
+import { describe, it, expect, vi } from "vitest";
+import { concat, decodeAbiParameters, getAddress, slice } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import {
   channelIdBindingError,
   computeChannelId as computeChannelIdForNetwork,
   isCanonicalChannelId,
   normalizeChannelId,
+  normalizeChannelSalt,
+  packRefundAuthorizerSalt,
+  unpackRefundAuthorizer,
+  validateChannelConfig,
+  isOnchainStateFresh,
 } from "../../../src/batch-settlement/utils";
 import {
   buildEip2612PermitData,
@@ -14,9 +20,10 @@ import {
 } from "../../../src/batch-settlement/encoding";
 import {
   channelIdsEqual,
-  validateChannelConfig,
   erc3009AuthorizationTimeInvalidReason,
+  verifyBatchSettlementVoucherTypedData,
 } from "../../../src/batch-settlement/facilitator/utils";
+import type { FacilitatorEvmSigner } from "../../../src/signer";
 import {
   ErrChannelIdMismatch,
   ErrInvalidChannelId,
@@ -36,7 +43,12 @@ import {
   readExtraString,
   readExtraUintString,
 } from "../../../src/batch-settlement/server/utils";
-import { MIN_WITHDRAW_DELAY, MAX_WITHDRAW_DELAY } from "../../../src/batch-settlement/constants";
+import {
+  BATCH_SETTLEMENT_ADDRESS,
+  MIN_WITHDRAW_DELAY,
+  MAX_WITHDRAW_DELAY,
+} from "../../../src/batch-settlement/constants";
+import { getEvmChainId } from "../../../src/utils";
 import type { ChannelConfig } from "../../../src/batch-settlement/types";
 import type { PaymentRequirements } from "@x402/core/types";
 
@@ -69,6 +81,60 @@ function computeChannelId(
 ): `0x${string}` {
   return computeChannelIdForNetwork(config, network);
 }
+
+describe("getEvmChainId", () => {
+  it("parses eip155 chain ids and rejects other network formats", () => {
+    expect(getEvmChainId("eip155:84532")).toBe(84532);
+    expect(() => getEvmChainId("solana:mainnet")).toThrow(/Unsupported network format/);
+    expect(() => getEvmChainId("eip155:not-a-number")).toThrow(/Invalid CAIP-2 chain ID/);
+  });
+});
+
+describe("normalizeChannelSalt", () => {
+  const bytes32One = "0x0000000000000000000000000000000000000000000000000000000000000001" as const;
+
+  it("left-pads number, bigint, and short hex to the same bytes32", () => {
+    expect(normalizeChannelSalt(1)).toBe(bytes32One);
+    expect(normalizeChannelSalt(1n)).toBe(bytes32One);
+    expect(normalizeChannelSalt("0x1")).toBe(bytes32One);
+    expect(normalizeChannelSalt(bytes32One)).toBe(bytes32One);
+  });
+
+  it("rejects negative, non-integer, and oversized values", () => {
+    expect(() => normalizeChannelSalt(-1)).toThrow(/non-negative safe integer/);
+    expect(() => normalizeChannelSalt(1.5)).toThrow(/non-negative safe integer/);
+    expect(() => normalizeChannelSalt(-1n)).toThrow(/fits in 32 bytes/);
+    expect(() => normalizeChannelSalt((1n << 256n) as bigint)).toThrow(/fits in 32 bytes/);
+    expect(() => normalizeChannelSalt("0xzz")).toThrow(/0x-prefixed hex/);
+  });
+});
+
+describe("packRefundAuthorizerSalt", () => {
+  const refundAuthorizer = "0xaaaabbbbccccddddeeeeffffaaaabbbbccccdddd" as `0x${string}`;
+
+  it("packs increment-style salts from the low 96 bits", () => {
+    const a = packRefundAuthorizerSalt(
+      "0x0000000000000000000000000000000000000000000000000000000000000011",
+      refundAuthorizer,
+    );
+    const b = packRefundAuthorizerSalt(
+      "0x0000000000000000000000000000000000000000000000000000000000000012",
+      refundAuthorizer,
+    );
+    expect(a).not.toBe(b);
+    expect(a).toBe(packRefundAuthorizerSalt("0x11", refundAuthorizer));
+    expect(unpackRefundAuthorizer(a)).toBe(getAddress(refundAuthorizer));
+    expect(unpackRefundAuthorizer(b)).toBe(getAddress(refundAuthorizer));
+  });
+
+  it("keeps the first 12 bytes when the high 12 are nonzero", () => {
+    const salt =
+      "0xabc1230000000000000000000000000000000000000000000000000000000099" as `0x${string}`;
+    expect(packRefundAuthorizerSalt(salt, refundAuthorizer)).toBe(
+      concat([slice(salt, 0, 12), getAddress(refundAuthorizer)]),
+    );
+  });
+});
 
 describe("computeChannelId", () => {
   it("is deterministic for identical configs", () => {
@@ -158,6 +224,18 @@ describe("normalizeChannelId", () => {
     [`0x${"a".repeat(30)}\\${"b".repeat(32)}`],
   ])("throws ErrInvalidChannelId for %s", value => {
     expect(() => normalizeChannelId(value)).toThrow(ErrInvalidChannelId);
+  });
+});
+
+describe("isOnchainStateFresh", () => {
+  const now = 1_000_000;
+
+  it("is false when ttlMs is 0 even if the row was just synced", () => {
+    expect(isOnchainStateFresh({ onchainSyncedAt: now }, 0, now)).toBe(false);
+  });
+
+  it("is true when the sync is still inside a positive ttl", () => {
+    expect(isOnchainStateFresh({ onchainSyncedAt: now - 1_000 }, 5_000, now)).toBe(true);
   });
 });
 
@@ -447,6 +525,8 @@ describe("server extra parsers", () => {
 
     expect(readExtraNumber({ refundNonce: 3 }, "refundNonce", 0)).toBe(3);
     expect(readExtraNumber({ refundNonce: "8" }, "refundNonce", 0)).toBe(8);
+    expect(readExtraNumber({ refundNonce: "0" }, "refundNonce", 0)).toBe(0);
+    expect(readExtraNumber({ refundNonce: "0" }, "refundNonce", 4)).toBe(0);
     expect(readExtraNumber({ refundNonce: "nope" }, "refundNonce", 4)).toBe(4);
     expect(readExtraNumber({ refundNonce: true }, "refundNonce", 1)).toBe(1);
   });
@@ -535,5 +615,120 @@ describe("readExtraUintString", () => {
   it("returns undefined when the key is absent", () => {
     expect(readExtraUintString(undefined, "totalClaimed")).toBeUndefined();
     expect(readExtraUintString({}, "totalClaimed")).toBeUndefined();
+  });
+});
+
+describe("verifyBatchSettlementVoucherTypedData", () => {
+  const CHANNEL_ID = `0x${"11".repeat(32)}` as `0x${string}`;
+  const AUTHORIZER = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as `0x${string}`;
+
+  it("returns false when ECDSA recovery fails on malformed signature bytes", async () => {
+    const signer: FacilitatorEvmSigner = {
+      getAddresses: () => [AUTHORIZER],
+      readContract: vi.fn(),
+      verifyTypedData: vi.fn(),
+      writeContract: vi.fn(),
+      sendTransaction: vi.fn(),
+      waitForTransactionReceipt: vi.fn(),
+      getCode: vi.fn(),
+    };
+    const ok = await verifyBatchSettlementVoucherTypedData(
+      signer,
+      {
+        channelId: CHANNEL_ID,
+        maxClaimableAmount: "1000",
+        payerAuthorizer: AUTHORIZER,
+        payer: AUTHORIZER,
+        signature: "0x00",
+      },
+      84532,
+    );
+    expect(ok).toBe(false);
+  });
+
+  it("returns true when the voucher signature matches payerAuthorizer", async () => {
+    const account = privateKeyToAccount(
+      "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a",
+    );
+    const signature = await account.signTypedData({
+      domain: {
+        name: "x402 Batch Settlement",
+        version: "1",
+        chainId: 84532,
+        verifyingContract: getAddress(BATCH_SETTLEMENT_ADDRESS),
+      },
+      types: {
+        Voucher: [
+          { name: "channelId", type: "bytes32" },
+          { name: "maxClaimableAmount", type: "uint128" },
+        ],
+      },
+      primaryType: "Voucher",
+      message: { channelId: CHANNEL_ID, maxClaimableAmount: 1000n },
+    });
+    const signer: FacilitatorEvmSigner = {
+      getAddresses: () => [account.address],
+      readContract: vi.fn(),
+      verifyTypedData: vi.fn(),
+      writeContract: vi.fn(),
+      sendTransaction: vi.fn(),
+      waitForTransactionReceipt: vi.fn(),
+      getCode: vi.fn(),
+    };
+    const ok = await verifyBatchSettlementVoucherTypedData(
+      signer,
+      {
+        channelId: CHANNEL_ID,
+        maxClaimableAmount: "1000",
+        payerAuthorizer: account.address,
+        payer: account.address,
+        signature,
+      },
+      84532,
+    );
+    expect(ok).toBe(true);
+  });
+
+  it("returns false when the recovered signer does not match payerAuthorizer", async () => {
+    const account = privateKeyToAccount(
+      "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a",
+    );
+    const signature = await account.signTypedData({
+      domain: {
+        name: "x402 Batch Settlement",
+        version: "1",
+        chainId: 84532,
+        verifyingContract: getAddress(BATCH_SETTLEMENT_ADDRESS),
+      },
+      types: {
+        Voucher: [
+          { name: "channelId", type: "bytes32" },
+          { name: "maxClaimableAmount", type: "uint128" },
+        ],
+      },
+      primaryType: "Voucher",
+      message: { channelId: CHANNEL_ID, maxClaimableAmount: 1000n },
+    });
+    const signer: FacilitatorEvmSigner = {
+      getAddresses: () => [account.address],
+      readContract: vi.fn(),
+      verifyTypedData: vi.fn(),
+      writeContract: vi.fn(),
+      sendTransaction: vi.fn(),
+      waitForTransactionReceipt: vi.fn(),
+      getCode: vi.fn(),
+    };
+    const ok = await verifyBatchSettlementVoucherTypedData(
+      signer,
+      {
+        channelId: CHANNEL_ID,
+        maxClaimableAmount: "1000",
+        payerAuthorizer: "0x0000000000000000000000000000000000000001",
+        payer: account.address,
+        signature,
+      },
+      84532,
+    );
+    expect(ok).toBe(false);
   });
 });

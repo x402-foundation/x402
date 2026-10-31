@@ -50,6 +50,8 @@ export type {
   BatchSettlementVoucherFields,
   BatchSettlementErc3009Authorization,
   BatchSettlementClaimPayload,
+  BatchSettlementEnrichedDepositPayload,
+  BatchSettlementEnrichedVoucherPayload,
   BatchSettlementEnrichedRefundPayload,
   BatchSettlementVoucherClaim,
   BatchSettlementPayload,

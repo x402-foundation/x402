@@ -57,11 +57,14 @@ function parseToolData(result: Awaited<ReturnType<typeof x402Mcp.callTool>>): un
 
 async function issueRequest(): Promise<RequestResult> {
   const result = await x402Mcp.callTool(endpointPath, {});
+  const data = parseToolData(result);
+  const success = result.paymentResponse?.success ?? !result.isError;
   return {
-    success: result.paymentResponse?.success ?? !result.isError,
-    data: parseToolData(result),
+    success,
+    data,
     status_code: result.isError ? 402 : 200,
     payment_response: result.paymentResponse,
+    ...(success ? {} : { error: `Payment failed (${result.isError ? 402 : 200}): ${JSON.stringify(data)}` }),
   };
 }
 

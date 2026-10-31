@@ -219,6 +219,8 @@ export interface TestEndpoint {
   sdks?: string[];
   /** Catalog SDKs that implement only the client role. */
   clientSdks?: string[];
+  /** Catalog SDKs that implement the facilitator role for this route. */
+  facilitatorSdks?: string[];
   /** For MCP tools: the tool name used in tools/call. Defaults to path if not specified. */
   toolName?: string;
   /** For MCP tools: expected MCP wire transport for discovery metadata. */

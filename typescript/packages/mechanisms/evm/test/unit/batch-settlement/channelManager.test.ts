@@ -8,9 +8,14 @@ import {
   type RefundResult,
 } from "../../../src/batch-settlement/server/channelManager";
 import { BatchSettlementEvmScheme } from "../../../src/batch-settlement/server/scheme";
-import { InMemoryChannelStorage, type Channel } from "../../../src/batch-settlement/server/storage";
+import {
+  InMemoryChannelStorage,
+  type Channel,
+  type ChannelLockStorage,
+} from "../../../src/batch-settlement/server/storage";
 import { computeChannelId as computeChannelIdForNetwork } from "../../../src/batch-settlement/utils";
 import type { ChannelConfig, AuthorizerSigner } from "../../../src/batch-settlement/types";
+import * as Errors from "../../../src/batch-settlement/errors";
 import type { FacilitatorClient } from "@x402/core/server";
 import type {
   PaymentPayload,
@@ -324,6 +329,18 @@ describe("BatchSettlementChannelManager — settle()", () => {
     const { manager } = buildManager({ facilitator });
     await expect(manager.settle()).rejects.toThrow(/Settle failed/);
   });
+
+  it("treats ErrNothingToSettle as a no-op instead of throwing", async () => {
+    const facilitator = buildFacilitator(async () => ({
+      success: false,
+      errorReason: Errors.ErrNothingToSettle,
+      errorMessage: "nothing to settle for receiver and token",
+      transaction: "",
+      network: NETWORK,
+    }));
+    const { manager } = buildManager({ facilitator });
+    await expect(manager.settle()).resolves.toEqual({ transaction: "" });
+  });
 });
 
 describe("BatchSettlementChannelManager — claimAndSettle()", () => {
@@ -363,6 +380,55 @@ describe("BatchSettlementChannelManager — claimAndSettle()", () => {
 });
 
 describe("BatchSettlementChannelManager — refund()", () => {
+  it("still refunds when the lock store throws", async () => {
+    const storage = new InMemoryChannelStorage();
+    const lockStorage: ChannelLockStorage = {
+      acquire: async () => true,
+      release: async () => undefined,
+      isHeld: async () => {
+        throw new Error("lock down");
+      },
+    };
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, { storage, lockStorage });
+    const facilitator = buildFacilitator();
+    const manager = new BatchSettlementChannelManager({
+      scheme,
+      facilitator,
+      receiver: RECEIVER,
+      token: TOKEN,
+      network: NETWORK,
+    });
+    const session = buildSession({ chargedCumulativeAmount: "1000", balance: "10000" });
+    await storeChannel(storage, session);
+
+    const result = await manager.refund();
+    expect(result).toEqual([{ channel: session.channelId, transaction: "0xtx" }]);
+  });
+
+  it("rejects refund when isHeld throws a TypeError", async () => {
+    const storage = new InMemoryChannelStorage();
+    const lockStorage: ChannelLockStorage = {
+      acquire: async () => true,
+      release: async () => undefined,
+      isHeld: async () => {
+        throw new TypeError("corrupt hold");
+      },
+    };
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, { storage, lockStorage });
+    const facilitator = buildFacilitator();
+    const manager = new BatchSettlementChannelManager({
+      scheme,
+      facilitator,
+      receiver: RECEIVER,
+      token: TOKEN,
+      network: NETWORK,
+    });
+    const session = buildSession({ chargedCumulativeAmount: "1000", balance: "10000" });
+    await storeChannel(storage, session);
+
+    await expect(manager.refund()).rejects.toThrow(TypeError);
+  });
+
   it("returns no channels when storage is empty", async () => {
     const { manager, facilitator } = buildManager();
     const result = await manager.refund();
@@ -370,13 +436,12 @@ describe("BatchSettlementChannelManager — refund()", () => {
     expect(facilitator.settle).not.toHaveBeenCalled();
   });
 
-  it("filters by provided channel ids (case-insensitive)", async () => {
+  it("refunds remaining escrow", async () => {
     const { manager, storage, facilitator } = buildManager();
     const session = buildSession({ chargedCumulativeAmount: "1000", balance: "10000" });
     await storeChannel(storage, session);
 
-    const idUpper = session.channelId.toUpperCase().replace("0X", "0x");
-    const result = await manager.refund([idUpper]);
+    const result = await manager.refund();
 
     expect(result).toEqual([{ channel: session.channelId, transaction: "0xtx" }]);
     expect(facilitator.settle).toHaveBeenCalledTimes(1);
@@ -424,6 +489,22 @@ describe("BatchSettlementChannelManager — refund()", () => {
     for (const { channel } of result) {
       expect(await storage.get(channel)).toBeUndefined();
     }
+  });
+
+  it("refundIdleChannels skips channels whose escrow balance is already zero", async () => {
+    const { manager, storage } = buildManager();
+    await storeChannel(
+      storage,
+      buildSession({
+        balance: "0",
+        chargedCumulativeAmount: "0",
+        totalClaimed: "0",
+        lastRequestTimestamp: Date.now() - 120_000,
+      }),
+    );
+
+    const results = await manager.refundIdleChannels({ idleSecs: 60 });
+    expect(results).toEqual([]);
   });
 
   it("refundIdleChannels only refunds channels idle long enough", async () => {
@@ -788,5 +869,68 @@ describe("BatchSettlementChannelManager — auto-loop tick policies", () => {
 
     await manager.stop();
     expect(onError).toHaveBeenCalled();
+  });
+});
+
+describe("BatchSettlementChannelManager — facilitator-managed mode", () => {
+  function buildManagedManager(opts?: { facilitator?: FakeFacilitator }): {
+    manager: BatchSettlementChannelManager;
+    facilitator: FakeFacilitator;
+    storage: InMemoryChannelStorage;
+  } {
+    const storage = new InMemoryChannelStorage();
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, {
+      voucherStoreMode: "facilitator",
+      storage,
+    });
+    const facilitator = opts?.facilitator ?? buildFacilitator();
+    const manager = new BatchSettlementChannelManager({
+      scheme,
+      facilitator,
+      receiver: RECEIVER,
+      token: TOKEN,
+      network: NETWORK,
+    });
+    return { manager, facilitator, storage };
+  }
+
+  it("allows claim from the replica", async () => {
+    const { manager, storage, facilitator } = buildManagedManager();
+    const session = buildSession({ chargedCumulativeAmount: "5000", totalClaimed: "0" });
+    await storeChannel(storage, session);
+
+    const results = await manager.claim();
+    expect(results).toHaveLength(1);
+    expect(facilitator.settle).toHaveBeenCalledTimes(1);
+    const [paymentPayload] = facilitator.settle.mock.calls[0];
+    expect((paymentPayload.payload as Record<string, unknown>).type).toBe("claim");
+  });
+
+  it("throws on refund()", async () => {
+    const { manager } = buildManagedManager();
+    await expect(manager.refund()).rejects.toThrow(
+      "cooperative refunds are client-initiated in facilitator-managed mode",
+    );
+  });
+
+  it("throws on refundIdleChannels()", async () => {
+    const { manager } = buildManagedManager();
+    await expect(manager.refundIdleChannels({ idleSecs: 60 })).rejects.toThrow(
+      "cooperative refunds are client-initiated in facilitator-managed mode",
+    );
+  });
+
+  it("does not start a refund interval timer", async () => {
+    vi.useFakeTimers();
+    try {
+      const setIntervalSpy = vi.spyOn(global, "setInterval");
+      const { manager } = buildManagedManager();
+
+      manager.start({ claimIntervalSecs: 1, settleIntervalSecs: 2, refundIntervalSecs: 3 });
+      expect(setIntervalSpy).toHaveBeenCalledTimes(2);
+      await manager.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
