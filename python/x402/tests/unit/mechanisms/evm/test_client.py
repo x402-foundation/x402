@@ -13,8 +13,9 @@ try:
 except ImportError:
     pytest.skip("EVM client requires eth_account", allow_module_level=True)
 
+from x402 import x402ClientSync
 from x402.extensions.erc20_approval_gas_sponsoring import ERC20_APPROVAL_GAS_SPONSORING_KEY
-from x402.mechanisms.evm.exact import ExactEvmClientScheme
+from x402.mechanisms.evm.exact import ExactEvmClientScheme, register_exact_evm_client
 from x402.mechanisms.evm.signer import RPCChainConfig, RPCConfig, _reset_sponsoring_warnings
 from x402.mechanisms.evm.signers import EthAccountSigner
 from x402.mechanisms.evm.upto import UptoEvmClientScheme
@@ -568,3 +569,28 @@ class TestAllowanceShortCircuit:
         assert allowance_rpc_server.eth_calls == want_rpc_calls
         assert signer.reads == want_reads
         assert bool(_sponsoring_warnings(caplog)) is want_warning
+
+
+def test_register_exact_evm_client_reads_allowance_over_rpc_config(allowance_rpc_server, caplog):
+    _reset_sponsoring_warnings()
+    signer = _ProbeAllowanceSigner(1_000_000, False)
+    registered = x402ClientSync()
+    register_exact_evm_client(
+        registered,
+        signer,
+        config=RPCConfig(rpc_url=allowance_rpc_server.url),
+    )
+    scheme = registered._schemes["eip155:*"]["exact"]
+    advertised = {ERC20_APPROVAL_GAS_SPONSORING_KEY: {}}
+
+    with caplog.at_level("WARNING", logger="x402.mechanisms.evm.signer"):
+        result = scheme.create_payment_payload(
+            _permit2_requirements(network="eip155:8453"),
+            advertised,
+        )
+
+    assert "__extensions" not in result
+    assert signer.signed_transactions == 0
+    assert signer.reads == 0
+    assert allowance_rpc_server.eth_calls == 1
+    assert _sponsoring_warnings(caplog) == []
