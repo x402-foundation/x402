@@ -79,6 +79,11 @@ type BatchSettlementEvmSchemeOptions struct {
 	PayerAuthorizer string
 	// VoucherSigner is an optional separate key for signing vouchers.
 	VoucherSigner evm.ClientEvmSigner
+	// RPCURL is used by the gas-sponsoring extensions for onchain reads and
+	// approval transaction fields when the signer cannot provide them.
+	RPCURL string
+	// RPCByChainID overrides RPCURL per chain ID.
+	RPCByChainID map[int64]evm.RPCChainConfig
 }
 
 // BatchSettlementEvmScheme implements SchemeNetworkClient for batched EVM payments.
@@ -105,6 +110,8 @@ func NewBatchSettlementEvmScheme(signer evm.ClientEvmSigner, config *BatchSettle
 		cfg.DepositStrategy = config.DepositStrategy
 		cfg.PayerAuthorizer = config.PayerAuthorizer
 		cfg.VoucherSigner = config.VoucherSigner
+		cfg.RPCURL = config.RPCURL
+		cfg.RPCByChainID = config.RPCByChainID
 	}
 
 	storage := cfg.Storage

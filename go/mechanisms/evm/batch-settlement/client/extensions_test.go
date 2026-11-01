@@ -4,9 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"log"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/crypto"
@@ -140,6 +145,20 @@ func extCtx(extensions map[string]interface{}) x402.PaymentPayloadContext {
 	return x402.PaymentPayloadContext{Extensions: extensions}
 }
 
+// newSignerWithoutRPC returns the standard private-key signer created without an ethclient.
+func newSignerWithoutRPC(t *testing.T) evm.ClientEvmSigner {
+	t.Helper()
+	privateKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	signer, err := evmsigners.NewClientSignerFromPrivateKey(hex.EncodeToString(crypto.FromECDSA(privateKey)))
+	if err != nil {
+		t.Fatalf("NewClientSignerFromPrivateKey failed: %v", err)
+	}
+	return signer
+}
+
 func captureBatchExtensionLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var logs bytes.Buffer
@@ -171,8 +190,9 @@ func TestCreatePaymentPayloadWarnsOnceWhenEip2612CapabilityIsMissing(t *testing.
 	if count := strings.Count(output, "[x402 batch-settlement] eip2612GasSponsoring"); count != 1 {
 		t.Fatalf("expected one warning, got %d: %q", count, output)
 	}
-	if !strings.Contains(output, "ClientEvmSignerWithReadContract") {
-		t.Fatalf("expected actionable read-capability warning, got %q", output)
+	if !strings.Contains(output, "BatchSettlementEvmSchemeOptions.RPCURL") ||
+		!strings.Contains(output, "RPCByChainID") {
+		t.Fatalf("expected actionable RPC guidance, got %q", output)
 	}
 }
 
@@ -228,15 +248,7 @@ func TestCreatePaymentPayloadDoesNotWarnWhenErc20ApprovalIsNotNeeded(t *testing.
 
 func TestCreatePaymentPayloadWarnsForStandardSignerWithoutRPC(t *testing.T) {
 	logs := captureBatchExtensionLogs(t)
-	privateKey, err := crypto.GenerateKey()
-	if err != nil {
-		t.Fatalf("GenerateKey failed: %v", err)
-	}
-	signer, err := evmsigners.NewClientSignerFromPrivateKey(hex.EncodeToString(crypto.FromECDSA(privateKey)))
-	if err != nil {
-		t.Fatalf("NewClientSignerFromPrivateKey failed: %v", err)
-	}
-	scheme := batchedExtSchemeWith(signer)
+	scheme := batchedExtSchemeWith(newSignerWithoutRPC(t))
 
 	payload, err := scheme.CreatePaymentPayload(
 		context.Background(),
@@ -470,5 +482,82 @@ func TestCreatePaymentPayload_Eip2612DeadlineFromPermit2(t *testing.T) {
 	}
 	if info.Deadline != depDeadline {
 		t.Fatalf("eip2612 deadline = %q, permit2 deadline = %q — must match", info.Deadline, depDeadline)
+	}
+}
+
+// newExtRPCServer answers eth_call with a zero uint256 (no allowance, nonce 0)
+// and eth_getTransactionCount with 0, and counts the requests.
+func newExtRPCServer(t *testing.T) (string, *atomic.Int32) {
+	t.Helper()
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		calls.Add(1)
+		resp := map[string]interface{}{"jsonrpc": "2.0", "id": req.ID}
+		switch req.Method {
+		case "eth_call":
+			resp["result"] = fmt.Sprintf("0x%064x", 0)
+		case "eth_getTransactionCount":
+			resp["result"] = "0x0"
+		default:
+			resp["error"] = map[string]interface{}{"code": -32601, "message": "method not found"}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL, &calls
+}
+
+func TestCreatePaymentPayload_RPCConfigEnablesGasSponsoringForSignerWithoutRPC(t *testing.T) {
+	configs := []struct {
+		name  string
+		apply func(opts *BatchSettlementEvmSchemeOptions, url string)
+	}{
+		{name: "RPCURL", apply: func(opts *BatchSettlementEvmSchemeOptions, url string) { opts.RPCURL = url }},
+		{name: "RPCByChainID", apply: func(opts *BatchSettlementEvmSchemeOptions, url string) {
+			opts.RPCByChainID = map[int64]evm.RPCChainConfig{evm.ChainIDBase.Int64(): {RPCURL: url}}
+		}},
+	}
+	extensions := []string{
+		eip2612gassponsor.EIP2612GasSponsoring.Key(),
+		erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key(),
+	}
+
+	for _, cfg := range configs {
+		for _, extension := range extensions {
+			t.Run(cfg.name+"/"+extension, func(t *testing.T) {
+				logs := captureBatchExtensionLogs(t)
+				url, rpcCalls := newExtRPCServer(t)
+				opts := &BatchSettlementEvmSchemeOptions{Storage: NewInMemoryClientChannelStorage()}
+				cfg.apply(opts, url)
+				scheme := NewBatchSettlementEvmScheme(newSignerWithoutRPC(t), opts)
+
+				payload, err := scheme.CreatePaymentPayload(
+					context.Background(),
+					extRequirementsPermit2(),
+					extCtx(map[string]interface{}{extension: map[string]interface{}{}}),
+				)
+				if err != nil {
+					t.Fatalf("CreatePaymentPayload failed: %v", err)
+				}
+				if _, ok := payload.Extensions[extension]; !ok {
+					t.Fatalf("expected %s extension, got %+v", extension, payload.Extensions)
+				}
+				if rpcCalls.Load() == 0 {
+					t.Fatal("expected the configured RPC endpoint to be used")
+				}
+				if strings.Contains(logs.String(), "[x402 batch-settlement] "+extension) {
+					t.Fatalf("expected no missing-capability warning, got %q", logs.String())
+				}
+			})
+		}
 	}
 }
