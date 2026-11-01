@@ -2,6 +2,7 @@ package facilitator
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"testing"
 
@@ -226,4 +227,47 @@ func TestGetTokenPayerFromTransaction_LookupProgramIndexDoesNotPanic(t *testing.
 		_, err := svm.GetTokenPayerFromTransaction(f.tx)
 		require.Error(t, err)
 	})
+}
+
+func TestExactSvmScheme_DefaultLimits(t *testing.T) {
+	signer := &mockExactSvmSigner{addresses: []solana.PublicKey{solana.NewWallet().PublicKey()}}
+	scheme := NewExactSvmScheme(signer)
+	// scheme_exact_svm.md §2.2.1 reference default and §2.1.4 signer set.
+	assert.Equal(t, uint32(400_000), scheme.maxComputeUnits())
+	assert.Equal(t, uint8(2), scheme.maxRequiredSignatures())
+
+	f := buildExactFixture(t)
+	limit := func(units uint32) solana.CompiledInstruction {
+		data := make([]byte, 5)
+		data[0] = ixSetComputeUnitLimit
+		binary.LittleEndian.PutUint32(data[1:], units)
+		return solana.CompiledInstruction{ProgramIDIndex: f.tx.Message.Instructions[0].ProgramIDIndex, Data: data}
+	}
+	require.NoError(t, scheme.verifyComputeLimitInstruction(f.tx, limit(400_000)))
+	err := scheme.verifyComputeLimitInstruction(f.tx, limit(400_001))
+	require.Error(t, err)
+	assert.Equal(t, ErrComputeLimitInstructionTooHigh, err.Error())
+
+	raised := uint32(1_400_000)
+	assert.NoError(t, NewExactSvmScheme(signer, &Config{MaxComputeUnits: &raised}).verifyComputeLimitInstruction(f.tx, limit(1_400_000)))
+}
+
+func TestExactSvmScheme_ConfiguredTransactionVersions(t *testing.T) {
+	payload, requirements, facilitatorAddr := buildValidExactSvmFixture(t)
+	signer := &mockExactSvmSigner{addresses: []solana.PublicKey{facilitatorAddr}}
+
+	narrowed := NewExactSvmScheme(signer, &Config{TransactionVersions: []int{1}})
+	assert.Equal(t, []int{1}, narrowed.GetExtra(x402.Network(svm.SolanaDevnetCAIP2))[svm.ExtraTransactionVersions])
+	_, err := narrowed.Verify(context.Background(), payload, requirements, nil)
+	var ve *x402.VerifyError
+	require.True(t, errors.As(err, &ve))
+	assert.Equal(t, ErrUnsupportedTransactionVersion, ve.InvalidReason)
+	assert.Equal(t, 0, signer.simulateCalls)
+
+	defaults := NewExactSvmScheme(signer)
+	assert.Equal(t, []int{0, 1}, defaults.GetExtra(x402.Network(svm.SolanaDevnetCAIP2))[svm.ExtraTransactionVersions])
+
+	for _, invalid := range [][]int{{}, {2}, {0, -1}} {
+		assert.Panics(t, func() { NewExactSvmScheme(signer, &Config{TransactionVersions: invalid}) })
+	}
 }

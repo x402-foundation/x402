@@ -6,7 +6,10 @@
 
 import type { Network } from "@x402/core/types";
 
-import type { FacilitatorTransactionVersion } from "../../payment-channels/facilitator";
+import {
+  type FacilitatorTransactionVersion,
+  resolveFacilitatorTransactionVersion,
+} from "../../payment-channels/facilitator";
 import {
   PaymentChannelRentCleanupManager,
   type PaymentChannelRentCleanupManagerConfig,
@@ -23,6 +26,10 @@ export {
   DEFAULT_MAX_TXS_PER_SIGNER,
   MAX_SAFE_RECLAIMS_PER_TX,
 } from "../../payment-channels/rentCleanup";
+export {
+  DEFAULT_FACILITATOR_TRANSACTION_VERSION,
+  resolveFacilitatorTransactionVersion,
+} from "../../payment-channels/facilitator";
 export type {
   RentCleanupCloseResult,
   RentCleanupOptions,
@@ -31,25 +38,6 @@ export type {
   RentDiscoveryOptions,
   RentDiscoveryResult,
 } from "../../payment-channels/rentCleanup";
-
-/** Used when `facilitatorTransactionVersion` is unset. */
-export const DEFAULT_FACILITATOR_TRANSACTION_VERSION: FacilitatorTransactionVersion = 1;
-
-/**
- * Apply the default to an unset version and throw on anything but 0 or 1.
- *
- * @param version - Configured facilitator transaction version, if any
- * @returns The version the facilitator builds its own transactions with
- */
-export function resolveFacilitatorTransactionVersion(
-  version: FacilitatorTransactionVersion | undefined,
-): FacilitatorTransactionVersion {
-  if (version === undefined) return DEFAULT_FACILITATOR_TRANSACTION_VERSION;
-  if (version !== 0 && version !== 1) {
-    throw new Error(`facilitatorTransactionVersion must be 0 or 1, received ${String(version)}`);
-  }
-  return version;
-}
 
 /** Configuration for {@link UptoSvmRentCleanupManager}. */
 export interface UptoSvmRentCleanupManagerConfig {
@@ -84,6 +72,8 @@ export interface UptoSvmRentCleanupManagerConfig {
    * v0 caps reclaim batches at `MAX_SAFE_RECLAIMS_PER_TX`. Defaults to 1.
    */
   facilitatorTransactionVersion?: FacilitatorTransactionVersion;
+  /** Treasury owner override; see `UptoSvmFacilitatorConfig.paymentChannelsTreasuryOwner`. */
+  treasuryOwner?: string | undefined;
 }
 
 /**

@@ -365,12 +365,12 @@ Register hooks for HTTP-specific payment required handling. Use cases include tr
 
 Register hooks on the facilitator for verification and settlement lifecycle events. Use cases include populating a bazaar discovery catalog, compliance checks or collecting metrics across all processed payments.
 
-* **onBeforeVerify** — Runs before payment verification. Return `{ abort: true, reason }` to reject.
-* **onAfterVerify** — Runs after verification returns a result, including when verify returns `isValid: false`. A thrown verification error uses `onVerifyFailure` instead.
-* **onVerifyFailure** — Runs when verification throws. It does not run for a result with `isValid: false` — use `onAfterVerify` for that case. Return `{ recovered: true, result }` to override.
-* **onBeforeSettle** — Runs before settlement. Return `{ abort: true, reason }` to reject.
-* **onAfterSettle** — Runs after successful settlement.
-* **onSettleFailure** — Runs on settlement failure. Return `{ recovered: true, result }` to override.
+* **onBeforeVerify** — Runs before payment verification. Return `{ abort: true, reason }` to reject. A throwing hook fails closed: verification is stopped before the scheme facilitator is called.
+* **onAfterVerify** — Runs after verification returns a result, including when verify returns `isValid: false`. A thrown verification error uses `onVerifyFailure` instead. Errors thrown by this hook are isolated: they are logged and skipped so they cannot change the verify outcome.
+* **onVerifyFailure** — Runs when verification throws. It does not run for a result with `isValid: false` — use `onAfterVerify` for that case. Return `{ recovered: true, result }` to override. Errors thrown by this hook are isolated: they are logged and skipped.
+* **onBeforeSettle** — Runs before settlement. Return `{ abort: true, reason }` to reject. A throwing hook fails closed: settlement is stopped before the scheme facilitator is called.
+* **onAfterSettle** — Runs after successful settlement. Errors thrown by this hook are isolated: they are logged and skipped so a failing observer cannot convert a successful onchain settlement into an error response or trigger `onSettleFailure`.
+* **onSettleFailure** — Runs on settlement failure. Return `{ recovered: true, result }` to override. Errors thrown by this hook are isolated: they are logged and skipped.
 
 <Tabs>
   <Tab title="TypeScript">

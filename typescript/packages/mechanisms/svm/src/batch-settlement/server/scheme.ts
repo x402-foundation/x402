@@ -43,11 +43,13 @@ import {
 import { getStablecoinTokenProgram, validateSvmAddress } from "../../utils";
 import {
   CLIENT_VOUCHER_EXPIRES_AT,
+  DYNAMIC_EXTRA_FIELDS,
   FULL_SPLIT_BPS,
   MAX_WITHDRAW_DELAY,
   MIN_WITHDRAW_DELAY,
 } from "../constants";
-import { BatchError } from "../errors";
+import { ErrUnsupportedTransactionVersion } from "../../exact/facilitator/errors";
+import { BatchError, rethrowSetupTransactionError } from "../errors";
 import { verifyBatchAuthorization } from "../authorization";
 import { signCloseAuthorization } from "../closeAuthorization";
 import { encodeReceiverBindingMemo } from "../receiverBinding";
@@ -106,7 +108,7 @@ export class BatchSvmScheme implements SchemeNetworkServer {
   readonly paymentFlows = {
     channel: { default: "authorization", supported: ["authorization"] },
   } as const satisfies Record<string, PaymentFlowConfig>;
-  readonly dynamicExtraFields = ["recentBlockhash", "recentSlot"];
+  readonly dynamicExtraFields = [...DYNAMIC_EXTRA_FIELDS];
   readonly schemeHooks: SchemeServerHooks;
 
   private readonly store: ChannelStore;
@@ -161,7 +163,7 @@ export class BatchSvmScheme implements SchemeNetworkServer {
       let voucher: BatchVoucher;
       if (raw.voucher) {
         if (BigInt(raw.voucher.maxClaimableAmount) !== cumulative) {
-          throw new Error(BatchError.CUMULATIVE_AMOUNT_MISMATCH);
+          throw new Error(BatchError.CLOSE_STATE);
         }
         voucher = raw.voucher;
       } else if (!serverMode) {
@@ -532,6 +534,16 @@ export class BatchSvmScheme implements SchemeNetworkServer {
       if (state) {
         this.assertStoredConfig(state, raw.channelConfig, ctx.requirements);
       }
+      // Once the payer has started a forced close, `settle` is unavailable, so
+      // a further paid request is refused (spec 4.5: a voucher or
+      // authorization against a Closing channel fails with channel_closing).
+      if (
+        (raw.type === "voucher" || raw.type === "authorization") &&
+        state !== undefined &&
+        (state.status === "closing" || state.closeRequestedAt !== undefined)
+      ) {
+        throw new Error(BatchError.CHANNEL_CLOSING);
+      }
       if (raw.type === "deposit" && !state) {
         const extra = ctx.requirements.extra!;
         const receiverAuthorizer = extra.receiverAuthorizer;
@@ -554,11 +566,7 @@ export class BatchSvmScheme implements SchemeNetworkServer {
             withdrawDelay: raw.channelConfig.withdrawDelay,
           });
         } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error);
-          const reason = detail.includes("receiver binding")
-            ? BatchError.RECEIVER_AUTHORIZER_MISMATCH
-            : BatchError.SETUP_TRANSACTION;
-          throw new Error(`${reason}: ${detail}`);
+          rethrowSetupTransactionError(error);
         }
       }
 
@@ -636,8 +644,12 @@ export class BatchSvmScheme implements SchemeNetworkServer {
           });
         } else {
           if (!raw.voucher) throw new Error(BatchError.VOUCHER_SIGNATURE);
+          // A cooperative close settles at the accepted cumulative; a voucher
+          // at any other watermark cannot close the channel (spec 7: close_state).
           if (BigInt(raw.voucher.maxClaimableAmount) !== state.chargedCumulativeAmount) {
-            throw new Error(BatchError.CUMULATIVE_AMOUNT_MISMATCH);
+            throw new Error(
+              `${BatchError.CLOSE_STATE}: refund voucher ${raw.voucher.maxClaimableAmount} is not the accepted cumulative ${state.chargedCumulativeAmount}`,
+            );
           }
           this.requestContexts.set(ctx.paymentPayload, { channelId });
         }
@@ -1734,5 +1746,6 @@ function parsePositiveAmount(value: string, field: string): bigint {
 function classifyError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes(CHANNEL_BUSY)) return CHANNEL_BUSY;
+  if (message.startsWith(ErrUnsupportedTransactionVersion)) return ErrUnsupportedTransactionVersion;
   return Object.values(BatchError).find(value => message.includes(value)) ?? "transaction_failed";
 }

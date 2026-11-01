@@ -1,5 +1,6 @@
 """Registration helpers for SVM exact payment schemes."""
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, TypeVar
 
 from ....schemas.helpers import matches_network_pattern
@@ -117,6 +118,7 @@ def register_exact_svm_facilitator(
     facilitator: FacilitatorT,
     signer: "FacilitatorSvmSigner",
     networks: str | list[str],
+    transaction_versions: Sequence[int] | None = None,
 ) -> FacilitatorT:
     """Register SVM exact payment schemes to x402Facilitator.
 
@@ -131,6 +133,9 @@ def register_exact_svm_facilitator(
         facilitator: x402Facilitator instance.
         signer: SVM signer for verification/settlement.
         networks: Network(s) to register.
+        transaction_versions: Transaction message versions to accept and
+            advertise, applied to both the V2 and V1 schemes. Defaults to
+            ``[0, 1]``.
 
     Returns:
         Facilitator for chaining.
@@ -141,14 +146,18 @@ def register_exact_svm_facilitator(
 
     settlement_cache = SettlementCache()
 
-    scheme = ExactSvmFacilitatorScheme(signer, settlement_cache)
+    scheme = ExactSvmFacilitatorScheme(
+        signer, settlement_cache, transaction_versions=transaction_versions
+    )
 
     if isinstance(networks, str):
         networks = [networks]
     facilitator.register(networks, scheme)
 
     # Register V1
-    v1_scheme = ExactSvmFacilitatorSchemeV1(signer, settlement_cache)
+    v1_scheme = ExactSvmFacilitatorSchemeV1(
+        signer, settlement_cache, transaction_versions=transaction_versions
+    )
     facilitator.register_v1(V1_NETWORKS, v1_scheme)
 
     return facilitator

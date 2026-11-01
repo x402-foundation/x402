@@ -1,3 +1,0 @@
-kind: added
-body: 'SVM upto: add Config.FacilitatorTransactionVersion and RentCleanupConfig.FacilitatorTransactionVersion to choose the message version (0 or 1) of the claim, cancel, and rent-cleanup transactions the facilitator builds itself. Client-built versions are unaffected. Unset keeps v1.'
-time: 2026-10-27T12:00:00Z

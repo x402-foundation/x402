@@ -1,1 +1,0 @@
-Fixed exact SVM verification to report a missing or wrong-program recipient token account after a failed simulation, while other simulation failures stay transaction_simulation_failed and settle includes the verify message.

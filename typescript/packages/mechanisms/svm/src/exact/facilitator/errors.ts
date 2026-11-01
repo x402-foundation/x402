@@ -1,3 +1,5 @@
+import type { TransactionV1BudgetViolation } from "../../transactionV1";
+
 /**
  * Named error reason constants for the exact SVM facilitator.
  *
@@ -32,6 +34,26 @@ export const ErrComputePriceInstruction =
   "invalid_exact_svm_payload_transaction_instructions_compute_price_instruction";
 export const ErrComputePriceInstructionTooHigh =
   "invalid_exact_svm_payload_transaction_instructions_compute_price_instruction_too_high";
+export const ErrTransactionSizeExceeded = "invalid_exact_svm_payload_transaction_size_exceeded";
+export const ErrLoadedAccountsDataSizeLimitMissing =
+  "invalid_exact_svm_payload_transaction_loaded_accounts_data_size_limit_missing";
+export const ErrTransactionV1ComputeBudgetInstruction =
+  "invalid_exact_svm_payload_transaction_v1_compute_budget_instruction";
+export const ErrTransactionV1HeapSize = "invalid_exact_svm_payload_transaction_v1_heap_size";
+
+/**
+ * Path 1 reasons for a version-1 config that fails sponsor policy. The compute
+ * unit limit and price codes are shared with the version-0 instruction checks.
+ */
+export const TRANSACTION_V1_BUDGET_REASONS: Record<TransactionV1BudgetViolation, string> = {
+  priority_fee_bits: ErrComputePriceInstruction,
+  heap_size: ErrTransactionV1HeapSize,
+  compute_budget_instruction: ErrTransactionV1ComputeBudgetInstruction,
+  compute_unit_limit_missing: ErrComputeLimitInstruction,
+  compute_unit_limit_too_high: ErrComputeLimitInstructionTooHigh,
+  loaded_accounts_data_size_limit_missing: ErrLoadedAccountsDataSizeLimitMissing,
+  priority_fee_too_high: ErrComputePriceInstructionTooHigh,
+};
 export const ErrNoTransferInstruction = "invalid_exact_svm_payload_no_transfer_instruction";
 export const ErrFeePayerTransferringFunds =
   "invalid_exact_svm_payload_transaction_fee_payer_transferring_funds";

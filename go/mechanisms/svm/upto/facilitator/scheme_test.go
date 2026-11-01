@@ -89,6 +89,35 @@ func TestVerifyAcceptsAWellFormedOpen(t *testing.T) {
 	assert.Zero(t, stub.simulations(), "verify does not simulate")
 }
 
+// Phase 3 step 4: the read-only verify refuses an open whose channel already
+// exists, as the deposit settle does.
+func TestVerifyRejectsAChannelThatAlreadyExists(t *testing.T) {
+	signer := newMockSigner(t, 1)
+	stub := newStubRPC(t)
+	fixture := newPaymentFixture(t, signer)
+	scheme := newScheme(signer, stub, nil)
+	stub.setAccount(fixture.channelID.String(), fixture.openChannel().encode(t))
+
+	_, err := scheme.Verify(context.Background(), fixture.payload, fixture.requirements, nil)
+	assert.Equal(t, ErrChannelAlreadyOpen, verifyErrorReason(t, err))
+	assert.Empty(t, signer.sentTransactions(), "verify is read-only and never broadcasts")
+}
+
+// The scheme types openSlot as a JSON number; the decimal string clients emit
+// and the number both verify.
+func TestVerifyAcceptsANumericOpenSlot(t *testing.T) {
+	signer := newMockSigner(t, 1)
+	fixture := newPaymentFixture(t, signer)
+	scheme := newScheme(signer, newStubRPC(t), nil)
+	slot, err := strconv.ParseUint(fixture.payload.Payload["openSlot"].(string), 10, 64)
+	require.NoError(t, err)
+
+	payload := fixture.withPayload(map[string]interface{}{"openSlot": float64(slot)})
+	response, err := scheme.Verify(context.Background(), payload, fixture.requirements, nil)
+	require.NoError(t, err)
+	assert.True(t, response.IsValid)
+}
+
 func TestVerifyRejections(t *testing.T) {
 	tests := []struct {
 		name       string

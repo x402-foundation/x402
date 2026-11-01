@@ -2457,6 +2457,53 @@ describe("upto SVM scheme", () => {
       });
     });
 
+    it.each([0, 1] as const)(
+      "simulates a version-%s open in its own message version",
+      async transactionVersion => {
+        const payer = await generateKeyPairSigner();
+        const feePayer = await generateKeyPairSigner();
+        const receiverAuthorizer = await generateKeyPairSigner();
+        const open = await buildOpenPaymentChannelTransaction({
+          authorizedSigner: receiverAuthorizer.address,
+          blockhash: { blockhash: DUMMY_BLOCKHASH, lastValidBlockHeight: 0n },
+          deposit: 1_000_000n,
+          feePayer: feePayer.address,
+          gracePeriod: WITHDRAW_DELAY,
+          mint: MINT,
+          openSlot: OPEN_SLOT,
+          payee: feePayer.address,
+          payer,
+          recipients: [{ bps: 10_000, recipient: PAY_TO }],
+          tokenProgram: TOKEN_PROGRAM_ADDRESS,
+          transactionVersion,
+        });
+        const simulateTransaction = vi.fn().mockResolvedValue(undefined);
+        await simulateOpenSettleDistribute(feePayer, { simulateTransaction }, SOLANA_DEVNET_CAIP2, {
+          openTransactionBase64: open.transaction,
+          channel: {
+            channelId: open.channelId,
+            mint: MINT,
+            network: SOLANA_DEVNET_CAIP2,
+            payee: feePayer.address,
+            payer: payer.address,
+            rentPayer: feePayer.address,
+            splits: [{ bps: 10_000, recipient: PAY_TO }],
+            tokenProgram: TOKEN_PROGRAM_ADDRESS,
+          },
+        });
+        const wire = simulateTransaction.mock.calls[0]![0] as string;
+        const compiled = getCompiledTransactionMessageDecoder().decode(
+          getTransactionDecoder().decode(getBase64Codec().encode(wire)).messageBytes,
+        );
+        expect(compiled.version).toBe(transactionVersion);
+        const programs = getInstructionsFromCompiledTransactionMessage(compiled).map(ix =>
+          ix.programAddress.toString(),
+        );
+        // Version 1 carries the budget in the message config, never as instructions.
+        expect(programs.includes(COMPUTE_BUDGET_PROGRAM_ADDRESS)).toBe(transactionVersion === 0);
+      },
+    );
+
     it("wraps a failed composite simulation as a settlement simulation error", async () => {
       const payer = await generateKeyPairSigner();
       const feePayer = await generateKeyPairSigner();
@@ -3255,7 +3302,7 @@ describe("upto SVM scheme", () => {
       const facilitator = new UptoFacilitatorScheme(toFacilitatorSvmSigner(feePayer));
       expect(facilitator.getExtra(SOLANA_DEVNET_CAIP2)).toEqual({
         feePayer: feePayer.address,
-        transactionVersions: [0],
+        transactionVersions: [0, 1],
       });
       expect(facilitator.getSigners(SOLANA_DEVNET_CAIP2)).toEqual([feePayer.address]);
     });
@@ -3292,12 +3339,12 @@ describe("upto SVM scheme", () => {
         randomSpy.mockReturnValueOnce(0);
         expect(facilitator.getExtra(SOLANA_DEVNET_CAIP2)).toEqual({
           feePayer: feePayerA.address,
-          transactionVersions: [0],
+          transactionVersions: [0, 1],
         });
         randomSpy.mockReturnValueOnce(0.99);
         expect(facilitator.getExtra(SOLANA_DEVNET_CAIP2)).toEqual({
           feePayer: feePayerB.address,
-          transactionVersions: [0],
+          transactionVersions: [0, 1],
         });
       } finally {
         randomSpy.mockRestore();

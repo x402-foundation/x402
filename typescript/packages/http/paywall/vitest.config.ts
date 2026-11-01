@@ -18,6 +18,7 @@ const NODE_TESTABLE_COVERAGE = [
   "src/evm/paywall.ts",
   "src/svm/index.ts",
   "src/svm/paywall.ts",
+  "src/svm/solana/transactionVersions.ts",
 ];
 
 export default defineConfig(({ mode }) => ({

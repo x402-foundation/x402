@@ -358,6 +358,8 @@ export interface PaymentChannelRentCleanupManagerConfig {
   signer: FacilitatorSvmSigner;
   storage: PaymentChannelStorage;
   network: Network;
+  /** Treasury owner override, as `DistributeBuildArgs.treasuryOwner`. */
+  treasuryOwner?: string | undefined;
   /**
    * `SetComputeUnitPrice` (microlamports per compute unit) attached to cleanup
    * transactions; `0` omits the instruction. Defaults to
@@ -419,6 +421,7 @@ export class PaymentChannelRentCleanupManager {
   private readonly getKitSigner: (feePayer: Address) => FacilitatorSigningCapabilities;
   private readonly storage: PaymentChannelStorage;
   private readonly network: Network;
+  private readonly treasuryOwner: string | undefined;
   private readonly computeUnitPriceMicroLamports: number | undefined;
   private readonly settleComputeUnitLimit: number | undefined;
   private readonly settleLoadedAccountsDataSizeLimit: number | undefined;
@@ -470,6 +473,7 @@ export class PaymentChannelRentCleanupManager {
     this.signer = config.signer;
     this.storage = config.storage;
     this.network = config.network;
+    this.treasuryOwner = config.treasuryOwner;
     this.computeUnitPriceMicroLamports = config.computeUnitPriceMicroLamports;
     this.settleComputeUnitLimit = config.settleComputeUnitLimit;
     this.settleLoadedAccountsDataSizeLimit = config.settleLoadedAccountsDataSizeLimit;
@@ -849,6 +853,7 @@ export class PaymentChannelRentCleanupManager {
       rentPayer: live.rentPayer,
       splits,
       tokenProgram: record.tokenProgram,
+      treasuryOwner: this.treasuryOwner,
     });
 
     let instructions: ServerInstruction[];

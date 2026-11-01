@@ -1,1 +1,0 @@
-Resource server `settle_on_cancel` now runs on every verified payment cancel, even when no before-handler settle completed, and the scheme decides from `settled_phases`. `resolve_failure_path_settlement` includes a cancel receipt only when a before-handler settlement exists.

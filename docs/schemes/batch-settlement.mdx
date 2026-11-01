@@ -763,6 +763,10 @@ Every channel is bound at open to a `receiverAuthorizer` key that signs cooperat
   </Tab>
 </Tabs>
 
+#### Batch Capacity (SVM)
+
+The facilitator builds its redemption transactions (claim, settle, seal, refund, rent cleanup) as Solana transaction v1 by default. Version 1 supports up to **18 claim channels** and **13 settle channels** per transaction; version 0 supports 4 of each. The facilitator advertises these limits as `extra.maxClaimChannels` and `extra.maxSettleChannels` in its `/supported` response, and the server uses them to size its claim and settle batches. A claim or settle request that exceeds the advertised capacity is rejected with `invalid_batch_settlement_svm_payload_type`.
+
 #### Redemption Worker (SVM)
 
 Start `BatchChannelManager` outside the request path to claim batches and distribute payouts:
@@ -814,6 +818,9 @@ Register `BatchSvmScheme` for `solana:*`. The SDK opens or tops up the channel o
     client.register("solana:*", new BatchSvmScheme(signer, {
       depositPolicy: { depositMultiplier: 5 },
       rpcUrl: process.env.SVM_RPC_URL,
+      // Optional: restrict to version-0 transactions only (e.g. for signers that
+      // cannot sign version-1). Default: build the highest version the facilitator supports.
+      // transactionVersions: [0],
     }));
     ```
 
@@ -844,6 +851,9 @@ Register `BatchSvmScheme` for `solana:*`. The SDK opens or tops up the channel o
     batch, err := batchclient.NewBatchSvmScheme(svmSigner, &batchclient.BatchSvmClientConfig{
         DepositPolicy: &batchclient.DepositPolicy{DepositMultiplier: &multiplier},
         RPCURL:        os.Getenv("SVM_RPC_URL"),
+        // Optional: restrict to version-0 transactions only (e.g. for signers that
+        // cannot sign version-1). Default: build the highest version the facilitator supports.
+        // TransactionVersions: []int{0},
     })
 
     x402Client := x402.Newx402Client().
@@ -884,6 +894,17 @@ Register `BatchSvmScheme` for `solana:*`. The SDK opens or tops up the channel o
 
     const scheme = new BatchSvmScheme(svmSigner, {
       channelStorage: new InMemoryBatchChannelStorage(),
+      // Optional: accepted transaction versions (default [0, 1]).
+      // Pass [0] to reject version-1 client transactions.
+      // transactionVersions: [0, 1],
+      // Optional: message version (0 or 1) for facilitator-built redemption transactions
+      // (claim, settle, seal, refund, rent cleanup). Default: 1.
+      // Version 1 supports up to 18 claim channels and 13 settle channels per batch;
+      // version 0 supports 4 of each.
+      // facilitatorTransactionVersion: 1,
+      // Optional: override the treasury owner the payment-channels program was built with.
+      // Useful when running against a custom or local program build.
+      // paymentChannelsTreasuryOwner: "YourTreasuryOwnerPubkey",
     });
 
     facilitator.register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", scheme);
@@ -909,6 +930,17 @@ Register `BatchSvmScheme` for `solana:*`. The SDK opens or tops up the channel o
 
     scheme := batchfacilitator.NewBatchSvmScheme(context.Background(), svmSigner, &batchfacilitator.Config{
         // ChannelStorage defaults to in-memory; inject a durable store for production
+        // Optional: accepted transaction versions (default [0, 1]).
+        // Pass []int{0} to reject version-1 client transactions.
+        // TransactionVersions: []int{0, 1},
+        // Optional: message version (0 or 1) for facilitator-built redemption transactions
+        // (claim, settle, seal, refund, rent cleanup). Default: 1.
+        // Version 1 supports up to 18 claim channels and 13 settle channels per batch;
+        // version 0 supports 4 of each.
+        // FacilitatorTransactionVersion: 1,
+        // Optional: override the treasury owner the payment-channels program was built with.
+        // Useful when running against a custom or local program build.
+        // PaymentChannelsTreasuryOwner: "YourTreasuryOwnerPubkey",
     })
 
     facilitator.Register([]x402.Network{svmmech.SolanaDevnetCAIP2}, scheme)

@@ -164,12 +164,36 @@ describe("ExactSvmScheme maxRequiredSignatures", () => {
     expect(result.invalidReason).toBe("invalid_exact_svm_payload_excessive_signers");
   });
 
-  it("does not apply a signature limit when the option is unset", async () => {
+  it("refuses a third required signer when the option is unset", async () => {
     const feePayer = await generateKeyPairSigner();
     const [a, b] = await Promise.all([generateKeyPairSigner(), generateKeyPairSigner()]);
     const transaction = await buildSignedTransactionWithSigners(feePayer.address, [a, b]);
 
     const scheme = new ExactSvmScheme(mockSigner(feePayer.address) as never);
+
+    const requirements = requirementsFor(feePayer.address);
+    const result = await scheme.verify(
+      {
+        x402Version: 2,
+        accepted: requirements,
+        payload: { transaction },
+      } as unknown as PaymentPayload,
+      requirements,
+    );
+
+    // scheme_exact_svm.md §2.1.4: only the client and the fee payer may sign.
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe("invalid_exact_svm_payload_excessive_signers");
+  });
+
+  it("applies an operator-raised signature limit", async () => {
+    const feePayer = await generateKeyPairSigner();
+    const [a, b] = await Promise.all([generateKeyPairSigner(), generateKeyPairSigner()]);
+    const transaction = await buildSignedTransactionWithSigners(feePayer.address, [a, b]);
+
+    const scheme = new ExactSvmScheme(mockSigner(feePayer.address) as never, undefined, {
+      maxRequiredSignatures: 3,
+    });
 
     const requirements = requirementsFor(feePayer.address);
     const result = await scheme.verify(

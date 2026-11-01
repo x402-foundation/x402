@@ -662,6 +662,70 @@ describe("wrapFetchWithPayment()", () => {
     expect(closed.value).toBe(true);
     expect(mockFetch).toHaveBeenCalledTimes(3);
   });
+
+  it("should pass payment-response headers to processPaymentResult", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const successResponse = createResponse(
+      200,
+      { data: "success" },
+      { "payment-response": "settled" },
+    );
+
+    mockFetch
+      .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+      .mockResolvedValueOnce(successResponse);
+    (
+      MockX402HTTPClient.prototype.processPaymentResult as ReturnType<typeof vi.fn>
+    ).mockImplementation(
+      async (
+        _payload: PaymentPayload,
+        getResponseHeader: (name: string) => string | null,
+        status: number,
+      ) => {
+        expect(status).toBe(200);
+        expect(getResponseHeader("PAYMENT-RESPONSE")).toBe("settled");
+        expect(getResponseHeader("X-MISSING")).toBeNull();
+        return { recovered: false };
+      },
+    );
+
+    await wrappedFetch("https://api.example.com", { method: "GET" });
+
+    expect(MockX402HTTPClient.prototype.processPaymentResult).toHaveBeenCalledTimes(1);
+  });
+
+  it("should pass recovery retry headers to the second processPaymentResult call", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const retryResponse = createResponse(
+      200,
+      { data: "success" },
+      { "payment-response": "recovered" },
+    );
+
+    mockFetch
+      .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+      .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+      .mockResolvedValueOnce(retryResponse);
+    (MockX402HTTPClient.prototype.processPaymentResult as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ recovered: true })
+      .mockImplementationOnce(
+        async (
+          _payload: PaymentPayload,
+          getRetryHeader: (name: string) => string | null,
+          status: number,
+        ) => {
+          expect(status).toBe(200);
+          expect(getRetryHeader("PAYMENT-RESPONSE")).toBe("recovered");
+          expect(getRetryHeader("X-MISSING")).toBeNull();
+          return { recovered: false };
+        },
+      );
+
+    const result = await wrappedFetch("https://api.example.com", { method: "GET" });
+
+    expect(result).toBe(retryResponse);
+    expect(MockX402HTTPClient.prototype.processPaymentResult).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("wrapFetchWithPaymentFromConfig()", () => {

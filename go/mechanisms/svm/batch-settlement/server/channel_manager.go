@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"sync"
 	"time"
@@ -193,7 +195,7 @@ func (m *BatchChannelManager) claim(ctx context.Context, channels []ChannelState
 		}
 	}
 	result := &passOutcome{claimed: []string{}, sealed: []string{}}
-	for _, batch := range chunk(claimable, m.batchSize()) {
+	for _, batch := range chunk(claimable, m.claimBatchSize()) {
 		if err := m.claimBatch(ctx, batch, result); err != nil {
 			return nil, nil, err
 		}
@@ -387,7 +389,7 @@ func (m *BatchChannelManager) distribute(ctx context.Context, channels []Channel
 		}
 	}
 	distributed := []string{}
-	for _, batch := range chunk(payable, m.batchSize()) {
+	for _, batch := range chunk(payable, m.settleBatchSize()) {
 		entries := make([]batchsettlement.BatchSettleChannel, 0, len(batch))
 		for _, channel := range batch {
 			entries = append(entries, batchsettlement.BatchSettleChannel{
@@ -521,18 +523,63 @@ func (m *BatchChannelManager) submit(ctx context.Context, payload any) (*x402.Se
 	}, m.config.Requirements)
 }
 
-func (m *BatchChannelManager) batchSize() int {
+// claimBatchSize is how many channels one claim request carries: the
+// facilitator's advertised maxClaimChannels (4 when absent, at most
+// V1MaxClaimChannels), lowered by
+// MaxChannelsPerBatch when set.
+func (m *BatchChannelManager) claimBatchSize() int {
+	return m.batchSize(batchsettlement.ExtraMaxClaimChannels, batchsettlement.V1MaxClaimChannels)
+}
+
+// settleBatchSize is how many channels one settle request carries: the
+// facilitator's advertised maxSettleChannels (4 when absent, at most
+// V1MaxSettleChannels), lowered by
+// MaxChannelsPerBatch when set.
+func (m *BatchChannelManager) settleBatchSize() int {
+	return m.batchSize(batchsettlement.ExtraMaxSettleChannels, batchsettlement.V1MaxSettleChannels)
+}
+
+// batchSize never exceeds ceiling, the protocol maximum: a facilitator
+// misadvertising a larger capacity would otherwise get batches the wire guard
+// rejects.
+func (m *BatchChannelManager) batchSize(capacityKey string, ceiling int) int {
+	capacity := min(advertisedCapacity(m.config.Requirements.Extra[capacityKey]), ceiling)
 	size := m.config.MaxChannelsPerBatch
-	if size == 0 {
-		size = maxChannelsPerBatch
+	if size == 0 || size > capacity {
+		size = capacity
 	}
 	if size < 1 {
 		size = 1
 	}
-	if size > maxChannelsPerBatch {
-		size = maxChannelsPerBatch
-	}
 	return size
+}
+
+// advertisedCapacity reads a copied maxClaimChannels/maxSettleChannels value.
+// Anything but a positive integer means the facilitator advertised none.
+func advertisedCapacity(value any) int {
+	var n float64
+	switch v := value.(type) {
+	case int:
+		n = float64(v)
+	case int64:
+		n = float64(v)
+	case uint32:
+		n = float64(v)
+	case float64:
+		n = v
+	case json.Number:
+		parsed, err := v.Int64()
+		if err != nil {
+			return maxChannelsPerBatch
+		}
+		n = float64(parsed)
+	default:
+		return maxChannelsPerBatch
+	}
+	if n < 1 || n != math.Trunc(n) || n > math.MaxInt32 {
+		return maxChannelsPerBatch
+	}
+	return int(n)
 }
 
 func (m *BatchChannelManager) report(err error) {

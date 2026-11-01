@@ -121,42 +121,45 @@ func TestStablecoinRegistryIsInternallyConsistent(t *testing.T) {
 func TestIsAcceptedTransactionVersion(t *testing.T) {
 	assert.True(t, IsAcceptedTransactionVersion(solana.MessageVersionLegacy), "legacy stays accepted for backward compatibility")
 	assert.True(t, IsAcceptedTransactionVersion(solana.MessageVersionV0))
+	assert.True(t, IsAcceptedTransactionVersion(solana.MessageVersionV1))
 	// Anything the verifiers do not model is rejected, whatever its number.
-	assert.False(t, IsAcceptedTransactionVersion(solana.MessageVersion(2)))
+	assert.False(t, IsAcceptedTransactionVersion(solana.MessageVersion(3)))
 	assert.False(t, IsAcceptedTransactionVersion(solana.MessageVersion(-1)))
 	assert.False(t, IsAcceptedTransactionVersion(solana.MessageVersion(127)))
 }
 
-func TestAdvertisedTransactionVersionsMarshalsToVersionZeroOnly(t *testing.T) {
+func TestAdvertisedTransactionVersionsMarshalsToVersionsZeroAndOne(t *testing.T) {
 	encoded, err := json.Marshal(map[string]interface{}{ExtraTransactionVersions: AdvertisedTransactionVersions})
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"transactionVersions":[0]}`, string(encoded), "legacy is accepted but never advertised")
+	assert.JSONEq(t, `{"transactionVersions":[0,1]}`, string(encoded), "legacy is accepted but never advertised")
 }
 
 func TestResolveTransactionVersion(t *testing.T) {
+	v0, v1 := solana.MessageVersionV0, solana.MessageVersionV1
 	tests := []struct {
 		name    string
 		extra   map[string]interface{}
+		want    solana.MessageVersion
 		wantErr bool
 	}{
-		{name: "nil extra selects v0", extra: nil},
-		{name: "absent field selects v0", extra: map[string]interface{}{"feePayer": "x"}},
+		{name: "nil extra selects v0", extra: nil, want: v0},
+		{name: "absent field selects v0", extra: map[string]interface{}{"feePayer": "x"}, want: v0},
 		{name: "malformed field is unsupported", extra: map[string]interface{}{ExtraTransactionVersions: "0"}, wantErr: true},
-		{name: "JSON-decoded [0] selects v0", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{float64(0)}}},
+		{name: "JSON-decoded [0] selects v0", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{float64(0)}}, want: v0},
 		{name: "JSON-decoded [\"legacy\",0] fails closed", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{"legacy", float64(0)}}, wantErr: true},
 		{name: "JSON-decoded [\"1\",0] fails closed", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{"1", float64(0)}}, wantErr: true},
 		{name: "JSON-decoded [null,0] fails closed", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{nil, float64(0)}}, wantErr: true},
 		{name: "JSON-decoded [0.5,0] fails closed", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{0.5, float64(0)}}, wantErr: true},
 		{name: "in-process []int{2,0} fails closed", extra: map[string]interface{}{ExtraTransactionVersions: []int{2, 0}}, wantErr: true},
-		{name: "JSON-decoded [1,0] selects v0", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{float64(1), float64(0)}}},
+		{name: "JSON-decoded [1,0] selects v1", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{float64(1), float64(0)}}, want: v1},
 		{name: "unknown version 2 fails closed", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{float64(2), float64(1), float64(0)}}, wantErr: true},
-		{name: "in-process []int{0} selects v0", extra: map[string]interface{}{ExtraTransactionVersions: []int{0}}},
-		{name: "in-process []interface{}{0} selects v0", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{0}}},
-		{name: "advertised value selects v0", extra: map[string]interface{}{ExtraTransactionVersions: AdvertisedTransactionVersions}},
+		{name: "in-process []int{0} selects v0", extra: map[string]interface{}{ExtraTransactionVersions: []int{0}}, want: v0},
+		{name: "in-process []interface{}{0} selects v0", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{0}}, want: v0},
+		{name: "advertised value selects v1", extra: map[string]interface{}{ExtraTransactionVersions: AdvertisedTransactionVersions}, want: v1},
 		{name: "[\"legacy\"] alone is unsupported: clients never build legacy", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{"legacy"}}, wantErr: true},
-		{name: "[1] alone is unsupported", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{float64(1)}}, wantErr: true},
+		{name: "[1] alone selects v1", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{float64(1)}}, want: v1},
 		{name: "[] is unsupported", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{}}, wantErr: true},
-		{name: "in-process []int{1} is unsupported", extra: map[string]interface{}{ExtraTransactionVersions: []int{1}}, wantErr: true},
+		{name: "in-process []int{1} selects v1", extra: map[string]interface{}{ExtraTransactionVersions: []int{1}}, want: v1},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -167,28 +170,29 @@ func TestResolveTransactionVersion(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, solana.MessageVersionV0, version)
+			assert.Equal(t, test.want, version)
 		})
 	}
 }
 
-func TestResolveTransactionVersionSelectsHighestMutualVersion(t *testing.T) {
-	original := ClientSupportedTransactionVersions
-	ClientSupportedTransactionVersions = []int{0, 1}
-	defer func() { ClientSupportedTransactionVersions = original }()
+func TestResolveTransactionVersionForNarrowsClientSet(t *testing.T) {
+	both := map[string]interface{}{ExtraTransactionVersions: []interface{}{float64(0), float64(1)}}
 
-	extra := map[string]interface{}{
-		ExtraTransactionVersions: []interface{}{float64(0), float64(1)},
-	}
-	selected, err := selectTransactionVersion(extra)
+	version, err := ResolveTransactionVersionFor(both, []int{0})
 	require.NoError(t, err)
-	assert.Equal(t, 1, selected)
+	assert.Equal(t, solana.MessageVersionV0, version, "a v0-only signer builds v0 even when v1 is advertised")
 
-	// Version 1 has no solana-go mapping yet, so resolution fails closed
-	// instead of handing SetVersion a value it would panic on.
-	_, err = ResolveTransactionVersion(extra)
+	version, err = ResolveTransactionVersionFor(both, nil)
+	require.NoError(t, err)
+	assert.Equal(t, solana.MessageVersionV1, version, "nil keeps the default set")
+
+	_, err = ResolveTransactionVersionFor(map[string]interface{}{ExtraTransactionVersions: []int{1}}, []int{0})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), ErrUnsupportedTransactionVersion)
+	assert.True(t, strings.HasPrefix(err.Error(), ErrUnsupportedTransactionVersion), err.Error())
+
+	_, err = ResolveTransactionVersionFor(both, []int{0, 2})
+	require.Error(t, err, "client sets other than 0/1 are rejected")
+	assert.True(t, strings.HasPrefix(err.Error(), ErrUnsupportedTransactionVersion), err.Error())
 }
 
 // Unknown version prefixes must be surfaced so verifiers can refuse them

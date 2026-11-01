@@ -150,6 +150,27 @@ describe("x402 Schemas", () => {
         const result = PaymentRequiredV1Schema.safeParse(invalid);
         expect(result.success).toBe(false);
       });
+
+      it("should accept 1024 payment options", () => {
+        const valid = {
+          ...validPaymentRequiredV1,
+          accepts: Array.from({ length: 1024 }, () => validPaymentRequirementsV1),
+        };
+        expect(PaymentRequiredV1Schema.safeParse(valid).success).toBe(true);
+      });
+
+      it("should reject an accepts list longer than 1024 without an issue per element", () => {
+        const invalid = {
+          ...validPaymentRequiredV1,
+          accepts: Array.from({ length: 5000 }, () => ({})),
+        };
+        const result = PaymentRequiredV1Schema.safeParse(invalid);
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error.issues).toHaveLength(1);
+          expect(result.error.issues[0]?.code).toBe("too_big");
+        }
+      });
     });
 
     describe("PaymentPayloadV1Schema", () => {
@@ -243,6 +264,27 @@ describe("x402 Schemas", () => {
         };
         const result = PaymentRequiredV2Schema.safeParse(invalid);
         expect(result.success).toBe(false);
+      });
+
+      it("should accept 1024 payment options", () => {
+        const valid = {
+          ...validPaymentRequiredV2,
+          accepts: Array.from({ length: 1024 }, () => validPaymentRequirementsV2),
+        };
+        expect(PaymentRequiredV2Schema.safeParse(valid).success).toBe(true);
+      });
+
+      it("should reject an accepts list longer than 1024 without an issue per element", () => {
+        const invalid = {
+          ...validPaymentRequiredV2,
+          accepts: Array.from({ length: 5000 }, () => ({})),
+        };
+        const result = PaymentRequiredV2Schema.safeParse(invalid);
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error.issues).toHaveLength(1);
+          expect(result.error.issues[0]?.code).toBe("too_big");
+        }
       });
     });
 

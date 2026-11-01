@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	solana "github.com/gagliardetto/solana-go"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels/generated"
@@ -26,6 +28,9 @@ const (
 type RefundLimits struct {
 	MaxComputeUnits             *uint32
 	MaxPriorityFeeMicroLamports *uint64
+	// TransactionVersions is the facilitator's accepted request_close message
+	// versions; nil accepts [0, 1].
+	TransactionVersions []int
 }
 
 // PreparedRefund is a validated refund. RequestClose is set only on the sponsored fallback path.
@@ -60,6 +65,17 @@ type SealDependencies struct {
 func AssertNotClosing(channel *generated.Channel, channelID string) error {
 	if generated.ChannelStatus(channel.Status) == generated.ChannelStatus_Closing {
 		return fmt.Errorf("%s: %s is closing; apply the final voucher with a seal payload", batchsettlement.ErrChannelClosing, channelID)
+	}
+	return nil
+}
+
+// AssertRefundable rejects a refund on a channel past Closing (sealed or
+// distributed) with the close code: such a channel cannot be closed again
+// (spec 4.5, 7).
+func AssertRefundable(channel *generated.Channel, channelID string) error {
+	status := generated.ChannelStatus(channel.Status)
+	if status != generated.ChannelStatus_Open && status != generated.ChannelStatus_Closing {
+		return fmt.Errorf("%s: a refund needs an Open or Closing channel; %s has status %d", batchsettlement.ErrCloseState, channelID, channel.Status)
 	}
 	return nil
 }
@@ -236,7 +252,7 @@ func PrepareRefund(
 		return PreparedRefund{}, err
 	}
 	if channel != nil && (cumulative < channel.Settlement.Settled || cumulative > channel.Deposit) {
-		return PreparedRefund{}, fmt.Errorf("%s: refund voucher must lie within settled and deposit", batchsettlement.ErrCumulativeAmountMismatch)
+		return PreparedRefund{}, fmt.Errorf("%s: refund voucher must lie within settled and deposit", batchsettlement.ErrCloseState)
 	}
 	binding, err := deps.ReadBinding(ctx, requirements.Network, channelID)
 	if err != nil {
@@ -272,7 +288,12 @@ func PrepareRefund(
 		Memo:                        terms.Memo,
 		MaxComputeUnits:             limits.MaxComputeUnits,
 		MaxPriorityFeeMicroLamports: limits.MaxPriorityFeeMicroLamports,
+		AcceptedTransactionVersions: limits.TransactionVersions,
 	}); err != nil {
+		// A version outside the accepted set keeps its own reason (spec 1.5).
+		if strings.HasPrefix(err.Error(), svm.ErrUnsupportedTransactionVersion) {
+			return PreparedRefund{}, err
+		}
 		return PreparedRefund{}, fmt.Errorf("%s: %s", batchsettlement.ErrRefundTransaction, err.Error())
 	}
 	return PreparedRefund{ChannelID: channelID, Terms: terms, RequestClose: payload.Transaction}, nil
@@ -293,6 +314,9 @@ func ValidateRefund(
 	}
 	channel, err := deps.FetchChannel(ctx, requirements.Network, prepared.ChannelID)
 	if err != nil {
+		return nil, "", BatchTerms{}, err
+	}
+	if err := AssertRefundable(channel, prepared.ChannelID); err != nil {
 		return nil, "", BatchTerms{}, err
 	}
 	if err := deps.AssertClaimChannel(channel, payload.ChannelConfig, prepared.Terms, requirements, []generated.ChannelStatus{

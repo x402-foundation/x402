@@ -3,10 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
-	"math/big"
 	"time"
-
-	"github.com/ethereum/go-ethereum/common"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/extensions/eip2612gassponsor"
@@ -112,21 +109,8 @@ func (c *UptoEvmScheme) trySignEip2612Permit(
 		return nil, nil
 	}
 
-	allowanceResult, err := readSigner.ReadContract(
-		ctx,
-		tokenAddress,
-		evm.ERC20AllowanceABI,
-		"allowance",
-		common.HexToAddress(c.signer.Address()),
-		common.HexToAddress(evm.PERMIT2Address),
-	)
-	if err == nil {
-		if allowanceBig, ok := allowanceResult.(*big.Int); ok {
-			requiredAmount, ok := new(big.Int).SetString(requirements.Amount, 10)
-			if ok && allowanceBig.Cmp(requiredAmount) >= 0 {
-				return nil, nil
-			}
-		}
+	if clientutil.HasSufficientPermit2Allowance(ctx, readSigner, tokenAddress, c.signer.Address(), requirements.Amount) {
+		return nil, nil
 	}
 
 	deadline := ""
@@ -167,23 +151,11 @@ func (c *UptoEvmScheme) trySignErc20Approval(
 
 	tokenAddress := evm.NormalizeAddress(requirements.Asset)
 
-	if readSigner, hasRead := c.signer.(evm.ClientEvmSignerWithReadContract); hasRead {
-		allowanceResult, err := readSigner.ReadContract(
-			ctx,
-			tokenAddress,
-			evm.ERC20AllowanceABI,
-			"allowance",
-			common.HexToAddress(c.signer.Address()),
-			common.HexToAddress(evm.PERMIT2Address),
-		)
-		if err == nil {
-			if allowanceBig, ok := allowanceResult.(*big.Int); ok {
-				requiredAmount, ok := new(big.Int).SetString(requirements.Amount, 10)
-				if ok && allowanceBig.Cmp(requiredAmount) >= 0 {
-					return nil, nil
-				}
-			}
-		}
+	// Skip signing when Permit2 allowance is already sufficient. Best-effort: a signer
+	// resolution error falls through to the approval path, which reports missing capability.
+	if readSigner, _ := c.resolveReadSigner(ctx, string(requirements.Network)); readSigner != nil &&
+		clientutil.HasSufficientPermit2Allowance(ctx, readSigner, tokenAddress, c.signer.Address(), requirements.Amount) {
+		return nil, nil
 	}
 
 	txSigner, err := c.resolveTxSigner(ctx, string(requirements.Network))

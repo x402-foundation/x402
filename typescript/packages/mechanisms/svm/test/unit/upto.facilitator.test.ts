@@ -363,9 +363,47 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
       isValid: true,
     });
     expect(channelMocks.broadcastOpen).not.toHaveBeenCalled();
-    expect(channelMocks.channelExists).not.toHaveBeenCalled();
+    // The channel-exists read is the deposit settle's own refusal, run read-only.
+    expect(channelMocks.channelExists).toHaveBeenCalledTimes(2);
     expect(channelMocks.fetchAndVerifyOpenChannel).not.toHaveBeenCalled();
     expect(channelMocks.simulateOpenSettleDistribute).not.toHaveBeenCalled();
+  });
+
+  it("verify accepts openSlot as the JSON number the scheme types it as", async () => {
+    const { facilitator, payload, requirements, uptoPayload } = await buildFixture();
+    channelMocks.channelExists.mockResolvedValue(false);
+    await expect(
+      facilitator.verify(
+        { ...payload, payload: { ...uptoPayload, openSlot: Number(uptoPayload.openSlot) } },
+        requirements,
+      ),
+    ).resolves.toMatchObject({ isValid: true });
+    for (const openSlot of [-1, 1.5, null]) {
+      await expect(
+        facilitator.verify({ ...payload, payload: { ...uptoPayload, openSlot } }, requirements),
+      ).resolves.toMatchObject({ invalidReason: "unsupported_payload_type", isValid: false });
+    }
+  });
+
+  it("advertises its configured accepted set and refuses an invalid one", async () => {
+    const signer = toFacilitatorSvmSigner(await generateKeyPairSigner());
+    const narrowed = new UptoSvmScheme(signer, { transactionVersions: [0] });
+    expect(narrowed.getExtra(SOLANA_DEVNET_CAIP2)).toMatchObject({ transactionVersions: [0] });
+    expect(() => new UptoSvmScheme(signer, { transactionVersions: [2] as never })).toThrow(
+      /non-empty list of 0 and\/or 1/,
+    );
+  });
+
+  it("verify refuses an open whose channel already exists", async () => {
+    const { facilitator, payload, requirements, uptoPayload } = await buildFixture();
+    channelMocks.channelExists.mockResolvedValue(true);
+
+    await expect(facilitator.verify(payload, requirements)).resolves.toEqual({
+      isValid: false,
+      invalidReason: ERR_CHANNEL_ALREADY_OPEN,
+      payer: uptoPayload.from,
+    });
+    expect(channelMocks.broadcastOpen).not.toHaveBeenCalled();
   });
 
   it("rejects maxTimeoutSeconds above maxChannelLifetimeSecs", async () => {
@@ -1450,7 +1488,7 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
       const { facilitator } = await buildFixture();
       expect(facilitator.getExtra(SOLANA_DEVNET_CAIP2)).toEqual({
         feePayer: expect.any(String),
-        transactionVersions: [0],
+        transactionVersions: [0, 1],
       });
       expect(facilitator.getExtra(SOLANA_DEVNET_CAIP2)).not.toHaveProperty("receiverAuthorizer");
 
@@ -1463,7 +1501,7 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
       expect(delegated.getExtra(SOLANA_DEVNET_CAIP2)).toEqual({
         feePayer: expect.any(String),
         receiverAuthorizer: authorizerSigner.address,
-        transactionVersions: [0],
+        transactionVersions: [0, 1],
       });
     });
 
