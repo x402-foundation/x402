@@ -373,10 +373,8 @@ describe("x402Facilitator - Lifecycle Hooks", () => {
 
       const result = await facilitator.settle(buildPaymentPayload(), buildPaymentRequirements());
 
-      // Settlement already executed onchain: the caller must still receive it.
       expect(result.success).toBe(true);
       expect(result.transaction).toBe("0xMockTx");
-      // A throwing observer is not a settlement failure.
       expect(failureHookCalled).toBe(false);
     });
 
@@ -476,13 +474,11 @@ describe("x402Facilitator - Lifecycle Hooks", () => {
           return { recovered: true, result: { isValid: true, payer: "0xRecovered" } };
         });
 
-      // A gate that could not complete its check must not authorize the payment.
       await expect(
         facilitator.verify(buildPaymentPayload(), buildPaymentRequirements()),
       ).rejects.toThrow("gate check failed");
       expect(executionOrder).toEqual([1]);
       expect(schemeVerifyCalled).toBe(false);
-      // Recovery hooks cannot override a failed gate.
       expect(failureHookCalled).toBe(false);
     });
 

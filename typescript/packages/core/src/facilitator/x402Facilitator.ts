@@ -289,9 +289,8 @@ export class x402Facilitator {
       requirements: paymentRequirements,
     };
 
-    // Execute beforeVerify hooks. This is a gate phase, so a throwing hook is
-    // deliberately not isolated: verification fails closed instead of
-    // skipping the check.
+    // This is a gate phase, so a throwing hook is deliberately not isolated:
+    // verification fails closed instead of skipping the check.
     for (const hook of this.beforeVerifyHooks) {
       const result = await hook(context);
       if (result && "abort" in result && result.abort) {
@@ -392,8 +391,6 @@ export class x402Facilitator {
       requirements: paymentRequirements,
     };
 
-    // Execute beforeSettle hooks. Gate phase, like beforeVerify: a throwing
-    // hook stops settlement before the scheme facilitator is called.
     for (const hook of this.beforeSettleHooks) {
       const result = await hook(context);
       if (result && "abort" in result && result.abort) {
@@ -480,10 +477,7 @@ export class x402Facilitator {
   }
 
   /**
-   * Logs a warning when an advisory lifecycle hook (after* or on*Failure)
-   * throws. These failures are isolated so an observer cannot alter the
-   * outcome of verification or settlement. Gate hooks (before*) are not
-   * isolated: a throw there fails closed.
+   * Logs a warning when an advisory lifecycle hook (after* or on*Failure) throws.
    *
    * @param phase - Lifecycle phase whose hook threw
    * @param error - Thrown value or rejection reason
