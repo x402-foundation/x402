@@ -10,7 +10,7 @@ import (
 )
 
 // HasSufficientPermit2Allowance returns false on a read or parse failure so
-// callers attach an approval extension instead of skipping it.
+// callers treat the allowance as insufficient.
 func HasSufficientPermit2Allowance(
 	ctx context.Context,
 	readSigner evm.ClientEvmSignerWithReadContract,
