@@ -9,6 +9,8 @@ import (
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
+// HasSufficientPermit2Allowance returns false on a read or parse failure so
+// callers attach an approval extension instead of skipping it.
 func HasSufficientPermit2Allowance(
 	ctx context.Context,
 	readSigner evm.ClientEvmSignerWithReadContract,
