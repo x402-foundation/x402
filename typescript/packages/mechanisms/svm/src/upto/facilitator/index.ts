@@ -13,6 +13,7 @@ export {
   UptoSvmScheme,
 } from "./scheme";
 export type { UptoDelegatedSettleContext, UptoSvmFacilitatorConfig } from "./scheme";
+export type { FacilitatorTransactionVersion } from "../../payment-channels/facilitator";
 export { ErrSettlementPending } from "../../exact/facilitator/errors";
 export {
   ChannelBroadcastConfirmationError as ChannelOpenConfirmationError,
@@ -30,8 +31,10 @@ export type {
 } from "../../payment-channels/storage";
 export {
   DEFAULT_ABANDON_GRACE_SECS,
+  DEFAULT_FACILITATOR_TRANSACTION_VERSION,
   DEFAULT_MAX_CLOSES_PER_RUN,
   DEFAULT_MAX_RECLAIMS_PER_TX,
+  DEFAULT_MAX_RECLAIMS_PER_TX_V1,
   DEFAULT_MAX_TXS_PER_RUN,
   DEFAULT_MAX_TXS_PER_SIGNER,
   MAX_SAFE_RECLAIMS_PER_TX,

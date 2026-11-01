@@ -317,6 +317,13 @@ export interface DistributeBuildArgs {
   splits: readonly { bps: number; recipient: string }[];
   network: string;
   programId?: Address | undefined;
+  /**
+   * Treasury owner the payment-channels program was built with. Defaults to
+   * the deployed program's owner for `network`; override it for a custom or
+   * local build (for example a localnet validator running a program built
+   * with the mainnet constant).
+   */
+  treasuryOwner?: string | undefined;
 }
 
 /**
@@ -344,7 +351,9 @@ export async function buildDistributeInstruction(
   const [payerTokenAccount] = await findAssociatedTokenPda({ mint, owner: payer, tokenProgram });
   const [payeeTokenAccount] = await findAssociatedTokenPda({ mint, owner: payee, tokenProgram });
   const [eventAuthority] = await findEventAuthorityPda({ programAddress: programId });
-  const treasury = getPaymentChannelsTreasuryOwner(args.network);
+  const treasury = args.treasuryOwner
+    ? address(args.treasuryOwner)
+    : getPaymentChannelsTreasuryOwner(args.network);
   const [treasuryTokenAccount] = await findAssociatedTokenPda({
     mint,
     owner: treasury,

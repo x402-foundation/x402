@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   x402ResourceServer,
+  AfterSettleAbortError,
+  isAfterSettleAborted,
   resolveSettlementOverrideAmount,
   type SettlePhase,
 } from "../../../src/server/x402ResourceServer";
@@ -817,6 +819,30 @@ describe("x402ResourceServer", () => {
     });
 
     describe("onAfterVerify", () => {
+      it("runs afterVerify when the facilitator returns isValid false", async () => {
+        const onVerifyFailure = vi.fn();
+        mockClient.setVerifyResponse(
+          buildVerifyResponse({ isValid: false, invalidReason: "mismatch" }),
+        );
+
+        let sawInvalidResult = false;
+        server.onAfterVerify(async context => {
+          sawInvalidResult =
+            context.result.isValid === false && context.result.invalidReason === "mismatch";
+        });
+        server.onVerifyFailure(onVerifyFailure);
+
+        const result = await server.verifyPayment(
+          buildPaymentPayload(),
+          buildPaymentRequirements(),
+        );
+
+        expect(result.isValid).toBe(false);
+        expect(result.invalidReason).toBe("mismatch");
+        expect(sawInvalidResult).toBe(true);
+        expect(onVerifyFailure).not.toHaveBeenCalled();
+      });
+
       it("should execute hook after successful verification", async () => {
         let hookExecuted = false;
         let hookResult: any;
@@ -1227,6 +1253,122 @@ describe("x402ResourceServer", () => {
         expect(hookExecuted).toBe(true);
         expect(hookResult).toBe(result);
       });
+
+      describe("AfterSettleAbortError", () => {
+        const onchainReceipt = () =>
+          buildSettleResponse({
+            transaction: "0xdeposit",
+            network: "eip155:8453" as Network,
+            payer: "0xpayer",
+            amount: "1000",
+            extra: { channelState: "kept" },
+          });
+
+        it("fails an onchain settle closed and keeps the receipt", async () => {
+          mockClient.setSettleResponse(onchainReceipt());
+          server.onAfterSettle(async () => {
+            throw new AfterSettleAbortError("voucher_store_unavailable", "store down");
+          });
+
+          const result = await server.settlePayment(
+            buildPaymentPayload(),
+            buildPaymentRequirements(),
+          );
+
+          expect(result.success).toBe(false);
+          expect(result.errorReason).toBe("voucher_store_unavailable");
+          expect(result.errorMessage).toBe("store down");
+          expect(result.transaction).toBe("0xdeposit");
+          expect(result.amount).toBe("1000");
+          expect(result.payer).toBe("0xpayer");
+          expect(result.extra).toEqual({ channelState: "kept" });
+          expect(isAfterSettleAborted(result)).toBe(true);
+        });
+
+        it("treats a same-name error from another class or copy as an abort", async () => {
+          class OtherCopyAfterSettleAbortError extends Error {
+            readonly reason = "voucher_store_unavailable";
+
+            constructor() {
+              super("store down");
+              this.name = "AfterSettleAbortError";
+            }
+          }
+          mockClient.setSettleResponse(onchainReceipt());
+          server.onAfterSettle(async () => {
+            throw new OtherCopyAfterSettleAbortError();
+          });
+
+          const result = await server.settlePayment(
+            buildPaymentPayload(),
+            buildPaymentRequirements(),
+          );
+
+          expect(result.success).toBe(false);
+          expect(result.errorReason).toBe("voucher_store_unavailable");
+          expect(result.transaction).toBe("0xdeposit");
+          expect(isAfterSettleAborted(result)).toBe(true);
+          expect(JSON.stringify(result)).not.toContain("afterSettleAborted");
+        });
+
+        it("keeps plain afterSettle errors non-fatal", async () => {
+          const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+          mockClient.setSettleResponse(onchainReceipt());
+          server.onAfterSettle(async () => {
+            throw new Error("log only");
+          });
+
+          const result = await server.settlePayment(
+            buildPaymentPayload(),
+            buildPaymentRequirements(),
+          );
+
+          expect(result.success).toBe(true);
+          expect(isAfterSettleAborted(result)).toBe(false);
+          warnSpy.mockRestore();
+        });
+
+        it("skips response enrichment for the aborted receipt", async () => {
+          const enrich = vi.fn(async () => ({ schemeField: "scheme" }));
+          mockClient.setSettleResponse(onchainReceipt());
+          server.register(
+            "test:network" as Network,
+            Object.assign(new MockSchemeNetworkServer("test-scheme"), {
+              enrichSettlementResponse: enrich,
+            }),
+          );
+          server.onAfterSettle(async () => {
+            throw new AfterSettleAbortError("channel_busy");
+          });
+
+          const result = await server.settlePayment(
+            buildPaymentPayload(),
+            buildPaymentRequirements(),
+          );
+
+          expect(result.success).toBe(false);
+          expect(result.transaction).toBe("0xdeposit");
+          expect(result.extra).toEqual({ channelState: "kept" });
+          expect(enrich).not.toHaveBeenCalled();
+        });
+
+        it("fails a beforeSettle skip result closed", async () => {
+          server.onBeforeSettle(async () => ({ skip: true, result: onchainReceipt() }));
+          server.onAfterSettle(async () => {
+            throw new AfterSettleAbortError("channel_busy");
+          });
+
+          const result = await server.settlePayment(
+            buildPaymentPayload(),
+            buildPaymentRequirements(),
+          );
+
+          expect(result.success).toBe(false);
+          expect(result.errorReason).toBe("channel_busy");
+          expect(result.transaction).toBe("0xdeposit");
+          expect(isAfterSettleAborted(result)).toBe(true);
+        });
+      });
     });
 
     describe("onSettleFailure", () => {
@@ -1393,13 +1535,13 @@ describe("x402ResourceServer", () => {
         expect(settleClient.settleCalls).toHaveLength(0);
       });
 
-      it("skips settleOnCancel when before-handler deposit did not complete", async () => {
+      it("settles on cancel without a before-handler deposit", async () => {
         const settleClient = new MockFacilitatorClient(
           buildSupportedResponse({
             kinds: [{ x402Version: 2, scheme: "upto", network: "eip155:8453" as Network }],
           }),
           undefined,
-          buildSettleResponse({ success: true, amount: "0" }),
+          buildSettleResponse({ success: true, amount: "0", transaction: "0xcancel" }),
         );
         const server = new x402ResourceServer(settleClient);
         const scheme = new MockSchemeNetworkServer("upto");
@@ -1416,8 +1558,16 @@ describe("x402ResourceServer", () => {
           buildPaymentRequirements({ scheme: "upto", network: "eip155:8453" as Network }),
         );
 
-        await cancellation.cancel({ reason: "handler_failed", responseStatus: 500 });
-        expect(settleClient.settleCalls).toHaveLength(0);
+        const cancelResult = await cancellation.cancel({
+          reason: "handler_failed",
+          responseStatus: 500,
+        });
+
+        expect(cancelResult).toEqual(
+          expect.objectContaining({ success: true, transaction: "0xcancel" }),
+        );
+        expect(settleClient.settleCalls).toHaveLength(1);
+        expect(settleClient.settleCalls[0].requirements.amount).toBe("0");
       });
 
       it("warns and preserves cancel when settleOnCancel settlement fails", async () => {
@@ -1732,7 +1882,7 @@ describe("x402ResourceServer", () => {
       const requirements = buildPaymentRequirements({
         scheme: "exact",
         network: "eip155:8453" as Network,
-        amount: "1000000",
+        amount: "10000000",
       });
 
       await server.settlePayment(payload, requirements, undefined, undefined, { amount: "$0.05" });
@@ -2768,6 +2918,38 @@ describe("x402ResourceServer", () => {
       expect(result.extensions).toEqual({ bazaar: true, customExt: "value" });
     });
 
+    it("should not mutate the extensions it was given while enriching", async () => {
+      // The same object travels on to settle() as declaredExtensions, so
+      // enrichment writing through it strips the declaration a later hook
+      // (enrichSettlementResponse) needs.
+      const server = new x402ResourceServer();
+      server.registerExtension({
+        key: "receiptish",
+        // Returns something shaped nothing like its own declaration, which is
+        // the normal case: an extension returns signed offers, not its config.
+        enrichPaymentRequiredResponse: async () => ({ info: { offers: ["signed"] } }),
+      });
+
+      const declaration = { includeTxHash: true };
+      const extensions = { receiptish: declaration };
+
+      const result = await server.createPaymentRequiredResponse(
+        [buildPaymentRequirements()],
+        { url: "https://example.com", description: "", mimeType: "" },
+        undefined,
+        extensions,
+      );
+
+      // The 402 carries the enriched value.
+      expect((result.extensions?.receiptish as { info?: unknown })?.info).toEqual({
+        offers: ["signed"],
+      });
+
+      // The caller's object is untouched.
+      expect(extensions.receiptish).toBe(declaration);
+      expect(declaration).toEqual({ includeTxHash: true });
+    });
+
     it("should omit extensions if empty", async () => {
       const server = new x402ResourceServer();
 
@@ -3361,36 +3543,70 @@ describe("resolveSettlementOverrideAmount", () => {
   });
 
   describe("dollar price format", () => {
+    // Dollar amounts resolve independently of requirements.amount, so this
+    // block uses its own, larger fixture to stay under the authorized-maximum
+    // check below regardless of decimals (unlike raw/percent, whose values
+    // are inherently derived from — or smaller than — baseRequirements.amount).
+    const dollarRequirements = buildPaymentRequirements({ amount: "10000000" });
+
     it("converts '$1.00' using provided 6 decimals", () => {
-      expect(resolveSettlementOverrideAmount("$1.00", baseRequirements, 6)).toBe("1000000");
+      expect(resolveSettlementOverrideAmount("$1.00", dollarRequirements, 6)).toBe("1000000");
     });
 
     it("converts '$0.05' using provided 6 decimals", () => {
-      expect(resolveSettlementOverrideAmount("$0.05", baseRequirements, 6)).toBe("50000");
+      expect(resolveSettlementOverrideAmount("$0.05", dollarRequirements, 6)).toBe("50000");
     });
 
     it("converts '$0.05' using 8 decimals when provided", () => {
-      expect(resolveSettlementOverrideAmount("$0.05", baseRequirements, 8)).toBe("5000000");
+      expect(resolveSettlementOverrideAmount("$0.05", dollarRequirements, 8)).toBe("5000000");
     });
 
     it("converts '$0.001' using provided 6 decimals", () => {
-      expect(resolveSettlementOverrideAmount("$0.001", baseRequirements, 6)).toBe("1000");
+      expect(resolveSettlementOverrideAmount("$0.001", dollarRequirements, 6)).toBe("1000");
     });
 
     it("converts '$0' to '0'", () => {
-      expect(resolveSettlementOverrideAmount("$0", baseRequirements, 6)).toBe("0");
+      expect(resolveSettlementOverrideAmount("$0", dollarRequirements, 6)).toBe("0");
     });
 
     it("pads and truncates toward zero without rounding", () => {
-      expect(resolveSettlementOverrideAmount("$1.0000005", baseRequirements, 6)).toBe("1000000");
-      expect(resolveSettlementOverrideAmount("$0.0000005", baseRequirements, 6)).toBe("0");
-      expect(resolveSettlementOverrideAmount("$0.0000009", baseRequirements, 6)).toBe("0");
+      expect(resolveSettlementOverrideAmount("$1.0000005", dollarRequirements, 6)).toBe("1000000");
+      expect(resolveSettlementOverrideAmount("$0.0000005", dollarRequirements, 6)).toBe("0");
+      expect(resolveSettlementOverrideAmount("$0.0000009", dollarRequirements, 6)).toBe("0");
     });
 
     it("throws when decimals are unknown", () => {
-      expect(() => resolveSettlementOverrideAmount("$1.00", baseRequirements)).toThrow(
+      expect(() => resolveSettlementOverrideAmount("$1.00", dollarRequirements)).toThrow(
         /asset decimals are unknown/,
       );
+    });
+  });
+
+  describe("authorized maximum enforcement", () => {
+    it("throws when a raw atomic-unit override exceeds requirements.amount", () => {
+      expect(() => resolveSettlementOverrideAmount("2001", baseRequirements)).toThrow(
+        /exceeds the authorized maximum/,
+      );
+    });
+
+    it("throws when a percent override resolves above 100% of requirements.amount", () => {
+      expect(() => resolveSettlementOverrideAmount("500%", baseRequirements)).toThrow(
+        /exceeds the authorized maximum/,
+      );
+    });
+
+    it("throws when a dollar override resolves above requirements.amount", () => {
+      const reqs = buildPaymentRequirements({ amount: "999999" });
+      expect(() => resolveSettlementOverrideAmount("$1.00", reqs, 6)).toThrow(
+        /exceeds the authorized maximum/,
+      );
+    });
+
+    it("does not throw when the resolved amount equals requirements.amount exactly", () => {
+      expect(() => resolveSettlementOverrideAmount("100%", baseRequirements)).not.toThrow();
+      expect(() =>
+        resolveSettlementOverrideAmount(baseRequirements.amount, baseRequirements),
+      ).not.toThrow();
     });
   });
 });

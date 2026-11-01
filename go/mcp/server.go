@@ -74,7 +74,7 @@ func NewPaymentWrapper(server *x402.X402ResourceServer, config PaymentWrapperCon
 //  7. OnBeforeExecution hook (if configured)
 //  8. Executes the original handler
 //  9. OnAfterExecution hook (if configured), including IsError results
-//  10. On handler throw / IsError, Cancel and attach failure-path payment-response
+//  10. On handler throw / IsError, Cancel and attach failure-path payment-response when present
 //  11. Settles after the handler when the flow requires it (else echoes before-handler settle)
 //  12. OnAfterSettlement hook (if configured)
 //  13. Returns result with settlement info in _meta
@@ -161,8 +161,8 @@ func (w *PaymentWrapper) Wrap(handler ToolHandler) ToolHandler {
 				return w.settlementFailedResult(toolName, "Settlement failed"), nil
 			}
 			if !settleResp.Success {
-				return w.settlementFailedResult(
-					toolName, fmt.Sprintf("Settlement failed: %s", settleResp.ErrorReason)), nil
+				return w.settlementFailedResultWithReceipt(
+					toolName, fmt.Sprintf("Settlement failed: %s", settleResp.ErrorReason), settleResp), nil
 			}
 			beforeHandlerSettlement = &x402.CompletedSettlement{
 				Phase:        x402.SettlePhaseBeforeHandler,
@@ -194,6 +194,7 @@ func (w *PaymentWrapper) Wrap(handler ToolHandler) ToolHandler {
 		// Execute the original handler
 		result, err := handler(ctx, request)
 		if err != nil {
+			log.Printf("[x402] MCP handler error: %v", err)
 			cancelSettlement := dispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
 				Reason: x402.CancellationReasonHandlerThrew,
 				Err:    err,
@@ -201,10 +202,10 @@ func (w *PaymentWrapper) Wrap(handler ToolHandler) ToolHandler {
 			receipt := x402.BuildFailurePathSettlementResponse(
 				cancelSettlement, beforeHandlerSettlement, &payload,
 			)
-			if receipt != nil {
-				return w.internalServerErrorResult(receipt), nil
+			if receipt == nil {
+				return nil, err
 			}
-			return nil, err
+			return w.internalServerErrorResult(receipt), nil
 		}
 
 		// OnAfterExecution hook (including IsError results; skipped on handler throw)
@@ -272,8 +273,8 @@ func (w *PaymentWrapper) settlePaymentResult(
 			return w.settlementFailedResult(hookCtx.ToolName, "Settlement failed"), nil
 		}
 		if !settleResp.Success {
-			return w.settlementFailedResult(
-				hookCtx.ToolName, fmt.Sprintf("Settlement failed: %s", settleResp.ErrorReason)), nil
+			return w.settlementFailedResultWithReceipt(
+				hookCtx.ToolName, fmt.Sprintf("Settlement failed: %s", settleResp.ErrorReason), settleResp), nil
 		}
 	}
 
@@ -419,6 +420,16 @@ func (w *PaymentWrapper) paymentRequiredResult(toolName, errorMsg string, payloa
 // (structuredContent + content[0].text + isError: true).
 func (w *PaymentWrapper) settlementFailedResult(toolName, errorMsg string) *mcp.CallToolResult {
 	return w.paymentRequiredResult(toolName, errorMsg, nil)
+}
+
+// settlementFailedResultWithReceipt is settlementFailedResult, plus the settle
+// receipt in _meta when an afterSettle abort failed an onchain settle.
+func (w *PaymentWrapper) settlementFailedResultWithReceipt(toolName, errorMsg string, settleResp *x402.SettleResponse) *mcp.CallToolResult {
+	result := w.settlementFailedResult(toolName, errorMsg)
+	if settleResp.AfterSettleAborted {
+		result.Meta = mcp.Meta{PaymentResponseMetaKey: settleResp}
+	}
+	return result
 }
 
 // internalServerErrorResult returns a generic internal error, optionally echoing

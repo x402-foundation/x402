@@ -22,10 +22,19 @@ import (
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
+// DefaultFacilitatorTransactionVersion is used when Config.FacilitatorTransactionVersion
+// is unset.
+const DefaultFacilitatorTransactionVersion = paymentchannels.FacilitatorTransactionVersion1
+
 // Config is the optional configuration of the batch-settlement SVM facilitator.
 type Config struct {
-	PendingSettlementStore  PendingSettlementStore
-	OnDistributionConfirmed OnDistributionConfirmed
+	// PaymentChannelsTreasuryOwner overrides the treasury owner the
+	// payment-channels program was built with, used to derive the treasury
+	// token account distribute pays. The zero key uses the deployed program's
+	// owner for the requirement's network; set it for a custom or local build.
+	PaymentChannelsTreasuryOwner solana.PublicKey
+	PendingSettlementStore       PendingSettlementStore
+	OnDistributionConfirmed      OnDistributionConfirmed
 	// ChannelStorage is the one channel store for every use case: the lifecycle
 	// index, the receiver-authorizer binding, the delegated caller identity,
 	// and rent cleanup. Unset uses one in-memory instance of this same store.
@@ -37,6 +46,13 @@ type Config struct {
 	MaxPriorityFeeMicroLamports *uint64
 	MaxComputeUnits             *uint32
 	MaxRequiredSignatures       *int
+	// TransactionVersions is the set of message versions this facilitator
+	// accepts for client-built setup transactions (open, top_up,
+	// request_close) and advertises as extra.transactionVersions. Any other
+	// version is rejected with unsupported_transaction_version before any
+	// instruction is inspected; legacy is accepted exactly when 0 is. Nil
+	// means [0, 1].
+	TransactionVersions []int
 	// ReceiverBindingHistoryReader is the optional archive-RPC fallback for a
 	// channel row with no receiver-authorizer binding. A binding read from
 	// history is written back when the row is absent. Nil leaves history off;
@@ -46,6 +62,14 @@ type Config struct {
 	// only when ResolveCallerIdentity is set. The identity is written on
 	// ChannelStorage, the same store as every other channel write.
 	DelegatedReceiverAuth *DelegatedReceiverAuth
+	// FacilitatorTransactionVersion is the message version (0 or 1) of the
+	// claim, settle, seal, refund, and rent-cleanup transactions the
+	// facilitator builds and signs itself. It does not affect which
+	// client-built versions are accepted. Unset defaults to
+	// DefaultFacilitatorTransactionVersion; any other value panics. Version 0,
+	// for a network without transaction v1 (SIMD-0385), lowers the advertised
+	// maxClaimChannels and maxSettleChannels to 4.
+	FacilitatorTransactionVersion *int
 }
 
 type schemeHooks struct {
@@ -73,6 +97,11 @@ type BatchSvmScheme struct {
 	maxIdleSecs     int64
 	history         ReceiverBindingHistoryReader
 	delegated       *DelegatedReceiverAuth
+	// transactionVersions is the normalized Config.TransactionVersions.
+	transactionVersions []int
+	// facilitatorTransactionVersion is the resolved
+	// Config.FacilitatorTransactionVersion.
+	facilitatorTransactionVersion int
 
 	mu                sync.Mutex
 	confirmationSlots map[string]uint64
@@ -98,6 +127,11 @@ func NewBatchSvmScheme(ctx context.Context, signer svm.FacilitatorSvmSigner, con
 	if err != nil {
 		panic(err)
 	}
+	transactionVersions, err := svm.NormalizeAcceptedTransactionVersions(config.TransactionVersions)
+	if err != nil {
+		panic("BatchSvmScheme: " + err.Error())
+	}
+	facilitatorVersion := resolveFacilitatorTransactionVersion(config.FacilitatorTransactionVersion)
 	if config.ChannelStorage == nil {
 		config.ChannelStorage = paymentchannels.NewInMemoryPaymentChannelStorage()
 	}
@@ -106,19 +140,41 @@ func NewBatchSvmScheme(ctx context.Context, signer svm.FacilitatorSvmSigner, con
 		pending = NewInMemoryPendingSettlementStore()
 	}
 	scheme := &BatchSvmScheme{
-		config:            *config,
-		raw:               raw,
-		channelStorage:    config.ChannelStorage,
-		pendingStore:      pending,
-		settlementCache:   svm.NewSettlementCache(),
-		maxIdleSecs:       idle,
-		history:           config.ReceiverBindingHistoryReader,
-		delegated:         delegated,
-		confirmationSlots: map[string]uint64{},
-		now:               func() int64 { return time.Now().Unix() },
+		config:              *config,
+		raw:                 raw,
+		channelStorage:      config.ChannelStorage,
+		pendingStore:        pending,
+		settlementCache:     svm.NewSettlementCache(),
+		maxIdleSecs:         idle,
+		history:             config.ReceiverBindingHistoryReader,
+		delegated:           delegated,
+		transactionVersions: transactionVersions,
+		confirmationSlots:   map[string]uint64{},
+		now:                 func() int64 { return time.Now().Unix() },
+
+		facilitatorTransactionVersion: facilitatorVersion,
 	}
 	scheme.signer = &recordingSigner{PaymentChannelFacilitatorSigner: raw, scheme: scheme}
 	return scheme
+}
+
+// resolveFacilitatorTransactionVersion applies the default to an unset version
+// and panics on anything but 0 or 1.
+func resolveFacilitatorTransactionVersion(version *int) int {
+	if version == nil {
+		return DefaultFacilitatorTransactionVersion
+	}
+	switch *version {
+	case paymentchannels.FacilitatorTransactionVersion0, paymentchannels.FacilitatorTransactionVersion1:
+		return *version
+	default:
+		panic(fmt.Sprintf("BatchSvmScheme: facilitatorTransactionVersion must be 0 or 1, received %d", *version))
+	}
+}
+
+// buildsTransactionV0 reports whether facilitator-built redemptions use version 0.
+func (f *BatchSvmScheme) buildsTransactionV0() bool {
+	return f.facilitatorTransactionVersion == paymentchannels.FacilitatorTransactionVersion0
 }
 
 func (f *BatchSvmScheme) Scheme() string { return batchsettlement.Scheme }
@@ -134,7 +190,14 @@ func (f *BatchSvmScheme) getExtra(ctx context.Context, network x402.Network) map
 	addresses := f.raw.GetAddresses(ctx, string(network))
 	extra := map[string]any{
 		batchsettlement.ExtraFeePayer: addresses[mrand.IntN(len(addresses))].String(),
+		// Transaction message versions accepted in client-built deposit,
+		// top-up, and close transactions. Servers copy it into the 402.
+		svm.ExtraTransactionVersions: append([]int(nil), f.transactionVersions...),
 	}
+	// Redemption capacity of the message version this facilitator builds.
+	// Servers copy it and author claim/settle batches no longer than it.
+	extra[batchsettlement.ExtraMaxClaimChannels] = f.maxClaimChannels()
+	extra[batchsettlement.ExtraMaxSettleChannels] = f.maxSettleChannels()
 	if f.maxIdleSecs > 0 {
 		extra[batchsettlement.ExtraMaxIdleSecs] = f.maxIdleSecs
 	}
@@ -142,6 +205,55 @@ func (f *BatchSvmScheme) getExtra(ctx context.Context, network x402.Network) map
 		extra[batchsettlement.ExtraReceiverAuthorizer] = f.delegated.ReceiverAuthorizer
 	}
 	return extra
+}
+
+// maxClaimChannels is the claim capacity this facilitator advertises and enforces.
+func (f *BatchSvmScheme) maxClaimChannels() int {
+	if f.buildsTransactionV0() {
+		return batchsettlement.DefaultBatchChannels
+	}
+	return batchsettlement.V1MaxClaimChannels
+}
+
+// maxSettleChannels is the settle capacity this facilitator advertises and enforces.
+func (f *BatchSvmScheme) maxSettleChannels() int {
+	if f.buildsTransactionV0() {
+		return batchsettlement.DefaultBatchChannels
+	}
+	return batchsettlement.V1MaxSettleChannels
+}
+
+// redemptionOptions sizes a facilitator-built redemption. Version 1 carries a
+// compute budget sized for the batch: 25,000 units per payment-channels
+// instruction plus 25,000, never below the single-channel default and capped
+// at the runtime maximum.
+func (f *BatchSvmScheme) redemptionOptions(instructions []solana.Instruction, onPrepared func(string, string) error) paymentchannels.SubmitSettleOptions {
+	opts := paymentchannels.SubmitSettleOptions{OnPrepared: onPrepared, FacilitatorTransactionVersion: f.facilitatorTransactionVersion}
+	if f.buildsTransactionV0() {
+		return opts
+	}
+	limit := RedemptionComputeUnitLimit(instructions)
+	opts.ComputeUnitLimit = &limit
+	return opts
+}
+
+// RedemptionComputeUnitLimit is the version-1 compute unit limit for a
+// redemption carrying instructions.
+func RedemptionComputeUnitLimit(instructions []solana.Instruction) uint32 {
+	channels := 0
+	for _, instruction := range instructions {
+		if instruction.ProgramID().Equals(paymentchannels.ProgramID) {
+			channels++
+		}
+	}
+	limit := uint64(RedemptionComputeUnitsBase) + uint64(RedemptionComputeUnitsPerChannel)*uint64(channels)
+	if limit < uint64(paymentchannels.DefaultSettleComputeUnitLimit) {
+		limit = uint64(paymentchannels.DefaultSettleComputeUnitLimit)
+	}
+	if limit > MaxRedemptionComputeUnits {
+		limit = MaxRedemptionComputeUnits
+	}
+	return uint32(limit)
 }
 
 // GetSigners returns the fee payer addresses.
@@ -163,10 +275,12 @@ func (f *BatchSvmScheme) GetChannelStorage() paymentchannels.PaymentChannelStora
 func (f *BatchSvmScheme) CreateRentCleanupManager(network x402.Network) *BatchSvmRentCleanupManager {
 	idle := f.maxIdleSecs
 	return NewBatchSvmRentCleanupManager(RentCleanupConfig{
-		Signer:      f.raw,
-		Network:     string(network),
-		MaxIdleSecs: &idle,
-		Storage:     f.channelStorage,
+		Signer:                        f.raw,
+		Network:                       string(network),
+		MaxIdleSecs:                   &idle,
+		Storage:                       f.channelStorage,
+		FacilitatorTransactionVersion: &f.facilitatorTransactionVersion,
+		TreasuryOwner:                 f.config.PaymentChannelsTreasuryOwner,
 	})
 }
 
@@ -209,11 +323,8 @@ func (f *BatchSvmScheme) Verify(ctx context.Context, payload types.PaymentPayloa
 		return VerifyFailure(batchsettlement.ErrPayloadType, "", ""), nil //nolint:nilerr // a malformed payload is an invalid payment, not a transport failure
 	}
 	payer := parsed.ChannelConfig.Payer
-	if payload.Accepted.Scheme != batchsettlement.Scheme || requirements.Scheme != batchsettlement.Scheme {
-		return VerifyFailure("unsupported_scheme", payer, ""), nil
-	}
-	if payload.Accepted.Network != requirements.Network {
-		return VerifyFailure("network_mismatch", payer, ""), nil
+	if reason := EnvelopeFailure(payload.Accepted, requirements); reason != "" {
+		return VerifyFailure(reason, payer, ""), nil
 	}
 	response, err := f.verifyParsed(ctx, record, parsed, requirements)
 	if err != nil {
@@ -742,9 +853,11 @@ func (f *BatchSvmScheme) submitRedemption(ctx context.Context, feePayer, network
 		if err != nil {
 			return "", err
 		}
-		signature, err := paymentchannels.SubmitChannelTransactionWithSigner(ctx, f.raw, f.signer, feeKey, network, instructions, paymentchannels.SubmitSettleOptions{
-			OnPrepared: onPrepared,
-		})
+		opts := f.redemptionOptions(instructions, onPrepared)
+		if opts.FacilitatorTransactionVersion == paymentchannels.FacilitatorTransactionVersion1 && !paymentchannels.FacilitatorV1TransactionFits(feeKey, instructions, opts) {
+			return "", fmt.Errorf("%s: redemption does not fit one version-1 transaction (%d bytes, %d account keys, %d instructions)", batchsettlement.ErrPayloadType, solana.MaxTransactionSizeV1, solana.MaxAddressesV1, solana.MaxInstructionsV1)
+		}
+		signature, err := paymentchannels.SubmitChannelTransactionWithSigner(ctx, f.raw, f.signer, feeKey, network, instructions, opts)
 		if err != nil {
 			var simulation *paymentchannels.ChannelSimulationError
 			if errors.As(err, &simulation) {
@@ -815,14 +928,15 @@ func (f *BatchSvmScheme) distributeInstruction(ctx context.Context, channelID st
 		return nil, err
 	}
 	return paymentchannels.BuildDistributeInstruction(paymentchannels.DistributeInstructionArgs{
-		Channel:      id,
-		Payer:        channel.Payer,
-		Payee:        channel.Payee,
-		RentPayer:    channel.RentPayer,
-		Mint:         channel.Mint,
-		TokenProgram: tokenProgram,
-		Splits:       []paymentchannels.Split{{Recipient: requirements.PayTo, BPS: batchsettlement.FullSplitBPS}},
-		Network:      requirements.Network,
+		Channel:       id,
+		Payer:         channel.Payer,
+		Payee:         channel.Payee,
+		RentPayer:     channel.RentPayer,
+		Mint:          channel.Mint,
+		TokenProgram:  tokenProgram,
+		Splits:        []paymentchannels.Split{{Recipient: requirements.PayTo, BPS: batchsettlement.FullSplitBPS}},
+		Network:       requirements.Network,
+		TreasuryOwner: f.config.PaymentChannelsTreasuryOwner,
 	})
 }
 
@@ -844,15 +958,16 @@ func (f *BatchSvmScheme) defaultSealDependencies() SealDependencies {
 		ResolveDelegatedIdentity: func(ctx context.Context, settle DelegatedSettleContext) (string, error) {
 			return ResolveDelegatedIdentity(ctx, f.delegated, settle)
 		},
-		DeriveChannelID:       f.deriveChannelID,
-		FetchChannel:          f.fetchChannel,
-		ReadChannel:           f.readChannel,
-		AssertClaimChannel:    f.assertClaimChannel,
-		DistributeInstruction: f.distributeInstruction,
-		SubmitRedemption:      f.submitRedemption,
-		CompleteOrPending:     f.completeOrPending,
-		NowSeconds:            f.now,
-		SettlementCache:       f.settlementCache,
+		DeriveChannelID:         f.deriveChannelID,
+		FetchChannel:            f.fetchChannel,
+		ReadChannel:             f.readChannel,
+		AssertClaimChannel:      f.assertClaimChannel,
+		DistributeInstruction:   f.distributeInstruction,
+		SubmitRedemption:        f.submitRedemption,
+		CompleteOrPending:       f.completeOrPending,
+		NowSeconds:              f.now,
+		SettlementCache:         f.settlementCache,
+		OnDistributionConfirmed: f.config.OnDistributionConfirmed,
 	}
 }
 

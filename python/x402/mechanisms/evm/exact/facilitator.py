@@ -19,7 +19,9 @@ from ..constants import (
     ERR_FACTORY_NOT_ALLOWED,
     ERR_FAILED_TO_GET_NETWORK_CONFIG,
     ERR_FAILED_TO_VERIFY_SIGNATURE,
+    ERR_INVALID_PAYLOAD,
     ERR_INVALID_SIGNATURE,
+    ERR_INVALID_SIGNATURE_S,
     ERR_MISSING_EIP712_DOMAIN,
     ERR_NETWORK_MISMATCH,
     ERR_RECIPIENT_MISMATCH,
@@ -42,6 +44,7 @@ from ..exact.eip3009_utils import (
     classify_eip3009_signature,
     diagnose_eip3009_simulation_failure,
     execute_transfer_with_authorization,
+    is_plain_non_canonical_ecdsa_signature,
     parse_eip3009_authorization,
     parse_eip3009_transfer_error,
     simulate_eip3009_transfer_result,
@@ -54,7 +57,9 @@ from ..types import (
     ERC6492SignatureData,
     ExactEIP3009Payload,
     TransactionReceipt,
+    get_payload_payer,
     is_permit2_payload,
+    validate_exact_evm_payload,
 )
 from ..utils import (
     bytes_to_hex,
@@ -148,6 +153,14 @@ class ExactEvmScheme:
         requirements: PaymentRequirements,
         context=None,
     ) -> VerifyResponse:
+        payload_error = validate_exact_evm_payload(payload.payload)
+        if payload_error:
+            return VerifyResponse(
+                is_valid=False,
+                invalid_reason=ERR_INVALID_PAYLOAD,
+                invalid_message=payload_error,
+                payer=get_payload_payer(payload.payload),
+            )
         if is_permit2_payload(payload.payload):
             return verify_permit2(self._signer, payload, requirements, context)
         verify_result, _ = self._verify(payload, requirements, simulate=True)
@@ -270,6 +283,16 @@ class ExactEvmScheme:
 
         try:
             signature = hex_to_bytes(evm_payload.signature)
+            payer_code = self._signer.get_code(payer)
+            if is_plain_non_canonical_ecdsa_signature(signature, len(payer_code) > 0):
+                return (
+                    VerifyResponse(
+                        is_valid=False,
+                        invalid_reason=ERR_INVALID_SIGNATURE_S,
+                        payer=payer,
+                    ),
+                    None,
+                )
             classification = classify_eip3009_signature(
                 self._signer,
                 evm_payload.authorization,
@@ -278,6 +301,7 @@ class ExactEvmScheme:
                 token_address,
                 extra["name"],
                 extra["version"],
+                payer_code,
             )
             if not classification.valid and classification.is_undeployed:
                 if not has_deployment_info(classification.sig_data):
@@ -418,12 +442,23 @@ class ExactEvmScheme:
         Returns:
             SettleResponse with success, transaction, and payer.
         """
+        network = str(requirements.network)
+
+        payload_error = validate_exact_evm_payload(payload.payload)
+        if payload_error:
+            return SettleResponse(
+                success=False,
+                error_reason=ERR_INVALID_PAYLOAD,
+                error_message=payload_error,
+                network=network,
+                payer=get_payload_payer(payload.payload),
+                transaction="",
+            )
+
         if is_permit2_payload(payload.payload):
             return settle_permit2(
                 self._signer, payload, requirements, context, pending_store=self._pending_store
             )
-
-        network = str(requirements.network)
 
         # Fast path: a prior settle attempt for this exact payload already broadcast a
         # transaction whose receipt wait failed (settlement_pending). The resource server's

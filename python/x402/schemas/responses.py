@@ -86,6 +86,11 @@ class SettleResponse(BaseX402Model):
         description="Facilitator extension sidechannel; not serialized to buyers.",
     )
     extra: dict[str, Any] | None = None
+    after_settle_aborted: bool = Field(
+        default=False,
+        exclude=True,
+        description="Set when an after-settle abort failed an onchain settle; not serialized.",
+    )
 
 
 class SupportedKind(BaseX402Model):

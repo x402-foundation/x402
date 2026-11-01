@@ -15,7 +15,6 @@ import (
 
 	ag_binary "github.com/gagliardetto/binary"
 	solana "github.com/gagliardetto/solana-go"
-	computebudget "github.com/gagliardetto/solana-go/programs/compute-budget"
 
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels/generated"
@@ -161,6 +160,11 @@ type BuildOpenArgs struct {
 	// Defaults to svm.DefaultComputeUnitPriceMicrolamports when nil; 0 omits
 	// the instruction. Must not exceed svm.MaxComputeUnitPriceMicrolamports.
 	ComputeUnitPriceMicroLamports *uint64
+	// TransactionVersion is the message version to build, resolved from
+	// extra.transactionVersions via svm.ResolveTransactionVersionFor. The zero
+	// value builds version 0. Version 1 carries the compute budget in its
+	// message config and requires a non-zero ComputeUnitLimit.
+	TransactionVersion solana.MessageVersion
 }
 
 // BuiltOpen is an unsigned `open` transaction plus the channel facts the
@@ -210,35 +214,30 @@ func BuildOpenTransaction(args BuildOpenArgs) (*BuiltOpen, error) {
 		memoIxs = append(memoIxs, solana.NewInstruction(memoProgramID, solana.AccountMetaSlice{}, []byte(*args.BindingMemo)))
 	}
 
-	computeBudgetIxs, err := resolveOpenComputeBudget(args.ComputeUnitLimit, args.ComputeUnitPriceMicroLamports)
+	limit, price, err := resolveOpenComputeBudget(args.ComputeUnitLimit, args.ComputeUnitPriceMicroLamports)
 	if err != nil {
 		return nil, err
 	}
-
-	builder := solana.NewTransactionBuilder()
-	for _, ix := range computeBudgetIxs {
-		builder.AddInstruction(ix)
-	}
-	builder.AddInstruction(openIx)
-	for _, ix := range memoIxs {
-		builder.AddInstruction(ix)
-	}
-	tx, err := builder.
-		SetRecentBlockHash(args.Blockhash).
-		SetFeePayer(args.FeePayer).
-		Build()
+	version := clientTransactionVersion(args.TransactionVersion)
+	tx, err := svm.BuildClientTransaction(
+		version,
+		args.FeePayer,
+		args.Blockhash,
+		append([]solana.Instruction{openIx}, memoIxs...),
+		limit,
+		price,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build open transaction: %w", err)
 	}
-	tx.Message.SetVersion(solana.MessageVersionV0)
 	raw, err := tx.MarshalBinary()
 	if err != nil {
 		return nil, fmt.Errorf("failed to serialize open transaction: %w", err)
 	}
-	if len(raw) > maxTransactionBytes {
+	if maxBytes := svm.MaxTransactionSize(version); len(raw) > maxBytes {
 		return nil, fmt.Errorf(
 			"open transaction is %d bytes, above the %d-byte packet limit",
-			len(raw), maxTransactionBytes,
+			len(raw), maxBytes,
 		)
 	}
 
@@ -262,16 +261,78 @@ func resolveSalt(salt *uint64) (uint64, error) {
 	return binary.LittleEndian.Uint64(buf), nil
 }
 
-// resolveOpenComputeBudget builds the optional ComputeBudget prefix for a
-// client open transaction: SetComputeUnitLimit (0 omits it) followed by
-// SetComputeUnitPrice (0 omits it), in that order per spec.
-func resolveOpenComputeBudget(computeUnitLimit *uint32, computeUnitPriceMicroLamports *uint64) ([]solana.Instruction, error) {
+// decodeChannelTransaction decodes a client channel transaction and rejects a
+// message version the verifiers do not model. The version is read from the
+// raw bytes first, so a newer wire format is reported as unsupported however
+// the installed decoder handles it.
+func decodeChannelTransaction(transactionBase64, label string) (*solana.Transaction, error) {
+	return decodeAcceptedChannelTransaction(transactionBase64, label, nil)
+}
+
+// decodeAcceptedChannelTransaction is decodeChannelTransaction against a
+// facilitator's accepted version set (nil means AdvertisedTransactionVersions;
+// legacy is accepted exactly when version 0 is).
+func decodeAcceptedChannelTransaction(transactionBase64, label string, accepted []int) (*solana.Transaction, error) {
+	if version, ok := svm.PeekWireTransactionVersion(transactionBase64); ok && !svm.IsAcceptedWireTransactionVersionIn(version, accepted) {
+		return nil, unsupportedTransactionVersionError(label, version)
+	}
+	tx, err := svm.DecodeTransaction(transactionBase64)
+	if err != nil {
+		if label == "" {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%s: %w", label, err)
+	}
+	if !svm.IsAcceptedTransactionVersionIn(tx.Message.GetVersion(), accepted) {
+		return nil, unsupportedTransactionVersionError(label, svm.WireTransactionVersion(tx.Message.GetVersion()))
+	}
+	// The decoder accepts a transaction over its version's size limit (1232
+	// bytes for legacy and version 0, 4096 for version 1), which the network
+	// would drop after the sponsor co-signed it.
+	if size, limit, exceeded := svm.TransactionSizeExceeded(transactionBase64, tx.Message.GetVersion()); exceeded {
+		prefix := ""
+		if label != "" {
+			prefix = label + ": "
+		}
+		version := "legacy"
+		if wire := svm.WireTransactionVersion(tx.Message.GetVersion()); wire >= 0 {
+			version = fmt.Sprintf("%d", wire)
+		}
+		return nil, fmt.Errorf(
+			"%stransaction is %d bytes, above the %d-byte limit for version %s",
+			prefix, size, limit, version,
+		)
+	}
+	return tx, nil
+}
+
+func unsupportedTransactionVersionError(label string, version int) error {
+	if label == "" {
+		return fmt.Errorf("%s: unsupported transaction message version %d", svm.ErrUnsupportedTransactionVersion, version)
+	}
+	return fmt.Errorf("%s: %s: unsupported transaction message version %d", svm.ErrUnsupportedTransactionVersion, label, version)
+}
+
+// clientTransactionVersion maps an unset (legacy) BuildOpenArgs version to
+// version 0: clients never build legacy messages.
+func clientTransactionVersion(version solana.MessageVersion) solana.MessageVersion {
+	if version == solana.MessageVersionLegacy {
+		return solana.MessageVersionV0
+	}
+	return version
+}
+
+// resolveOpenComputeBudget validates the compute budget of a client open or
+// top_up transaction: the SetComputeUnitLimit units (0 omits it on version 0)
+// and the SetComputeUnitPrice microlamports (0 omits it). Version 1 carries
+// the same values in its message config.
+func resolveOpenComputeBudget(computeUnitLimit *uint32, computeUnitPriceMicroLamports *uint64) (uint32, uint64, error) {
 	limit := OpenDefaultComputeUnitLimit
 	if computeUnitLimit != nil {
 		limit = *computeUnitLimit
 	}
 	if limit > OpenMaxComputeUnitLimit {
-		return nil, fmt.Errorf(
+		return 0, 0, fmt.Errorf(
 			"computeUnitLimit must be in [0, %d], received %d", OpenMaxComputeUnitLimit, limit,
 		)
 	}
@@ -281,32 +342,12 @@ func resolveOpenComputeBudget(computeUnitLimit *uint32, computeUnitPriceMicroLam
 		price = *computeUnitPriceMicroLamports
 	}
 	if price > svm.MaxComputeUnitPriceMicrolamports {
-		return nil, fmt.Errorf(
+		return 0, 0, fmt.Errorf(
 			"computeUnitPriceMicroLamports must be in [0, %d], received %d",
 			svm.MaxComputeUnitPriceMicrolamports, price,
 		)
 	}
-
-	var instructions []solana.Instruction
-	if limit > 0 {
-		limitIx, err := computebudget.NewSetComputeUnitLimitInstructionBuilder().
-			SetUnits(limit).
-			ValidateAndBuild()
-		if err != nil {
-			return nil, fmt.Errorf("failed to build compute limit instruction: %w", err)
-		}
-		instructions = append(instructions, limitIx)
-	}
-	if price > 0 {
-		priceIx, err := computebudget.NewSetComputeUnitPriceInstructionBuilder().
-			SetMicroLamports(price).
-			ValidateAndBuild()
-		if err != nil {
-			return nil, fmt.Errorf("failed to build compute price instruction: %w", err)
-		}
-		instructions = append(instructions, priceIx)
-	}
-	return instructions, nil
+	return limit, price, nil
 }
 
 // FindChannelPDA derives the channel program-derived address for the given
@@ -367,6 +408,9 @@ type BuildTopUpArgs struct {
 	ComputeUnitPriceMicroLamports *uint64
 	// Program overrides the payment-channels program id. The zero key uses ProgramID.
 	Program solana.PublicKey
+	// TransactionVersion is the message version to build; the zero value
+	// builds version 0 (see BuildOpenArgs.TransactionVersion).
+	TransactionVersion solana.MessageVersion
 }
 
 // BuiltTopUp is an unsigned top_up transaction.
@@ -414,23 +458,21 @@ func BuildTopUpPaymentChannelTransaction(args BuildTopUpArgs) (*BuiltTopUp, erro
 	if err != nil {
 		return nil, err
 	}
-	computeBudgetIxs, err := resolveOpenComputeBudget(args.ComputeUnitLimit, args.ComputeUnitPriceMicroLamports)
+	limit, price, err := resolveOpenComputeBudget(args.ComputeUnitLimit, args.ComputeUnitPriceMicroLamports)
 	if err != nil {
 		return nil, err
 	}
-
-	builder := solana.NewTransactionBuilder().SetRecentBlockHash(args.Blockhash).SetFeePayer(args.FeePayer)
-	for _, ix := range computeBudgetIxs {
-		builder.AddInstruction(ix)
-	}
-	tx, err := builder.
-		AddInstruction(topUp).
-		AddInstruction(solana.NewInstruction(memoProgramID, solana.AccountMetaSlice{}, memoData)).
-		Build()
+	tx, err := svm.BuildClientTransaction(
+		clientTransactionVersion(args.TransactionVersion),
+		args.FeePayer,
+		args.Blockhash,
+		[]solana.Instruction{topUp, solana.NewInstruction(memoProgramID, solana.AccountMetaSlice{}, memoData)},
+		limit,
+		price,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build top-up transaction: %w", err)
 	}
-	tx.Message.SetVersion(solana.MessageVersionV0)
 	return &BuiltTopUp{ChannelID: args.ChannelID, Amount: args.Amount, Transaction: tx}, nil
 }
 
@@ -447,14 +489,17 @@ type VerifyTopUpExpected struct {
 	Program                     solana.PublicKey
 	MaxComputeUnits             *uint32
 	MaxPriorityFeeMicroLamports *uint64
+	// AcceptedTransactionVersions is the facilitator's accepted message
+	// versions; nil accepts AdvertisedTransactionVersions.
+	AcceptedTransactionVersions []int
 }
 
 // VerifyTopUpTransaction decodes and validates the canonical top-up transaction
 // layout and account bindings.
 func VerifyTopUpTransaction(transactionBase64 string, expected VerifyTopUpExpected) error {
-	tx, err := svm.DecodeTransaction(transactionBase64)
+	tx, err := decodeAcceptedChannelTransaction(transactionBase64, "verifyTopUpTransaction", expected.AcceptedTransactionVersions)
 	if err != nil {
-		return fmt.Errorf("verifyTopUpTransaction: %w", err)
+		return err
 	}
 	message := &tx.Message
 	if len(message.AddressTableLookups) > 0 {
@@ -603,6 +648,10 @@ type VerifyOpenExpected struct {
 	// MaxRequiredSignatures, when set, rejects transactions requiring more
 	// signatures than the operator allows.
 	MaxRequiredSignatures *int
+	// AcceptedTransactionVersions is the facilitator's accepted message
+	// versions, checked before any instruction; nil accepts
+	// AdvertisedTransactionVersions. Legacy is accepted exactly when 0 is.
+	AcceptedTransactionVersions []int
 }
 
 // VerifyOpenResult holds the channel facts extracted from a verified open.
@@ -624,9 +673,12 @@ type VerifyOpenResult struct {
 // open and drain the sponsor. Simulation cannot substitute for these checks:
 // it runs only after the signature already authorized the transaction.
 func VerifyOpenTransaction(transactionBase64 string, expected VerifyOpenExpected) (*VerifyOpenResult, error) {
-	tx, err := svm.DecodeTransaction(transactionBase64)
+	// The checks below model the legacy, v0 and v1 message layouts. Reject any
+	// other version before inspecting any instruction so version-specific
+	// policy fields cannot bypass the sponsor's limits.
+	tx, err := decodeAcceptedChannelTransaction(transactionBase64, "verifyOpenTransaction", expected.AcceptedTransactionVersions)
 	if err != nil {
-		return nil, fmt.Errorf("verifyOpenTransaction: %w", err)
+		return nil, err
 	}
 	message := &tx.Message
 
@@ -981,6 +1033,14 @@ func findCanonicalOpenInstruction(
 		maxPriorityFee = *expected.MaxPriorityFeeMicroLamports
 	}
 
+	// Version 1 carries the compute budget in its message config instead of a
+	// ComputeBudget prefix; the prefix must then be absent.
+	if message.GetVersion() == solana.MessageVersionV1 {
+		if violation := svm.ValidateTransactionV1Config(message, maxComputeUnits, maxPriorityFee); violation != svm.TransactionV1ConfigOK {
+			return empty, fmt.Errorf("verifyOpenTransaction: %s", violation)
+		}
+	}
+
 	index := 0
 	seenLimit, seenPrice := false, false
 	for index < len(message.Instructions) {
@@ -1119,11 +1179,11 @@ func memosBesidesBinding(memoDatas [][]byte, expectedBinding *string) ([][]byte,
 	if exact == 1 {
 		found = prefixed
 	}
+	if exact == 0 && prefixed > 0 {
+		return nil, fmt.Errorf("verifyOpenTransaction: the receiver binding Memo names another receiver authorizer")
+	}
 	if exact != 1 || prefixed != 1 {
-		return nil, fmt.Errorf(
-			"verifyOpenTransaction: expected exactly one Memo instruction matching the receiver binding, found %d",
-			found,
-		)
+		return nil, fmt.Errorf("verifyOpenTransaction: expected exactly one receiver-binding Memo, found %d", found)
 	}
 	other := make([][]byte, 0, len(memoDatas))
 	for _, data := range memoDatas {

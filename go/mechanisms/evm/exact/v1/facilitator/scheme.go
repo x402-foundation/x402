@@ -188,7 +188,15 @@ func (f *ExactEvmSchemeV1) verify(
 		return nil, x402.NewVerifyError(ErrInvalidSignatureFormat, evmPayload.Authorization.From, err.Error())
 	}
 
-	classification, err := exactfacilitator.ClassifyEIP3009Signature(
+	payerCode, err := f.signer.GetCode(ctx, evmPayload.Authorization.From)
+	if err != nil {
+		return nil, x402.NewVerifyError(ErrFailedToVerifySignature, evmPayload.Authorization.From, err.Error())
+	}
+	if evm.IsPlainNonCanonicalECDSASignature(signatureBytes, len(payerCode) > 0) {
+		return nil, x402.NewVerifyError(ErrInvalidSignatureS, evmPayload.Authorization.From, "invalid signature s")
+	}
+
+	classification, err := exactfacilitator.ClassifyEIP3009SignatureWithCode(
 		ctx,
 		f.signer,
 		evmPayload.Authorization,
@@ -197,6 +205,7 @@ func (f *ExactEvmSchemeV1) verify(
 		tokenAddress,
 		tokenName,
 		tokenVersion,
+		payerCode,
 	)
 	if err != nil {
 		return nil, x402.NewVerifyError(ErrFailedToVerifySignature, evmPayload.Authorization.From, err.Error())

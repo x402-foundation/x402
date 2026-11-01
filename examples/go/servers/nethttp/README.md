@@ -5,7 +5,7 @@ Standard library `net/http` server demonstrating how to protect API endpoints wi
 
 ## Prerequisites
 
-- Go 1.24 or higher
+- Go 1.26.10 or higher
 - Valid EVM address for receiving payments
 - URL of a facilitator supporting the desired payment network, see [facilitator list](https://www.x402.org/ecosystem?category=facilitators)
 

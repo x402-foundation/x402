@@ -37,6 +37,35 @@ MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS = 5_000_000  # 5 lamports
 DEFAULT_COMPUTE_UNIT_LIMIT = 20000
 MAX_MEMO_BYTES = 256
 
+# Loaded-account-data budget a client sets on a version-1 (SIMD-0385)
+# transaction. Version 1 has no implicit default: an unset limit requests 0
+# bytes and the transaction cannot load its programs. Every invoked
+# upgradeable program's data account counts against it, and mainnet
+# Token-2022 alone is ~1.32 MiB, so 4 MiB leaves headroom.
+DEFAULT_LOADED_ACCOUNTS_DATA_SIZE_LIMIT = 4_194_304
+
+# Serialized transaction size limits by message version.
+MAX_TRANSACTION_SIZE_V0 = 1232
+MAX_TRANSACTION_SIZE_V1 = 4096
+
+# Transaction message versions, in the Wallet Standard
+# ``supportedTransactionVersions`` vocabulary ("legacy" | 0 | 1).
+#
+# ADVERTISED_TRANSACTION_VERSIONS is what facilitators publish as
+# ``extra.transactionVersions`` in ``/supported``; servers copy it into
+# ``PaymentRequirements.extra`` and clients build one of the advertised versions.
+# Legacy is deprecated and never advertised.
+ADVERTISED_TRANSACTION_VERSIONS: list[str | int] = [0, 1]
+# Versions the current client implementation can construct. Negotiation picks
+# the highest value shared with the facilitator's advertised set.
+CLIENT_SUPPORTED_TRANSACTION_VERSIONS: list[int] = [0, 1]
+# ACCEPTED_TRANSACTION_VERSIONS is what verifiers tolerate on the wire. Legacy
+# stays accepted for backward compatibility. Every verifier derives its fee
+# policy from version-specific structure (ComputeBudget instructions on
+# legacy/v0, ``message.config`` on v1), so any version outside this allowlist is
+# rejected before instructions are inspected.
+ACCEPTED_TRANSACTION_VERSIONS: list[str | int] = ["legacy", 0, 1]
+
 # Solana address validation regex (base58, 32-44 characters)
 SVM_ADDRESS_REGEX = r"^[1-9A-HJ-NP-Za-km-z]{32,44}$"
 
@@ -68,6 +97,7 @@ ERR_INVALID_INSTRUCTION_COUNT = "invalid_exact_svm_payload_transaction_instructi
 ERR_UNKNOWN_FOURTH_INSTRUCTION = "invalid_exact_svm_payload_unknown_fourth_instruction"
 ERR_UNKNOWN_FIFTH_INSTRUCTION = "invalid_exact_svm_payload_unknown_fifth_instruction"
 ERR_UNKNOWN_SIXTH_INSTRUCTION = "invalid_exact_svm_payload_unknown_sixth_instruction"
+ERR_UNKNOWN_SEVENTH_INSTRUCTION = "invalid_exact_svm_payload_unknown_seventh_instruction"
 ERR_INVALID_COMPUTE_LIMIT = (
     "invalid_exact_svm_payload_transaction_instructions_compute_limit_instruction"
 )
@@ -77,6 +107,21 @@ ERR_INVALID_COMPUTE_PRICE = (
 ERR_COMPUTE_PRICE_TOO_HIGH = (
     "invalid_exact_svm_payload_transaction_instructions_compute_price_instruction_too_high"
 )
+ERR_COMPUTE_LIMIT_TOO_HIGH = (
+    "invalid_exact_svm_payload_transaction_instructions_compute_limit_instruction_too_high"
+)
+# Version 1 carries its compute budget in the message config instead of
+# ComputeBudget instructions. A missing or over-cap compute unit limit and an
+# over-cap priority fee reuse the compute limit / price codes above.
+ERR_LOADED_ACCOUNTS_DATA_SIZE_LIMIT_MISSING = (
+    "invalid_exact_svm_payload_transaction_loaded_accounts_data_size_limit_missing"
+)
+ERR_V1_COMPUTE_BUDGET_INSTRUCTION = (
+    "invalid_exact_svm_payload_transaction_v1_compute_budget_instruction"
+)
+ERR_V1_HEAP_SIZE = "invalid_exact_svm_payload_transaction_v1_heap_size"
+# A transaction over its message version's serialized size limit.
+ERR_TRANSACTION_SIZE_EXCEEDED = "invalid_exact_svm_payload_transaction_size_exceeded"
 ERR_NO_TRANSFER_INSTRUCTION = "invalid_exact_svm_payload_no_transfer_instruction"
 ERR_MINT_MISMATCH = "invalid_exact_svm_payload_mint_mismatch"
 ERR_RECIPIENT_MISMATCH = "invalid_exact_svm_payload_recipient_mismatch"
@@ -85,10 +130,13 @@ ERR_FEE_PAYER_MISSING = "invalid_exact_svm_payload_missing_fee_payer"
 ERR_FEE_PAYER_NOT_MANAGED = "fee_payer_not_managed_by_facilitator"
 ERR_FEE_PAYER_TRANSFERRING = "invalid_exact_svm_payload_transaction_fee_payer_transferring_funds"
 ERR_SIMULATION_FAILED = "transaction_simulation_failed"
+ERR_RECIPIENT_ATA_MISSING = "invalid_exact_svm_recipient_ata_missing"
+ERR_RECIPIENT_ATA_WRONG_PROGRAM_OWNER = "invalid_exact_svm_recipient_ata_wrong_program_owner"
 ERR_TRANSACTION_FAILED = "transaction_failed"
 ERR_DUPLICATE_SETTLEMENT = "duplicate_settlement"
 ERR_MEMO_MISMATCH = "invalid_exact_svm_payload_memo_mismatch"
 ERR_MEMO_COUNT = "invalid_exact_svm_payload_memo_count"
+ERR_UNSUPPORTED_TRANSACTION_VERSION = "unsupported_transaction_version"
 
 # Non-terminal settle error reason meaning a transaction was broadcast but
 # ConfirmTransaction could not observe its confirmation in time — mirrors

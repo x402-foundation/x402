@@ -6,6 +6,7 @@ from x402.mechanisms.evm import (
     ExactEvmPayloadV1,
     ExactEvmPayloadV2,
 )
+from x402.mechanisms.evm.types import validate_exact_evm_payload
 
 
 class TestExactEIP3009Authorization:
@@ -185,3 +186,34 @@ class TestExactEvmPayloadV1V2:
     def test_v1_and_v2_should_be_same(self):
         """V1 and V2 should be the same type."""
         assert ExactEvmPayloadV1 is ExactEvmPayloadV2
+
+
+def make_eip3009_payload_dict(**authorization_overrides) -> dict:
+    authorization = {
+        "from": "0x1234567890123456789012345678901234567890",
+        "to": "0x0987654321098765432109876543210987654321",
+        "value": "1000000",
+        "validAfter": "0",
+        "validBefore": "1000003600",
+        "nonce": "0x" + "00" * 32,
+    }
+    authorization.update(authorization_overrides)
+    return {"authorization": authorization, "signature": "0x" + "00" * 65}
+
+
+class TestValidateExactEvmPayload:
+    """Test validate_exact_evm_payload accepts well-formed edge values."""
+
+    def test_should_accept_well_formed_payload(self):
+        """Should accept a well-formed EIP-3009 payload."""
+        assert validate_exact_evm_payload(make_eip3009_payload_dict()) is None
+
+    def test_should_accept_max_uint256(self):
+        """Should accept the largest uint256 value."""
+        payload = make_eip3009_payload_dict(value=str(2**256 - 1))
+        assert validate_exact_evm_payload(payload) is None
+
+    def test_should_accept_nonce_without_0x_prefix(self):
+        """Should accept a nonce without 0x, as parse_eip3009_authorization does."""
+        payload = make_eip3009_payload_dict(nonce="ab" * 32)
+        assert validate_exact_evm_payload(payload) is None

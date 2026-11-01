@@ -152,6 +152,7 @@ export class AuthCaptureSettlementHooks {
   async settleOnCancel(
     context: VerifiedPaymentCanceledContext,
   ): Promise<PaymentRequirements | void> {
+    if (!context.settledPhases.includes("before-handler")) return;
     const extraParsed = parseAuthCaptureExtra(context.requirements.extra);
     if ("error" in extraParsed) return;
     const extra = extraParsed.extra;

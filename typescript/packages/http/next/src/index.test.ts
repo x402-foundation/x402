@@ -7,6 +7,7 @@ import type {
   FacilitatorClient,
 } from "@x402/core/server";
 import {
+  checkIfBazaarNeeded,
   FacilitatorResponseError,
   x402ResourceServer,
   x402HTTPResourceServer,
@@ -88,28 +89,32 @@ vi.mock("@x402/core/server", async importOriginal => {
       return null;
     },
     SETTLEMENT_OVERRIDES_HEADER: "Settlement-Overrides",
-    x402ResourceServer: vi.fn().mockImplementation(() => ({
-      initialize: vi.fn().mockResolvedValue(undefined),
-      registerExtension: vi.fn(),
-      register: vi.fn(),
-      hasExtension: vi.fn().mockReturnValue(false),
-    })),
-    x402HTTPResourceServer: vi.fn().mockImplementation((server, routes) => ({
-      initialize: vi.fn().mockResolvedValue(undefined),
-      registerPaywallProvider: vi.fn(),
-      processHTTPRequest: (...args: unknown[]) => mockFunctions.processHTTPRequest(...args),
-      processSettlement: (...args: unknown[]) => mockFunctions.processSettlement(...args),
-      createCompletedSettlementHeaders: (...args: unknown[]) =>
-        mockFunctions.createCompletedSettlementHeaders(...args),
-      createFailurePathSettlementHeaders: (...args: unknown[]) =>
-        mockFunctions.createFailurePathSettlementHeaders(...args),
-      requiresPayment: (...args: unknown[]) => mockFunctions.requiresPayment(...args),
-      routes: routes || {},
-      server: server || {
-        hasExtension: vi.fn().mockReturnValue(false),
+    x402ResourceServer: vi.fn().mockImplementation(function () {
+      return {
+        initialize: vi.fn().mockResolvedValue(undefined),
         registerExtension: vi.fn(),
-      },
-    })),
+        register: vi.fn(),
+        hasExtension: vi.fn().mockReturnValue(false),
+      };
+    }),
+    x402HTTPResourceServer: vi.fn().mockImplementation(function (server, routes) {
+      return {
+        initialize: vi.fn().mockResolvedValue(undefined),
+        registerPaywallProvider: vi.fn(),
+        processHTTPRequest: (...args: unknown[]) => mockFunctions.processHTTPRequest(...args),
+        processSettlement: (...args: unknown[]) => mockFunctions.processSettlement(...args),
+        createCompletedSettlementHeaders: (...args: unknown[]) =>
+          mockFunctions.createCompletedSettlementHeaders(...args),
+        createFailurePathSettlementHeaders: (...args: unknown[]) =>
+          mockFunctions.createFailurePathSettlementHeaders(...args),
+        requiresPayment: (...args: unknown[]) => mockFunctions.requiresPayment(...args),
+        routes: routes || {},
+        server: server || {
+          hasExtension: vi.fn().mockReturnValue(false),
+          registerExtension: vi.fn(),
+        },
+      };
+    }),
     checkIfBazaarNeeded: vi.fn().mockReturnValue(false),
   };
 });
@@ -586,6 +591,31 @@ describe("paymentProxy", () => {
     expect(mockServer.registerPaywallProvider).toHaveBeenCalledWith(paywall);
     expect(response.status).toBe(200);
   });
+
+  it("paymentProxyFromHTTPServer loads and validates the bazaar extension when routes need it", async () => {
+    vi.mocked(checkIfBazaarNeeded).mockReturnValueOnce(true);
+    const mockServer = createMockHttpServer({ type: "no-payment-required" });
+
+    const proxy = paymentProxyFromHTTPServer(mockServer, undefined, undefined, false);
+    const response = await proxy(createMockRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockServer.processHTTPRequest).toHaveBeenCalled();
+    expect(mockServer.server.hasExtension).toHaveBeenCalledWith("bazaar");
+    expect(mockServer.server.registerExtension).toHaveBeenCalled();
+  });
+
+  it("paymentProxyFromHTTPServer skips bazaar registration when the extension is already present", async () => {
+    vi.mocked(checkIfBazaarNeeded).mockReturnValueOnce(true);
+    const mockServer = createMockHttpServer({ type: "no-payment-required" });
+    vi.mocked(mockServer.server.hasExtension).mockReturnValue(true);
+
+    const proxy = paymentProxyFromHTTPServer(mockServer, undefined, undefined, false);
+    const response = await proxy(createMockRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockServer.server.registerExtension).not.toHaveBeenCalled();
+  });
 });
 
 describe("withX402", () => {
@@ -673,6 +703,40 @@ describe("withX402", () => {
         responseStatus: 400,
       }),
     );
+  });
+
+  it.each([204, 205, 304])("preserves a settled null-body %i response", async status => {
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    const mockServer = createMockHttpServer(
+      {
+        type: "payment-verified",
+        paymentPayload: mockPaymentPayload,
+        paymentRequirements: mockPaymentRequirements,
+        cancellationDispatcher: { cancel } as PaymentVerifiedResult["cancellationDispatcher"],
+      },
+      { success: true, headers: { "PAYMENT-RESPONSE": "settled" } },
+    );
+    const original = new NextResponse(null, {
+      status,
+      headers: { "X-Handler": "preserved", "Cache-Control": "max-age=60" },
+    });
+    setSettlementOverrides(original, { amount: "500" });
+    const handler = vi.fn().mockResolvedValue(original);
+    const wrappedHandler = withX402FromHTTPServer(handler, mockServer, undefined, undefined, false);
+
+    const response = await wrappedHandler(createMockRequest());
+
+    expect(response.status).toBe(status);
+    expect(response.body).toBeNull();
+    expect(response.headers.get("PAYMENT-RESPONSE")).toBe("settled");
+    expect(response.headers.get("X-Handler")).toBe("preserved");
+    expect(response.headers.get("Cache-Control")).toBe("max-age=60, private");
+    expect(response.headers.has("Settlement-Overrides")).toBe(false);
+    expect(mockServer.processSettlement).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(mockServer.processSettlement).mock.calls[0][3]?.responseBody).toEqual(
+      Buffer.alloc(0),
+    );
+    expect(cancel).not.toHaveBeenCalled();
   });
 
   it("echoes before-handler PAYMENT-RESPONSE when handler throws", async () => {
@@ -1034,6 +1098,33 @@ describe("withX402", () => {
     expect(mockServer.registerPaywallProvider).toHaveBeenCalledWith(paywall);
     expect(handler).toHaveBeenCalled();
     expect(response.status).toBe(200);
+  });
+
+  it("withX402FromHTTPServer loads and validates the bazaar extension when routes need it", async () => {
+    vi.mocked(checkIfBazaarNeeded).mockReturnValueOnce(true);
+    const mockServer = createMockHttpServer({ type: "no-payment-required" });
+    const handler = vi.fn().mockResolvedValue(NextResponse.json({ data: "protected" }));
+
+    const wrappedHandler = withX402FromHTTPServer(handler, mockServer, undefined, undefined, false);
+    const response = await wrappedHandler(createMockRequest());
+
+    expect(response.status).toBe(200);
+    expect(handler).toHaveBeenCalled();
+    expect(mockServer.server.hasExtension).toHaveBeenCalledWith("bazaar");
+    expect(mockServer.server.registerExtension).toHaveBeenCalled();
+  });
+
+  it("withX402FromHTTPServer skips bazaar registration when the extension is already present", async () => {
+    vi.mocked(checkIfBazaarNeeded).mockReturnValueOnce(true);
+    const mockServer = createMockHttpServer({ type: "no-payment-required" });
+    vi.mocked(mockServer.server.hasExtension).mockReturnValue(true);
+    const handler = vi.fn().mockResolvedValue(NextResponse.json({ data: "protected" }));
+
+    const wrappedHandler = withX402FromHTTPServer(handler, mockServer, undefined, undefined, false);
+    const response = await wrappedHandler(createMockRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockServer.server.registerExtension).not.toHaveBeenCalled();
   });
 });
 

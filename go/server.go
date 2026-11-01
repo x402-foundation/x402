@@ -26,6 +26,7 @@ var (
 //   - Percent of requirements.Amount: "50%"  (up to 2 decimal places, floored)
 //   - Dollar price: "$0.05" (converted using the provided decimals)
 func ResolveSettlementOverrideAmount(rawAmount string, requirements types.PaymentRequirements, decimals int) (string, error) {
+	var resolved string
 	if m := percentRegex.FindStringSubmatch(rawAmount); m != nil {
 		parts := strings.SplitN(m[1], ".", 2)
 		integerPart, ok := new(big.Int).SetString(parts[0], 10)
@@ -47,14 +48,35 @@ func ResolveSettlementOverrideAmount(rawAmount string, requirements types.Paymen
 		}
 		result := new(big.Int).Mul(base, scaledPercent)
 		result.Div(result, big.NewInt(10000))
-		return result.String(), nil
+		resolved = result.String()
+	} else if m := dollarRegex.FindStringSubmatch(rawAmount); m != nil {
+		converted, err := ConvertToTokenAmount(m[1], decimals)
+		if err != nil {
+			return "", err
+		}
+		resolved = converted
+	} else {
+		resolved = rawAmount
 	}
 
-	if m := dollarRegex.FindStringSubmatch(rawAmount); m != nil {
-		return ConvertToTokenAmount(m[1], decimals)
+	resolvedAmount, ok := new(big.Int).SetString(resolved, 10)
+	if !ok {
+		return "", fmt.Errorf("invalid settlement override amount: %s", rawAmount)
+	}
+	authorized, ok := new(big.Int).SetString(requirements.Amount, 10)
+	if !ok {
+		return "", fmt.Errorf("invalid requirements amount: %s", requirements.Amount)
+	}
+	if resolvedAmount.Cmp(authorized) > 0 {
+		return "", fmt.Errorf(
+			"settlement override amount %q resolves to %s atomic units, which exceeds the authorized maximum of %s in PaymentRequirements",
+			rawAmount,
+			resolved,
+			requirements.Amount,
+		)
 	}
 
-	return rawAmount, nil
+	return resolved, nil
 }
 
 // x402ResourceServer manages payment requirements and verification for protected resources
@@ -120,16 +142,32 @@ type labeledHook[F any] struct {
 type SupportedCache struct {
 	mu     sync.RWMutex
 	data   map[string]SupportedResponse // key is facilitator identifier
+	order  []string                     // registration order; earlier facilitators win
 	expiry map[string]time.Time
 	ttl    time.Duration
 }
 
-// Set stores a supported response in the cache
+// Set stores a supported response in the cache.
+// The first Set for a key records registration order. Later facilitators that
+// advertise the same scheme are fallbacks, not replacements.
 func (c *SupportedCache) Set(key string, response SupportedResponse) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if _, exists := c.data[key]; !exists {
+		c.order = append(c.order, key)
+	}
 	c.data[key] = response
 	c.expiry[key] = time.Now().Add(c.ttl)
+}
+
+// snapshotLocked returns cached responses in registration order.
+// The caller must hold c.mu.
+func (c *SupportedCache) snapshotLocked() []SupportedResponse {
+	out := make([]SupportedResponse, 0, len(c.order))
+	for _, key := range c.order {
+		out = append(out, c.data[key])
+	}
+	return out
 }
 
 // Get retrieves a supported response from the cache
@@ -157,6 +195,7 @@ func (c *SupportedCache) Clear() {
 
 	clear(c.data)
 	clear(c.expiry)
+	c.order = nil
 }
 
 // ResourceServerOption configures the server
@@ -280,7 +319,7 @@ func (s *x402ResourceServer) findSupportedKind(network Network, scheme string) (
 	s.supportedCache.mu.RLock()
 	defer s.supportedCache.mu.RUnlock()
 
-	for _, cachedResponse := range s.supportedCache.data {
+	for _, cachedResponse := range s.supportedCache.snapshotLocked() {
 		for _, kind := range cachedResponse.Kinds {
 			if kind.X402Version != 2 || kind.Scheme != scheme || string(kind.Network) != string(network) {
 				continue
@@ -627,8 +666,8 @@ func (s *x402ResourceServer) CreatePaymentCancellationDispatcher(
 // The HTTP transport calls this after a successful Verify but before/instead
 // of Settle when the resource handler errors or returns a non-2xx response.
 //
-// settledPhases lists settle phases already completed before the handler (for
-// settleOnCancel). Pass nil when none have completed.
+// settledPhases lists settle phases that already completed for this payment.
+// Pass nil when none have completed.
 //
 // Hook execution order (mirrors verify/settle): manual → matched scheme →
 // declared extensions. Extension hooks gate on `declaredExtensions[key]`
@@ -672,24 +711,25 @@ func (s *x402ResourceServer) CreatePaymentCancellationDispatcherWithExtensions(
 				_ = lh.Hook(cancelCtx)
 			}
 
-			return s.settleOnCancelAfterHooks(ctx, payload, requirements, declaredExtensions, resolvedSettledPhases, cancelCtx, scheme)
+			return s.settleOnCancelAfterHooks(ctx, payload, requirements, declaredExtensions, cancelCtx, scheme)
 		},
 	}
 }
 
 // settleOnCancelAfterHooks asks the matched scheme for cancel settle requirements
-// when before-handler settle completed. Settlement errors become a failed receipt.
+// and settles once when provided, including when no before-handler settle has
+// completed. The scheme decides whether cancel settle applies. Settlement
+// errors become a failed receipt.
 func (s *x402ResourceServer) settleOnCancelAfterHooks(
 	ctx context.Context,
 	payload types.PaymentPayload,
 	requirements types.PaymentRequirements,
 	declaredExtensions map[string]interface{},
-	settledPhases []SettlePhase,
 	cancelCtx VerifiedPaymentCanceledContext,
 	scheme SchemeNetworkServer,
 ) *SettleResponse {
 	provider, ok := scheme.(SettleOnCancelProvider)
-	if !ok || !settledPhasesContain(settledPhases, SettlePhaseBeforeHandler) {
+	if !ok {
 		return nil
 	}
 
@@ -711,15 +751,6 @@ func (s *x402ResourceServer) settleOnCancelAfterHooks(
 		return failedCancelSettleResponse(requirements, settleErr)
 	}
 	return settleResp
-}
-
-func settledPhasesContain(phases []SettlePhase, want SettlePhase) bool {
-	for _, p := range phases {
-		if p == want {
-			return true
-		}
-	}
-	return false
 }
 
 func failedCancelSettleResponse(requirements types.PaymentRequirements, err error) *SettleResponse {
@@ -1271,7 +1302,15 @@ func (s *x402ResourceServer) VerifyPaymentWithExtensions(
 	// Handle IsValid: false — facilitator reachable but explicitly rejected the payment.
 	// Conflating "no network error" with "payment valid" is a security bug: an HTTP-200
 	// response carrying {"isValid":false} must be treated as a hard gate failure.
+	// Run afterVerify hooks so schemes can stash corrective state for 402 enrichment.
 	if verifyResult == nil || !verifyResult.IsValid {
+		if verifyResult != nil {
+			if afterRes, afterErr := s.runAfterVerifyHooks(payload, requirements, declaredExtensions, hookCtx, afterVerifyHooks, verifyResult); afterErr != nil {
+				return afterRes, afterErr
+			} else if afterRes != nil {
+				verifyResult = afterRes
+			}
+		}
 		reason := ErrCodeInvalidPayment
 		var payer, message string
 		if verifyResult != nil {
@@ -1282,13 +1321,6 @@ func (s *x402ResourceServer) VerifyPaymentWithExtensions(
 			message = verifyResult.InvalidMessage
 		}
 		ve := NewVerifyError(reason, payer, message)
-		failureCtx := VerifyFailureContext{VerifyContext: hookCtx, Error: ve}
-		for _, lh := range verifyFailureHooks {
-			result, _ := lh.Hook(failureCtx)
-			if result != nil && result.Recovered {
-				return s.runAfterVerifyHooks(payload, requirements, declaredExtensions, hookCtx, afterVerifyHooks, result.Result)
-			}
-		}
 		return verifyResult, ve
 	}
 
@@ -1394,6 +1426,16 @@ func settleResponseToError(result *SettleResponse) error {
 		reason = "Settlement failed"
 	}
 	return NewSettleError(reason, result.Payer, result.Network, result.Transaction, result.ErrorMessage)
+}
+
+// applyAfterSettleAbort flips an onchain successful settle to success:false
+// when an afterSettle hook aborts. Transaction/amount/payer/onchain extra are
+// kept so callers retain proof funds moved.
+func applyAfterSettleAbort(result *SettleResponse, reason, message string) {
+	result.Success = false
+	result.ErrorReason = reason
+	result.ErrorMessage = message
+	result.AfterSettleAborted = true
 }
 
 // SettlePayment settles a V2 payment with no declared extensions.
@@ -1507,7 +1549,14 @@ func (s *x402ResourceServer) SettlePaymentWithExtensions(
 				// Execute afterSettle hooks even when skipping
 				skipResultCtx := SettleResultContext{SettleContext: hookCtx, Result: result.SkipResult}
 				for _, ah := range afterSettleHooks {
-					_ = ah.Hook(skipResultCtx)
+					if hookErr := ah.Hook(skipResultCtx); hookErr != nil {
+						var abort *AfterSettleAbortError
+						if errors.As(hookErr, &abort) {
+							applyAfterSettleAbort(result.SkipResult, abort.Reason, abort.Message)
+							break
+						}
+						log.Printf("[x402] afterSettle hook error: %v", hookErr)
+					}
 				}
 				return result.SkipResult, nil
 			}
@@ -1591,7 +1640,18 @@ func (s *x402ResourceServer) SettlePaymentWithExtensions(
 	// Execute afterSettle hooks
 	resultCtx := SettleResultContext{SettleContext: hookCtx, Result: settleResult}
 	for _, lh := range afterSettleHooks {
-		_ = lh.Hook(resultCtx) // Log errors but don't fail
+		if hookErr := lh.Hook(resultCtx); hookErr != nil {
+			var abort *AfterSettleAbortError
+			if errors.As(hookErr, &abort) {
+				if settleResult == nil {
+					return nil, NewSettleError(abort.Reason, "", network, "", abort.Message)
+				}
+				applyAfterSettleAbort(settleResult, abort.Reason, abort.Message)
+				// Enrichment must not replace the aborted receipt, which carries the onchain transaction.
+				return settleResult, nil
+			}
+			log.Printf("[x402] afterSettle hook error: %v", hookErr)
+		}
 	}
 
 	// Scheme-level settlement-response enrichment. Mirrors TS
@@ -1729,7 +1789,7 @@ func (s *x402ResourceServer) BuildPaymentRequirementsFromConfig(ctx context.Cont
 
 	// Check each cached facilitator response for matching supported kind
 	s.supportedCache.mu.RLock()
-	for _, cachedResponse := range s.supportedCache.data {
+	for _, cachedResponse := range s.supportedCache.snapshotLocked() {
 		// Iterate through flat kinds array (version is in each element)
 		for _, kind := range cachedResponse.Kinds {
 			// Match on scheme and network (only check V2 kinds)

@@ -1,5 +1,32 @@
 # @x402/mcp Changelog
 
+## 2.29.0
+
+### Minor Changes
+
+- Updated dependencies [636f585](https://github.com/x402-foundation/x402/commit/636f585)
+- Updated dependencies [76f2f28](https://github.com/x402-foundation/x402/commit/76f2f28)
+- Updated dependencies [732c181](https://github.com/x402-foundation/x402/commit/732c181)
+- Updated dependencies [8c2b431](https://github.com/x402-foundation/x402/commit/8c2b431)
+- Updated dependencies [3525075](https://github.com/x402-foundation/x402/commit/3525075)
+- Updated dependencies [e95b066](https://github.com/x402-foundation/x402/commit/e95b066)
+- Updated dependencies [3bd3c1d](https://github.com/x402-foundation/x402/commit/3bd3c1d)
+- Updated dependencies [bc31d3e](https://github.com/x402-foundation/x402/commit/bc31d3e)
+- Updated dependencies [db2c98e](https://github.com/x402-foundation/x402/commit/db2c98e)
+- Updated dependencies [7abd80f](https://github.com/x402-foundation/x402/commit/7abd80f)
+- Updated dependencies [fa5eb06](https://github.com/x402-foundation/x402/commit/fa5eb06)
+- Updated dependencies [3ca54cb](https://github.com/x402-foundation/x402/commit/3ca54cb)
+- Updated dependencies [b609bf5](https://github.com/x402-foundation/x402/commit/b609bf5)
+- Updated dependencies [8065278](https://github.com/x402-foundation/x402/commit/8065278)
+  - @x402/core@2.29.0
+
+### Patch Changes
+
+- [636f585](https://github.com/x402-foundation/x402/commit/636f585): Add `AfterSettleAbortError`: an `afterSettle` hook can throw it to fail an onchain-successful settle closed (`success: false`) while keeping transaction, amount, payer, and onchain extra. HTTP `PAYMENT-RESPONSE` and MCP `_meta` forward that receipt, and other `afterSettle` errors stay non-fatal. EVM batch-settlement deposit persistence failures now abort this way instead of surfacing as successful settles. ([#3994](https://github.com/x402-foundation/x402/pull/3994)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- [6f76f5b](https://github.com/x402-foundation/x402/commit/6f76f5b): MCP 402 responses snapshot payment accepts before scheme enrichers so batch-settlement recovery retries still match. ([#3496](https://github.com/x402-foundation/x402/pull/3496)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- [374216b](https://github.com/x402-foundation/x402/commit/374216b): Raise runtime and peer dependency floors so installs no longer resolve known-vulnerable releases of axios, express, hono, fastify, Next.js, the MCP SDK, ajv, and the Hedera SDK. ([#3981](https://github.com/x402-foundation/x402/pull/3981)) - Thanks [@phdargen](https://github.com/phdargen) and [@cursoragent](https://github.com/cursoragent)!
+- [8065278](https://github.com/x402-foundation/x402/commit/8065278): Depend on zod ^4.6.6 so GHSA-mrhx-c7xc-m3w5 (CVE-2023-54404) is fixed. There is no patched zod 3.x. `PaymentRequired` `accepts`, the legacy `x402Response` and discovered-resource `accepts` arrays, legacy discovery `items`, legacy supported `kinds`, and SIWX `resources` now reject more than 1024 entries. Inferred payment object types are unchanged. The re-exported `z`, schema classes, and `parsePaymentRequired` / `parsePaymentRequirements` / `parsePaymentPayload` results are zod 4. Code that passed those schemas into a zod 3 API, or read `ZodError.errors`, needs zod 4 (use `.issues`). Legacy `processPriceToAtomicAmount` error text now uses zod 4 issue messages, for example "expected number to be >=0.0001". ([#3983](https://github.com/x402-foundation/x402/pull/3983)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+
 ## 2.28.0
 
 ### Minor Changes

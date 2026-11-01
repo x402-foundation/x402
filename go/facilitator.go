@@ -50,19 +50,7 @@ func (f *x402Facilitator) RegisterV1(networks []Network, facilitator SchemeNetwo
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	// Create network set
-	networkSet := make(map[Network]bool)
-	for _, network := range networks {
-		networkSet[network] = true
-	}
-
-	// Append to array (supports multiple facilitators with same scheme name)
-	f.schemesV1 = append(f.schemesV1, &schemeData{
-		facilitator: facilitator,
-		networks:    networkSet,
-		pattern:     derivePattern(networks),
-	})
-
+	f.schemesV1 = append(f.schemesV1, schemeEntries(facilitator, networks)...)
 	return f
 }
 
@@ -72,20 +60,35 @@ func (f *x402Facilitator) Register(networks []Network, facilitator SchemeNetwork
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	// Create network set
-	networkSet := make(map[Network]bool)
+	f.schemes = append(f.schemes, schemeEntries(facilitator, networks)...)
+	return f
+}
+
+func schemeEntries[F any](facilitator F, networks []Network) []*schemeData {
+	grouped := make(map[string][]Network)
+	order := make([]string, 0)
 	for _, network := range networks {
-		networkSet[network] = true
+		namespace, _, _ := strings.Cut(string(network), ":")
+		if _, seen := grouped[namespace]; !seen {
+			order = append(order, namespace)
+		}
+		grouped[namespace] = append(grouped[namespace], network)
 	}
 
-	// Append to array (supports multiple facilitators with same scheme name)
-	f.schemes = append(f.schemes, &schemeData{
-		facilitator: facilitator,
-		networks:    networkSet,
-		pattern:     derivePattern(networks),
-	})
-
-	return f
+	entries := make([]*schemeData, 0, len(order))
+	for _, namespace := range order {
+		nsNetworks := grouped[namespace]
+		networkSet := make(map[Network]bool, len(nsNetworks))
+		for _, network := range nsNetworks {
+			networkSet[network] = true
+		}
+		entries = append(entries, &schemeData{
+			facilitator: facilitator,
+			networks:    networkSet,
+			pattern:     derivePattern(nsNetworks),
+		})
+	}
+	return entries
 }
 
 // RegisterExtension registers a protocol extension.

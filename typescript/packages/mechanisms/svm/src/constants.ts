@@ -34,7 +34,44 @@ export const MAINNET_WS_URL = "wss://api.mainnet-beta.solana.com";
 export const DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS = 1;
 export const MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS = 5_000_000; // 5 lamports
 export const DEFAULT_COMPUTE_UNIT_LIMIT = 20_000;
+
+/**
+ * Reference default ceiling on the compute unit limit a sponsor pays for
+ * (scheme_exact_svm.md §2.2.1), applied to a version-0 `SetComputeUnitLimit`
+ * and a version-1 header `computeUnitLimit` alike.
+ */
+export const DEFAULT_MAX_COMPUTE_UNITS = 400_000;
+
+/**
+ * Default ceiling on a sponsored transaction's required signatures: the client
+ * and the fee payer. Any other required signer is a base fee the sponsor pays
+ * for a party outside the payment (scheme_exact_svm.md §2.1.4).
+ */
+export const DEFAULT_MAX_REQUIRED_SIGNATURES = 2;
 export const MAX_MEMO_BYTES = 256;
+
+/**
+ * Transaction message versions the SVM verifiers accept. Version 0 carries its
+ * compute budget as ComputeBudget instructions and version 1 (SIMD-0385) in
+ * the message config; the verifiers model both, and reject any other version
+ * before its instructions are inspected. Legacy is tolerated for backward
+ * compatibility but deprecated and never advertised; see
+ * {@link ADVERTISED_TRANSACTION_VERSIONS}.
+ */
+export const ACCEPTED_TRANSACTION_VERSIONS: readonly (number | string)[] = ["legacy", 0, 1];
+
+/**
+ * Transaction message versions a facilitator advertises as
+ * `extra.transactionVersions` in `/supported`. Clients build one of these.
+ */
+export const ADVERTISED_TRANSACTION_VERSIONS: readonly number[] = [0, 1];
+
+/**
+ * Transaction versions this client implementation can construct. A client
+ * whose signer cannot sign version 1 narrows this with its
+ * `transactionVersions` option.
+ */
+export const CLIENT_SUPPORTED_TRANSACTION_VERSIONS: readonly (0 | 1)[] = [0, 1];
 
 /**
  * How long a transaction is held in the duplicate settlement cache (ms).

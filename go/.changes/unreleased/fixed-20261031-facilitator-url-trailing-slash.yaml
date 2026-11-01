@@ -1,0 +1,3 @@
+kind: fixed
+body: 'HTTPFacilitatorClient: trim trailing slashes from the facilitator URL, so https://host/ no longer sends requests to //verify and //settle.'
+time: 2026-10-31T00:00:00Z

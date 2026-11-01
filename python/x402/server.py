@@ -13,6 +13,7 @@ from typing import Any
 from typing_extensions import Self
 
 from .schemas import (
+    AfterSettleAbortError,
     PaymentPayload,
     PaymentPayloadV1,
     PaymentRequired,
@@ -124,12 +125,12 @@ class x402ResourceServer(x402ResourceServerBase):
         return self
 
     def on_after_verify(self, hook: AfterVerifyHook) -> Self:
-        """Register hook after successful verification."""
+        """Register hook after verification returns a result, including is_valid false."""
         self._after_verify_hooks.append(hook)
         return self
 
     def on_verify_failure(self, hook: OnVerifyFailureHook) -> Self:
-        """Register hook on verification failure. Return RecoveredVerifyResult to recover."""
+        """Register hook when verification raises. Return RecoveredVerifyResult to recover."""
         self._on_verify_failure_hooks.append(hook)
         return self
 
@@ -295,7 +296,13 @@ class x402ResourceServer(x402ResourceServerBase):
                     else:
                         result = await settle_with_pending_retry_async(target, p, r)
                 else:
-                    result = await self._execute_hook(target, ctx)
+                    try:
+                        result = await self._execute_hook(target, ctx)
+                    except AfterSettleAbortError as abort:
+                        # The settle generator receives hook results via send(), so the abort is returned to it.
+                        if phase_cmd != "after":
+                            raise
+                        result = abort
         except StopIteration as e:
             return await self._finalize_settle_result_async(
                 e.value,
@@ -341,7 +348,7 @@ class x402ResourceServer(x402ResourceServerBase):
 
         scheme = self._find_registered_scheme(requirements.scheme, requirements.network)
         settle_on_cancel = getattr(scheme, "settle_on_cancel", None) if scheme else None
-        if settle_on_cancel is None or "before-handler" not in resolved_phases:
+        if settle_on_cancel is None:
             return None
 
         label = f'scheme "{requirements.scheme}" settleOnCancel'
@@ -463,12 +470,12 @@ class x402ResourceServerSync(x402ResourceServerBase):
         return self
 
     def on_after_verify(self, hook: SyncAfterVerifyHook) -> Self:
-        """Register hook after successful verification."""
+        """Register hook after verification returns a result, including is_valid false."""
         self._after_verify_hooks.append(hook)
         return self
 
     def on_verify_failure(self, hook: SyncOnVerifyFailureHook) -> Self:
-        """Register hook on verification failure. Return RecoveredVerifyResult to recover."""
+        """Register hook when verification raises. Return RecoveredVerifyResult to recover."""
         self._on_verify_failure_hooks.append(hook)
         return self
 
@@ -615,7 +622,13 @@ class x402ResourceServerSync(x402ResourceServerBase):
                     else:
                         result = settle_with_pending_retry(target, p, r)
                 else:
-                    result = self._execute_hook_sync(target, ctx)
+                    try:
+                        result = self._execute_hook_sync(target, ctx)
+                    except AfterSettleAbortError as abort:
+                        # The settle generator receives hook results via send(), so the abort is returned to it.
+                        if phase_cmd != "after":
+                            raise
+                        result = abort
         except StopIteration as e:
             return self._finalize_settle_result(
                 e.value,
@@ -662,7 +675,7 @@ class x402ResourceServerSync(x402ResourceServerBase):
 
         scheme = self._find_registered_scheme(requirements.scheme, requirements.network)
         settle_on_cancel = getattr(scheme, "settle_on_cancel", None) if scheme else None
-        if settle_on_cancel is None or "before-handler" not in resolved_phases:
+        if settle_on_cancel is None:
             return None
 
         label = f'scheme "{requirements.scheme}" settleOnCancel'

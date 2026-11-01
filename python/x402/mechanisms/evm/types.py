@@ -1,7 +1,13 @@
 """EVM-specific payload and data types."""
 
+import re
 from dataclasses import dataclass
 from typing import Any
+
+_UINT256_MAX = 2**256 - 1
+# The digit cap also keeps int() below Python's 4300-digit conversion limit.
+_UINT256_DECIMAL_RE = re.compile(r"[0-9]{1,78}")
+_BYTES32_HEX_RE = re.compile(r"(0x)?[0-9a-fA-F]{64}")
 
 
 @dataclass
@@ -279,6 +285,115 @@ def is_eip3009_payload(payload: dict[str, Any]) -> bool:
         True if the payload contains authorization key.
     """
     return "authorization" in payload
+
+
+def _is_uint256_string(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and _UINT256_DECIMAL_RE.fullmatch(value) is not None
+        and int(value) <= _UINT256_MAX
+    )
+
+
+def _validate_signature(payload: dict[str, Any]) -> str | None:
+    signature = payload.get("signature")
+    if signature is not None and not isinstance(signature, str):
+        return "signature must be a string"
+    return None
+
+
+def _validate_eip3009_authorization(authorization: Any) -> str | None:
+    if not isinstance(authorization, dict):
+        return "authorization must be an object"
+    for key in ("from", "to"):
+        if not isinstance(authorization.get(key), str):
+            return f"authorization.{key} must be a string"
+    nonce = authorization.get("nonce")
+    if not isinstance(nonce, str) or _BYTES32_HEX_RE.fullmatch(nonce) is None:
+        return "authorization.nonce must be a 32-byte hex string"
+    for key in ("value", "validAfter", "validBefore"):
+        if not _is_uint256_string(authorization.get(key)):
+            return f"authorization.{key} must be a uint256 decimal string"
+    return None
+
+
+def _validate_permit2_authorization(authorization: Any) -> str | None:
+    if not isinstance(authorization, dict):
+        return "permit2Authorization must be an object"
+    permitted = authorization.get("permitted")
+    if not isinstance(permitted, dict):
+        return "permit2Authorization.permitted must be an object"
+    witness = authorization.get("witness")
+    if not isinstance(witness, dict):
+        return "permit2Authorization.witness must be an object"
+    strings = {
+        "from": authorization.get("from"),
+        "spender": authorization.get("spender"),
+        "permitted.token": permitted.get("token"),
+        "witness.to": witness.get("to"),
+    }
+    for name, value in strings.items():
+        if not isinstance(value, str):
+            return f"permit2Authorization.{name} must be a string"
+    numbers = {
+        "nonce": authorization.get("nonce"),
+        "deadline": authorization.get("deadline"),
+        "permitted.amount": permitted.get("amount"),
+        "witness.validAfter": witness.get("validAfter"),
+    }
+    for name, value in numbers.items():
+        if not _is_uint256_string(value):
+            return f"permit2Authorization.{name} must be a uint256 decimal string"
+    return None
+
+
+def validate_eip3009_payload(payload: dict[str, Any]) -> str | None:
+    """Check that a raw EIP-3009 payload has the field types verify and settle parse.
+
+    Args:
+        payload: Raw payload dictionary.
+
+    Returns:
+        None if well-formed, otherwise a message naming the first malformed field.
+    """
+    return _validate_signature(payload) or _validate_eip3009_authorization(
+        payload.get("authorization")
+    )
+
+
+def validate_exact_evm_payload(payload: dict[str, Any]) -> str | None:
+    """Check that a raw exact EVM payload has the field types verify and settle parse.
+
+    The payload is client-supplied, so malformed input must be rejected as invalid
+    instead of raising. Permit2 and EIP-3009 payloads are told apart the same way
+    verify and settle route them.
+
+    Args:
+        payload: Raw payload dictionary.
+
+    Returns:
+        None if well-formed, otherwise a message naming the first malformed field.
+    """
+    if is_permit2_payload(payload):
+        return _validate_signature(payload) or _validate_permit2_authorization(
+            payload["permit2Authorization"]
+        )
+    return validate_eip3009_payload(payload)
+
+
+def get_payload_payer(payload: dict[str, Any]) -> str | None:
+    """Get the payer address from a raw exact EVM payload without validating it.
+
+    Args:
+        payload: Raw payload dictionary.
+
+    Returns:
+        The authorization's ``from`` value if it is a string, otherwise None.
+    """
+    key = "permit2Authorization" if is_permit2_payload(payload) else "authorization"
+    authorization = payload.get(key)
+    payer = authorization.get("from") if isinstance(authorization, dict) else None
+    return payer if isinstance(payer, str) else None
 
 
 @dataclass

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -267,10 +268,20 @@ func handlePaymentError(w http.ResponseWriter, response *x402http.HTTPResponseIn
 		w.Header().Set(key, value)
 	}
 
+	contentType := response.Headers["Content-Type"]
+	if contentType == "" {
+		contentType = response.Headers["content-type"]
+	}
+	mediaType, _, _ := strings.Cut(contentType, ";")
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+
 	if response.IsHTML {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(response.Status)
 		fmt.Fprint(w, response.Body)
+	} else if text, ok := response.Body.(string); ok && mediaType == "text/plain" {
+		w.WriteHeader(response.Status)
+		fmt.Fprint(w, text)
 	} else {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(response.Status)
@@ -403,7 +414,7 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 		default:
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusPaymentRequired)
-			_ = json.NewEncoder(w).Encode(map[string]any{})
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": x402.ErrCodeSettlementFailed})
 		}
 		return
 	}
