@@ -26,6 +26,9 @@ arrived over IBC (`ibc/<hash>`), such as USDC from Noble.
 - `payTo`: a bech32 account address on the chain.
 - `extra` (optional): `symbol` and `decimals` for display. A facilitator's
   `/supported` kind may state `feeDenom` and `feePayer: "payer"`.
+  - `extra.splits`: not implemented by this binding. A facilitator MUST reject
+  requirements carrying a non-empty `splits` array, and does not advertise
+  splits in `/supported`.
 
 ```json
 {
@@ -89,30 +92,31 @@ The facilitator refuses the payment, with the reason in brackets, unless all of 
 2. `paymentPayload.accepted` has the same `amount`, `asset` and `payTo` as
    the server's `paymentRequirements`
    (`invalid_exact_cosmos_payload_accepted_mismatch`).
-3. `payload.transaction` decodes as a `TxRaw` the chain's own decoder
+      Neither carries a non-empty `extra.splits` (`invalid_payment_requirements`).
+4. `payload.transaction` decodes as a `TxRaw` the chain's own decoder
    accepts, no larger than a set limit (16 KiB is enough for a single
    send) (`invalid_payload`, `invalid_exact_cosmos_payload_transaction`).
-4. The body holds exactly one message and no extension options. The message
+5. The body holds exactly one message and no extension options. The message
    is a `MsgSend` to `payTo` whose `amount` is exactly `amount` of `asset`
    and nothing else (`..._message`, `..._recipient_mismatch`, `..._amount_mismatch`).
-5. There is exactly one signer, in `SIGN_MODE_DIRECT`. Its public key is a
+6. There is exactly one signer, in `SIGN_MODE_DIRECT`. Its public key is a
    type the chain accepts, and its address is the message's `from_address`
    (`..._signer`).
-6. The fee has no `granter`, and its `payer` is empty or the signer (`..._fee`).
-7. `timeout_height`, if set, is above the latest block (`..._expired`).
-8. The signer info's sequence is at least the account's current sequence
+7. The fee has no `granter`, and its `payer` is empty or the signer (`..._fee`).
+8. `timeout_height`, if set, is above the latest block (`..._expired`).
+9. The signer info's sequence is at least the account's current sequence
    (`..._sequence`), so a transaction already included is refused. A later
    sequence is allowed for a payer whose earlier transactions wait in the
    mempool: the simulation in step 10 runs on the node's check state,
    which counts them, and refuses a real gap.
-9. The signature verifies over
+10. The signature verifies over
    `SignDoc{body_bytes, auth_info_bytes, chain_id, account_number}`, using
    the account number from the chain (`..._signature`). The facilitator
    must check this itself, because a node skips signature verification
    when it simulates.
-10. Simulation (`cosmos.tx.v1beta1.Service/Simulate`) succeeds. A failure
+11. Simulation (`cosmos.tx.v1beta1.Service/Simulate`) succeeds. A failure
     for balance is `insufficient_funds`.
-11. The gas the simulation used is no more than the transaction's gas
+12. The gas the simulation used is no more than the transaction's gas
     limit (`..._gas`). Simulation runs without a gas limit. A transaction
     short of gas would be included, charge its fee and transfer nothing.
 
