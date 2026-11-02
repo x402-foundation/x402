@@ -392,10 +392,6 @@ class x402FacilitatorBase:
     # ========================================================================
 
     def _warn_hook_failure(self, operation: str, phase: HookPhase, error: Exception) -> None:
-        """Log a throwing advisory hook (after/failure phase) so it is skipped, not raised.
-
-        Before hooks are gates and are not isolated: a throw there fails closed.
-        """
         logger.warning("[x402] Facilitator %s %s hook threw: %s", operation, phase, error)
 
     def _verify_core(
