@@ -94,7 +94,8 @@ export class InFlightGuard<Pending> {
    * Keeps a key for a pending settlement. While the hold is current, the expiry
    * stays where `tryAcquire` or `renew` set it. A settle that outlived the TTL lost its
    * key, but the transaction it broadcast may still land, so the key is taken
-   * again, with a fresh expiry.
+   * again, with a fresh expiry, unless another settle holds it: that hold already
+   * blocks a resubmit, and its settle re-verifies, so it is left as it is.
    *
    * @param hold - The settle's hold
    * @param pending - What a retry needs to finish the settlement
@@ -106,7 +107,10 @@ export class InFlightGuard<Pending> {
       entry.pending = pending;
       return;
     }
-    this.entries.delete(hold.key);
+    if (entry !== undefined) {
+      // Replacing it would orphan the other settle's hold and let it overwrite ours in turn.
+      return;
+    }
     this.entries.set(hold.key, { hold, acquiredAt: Date.now(), pending });
   }
 
