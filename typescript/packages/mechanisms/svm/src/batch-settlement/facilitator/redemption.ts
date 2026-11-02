@@ -26,7 +26,6 @@ export const REDEMPTION_COMPUTE_UNIT_BASE = 25_000;
 /** Compute units budgeted per redemption instruction. */
 export const REDEMPTION_COMPUTE_UNIT_PER_INSTRUCTION = 25_000;
 
-/** Per-transaction compute unit ceiling. */
 const MAX_TRANSACTION_COMPUTE_UNITS = 1_400_000;
 
 /** Batch capacity the facilitator advertises as `maxClaimChannels` / `maxSettleChannels`. */

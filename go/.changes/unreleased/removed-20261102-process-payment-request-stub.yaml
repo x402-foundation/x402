@@ -1,0 +1,3 @@
+kind: removed
+body: 'Remove x402ResourceServer.ProcessPaymentRequest, an unimplemented stub that always returned "not implemented". Use VerifyPayment and SettlePayment, or the HTTP middleware, instead.'
+time: 2026-11-02T00:00:00Z

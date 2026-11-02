@@ -132,7 +132,7 @@ func (c *BatchSettlementEvmScheme) trySignEip2612Permit(
 		return nil, nil
 	}
 
-	readSigner, err := evm.ResolveReadSigner(ctx, c.signer, "")
+	readSigner, err := c.resolveReadSigner(ctx, string(requirements.Network))
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +141,7 @@ func (c *BatchSettlementEvmScheme) trySignEip2612Permit(
 			"batch-settlement",
 			string(requirements.Network),
 			eip2612gassponsor.EIP2612GasSponsoring.Key(),
-			"the signer cannot read contracts; provide an RPC-backed signer implementing evm.ClientEvmSignerWithReadContract, such as one created with signers/evm.NewClientSignerFromPrivateKeyWithClient",
+			"the client cannot read contracts; configure BatchSettlementEvmSchemeOptions.RPCURL or RPCByChainID, or use an RPC-backed signer such as one created with signers/evm.NewClientSignerFromPrivateKeyWithClient",
 		)
 		return nil, nil
 	}
@@ -219,7 +219,7 @@ func (c *BatchSettlementEvmScheme) trySignErc20Approval(
 
 	tokenAddress := evm.NormalizeAddress(requirements.Asset)
 
-	if readSigner, _ := evm.ResolveReadSigner(ctx, c.signer, ""); readSigner != nil {
+	if readSigner, _ := c.resolveReadSigner(ctx, string(requirements.Network)); readSigner != nil {
 		// Approximate the deposit amount with the per-request amount —
 		// sufficient for the allowance short-circuit since `deposit ≥
 		// requirements.Amount` always holds for batched flows. Skip the
@@ -230,7 +230,7 @@ func (c *BatchSettlementEvmScheme) trySignErc20Approval(
 		}
 	}
 
-	txSigner, err := evm.ResolveTxSigner(ctx, c.signer, "")
+	txSigner, err := c.resolveTxSigner(ctx, string(requirements.Network))
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +239,7 @@ func (c *BatchSettlementEvmScheme) trySignErc20Approval(
 			"batch-settlement",
 			string(requirements.Network),
 			erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key(),
-			"the signer cannot sign an ERC-20 approval transaction; provide an RPC-backed signer implementing evm.ClientEvmSignerWithTxSigning, such as one created with signers/evm.NewClientSignerFromPrivateKeyWithClient",
+			"the client cannot sign an ERC-20 approval transaction; configure BatchSettlementEvmSchemeOptions.RPCURL or RPCByChainID for RPC access and provide transaction-signing support, or use an RPC-backed signer such as one created with signers/evm.NewClientSignerFromPrivateKeyWithClient",
 		)
 		return nil, nil
 	}
