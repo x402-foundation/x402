@@ -1,11 +1,15 @@
 import {
   SchemeNetworkClient,
+  PaymentPayload,
+  PaymentReconcileResult,
   PaymentRequirements,
   PaymentPayloadResult,
   PaymentPayloadContext,
 } from "@x402/core/types";
+import { getAddress } from "viem";
+import { eip3009ABI } from "../../constants";
 import { ClientEvmSigner } from "../../signer";
-import { AssetTransferMethod } from "../../types";
+import { AssetTransferMethod, ExactEIP3009Payload } from "../../types";
 import { createEIP3009Payload } from "./eip3009";
 import { createPermit2Payload } from "./permit2";
 import {
@@ -13,7 +17,7 @@ import {
   trySignErc20ApprovalExtension,
 } from "../../shared/extensions";
 import { findDefaultAsset } from "../../defaultAssets";
-import type { EvmSchemeOptions } from "../../shared/rpc";
+import { resolveExtensionRpcCapabilities, type EvmSchemeOptions } from "../../shared/rpc";
 
 /**
  * EVM client implementation for the Exact payment scheme.
@@ -101,5 +105,37 @@ export class ExactEvmScheme implements SchemeNetworkClient {
     }
 
     return createEIP3009Payload(this.signer, x402Version, paymentRequirements);
+  }
+
+  /**
+   * Reports whether an EIP-3009 authorization this client signed has been used
+   * on chain, via `authorizationState(from, nonce)` on the token. Needs
+   * `readContract` on the signer or an RPC URL in options; Permit2 payloads and
+   * clients without chain reads return `"unknown"`.
+   *
+   * @param paymentPayload - A payload previously returned by createPaymentPayload
+   * @returns Whether the authorization has been used
+   */
+  async reconcilePaymentPayload(paymentPayload: PaymentPayload): Promise<PaymentReconcileResult> {
+    const requirements = paymentPayload.accepted;
+    const authorization = (paymentPayload.payload as Partial<ExactEIP3009Payload>).authorization;
+    if (!requirements || !authorization?.from || !authorization.nonce) {
+      return "unknown";
+    }
+    const { readContract } = resolveExtensionRpcCapabilities(
+      requirements.network,
+      this.signer,
+      this.options,
+    );
+    if (!readContract) {
+      return "unknown";
+    }
+    const used = await readContract({
+      address: getAddress(requirements.asset),
+      abi: eip3009ABI,
+      functionName: "authorizationState",
+      args: [getAddress(authorization.from), authorization.nonce],
+    });
+    return used ? "settled" : "unsettled";
   }
 }
