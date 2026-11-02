@@ -1119,6 +1119,11 @@ export class x402ResourceServer {
         }
       } catch (error) {
         this.warnResourceServerHookFailure("beforeVerify", label, error);
+        return {
+          isValid: false,
+          invalidReason: "extension_hook_error",
+          invalidMessage: error instanceof Error ? error.message : String(error),
+        };
       }
     }
 
@@ -1362,6 +1367,13 @@ export class x402ResourceServer {
           throw error;
         }
         this.warnResourceServerHookFailure("beforeSettle", label, error);
+        throw new SettleError(400, {
+          success: false,
+          errorReason: "extension_hook_error",
+          errorMessage: error instanceof Error ? error.message : String(error),
+          transaction: "",
+          network: requirements.network,
+        });
       }
     }
 

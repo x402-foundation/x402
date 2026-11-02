@@ -706,16 +706,22 @@ describe("x402ResourceServer", () => {
         expect(executionOrder).toEqual([1, 2]); // Third hook not executed
       });
 
-      it("should warn and continue verification when a beforeVerify hook throws", async () => {
+      it("should warn and return invalid when a beforeVerify hook throws", async () => {
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
         server.onBeforeVerify(async () => {
           throw new Error("Hook boom");
         });
 
-        await server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements());
+        const result = await server.verifyPayment(
+          buildPaymentPayload(),
+          buildPaymentRequirements(),
+        );
 
-        expect(mockClient.verifyCalls.length).toBe(1);
+        expect(result.isValid).toBe(false);
+        expect(result.invalidReason).toBe("extension_hook_error");
+        expect(result.invalidMessage).toBe("Hook boom");
+        expect(mockClient.verifyCalls.length).toBe(0);
         expect(warnSpy).toHaveBeenCalledWith(
           expect.stringMatching(
             /\[x402\] Resource server beforeVerify hook threw \(manual beforeVerify hook #0\): Hook boom/,
@@ -1195,20 +1201,25 @@ describe("x402ResourceServer", () => {
         }
       });
 
-      it("should warn and continue settlement when a beforeSettle hook throws", async () => {
+      it("should warn and throw SettleError when a beforeSettle hook throws", async () => {
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
         server.onBeforeSettle(async () => {
           throw new Error("Unexpected failure");
         });
 
-        const result = await server.settlePayment(
-          buildPaymentPayload(),
-          buildPaymentRequirements(),
-        );
+        let caught: any;
+        try {
+          await server.settlePayment(buildPaymentPayload(), buildPaymentRequirements());
+          expect.unreachable("Should have thrown");
+        } catch (e) {
+          caught = e;
+        }
 
-        expect(result.success).toBe(true);
-        expect(mockClient.settleCalls.length).toBe(1);
+        expect(caught.name).toBe("SettleError");
+        expect(caught.errorReason).toBe("extension_hook_error");
+        expect(caught.errorMessage).toBe("Unexpected failure");
+        expect(mockClient.settleCalls.length).toBe(0);
         expect(warnSpy).toHaveBeenCalledWith(
           expect.stringMatching(
             /\[x402\] Resource server beforeSettle hook threw \(manual beforeSettle hook #0\): Unexpected failure/,
