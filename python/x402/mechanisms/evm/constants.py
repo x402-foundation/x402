@@ -361,6 +361,8 @@ ERR_PERMIT2_INVALID_DESTINATION = "permit2_invalid_destination"
 ERR_PERMIT2_INVALID_OWNER = "permit2_invalid_owner"
 
 # Upto-specific error codes
+ERR_UPTO_INVALID_PAYLOAD = "invalid_upto_evm_payload"
+ERR_UPTO_INVALID_REQUIRED_AMOUNT = "invalid_upto_evm_required_amount"
 ERR_UPTO_SETTLEMENT_EXCEEDS_AMOUNT = "invalid_upto_evm_payload_settlement_exceeds_amount"
 ERR_UPTO_FACILITATOR_MISMATCH = "upto_facilitator_mismatch"
 ERR_UPTO_INVALID_SCHEME = "invalid_upto_evm_scheme"
