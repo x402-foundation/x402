@@ -1759,17 +1759,6 @@ func (s *x402ResourceServer) CreatePaymentRequiredResponseWithPayload(
 	return response
 }
 
-// ProcessPaymentRequest processes a payment request end-to-end
-func (s *x402ResourceServer) ProcessPaymentRequest(
-	ctx context.Context,
-	config ResourceConfig,
-	payload *types.PaymentPayload,
-) (*types.PaymentRequirements, *VerifyResponse, error) {
-	// This is a stub - needs full implementation
-	// For now, return error
-	return nil, nil, fmt.Errorf("not implemented")
-}
-
 // BuildPaymentRequirementsFromConfig builds payment requirements from config
 // This wraps the single requirement builder with facilitator data
 func (s *x402ResourceServer) BuildPaymentRequirementsFromConfig(ctx context.Context, config ResourceConfig) ([]types.PaymentRequirements, error) {
