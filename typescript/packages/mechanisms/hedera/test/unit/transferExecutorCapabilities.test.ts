@@ -973,3 +973,97 @@ describe("createHederaGetTransactionRecord", () => {
     );
   });
 });
+
+describe("Mirror Node error messages", () => {
+  // Hosted Mirror Node providers put the API key in the URL path.
+  const KEYED_BASE = "https://host.example/v1/SECRET-KEY";
+  const config = { mirrorNodeUrl: KEYED_BASE };
+
+  const capabilities = [
+    [
+      "resolveEvmAddress",
+      () => createHederaResolveEvmAddress(config)({ account: "0.0.5", network: TESTNET }),
+      "GET /api/v1/accounts/0.0.5",
+    ],
+    [
+      "getTokenCustomFees",
+      () => createHederaGetTokenCustomFees(config)({ tokenId: "0.0.6001", network: TESTNET }),
+      "GET /api/v1/tokens/0.0.6001",
+    ],
+    [
+      "simulateContractCall",
+      () =>
+        createHederaSimulateContractCall(config)({
+          network: TESTNET,
+          from: "0x0000000000000000000000000000000000001389",
+          to: "0x0000000000000000000000000000000000001771",
+          data: "0x",
+          gas: 100_000,
+          estimate: false,
+        }),
+      "POST /api/v1/contracts/call",
+    ],
+    [
+      "getTransactionRecord",
+      () =>
+        createHederaGetTransactionRecord(config)({
+          transactionId: "0.0.5001@1700000000.000000001",
+          network: TESTNET,
+        }),
+      "GET /api/v1/transactions/0.0.5001-1700000000-000000001",
+    ],
+  ] as const;
+
+  /**
+   * Asserts the capability rejects with a message that names the request
+   * method and path but not the configured base URL.
+   *
+   * @param run - Invokes the capability
+   * @param request - Expected method and path in the message
+   */
+  async function expectRedacted(run: () => Promise<unknown>, request: string) {
+    const error = await run().then(
+      () => expect.fail("expected a rejection"),
+      (e: unknown) => e as Error,
+    );
+    expect(error.message).toContain(`Mirror Node ${request}`);
+    expect(error.message).not.toContain("SECRET-KEY");
+    expect(error.message).not.toContain("host.example");
+  }
+
+  it.each(capabilities)(
+    "%s leaves the base URL out when fetch rejects quoting it",
+    async (_, run, request) => {
+      const fetchFn = mockFetch(url => new TypeError(`Failed to parse URL from ${url}`));
+
+      await expectRedacted(run, request);
+      expect(String(fetchFn.mock.calls[0][0])).toMatch(
+        /^https:\/\/host\.example\/v1\/SECRET-KEY\//,
+      );
+    },
+  );
+
+  it.each(
+    capabilities.flatMap(([name, run, request]) => [
+      [name, 500, run, request] as const,
+      [name, 429, run, request] as const,
+    ]),
+  )("%s leaves the base URL out on HTTP %i", async (_, status, run, request) => {
+    mockFetch(() => ({ status, body: { _status: { messages: [{ message: "Unavailable" }] } } }));
+
+    await expectRedacted(run, request);
+  });
+
+  it("keeps the unredacted error as the cause for local logging", async () => {
+    const original = new TypeError(`Failed to parse URL from ${KEYED_BASE}/api/v1/accounts/0.0.5`);
+    mockFetch(() => original);
+
+    await expect(
+      createHederaResolveEvmAddress(config)({ account: "0.0.5", network: TESTNET }),
+    ).rejects.toMatchObject({
+      message:
+        "Mirror Node GET /api/v1/accounts/0.0.5 failed: Failed to parse URL from <mirror-node>/api/v1/accounts/0.0.5",
+      cause: original,
+    });
+  });
+});

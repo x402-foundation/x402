@@ -100,7 +100,9 @@ type MirrorEvmAccount = {
  */
 type MirrorResponse = {
   /**
-   * Request method and URL, for error messages.
+   * Request method and path, for error messages. The base URL is left out
+   * because operators may embed an API key in it, and these messages reach
+   * resource servers and clients.
    */
   request: string;
   status: number;
@@ -131,24 +133,51 @@ function mirrorNodeBaseUrl(config: HederaMirrorNodeConfig, network: string): str
  * Sends a Mirror Node request with a bounded timeout, keeping the HTTP status.
  * A network error or timeout throws.
  *
- * @param url - Fully-qualified Mirror Node URL
+ * Error messages name only the method and path: they reach resource servers
+ * and clients, and the base URL may carry an operator's API key.
+ *
+ * @param baseUrl - Mirror Node REST API base URL, without a trailing slash
+ * @param path - Request path, starting with `/api/v1/`
  * @param init - Optional request method, headers and body
  * @returns The response status and its parsed JSON body
+ * @throws {Error} On a network error or timeout, with the base URL redacted
+ *   from the message; the original error is kept as `cause` for local logging
  */
-async function mirrorFetch(url: string, init: RequestInit = {}): Promise<MirrorResponse> {
-  const request = `${init.method ?? "GET"} ${url}`;
+async function mirrorFetch(
+  baseUrl: string,
+  path: string,
+  init: RequestInit = {},
+): Promise<MirrorResponse> {
+  const request = `${init.method ?? "GET"} ${path}`;
   let response: Response;
   let text: string;
   try {
-    response = await fetch(url, {
+    response = await fetch(`${baseUrl}${path}`, {
       ...init,
       signal: AbortSignal.timeout(MIRROR_NODE_REQUEST_TIMEOUT_MS),
     });
     text = await response.text();
   } catch (error) {
-    throw new Error(`Mirror Node ${request} failed: ${errorMessage(error)}`, { cause: error });
+    throw new Error(
+      `Mirror Node ${request} failed: ${redactBaseUrl(errorMessage(error), baseUrl)}`,
+      {
+        cause: error,
+      },
+    );
   }
   return { request, status: response.status, ok: response.ok, body: parseJson(text) };
+}
+
+/**
+ * Replaces every occurrence of the Mirror Node base URL in a message, since
+ * fetch errors (e.g. "Failed to parse URL from ...") can quote the full URL.
+ *
+ * @param message - Error message
+ * @param baseUrl - Mirror Node REST API base URL
+ * @returns The message with the base URL replaced by `<mirror-node>`
+ */
+function redactBaseUrl(message: string, baseUrl: string): string {
+  return baseUrl ? message.split(baseUrl).join("<mirror-node>") : message;
 }
 
 /**
@@ -209,7 +238,7 @@ export function createHederaResolveEvmAddress(
 ): NonNullable<FacilitatorHederaSigner["resolveEvmAddress"]> {
   return async ({ account, network }) => {
     const baseUrl = mirrorNodeBaseUrl(config, network);
-    const response = await mirrorFetch(`${baseUrl}/api/v1/accounts/${encodeURIComponent(account)}`);
+    const response = await mirrorFetch(baseUrl, `/api/v1/accounts/${encodeURIComponent(account)}`);
     if (isNotFound(response)) {
       return undefined;
     }
@@ -230,7 +259,7 @@ export function createHederaResolveEvmAddress(
  *
  * @param fees - The `custom_fees` object of a token
  * @param kind - Name of the fee list
- * @param request - Request method and URL, for error messages
+ * @param request - Request method and path, for error messages
  * @returns Number of fees of that kind
  */
 function countFees(fees: Record<string, unknown>, kind: string, request: string): number {
@@ -257,7 +286,7 @@ export function createHederaGetTokenCustomFees(
 ): NonNullable<FacilitatorHederaSigner["getTokenCustomFees"]> {
   return async ({ tokenId, network }): Promise<HederaTokenCustomFees | undefined> => {
     const baseUrl = mirrorNodeBaseUrl(config, network);
-    const response = await mirrorFetch(`${baseUrl}/api/v1/tokens/${encodeURIComponent(tokenId)}`);
+    const response = await mirrorFetch(baseUrl, `/api/v1/tokens/${encodeURIComponent(tokenId)}`);
     if (isNotFound(response)) {
       return undefined;
     }
@@ -295,7 +324,7 @@ export function createHederaSimulateContractCall(
 ): NonNullable<FacilitatorHederaSigner["simulateContractCall"]> {
   return async ({ network, from, to, data, gas, estimate }) => {
     const baseUrl = mirrorNodeBaseUrl(config, network);
-    const response = await mirrorFetch(`${baseUrl}/api/v1/contracts/call`, {
+    const response = await mirrorFetch(baseUrl, "/api/v1/contracts/call", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ block: "latest", data, estimate, from, gas, to }),
@@ -355,7 +384,7 @@ function classifyRejectedCall(response: MirrorResponse): HederaContractCallSimul
  * Parses the hex `result` of an `estimate: true` contract call.
  *
  * @param result - The `result` field of the response
- * @param request - Request method and URL, for error messages
+ * @param request - Request method and path, for error messages
  * @returns The gas estimate
  */
 function parseGasEstimate(result: unknown, request: string): number {
@@ -538,7 +567,7 @@ async function readTransactionRecord(
   mirrorId: string,
   transactionId: string,
 ): Promise<HederaTransactionRecord | undefined> {
-  const transactions = await mirrorFetch(`${baseUrl}/api/v1/transactions/${mirrorId}`);
+  const transactions = await mirrorFetch(baseUrl, `/api/v1/transactions/${mirrorId}`);
   if (transactions.status === 404) {
     return undefined;
   }
@@ -560,7 +589,7 @@ async function readTransactionRecord(
       item.parent_consensus_timestamp === parent.consensus_timestamp,
   );
 
-  const result = await mirrorFetch(`${baseUrl}/api/v1/contracts/results/${mirrorId}`);
+  const result = await mirrorFetch(baseUrl, `/api/v1/contracts/results/${mirrorId}`);
   if (result.status === 404) {
     return undefined;
   }
@@ -582,7 +611,7 @@ async function readTransactionRecord(
  *
  * @param value - Candidate value
  * @param field - Field name, for error messages
- * @param request - Request method and URL, for error messages
+ * @param request - Request method and path, for error messages
  * @returns The array
  * @throws {Error} When `value` is not an array
  */
@@ -598,7 +627,7 @@ function requireArray(value: unknown, field: string, request: string): unknown[]
  *
  * @param value - Candidate value
  * @param field - Field name, for error messages
- * @param request - Request method and URL, for error messages
+ * @param request - Request method and path, for error messages
  * @returns The string
  * @throws {Error} When `value` is not a string
  */
@@ -615,7 +644,7 @@ function requireString(value: unknown, field: string, request: string): string {
  *
  * @param value - Candidate integer
  * @param field - Field name, for error messages
- * @param request - Request method and URL, for error messages
+ * @param request - Request method and path, for error messages
  * @returns The integer as a base-10 string
  * @throws {Error} When `value` is not a safe integer
  */
@@ -631,7 +660,7 @@ function safeIntegerString(value: unknown, field: string, request: string): stri
  *
  * @param value - The list
  * @param field - Field name, for error messages
- * @param request - Request method and URL, for error messages
+ * @param request - Request method and path, for error messages
  * @returns The normalized transfers
  */
 function toTransfers(value: unknown, field: string, request: string): HederaTransferEntry[] {
@@ -648,7 +677,7 @@ function toTransfers(value: unknown, field: string, request: string): HederaTran
  * Maps a Mirror Node transaction entry to a normalized record entry.
  *
  * @param entry - Mirror Node transaction entry
- * @param request - Request method and URL, for error messages
+ * @param request - Request method and path, for error messages
  * @returns The record entry
  */
 function toRecordEntry(
@@ -704,7 +733,7 @@ function toRecordEntry(
  *
  * @param value - Candidate value
  * @param field - Field name, for error messages
- * @param request - Request method and URL, for error messages
+ * @param request - Request method and path, for error messages
  * @returns The string, or null
  */
 function nullableString(value: unknown, field: string, request: string): string | null {
@@ -715,7 +744,7 @@ function nullableString(value: unknown, field: string, request: string): string 
  * Maps a Mirror Node contract log, lowercasing its hex fields.
  *
  * @param value - Mirror Node log
- * @param request - Request method and URL, for error messages
+ * @param request - Request method and path, for error messages
  * @returns The contract log
  */
 function toContractLog(value: unknown, request: string): HederaContractLog {
