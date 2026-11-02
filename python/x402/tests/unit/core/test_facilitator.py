@@ -705,9 +705,7 @@ class TestX402FacilitatorGateHookErrors:
         with pytest.raises(SettleError) as settle_exc:
             await facilitator.settle(_payload(requirements), requirements)
         assert verify_exc.value.invalid_reason == "blocked"
-        assert verify_exc.value.invalid_message is None
         assert settle_exc.value.error_reason == "blocked"
-        assert settle_exc.value.error_message is None
         assert scheme.verify_calls == []
         assert scheme.settle_calls == []
 
@@ -752,23 +750,19 @@ class TestX402FacilitatorGateHookErrors:
         assert scheme.settle_calls == []
 
     @pytest.mark.asyncio
-    async def test_v2_before_hook_abort_keeps_empty_message(self):
+    async def test_before_hook_abort_keeps_missing_and_empty_message(self):
         facilitator = x402Facilitator()
         facilitator.register(["eip155:8453"], MockSchemeNetworkFacilitator("exact"))
         requirements = _requirements("eip155:8453")
-        facilitator.on_before_verify(
-            lambda ctx: AbortResult(reason="Facilitator security check failed", message="")
-        )
-        facilitator.on_before_settle(
-            lambda ctx: AbortResult(reason="Gas price too high", message="")
-        )
+        facilitator.on_before_verify(lambda ctx: AbortResult(reason="blocked"))
+        facilitator.on_before_settle(lambda ctx: AbortResult(reason="blocked", message=""))
 
         with pytest.raises(VerifyError) as verify_exc:
             await facilitator.verify(_payload(requirements), requirements)
         with pytest.raises(SettleError) as settle_exc:
             await facilitator.settle(_payload(requirements), requirements)
 
-        assert verify_exc.value.invalid_message == ""
+        assert verify_exc.value.invalid_message is None
         assert settle_exc.value.error_message == ""
 
 
@@ -883,7 +877,7 @@ class TestX402FacilitatorSyncHookErrorIsolation:
         assert exc.value.error_message == "Settlement aborted by facilitator hook"
         assert scheme.settle_calls == []
 
-    def test_v2_before_hook_abort_keeps_missing_and_empty_message(self):
+    def test_before_hook_abort_keeps_missing_and_empty_message(self):
         facilitator = x402FacilitatorSync()
         facilitator.register(["eip155:8453"], MockSchemeNetworkFacilitator("exact"))
         requirements = _requirements("eip155:8453")

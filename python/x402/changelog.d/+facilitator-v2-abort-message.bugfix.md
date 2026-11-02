@@ -1,1 +1,1 @@
-Facilitator before-verify and before-settle aborts now keep the hook message on `VerifyError.invalid_message` and `SettleError.error_message` for V2 verify and settle, including when that message is missing or empty.
+Facilitator before-verify and before-settle aborts now raise `VerifyError` and `SettleError` instead of `PaymentAbortedError`, and copy the hook message onto `invalid_message` and `error_message`.
