@@ -365,6 +365,27 @@ Use `depositStrategy` for fine-grained control: cap deposits, skip top-ups, or r
   </Tab>
 </Tabs>
 
+### Permit2 approval gas sponsoring (Go)
+
+When a server advertises the [EIP-2612](/extensions/eip2612-gas-sponsoring) or [ERC-20 approval](/extensions/erc20-approval-gas-sponsoring) gas-sponsoring extensions for a Permit2 deposit, the Go batch-settlement client needs RPC access to read token contracts and fill approval transaction fields. Configure `RPCURL` or `RPCByChainID` in `BatchSettlementEvmSchemeOptions`, or use an RPC-backed signer:
+
+```go
+// Option 1: RPC-backed signer (provides both read and tx-signing capability)
+evmSigner, _ := evmsigners.NewClientSignerFromPrivateKeyWithClient(
+    os.Getenv("EVM_PRIVATE_KEY"),
+    "https://sepolia.base.org",
+)
+batchScheme := batchedclient.NewBatchSettlementEvmScheme(evmSigner, nil)
+
+// Option 2: configure RPC separately in scheme options
+batchScheme = batchedclient.NewBatchSettlementEvmScheme(evmSigner, &batchedclient.BatchSettlementEvmSchemeOptions{
+    RPCURL: "https://sepolia.base.org",
+    // Or per-chain: RPCByChainID: map[int64]evm.RPCChainConfig{84532: {RPCURL: "https://sepolia.base.org"}},
+})
+```
+
+If neither is configured and the server advertises a gas-sponsoring extension, the client skips the extension and logs an actionable warning once per network.
+
 ### Voucher Signer Delegation
 
 By default, vouchers are signed by the payer key. For higher-throughput clients, especially smart wallets using EIP-1271, delegate voucher signing to a dedicated EOA. The delegated address is committed into the channel as `payerAuthorizer`, which lets the facilitator verify vouchers with ECDSA recovery instead of an onchain smart-wallet signature check.
