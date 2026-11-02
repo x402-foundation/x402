@@ -115,6 +115,11 @@ export function wrapFetchWithPayment(
       // Hook's retry got 402, fall through to payment
     }
 
+    // Check if this is already a retry to prevent infinite loops
+    if (clonedRequest.headers.has("PAYMENT-SIGNATURE") || clonedRequest.headers.has("X-PAYMENT")) {
+      throw new Error("Payment already attempted");
+    }
+
     // Create payment payload (copy extensions from PaymentRequired)
     let paymentPayload;
     try {
@@ -127,11 +132,6 @@ export function wrapFetchWithPayment(
 
     // Encode payment header
     const paymentHeaders = httpClient.encodePaymentSignatureHeader(paymentPayload);
-
-    // Check if this is already a retry to prevent infinite loops
-    if (clonedRequest.headers.has("PAYMENT-SIGNATURE") || clonedRequest.headers.has("X-PAYMENT")) {
-      throw new Error("Payment already attempted");
-    }
 
     // Add payment headers to cloned request
     for (const [key, value] of Object.entries(paymentHeaders)) {
