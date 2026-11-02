@@ -41,8 +41,9 @@ function word(calldata: string, index: number): string {
 describe("toLongZeroAddress", () => {
   it("packs shard, realm and num into 4, 8 and 8 bytes", () => {
     expect(toLongZeroAddress("1.2.3")).toBe("0x0000000100000000000000020000000000000003");
-    expect(toLongZeroAddress("1.2.3")).toBe(
-      `0x${ContractId.fromString("1.2.3").toSolidityAddress()}`,
+    // The SDK's toEvmAddress drops shard and realm, so it agrees only in shard 0, realm 0.
+    expect(toLongZeroAddress("0.0.1234")).toBe(
+      `0x${ContractId.fromString("0.0.1234").toEvmAddress()}`,
     );
   });
 

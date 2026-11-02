@@ -211,9 +211,7 @@ export async function createPayment(
     mirrorNodeUrl,
     executorId: env.executor,
     from: from.evmAddress,
-    asset: options.asset
-      ? `0x${TokenId.fromString(options.asset).toSolidityAddress()}`
-      : ZERO_ADDRESS,
+    asset: options.asset ? `0x${TokenId.fromString(options.asset).toEvmAddress()}` : ZERO_ADDRESS,
     to: to.evmAddress,
     amount: options.boundAmount ?? amount,
   });
@@ -326,7 +324,7 @@ export async function createTokenFixture(
           .setGas(1_000_000)
           .setFunction(
             "associate",
-            new ContractFunctionParameters().addAddress(tokenId.toSolidityAddress()),
+            new ContractFunctionParameters().addAddress(tokenId.toEvmAddress()),
           )
           .execute(client)
       ).getReceipt(client);

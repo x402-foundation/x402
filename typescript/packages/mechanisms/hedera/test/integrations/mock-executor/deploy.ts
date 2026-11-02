@@ -121,7 +121,7 @@ async function main(): Promise<void> {
     }
 
     console.log(`${name} deployed: ${contractId.toString()}`);
-    console.log(`  evm address:   0x${contractId.toSolidityAddress()}`);
+    console.log(`  evm address:   0x${contractId.toEvmAddress()}`);
     console.log(`  hashscan:      https://hashscan.io/testnet/contract/${contractId.toString()}`);
     if (isMock) {
       console.log(`  funded:        ${fundHbar} HBAR`);
