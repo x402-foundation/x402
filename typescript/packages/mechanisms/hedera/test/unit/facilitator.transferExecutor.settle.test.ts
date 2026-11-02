@@ -1108,6 +1108,74 @@ describe("transferExecutor settle: in-flight guard", () => {
 
     expect(verified).toEqual({ isValid: true, payer: PAYER });
   });
+
+  it("resolves with unexpected_settle_error and frees the key when a step before broadcast throws", async () => {
+    const signer = createSigner();
+    const config = createConfig();
+    const executors = config.transferExecutor!.executors!;
+    // A hot reload swaps in a malformed list, so settle's admission re-check throws.
+    signer.simulateContractCall.mockImplementationOnce(async () => {
+      executors[TESTNET] = { [EXECUTOR]: true } as unknown as string[];
+      return { reverted: false };
+    });
+    const scheme = new ExactHederaScheme(signer, config);
+    const requirements = createRequirements();
+    const payload = createPaymentPayload(requirements);
+
+    const first = await scheme.settle(payload, requirements);
+    executors[TESTNET] = [EXECUTOR];
+    const second = await scheme.settle(payload, requirements);
+
+    expect(first).toMatchObject({
+      success: false,
+      network: TESTNET,
+      transaction: "",
+      errorReason: ErrUnexpectedSettleError,
+      payer: PAYER,
+    });
+    expect(first.errorMessage).toContain("includes");
+    expect(second).toEqual({ success: true, transaction: TX_ID, network: TESTNET, payer: PAYER });
+    expect(signer.submitContractExecute).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["an empty result", {}],
+    ["no result", undefined],
+    ["an empty tx id", { transactionId: "", receiptStatus: "SUCCESS" }],
+  ])(
+    "resolves with unexpected_settle_error and keeps the key when the submission returns %s",
+    async (_, submitted) => {
+      const signer = createSigner();
+      signer.submitContractExecute.mockResolvedValueOnce(
+        submitted as unknown as HederaContractExecuteResult,
+      );
+      const scheme = new ExactHederaScheme(signer, createConfig());
+      const requirements = createRequirements();
+      const payload = createPaymentPayload(requirements);
+
+      const first = await scheme.settle(payload, requirements);
+      const duplicate = await scheme.settle(payload, requirements);
+
+      expect(first).toEqual({
+        success: false,
+        network: TESTNET,
+        transaction: "",
+        errorReason: ErrUnexpectedSettleError,
+        errorMessage: "transaction broadcast but the signer returned no transaction id",
+        payer: PAYER,
+      });
+      expect(duplicate).toEqual({
+        success: false,
+        network: TESTNET,
+        transaction: "",
+        errorReason: ErrInvalidPayload,
+        errorMessage: "payload already in flight",
+        payer: PAYER,
+      });
+      expect(signer.submitContractExecute).toHaveBeenCalledTimes(1);
+      expect(signer.getTransactionRecord).not.toHaveBeenCalled();
+    },
+  );
 });
 
 /**

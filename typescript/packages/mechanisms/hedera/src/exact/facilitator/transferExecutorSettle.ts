@@ -60,6 +60,11 @@ export type TransferExecutorSettleContext = TransferExecutorContext & {
 type SettleOutcome = {
   response: SettleResponse;
   pending?: PendingTransferExecutorSettlement;
+  /**
+   * Something may have been broadcast with nothing to judge it by: the key stays
+   * held until it expires, with nothing pending.
+   */
+  keep?: true;
 };
 
 /**
@@ -77,7 +82,8 @@ type SettleFailure = (
  * The key is released on a definite outcome and kept on `settlement_pending`
  * until it expires, so a retry can't submit a second contract call while the
  * first may still land. A retry with the same requirements judges the submitted
- * transaction's record again instead.
+ * transaction's record again instead. A broadcast that returned no transaction
+ * id keeps the key too, with nothing for a retry to judge. Never rejects.
  *
  * @param ctx - Signer, config, alias policy and the scheme's guard
  * @param payload - Payment payload
@@ -89,52 +95,77 @@ export async function settleTransferExecutor(
   payload: PaymentPayload,
   requirements: PaymentRequirements,
 ): Promise<SettleResponse> {
+  const { network } = requirements;
   const parsed = parseTransferExecutorPayload(payload.payload);
   if ("malformedField" in parsed) {
-    // Nothing to guard: verification rejects it.
-    return (await settleHeld(ctx, payload, requirements)).response;
+    // Nothing to guard: verification rejects it before anything is submitted.
+    try {
+      return (await settleHeld(ctx, payload, requirements)).response;
+    } catch (error) {
+      return failureFor(network, "")(ErrUnexpectedSettleError, errorMessage(error));
+    }
   }
-  const key = transferExecutorInFlightKey(requirements.network, parsed.payload);
+  const key = transferExecutorInFlightKey(network, parsed.payload);
   // Core retries a pending settlement once, with the same requirements: re-read
   // the record of the transaction already submitted, and submit nothing.
   const retry = ctx.guard.takePending(key, pending =>
     isDeepStrictEqual(pending.requirements, requirements),
   );
   if (retry !== undefined) {
-    return settleUnder(ctx.guard, retry.hold, judgeSubmitted(retry.pending));
+    return settleUnder(
+      ctx.guard,
+      retry.hold,
+      judgeSubmitted(retry.pending),
+      failureFor(network, retry.pending.call.payer),
+    );
   }
   // Before the first await, so an identical concurrent settle sees the key.
   const hold = ctx.guard.tryAcquire(key);
+  const fail = failureFor(network, parsed.payload.payer);
   if (hold === undefined) {
-    const fail = failureFor(requirements.network, parsed.payload.payer);
     return fail(ErrInvalidPayload, "payload already in flight");
   }
   return settleUnder(
     ctx.guard,
     hold,
     settleHeld(ctx, payload, requirements, () => ctx.guard.renew(hold)),
+    fail,
   );
 }
 
 /**
- * Settles under a hold: keeps the key while the outcome is pending, and releases it otherwise.
+ * Settles under a hold: keeps the key while the outcome is pending or something
+ * was broadcast that can't be judged, and releases it otherwise.
+ *
+ * Every step after a broadcast resolves, so a settle step that rejects broadcast
+ * nothing, and its key is released.
  *
  * @param guard - The scheme's guard
  * @param hold - The settle's hold
  * @param settlement - The settle step
+ * @param fail - Failure builder for this payment
  * @returns Settlement response
  */
 async function settleUnder(
   guard: InFlightGuard<PendingTransferExecutorSettlement>,
   hold: InFlightHold,
   settlement: Promise<SettleOutcome>,
+  fail: SettleFailure,
 ): Promise<SettleResponse> {
-  const { response, pending } = await settlement;
-  // On pending the call may still land, so a retry must not submit another.
-  if (pending === undefined) {
+  let outcome: SettleOutcome;
+  try {
+    outcome = await settlement;
+  } catch (error) {
+    // Nothing was broadcast: a kept key would refuse every retry until it expires.
     guard.release(hold);
-  } else {
+    return fail(ErrUnexpectedSettleError, errorMessage(error));
+  }
+  const { response, pending, keep } = outcome;
+  // On pending the call may still land, so a retry must not submit another.
+  if (pending !== undefined) {
     guard.holdPending(hold, pending);
+  } else if (keep !== true) {
+    guard.release(hold);
   }
   return response;
 }
@@ -185,7 +216,7 @@ async function settleHeld(
   }
   // The transaction's valid duration starts here, so the key's TTL does too.
   renewHold?.();
-  let submitted: HederaContractExecuteResult;
+  let submitted: HederaContractExecuteResult | undefined;
   try {
     // Exactly as simulated, and the only transaction this method signs.
     submitted = await signer.submitContractExecute({
@@ -199,7 +230,19 @@ async function settleHeld(
     // The capability throws only when nothing was broadcast.
     return { response: fail(ErrUnexpectedSettleError, errorMessage(error)) };
   }
-  const transaction = submitted.transactionId;
+  // It returned, so something was broadcast: from here on no step throws, and
+  // the key is released only on a definite outcome.
+  const transaction = submitted?.transactionId;
+  if (submitted === undefined || typeof transaction !== "string" || transaction === "") {
+    // No record to judge, so nothing for a retry: kept until it expires.
+    return {
+      response: fail(
+        ErrUnexpectedSettleError,
+        "transaction broadcast but the signer returned no transaction id",
+      ),
+      keep: true,
+    };
+  }
   const pending: PendingTransferExecutorSettlement = {
     signer,
     requirements,
@@ -231,7 +274,8 @@ async function settleHeld(
 
 /**
  * Reads a submitted call's consensus record and judges it. A record that can't
- * be read yet leaves the settlement pending.
+ * be read yet, or judged at all, leaves the settlement pending. Never rejects:
+ * the call was broadcast, so its key must not be released.
  *
  * @param submitted - The submitted call and what judging its record needs
  * @returns Settlement outcome
@@ -241,27 +285,25 @@ async function judgeSubmitted(
 ): Promise<SettleOutcome> {
   const { signer, requirements, call, facilitator, transaction } = submitted;
   const { network } = requirements;
-  const fail = failureFor(network, call.payer);
+  const stillPending = (detail: string): SettleOutcome => ({
+    response: failureFor(network, call.payer)(ErrSettlementPending, detail, transaction),
+    pending: submitted,
+  });
   let record: HederaTransactionRecord | undefined;
   try {
     record = await signer.getTransactionRecord({ transactionId: transaction, network });
   } catch (error) {
-    return {
-      response: fail(
-        ErrSettlementPending,
-        `transaction record could not be obtained: ${errorMessage(error)}`,
-        transaction,
-      ),
-      pending: submitted,
-    };
+    return stillPending(`transaction record could not be obtained: ${errorMessage(error)}`);
   }
   if (record === undefined) {
-    return {
-      response: fail(ErrSettlementPending, "transaction record not available yet", transaction),
-      pending: submitted,
-    };
+    return stillPending("transaction record not available yet");
   }
-  return { response: judgeRecord(requirements, call, facilitator, transaction, record) };
+  try {
+    return { response: judgeRecord(requirements, call, facilitator, transaction, record) };
+  } catch (error) {
+    // The record checks catch their own errors; this guards whatever else could throw.
+    return stillPending(`transaction record could not be judged: ${errorMessage(error)}`);
+  }
 }
 
 /**
