@@ -70,6 +70,7 @@ from .constants import (
 
 # Default assets
 from .default_assets import DEFAULT_ASSETS, find_default_asset, get_default_asset
+from .errors import TransactionOnchainFailureError
 
 # Settlement cache (shared across V1/V2 facilitator instances)
 from .settlement_cache import SettlementCache
@@ -190,6 +191,7 @@ __all__ = [
     # Signer implementations
     "KeypairSigner",
     "FacilitatorKeypairSigner",
+    "TransactionOnchainFailureError",
     # Utilities
     "normalize_network",
     "get_network_config",

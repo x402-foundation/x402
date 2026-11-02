@@ -43,6 +43,7 @@ from ...constants import (
     TOKEN_2022_PROGRAM_ADDRESS,
     TOKEN_PROGRAM_ADDRESS,
 )
+from ...errors import TransactionOnchainFailureError
 from ...settlement_cache import SettlementCache
 from ...signer import FacilitatorSvmSigner
 from ...types import ExactSvmPayload
@@ -402,7 +403,18 @@ class ExactSvmSchemeV1:
             signature = self._signer.send_transaction(fully_signed_tx, network)
 
             # Wait for confirmation
-            self._signer.confirm_transaction(signature, network)
+            try:
+                self._signer.confirm_transaction(signature, network)
+            except TransactionOnchainFailureError as e:
+                self._settlement_cache.delete(tx_key)
+                return SettleResponse(
+                    success=False,
+                    error_reason=ERR_TRANSACTION_FAILED,
+                    error_message=str(e),
+                    transaction=signature,
+                    network=network,
+                    payer=verify_result.payer or "",
+                )
 
             return SettleResponse(
                 success=True,

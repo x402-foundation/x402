@@ -52,6 +52,7 @@ from ..constants import (
     TOKEN_2022_PROGRAM_ADDRESS,
     TOKEN_PROGRAM_ADDRESS,
 )
+from ..errors import TransactionOnchainFailureError
 from ..settlement_cache import SettlementCache
 from ..signer import FacilitatorSvmSigner, FacilitatorSvmSignerWithGetAccountInfo
 from ..types import ExactSvmPayload
@@ -576,11 +577,25 @@ class ExactSvmScheme:
         settle response, shared by the fresh-broadcast path in settle() and the
         pending-settlement reconciliation path in _reconcile_pending_settlement().
 
-        On confirm failure, records/refreshes the pending-settlement entry so a
-        retry reconciles via the fast path instead of re-verifying/re-sending.
+        Confirmed execution failure is terminal. Unknown confirmation outcomes
+        retain the signature so a retry reconciles instead of re-sending.
         """
         try:
             self._signer.confirm_transaction(signature, network)
+        except TransactionOnchainFailureError as e:
+            try:
+                self._pending_store.delete(tx_key)
+            except Exception:
+                pass  # A cleanup error must not mask a confirmed execution failure.
+            self._settlement_cache.delete(tx_key)
+            return SettleResponse(
+                success=False,
+                error_reason=ERR_TRANSACTION_FAILED,
+                error_message=str(e),
+                transaction=signature,
+                network=network,
+                payer=payer,
+            )
         except Exception as e:
             try:
                 self._pending_store.set(tx_key, signature)

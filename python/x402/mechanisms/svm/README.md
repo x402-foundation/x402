@@ -90,10 +90,18 @@ facilitator.register(
 | `FacilitatorSvmSigner` | Protocol for facilitator signers |
 | `KeypairSigner` | Client signer using Solana keypair |
 | `FacilitatorKeypairSigner` | Facilitator signer with RPC client |
+| `TransactionOnchainFailureError` | Confirmed or finalized execution failure |
 | `DEFAULT_ASSETS` | USD-pegged default asset table (CAIP-2 → asset list) |
 | `get_default_asset` / `find_default_asset` | Forward and reverse default-asset lookups |
 | `NETWORK_CONFIGS` / `get_network_config` | Per-network transport endpoints (`rpc_url`, `ws_url`) |
 | `V1_NETWORKS` | List of V1 network names |
+
+Custom facilitator signers must raise `TransactionOnchainFailureError` from
+`confirm_transaction` only for execution errors at `confirmed` or `finalized`.
+V2 returns `transaction_failed` with the original signature and releases the
+pending and duplicate entries. Other confirmation exceptions, including timeouts
+and RPC errors, retain `settlement_pending` for reconciliation. Continue polling
+for `processed` results, even when they contain an execution error.
 
 ## Supported Networks
 
