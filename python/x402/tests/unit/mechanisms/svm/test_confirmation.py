@@ -22,6 +22,7 @@ from x402.mechanisms.svm import (
 )
 from x402.mechanisms.svm.exact import ExactSvmClientScheme, ExactSvmFacilitatorScheme
 from x402.mechanisms.svm.exact.v1.facilitator import ExactSvmSchemeV1
+from x402.mechanisms.svm.rpc import CONFIRMED
 from x402.mechanisms.svm.signers import FacilitatorKeypairSigner, KeypairSigner
 from x402.mechanisms.svm.utils import transaction_message_hash
 from x402.schemas import PaymentPayload, PaymentRequirements
@@ -87,10 +88,11 @@ def payment(signer_rpc):
     tx = VersionedTransaction.from_bytes(base64.b64decode(signed))
     tx.verify_and_hash_message()
 
-    def send_raw_transaction(wire, opts):
+    def send_raw_transaction(wire, *, skip_preflight, preflight_commitment):
         sent = VersionedTransaction.from_bytes(wire)
         sent.verify_and_hash_message()
-        assert opts.skip_preflight is True
+        assert skip_preflight is True
+        assert preflight_commitment == CONFIRMED
         return SimpleNamespace(value=sent.signatures[0])
 
     rpc.send_raw_transaction.side_effect = send_raw_transaction
