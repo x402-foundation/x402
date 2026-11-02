@@ -1,4 +1,6 @@
-import { isAddress } from "@solana/kit";
+import { address, type Address, isAddress } from "@solana/kit";
+import type { FacilitatorTransactionVersion } from "../../payment-channels/facilitator";
+import { getPaymentChannelsTreasuryOwner } from "../../payment-channels/onchain";
 import type {
   FacilitatorContext,
   Network,
@@ -63,9 +65,36 @@ export interface BatchSvmFacilitatorConfig {
    * is not advertised. Defaults to `DEFAULT_MAX_IDLE_SECS` (seven days).
    */
   maxIdleSecs?: number | undefined;
+  /**
+   * Message version (0 or 1) of the claim, settle, seal, refund, and
+   * rent-cleanup transactions the facilitator builds and signs itself. It does
+   * not affect which client-built versions are accepted. Any other value
+   * throws. `1` advertises `maxClaimChannels` 18 and `maxSettleChannels` 13
+   * and sizes an inline compute budget per batch; `0` advertises four of each
+   * and keeps the version-0 compute-budget defaults.
+   *
+   * Default: `DEFAULT_FACILITATOR_TRANSACTION_VERSION` (1)
+   */
+  facilitatorTransactionVersion?: FacilitatorTransactionVersion | undefined;
+  /**
+   * Treasury owner the payment-channels program was built with, used to derive
+   * the treasury token account `distribute` pays the protocol fee to. Defaults
+   * to the deployed program's owner for the requirement's network; set it for
+   * a custom or local build.
+   */
+  paymentChannelsTreasuryOwner?: string | undefined;
   maxPriorityFeeMicroLamports?: number | undefined;
   maxComputeUnits?: number | undefined;
   maxRequiredSignatures?: number | undefined;
+  /**
+   * Transaction message versions this facilitator accepts for client-built
+   * setup transactions (`open`, `top_up`, `request_close`), advertised as
+   * `extra.transactionVersions` in `/supported`. A transaction of any other
+   * version is rejected with `unsupported_transaction_version` before any
+   * instruction is inspected; a legacy message is accepted exactly when
+   * version 0 is. Defaults to `[0, 1]`.
+   */
+  transactionVersions?: readonly (0 | 1)[] | undefined;
   /**
    * Optional fallback for a channel row with no receiver-authorizer binding.
    * Reads the open transaction's binding memo and writes it back through
@@ -354,4 +383,31 @@ function isReceiverBindingHistoryReader(value: object): value is BatchReceiverBi
     typeof historyReader.getSignaturesForAddress === "function" &&
     typeof historyReader.getTransaction === "function"
   );
+}
+
+/**
+ * The payment-channels treasury owner for `network`: the configured override,
+ * else the deployed program's owner for that network.
+ *
+ * @param config - Facilitator configuration
+ * @param network - CAIP-2 network of the requirements
+ * @returns Treasury owner address
+ */
+export function treasuryOwnerOf(config: BatchSvmFacilitatorConfig, network: string): Address {
+  if (config.paymentChannelsTreasuryOwner === undefined) {
+    return getPaymentChannelsTreasuryOwner(network);
+  }
+  if (!isAddress(config.paymentChannelsTreasuryOwner)) {
+    throw new Error("paymentChannelsTreasuryOwner must be a base58 Solana address");
+  }
+  return address(config.paymentChannelsTreasuryOwner);
+}
+
+/**
+ * Reject a configured treasury owner that is not a Solana address.
+ *
+ * @param config - Facilitator configuration
+ */
+export function assertTreasuryOwner(config: BatchSvmFacilitatorConfig): void {
+  if (config.paymentChannelsTreasuryOwner !== undefined) treasuryOwnerOf(config, "");
 }

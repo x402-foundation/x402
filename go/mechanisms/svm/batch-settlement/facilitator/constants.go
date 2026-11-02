@@ -7,8 +7,16 @@ import (
 )
 
 const (
-	// MaxChannelsPerSettleTx is how many Ed25519-plus-settle pairs fit in one transaction.
+	// MaxChannelsPerSettleTx is how many Ed25519-plus-settle pairs fit in one
+	// legacy or version-0 transaction. Version 1 redemptions use
+	// batchsettlement.V1MaxClaimChannels and V1MaxSettleChannels.
 	MaxChannelsPerSettleTx = 4
+
+	// RedemptionComputeUnitsBase and RedemptionComputeUnitsPerChannel size a
+	// version-1 redemption's compute unit limit; MaxRedemptionComputeUnits caps it.
+	RedemptionComputeUnitsBase       = 25_000
+	RedemptionComputeUnitsPerChannel = 25_000
+	MaxRedemptionComputeUnits        = 1_400_000
 
 	// ChannelReadAttempts is how many times a post-broadcast channel read retries a transient RPC failure.
 	ChannelReadAttempts = 5

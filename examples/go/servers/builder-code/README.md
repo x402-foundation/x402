@@ -4,7 +4,7 @@ Gin server demonstrating ERC-8021 builder-code attribution on paid endpoints via
 
 ## Prerequisites
 
-- Go 1.24 or higher
+- Go 1.26.10 or higher
 - EVM address on Base Sepolia for receiving payments
 - URL of a facilitator supporting Base Sepolia (`eip155:84532`); use the [builder-code facilitator](../../facilitator/builder-code/) for full attribution
 

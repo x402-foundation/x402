@@ -5,6 +5,7 @@ Contains shared logic for facilitator implementations.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable, Generator
 from dataclasses import dataclass
 from typing import Any, Generic, Literal, TypeVar
@@ -39,11 +40,18 @@ from .schemas import (
     matches_network_pattern,
 )
 
+logger = logging.getLogger(__name__)
+
 # ============================================================================
 # Type Aliases - Support both sync and async hooks
 # ============================================================================
 
 T = TypeVar("T")
+FacilitatorT = TypeVar(
+    "FacilitatorT",
+    SchemeNetworkFacilitator,
+    SchemeNetworkFacilitatorV1,
+)
 
 BeforeVerifyHook = Callable[[VerifyContext], Awaitable[AbortResult | None] | AbortResult | None]
 AfterVerifyHook = Callable[[VerifyResultContext], Awaitable[None] | None]
@@ -132,14 +140,7 @@ class x402FacilitatorBase:
         Returns:
             Self for chaining.
         """
-        pattern = derive_network_pattern(networks)
-        self._schemes.append(
-            SchemeData(
-                facilitator=facilitator,
-                networks=set(networks),
-                pattern=pattern,
-            )
-        )
+        self._append_scheme_per_namespace(self._schemes, networks, facilitator)
         return self
 
     def register_v1(
@@ -156,15 +157,31 @@ class x402FacilitatorBase:
         Returns:
             Self for chaining.
         """
-        pattern = derive_network_pattern(networks)
-        self._schemes_v1.append(
-            SchemeData(
-                facilitator=facilitator,
-                networks=set(networks),
-                pattern=pattern,
-            )
-        )
+        self._append_scheme_per_namespace(self._schemes_v1, networks, facilitator)
         return self
+
+    def _append_scheme_per_namespace(
+        self,
+        schemes: list[SchemeData[FacilitatorT]],
+        networks: list[Network],
+        facilitator: FacilitatorT,
+    ) -> None:
+        if not networks:
+            raise ValueError("At least one network required")
+
+        networks_by_namespace: dict[str, list[Network]] = {}
+        for network in networks:
+            namespace = network.split(":")[0]
+            networks_by_namespace.setdefault(namespace, []).append(network)
+
+        for namespace_networks in networks_by_namespace.values():
+            schemes.append(
+                SchemeData(
+                    facilitator=facilitator,
+                    networks=set(namespace_networks),
+                    pattern=derive_network_pattern(namespace_networks),
+                )
+            )
 
     def register_extension(self, extension: FacilitatorExtension) -> x402FacilitatorBase:
         """Register a facilitator extension.
@@ -373,6 +390,9 @@ class x402FacilitatorBase:
     # ========================================================================
     # Core Logic Generators (shared between async/sync)
     # ========================================================================
+
+    def _warn_hook_failure(self, operation: str, phase: HookPhase, error: Exception) -> None:
+        logger.warning("[x402] Facilitator %s %s hook threw: %s", operation, phase, error)
 
     def _verify_core(
         self,

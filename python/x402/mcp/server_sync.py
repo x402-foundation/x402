@@ -11,6 +11,7 @@ from ..payment_flow import (
     resolve_failure_path_settlement,
     resolve_payment_flow_phases,
 )
+from ..schemas import SettleResponse
 from ..schemas.hooks import CompletedSettlement, VerifiedPaymentCancelOptions
 from ..server import x402ResourceServerSync
 from .types import (
@@ -240,6 +241,7 @@ def _process_paid_tool_call_sync(
                     tool_name,
                     config,
                     before_settle.error_reason or "Settlement failed",
+                    before_settle,
                 )
             before_handler_settlement = CompletedSettlement(
                 phase="before-handler",
@@ -411,6 +413,7 @@ def _settle_payment_result_sync(
             tool_name,
             config,
             settle_result.error_reason or "Unknown settlement failure",
+            settle_result,
         )
 
     if config.hooks and config.hooks.on_after_settlement:
@@ -471,6 +474,7 @@ def _create_settlement_failed_result_sync(
     tool_name: str,
     config: SyncPaymentWrapperConfig,
     error_message: str,
+    settle_response: SettleResponse | None = None,
 ) -> MCPToolResult:
     """Create a 402 settlement failed result (sync)."""
     resource_info = build_tool_resource_info(tool_name, config.resource)
@@ -498,8 +502,14 @@ def _create_settlement_failed_result_sync(
 
     content_text = json.dumps(error_data)
 
+    meta = (
+        {MCP_PAYMENT_RESPONSE_META_KEY: _settle_meta_sync(settle_response)}
+        if settle_response is not None and settle_response.after_settle_aborted
+        else None
+    )
     return MCPToolResult(
         structured_content=error_data,
         content=[{"type": "text", "text": content_text}],
         is_error=True,
+        meta=meta,
     )

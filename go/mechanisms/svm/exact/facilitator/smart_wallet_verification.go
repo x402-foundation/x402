@@ -96,6 +96,9 @@ func assertFeePayerIsolated(tx *solana.Transaction, feePayer solana.PublicKey) e
 }
 
 func validateComputeBudgetLimits(tx *solana.Transaction, maxCU uint32, maxPriorityFee uint64) error {
+	if tx.Message.GetVersion() == solana.MessageVersionV1 {
+		return smartWalletV1ConfigError(svm.ValidateTransactionV1Config(&tx.Message, maxCU, maxPriorityFee))
+	}
 	for _, ix := range tx.Message.Instructions {
 		programID, err := tx.Message.Program(ix.ProgramIDIndex)
 		if err != nil || !programID.Equals(solana.ComputeBudget) {
@@ -126,6 +129,23 @@ func validateComputeBudgetLimits(tx *solana.Transaction, maxCU uint32, maxPriori
 		}
 	}
 	return nil
+}
+
+// smartWalletV1ConfigError maps a version-1 config violation to the Path 2
+// reason codes that the same rule carries on legacy and version 0.
+func smartWalletV1ConfigError(violation svm.TransactionV1ConfigViolation) error {
+	switch violation {
+	case svm.TransactionV1ConfigOK:
+		return nil
+	case svm.TransactionV1ComputeBudgetInstruction, svm.TransactionV1HeapSize:
+		return fmt.Errorf("%s: %s", ErrSmartWalletUnsupportedComputeBudget, violation)
+	case svm.TransactionV1ComputeUnitLimitMissing, svm.TransactionV1LoadedAccountsDataSizeLimitMissing:
+		return fmt.Errorf("%s: %s", ErrSmartWalletMalformedComputeLimit, violation)
+	case svm.TransactionV1ComputeUnitLimitTooHigh:
+		return fmt.Errorf("%s: %s", ErrSmartWalletComputeUnitsTooHigh, violation)
+	default:
+		return fmt.Errorf("%s: %s", ErrSmartWalletPriorityFeeTooHigh, violation)
+	}
 }
 
 func extractTransfersFromInnerInstructions(inner []rpc.InnerInstruction, accountKeys solana.PublicKeySlice) []transferCheckedInfo {

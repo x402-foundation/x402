@@ -49,14 +49,12 @@ export function payerCodeLookupFailureMessage(error: unknown): string {
   return stripped.length > 0 ? stripped.slice(0, 200) : "payer eth_getCode failed";
 }
 
-// secp256k1 group order N halved: the EIP-2 / SEC1 §4.1.4 low-s upper bound.
-// Mirrors Go `secp256k1HalfN` in `evm.IsCanonicalECDSASignature`.
+// EIP-2 low-s bound: s <= n/2.
 const SECP256K1_N_HALF = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0n;
 
 /**
  * Report whether a 65-byte ECDSA signature uses a low-s value (`s <= n/2`, EIP-2).
- * Any other length is not a plain ECDSA signature and returns false.
- * Mirrors Go `evm.IsCanonicalECDSASignature`.
+ * Any other length returns false.
  *
  * @param signature - The r || s || v signature to inspect.
  * @returns True for a canonical low-s 65-byte signature; false otherwise.
@@ -70,10 +68,8 @@ export function isCanonicalEcdsaSignature(signature: Hex): boolean {
 }
 
 /**
- * Report whether `signature` is a high-s plain EOA signature that verify must reject.
- * Only a 65-byte signature from a payer with no bytecode qualifies: ERC-1271 / ERC-6492
- * wrappers have other lengths, and a deployed wallet decides malleability itself.
- * Mirrors Go `IsPlainNonCanonicalECDSASignature`.
+ * Report whether `signature` is a high-s plain EOA signature.
+ * Only a 65-byte signature from a payer with no bytecode qualifies.
  *
  * @param signature - The full payload signature (not the ERC-6492 inner signature).
  * @param isDeployedAtPayer - Whether the payer has bytecode, from {@link classifyErc6492Payer}.
@@ -107,6 +103,7 @@ export async function classifyErc6492Payer(
   const hasDeploymentInfo = !!(
     erc6492Data.address &&
     erc6492Data.data &&
+    erc6492Data.data !== "0x" &&
     !isAddressEqual(erc6492Data.address, ZERO_ADDRESS)
   );
   const innerSignature = hasDeploymentInfo ? erc6492Data.signature : signature;

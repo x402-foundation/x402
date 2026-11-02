@@ -1,5 +1,32 @@
 # @x402/paywall Changelog
 
+## 2.29.0
+
+### Minor Changes
+
+- [43aaecb](https://github.com/x402-foundation/x402/commit/43aaecb): Added `rpcUrls` to `PaywallConfig`: a map of RPC endpoints keyed by CAIP-2 network. The Solana paywall uses it for the balance check and for building the payment transaction, so mainnet payments no longer depend on `api.mainnet-beta.solana.com`, which rejects browser-origin requests. Networks without an entry keep the public default. ([#3599](https://github.com/x402-foundation/x402/pull/3599)) - Thanks [@notorious-d-e-v](https://github.com/notorious-d-e-v)!
+- [db2c98e](https://github.com/x402-foundation/x402/commit/db2c98e): Require canonical CAIP-2 network identifiers for Algorand and remove support for full genesis hashes as network values. Clients, servers, and facilitators must use the truncated 32-character network references introduced in `@x402/avm` 2.20.0. ([#3894](https://github.com/x402-foundation/x402/pull/3894)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe) and [@cursoragent](https://github.com/cursoragent)!
+- Updated dependencies [636f585](https://github.com/x402-foundation/x402/commit/636f585)
+- Updated dependencies [76f2f28](https://github.com/x402-foundation/x402/commit/76f2f28)
+- Updated dependencies [732c181](https://github.com/x402-foundation/x402/commit/732c181)
+- Updated dependencies [8c2b431](https://github.com/x402-foundation/x402/commit/8c2b431)
+- Updated dependencies [3525075](https://github.com/x402-foundation/x402/commit/3525075)
+- Updated dependencies [e95b066](https://github.com/x402-foundation/x402/commit/e95b066)
+- Updated dependencies [3bd3c1d](https://github.com/x402-foundation/x402/commit/3bd3c1d)
+- Updated dependencies [bc31d3e](https://github.com/x402-foundation/x402/commit/bc31d3e)
+- Updated dependencies [db2c98e](https://github.com/x402-foundation/x402/commit/db2c98e)
+- Updated dependencies [7abd80f](https://github.com/x402-foundation/x402/commit/7abd80f)
+- Updated dependencies [fa5eb06](https://github.com/x402-foundation/x402/commit/fa5eb06)
+- Updated dependencies [3ca54cb](https://github.com/x402-foundation/x402/commit/3ca54cb)
+- Updated dependencies [b609bf5](https://github.com/x402-foundation/x402/commit/b609bf5)
+- Updated dependencies [8065278](https://github.com/x402-foundation/x402/commit/8065278)
+  - @x402/core@2.29.0
+
+### Patch Changes
+
+- [43aaecb](https://github.com/x402-foundation/x402/commit/43aaecb): Regenerated the EVM and AVM paywall bundles, which had not been rebuilt since May. They now include the Algorand CAIP-2 network ID fix, the spend-control handling and the Celo Sepolia and Sei testnet faucet links that were merged in source but never shipped. ([#3599](https://github.com/x402-foundation/x402/pull/3599)) - Thanks [@notorious-d-e-v](https://github.com/notorious-d-e-v)!
+- [a9772e5](https://github.com/x402-foundation/x402/commit/a9772e5): Fixed reflected XSS when embedding configuration in EVM, SVM, and AVM paywall HTML. ([#3855](https://github.com/x402-foundation/x402/pull/3855)) - Thanks [@asooge](https://github.com/asooge)!
+
 ## 2.28.0
 
 ### Patch Changes

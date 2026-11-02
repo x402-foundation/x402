@@ -74,6 +74,7 @@ export const ErrCumulativeAmountMismatch =
 export const ErrChannelBusy = "invalid_batch_settlement_evm_channel_busy";
 export const ErrVerificationStateUnavailable =
   "invalid_batch_settlement_evm_verification_state_unavailable";
+export const ErrVoucherStoreUnavailable = "invalid_batch_settlement_evm_voucher_store_unavailable";
 export const ErrChargeExceedsSignedCumulative =
   "invalid_batch_settlement_evm_charge_exceeds_signed_cumulative";
 export const ErrMissingChannel = "invalid_batch_settlement_evm_missing_channel";

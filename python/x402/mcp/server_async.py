@@ -11,7 +11,7 @@ from ..payment_flow import (
     resolve_failure_path_settlement,
     resolve_payment_flow_phases,
 )
-from ..schemas import PaymentRequirements, ResourceInfo
+from ..schemas import PaymentRequirements, ResourceInfo, SettleResponse
 from ..schemas.hooks import CompletedSettlement, VerifiedPaymentCancelOptions
 from ..server import x402ResourceServer as x402ResourceServerAsync
 from .types import (
@@ -359,6 +359,7 @@ async def _process_paid_tool_call_async(
                     before_settle.error_reason
                     or before_settle.error_message
                     or "Settlement failed",
+                    before_settle,
                 )
             before_handler_settlement = CompletedSettlement(
                 phase="before-handler",
@@ -376,6 +377,7 @@ async def _process_paid_tool_call_async(
                     tool_name,
                     config,
                     before_settle.error_reason or "Settlement failed",
+                    before_settle,
                 )
             before_handler_settlement = CompletedSettlement(
                 phase="before-handler",
@@ -566,6 +568,7 @@ async def _settle_payment_result_async(
             tool_name,
             config,
             settle_result.error_reason or "Unknown settlement failure",
+            settle_result,
         )
 
     if config.hooks and config.hooks.on_after_settlement:
@@ -653,6 +656,7 @@ async def _create_settlement_failed_result_async(
     tool_name: str,
     config: PaymentWrapperConfig,
     error_message: str,
+    settle_response: SettleResponse | None = None,
 ) -> MCPToolResult:
     """Create a 402 settlement failed result (async).
 
@@ -661,6 +665,8 @@ async def _create_settlement_failed_result_async(
         tool_name: Name of the tool for resource URL
         config: Payment wrapper configuration
         error_message: Error message describing settlement failure
+        settle_response: Failed settle response; its receipt is attached to ``_meta``
+            when an after-settle abort failed an onchain settle
 
     Returns:
         Structured 402 error result with settlement failure details
@@ -691,8 +697,14 @@ async def _create_settlement_failed_result_async(
 
     content_text = json.dumps(error_data)
 
+    meta = (
+        {MCP_PAYMENT_RESPONSE_META_KEY: _settle_meta(settle_response)}
+        if settle_response is not None and settle_response.after_settle_aborted
+        else None
+    )
     return MCPToolResult(
         structured_content=error_data,
         content=[{"type": "text", "text": content_text}],
         is_error=True,
+        meta=meta,
     )

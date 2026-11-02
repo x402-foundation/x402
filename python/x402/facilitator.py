@@ -144,8 +144,14 @@ class x402Facilitator(x402FacilitatorBase):
         result = None
         try:
             while True:
-                _, hook, ctx = gen.send(result)
-                result = await self._execute_hook(hook, ctx)
+                phase, hook, ctx = gen.send(result)
+                try:
+                    result = await self._execute_hook(hook, ctx)
+                except Exception as e:
+                    if phase == "before":
+                        raise
+                    self._warn_hook_failure("verify", phase, e)
+                    result = None
         except StopIteration as e:
             return e.value
 
@@ -181,8 +187,14 @@ class x402Facilitator(x402FacilitatorBase):
         result = None
         try:
             while True:
-                _, hook, ctx = gen.send(result)
-                result = await self._execute_hook(hook, ctx)
+                phase, hook, ctx = gen.send(result)
+                try:
+                    result = await self._execute_hook(hook, ctx)
+                except Exception as e:
+                    if phase == "before":
+                        raise
+                    self._warn_hook_failure("settle", phase, e)
+                    result = None
         except StopIteration as e:
             return e.value
 
@@ -298,8 +310,14 @@ class x402FacilitatorSync(x402FacilitatorBase):
         result = None
         try:
             while True:
-                _, hook, ctx = gen.send(result)
-                result = self._execute_hook_sync(hook, ctx)
+                phase, hook, ctx = gen.send(result)
+                try:
+                    result = self._execute_hook_sync(hook, ctx)
+                except Exception as e:
+                    if phase == "before":
+                        raise
+                    self._warn_hook_failure("verify", phase, e)
+                    result = None
         except StopIteration as e:
             return e.value
 
@@ -335,8 +353,14 @@ class x402FacilitatorSync(x402FacilitatorBase):
         result = None
         try:
             while True:
-                _, hook, ctx = gen.send(result)
-                result = self._execute_hook_sync(hook, ctx)
+                phase, hook, ctx = gen.send(result)
+                try:
+                    result = self._execute_hook_sync(hook, ctx)
+                except Exception as e:
+                    if phase == "before":
+                        raise
+                    self._warn_hook_failure("settle", phase, e)
+                    result = None
         except StopIteration as e:
             return e.value
 

@@ -83,8 +83,12 @@ func (r *settleRequest) settlementAmount(limit *big.Int) (*big.Int, error) {
 
 // SettleOnCancel voids the escrow hold when a verified payment is canceled before the handler
 // completes, releasing funds without waiting for onchain expiry. A custom operator's hold is its
-// own contract's to release, and the authorization flow holds nothing.
+// own contract's to release, and the authorization flow holds nothing. Nothing is held until the
+// before-handler authorize settled, so a cancel before then has nothing to void.
 func (s *AuthCaptureEvmScheme) SettleOnCancel(ctx x402.VerifiedPaymentCanceledContext) (*types.PaymentRequirements, error) {
+	if !x402.SettledPhasesContain(ctx.SettledPhases, x402.SettlePhaseBeforeHandler) {
+		return nil, nil
+	}
 	switch ctx.Reason {
 	case x402.CancellationReasonHandlerFailed,
 		x402.CancellationReasonHandlerThrew,

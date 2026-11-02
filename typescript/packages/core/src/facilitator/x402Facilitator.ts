@@ -150,8 +150,8 @@ export class x402Facilitator {
   }
 
   /**
-   * Register a hook to execute after successful facilitator payment verification (isValid: true).
-   * This hook is NOT called when verification fails (isValid: false) - use onVerifyFailure for that.
+   * Register a hook to execute after verification returns a result, including
+   * `isValid: false`. A thrown verification error uses `onVerifyFailure` instead.
    *
    * @param hook - The hook function to register
    * @returns The x402Facilitator instance for chaining
@@ -162,8 +162,8 @@ export class x402Facilitator {
   }
 
   /**
-   * Register a hook to execute when facilitator payment verification fails.
-   * Called when: verification returns isValid: false, or an exception is thrown during verification.
+   * Register a hook to execute when verification throws.
+   * It does not run for a result with `isValid: false`. Use `onAfterVerify` for that rejection.
    * Can recover from failure by returning { recovered: true, result: VerifyResponse }
    *
    * @param hook - The hook function to register
@@ -289,7 +289,8 @@ export class x402Facilitator {
       requirements: paymentRequirements,
     };
 
-    // Execute beforeVerify hooks
+    // This is a gate phase, so a throwing hook is deliberately not isolated:
+    // verification fails closed instead of skipping the check.
     for (const hook of this.beforeVerifyHooks) {
       const result = await hook(context);
       if (result && "abort" in result && result.abort) {
@@ -338,42 +339,17 @@ export class x402Facilitator {
         facilitatorContext,
       );
 
-      // Check if verification failed (isValid: false)
-      if (!verifyResult.isValid) {
-        const reason = verifyResult.invalidReason || "Verification failed";
-        const detail = verifyResult.invalidMessage;
-        const failureContext: FacilitatorVerifyFailureContext = {
-          ...context,
-          error: new Error(detail ? `${reason}: ${detail}` : reason),
-        };
-
-        // Execute onVerifyFailure hooks
-        for (const hook of this.onVerifyFailureHooks) {
-          const result = await hook(failureContext);
-          if (result && "recovered" in result && result.recovered) {
-            // If recovered, execute afterVerify hooks with recovered result
-            const recoveredContext: FacilitatorVerifyResultContext = {
-              ...context,
-              result: result.result,
-            };
-            for (const hook of this.afterVerifyHooks) {
-              await hook(recoveredContext);
-            }
-            return result.result;
-          }
-        }
-
-        return verifyResult;
-      }
-
-      // Execute afterVerify hooks only for successful verification
       const resultContext: FacilitatorVerifyResultContext = {
         ...context,
         result: verifyResult,
       };
 
       for (const hook of this.afterVerifyHooks) {
-        await hook(resultContext);
+        try {
+          await hook(resultContext);
+        } catch (error) {
+          this.warnFacilitatorHookFailure("afterVerify", error);
+        }
       }
 
       return verifyResult;
@@ -385,9 +361,13 @@ export class x402Facilitator {
 
       // Execute onVerifyFailure hooks
       for (const hook of this.onVerifyFailureHooks) {
-        const result = await hook(failureContext);
-        if (result && "recovered" in result && result.recovered) {
-          return result.result;
+        try {
+          const result = await hook(failureContext);
+          if (result && "recovered" in result && result.recovered) {
+            return result.result;
+          }
+        } catch (hookError) {
+          this.warnFacilitatorHookFailure("onVerifyFailure", hookError);
         }
       }
 
@@ -411,7 +391,6 @@ export class x402Facilitator {
       requirements: paymentRequirements,
     };
 
-    // Execute beforeSettle hooks
     for (const hook of this.beforeSettleHooks) {
       const result = await hook(context);
       if (result && "abort" in result && result.abort) {
@@ -463,8 +442,15 @@ export class x402Facilitator {
         result: settleResult,
       };
 
+      // Isolate afterSettle hook failures: settlement has already executed
+      // onchain, so a throwing observer must not convert a successful settle
+      // into an error response (or trigger onSettleFailure hooks).
       for (const hook of this.afterSettleHooks) {
-        await hook(resultContext);
+        try {
+          await hook(resultContext);
+        } catch (error) {
+          this.warnFacilitatorHookFailure("afterSettle", error);
+        }
       }
 
       return settleResult;
@@ -476,14 +462,29 @@ export class x402Facilitator {
 
       // Execute onSettleFailure hooks
       for (const hook of this.onSettleFailureHooks) {
-        const result = await hook(failureContext);
-        if (result && "recovered" in result && result.recovered) {
-          return result.result;
+        try {
+          const result = await hook(failureContext);
+          if (result && "recovered" in result && result.recovered) {
+            return result.result;
+          }
+        } catch (hookError) {
+          this.warnFacilitatorHookFailure("onSettleFailure", hookError);
         }
       }
 
       throw error;
     }
+  }
+
+  /**
+   * Logs a warning when an advisory lifecycle hook (after* or on*Failure) throws.
+   *
+   * @param phase - Lifecycle phase whose hook threw
+   * @param error - Thrown value or rejection reason
+   */
+  private warnFacilitatorHookFailure(phase: string, error: unknown): void {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.warn(`[x402] Facilitator ${phase} hook threw: ${detail}`);
   }
 
   /**

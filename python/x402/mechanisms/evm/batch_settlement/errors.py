@@ -98,3 +98,4 @@ ERR_CHARGE_EXCEEDS_SIGNED_CUMULATIVE = (
     "invalid_batch_settlement_evm_charge_exceeds_signed_cumulative"
 )
 ERR_MISSING_CHANNEL = "invalid_batch_settlement_evm_missing_channel"
+ERR_VOUCHER_STORE_UNAVAILABLE = "invalid_batch_settlement_evm_voucher_store_unavailable"

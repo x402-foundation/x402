@@ -1,4 +1,5 @@
 import type { SettleResponse } from "@x402/core/types";
+import { AfterSettleAbortError } from "@x402/core/server";
 import type { SettleContext, SettleFailureContext, SettleResultContext } from "@x402/core/server";
 import { signClaimBatch, signRefund } from "../authorizerSigner";
 import {
@@ -326,40 +327,49 @@ export async function handleAfterSettle(
     const signedMaxClaimable = raw.voucher.maxClaimableAmount;
     const now = Date.now();
 
-    const updateResult = await storage.updateChannel(channelId, current => {
-      if (!current) {
-        return current;
-      }
-      if (!pendingId || current.pendingRequest?.pendingId !== pendingId) {
-        return current;
-      }
-      const chargedActual = (
-        BigInt(current.chargedCumulativeAmount) + BigInt(requirements.amount)
-      ).toString();
-      return {
-        channelId,
-        channelConfig: config,
-        chargedCumulativeAmount: chargedActual,
-        signedMaxClaimable,
-        signature: raw.voucher.signature,
-        balance: readExtraString(channelState, "balance", current.balance),
-        totalClaimed: readExtraString(channelState, "totalClaimed", current.totalClaimed),
-        withdrawRequestedAt: readExtraNumber(
-          channelState,
-          "withdrawRequestedAt",
-          current.withdrawRequestedAt,
-        ),
-        refundNonce: readExtraNumber(channelState, "refundNonce", current.refundNonce),
-        onchainSyncedAt: now,
-        lastRequestTimestamp: now,
-      };
-    });
+    let missingRow = false;
+    const updateResult = await storage
+      .updateChannel(channelId, current => {
+        if (!current) {
+          missingRow = true;
+          return current;
+        }
+        if (!pendingId || current.pendingRequest?.pendingId !== pendingId) {
+          return current;
+        }
+        const chargedActual = (
+          BigInt(current.chargedCumulativeAmount) + BigInt(requirements.amount)
+        ).toString();
+        return {
+          channelId,
+          channelConfig: config,
+          chargedCumulativeAmount: chargedActual,
+          signedMaxClaimable,
+          signature: raw.voucher.signature,
+          balance: readExtraString(channelState, "balance", current.balance),
+          totalClaimed: readExtraString(channelState, "totalClaimed", current.totalClaimed),
+          withdrawRequestedAt: readExtraNumber(
+            channelState,
+            "withdrawRequestedAt",
+            current.withdrawRequestedAt,
+          ),
+          refundNonce: readExtraNumber(channelState, "refundNonce", current.refundNonce),
+          onchainSyncedAt: now,
+          lastRequestTimestamp: now,
+        };
+      })
+      .catch((error: unknown) => {
+        throw new AfterSettleAbortError(
+          Errors.ErrVoucherStoreUnavailable,
+          error instanceof Error ? error.message : String(error),
+        );
+      });
     if (updateResult.status === "updated" && updateResult.channel) {
       scheme.rememberChannelSnapshot(paymentPayload, updateResult.channel);
       return;
     }
     scheme.takeRequestContext(paymentPayload);
-    throw new Error(Errors.ErrChannelBusy);
+    throw new AfterSettleAbortError(missingRow ? Errors.ErrMissingChannel : Errors.ErrChannelBusy);
   }
 }
 

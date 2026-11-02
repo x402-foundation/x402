@@ -216,7 +216,62 @@ export type BeforeSettleHook = (
   void | { abort: true; reason: string; message?: string } | { skip: true; result: SettleResponse }
 >;
 
+/**
+ * Runs after a successful settle. Thrown errors are logged and do not affect the
+ * settlement, except {@link AfterSettleAbortError}, which fails the settle closed
+ * (`success: false`) while keeping transaction, amount, payer, and onchain extra.
+ */
 export type AfterSettleHook = (context: SettleResultContext) => Promise<void>;
+
+const AFTER_SETTLE_ABORT_NAME = "AfterSettleAbortError";
+// Registry symbol so separately bundled copies of this module share the marker.
+const AFTER_SETTLE_ABORTED = Symbol.for("x402.afterSettleAborted");
+
+/**
+ * Thrown from an `afterSettle` hook to fail a successful settle closed after funds
+ * moved onchain but the server could not persist the outcome (e.g. a voucher store failure).
+ */
+export class AfterSettleAbortError extends Error {
+  readonly reason: string;
+
+  /**
+   * Creates an AfterSettleAbortError.
+   *
+   * @param reason - Machine-readable failure reason surfaced as `errorReason`
+   * @param message - Optional human-readable detail surfaced as `errorMessage`
+   */
+  constructor(reason: string, message?: string) {
+    super(message || reason);
+    this.name = AFTER_SETTLE_ABORT_NAME;
+    this.reason = reason;
+  }
+}
+
+/**
+ * Reports whether an `afterSettle` hook error is an {@link AfterSettleAbortError}. Matches on
+ * `name` as well as `instanceof` so an abort thrown from another bundled copy of this package
+ * still fails the settle closed.
+ *
+ * @param error - Value thrown by an `afterSettle` hook
+ * @returns True when the error is an AfterSettleAbortError
+ */
+function isAfterSettleAbortError(error: unknown): error is AfterSettleAbortError {
+  return (
+    error instanceof AfterSettleAbortError ||
+    (error instanceof Error && error.name === AFTER_SETTLE_ABORT_NAME)
+  );
+}
+
+/**
+ * Reports whether an `afterSettle` abort failed this onchain-successful settle response closed.
+ * The marker is a non-enumerable symbol property, so it never reaches the wire.
+ *
+ * @param response - Settlement response returned by {@link x402ResourceServer.settlePayment}
+ * @returns True when the response was failed closed by an {@link AfterSettleAbortError}
+ */
+export function isAfterSettleAborted(response: SettleResponse): boolean {
+  return AFTER_SETTLE_ABORTED in response;
+}
 
 export type OnSettleFailureHook = (
   context: SettleFailureContext,
@@ -581,7 +636,8 @@ export class x402ResourceServer {
   }
 
   /**
-   * Register a hook to execute after successful payment verification.
+   * Register a hook to execute after verification returns a result, including
+   * a facilitator response with `isValid: false`.
    *
    * @param hook - The hook function to register
    * @returns The x402ResourceServer instance for chaining
@@ -592,7 +648,8 @@ export class x402ResourceServer {
   }
 
   /**
-   * Register a hook to execute when payment verification fails.
+   * Register a hook to execute when payment verification throws.
+   * It does not run for a facilitator response with `isValid: false`.
    * Can recover from failure by returning { recovered: true, result: VerifyResponse }
    *
    * @param hook - The hook function to register
@@ -1171,7 +1228,7 @@ export class x402ResourceServer {
    * @param requirements - Requirements matched to the payload
    * @param declaredExtensions - Optional per-extension declarations for the request
    * @param transportContext - Optional transport-specific context
-   * @param settledPhases - Settle phases already completed before the handler (for settleOnCancel)
+   * @param settledPhases - Settle phases that already completed for this payment
    * @returns Dispatcher with cancel only
    */
   createPaymentCancellationDispatcher(
@@ -1282,16 +1339,15 @@ export class x402ResourceServer {
             result: settleResult,
             transportContext,
           };
-          for (const { label, hook } of this.getLabeledHooks(
-            "afterSettle",
-            extensionKeysInUse,
-            matchedScheme,
-          )) {
-            try {
-              await hook(skipResultContext);
-            } catch (error) {
-              this.warnResourceServerHookFailure("afterSettle", label, error);
-            }
+          if (
+            await this.runAfterSettleHooks(
+              settleResult,
+              skipResultContext,
+              extensionKeysInUse,
+              matchedScheme,
+            )
+          ) {
+            return settleResult;
           }
           await this.enrichSettlementResponse(
             settleResult,
@@ -1411,16 +1467,16 @@ export class x402ResourceServer {
         result: settleResult,
       };
 
-      for (const { label, hook } of this.getLabeledHooks(
-        "afterSettle",
-        extensionKeysInUse,
-        matchedScheme,
-      )) {
-        try {
-          await hook(resultContext);
-        } catch (error) {
-          this.warnResourceServerHookFailure("afterSettle", label, error);
-        }
+      // Enrichment must not replace an aborted receipt, which carries the onchain transaction.
+      if (
+        await this.runAfterSettleHooks(
+          settleResult,
+          resultContext,
+          extensionKeysInUse,
+          matchedScheme,
+        )
+      ) {
+        return settleResult;
       }
 
       await this.enrichSettlementResponse(
@@ -1843,7 +1899,7 @@ export class x402ResourceServer {
       matchedScheme.scheme,
       matchedScheme.network,
     );
-    if (!scheme?.settleOnCancel || !settledPhases.includes("before-handler")) {
+    if (!scheme?.settleOnCancel) {
       return;
     }
 
@@ -1873,6 +1929,47 @@ export class x402ResourceServer {
         network: requirements.network as Network,
       };
     }
+  }
+
+  /**
+   * Runs `afterSettle` hooks. An {@link AfterSettleAbortError} fails the onchain-successful settle
+   * closed in place, keeping transaction, amount, payer, and onchain extra, and stops later hooks.
+   * Other thrown errors are logged and non-fatal.
+   *
+   * @param result - Settle response to fail closed (mutated in place) when a hook aborts
+   * @param context - Settle result context passed to each hook
+   * @param extensionKeysInUse - Declared extension keys for this request
+   * @param matchedScheme - Scheme/network selected for this payment
+   * @param matchedScheme.network - Matched payment network
+   * @param matchedScheme.scheme - Matched payment scheme
+   * @returns True when a hook aborted and the result was failed closed
+   */
+  private async runAfterSettleHooks(
+    result: SettleResponse,
+    context: SettleResultContext,
+    extensionKeysInUse: readonly string[],
+    matchedScheme: { network: Network; scheme: string },
+  ): Promise<boolean> {
+    for (const { label, hook } of this.getLabeledHooks(
+      "afterSettle",
+      extensionKeysInUse,
+      matchedScheme,
+    )) {
+      try {
+        await hook(context);
+      } catch (error) {
+        if (!isAfterSettleAbortError(error)) {
+          this.warnResourceServerHookFailure("afterSettle", label, error);
+          continue;
+        }
+        result.success = false;
+        result.errorReason = error.reason;
+        result.errorMessage = error.message;
+        Object.defineProperty(result, AFTER_SETTLE_ABORTED, { value: true });
+        return true;
+      }
+    }
+    return false;
   }
 
   /**

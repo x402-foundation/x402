@@ -424,6 +424,13 @@ func testValidatesTerms(t *testing.T) {
 	_, err = scheme.resolveTerms(context.Background(), serverMode)
 	require.ErrorContains(t, err, "Trust it explicitly")
 
+	// The client's own key cannot also be the challenge's sponsor.
+	selfSponsored := h.requirements("", map[string]any{
+		batchsettlement.ExtraFeePayer: h.payer.Address().String(),
+	})
+	_, err = scheme.resolveTerms(context.Background(), selfSponsored)
+	require.ErrorContains(t, err, batchsettlement.ErrFeePayerMismatch)
+
 	trusted, err := NewBatchSvmScheme(h.payer, &BatchSvmClientConfig{
 		RPCURL: h.rpcURL,
 		ServerSignedChannelsPolicy: &BatchServerSignedChannelsPolicy{

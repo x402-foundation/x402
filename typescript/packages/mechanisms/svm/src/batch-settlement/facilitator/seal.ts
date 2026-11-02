@@ -21,6 +21,7 @@ import type {
 } from "@x402/core/types";
 
 import { verifyRequestCloseTransaction } from "../../payment-channels/close";
+import { ErrUnsupportedTransactionVersion } from "../../exact/facilitator/errors";
 import type { Channel } from "../../payment-channels/generated/accounts/channel";
 import {
   buildSettleAndSealInstructions,
@@ -65,6 +66,8 @@ export type CloseIntent = "seal" | "refund";
 export interface RefundLimits {
   maxComputeUnits?: number | undefined;
   maxPriorityFeeMicroLamports?: number | undefined;
+  /** Accepted `request_close` message versions; unset accepts `[0, 1]`. */
+  transactionVersions?: readonly number[] | undefined;
 }
 
 /** A validated refund; `requestClose` is set only on the sponsored fallback path. */
@@ -209,6 +212,21 @@ export function assertNotClosing(channel: Channel, channelId: string): void {
   if (channel.status === ChannelStatus.Closing) {
     throw new Error(
       `${BatchError.CHANNEL_CLOSING}: ${channelId} is closing; apply the final voucher with a seal payload`,
+    );
+  }
+}
+
+/**
+ * Reject a refund on a channel past `Closing` (sealed or distributed) with the
+ * close code: such a channel cannot be closed again (spec 4.5, 7).
+ *
+ * @param channel - Decoded channel account
+ * @param channelId - Channel PDA, for the message
+ */
+export function assertRefundable(channel: Channel, channelId: string): void {
+  if (channel.status !== ChannelStatus.Open && channel.status !== ChannelStatus.Closing) {
+    throw new Error(
+      `${BatchError.CLOSE_STATE}: a refund needs an Open or Closing channel; ${channelId} has status ${channel.status}`,
     );
   }
 }
@@ -381,7 +399,7 @@ export async function prepareRefund(
   const channel = await deps.readChannel(requirements.network, channelId);
   if (channel && (cumulative < channel.settlement.settled || cumulative > channel.deposit)) {
     throw new Error(
-      `${BatchError.CUMULATIVE_AMOUNT_MISMATCH}: refund voucher must lie within settled and deposit`,
+      `${BatchError.CLOSE_STATE}: refund voucher must lie within settled and deposit`,
     );
   }
 
@@ -398,6 +416,7 @@ export async function prepareRefund(
   }
   try {
     await verifyRequestCloseTransaction(payload.transaction, {
+      acceptedTransactionVersions: limits.transactionVersions,
       channelId,
       feePayer: terms.feePayer,
       maxComputeUnits: limits.maxComputeUnits,
@@ -407,6 +426,8 @@ export async function prepareRefund(
     });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    // A version outside the accepted set keeps its own reason (§1.5).
+    if (detail.startsWith(ErrUnsupportedTransactionVersion)) throw new Error(detail);
     throw new Error(`${BatchError.REFUND_TRANSACTION}: ${detail}`);
   }
   return { channelId, requestClose: payload.transaction, terms };
@@ -431,6 +452,7 @@ export async function validateRefund(
 ): Promise<{ channel: Channel; channelId: string; terms: SealTerms }> {
   const { channelId, terms } = await prepareRefund(deps, payload, requirements, limits, context);
   const channel = await deps.fetchChannel(requirements.network, channelId);
+  assertRefundable(channel, channelId);
   deps.assertClaimChannel(channel, payload.channelConfig, terms, requirements, [
     ChannelStatus.Open,
     ChannelStatus.Closing,

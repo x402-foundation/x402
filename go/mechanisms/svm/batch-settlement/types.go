@@ -363,7 +363,8 @@ func IsBatchFacilitatorPayload(value any) bool {
 	switch record["type"] {
 	case PayloadTypeClaim:
 		claims, ok := asSlice(record["claims"])
-		if !ok || len(claims) == 0 || len(claims) > 4 {
+		// The protocol maximum; the facilitator checks its own advertised capacity.
+		if !ok || len(claims) == 0 || len(claims) > V1MaxClaimChannels {
 			return false
 		}
 		for _, claim := range claims {
@@ -379,7 +380,7 @@ func IsBatchFacilitatorPayload(value any) bool {
 			(!present(record, "closeAuthorization") || isCloseAuthorization(record["closeAuthorization"]))
 	case PayloadTypeSettle:
 		channels, ok := asSlice(record["channels"])
-		if !ok || len(channels) == 0 {
+		if !ok || len(channels) == 0 || len(channels) > V1MaxSettleChannels {
 			return false
 		}
 		for _, item := range channels {

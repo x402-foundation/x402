@@ -284,6 +284,72 @@ func TestCleanupPacks62LiveChannelsIntoOneV1ReclaimTransaction(t *testing.T) {
 	require.Len(t, harness.sentInstructionData(0), 62)
 }
 
+func TestRentCleanupHonoursTheConfiguredFacilitatorTransactionVersion(t *testing.T) {
+	tests := []struct {
+		name        string
+		version     *int
+		wantVersion solana.MessageVersion
+	}{
+		{"unset defaults to v1", nil, solana.MessageVersionV1},
+		{"explicit v0", intPtr(paymentchannels.FacilitatorTransactionVersion0), solana.MessageVersionV0},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			harness := newCleanupHarness(t)
+			// Built via the scheme to cover Config.FacilitatorTransactionVersion propagation.
+			scheme := newScheme(harness.signer, harness.stub, &Config{
+				ChannelStorage:                harness.storage,
+				FacilitatorTransactionVersion: test.version,
+			})
+			harness.manager = scheme.NewRentCleanupManager(testNetwork)
+
+			harness.seedRecord(
+				paymentchannels.PaymentChannelRecord{PayTo: harness.payTo.String()},
+				harness.channel(generated.ChannelStatus_Distributed, testSlot-paymentchannels.OpenSlotWindow-1),
+			)
+
+			require.NoError(t, harness.manager.Cleanup(
+				context.Background(), harness.options(CleanupOptions{MaxTxsPerSigner: 1}),
+			))
+
+			require.Empty(t, harness.errors)
+			require.Len(t, harness.reclaims, 1)
+			sent := harness.signer.sentTransactions()
+			require.Len(t, sent, 1)
+			assert.Equal(t, test.wantVersion, sent[0].Message.GetVersion())
+		})
+	}
+}
+
+func TestV0RentCleanupCapsReclaimBatchesAtTheSafeLimit(t *testing.T) {
+	harness := newCleanupHarness(t)
+	harness.manager = NewRentCleanupManager(RentCleanupConfig{
+		Signer:                        harness.signer,
+		Storage:                       harness.storage,
+		Network:                       testNetwork,
+		FacilitatorTransactionVersion: intPtr(paymentchannels.FacilitatorTransactionVersion0),
+	})
+	openSlot := testSlot - paymentchannels.OpenSlotWindow - 1
+	for i := 0; i < paymentchannels.MaxSafeReclaimsPerTx+4; i++ {
+		harness.seedRecord(
+			paymentchannels.PaymentChannelRecord{PayTo: harness.payTo.String()},
+			harness.channel(generated.ChannelStatus_Distributed, openSlot),
+		)
+	}
+
+	require.NoError(t, harness.manager.Cleanup(context.Background(), harness.options(CleanupOptions{
+		MaxReclaimsPerTx: paymentchannels.DefaultMaxReclaimsPerTxV1,
+	})))
+
+	require.Empty(t, harness.errors)
+	sent := harness.signer.sentTransactions()
+	require.Len(t, sent, 2, "a v0 batch never exceeds MaxSafeReclaimsPerTx")
+	for _, tx := range sent {
+		assert.Equal(t, solana.MessageVersionV0, tx.Message.GetVersion())
+	}
+}
+
 func TestCleanupDefersClosingChannels(t *testing.T) {
 	harness := newCleanupHarness(t)
 	record := harness.seedRecord(

@@ -6,11 +6,14 @@ import time
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from x402.mechanisms.evm.asset_cache import reset_asset_contract_cache
 from x402.mechanisms.evm.constants import (
     ERR_ASSET_NOT_DEPLOYED_CONTRACT,
     ERR_ERC20_APPROVAL_BROADCAST_FAILED,
     ERR_INSUFFICIENT_BALANCE,
+    ERR_INVALID_PAYLOAD,
     ERR_NETWORK_MISMATCH,
     ERR_PERMIT2_ALLOWANCE_REQUIRED,
     ERR_PERMIT2_AMOUNT_MISMATCH,
@@ -125,6 +128,40 @@ def make_requirements(
         max_timeout_seconds=3600,
         extra={"assetTransferMethod": "permit2"},
     )
+
+
+_MISSING = object()
+
+# (path, value): set the field at `path` in the payload dict; _MISSING deletes it.
+MALFORMED_PERMIT2_PAYLOADS = [
+    pytest.param(("permit2Authorization",), "oops", id="authorization_not_object"),
+    pytest.param(("permit2Authorization", "permitted"), None, id="permitted_not_object"),
+    pytest.param(("permit2Authorization", "witness"), [], id="witness_not_object"),
+    pytest.param(("permit2Authorization", "from"), 123, id="from_not_string"),
+    pytest.param(("permit2Authorization", "spender"), _MISSING, id="spender_missing"),
+    pytest.param(("permit2Authorization", "permitted", "token"), None, id="token_not_string"),
+    pytest.param(("permit2Authorization", "witness", "to"), 123, id="witness_to_not_string"),
+    pytest.param(("permit2Authorization", "nonce"), "abc", id="nonce_not_numeric"),
+    pytest.param(("permit2Authorization", "nonce"), str(2**256), id="nonce_above_uint256"),
+    pytest.param(("permit2Authorization", "deadline"), _MISSING, id="deadline_missing"),
+    pytest.param(("permit2Authorization", "deadline"), "1" * 5000, id="deadline_over_digit_limit"),
+    pytest.param(("permit2Authorization", "permitted", "amount"), "-1", id="amount_negative"),
+    pytest.param(("permit2Authorization", "permitted", "amount"), 1000, id="amount_json_number"),
+    pytest.param(("permit2Authorization", "witness", "validAfter"), [], id="valid_after_list"),
+    pytest.param(("signature",), 123, id="signature_not_string"),
+]
+
+
+def make_malformed_payload(path: tuple[str, ...], value: Any) -> PaymentPayload:
+    payload_dict = make_permit2_payload_dict()
+    target = payload_dict
+    for key in path[:-1]:
+        target = target[key]
+    if value is _MISSING:
+        del target[path[-1]]
+    else:
+        target[path[-1]] = value
+    return make_payment_payload(payload_dict=payload_dict)
 
 
 class MockFacilitatorSigner:
@@ -433,6 +470,25 @@ class TestVerifyPermit2:
             result = self._verify(facilitator)
         assert result.is_valid is False
         assert result.invalid_reason == ERR_ASSET_NOT_DEPLOYED_CONTRACT
+
+    @pytest.mark.parametrize(("path", "value"), MALFORMED_PERMIT2_PAYLOADS)
+    def test_verify_rejects_malformed_payload(self, path, value):
+        facilitator = self._make_facilitator()
+
+        result = facilitator.verify(make_malformed_payload(path, value), make_requirements())
+
+        assert result.is_valid is False
+        assert result.invalid_reason == ERR_INVALID_PAYLOAD
+        assert result.invalid_message.startswith(f"{'.'.join(path)} must be ")
+
+    def test_verify_malformed_payload_reports_payer(self):
+        facilitator = self._make_facilitator()
+        payload = make_malformed_payload(("permit2Authorization", "deadline"), "abc")
+
+        result = facilitator.verify(payload, make_requirements())
+
+        assert result.invalid_reason == ERR_INVALID_PAYLOAD
+        assert result.payer == PAYER
 
 
 # ============================================================================
@@ -751,6 +807,19 @@ class TestSettlePermit2:
         assert result.success is False
         assert result.error_reason == ERR_SETTLEMENT_PENDING
         assert result.transaction == settle_hash
+
+    @pytest.mark.parametrize(("path", "value"), MALFORMED_PERMIT2_PAYLOADS)
+    def test_settle_rejects_malformed_payload(self, path, value):
+        signer = MockFacilitatorSigner()
+        facilitator = ExactEvmFacilitatorScheme(signer)
+
+        result = facilitator.settle(make_malformed_payload(path, value), make_requirements())
+
+        assert result.success is False
+        assert result.error_reason == ERR_INVALID_PAYLOAD
+        assert result.error_message.startswith(f"{'.'.join(path)} must be ")
+        assert result.network == NETWORK
+        assert signer.write_calls == []
 
 
 # ============================================================================

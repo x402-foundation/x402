@@ -1,3 +1,0 @@
-kind: fixed
-body: Gin, Echo, and net/http send a declared text/plain payment-error string as text, so newlines in that body stay intact. JSON object bodies are unchanged.
-time: 2026-10-23T07:40:00Z

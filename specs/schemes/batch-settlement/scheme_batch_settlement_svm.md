@@ -252,6 +252,8 @@ and `SettlementResponse` types are defined in
 | `minDeposit` | string | no | Atomic deposit target. When present, MUST be a positive integer greater than or equal to `amount`. |
 | `maxIdleSecs` | number | no | Facilitator idle window in seconds, copied from the facilitator's `/supported` `extra`. After this long with no facilitator-visible lifecycle activity on an `Open` channel, the facilitator MAY abandon-close it at the onchain `settled` watermark (see Phase 4). Absent means the facilitator does not idle-close. |
 | `transactionVersions` | array | no | Transaction message versions the facilitator accepts, as an array of `0` and/or `1`, copied from the facilitator's `/supported` `extra`. Absent means `[0]`. See [Transaction versions](#transaction-versions). |
+| `maxClaimChannels` | number | no | Most `claims[]` entries the facilitator redeems in one `claim` transaction, copied from the facilitator's `/supported` `extra`. Absent means `4`. See [Facilitator-built transactions](#facilitator-built-transactions-and-batching-capacity). |
+| `maxSettleChannels` | number | no | Most `channels[]` entries the facilitator distributes in one `settle` transaction, copied from the facilitator's `/supported` `extra`. Absent means `4`. |
 | `channelState` | object | no | Corrective-only server channel snapshot for cumulative amount resynchronization. |
 | `voucherState` | object | no | Corrective-only signed voucher proof for cumulative amount resynchronization. |
 
@@ -802,19 +804,20 @@ The `deposit` settle payload is the client variant from section 4.3. A `voucher`
 is stored and answered by the server without a facilitator settlement. Every
 server-authored payload identifies a channel by the same entry shape,
 `channelId` plus `channelConfig`, and carries vouchers as `BatchVoucher`
-objects; `claim` and `settle` wrap one to four such entries in an array, while
+objects; `claim` and `settle` wrap one or more such entries in an array (up to the
+facilitator's advertised capacity, four when it advertises none), while
 `seal` acts on one channel. The server-authored or server-enriched variants
 are:
 
 | Payload | Field | Type | Notes |
 |---|---|---|---|
 | Claim | `type` | string | `"claim"` |
-| Claim | `claims` | array | One to four channels to claim in one transaction. |
+| Claim | `claims` | array | One to `extra.maxClaimChannels` (four when absent) channels to claim in one transaction. |
 | Claim | `claims[].channelId` | string | Channel PDA. |
 | Claim | `claims[].channelConfig` | `ChannelConfig` | Full channel configuration. |
 | Claim | `claims[].voucher` | `BatchVoucher` | Latest accepted voucher; its `maxClaimableAmount` becomes the new onchain `settled` watermark. `expiresAt` MUST be `0`. |
 | Settle | `type` | string | `"settle"` |
-| Settle | `channels` | array | One to four channels to distribute in one transaction. |
+| Settle | `channels` | array | One to `extra.maxSettleChannels` (four when absent) channels to distribute in one transaction. |
 | Settle | `channels[].channelId` | string | Channel PDA. |
 | Settle | `channels[].channelConfig` | `ChannelConfig` | Full configuration used to derive accounts, validate the channel, and reconstruct the distribution. |
 | Seal | `type` | string | `"seal"` |
@@ -946,10 +949,12 @@ precompile instruction:
 }
 ```
 
-`claims[]` MUST contain between one and four entries so the instruction pairs
-fit in a legacy Solana transaction without address lookup tables. The
-facilitator MUST process every entry or fail the request; it MUST NOT silently
-truncate a batch. For each claim it emits an Ed25519
+`claims[]` MUST contain at least one entry and at most `extra.maxClaimChannels`
+entries, or four when the facilitator advertises no `maxClaimChannels`, so the
+instruction pairs fit in one transaction without address lookup tables. A
+facilitator MUST reject a `claims[]` longer than the capacity it advertises
+with `invalid_batch_settlement_svm_payload_type`. The facilitator MUST process
+every entry or fail the request; it MUST NOT silently truncate a batch. For each claim it emits an Ed25519
 precompile instruction immediately followed by the program `settle`
 instruction.
 
@@ -990,8 +995,10 @@ a `settle` payload:
 }
 ```
 
-`channels[]` MUST contain between one and four entries, the same
-transaction-size bound as `claims[]`. The facilitator invokes `distribute` for
+`channels[]` MUST contain at least one entry and at most `extra.maxSettleChannels`
+entries, or four when the facilitator advertises no `maxSettleChannels`. A
+facilitator MUST reject a longer `channels[]` with
+`invalid_batch_settlement_svm_payload_type`. The facilitator invokes `distribute` for
 every `channels[]` entry in one transaction and MUST process every entry or
 fail the request; it MUST NOT silently truncate a batch. It MUST confirm the
 transaction onchain before returning success.
@@ -1161,13 +1168,18 @@ A cooperative refund (section 3) instead returns the close signature and
 #### `GET /supported`
 
 The facilitator advertises its SVM transaction fee payer, the transaction
-message versions it accepts, and, when it runs
+message versions it accepts, the most channels it redeems in one `claim` and
+one `settle` transaction (`maxClaimChannels`, `maxSettleChannels`; see
+[Facilitator-built transactions](#facilitator-built-transactions-and-batching-capacity)),
+and, when it runs
 idle rent cleanup, the idle window `maxIdleSecs` (a positive integer number of
 seconds; the reference implementation defaults to `604800`, seven days). A
 facilitator that accepts delegated closes also advertises
 `extra.receiverAuthorizer`, the key it binds into those channels. The server
-MUST copy `feePayer`, `transactionVersions`, and `maxIdleSecs` into
-`PaymentRequirements.extra`, then
+MUST copy `feePayer`, `transactionVersions`, `maxClaimChannels`,
+`maxSettleChannels`, and `maxIdleSecs` into `PaymentRequirements.extra`, MUST
+NOT author a `claim` or `settle` request with more entries than the copied
+capacity (four when absent), then
 set `extra.tokenProgram` from the selected asset's verified mint owner. A
 server SHOULD claim every channel well inside `maxIdleSecs`, because the
 facilitator may close an idle channel at its onchain `settled` watermark and
@@ -1187,7 +1199,9 @@ advertised key:
       "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
       "extra": {
         "feePayer": "<facilitator-fee-payer>",
-        "transactionVersions": [0],
+        "transactionVersions": [0, 1],
+        "maxClaimChannels": 18,
+        "maxSettleChannels": 13,
         "maxIdleSecs": 604800
       }
     }
@@ -1672,8 +1686,8 @@ the request path:
 
 - **Claim (`type: "claim"`).** For each channel, build an Ed25519 precompile
   instruction for the latest stored voucher followed by program `settle`. Pack
-  as many channels as the transaction's serialized size and account limits
-  allow (four in a legacy or version-0 transaction, see
+  as many channels as the facilitator's advertised `maxClaimChannels` allows
+  (four in a legacy or version-0 transaction, eighteen in version 1, see
   [Facilitator-built transactions](#facilitator-built-transactions-and-batching-capacity))
   and do not silently drop channels from a full batch. Program `settle`
   advances onchain `settled` to the voucher's exact `maxClaimableAmount`.
@@ -1708,18 +1722,32 @@ choice:
   legacy and version 0, 4096 bytes for version 1), the 64 static account keys
   a message may carry, and the 64 top-level instruction limit, never from a
   fixed count. A batch that does not fit is split, never truncated.
+- The facilitator advertises the `claim` and `settle` capacity of the message
+  version it builds redemptions in as `extra.maxClaimChannels` and
+  `extra.maxSettleChannels`: positive integers no greater than what fits that
+  version for every channel shape it accepts. A facilitator that builds
+  redemptions as legacy or version 0 MUST NOT advertise more than `4` (it MAY
+  omit the fields, which means `4`); one that builds them as version 1 MAY
+  advertise up to the version-1 capacities in the table below. The facilitator
+  checks a request's length against the capacity it advertises, not against
+  `PaymentRequirements.extra`. If a request within that capacity still does
+  not fit (an unusual channel shape), the facilitator MUST fail it rather than
+  truncate it.
 
 The table is informative. Per-channel costs are the bytes a further channel
 adds to the message once the shared accounts (fee payer, programs, sysvars,
 mint, payee and treasury token accounts) are already present; the shared
 overhead is about 230 bytes for the claim shape and about 400 bytes for
 `distribute`. Capacities are the binding limit of size, accounts and
-instruction count.
+instruction count. The `distribute` capacity assumes every channel in a
+`settle` request pays the route's `payTo`, as the facilitator requires: 14 fit
+then, so 13 leaves a channel of margin. Were each channel to pay its own
+recipient, only 11 would fit.
 
 | Instruction | Per channel | Legacy / v0 (1232 B) | Version 1 (4096 B) | Binding limit for v1 |
 |---|---|---|---|---|
 | `settle` claim: Ed25519 precompile + `settle` | 1 account, 2 instructions, ~205 B | 4 | 18 | size |
-| `distribute` (open or sealed) | 4 accounts, 1 instruction, ~143 B | 5 | 13 | 64 account keys |
+| `distribute` (open or sealed) | 3 accounts with the shared `payTo`, 1 instruction, ~143 B | 5 | 13 | 64 account keys |
 | `reclaim` | 1 account, 1 instruction, ~38 B | ~26 | 62 | 64 account keys |
 | `settle_and_seal` + sealed `distribute` (refund) | one channel per transaction | 1 | 1 | not batched |
 | `open`, `top_up`, `request_close` | client-built, one channel per transaction | 1 | 1 | not batched |

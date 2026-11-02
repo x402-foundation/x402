@@ -53,6 +53,20 @@
       "roles": [
         "client"
       ]
+    },
+    "EVM_BATCH_SETTLEMENT_VOUCHER_STORE_MODE": {
+      "required": false,
+      "roles": [
+        "server",
+        "client",
+        "facilitator"
+      ]
+    },
+    "SERVER_EVM_BATCH_SETTLEMENT_REFUND_AUTHORIZER_PRIVATE_KEY": {
+      "required": false,
+      "roles": [
+        "server"
+      ]
     }
   },
   "testnet": {
@@ -135,6 +149,79 @@
       ],
       "schemeOptions": {
         "coldstart": true
+      },
+      "price": {
+        "amount": "1000",
+        "assetRef": "permit2"
+      },
+      "extensions": [
+        "bazaar",
+        "erc20ApprovalGasSponsoring"
+      ]
+    },
+    "/batch-settlement-managed/evm/eip3009": {
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "eip3009",
+      "sdks": [
+        "go"
+      ],
+      "schemeOptions": {
+        "facilitatorManaged": true
+      },
+      "price": {
+        "usd": "$0.001"
+      },
+      "extensions": [
+        "bazaar"
+      ]
+    },
+    "/batch-settlement-managed/evm/permit2": {
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "permit2",
+      "sdks": [
+        "go"
+      ],
+      "schemeOptions": {
+        "permit2Direct": true,
+        "facilitatorManaged": true
+      },
+      "price": {
+        "amount": "1000",
+        "assetRef": "permit2",
+        "permit2Domain": true
+      },
+      "extensions": [
+        "bazaar"
+      ]
+    },
+    "/batch-settlement-managed/evm/permit2-eip2612GasSponsoring": {
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "permit2",
+      "sdks": [
+        "go"
+      ],
+      "schemeOptions": {
+        "coldstart": true,
+        "facilitatorManaged": true
+      },
+      "price": {
+        "usd": "$0.001",
+        "declareAssetTransferMethod": true
+      },
+      "extensions": [
+        "bazaar",
+        "eip2612GasSponsoring"
+      ]
+    },
+    "/batch-settlement-managed/evm/permit2-erc20ApprovalGasSponsoring": {
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "permit2",
+      "sdks": [
+        "go"
+      ],
+      "schemeOptions": {
+        "coldstart": true,
+        "facilitatorManaged": true
       },
       "price": {
         "amount": "1000",

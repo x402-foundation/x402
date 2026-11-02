@@ -180,6 +180,64 @@ func (m *mockValidatingScheme) ValidateFacilitatorSupport(_ Network, _ types.Sup
 	return errors.New(m.problem)
 }
 
+func TestFindSupportedKindPrefersEarlierFacilitator(t *testing.T) {
+	ctx := context.Background()
+	first := &mockServerFacilitatorClient{
+		kinds: []SupportedKind{{
+			X402Version: 2,
+			Scheme:      "batch-settlement",
+			Network:     "eip155:84532",
+			Extra:       map[string]interface{}{"receiverAuthorizer": "0xfirst"},
+		}},
+	}
+	second := &mockServerFacilitatorClient{
+		kinds: []SupportedKind{{
+			X402Version: 2,
+			Scheme:      "batch-settlement",
+			Network:     "eip155:84532",
+			Extra:       map[string]interface{}{"receiverAuthorizer": "0xsecond"},
+		}},
+	}
+	server := Newx402ResourceServer(
+		WithFacilitatorClient(first),
+		WithFacilitatorClient(second),
+		WithSchemeServer("eip155:84532", &mockSchemeNetworkServer{
+			scheme: "batch-settlement",
+			enhanceReqs: func(_ context.Context, base types.PaymentRequirements, supported types.SupportedKind, _ []string) (types.PaymentRequirements, error) {
+				if base.Extra == nil {
+					base.Extra = map[string]interface{}{}
+				}
+				base.Extra["receiverAuthorizer"] = supported.Extra["receiverAuthorizer"]
+				return base, nil
+			},
+		}),
+	)
+	if err := server.Initialize(ctx); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+
+	kind, _, found := server.findSupportedKind("eip155:84532", "batch-settlement")
+	if !found {
+		t.Fatal("expected a supported kind")
+	}
+	if kind.Extra["receiverAuthorizer"] != "0xfirst" {
+		t.Fatalf("findSupportedKind authorizer = %v, want 0xfirst", kind.Extra["receiverAuthorizer"])
+	}
+
+	reqs, err := server.BuildPaymentRequirementsFromConfig(ctx, ResourceConfig{
+		Scheme:  "batch-settlement",
+		Network: "eip155:84532",
+		PayTo:   "0xpayee",
+		Price:   "$0.001",
+	})
+	if err != nil {
+		t.Fatalf("BuildPaymentRequirementsFromConfig: %v", err)
+	}
+	if len(reqs) != 1 || reqs[0].Extra["receiverAuthorizer"] != "0xfirst" {
+		t.Fatalf("built requirements authorizer = %v, want 0xfirst", reqs[0].Extra["receiverAuthorizer"])
+	}
+}
+
 func TestServerInitializeRejectsCapabilityProblems(t *testing.T) {
 	ctx := context.Background()
 	mockClient := &mockServerFacilitatorClient{
@@ -922,20 +980,29 @@ func TestSettleOnCancel_SkipsWhenVoid(t *testing.T) {
 	}
 }
 
-func TestSettleOnCancel_SkipsWithoutBeforeHandlerDeposit(t *testing.T) {
+func TestSettleOnCancel_SettlesWithoutBeforeHandlerDeposit(t *testing.T) {
 	ctx := context.Background()
 	var settleCalls int
 	mockClient := &mockFacilitatorClient{
 		kinds: []SupportedKind{
-			{X402Version: 2, Scheme: "upto", Network: "eip155:8453"},
+			{X402Version: 2, Scheme: "exact", Network: "eip155:8453"},
 		},
 		settle: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*SettleResponse, error) {
 			settleCalls++
-			return &SettleResponse{Success: true, Transaction: "0x", Network: "eip155:8453"}, nil
+			var reqs types.PaymentRequirements
+			if err := json.Unmarshal(requirementsBytes, &reqs); err != nil {
+				t.Fatalf("unmarshal requirements: %v", err)
+			}
+			return &SettleResponse{
+				Success:     true,
+				Amount:      reqs.Amount,
+				Transaction: "0xcancel",
+				Network:     "eip155:8453",
+			}, nil
 		},
 	}
 	scheme := &mockSettleOnCancelScheme{
-		mockSchemeNetworkServer: mockSchemeNetworkServer{scheme: "upto"},
+		mockSchemeNetworkServer: mockSchemeNetworkServer{scheme: "exact"},
 		settleOnCancel: func(c VerifiedPaymentCanceledContext) (*types.PaymentRequirements, error) {
 			reqs := c.Requirements.(types.PaymentRequirements)
 			reqs.Amount = "0"
@@ -947,14 +1014,15 @@ func TestSettleOnCancel_SkipsWithoutBeforeHandlerDeposit(t *testing.T) {
 		t.Fatalf("Initialize: %v", err)
 	}
 
-	requirements := types.PaymentRequirements{Scheme: "upto", Network: "eip155:8453", Asset: "USDC", Amount: "1", PayTo: "0x"}
+	requirements := types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453", Asset: "USDC", Amount: "1", PayTo: "0x"}
 	payload := types.PaymentPayload{X402Version: 2, Accepted: requirements, Payload: map[string]interface{}{}}
 	cancellation := server.CreatePaymentCancellationDispatcherWithExtensions(ctx, payload, requirements, nil, nil)
-	if got := cancellation.Cancel(VerifiedPaymentCancelOptions{Reason: CancellationReasonHandlerFailed, ResponseStatus: 500}); got != nil {
-		t.Fatalf("expected nil cancel result, got %+v", got)
+	got := cancellation.Cancel(VerifiedPaymentCancelOptions{Reason: CancellationReasonHandlerFailed, ResponseStatus: 500})
+	if got == nil || !got.Success || got.Transaction != "0xcancel" {
+		t.Fatalf("expected cancel settle without before-handler deposit, got %+v", got)
 	}
-	if settleCalls != 0 {
-		t.Fatalf("expected 0 settle calls, got %d", settleCalls)
+	if settleCalls != 1 {
+		t.Fatalf("expected 1 settle call, got %d", settleCalls)
 	}
 }
 
@@ -1056,6 +1124,17 @@ func TestBuildFailurePathSettlementResponse_EchoesBeforeHandler(t *testing.T) {
 	}
 }
 
+func TestBuildFailurePathSettlementResponse_OmitsCancelWithoutBeforeHandler(t *testing.T) {
+	cancel := &SettleResponse{
+		Success:     true,
+		Transaction: "0xcancel",
+		Network:     "eip155:8453",
+	}
+	if got := BuildFailurePathSettlementResponse(cancel, nil, nil); got != nil {
+		t.Fatalf("expected cancel without a before-handler settlement to be omitted, got %+v", got)
+	}
+}
+
 func TestBuildFailurePathSettlementResponse_NilWhenNothing(t *testing.T) {
 	if got := BuildFailurePathSettlementResponse(nil, nil, nil); got != nil {
 		t.Fatalf("expected nil, got %+v", got)
@@ -1149,76 +1228,6 @@ func TestFindMatchingRequirements_DynamicExtraFields(t *testing.T) {
 		}
 	})
 }
-
-// TestServerProcessPaymentRequest - SKIPPED: ProcessPaymentRequest is a stub
-/*
-func TestServerProcessPaymentRequest(t *testing.T) {
-	ctx := context.Background()
-
-	mockServer := &mockSchemeNetworkServer{scheme: "exact"}
-	mockClient := &mockFacilitatorClient{}
-
-	server := Newx402ResourceServer(
-		WithFacilitatorClient(mockClient),
-		WithSchemeServer("eip155:1", mockServer),
-	)
-	server.Initialize(ctx)
-
-	config := ResourceConfig{
-		Scheme:  "exact",
-		PayTo:   "0xrecipient",
-		Price:   "$1.00",
-		Network: "eip155:1",
-	}
-
-	info := ResourceInfo{
-		URL:         "https://api.example.com/resource",
-		Description: "API resource",
-	}
-
-	// Test without payment (should require payment)
-	result, err := server.ProcessPaymentRequest(ctx, nil, config, info, nil)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	if result.Success {
-		t.Fatal("Expected payment to be required")
-	}
-	if result.RequiresPayment == nil {
-		t.Fatal("Expected payment required response")
-	}
-
-	// Test with valid payment
-	// First, build requirements to see what they actually are
-	builtReqs, _ := server.BuildPaymentRequirements(ctx, config)
-
-	payload := &PaymentPayload{
-		X402Version: 2,
-		Payload:     map[string]interface{}{},
-		Accepted:    builtReqs[0], // Use the actual built requirements
-	}
-
-	result, err = server.ProcessPaymentRequest(ctx, payload, config, info, nil)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	if !result.Success {
-		if result.Error != "" {
-			t.Fatalf("Expected payment to be verified, got error: %s", result.Error)
-		}
-		if result.RequiresPayment != nil {
-			t.Fatalf("Expected payment to be verified, got payment required: %v", result.RequiresPayment.Error)
-		}
-		t.Fatal("Expected payment to be verified")
-	}
-	if result.VerificationResult == nil {
-		t.Fatal("Expected verification result")
-	}
-	if !result.VerificationResult.IsValid {
-		t.Fatal("Expected valid verification")
-	}
-}
-*/
 
 func TestSupportedCache(t *testing.T) {
 	cache := &SupportedCache{

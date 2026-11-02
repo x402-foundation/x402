@@ -15,9 +15,15 @@ from x402.http.types import (
     PaymentOption,
     RouteConfig,
 )
-from x402.http.utils import encode_payment_signature_header
+from x402.http.utils import decode_payment_response_header, encode_payment_signature_header
 from x402.http.x402_http_server import x402HTTPResourceServer
-from x402.schemas import PaymentPayload, PaymentRequirements, SettleResponse, VerifyResponse
+from x402.schemas import (
+    AfterSettleAbortError,
+    PaymentPayload,
+    PaymentRequirements,
+    SettleResponse,
+    VerifyResponse,
+)
 from x402.schemas.hooks import (
     AbortProtectedRequestResult,
     GrantAccessResult,
@@ -259,6 +265,51 @@ class TestSkipHandlerSettlement:
         assert result.response.status == 200
         assert result.response.body == {"message": "Refund acknowledged"}
         assert "PAYMENT-RESPONSE" in result.response.headers
+
+
+class TestAfterSettleAbort:
+    @pytest.mark.asyncio
+    async def test_keeps_onchain_receipt_in_payment_response(self):
+        class ExactScheme:
+            scheme = "exact"
+            default_asset_transfer_method = "default"
+            payment_flows = {
+                "default": {"supported": ("authorization",), "default": "authorization"},
+            }
+
+        class DepositFacilitatorClient(MockFacilitatorClient):
+            async def settle(self, payload, requirements) -> SettleResponse:
+                return SettleResponse(
+                    success=True,
+                    transaction="0xdeposit",
+                    network="eip155:8453",
+                    payer="0xpayer",
+                    amount="1000000",
+                    extra={"channelState": "kept"},
+                )
+
+        def abort_after_settle(_ctx):
+            raise AfterSettleAbortError("voucher_store_unavailable", "store down")
+
+        server = x402ResourceServer(DepositFacilitatorClient())
+        server.register("eip155:8453", ExactScheme())
+        server.initialize()
+        server.on_after_settle(abort_after_settle)
+        http_server = x402HTTPResourceServer(server, {})
+        requirements = make_requirements()
+        payload = PaymentPayload(payload={}, accepted=requirements)
+
+        result = await http_server.process_settlement(payload, requirements)
+
+        assert result.success is False
+        assert result.response is not None
+        assert result.response.status == 402
+        decoded = decode_payment_response_header(result.headers["PAYMENT-RESPONSE"])
+        assert decoded.success is False
+        assert decoded.error_reason == "voucher_store_unavailable"
+        assert decoded.transaction == "0xdeposit"
+        assert decoded.amount == "1000000"
+        assert decoded.extra == {"channelState": "kept"}
 
 
 class PaymentHeaderAdapter(MockHTTPAdapter):

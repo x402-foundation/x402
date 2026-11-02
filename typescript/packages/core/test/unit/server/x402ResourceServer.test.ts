@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   x402ResourceServer,
+  AfterSettleAbortError,
+  isAfterSettleAborted,
   resolveSettlementOverrideAmount,
   type SettlePhase,
 } from "../../../src/server/x402ResourceServer";
@@ -817,6 +819,30 @@ describe("x402ResourceServer", () => {
     });
 
     describe("onAfterVerify", () => {
+      it("runs afterVerify when the facilitator returns isValid false", async () => {
+        const onVerifyFailure = vi.fn();
+        mockClient.setVerifyResponse(
+          buildVerifyResponse({ isValid: false, invalidReason: "mismatch" }),
+        );
+
+        let sawInvalidResult = false;
+        server.onAfterVerify(async context => {
+          sawInvalidResult =
+            context.result.isValid === false && context.result.invalidReason === "mismatch";
+        });
+        server.onVerifyFailure(onVerifyFailure);
+
+        const result = await server.verifyPayment(
+          buildPaymentPayload(),
+          buildPaymentRequirements(),
+        );
+
+        expect(result.isValid).toBe(false);
+        expect(result.invalidReason).toBe("mismatch");
+        expect(sawInvalidResult).toBe(true);
+        expect(onVerifyFailure).not.toHaveBeenCalled();
+      });
+
       it("should execute hook after successful verification", async () => {
         let hookExecuted = false;
         let hookResult: any;
@@ -1227,6 +1253,122 @@ describe("x402ResourceServer", () => {
         expect(hookExecuted).toBe(true);
         expect(hookResult).toBe(result);
       });
+
+      describe("AfterSettleAbortError", () => {
+        const onchainReceipt = () =>
+          buildSettleResponse({
+            transaction: "0xdeposit",
+            network: "eip155:8453" as Network,
+            payer: "0xpayer",
+            amount: "1000",
+            extra: { channelState: "kept" },
+          });
+
+        it("fails an onchain settle closed and keeps the receipt", async () => {
+          mockClient.setSettleResponse(onchainReceipt());
+          server.onAfterSettle(async () => {
+            throw new AfterSettleAbortError("voucher_store_unavailable", "store down");
+          });
+
+          const result = await server.settlePayment(
+            buildPaymentPayload(),
+            buildPaymentRequirements(),
+          );
+
+          expect(result.success).toBe(false);
+          expect(result.errorReason).toBe("voucher_store_unavailable");
+          expect(result.errorMessage).toBe("store down");
+          expect(result.transaction).toBe("0xdeposit");
+          expect(result.amount).toBe("1000");
+          expect(result.payer).toBe("0xpayer");
+          expect(result.extra).toEqual({ channelState: "kept" });
+          expect(isAfterSettleAborted(result)).toBe(true);
+        });
+
+        it("treats a same-name error from another class or copy as an abort", async () => {
+          class OtherCopyAfterSettleAbortError extends Error {
+            readonly reason = "voucher_store_unavailable";
+
+            constructor() {
+              super("store down");
+              this.name = "AfterSettleAbortError";
+            }
+          }
+          mockClient.setSettleResponse(onchainReceipt());
+          server.onAfterSettle(async () => {
+            throw new OtherCopyAfterSettleAbortError();
+          });
+
+          const result = await server.settlePayment(
+            buildPaymentPayload(),
+            buildPaymentRequirements(),
+          );
+
+          expect(result.success).toBe(false);
+          expect(result.errorReason).toBe("voucher_store_unavailable");
+          expect(result.transaction).toBe("0xdeposit");
+          expect(isAfterSettleAborted(result)).toBe(true);
+          expect(JSON.stringify(result)).not.toContain("afterSettleAborted");
+        });
+
+        it("keeps plain afterSettle errors non-fatal", async () => {
+          const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+          mockClient.setSettleResponse(onchainReceipt());
+          server.onAfterSettle(async () => {
+            throw new Error("log only");
+          });
+
+          const result = await server.settlePayment(
+            buildPaymentPayload(),
+            buildPaymentRequirements(),
+          );
+
+          expect(result.success).toBe(true);
+          expect(isAfterSettleAborted(result)).toBe(false);
+          warnSpy.mockRestore();
+        });
+
+        it("skips response enrichment for the aborted receipt", async () => {
+          const enrich = vi.fn(async () => ({ schemeField: "scheme" }));
+          mockClient.setSettleResponse(onchainReceipt());
+          server.register(
+            "test:network" as Network,
+            Object.assign(new MockSchemeNetworkServer("test-scheme"), {
+              enrichSettlementResponse: enrich,
+            }),
+          );
+          server.onAfterSettle(async () => {
+            throw new AfterSettleAbortError("channel_busy");
+          });
+
+          const result = await server.settlePayment(
+            buildPaymentPayload(),
+            buildPaymentRequirements(),
+          );
+
+          expect(result.success).toBe(false);
+          expect(result.transaction).toBe("0xdeposit");
+          expect(result.extra).toEqual({ channelState: "kept" });
+          expect(enrich).not.toHaveBeenCalled();
+        });
+
+        it("fails a beforeSettle skip result closed", async () => {
+          server.onBeforeSettle(async () => ({ skip: true, result: onchainReceipt() }));
+          server.onAfterSettle(async () => {
+            throw new AfterSettleAbortError("channel_busy");
+          });
+
+          const result = await server.settlePayment(
+            buildPaymentPayload(),
+            buildPaymentRequirements(),
+          );
+
+          expect(result.success).toBe(false);
+          expect(result.errorReason).toBe("channel_busy");
+          expect(result.transaction).toBe("0xdeposit");
+          expect(isAfterSettleAborted(result)).toBe(true);
+        });
+      });
     });
 
     describe("onSettleFailure", () => {
@@ -1393,13 +1535,13 @@ describe("x402ResourceServer", () => {
         expect(settleClient.settleCalls).toHaveLength(0);
       });
 
-      it("skips settleOnCancel when before-handler deposit did not complete", async () => {
+      it("settles on cancel without a before-handler deposit", async () => {
         const settleClient = new MockFacilitatorClient(
           buildSupportedResponse({
             kinds: [{ x402Version: 2, scheme: "upto", network: "eip155:8453" as Network }],
           }),
           undefined,
-          buildSettleResponse({ success: true, amount: "0" }),
+          buildSettleResponse({ success: true, amount: "0", transaction: "0xcancel" }),
         );
         const server = new x402ResourceServer(settleClient);
         const scheme = new MockSchemeNetworkServer("upto");
@@ -1416,8 +1558,16 @@ describe("x402ResourceServer", () => {
           buildPaymentRequirements({ scheme: "upto", network: "eip155:8453" as Network }),
         );
 
-        await cancellation.cancel({ reason: "handler_failed", responseStatus: 500 });
-        expect(settleClient.settleCalls).toHaveLength(0);
+        const cancelResult = await cancellation.cancel({
+          reason: "handler_failed",
+          responseStatus: 500,
+        });
+
+        expect(cancelResult).toEqual(
+          expect.objectContaining({ success: true, transaction: "0xcancel" }),
+        );
+        expect(settleClient.settleCalls).toHaveLength(1);
+        expect(settleClient.settleCalls[0].requirements.amount).toBe("0");
       });
 
       it("warns and preserves cancel when settleOnCancel settlement fails", async () => {
