@@ -20,10 +20,6 @@ import { ALGORAND_MAINNET_CAIP2, ALGORAND_TESTNET_CAIP2 } from "./constants";
  * @returns The validated CAIP-2 network identifier
  */
 export function normalizeAlgorandNetwork(network: string): Network {
-  if (!network.startsWith("algorand:")) {
-    throw new Error(`Unsupported Algorand network: ${network}`);
-  }
-
   if (network === ALGORAND_MAINNET_CAIP2 || network === ALGORAND_TESTNET_CAIP2) {
     return network as Network;
   }
