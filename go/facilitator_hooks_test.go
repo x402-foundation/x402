@@ -44,7 +44,6 @@ func TestFacilitatorBeforeVerifyHook_Abort(t *testing.T) {
 		t.Error("Expected nil result when verification is aborted")
 	}
 
-	// Check error is VerifyError with correct reason and message
 	ve := &VerifyError{}
 	if errors.As(err, &ve) {
 		if ve.InvalidReason != "Facilitator security check failed" {
@@ -190,7 +189,6 @@ func TestFacilitatorBeforeSettleHook_Abort(t *testing.T) {
 		t.Error("Expected nil result when settlement is aborted")
 	}
 
-	// Check error is SettleError with correct reason and message
 	se := &SettleError{}
 	if errors.As(err, &se) {
 		if se.ErrorReason != "Gas price too high" {
