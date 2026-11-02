@@ -79,12 +79,20 @@ describe("parseTransferExecutorConfig", () => {
     expect(() => parseTransferExecutorConfig(config)).toThrow(/executors.*hedera:testnet/);
   });
 
-  it.each([["abc"], ["0.0.7000 "], [7000]])("rejects executor entry %j", entry => {
-    const config = {
-      executors: { [TESTNET]: [entry] },
-      gasLimit: 300_000,
-    } as unknown as HederaTransferExecutorConfig;
-    expect(() => parseTransferExecutorConfig(config)).toThrow(/executors.*hedera:testnet/);
+  it.each([["abc"], ["0.0.7000 "], [7000], ["0.0.99999999999999999999"], ["4294967296.0.7000"]])(
+    "rejects executor entry %j",
+    entry => {
+      const config = {
+        executors: { [TESTNET]: [entry] },
+        gasLimit: 300_000,
+      } as unknown as HederaTransferExecutorConfig;
+      expect(() => parseTransferExecutorConfig(config)).toThrow(/executors.*hedera:testnet/);
+    },
+  );
+
+  it("accepts the largest encodable executor id", () => {
+    const executors = { [TESTNET]: ["0.0.18446744073709551615"] };
+    expect(parseTransferExecutorConfig({ executors, gasLimit: 1 })?.executors).toEqual(executors);
   });
 });
 

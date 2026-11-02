@@ -166,7 +166,7 @@ describe("ExactHedera client scheme: transferExecutor", () => {
     },
   );
 
-  it.each([["0.0.b794f5"], ["5001"], [""]])(
+  it.each([["0.0.b794f5"], ["5001"], [""], ["0.0.18446744073709551616"]])(
     "refuses a signer accountId %j that is not a Hedera account id, before calling the hook",
     async accountId => {
       const signer = { ...signerWithHook(), accountId };

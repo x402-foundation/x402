@@ -2,7 +2,7 @@
 // nothing here is public API.
 import { HEDERA_TRANSFER_EXECUTOR_WILDCARD } from "./constants";
 import type { ExactHederaTransferExecutorPayload } from "./types";
-import { isValidHederaEntityId, isValidHexBytes } from "./utils";
+import { isEncodableHederaEntityId, isValidHexBytes } from "./utils";
 
 /**
  * Returns true when `value` is a non-null, non-array object.
@@ -72,8 +72,9 @@ export type TransferExecutorPayloadParse =
   | { malformedField: "payload" | keyof ExactHederaTransferExecutorPayload };
 
 /**
- * Checks a `transferExecutor` payload: `payer` and `executor` are Hedera ids,
- * and `authorization` is `0x`-prefixed hex, never interpreted.
+ * Checks a `transferExecutor` payload: `payer` and `executor` are Hedera ids
+ * that fit a long-zero address, and `authorization` is `0x`-prefixed hex,
+ * never interpreted.
  *
  * @param value - Candidate payload
  * @returns The payload with only its three fields, or the first malformed field
@@ -83,10 +84,10 @@ export function parseTransferExecutorPayload(value: unknown): TransferExecutorPa
     return { malformedField: "payload" };
   }
   const { payer, executor, authorization } = value;
-  if (typeof payer !== "string" || !isValidHederaEntityId(payer)) {
+  if (typeof payer !== "string" || !isEncodableHederaEntityId(payer)) {
     return { malformedField: "payer" };
   }
-  if (typeof executor !== "string" || !isValidHederaEntityId(executor)) {
+  if (typeof executor !== "string" || !isEncodableHederaEntityId(executor)) {
     return { malformedField: "executor" };
   }
   if (!isValidHexBytes(authorization)) {

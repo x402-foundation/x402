@@ -3,7 +3,9 @@ import { HEDERA_TESTNET_CAIP2 } from "../../src/constants";
 import { executorListAdmits, isStringArray } from "../../src/internal";
 import {
   assertSupportedHederaNetwork,
+  isEncodableHederaEntityId,
   isSupportedHederaNetwork,
+  isValidHederaEntityId,
   isValidHexBytes,
 } from "../../src/utils";
 
@@ -44,6 +46,36 @@ describe("Hedera utils", () => {
   ])("rejects %s as hex bytes", (_label, value) => {
     expect(isValidHexBytes(value)).toBe(false);
   });
+});
+
+describe("isEncodableHederaEntityId", () => {
+  it.each([
+    ["the smallest id", "0.0.0"],
+    ["num 2^64 - 1", "0.0.18446744073709551615"],
+    ["realm 2^64 - 1", "0.18446744073709551615.0"],
+    ["shard 2^32 - 1", "4294967295.0.0"],
+    ["every part at its largest", "4294967295.18446744073709551615.18446744073709551615"],
+  ])("accepts %s", (_, entityId) => {
+    expect(isEncodableHederaEntityId(entityId)).toBe(true);
+  });
+
+  // Each still passes the regex-only check, so only the bound rejects it.
+  it.each([
+    ["num 2^64", "0.0.18446744073709551616"],
+    ["realm 2^64", "0.18446744073709551616.0"],
+    ["shard 2^32", "4294967296.0.0"],
+    ["a 20-digit num", "0.0.99999999999999999999"],
+  ])("rejects %s, which is a valid entity id", (_, entityId) => {
+    expect(isValidHederaEntityId(entityId)).toBe(true);
+    expect(isEncodableHederaEntityId(entityId)).toBe(false);
+  });
+
+  it.each(["0.0", "0.0.-1", "0.0.1.2", "0x0000000000000000000000000000000000001b58", ""])(
+    "rejects %j, which is not an entity id",
+    entityId => {
+      expect(isEncodableHederaEntityId(entityId)).toBe(false);
+    },
+  );
 });
 
 describe("isStringArray", () => {

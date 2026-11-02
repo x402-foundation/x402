@@ -11,7 +11,7 @@ import { executorListAdmits, isStringArray, parseTransferExecutorPayload } from 
 import type { ExactHederaPayloadV2, HederaAssetTransferMethod } from "../../types";
 import {
   assertSupportedHederaNetwork,
-  isValidHederaEntityId,
+  isEncodableHederaEntityId,
   resolveHederaAssetTransferMethod,
 } from "../../utils";
 
@@ -119,8 +119,9 @@ export class ExactHederaScheme implements SchemeNetworkClient {
       );
     }
 
+    // The same bound the payload parse below applies, checked here for a message naming the signer.
     const payer = this.signer.accountId;
-    if (!isValidHederaEntityId(payer)) {
+    if (!isEncodableHederaEntityId(payer)) {
       throw new Error(
         `Signer accountId ${JSON.stringify(payer)} is not a Hedera account id, so it cannot be payload.payer`,
       );

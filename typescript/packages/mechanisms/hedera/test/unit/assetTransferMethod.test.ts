@@ -69,7 +69,9 @@ describe("parseTransferExecutorPayload", () => {
     ["payload", ["0.0.5001"]],
     ["payer", { ...transferExecutorPayload, payer: undefined }],
     ["payer", { ...transferExecutorPayload, payer: "0.0.b794f5" }],
+    ["payer", { ...transferExecutorPayload, payer: "0.0.18446744073709551616" }],
     ["executor", { ...transferExecutorPayload, executor: "contract" }],
+    ["executor", { ...transferExecutorPayload, executor: "4294967296.0.7000" }],
     ["authorization", { ...transferExecutorPayload, authorization: "deadbeef" }],
   ])("names %s as the first malformed field of %j", (malformedField, payload) => {
     expect(parseTransferExecutorPayload(payload)).toEqual({ malformedField });

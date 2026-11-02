@@ -24,6 +24,27 @@ export function isValidHederaEntityId(entityId: string): boolean {
   return HEDERA_ENTITY_ID_REGEX.test(entityId);
 }
 
+/**
+ * Exclusive upper bounds of shard, realm and num: the 4, 8 and 8 bytes each
+ * takes in a long-zero EVM address.
+ */
+const ENTITY_ID_PART_LIMITS = [1n << 32n, 1n << 64n, 1n << 64n] as const;
+
+/**
+ * Validate a Hedera entity id whose parts fit its long-zero EVM address.
+ * The id regex accepts any digit string, so a wider part would otherwise pass
+ * shape checks and only fail once encoded.
+ *
+ * @param entityId - Entity id to validate
+ * @returns True when valid with shard < 2^32, realm < 2^64 and num < 2^64
+ */
+export function isEncodableHederaEntityId(entityId: string): boolean {
+  return (
+    isValidHederaEntityId(entityId) &&
+    entityId.split(".").every((part, index) => BigInt(part) < ENTITY_ID_PART_LIMITS[index])
+  );
+}
+
 const HEX_BYTES_REGEX = /^0x([0-9a-fA-F]{2})*$/;
 
 /**

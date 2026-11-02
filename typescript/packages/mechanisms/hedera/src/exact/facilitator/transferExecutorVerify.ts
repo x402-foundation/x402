@@ -115,6 +115,7 @@ export async function verifyTransferExecutor(
     aliasPolicy: ctx.aliasPolicy,
     checkFeePayerParity: false,
     codes: TRANSFER_EXECUTOR_REQUIREMENT_CODES,
+    requireEncodableIds: true,
   });
   if (requirementsFailure) {
     return { response: requirementsFailure };

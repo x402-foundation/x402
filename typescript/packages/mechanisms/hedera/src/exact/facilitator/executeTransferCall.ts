@@ -1,5 +1,10 @@
 import { HEDERA_HBAR_EVM_ADDRESS, HEDERA_EXECUTE_TRANSFER_SELECTOR } from "../../constants";
-import { isHbarAsset, isValidHederaEntityId, isValidHexBytes } from "../../utils";
+import {
+  isEncodableHederaEntityId,
+  isHbarAsset,
+  isValidHederaEntityId,
+  isValidHexBytes,
+} from "../../utils";
 
 const EVM_ADDRESS_REGEX = /^0x[0-9a-fA-F]{40}$/;
 const MAX_UINT256 = (1n << 256n) - 1n;
@@ -20,10 +25,11 @@ export function toLongZeroAddress(entityId: string): string {
   if (!isValidHederaEntityId(entityId)) {
     throw new Error(`Not a Hedera entity id: ${entityId}`);
   }
-  const [shard, realm, num] = entityId.split(".").map(part => BigInt(part));
-  if (shard >= 1n << 32n || realm >= 1n << 64n || num >= 1n << 64n) {
+  // Verification rejects these first; this keeps a wider part from aliasing another entity.
+  if (!isEncodableHederaEntityId(entityId)) {
     throw new Error(`Hedera entity id out of range: ${entityId}`);
   }
+  const [shard, realm, num] = entityId.split(".").map(part => BigInt(part));
   return `0x${toHex(shard, 8)}${toHex(realm, 16)}${toHex(num, 16)}`;
 }
 

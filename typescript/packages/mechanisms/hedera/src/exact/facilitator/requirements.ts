@@ -1,6 +1,8 @@
 import type { PaymentPayload, PaymentRequirements, VerifyResponse } from "@x402/core/types";
 import {
   assertSupportedHederaNetwork,
+  isEncodableHederaEntityId,
+  isHbarAsset,
   isValidHederaAsset,
   isValidHederaEntityId,
 } from "../../utils";
@@ -72,6 +74,7 @@ export const TRANSFER_EXECUTOR_REQUIREMENT_CODES: RequirementCodes = {
  * @param options.aliasPolicy - Alias handling behavior for the payTo format check
  * @param options.checkFeePayerParity - Whether `extra.feePayer` must match between `accepted` and `requirements`
  * @param options.codes - The code each check rejects with
+ * @param options.requireEncodableIds - Whether an HTS `asset` and an entity-id `payTo` must fit a long-zero address
  * @returns The rejection, or null
  */
 export function validateExactRequirements(
@@ -81,6 +84,7 @@ export function validateExactRequirements(
     aliasPolicy: HederaAliasPolicy;
     checkFeePayerParity: boolean;
     codes: RequirementCodes;
+    requireEncodableIds?: boolean;
   },
 ): VerifyRejection | null {
   const { codes } = options;
@@ -111,6 +115,19 @@ export function validateExactRequirements(
   }
   if (!isValidPayToFormatForPolicy(requirements.payTo, options.aliasPolicy)) {
     return { isValid: false, invalidReason: codes.payTo, payer: "" };
+  }
+  // A method that encodes ids as EVM addresses rejects a part too wide to encode
+  // here, as a shape failure, rather than when it builds the call.
+  if (options.requireEncodableIds) {
+    if (!isHbarAsset(requirements.asset) && !isEncodableHederaEntityId(requirements.asset)) {
+      return { isValid: false, invalidReason: codes.asset, payer: "" };
+    }
+    if (
+      isValidHederaEntityId(requirements.payTo) &&
+      !isEncodableHederaEntityId(requirements.payTo)
+    ) {
+      return { isValid: false, invalidReason: codes.payTo, payer: "" };
+    }
   }
   if (!/^\d+$/.test(requirements.amount)) {
     return { isValid: false, invalidReason: codes.amount, payer: "" };

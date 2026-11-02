@@ -1,7 +1,7 @@
 import { HEDERA_MAX_CONTRACT_CALL_GAS, HEDERA_TRANSFER_EXECUTOR_WILDCARD } from "../../constants";
 import { executorListAdmits } from "../../internal";
 import type { FacilitatorHederaSigner } from "../../signer";
-import { isSupportedHederaNetwork, isValidHederaEntityId } from "../../utils";
+import { isEncodableHederaEntityId, isSupportedHederaNetwork } from "../../utils";
 
 /**
  * Alias handling behavior for payTo checks.
@@ -114,7 +114,7 @@ export function parseTransferExecutorConfig(
     for (const entry of entries) {
       if (
         entry !== HEDERA_TRANSFER_EXECUTOR_WILDCARD &&
-        (typeof entry !== "string" || !isValidHederaEntityId(entry))
+        (typeof entry !== "string" || !isEncodableHederaEntityId(entry))
       ) {
         throw new Error(
           `transferExecutor.executors["${network}"] entry ${JSON.stringify(entry)} must be "*" or a Hedera contract id`,

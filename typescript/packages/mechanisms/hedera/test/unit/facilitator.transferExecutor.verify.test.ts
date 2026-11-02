@@ -471,6 +471,80 @@ describe("transferExecutor verify: requirement rules", () => {
   );
 });
 
+/**
+ * Passes the entity id regex but its num is above 2^64 - 1, so it has no long-zero address.
+ */
+const OUT_OF_RANGE_ID = "0.0.99999999999999999999";
+
+describe("transferExecutor verify: ids too wide for a long-zero address", () => {
+  // A wildcard admits any executor, so only the shape check stands between the id and encoding.
+  const wildcardConfig = () => createConfig({ executors: { [TESTNET]: ["*"] } });
+
+  it.each([
+    ["payer", ErrInvalidPayloadPayer],
+    ["executor", ErrInvalidPayloadExecutor],
+  ])("rejects an out-of-range %s with its payload code", async (field, invalidReason) => {
+    const signer = createSigner();
+    const scheme = new ExactHederaScheme(signer, wildcardConfig());
+    const requirements = createRequirements();
+
+    const result = await scheme.verify(
+      createPaymentPayload(
+        requirements,
+        createTransferExecutorPayload({ [field]: OUT_OF_RANGE_ID }),
+      ),
+      requirements,
+    );
+
+    expect(result).toEqual({ isValid: false, invalidReason, payer: "" });
+    expect(signer.resolveEvmAddress).not.toHaveBeenCalled();
+    expect(signer.simulateContractCall).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["asset", "reject" as const],
+    ["payTo", "reject" as const],
+    ["payTo", "allow" as const],
+  ])(
+    "rejects an out-of-range %s under the %s alias policy with invalid_payment_requirements",
+    async (field, aliasPolicy) => {
+      const signer = createSigner();
+      const scheme = new ExactHederaScheme(signer, { ...wildcardConfig(), aliasPolicy });
+      const requirements = createRequirements({ [field]: OUT_OF_RANGE_ID });
+
+      const result = await scheme.verify(
+        createPaymentPayload(requirements, createTransferExecutorPayload()),
+        requirements,
+      );
+
+      expect(result).toEqual({
+        isValid: false,
+        invalidReason: ErrInvalidPaymentRequirements,
+        payer: "",
+      });
+      expect(signer.getTokenCustomFees).not.toHaveBeenCalled();
+      expect(signer.resolveEvmAddress).not.toHaveBeenCalled();
+      expect(signer.simulateContractCall).not.toHaveBeenCalled();
+    },
+  );
+
+  it("accepts an HTS asset at the largest encodable num", async () => {
+    const signer = createSigner();
+    const scheme = new ExactHederaScheme(signer, createConfig());
+    const requirements = createRequirements({ asset: "0.0.18446744073709551615" });
+
+    const result = await scheme.verify(
+      createPaymentPayload(requirements, createTransferExecutorPayload()),
+      requirements,
+    );
+
+    expect(result).toEqual({ isValid: true, payer: PAYER });
+    expect(signer.simulateContractCall.mock.calls[0][0].data).toContain(
+      "000000000000000000000000000000000000000000000000ffffffffffffffff",
+    );
+  });
+});
+
 describe("transferExecutor verify: method support", () => {
   const disabledCases: Array<{
     name: string;
