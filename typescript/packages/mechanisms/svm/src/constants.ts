@@ -9,11 +9,16 @@ export const MEMO_PROGRAM_ADDRESS = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr
 
 /**
  * Phantom/Solflare Lighthouse program address
- * Phantom and Solflare wallets inject Lighthouse instructions for user protection on mainnet transactions.
- * - Phantom adds 1 Lighthouse instruction (4th instruction)
- * - Solflare adds 2 Lighthouse instructions (4th and 5th instructions)
- * We allow these as optional instructions to support these wallets.
+ * Phantom and Solflare wallets inject Lighthouse assertion instructions for
+ * user protection on mainnet transactions. These instructions only assert
+ * conditions and abort the transaction if they fail — they never mutate
+ * payment-relevant state — so the facilitator treats Lighthouse as a "guard"
+ * program allowed anywhere in the instruction list (before, after, or
+ * interspersed among the protocol instructions), rather than assuming a
+ * fixed count or position. Wallets do not guarantee a stable instruction
+ * count or position for these; treat any such assumption as unsupported.
  * See: https://github.com/x402-foundation/x402/issues/828
+ *  and: https://github.com/x402-foundation/x402/issues/2097
  */
 export const LIGHTHOUSE_PROGRAM_ADDRESS = "L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95";
 

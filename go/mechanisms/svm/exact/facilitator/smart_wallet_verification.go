@@ -73,7 +73,17 @@ func expectedDestinationATAs(payTo, mint solana.PublicKey) (map[solana.PublicKey
 }
 
 func assertFeePayerIsolated(tx *solana.Transaction, feePayer solana.PublicKey) error {
-	for _, ix := range tx.Message.Instructions {
+	return assertFeePayerIsolatedFromInstructions(tx, tx.Message.Instructions, feePayer)
+}
+
+// assertFeePayerIsolatedFromInstructions is assertFeePayerIsolated narrowed to
+// an explicit instruction subset, so a matched preflight/postflight
+// instruction-tuple block can be isolation-checked independently of the full
+// transaction.
+func assertFeePayerIsolatedFromInstructions(
+	tx *solana.Transaction, instructions []solana.CompiledInstruction, feePayer solana.PublicKey,
+) error {
+	for _, ix := range instructions {
 		programID, err := tx.Message.Program(ix.ProgramIDIndex)
 		if err != nil {
 			return fmt.Errorf("%s: %w", ErrSmartWalletFeePayerNotIsolated, err)

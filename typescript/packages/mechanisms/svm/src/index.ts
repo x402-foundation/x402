@@ -7,6 +7,7 @@
 // Export V2 implementations (default)
 export { ExactSvmScheme } from "./exact";
 export type { ExactSvmSchemeOptions } from "./exact/facilitator/scheme";
+export type { InstructionIdentity, InstructionTuple } from "./exact/facilitator/instructionLayout";
 export { UptoSvmScheme } from "./upto";
 export { BatchSvmScheme } from "./batch-settlement";
 
