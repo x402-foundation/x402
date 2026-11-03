@@ -22,10 +22,16 @@ The `upto` scheme MUST enforce the following properties across ALL network imple
 
 ### 1. Single-Use Authorization
 
-Each authorization MUST be settled at most once. After settlement (regardless of amount), the authorization is consumed and cannot be reused.
+Each authorization MUST be settled at most once. A nonzero settlement consumes the authorization and
+cannot be reused. A zero-charge outcome that submits no onchain transaction leaves the authorization
+unconsumed; it expires at its validity deadline unless the network-specific mechanism cancels it.
 
-- Rationale: Provides a clear audit trail, simpler mental model, and matches x402's request-response pattern.
-- Implementation: On EVM, Permit2's nonce mechanism enforces this. The EIP-3009 path consumes the token authorization nonce instead. Other networks MUST implement equivalent replay protection.
+- Rationale: A successful nonzero settlement must have one payment outcome. A zero-charge outcome
+  need not consume an authorization when no payment transaction is submitted.
+- Implementation: On EVM, Permit2's nonce mechanism enforces nonzero settlement replay protection.
+  The EIP-3009 path consumes the token authorization nonce instead. For a zero-charge EVM outcome,
+  no transaction is submitted and the authorization expires unused. Other networks MUST implement
+  equivalent replay protection for nonzero settlements and document their zero-charge behavior.
 
 ### 2. Time-Bound Authorization
 
