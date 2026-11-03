@@ -4,12 +4,14 @@ import type {
   PaymentRequirements,
   SettleResponse,
 } from "@x402/core/types";
+import { SettleError } from "@x402/core/types";
 import type { FacilitatorClient } from "@x402/core/server";
 import type { BatchSettlementVoucherClaim } from "../types";
 import type { BatchSettlementEvmScheme } from "./scheme";
 import { computeChannelId } from "../utils";
 import { BATCH_SETTLEMENT_SCHEME } from "../constants";
 import { signClaimBatch, signRefund } from "../authorizerSigner";
+import { ErrNothingToSettle } from "../errors";
 import type { Channel } from "./storage";
 
 export interface ChannelManagerConfig {
@@ -151,14 +153,33 @@ export class BatchSettlementChannelManager {
   /**
    * Transfers claimed (but unsettled) funds to the receiver by calling `settle(receiver, token)`.
    *
-   * @returns Settle result with the transaction hash.
+   * @returns Settle result with the transaction hash, or an empty transaction when nothing is
+   * claimed but unsettled.
    */
   async settle(): Promise<SettleResult> {
     const paymentPayload = this.buildSettlePaymentPayload();
     const requirements = this.buildPaymentRequirements();
 
-    const response = await this.facilitator.settle(paymentPayload, requirements);
+    let response: SettleResponse;
+    try {
+      response = await this.facilitator.settle(paymentPayload, requirements);
+    } catch (err) {
+      // HTTPFacilitatorClient throws a SettleError when the facilitator replies with a non-2xx status.
+      if (!(err instanceof SettleError) || err.errorReason !== ErrNothingToSettle) {
+        throw err;
+      }
+      response = {
+        success: false,
+        errorReason: err.errorReason,
+        transaction: "",
+        network: err.network,
+      };
+    }
     if (!response.success) {
+      if (response.errorReason === ErrNothingToSettle) {
+        this.pendingSettle = false;
+        return { transaction: "" };
+      }
       throw new Error(formatFacilitatorFailure("Settle", response));
     }
 
@@ -275,7 +296,8 @@ export class BatchSettlementChannelManager {
    * Stops the auto-settlement loop.
    *
    * @param opts - Stop options.
-   * @param opts.flush - When true, run `claimAndSettle` before stopping.
+   * @param opts.flush - When true, run `claimAndSettle` before stopping, and settle even when it
+   * claimed nothing (claims from refunds or earlier processes may be unsettled).
    * @returns Resolves when the loop is stopped (and flush work completes, if requested).
    */
   async stop(opts?: { flush?: boolean }): Promise<void> {
@@ -287,10 +309,13 @@ export class BatchSettlementChannelManager {
     this.pendingJobs.clear();
 
     if (opts?.flush) {
-      await this.claimAndSettle({
+      const flushed = await this.claimAndSettle({
         maxClaimsPerBatch: this.autoSettleConfig.maxClaimsPerBatch,
         selectClaimChannels: this.autoSettleConfig.selectClaimChannels,
       });
+      if (!flushed.settle) {
+        await this.settle();
+      }
     }
   }
 
@@ -347,6 +372,9 @@ export class BatchSettlementChannelManager {
     const response = await this.facilitator.settle(paymentPayload, this.buildPaymentRequirements());
     if (!response.success) {
       throw new Error(formatFacilitatorFailure("Refund", response));
+    }
+    if (claims.length > 0) {
+      this.pendingSettle = true;
     }
 
     await this.scheme
@@ -467,14 +495,13 @@ export class BatchSettlementChannelManager {
   }
 
   /**
-   * Runs the settlement auto job.
+   * Runs the settlement auto job. It runs even when `pendingSettle` is false, since claims
+   * submitted by refunds or by an earlier process are not tracked in memory; the facilitator
+   * answers nothing-to-settle from onchain state.
    */
   private async runSettleJob(): Promise<void> {
     const cfg = this.autoSettleConfig;
     const context = this.buildAutoSettlementContext(Date.now());
-    if (!context.pendingSettle) {
-      return;
-    }
 
     try {
       if (cfg.shouldSettle && !(await cfg.shouldSettle(context))) {
@@ -482,6 +509,9 @@ export class BatchSettlementChannelManager {
       }
 
       const result = await this.settle();
+      if (!result.transaction) {
+        return;
+      }
       this.lastSettleTime = Date.now();
       cfg.onSettle?.(result);
     } catch (err) {
