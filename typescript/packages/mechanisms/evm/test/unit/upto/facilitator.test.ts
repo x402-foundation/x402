@@ -8,6 +8,8 @@ import {
   ErrPermit2AmountMismatch,
   ErrUptoAmountExceedsPermitted,
   ErrUptoFacilitatorMismatch,
+  ErrUptoInvalidPayload,
+  ErrUptoInvalidRequiredAmount,
   ErrUptoSettlementExceedsAmount,
   ErrUptoUnauthorizedFacilitator,
   ErrUptoInvalidScheme,
@@ -83,6 +85,106 @@ function makeRequirements(overrides?: Partial<PaymentRequirements>): PaymentRequ
     extra: { assetTransferMethod: "permit2", facilitatorAddress: FACILITATOR_ADDRESS },
     ...overrides,
   };
+}
+
+const MISSING = Symbol("missing");
+const UNSUPPORTED_PAYLOAD_MESSAGE = "unsupported payload type: expected upto permit2 payload";
+
+// [name, path, value, messagePrefix]: set the field at `path` in the payload; MISSING deletes it.
+// Cases the upto payload guard rejects outright (a missing or wrong-typed field) surface with the
+// unsupported-type message; cases inside an upto-shaped payload are rejected by the shape
+// validator with a message naming the field. Both must return ErrUptoInvalidPayload from verify
+// and settle instead of throwing.
+const MALFORMED_UPTO_PAYLOADS: Array<[string, string[], unknown, string]> = [
+  ["authorization not object", ["permit2Authorization"], "oops", "unsupported payload type"],
+  ["witness not object", ["permit2Authorization", "witness"], [], "unsupported payload type"],
+  [
+    "facilitator missing",
+    ["permit2Authorization", "witness", "facilitator"],
+    MISSING,
+    "unsupported payload type",
+  ],
+  ["permitted not object", ["permit2Authorization", "permitted"], null, "unsupported payload type"],
+  ["from not string", ["permit2Authorization", "from"], 123, "unsupported payload type"],
+  ["spender missing", ["permit2Authorization", "spender"], MISSING, "unsupported payload type"],
+  [
+    "token not string",
+    ["permit2Authorization", "permitted", "token"],
+    null,
+    "unsupported payload type",
+  ],
+  [
+    "witness.to not string",
+    ["permit2Authorization", "witness", "to"],
+    123,
+    "unsupported payload type",
+  ],
+  [
+    "facilitator not string",
+    ["permit2Authorization", "witness", "facilitator"],
+    123,
+    "unsupported payload type",
+  ],
+  [
+    "nonce not numeric",
+    ["permit2Authorization", "nonce"],
+    "abc",
+    "permit2Authorization.nonce must be ",
+  ],
+  ["nonce json number", ["permit2Authorization", "nonce"], 123, "unsupported payload type"],
+  [
+    "nonce above uint256",
+    ["permit2Authorization", "nonce"],
+    (1n << 256n).toString(),
+    "permit2Authorization.nonce must be ",
+  ],
+  ["deadline missing", ["permit2Authorization", "deadline"], MISSING, "unsupported payload type"],
+  [
+    "deadline over digit limit",
+    ["permit2Authorization", "deadline"],
+    "1".repeat(5000),
+    "permit2Authorization.deadline must be ",
+  ],
+  [
+    "amount negative",
+    ["permit2Authorization", "permitted", "amount"],
+    "-1",
+    "permit2Authorization.permitted.amount must be ",
+  ],
+  [
+    "amount json number",
+    ["permit2Authorization", "permitted", "amount"],
+    1000,
+    "unsupported payload type",
+  ],
+  [
+    "validAfter list",
+    ["permit2Authorization", "witness", "validAfter"],
+    [],
+    "unsupported payload type",
+  ],
+  ["signature not string", ["signature"], 123, "unsupported payload type"],
+  [
+    "facilitator not address",
+    ["permit2Authorization", "witness", "facilitator"],
+    "0xnotanaddress",
+    "permit2Authorization.witness.facilitator must be ",
+  ],
+];
+
+function makeMalformedUptoPayload(path: string[], value: unknown): PaymentPayload {
+  const payload = makePayload();
+  const raw = structuredClone(payload.payload) as Record<string, unknown>;
+  const target = path
+    .slice(0, -1)
+    .reduce<Record<string, unknown>>((node, key) => node[key] as Record<string, unknown>, raw);
+  const field = path[path.length - 1];
+  if (value === MISSING) {
+    delete target[field];
+  } else {
+    target[field] = value;
+  }
+  return { ...payload, payload: raw };
 }
 
 // Returns deployed-contract bytecode for the token/asset address, EOA ("0x") for everything else.
@@ -286,7 +388,7 @@ describe("UptoEvmScheme (Facilitator)", () => {
       expect(result.invalidReason).toBe("invalid_permit2_signature");
     });
 
-    it("should reject non-Permit2 payload via scheme wrapper with unsupported_payload_type", async () => {
+    it("should reject non-Permit2 payload via scheme wrapper with invalid_upto_evm_payload", async () => {
       const payload: PaymentPayload = {
         x402Version: 2,
         accepted: { scheme: "upto", network: "eip155:8453" },
@@ -306,7 +408,43 @@ describe("UptoEvmScheme (Facilitator)", () => {
       const result = await scheme.verify(payload, makeRequirements());
 
       expect(result.isValid).toBe(false);
-      expect(result.invalidReason).toBe("unsupported_payload_type");
+      expect(result.invalidReason).toBe(ErrUptoInvalidPayload);
+      expect(result.invalidMessage).toBe(UNSUPPORTED_PAYLOAD_MESSAGE);
+    });
+
+    it.each(MALFORMED_UPTO_PAYLOADS)(
+      "should reject malformed payload with invalid_upto_evm_payload: %s",
+      async (_name, path, value, messagePrefix) => {
+        const result = await scheme.verify(
+          makeMalformedUptoPayload(path, value),
+          makeRequirements(),
+        );
+
+        expect(result.isValid).toBe(false);
+        expect(result.invalidReason).toBe(ErrUptoInvalidPayload);
+        expect(result.invalidMessage).toMatch(new RegExp(`^${messagePrefix}`));
+      },
+    );
+
+    it("should report the payer for a malformed payload with a readable from", async () => {
+      const payload = makeMalformedUptoPayload(["permit2Authorization", "nonce"], "abc");
+
+      const result = await scheme.verify(payload, makeRequirements());
+
+      expect(result.invalidReason).toBe(ErrUptoInvalidPayload);
+      expect(result.payer).toBe("0x1234567890123456789012345678901234567890");
+    });
+
+    it("should reject an unparsable requirements.amount with invalid_upto_evm_required_amount", async () => {
+      const result = await scheme.verify(
+        makePayload(),
+        makeRequirements({ amount: "not-a-number" }),
+      );
+
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe(ErrUptoInvalidRequiredAmount);
+      expect(result.invalidMessage).toBe("invalid required amount format");
+      expect(result.payer).toBe("0x1234567890123456789012345678901234567890");
     });
   });
 
@@ -371,7 +509,7 @@ describe("UptoEvmScheme (Facilitator)", () => {
       expect(result.errorReason).toBe(ErrUptoSettlementExceedsAmount);
     });
 
-    it("should reject non-Permit2 payload via scheme wrapper with unsupported_payload_type", async () => {
+    it("should reject non-Permit2 payload via scheme wrapper with invalid_upto_evm_payload", async () => {
       const payload: PaymentPayload = {
         x402Version: 2,
         accepted: { scheme: "upto", network: "eip155:8453" },
@@ -391,7 +529,45 @@ describe("UptoEvmScheme (Facilitator)", () => {
       const result = await scheme.settle(payload, makeRequirements());
 
       expect(result.success).toBe(false);
-      expect(result.errorReason).toBe("unsupported_payload_type");
+      expect(result.errorReason).toBe(ErrUptoInvalidPayload);
+      expect(result.errorMessage).toBe(UNSUPPORTED_PAYLOAD_MESSAGE);
+    });
+
+    it.each(MALFORMED_UPTO_PAYLOADS)(
+      "should reject malformed payload with invalid_upto_evm_payload: %s",
+      async (_name, path, value, messagePrefix) => {
+        const result = await scheme.settle(
+          makeMalformedUptoPayload(path, value),
+          makeRequirements(),
+        );
+
+        expect(result.success).toBe(false);
+        expect(result.errorReason).toBe(ErrUptoInvalidPayload);
+        expect(result.errorMessage).toMatch(new RegExp(`^${messagePrefix}`));
+        expect(result.network).toBe("eip155:8453");
+        expect(mockSigner.writeContract).not.toHaveBeenCalled();
+      },
+    );
+
+    it("should report the payer for a malformed payload with a readable from", async () => {
+      const payload = makeMalformedUptoPayload(["permit2Authorization", "nonce"], "abc");
+
+      const result = await scheme.settle(payload, makeRequirements());
+
+      expect(result.errorReason).toBe(ErrUptoInvalidPayload);
+      expect(result.payer).toBe("0x1234567890123456789012345678901234567890");
+    });
+
+    it("should reject an unparsable settlement amount with invalid_upto_evm_payload", async () => {
+      const result = await scheme.settle(
+        makePayload(),
+        makeRequirements({ amount: "not-a-number" }),
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe(ErrUptoInvalidPayload);
+      expect(result.errorMessage).toBe("invalid settlement amount");
+      expect(mockSigner.writeContract).not.toHaveBeenCalled();
     });
   });
 
