@@ -1,6 +1,7 @@
 import { address, generateKeyPairSigner, getBase64Codec, type Signature } from "@solana/kit";
 import type { PaymentRequirements } from "@x402/core/types";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { settlementAtaReader } from "./helpers/tokenAccount";
 
 import { buildDepositPayload } from "../../src/batch-settlement/client/channel";
 import { BatchError } from "../../src/batch-settlement/errors";
@@ -20,7 +21,7 @@ import { SOLANA_DEVNET_CAIP2, TOKEN_PROGRAM_ADDRESS } from "../../src/constants"
 import { USDC_DEVNET_ADDRESS, USDC_MAINNET_ADDRESS } from "../../src/defaultAssets";
 import type { Channel } from "../../src/payment-channels/generated/accounts/channel";
 import { getChannelDistributionHash } from "../../src/payment-channels/facilitator";
-import { ChannelStatus } from "../../src/payment-channels/onchain";
+import { ChannelStatus, getPaymentChannelsTreasuryOwner } from "../../src/payment-channels/onchain";
 import {
   buildOpenPaymentChannelTransaction,
   verifyOpenTransaction,
@@ -121,7 +122,12 @@ function channel(overrides: Partial<Channel> = {}): Channel {
 function signer() {
   return {
     confirmTransaction: vi.fn().mockResolvedValue(undefined),
-    getAccountInfo: vi.fn().mockResolvedValue({ owner: TOKEN_PROGRAM_ADDRESS }),
+    getAccountInfo: vi.fn().mockImplementation(
+      settlementAtaReader({
+        mint: MINT,
+        owners: () => [payer.address, RECEIVER, getPaymentChannelsTreasuryOwner(NETWORK)],
+      }),
+    ),
     getAddresses: vi.fn(() => [feePayer.address]),
     getLatestBlockhash: vi.fn(),
     getSigner: vi.fn(() => feePayer),
@@ -186,7 +192,9 @@ describe("batch-settlement receiver-authorizer binding", () => {
     const other = await buildOpenPaymentChannelTransaction(
       openArgs({ bindingMemo: encodeReceiverBindingMemo(payer.address) }),
     );
-    await expect(verifyOpen(other.transaction, expected)).rejects.toThrow(/found 0/);
+    await expect(verifyOpen(other.transaction, expected)).rejects.toThrow(
+      /names another receiver authorizer/,
+    );
     const both = await buildOpenPaymentChannelTransaction(
       openArgs({ memo: encodeReceiverBindingMemo(payer.address) }),
     );

@@ -1,0 +1,3 @@
+kind: fixed
+body: 'SVM verifiers enforce the serialized size limit of the message version on every client transaction they co-sign (1232 bytes for legacy and version 0, 4096 bytes for version 1). Exact rejects an oversized payment with the new invalid_exact_solana_payload_transaction_size_exceeded reason; the open, top_up and request_close verifiers reject one before checking its layout.'
+time: 2026-10-26T20:00:00Z

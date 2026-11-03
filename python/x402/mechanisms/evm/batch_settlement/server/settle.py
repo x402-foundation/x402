@@ -6,6 +6,7 @@ import re
 import time
 from typing import TYPE_CHECKING, Any
 
+from .....schemas import AfterSettleAbortError
 from ..authorizer_signer import sign_claim_batch, sign_refund
 from ..errors import (
     ERR_CHANNEL_BUSY,
@@ -15,6 +16,7 @@ from ..errors import (
     ERR_MISSING_CHANNEL,
     ERR_REFUND_AMOUNT_INVALID,
     ERR_REFUND_NO_BALANCE,
+    ERR_VOUCHER_STORE_UNAVAILABLE,
 )
 from ..types import (
     VoucherClaim,
@@ -298,9 +300,12 @@ def handle_after_settle(scheme: BatchSettlementEvmScheme, ctx: SettleResultConte
         signed_max_claimable = str(voucher["maxClaimableAmount"])
         signature = voucher.get("signature", "0x")
         now = _now_ms()
+        missing_row = False
 
         def update_deposit(current: Channel | None) -> Channel | None:
+            nonlocal missing_row
             if current is None:
+                missing_row = True
                 return current
             if not pending_id or (
                 current.pending_request is None or current.pending_request.pending_id != pending_id
@@ -327,12 +332,17 @@ def handle_after_settle(scheme: BatchSettlementEvmScheme, ctx: SettleResultConte
             next_ch.pending_request = None
             return next_ch
 
-        update_result = storage.update_channel(channel_id, update_deposit)
+        try:
+            update_result = storage.update_channel(channel_id, update_deposit)
+        except Exception as e:
+            raise AfterSettleAbortError(ERR_VOUCHER_STORE_UNAVAILABLE, str(e)) from e
         if update_result.status == "updated" and update_result.channel is not None:
             scheme.remember_channel_snapshot(payment_payload, update_result.channel)
             return
         scheme.take_request_context(payment_payload)
-        raise ValueError(ERR_CHANNEL_BUSY)
+        if missing_row:
+            raise AfterSettleAbortError(ERR_MISSING_CHANNEL)
+        raise AfterSettleAbortError(ERR_CHANNEL_BUSY)
 
 
 def handle_settle_failure(scheme: BatchSettlementEvmScheme, ctx: SettleFailureContext) -> None:

@@ -535,7 +535,13 @@ describe("BatchSvmRentCleanupManager — cleanup", () => {
   // must be clamped, not honored: a larger batch risks failing to serialize
   // or being rejected on broadcast (see the Go SDK's
   // TestReclaimBatchFitsInOneTransaction, which proves the same ceiling).
-  it("clamps maxReclaimsPerTx to MAX_SAFE_RECLAIMS_PER_TX", async () => {
+  it("clamps maxReclaimsPerTx to MAX_SAFE_RECLAIMS_PER_TX under v0", async () => {
+    manager = new BatchSvmRentCleanupManager({
+      facilitatorTransactionVersion: 0,
+      network: NETWORK,
+      signer: cleanupSigner(feePayer),
+      storage,
+    });
     for (let i = 0; i < MAX_SAFE_RECLAIMS_PER_TX + 1; i++) {
       await seed();
     }

@@ -103,6 +103,7 @@ from .schemas import (
     X402_VERSION,
     # Hooks
     AbortResult,
+    AfterSettleAbortError,
     AssetAmount,
     CompletedSettlement,
     # Errors
@@ -173,7 +174,7 @@ from .server import (
     x402ResourceServerSync,
 )
 
-__version__ = "2.25.0"
+__version__ = "2.26.0"
 
 __all__ = [
     # Version
@@ -277,6 +278,7 @@ __all__ = [
     "SettleError",
     "SchemeNotFoundError",
     "NoMatchingRequirementsError",
+    "AfterSettleAbortError",
     "PaymentAbortedError",
     "FacilitatorCapabilityError",
     # Types - Helpers

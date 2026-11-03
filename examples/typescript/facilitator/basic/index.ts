@@ -159,6 +159,44 @@ app.post("/verify", async (req, res) => {
       });
     }
 
+    const payloadField: unknown = paymentPayload.payload;
+    if (
+      typeof payloadField !== "object" ||
+      payloadField === null ||
+      Array.isArray(payloadField)
+    ) {
+      return res.status(400).json({
+        error: "paymentPayload.payload must be an object",
+      });
+    }
+
+    const supportedKind = facilitator
+      .getSupported()
+      .kinds.some(
+        (kind) =>
+          kind.x402Version === paymentPayload.x402Version &&
+          kind.scheme === paymentRequirements.scheme &&
+          kind.network === paymentRequirements.network,
+      );
+    if (!supportedKind) {
+      return res.json({
+        isValid: false,
+        invalidReason: "unsupported_scheme",
+      });
+    }
+
+    if (
+      paymentRequirements.scheme === "exact" &&
+      paymentRequirements.network.startsWith("eip155:") &&
+      !("authorization" in payloadField) &&
+      !("permit2Authorization" in payloadField)
+    ) {
+      return res.status(400).json({
+        error:
+          "paymentPayload.payload must include authorization or permit2Authorization",
+      });
+    }
+
     // Hooks will automatically:
     // - Track verified payment (onAfterVerify)
     // - Extract and catalog discovery info (onAfterVerify)
@@ -189,11 +227,54 @@ app.post("/verify", async (req, res) => {
 app.post("/settle", async (req, res) => {
   const endpointT0 = performance.now();
   try {
-    const { paymentPayload, paymentRequirements } = req.body;
+    const { paymentPayload, paymentRequirements } = req.body as {
+      paymentPayload: PaymentPayload;
+      paymentRequirements: PaymentRequirements;
+    };
 
     if (!paymentPayload || !paymentRequirements) {
       return res.status(400).json({
         error: "Missing paymentPayload or paymentRequirements",
+      });
+    }
+
+    const payloadField: unknown = paymentPayload.payload;
+    if (
+      typeof payloadField !== "object" ||
+      payloadField === null ||
+      Array.isArray(payloadField)
+    ) {
+      return res.status(400).json({
+        error: "paymentPayload.payload must be an object",
+      });
+    }
+
+    const supportedKind = facilitator
+      .getSupported()
+      .kinds.some(
+        (kind) =>
+          kind.x402Version === paymentPayload.x402Version &&
+          kind.scheme === paymentRequirements.scheme &&
+          kind.network === paymentRequirements.network,
+      );
+    if (!supportedKind) {
+      return res.json({
+        success: false,
+        errorReason: "unsupported_scheme",
+        transaction: "",
+        network: paymentRequirements.network || "unknown",
+      });
+    }
+
+    if (
+      paymentRequirements.scheme === "exact" &&
+      paymentRequirements.network.startsWith("eip155:") &&
+      !("authorization" in payloadField) &&
+      !("permit2Authorization" in payloadField)
+    ) {
+      return res.status(400).json({
+        error:
+          "paymentPayload.payload must include authorization or permit2Authorization",
       });
     }
 
@@ -202,8 +283,8 @@ app.post("/settle", async (req, res) => {
     // - Check verification timeout (onBeforeSettle)
     // - Clean up tracking (onAfterSettle / onSettleFailure)
     const response: SettleResponse = await facilitator.settle(
-      paymentPayload as PaymentPayload,
-      paymentRequirements as PaymentRequirements,
+      paymentPayload,
+      paymentRequirements,
     );
 
     res.json(response);

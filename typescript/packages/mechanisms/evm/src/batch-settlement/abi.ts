@@ -204,6 +204,16 @@ export const batchSettlementABI = [
     ],
     anonymous: false,
   },
+  {
+    type: "event",
+    name: "Refunded",
+    inputs: [
+      { name: "channelId", type: "bytes32", indexed: true },
+      { name: "sender", type: "address", indexed: true },
+      { name: "amount", type: "uint128", indexed: false },
+    ],
+    anonymous: false,
+  },
 ] as const;
 
 export const erc20BalanceOfABI = [

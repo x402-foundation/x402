@@ -266,6 +266,10 @@ export interface SchemeNetworkServer {
    * canceled (handler failure/throw or post-verify abort). Core calls
    * `settlePayment` with the returned requirements; return void to skip settle.
    *
+   * `context.settledPhases` lists the settle phases already completed for this
+   * payment and may be empty. Only return requirements when cancel settle is
+   * appropriate for the completed phases.
+   *
    * @param context - Cancellation context for the verified payment
    * @returns Requirements to settle, or void to leave the payment unsettled
    */

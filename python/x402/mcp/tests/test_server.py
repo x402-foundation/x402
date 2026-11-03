@@ -436,6 +436,63 @@ def test_create_payment_wrapper_settlement_returns_failure():
     assert after_settlement_calls == []
 
 
+def test_create_payment_wrapper_after_settle_abort_attaches_receipt():
+    """An after-settle abort fails the call closed but keeps the onchain receipt in _meta."""
+    from x402.mcp.types import MCP_PAYMENT_RESPONSE_META_KEY
+
+    server = MockResourceServer()
+    server.settle_payment = Mock(
+        return_value=SettleResponse(
+            success=False,
+            error_reason="voucher_store_unavailable",
+            error_message="store down",
+            transaction="0xdeposit",
+            amount="1000",
+            network="eip155:84532",
+            payer="p",
+            after_settle_aborted=True,
+        )
+    )
+    config = PaymentWrapperConfig(
+        accepts=[
+            PaymentRequirements(
+                scheme="exact",
+                network="eip155:84532",
+                amount="1000",
+                asset="USDC",
+                pay_to="0xrecipient",
+                max_timeout_seconds=300,
+            )
+        ],
+    )
+    paid = create_payment_wrapper(server, config)
+
+    def handler(args, context):
+        return {"content": [{"type": "text", "text": "ok"}]}
+
+    wrapped = paid(handler)
+    payload = PaymentPayload(
+        x402_version=2,
+        accepted={
+            "scheme": "exact",
+            "network": "eip155:84532",
+            "amount": "1000",
+            "asset": "USDC",
+            "pay_to": "0xrecipient",
+            "max_timeout_seconds": 300,
+        },
+        payload={"signature": "0x123"},
+    )
+    result = wrapped({"test": "value"}, {"_meta": {"x402/payment": payload.model_dump()}})
+
+    assert result.is_error is True
+    receipt = result.meta[MCP_PAYMENT_RESPONSE_META_KEY]
+    assert receipt["success"] is False
+    assert receipt["errorReason"] == "voucher_store_unavailable"
+    assert receipt["transaction"] == "0xdeposit"
+    assert receipt["amount"] == "1000"
+
+
 def test_create_payment_wrapper_handler_error_no_settlement():
     """Test that settlement is NOT called when handler returns an error."""
     server = MockResourceServer()
@@ -1089,6 +1146,25 @@ def test_prefers_cancel_refund_receipt_when_handler_throws_under_escrow():
     assert result.content == [{"type": "text", "text": "Internal Server Error"}]
     assert result.meta[MCP_PAYMENT_RESPONSE_META_KEY]["transaction"] == "0xrefund"
     dispatcher.cancel_sync.assert_called_once()
+
+
+def test_cancel_without_before_handler_omits_payment_meta_and_reraises():
+    server = MockResourceServer()
+    cancel_receipt = SettleResponse(
+        success=True, amount="0", transaction="0xcancel", network="eip155:84532"
+    )
+    dispatcher = Mock()
+    dispatcher.cancel_sync = Mock(return_value=cancel_receipt)
+    server.create_payment_cancellation_dispatcher = Mock(return_value=dispatcher)
+    paid = create_payment_wrapper(server, PaymentWrapperConfig(accepts=_mcp_accepts()))
+
+    def handler(_args, _context):
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        paid(handler)({"test": "arg"}, _mcp_extra(_mcp_payload()))
+    dispatcher.cancel_sync.assert_called_once()
+    assert server.settle_payment.call_count == 0
 
 
 def test_unexpected_errors_return_generic_internal_server_error():

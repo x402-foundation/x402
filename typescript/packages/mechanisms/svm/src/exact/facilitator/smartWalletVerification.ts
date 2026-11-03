@@ -20,7 +20,12 @@ import {
 import type { PaymentRequirements, VerifyResponse } from "@x402/core/types";
 import { MEMO_PROGRAM_ADDRESS } from "../../constants";
 import type { FacilitatorSvmSigner, SvmInnerInstructionsResult } from "../../signer";
-import { decodeTransactionFromPayload } from "../../utils";
+import {
+  checkTransactionV1Budget,
+  readTransactionV1Config,
+  type TransactionV1BudgetViolation,
+} from "../../transactionV1";
+import { decodeTransactionFromPayload, isAcceptedTransactionVersion } from "../../utils";
 import * as Errors from "./errors";
 
 const DEFAULT_SMART_WALLET_MAX_COMPUTE_UNITS = 400_000;
@@ -183,6 +188,21 @@ export function resolveAccountKeys(
 }
 
 /**
+ * Fail closed on any transaction message version these checks predate. The
+ * compute budget and fee-payer isolation checks scan instructions, which a
+ * version that relocates its budget (e.g. transaction v1's `message.config`)
+ * would let pass vacuously.
+ *
+ * @param version - The `version` field of the compiled transaction message
+ * @throws Error prefixed with `unsupported_transaction_version`
+ */
+function assertAcceptedTransactionVersion(version: number | string): void {
+  if (!isAcceptedTransactionVersion(version)) {
+    throw new Error(`${Errors.ErrUnsupportedTransactionVersion}: ${String(version)}`);
+  }
+}
+
+/**
  * Asserts the fee payer does NOT appear in any instruction's accounts or as a
  * program ID. If the fee payer is never referenced in any instruction, the
  * Solana runtime cannot authorize it for token transfers, account creation,
@@ -201,6 +221,7 @@ export async function assertFeePayerIsolated(
   network?: string,
 ): Promise<void> {
   const compiled = getCompiledTransactionMessageDecoder().decode(transaction.messageBytes);
+  assertAcceptedTransactionVersion(compiled.version);
 
   // Check if transaction uses Address Lookup Tables
   const hasALTs =
@@ -285,11 +306,55 @@ export function validateComputeBudgetLimits(
     limits?.maxPriorityFeeMicroLamports ?? DEFAULT_SMART_WALLET_MAX_PRIORITY_FEE_MICROLAMPORTS;
 
   const compiled = getCompiledTransactionMessageDecoder().decode(transaction.messageBytes);
+  assertAcceptedTransactionVersion(compiled.version);
   const decompiled = decompileTransactionMessage(compiled);
-  validateComputeBudgetLimitsFromInstructions(decompiled.instructions ?? [], {
+  validateComputeBudgetForMessage(compiled, decompiled.instructions ?? [], {
     maxComputeUnits: maxCU,
     maxPriorityFeeMicroLamports: maxPriorityFee,
   });
+}
+
+const SMART_WALLET_V1_BUDGET_REASONS: Record<TransactionV1BudgetViolation, string> = {
+  priority_fee_bits: Errors.ErrSmartWalletUnsupportedComputeBudget,
+  heap_size: Errors.ErrSmartWalletUnsupportedComputeBudget,
+  compute_budget_instruction: Errors.ErrSmartWalletUnsupportedComputeBudget,
+  compute_unit_limit_missing: Errors.ErrSmartWalletMalformedComputeLimit,
+  loaded_accounts_data_size_limit_missing: Errors.ErrSmartWalletMalformedComputeLimit,
+  compute_unit_limit_too_high: Errors.ErrSmartWalletComputeUnitsTooHigh,
+  priority_fee_too_high: Errors.ErrSmartWalletPriorityFeeTooHigh,
+};
+
+/**
+ * Validates a message's compute budget under the smart-wallet caps: the
+ * ComputeBudget instructions of a legacy or version-0 message, or the config
+ * of a version-1 message (which must carry no ComputeBudget instruction).
+ *
+ * @param compiled - The compiled transaction message
+ * @param instructions - Its decompiled top-level instructions
+ * @param limits - Resolved compute budget caps (defaults already applied)
+ * @param limits.maxComputeUnits - Maximum allowed compute units
+ * @param limits.maxPriorityFeeMicroLamports - Maximum allowed price, in microlamports per CU
+ */
+export function validateComputeBudgetForMessage(
+  compiled: unknown,
+  instructions: ReadonlyArray<DecodedInstructionView>,
+  limits: { maxComputeUnits: number; maxPriorityFeeMicroLamports: number },
+): void {
+  if ((compiled as { version: number | string }).version !== 1) {
+    validateComputeBudgetLimitsFromInstructions(instructions, limits);
+    return;
+  }
+  const violation = checkTransactionV1Budget(
+    readTransactionV1Config(compiled),
+    instructions.map(ix => ix.programAddress.toString()),
+    {
+      maxComputeUnits: limits.maxComputeUnits,
+      maxPriceMicroLamports: limits.maxPriorityFeeMicroLamports,
+    },
+  );
+  if (violation) {
+    throw new Error(`${SMART_WALLET_V1_BUDGET_REASONS[violation]}: transaction v1 ${violation}`);
+  }
 }
 
 /**
@@ -501,7 +566,7 @@ export async function verifySmartWalletTransaction(
       const maxCU = options?.maxComputeUnits ?? DEFAULT_SMART_WALLET_MAX_COMPUTE_UNITS;
       const maxPriorityFee =
         options?.maxPriorityFeeMicroLamports ?? DEFAULT_SMART_WALLET_MAX_PRIORITY_FEE_MICROLAMPORTS;
-      validateComputeBudgetLimitsFromInstructions(instructions, {
+      validateComputeBudgetForMessage(decoded!.compiled, instructions, {
         maxComputeUnits: maxCU,
         maxPriorityFeeMicroLamports: maxPriorityFee,
       });

@@ -107,6 +107,8 @@ export {
   verifyHashSignature,
   verifyHashSignatureWithCode,
   classifyErc6492Payer,
+  isCanonicalEcdsaSignature,
+  isPlainNonCanonicalEcdsaSignature,
 } from "./shared/verifySignature";
 export type { Erc6492Classification } from "./shared/verifySignature";
 

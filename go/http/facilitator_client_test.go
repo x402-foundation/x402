@@ -153,6 +153,24 @@ func TestNewHTTPFacilitatorClient(t *testing.T) {
 	}
 }
 
+func TestNewHTTPFacilitatorClientTrimsTrailingSlash(t *testing.T) {
+	var path string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"isValid":true,"payer":"0x1"}`))
+	}))
+	defer server.Close()
+
+	client := NewHTTPFacilitatorClient(&FacilitatorConfig{URL: server.URL + "/"})
+	if _, err := client.Verify(context.Background(), []byte(`{"x402Version":2,"accepted":{"scheme":"exact","network":"eip155:8453"},"payload":{}}`), []byte(`{"scheme":"exact","network":"eip155:8453"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if path != "/verify" {
+		t.Errorf("path = %q, want /verify", path)
+	}
+}
+
 func TestHTTPFacilitatorClientDefaultTimeout(t *testing.T) {
 	got := NewHTTPFacilitatorClient(nil).HTTPClient().Timeout
 	if got != 90*time.Second {

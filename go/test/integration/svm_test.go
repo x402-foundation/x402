@@ -20,6 +20,7 @@ import (
 	svmclient "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
 	svmfacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
 	svmserver "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
 	svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
@@ -652,7 +653,7 @@ func TestSVMIntegrationV1(t *testing.T) {
 }
 */
 
-// forcedPendingConfirmSigner wraps a real FacilitatorSvmSigner and, while
+// forcedPendingConfirmSigner wraps a real PaymentChannelFacilitatorSigner and, while
 // forcePending is true, makes ConfirmTransaction fail immediately instead of
 // delegating to the real (network-speed-dependent) confirmation polling.
 // SignTransaction and SendTransaction are always delegated unmodified via
@@ -661,15 +662,17 @@ func TestSVMIntegrationV1(t *testing.T) {
 // settlement_pending path can be exercised without racing devnet's real
 // confirmation latency.
 type forcedPendingConfirmSigner struct {
-	svm.FacilitatorSvmSigner
+	paymentchannels.PaymentChannelFacilitatorSigner
 	forcePending atomic.Bool
 }
+
+var _ paymentchannels.PaymentChannelFacilitatorSigner = (*forcedPendingConfirmSigner)(nil)
 
 func (s *forcedPendingConfirmSigner) ConfirmTransaction(ctx context.Context, signature solana.Signature, network string) error {
 	if s.forcePending.Load() {
 		return fmt.Errorf("forced confirmation failure for settlement_pending integration test")
 	}
-	return s.FacilitatorSvmSigner.ConfirmTransaction(ctx, signature, network)
+	return s.PaymentChannelFacilitatorSigner.ConfirmTransaction(ctx, signature, network)
 }
 
 // buildSvmSettlementPendingFixture creates a real, signed, but not-yet-settled
@@ -739,7 +742,7 @@ func TestSVMIntegrationV2_SettlementPendingReconciliation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create facilitator signer: %v", err)
 	}
-	facilitatorSigner := &forcedPendingConfirmSigner{FacilitatorSvmSigner: realFacilitatorSigner}
+	facilitatorSigner := &forcedPendingConfirmSigner{PaymentChannelFacilitatorSigner: realFacilitatorSigner}
 	svmFacilitatorScheme := svmfacilitator.NewExactSvmScheme(facilitatorSigner)
 
 	paymentPayload, requirements := buildSvmSettlementPendingFixture(t, ctx, clientPrivateKey, facilitatorAddress, resourceServerAddress)
@@ -808,7 +811,7 @@ func TestSVMIntegrationV2_ResourceServerSettlementPendingRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create facilitator signer: %v", err)
 	}
-	facilitatorSigner := &forcedPendingConfirmSigner{FacilitatorSvmSigner: realFacilitatorSigner}
+	facilitatorSigner := &forcedPendingConfirmSigner{PaymentChannelFacilitatorSigner: realFacilitatorSigner}
 	facilitator := x402.Newx402Facilitator()
 	facilitator.Register([]x402.Network{svm.SolanaDevnetCAIP2}, svmfacilitator.NewExactSvmScheme(facilitatorSigner))
 	facilitatorClient := &localSvmFacilitatorClient{facilitator: facilitator, signer: realFacilitatorSigner}
