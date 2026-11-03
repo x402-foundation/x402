@@ -263,6 +263,65 @@ export function paymentMiddlewareFromHTTPServer(
           declaredExtensions,
         } = result;
 
+        // ── Pre-handler settlement (Server-SR2 compliance) ───────────────────
+        // For flows where processHTTPRequest has not yet settled (the authorization
+        // flow: settleBeforeHandler=false), settle now before calling next().
+        // This ensures the handler — and any side-effects it produces — only runs
+        // against a confirmed payment. If settlement fails the handler is never
+        // invoked and no side-effects occur.
+        //
+        // After successful pre-settlement the buffering below still runs to detect
+        // handler status and attempt cancellation on failure — but the final
+        // processSettlement call is skipped (payment is already confirmed).
+        let preHandlerSettleResult:
+          | Awaited<ReturnType<x402HTTPResourceServer["processSettlement"]>>
+          | undefined;
+        if (!beforeHandlerSettlement) {
+          try {
+            preHandlerSettleResult = await httpServer.processSettlement(
+              paymentPayload,
+              paymentRequirements,
+              declaredExtensions,
+              { request: context, responseBody: Buffer.alloc(0), responseHeaders: {} },
+              undefined,
+              undefined,
+            );
+          } catch (error) {
+            if (error instanceof FacilitatorResponseError) {
+              sendFacilitatorError(res, error);
+              return;
+            }
+            console.error(error);
+            res.removeHeader(SETTLEMENT_OVERRIDES_HEADER);
+            res.status(402).json({ error: "settlement_failed" });
+            return;
+          }
+
+          if (!preHandlerSettleResult.success) {
+            const { response } = preHandlerSettleResult;
+            Object.entries(response.headers).forEach(([key, value]) => {
+              res.setHeader(key, value);
+            });
+            res.removeHeader(SETTLEMENT_OVERRIDES_HEADER);
+            res.status(response.status);
+            sendPaymentErrorBody(res, response);
+            return;
+          }
+
+          // Apply settlement headers before the handler runs.
+          Object.entries(preHandlerSettleResult.headers).forEach(([key, value]) => {
+            res.setHeader(key, value);
+          });
+          res.setHeader(
+            "Cache-Control",
+            withPrivateCacheControl(
+              res.getHeader("Cache-Control") != null
+                ? String(res.getHeader("Cache-Control"))
+                : null,
+            ),
+          );
+        }
+
         // Intercept and buffer all core methods that can commit response to client
         const originalWriteHead = res.writeHead.bind(res);
         const originalWrite = res.write.bind(res);
@@ -389,53 +448,59 @@ export function paymentMiddlewareFromHTTPServer(
         }
 
         try {
-          // Build response body buffer from buffered write/end calls
-          const responseBody = Buffer.concat(
-            bufferedCalls.flatMap(([m, args]) =>
-              (m === "write" || m === "end") && args[0] ? [Buffer.from(args[0])] : [],
-            ),
-          );
+          // Pre-handler settlement path (authorization flow): payment already
+          // confirmed — skip the facilitator call and replay the buffer as-is.
+          if (preHandlerSettleResult) {
+            // headers and Cache-Control were set before the handler ran
+          } else {
+            // Build response body buffer from buffered write/end calls
+            const responseBody = Buffer.concat(
+              bufferedCalls.flatMap(([m, args]) =>
+                (m === "write" || m === "end") && args[0] ? [Buffer.from(args[0])] : [],
+              ),
+            );
 
-          const responseHeaders: Record<string, string> = {};
-          for (const [key, value] of Object.entries(res.getHeaders())) {
-            if (value != null) {
-              responseHeaders[key] = String(value);
+            const responseHeaders: Record<string, string> = {};
+            for (const [key, value] of Object.entries(res.getHeaders())) {
+              if (value != null) {
+                responseHeaders[key] = String(value);
+              }
             }
-          }
 
-          const settleResult = await httpServer.processSettlement(
-            paymentPayload,
-            paymentRequirements,
-            declaredExtensions,
-            { request: context, responseBody, responseHeaders },
-            undefined,
-            beforeHandlerSettlement,
-          );
+            const settleResult = await httpServer.processSettlement(
+              paymentPayload,
+              paymentRequirements,
+              declaredExtensions,
+              { request: context, responseBody, responseHeaders },
+              undefined,
+              beforeHandlerSettlement,
+            );
 
-          // If settlement fails, return an error and do not send the buffered response
-          if (!settleResult.success) {
-            bufferedCalls = [];
-            const { response } = settleResult;
-            Object.entries(response.headers).forEach(([key, value]) => {
+            // If settlement fails, return an error and do not send the buffered response
+            if (!settleResult.success) {
+              bufferedCalls = [];
+              const { response } = settleResult;
+              Object.entries(response.headers).forEach(([key, value]) => {
+                res.setHeader(key, value);
+              });
+              res.status(response.status);
+              sendPaymentErrorBody(res, response);
+              return;
+            }
+
+            // Settlement succeeded - add headers to response
+            Object.entries(settleResult.headers).forEach(([key, value]) => {
               res.setHeader(key, value);
             });
-            res.status(response.status);
-            sendPaymentErrorBody(res, response);
-            return;
+            res.setHeader(
+              "Cache-Control",
+              withPrivateCacheControl(
+                res.getHeader("Cache-Control") != null
+                  ? String(res.getHeader("Cache-Control"))
+                  : null,
+              ),
+            );
           }
-
-          // Settlement succeeded - add headers to response
-          Object.entries(settleResult.headers).forEach(([key, value]) => {
-            res.setHeader(key, value);
-          });
-          res.setHeader(
-            "Cache-Control",
-            withPrivateCacheControl(
-              res.getHeader("Cache-Control") != null
-                ? String(res.getHeader("Cache-Control"))
-                : null,
-            ),
-          );
         } catch (error) {
           if (error instanceof FacilitatorResponseError) {
             bufferedCalls = [];

@@ -622,6 +622,13 @@ describe("paymentMiddleware", () => {
         type: "payment-verified",
         paymentPayload: mockPaymentPayload,
         paymentRequirements: mockPaymentRequirements,
+        // Use upfront flow so buffering+after-handler settle path is exercised
+        beforeHandlerSettlement: {
+          phase: "before-handler" as const,
+          flow: "upfront" as const,
+          result: { success: true as const, transaction: "0xtest", network: "eip155:84532" as const },
+          requirements: mockPaymentRequirements,
+        },
       },
       { success: true, headers: { "PAYMENT-RESPONSE": "settled" } },
     );
@@ -665,6 +672,13 @@ describe("paymentMiddleware", () => {
       type: "payment-verified",
       paymentPayload: mockPaymentPayload,
       paymentRequirements: mockPaymentRequirements,
+      // Use upfront flow so the buffered path runs and settlement is skipped on >= 400
+      beforeHandlerSettlement: {
+        phase: "before-handler" as const,
+        flow: "upfront" as const,
+        result: { success: true as const, transaction: "0xtest", network: "eip155:84532" as const },
+        requirements: mockPaymentRequirements,
+      },
     });
 
     const middleware = paymentMiddleware(
@@ -729,12 +743,13 @@ describe("paymentMiddleware", () => {
     expect(res._headers["Settlement-Overrides"]).toBeUndefined();
   });
 
-  it("skips settlement when handler returns >= 400", async () => {
+  it("settles before handler (authorization flow) and attempts cancellation when handler returns >= 400", async () => {
     setupMockHttpServer(
       {
         type: "payment-verified",
         paymentPayload: mockPaymentPayload,
         paymentRequirements: mockPaymentRequirements,
+        // No beforeHandlerSettlement: authorization flow — middleware settles before calling next()
       },
       { success: true, headers: { "PAYMENT-RESPONSE": "settled" } },
     );
@@ -749,7 +764,6 @@ describe("paymentMiddleware", () => {
     const req = createMockRequest();
     const res = createMockResponse();
     const next = vi.fn(() => {
-      // Simulate handler returning error
       res.setHeader("Settlement-Overrides", JSON.stringify({ amount: "32%" }));
       res.statusCode = 500;
       res.end();
@@ -758,14 +772,16 @@ describe("paymentMiddleware", () => {
     await middleware(req, res, next);
 
     expect(next).toHaveBeenCalled();
-    expect(mockProcessSettlement).not.toHaveBeenCalled();
+    // Pre-handler settlement is called once (authorization flow settles before handler)
+    expect(mockProcessSettlement).toHaveBeenCalledTimes(1);
+    // PAYMENT-RESPONSE header was set by the pre-handler settlement
+    expect(res.setHeader).toHaveBeenCalledWith("PAYMENT-RESPONSE", "settled");
     expect(mockCreateFailurePathSettlementHeaders).toHaveBeenCalledWith(
       undefined,
       undefined,
       mockPaymentPayload,
-      null,
+      expect.anything(),
     );
-    expect(res.setHeader).not.toHaveBeenCalledWith("PAYMENT-RESPONSE", expect.anything());
     expect(res.removeHeader).toHaveBeenCalledWith("Settlement-Overrides");
     expect(res._headers["Settlement-Overrides"]).toBeUndefined();
     const cancellationDispatcher = (await mockProcessHTTPRequest.mock.results[0].value)
@@ -1772,13 +1788,20 @@ describe("before-handler receipt survives a failing handler", () => {
     expect(mockProcessSettlement).toHaveBeenCalledTimes(1);
   });
 
-  it("adds no receipt for a flow that has not settled before the handler", async () => {
+  it("settles before handler (authorization flow) and includes receipt when handler throws", async () => {
+    // Authorization flow: processHTTPRequest returns no beforeHandlerSettlement.
+    // The middleware now settles before calling next() (SR-2 fix), so the receipt
+    // from that pre-handler settlement IS on the response even when the handler fails.
     beforeHandlerSettlement = undefined;
 
     const result = await probe("/api/throw-sync");
 
     expect(result.status).toBe(500);
-    expect(result.headers[RECEIPT_HEADER]).toBeUndefined();
+    // Receipt is present — set by the pre-handler settlement (SR-2 fix)
+    expect(result.headers[RECEIPT_HEADER]).toBe(AFTER_HANDLER_RECEIPT);
+    expect(mockProcessSettlement).toHaveBeenCalledTimes(1);
+    // createCompletedSettlementHeaders is not called for the pre-handler path;
+    // headers come directly from processSettlement's return value
     expect(mockCreateCompletedSettlementHeaders).not.toHaveBeenCalled();
   });
 });
