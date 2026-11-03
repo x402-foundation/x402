@@ -19,6 +19,7 @@ import type { PaymentPayload, VerifyResponse } from "@x402/core/types";
 import { privateKeyToAccount } from "viem/accounts";
 import * as Errors from "../../../src/batch-settlement/errors";
 import { computeChannelId as computeChannelIdForNetwork } from "../../../src/batch-settlement/utils";
+import { requestContextTtlMs } from "../../../src/batch-settlement/voucherStore";
 
 const NETWORK = "eip155:84532";
 const RECEIVER = "0x9876543210987654321098765432109876543210" as `0x${string}`;
@@ -130,7 +131,12 @@ function refundPayload(channelId: string): PaymentPayload {
 
 function cancelContext(
   paymentPayload: PaymentPayload,
-  reason: "handler_failed" | "handler_threw" | "after_verify_aborted" = "handler_failed",
+  reason:
+    | "handler_failed"
+    | "handler_threw"
+    | "after_verify_aborted"
+    | "settlement_preflight_failed" = "handler_failed",
+  verifyResult?: VerifyResponse,
 ) {
   return {
     paymentPayload,
@@ -146,6 +152,7 @@ function cancelContext(
     declaredExtensions: {},
     phase: "cancel" as const,
     reason,
+    verifyResult,
     settledPhases: [] as const,
   };
 }
@@ -410,7 +417,7 @@ describe("facilitator-managed server hooks", () => {
 
     expect(await storage.get(channelId)).toMatchObject({
       chargedCumulativeAmount: "1000",
-      balance: "6000",
+      balance: "5000",
       signedMaxClaimable: "2000",
     });
   });
@@ -584,35 +591,39 @@ describe("facilitator-managed server hooks", () => {
     ).resolves.toBeUndefined();
   });
 
-  it.each(["handler_failed", "handler_threw", "after_verify_aborted"] as const)(
-    "returns a zero-amount settle for managed cancel on %s",
-    reason => {
-      const server = buildManagedServer();
-      const config = buildConfig();
-      const channelId = computeChannelId(config);
-      const expected = {
-        scheme: "batch-settlement",
-        network: NETWORK,
-        amount: "0",
-        asset: TOKEN,
-        payTo: RECEIVER,
-        maxTimeoutSeconds: 3600,
-        extra: { voucherManager: "facilitator" },
-      };
-      expect(handleManagedSettleOnCancel(cancelContext(voucherPayload(channelId), reason))).toEqual(
+  it.each([
+    "handler_failed",
+    "handler_threw",
+    "after_verify_aborted",
+    "settlement_preflight_failed",
+  ] as const)("returns a zero-amount settle for managed cancel on %s", reason => {
+    const server = buildManagedServer();
+    const config = buildConfig();
+    const channelId = computeChannelId(config);
+    const expected = {
+      scheme: "batch-settlement",
+      network: NETWORK,
+      amount: "0",
+      asset: TOKEN,
+      payTo: RECEIVER,
+      maxTimeoutSeconds: 3600,
+      extra: { voucherManager: "facilitator" },
+    };
+    const payloads = [
+      voucherPayload(channelId),
+      depositPayload(channelId),
+      refundPayload(channelId),
+    ];
+    for (const paymentPayload of payloads) {
+      server.mergeRequestContext(paymentPayload, { pendingId: "0xpending" });
+      expect(handleManagedSettleOnCancel(server, cancelContext(paymentPayload, reason))).toEqual(
         expected,
       );
-      expect(handleManagedSettleOnCancel(cancelContext(depositPayload(channelId), reason))).toEqual(
-        expected,
-      );
-      expect(handleManagedSettleOnCancel(cancelContext(refundPayload(channelId), reason))).toEqual(
-        expected,
-      );
-      expect(server.settleOnCancel(cancelContext(voucherPayload(channelId), reason))).toEqual(
-        expected,
-      );
-    },
-  );
+    }
+    const schemePayload = voucherPayload(channelId);
+    server.mergeRequestContext(schemePayload, { pendingId: "0xpending" });
+    expect(server.settleOnCancel(cancelContext(schemePayload, reason))).toEqual(expected);
+  });
 
   it("stamps pendingId and cancel on managed cancel settle enrichment", async () => {
     const server = buildManagedServer();
@@ -627,6 +638,31 @@ describe("facilitator-managed server hooks", () => {
       phase: "cancel",
     } as never);
     expect(fields).toEqual({ pendingId: "0xabc123", cancel: true });
+  });
+
+  it("recovers the facilitator pendingId from the trusted verify result", () => {
+    const server = buildManagedServer();
+    const paymentPayload = voucherPayload(computeChannelId(buildConfig()));
+    const context = cancelContext(paymentPayload, "settlement_preflight_failed", {
+      isValid: true,
+      extra: { pendingId: "0xverified-pending" },
+    });
+
+    expect(handleManagedSettleOnCancel(server, context)).toMatchObject({ amount: "0" });
+    expect(server.readRequestContext(paymentPayload)?.pendingId).toBe("0xverified-pending");
+  });
+
+  it("skips managed cancel when no trusted pendingId is available", () => {
+    const server = buildManagedServer();
+    const paymentPayload = voucherPayload(computeChannelId(buildConfig()));
+
+    expect(
+      handleManagedSettleOnCancel(
+        server,
+        cancelContext(paymentPayload, "settlement_preflight_failed"),
+      ),
+    ).toBeUndefined();
+    expect(server.readRequestContext(paymentPayload)).toBeUndefined();
   });
 
   it("stamps cancel on deposit and refund enrich without building refund fields", async () => {
@@ -702,6 +738,65 @@ describe("facilitator-managed server hooks", () => {
     });
   });
 
+  it("aborts managed verify when the facilitator omits pendingId", async () => {
+    const server = buildManagedServer();
+    const paymentPayload = voucherPayload(computeChannelId(buildConfig()));
+
+    const result = await handleManagedAfterVerify(server, {
+      paymentPayload,
+      requirements: { network: NETWORK } as never,
+      result: {
+        isValid: true,
+        payer: PAYER,
+        extra: {
+          chargedCumulativeAmount: "0",
+          balance: "10000",
+          totalClaimed: "0",
+          withdrawRequestedAt: 0,
+          refundNonce: "0",
+        },
+      } as VerifyResponse,
+    } as never);
+
+    expect(result).toMatchObject({
+      abort: true,
+      reason: Errors.ErrVerificationStateUnavailable,
+    });
+    expect(server.readRequestContext(paymentPayload)).toBeUndefined();
+  });
+
+  it("retains pendingId but skips the snapshot when managed verify state is malformed", async () => {
+    const server = buildManagedServer();
+    const paymentPayload = voucherPayload(computeChannelId(buildConfig()));
+
+    const result = await handleManagedAfterVerify(server, {
+      paymentPayload,
+      requirements: { network: NETWORK } as never,
+      result: {
+        isValid: true,
+        payer: PAYER,
+        extra: {
+          pendingId: "0xpending",
+          chargedCumulativeAmount: "0",
+          balance: "01",
+          totalClaimed: "0",
+          withdrawRequestedAt: 0,
+          refundNonce: "0",
+        },
+      } as VerifyResponse,
+    } as never);
+
+    expect(result).toMatchObject({
+      abort: true,
+      reason: Errors.ErrVerificationStateUnavailable,
+    });
+    expect(server.readRequestContext(paymentPayload)).toMatchObject({
+      pendingId: "0xpending",
+      reservationCommitted: true,
+    });
+    expect(server.readRequestContext(paymentPayload)?.channelSnapshot).toBeUndefined();
+  });
+
   it("records a verify snapshot after a successful managed voucher verify", async () => {
     const server = buildManagedServer();
     const config = buildConfig();
@@ -715,6 +810,8 @@ describe("facilitator-managed server hooks", () => {
         isValid: true,
         payer: PAYER,
         extra: {
+          pendingId: "0xverify-pending",
+          chargedCumulativeAmount: "0",
           balance: "10000",
           totalClaimed: "1000",
           withdrawRequestedAt: 2,
@@ -731,7 +828,7 @@ describe("facilitator-managed server hooks", () => {
       refundNonce: 3,
       chargedCumulativeAmount: "0",
     });
-    expect(server.readRequestContext(paymentPayload)?.pendingId).toBeUndefined();
+    expect(server.readRequestContext(paymentPayload)?.pendingId).toBe("0xverify-pending");
   });
 
   it("stashes verify pendingId and echoes it on voucher settle enrichment", async () => {
@@ -747,9 +844,12 @@ describe("facilitator-managed server hooks", () => {
         isValid: true,
         payer: PAYER,
         extra: {
+          chargedCumulativeAmount: "0",
           balance: "10000",
           totalClaimed: "1000",
           pendingId: "0xabc123",
+          withdrawRequestedAt: 0,
+          refundNonce: "0",
         },
       } as VerifyResponse,
     } as never);
@@ -784,7 +884,14 @@ describe("facilitator-managed server hooks", () => {
       result: {
         isValid: true,
         payer: PAYER,
-        extra: { balance: "10000", totalClaimed: "0", chargedCumulativeAmount: "1000" },
+        extra: {
+          pendingId: "0xrefund-pending",
+          balance: "10000",
+          totalClaimed: "0",
+          chargedCumulativeAmount: "1000",
+          withdrawRequestedAt: 0,
+          refundNonce: "0",
+        },
       } as VerifyResponse,
     } as never);
 
@@ -1010,7 +1117,7 @@ describe("facilitator-managed server hooks", () => {
     });
   });
 
-  it("falls back to the verify snapshot for charged cumulative when settle extra omits it", async () => {
+  it("falls back to the complete verify snapshot when settle channel state is malformed", async () => {
     const storage = new InMemoryChannelStorage();
     const server = buildManagedServer(storage);
     const config = buildConfig();
@@ -1052,9 +1159,95 @@ describe("facilitator-managed server hooks", () => {
 
     expect(await storage.get(channelId)).toMatchObject({
       chargedCumulativeAmount: "2500",
-      balance: "7500",
-      totalClaimed: "1000",
-      refundNonce: 2,
+      balance: "8000",
+      totalClaimed: "500",
+      refundNonce: 1,
+    });
+  });
+
+  it("leaves the replica unchanged when no complete state is available", async () => {
+    const storage = new InMemoryChannelStorage();
+    const server = buildManagedServer(storage);
+    const config = buildConfig();
+    const channelId = computeChannelId(config);
+    await storage.updateChannel(channelId, () => ({
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "1000",
+      signedMaxClaimable: "1000",
+      signature: "0xdeadbeef",
+      balance: "8000",
+      totalClaimed: "500",
+      withdrawRequestedAt: 0,
+      refundNonce: 1,
+      lastRequestTimestamp: Date.now(),
+    }));
+
+    await handleManagedAfterSettle(server, {
+      paymentPayload: voucherPayload(channelId),
+      requirements: { network: NETWORK } as never,
+      result: {
+        success: true,
+        network: NETWORK,
+        extra: { channelState: { balance: "7000" } },
+      },
+    } as never);
+
+    expect(await storage.get(channelId)).toMatchObject({
+      chargedCumulativeAmount: "1000",
+      balance: "8000",
+      totalClaimed: "500",
+      refundNonce: 1,
+    });
+  });
+
+  it("never uses a pre-refund verify snapshot for replica state", async () => {
+    const storage = new InMemoryChannelStorage();
+    const server = buildManagedServer(storage);
+    const config = buildConfig();
+    const channelId = computeChannelId(config);
+    const paymentPayload = refundPayload(channelId);
+    await storage.updateChannel(channelId, () => ({
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "1000",
+      signedMaxClaimable: "1000",
+      signature: "0xdeadbeef",
+      balance: "8000",
+      totalClaimed: "500",
+      withdrawRequestedAt: 0,
+      refundNonce: 1,
+      lastRequestTimestamp: Date.now(),
+    }));
+    server.mergeRequestContext(paymentPayload, {
+      channelSnapshot: {
+        channelId,
+        channelConfig: config,
+        chargedCumulativeAmount: "1000",
+        signedMaxClaimable: "1000",
+        signature: "0xdeadbeef",
+        balance: "8000",
+        totalClaimed: "500",
+        withdrawRequestedAt: 0,
+        refundNonce: 1,
+        lastRequestTimestamp: Date.now(),
+      },
+    });
+
+    await handleManagedAfterSettle(server, {
+      paymentPayload,
+      requirements: { network: NETWORK } as never,
+      result: {
+        success: true,
+        network: NETWORK,
+        extra: { channelState: { balance: "7000" } },
+      },
+    } as never);
+
+    expect(await storage.get(channelId)).toMatchObject({
+      balance: "8000",
+      totalClaimed: "500",
+      refundNonce: 1,
     });
   });
 
@@ -1420,6 +1613,8 @@ describe("facilitator-managed server hooks", () => {
             balance: "5000",
             totalClaimed: "5000",
             chargedCumulativeAmount: "5000",
+            withdrawRequestedAt: 0,
+            refundNonce: "0",
           },
         },
       },
@@ -1632,6 +1827,8 @@ describe("facilitator-managed server hooks", () => {
             balance: "1000",
             totalClaimed: "1000",
             chargedCumulativeAmount: "1000",
+            withdrawRequestedAt: 0,
+            refundNonce: "0",
           },
         },
       },
@@ -1687,6 +1884,22 @@ describe("facilitator-managed server hooks", () => {
       expect(server.readRequestContext(paymentPayload)).toBeUndefined();
     });
 
+    it("expires an abandoned request context after twice its admission-lock TTL", () => {
+      vi.useFakeTimers();
+      try {
+        const server = buildManagedServer();
+        const paymentPayload = voucherPayload(computeChannelId(buildConfig()));
+        const contextTtlMs = requestContextTtlMs(3600);
+        server.mergeRequestContext(paymentPayload, { pendingId: "0xpending" }, contextTtlMs);
+
+        vi.advanceTimersByTime(contextTtlMs + 1);
+
+        expect(server.readRequestContext(paymentPayload)).toBeUndefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("drops the context when the replica upsert throws", async () => {
       const storage = new InMemoryChannelStorage();
       const server = buildManagedServer(storage);
@@ -1698,19 +1911,32 @@ describe("facilitator-managed server hooks", () => {
         handleManagedAfterSettle(server, {
           paymentPayload,
           requirements: { network: NETWORK } as never,
-          result: { success: true, network: NETWORK },
+          result: {
+            success: true,
+            network: NETWORK,
+            extra: {
+              channelState: {
+                balance: "10000",
+                totalClaimed: "0",
+                chargedCumulativeAmount: "1000",
+                withdrawRequestedAt: 0,
+                refundNonce: "0",
+              },
+            },
+          },
         } as never),
       ).rejects.toThrow("storage down");
 
       expect(server.readRequestContext(paymentPayload)).toBeUndefined();
     });
 
-    it("drops the context when a managed refund cannot be enriched", async () => {
+    it("retains the context when a managed refund cannot be enriched", async () => {
       const server = buildManagedServer();
       const config = buildConfig();
       const channelId = computeChannelId(config);
       const paymentPayload = refundPayload(channelId);
       server.mergeRequestContext(paymentPayload, {
+        pendingId: "0xpending",
         channelSnapshot: {
           channelId,
           channelConfig: config,
@@ -1733,7 +1959,7 @@ describe("facilitator-managed server hooks", () => {
         } as never),
       ).rejects.toThrow(Errors.ErrRefundNoBalance);
 
-      expect(server.readRequestContext(paymentPayload)).toBeUndefined();
+      expect(server.readRequestContext(paymentPayload)).toMatchObject({ pendingId: "0xpending" });
     });
   });
 

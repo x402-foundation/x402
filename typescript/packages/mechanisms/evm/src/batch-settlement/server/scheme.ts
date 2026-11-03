@@ -31,6 +31,7 @@ import {
 import {
   advertisedVoucherManagers,
   defaultOnchainStateTtlMs,
+  requestContextTtlMs,
   voucherStoreMode,
   type VoucherStoreMode,
 } from "../voucherStore";
@@ -136,6 +137,11 @@ type VoucherStoreHandlers = {
   enrichSettlementResponse: typeof handleEnrichSettlementResponse;
 };
 
+type RequestContextEntry = {
+  context: BatchSettlementRequestContext;
+  expiresAt: number;
+};
+
 const HANDLERS: Record<VoucherStoreMode, VoucherStoreHandlers> = {
   self: {
     onBeforeVerify: handleBeforeVerify,
@@ -177,7 +183,7 @@ export class BatchSettlementEvmScheme implements SchemeNetworkServer {
 
   private readonly requestContexts = new WeakMap<
     DeepReadonly<PaymentPayload>,
-    BatchSettlementRequestContext
+    RequestContextEntry
   >();
   private moneyParsers: MoneyParser[] = [];
   private readonly storage: ChannelStorage;
@@ -265,7 +271,7 @@ export class BatchSettlementEvmScheme implements SchemeNetworkServer {
   settleOnCancel(ctx: VerifiedPaymentCanceledContext): PaymentRequirements | void {
     switch (this.configuredMode) {
       case "facilitator":
-        return handleManagedSettleOnCancel(ctx);
+        return handleManagedSettleOnCancel(this, ctx);
       case "self":
         return;
       default: {
@@ -307,14 +313,22 @@ export class BatchSettlementEvmScheme implements SchemeNetworkServer {
    *
    * @param payload - Request-scoped payment payload object.
    * @param context - Partial context fields to merge.
+   * @param ttlMs - Lifetime for a new entry.
    */
   mergeRequestContext(
     payload: DeepReadonly<PaymentPayload>,
     context: BatchSettlementRequestContext,
+    ttlMs = requestContextTtlMs(undefined),
   ): void {
+    const now = Date.now();
+    const entry = this.requestContexts.get(payload);
+    const current = entry && now < entry.expiresAt ? entry : undefined;
     this.requestContexts.set(payload, {
-      ...this.requestContexts.get(payload),
-      ...context,
+      context: {
+        ...current?.context,
+        ...context,
+      },
+      expiresAt: current?.expiresAt ?? now + ttlMs,
     });
   }
 
@@ -327,7 +341,15 @@ export class BatchSettlementEvmScheme implements SchemeNetworkServer {
   readRequestContext(
     payload: DeepReadonly<PaymentPayload>,
   ): BatchSettlementRequestContext | undefined {
-    return this.requestContexts.get(payload);
+    const entry = this.requestContexts.get(payload);
+    if (!entry) {
+      return undefined;
+    }
+    if (Date.now() >= entry.expiresAt) {
+      this.requestContexts.delete(payload);
+      return undefined;
+    }
+    return entry.context;
   }
 
   /**
@@ -339,7 +361,7 @@ export class BatchSettlementEvmScheme implements SchemeNetworkServer {
   takeRequestContext(
     payload: DeepReadonly<PaymentPayload>,
   ): BatchSettlementRequestContext | undefined {
-    const context = this.requestContexts.get(payload);
+    const context = this.readRequestContext(payload);
     this.requestContexts.delete(payload);
     return context;
   }

@@ -8,20 +8,31 @@ import type {
 } from "@x402/core/server";
 import type { PaymentRequirements, SchemePaymentRequiredContext } from "@x402/core/types";
 import { isBatchSettlementPayload, isBatchSettlementRefundPayload } from "../types";
-import type { BatchSettlementChannelStateExtra, BatchSettlementVoucherStateExtra } from "../types";
+import type {
+  BatchSettlementChannelStateExtra,
+  BatchSettlementPayload,
+  BatchSettlementVoucherStateExtra,
+} from "../types";
 import { BATCH_SETTLEMENT_SCHEME } from "../constants";
 import * as Errors from "../errors";
+import { requestContextTtlMs } from "../voucherStore";
 import type { Channel } from "./storage";
 import {
   abortIfBelowMinDeposit,
   abortIfChannelUnbound,
   abortIfUnexpectedServerAuthoredSettleFields,
   skipHandlerForRefund,
+  verificationStateUnavailable,
   writeCorrectiveAcceptExtra,
 } from "./verify";
 import { buildRefundSettlementFields } from "./settle";
-import { readChannelStateExtra, readExtraNumber, readExtraString } from "./utils";
+import { readChannelStateExtra, readExtraUintString } from "./utils";
 import type { BatchSettlementEvmScheme } from "./scheme";
+
+type ManagedChannelState = Pick<
+  Channel,
+  "chargedCumulativeAmount" | "balance" | "totalClaimed" | "withdrawRequestedAt" | "refundNonce"
+>;
 
 /**
  * Pass-through verify: min-deposit + channel-id binding only.
@@ -98,36 +109,42 @@ export async function handleManagedAfterVerify(
       const channelState = readCorrectiveChannelState(ex);
       const voucherState = readCorrectiveVoucherState(ex);
       if (channelState || voucherState) {
-        scheme.mergeRequestContext(paymentPayload, {
-          correctiveChannelState: channelState,
-          correctiveVoucherState: voucherState,
-        });
+        scheme.mergeRequestContext(
+          paymentPayload,
+          {
+            correctiveChannelState: channelState,
+            correctiveVoucherState: voucherState,
+          },
+          requestContextTtlMs(ctx.requirements.maxTimeoutSeconds),
+        );
       }
     }
     return;
   }
 
   const ex = result.extra ?? {};
-  const now = Date.now();
-  const channelSnapshot: Channel = {
-    channelId: raw.voucher.channelId,
-    channelConfig: raw.channelConfig,
-    chargedCumulativeAmount: readExtraString(ex, "chargedCumulativeAmount", "0"),
-    signedMaxClaimable: raw.voucher.maxClaimableAmount,
-    signature: raw.voucher.signature,
-    balance: readExtraString(ex, "balance", "0"),
-    totalClaimed: readExtraString(ex, "totalClaimed", "0"),
-    withdrawRequestedAt: readExtraNumber(ex, "withdrawRequestedAt", 0),
-    refundNonce: readExtraNumber(ex, "refundNonce", 0),
-    lastRequestTimestamp: now,
-  };
+  const pendingId = readPendingId(ex);
+  if (!pendingId) {
+    return verificationStateUnavailable();
+  }
 
-  const pendingId = typeof ex.pendingId === "string" && ex.pendingId ? ex.pendingId : undefined;
+  scheme.mergeRequestContext(
+    paymentPayload,
+    {
+      channelId: raw.voucher.channelId,
+      pendingId,
+      reservationCommitted: true,
+    },
+    requestContextTtlMs(ctx.requirements.maxTimeoutSeconds),
+  );
+
+  const state = parseManagedChannelState(ex);
+  if (!state) {
+    return verificationStateUnavailable();
+  }
 
   scheme.mergeRequestContext(paymentPayload, {
-    channelId: raw.voucher.channelId,
-    channelSnapshot,
-    ...(pendingId ? { pendingId, reservationCommitted: true } : {}),
+    channelSnapshot: toChannelView(raw, state),
   });
 
   if (isBatchSettlementRefundPayload(raw)) {
@@ -193,22 +210,40 @@ export async function handleManagedSettleFailure(
  * Enrichment stamps `cancel: true`; the facilitator must not charge, deposit,
  * or refund.
  *
+ * @param scheme - Owning scheme.
  * @param ctx - Cancellation context from the resource server.
  * @returns Zero-amount requirements for batch-settlement payloads; void otherwise.
  */
 export function handleManagedSettleOnCancel(
+  scheme: BatchSettlementEvmScheme,
   ctx: VerifiedPaymentCanceledContext,
 ): PaymentRequirements | void {
   if (
     ctx.reason !== "handler_failed" &&
     ctx.reason !== "handler_threw" &&
-    ctx.reason !== "after_verify_aborted"
+    ctx.reason !== "after_verify_aborted" &&
+    ctx.reason !== "settlement_preflight_failed"
   ) {
     return;
   }
   if (!isBatchSettlementPayload(ctx.paymentPayload.payload)) {
     return;
   }
+
+  const requestContext = scheme.readRequestContext(ctx.paymentPayload);
+  if (!requestContext?.pendingId) {
+    const verifiedPendingId = readPendingId(ctx.verifyResult?.extra);
+    if (!verifiedPendingId) {
+      scheme.takeRequestContext(ctx.paymentPayload);
+      return;
+    }
+    scheme.mergeRequestContext(
+      ctx.paymentPayload,
+      { pendingId: verifiedPendingId },
+      requestContextTtlMs(ctx.requirements.maxTimeoutSeconds),
+    );
+  }
+
   return { ...ctx.requirements, amount: "0" };
 }
 
@@ -244,22 +279,17 @@ export async function handleManagedEnrichSettlementPayload(
       throw new Error(Errors.ErrMissingChannel);
     }
 
-    try {
-      return {
-        ...(await buildRefundSettlementFields({
-          channel: snapshot,
-          raw,
-          channelId: raw.voucher.channelId,
-          network: requirements.network,
-          refundSigner: scheme.getRefundAuthorizerSigner(),
-          includeClaimAuthorizerSignature: false,
-        })),
-        ...pendingFields,
-      };
-    } catch (error) {
-      scheme.takeRequestContext(paymentPayload);
-      throw error;
-    }
+    return {
+      ...(await buildRefundSettlementFields({
+        channel: snapshot,
+        raw,
+        channelId: raw.voucher.channelId,
+        network: requirements.network,
+        refundSigner: scheme.getRefundAuthorizerSigner(),
+        includeClaimAuthorizerSignature: false,
+      })),
+      ...pendingFields,
+    };
   }
 
   return pendingId ? pendingFields : undefined;
@@ -306,49 +336,121 @@ async function upsertReplicaAfterSettle(
 
   const storage = scheme.getStorage();
   const channelId = raw.voucher.channelId;
-  const channelState = readChannelStateExtra(result.extra);
-  const now = Date.now();
-  const charged =
-    (channelState && readExtraString(channelState, "chargedCumulativeAmount", "")) ||
-    scheme.readRequestContext(paymentPayload)?.channelSnapshot?.chargedCumulativeAmount ||
-    "0";
+  const isRefund = isBatchSettlementRefundPayload(raw);
+  const replicaState = managedReplicaState(scheme, ctx, isRefund);
+  if (!replicaState) {
+    return;
+  }
 
-  if (isBatchSettlementRefundPayload(raw)) {
-    const balance = readExtraString(channelState, "balance", "0");
-    if (BigInt(balance) <= BigInt(charged)) {
-      await storage.updateChannel(channelId, current => (current ? undefined : current));
-      return;
-    }
+  const state = toChannelView(raw, replicaState);
+  if (isRefund && BigInt(state.balance) <= BigInt(state.chargedCumulativeAmount)) {
+    await storage.updateChannel(channelId, current => (current ? undefined : current));
+    return;
   }
 
   await storage.updateChannel(channelId, current => {
-    if (current && !isBatchSettlementRefundPayload(raw)) {
+    if (current && !isRefund) {
       try {
-        if (BigInt(charged) < BigInt(current.chargedCumulativeAmount)) {
+        if (BigInt(state.chargedCumulativeAmount) < BigInt(current.chargedCumulativeAmount)) {
           return current;
         }
       } catch {
         // Non-numeric watermarks fall through to the normal upsert below.
       }
     }
-    const base = current ?? scheme.readRequestContext(paymentPayload)?.channelSnapshot;
-    return {
-      channelId,
-      channelConfig: raw.channelConfig,
-      chargedCumulativeAmount: charged || base?.chargedCumulativeAmount || "0",
-      signedMaxClaimable: raw.voucher.maxClaimableAmount,
-      signature: raw.voucher.signature,
-      balance: readExtraString(channelState, "balance", base?.balance ?? "0"),
-      totalClaimed: readExtraString(channelState, "totalClaimed", base?.totalClaimed ?? "0"),
-      withdrawRequestedAt: readExtraNumber(
-        channelState,
-        "withdrawRequestedAt",
-        base?.withdrawRequestedAt ?? 0,
-      ),
-      refundNonce: readExtraNumber(channelState, "refundNonce", base?.refundNonce ?? 0),
-      lastRequestTimestamp: now,
-    };
+    return state;
   });
+}
+
+/**
+ * Resolves the channel state to replicate.
+ *
+ * @param scheme - Owning scheme.
+ * @param ctx - Post-settle context.
+ * @param isRefund - Whether the payload is a cooperative refund.
+ * @returns Trusted channel state, or undefined when none is available.
+ */
+function managedReplicaState(
+  scheme: BatchSettlementEvmScheme,
+  ctx: SettleResultContext,
+  isRefund: boolean,
+): ManagedChannelState | undefined {
+  const settled = parseManagedChannelState(readChannelStateExtra(ctx.result.extra));
+  if (settled || isRefund) {
+    return settled;
+  }
+  return scheme.readRequestContext(ctx.paymentPayload)?.channelSnapshot;
+}
+
+/**
+ * Builds a channel view from parsed state.
+ *
+ * @param raw - Batch-settlement payload being verified or settled.
+ * @param state - Trusted facilitator channel state.
+ * @returns Complete channel view.
+ */
+function toChannelView(raw: BatchSettlementPayload, state: ManagedChannelState): Channel {
+  return {
+    ...state,
+    channelId: raw.voucher.channelId,
+    channelConfig: raw.channelConfig,
+    signedMaxClaimable: raw.voucher.maxClaimableAmount,
+    signature: raw.voucher.signature,
+    lastRequestTimestamp: Date.now(),
+  };
+}
+
+/**
+ * Strictly parses channel state.
+ *
+ * @param extra - Facilitator verify or settle extras.
+ * @returns Strictly parsed channel state, or undefined when a field is missing or malformed.
+ */
+function parseManagedChannelState(
+  extra: Partial<Record<keyof BatchSettlementChannelStateExtra, unknown>> | undefined,
+): ManagedChannelState | undefined {
+  const chargedCumulativeAmount = readExtraUintString(extra, "chargedCumulativeAmount");
+  const balance = readExtraUintString(extra, "balance");
+  const totalClaimed = readExtraUintString(extra, "totalClaimed");
+  const withdrawRequestedAt = readExtraUintString(extra, "withdrawRequestedAt");
+  const refundNonce = readExtraUintString(extra, "refundNonce");
+  if (
+    chargedCumulativeAmount === undefined ||
+    balance === undefined ||
+    totalClaimed === undefined ||
+    withdrawRequestedAt === undefined ||
+    refundNonce === undefined
+  ) {
+    return undefined;
+  }
+
+  const withdrawRequestedAtNumber = Number(withdrawRequestedAt);
+  const refundNonceNumber = Number(refundNonce);
+  if (
+    !Number.isSafeInteger(withdrawRequestedAtNumber) ||
+    !Number.isSafeInteger(refundNonceNumber)
+  ) {
+    return undefined;
+  }
+
+  return {
+    chargedCumulativeAmount,
+    balance,
+    totalClaimed,
+    withdrawRequestedAt: withdrawRequestedAtNumber,
+    refundNonce: refundNonceNumber,
+  };
+}
+
+/**
+ * Reads `pendingId` from verify extras.
+ *
+ * @param extra - Facilitator verify extras.
+ * @returns The non-empty `pendingId`, or undefined.
+ */
+function readPendingId(extra: Record<string, unknown> | undefined): string | undefined {
+  const value = extra?.pendingId;
+  return typeof value === "string" && value ? value : undefined;
 }
 
 /**

@@ -4381,8 +4381,10 @@ describe("BatchSettlementEvmScheme — facilitator-managed voucher store", () =>
         isValid: true,
         payer: PAYER,
         extra: {
+          pendingId: "0xrefund-pending",
           balance: "10000",
           totalClaimed: "0",
+          withdrawRequestedAt: 0,
           refundNonce: "0",
           chargedCumulativeAmount: "5000",
         },
@@ -4689,8 +4691,10 @@ describe("BatchSettlementEvmScheme — facilitator-managed voucher store", () =>
         isValid: true,
         payer: PAYER,
         extra: {
+          pendingId: "0xmanaged-pending",
           balance: "10000",
           totalClaimed: "0",
+          withdrawRequestedAt: 0,
           refundNonce: "0",
           chargedCumulativeAmount: "0",
         },

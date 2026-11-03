@@ -7,6 +7,7 @@ import {
   isFacilitatorManaged,
   paymentResponseExtra,
   pendingTtlMs,
+  requestContextTtlMs,
   voucherStoreMode,
 } from "../../../src/batch-settlement/voucherStore";
 import {
@@ -57,6 +58,11 @@ describe("voucherStore helpers — pendingTtlMs", () => {
 
   it("treats an undefined timeout like zero before clamping", () => {
     expect(pendingTtlMs(undefined)).toBe(5_000);
+  });
+
+  it("derives request-context TTL as twice the admission-lock TTL", () => {
+    expect(requestContextTtlMs(120)).toBe(pendingTtlMs(120) * 2);
+    expect(requestContextTtlMs(3600)).toBe(pendingTtlMs(3600) * 2);
   });
 });
 

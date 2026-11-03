@@ -27,7 +27,7 @@ import {
   verifyEoaVoucherSignature,
 } from "../utils";
 import * as Errors from "../errors";
-import { pendingTtlMs } from "../voucherStore";
+import { pendingTtlMs, requestContextTtlMs } from "../voucherStore";
 import type { BatchSettlementEvmScheme } from "./scheme";
 import { rethrowLockImplementationError, type Channel } from "./storage";
 import { readExtraNumber, readExtraString, readExtraUintString } from "./utils";
@@ -39,7 +39,7 @@ const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
  *
  * @returns An abort directive with a stable, non-sensitive reason.
  */
-function verificationStateUnavailable(): {
+export function verificationStateUnavailable(): {
   abort: true;
   reason: string;
   message: string;
@@ -134,7 +134,11 @@ export async function handleBeforeVerify(
   const channelId = raw.voucher.channelId;
   const now = Date.now();
   const pendingId = createNonce();
-  scheme.mergeRequestContext(paymentPayload, { channelId, pendingId });
+  scheme.mergeRequestContext(
+    paymentPayload,
+    { channelId, pendingId },
+    requestContextTtlMs(requirements.maxTimeoutSeconds),
+  );
 
   try {
     const locks = scheme.getLockStorage();

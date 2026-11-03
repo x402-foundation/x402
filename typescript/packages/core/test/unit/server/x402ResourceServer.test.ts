@@ -952,7 +952,10 @@ describe("x402ResourceServer", () => {
         expect(laterHook).not.toHaveBeenCalled();
         expect(cancellationHook).toHaveBeenCalledTimes(1);
         expect(cancellationHook).toHaveBeenCalledWith(
-          expect.objectContaining({ reason: "after_verify_aborted" }),
+          expect.objectContaining({
+            reason: "after_verify_aborted",
+            verifyResult: expect.objectContaining({ isValid: true }),
+          }),
         );
       });
 
@@ -1201,12 +1204,14 @@ describe("x402ResourceServer", () => {
         }
       });
 
-      it("fails settlement closed when a beforeSettle hook throws", async () => {
+      it("fails settlement closed and cancels when a beforeSettle hook throws", async () => {
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const cancellationHook = vi.fn();
 
         server.onBeforeSettle(async () => {
           throw new Error("Unexpected failure");
         });
+        server.onVerifiedPaymentCanceled(cancellationHook);
 
         try {
           await server.settlePayment(buildPaymentPayload(), buildPaymentRequirements());
@@ -1222,6 +1227,13 @@ describe("x402ResourceServer", () => {
           expect.stringMatching(
             /\[x402\] Resource server beforeSettle hook threw \(manual beforeSettle hook #0\): Unexpected failure/,
           ),
+        );
+        expect(cancellationHook).toHaveBeenCalledWith(
+          expect.objectContaining({
+            reason: "settlement_preflight_failed",
+            error: expect.objectContaining({ errorReason: "before_settle_hook_error" }),
+            settledPhases: [],
+          }),
         );
 
         warnSpy.mockRestore();
@@ -1419,6 +1431,18 @@ describe("x402ResourceServer", () => {
 
         expect(result.success).toBe(true);
         expect(result.transaction).toBe("0xRecoveredTx");
+      });
+
+      it("does not dispatch settlement_preflight_failed after the facilitator was reached", async () => {
+        const cancellationHook = vi.fn();
+        mockClient.setSettleResponse(new Error("facilitator unavailable"));
+        server.onVerifiedPaymentCanceled(cancellationHook);
+
+        await expect(
+          server.settlePayment(buildPaymentPayload(), buildPaymentRequirements()),
+        ).rejects.toThrow("facilitator unavailable");
+
+        expect(cancellationHook).not.toHaveBeenCalled();
       });
     });
 

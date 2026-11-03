@@ -4,6 +4,7 @@ import type { Channel, ChannelStorage } from "./storage/channel";
 
 const MIN_PENDING_TTL_MS = 5_000;
 const MAX_PENDING_TTL_MS = 10 * 60 * 1000;
+const LOCK_TTL_GRACE_MULTIPLIER = 2;
 
 /** Who owns the authoritative offchain voucher store for a request or network. */
 export type VoucherStoreMode = "self" | "facilitator";
@@ -89,6 +90,16 @@ export function voucherStoreMode(requirements: PaymentRequirements): VoucherStor
 export function pendingTtlMs(maxTimeoutSeconds: number | undefined): number {
   const requestedMs = Math.max(0, maxTimeoutSeconds ?? 0) * 1000;
   return Math.min(MAX_PENDING_TTL_MS, Math.max(MIN_PENDING_TTL_MS, requestedMs));
+}
+
+/**
+ * Computes the request-context TTL.
+ *
+ * @param maxTimeoutSeconds - Resource timeout from payment requirements.
+ * @returns Request-context TTL in milliseconds.
+ */
+export function requestContextTtlMs(maxTimeoutSeconds: number | undefined): number {
+  return pendingTtlMs(maxTimeoutSeconds) * LOCK_TTL_GRACE_MULTIPLIER;
 }
 
 /**
