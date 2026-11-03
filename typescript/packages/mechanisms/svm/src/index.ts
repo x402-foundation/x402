@@ -9,6 +9,8 @@ export { ExactSvmScheme } from "./exact";
 export type { ExactSvmSchemeOptions } from "./exact/facilitator/scheme";
 export { UptoSvmScheme } from "./upto";
 export { BatchSvmScheme } from "./batch-settlement";
+export { AuthCaptureSvmScheme } from "./auth-capture";
+export type { AuthCaptureSvmPayloadV2 } from "./auth-capture";
 
 // Export smart wallet verification helpers
 export {
