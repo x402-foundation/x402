@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
 import type {
   CompletedSettlement,
@@ -26,13 +26,40 @@ import {
 
 import { createHttpServer } from "./utils";
 
-const bazaarModule = vi.hoisted(() => ({
+const bazaarState = vi.hoisted(() => ({
   loads: 0,
+  failDynamicImport: false,
 }));
 
-vi.mock("@x402/extensions/bazaar", () => {
-  bazaarModule.loads += 1;
-  throw new Error("Cannot find module '@x402/extensions/bazaar'");
+vi.mock("./bazaarStartup", async () => {
+  const actual =
+    await vi.importActual<typeof import("@x402/extensions/bazaar")>("@x402/extensions/bazaar");
+  return {
+    validateBazaarRouteExtensions: actual.validateBazaarRouteExtensions,
+  };
+});
+
+vi.mock("@x402/extensions/bazaar", async () => {
+  const actual =
+    await vi.importActual<typeof import("@x402/extensions/bazaar")>("@x402/extensions/bazaar");
+  const missing = (): never => {
+    bazaarState.loads += 1;
+    throw new Error("Cannot find module '@x402/extensions/bazaar'");
+  };
+  return {
+    get bazaarResourceServerExtension() {
+      if (bazaarState.failDynamicImport) {
+        return missing();
+      }
+      return actual.bazaarResourceServerExtension;
+    },
+    get validateBazaarRouteExtensions() {
+      if (bazaarState.failDynamicImport) {
+        return missing();
+      }
+      return actual.validateBazaarRouteExtensions;
+    },
+  };
 });
 
 // Mock utils
@@ -1190,49 +1217,97 @@ describe("paymentProxyFromConfig", () => {
   });
 });
 
-describe("pre-registered bazaar extension", () => {
+describe("bazaar startup validation", () => {
+  const malformedWarning = 'Route "GET /paid" declares a bazaar extension but it is malformed';
+
   beforeEach(() => {
-    bazaarModule.loads = 0;
+    bazaarState.loads = 0;
+    bazaarState.failDynamicImport = false;
     vi.mocked(checkIfBazaarNeeded).mockReturnValue(false);
   });
 
-  const expectNoBazaarImport = async (
+  afterEach(() => {
+    bazaarState.failDynamicImport = false;
+  });
+
+  const expectBazaarValidation = async (
+    registered: boolean,
     run: (httpServer: x402HTTPResourceServer) => Promise<number>,
   ): Promise<void> => {
+    bazaarState.failDynamicImport = true;
     vi.mocked(checkIfBazaarNeeded).mockReturnValue(true);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const httpServer = createMockHttpServer({ type: "no-payment-required" });
+    httpServer.routes = {
+      "GET /paid": {
+        accepts: { scheme: "exact", payTo: "0x123", price: "$0.01", network: "eip155:84532" },
+        extensions: { bazaar: "not-an-object" },
+      },
+    } as unknown as typeof httpServer.routes;
     const resourceServer = httpServer.server as unknown as {
       hasExtension: ReturnType<typeof vi.fn>;
       registerExtension: ReturnType<typeof vi.fn>;
     };
-    resourceServer.hasExtension.mockReturnValue(true);
+    resourceServer.hasExtension.mockReturnValue(registered);
 
-    const status = await run(httpServer);
+    try {
+      const status = await run(httpServer);
 
-    expect({
-      loads: bazaarModule.loads,
-      errors: consoleError.mock.calls.map(call => String(call[0])),
-      registered: resourceServer.registerExtension.mock.calls.length,
-    }).toEqual({
-      loads: 0,
-      errors: [],
-      registered: 0,
-    });
-    expect(status).toBe(200);
-    consoleError.mockRestore();
+      expect(status).toBe(200);
+      expect({
+        loads: bazaarState.loads,
+        errors: consoleError.mock.calls.map(call => String(call[0])),
+        registered: resourceServer.registerExtension.mock.calls.length,
+        warnings: consoleWarn.mock.calls.map(call => String(call[0])),
+      }).toEqual({
+        loads: registered ? 0 : 1,
+        errors: registered ? [] : ["Failed to load bazaar extension:"],
+        registered: 0,
+        warnings: [
+          `x402: ${malformedWarning} (expected an object with "info" and "schema" fields)`,
+        ],
+      });
+    } finally {
+      consoleError.mockRestore();
+      consoleWarn.mockRestore();
+    }
   };
 
-  it("paymentProxyFromHTTPServer does not import @x402/extensions/bazaar or log when bazaar is already registered", async () => {
-    await expectNoBazaarImport(async httpServer => {
+  it("paymentProxyFromHTTPServer validates pre-registered bazaar routes without a dynamic import", async () => {
+    await expectBazaarValidation(true, async httpServer => {
       const proxy = paymentProxyFromHTTPServer(httpServer, undefined, undefined, false);
       const response = await proxy(createMockRequest());
       return response.status;
     });
   });
 
-  it("withX402FromHTTPServer does not import @x402/extensions/bazaar or log when bazaar is already registered", async () => {
-    await expectNoBazaarImport(async httpServer => {
+  it("withX402FromHTTPServer validates pre-registered bazaar routes without a dynamic import", async () => {
+    await expectBazaarValidation(true, async httpServer => {
+      const handler = vi.fn().mockResolvedValue(NextResponse.json({ data: "protected" }));
+      const wrappedHandler = withX402FromHTTPServer(
+        handler,
+        httpServer,
+        undefined,
+        undefined,
+        false,
+      );
+      const response = await wrappedHandler(createMockRequest());
+      expect(handler).toHaveBeenCalledOnce();
+      return response.status;
+    });
+  });
+
+  it("paymentProxyFromHTTPServer still validates bazaar routes when the dynamic import fails", async () => {
+    await expectBazaarValidation(false, async httpServer => {
+      const proxy = paymentProxyFromHTTPServer(httpServer, undefined, undefined, false);
+      const response = await proxy(createMockRequest());
+      return response.status;
+    });
+  });
+
+  it("withX402FromHTTPServer still validates bazaar routes when the dynamic import fails", async () => {
+    await expectBazaarValidation(false, async httpServer => {
       const handler = vi.fn().mockResolvedValue(NextResponse.json({ data: "protected" }));
       const wrappedHandler = withX402FromHTTPServer(
         handler,
