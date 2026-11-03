@@ -83,6 +83,8 @@ export {
   isAlgorandNetwork,
   isTestnetNetwork,
   normalizeAlgorandNetwork,
+  publishedAlgorandForms,
+  algorandLookupAliases,
   getGenesisHashFromTransaction,
   validateGroupId,
   getTransactionId,

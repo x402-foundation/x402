@@ -15,6 +15,7 @@ import type {
 } from "@x402/core/types";
 import { convertToTokenAmount, parseMoney } from "@x402/core/utils";
 import { findDefaultAsset, getDefaultAsset } from "../../defaultAssets";
+import { algorandLookupAliases } from "../../utils";
 
 /**
  * AVM server implementation for the Exact payment scheme.
@@ -23,6 +24,8 @@ import { findDefaultAsset, getDefaultAsset } from "../../defaultAssets";
  */
 export class ExactAvmScheme implements SchemeNetworkServer {
   readonly scheme = "exact";
+  /** Injected into x402ResourceServer at register. Core does not import this package. */
+  readonly networkEquivalents = algorandLookupAliases;
   readonly defaultAssetTransferMethod = "default";
   readonly paymentFlows = {
     default: { supported: ["authorization", "upfront"], default: "authorization" },

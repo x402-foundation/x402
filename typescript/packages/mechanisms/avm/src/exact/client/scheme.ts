@@ -23,7 +23,12 @@ import type { ClientAvmSigner, ClientAvmConfig } from "../../signer";
 import { findDefaultAsset } from "../../defaultAssets";
 import type { ExactAvmPayloadV2 } from "../../types";
 import { getDefaultAsset } from "../../defaultAssets";
-import { encodeTransaction, isTestnetNetwork, normalizeAlgorandNetwork } from "../../utils";
+import {
+  algorandLookupAliases,
+  encodeTransaction,
+  isTestnetNetwork,
+  normalizeAlgorandNetwork,
+} from "../../utils";
 
 /**
  * AVM client implementation for the Exact payment scheme.
@@ -34,6 +39,8 @@ import { encodeTransaction, isTestnetNetwork, normalizeAlgorandNetwork } from ".
 export class ExactAvmScheme implements SchemeNetworkClient {
   readonly scheme = "exact";
   findDefaultAsset = findDefaultAsset;
+  /** Injected into x402Client at register. Core does not import this package. */
+  readonly networkEquivalents = algorandLookupAliases;
 
   /**
    * Creates a new ExactAvmScheme instance.

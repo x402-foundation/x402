@@ -144,11 +144,41 @@ export const findSchemesByNetwork = <T>(
   return implementationsByScheme;
 };
 
+/**
+ * Published aliases for one network identifier.
+ * Callers that omit it keep exact identity lookup. Unknown names return themselves.
+ * Core does not import a mechanism package to obtain this function.
+ */
+export type NetworkEquivalents = (network: string) => readonly string[];
+
+/**
+ * Exact scheme lookup. The requested key wins. Other names from `equivalents`
+ * are consulted only when that key misses. Two different alias maps fail closed.
+ * Wildcard matching still applies only to the requested network, after exact keys miss.
+ *
+ * @param map - Network to scheme map
+ * @param scheme - Scheme name
+ * @param network - Requested network identifier
+ * @param equivalents - Optional alias hook. Default is identity.
+ * @returns The registered value, or undefined when missing or ambiguous
+ */
 export const findByNetworkAndScheme = <T>(
   map: Map<string, Map<string, T>>,
   scheme: string,
   network: Network,
+  equivalents: NetworkEquivalents = (value) => [value],
 ): T | undefined => {
+  const requested = map.get(network);
+  if (requested?.has(scheme)) return requested.get(scheme);
+
+  const hits: Array<Map<string, T>> = [];
+  for (const name of equivalents(network)) {
+    if (name === network) continue;
+    const direct = map.get(name);
+    if (direct?.has(scheme) && !hits.includes(direct)) hits.push(direct);
+  }
+  if (hits.length > 1) return undefined;
+  if (hits.length === 1) return hits[0].get(scheme);
   return findSchemesByNetwork(map, network)?.get(scheme);
 };
 
