@@ -457,7 +457,7 @@ Note: x402 v1 uses human-readable network identifiers (e.g., "base") in the prot
                     "amount": { "type": "string" },
                     "validUntil": { "type": "integer" }
                   },
-                  "required": ["version", "resourceUrl", "scheme", "network", "asset", "payTo", "amount"]
+                  "required": ["version", "resourceUrl", "scheme", "network", "asset", "payTo", "amount", "validUntil"]
                 },
                 "signature": { "type": "string" }
               },
@@ -534,7 +534,7 @@ Note: x402 v1 uses human-readable network identifiers (e.g., "base") in the prot
                     "amount": { "type": "string" },
                     "validUntil": { "type": "integer" }
                   },
-                  "required": ["version", "resourceUrl", "scheme", "network", "asset", "payTo", "amount"]
+                  "required": ["version", "resourceUrl", "scheme", "network", "asset", "payTo", "amount", "validUntil"]
                 },
                 "signature": { "type": "string" }
               },
@@ -699,7 +699,7 @@ Note: x402 v1 uses human-readable network identifiers (e.g., "base") in the prot
                   "issuedAt": { "type": "integer" },
                   "transaction": { "type": "string" }
                 },
-                "required": ["version", "network", "resourceUrl", "payer", "issuedAt"]
+                "required": ["version", "network", "resourceUrl", "payer", "issuedAt", "transaction"]
               },
               "signature": { "type": "string" }
             },
@@ -755,7 +755,7 @@ Note: x402 v1 uses human-readable network identifiers (e.g., "base") in the prot
                   "issuedAt": { "type": "integer" },
                   "transaction": { "type": "string" }
                 },
-                "required": ["version", "network", "resourceUrl", "payer", "issuedAt"]
+                "required": ["version", "network", "resourceUrl", "payer", "issuedAt", "transaction"]
               },
               "signature": { "type": "string" }
             },
