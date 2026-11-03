@@ -190,6 +190,10 @@ const (
 	// CancellationReasonAfterVerifyAborted indicates an AfterVerifyHook aborted verification
 	// after a successful (or recovered) verify, so schemes can clear committed reservations.
 	CancellationReasonAfterVerifyAborted VerifiedPaymentCancellationReason = "after_verify_aborted"
+	// CancellationReasonSettlementPreflightFailed indicates settlement failed before reaching
+	// the facilitator (beforeSettle abort or error, settlement-payload enrichment failure).
+	// It fires only when no earlier settle phase completed, so SettledPhases is empty.
+	CancellationReasonSettlementPreflightFailed VerifiedPaymentCancellationReason = "settlement_preflight_failed"
 )
 
 // VerifiedPaymentCanceledContext is delivered to OnVerifiedPaymentCanceled hooks when a
@@ -200,6 +204,8 @@ type VerifiedPaymentCanceledContext struct {
 	Err            error
 	ResponseStatus int
 	SettledPhases  []SettlePhase
+	// VerifyResult is the trusted verify response. Set only for after_verify_aborted.
+	VerifyResult *VerifyResponse
 }
 
 // SettledPhasesContain reports whether phases includes want. Schemes use it in
@@ -218,6 +224,7 @@ type VerifiedPaymentCancelOptions struct {
 	Reason         VerifiedPaymentCancellationReason
 	Err            error
 	ResponseStatus int
+	VerifyResult   *VerifyResponse
 }
 
 // PaymentCancellationDispatcher fires onVerifiedPaymentCanceled hooks at most once,

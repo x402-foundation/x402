@@ -305,7 +305,7 @@ func handleBeforeVerify(s *BatchSettlementEvmScheme, ctx x402.VerifyContext) (*x
 	s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{
 		ChannelId: channelId,
 		PendingId: pendingId,
-	})
+	}, requestContextTtl(ctx.Requirements.GetMaxTimeoutSeconds()))
 
 	acquired, acquireErr := s.lockStorage.Acquire(ctx.Ctx, channelId, pendingId, storage.PendingTtlMs(ctx.Requirements.GetMaxTimeoutSeconds()))
 	if impl := RethrowLockImplementationError(acquireErr); impl != nil {
