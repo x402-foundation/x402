@@ -1,7 +1,11 @@
 import { decodePaymentResponseHeader } from "@x402/core/http";
-import type { PaymentRequirements } from "@x402/core/types";
+import type { Network, PaymentRequirements } from "@x402/core/types";
 import { getAddress } from "viem";
-import type { ClientEvmSigner } from "../../signer";
+import {
+  assertClientEvmCapabilities,
+  EvmRpcNotConfiguredError,
+  type ClientEvmSigner,
+} from "../../signer";
 import { batchSettlementABI } from "../abi";
 import { BATCH_SETTLEMENT_ADDRESS, MIN_WITHDRAW_DELAY } from "../constants";
 import type {
@@ -230,9 +234,7 @@ export async function recoverChannel(
   deps: BatchSettlementClientDeps,
   paymentRequirements: PaymentRequirements,
 ): Promise<BatchSettlementClientContext> {
-  if (!deps.signer.readContract) {
-    throw new Error("recoverChannel requires ClientEvmSigner.readContract");
-  }
+  assertClientEvmCapabilities(deps.signer, ["readContract"], "recoverChannel");
 
   const config = buildChannelConfig(deps, paymentRequirements);
   const channelId = computeChannelId(config, paymentRequirements.network);
@@ -240,6 +242,7 @@ export async function recoverChannel(
   const [chBalance, chTotalClaimed] = await readChannelBalanceAndTotalClaimed(
     deps.signer,
     channelId,
+    paymentRequirements.network,
   );
 
   const ctx: BatchSettlementClientContext = {
@@ -257,21 +260,51 @@ export async function recoverChannel(
  *
  * @param signer - Signer providing `readContract`.
  * @param channelId - The `bytes32` channel id to query.
+ * @param network - CAIP-2 network of the channel.
  * @returns Tuple of `[balance, totalClaimed]` as bigints.
  */
 export async function readChannelBalanceAndTotalClaimed(
   signer: ClientEvmSigner,
   channelId: `0x${string}`,
+  network: Network,
 ): Promise<[bigint, bigint]> {
+  assertClientEvmCapabilities(signer, ["readContract"], "readChannelBalanceAndTotalClaimed");
+  return (await signer.readContract(
+    {
+      address: BATCH_SETTLEMENT_ADDRESS,
+      abi: batchSettlementABI,
+      functionName: "channels",
+      args: [channelId],
+    },
+    network,
+  )) as [bigint, bigint];
+}
+
+/**
+ * Runs a best-effort onchain read that callers fall back from.
+ *
+ * A signer without `readContract`, or without an RPC for the read's network,
+ * yields `undefined` rather than an error. Any other read failure propagates.
+ *
+ * @param signer - Client signer the read goes through.
+ * @param read - The read to run.
+ * @returns The read result, or `undefined` when the signer cannot read.
+ */
+export async function readIfSignerCan<T>(
+  signer: ClientEvmSigner,
+  read: () => Promise<T>,
+): Promise<T | undefined> {
   if (!signer.readContract) {
-    throw new Error("readChannelBalanceAndTotalClaimed requires ClientEvmSigner.readContract");
+    return undefined;
   }
-  return (await signer.readContract({
-    address: BATCH_SETTLEMENT_ADDRESS,
-    abi: batchSettlementABI,
-    functionName: "channels",
-    args: [channelId],
-  })) as [bigint, bigint];
+  try {
+    return await read();
+  } catch (error) {
+    if (error instanceof EvmRpcNotConfiguredError) {
+      return undefined;
+    }
+    throw error;
+  }
 }
 
 /**

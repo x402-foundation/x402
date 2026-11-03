@@ -4,6 +4,7 @@ import { toClientEvmSigner } from "@x402/evm";
 import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/client";
 import { FileClientChannelStorage } from "@x402/evm/batch-settlement/client/file-storage";
 import { x402Client, wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
+import { toClientSvmSigner } from "@x402/svm";
 import { BatchSvmScheme, NoBatchChannelToRefundError } from "@x402/svm/batch-settlement/client";
 import { config } from "dotenv";
 import { createPublicClient, http } from "viem";
@@ -82,11 +83,13 @@ async function main(): Promise<void> {
   }
 
   if (svmPrivateKeyRaw) {
-    const svmSigner = await createKeyPairSignerFromBytes(base58.decode(svmPrivateKeyRaw));
+    const svmSigner = toClientSvmSigner(
+      await createKeyPairSignerFromBytes(base58.decode(svmPrivateKeyRaw)),
+      svmRpcUrl ? { defaultRpcUrl: svmRpcUrl } : undefined,
+    );
     svmScheme = new BatchSvmScheme(svmSigner, {
       depositPolicy: { depositMultiplier },
       salt: svmChannelSalt,
-      ...(svmRpcUrl ? { rpcUrl: svmRpcUrl } : {}),
       ...(svmServerSignedOperators.length > 0
         ? {
             serverSignedChannelsPolicy: {

@@ -24,7 +24,7 @@ import {
   isBatchSettlementVoucherPayload,
 } from "../../../src/batch-settlement/types";
 import { createBatchSettlementClientHooks } from "../../../src/batch-settlement/client/hooks";
-import type { ClientEvmSigner } from "../../../src/signer";
+import { toClientEvmSigner, type ClientEvmSigner } from "../../../src/signer";
 import type {
   PaymentPayload,
   PaymentRequirements,
@@ -348,6 +348,27 @@ describe("BatchSettlementEvmScheme — createPaymentPayload", () => {
     const result = await client.createPaymentPayload(2, makeRequirements(), SPEND_CAP);
     expect(result.x402Version).toBe(2);
     expect(isBatchSettlementDepositPayload(result.payload as Record<string, unknown>)).toBe(true);
+  });
+
+  it("deposits from empty local state when the signer has no RPC for the channel's network", async () => {
+    const signer = toClientEvmSigner(buildSigner(PAYER_PRIVATE_KEY), {
+      8453: { rpcUrl: "https://base.example" },
+    });
+    const client = new BatchSettlementEvmScheme(signer);
+
+    const result = await client.createPaymentPayload(2, makeRequirements(), SPEND_CAP);
+    expect(isBatchSettlementDepositPayload(result.payload as Record<string, unknown>)).toBe(true);
+  });
+
+  it("propagates a channel read failure instead of depositing from empty local state", async () => {
+    const signer = buildSignerWithRead(PAYER_PRIVATE_KEY, async () => {
+      throw new Error("rpc unavailable");
+    });
+    const client = new BatchSettlementEvmScheme(signer);
+
+    await expect(client.createPaymentPayload(2, makeRequirements(), SPEND_CAP)).rejects.toThrow(
+      "rpc unavailable",
+    );
   });
 
   it("voucher.maxClaimableAmount equals charged + amount on first request", async () => {
@@ -742,7 +763,7 @@ describe("BatchSettlementEvmScheme — createPaymentPayload", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const storage = new InMemoryClientChannelStorage();
-      const baseSigner = buildSigner(PAYER_PRIVATE_KEY); // no readContract, no rpcUrl
+      const baseSigner = buildSigner(PAYER_PRIVATE_KEY); // no readContract
       const config = buildChannelConfig(
         makeDeps({ signer: baseSigner, storage }),
         makeRequirements(),
@@ -1388,13 +1409,17 @@ describe("recoverChannel / hasChannel / getChannel", () => {
     const config = buildChannelConfig(makeDeps({ signer }), makeRequirements());
     const id = computeChannelId(config);
     expect((await storage.get(id.toLowerCase()))?.balance).toBe("5000");
+    expect(readContract).toHaveBeenCalledWith(
+      expect.objectContaining({ functionName: "channels", args: [id] }),
+      NETWORK,
+    );
   });
 
   it("recoverChannel throws when readContract is unavailable", async () => {
     const signer = buildSigner(PAYER_PRIVATE_KEY);
     const storage = new InMemoryClientChannelStorage();
     await expect(recoverChannel(makeDeps({ signer, storage }), makeRequirements())).rejects.toThrow(
-      /readContract/,
+      new Error("recoverChannel requires readContract on the signer."),
     );
   });
 
@@ -1445,6 +1470,23 @@ describe("processCorrectivePaymentRequired", () => {
     expect(ok).toBe(false);
   });
 
+  it("declines to resync, leaving storage untouched, when the signer has no RPC for the network", async () => {
+    const signer = toClientEvmSigner(buildSigner(PAYER_PRIVATE_KEY), {
+      8453: { rpcUrl: "https://base.example" },
+    });
+    const storage = new InMemoryClientChannelStorage();
+
+    const ok = await processCorrectivePaymentRequired(makeDeps({ signer, storage }), {
+      x402Version: 2,
+      error: Errors.ErrCumulativeAmountMismatch,
+      accepts: [makeRequirements()],
+    } as unknown as PaymentRequired);
+
+    expect(ok).toBe(false);
+    const id = computeChannelId(buildChannelConfig(makeDeps({ signer }), makeRequirements()));
+    expect(await storage.get(id.toLowerCase())).toBeUndefined();
+  });
+
   it("recoverFromOnChainState updates session when no signature is present", async () => {
     const readContract = vi.fn().mockResolvedValue([10000n, 2500n]);
     const signer = buildSignerWithRead(PAYER_PRIVATE_KEY, readContract);
@@ -1457,6 +1499,10 @@ describe("processCorrectivePaymentRequired", () => {
     } as unknown as PaymentRequired);
 
     expect(ok).toBe(true);
+    expect(readContract).toHaveBeenCalledWith(
+      expect.objectContaining({ functionName: "channels" }),
+      NETWORK,
+    );
     const id = computeChannelId(buildChannelConfig(makeDeps({ signer }), makeRequirements()));
     const ctx = await storage.get(id.toLowerCase());
     expect(ctx?.chargedCumulativeAmount).toBe("2500");
@@ -1921,14 +1967,24 @@ describe("BatchSettlementEvmScheme — refund()", () => {
     );
   });
 
-  it("throws when there is no local channel and no RPC to recover from", async () => {
-    const signer = buildSigner(PAYER_PRIVATE_KEY);
-    const client = new BatchSettlementEvmScheme(signer);
-    const fetchImpl = makeFetch([async () => probe402Response()]);
-    await expect(client.refund(REFUND_URL, { fetch: fetchImpl })).rejects.toThrow(
-      /existing channel record/,
-    );
-  });
+  it.each([
+    ["no readContract", buildSigner(PAYER_PRIVATE_KEY)],
+    [
+      "no RPC for the network",
+      toClientEvmSigner(buildSigner(PAYER_PRIVATE_KEY), {
+        8453: { rpcUrl: "https://base.example" },
+      }),
+    ],
+  ])(
+    "throws when there is no local channel and the signer has %s to recover from",
+    async (_, signer) => {
+      const client = new BatchSettlementEvmScheme(signer);
+      const fetchImpl = makeFetch([async () => probe402Response()]);
+      await expect(client.refund(REFUND_URL, { fetch: fetchImpl })).rejects.toThrow(
+        /existing channel record/,
+      );
+    },
+  );
 
   it("throws when a 200 refund response is missing PAYMENT-RESPONSE", async () => {
     const signer = buildSigner(PAYER_PRIVATE_KEY);

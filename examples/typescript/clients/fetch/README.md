@@ -7,6 +7,7 @@ import { x402Client, wrapFetchWithPayment } from "@x402/fetch";
 import { AuthCaptureEvmScheme } from "@x402/evm/auth-capture/client";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { UptoEvmScheme } from "@x402/evm/upto/client";
+import { toClientSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { privateKeyToAccount } from "viem/accounts";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
@@ -16,7 +17,7 @@ const client = new x402Client()
   .register("eip155:*", new ExactEvmScheme(privateKeyToAccount(process.env.EVM_PRIVATE_KEY)))
   .register("eip155:*", new UptoEvmScheme(privateKeyToAccount(process.env.EVM_PRIVATE_KEY)))
   .register("eip155:*", new AuthCaptureEvmScheme(privateKeyToAccount(process.env.EVM_PRIVATE_KEY)))
-  .register("solana:*", new ExactSvmScheme(await createKeyPairSignerFromBytes(base58.decode(process.env.SVM_PRIVATE_KEY))))
+  .register("solana:*", new ExactSvmScheme(toClientSvmSigner(await createKeyPairSignerFromBytes(base58.decode(process.env.SVM_PRIVATE_KEY)))))
   .setSpendControls({
     maxAmountPerPayment: "$1",
   });

@@ -1,6 +1,8 @@
+import type { Network } from "@x402/core/types";
 import { getAddress } from "viem";
 import { eip2612PermitTypes, eip2612NoncesAbi, PERMIT2_ADDRESS } from "../../constants";
 import { ClientEvmSigner } from "../../signer";
+import { getEvmChainId } from "../../utils";
 import type { Eip2612GasSponsoringInfo } from "../extensions";
 
 export type Eip2612PermitSigner = Pick<ClientEvmSigner, "address" | "signTypedData"> & {
@@ -20,7 +22,7 @@ export type Eip2612PermitSigner = Pick<ClientEvmSigner, "address" | "signTypedDa
  * @param tokenAddress - The ERC-20 token contract address
  * @param tokenName - The token name (from paymentRequirements.extra.name)
  * @param tokenVersion - The token version (from paymentRequirements.extra.version)
- * @param chainId - The chain ID
+ * @param network - The CAIP-2 network of the token
  * @param deadline - The deadline for the permit (unix timestamp as string)
  * @param permittedAmount - The Permit2 permitted amount (must match exactly)
  * @returns The EIP-2612 gas sponsoring info object
@@ -30,7 +32,7 @@ export async function signEip2612Permit(
   tokenAddress: `0x${string}`,
   tokenName: string,
   tokenVersion: string,
-  chainId: number,
+  network: Network,
   deadline: string,
   permittedAmount: string,
 ): Promise<Eip2612GasSponsoringInfo> {
@@ -38,18 +40,21 @@ export async function signEip2612Permit(
   const spender = getAddress(PERMIT2_ADDRESS);
 
   // Query the current EIP-2612 nonce from the token contract
-  const nonce = (await signer.readContract({
-    address: tokenAddress,
-    abi: eip2612NoncesAbi,
-    functionName: "nonces",
-    args: [owner],
-  })) as bigint;
+  const nonce = (await signer.readContract(
+    {
+      address: tokenAddress,
+      abi: eip2612NoncesAbi,
+      functionName: "nonces",
+      args: [owner],
+    },
+    network,
+  )) as bigint;
 
   // Construct EIP-712 domain for the token's permit function
   const domain = {
     name: tokenName,
     version: tokenVersion,
-    chainId,
+    chainId: getEvmChainId(network),
     verifyingContract: tokenAddress,
   };
 

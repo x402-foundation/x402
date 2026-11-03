@@ -8,6 +8,7 @@ import {
   type BatchSettlementClientDeps,
   buildChannelConfig,
   readChannelBalanceAndTotalClaimed,
+  readIfSignerCan,
 } from "./channel";
 import * as Errors from "../errors";
 import type { BatchSettlementChannelStateExtra, BatchSettlementVoucherStateExtra } from "../types";
@@ -85,14 +86,13 @@ export async function recoverFromSignature(
   const config = buildChannelConfig(deps, accept);
   const channelId = computeChannelId(config, accept.network);
 
-  if (!deps.signer.readContract) {
+  const onchain = await readIfSignerCan(deps.signer, () =>
+    readChannelBalanceAndTotalClaimed(deps.signer, channelId, accept.network),
+  );
+  if (!onchain) {
     return false;
   }
-
-  const [chBalance, chTotalClaimed] = await readChannelBalanceAndTotalClaimed(
-    deps.signer,
-    channelId,
-  );
+  const [chBalance, chTotalClaimed] = onchain;
 
   if (charged < chTotalClaimed) {
     return false;
@@ -144,17 +144,16 @@ export async function recoverFromOnChainState(
   deps: BatchSettlementClientDeps,
   accept: PaymentRequirements,
 ): Promise<boolean> {
-  if (!deps.signer.readContract) {
-    return false;
-  }
-
   const config = buildChannelConfig(deps, accept);
   const channelId = computeChannelId(config, accept.network);
 
-  const [chBalance, chTotalClaimed] = await readChannelBalanceAndTotalClaimed(
-    deps.signer,
-    channelId,
+  const onchain = await readIfSignerCan(deps.signer, () =>
+    readChannelBalanceAndTotalClaimed(deps.signer, channelId, accept.network),
   );
+  if (!onchain) {
+    return false;
+  }
+  const [chBalance, chTotalClaimed] = onchain;
 
   const ctx: BatchSettlementClientContext = {
     chargedCumulativeAmount: chTotalClaimed.toString(),

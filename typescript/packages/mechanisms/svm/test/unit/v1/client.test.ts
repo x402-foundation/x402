@@ -14,23 +14,6 @@ vi.mock("@solana-program/token-2022", async importOriginal => {
   };
 });
 
-vi.mock("../../../src/utils", async importOriginal => {
-  const actual = await importOriginal<typeof import("../../../src/utils")>();
-  return {
-    ...actual,
-    createRpcClient: vi.fn(() => ({
-      getLatestBlockhash: () => ({
-        send: async () => ({
-          value: {
-            blockhash: "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
-            lastValidBlockHeight: 1n,
-          },
-        }),
-      }),
-    })),
-  };
-});
-
 describe("ExactSvmSchemeV1", () => {
   let mockSigner: ClientSvmSigner;
 
@@ -43,6 +26,11 @@ describe("ExactSvmSchemeV1", () => {
           signatures: {},
         },
       ]) as never,
+      getAccountInfo: vi.fn(),
+      getLatestBlockhash: vi.fn(async () => ({
+        blockhash: "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+        lastValidBlockHeight: 1n,
+      })),
     };
   });
 
@@ -137,12 +125,16 @@ describe("ExactSvmSchemeV1", () => {
       ).rejects.toThrow("Asset was not created by a known token program");
     });
 
-    it("forwards a configured rpcUrl before rejecting an unknown mint program", async () => {
-      vi.mocked(fetchMint).mockResolvedValue({
-        data: { decimals: 6 },
-        programAddress: "11111111111111111111111111111111",
-      } as never);
-      const client = new ExactSvmSchemeV1(mockSigner, { rpcUrl: "https://custom-rpc.example" });
+    it("rejects a bare signer before signing when the mint must be read", async () => {
+      vi.mocked(fetchMint).mockImplementation(async rpc => {
+        await rpc.getAccountInfo(USDC_DEVNET_ADDRESS as never).send();
+        throw new Error("mint read should have failed first");
+      });
+      const bare: ClientSvmSigner = {
+        address: mockSigner.address,
+        signTransactions: vi.fn(),
+      };
+      const client = new ExactSvmSchemeV1(bare);
       await expect(
         client.createPaymentPayload(1, {
           scheme: "exact",
@@ -153,7 +145,8 @@ describe("ExactSvmSchemeV1", () => {
           maxTimeoutSeconds: 3600,
           extra: { feePayer: mockSigner.address },
         } as never),
-      ).rejects.toThrow("Asset was not created by a known token program");
+      ).rejects.toThrow("ExactSvmSchemeV1 requires getAccountInfo on the signer.");
+      expect(bare.signTransactions).not.toHaveBeenCalled();
     });
 
     it("rejects when extra.feePayer is missing after mint resolution", async () => {

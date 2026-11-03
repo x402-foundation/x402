@@ -2,14 +2,12 @@ import { createPublicClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { base, baseSepolia } from "viem/chains";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
-import {
-  UptoEvmScheme as UptoEvmClientScheme,
-  type UptoEvmSchemeOptions,
-} from "@x402/evm/upto/client";
+import { UptoEvmScheme as UptoEvmClientScheme } from "@x402/evm/upto/client";
 import { AuthCaptureEvmScheme } from "@x402/evm/auth-capture/client";
 import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/client";
 import { ExactEvmSchemeV1 } from "@x402/evm/v1";
 import { toClientEvmSigner } from "@x402/evm";
+import { toClientSvmSigner } from "@x402/svm";
 import { BatchSvmScheme as BatchSettlementSvmScheme } from "@x402/svm/batch-settlement/client";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { UptoSvmScheme } from "@x402/svm/upto/client";
@@ -149,12 +147,6 @@ export async function createE2EClient(options: E2EClientOptions = {}): Promise<E
 
     const evmSigner = toClientEvmSigner(evmAccount, publicClient);
 
-    const evmSchemeOptions = evmRpcUrl ? { rpcUrl: evmRpcUrl } : undefined;
-
-    const uptoSchemeOptions: UptoEvmSchemeOptions | undefined = evmRpcUrl
-      ? { rpcUrl: evmRpcUrl }
-      : undefined;
-
     // Batch-settlement scheme uses a per-scenario salt (EVM_BATCH_SETTLEMENT_CHANNEL) so
     // concurrent e2e runs don't collide on the same on-chain channel id. An optional
     // voucher signer (CLIENT_EVM_BATCH_SETTLEMENT_VOUCHER_SIGNER_PRIVATE_KEY) exercises
@@ -175,11 +167,8 @@ export async function createE2EClient(options: E2EClientOptions = {}): Promise<E
     if (batchFamily === "evm") batchSettlementScheme = evmBatchSettlementScheme;
 
     schemes.push(
-      { network: networkCaip2Pattern("evm"), client: new ExactEvmScheme(evmSigner, evmSchemeOptions) },
-      {
-        network: networkCaip2Pattern("evm"),
-        client: new UptoEvmClientScheme(evmSigner, uptoSchemeOptions),
-      },
+      { network: networkCaip2Pattern("evm"), client: new ExactEvmScheme(evmSigner) },
+      { network: networkCaip2Pattern("evm"), client: new UptoEvmClientScheme(evmSigner) },
       { network: networkCaip2Pattern("evm"), client: evmBatchSettlementScheme },
       { network: networkCaip2Pattern("evm"), client: new AuthCaptureEvmScheme(evmSigner) },
       { network: "base-sepolia", client: new ExactEvmSchemeV1(evmSigner), x402Version: 1 },
@@ -188,18 +177,13 @@ export async function createE2EClient(options: E2EClientOptions = {}): Promise<E
   }
 
   if (wants("svm") && process.env.CLIENT_SVM_PRIVATE_KEY) {
-    const svmSigner = await createKeyPairSignerFromBytes(
-      base58.decode(process.env.CLIENT_SVM_PRIVATE_KEY),
+    const svmSigner = toClientSvmSigner(
+      await createKeyPairSignerFromBytes(base58.decode(process.env.CLIENT_SVM_PRIVATE_KEY)),
+      process.env.SVM_RPC_URL ? { defaultRpcUrl: process.env.SVM_RPC_URL } : undefined,
     );
-    const svmSchemeOptions =
-      process.env.SVM_RPC_URL || options.svmTransactionVersions
-        ? {
-          ...(process.env.SVM_RPC_URL ? { rpcUrl: process.env.SVM_RPC_URL } : {}),
-          ...(options.svmTransactionVersions
-            ? { transactionVersions: options.svmTransactionVersions }
-            : {}),
-        }
-        : undefined;
+    const svmSchemeOptions = options.svmTransactionVersions
+      ? { transactionVersions: options.svmTransactionVersions }
+      : undefined;
 
     // Batch-settlement derives the channel PDA from a per-scenario salt so
     // concurrent e2e runs do not collide on one onchain channel. Discovery

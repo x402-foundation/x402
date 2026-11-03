@@ -121,6 +121,7 @@ For more control, you can use the builder pattern to register multiple schemes:
 import axios from "axios";
 import { wrapAxiosWithPayment, x402Client } from "@x402/axios";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
+import { toClientSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { privateKeyToAccount } from "viem/accounts";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
@@ -128,7 +129,9 @@ import { base58 } from "@scure/base";
 
 // Create signers
 const evmSigner = privateKeyToAccount("0xYourPrivateKey");
-const svmSigner = await createKeyPairSignerFromBytes(base58.decode("YourSvmPrivateKey"));
+const svmSigner = toClientSvmSigner(
+  await createKeyPairSignerFromBytes(base58.decode("YourSvmPrivateKey")),
+);
 
 // Build client with multiple schemes
 const client = new x402Client()

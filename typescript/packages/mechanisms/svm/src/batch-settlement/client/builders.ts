@@ -12,7 +12,8 @@ import type { PaymentRequirements } from "@x402/core/types";
 
 import { buildTopUpPaymentChannelTransaction, parseU64 } from "../../payment-channels/open";
 import { requireTokenProgramHint } from "../../payment-channels/requirements";
-import { createRpcClient, resolveBlockhash, resolveTransactionVersion } from "../../utils";
+import { clientSignerRpc } from "../../signer";
+import { resolveBlockhash, resolveTransactionVersion } from "../../utils";
 import { deriveBatchChannelId } from "../codec";
 import { BatchError } from "../errors";
 import type {
@@ -43,10 +44,8 @@ export interface BatchBuildArgs {
 
 /** Inputs of a builder that signs a transaction. */
 export interface BatchTransactionBuildArgs extends BatchBuildArgs {
-  /** Blockhash to build against; defaults to the challenge hint or the RPC's latest. */
+  /** Blockhash to build against; defaults to the challenge hint or the signer's latest. */
   blockhash?: { blockhash: string; lastValidBlockHeight: bigint } | undefined;
-  /** RPC endpoint for the blockhash fallback. */
-  rpcUrl?: string | undefined;
   /** Versions the signer can sign; defaults to `[0, 1]`. */
   transactionVersions?: readonly number[] | undefined;
 }
@@ -161,7 +160,7 @@ export async function buildBatchTopUpPayload(
   const blockhash =
     args.blockhash ??
     (await resolveBlockhash(
-      createRpcClient(args.requirements.network, args.rpcUrl),
+      clientSignerRpc(args.signer, args.requirements.network, "buildBatchTopUpPayload"),
       args.requirements,
     ));
   const topUp = await buildTopUpPaymentChannelTransaction({
@@ -203,7 +202,7 @@ export async function buildBatchRefundPayload(
   const blockhash = args.withTransaction
     ? (args.blockhash ??
       (await resolveBlockhash(
-        createRpcClient(args.requirements.network, args.rpcUrl),
+        clientSignerRpc(args.signer, args.requirements.network, "buildBatchRefundPayload"),
         args.requirements,
       )))
     : undefined;

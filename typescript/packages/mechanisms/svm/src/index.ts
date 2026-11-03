@@ -26,15 +26,17 @@ export type {
 } from "./exact/facilitator/smartWalletVerification";
 
 // Export signer utilities and types
-export { toClientSvmSigner, toFacilitatorSvmSigner } from "./signer";
+export { assertClientSvmRpc, toClientSvmSigner, toFacilitatorSvmSigner } from "./signer";
 export type {
   ClientSvmSigner,
+  ClientSvmRpc,
   FacilitatorSvmSigner,
   FacilitatorAccountInfo,
   FacilitatorProgramAccount,
   FacilitatorSimulateTransactionOptions,
   FacilitatorRpcClient,
   FacilitatorRpcConfig,
+  SvmRpcConfig,
   ClientSvmConfig,
   SvmInnerInstructionsResult,
 } from "./signer";

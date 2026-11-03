@@ -804,20 +804,22 @@ Register `BatchSvmScheme` for `solana:*`. The SDK opens or tops up the channel o
   <Tab title="TypeScript">
     ```typescript
     import { x402Client } from "@x402/core/client";
+    import { toClientSvmSigner } from "@x402/svm";
     import { ExactSvmScheme } from "@x402/svm/exact/client";
     import { BatchSvmScheme } from "@x402/svm/batch-settlement/client";
     import { createKeyPairSignerFromBytes } from "@solana/kit";
     import { base58 } from "@scure/base";
 
-    const signer = await createKeyPairSignerFromBytes(
-      base58.decode(process.env.SVM_PRIVATE_KEY!),
+    // RPC lives on the signer; omit the second argument for the public cluster URL.
+    const signer = toClientSvmSigner(
+      await createKeyPairSignerFromBytes(base58.decode(process.env.SVM_PRIVATE_KEY!)),
+      { defaultRpcUrl: process.env.SVM_RPC_URL },
     );
 
     const client = new x402Client();
     client.register("solana:*", new ExactSvmScheme(signer));
     client.register("solana:*", new BatchSvmScheme(signer, {
       depositPolicy: { depositMultiplier: 5 },
-      rpcUrl: process.env.SVM_RPC_URL,
       // Optional: restrict to version-0 transactions only (e.g. for signers that
       // cannot sign version-1). Default: build the highest version the facilitator supports.
       // transactionVersions: [0],

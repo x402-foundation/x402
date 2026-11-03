@@ -29,9 +29,10 @@ This package provides three main components for handling x402 payments on Solana
 
 **Client:**
 - `ExactSvmScheme` - V2 exact client using SPL Token
-- `toClientSvmSigner(keypair)` - Converts Solana keypairs to x402 signers
-- `ClientSvmSigner` - TypeScript type for client signers
-- `ClientSvmConfig` - Optional RPC configuration
+- `toClientSvmSigner(signer, rpcConfig?)` - Attaches network-aware RPC to a client signer. Omit `rpcConfig` for the public cluster URL, or pass a kit client, a per-network map, or `{ defaultRpcUrl }`
+- `ClientSvmSigner` - Transaction signer plus optional RPC methods
+- `ClientSvmRpc` / `assertClientSvmRpc` - The reads a scheme may require, and the check that throws when one is missing
+- `ClientSvmConfig` - Optional client options such as `transactionVersions`
 
 **Facilitator:**
 - `ExactSvmScheme` - V2 exact facilitator for payment verification and settlement
@@ -161,30 +162,34 @@ const paidFetch = wrapFetchWithPayment(fetch, client);
 
 ```typescript
 import { x402Client } from "@x402/core/client";
+import { toClientSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { UptoSvmScheme } from "@x402/svm/upto/client";
 import { ExactSvmSchemeV1 } from "@x402/svm/v1";
 
+const svmSigner = toClientSvmSigner(signer);
 const client = new x402Client()
-  .register("solana:*", new ExactSvmScheme(signer)) // fixed-price
-  .register("solana:*", new UptoSvmScheme(signer))  // usage-based
-  .registerSchemeV1("solana-devnet", new ExactSvmSchemeV1(signer))
-  .registerSchemeV1("solana", new ExactSvmSchemeV1(signer));
+  .register("solana:*", new ExactSvmScheme(svmSigner)) // fixed-price
+  .register("solana:*", new UptoSvmScheme(svmSigner))  // usage-based
+  .registerSchemeV1("solana-devnet", new ExactSvmSchemeV1(svmSigner))
+  .registerSchemeV1("solana", new ExactSvmSchemeV1(svmSigner));
 ```
 
 ### 3. Using Config (Flexible)
 
 ```typescript
 import { x402Client } from "@x402/core/client";
+import { toClientSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { ExactSvmSchemeV1 } from "@x402/svm/v1";
 
+const svmSigner = toClientSvmSigner(signer);
 const client = x402Client.fromConfig({
   schemes: [
-    { network: "solana:*", client: new ExactSvmScheme(signer) },
+    { network: "solana:*", client: new ExactSvmScheme(svmSigner) },
     { 
       network: "solana-devnet", 
-      client: new ExactSvmSchemeV1(signer), 
+      client: new ExactSvmSchemeV1(svmSigner), 
       x402Version: 1 
     }
   ]

@@ -27,10 +27,10 @@ import {
   MAX_MEMO_BYTES,
   MEMO_PROGRAM_ADDRESS,
 } from "../../../constants";
-import type { ClientSvmConfig, ClientSvmSigner } from "../../../signer";
+import { clientSignerRpc, type ClientSvmConfig, type ClientSvmSigner } from "../../../signer";
 import type { ExactSvmPayloadV1 } from "../../../types";
 import { applyTransactionV1Config, computeBudgetInstructions } from "../../../transactionV1";
-import { createRpcClient, resolveTransactionVersion } from "../../../utils";
+import { resolveTransactionVersion } from "../../../utils";
 import { getCachedMintMetadata, type MintMetadataCache } from "../../../mint-cache";
 import { findDefaultAsset } from "../../../defaultAssets";
 
@@ -46,7 +46,7 @@ export class ExactSvmSchemeV1 implements SchemeNetworkClient {
    * Creates a new ExactSvmClientV1 instance.
    *
    * @param signer - The SVM signer for client operations
-   * @param config - Optional configuration with custom RPC URL
+   * @param config - Optional transaction-version configuration
    * @returns ExactSvmClientV1 instance
    */
   constructor(
@@ -72,7 +72,7 @@ export class ExactSvmSchemeV1 implements SchemeNetworkClient {
       paymentRequirements.extra,
       this.config?.transactionVersions,
     );
-    const rpc = createRpcClient(selectedV1.network, this.config?.rpcUrl);
+    const rpc = clientSignerRpc(this.signer, selectedV1.network, "ExactSvmSchemeV1");
 
     const mintMetadata = await getCachedMintMetadata(
       rpc,

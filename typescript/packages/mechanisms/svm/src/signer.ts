@@ -18,19 +18,11 @@ import {
 import { ErrSmartWalletAltResolutionFailed } from "./exact/facilitator/errors";
 
 /**
- * Client-side signer for creating and signing Solana transactions
- * This is a wrapper around TransactionSigner from @solana/kit
- */
-export type ClientSvmSigner = TransactionSigner;
-
-/**
- * Configuration for client operations
+ * Configuration for client scheme construction.
+ *
+ * RPC is not configured here. Pass it to {@link toClientSvmSigner}.
  */
 export type ClientSvmConfig = {
-  /**
-   * Optional custom RPC URL for the client to use
-   */
-  rpcUrl?: string;
   /**
    * Transaction message versions the client and its signer can build. The
    * client builds the highest of these that the facilitator advertises in
@@ -391,13 +383,251 @@ export type SvmInnerInstructionsResult = {
 };
 
 /**
- * Convert a signer to ClientSvmSigner (identity function for type safety)
+ * Network-aware RPC a client signer may expose.
  *
- * @param signer - The signer to convert
- * @returns The signer as ClientSvmSigner
+ * The three reads match {@link FacilitatorSvmSigner}. `getProgramAccounts`
+ * is the batch client's channel-discovery scan. A kit `KeyPairSigner` omits
+ * all of them and is still a {@link ClientSvmSigner}.
  */
-export function toClientSvmSigner(signer: ClientSvmSigner): ClientSvmSigner {
-  return signer;
+export type ClientSvmRpc = {
+  getAccountInfo: NonNullable<FacilitatorSvmSigner["getAccountInfo"]>;
+  getLatestBlockhash: NonNullable<FacilitatorSvmSigner["getLatestBlockhash"]>;
+  getSlot: NonNullable<FacilitatorSvmSigner["getSlot"]>;
+  getProgramAccounts: NonNullable<FacilitatorSvmSigner["getProgramAccounts"]>;
+};
+
+/**
+ * Client signer. Signing is required. RPC methods are present only when the
+ * caller composed them with {@link toClientSvmSigner} or implemented them.
+ */
+export type ClientSvmSigner = TransactionSigner & Partial<ClientSvmRpc>;
+
+const CLIENT_SVM_RPC_METHODS = [
+  "getAccountInfo",
+  "getLatestBlockhash",
+  "getSlot",
+  "getProgramAccounts",
+] as const satisfies readonly (keyof ClientSvmRpc)[];
+
+/**
+ * RPC source shared by {@link toClientSvmSigner} and {@link toFacilitatorSvmSigner}.
+ *
+ * A kit client is used for every network. A map keys clients by CAIP-2 id, and
+ * `"*"` is the fallback client. `{ defaultRpcUrl }` builds the cluster client
+ * against that URL. An omitted config uses the public cluster URL.
+ */
+export type SvmRpcConfig =
+  | FacilitatorRpcClient
+  | Record<string, FacilitatorRpcClient>
+  | { defaultRpcUrl?: string };
+
+/**
+ * Pick the RPC client for one network.
+ *
+ * An exact map key wins over `"*"`. Anything else uses {@link createRpcClient}.
+ *
+ * @param rpcConfig - Client, per-network map, or default URL
+ * @returns A resolver from CAIP-2 network to a kit RPC client
+ */
+function resolveSvmRpcClient(rpcConfig?: SvmRpcConfig): (network: string) => FacilitatorRpcClient {
+  let rpcMap: Record<string, FacilitatorRpcClient> = {};
+  let defaultRpcUrl: string | undefined;
+
+  if (rpcConfig) {
+    if ("defaultRpcUrl" in rpcConfig && typeof rpcConfig.defaultRpcUrl === "string") {
+      defaultRpcUrl = rpcConfig.defaultRpcUrl;
+    } else if ("getBalance" in rpcConfig || "getSlot" in rpcConfig) {
+      rpcMap = { "*": rpcConfig as FacilitatorRpcClient };
+    } else {
+      rpcMap = rpcConfig as Record<string, FacilitatorRpcClient>;
+    }
+  }
+
+  return network => {
+    const exact = rpcMap[network];
+    if (exact) return exact;
+    const wildcard = rpcMap["*"];
+    if (wildcard) return wildcard;
+    return createRpcClient(network as `${string}:${string}`, defaultRpcUrl);
+  };
+}
+
+/**
+ * Network-aware reads backed by {@link resolveSvmRpcClient}.
+ *
+ * `getLatestBlockhash` keeps the client's previous call, with no commitment
+ * argument. The facilitator passes `finalized` itself.
+ *
+ * @param getRpcForNetwork - Resolver from {@link resolveSvmRpcClient}
+ * @returns The client RPC methods
+ */
+function createClientSvmRpc(
+  getRpcForNetwork: (network: string) => FacilitatorRpcClient,
+): ClientSvmRpc {
+  return {
+    async getAccountInfo(accountAddress, network, options) {
+      const result = await getRpcForNetwork(network)
+        .getAccountInfo(accountAddress as never, {
+          commitment: (options?.commitment ?? "confirmed") as never,
+          encoding: (options?.encoding ?? "base64") as never,
+          ...(options?.minContextSlot !== undefined
+            ? { minContextSlot: options.minContextSlot }
+            : {}),
+        })
+        .send();
+      return result.value as FacilitatorAccountInfo | null;
+    },
+    async getLatestBlockhash(network) {
+      const result = await getRpcForNetwork(network).getLatestBlockhash().send();
+      return {
+        blockhash: result.value.blockhash,
+        lastValidBlockHeight: result.value.lastValidBlockHeight,
+      };
+    },
+    async getSlot(network, commitment = "finalized") {
+      return getRpcForNetwork(network)
+        .getSlot({ commitment: commitment as never })
+        .send();
+    },
+    async getProgramAccounts(network, programId, config) {
+      return getRpcForNetwork(network)
+        .getProgramAccounts(programId as Address, {
+          commitment: (config.commitment ?? "confirmed") as never,
+          encoding: "base64",
+          filters: config.filters as never,
+        })
+        .send();
+    },
+  };
+}
+
+/**
+ * True when `prop` is one of {@link ClientSvmRpc}'s methods.
+ *
+ * @param prop - Property name read from a signer
+ * @returns Whether the property is a client RPC method
+ */
+function isClientSvmRpcMethod(prop: string): prop is keyof ClientSvmRpc {
+  return (CLIENT_SVM_RPC_METHODS as readonly string[]).includes(prop);
+}
+
+/**
+ * Read `prop` from `target` and bind functions that use `this`.
+ *
+ * A non-configurable own value must be returned unchanged. Kit keypairs store
+ * `signTransactions` that way, and the function already closes over its keys.
+ *
+ * @param target - Object the proxy forwards to
+ * @param prop - Property being read
+ * @returns The property value, bound to `target` when that is allowed
+ */
+function forwardSignerProperty(target: object, prop: string | symbol): unknown {
+  const value = Reflect.get(target, prop, target);
+  if (typeof value !== "function") return value;
+  const own = Object.getOwnPropertyDescriptor(target, prop);
+  if (own && own.configurable === false && "value" in own && own.writable === false) return value;
+  return value.bind(target);
+}
+
+/**
+ * Attach network-aware RPC to a client signer.
+ *
+ * The returned object forwards every property of `signer`. Class methods are
+ * called with the original object as `this`, so private fields keep working.
+ * With no `rpcConfig`, public cluster URLs fill any RPC method the signer
+ * does not already implement. A method the signer already has is kept, so
+ * wrapping again does not replace a custom client.
+ *
+ * @param signer - Kit transaction signer, or a signer that already has RPC
+ * @param rpcConfig - Kit client, per-network map, or `{ defaultRpcUrl }`
+ * @returns `signer` plus {@link ClientSvmRpc}
+ */
+export function toClientSvmSigner<T extends TransactionSigner>(
+  signer: T,
+  rpcConfig?: SvmRpcConfig,
+): T & ClientSvmRpc {
+  const rpc = createClientSvmRpc(resolveSvmRpcClient(rpcConfig));
+  return new Proxy(signer, {
+    get(target, prop) {
+      if (typeof prop === "string" && isClientSvmRpcMethod(prop)) {
+        if (rpcConfig === undefined) {
+          const existing = forwardSignerProperty(target, prop);
+          if (typeof existing === "function") return existing;
+        }
+        return rpc[prop];
+      }
+      return forwardSignerProperty(target, prop);
+    },
+  }) as T & ClientSvmRpc;
+}
+
+/**
+ * Throw when `signer` is missing a client RPC method.
+ *
+ * Schemes call this at the read, not in the constructor, so a 402 hint that
+ * skips the read does not require the method.
+ *
+ * @param signer - Client signer to check
+ * @param caps - Method names the current read needs
+ * @param label - Scheme or helper name used in the error
+ * @throws Error when any named method is missing
+ */
+export function assertClientSvmRpc<K extends keyof ClientSvmRpc>(
+  signer: ClientSvmSigner,
+  caps: readonly K[],
+  label: string,
+): asserts signer is ClientSvmSigner & Required<Pick<ClientSvmRpc, K>> {
+  for (const method of caps) {
+    if (typeof signer[method] !== "function") {
+      throw new Error(`${label} requires ${method} on the signer.`);
+    }
+  }
+}
+
+/**
+ * Kit RPC surface whose reads go through a client signer.
+ *
+ * `getLatestBlockhash`, `getSlot`, and `getAccountInfo` each assert their
+ * capability inside `send`, so constructing this object performs no RPC and
+ * does not require the methods.
+ *
+ * @param signer - Client signer that may carry RPC
+ * @param network - CAIP-2 or legacy network id passed to the signer
+ * @param label - Scheme or helper name used in the assert error
+ * @returns A kit-shaped RPC for blockhash, slot, and account reads
+ */
+export function clientSignerRpc(
+  signer: ClientSvmSigner,
+  network: string,
+  label: string,
+): ReturnType<typeof createRpcClient> {
+  const rpc = {
+    getAccountInfo: (
+      accountAddress: Address,
+      config?: { commitment?: string; encoding?: string; minContextSlot?: bigint },
+    ) => ({
+      send: async () => {
+        assertClientSvmRpc(signer, ["getAccountInfo"], label);
+        return {
+          context: { slot: 0n },
+          value: await signer.getAccountInfo(String(accountAddress), network, config),
+        };
+      },
+    }),
+    getLatestBlockhash: () => ({
+      send: async () => {
+        assertClientSvmRpc(signer, ["getLatestBlockhash"], label);
+        return { value: await signer.getLatestBlockhash(network) };
+      },
+    }),
+    getSlot: (config?: { commitment?: string }) => ({
+      send: async () => {
+        assertClientSvmRpc(signer, ["getSlot"], label);
+        return signer.getSlot(network, config?.commitment);
+      },
+    }),
+  };
+  return rpc as ReturnType<typeof createRpcClient>;
 }
 
 /**
@@ -500,13 +730,10 @@ export function createRpcCapabilitiesFromRpc(
 }
 
 /**
- * RPC configuration for the facilitator
- * Can be a single RPC (all networks), a network mapping, or config options
+ * RPC configuration for {@link toFacilitatorSvmSigner}.
+ * Same shapes as {@link SvmRpcConfig}.
  */
-export type FacilitatorRpcConfig =
-  | FacilitatorRpcClient // Single RPC for all networks
-  | Record<string, FacilitatorRpcClient> // Per-network RPC mapping
-  | { defaultRpcUrl?: string }; // Custom default RPC URL
+export type FacilitatorRpcConfig = SvmRpcConfig;
 
 /**
  * Create a FacilitatorSvmSigner from a TransactionSigner and optional RPC config
@@ -543,38 +770,7 @@ export function toFacilitatorSvmSigner(
   signer: TransactionSigner & MessagePartialSigner,
   rpcConfig?: FacilitatorRpcConfig,
 ): FacilitatorSvmSigner {
-  let rpcMap: Record<string, FacilitatorRpcClient> = {};
-  let defaultRpcUrl: string | undefined;
-
-  if (rpcConfig) {
-    // Check if it's a config object with defaultRpcUrl
-    if ("defaultRpcUrl" in rpcConfig && typeof rpcConfig.defaultRpcUrl === "string") {
-      defaultRpcUrl = rpcConfig.defaultRpcUrl;
-    }
-    // Check if it's a single RPC client
-    else if ("getBalance" in rpcConfig || "getSlot" in rpcConfig) {
-      rpcMap["*"] = rpcConfig as FacilitatorRpcClient;
-    }
-    // Otherwise, it's a network mapping
-    else {
-      rpcMap = rpcConfig as Record<string, FacilitatorRpcClient>;
-    }
-  }
-
-  const getRpcForNetwork = (network: string): FacilitatorRpcClient => {
-    // 1. Check for exact network match
-    if (rpcMap[network]) {
-      return rpcMap[network];
-    }
-
-    // 2. Check for wildcard RPC
-    if (rpcMap["*"]) {
-      return rpcMap["*"];
-    }
-
-    // 3. Create default RPC for this network
-    return createRpcClient(network as `${string}:${string}`, defaultRpcUrl);
-  };
+  const getRpcForNetwork = resolveSvmRpcClient(rpcConfig);
 
   return {
     getAddresses: () => {

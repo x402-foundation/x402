@@ -11,6 +11,7 @@ import { MAX_MEMO_BYTES, SOLANA_DEVNET_CAIP2, TOKEN_PROGRAM_ADDRESS } from "../.
 import { USDC_DEVNET_ADDRESS } from "../../src/defaultAssets";
 import { getCachedMintMetadata } from "../../src/mint-cache";
 import { resolveBlockhash } from "../../src/utils";
+import * as svmUtils from "../../src/utils";
 
 vi.mock("@solana-program/token-2022", async importOriginal => {
   const actual = await importOriginal<typeof import("@solana-program/token-2022")>();
@@ -28,6 +29,20 @@ function getRegisteredNetworks(client: x402Client, version: number): string[] {
   const internals = client as unknown as ClientInternals;
   const byNetwork = internals.registeredClientSchemes.get(version);
   return byNetwork ? [...byNetwork.keys()] : [];
+}
+
+function getRegisteredScheme(
+  client: x402Client,
+  version: number,
+  network: string,
+  scheme: string,
+):
+  | { createPaymentPayload: (v: number, requirements: PaymentRequirements) => Promise<unknown> }
+  | undefined {
+  const internals = client as unknown as ClientInternals;
+  return internals.registeredClientSchemes.get(version)?.get(network)?.get(scheme) as
+    | { createPaymentPayload: (v: number, requirements: PaymentRequirements) => Promise<unknown> }
+    | undefined;
 }
 
 const PROVIDED_BLOCKHASH = "EZ3rST5dvHmbanh75jc4PuLfV96vp9fEYBVeNk4FfM1k";
@@ -82,7 +97,7 @@ describe("ExactSvmScheme", () => {
 
     it("should accept optional config", () => {
       const client = new ExactSvmScheme(mockSigner, {
-        rpcUrl: "https://custom-rpc.com",
+        transactionVersions: [0],
       });
       expect(client.scheme).toBe("exact");
     });
@@ -175,13 +190,13 @@ describe("ExactSvmScheme", () => {
       ).rejects.toThrow("Asset was not created by a known token program");
     });
 
-    it("forwards a configured rpcUrl before rejecting an unknown mint program", async () => {
-      vi.mocked(fetchMint).mockResolvedValue({
-        data: { decimals: 6 },
-        programAddress: "11111111111111111111111111111111",
-      } as never);
+    it("rejects a bare signer before signing when the mint must be read", async () => {
+      vi.mocked(fetchMint).mockImplementation(async rpc => {
+        await rpc.getAccountInfo(USDC_DEVNET_ADDRESS as never).send();
+        throw new Error("mint read should have failed first");
+      });
       const payer = await generateKeyPairSigner();
-      const client = new ExactSvmScheme(payer, { rpcUrl: "https://custom-rpc.example" });
+      const client = new ExactSvmScheme(payer);
       await expect(
         client.createPaymentPayload(2, {
           scheme: "exact",
@@ -192,7 +207,7 @@ describe("ExactSvmScheme", () => {
           maxTimeoutSeconds: 3600,
           extra: { feePayer: payer.address, recentBlockhash: PROVIDED_BLOCKHASH },
         }),
-      ).rejects.toThrow("Asset was not created by a known token program");
+      ).rejects.toThrow("ExactSvmScheme requires getAccountInfo on the signer.");
     });
 
     it("rejects when extra.feePayer is missing after mint resolution", async () => {
@@ -343,6 +358,42 @@ describe("registerExactSvmScheme", () => {
 
     expect(getRegisteredNetworks(client, 2)).toEqual(["solana:*"]);
     expect(getRegisteredNetworks(client, 1).sort()).toEqual([...NETWORKS].sort());
+  });
+
+  it("preserves public RPC when registering a bare signer", async () => {
+    const payer = await generateKeyPairSigner();
+    const send = vi.fn().mockResolvedValue({
+      value: { blockhash: FALLBACK_BLOCKHASH, lastValidBlockHeight: 1n },
+    });
+    const spy = vi.spyOn(svmUtils, "createRpcClient").mockReturnValue({
+      getLatestBlockhash: () => ({ send }),
+    } as never);
+    vi.mocked(fetchMint).mockResolvedValue({
+      data: { decimals: 6 },
+      programAddress: TOKEN_PROGRAM_ADDRESS,
+    } as never);
+    try {
+      const client = new x402Client();
+      registerExactSvmScheme(client, {
+        signer: payer,
+        networks: [SOLANA_DEVNET_CAIP2 as Network],
+      });
+      const scheme = getRegisteredScheme(client, 2, SOLANA_DEVNET_CAIP2, "exact");
+      await scheme
+        ?.createPaymentPayload(2, {
+          scheme: "exact",
+          network: SOLANA_DEVNET_CAIP2,
+          asset: USDC_DEVNET_ADDRESS,
+          amount: "100000",
+          payTo: payer.address,
+          maxTimeoutSeconds: 3600,
+          extra: { feePayer: payer.address },
+        })
+        .catch(() => undefined);
+      expect(spy).toHaveBeenCalledWith(SOLANA_DEVNET_CAIP2, undefined);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("registers caller-supplied policies", () => {

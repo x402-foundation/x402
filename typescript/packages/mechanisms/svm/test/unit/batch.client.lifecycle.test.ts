@@ -14,7 +14,7 @@ import type { BatchChannelConfig } from "../../src/batch-settlement/types";
 import { SOLANA_DEVNET_CAIP2, TOKEN_PROGRAM_ADDRESS } from "../../src/constants";
 import { USDC_DEVNET_ADDRESS, USDC_MAINNET_ADDRESS } from "../../src/defaultAssets";
 import { signVoucher } from "../../src/payment-channels/voucher";
-import { createRpcClient, resolveBlockhash, resolveOpenSlot } from "../../src/utils";
+import { resolveBlockhash, resolveOpenSlot } from "../../src/utils";
 
 vi.mock("@solana-program/token-2022", async importOriginal => ({
   ...(await importOriginal<typeof import("@solana-program/token-2022")>()),
@@ -23,9 +23,6 @@ vi.mock("@solana-program/token-2022", async importOriginal => ({
 
 vi.mock("../../src/utils", async importOriginal => ({
   ...(await importOriginal<typeof import("../../src/utils")>()),
-  createRpcClient: vi.fn(() => ({
-    getProgramAccounts: vi.fn(() => ({ send: vi.fn().mockResolvedValue([]) })),
-  })),
   resolveBlockhash: vi.fn(),
   resolveOpenSlot: vi.fn(),
 }));
@@ -52,9 +49,6 @@ beforeEach(() => {
     lastValidBlockHeight: 10n,
   });
   vi.mocked(resolveOpenSlot).mockResolvedValue(123n);
-  vi.mocked(createRpcClient).mockReturnValue({
-    getProgramAccounts: vi.fn(() => ({ send: vi.fn().mockResolvedValue([]) })),
-  } as never);
 });
 
 function requirements(overrides: Partial<PaymentRequirements> = {}): PaymentRequirements {
@@ -447,19 +441,31 @@ describe("batch client lifecycle", () => {
     });
   });
 
-  it("treats empty and failed discovery scans as cache misses", async () => {
-    const client = new BatchSvmScheme(payer);
-    const api = internals(client);
+  it("treats a missing, empty, or failed discovery scan as a cache miss", async () => {
     const terms = {
       feePayer: feePayer.address,
       tokenProgram: TOKEN_PROGRAM_ADDRESS,
       withdrawDelay: 900,
     };
-    await expect(api.discoverChannel(requirements(), terms)).resolves.toBeUndefined();
-    vi.mocked(createRpcClient).mockReturnValue({
-      getProgramAccounts: vi.fn(() => ({ send: vi.fn().mockRejectedValue(new Error("rpc")) })),
-    } as never);
-    await expect(api.discoverChannel(requirements(), terms)).resolves.toBeUndefined();
+    const withScan = (getProgramAccounts: ReturnType<typeof vi.fn>) =>
+      new BatchSvmScheme({
+        address: payer.address,
+        getProgramAccounts,
+        signMessages: payer.signMessages.bind(payer),
+        signTransactions: payer.signTransactions.bind(payer),
+      });
+    await expect(
+      internals(new BatchSvmScheme(payer)).discoverChannel(requirements(), terms),
+    ).resolves.toBeUndefined();
+    await expect(
+      internals(withScan(vi.fn().mockResolvedValue([]))).discoverChannel(requirements(), terms),
+    ).resolves.toBeUndefined();
+    await expect(
+      internals(withScan(vi.fn().mockRejectedValue(new Error("rpc")))).discoverChannel(
+        requirements(),
+        terms,
+      ),
+    ).resolves.toBeUndefined();
   });
 
   it("adopts a discovered channel before allocating a voucher", async () => {

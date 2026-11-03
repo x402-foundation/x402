@@ -1,15 +1,11 @@
 /* eslint-disable jsdoc/require-jsdoc */
 /** Client-side payment-channel construction for SVM `batch-settlement`. */
 
-import {
-  createSignableMessage,
-  getBase58Decoder,
-  type MessagePartialSigner,
-  type TransactionSigner,
-} from "@solana/kit";
+import { createSignableMessage, getBase58Decoder, type MessagePartialSigner } from "@solana/kit";
 
 import { buildRequestCloseTransaction } from "../../payment-channels/close";
 import { buildOpenPaymentChannelTransaction } from "../../payment-channels/open";
+import type { ClientSvmSigner } from "../../signer";
 import type { BuildableTransactionVersion } from "../../transactionV1";
 import { encodeVoucherMessageBytes } from "../../payment-channels/voucher";
 import { signBatchAuthorization } from "../authorization";
@@ -23,7 +19,7 @@ import type {
   BatchVoucher,
 } from "../types";
 
-export type BatchClientSigner = TransactionSigner & MessagePartialSigner;
+export type BatchClientSigner = ClientSvmSigner & MessagePartialSigner;
 
 export async function signBatchVoucher(
   signer: BatchClientSigner,

@@ -13,7 +13,6 @@ import {
   trySignErc20ApprovalExtension,
 } from "../../shared/extensions";
 import { findDefaultAsset } from "../../defaultAssets";
-import type { EvmSchemeOptions } from "../../shared/rpc";
 
 /**
  * EVM client implementation for the Exact payment scheme.
@@ -37,13 +36,10 @@ export class ExactEvmScheme implements SchemeNetworkClient {
    * @param signer - The EVM signer for client operations.
    *   Base flow only requires `address` + `signTypedData`.
    *   Extension enrichment (EIP-2612 / ERC-20 approval sponsoring) additionally
-   *   requires optional capabilities like `readContract` and tx signing helpers.
-   * @param options - Optional RPC configuration used to backfill extension capabilities.
+   *   requires optional capabilities like `readContract` and tx signing helpers,
+   *   which `toClientEvmSigner(account, rpc)` composes.
    */
-  constructor(
-    private readonly signer: ClientEvmSigner,
-    private readonly options?: EvmSchemeOptions,
-  ) {}
+  constructor(private readonly signer: ClientEvmSigner) {}
 
   /**
    * Creates a payment payload for the Exact scheme.
@@ -71,7 +67,6 @@ export class ExactEvmScheme implements SchemeNetworkClient {
 
       const eip2612Extensions = await trySignEip2612PermitExtension(
         this.signer,
-        this.options,
         paymentRequirements,
         result,
         context,
@@ -86,7 +81,6 @@ export class ExactEvmScheme implements SchemeNetworkClient {
 
       const erc20Extensions = await trySignErc20ApprovalExtension(
         this.signer,
-        this.options,
         paymentRequirements,
         context,
       );

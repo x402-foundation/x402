@@ -1,0 +1,5 @@
+---
+"@x402/svm": minor
+---
+
+**Breaking:** SVM client RPC now lives on the signer. Removed `ClientSvmConfig.rpcUrl`, `BatchSvmClientConfig.rpcUrl`, and `BatchTransactionBuildArgs.rpcUrl`. Add `ClientSvmRpc` (`getAccountInfo`, `getLatestBlockhash`, `getSlot`, `getProgramAccounts`), `toClientSvmSigner(signer, rpcConfig)`, and `assertClientSvmRpc`. Pass a kit client, a per-network map, or `{ defaultRpcUrl }`; omit `rpcConfig` for the public cluster URL. `registerExactSvmScheme` wraps the signer, so that helper still uses the public URL. A bare signer pays a 402 that already carries the hints that read would have fetched, and is rejected with `"<scheme> requires <method> on the signer."` only when a read is actually needed. Batch settlement still reads the mint to check that `extra.tokenProgram` owns the asset. Migrate `new ExactSvmScheme(signer, { rpcUrl })` to `new ExactSvmScheme(toClientSvmSigner(signer, { defaultRpcUrl: rpcUrl }))`. The wire format is unchanged. Server scheme `rpcUrl` and `createChannelManager` `rpcUrl` are unchanged.

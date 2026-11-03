@@ -29,6 +29,7 @@ import { ExactCantonScheme } from "@x402/canton/exact/client";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/client";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { UptoEvmScheme } from "@x402/evm/upto/client";
+import { toClientSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { UptoSvmScheme } from "@x402/svm/upto/client";
 import { toClientKeetaSigner } from "@x402/keeta";
@@ -277,7 +278,9 @@ async function main(): Promise<void> {
 
   // Register SVM scheme if private key is provided
   if (svmPrivateKey) {
-    const svmSigner = await createKeyPairSignerFromBytes(base58.decode(svmPrivateKey));
+    const svmSigner = toClientSvmSigner(
+      await createKeyPairSignerFromBytes(base58.decode(svmPrivateKey)),
+    );
     client.register("solana:*", new ExactSvmScheme(svmSigner));
     client.register("solana:*", new UptoSvmScheme(svmSigner));
     console.log(`Initialized SVM account: ${svmSigner.address}`);

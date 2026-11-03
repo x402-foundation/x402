@@ -18,11 +18,14 @@ import {
   type Address,
 } from "@solana/kit";
 import {
+  assertClientSvmRpc,
+  clientSignerRpc,
   createRpcCapabilitiesFromRpc,
   toClientSvmSigner,
   toFacilitatorSvmSigner,
 } from "../../src/signer";
 import type { ClientSvmSigner } from "../../src/signer";
+import * as svmUtils from "../../src/utils";
 import { SOLANA_DEVNET_CAIP2, SOLANA_MAINNET_CAIP2 } from "../../src/constants";
 import { encodeSignedTransaction, placeholderFeePayerSignature } from "./helpers/signedTransaction";
 
@@ -42,15 +45,241 @@ describe("SVM Signer Converters", () => {
   });
 
   describe("toClientSvmSigner", () => {
-    it("should return the same signer (identity function)", () => {
-      const mockSigner: ClientSvmSigner = {
-        address: "9xAXssX9j7vuK99c7cFwqbixzL3bFrzPy9PUhCtDPAYJ" as never,
+    const signerAddress = "9xAXssX9j7vuK99c7cFwqbixzL3bFrzPy9PUhCtDPAYJ" as Address;
+
+    function baseSigner() {
+      return {
+        address: signerAddress,
+        signTransactions: vi.fn(async () => []),
+      };
+    }
+
+    function recordingRpc(label: string) {
+      const accountConfigs: unknown[] = [];
+      const blockhashArgCounts: number[] = [];
+      const slotConfigs: unknown[] = [];
+      const programConfigs: unknown[] = [];
+      const rpc = {
+        getAccountInfo: (_account: unknown, config?: unknown) => ({
+          send: async () => {
+            accountConfigs.push(config);
+            return { value: { data: [`${label}-account`] } };
+          },
+        }),
+        getBalance: () => ({ send: async () => ({ value: 0n }) }),
+        getLatestBlockhash: (...args: unknown[]) => ({
+          send: async () => {
+            blockhashArgCounts.push(args.length);
+            return { value: { blockhash: `${label}-bh`, lastValidBlockHeight: 4n } };
+          },
+        }),
+        getProgramAccounts: (_program: unknown, config?: unknown) => ({
+          send: async () => {
+            programConfigs.push(config);
+            return [{ pubkey: `${label}-row` }];
+          },
+        }),
+        getSlot: (config?: unknown) => ({
+          send: async () => {
+            slotConfigs.push(config);
+            return 9n;
+          },
+        }),
+      };
+      return { accountConfigs, blockhashArgCounts, programConfigs, rpc, slotConfigs };
+    }
+
+    it("uses the public cluster client when no RPC config is passed", async () => {
+      const recorded = recordingRpc("default");
+      const spy = vi.spyOn(svmUtils, "createRpcClient").mockReturnValue(recorded.rpc as never);
+      try {
+        const bare = baseSigner();
+        const wrapped = toClientSvmSigner(bare);
+        expect(wrapped).not.toBe(bare);
+
+        await expect(wrapped.getAccountInfo(signerAddress, SOLANA_DEVNET_CAIP2)).resolves.toEqual({
+          data: ["default-account"],
+        });
+        await wrapped.getAccountInfo(signerAddress, SOLANA_DEVNET_CAIP2, {
+          commitment: "processed",
+          encoding: "jsonParsed",
+          minContextSlot: 3n,
+        });
+        await expect(wrapped.getLatestBlockhash(SOLANA_MAINNET_CAIP2)).resolves.toEqual({
+          blockhash: "default-bh",
+          lastValidBlockHeight: 4n,
+        });
+        await expect(wrapped.getSlot(SOLANA_DEVNET_CAIP2)).resolves.toBe(9n);
+        await expect(
+          wrapped.getProgramAccounts(SOLANA_DEVNET_CAIP2, signerAddress, { filters: [] }),
+        ).resolves.toEqual([{ pubkey: "default-row" }]);
+
+        expect(spy).toHaveBeenCalledWith(SOLANA_DEVNET_CAIP2, undefined);
+        expect(spy).toHaveBeenCalledWith(SOLANA_MAINNET_CAIP2, undefined);
+        expect(recorded.accountConfigs).toEqual([
+          { commitment: "confirmed", encoding: "base64" },
+          { commitment: "processed", encoding: "jsonParsed", minContextSlot: 3n },
+        ]);
+        expect(recorded.blockhashArgCounts).toEqual([0]);
+        expect(recorded.slotConfigs).toEqual([{ commitment: "finalized" }]);
+        expect(recorded.programConfigs).toEqual([
+          { commitment: "confirmed", encoding: "base64", filters: [] },
+        ]);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("sends every network to one kit client", async () => {
+      const recorded = recordingRpc("single");
+      const spy = vi.spyOn(svmUtils, "createRpcClient");
+      try {
+        const wrapped = toClientSvmSigner(baseSigner(), recorded.rpc);
+        await wrapped.getSlot(SOLANA_DEVNET_CAIP2);
+        await wrapped.getSlot(SOLANA_MAINNET_CAIP2);
+        expect(recorded.slotConfigs).toEqual([
+          { commitment: "finalized" },
+          { commitment: "finalized" },
+        ]);
+        expect(spy).not.toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("builds the cluster client from defaultRpcUrl", async () => {
+      const recorded = recordingRpc("url");
+      const spy = vi.spyOn(svmUtils, "createRpcClient").mockReturnValue(recorded.rpc as never);
+      try {
+        const wrapped = toClientSvmSigner(baseSigner(), {
+          defaultRpcUrl: "https://rpc.example",
+        });
+        await wrapped.getLatestBlockhash(SOLANA_DEVNET_CAIP2);
+        expect(spy).toHaveBeenCalledWith(SOLANA_DEVNET_CAIP2, "https://rpc.example");
+        expect(recorded.blockhashArgCounts).toEqual([0]);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("prefers an exact network client over the wildcard client", async () => {
+      const exact = recordingRpc("exact");
+      const wildcard = recordingRpc("wild");
+      const wrapped = toClientSvmSigner(baseSigner(), {
+        "*": wildcard.rpc,
+        [SOLANA_DEVNET_CAIP2]: exact.rpc,
+      });
+
+      await expect(wrapped.getSlot(SOLANA_DEVNET_CAIP2)).resolves.toBe(9n);
+      await expect(wrapped.getSlot("solana:unknown")).resolves.toBe(9n);
+      expect(exact.slotConfigs).toHaveLength(1);
+      expect(wildcard.slotConfigs).toHaveLength(1);
+    });
+
+    it("keeps a complete RPC signer and lets a later config replace it", async () => {
+      const recorded = recordingRpc("custom");
+      const wrapped = toClientSvmSigner(baseSigner(), recorded.rpc);
+      const again = toClientSvmSigner(wrapped);
+      await again.getSlot(SOLANA_DEVNET_CAIP2);
+      expect(recorded.slotConfigs).toEqual([{ commitment: "finalized" }]);
+
+      const replacement = recordingRpc("replacement");
+      const overridden = toClientSvmSigner(wrapped, replacement.rpc);
+      await overridden.getSlot(SOLANA_DEVNET_CAIP2);
+      expect(replacement.slotConfigs).toEqual([{ commitment: "finalized" }]);
+      expect(recorded.slotConfigs).toHaveLength(1);
+    });
+
+    it("keeps RPC methods the signer already has and fills the rest", async () => {
+      const getSlot = vi.fn(async () => 3n);
+      const recorded = recordingRpc("fill");
+      const spy = vi.spyOn(svmUtils, "createRpcClient").mockReturnValue(recorded.rpc as never);
+      try {
+        const wrapped = toClientSvmSigner({ ...baseSigner(), getSlot });
+        await expect(wrapped.getSlot(SOLANA_DEVNET_CAIP2)).resolves.toBe(3n);
+        expect(spy).not.toHaveBeenCalled();
+        await wrapped.getLatestBlockhash(SOLANA_DEVNET_CAIP2);
+        expect(spy).toHaveBeenCalledWith(SOLANA_DEVNET_CAIP2, undefined);
+        expect(getSlot).toHaveBeenCalledWith(SOLANA_DEVNET_CAIP2);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("calls a class signer's private state through the wrapper", async () => {
+      class Wallet {
+        readonly address = signerAddress;
+        #secret = "kept";
+
+        async signTransactions() {
+          return [this.#secret];
+        }
+
+        async getSlot() {
+          return BigInt(this.#secret.length);
+        }
+      }
+
+      const wrapped = toClientSvmSigner(new Wallet() as never);
+      const signTransactions = wrapped.signTransactions;
+      const getSlot = wrapped.getSlot;
+      await expect(signTransactions([] as never)).resolves.toEqual(["kept"]);
+      await expect(getSlot(SOLANA_DEVNET_CAIP2)).resolves.toBe(4n);
+    });
+
+    it("forwards a kit keypair, which stays assignable without RPC methods", async () => {
+      const keypair = await generateKeyPairSigner();
+      const assigned: ClientSvmSigner = keypair;
+      const wrapped = toClientSvmSigner(keypair);
+
+      expect(assigned.address).toBe(keypair.address);
+      expect(assigned.getLatestBlockhash).toBeUndefined();
+      await expect(wrapped.signTransactions([])).resolves.toEqual([]);
+    });
+
+    it("adapts signer reads to kit send and asserts inside send", async () => {
+      const recorded = recordingRpc("adapt");
+      const adapted = clientSignerRpc(
+        toClientSvmSigner(baseSigner(), recorded.rpc),
+        SOLANA_DEVNET_CAIP2,
+        "ExactSvmScheme",
+      );
+      await expect(adapted.getAccountInfo(signerAddress as never).send()).resolves.toEqual({
+        context: { slot: 0n },
+        value: { data: ["adapt-account"] },
+      });
+      await expect(adapted.getLatestBlockhash().send()).resolves.toEqual({
+        value: { blockhash: "adapt-bh", lastValidBlockHeight: 4n },
+      });
+      await expect(adapted.getSlot().send()).resolves.toBe(9n);
+
+      const bare = clientSignerRpc(baseSigner(), SOLANA_DEVNET_CAIP2, "BatchSvmScheme");
+      await expect(bare.getAccountInfo(signerAddress as never).send()).rejects.toThrow(
+        "BatchSvmScheme requires getAccountInfo on the signer.",
+      );
+      await expect(bare.getLatestBlockhash().send()).rejects.toThrow(
+        "BatchSvmScheme requires getLatestBlockhash on the signer.",
+      );
+      await expect(bare.getSlot().send()).rejects.toThrow(
+        "BatchSvmScheme requires getSlot on the signer.",
+      );
+    });
+  });
+
+  describe("assertClientSvmRpc", () => {
+    it("names the missing method and accepts a signer that has it", () => {
+      const signer: ClientSvmSigner = {
+        address: "9xAXssX9j7vuK99c7cFwqbixzL3bFrzPy9PUhCtDPAYJ" as Address,
         signTransactions: vi.fn() as never,
       };
+      expect(() => assertClientSvmRpc(signer, ["getSlot"], "UptoSvmScheme")).toThrow(
+        "UptoSvmScheme requires getSlot on the signer.",
+      );
 
-      const result = toClientSvmSigner(mockSigner);
-      expect(result).toBe(mockSigner);
-      expect(result.address).toBe(mockSigner.address);
+      const wrapped = toClientSvmSigner(signer, {
+        getSlot: () => ({ send: async () => 1n }),
+      });
+      expect(() => assertClientSvmRpc(wrapped, ["getSlot"], "UptoSvmScheme")).not.toThrow();
     });
   });
 

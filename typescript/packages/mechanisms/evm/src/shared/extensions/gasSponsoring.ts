@@ -9,11 +9,9 @@ import {
 } from "../../exact/extensions";
 import { getAddress } from "viem";
 import { PERMIT2_ADDRESS, erc20AllowanceAbi } from "../../constants";
-import { getEvmChainId } from "../../utils";
-import { ClientEvmSigner } from "../../signer";
+import { ClientEvmSigner, EvmRpcNotConfiguredError } from "../../signer";
 import { signEip2612Permit } from "../../exact/client/eip2612";
 import { signErc20ApprovalTransaction } from "../../exact/client/erc20approval";
-import { resolveExtensionRpcCapabilities, type EvmSchemeOptions } from "../rpc";
 
 const warnedNetworks = new Set<string>();
 
@@ -21,11 +19,11 @@ const warnedNetworks = new Set<string>();
  * Warns, once per network per process, that gas sponsoring was advertised but
  * cannot be used because the client cannot read the chain.
  *
- * Without `readContract` on the signer or an `rpcUrl` in the scheme options the
- * payload goes out without the sponsored permit/approval, and a fresh wallet
- * gets `412 permit2_allowance_required` from the facilitator with nothing in
- * the client to say why. Warned rather than thrown so an existing integration
- * keeps its current behaviour; the fix is one of the two named in the message.
+ * Without a signer that reads this network the payload goes out without the
+ * sponsored permit/approval, and a fresh wallet gets
+ * `412 permit2_allowance_required` from the facilitator with nothing in the
+ * client to say why. Warned rather than thrown so an existing integration
+ * keeps its current behaviour; the fix is named in the message.
  *
  * @param network - The CAIP-2 network the payment requirements are for
  */
@@ -35,9 +33,42 @@ function warnCannotReadForSponsoring(network: string): void {
   console.warn(
     `[x402] gas sponsoring is advertised for ${network} but the client cannot read the chain, ` +
       "so the sponsored permit/approval will not be signed and a fresh wallet will get " +
-      "412 permit2_allowance_required. Pass { rpcUrl } to ExactEvmScheme, or use a signer " +
-      "with readContract (e.g. toClientEvmSigner(account, publicClient)).",
+      "412 permit2_allowance_required. Give the signer an RPC for this network with " +
+      "toClientEvmSigner(account, rpc).",
   );
+}
+
+/**
+ * Reads the payer's Permit2 allowance for the sponsored token.
+ *
+ * @param readContract - The signer's `readContract`
+ * @param owner - The payer address
+ * @param requirements - The payment requirements naming network and asset
+ * @returns The allowance, `"unreadable"` when the signer has no RPC for the network,
+ *   or `undefined` when the read failed for another reason
+ */
+async function readPermit2Allowance(
+  readContract: NonNullable<ClientEvmSigner["readContract"]>,
+  owner: `0x${string}`,
+  requirements: PaymentRequirements,
+): Promise<bigint | "unreadable" | undefined> {
+  try {
+    return (await readContract(
+      {
+        address: getAddress(requirements.asset),
+        abi: erc20AllowanceAbi,
+        functionName: "allowance",
+        args: [owner, PERMIT2_ADDRESS],
+      },
+      requirements.network,
+    )) as bigint;
+  } catch (error) {
+    if (error instanceof EvmRpcNotConfiguredError) {
+      return "unreadable";
+    }
+    // Any other allowance failure proceeds with signing.
+    return undefined;
+  }
 }
 
 /**
@@ -53,7 +84,6 @@ export function _resetSponsoringWarnings(): void {
  * Attempts to sign an EIP-2612 permit for gasless Permit2 approval.
  *
  * @param signer - The EVM client signer
- * @param options - Optional RPC configuration for backfilling capabilities
  * @param requirements - The payment requirements from the server
  * @param result - The payment payload result from the scheme
  * @param context - Optional context containing server extensions and metadata
@@ -62,7 +92,6 @@ export function _resetSponsoringWarnings(): void {
  */
 export async function trySignEip2612PermitExtension(
   signer: ClientEvmSigner,
-  options: EvmSchemeOptions | undefined,
   requirements: PaymentRequirements,
   result: PaymentPayloadResult,
   context?: PaymentPayloadContext,
@@ -72,14 +101,12 @@ export async function trySignEip2612PermitExtension(
     return undefined;
   }
 
-  const capabilities = resolveExtensionRpcCapabilities(requirements.network, signer, options);
-
-  if (!capabilities.readContract) {
+  const readContract = signer.readContract;
+  if (!readContract) {
     // The server advertised sponsoring and the client would sign the permit,
-    // but it cannot read `allowance`/`nonces`: the signer has no `readContract`
-    // and no `rpcUrl` was configured. Returning silently here sends a payload
-    // without the permit, and the facilitator answers 412
-    // permit2_allowance_required with nothing to say why.
+    // but it cannot read `allowance`/`nonces`: the signer has no `readContract`.
+    // Returning silently here sends a payload without the permit, and the
+    // facilitator answers 412 permit2_allowance_required with nothing to say why.
     warnCannotReadForSponsoring(requirements.network);
     return undefined;
   }
@@ -90,23 +117,14 @@ export async function trySignEip2612PermitExtension(
     return undefined;
   }
 
-  const chainId = getEvmChainId(requirements.network);
-  const tokenAddress = getAddress(requirements.asset) as `0x${string}`;
   const requiredAllowance = approvalAmount ?? requirements.amount;
-
-  try {
-    const allowance = (await capabilities.readContract({
-      address: tokenAddress,
-      abi: erc20AllowanceAbi,
-      functionName: "allowance",
-      args: [signer.address, PERMIT2_ADDRESS],
-    })) as bigint;
-
-    if (allowance >= BigInt(requiredAllowance)) {
-      return undefined;
-    }
-  } catch {
-    // Allowance check failed, proceed with signing
+  const allowance = await readPermit2Allowance(readContract, signer.address, requirements);
+  if (allowance === "unreadable") {
+    warnCannotReadForSponsoring(requirements.network);
+    return undefined;
+  }
+  if (allowance !== undefined && allowance >= BigInt(requiredAllowance)) {
+    return undefined;
   }
 
   const permit2Auth = result.payload?.permit2Authorization as Record<string, unknown> | undefined;
@@ -118,12 +136,12 @@ export async function trySignEip2612PermitExtension(
     {
       address: signer.address,
       signTypedData: msg => signer.signTypedData(msg),
-      readContract: capabilities.readContract,
+      readContract,
     },
-    tokenAddress,
+    getAddress(requirements.asset),
     tokenName,
     tokenVersion,
-    chainId,
+    requirements.network,
     deadline,
     requiredAllowance,
   );
@@ -137,7 +155,6 @@ export async function trySignEip2612PermitExtension(
  * Attempts to sign an ERC-20 approval transaction for gasless Permit2 approval.
  *
  * @param signer - The EVM client signer
- * @param options - Optional RPC configuration for backfilling capabilities
  * @param requirements - The payment requirements from the server
  * @param context - Optional context containing server extensions and metadata
  * @param approvalAmount - Optional amount to check for Permit2 allowance
@@ -145,7 +162,6 @@ export async function trySignEip2612PermitExtension(
  */
 export async function trySignErc20ApprovalExtension(
   signer: ClientEvmSigner,
-  options: EvmSchemeOptions | undefined,
   requirements: PaymentRequirements,
   context?: PaymentPayloadContext,
   approvalAmount?: string,
@@ -154,45 +170,35 @@ export async function trySignErc20ApprovalExtension(
     return undefined;
   }
 
-  const capabilities = resolveExtensionRpcCapabilities(requirements.network, signer, options);
-
-  if (!capabilities.readContract) {
+  const { readContract, signTransaction, getTransactionCount, estimateFeesPerGas } = signer;
+  if (!readContract) {
     warnCannotReadForSponsoring(requirements.network);
     return undefined;
   }
 
-  if (!capabilities.signTransaction || !capabilities.getTransactionCount) {
+  if (!signTransaction || !getTransactionCount) {
     return undefined;
   }
 
-  const chainId = getEvmChainId(requirements.network);
-  const tokenAddress = getAddress(requirements.asset) as `0x${string}`;
   const requiredAllowance = approvalAmount ?? requirements.amount;
-
-  try {
-    const allowance = (await capabilities.readContract({
-      address: tokenAddress,
-      abi: erc20AllowanceAbi,
-      functionName: "allowance",
-      args: [signer.address, PERMIT2_ADDRESS],
-    })) as bigint;
-
-    if (allowance >= BigInt(requiredAllowance)) {
-      return undefined;
-    }
-  } catch {
-    // Allowance check failed, proceed with signing
+  const allowance = await readPermit2Allowance(readContract, signer.address, requirements);
+  if (allowance === "unreadable") {
+    warnCannotReadForSponsoring(requirements.network);
+    return undefined;
+  }
+  if (allowance !== undefined && allowance >= BigInt(requiredAllowance)) {
+    return undefined;
   }
 
   const info = await signErc20ApprovalTransaction(
     {
       address: signer.address,
-      signTransaction: capabilities.signTransaction,
-      getTransactionCount: capabilities.getTransactionCount,
-      estimateFeesPerGas: capabilities.estimateFeesPerGas,
+      signTransaction,
+      getTransactionCount,
+      estimateFeesPerGas,
     },
-    tokenAddress,
-    chainId,
+    getAddress(requirements.asset),
+    requirements.network,
   );
 
   return {

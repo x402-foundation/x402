@@ -8,7 +8,7 @@ import {
   createPermit2ApprovalTx,
   getPermit2AllowanceReadParams,
 } from "../../../src/exact/client/permit2";
-import type { ClientEvmSigner } from "../../../src/signer";
+import { toClientEvmSigner, type ClientEvmSigner } from "../../../src/signer";
 import { PERMIT2_ADDRESS, x402ExactPermit2ProxyAddress } from "../../../src/constants";
 import { isPermit2Payload, isEIP3009Payload } from "../../../src/types";
 import { _resetSponsoringWarnings } from "../../../src/shared/extensions/gasSponsoring";
@@ -700,7 +700,7 @@ describe("Permit2 Approval Flow", () => {
       _resetSponsoringWarnings();
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       try {
-        // The documented `new ExactEvmScheme(account)` form: no readContract, no rpcUrl.
+        // The documented `new ExactEvmScheme(account)` form: no readContract.
         const bareSigner: ClientEvmSigner = {
           address: "0x1234567890123456789012345678901234567890",
           signTypedData: vi.fn().mockResolvedValue("0x" + "ab".repeat(32) + "cd".repeat(32) + "1b"),
@@ -714,9 +714,12 @@ describe("Permit2 Approval Flow", () => {
 
         const result = await scheme.createPaymentPayload(2, permit2Requirements, advertised);
         expect(result.extensions).toBeUndefined();
+        expect(bareSigner.signTypedData).not.toHaveBeenCalledWith(
+          expect.objectContaining({ primaryType: "Permit" }),
+        );
         expect(warn).toHaveBeenCalledTimes(1);
         expect(warn.mock.calls[0]?.[0]).toMatch(/cannot read the chain/);
-        expect(warn.mock.calls[0]?.[0]).toMatch(/rpcUrl/);
+        expect(warn.mock.calls[0]?.[0]).toMatch(/toClientEvmSigner\(account, rpc\)/);
 
         // Once per network: a second payment does not repeat it.
         await scheme.createPaymentPayload(2, permit2Requirements, advertised);
@@ -727,6 +730,46 @@ describe("Permit2 Approval Flow", () => {
         warn.mockClear();
         await scheme.createPaymentPayload(2, permit2Requirements, { extensions: {} });
         expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("warns once per network, and skips the permit, when the signer has no RPC for the network", async () => {
+      _resetSponsoringWarnings();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const signTypedData = vi
+          .fn()
+          .mockResolvedValue("0x" + "ab".repeat(32) + "cd".repeat(32) + "1b");
+        const signer = toClientEvmSigner(
+          { address: "0x1234567890123456789012345678901234567890", signTypedData },
+          { 8453: { rpcUrl: "https://base.example" } },
+        );
+        const scheme = new ExactEvmScheme(signer);
+        const advertised = {
+          extensions: {
+            eip2612GasSponsoring: { info: { description: "test", version: "1" }, schema: {} },
+          },
+        };
+
+        const first = await scheme.createPaymentPayload(2, permit2Requirements, advertised);
+        await scheme.createPaymentPayload(2, permit2Requirements, advertised);
+        expect(first.extensions).toBeUndefined();
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0]?.[0]).toMatch(/eip155:84532/);
+
+        const sepolia = await scheme.createPaymentPayload(
+          2,
+          { ...permit2Requirements, network: "eip155:11155111" },
+          advertised,
+        );
+        expect(sepolia.extensions).toBeUndefined();
+        expect(warn).toHaveBeenCalledTimes(2);
+        expect(warn.mock.calls[1]?.[0]).toMatch(/eip155:11155111/);
+        expect(signTypedData).not.toHaveBeenCalledWith(
+          expect.objectContaining({ primaryType: "Permit" }),
+        );
       } finally {
         warn.mockRestore();
       }
@@ -759,6 +802,20 @@ describe("Permit2 Approval Flow", () => {
       expect(info.spender).toBeDefined();
       expect(info.signature).toBeDefined();
       expect(info.version).toBe("1");
+      expect(signerWithReader.readContract).toHaveBeenCalledWith(
+        expect.objectContaining({ functionName: "allowance" }),
+        "eip155:84532",
+      );
+      expect(signerWithReader.readContract).toHaveBeenCalledWith(
+        expect.objectContaining({ functionName: "nonces" }),
+        "eip155:84532",
+      );
+      expect(signerWithReader.signTypedData).toHaveBeenCalledWith(
+        expect.objectContaining({
+          primaryType: "Permit",
+          domain: expect.objectContaining({ chainId: 84532 }),
+        }),
+      );
     });
 
     it("should not return extensions for EIP-3009 asset transfer method", async () => {
@@ -852,7 +909,7 @@ describe("Permit2 Approval Flow", () => {
           estimateFeesPerGas: vi
             .fn()
             .mockResolvedValue({ maxFeePerGas: 1n, maxPriorityFeePerGas: 1n }),
-          // No readContract, no rpcUrl: the allowance cannot be checked.
+          // No readContract: the allowance cannot be checked.
         };
         const scheme = new ExactEvmScheme(bareSigner);
         const result = await scheme.createPaymentPayload(2, erc20Requirements, {
@@ -861,8 +918,40 @@ describe("Permit2 Approval Flow", () => {
           },
         });
         expect(result.extensions).toBeUndefined();
+        expect(bareSigner.signTransaction).not.toHaveBeenCalled();
         expect(warn).toHaveBeenCalledTimes(1);
         expect(warn.mock.calls[0]?.[0]).toMatch(/cannot read the chain/);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("warns once, and signs no approval, when the signer has no RPC for the network", async () => {
+      _resetSponsoringWarnings();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const signTransaction = vi.fn().mockResolvedValue("0x02ab");
+        const signer = toClientEvmSigner(
+          {
+            address: "0x1234567890123456789012345678901234567890",
+            signTypedData: vi.fn().mockResolvedValue("0xmocksig"),
+            signTransaction,
+          },
+          { 8453: { rpcUrl: "https://base.example" } },
+        );
+        const scheme = new ExactEvmScheme(signer);
+        const advertised = {
+          extensions: {
+            erc20ApprovalGasSponsoring: { info: { description: "test", version: "1" }, schema: {} },
+          },
+        };
+
+        const result = await scheme.createPaymentPayload(2, erc20Requirements, advertised);
+        await scheme.createPaymentPayload(2, erc20Requirements, advertised);
+        expect(result.extensions).toBeUndefined();
+        expect(signTransaction).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0]?.[0]).toMatch(/eip155:84532/);
       } finally {
         warn.mockRestore();
       }
@@ -912,6 +1001,14 @@ describe("Permit2 Approval Flow", () => {
       expect(info.spender).toBeDefined();
       expect(info.signedTransaction).toBe(mockSignedTx);
       expect(info.version).toBe("1");
+      expect(signer.getTransactionCount).toHaveBeenCalledWith(
+        { address: "0x1234567890123456789012345678901234567890" },
+        "eip155:84532",
+      );
+      expect(signer.estimateFeesPerGas).toHaveBeenCalledWith(undefined, "eip155:84532");
+      expect(signer.signTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({ nonce: 5, chainId: 84532 }),
+      );
     });
 
     it("should use EIP-2612 over ERC-20 approval when token has EIP-2612 support", async () => {

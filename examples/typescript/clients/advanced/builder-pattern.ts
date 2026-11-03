@@ -2,6 +2,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { x402Client, wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { UptoEvmScheme } from "@x402/evm/upto/client";
+import { toClientSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { UptoSvmScheme } from "@x402/svm/upto/client";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
@@ -31,7 +32,9 @@ export async function runBuilderPatternExample(
 
   const evmSigner = privateKeyToAccount(evmPrivateKey);
   const ethereumMainnetSigner = evmSigner; // Could be a different signer for mainnet
-  const svmSigner = await createKeyPairSignerFromBytes(base58.decode(svmPrivateKey));
+  const svmSigner = toClientSvmSigner(
+    await createKeyPairSignerFromBytes(base58.decode(svmPrivateKey)),
+  );
   const solanaDevnetSigner = svmSigner; // Could be a different signer for devnet
 
   // Builder pattern allows fine-grained control over network registration

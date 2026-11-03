@@ -13,7 +13,12 @@ import type {
   BatchSettlementRefundPayload,
 } from "../types";
 import { computeChannelId } from "../utils";
-import { type BatchSettlementClientDeps, buildChannelConfig, recoverChannel } from "./channel";
+import {
+  type BatchSettlementClientDeps,
+  buildChannelConfig,
+  readIfSignerCan,
+  recoverChannel,
+} from "./channel";
 import { createBatchSettlementClientHooks } from "./hooks";
 import { signVoucher } from "./voucher";
 
@@ -198,10 +203,9 @@ async function buildRefundPaymentPayload(
   const channelId = computeChannelId(config, requirements.network);
   const key = channelId.toLowerCase();
 
-  let channel = await ctx.storage.get(key);
-  if (channel === undefined && ctx.signer.readContract) {
-    channel = await recoverChannel(ctx, requirements);
-  }
+  const channel =
+    (await ctx.storage.get(key)) ??
+    (await readIfSignerCan(ctx.signer, () => recoverChannel(ctx, requirements)));
   if (channel === undefined) {
     throw new Error(
       "Refund requires an existing channel record; deposit first or call from a context with an EVM RPC",

@@ -2,9 +2,11 @@ import { base58 } from "@scure/base";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { decodePaymentRequiredHeader } from "@x402/core/http";
 import { convertToTokenAmount } from "@x402/core/utils";
+import { toClientEvmSigner } from "@x402/evm";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { UptoEvmScheme } from "@x402/evm/upto/client";
 import { wrapFetchWithPayment, x402Client, x402HTTPClient } from "@x402/fetch";
+import { toClientSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { privateKeyToAccount } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -67,13 +69,17 @@ let httpClient: x402HTTPClient;
 beforeAll(async () => {
   baseUrl = await startTestServer();
 
-  const evmSigner = privateKeyToAccount(EVM_PRIVATE_KEY);
-  const svmSigner = await createKeyPairSignerFromBytes(base58.decode(SVM_PRIVATE_KEY));
+  const evmSigner = toClientEvmSigner(privateKeyToAccount(EVM_PRIVATE_KEY), {
+    rpcUrl: EVM_RPC_URL,
+  });
+  const svmSigner = toClientSvmSigner(
+    await createKeyPairSignerFromBytes(base58.decode(SVM_PRIVATE_KEY)),
+  );
 
   const client = new x402Client();
   client.setSpendControls({ maxAmountPerPayment: "$1" });
-  client.register("eip155:*", new ExactEvmScheme(evmSigner, { rpcUrl: EVM_RPC_URL }));
-  client.register("eip155:*", new UptoEvmScheme(evmSigner, { rpcUrl: EVM_RPC_URL }));
+  client.register("eip155:*", new ExactEvmScheme(evmSigner));
+  client.register("eip155:*", new UptoEvmScheme(evmSigner));
   client.register("solana:*", new ExactSvmScheme(svmSigner));
 
   fetchWithPayment = wrapFetchWithPayment(fetch, client);
