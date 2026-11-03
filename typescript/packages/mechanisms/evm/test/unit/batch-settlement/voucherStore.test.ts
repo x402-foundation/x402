@@ -60,9 +60,14 @@ describe("voucherStore helpers — pendingTtlMs", () => {
     expect(pendingTtlMs(undefined)).toBe(5_000);
   });
 
-  it("derives request-context TTL as twice the admission-lock TTL", () => {
-    expect(requestContextTtlMs(120)).toBe(pendingTtlMs(120) * 2);
-    expect(requestContextTtlMs(3600)).toBe(pendingTtlMs(3600) * 2);
+  it("derives request-context TTL from the server timeout plus grace", () => {
+    expect(requestContextTtlMs(undefined)).toBe(15_000);
+    expect(requestContextTtlMs(0)).toBe(15_000);
+    expect(requestContextTtlMs(-5)).toBe(15_000);
+    expect(requestContextTtlMs(1)).toBe(15_000);
+    expect(requestContextTtlMs(120)).toBe(130_000);
+    expect(requestContextTtlMs(3600)).toBe(3_610_000);
+    expect(requestContextTtlMs(Number.MAX_SAFE_INTEGER)).toBe(24 * 60 * 60 * 1000 + 10_000);
   });
 });
 

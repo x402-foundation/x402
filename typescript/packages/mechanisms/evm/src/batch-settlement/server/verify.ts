@@ -553,7 +553,8 @@ export async function handleVerifiedPaymentCanceled(
   if (
     ctx.reason !== "handler_threw" &&
     ctx.reason !== "handler_failed" &&
-    ctx.reason !== "after_verify_aborted"
+    ctx.reason !== "after_verify_aborted" &&
+    ctx.reason !== "settlement_preflight_failed"
   ) {
     return;
   }

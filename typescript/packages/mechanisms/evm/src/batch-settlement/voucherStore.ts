@@ -4,7 +4,8 @@ import type { Channel, ChannelStorage } from "./storage/channel";
 
 const MIN_PENDING_TTL_MS = 5_000;
 const MAX_PENDING_TTL_MS = 10 * 60 * 1000;
-const LOCK_TTL_GRACE_MULTIPLIER = 2;
+const REQUEST_CONTEXT_GRACE_MS = 10_000;
+const MAX_REQUEST_CONTEXT_BASE_MS = 24 * 60 * 60 * 1000;
 
 /** Who owns the authoritative offchain voucher store for a request or network. */
 export type VoucherStoreMode = "self" | "facilitator";
@@ -93,13 +94,18 @@ export function pendingTtlMs(maxTimeoutSeconds: number | undefined): number {
 }
 
 /**
- * Computes the request-context TTL.
+ * Computes the request-context TTL. Keeps per-request state (including the `pendingId`)
+ * available for the payment's `maxTimeoutSeconds` window plus grace, so a late cancel can still release it.
  *
  * @param maxTimeoutSeconds - Resource timeout from payment requirements.
  * @returns Request-context TTL in milliseconds.
  */
 export function requestContextTtlMs(maxTimeoutSeconds: number | undefined): number {
-  return pendingTtlMs(maxTimeoutSeconds) * LOCK_TTL_GRACE_MULTIPLIER;
+  const requestedMs = Math.min(
+    MAX_REQUEST_CONTEXT_BASE_MS,
+    Math.max(0, maxTimeoutSeconds ?? 0) * 1000,
+  );
+  return Math.max(MIN_PENDING_TTL_MS, requestedMs) + REQUEST_CONTEXT_GRACE_MS;
 }
 
 /**

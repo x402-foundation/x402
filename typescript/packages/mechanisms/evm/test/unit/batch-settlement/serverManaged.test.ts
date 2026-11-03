@@ -1884,7 +1884,7 @@ describe("facilitator-managed server hooks", () => {
       expect(server.readRequestContext(paymentPayload)).toBeUndefined();
     });
 
-    it("expires an abandoned request context after twice its admission-lock TTL", () => {
+    it("expires an abandoned request context after the server timeout plus grace", () => {
       vi.useFakeTimers();
       try {
         const server = buildManagedServer();

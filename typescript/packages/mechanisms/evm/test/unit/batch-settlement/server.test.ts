@@ -2281,6 +2281,27 @@ describe("BatchSettlementEvmScheme — pending cleanup hooks", () => {
     expect(await storage.isHeld(channelId, firstPendingId)).toBe(false);
   });
 
+  it("releases the admission lock when settlement fails before reaching the facilitator", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const payload = buildVoucherPayload(channelId, "1000", config);
+    await reservePending(server, payload, makeRequirements({ amount: "1000" }));
+    const pendingId = server.readRequestContext(payload)?.pendingId;
+    expect(pendingId).toBeDefined();
+    expect(await storage.isHeld(channelId, pendingId)).toBe(true);
+
+    await server.schemeHooks.onVerifiedPaymentCanceled!({
+      paymentPayload: payload,
+      requirements: makeRequirements({ amount: "1000" }),
+      declaredExtensions: {},
+      reason: "settlement_preflight_failed",
+      error: new Error("enrichment failed"),
+    } as never);
+
+    expect(await storage.isHeld(channelId, pendingId)).toBe(false);
+    expect(server.readRequestContext(payload)).toBeUndefined();
+  });
+
   it("ignores lock-store errors when releasing a reservation", async () => {
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);
