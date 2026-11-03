@@ -145,7 +145,6 @@ func extCtx(extensions map[string]interface{}) x402.PaymentPayloadContext {
 	return x402.PaymentPayloadContext{Extensions: extensions}
 }
 
-// newSignerWithoutRPC returns the standard private-key signer created without an ethclient.
 func newSignerWithoutRPC(t *testing.T) evm.ClientEvmSigner {
 	t.Helper()
 	privateKey, err := crypto.GenerateKey()
@@ -485,8 +484,6 @@ func TestCreatePaymentPayload_Eip2612DeadlineFromPermit2(t *testing.T) {
 	}
 }
 
-// newExtRPCServer answers eth_call with a zero uint256 (no allowance, nonce 0)
-// and eth_getTransactionCount with 0, and counts the requests.
 func newExtRPCServer(t *testing.T) (string, *atomic.Int32) {
 	t.Helper()
 	var calls atomic.Int32

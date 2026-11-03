@@ -105,10 +105,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * @returns A field message, or undefined when `value` is a uint256 decimal string
  */
 function uint256Message(path: string, value: unknown): string | undefined {
-  if (typeof value === "string" && UINT256_DECIMAL.test(value) && BigInt(value) <= UINT256_MAX) {
-    return undefined;
+  if (typeof value !== "string" || !UINT256_DECIMAL.test(value) || BigInt(value) > UINT256_MAX) {
+    return `${path} must be a uint256 decimal string`;
   }
-  return `${path} must be a uint256 decimal string`;
 }
 
 /**
@@ -127,7 +126,6 @@ function addressMessage(path: string, value: unknown): string | undefined {
   } catch {
     return `${path} must be an address`;
   }
-  return undefined;
 }
 
 /**
@@ -147,10 +145,7 @@ function hasPermit2Authorization(payload: object): boolean {
  * @returns A field message, or undefined when `signature` is a string
  */
 function signatureMessage(payload: Record<string, unknown>): string | undefined {
-  if (typeof payload.signature !== "string") {
-    return "signature must be a string";
-  }
-  return undefined;
+  return typeof payload.signature === "string" ? undefined : "signature must be a string";
 }
 
 /**
@@ -163,30 +158,16 @@ function eip3009AuthorizationMessage(authorization: unknown): string | undefined
   if (!isRecord(authorization)) {
     return "authorization must be an object";
   }
-  const fromError = addressMessage("authorization.from", authorization.from);
-  if (fromError) {
-    return fromError;
-  }
-  const toError = addressMessage("authorization.to", authorization.to);
-  if (toError) {
-    return toError;
-  }
-  if (typeof authorization.nonce !== "string" || !BYTES32_HEX.test(authorization.nonce)) {
-    return "authorization.nonce must be a 32-byte hex string";
-  }
-  const valueError = uint256Message("authorization.value", authorization.value);
-  if (valueError) {
-    return valueError;
-  }
-  const validAfterError = uint256Message("authorization.validAfter", authorization.validAfter);
-  if (validAfterError) {
-    return validAfterError;
-  }
-  const validBeforeError = uint256Message("authorization.validBefore", authorization.validBefore);
-  if (validBeforeError) {
-    return validBeforeError;
-  }
-  return undefined;
+  return (
+    addressMessage("authorization.from", authorization.from) ??
+    addressMessage("authorization.to", authorization.to) ??
+    (typeof authorization.nonce !== "string" || !BYTES32_HEX.test(authorization.nonce)
+      ? "authorization.nonce must be a 32-byte hex string"
+      : undefined) ??
+    uint256Message("authorization.value", authorization.value) ??
+    uint256Message("authorization.validAfter", authorization.validAfter) ??
+    uint256Message("authorization.validBefore", authorization.validBefore)
+  );
 }
 
 /**
@@ -199,43 +180,23 @@ function permit2AuthorizationMessage(authorization: unknown): string | undefined
   if (!isRecord(authorization)) {
     return "permit2Authorization must be an object";
   }
-  if (!isRecord(authorization.permitted)) {
+  const { permitted, witness } = authorization;
+  if (!isRecord(permitted)) {
     return "permit2Authorization.permitted must be an object";
   }
-  if (!isRecord(authorization.witness)) {
+  if (!isRecord(witness)) {
     return "permit2Authorization.witness must be an object";
   }
-  const permitted = authorization.permitted;
-  const witness = authorization.witness;
-  const fromError = addressMessage("permit2Authorization.from", authorization.from);
-  if (fromError) {
-    return fromError;
-  }
-  const spenderError = addressMessage("permit2Authorization.spender", authorization.spender);
-  if (spenderError) {
-    return spenderError;
-  }
-  const tokenError = addressMessage("permit2Authorization.permitted.token", permitted.token);
-  if (tokenError) {
-    return tokenError;
-  }
-  const witnessToError = addressMessage("permit2Authorization.witness.to", witness.to);
-  if (witnessToError) {
-    return witnessToError;
-  }
-  const nonceError = uint256Message("permit2Authorization.nonce", authorization.nonce);
-  if (nonceError) {
-    return nonceError;
-  }
-  const deadlineError = uint256Message("permit2Authorization.deadline", authorization.deadline);
-  if (deadlineError) {
-    return deadlineError;
-  }
-  const amountError = uint256Message("permit2Authorization.permitted.amount", permitted.amount);
-  if (amountError) {
-    return amountError;
-  }
-  return uint256Message("permit2Authorization.witness.validAfter", witness.validAfter);
+  return (
+    addressMessage("permit2Authorization.from", authorization.from) ??
+    addressMessage("permit2Authorization.spender", authorization.spender) ??
+    addressMessage("permit2Authorization.permitted.token", permitted.token) ??
+    addressMessage("permit2Authorization.witness.to", witness.to) ??
+    uint256Message("permit2Authorization.nonce", authorization.nonce) ??
+    uint256Message("permit2Authorization.deadline", authorization.deadline) ??
+    uint256Message("permit2Authorization.permitted.amount", permitted.amount) ??
+    uint256Message("permit2Authorization.witness.validAfter", witness.validAfter)
+  );
 }
 
 /**

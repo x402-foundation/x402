@@ -14,6 +14,7 @@ except ImportError as e:
         "SVM mechanism requires solana packages. Install with: pip install x402[svm]"
     ) from e
 
+from .errors import TransactionOnchainFailureError
 from .rpc import CONFIRMED, SvmRpcClient
 from .utils import get_network_config, normalize_network
 
@@ -278,7 +279,8 @@ class FacilitatorKeypairSigner:
             timeout_seconds: Maximum time to wait.
 
         Raises:
-            RuntimeError: If confirmation fails or times out.
+            TransactionOnchainFailureError: If confirmed or finalized execution failed.
+            RuntimeError: If confirmation times out.
         """
         from solders.transaction_status import TransactionConfirmationStatus
 
@@ -296,9 +298,9 @@ class FacilitatorKeypairSigner:
                     TransactionConfirmationStatus.Confirmed,
                     TransactionConfirmationStatus.Finalized,
                 ]:
+                    if status.err is not None:
+                        raise TransactionOnchainFailureError(f"Transaction failed: {status.err}")
                     return
-                if status.err:
-                    raise RuntimeError(f"Transaction failed: {status.err}")
 
             time.sleep(1)
 

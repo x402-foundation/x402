@@ -1,0 +1,1 @@
+Report confirmed or finalized Solana execution failures as terminal settlement errors with their transaction signatures, releasing pending and duplicate entries. Keep uncertain V2 confirmations pending and continue polling processed errors.

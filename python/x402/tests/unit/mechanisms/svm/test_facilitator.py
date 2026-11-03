@@ -1,5 +1,6 @@
 """Tests for ExactSvmScheme facilitator."""
 
+import base64
 import hashlib
 from unittest.mock import patch
 
@@ -8,6 +9,8 @@ from solders.hash import Hash
 from solders.instruction import Instruction
 from solders.message import MessageV0
 from solders.pubkey import Pubkey
+from solders.signature import Signature
+from solders.transaction import VersionedTransaction
 
 from x402.mechanisms.svm import (
     SOLANA_DEVNET_CAIP2,
@@ -583,6 +586,7 @@ class TestDuplicateSettlementCache:
                 yield
 
     def _make_payload(self, transaction: str) -> PaymentPayload:
+        wire = VersionedTransaction.populate(_FakeTx(transaction).message, [Signature.default()])
         return PaymentPayload(
             x402_version=2,
             resource=ResourceInfo(
@@ -599,7 +603,7 @@ class TestDuplicateSettlementCache:
                 max_timeout_seconds=3600,
                 extra={"feePayer": "FeePayer1111111111111111111111111111"},
             ),
-            payload={"transaction": transaction},
+            payload={"transaction": base64.b64encode(bytes(wire)).decode()},
         )
 
     def _make_requirements(self) -> PaymentRequirements:
@@ -688,6 +692,7 @@ class TestDuplicateSettlementCache:
         shared_cache = SettlementCache()
         v2 = ExactSvmFacilitatorScheme(signer, shared_cache)
         v1 = ExactSvmFacilitatorSchemeV1(signer, shared_cache)
+        payload = self._make_payload("crossVersionTx==")
 
         # Settle via V2 first
         with patch.object(
@@ -696,7 +701,7 @@ class TestDuplicateSettlementCache:
             return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
         ):
             result1 = v2.settle(
-                self._make_payload("crossVersionTx=="),
+                payload,
                 self._make_requirements(),
             )
             assert result1.success is True
@@ -705,7 +710,7 @@ class TestDuplicateSettlementCache:
         v1_payload = PaymentPayloadV1(
             scheme="exact",
             network="solana-devnet",
-            payload={"transaction": "crossVersionTx=="},
+            payload=payload.payload,
         )
         v1_requirements = PaymentRequirementsV1(
             scheme="exact",

@@ -123,7 +123,10 @@ class FacilitatorSvmSigner(Protocol):
             network: CAIP-2 network identifier.
 
         Raises:
-            RuntimeError: If confirmation fails or times out.
+            TransactionOnchainFailureError: If confirmed or finalized execution failed.
+                Import from x402.mechanisms.svm. V2 treats this as terminal.
+            Exception: If confirmation is uncertain (including timeout or RPC failure).
+                V2 keeps the original signature pending for reconciliation.
         """
         ...
 
