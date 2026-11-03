@@ -2,6 +2,8 @@
 
 Core implementation of the x402 payment protocol. Provides transport-agnostic client, server, and facilitator components with both async and sync variants.
 
+Python buyers and HTTP resource servers also support [facilitator-managed EVM batch settlement](mechanisms/evm/batch_settlement/README.md) against the Go facilitator's voucher store and settlement worker.
+
 ## Installation
 
 Install the core package with your preferred framework/client:

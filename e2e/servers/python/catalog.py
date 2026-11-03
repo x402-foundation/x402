@@ -11,9 +11,10 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 SDK = "python"
 PROTECTED_ROUTE_MESSAGE = "Protected endpoint accessed successfully"
@@ -166,7 +167,10 @@ def catalog_routes() -> list[CatalogRoute]:
     routes: list[CatalogRoute] = []
 
     for path, definition in _CATALOG["routes"].items():
-        if SDK not in definition.get("sdks", []):
+        if (
+            SDK not in definition.get("sdks", [])
+            and SDK not in definition.get("serverSdks", [])
+        ):
             continue
         network = definition["network"]
         if definition["scheme"] in excluded_schemes or network in excluded_networks:

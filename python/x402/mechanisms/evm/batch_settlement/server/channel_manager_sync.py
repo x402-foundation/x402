@@ -78,6 +78,8 @@ class BatchSettlementChannelManagerSync:
         return {"claims": claims, "settle": settle}
 
     def refund(self, channel_ids: list[str] | None = None) -> list[RefundResult]:
+        if self._scheme.is_facilitator_managed():
+            raise ValueError("cooperative refunds are client-initiated in facilitator-managed mode")
         storage = self._scheme.get_storage()
         channels = storage.list()
 
@@ -92,6 +94,8 @@ class BatchSettlementChannelManagerSync:
         return self._refund_channels(targets)
 
     def refund_idle_channels(self, idle_secs: int) -> list[RefundResult]:
+        if self._scheme.is_facilitator_managed():
+            raise ValueError("cooperative refunds are client-initiated in facilitator-managed mode")
         targets = get_idle_channels_for_refund(self._scheme.get_storage().list(), idle_secs)
         return self._refund_channels(targets)
 
@@ -113,7 +117,8 @@ class BatchSettlementChannelManagerSync:
 
         self._start_auto_timer("claim", self._auto_settle_config.claim_interval_secs)
         self._start_auto_timer("settle", self._auto_settle_config.settle_interval_secs)
-        self._start_auto_timer("refund", self._auto_settle_config.refund_interval_secs)
+        if not self._scheme.is_facilitator_managed():
+            self._start_auto_timer("refund", self._auto_settle_config.refund_interval_secs)
 
     def stop(self, flush: bool = False) -> None:
         self._running = False
@@ -221,6 +226,8 @@ class BatchSettlementChannelManagerSync:
             cfg.on_settle(result)
 
     def _run_refund_job(self) -> None:
+        if self._scheme.is_facilitator_managed():
+            return
         cfg = self._auto_settle_config
         if cfg.select_refund_channels is None:
             return

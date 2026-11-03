@@ -549,6 +549,8 @@ class PaymentRequirementsExtra:
     min_deposit: str | None = None
     channel_state: ChannelStateExtra | None = None
     voucher_state: VoucherStateExtra | None = None
+    voucher_manager: str | None = None
+    refund_authorizer: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -557,6 +559,10 @@ class PaymentRequirementsExtra:
             "name": self.name,
             "version": self.version,
         }
+        if self.voucher_manager is not None:
+            out["voucherManager"] = self.voucher_manager
+        if self.refund_authorizer is not None:
+            out["refundAuthorizer"] = self.refund_authorizer
         if self.asset_transfer_method is not None:
             out["assetTransferMethod"] = self.asset_transfer_method
         if self.min_deposit is not None:
@@ -576,6 +582,8 @@ class PaymentRequirementsExtra:
             withdraw_delay=int(data["withdrawDelay"]),
             name=data["name"],
             version=data["version"],
+            voucher_manager=data.get("voucherManager"),
+            refund_authorizer=data.get("refundAuthorizer"),
             asset_transfer_method=data.get("assetTransferMethod"),
             min_deposit=str(data["minDeposit"]) if data.get("minDeposit") is not None else None,
             channel_state=ChannelStateExtra.from_dict(cs) if cs else None,
@@ -590,9 +598,12 @@ class PaymentResponseExtra:
     charged_amount: str | None = None
     channel_state: ChannelStateExtra | None = None
     voucher_state: VoucherStateExtra | None = None
+    charge_count: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {}
+        if self.charge_count is not None:
+            out["chargeCount"] = self.charge_count
         if self.charged_amount is not None:
             out["chargedAmount"] = self.charged_amount
         if self.channel_state is not None:
@@ -607,6 +618,7 @@ class PaymentResponseExtra:
         vs = data.get("voucherState")
         return cls(
             charged_amount=str(data["chargedAmount"]) if "chargedAmount" in data else None,
+            charge_count=data.get("chargeCount"),
             channel_state=ChannelStateExtra.from_dict(cs) if cs else None,
             voucher_state=VoucherStateExtra.from_dict(vs) if vs else None,
         )

@@ -29,7 +29,12 @@ function roleImplementsEndpoint(
 ): boolean {
   const listed = endpoint.sdks;
   const clientOnly = endpoint.clientSdks;
-  if ((!listed || listed.length === 0) && (!clientOnly || clientOnly.length === 0)) {
+  const serverOnly = endpoint.serverSdks;
+  if (
+    (!listed || listed.length === 0) &&
+    (!clientOnly || clientOnly.length === 0) &&
+    (!serverOnly || serverOnly.length === 0)
+  ) {
     return true;
   }
   if (listed?.includes(language)) {
