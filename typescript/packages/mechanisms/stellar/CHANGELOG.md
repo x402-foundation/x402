@@ -1,5 +1,32 @@
 # @x402/stellar Changelog
 
+## 2.29.0
+
+### Minor Changes
+
+- [0aee759](https://github.com/x402-foundation/x402/commit/0aee759): Mapped common Stellar simulation failures to exported typed errors with account and asset context. ([#2975](https://github.com/x402-foundation/x402/pull/2975)) - Thanks [@realmehmetali](https://github.com/realmehmetali)!
+- Updated dependencies [636f585](https://github.com/x402-foundation/x402/commit/636f585)
+- Updated dependencies [76f2f28](https://github.com/x402-foundation/x402/commit/76f2f28)
+- Updated dependencies [732c181](https://github.com/x402-foundation/x402/commit/732c181)
+- Updated dependencies [8c2b431](https://github.com/x402-foundation/x402/commit/8c2b431)
+- Updated dependencies [3525075](https://github.com/x402-foundation/x402/commit/3525075)
+- Updated dependencies [e95b066](https://github.com/x402-foundation/x402/commit/e95b066)
+- Updated dependencies [3bd3c1d](https://github.com/x402-foundation/x402/commit/3bd3c1d)
+- Updated dependencies [bc31d3e](https://github.com/x402-foundation/x402/commit/bc31d3e)
+- Updated dependencies [db2c98e](https://github.com/x402-foundation/x402/commit/db2c98e)
+- Updated dependencies [7abd80f](https://github.com/x402-foundation/x402/commit/7abd80f)
+- Updated dependencies [fa5eb06](https://github.com/x402-foundation/x402/commit/fa5eb06)
+- Updated dependencies [3ca54cb](https://github.com/x402-foundation/x402/commit/3ca54cb)
+- Updated dependencies [b609bf5](https://github.com/x402-foundation/x402/commit/b609bf5)
+- Updated dependencies [8065278](https://github.com/x402-foundation/x402/commit/8065278)
+  - @x402/core@2.29.0
+
+### Patch Changes
+
+- [306fd36](https://github.com/x402-foundation/x402/commit/306fd36): Propagate `invalidMessage` from the settle-time re-verification into `SettleResponse.errorMessage`, including the EVM auth-capture collect and lifecycle settle paths, matching the behavior already present in the avm, casper, cardano, hedera, tvm, and xrpl mechanisms. Settle failures previously returned only `errorReason`, so the diagnostic detail (e.g. the underlying Solana simulation error) was dropped even though `/verify` returned it. ([#3119](https://github.com/x402-foundation/x402/pull/3119)) - Thanks [@notorious-d-e-v](https://github.com/notorious-d-e-v)!
+- [62fc03e](https://github.com/x402-foundation/x402/commit/62fc03e): Require `@stellar/stellar-sdk` `^16.4.1`, the `lts-16` release that bumps `axios` from 1.18.0 to 1.20.0 and clears its seven high-severity advisories. No source change: 16.4.1 differs from 16.3.1 by that one dependency, and `.switch()` / `toXDR()` / `fromXDR()` are unchanged on the 16 line. The floor is raised so no install can resolve 16.3.x again. ([#3904](https://github.com/x402-foundation/x402/pull/3904)) - Thanks [@parthod0x](https://github.com/parthod0x)!
+- [332f65d](https://github.com/x402-foundation/x402/commit/332f65d): Fixed `ExactStellarScheme.settle` collapsing every non-`PENDING` `sendTransaction` result into the same constant `errorReason`. The RPC's `status`, `errorResult` code, and `latestLedger` are now surfaced via `errorMessage`/`extra`, and a `TRY_AGAIN_LATER` response is reported with a distinct, retryable `errorReason` (`settle_exact_stellar_transaction_submission_retryable`) instead of being treated as a terminal failure identical to `ERROR`. ([#3293](https://github.com/x402-foundation/x402/pull/3293)) - Thanks [@wakqasahmed](https://github.com/wakqasahmed)!
+
 ## 2.28.0
 
 ### Minor Changes

@@ -64,9 +64,17 @@ async function buildTransaction(feePayer: Address, instructions: IInstruction[])
   return { messageBytes, signatures: {} };
 }
 
-async function buildSmartWalletPayload(feePayer: Address, unknownProgram: Address, payer: Address) {
+async function buildSmartWalletPayload(
+  feePayer: Address,
+  unknownProgram: Address,
+  payer: Address,
+  computeUnits = 100_000,
+) {
+  const limitData = new Uint8Array(5);
+  limitData[0] = 2;
+  new DataView(limitData.buffer).setUint32(1, computeUnits, true);
   const tx = await buildTransaction(feePayer, [
-    { programAddress: COMPUTE_BUDGET_PROGRAM, data: new Uint8Array([2, 160, 134, 1, 0]) },
+    { programAddress: COMPUTE_BUDGET_PROGRAM, data: limitData },
     { programAddress: COMPUTE_BUDGET_PROGRAM, data: new Uint8Array([3, 16, 39, 0, 0, 0, 0, 0, 0]) },
     {
       programAddress: unknownProgram,
@@ -1397,5 +1405,121 @@ describe("ExactSvmScheme pending-settlement reconciliation for smart wallet sett
     expect(result.isValid).toBe(true);
     expect(mockSigner.simulateTransactionWithInnerInstructions).toHaveBeenCalled();
     expect(mockSigner.fetchAddressLookupTables).toHaveBeenCalled();
+  });
+});
+
+describe("ExactSvmScheme smart wallet compute-unit caps", () => {
+  beforeEach(() => {
+    mockAtaMap = {};
+    vi.clearAllMocks();
+  });
+
+  /**
+   * Verifies a 500,000-CU smart-wallet transaction under the given options.
+   *
+   * @param options - Facilitator options, merged over smart wallet verification enabled
+   * @param allowlistWallet - Whether the wallet program is on the smart-wallet allowlist
+   * @returns The verify response and the simulation mock
+   */
+  async function verifyHighComputeSmartWallet(
+    options: Record<string, unknown>,
+    allowlistWallet = true,
+  ) {
+    const { ExactSvmScheme } = await import("../../src/exact/facilitator/scheme");
+    const feePayer = await generateKeyPairSigner();
+    const walletProgram = await generateKeyPairSigner();
+    const payTo = await generateKeyPairSigner();
+    const payer = await generateKeyPairSigner();
+    mockAtaMap[payTo.address] = payTo.address;
+
+    const txBase64 = await buildSmartWalletPayload(
+      feePayer.address,
+      walletProgram.address,
+      payer.address,
+      500_000,
+    );
+    const simulate = vi.fn().mockResolvedValue({
+      innerInstructions: [
+        {
+          index: 0,
+          instructions: [
+            buildMockInnerTransfer(
+              TOKEN_PROGRAM,
+              USDC_DEVNET_ADDRESS,
+              payTo.address,
+              payer.address as string,
+              "100000",
+            ),
+          ],
+        },
+      ],
+    });
+    const mockSigner = {
+      getAddresses: vi.fn().mockReturnValue([feePayer.address]),
+      getSigner: vi.fn().mockReturnValue(feePayer),
+      signTransaction: vi.fn().mockResolvedValue(txBase64),
+      simulateTransaction: vi.fn().mockResolvedValue(undefined),
+      sendTransaction: vi.fn(),
+      confirmTransaction: vi.fn(),
+      getConfirmedTransactionInnerInstructions: vi.fn().mockResolvedValue(null),
+      getTokenAccountBalance: vi.fn().mockResolvedValue(null),
+      fetchAddressLookupTables: vi.fn().mockResolvedValue({}),
+      simulateTransactionWithInnerInstructions: simulate,
+    };
+    const scheme = new ExactSvmScheme(mockSigner as never, undefined, {
+      enableSmartWalletVerification: true,
+      smartWalletAllowedPrograms: allowlistWallet
+        ? [walletProgram.address]
+        : ["SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf"],
+      ...options,
+    });
+    const requirements = {
+      scheme: "exact",
+      network: SOLANA_DEVNET_CAIP2,
+      asset: USDC_DEVNET_ADDRESS,
+      amount: "100000",
+      payTo: payTo.address,
+      maxTimeoutSeconds: 3600,
+      extra: { feePayer: feePayer.address },
+    };
+    const result = await scheme.verify(
+      { x402Version: 2, accepted: requirements, payload: { transaction: txBase64 } } as never,
+      requirements as never,
+    );
+    return { result, simulate };
+  }
+
+  it("judges a smart wallet above the default static cap against smartWalletMaxComputeUnits", async () => {
+    const { result, simulate } = await verifyHighComputeSmartWallet({
+      smartWalletMaxComputeUnits: 1_000_000,
+    });
+    expect(result.isValid).toBe(true);
+    expect(simulate).toHaveBeenCalled();
+  });
+
+  it("reports the smart-wallet cap when the transaction exceeds both defaults", async () => {
+    const { result } = await verifyHighComputeSmartWallet({});
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toContain(Errors.ErrSmartWalletComputeUnitsTooHigh);
+  });
+
+  it("keeps an explicit maxComputeUnits a hard ceiling for both paths", async () => {
+    const { result, simulate } = await verifyHighComputeSmartWallet({
+      maxComputeUnits: 400_000,
+      smartWalletMaxComputeUnits: 1_000_000,
+    });
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe(Errors.ErrComputeLimitInstructionTooHigh);
+    expect(simulate).not.toHaveBeenCalled();
+  });
+
+  it("keeps the static reason when no allowlisted wallet program is invoked", async () => {
+    const { result, simulate } = await verifyHighComputeSmartWallet(
+      { smartWalletMaxComputeUnits: 1_000_000 },
+      false,
+    );
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe(Errors.ErrComputeLimitInstructionTooHigh);
+    expect(simulate).not.toHaveBeenCalled();
   });
 });

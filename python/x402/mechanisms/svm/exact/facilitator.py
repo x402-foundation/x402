@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+from collections.abc import Sequence
 from typing import Any
 
 try:
@@ -21,49 +22,52 @@ from ....schemas import (
     VerifyResponse,
 )
 from ..constants import (
-    ADVERTISED_TRANSACTION_VERSIONS,
-    COMPUTE_BUDGET_PROGRAM_ADDRESS,
     ERR_AMOUNT_INSUFFICIENT,
     ERR_DUPLICATE_SETTLEMENT,
     ERR_FEE_PAYER_MISSING,
     ERR_FEE_PAYER_NOT_MANAGED,
     ERR_FEE_PAYER_TRANSFERRING,
-    ERR_INVALID_COMPUTE_LIMIT,
-    ERR_INVALID_COMPUTE_PRICE,
-    ERR_INVALID_INSTRUCTION_COUNT,
     ERR_MEMO_COUNT,
     ERR_MEMO_MISMATCH,
     ERR_MINT_MISMATCH,
     ERR_NETWORK_MISMATCH,
     ERR_NO_TRANSFER_INSTRUCTION,
+    ERR_RECIPIENT_ATA_MISSING,
+    ERR_RECIPIENT_ATA_WRONG_PROGRAM_OWNER,
     ERR_RECIPIENT_MISMATCH,
     ERR_SETTLEMENT_PENDING,
     ERR_SIMULATION_FAILED,
     ERR_TRANSACTION_DECODE_FAILED,
     ERR_TRANSACTION_FAILED,
+    ERR_TRANSACTION_SIZE_EXCEEDED,
     ERR_UNKNOWN_FIFTH_INSTRUCTION,
     ERR_UNKNOWN_FOURTH_INSTRUCTION,
+    ERR_UNKNOWN_SEVENTH_INSTRUCTION,
     ERR_UNKNOWN_SIXTH_INSTRUCTION,
     ERR_UNSUPPORTED_SCHEME,
     ERR_UNSUPPORTED_TRANSACTION_VERSION,
     LIGHTHOUSE_PROGRAM_ADDRESS,
-    MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
     MEMO_PROGRAM_ADDRESS,
     SCHEME_EXACT,
     TOKEN_2022_PROGRAM_ADDRESS,
     TOKEN_PROGRAM_ADDRESS,
 )
+from ..errors import TransactionOnchainFailureError
 from ..settlement_cache import SettlementCache
-from ..signer import FacilitatorSvmSigner
+from ..signer import FacilitatorSvmSigner, FacilitatorSvmSignerWithGetAccountInfo
 from ..types import ExactSvmPayload
 from ..utils import (
+    check_exact_compute_budget,
     decode_transaction_from_payload,
     derive_ata,
     get_token_payer_from_transaction,
     get_transaction_version,
     is_accepted_transaction_version,
+    normalize_accepted_transaction_versions,
     peek_wire_transaction_version,
     transaction_message_hash,
+    transaction_size_exceeded,
+    validate_svm_address,
 )
 
 
@@ -85,6 +89,7 @@ class ExactSvmScheme:
         signer: FacilitatorSvmSigner,
         settlement_cache: SettlementCache | None = None,
         pending_store: PendingSettlementStore | None = None,
+        transaction_versions: Sequence[int] | None = None,
     ):
         """Create ExactSvmScheme facilitator.
 
@@ -95,8 +100,19 @@ class ExactSvmScheme:
                 transaction reconcile against an already-broadcast signature instead of
                 re-verifying and re-sending (see settlement_pending). Defaults to a fresh
                 in-memory store when omitted.
+            transaction_versions: Transaction message versions this facilitator
+                accepts and advertises as ``extra.transactionVersions``. Any other
+                version is rejected with ``unsupported_transaction_version``; legacy
+                is accepted exactly when 0 is. Narrow it to ``[0]`` for a sponsor
+                whose signer or RPC does not yet handle version 1. Defaults to
+                ``[0, 1]``.
+
+        Raises:
+            ValueError: If ``transaction_versions`` is empty or holds anything
+                but 0 and 1.
         """
         self._signer = signer
+        self._transaction_versions = normalize_accepted_transaction_versions(transaction_versions)
         self._settlement_cache = settlement_cache or SettlementCache()
         self._pending_store: PendingSettlementStore = (
             pending_store or InMemoryPendingSettlementStore()
@@ -106,8 +122,8 @@ class ExactSvmScheme:
         """Get mechanism-specific extra data for the supported kinds endpoint.
 
         For SVM, this includes a randomly selected fee payer address and the
-        transaction message versions this facilitator advertises (version 0;
-        legacy is still accepted on the wire but is deprecated).
+        transaction message versions this facilitator advertises (versions 0
+        and 1; legacy is still accepted on the wire but is deprecated).
         Random selection distributes load across multiple signers.
 
         Args:
@@ -123,7 +139,7 @@ class ExactSvmScheme:
 
         return {
             "feePayer": fee_payer,
-            "transactionVersions": list(ADVERTISED_TRANSACTION_VERSIONS),
+            "transactionVersions": list(self._transaction_versions),
         }
 
     def get_signers(self, network: Network) -> list[str]:
@@ -148,8 +164,9 @@ class ExactSvmScheme:
 
         Validates:
         - Scheme and network match
-        - Transaction structure (3-6 instructions)
-        - Compute budget instructions are valid
+        - Transaction version is legacy, 0 or 1
+        - Transaction structure (3-6 instructions, or 1-5 on version 1)
+        - Compute budget instructions (or message.config on version 1) are valid
         - TransferChecked instruction:
           - Token program is known (Token or Token-2022)
           - Mint matches requirements.asset
@@ -191,7 +208,9 @@ class ExactSvmScheme:
         # Read the version from the raw bytes first so a newer wire format is
         # reported as unsupported however the installed solders handles it.
         wire_version = peek_wire_transaction_version(svm_payload.transaction)
-        if wire_version is not None and not is_accepted_transaction_version(wire_version):
+        if wire_version is not None and not is_accepted_transaction_version(
+            wire_version, self._transaction_versions
+        ):
             return VerifyResponse(
                 is_valid=False, invalid_reason=ERR_UNSUPPORTED_TRANSACTION_VERSION, payer=""
             )
@@ -205,60 +224,26 @@ class ExactSvmScheme:
 
         # Version allowlist, checked before any signature or instruction check:
         # every check below reads its fee policy from version-specific structure.
-        if not is_accepted_transaction_version(get_transaction_version(tx.message)):
+        version = get_transaction_version(tx.message)
+        if not is_accepted_transaction_version(version, self._transaction_versions):
             return VerifyResponse(
                 is_valid=False, invalid_reason=ERR_UNSUPPORTED_TRANSACTION_VERSION, payer=""
+            )
+
+        # Size limit of the message version (§1.5): 1232 bytes for legacy and
+        # version 0, 4096 for version 1. The decoder accepts larger payloads.
+        if transaction_size_exceeded(svm_payload.transaction, version):
+            return VerifyResponse(
+                is_valid=False, invalid_reason=ERR_TRANSACTION_SIZE_EXCEEDED, payer=""
             )
 
         message = tx.message
         instructions = message.instructions
         static_accounts = list(message.account_keys)
 
-        # 3-6 instructions: ComputeLimit + ComputePrice + TransferChecked + optional Lighthouse/Memo
-        if len(instructions) < 3 or len(instructions) > 6:
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_INVALID_INSTRUCTION_COUNT, payer=""
-            )
-
-        # Step 3: Verify Compute Budget Instructions
-        compute_budget_program = Pubkey.from_string(COMPUTE_BUDGET_PROGRAM_ADDRESS)
-
-        # Verify compute unit limit instruction (index 0)
-        cu_limit_ix = instructions[0]
-        cu_limit_program = static_accounts[cu_limit_ix.program_id_index]
-        cu_limit_data = bytes(cu_limit_ix.data)
-
-        if cu_limit_program != compute_budget_program or len(cu_limit_data) < 1:
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_INVALID_COMPUTE_LIMIT, payer=""
-            )
-        if cu_limit_data[0] != 2:  # SetComputeUnitLimit discriminator
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_INVALID_COMPUTE_LIMIT, payer=""
-            )
-
-        # Verify compute unit price instruction (index 1)
-        cu_price_ix = instructions[1]
-        cu_price_program = static_accounts[cu_price_ix.program_id_index]
-        cu_price_data = bytes(cu_price_ix.data)
-
-        if cu_price_program != compute_budget_program or len(cu_price_data) < 9:
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_INVALID_COMPUTE_PRICE, payer=""
-            )
-        if cu_price_data[0] != 3:  # SetComputeUnitPrice discriminator
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_INVALID_COMPUTE_PRICE, payer=""
-            )
-
-        # Parse microLamports (u64, little-endian) and check against max
-        micro_lamports = int.from_bytes(cu_price_data[1:9], "little")
-        if micro_lamports > MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS:
-            return VerifyResponse(
-                is_valid=False,
-                invalid_reason="invalid_exact_svm_payload_transaction_instructions_compute_price_instruction_too_high",
-                payer="",
-            )
+        budget_error, transfer_index = check_exact_compute_budget(message)
+        if budget_error:
+            return VerifyResponse(is_valid=False, invalid_reason=budget_error, payer="")
 
         # Get token payer
         payer = get_token_payer_from_transaction(tx)
@@ -268,7 +253,7 @@ class ExactSvmScheme:
             )
 
         # Step 4: Verify Transfer Instruction
-        transfer_ix = instructions[2]
+        transfer_ix = instructions[transfer_index]
         transfer_program = static_accounts[transfer_ix.program_id_index]
         transfer_program_str = str(transfer_program)
 
@@ -281,14 +266,17 @@ class ExactSvmScheme:
             )
 
         # Step 5: Verify optional instructions (if present)
-        optional_instructions = instructions[3:]
+        optional_instructions = instructions[transfer_index + 1 :]
         if optional_instructions:
             lighthouse_program = Pubkey.from_string(LIGHTHOUSE_PROGRAM_ADDRESS)
             memo_program = Pubkey.from_string(MEMO_PROGRAM_ADDRESS)
+            # Named by optional slot, so the same codes apply on version 1,
+            # whose optional slots start at index 1 rather than 3.
             invalid_reasons = [
                 ERR_UNKNOWN_FOURTH_INSTRUCTION,
                 ERR_UNKNOWN_FIFTH_INSTRUCTION,
                 ERR_UNKNOWN_SIXTH_INSTRUCTION,
+                ERR_UNKNOWN_SEVENTH_INSTRUCTION,
             ]
 
             for idx, optional_ix in enumerate(optional_instructions):
@@ -377,15 +365,44 @@ class ExactSvmScheme:
             fully_signed_tx = self._signer.sign_transaction(
                 svm_payload.transaction, fee_payer_str, network
             )
+        except Exception as e:
+            return VerifyResponse(
+                is_valid=False,
+                invalid_reason=ERR_SIMULATION_FAILED,
+                invalid_message=str(e),
+                payer=payer,
+            )
 
+        try:
             # Simulate to verify transaction would succeed
             self._signer.simulate_transaction(fully_signed_tx, network)
         except Exception as e:
             error_msg = str(e)
+            invalid_reason = ERR_SIMULATION_FAILED
+            invalid_message = error_msg
+            if isinstance(self._signer, FacilitatorSvmSignerWithGetAccountInfo):
+                try:
+                    owner = self._signer.get_account_info(str(dest_ata), network)
+                except Exception:
+                    pass
+                else:
+                    destination = str(dest_ata)
+                    if owner is None:
+                        invalid_reason = ERR_RECIPIENT_ATA_MISSING
+                        invalid_message = (
+                            f"{error_msg}; recipient ATA {destination} was not found "
+                            "during diagnostic lookup"
+                        )
+                    elif validate_svm_address(owner) and owner != transfer_program_str:
+                        invalid_reason = ERR_RECIPIENT_ATA_WRONG_PROGRAM_OWNER
+                        invalid_message = (
+                            f"{error_msg}; recipient ATA {destination} has program "
+                            f"owner {owner}, expected {transfer_program_str}"
+                        )
             return VerifyResponse(
                 is_valid=False,
-                invalid_reason=ERR_SIMULATION_FAILED,
-                invalid_message=error_msg,
+                invalid_reason=invalid_reason,
+                invalid_message=invalid_message,
                 payer=payer,
             )
 
@@ -417,7 +434,9 @@ class ExactSvmScheme:
         # Parse and decode the transaction up front (no RPC calls) so we can key the
         # PendingSettlementStore on the message hash before doing any verify/sign/send work.
         wire_version = peek_wire_transaction_version(svm_payload.transaction)
-        if wire_version is not None and not is_accepted_transaction_version(wire_version):
+        if wire_version is not None and not is_accepted_transaction_version(
+            wire_version, self._transaction_versions
+        ):
             return SettleResponse(
                 success=False,
                 error_reason=ERR_UNSUPPORTED_TRANSACTION_VERSION,
@@ -427,7 +446,9 @@ class ExactSvmScheme:
             )
         try:
             tx = decode_transaction_from_payload(svm_payload)
-            if not is_accepted_transaction_version(get_transaction_version(tx.message)):
+            if not is_accepted_transaction_version(
+                get_transaction_version(tx.message), self._transaction_versions
+            ):
                 return SettleResponse(
                     success=False,
                     error_reason=ERR_UNSUPPORTED_TRANSACTION_VERSION,
@@ -474,6 +495,7 @@ class ExactSvmScheme:
             return SettleResponse(
                 success=False,
                 error_reason=verify_result.invalid_reason,
+                error_message=verify_result.invalid_message,
                 network=network,
                 payer=verify_result.payer,
                 transaction="",
@@ -555,11 +577,25 @@ class ExactSvmScheme:
         settle response, shared by the fresh-broadcast path in settle() and the
         pending-settlement reconciliation path in _reconcile_pending_settlement().
 
-        On confirm failure, records/refreshes the pending-settlement entry so a
-        retry reconciles via the fast path instead of re-verifying/re-sending.
+        Confirmed execution failure is terminal. Unknown confirmation outcomes
+        retain the signature so a retry reconciles instead of re-sending.
         """
         try:
             self._signer.confirm_transaction(signature, network)
+        except TransactionOnchainFailureError as e:
+            try:
+                self._pending_store.delete(tx_key)
+            except Exception:
+                pass  # A cleanup error must not mask a confirmed execution failure.
+            self._settlement_cache.delete(tx_key)
+            return SettleResponse(
+                success=False,
+                error_reason=ERR_TRANSACTION_FAILED,
+                error_message=str(e),
+                transaction=signature,
+                network=network,
+                payer=payer,
+            )
         except Exception as e:
             try:
                 self._pending_store.set(tx_key, signature)

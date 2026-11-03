@@ -37,6 +37,11 @@ const DefaultFacilitatorTransactionVersion = paymentchannels.FacilitatorTransact
 
 // Config is the optional configuration of the SVM `upto` facilitator.
 type Config struct {
+	// PaymentChannelsTreasuryOwner overrides the treasury owner the
+	// payment-channels program was built with, used to derive the treasury
+	// token account distribute pays. The zero key uses the deployed program's
+	// owner for the requirement's network; set it for a custom or local build.
+	PaymentChannelsTreasuryOwner solana.PublicKey
 	// ChannelStorage is the one channel store for every use case: the lifecycle
 	// index, rent cleanup, and the delegated caller identity. Unset uses one
 	// in-memory instance of this same store. Pass a durable implementation
@@ -64,6 +69,13 @@ type Config struct {
 	// open needs two. Unset means only the exact `{from, feePayer}` signer-set
 	// rule applies.
 	MaxRequiredSignatures *int
+
+	// TransactionVersions is the set of message versions this facilitator
+	// accepts for a client open and advertises as extra.transactionVersions.
+	// An open of any other version is rejected with
+	// unsupported_transaction_version before any instruction is inspected;
+	// legacy is accepted exactly when 0 is. Nil means [0, 1].
+	TransactionVersions []int
 
 	// ComputeUnitPriceMicroLamports is converted to v1's total priority fee for
 	// facilitator-submitted settlement transactions. A value of 0 omits the
@@ -167,6 +179,7 @@ type UptoSvmScheme struct {
 	pendingStore          x402.PendingSettlementStore
 	authorizerSigner      svm.ReceiverAuthorizerSigner
 	resolveCallerIdentity ResolveCallerIdentity
+	transactionVersions   []int
 }
 
 // NewUptoSvmScheme creates a new UptoSvmScheme. The signer supplies the fee
@@ -202,6 +215,10 @@ func NewUptoSvmScheme(signer svm.FacilitatorSvmSigner, config *Config) *UptoSvmS
 	if cfg.AuthorizerSigner != nil && cfg.ResolveCallerIdentity == nil {
 		panic("upto svm facilitator: authorizerSigner requires resolveCallerIdentity")
 	}
+	transactionVersions, err := svm.NormalizeAcceptedTransactionVersions(cfg.TransactionVersions)
+	if err != nil {
+		panic("upto svm facilitator: " + err.Error())
+	}
 	if cfg.ChannelStorage == nil {
 		cfg.ChannelStorage = paymentchannels.NewInMemoryPaymentChannelStorage()
 	}
@@ -213,6 +230,7 @@ func NewUptoSvmScheme(signer svm.FacilitatorSvmSigner, config *Config) *UptoSvmS
 		pendingStore:          x402.NewInMemoryPendingSettlementStore(),
 		authorizerSigner:      cfg.AuthorizerSigner,
 		resolveCallerIdentity: cfg.ResolveCallerIdentity,
+		transactionVersions:   transactionVersions,
 	}
 }
 
@@ -273,6 +291,7 @@ func (f *UptoSvmScheme) NewRentCleanupManager(network string) *RentCleanupManage
 		Signer:                            f.signer,
 		Storage:                           f.channelStorage,
 		Network:                           network,
+		TreasuryOwner:                     f.config.PaymentChannelsTreasuryOwner,
 		ComputeUnitPriceMicroLamports:     f.config.ComputeUnitPriceMicroLamports,
 		SettleComputeUnitLimit:            f.config.SettleComputeUnitLimit,
 		SettleLoadedAccountsDataSizeLimit: f.config.SettleLoadedAccountsDataSizeLimit,
@@ -289,7 +308,7 @@ func (f *UptoSvmScheme) GetExtra(network x402.Network) map[string]interface{} {
 	}
 	extra := map[string]interface{}{
 		upto.ExtraFeePayer:            addresses[rand.IntN(len(addresses))].String(),
-		upto.ExtraTransactionVersions: append([]int(nil), svm.AdvertisedTransactionVersions...),
+		upto.ExtraTransactionVersions: append([]int(nil), f.transactionVersions...),
 	}
 	if f.authorizerSigner != nil {
 		extra[upto.ExtraReceiverAuthorizer] = f.authorizerSigner.Address().String()
@@ -318,6 +337,18 @@ func (f *UptoSvmScheme) Verify(
 	auth, err := f.validateOpenAuthorization(ctx, payload, requirements, true)
 	if err != nil {
 		return nil, err
+	}
+	// The deposit settle refuses an open whose channel already exists, so the
+	// read-only preflight does too: a verify that passed would otherwise
+	// promise a deposit that cannot land.
+	channelRPC := paymentchannels.AccountFetchRPC(f.signer, string(requirements.Network))
+	exists, err := paymentchannels.ChannelExists(ctx, channelRPC, auth.channelID)
+	if err != nil {
+		return nil, x402.NewVerifyError(ErrChannelState, auth.payload.From, err.Error())
+	}
+	if exists {
+		return nil, x402.NewVerifyError(ErrChannelAlreadyOpen, auth.payload.From,
+			fmt.Sprintf("channel %s already exists", auth.payload.ChannelId))
 	}
 	return &x402.VerifyResponse{IsValid: true, Payer: auth.payload.From}, nil
 }
@@ -549,14 +580,15 @@ func (f *UptoSvmScheme) settleDeposit(
 
 	if err := paymentchannels.SimulateOpenSettleDistribute(
 		ctx, f.signer, auth.feePayer, uptoPayload.OpenTransaction, paymentchannels.SettlementSimChannel{
-			ChannelID:    auth.channelID,
-			Mint:         auth.mint,
-			Payee:        auth.feePayer,
-			Payer:        auth.from,
-			RentPayer:    auth.feePayer,
-			TokenProgram: auth.tokenProgram,
-			Network:      string(requirements.Network),
-			Splits:       auth.channelConfig.Splits,
+			ChannelID:     auth.channelID,
+			Mint:          auth.mint,
+			Payee:         auth.feePayer,
+			Payer:         auth.from,
+			RentPayer:     auth.feePayer,
+			TokenProgram:  auth.tokenProgram,
+			Network:       string(requirements.Network),
+			Splits:        auth.channelConfig.Splits,
+			TreasuryOwner: f.config.PaymentChannelsTreasuryOwner,
 		},
 	); err != nil {
 		f.settlementCache.Delete(depositKey)
@@ -867,6 +899,8 @@ type settlementChannel struct {
 	TokenProgram solana.PublicKey
 	Network      string
 	Splits       []paymentchannels.Split
+	// TreasuryOwner overrides the program's treasury owner; zero uses Network's.
+	TreasuryOwner solana.PublicKey
 }
 
 // voucherArgs carry a signed voucher into settle_and_seal via the Ed25519
@@ -904,14 +938,15 @@ func buildSettleAndDistribute(
 		return nil, err
 	}
 	distribute, err := paymentchannels.BuildDistributeInstruction(paymentchannels.DistributeInstructionArgs{
-		Channel:      channel.ChannelID,
-		Payer:        channel.Payer,
-		Payee:        channel.Payee,
-		RentPayer:    channel.RentPayer,
-		Mint:         channel.Mint,
-		TokenProgram: channel.TokenProgram,
-		Splits:       channel.Splits,
-		Network:      channel.Network,
+		Channel:       channel.ChannelID,
+		Payer:         channel.Payer,
+		Payee:         channel.Payee,
+		RentPayer:     channel.RentPayer,
+		Mint:          channel.Mint,
+		TokenProgram:  channel.TokenProgram,
+		Splits:        channel.Splits,
+		Network:       channel.Network,
+		TreasuryOwner: channel.TreasuryOwner,
 	})
 	if err != nil {
 		return nil, err
@@ -940,14 +975,15 @@ func (f *UptoSvmScheme) submitClaim(
 	}
 
 	instructions, err := buildSettleAndDistribute(settlementChannel{
-		ChannelID:    channel.ChannelID,
-		Mint:         channel.Mint,
-		Payee:        channel.Payee,
-		Payer:        channel.Payer,
-		RentPayer:    channel.RentPayer,
-		TokenProgram: args.TokenProgram,
-		Network:      args.Network,
-		Splits:       channel.Splits,
+		ChannelID:     channel.ChannelID,
+		Mint:          channel.Mint,
+		Payee:         channel.Payee,
+		Payer:         channel.Payer,
+		RentPayer:     channel.RentPayer,
+		TokenProgram:  args.TokenProgram,
+		Network:       args.Network,
+		Splits:        channel.Splits,
+		TreasuryOwner: f.config.PaymentChannelsTreasuryOwner,
 	}, voucher)
 	if err != nil {
 		return "", err
@@ -1111,6 +1147,7 @@ func (f *UptoSvmScheme) validateOpenAuthorization(
 		MaxComputeUnits:             f.config.MaxComputeUnits,
 		MaxPriorityFeeMicroLamports: f.config.MaxPriorityFeeMicroLamports,
 		MaxRequiredSignatures:       f.config.MaxRequiredSignatures,
+		AcceptedTransactionVersions: f.transactionVersions,
 	})
 	if err != nil {
 		return nil, x402.NewVerifyError(openTransactionReason(err), payer, err.Error())

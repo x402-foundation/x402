@@ -188,9 +188,12 @@ func (c RentCleanupStartConfig) discoveryOptions() RentDiscoveryOptions {
 
 // PaymentChannelRentCleanupConfig configures a rent cleanup manager for one network.
 type PaymentChannelRentCleanupConfig struct {
-	Signer                            svm.FacilitatorSvmSigner
-	Storage                           PaymentChannelStorage
-	Network                           string
+	Signer  svm.FacilitatorSvmSigner
+	Storage PaymentChannelStorage
+	Network string
+	// TreasuryOwner overrides the program's treasury owner for close/distribute
+	// cleanup; the zero key uses TreasuryOwner(Network).
+	TreasuryOwner                     solana.PublicKey
 	ComputeUnitPriceMicroLamports     *uint64
 	SettleComputeUnitLimit            *uint32
 	SettleLoadedAccountsDataSizeLimit *uint32
@@ -208,6 +211,7 @@ type PaymentChannelRentCleanupManager struct {
 	signer                            PaymentChannelFacilitatorSigner
 	storage                           PaymentChannelStorage
 	network                           string
+	treasuryOwner                     solana.PublicKey
 	computeUnitPriceMicroLamports     *uint64
 	settleComputeUnitLimit            *uint32
 	settleLoadedAccountsDataSizeLimit *uint32
@@ -252,6 +256,7 @@ func NewPaymentChannelRentCleanupManager(config PaymentChannelRentCleanupConfig)
 		signer:                            AssertPaymentChannelFacilitatorSigner(config.Signer, label),
 		storage:                           config.Storage,
 		network:                           config.Network,
+		treasuryOwner:                     config.TreasuryOwner,
 		computeUnitPriceMicroLamports:     config.ComputeUnitPriceMicroLamports,
 		settleComputeUnitLimit:            config.SettleComputeUnitLimit,
 		settleLoadedAccountsDataSizeLimit: config.SettleLoadedAccountsDataSizeLimit,
@@ -597,14 +602,15 @@ func (m *PaymentChannelRentCleanupManager) submitCloseOrDistribute(
 		return "", fmt.Errorf("channel %s has an invalid stored tokenProgram: %w", record.ChannelID, err)
 	}
 	distribute, err := BuildDistributeInstruction(DistributeInstructionArgs{
-		Channel:      channelID,
-		Payer:        channel.Payer,
-		Payee:        channel.Payee,
-		RentPayer:    channel.RentPayer,
-		Mint:         channel.Mint,
-		TokenProgram: tokenProgram,
-		Splits:       []Split{{Recipient: record.PayTo, BPS: BasisPointsDenominator}},
-		Network:      m.network,
+		Channel:       channelID,
+		Payer:         channel.Payer,
+		Payee:         channel.Payee,
+		RentPayer:     channel.RentPayer,
+		Mint:          channel.Mint,
+		TokenProgram:  tokenProgram,
+		Splits:        []Split{{Recipient: record.PayTo, BPS: BasisPointsDenominator}},
+		Network:       m.network,
+		TreasuryOwner: m.treasuryOwner,
 	})
 	if err != nil {
 		return "", err

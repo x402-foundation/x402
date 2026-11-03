@@ -20,6 +20,17 @@ if TYPE_CHECKING:
 MAX_DISCOVERY_RESPONSE_BYTES = 4 << 20
 
 
+def _read_discovery_body(response: Any) -> bytes:
+    try:
+        return read_limited_body(response.iter_bytes(), MAX_DISCOVERY_RESPONSE_BYTES)
+    except ResponseBodyTooLargeError:
+        raise
+    except Exception as err:
+        raise ValueError("failed to read response body") from err
+    finally:
+        response.close()
+
+
 @dataclass
 class ListDiscoveryResourcesParams:
     """Parameters for listing discovery resources.
@@ -268,14 +279,7 @@ class BazaarExtension:
             params=query_params if query_params else None,
         )
         response = http_client.send(request, stream=True)
-        try:
-            body = read_limited_body(response.iter_bytes(), MAX_DISCOVERY_RESPONSE_BYTES)
-        except ResponseBodyTooLargeError:
-            raise
-        except Exception as err:
-            raise ValueError("failed to read response body") from err
-        finally:
-            response.close()
+        body = _read_discovery_body(response)
 
         if response.status_code != 200:
             raise ValueError(
@@ -354,14 +358,7 @@ class BazaarExtension:
             params=query_params,
         )
         response = http_client.send(request, stream=True)
-        try:
-            body = read_limited_body(response.iter_bytes(), MAX_DISCOVERY_RESPONSE_BYTES)
-        except ResponseBodyTooLargeError:
-            raise
-        except Exception as err:
-            raise ValueError("failed to read response body") from err
-        finally:
-            response.close()
+        body = _read_discovery_body(response)
 
         if response.status_code != 200:
             raise ValueError(

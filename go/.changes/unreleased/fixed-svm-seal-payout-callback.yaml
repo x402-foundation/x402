@@ -1,2 +1,0 @@
-kind: fixed
-body: Cooperative Solana seal and refund closes record the merchant payout through OnDistributionConfirmed, keep paidToReceiver for a retry, and return settlement_pending when that recording fails so the retry does not broadcast again.

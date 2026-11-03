@@ -9,10 +9,16 @@ import (
 	"strings"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels/generated"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
+
+// InvalidPaymentRequirements is the core x402 reason for a
+// paymentPayload.accepted that does not equal the requirements.
+const InvalidPaymentRequirements = "invalid_payment_requirements"
 
 var (
 	statusCodePattern = regexp.MustCompile(`\b429\b|\b503\b`)
@@ -20,6 +26,33 @@ var (
 )
 
 const extraPaidToReceiver = "paidToReceiver"
+
+// EnvelopeFailure checks the request envelope: paymentPayload.accepted MUST
+// equal paymentRequirements (spec 4.5). The extra fields a server regenerates
+// for every PaymentRequired are left out, since the forwarded requirements
+// carry this response's values while accepted echoes the client's. It returns
+// the failure reason, or "" when the envelope matches.
+func EnvelopeFailure(accepted, requirements types.PaymentRequirements) string {
+	if accepted.Scheme != batchsettlement.Scheme || requirements.Scheme != batchsettlement.Scheme {
+		return "unsupported_scheme"
+	}
+	if !x402.DeepEqual(comparableRequirements(accepted), comparableRequirements(requirements)) {
+		return InvalidPaymentRequirements
+	}
+	return ""
+}
+
+func comparableRequirements(requirements types.PaymentRequirements) types.PaymentRequirements {
+	extra := make(map[string]interface{}, len(requirements.Extra))
+	for key, value := range requirements.Extra {
+		extra[key] = value
+	}
+	for _, field := range batchsettlement.DynamicExtraFields {
+		delete(extra, field)
+	}
+	requirements.Extra = extra
+	return requirements
+}
 
 // PendingSignatureOf returns the signature carried by an error that means the
 // broadcast's outcome is unknown.
@@ -207,6 +240,9 @@ func ClassifyError(err error) string {
 	}
 	if statusCodePattern.MatchString(message) {
 		return batchsettlement.ErrChannelState
+	}
+	if strings.HasPrefix(message, svm.ErrUnsupportedTransactionVersion) {
+		return svm.ErrUnsupportedTransactionVersion
 	}
 	for _, reason := range batchsettlement.ErrorReasons() {
 		if contains(message, reason) {

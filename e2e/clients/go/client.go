@@ -73,13 +73,39 @@ type PaymentClientContext struct {
 	BatchPhase       string
 }
 
+// PaymentClientOptions narrows what BuildPaymentClientWithOptions registers,
+// for family-specific e2e clients.
+type PaymentClientOptions struct {
+	// SvmOnly skips every non-SVM family even when its credentials are set.
+	SvmOnly bool
+	// SvmTransactionVersions narrows the Solana transaction message versions
+	// the SVM schemes build. Nil keeps the SDK default ([0, 1]); []int{0}
+	// keeps the client on version 0 even when the facilitator advertises 1.
+	SvmTransactionVersions []int
+}
+
 // BuildPaymentClient builds the shared x402 payment client + batched scheme
 // from env vars, registering each Go-supported network whose credentials are set.
 // Exits the process via OutputError on misconfiguration.
 func BuildPaymentClient() *PaymentClientContext {
+	return BuildPaymentClientWithOptions(PaymentClientOptions{})
+}
+
+// BuildPaymentClientWithOptions is BuildPaymentClient with family and SVM
+// transaction-version narrowing.
+func BuildPaymentClientWithOptions(opts PaymentClientOptions) *PaymentClientContext {
 	evmPrivateKey := os.Getenv("CLIENT_EVM_PRIVATE_KEY")
+	if opts.SvmOnly {
+		evmPrivateKey = ""
+	}
 	svmPrivateKey := os.Getenv("CLIENT_SVM_PRIVATE_KEY")
 	cardanoMnemonic := cardanoClientMnemonic()
+	if opts.SvmOnly {
+		cardanoMnemonic = ""
+	}
+	if opts.SvmOnly && svmPrivateKey == "" {
+		log.Fatal("CLIENT_SVM_PRIVATE_KEY is required")
+	}
 	if evmPrivateKey == "" && svmPrivateKey == "" && cardanoMnemonic == "" {
 		log.Fatal("At least one of CLIENT_EVM_PRIVATE_KEY, CLIENT_SVM_PRIVATE_KEY or CLIENT_CARDANO_MNEMONIC (with CARDANO_RPC_URL and BLOCKFROST_PROJECT_ID) is required")
 	}
@@ -153,11 +179,17 @@ func BuildPaymentClient() *PaymentClientContext {
 
 		var svmCfg *svmconfig.ClientConfig
 		svmRpcURL := os.Getenv("SVM_RPC_URL")
-		if svmRpcURL != "" {
-			svmCfg = &svmconfig.ClientConfig{RPCURL: svmRpcURL}
+		if svmRpcURL != "" || opts.SvmTransactionVersions != nil {
+			svmCfg = &svmconfig.ClientConfig{
+				RPCURL:              svmRpcURL,
+				TransactionVersions: opts.SvmTransactionVersions,
+			}
 		}
 
-		batchCfg := &batchsvmclient.BatchSvmClientConfig{RPCURL: svmRpcURL}
+		batchCfg := &batchsvmclient.BatchSvmClientConfig{
+			RPCURL:              svmRpcURL,
+			TransactionVersions: opts.SvmTransactionVersions,
+		}
 		if saltHex := batchSettlementChannelSalt(); saltHex != "" {
 			if salt, err := svmChannelSaltU64(saltHex); err != nil {
 				OutputError(fmt.Sprintf("Invalid batch-settlement channel salt: %v", err))
@@ -211,6 +243,12 @@ func BuildPaymentClient() *PaymentClientContext {
 // CreateClient builds the shared x402 client used by go-http e2e, wrapping
 // BuildPaymentClient's payment client in a payment-capable *http.Client.
 func CreateClient() *ClientContext {
+	return CreateClientWithOptions(PaymentClientOptions{})
+}
+
+// CreateClientWithOptions is CreateClient with family and SVM
+// transaction-version narrowing.
+func CreateClientWithOptions(opts PaymentClientOptions) *ClientContext {
 	serverURL := os.Getenv("RESOURCE_SERVER_URL")
 	if serverURL == "" {
 		log.Fatal("RESOURCE_SERVER_URL is required")
@@ -221,7 +259,7 @@ func CreateClient() *ClientContext {
 		endpointPath = "/protected"
 	}
 
-	pc := BuildPaymentClient()
+	pc := BuildPaymentClientWithOptions(opts)
 	if pc == nil {
 		return nil
 	}
