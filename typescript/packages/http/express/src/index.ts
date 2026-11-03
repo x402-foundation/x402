@@ -87,6 +87,118 @@ function sendPaymentErrorBody(
   res.json(response.body ?? {});
 }
 
+/** Result of {@link x402HTTPResourceServer.processSettlement}. */
+type SettleResult = Awaited<ReturnType<x402HTTPResourceServer["processSettlement"]>>;
+
+/**
+ * Settle an authorization-flow payment before the resource handler runs
+ * (Server-SR2 compliance). The handler — and any side-effects it produces —
+ * must only run against a confirmed payment.
+ *
+ * On any terminal outcome (facilitator error, unexpected error, or a failed
+ * settlement) this writes the response itself and returns `{ handled: true }`,
+ * signalling the caller to stop. On success it applies settlement and
+ * Cache-Control headers and returns the settle result for the caller to retain.
+ *
+ * @param httpServer - Resource server performing settlement
+ * @param res - Express response to write headers / terminal bodies to
+ * @param context - HTTP request context for the settle call
+ * @param paymentPayload - Verified client payment payload
+ * @param paymentRequirements - Resolved payment requirements
+ * @param declaredExtensions - Extensions declared for this route
+ * @returns `{ handled: true }` if a terminal response was sent, else the settle result
+ */
+async function settleBeforeHandler(
+  httpServer: x402HTTPResourceServer,
+  res: Response,
+  context: HTTPRequestContext,
+  paymentPayload: Parameters<x402HTTPResourceServer["processSettlement"]>[0],
+  paymentRequirements: Parameters<x402HTTPResourceServer["processSettlement"]>[1],
+  declaredExtensions: Parameters<x402HTTPResourceServer["processSettlement"]>[2],
+): Promise<{ handled: true } | { handled: false; result: SettleResult }> {
+  let result: SettleResult;
+  try {
+    result = await httpServer.processSettlement(
+      paymentPayload,
+      paymentRequirements,
+      declaredExtensions,
+      { request: context, responseBody: Buffer.alloc(0), responseHeaders: {} },
+      undefined,
+      undefined,
+    );
+  } catch (error) {
+    if (error instanceof FacilitatorResponseError) {
+      sendFacilitatorError(res, error);
+      return { handled: true };
+    }
+    console.error(error);
+    res.removeHeader(SETTLEMENT_OVERRIDES_HEADER);
+    res.status(402).json({ error: "settlement_failed" });
+    return { handled: true };
+  }
+
+  if (!result.success) {
+    const { response } = result;
+    Object.entries(response.headers).forEach(([key, value]) => {
+      res.setHeader(key, value);
+    });
+    res.removeHeader(SETTLEMENT_OVERRIDES_HEADER);
+    res.status(response.status);
+    sendPaymentErrorBody(res, response);
+    return { handled: true };
+  }
+
+  // Apply settlement headers before the handler runs.
+  Object.entries(result.headers).forEach(([key, value]) => {
+    res.setHeader(key, value);
+  });
+  res.setHeader(
+    "Cache-Control",
+    withPrivateCacheControl(
+      res.getHeader("Cache-Control") != null ? String(res.getHeader("Cache-Control")) : null,
+    ),
+  );
+
+  return { handled: false, result };
+}
+
+/**
+ * Apply failure-path settlement headers to the response when a handler fails
+ * after payment verification (threw, or returned status >= 400).
+ *
+ * Computes the cancel/deposit receipt headers via the resource server and sets
+ * each on the response. A no-op when the server produces no failure headers.
+ *
+ * @param res - Express response to set headers on
+ * @param httpServer - Resource server that builds the failure-path headers
+ * @param cancelSettlement - Result of the cancellation attempt, if any
+ * @param beforeHandlerSettlement - Completed before-handler settle, when present
+ * @param paymentPayload - Verified client payment payload
+ */
+function applyFailurePathHeaders(
+  res: Response,
+  httpServer: x402HTTPResourceServer,
+  cancelSettlement: Parameters<x402HTTPResourceServer["createFailurePathSettlementHeaders"]>[0],
+  beforeHandlerSettlement: Parameters<
+    x402HTTPResourceServer["createFailurePathSettlementHeaders"]
+  >[1],
+  paymentPayload: Parameters<x402HTTPResourceServer["createFailurePathSettlementHeaders"]>[2],
+): void {
+  const existingCacheControl =
+    res.getHeader("Cache-Control") != null ? String(res.getHeader("Cache-Control")) : null;
+  const failureHeaders = httpServer.createFailurePathSettlementHeaders(
+    cancelSettlement,
+    beforeHandlerSettlement,
+    paymentPayload,
+    existingCacheControl,
+  );
+  if (failureHeaders) {
+    Object.entries(failureHeaders).forEach(([key, value]) => {
+      res.setHeader(key, String(value));
+    });
+  }
+}
+
 /**
  * Decode percent-escapes in a request path.
  *
@@ -273,52 +385,20 @@ export function paymentMiddlewareFromHTTPServer(
         // After successful pre-settlement the buffering below still runs to detect
         // handler status and attempt cancellation on failure — but the final
         // processSettlement call is skipped (payment is already confirmed).
-        let preHandlerSettleResult:
-          Awaited<ReturnType<x402HTTPResourceServer["processSettlement"]>> | undefined;
+        let preHandlerSettleResult: SettleResult | undefined;
         if (!beforeHandlerSettlement) {
-          try {
-            preHandlerSettleResult = await httpServer.processSettlement(
-              paymentPayload,
-              paymentRequirements,
-              declaredExtensions,
-              { request: context, responseBody: Buffer.alloc(0), responseHeaders: {} },
-              undefined,
-              undefined,
-            );
-          } catch (error) {
-            if (error instanceof FacilitatorResponseError) {
-              sendFacilitatorError(res, error);
-              return;
-            }
-            console.error(error);
-            res.removeHeader(SETTLEMENT_OVERRIDES_HEADER);
-            res.status(402).json({ error: "settlement_failed" });
-            return;
-          }
-
-          if (!preHandlerSettleResult.success) {
-            const { response } = preHandlerSettleResult;
-            Object.entries(response.headers).forEach(([key, value]) => {
-              res.setHeader(key, value);
-            });
-            res.removeHeader(SETTLEMENT_OVERRIDES_HEADER);
-            res.status(response.status);
-            sendPaymentErrorBody(res, response);
-            return;
-          }
-
-          // Apply settlement headers before the handler runs.
-          Object.entries(preHandlerSettleResult.headers).forEach(([key, value]) => {
-            res.setHeader(key, value);
-          });
-          res.setHeader(
-            "Cache-Control",
-            withPrivateCacheControl(
-              res.getHeader("Cache-Control") != null
-                ? String(res.getHeader("Cache-Control"))
-                : null,
-            ),
+          const outcome = await settleBeforeHandler(
+            httpServer,
+            res,
+            context,
+            paymentPayload,
+            paymentRequirements,
+            declaredExtensions,
           );
+          if (outcome.handled) {
+            return;
+          }
+          preHandlerSettleResult = outcome.result;
         }
 
         // Intercept and buffer all core methods that can commit response to client
@@ -391,19 +471,13 @@ export function paymentMiddlewareFromHTTPServer(
             reason: "handler_threw",
             error,
           });
-          const existingCacheControl =
-            res.getHeader("Cache-Control") != null ? String(res.getHeader("Cache-Control")) : null;
-          const failureHeaders = httpServer.createFailurePathSettlementHeaders(
+          applyFailurePathHeaders(
+            res,
+            httpServer,
             cancelSettlement,
             beforeHandlerSettlement,
             paymentPayload,
-            existingCacheControl,
           );
-          if (failureHeaders) {
-            Object.entries(failureHeaders).forEach(([key, value]) => {
-              res.setHeader(key, String(value));
-            });
-          }
           bufferedCalls = [];
           restoreResponseMethods();
           return next(error);
@@ -419,19 +493,13 @@ export function paymentMiddlewareFromHTTPServer(
             responseStatus: res.statusCode,
           });
           res.removeHeader(SETTLEMENT_OVERRIDES_HEADER);
-          const existingCacheControl =
-            res.getHeader("Cache-Control") != null ? String(res.getHeader("Cache-Control")) : null;
-          const failureHeaders = httpServer.createFailurePathSettlementHeaders(
+          applyFailurePathHeaders(
+            res,
+            httpServer,
             cancelSettlement,
             beforeHandlerSettlement,
             paymentPayload,
-            existingCacheControl,
           );
-          if (failureHeaders) {
-            Object.entries(failureHeaders).forEach(([key, value]) => {
-              res.setHeader(key, String(value));
-            });
-          }
           restoreResponseMethods();
           // Replay all buffered calls in order
           for (const [method, args] of bufferedCalls) {
