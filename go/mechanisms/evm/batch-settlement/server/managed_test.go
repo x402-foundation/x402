@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -1441,19 +1442,22 @@ func TestRequestContext_EvictsEntriesOlderThanTtl(t *testing.T) {
 	}
 }
 
-func TestRequestContextTtl_FollowsAdmissionLockTtl(t *testing.T) {
+func TestRequestContextTtl(t *testing.T) {
 	for _, tc := range []struct {
 		name              string
 		maxTimeoutSeconds int
+		want              time.Duration
 	}{
-		{name: "minimum", maxTimeoutSeconds: 0},
-		{name: "mid-range", maxTimeoutSeconds: 120},
-		{name: "lock ceiling", maxTimeoutSeconds: 3600},
+		{name: "unset floors at minimum", maxTimeoutSeconds: 0, want: 15 * time.Second},
+		{name: "negative floors at minimum", maxTimeoutSeconds: -5, want: 15 * time.Second},
+		{name: "below minimum floors", maxTimeoutSeconds: 1, want: 15 * time.Second},
+		{name: "mid-range", maxTimeoutSeconds: 120, want: 130 * time.Second},
+		{name: "one hour", maxTimeoutSeconds: 3600, want: time.Hour + 10*time.Second},
+		{name: "absurd value hits safety ceiling", maxTimeoutSeconds: math.MaxInt32, want: 24*time.Hour + 10*time.Second},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			want := 2 * time.Duration(storage.PendingTtlMs(tc.maxTimeoutSeconds)) * time.Millisecond
-			if got := requestContextTtl(tc.maxTimeoutSeconds); got != want {
-				t.Fatalf("got %s, want %s", got, want)
+			if got := requestContextTtl(tc.maxTimeoutSeconds); got != tc.want {
+				t.Fatalf("got %s, want %s", got, tc.want)
 			}
 		})
 	}

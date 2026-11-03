@@ -30,10 +30,24 @@ type BatchSettlementRequestContext struct {
 	CorrectiveVoucherState *batchsettlement.BatchSettlementVoucherStateExtra
 }
 
-const lockTtlGraceMultiplier = 2
+const requestContextGrace = 10 * time.Second
 
+const maxRequestContextBase = 24 * time.Hour
+
+// requestContextTtl keeps the per-request state (including the pendingId) available for
+// the payment's maxTimeoutSeconds window plus grace, so a late cancel can still release it.
 func requestContextTtl(maxTimeoutSeconds int) time.Duration {
-	return lockTtlGraceMultiplier * time.Duration(storage.PendingTtlMs(maxTimeoutSeconds)) * time.Millisecond
+	base := time.Duration(storage.PendingTtlMs(0)) * time.Millisecond
+	if maxTimeoutSeconds > 0 {
+		requested := maxRequestContextBase
+		if int64(maxTimeoutSeconds) < int64(maxRequestContextBase/time.Second) {
+			requested = time.Duration(maxTimeoutSeconds) * time.Second
+		}
+		if requested > base {
+			base = requested
+		}
+	}
+	return base + requestContextGrace
 }
 
 const requestContextSweepInterval = time.Minute
@@ -469,7 +483,8 @@ func (s *BatchSettlementEvmScheme) OnVerifiedPaymentCanceledHook() x402.OnVerifi
 func handleVerifiedPaymentCanceled(s *BatchSettlementEvmScheme, ctx x402.VerifiedPaymentCanceledContext) error {
 	if ctx.Reason != x402.CancellationReasonHandlerThrew &&
 		ctx.Reason != x402.CancellationReasonHandlerFailed &&
-		ctx.Reason != x402.CancellationReasonAfterVerifyAborted {
+		ctx.Reason != x402.CancellationReasonAfterVerifyAborted &&
+		ctx.Reason != x402.CancellationReasonSettlementPreflightFailed {
 		return nil
 	}
 	return s.ClearPendingRequest(ctx.Payload)

@@ -1017,6 +1017,36 @@ func TestOnVerifiedPaymentCanceled_AfterVerifyAbortedClearsPending(t *testing.T)
 	}
 }
 
+// Preflight settle failures never fire OnSettleFailure, so the cancel hook must release the lock.
+func TestOnVerifiedPaymentCanceled_SettlementPreflightFailedClearsPending(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	fx := newSignedVoucherFixture(t)
+	stub := &stubPayload{data: fx.payload(t, "10")}
+	if res := runBeforeVerify(t, s, stub); res != nil {
+		t.Fatalf("BeforeVerify: %+v", res)
+	}
+	if res := runAfterVerify(t, s, stub, validVerifyResult()); res != nil {
+		t.Fatalf("AfterVerify: %+v", res)
+	}
+	if !lockHeld(t, s, fx.channelId, "") {
+		t.Fatal("expected committed admission lock")
+	}
+
+	err := s.OnVerifiedPaymentCanceledHook()(x402.VerifiedPaymentCanceledContext{
+		SettleContext: x402.SettleContext{Payload: stub, Requirements: batchedReqs()},
+		Reason:        x402.CancellationReasonSettlementPreflightFailed,
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if lockHeld(t, s, fx.channelId, "") {
+		t.Fatal("admission lock not released")
+	}
+	if s.requestContextCount() != 0 {
+		t.Fatalf("expected request context map empty, got %d", s.requestContextCount())
+	}
+}
+
 // ----- BeforeSettleHook -----
 
 // TestBeforeSettleHook_DepositPassThrough pins the new BeforeSettleHook
