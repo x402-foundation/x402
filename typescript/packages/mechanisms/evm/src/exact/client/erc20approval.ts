@@ -1,3 +1,4 @@
+import type { Network } from "@x402/core/types";
 import { encodeFunctionData, getAddress, maxUint256 } from "viem";
 import {
   PERMIT2_ADDRESS,
@@ -7,6 +8,7 @@ import {
   DEFAULT_MAX_PRIORITY_FEE_PER_GAS,
 } from "../../constants";
 import { ClientEvmSigner } from "../../signer";
+import { getEvmChainId } from "../../utils";
 import {
   ERC20_APPROVAL_GAS_SPONSORING_VERSION,
   type Erc20ApprovalGasSponsoringInfo,
@@ -29,13 +31,13 @@ export type Erc20ApprovalTxSigner = Pick<ClientEvmSigner, "address"> & {
  *
  * @param signer - The client EVM signer (must support signTransaction, getTransactionCount)
  * @param tokenAddress - The ERC-20 token contract address
- * @param chainId - The chain ID
+ * @param network - The CAIP-2 network of the token
  * @returns The ERC-20 approval gas sponsoring info object
  */
 export async function signErc20ApprovalTransaction(
   signer: Erc20ApprovalTxSigner,
   tokenAddress: `0x${string}`,
-  chainId: number,
+  network: Network,
 ): Promise<Erc20ApprovalGasSponsoringInfo> {
   const from = signer.address;
   const spender = getAddress(PERMIT2_ADDRESS);
@@ -48,13 +50,13 @@ export async function signErc20ApprovalTransaction(
   });
 
   // Get current nonce for the sender
-  const nonce = await signer.getTransactionCount({ address: from });
+  const nonce = await signer.getTransactionCount({ address: from }, network);
 
   // Get current fee estimates, with fallback values
   let maxFeePerGas: bigint;
   let maxPriorityFeePerGas: bigint;
   try {
-    const fees = await signer.estimateFeesPerGas?.();
+    const fees = await signer.estimateFeesPerGas?.(undefined, network);
     if (!fees) {
       throw new Error("no fee estimates available");
     }
@@ -73,7 +75,7 @@ export async function signErc20ApprovalTransaction(
     gas: ERC20_APPROVE_GAS_LIMIT,
     maxFeePerGas,
     maxPriorityFeePerGas,
-    chainId,
+    chainId: getEvmChainId(network),
   });
 
   return {

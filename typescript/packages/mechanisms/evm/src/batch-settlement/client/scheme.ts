@@ -20,7 +20,6 @@ import {
   trySignEip2612PermitExtension,
   trySignErc20ApprovalExtension,
 } from "../../shared/extensions";
-import type { EvmSchemeOptions } from "../../shared/rpc";
 import { createBatchSettlementEIP3009DepositPayload } from "./eip3009";
 import { createBatchSettlementPermit2DepositPayload } from "./permit2";
 import {
@@ -35,7 +34,12 @@ import {
   validateDepositPolicy,
 } from "./config";
 import { refundChannel, type RefundOptions } from "./refund";
-import { type BatchSettlementClientDeps, buildChannelConfig, recoverChannel } from "./channel";
+import {
+  type BatchSettlementClientDeps,
+  buildChannelConfig,
+  readIfSignerCan,
+  recoverChannel,
+} from "./channel";
 import { createBatchSettlementClientHooks } from "./hooks";
 import { processCorrectivePaymentRequired } from "./recovery";
 import type { ClientChannelStorage } from "./storage";
@@ -72,7 +76,6 @@ export class BatchSettlementEvmScheme implements SchemeNetworkClient {
   private readonly salt: `0x${string}`;
   private readonly payerAuthorizer: `0x${string}` | undefined;
   private readonly voucherSigner: ClientEvmSigner | undefined;
-  private readonly extensionRpcOptions: EvmSchemeOptions | undefined;
 
   /**
    * Constructs a batched client scheme.
@@ -84,22 +87,14 @@ export class BatchSettlementEvmScheme implements SchemeNetworkClient {
     private readonly signer: ClientEvmSigner,
     optionsOrPolicy?: BatchSettlementEvmSchemeOptions | BatchSettlementDepositPolicy,
   ) {
-    const {
-      storage,
-      depositPolicy,
-      depositStrategy,
-      salt,
-      payerAuthorizer,
-      voucherSigner,
-      extensionRpcOptions,
-    } = resolveClientOptions(optionsOrPolicy);
+    const { storage, depositPolicy, depositStrategy, salt, payerAuthorizer, voucherSigner } =
+      resolveClientOptions(optionsOrPolicy);
     this.storage = storage;
     this.depositPolicy = depositPolicy;
     this.depositStrategy = depositStrategy;
     this.salt = salt;
     this.payerAuthorizer = payerAuthorizer;
     this.voucherSigner = voucherSigner;
-    this.extensionRpcOptions = extensionRpcOptions;
 
     if (
       payerAuthorizer !== undefined &&
@@ -135,11 +130,10 @@ export class BatchSettlementEvmScheme implements SchemeNetworkClient {
     const channelId = computeChannelId(config, paymentRequirements.network);
     const key = channelId.toLowerCase();
 
-    let batchedCtx = await this.storage.get(key);
-    if (batchedCtx === undefined && this.signer.readContract) {
-      batchedCtx = await recoverChannel(deps, paymentRequirements);
-    }
-    batchedCtx = batchedCtx ?? {};
+    const batchedCtx =
+      (await this.storage.get(key)) ??
+      (await readIfSignerCan(this.signer, () => recoverChannel(deps, paymentRequirements))) ??
+      {};
 
     const needsInitialDeposit = !batchedCtx.balance || batchedCtx.balance === "0";
 
@@ -217,7 +211,6 @@ export class BatchSettlementEvmScheme implements SchemeNetworkClient {
 
       const eip2612Extensions = await trySignEip2612PermitExtension(
         this.signer,
-        this.extensionRpcOptions,
         paymentRequirements,
         result,
         context,
@@ -229,7 +222,6 @@ export class BatchSettlementEvmScheme implements SchemeNetworkClient {
 
       const erc20Extensions = await trySignErc20ApprovalExtension(
         this.signer,
-        this.extensionRpcOptions,
         paymentRequirements,
         context,
         depositAmount,

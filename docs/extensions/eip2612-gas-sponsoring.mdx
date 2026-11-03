@@ -81,22 +81,23 @@ The `ExactEvmScheme` handles EIP-2612 gas sponsoring automatically. When the ser
 
 Signing the EIP-2612 permit requires reading `allowance` and `nonces` from the chain. The scheme gets this capability from either:
 
-- A signer that includes `readContract` (e.g., `toClientEvmSigner(account, publicClient)`), or
-- An `rpcUrl` passed to `ExactEvmScheme` options
+- A signer that includes `readContract` (in TypeScript, compose it with `toClientEvmSigner(account, rpc)`), or
+- An `rpcUrl` passed to `ExactEvmScheme` options (Go)
 
 If neither is provided and the server advertises this extension, the scheme logs a warning and skips the permit. A wallet with no Permit2 allowance will then receive a `412 permit2_allowance_required` error.
 
 <Tabs>
   <Tab title="TypeScript">
     ```typescript
+    import { toClientEvmSigner } from "@x402/evm";
     import { ExactEvmScheme } from "@x402/evm/exact/client";
 
-    // Option 1: pass rpcUrl so the scheme can read the chain
-    const scheme = new ExactEvmScheme(signer, { rpcUrl: "https://mainnet.base.org" });
-    client.register("eip155:*", scheme);
+    // Give the signer an RPC per chain id so the scheme can read the chain
+    const signer = toClientEvmSigner(account, { 8453: { rpcUrl: "https://mainnet.base.org" } });
+    client.register("eip155:*", new ExactEvmScheme(signer));
 
-    // Option 2: use a signer that already has readContract
-    // const scheme = new ExactEvmScheme(toClientEvmSigner(account, publicClient));
+    // Or read through a viem public client bound to its chain
+    // const signer = toClientEvmSigner(account, publicClient);
 
     // The scheme automatically signs an EIP-2612 permit when:
     // 1. The server advertises eip2612GasSponsoring

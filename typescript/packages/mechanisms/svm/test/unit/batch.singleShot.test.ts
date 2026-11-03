@@ -376,6 +376,25 @@ describe("tracked-channel builders", () => {
     expect(wireVersion(signerV0.deposit.transaction)).toBe(0);
   });
 
+  it("rejects a builder that must fetch a blockhash when the signer has no RPC", async () => {
+    await expect(
+      buildBatchTopUpPayload({
+        channel: tracked(3_000n, 4_000n),
+        depositAmount: "6000",
+        requirements: requirements(),
+        signer: payer,
+      }),
+    ).rejects.toThrow("buildBatchTopUpPayload requires getLatestBlockhash on the signer.");
+    await expect(
+      buildBatchRefundPayload({
+        channel: tracked(3_000n, 10_000n),
+        requirements: requirements(),
+        signer: payer,
+        withTransaction: true,
+      }),
+    ).rejects.toThrow("buildBatchRefundPayload requires getLatestBlockhash on the signer.");
+  });
+
   it("refuses a top-up that does not cover the next charge or adds nothing", async () => {
     const args = {
       blockhash: BLOCKHASH,
@@ -454,7 +473,7 @@ describe("tracked-channel builders", () => {
 
 describe("batch client terms", () => {
   it("refuses a challenge whose fee payer is the client itself", async () => {
-    const client = new BatchClient(payer, { depositAmount: "10000", rpcUrl: "http://127.0.0.1:1" });
+    const client = new BatchClient(payer, { depositAmount: "10000" });
     await expect(
       client.createPaymentPayload(2, requirements({ feePayer: payer.address })),
     ).rejects.toThrow(BatchError.FEE_PAYER_MISMATCH);

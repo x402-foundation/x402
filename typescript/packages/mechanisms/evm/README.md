@@ -24,7 +24,7 @@ This package provides three main components for handling x402 payments on EVM-co
 
 **Client:**
 - `ExactEvmClient` - V2 client implementation using EIP-3009
-- `toClientEvmSigner(account)` - Converts viem accounts to x402 signers
+- `toClientEvmSigner(account, rpc?)` - Converts viem accounts to x402 signers, optionally composing onchain reads from `rpc`
 - `ClientEvmSigner` - TypeScript type for client signers
 
 **Facilitator:**
@@ -88,27 +88,38 @@ const client = new x402Client()
   .registerSchemeV1("base", new ExactEvmClientV1(signer));
 ```
 
-### Extension RPC Configuration (Optional)
+### Signer RPC Configuration (Optional)
 
 `ExactEvmClient` only requires signer support for `address` + `signTypedData`.
-Permit2 extension enrichment (EIP-2612 / ERC-20 approval gas sponsoring) can
-optionally use explicit RPC config when signer read/fee helpers are unavailable.
+Permit2 extension enrichment (EIP-2612 / ERC-20 approval gas sponsoring) and
+batch-settlement channel recovery also read the chain. The signer owns those
+reads: compose them with `toClientEvmSigner(account, rpc)`, where `rpc` is a
+viem public client, `{ rpcUrl }` for every network, or endpoints keyed by chain id.
+Scheme constructors take no RPC options.
+
+Reads route by network. A public client bound to another chain, or a chain-id map
+without the network, throws `EvmRpcNotConfiguredError` instead of reading. When
+gas sponsoring is advertised and the signer cannot read the network, the client
+warns once per network and pays without the sponsored permit.
 
 No chain-default RPC fallback is applied by the SDK.
 
 ```typescript
-// Per-network explicit registration
-const client = new x402Client()
-  .register("eip155:137", new ExactEvmClient(signer, { rpcUrl: polygonRpcUrl }))
-  .register("eip155:8453", new ExactEvmClient(signer, { rpcUrl: baseRpcUrl }));
+// One public client, bound to its chain
+const signer = toClientEvmSigner(
+  account,
+  createPublicClient({ chain: base, transport: http(baseRpcUrl) }),
+);
+const client = new x402Client().register("eip155:8453", new ExactEvmClient(signer));
 
-// Wildcard registration with chain-id keyed config map
+// Wildcard registration with chain-id keyed endpoints
+const multiChainSigner = toClientEvmSigner(account, {
+  137: { rpcUrl: polygonRpcUrl },
+  8453: { rpcUrl: baseRpcUrl },
+});
 const wildcardClient = new x402Client().register(
   "eip155:*",
-  new ExactEvmClient(signer, {
-    137: { rpcUrl: polygonRpcUrl },
-    8453: { rpcUrl: baseRpcUrl },
-  }),
+  new ExactEvmClient(multiChainSigner),
 );
 ```
 

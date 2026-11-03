@@ -6,14 +6,9 @@ import type { PaymentPayload, PaymentRequirements, SchemeNetworkClient } from "@
 import { findDefaultAsset } from "../../defaultAssets";
 import { buildOpenPaymentChannelTransaction } from "../../payment-channels/open";
 import { parseTokenProgramHint, resolveUptoSvmMemo } from "../../payment-channels/requirements";
-import type { ClientSvmConfig, ClientSvmSigner } from "../../signer";
+import { clientSignerRpc, type ClientSvmConfig, type ClientSvmSigner } from "../../signer";
 import { type UptoSvmPayloadV2 } from "../../types";
-import {
-  createRpcClient,
-  resolveBlockhash,
-  resolveOpenSlot,
-  resolveTransactionVersion,
-} from "../../utils";
+import { resolveBlockhash, resolveOpenSlot, resolveTransactionVersion } from "../../utils";
 import { resolveUptoSvmPaymentChannelConfig } from "../shared";
 
 /**
@@ -35,7 +30,7 @@ export class UptoSvmScheme implements SchemeNetworkClient {
    * Creates a new upto SVM client.
    *
    * @param signer - The payer's SVM signer
-   * @param config - Optional configuration, such as a custom RPC URL
+   * @param config - Optional transaction-version configuration
    */
   constructor(
     private readonly signer: ClientSvmSigner,
@@ -56,7 +51,7 @@ export class UptoSvmScheme implements SchemeNetworkClient {
   ): Promise<Pick<PaymentPayload, "x402Version" | "payload">> {
     const channelConfig = resolveUptoSvmPaymentChannelConfig(paymentRequirements);
 
-    const rpc = createRpcClient(paymentRequirements.network, this.config?.rpcUrl);
+    const rpc = clientSignerRpc(this.signer, paymentRequirements.network, "UptoSvmScheme");
 
     // Resolve the token program: prefer the requirement's hint, else read the mint.
     let tokenProgram = parseTokenProgramHint(paymentRequirements.extra);

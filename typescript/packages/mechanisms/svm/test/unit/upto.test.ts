@@ -2979,14 +2979,35 @@ describe("upto SVM scheme", () => {
       expect(fetchMint).toHaveBeenCalled();
     });
 
-    it("forwards a configured rpcUrl when creating the payload", async () => {
-      vi.mocked(fetchMint).mockResolvedValue({
-        programAddress: TOKEN_PROGRAM_ADDRESS,
-      } as never);
+    it("pays a fully hinted challenge with a bare signer and no RPC read", async () => {
+      vi.mocked(fetchMint).mockClear();
       const payer = await generateKeyPairSigner();
       const feePayer = await generateKeyPairSigner();
       const receiverAuthorizer = await generateKeyPairSigner();
-      const client = new UptoClientScheme(payer, { rpcUrl: "https://custom-rpc.example" });
+      const rpcReads: string[] = [];
+      const signer = new Proxy(payer, {
+        get(target, prop) {
+          if (
+            prop === "getAccountInfo" ||
+            prop === "getLatestBlockhash" ||
+            prop === "getSlot" ||
+            prop === "getProgramAccounts"
+          ) {
+            rpcReads.push(String(prop));
+            return undefined;
+          }
+          const value = Reflect.get(target, prop, target);
+          const own = Object.getOwnPropertyDescriptor(target, prop);
+          if (
+            typeof value === "function" &&
+            !(own && own.configurable === false && "value" in own && own.writable === false)
+          ) {
+            return value.bind(target);
+          }
+          return value;
+        },
+      });
+      const client = new UptoClientScheme(signer);
       const requirements: PaymentRequirements = {
         scheme: "upto",
         network: SOLANA_DEVNET_CAIP2,
@@ -3007,6 +3028,86 @@ describe("upto SVM scheme", () => {
       const result = await client.createPaymentPayload(2, requirements);
       const payload = result.payload as unknown as UptoSvmPayloadV2;
       expect(payload.channelId).toMatch(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/);
+      expect(rpcReads).toEqual([]);
+      expect(fetchMint).not.toHaveBeenCalled();
+    });
+
+    it("rejects an unhinted blockhash before signing when the signer has no RPC", async () => {
+      const payer = await generateKeyPairSigner();
+      const feePayer = await generateKeyPairSigner();
+      const receiverAuthorizer = await generateKeyPairSigner();
+      let signed = false;
+      const signer = new Proxy(payer, {
+        get(target, prop) {
+          const value = Reflect.get(target, prop, target);
+          if (prop === "signTransactions" && typeof value === "function") {
+            return (...args: unknown[]) => {
+              signed = true;
+              return Reflect.apply(value, target, args);
+            };
+          }
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+      const client = new UptoClientScheme(signer);
+
+      await expect(
+        client.createPaymentPayload(2, {
+          scheme: "upto",
+          network: SOLANA_DEVNET_CAIP2,
+          asset: MINT,
+          amount: "1000000",
+          payTo: PAY_TO,
+          maxTimeoutSeconds: 300,
+          extra: {
+            feePayer: feePayer.address,
+            recentSlot: OPEN_SLOT.toString(),
+            receiverAuthorizer: receiverAuthorizer.address,
+            tokenProgram: TOKEN_PROGRAM_ADDRESS,
+            withdrawDelay: WITHDRAW_DELAY,
+          },
+        }),
+      ).rejects.toThrow("UptoSvmScheme requires getLatestBlockhash on the signer.");
+      expect(signed).toBe(false);
+    });
+
+    it("rejects an unhinted slot before signing when the signer has no RPC", async () => {
+      const payer = await generateKeyPairSigner();
+      const feePayer = await generateKeyPairSigner();
+      const receiverAuthorizer = await generateKeyPairSigner();
+      let signed = false;
+      const signer = new Proxy(payer, {
+        get(target, prop) {
+          const value = Reflect.get(target, prop, target);
+          if (prop === "signTransactions" && typeof value === "function") {
+            return (...args: unknown[]) => {
+              signed = true;
+              return Reflect.apply(value, target, args);
+            };
+          }
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+      const client = new UptoClientScheme(signer);
+
+      await expect(
+        client.createPaymentPayload(2, {
+          scheme: "upto",
+          network: SOLANA_DEVNET_CAIP2,
+          asset: MINT,
+          amount: "1000000",
+          payTo: PAY_TO,
+          maxTimeoutSeconds: 300,
+          extra: {
+            feePayer: feePayer.address,
+            recentBlockhash: DUMMY_BLOCKHASH,
+            receiverAuthorizer: receiverAuthorizer.address,
+            tokenProgram: TOKEN_PROGRAM_ADDRESS,
+            withdrawDelay: WITHDRAW_DELAY,
+          },
+        }),
+      ).rejects.toThrow("UptoSvmScheme requires getSlot on the signer.");
+      expect(signed).toBe(false);
     });
 
     it("accepts a Token-2022 mint when extra.tokenProgram is omitted", async () => {

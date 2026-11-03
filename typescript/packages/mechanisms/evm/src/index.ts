@@ -14,8 +14,20 @@ export {
 } from "./exact/client";
 
 // Signers
-export { toClientEvmSigner, toFacilitatorEvmSigner } from "./signer";
-export type { ClientEvmSigner, FacilitatorEvmSigner } from "./signer";
+export {
+  assertClientEvmCapabilities,
+  EvmRpcNotConfiguredError,
+  toClientEvmSigner,
+  toFacilitatorEvmSigner,
+} from "./signer";
+export type {
+  ClientEvmCapability,
+  ClientEvmSigner,
+  EvmRpcClient,
+  EvmRpcConfig,
+  EvmRpcEndpoint,
+  FacilitatorEvmSigner,
+} from "./signer";
 
 // Types
 export type {

@@ -105,11 +105,14 @@ pnpm dev
 ```typescript
 import { x402Client } from "@x402/core/client";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
+import { toClientSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { privateKeyToAccount } from "viem/accounts";
 
 const evmSigner = privateKeyToAccount(evmPrivateKey);
-const svmSigner = await createKeyPairSignerFromBytes(base58.decode(svmPrivateKey));
+const svmSigner = toClientSvmSigner(
+  await createKeyPairSignerFromBytes(base58.decode(svmPrivateKey)),
+);
 
 // Optional: custom selector to pick which payment option to use
 const selectPayment = (_version: number, requirements: PaymentRequirements[]) => {

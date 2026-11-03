@@ -29,7 +29,7 @@ let mockAtaMap: Record<string, Address> = {};
 const mockRpc = {
   getLatestBlockhash: vi.fn(() => ({
     send: vi.fn().mockResolvedValue({
-      value: { blockhash: blockhashes[blockhashIndex++] },
+      value: { blockhash: blockhashes[blockhashIndex++], lastValidBlockHeight: 1n },
     }),
   })),
 };
@@ -64,7 +64,9 @@ vi.mock("@solana-program/token-2022", async () => {
 });
 
 async function createSigner() {
-  return generateKeyPairSigner();
+  const keypair = await generateKeyPairSigner();
+  const { toClientSvmSigner } = await import("../../src/signer");
+  return toClientSvmSigner(keypair);
 }
 
 describe("Memo Uniqueness", () => {
@@ -592,9 +594,9 @@ describe("transactionMessageHash malleability resistance", () => {
 
     const { ExactSvmScheme } = await import("../../src/exact/client/scheme");
 
-    const clientSigner = await generateKeyPairSigner();
-    const feePayer = await generateKeyPairSigner();
-    const payTo = await generateKeyPairSigner();
+    const clientSigner = await createSigner();
+    const feePayer = await createSigner();
+    const payTo = await createSigner();
 
     const client = new ExactSvmScheme(clientSigner);
     mockAtaMap = {
@@ -643,9 +645,9 @@ describe("transactionMessageHash malleability resistance", () => {
 
     const { ExactSvmScheme } = await import("../../src/exact/client/scheme");
 
-    const clientSigner = await generateKeyPairSigner();
-    const feePayer = await generateKeyPairSigner();
-    const payTo = await generateKeyPairSigner();
+    const clientSigner = await createSigner();
+    const feePayer = await createSigner();
+    const payTo = await createSigner();
 
     const client = new ExactSvmScheme(clientSigner);
     mockAtaMap = {

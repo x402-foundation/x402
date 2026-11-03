@@ -1,5 +1,6 @@
 import { config } from "dotenv";
 import { x402Client, wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
+import { toClientEvmSigner } from "@x402/evm";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import {
   BuilderCodeClientExtension,
@@ -31,11 +32,10 @@ const url = `${baseURL}${endpointPath}`;
  * - ENDPOINT_PATH: Paid endpoint path
  */
 async function main(): Promise<void> {
-  const evmSigner = privateKeyToAccount(evmPrivateKey);
-  const rpcOptions = { rpcUrl: evmRpcUrl };
+  const evmSigner = toClientEvmSigner(privateKeyToAccount(evmPrivateKey), { rpcUrl: evmRpcUrl });
 
   const client = new x402Client();
-  client.register("eip155:*", new ExactEvmScheme(evmSigner, rpcOptions));
+  client.register("eip155:*", new ExactEvmScheme(evmSigner));
   if (clientBuilderCode) {
     client.registerExtension(new BuilderCodeClientExtension(clientBuilderCode));
   }

@@ -27,20 +27,21 @@ Register `BatchSvmScheme` with an `x402Client`. The SDK opens or tops up the cha
 
 ```typescript
 import { x402Client } from "@x402/core/client";
+import { toClientSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { BatchSvmScheme } from "@x402/svm/batch-settlement/client";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { base58 } from "@scure/base";
 
-const signer = await createKeyPairSignerFromBytes(
-  base58.decode(process.env.SVM_PRIVATE_KEY!),
+const signer = toClientSvmSigner(
+  await createKeyPairSignerFromBytes(base58.decode(process.env.SVM_PRIVATE_KEY!)),
+  { defaultRpcUrl: process.env.SVM_RPC_URL },
 );
 
 const client = new x402Client();
 client.register("solana:*", new ExactSvmScheme(signer)); // fixed-price services
 client.register("solana:*", new BatchSvmScheme(signer, {
   depositPolicy: { depositMultiplier: 5 },
-  rpcUrl: process.env.SVM_RPC_URL,
 }));
 ```
 

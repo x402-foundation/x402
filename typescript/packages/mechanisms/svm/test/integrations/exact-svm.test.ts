@@ -16,7 +16,11 @@ import {
   SettleResponse,
   SupportedResponse,
 } from "@x402/core/types";
-import { ExactSvmScheme as ExactSvmClient, toFacilitatorSvmSigner } from "../../src";
+import {
+  ExactSvmScheme as ExactSvmClient,
+  toClientSvmSigner,
+  toFacilitatorSvmSigner,
+} from "../../src";
 import { ExactSvmScheme as ExactSvmServer } from "../../src/exact/server/scheme";
 import { ExactSvmScheme as ExactSvmFacilitator } from "../../src/exact/facilitator/scheme";
 import type { ExactSvmPayloadV2 } from "../../src/types";
@@ -134,9 +138,9 @@ describe("SVM Integration Tests", () => {
       const clientSigner = await createKeyPairSignerFromBytes(clientBytes);
       clientAddress = clientSigner.address;
 
-      const svmClient = new ExactSvmClient(clientSigner, {
-        rpcUrl: "https://api.devnet.solana.com",
-      });
+      const svmClient = new ExactSvmClient(
+        toClientSvmSigner(clientSigner, { defaultRpcUrl: "https://api.devnet.solana.com" }),
+      );
       client = new x402Client().register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", svmClient);
 
       const facilitatorBytes = base58.decode(FACILITATOR_PRIVATE_KEY);
@@ -235,9 +239,9 @@ describe("SVM Integration Tests", () => {
       const clientBytes = base58.decode(CLIENT_PRIVATE_KEY);
       const clientSigner = await createKeyPairSignerFromBytes(clientBytes);
 
-      const svmClient = new ExactSvmClient(clientSigner, {
-        rpcUrl: "https://api.devnet.solana.com",
-      });
+      const svmClient = new ExactSvmClient(
+        toClientSvmSigner(clientSigner, { defaultRpcUrl: "https://api.devnet.solana.com" }),
+      );
       const paymentClient = new x402Client().register(
         "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
         svmClient,

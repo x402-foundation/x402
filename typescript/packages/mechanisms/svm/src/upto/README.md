@@ -14,17 +14,18 @@ Uses the [payment-channels](https://github.com/solana-foundation/payment-channel
 
 ## Client Usage
 
-Register `UptoSvmScheme` with an `x402Client` to handle payments for services that use the `upto` scheme. From the buyer's perspective, usage is transparent — the SDK signs a max-authorization (`open`) and the server charges only what was consumed.
+Register `UptoSvmScheme` with an `x402Client` to handle payments for services that use the `upto` scheme. From the buyer's perspective, usage is transparent. The SDK signs a max-authorization (`open`) and the server charges only what was consumed. Wrap the keypair with `toClientSvmSigner` so blockhash, slot, and mint reads use the public cluster URL, or pass `{ defaultRpcUrl }` when they should not. A 402 that already carries `recentBlockhash`, `recentSlot`, and `tokenProgram` does not need those reads.
 
 ```typescript
 import { x402Client } from "@x402/core/client";
+import { toClientSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { UptoSvmScheme } from "@x402/svm/upto/client";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { base58 } from "@scure/base";
 
-const signer = await createKeyPairSignerFromBytes(
-  base58.decode(process.env.SVM_PRIVATE_KEY!),
+const signer = toClientSvmSigner(
+  await createKeyPairSignerFromBytes(base58.decode(process.env.SVM_PRIVATE_KEY!)),
 );
 
 const client = new x402Client();

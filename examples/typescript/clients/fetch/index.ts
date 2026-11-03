@@ -1,8 +1,10 @@
 import { config } from "dotenv";
 import { x402Client, wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
+import { toClientEvmSigner } from "@x402/evm";
 import { AuthCaptureEvmScheme } from "@x402/evm/auth-capture/client";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { UptoEvmScheme } from "@x402/evm/upto/client";
+import { toClientSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { UptoSvmScheme } from "@x402/svm/upto/client";
 import { privateKeyToAccount } from "viem/accounts";
@@ -39,14 +41,16 @@ async function main(): Promise<void> {
     maxAmountPerPayment: "$1",
   });
   if (evmPrivateKey) {
-    const evmSigner = privateKeyToAccount(evmPrivateKey);
-    const rpcOptions = evmRpcUrl ? { rpcUrl: evmRpcUrl } : undefined;
-    client.register("eip155:*", new ExactEvmScheme(evmSigner, rpcOptions));
-    client.register("eip155:*", new UptoEvmScheme(evmSigner, rpcOptions));
+    const account = privateKeyToAccount(evmPrivateKey);
+    const evmSigner = toClientEvmSigner(account, evmRpcUrl ? { rpcUrl: evmRpcUrl } : undefined);
+    client.register("eip155:*", new ExactEvmScheme(evmSigner));
+    client.register("eip155:*", new UptoEvmScheme(evmSigner));
     client.register("eip155:*", new AuthCaptureEvmScheme(evmSigner));
   }
   if (svmPrivateKey) {
-    const svmSigner = await createKeyPairSignerFromBytes(base58.decode(svmPrivateKey));
+    const svmSigner = toClientSvmSigner(
+      await createKeyPairSignerFromBytes(base58.decode(svmPrivateKey)),
+    );
     client.register("solana:*", new ExactSvmScheme(svmSigner));
     client.register("solana:*", new UptoSvmScheme(svmSigner));
   }

@@ -27,7 +27,7 @@ import {
   encodeVoucherMessageBytes,
   verifyVoucherSignature,
 } from "../../src/payment-channels/voucher";
-import { toFacilitatorSvmSigner } from "../../src/signer";
+import { toClientSvmSigner, toFacilitatorSvmSigner } from "../../src/signer";
 import { createRpcClient } from "../../src/utils";
 
 /**
@@ -168,10 +168,10 @@ describe("batch-settlement SVM onchain", () => {
       // The payout destinations must exist before an escrow is accepted.
       await fundUsdc(operator.address, 0);
       await fundUsdc(receiver.address, 0);
-      lifecycleClient = new BatchClientScheme(payer, {
-        depositAmount: DEPOSIT,
-        rpcUrl: RPC_URL,
-      });
+      lifecycleClient = new BatchClientScheme(
+        toClientSvmSigner(payer, { defaultRpcUrl: RPC_URL }),
+        { depositAmount: DEPOSIT },
+      );
     });
 
     /** The client that owns the channel through the lifecycle stages. */
@@ -194,7 +194,9 @@ describe("batch-settlement SVM onchain", () => {
         new BatchServerScheme({ receiverAuthorizer, store, withdrawDelay: WITHDRAW_DELAY }),
       );
       const clientScheme = coldClient
-        ? new BatchClientScheme(payer, { depositAmount: DEPOSIT, rpcUrl: RPC_URL })
+        ? new BatchClientScheme(toClientSvmSigner(payer, { defaultRpcUrl: RPC_URL }), {
+            depositAmount: DEPOSIT,
+          })
         : lifecycleClient;
       const client = new x402Client().register(NETWORK, clientScheme);
       return { client, clientScheme, server, store };
@@ -413,9 +415,8 @@ describe("batch-settlement SVM onchain", () => {
       // Its own channel, opened with exactly one request of escrow, so the
       // second request has to add more.
       const store = new MemoryChannelStore();
-      const thrifty = new BatchClientScheme(payer, {
+      const thrifty = new BatchClientScheme(toClientSvmSigner(payer, { defaultRpcUrl: RPC_URL }), {
         depositAmount: PRICE,
-        rpcUrl: RPC_URL,
         salt: "1",
       });
       const facilitator = new x402Facilitator().register(
@@ -522,14 +523,16 @@ describe("batch-settlement SVM onchain", () => {
           }),
         );
         await server.initialize();
-        const clientScheme = new BatchClientScheme(payer, {
-          depositAmount: DEPOSIT,
-          rpcUrl: RPC_URL,
-          salt: "2",
-          // Delegating voucher signing to the operator is an explicit client
-          // decision, never something a 402 can ask for.
-          serverSignedChannelsPolicy: { allowedOperators: [voucherOperator.address] },
-        });
+        const clientScheme = new BatchClientScheme(
+          toClientSvmSigner(payer, { defaultRpcUrl: RPC_URL }),
+          {
+            depositAmount: DEPOSIT,
+            salt: "2",
+            // Delegating voucher signing to the operator is an explicit client
+            // decision, never something a 402 can ask for.
+            serverSignedChannelsPolicy: { allowedOperators: [voucherOperator.address] },
+          },
+        );
         const client = new x402Client().register(NETWORK, clientScheme);
         const accepts: PaymentRequirements[] = [
           {

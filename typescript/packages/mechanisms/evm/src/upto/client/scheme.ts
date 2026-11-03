@@ -11,7 +11,6 @@ import {
   trySignErc20ApprovalExtension,
 } from "../../shared/extensions";
 import { findDefaultAsset } from "../../defaultAssets";
-import { UptoEvmSchemeOptions } from "./rpc";
 
 /**
  * EVM client implementation for the Upto payment scheme.
@@ -25,12 +24,8 @@ export class UptoEvmScheme implements SchemeNetworkClient {
    * Creates a new UptoEvmScheme instance.
    *
    * @param signer - The EVM signer for client operations
-   * @param options - Optional RPC configuration
    */
-  constructor(
-    private readonly signer: ClientEvmSigner,
-    private readonly options?: UptoEvmSchemeOptions,
-  ) {}
+  constructor(private readonly signer: ClientEvmSigner) {}
 
   /**
    * Creates a payment payload for the Upto scheme using Permit2.
@@ -49,7 +44,6 @@ export class UptoEvmScheme implements SchemeNetworkClient {
 
     const eip2612Extensions = await trySignEip2612PermitExtension(
       this.signer,
-      this.options,
       paymentRequirements,
       result,
       context,
@@ -60,7 +54,6 @@ export class UptoEvmScheme implements SchemeNetworkClient {
 
     const erc20Extensions = await trySignErc20ApprovalExtension(
       this.signer,
-      this.options,
       paymentRequirements,
       context,
     );

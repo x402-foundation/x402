@@ -1,8 +1,10 @@
 import { config } from "dotenv";
 import { x402Client, wrapAxiosWithPayment, x402HTTPClient } from "@x402/axios";
+import { toClientEvmSigner } from "@x402/evm";
 import { AuthCaptureEvmScheme } from "@x402/evm/auth-capture/client";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { UptoEvmScheme } from "@x402/evm/upto/client";
+import { toClientSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { UptoSvmScheme } from "@x402/svm/upto/client";
 import { privateKeyToAccount } from "viem/accounts";
@@ -30,13 +32,15 @@ const url = `${baseURL}${endpointPath}`;
  * - EVM_RPC_URL: JSON-RPC endpoint for on-chain reads (enables gas sponsoring extensions)
  */
 async function main(): Promise<void> {
-  const evmSigner = privateKeyToAccount(evmPrivateKey);
-  const svmSigner = await createKeyPairSignerFromBytes(base58.decode(svmPrivateKey));
-  const rpcOptions = evmRpcUrl ? { rpcUrl: evmRpcUrl } : undefined;
+  const account = privateKeyToAccount(evmPrivateKey);
+  const evmSigner = toClientEvmSigner(account, evmRpcUrl ? { rpcUrl: evmRpcUrl } : undefined);
+  const svmSigner = toClientSvmSigner(
+    await createKeyPairSignerFromBytes(base58.decode(svmPrivateKey)),
+  );
 
   const client = new x402Client()
-    .register("eip155:*", new ExactEvmScheme(evmSigner, rpcOptions))
-    .register("eip155:*", new UptoEvmScheme(evmSigner, rpcOptions))
+    .register("eip155:*", new ExactEvmScheme(evmSigner))
+    .register("eip155:*", new UptoEvmScheme(evmSigner))
     .register("eip155:*", new AuthCaptureEvmScheme(evmSigner))
     .register("solana:*", new ExactSvmScheme(svmSigner))
     .register("solana:*", new UptoSvmScheme(svmSigner))

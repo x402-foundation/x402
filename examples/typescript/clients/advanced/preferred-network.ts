@@ -2,6 +2,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { x402Client, type PaymentRequirements } from "@x402/fetch";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { UptoEvmScheme } from "@x402/evm/upto/client";
+import { toClientSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { base58 } from "@scure/base";
@@ -30,7 +31,9 @@ export async function runPreferredNetworkExample(
   console.log("🎯 Creating client with preferred network selection...\n");
 
   const evmSigner = privateKeyToAccount(evmPrivateKey);
-  const svmSigner = await createKeyPairSignerFromBytes(base58.decode(svmPrivateKey));
+  const svmSigner = toClientSvmSigner(
+    await createKeyPairSignerFromBytes(base58.decode(svmPrivateKey)),
+  );
 
   // Define network preference order (most preferred first)
   const networkPreferences = ["solana:", "eip155:"];

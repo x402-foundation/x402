@@ -15,13 +15,8 @@ import { requireTokenProgramHint } from "../../payment-channels/requirements";
 import { encodeVoucherMessageBytes, verifyVoucherSignature } from "../../payment-channels/voucher";
 import { discoverChannelsByPayer, type ProgramAccountScan } from "../../payment-channels/discovery";
 import { ChannelStatus } from "../../payment-channels/generated/types/channelStatus";
-import type { ClientSvmConfig } from "../../signer";
-import {
-  createRpcClient,
-  resolveBlockhash,
-  resolveOpenSlot,
-  resolveTransactionVersion,
-} from "../../utils";
+import { clientSignerRpc, type ClientSvmConfig } from "../../signer";
+import { resolveBlockhash, resolveOpenSlot, resolveTransactionVersion } from "../../utils";
 import { MAX_WITHDRAW_DELAY, MIN_WITHDRAW_DELAY } from "../constants";
 import { BatchError } from "../errors";
 import { checkCorrectiveState } from "./corrective";
@@ -269,8 +264,10 @@ export class BatchSvmScheme implements SchemeNetworkClient {
         terms.trust,
         existing.deposit,
       );
-      const rpc = createRpcClient(requirements.network, this.config.rpcUrl);
-      const blockhash = await resolveBlockhash(rpc, requirements);
+      const blockhash = await resolveBlockhash(
+        clientSignerRpc(this.signer, requirements.network, "BatchSvmScheme"),
+        requirements,
+      );
       const topUp = await buildTopUpPaymentChannelTransaction({
         transactionVersion,
         amount: topUpAmount,
@@ -336,7 +333,7 @@ export class BatchSvmScheme implements SchemeNetworkClient {
       terms.trust,
       0n,
     );
-    const rpc = createRpcClient(requirements.network, this.config.rpcUrl);
+    const rpc = clientSignerRpc(this.signer, requirements.network, "BatchSvmScheme");
     const [blockhash, openSlot] = await Promise.all([
       resolveBlockhash(rpc, requirements),
       resolveOpenSlot(rpc, requirements),
@@ -423,7 +420,7 @@ export class BatchSvmScheme implements SchemeNetworkClient {
     const { existing, lookupRequirements, terms } = located;
     const blockhash = options?.withTransaction
       ? await resolveBlockhash(
-          createRpcClient(lookupRequirements.network, this.config.rpcUrl),
+          clientSignerRpc(this.signer, lookupRequirements.network, "BatchSvmScheme"),
           lookupRequirements,
         )
       : undefined;
@@ -567,15 +564,15 @@ export class BatchSvmScheme implements SchemeNetworkClient {
     terms: ResolvedTerms,
   ): Promise<OpenChannel | undefined> {
     if (this.config.discoverChannels === false) return undefined;
-    const rpc = createRpcClient(requirements.network, this.config.rpcUrl);
-    const scan: ProgramAccountScan = async (programId, filters) =>
-      (await rpc
-        .getProgramAccounts(programId as Address, {
-          commitment: "confirmed",
-          encoding: "base64",
-          filters: filters as never,
-        })
-        .send()) as never;
+    const getProgramAccounts = this.signer.getProgramAccounts;
+    // Discovery is an optimization. A signer without the scan opens a new channel.
+    if (typeof getProgramAccounts !== "function") return undefined;
+    const scan: ProgramAccountScan = (programId, filters) =>
+      getProgramAccounts(requirements.network, programId, {
+        commitment: "confirmed",
+        encoding: "base64",
+        filters,
+      });
     let found;
     try {
       found = await discoverChannelsByPayer(scan, this.signer.address);
@@ -1097,8 +1094,10 @@ export class BatchSvmScheme implements SchemeNetworkClient {
       extra,
       "extra.tokenProgram is not a supported SPL token program",
     );
-    const rpc = createRpcClient(requirements.network, this.config.rpcUrl);
-    const mint = await fetchMint(rpc, requirements.asset as Address);
+    const mint = await fetchMint(
+      clientSignerRpc(this.signer, requirements.network, "BatchSvmScheme"),
+      requirements.asset as Address,
+    );
     if (mint.programAddress.toString() !== tokenProgram) {
       throw new Error("extra.tokenProgram does not own requirements.asset");
     }

@@ -171,6 +171,7 @@ import { privateKeyToAccount } from "viem/accounts";
 
 const evmSigner = privateKeyToAccount(evmPrivateKey);
 const mainnetSigner = privateKeyToAccount(mainnetPrivateKey);
+// svmSigner: wrap a kit signer with toClientSvmSigner(signer) from "@x402/svm"
 
 // More specific patterns take precedence over wildcards
 const client = new x402Client()

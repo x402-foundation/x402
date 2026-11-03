@@ -1,4 +1,15 @@
-import type { Log } from "viem";
+import type { Network } from "@x402/core/types";
+import { createPublicClient, http, type Log } from "viem";
+import { getEvmChainId } from "./utils";
+
+type ReadContractArgs = {
+  address: `0x${string}`;
+  abi: readonly unknown[];
+  functionName: string;
+  args?: readonly unknown[];
+};
+
+type FeesPerGas = { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint };
 
 /**
  * ClientEvmSigner - Used by x402 clients to sign payment authorizations.
@@ -8,7 +19,9 @@ import type { Log } from "viem";
  * const account = privateKeyToAccount('0x...');
  * ```
  *
- * Or composed via `toClientEvmSigner(account, publicClient)`.
+ * Or composed with onchain reads via `toClientEvmSigner(account, rpc)`.
+ *
+ * Every onchain read takes the CAIP-2 `network` to read as its trailing argument.
  */
 export type ClientEvmSigner = {
   readonly address: `0x${string}`;
@@ -19,15 +32,10 @@ export type ClientEvmSigner = {
     message: Record<string, unknown>;
   }): Promise<`0x${string}`>;
   /**
-   * Optional on-chain reads.
-   * Required only for extension enrichment (EIP-2612 / ERC-20 approval).
+   * Optional onchain reads.
+   * Required for extension enrichment (EIP-2612 / ERC-20 approval) and batch-settlement channel recovery.
    */
-  readContract?(args: {
-    address: `0x${string}`;
-    abi: readonly unknown[];
-    functionName: string;
-    args?: readonly unknown[];
-  }): Promise<unknown>;
+  readContract?(args: ReadContractArgs, network: Network): Promise<unknown>;
   /**
    * Optional: Signs a raw EIP-1559 transaction without broadcasting.
    * Required for ERC-20 approval gas sponsoring when the token lacks EIP-2612.
@@ -45,13 +53,135 @@ export type ClientEvmSigner = {
    * Optional: Gets the current transaction count (nonce) for an address.
    * Required for ERC-20 approval gas sponsoring.
    */
-  getTransactionCount?(args: { address: `0x${string}` }): Promise<number>;
+  getTransactionCount?(args: { address: `0x${string}` }, network: Network): Promise<number>;
   /**
-   * Optional: Estimates current gas fees per gas.
-   * Required for ERC-20 approval gas sponsoring.
+   * Optional: Estimates current gas fees per gas. Used by ERC-20 approval gas sponsoring,
+   * which falls back to default fees without it.
+   *
+   * The leading `undefined` keeps a viem `PublicClient` assignable: its `estimateFeesPerGas`
+   * takes an optional parameters object that a bare `network` string does not satisfy.
    */
-  estimateFeesPerGas?(): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }>;
+  estimateFeesPerGas?(args: undefined, network: Network): Promise<FeesPerGas>;
 };
+
+/** Optional {@link ClientEvmSigner} capability a scheme can require. */
+export type ClientEvmCapability =
+  | "readContract"
+  | "signTransaction"
+  | "getTransactionCount"
+  | "estimateFeesPerGas";
+
+/**
+ * Asserts that a client signer exposes every capability a component needs.
+ *
+ * @param signer - Client signer to validate
+ * @param capabilities - Optional signer methods the component calls
+ * @param label - Component name for error messages
+ * @throws Error naming the first missing capability
+ */
+export function assertClientEvmCapabilities<C extends ClientEvmCapability>(
+  signer: ClientEvmSigner,
+  capabilities: readonly C[],
+  label: string,
+): asserts signer is ClientEvmSigner & Required<Pick<ClientEvmSigner, C>> {
+  for (const method of capabilities) {
+    if (typeof signer[method] !== "function") {
+      throw new Error(`${label} requires ${method} on the signer.`);
+    }
+  }
+}
+
+/**
+ * viem-like public client that {@link toClientEvmSigner} reads through.
+ *
+ * A defined `chain` binds the client to that chain id. An undefined `chain` cannot be
+ * checked, so the client is used for every network.
+ */
+export type EvmRpcClient = {
+  readonly chain?: { readonly id: number };
+  readContract(args: ReadContractArgs): Promise<unknown>;
+  getTransactionCount(args: { address: `0x${string}` }): Promise<number>;
+  estimateFeesPerGas(): Promise<FeesPerGas>;
+};
+
+/** JSON-RPC endpoint that {@link toClientEvmSigner} creates a cached public client for. */
+export type EvmRpcEndpoint = { rpcUrl: string };
+
+/**
+ * RPC configuration for {@link toClientEvmSigner}: a public client, one endpoint used for
+ * every network, or endpoints keyed by EVM chain id.
+ */
+export type EvmRpcConfig = EvmRpcClient | EvmRpcEndpoint | Record<number, EvmRpcEndpoint>;
+
+/** Thrown by a composed signer's read when its RPC configuration does not cover the network. */
+export class EvmRpcNotConfiguredError extends Error {
+  /**
+   * Creates the error for an uncovered network.
+   *
+   * @param network - CAIP-2 network that was read
+   * @param reason - Optional detail on why the configuration does not cover it
+   */
+  constructor(
+    readonly network: Network,
+    reason?: string,
+  ) {
+    super(
+      `No EVM RPC is configured for ${network}${reason ? ` (${reason})` : ""}. ` +
+        "Configure one with toClientEvmSigner(account, rpc).",
+    );
+    this.name = "EvmRpcNotConfiguredError";
+  }
+}
+
+const rpcClientCache = new Map<string, EvmRpcClient>();
+
+/**
+ * Gets or creates the cached public client for an RPC URL.
+ *
+ * @param rpcUrl - JSON-RPC endpoint URL
+ * @returns The public client for `rpcUrl`
+ */
+function rpcClientForUrl(rpcUrl: string): EvmRpcClient {
+  const existing = rpcClientCache.get(rpcUrl);
+  if (existing) {
+    return existing;
+  }
+  const client = createPublicClient({ transport: http(rpcUrl) });
+  rpcClientCache.set(rpcUrl, client);
+  return client;
+}
+
+/**
+ * Builds the network-to-client router for an RPC configuration.
+ *
+ * @param rpc - RPC configuration passed to {@link toClientEvmSigner}
+ * @returns A function returning the client that serves a network
+ */
+function rpcClientRouter(rpc: EvmRpcConfig): (network: Network) => EvmRpcClient {
+  if ("readContract" in rpc) {
+    return network => {
+      // Reading another chain through a chain-bound client would return that chain's state.
+      if (rpc.chain !== undefined && rpc.chain.id !== getEvmChainId(network)) {
+        throw new EvmRpcNotConfiguredError(
+          network,
+          `the public client is bound to chain ${rpc.chain.id}`,
+        );
+      }
+      return rpc;
+    };
+  }
+  if ("rpcUrl" in rpc) {
+    const { rpcUrl } = rpc;
+    return () => rpcClientForUrl(rpcUrl);
+  }
+  return network => {
+    const endpoint: EvmRpcEndpoint | undefined = rpc[getEvmChainId(network)];
+    if (!endpoint) {
+      throw new EvmRpcNotConfiguredError(network);
+    }
+    return rpcClientForUrl(endpoint.rpcUrl);
+  };
+}
 
 /**
  * FacilitatorEvmSigner - Used by x402 facilitators to verify and settle payments
@@ -122,23 +252,17 @@ export type FacilitatorEvmSigner = {
 };
 
 /**
- * Composes a ClientEvmSigner from a local account and a public client.
+ * Composes a ClientEvmSigner from a signer and the RPC that serves its onchain reads.
  *
- * Use this when your signer (e.g., `privateKeyToAccount`) doesn't have
- * `readContract`. The `publicClient` provides the on-chain read capability.
+ * This is the one place client RPC is configured. Use it when your signer
+ * (e.g., `privateKeyToAccount`) cannot read the chain. The signer's own
+ * `readContract`, `getTransactionCount` and `estimateFeesPerGas` take precedence
+ * over `rpc`. Reads route by their `network` argument: a public client bound to
+ * another chain, or a chain-id map without an entry for the network, throws
+ * {@link EvmRpcNotConfiguredError} instead of reading.
  *
- * Alternatively, use a local account with an explicit public client:
- * ```typescript
- * const account = privateKeyToAccount('0x...');
- * const publicClient = createPublicClient({ chain: baseSepolia, transport: http() });
- * const signer = toClientEvmSigner(account, publicClient);
- * ```
- *
- * @param signer - A signer with `address` and `signTypedData` (and optionally `readContract`)
- * @param publicClient - A client with optional read/nonce/fee helpers
- * @param publicClient.readContract - The readContract method from the public client
- * @param publicClient.getTransactionCount - Optional getTransactionCount for ERC-20 approval
- * @param publicClient.estimateFeesPerGas - Optional estimateFeesPerGas for ERC-20 approval
+ * @param signer - A signer with `address` and `signTypedData`, and optionally its own reads
+ * @param rpc - A viem public client, `{ rpcUrl }` for every network, or `{ [chainId]: { rpcUrl } }`
  * @returns A ClientEvmSigner with any available optional capabilities
  *
  * @example
@@ -146,50 +270,45 @@ export type FacilitatorEvmSigner = {
  * const account = privateKeyToAccount("0x...");
  * const publicClient = createPublicClient({ chain: baseSepolia, transport: http() });
  * const signer = toClientEvmSigner(account, publicClient);
+ * const multiChainSigner = toClientEvmSigner(account, {
+ *   8453: { rpcUrl: "https://mainnet.base.org" },
+ *   137: { rpcUrl: "https://polygon-rpc.com" },
+ * });
  * ```
  */
-export function toClientEvmSigner(
-  signer: Omit<ClientEvmSigner, "readContract"> & {
-    readContract?: ClientEvmSigner["readContract"];
-  },
-  publicClient?: {
-    readContract(args: {
-      address: `0x${string}`;
-      abi: readonly unknown[];
-      functionName: string;
-      args?: readonly unknown[];
-    }): Promise<unknown>;
-    getTransactionCount?(args: { address: `0x${string}` }): Promise<number>;
-    estimateFeesPerGas?(): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }>;
-  },
-): ClientEvmSigner {
-  const readContract = signer.readContract ?? publicClient?.readContract.bind(publicClient);
+export function toClientEvmSigner(signer: ClientEvmSigner, rpc?: EvmRpcConfig): ClientEvmSigner {
+  const clientFor = rpc === undefined ? undefined : rpcClientRouter(rpc);
 
   const result: ClientEvmSigner = {
     address: signer.address,
     signTypedData: msg => signer.signTypedData(msg),
   };
 
+  const readContract = signer.readContract;
   if (readContract) {
-    result.readContract = readContract;
+    result.readContract = (args, network) => readContract(args, network);
+  } else if (clientFor) {
+    result.readContract = async (args, network) => clientFor(network).readContract(args);
   }
 
-  // Forward optional capabilities from signer or publicClient
   const signTransaction = signer.signTransaction;
   if (signTransaction) {
     result.signTransaction = args => signTransaction(args);
   }
 
-  const getTransactionCount =
-    signer.getTransactionCount ?? publicClient?.getTransactionCount?.bind(publicClient);
+  const getTransactionCount = signer.getTransactionCount;
   if (getTransactionCount) {
-    result.getTransactionCount = args => getTransactionCount(args);
+    result.getTransactionCount = (args, network) => getTransactionCount(args, network);
+  } else if (clientFor) {
+    result.getTransactionCount = async (args, network) =>
+      clientFor(network).getTransactionCount(args);
   }
 
-  const estimateFeesPerGas =
-    signer.estimateFeesPerGas ?? publicClient?.estimateFeesPerGas?.bind(publicClient);
+  const estimateFeesPerGas = signer.estimateFeesPerGas;
   if (estimateFeesPerGas) {
-    result.estimateFeesPerGas = () => estimateFeesPerGas();
+    result.estimateFeesPerGas = (args, network) => estimateFeesPerGas(args, network);
+  } else if (clientFor) {
+    result.estimateFeesPerGas = async (_args, network) => clientFor(network).estimateFeesPerGas();
   }
 
   return result;

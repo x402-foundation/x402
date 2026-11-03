@@ -158,14 +158,16 @@ Register the `BuilderCodeClientExtension` on your x402 client. It attaches your 
   <Tab title="TypeScript">
 ```typescript
 import { x402Client, wrapFetchWithPayment } from "@x402/fetch";
+import { toClientEvmSigner } from "@x402/evm";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { BuilderCodeClientExtension } from "@x402/extensions/builder-code";
 import { privateKeyToAccount } from "viem/accounts";
 
-const evmSigner = privateKeyToAccount(process.env.EVM_PRIVATE_KEY as `0x${string}`);
+const account = privateKeyToAccount(process.env.EVM_PRIVATE_KEY as `0x${string}`);
+const evmSigner = toClientEvmSigner(account, { rpcUrl: process.env.EVM_RPC_URL as string });
 
 const client = new x402Client();
-client.register("eip155:*", new ExactEvmScheme(evmSigner, { rpcUrl: process.env.EVM_RPC_URL }));
+client.register("eip155:*", new ExactEvmScheme(evmSigner));
 client.registerExtension(new BuilderCodeClientExtension("bc_my_client"));
 
 const fetchWithPayment = wrapFetchWithPayment(fetch, client);
