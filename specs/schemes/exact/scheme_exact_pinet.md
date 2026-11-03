@@ -6,7 +6,7 @@ This scheme only supports x402 `v2`.
 
 ## Supported Networks
 
-This specification uses the Pi Network [CAIP-2](https://namespaces.chainagnostic.org/pinet/caip2) namespace, whose registration is pending review in [ChainAgnostic/namespaces#199](https://github.com/ChainAgnostic/namespaces/pull/199):
+This specification uses the Pi Network [CAIP-2](https://namespaces.chainagnostic.org/pinet/caip2) namespace:
 
 | Network         | Network passphrase | Estimated ledger seconds |
 | --------------- | ------------------ | ------------------------ |
