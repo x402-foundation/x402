@@ -274,8 +274,7 @@ export function paymentMiddlewareFromHTTPServer(
         // handler status and attempt cancellation on failure — but the final
         // processSettlement call is skipped (payment is already confirmed).
         let preHandlerSettleResult:
-          | Awaited<ReturnType<x402HTTPResourceServer["processSettlement"]>>
-          | undefined;
+          Awaited<ReturnType<x402HTTPResourceServer["processSettlement"]>> | undefined;
         if (!beforeHandlerSettlement) {
           try {
             preHandlerSettleResult = await httpServer.processSettlement(

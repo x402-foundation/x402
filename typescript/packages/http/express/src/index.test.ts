@@ -626,7 +626,11 @@ describe("paymentMiddleware", () => {
         beforeHandlerSettlement: {
           phase: "before-handler" as const,
           flow: "upfront" as const,
-          result: { success: true as const, transaction: "0xtest", network: "eip155:84532" as const },
+          result: {
+            success: true as const,
+            transaction: "0xtest",
+            network: "eip155:84532" as const,
+          },
           requirements: mockPaymentRequirements,
         },
       },
