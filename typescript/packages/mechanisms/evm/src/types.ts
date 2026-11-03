@@ -171,12 +171,16 @@ function eip3009AuthorizationMessage(authorization: unknown): string | undefined
 }
 
 /**
- * Check exact Permit2 authorization field types.
+ * Check exact or upto Permit2 authorization field types.
  *
  * @param authorization - Candidate authorization
+ * @param requireFacilitator - Whether `witness.facilitator` must be an address (upto)
  * @returns A field message, or undefined when the authorization is well-formed
  */
-function permit2AuthorizationMessage(authorization: unknown): string | undefined {
+function permit2AuthorizationMessage(
+  authorization: unknown,
+  requireFacilitator = false,
+): string | undefined {
   if (!isRecord(authorization)) {
     return "permit2Authorization must be an object";
   }
@@ -192,6 +196,9 @@ function permit2AuthorizationMessage(authorization: unknown): string | undefined
     addressMessage("permit2Authorization.spender", authorization.spender) ??
     addressMessage("permit2Authorization.permitted.token", permitted.token) ??
     addressMessage("permit2Authorization.witness.to", witness.to) ??
+    (requireFacilitator
+      ? addressMessage("permit2Authorization.witness.facilitator", witness.facilitator)
+      : undefined) ??
     uint256Message("permit2Authorization.nonce", authorization.nonce) ??
     uint256Message("permit2Authorization.deadline", authorization.deadline) ??
     uint256Message("permit2Authorization.permitted.amount", permitted.amount) ??
@@ -341,5 +348,20 @@ export function isUptoPermit2Payload(
     typeof w.facilitator === "string" &&
     typeof w.to === "string" &&
     typeof w.validAfter === "string"
+  );
+}
+
+/**
+ * Check that a raw upto Permit2 payload has the field types verify and settle parse.
+ *
+ * @param payload - Raw payload
+ * @returns Undefined if well-formed, otherwise a message naming the first malformed field
+ */
+export function validateUptoPermit2Payload(payload: unknown): string | undefined {
+  if (!isRecord(payload)) {
+    return "payload must be an object";
+  }
+  return (
+    signatureMessage(payload) ?? permit2AuthorizationMessage(payload.permit2Authorization, true)
   );
 }
