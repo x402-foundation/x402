@@ -1126,8 +1126,8 @@ export class x402ResourceServer {
         // URL, path, or storage error; the warning log already has the detail.
         return {
           isValid: false,
-          invalidReason: "extension_hook_error",
-          invalidMessage: "extension hook failed",
+          invalidReason: "before_verify_hook_error",
+          invalidMessage: "before verify hook failed",
         };
       }
     }
@@ -1375,8 +1375,8 @@ export class x402ResourceServer {
         // Same as beforeVerify: do not echo the thrown message to the payer.
         throw new SettleError(400, {
           success: false,
-          errorReason: "extension_hook_error",
-          errorMessage: "extension hook failed",
+          errorReason: "before_settle_hook_error",
+          errorMessage: "before settle hook failed",
           transaction: "",
           network: requirements.network,
         });
