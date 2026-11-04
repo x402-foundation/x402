@@ -11,7 +11,6 @@ import {
   SettlementOverrides,
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
-import { validateBazaarRouteExtensions } from "@x402/extensions/bazaar";
 import { NextRequest, NextResponse } from "next/server";
 import {
   prepareHttpServer,
@@ -39,19 +38,16 @@ const prepareBazaar = (httpServer: x402HTTPResourceServer): Promise<void> | null
     return null;
   }
 
-  const registration = httpServer.server.hasExtension("bazaar")
-    ? Promise.resolve()
-    : import(/* webpackIgnore: true */ "@x402/extensions/bazaar")
-        .then(({ bazaarResourceServerExtension }) => {
-          httpServer.server.registerExtension(bazaarResourceServerExtension);
-        })
-        .catch((err: unknown) => {
-          console.error("Failed to load bazaar extension:", err);
-        });
-
-  return registration.then(() => {
-    validateBazaarRouteExtensions(httpServer.routes);
-  });
+  return import("@x402/extensions/bazaar")
+    .then(({ bazaarResourceServerExtension, validateBazaarRouteExtensions }) => {
+      if (!httpServer.server.hasExtension("bazaar")) {
+        httpServer.server.registerExtension(bazaarResourceServerExtension);
+      }
+      validateBazaarRouteExtensions(httpServer.routes);
+    })
+    .catch((err: unknown) => {
+      console.error("Failed to load bazaar extension:", err);
+    });
 };
 
 /**

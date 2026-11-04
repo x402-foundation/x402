@@ -2,4 +2,4 @@
 "@x402/next": patch
 ---
 
-Fixed bundled Next.js builds logging a bazaar load failure when the bazaar extension is already registered. Route validation still runs through a static import of `validateBazaarRouteExtensions`.
+Fixed Next.js builds failing with `ERR_MODULE_NOT_FOUND` for `@x402/extensions/bazaar` when Bazaar routes use either a pre-registered or automatically registered extension. The bazaar extension is lazily imported without `webpackIgnore` so the bundler traces `@x402/extensions`. Startup validation always runs for routes that declare Bazaar.
