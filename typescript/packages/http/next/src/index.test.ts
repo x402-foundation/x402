@@ -7,7 +7,6 @@ import type {
   FacilitatorClient,
 } from "@x402/core/server";
 import {
-  checkIfBazaarNeeded,
   FacilitatorResponseError,
   checkIfBazaarNeeded,
   x402ResourceServer,
