@@ -314,6 +314,11 @@ app.listen(parseInt(PORT), () => {
   console.log();
 });
 
+/**
+ * Stops the rent cleanup manager and exits the process.
+ *
+ * @returns A promise that never resolves because the process exits.
+ */
 async function shutdown(): Promise<void> {
   await rentCleanupManager?.stop();
   process.exit(0);

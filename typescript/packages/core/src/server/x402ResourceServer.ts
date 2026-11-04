@@ -160,12 +160,14 @@ const SETTLEMENT_PENDING_REASON = "settlement_pending";
 export type VerifiedPaymentCancellationReason =
   | "handler_threw"
   | "handler_failed"
-  | "after_verify_aborted";
+  | "after_verify_aborted"
+  | "settlement_preflight_failed";
 
 export interface VerifiedPaymentCanceledContext extends SettleContext {
   reason: VerifiedPaymentCancellationReason;
   error?: unknown;
   responseStatus?: number;
+  readonly verifyResult?: DeepReadonly<VerifyResponse>;
   readonly settledPhases: readonly SettlePhase[];
 }
 
@@ -173,6 +175,7 @@ export interface VerifiedPaymentCancelOptions {
   reason: VerifiedPaymentCancellationReason;
   error?: unknown;
   responseStatus?: number;
+  verifyResult?: VerifyResponse;
 }
 
 export interface CompletedSettlement {
@@ -1289,254 +1292,32 @@ export class x402ResourceServer {
     phase: SettlePhase = "after-handler",
   ): Promise<SettleResponse> {
     const resolvedDeclaredExtensions = declaredExtensions ?? {};
-    const extensionKeysInUse = Object.keys(resolvedDeclaredExtensions);
-
-    // Apply settlement overrides (e.g., partial settlement for upto scheme)
-    let effectiveRequirements = requirements;
-    if (settlementOverrides?.amount !== undefined) {
-      // Only `$…` overrides need asset decimals. Atomic and percent formats must
-      // not force a decimals lookup (unknown custom mints would otherwise fail).
-      let decimals: number | undefined;
-      if (/^\$\d+(?:\.\d+)?$/.test(settlementOverrides.amount)) {
-        const scheme = findByNetworkAndScheme(
-          this.registeredServerSchemes,
-          requirements.scheme,
-          requirements.network as Network,
-        );
-        decimals = scheme?.getAssetDecimals?.(
-          requirements.asset ?? "",
-          requirements.network as Network,
-        );
-      }
-      effectiveRequirements = {
-        ...requirements,
-        amount: resolveSettlementOverrideAmount(settlementOverrides.amount, requirements, decimals),
-      };
-    }
-
-    const context: SettleContext = {
-      paymentPayload,
-      requirements: effectiveRequirements,
-      declaredExtensions: resolvedDeclaredExtensions,
-      phase,
-      transportContext,
-    };
-    const matchedScheme = {
-      network: effectiveRequirements.network as Network,
-      scheme: effectiveRequirements.scheme,
-    };
-
-    for (const { label, hook } of this.getLabeledHooks(
-      "beforeSettle",
-      extensionKeysInUse,
-      matchedScheme,
-    )) {
-      try {
-        const result = await hook(context);
-        if (result && "abort" in result && result.abort) {
-          throw new SettleError(400, {
-            success: false,
-            errorReason: result.reason,
-            errorMessage: result.message,
-            transaction: "",
-            network: requirements.network,
-          });
-        }
-        if (result && "skip" in result && result.skip) {
-          const settleResult = result.result;
-          const skipResultContext: SettleResultContext = {
-            ...context,
-            result: settleResult,
-            transportContext,
-          };
-          if (
-            await this.runAfterSettleHooks(
-              settleResult,
-              skipResultContext,
-              extensionKeysInUse,
-              matchedScheme,
-            )
-          ) {
-            return settleResult;
-          }
-          await this.enrichSettlementResponse(
-            settleResult,
-            skipResultContext,
-            resolvedDeclaredExtensions,
-            matchedScheme,
-          );
-          return settleResult;
-        }
-      } catch (error) {
-        if (error instanceof SettleError) {
-          throw error;
-        }
-        this.warnResourceServerHookFailure("beforeSettle", label, error);
-        // Same as beforeVerify: do not echo the thrown message to the payer.
-        throw new SettleError(400, {
-          success: false,
-          errorReason: "before_settle_hook_error",
-          errorMessage: "before settle hook failed",
-          transaction: "",
-          network: requirements.network,
-        });
-      }
-    }
-
+    const progress = { facilitatorCalled: false };
     try {
-      const scheme = findByNetworkAndScheme(
-        this.registeredServerSchemes,
-        matchedScheme.scheme,
-        matchedScheme.network,
+      return await this.settlePaymentInternal(
+        paymentPayload,
+        requirements,
+        resolvedDeclaredExtensions,
+        transportContext,
+        settlementOverrides,
+        phase,
+        progress,
       );
-      // Settle-local payload copy so a second settle can enrich the same keys
-      // without mutating the caller's object (assertAdditivePayloadEnrichment
-      // still runs against the original client payload).
-      let settlePayload: PaymentPayload = paymentPayload;
-      const payloadEnrichmentHook = scheme?.enrichSettlementPayload;
-      if (payloadEnrichmentHook) {
-        const label = `scheme "${matchedScheme.scheme}" enrichSettlementPayload`;
-        const enrichment = await payloadEnrichmentHook(context);
-        if (enrichment !== undefined) {
-          assertAdditivePayloadEnrichment(paymentPayload.payload, enrichment, label);
-          settlePayload = {
-            ...paymentPayload,
-            payload: { ...paymentPayload.payload, ...enrichment },
-          };
-        }
-      }
-
-      // Find the facilitator that supports this payment type
-      const facilitatorClient = this.getFacilitatorClient(
-        settlePayload.x402Version,
-        effectiveRequirements.network,
-        effectiveRequirements.scheme,
-      );
-
-      let settleResult: SettleResponse;
-
-      if (!facilitatorClient) {
-        // Fallback: try all facilitators if no specific support found
-        let lastError: Error | undefined;
-
-        for (const client of this.facilitatorClients) {
-          try {
-            settleResult = await this.settleWithPendingRetry(
-              client,
-              settlePayload,
-              effectiveRequirements,
-            );
-            break;
-          } catch (error) {
-            lastError = error as Error;
-          }
-        }
-
-        if (!settleResult!) {
-          throw (
-            lastError ||
-            new Error(
-              `No facilitator supports ${effectiveRequirements.scheme} on ${effectiveRequirements.network} for v${settlePayload.x402Version}`,
-            )
-          );
-        }
-      } else {
-        // Use the specific facilitator that supports this payment
-        settleResult = await this.settleWithPendingRetry(
-          facilitatorClient,
-          settlePayload,
-          effectiveRequirements,
+    } catch (error) {
+      if (!progress.facilitatorCalled) {
+        await this.cancelUnsettledPayment(
+          paymentPayload,
+          requirements,
+          resolvedDeclaredExtensions,
+          phase,
+          error,
+          transportContext,
         );
       }
-
-      // A returned (non-thrown) settleResult with success:false — e.g. from a
-      // remote/HTTP facilitator, or a settlement_pending outcome that
-      // survived the single automatic retry above — previously looked like a
-      // success: afterSettle hooks would run and callers would treat the
-      // response as settled. Route it through onSettleFailure like a thrown
-      // error so hooks get a chance to recover.
-      if (!settleResult.success) {
-        const failureContext: SettleFailureContext = {
-          ...context,
-          error: settleResponseToError(settleResult),
-        };
-
-        for (const { label, hook } of this.getLabeledHooks(
-          "onSettleFailure",
-          extensionKeysInUse,
-          matchedScheme,
-        )) {
-          try {
-            const result = await hook(failureContext);
-            if (result && "recovered" in result && result.recovered) {
-              return result.result;
-            }
-          } catch (error) {
-            this.warnResourceServerHookFailure("onSettleFailure", label, error);
-          }
-        }
-
-        return settleResult;
-      }
-
-      // Execute afterSettle hooks
-      const resultContext: SettleResultContext = {
-        ...context,
-        result: settleResult,
-      };
-
-      // Enrichment must not replace an aborted receipt, which carries the onchain transaction.
-      if (
-        await this.runAfterSettleHooks(
-          settleResult,
-          resultContext,
-          extensionKeysInUse,
-          matchedScheme,
-        )
-      ) {
-        return settleResult;
-      }
-
-      await this.enrichSettlementResponse(
-        settleResult,
-        resultContext,
-        resolvedDeclaredExtensions,
-        matchedScheme,
-      );
-
-      return settleResult;
-    } catch (error) {
-      const failureContext: SettleFailureContext = {
-        ...context,
-        error: error as Error,
-      };
-
-      for (const { label, hook } of this.getLabeledHooks(
-        "onSettleFailure",
-        extensionKeysInUse,
-        matchedScheme,
-      )) {
-        try {
-          const result = await hook(failureContext);
-          if (result && "recovered" in result && result.recovered) {
-            return result.result;
-          }
-        } catch (error) {
-          this.warnResourceServerHookFailure("onSettleFailure", label, error);
-        }
-      }
-
       throw error;
     }
   }
 
-  /**
-   * Find matching payment requirements for a payment
-   *
-   * @param availableRequirements - Array of available payment requirements
-   * @param paymentPayload - The payment payload
-   * @returns Matching payment requirements or undefined
-   */
   /**
    * Validates optional client extension echoes against server-advertised extension info.
    * When the client omits extensions entirely, validation passes.
@@ -1616,9 +1397,6 @@ export class x402ResourceServer {
           return undefined;
         }
 
-        // For v2, all server-declared requirements must match.
-        // The client may include additive scheme-specific metadata under `accepted.extra`.
-        // Scheme-declared dynamicExtraFields are omitted from the extra comparison
         return availableRequirements.find(paymentRequirements => {
           const scheme = findByNetworkAndScheme(
             this.registeredServerSchemes,
@@ -1636,7 +1414,6 @@ export class x402ResourceServer {
           return undefined;
         }
 
-        // For v1, match by scheme and network
         return availableRequirements.find(
           req =>
             req.scheme === paymentPayload.accepted.scheme &&
@@ -1647,6 +1424,323 @@ export class x402ResourceServer {
           `Unsupported x402 version: ${(paymentPayload as PaymentPayload).x402Version}`,
         );
     }
+  }
+
+  /**
+   * Runs one settlement lifecycle.
+   *
+   * @param paymentPayload - Payment payload to settle.
+   * @param requirements - Payment requirements for the settlement.
+   * @param declaredExtensions - Declared route extensions.
+   * @param transportContext - Optional transport context.
+   * @param settlementOverrides - Optional settlement amount override.
+   * @param phase - Settlement phase.
+   * @param progress - Mutable settlement progress.
+   * @param progress.facilitatorCalled - Set once the facilitator boundary is crossed.
+   * @returns Settlement response.
+   */
+  private async settlePaymentInternal(
+    paymentPayload: PaymentPayload,
+    requirements: PaymentRequirements,
+    declaredExtensions: Record<string, unknown>,
+    transportContext: unknown,
+    settlementOverrides: SettlementOverrides | undefined,
+    phase: SettlePhase,
+    progress: { facilitatorCalled: boolean },
+  ): Promise<SettleResponse> {
+    const extensionKeysInUse = Object.keys(declaredExtensions);
+
+    // Apply settlement overrides (e.g., partial settlement for upto scheme)
+    let effectiveRequirements = requirements;
+    if (settlementOverrides?.amount !== undefined) {
+      // Only `$…` overrides need asset decimals. Atomic and percent formats must
+      // not force a decimals lookup (unknown custom mints would otherwise fail).
+      let decimals: number | undefined;
+      if (/^\$\d+(?:\.\d+)?$/.test(settlementOverrides.amount)) {
+        const scheme = findByNetworkAndScheme(
+          this.registeredServerSchemes,
+          requirements.scheme,
+          requirements.network as Network,
+        );
+        decimals = scheme?.getAssetDecimals?.(
+          requirements.asset ?? "",
+          requirements.network as Network,
+        );
+      }
+      effectiveRequirements = {
+        ...requirements,
+        amount: resolveSettlementOverrideAmount(settlementOverrides.amount, requirements, decimals),
+      };
+    }
+
+    const context: SettleContext = {
+      paymentPayload,
+      requirements: effectiveRequirements,
+      declaredExtensions: declaredExtensions,
+      phase,
+      transportContext,
+    };
+    const matchedScheme = {
+      network: effectiveRequirements.network as Network,
+      scheme: effectiveRequirements.scheme,
+    };
+
+    for (const { label, hook } of this.getLabeledHooks(
+      "beforeSettle",
+      extensionKeysInUse,
+      matchedScheme,
+    )) {
+      try {
+        const result = await hook(context);
+        if (result && "abort" in result && result.abort) {
+          throw new SettleError(400, {
+            success: false,
+            errorReason: result.reason,
+            errorMessage: result.message,
+            transaction: "",
+            network: requirements.network,
+          });
+        }
+        if (result && "skip" in result && result.skip) {
+          const settleResult = result.result;
+          const skipResultContext: SettleResultContext = {
+            ...context,
+            result: settleResult,
+            transportContext,
+          };
+          if (
+            await this.runAfterSettleHooks(
+              settleResult,
+              skipResultContext,
+              extensionKeysInUse,
+              matchedScheme,
+            )
+          ) {
+            return settleResult;
+          }
+          await this.enrichSettlementResponse(
+            settleResult,
+            skipResultContext,
+            declaredExtensions,
+            matchedScheme,
+          );
+          return settleResult;
+        }
+      } catch (error) {
+        if (error instanceof SettleError) {
+          throw error;
+        }
+        this.warnResourceServerHookFailure("beforeSettle", label, error);
+        // Same as beforeVerify: do not echo the thrown message to the payer.
+        throw new SettleError(400, {
+          success: false,
+          errorReason: "before_settle_hook_error",
+          errorMessage: "before settle hook failed",
+          transaction: "",
+          network: requirements.network,
+        });
+      }
+    }
+
+    try {
+      const scheme = findByNetworkAndScheme(
+        this.registeredServerSchemes,
+        matchedScheme.scheme,
+        matchedScheme.network,
+      );
+      // Settle-local payload copy so a second settle can enrich the same keys
+      // without mutating the caller's object (assertAdditivePayloadEnrichment
+      // still runs against the original client payload).
+      let settlePayload: PaymentPayload = paymentPayload;
+      const payloadEnrichmentHook = scheme?.enrichSettlementPayload;
+      if (payloadEnrichmentHook) {
+        const label = `scheme "${matchedScheme.scheme}" enrichSettlementPayload`;
+        const enrichment = await payloadEnrichmentHook(context);
+        if (enrichment !== undefined) {
+          assertAdditivePayloadEnrichment(paymentPayload.payload, enrichment, label);
+          settlePayload = {
+            ...paymentPayload,
+            payload: { ...paymentPayload.payload, ...enrichment },
+          };
+        }
+      }
+
+      // Find the facilitator that supports this payment type
+      const facilitatorClient = this.getFacilitatorClient(
+        settlePayload.x402Version,
+        effectiveRequirements.network,
+        effectiveRequirements.scheme,
+      );
+
+      let settleResult: SettleResponse;
+
+      if (!facilitatorClient) {
+        // Fallback: try all facilitators if no specific support found
+        let lastError: Error | undefined;
+
+        for (const client of this.facilitatorClients) {
+          try {
+            progress.facilitatorCalled = true;
+            settleResult = await this.settleWithPendingRetry(
+              client,
+              settlePayload,
+              effectiveRequirements,
+            );
+            break;
+          } catch (error) {
+            lastError = error as Error;
+          }
+        }
+
+        if (!settleResult!) {
+          throw (
+            lastError ||
+            new Error(
+              `No facilitator supports ${effectiveRequirements.scheme} on ${effectiveRequirements.network} for v${settlePayload.x402Version}`,
+            )
+          );
+        }
+      } else {
+        // Use the specific facilitator that supports this payment
+        progress.facilitatorCalled = true;
+        settleResult = await this.settleWithPendingRetry(
+          facilitatorClient,
+          settlePayload,
+          effectiveRequirements,
+        );
+      }
+
+      // A returned (non-thrown) settleResult with success:false — e.g. from a
+      // remote/HTTP facilitator, or a settlement_pending outcome that
+      // survived the single automatic retry above — previously looked like a
+      // success: afterSettle hooks would run and callers would treat the
+      // response as settled. Route it through onSettleFailure like a thrown
+      // error so hooks get a chance to recover.
+      if (!settleResult.success) {
+        const failureContext: SettleFailureContext = {
+          ...context,
+          error: settleResponseToError(settleResult),
+        };
+
+        for (const { label, hook } of this.getLabeledHooks(
+          "onSettleFailure",
+          extensionKeysInUse,
+          matchedScheme,
+        )) {
+          try {
+            const result = await hook(failureContext);
+            if (result && "recovered" in result && result.recovered) {
+              return result.result;
+            }
+          } catch (error) {
+            this.warnResourceServerHookFailure("onSettleFailure", label, error);
+          }
+        }
+
+        return settleResult;
+      }
+
+      // Execute afterSettle hooks
+      const resultContext: SettleResultContext = {
+        ...context,
+        result: settleResult,
+      };
+
+      // Enrichment must not replace an aborted receipt, which carries the onchain transaction.
+      if (
+        await this.runAfterSettleHooks(
+          settleResult,
+          resultContext,
+          extensionKeysInUse,
+          matchedScheme,
+        )
+      ) {
+        return settleResult;
+      }
+
+      await this.enrichSettlementResponse(
+        settleResult,
+        resultContext,
+        declaredExtensions,
+        matchedScheme,
+      );
+
+      return settleResult;
+    } catch (error) {
+      const failureContext: SettleFailureContext = {
+        ...context,
+        error: error as Error,
+      };
+
+      if (progress.facilitatorCalled) {
+        for (const { label, hook } of this.getLabeledHooks(
+          "onSettleFailure",
+          extensionKeysInUse,
+          matchedScheme,
+        )) {
+          try {
+            const result = await hook(failureContext);
+            if (result && "recovered" in result && result.recovered) {
+              return result.result;
+            }
+          } catch (error) {
+            this.warnResourceServerHookFailure("onSettleFailure", label, error);
+          }
+        }
+      }
+
+      throw error;
+    }
+  }
+
+  /**
+   * Cancels a payment when settlement failed before the facilitator was reached.
+   *
+   * @param paymentPayload - Signed payment payload for the failed settle.
+   * @param requirements - Original payment requirements.
+   * @param declaredExtensions - Declared route extensions.
+   * @param phase - Settle phase that failed.
+   * @param error - Failure that prevented facilitator settlement.
+   * @param transportContext - Transport context to expose to cancellation hooks.
+   * @returns A promise that resolves once cancellation completes.
+   */
+  private async cancelUnsettledPayment(
+    paymentPayload: PaymentPayload,
+    requirements: PaymentRequirements,
+    declaredExtensions: Record<string, unknown>,
+    phase: SettlePhase,
+    error: unknown,
+    transportContext: unknown,
+  ): Promise<void> {
+    switch (phase) {
+      case "cancel":
+        return;
+      case "before-handler":
+        break;
+      case "after-handler": {
+        try {
+          const flow = this.getPaymentFlow(paymentPayload, requirements);
+          if (resolvePaymentFlowPhases(flow).settleBeforeHandler) {
+            return;
+          }
+        } catch {
+          return;
+        }
+        break;
+      }
+      default: {
+        const _exhaustive: never = phase;
+        return _exhaustive;
+      }
+    }
+
+    const dispatcher = this.createPaymentCancellationDispatcher(
+      paymentPayload,
+      requirements,
+      declaredExtensions,
+      transportContext,
+    );
+    await dispatcher.cancel({ reason: "settlement_preflight_failed", error });
   }
 
   /**
@@ -1783,7 +1877,7 @@ export class x402ResourceServer {
             context.paymentPayload,
             context.requirements,
             context.declaredExtensions,
-            { reason: "after_verify_aborted" },
+            { reason: "after_verify_aborted", verifyResult },
             context.transportContext,
             [],
           );
@@ -1897,6 +1991,7 @@ export class x402ResourceServer {
       reason: options.reason,
       error: options.error,
       responseStatus: options.responseStatus,
+      verifyResult: options.verifyResult,
       settledPhases,
     };
 

@@ -7,10 +7,12 @@ import type {
 import type { FacilitatorClient } from "@x402/core/server";
 import type { BatchSettlementVoucherClaim } from "../types";
 import type { BatchSettlementEvmScheme } from "./scheme";
-import { computeChannelId } from "../utils";
 import { BATCH_SETTLEMENT_SCHEME } from "../constants";
+import * as Errors from "../errors";
 import { signClaimBatch, signRefund } from "../authorizerSigner";
-import type { Channel } from "./storage";
+import { applyClaimedTotals, selectClaimableVouchers } from "../claims";
+import type { Channel, ChannelLockStorage, ChannelQuery } from "./storage";
+import { queryChannels, rethrowLockImplementationError } from "./storage";
 
 export interface ChannelManagerConfig {
   scheme: BatchSettlementEvmScheme;
@@ -85,14 +87,26 @@ function formatFacilitatorFailure(operation: string, response: SettleResponse): 
 }
 
 /**
- * Checks whether a channel has a non-expired payer request reservation.
+ * Returns whether a live admission lock is held. Lock-store I/O failures are optimistic
+ * (treat as not held). Implementation/parse errors fail closed and propagate.
  *
- * @param channel - Channel state to inspect.
- * @param now - Current wall-clock time in milliseconds.
- * @returns Whether the channel is busy with a live pending request.
+ * @param lock - Admission lock store. Missing store is treated as not held.
+ * @param channelId - Channel to inspect.
+ * @returns Whether a live lock is present.
  */
-function hasLivePendingRequest(channel: Channel, now = Date.now()): boolean {
-  return channel.pendingRequest !== undefined && channel.pendingRequest.expiresAt > now;
+async function channelIsHeld(
+  lock: ChannelLockStorage | undefined,
+  channelId: string,
+): Promise<boolean> {
+  if (!lock) {
+    return false;
+  }
+  try {
+    return await lock.isHeld(channelId);
+  } catch (err) {
+    rethrowLockImplementationError(err);
+    return false;
+  }
 }
 
 /**
@@ -159,6 +173,10 @@ export class BatchSettlementChannelManager {
 
     const response = await this.facilitator.settle(paymentPayload, requirements);
     if (!response.success) {
+      if (response.errorReason === Errors.ErrNothingToSettle) {
+        this.pendingSettle = false;
+        return { transaction: "" };
+      }
       throw new Error(formatFacilitatorFailure("Settle", response));
     }
 
@@ -187,23 +205,22 @@ export class BatchSettlementChannelManager {
   }
 
   /**
-   * Initiates cooperative refunds for one or more channels.
+   * Initiates cooperative refunds for stored channels with remaining escrow.
    *
-   * @param channelIds - Specific channels to refund; defaults to all sessions.
    * @returns One result per successfully refunded channel.
    */
-  async refund(channelIds?: string[]): Promise<RefundResult[]> {
+  async refund(): Promise<RefundResult[]> {
+    this.assertRefundAllowed();
     const storage = this.scheme.getStorage();
-    const channels = await storage.list();
+    const { items: channels } = await queryChannels(storage, { kind: "idleRefundable" });
 
-    const now = Date.now();
-    const targets = (
-      channelIds
-        ? channels.filter(s =>
-            channelIds.some(id => id.toLowerCase() === s.channelId.toLowerCase()),
-          )
-        : channels
-    ).filter(channel => !hasLivePendingRequest(channel, now));
+    const lock = this.scheme.getLockStorage();
+    const targets: Channel[] = [];
+    for (const channel of channels) {
+      if (!(await channelIsHeld(lock, channel.channelId))) {
+        targets.push(channel);
+      }
+    }
 
     if (targets.length === 0) {
       return [];
@@ -220,6 +237,7 @@ export class BatchSettlementChannelManager {
    * @returns One result per successfully refunded channel.
    */
   async refundIdleChannels(opts: { idleSecs: number }): Promise<RefundResult[]> {
+    this.assertRefundAllowed();
     const channels = await this.getIdleChannelsForRefund(opts.idleSecs);
     return this.refundChannels(channels);
   }
@@ -236,7 +254,13 @@ export class BatchSettlementChannelManager {
    * @returns Array of {@link BatchSettlementVoucherClaim} entries for batch submission.
    */
   async getClaimableVouchers(opts?: { idleSecs?: number }): Promise<BatchSettlementVoucherClaim[]> {
-    const channels = await this.scheme.getStorage().list();
+    const filter: ChannelQuery = {
+      kind: "claimable",
+      ...(opts?.idleSecs !== undefined
+        ? { idleAtOrBefore: Date.now() - opts.idleSecs * 1000 }
+        : {}),
+    };
+    const { items: channels } = await queryChannels(this.scheme.getStorage(), filter);
     return this.getClaimableVouchersFromChannels(channels, opts);
   }
 
@@ -246,8 +270,10 @@ export class BatchSettlementChannelManager {
    * @returns All stored channel records with `withdrawRequestedAt` set.
    */
   async getWithdrawalPendingSessions(): Promise<Channel[]> {
-    const channels = await this.scheme.getStorage().list();
-    return channels.filter(s => s.withdrawRequestedAt > 0);
+    const { items } = await queryChannels(this.scheme.getStorage(), {
+      kind: "withdrawPending",
+    });
+    return items;
   }
 
   /**
@@ -268,7 +294,9 @@ export class BatchSettlementChannelManager {
 
     this.startAutoTimer("claim", config.claimIntervalSecs);
     this.startAutoTimer("settle", config.settleIntervalSecs);
-    this.startAutoTimer("refund", config.refundIntervalSecs);
+    if (!this.scheme.isFacilitatorManagedVoucherStore(this.network)) {
+      this.startAutoTimer("refund", config.refundIntervalSecs);
+    }
   }
 
   /**
@@ -349,11 +377,16 @@ export class BatchSettlementChannelManager {
       throw new Error(formatFacilitatorFailure("Refund", response));
     }
 
+    if (await channelIsHeld(this.scheme.getLockStorage(), target.channelId)) {
+      return {
+        channel: target.channelId,
+        transaction: response.transaction,
+      };
+    }
+
     await this.scheme
       .getStorage()
-      .updateChannel(target.channelId, current =>
-        current && !hasLivePendingRequest(current) ? undefined : current,
-      );
+      .updateChannel(target.channelId, current => (current ? undefined : current));
 
     return {
       channel: target.channelId,
@@ -441,6 +474,10 @@ export class BatchSettlementChannelManager {
       case "refund":
         await this.runRefundJob();
         return;
+      default: {
+        const _exhaustive: never = job;
+        throw new Error(`unhandled auto job: ${_exhaustive}`);
+      }
     }
   }
 
@@ -493,6 +530,9 @@ export class BatchSettlementChannelManager {
    * Runs the refund auto job.
    */
   private async runRefundJob(): Promise<void> {
+    if (this.scheme.isFacilitatorManagedVoucherStore(this.network)) {
+      return;
+    }
     const cfg = this.autoSettleConfig;
     if (!cfg.selectRefundChannels) {
       return;
@@ -575,9 +615,10 @@ export class BatchSettlementChannelManager {
    * @returns Successful refund results.
    */
   private async refundChannels(channels: Channel[]): Promise<RefundResult[]> {
+    const lock = this.scheme.getLockStorage();
     const results: RefundResult[] = [];
     for (const channel of channels) {
-      if (hasLivePendingRequest(channel)) {
+      if (await channelIsHeld(lock, channel.channelId)) {
         continue;
       }
       results.push(await this.refundChannel(channel));
@@ -635,59 +676,26 @@ export class BatchSettlementChannelManager {
     channels: Channel[],
     opts?: { idleSecs?: number },
   ): BatchSettlementVoucherClaim[] {
-    const now = Date.now();
-    const claims: BatchSettlementVoucherClaim[] = [];
-
-    for (const c of channels) {
-      if (BigInt(c.chargedCumulativeAmount) <= BigInt(c.totalClaimed)) {
-        continue;
-      }
-      if (opts?.idleSecs !== undefined) {
-        const idleMs = now - c.lastRequestTimestamp;
-        if (idleMs < opts.idleSecs * 1000) {
-          continue;
-        }
-      }
-      claims.push({
-        voucher: {
-          channel: c.channelConfig,
-          maxClaimableAmount: c.signedMaxClaimable,
-        },
-        signature: c.signature as `0x${string}`,
-        totalClaimed: c.chargedCumulativeAmount,
-      });
-    }
-
-    return claims;
-  }
-
-  /**
-   * Filters idle channels that can be cooperatively refunded.
-   *
-   * @param channels - Channels to inspect.
-   * @param idleSecs - Minimum seconds since the last request.
-   * @returns Idle refundable channels.
-   */
-  private getIdleChannelsForRefundFromChannels(channels: Channel[], idleSecs: number): Channel[] {
-    const now = Date.now();
-    const idleMs = idleSecs * 1000;
-    return channels.filter(c => {
-      if (BigInt(c.balance) === 0n) return false;
-      if (hasLivePendingRequest(c, now)) return false;
-      return now - c.lastRequestTimestamp >= idleMs;
+    return selectClaimableVouchers(channels, {
+      now: Date.now(),
+      ...(opts?.idleSecs !== undefined ? { idleSecs: opts.idleSecs } : {}),
     });
   }
 
   /**
-   * Returns channels that have been idle longer than `idleSecs` and still have
-   * a non-zero balance (candidates for cooperative refund).
+   * Returns idle channels that still have escrow, skipping live admission locks.
    *
    * @param idleSecs - Minimum seconds since last request for a session to count as idle.
    * @returns Channels meeting the idle and balance criteria.
    */
   private async getIdleChannelsForRefund(idleSecs: number): Promise<Channel[]> {
-    const channels = await this.scheme.getStorage().list();
-    return this.getIdleChannelsForRefundFromChannels(channels, idleSecs);
+    const { items: channels } = await queryChannels(this.scheme.getStorage(), {
+      kind: "idleRefundable",
+      idleAtOrBefore: Date.now() - idleSecs * 1000,
+    });
+    const lock = this.scheme.getLockStorage();
+    const held = await Promise.all(channels.map(channel => channelIsHeld(lock, channel.channelId)));
+    return channels.filter((_, index) => !held[index]);
   }
 
   /**
@@ -766,26 +774,15 @@ export class BatchSettlementChannelManager {
    * @param claims - Voucher claims that were included in the submitted settlement transaction.
    */
   private async updateClaimedSessions(claims: BatchSettlementVoucherClaim[]): Promise<void> {
-    const storage = this.scheme.getStorage();
-    for (const claim of claims) {
-      const channelId = computeChannelId(claim.voucher.channel, this.network);
-      const channel = await storage.get(channelId);
-      if (!channel) {
-        continue;
-      }
-      const claimedAmount = BigInt(claim.totalClaimed);
-      if (claimedAmount <= BigInt(channel.totalClaimed)) {
-        continue;
-      }
-      await storage.updateChannel(channelId, current => {
-        if (!current || claimedAmount <= BigInt(current.totalClaimed)) {
-          return current;
-        }
-        return {
-          ...current,
-          totalClaimed: claimedAmount.toString(),
-        };
-      });
+    await applyClaimedTotals(this.scheme.getStorage(), claims, this.network);
+  }
+
+  /**
+   * Throws when this manager is attached to a facilitator-managed server.
+   */
+  private assertRefundAllowed(): void {
+    if (this.scheme.isFacilitatorManagedVoucherStore(this.network)) {
+      throw new Error("cooperative refunds are client-initiated in facilitator-managed mode");
     }
   }
 }

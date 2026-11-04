@@ -2,7 +2,9 @@ package x402
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/x402-foundation/x402/go/v2/types"
@@ -262,6 +264,7 @@ func TestOnVerifyFailureHook_NoRecover(t *testing.T) {
 func TestAfterVerifyHook_Abort(t *testing.T) {
 	laterCalled := false
 	cancelReason := VerifiedPaymentCancellationReason("")
+	var cancelVerifyResult *VerifyResponse
 
 	server := Newx402ResourceServer()
 	registerExactEvmScheme(server)
@@ -278,13 +281,14 @@ func TestAfterVerifyHook_Abort(t *testing.T) {
 	})
 	server.OnVerifiedPaymentCanceled(func(ctx VerifiedPaymentCanceledContext) error {
 		cancelReason = ctx.Reason
+		cancelVerifyResult = ctx.VerifyResult
 		return nil
 	})
 
 	server.facilitatorClients[Network("eip155:8453")] = map[string]FacilitatorClient{
 		"exact": &mockFacilitatorClient{
 			verify: func(ctx context.Context, payload []byte, reqs []byte) (*VerifyResponse, error) {
-				return &VerifyResponse{IsValid: true, Payer: "0xpayer"}, nil
+				return &VerifyResponse{IsValid: true, Payer: "0xpayer", Extra: map[string]interface{}{"pendingId": "0xpending"}}, nil
 			},
 		},
 	}
@@ -308,6 +312,213 @@ func TestAfterVerifyHook_Abort(t *testing.T) {
 	}
 	if cancelReason != CancellationReasonAfterVerifyAborted {
 		t.Fatalf("cancel reason = %q", cancelReason)
+	}
+	if cancelVerifyResult == nil || !cancelVerifyResult.IsValid || cancelVerifyResult.Extra["pendingId"] != "0xpending" {
+		t.Fatalf("cancel must carry the trusted verify result, got %+v", cancelVerifyResult)
+	}
+}
+
+type settleFailureScheme struct {
+	mockSchemeNetworkServer
+	flow      PaymentFlowName
+	enrichErr error
+}
+
+func (m *settleFailureScheme) PaymentFlows() map[string]PaymentFlowConfig {
+	return map[string]PaymentFlowConfig{
+		SDKDefaultAssetTransferMethod: {Supported: []PaymentFlowName{m.flow}, Default: m.flow},
+	}
+}
+
+func (m *settleFailureScheme) EnrichSettlementPayload(SettleContext) (map[string]interface{}, error) {
+	return nil, m.enrichErr
+}
+
+func TestSettlePayment_SettlementFailedCancelOnlyBeforeFacilitator(t *testing.T) {
+	abort := func(SettleContext) (*BeforeHookResult, error) {
+		return &BeforeHookResult{Abort: true, Reason: "settle_denied"}, nil
+	}
+	hookErr := func(SettleContext) (*BeforeHookResult, error) {
+		return nil, errors.New("hook failed")
+	}
+	facilitatorErr := func(context.Context, []byte, []byte) (*SettleResponse, error) {
+		return nil, errors.New("rpc down")
+	}
+	facilitatorFailure := func(context.Context, []byte, []byte) (*SettleResponse, error) {
+		return &SettleResponse{Success: false, ErrorReason: "insufficient_funds", Network: "eip155:8453"}, nil
+	}
+	cases := []struct {
+		name         string
+		flow         PaymentFlowName
+		phase        SettlePhase
+		beforeSettle BeforeSettleHook
+		enrichErr    error
+		settle       func(context.Context, []byte, []byte) (*SettleResponse, error)
+		wantCancel   bool
+	}{
+		{name: "before-handler beforeSettle abort", flow: PaymentFlowUpfront, phase: SettlePhaseBeforeHandler, beforeSettle: abort, wantCancel: true},
+		{name: "after-handler beforeSettle abort in authorization flow", flow: PaymentFlowAuthorization, phase: SettlePhaseAfterHandler, beforeSettle: abort, wantCancel: true},
+		{name: "after-handler beforeSettle error", flow: PaymentFlowAuthorization, phase: SettlePhaseAfterHandler, beforeSettle: hookErr, wantCancel: true},
+		{name: "after-handler enrichment error", flow: PaymentFlowAuthorization, phase: SettlePhaseAfterHandler, enrichErr: errors.New("signer down"), wantCancel: true},
+		{name: "after-handler abort in escrow flow", flow: PaymentFlowEscrow, phase: SettlePhaseAfterHandler, beforeSettle: abort},
+		{name: "cancel phase abort", flow: PaymentFlowAuthorization, phase: SettlePhaseCancel, beforeSettle: abort},
+		{name: "facilitator error", flow: PaymentFlowAuthorization, phase: SettlePhaseAfterHandler, settle: facilitatorErr},
+		{name: "facilitator failure response", flow: PaymentFlowAuthorization, phase: SettlePhaseAfterHandler, settle: facilitatorFailure},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := Newx402ResourceServer()
+			server.Register("eip155:8453", &settleFailureScheme{
+				mockSchemeNetworkServer: mockSchemeNetworkServer{scheme: "exact"},
+				flow:                    tc.flow,
+				enrichErr:               tc.enrichErr,
+			})
+			settleCalls := 0
+			server.facilitatorClients[Network("eip155:8453")] = map[string]FacilitatorClient{
+				"exact": &mockFacilitatorClient{
+					settle: func(ctx context.Context, payload []byte, reqs []byte) (*SettleResponse, error) {
+						settleCalls++
+						return tc.settle(ctx, payload, reqs)
+					},
+				},
+			}
+			if tc.beforeSettle != nil {
+				server.OnBeforeSettle(tc.beforeSettle)
+			}
+			var canceled []VerifiedPaymentCanceledContext
+			server.OnVerifiedPaymentCanceled(func(ctx VerifiedPaymentCanceledContext) error {
+				canceled = append(canceled, ctx)
+				return nil
+			})
+
+			payload := types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{}}
+			requirements := types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"}
+			result, err := server.SettlePaymentWithExtensions(context.Background(), payload, requirements, nil, nil, tc.phase)
+			if err == nil && (result == nil || result.Success) {
+				t.Fatalf("expected settle failure, got %+v", result)
+			}
+
+			if !tc.wantCancel {
+				if len(canceled) != 0 {
+					t.Fatalf("expected no cancellation, got %+v", canceled)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected settle error")
+			}
+			if settleCalls != 0 {
+				t.Fatalf("facilitator settle calls = %d", settleCalls)
+			}
+			if len(canceled) != 1 {
+				t.Fatalf("expected one cancellation, got %d", len(canceled))
+			}
+			got := canceled[0]
+			if got.Reason != CancellationReasonSettlementPreflightFailed || len(got.SettledPhases) != 0 || got.VerifyResult != nil {
+				t.Fatalf("got reason=%q settledPhases=%v verifyResult=%+v", got.Reason, got.SettledPhases, got.VerifyResult)
+			}
+			if !errors.Is(got.Err, err) {
+				t.Fatalf("cancel Err = %v, want %v", got.Err, err)
+			}
+		})
+	}
+}
+
+// preflightCancelScheme fails enrichment before the facilitator and records settleOnCancel calls.
+type preflightCancelScheme struct {
+	settleFailureScheme
+	failCancelEnrich bool
+	cancelReasons    []VerifiedPaymentCancellationReason
+	cancelPhases     [][]SettlePhase
+}
+
+func (m *preflightCancelScheme) EnrichSettlementPayload(ctx SettleContext) (map[string]interface{}, error) {
+	if ctx.Phase == SettlePhaseCancel && !m.failCancelEnrich {
+		return nil, nil
+	}
+	return nil, m.enrichErr
+}
+
+func (m *preflightCancelScheme) SettleOnCancel(ctx VerifiedPaymentCanceledContext) (*types.PaymentRequirements, error) {
+	m.cancelReasons = append(m.cancelReasons, ctx.Reason)
+	m.cancelPhases = append(m.cancelPhases, ctx.SettledPhases)
+	reqs := ctx.Requirements.(types.PaymentRequirements)
+	reqs.Amount = "0"
+	return &reqs, nil
+}
+
+func TestSettlePayment_PreflightFailureRunsSettleOnCancel(t *testing.T) {
+	cases := []struct {
+		name             string
+		failCancelEnrich bool
+		wantSettleCalls  int
+	}{
+		{name: "cancel settle reaches the facilitator", wantSettleCalls: 1},
+		{name: "cancel settle also fails before the facilitator without recursing", failCancelEnrich: true, wantSettleCalls: 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			scheme := &preflightCancelScheme{
+				settleFailureScheme: settleFailureScheme{
+					mockSchemeNetworkServer: mockSchemeNetworkServer{scheme: "exact"},
+					flow:                    PaymentFlowAuthorization,
+					enrichErr:               errors.New("signer down"),
+				},
+				failCancelEnrich: tc.failCancelEnrich,
+			}
+			server := Newx402ResourceServer()
+			server.Register("eip155:8453", scheme)
+
+			var settledAmounts []string
+			server.facilitatorClients[Network("eip155:8453")] = map[string]FacilitatorClient{
+				"exact": &mockFacilitatorClient{
+					settle: func(ctx context.Context, payload []byte, reqs []byte) (*SettleResponse, error) {
+						var parsed types.PaymentRequirements
+						if err := json.Unmarshal(reqs, &parsed); err != nil {
+							t.Fatalf("unmarshal requirements: %v", err)
+						}
+						settledAmounts = append(settledAmounts, parsed.Amount)
+						return &SettleResponse{Success: true, Amount: parsed.Amount, Network: "eip155:8453"}, nil
+					},
+				},
+			}
+			cancelHooks := 0
+			server.OnVerifiedPaymentCanceled(func(VerifiedPaymentCanceledContext) error {
+				cancelHooks++
+				return nil
+			})
+			settleFailureHooks := 0
+			server.OnSettleFailure(func(SettleFailureContext) (*SettleFailureHookResult, error) {
+				settleFailureHooks++
+				return nil, nil
+			})
+
+			payload := types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{}}
+			requirements := types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453", Amount: "1000"}
+			_, err := server.SettlePaymentWithExtensions(context.Background(), payload, requirements, nil, nil, SettlePhaseAfterHandler)
+			if err == nil || !strings.Contains(err.Error(), "signer down") {
+				t.Fatalf("expected the original enrichment error, got %v", err)
+			}
+
+			if len(scheme.cancelReasons) != 1 || scheme.cancelReasons[0] != CancellationReasonSettlementPreflightFailed {
+				t.Fatalf("settleOnCancel reasons = %v", scheme.cancelReasons)
+			}
+			if len(scheme.cancelPhases[0]) != 0 {
+				t.Fatalf("settleOnCancel settledPhases = %v", scheme.cancelPhases[0])
+			}
+			if cancelHooks != 1 {
+				t.Fatalf("cancel hooks = %d, want 1", cancelHooks)
+			}
+			if len(settledAmounts) != tc.wantSettleCalls {
+				t.Fatalf("settle amounts = %v, want %d calls", settledAmounts, tc.wantSettleCalls)
+			}
+			if tc.wantSettleCalls == 1 && settledAmounts[0] != "0" {
+				t.Fatalf("cancel settle amount = %q, want 0", settledAmounts[0])
+			}
+			if settleFailureHooks != 0 {
+				t.Fatalf("OnSettleFailure must not run before the facilitator, ran %d times", settleFailureHooks)
+			}
+		})
 	}
 }
 

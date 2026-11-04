@@ -2,6 +2,7 @@ import type { PaymentRequirements } from "@x402/core/types";
 import type { ClientEvmSigner } from "../../signer";
 import type { EvmSchemeOptions } from "../../shared/rpc";
 import type { ChannelConfig } from "../types";
+import { normalizeChannelSalt, type ChannelSalt } from "../utils";
 import { type ClientChannelStorage, InMemoryClientChannelStorage } from "./storage";
 import type { BatchSettlementClientContext } from "./storage";
 
@@ -53,7 +54,11 @@ export interface BatchSettlementEvmSchemeOptions {
   /** Optional callback for app-specific deposit sizing or skipping. */
   depositStrategy?: BatchSettlementDepositStrategy;
   storage?: ClientChannelStorage;
-  salt?: `0x${string}`;
+  /**
+   * Channel discriminator. Prefer a small index (`0`, `1`, `2`); a full
+   * `bytes32` hex value is still accepted for compatibility.
+   */
+  salt?: ChannelSalt;
   payerAuthorizer?: `0x${string}`;
   rpcUrl?: string;
   /** When set, EIP-712 vouchers are signed with this key; deposits still use the main `signer`. */
@@ -113,7 +118,7 @@ export function resolveClientOptions(
       storage: second.storage ?? new InMemoryClientChannelStorage(),
       depositPolicy: second.depositPolicy,
       depositStrategy: second.depositStrategy,
-      salt: second.salt ?? DEFAULT_SALT,
+      salt: second.salt !== undefined ? normalizeChannelSalt(second.salt) : DEFAULT_SALT,
       payerAuthorizer: second.payerAuthorizer,
       voucherSigner: second.voucherSigner,
       extensionRpcOptions: second.rpcUrl ? { rpcUrl: second.rpcUrl } : undefined,

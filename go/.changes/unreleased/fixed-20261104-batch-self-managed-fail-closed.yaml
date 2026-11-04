@@ -1,0 +1,3 @@
+kind: fixed
+body: 'EVM batch-settlement self-managed mode: a lock-store or channel-storage implementation/parse error while persisting a deposit charge after a successful settle now fails the settle closed with invalid_batch_settlement_evm_voucher_store_unavailable (AfterSettleAbortError) instead of being logged and returning a successful settle without a recorded charge. A lock-store implementation error while acquiring the admission lock in BeforeVerify now aborts with invalid_batch_settlement_evm_verification_state_unavailable instead of returning the raw error. Unchanged on the wire.'
+time: 2026-11-04T07:00:00Z

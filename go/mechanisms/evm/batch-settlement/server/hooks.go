@@ -305,12 +305,14 @@ func handleBeforeVerify(s *BatchSettlementEvmScheme, ctx x402.VerifyContext) (*x
 	s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{
 		ChannelId: channelId,
 		PendingId: pendingId,
-	})
+	}, requestContextTtl(ctx.Requirements.GetMaxTimeoutSeconds()))
 
 	acquired, acquireErr := s.lockStorage.Acquire(ctx.Ctx, channelId, pendingId, storage.PendingTtlMs(ctx.Requirements.GetMaxTimeoutSeconds()))
 	if impl := RethrowLockImplementationError(acquireErr); impl != nil {
+		// Abort with a stable reason, not the raw lock-store error.
 		s.TakeRequestContext(ctx.Payload)
-		return nil, impl
+		log.Printf("[batched] BeforeVerify: lock acquire failed: %v", impl)
+		return verificationStateUnavailable(), nil
 	}
 	if acquireErr == nil {
 		if !acquired {
@@ -1068,9 +1070,11 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 		now := time.Now().UnixMilli()
 		reqAmount := bigOrZero(ctx.Requirements.GetAmount())
 
+		// Only AfterSettleAbortError fails the settle closed; any other error is logged and
+		// would leave a successful settle without a recorded charge.
 		hold, holdErr := inspectAdmission(ctx.Ctx, s, normalizedId, pendingId)
 		if holdErr != nil {
-			return holdErr
+			return x402.NewAfterSettleAbort(batchsettlement.ErrVoucherStoreUnavailable, holdErr.Error())
 		}
 		if hold == admissionOther {
 			return x402.NewAfterSettleAbort(batchsettlement.ErrChannelBusy, "")
@@ -1107,9 +1111,6 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 			return &next
 		})
 		if updateErr != nil {
-			if impl := RethrowLockImplementationError(updateErr); impl != nil {
-				return impl
-			}
 			return x402.NewAfterSettleAbort(batchsettlement.ErrVoucherStoreUnavailable, updateErr.Error())
 		}
 		if updateRes.Status == ChannelUpdated && updateRes.Channel != nil {
