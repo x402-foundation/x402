@@ -101,11 +101,11 @@ describe.each([
     },
   );
 
-  it("preserves the default empty JSON response", async () => {
+  it("preserves the default unpaid JSON response", async () => {
     const handler = wrap(await createServer());
     const response = await handler(new NextRequest("https://example.com/api/paid"));
 
-    expect(await response.json()).toEqual({});
+    expect(await response.json()).toEqual({ error: "Payment required" });
     expect(response.status).toBe(402);
     expect(response.headers.get("Content-Type")).toBe("application/json");
     expect(response.headers.has("PAYMENT-REQUIRED")).toBe(true);

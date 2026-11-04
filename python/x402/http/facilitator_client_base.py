@@ -6,7 +6,7 @@ Contains shared logic for HTTPFacilitatorClient implementations.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -73,8 +73,8 @@ class CreateHeadersAuthProvider:
         result = self._create_headers()
         # A flat dict such as {"Authorization": "..."} matches no path key and
         # would otherwise drop auth on every request.
-        has_path_key = any(isinstance(result.get(path), dict) for path in _AUTH_HEADER_PATHS)
-        if not has_path_key and any(not isinstance(value, dict) for value in result.values()):
+        has_path_key = any(isinstance(result.get(path), Mapping) for path in _AUTH_HEADER_PATHS)
+        if not has_path_key and any(not isinstance(value, Mapping) for value in result.values()):
             raise ValueError(
                 "create_headers must return a dict keyed by facilitator path, e.g. "
                 '{"verify": {"Authorization": "..."}, "settle": {...}, "supported": {...}}, '

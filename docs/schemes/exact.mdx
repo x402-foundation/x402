@@ -449,6 +449,120 @@ import { createTickets, createXrplWalletSigner } from "@x402/xrpl";
 const ticketSequences = await createTickets(signer, "xrpl:1", 5);
 ```
 
+### Canton Setup
+
+The Canton implementation uses CIP-56 `TransferFactory_Transfer` — the client signs a prepared transfer instruction naming the merchant as receiver but does not submit it. The signed transaction travels inline (gzip-compressed) in the payment payload, so any facilitator can relay it. The facilitator submits the payer-signed transaction and pays the Canton network traffic fee.
+
+Before receiving payments, the merchant must hold a live `TransferPreapproval` for the payment instrument. Use the `ensureTransferPreapproval` helper to create or renew it:
+
+```bash
+npm install @x402/canton
+```
+
+**Merchant preapproval (one-time setup)**
+
+```typescript
+import { ensureTransferPreapproval } from "@x402/canton";
+
+const result = await ensureTransferPreapproval(
+  {
+    participantUrl: process.env.CANTON_PARTICIPANT_URL!,
+    token: process.env.CANTON_TOKEN!,
+    userId: process.env.CANTON_USER_ID!,
+    synchronizerId: process.env.CANTON_SYNCHRONIZER_ID!,
+    scanUrl: process.env.CANTON_SCAN_URL!,
+    party: process.env.CANTON_ADDRESS!,
+    privateKeyPem: process.env.CANTON_PRIVATE_KEY!,
+  },
+  { expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000) },
+);
+console.log(`TransferPreapproval ${result.action}, expires ${result.expiresAt}`);
+```
+
+**Server**
+
+```typescript
+import { x402ResourceServer } from "@x402/core/server";
+import { ExactCantonScheme } from "@x402/canton/exact/server";
+
+const resourceServer = new x402ResourceServer(facilitatorClient)
+  .register("canton:mainnet", new ExactCantonScheme());
+
+// Canton prices are explicit asset amounts; dollar-string pricing is not supported.
+// The instrument admin (DSO for Canton Coin) travels in extra.instrumentId.
+{
+  "GET /data": {
+    accepts: [
+      {
+        scheme: "exact",
+        price: {
+          amount: "100000000", // 0.01 CC (1 CC = 1e10 atomic units)
+          asset: "CC",
+          extra: {
+            instrumentId: {
+              admin: process.env.CANTON_INSTRUMENT_ADMIN!, // DSO party for Canton Coin
+              id: "Amulet",
+            },
+          },
+        },
+        network: "canton:mainnet",
+        payTo: process.env.CANTON_ADDRESS!, // merchant party id
+      },
+    ],
+    description: "Data endpoint",
+    mimeType: "application/json",
+  },
+}
+```
+
+**Client**
+
+```typescript
+import { x402Client } from "@x402/core/client";
+import { toClientCantonSigner } from "@x402/canton";
+import { ExactCantonScheme } from "@x402/canton/exact/client";
+
+const cantonSigner = toClientCantonSigner({
+  participantUrl: process.env.CANTON_PARTICIPANT_URL!,
+  token: process.env.CANTON_TOKEN!,
+  userId: process.env.CANTON_USER_ID!,
+  synchronizerId: process.env.CANTON_SYNCHRONIZER_ID!,
+  scanUrl: process.env.CANTON_SCAN_URL!,
+  party: process.env.CANTON_PARTY!,
+  privateKeyPem: process.env.CANTON_PRIVATE_KEY!,
+});
+
+const client = new x402Client()
+  .register("canton:*", new ExactCantonScheme(cantonSigner));
+```
+
+**Facilitator**
+
+```typescript
+import { x402Facilitator } from "@x402/core/facilitator";
+import { toFacilitatorCantonSigner } from "@x402/canton";
+import { ExactCantonScheme } from "@x402/canton/exact/facilitator";
+
+const cantonSigner = toFacilitatorCantonSigner({
+  participantUrl: process.env.CANTON_PARTICIPANT_URL!,
+  token: process.env.CANTON_TOKEN!,
+  userId: process.env.CANTON_USER_ID!,
+  synchronizerId: process.env.CANTON_SYNCHRONIZER_ID!,
+  facilitatorParties: [process.env.CANTON_FACILITATOR_PARTY!],
+});
+
+const facilitator = new x402Facilitator()
+  .register(
+    "canton:mainnet",
+    new ExactCantonScheme(cantonSigner, {
+      synchronizerId: process.env.CANTON_SYNCHRONIZER_ID!,
+      networks: ["canton:mainnet"],
+    }),
+  );
+```
+
+Canton Coin (`CC`) is the native unit (1 CC = 1e10 atomic units). Dollar-string pricing (`"$0.01"`) is not supported for Canton — always specify an explicit `amount` and `asset`. The `extra.instrumentId` field identifies the payment instrument: for Canton Coin, `{ admin: "<DSO-party>", id: "Amulet" }`.
+
 ### Cardano Setup
 
 The Cardano implementation uses a client-signed, facilitator-submitted model: the client builds and signs the complete transaction but never broadcasts it. The facilitator verifies and submits it after the resource handler runs.
@@ -544,7 +658,7 @@ For testnet funds, get test ADA from the [Cardano testnets faucet](https://docs.
 
 ### Network Implementations
 
-The `exact` scheme has network specifications for EVM, SVM, AVM, Stellar, Aptos, Casper, Hedera, TON, Cardano, Keeta, Sui, Concordium, NEAR, XRPL, and Bitcoin Lightning (`lnbtc`).
+The `exact` scheme has network specifications for EVM, SVM, AVM, Stellar, Aptos, Casper, Hedera, TON, Canton, Cardano, Keeta, Sui, Concordium, NEAR, XRPL, and Bitcoin Lightning (`lnbtc`).
 
 ### SVM Smart Wallet Support
 
@@ -605,8 +719,9 @@ Additional options:
     | `smartWalletMaxPriorityFeeMicroLamports` | `number` | `50000` | Maximum priority fee in microlamports for smart wallet transactions. |
     | `smartWalletAllowedPrograms` | `string[]` | Built-in list | Allowed smart wallet program addresses. Only transactions invoking a program in this list reach simulation-based verification. |
     | `maxPriorityFeeMicroLamports` | `number` | `5000000` | Maximum compute unit price in microlamports accepted on the static path. The facilitator pays the transaction fee, so this bounds the priority fee a payer can make it pay. |
-    | `maxComputeUnits` | `number` | No limit | Maximum compute unit limit accepted on the static path. An SPL transfer with a memo uses ~20k CU; a low ceiling still leaves ample headroom for wallet-injected instructions. |
-    | `maxRequiredSignatures` | `number` | No limit | Maximum number of required signatures. Every signature adds 5,000 lamports of base fee paid by the facilitator. A typical x402 payment needs two (payer + fee payer). |
+    | `maxComputeUnits` | `number` | `400000` | Maximum compute unit limit accepted on the static path. An SPL transfer with a memo uses ~20k CU; a low ceiling still leaves ample headroom for wallet-injected instructions. |
+    | `maxRequiredSignatures` | `number` | `2` | Maximum number of required signatures. Every signature adds 5,000 lamports of base fee paid by the facilitator. A typical x402 payment needs two (payer + fee payer). |
+    | `transactionVersions` | `number[]` | `[0, 1]` | Accepted Solana transaction message versions. Advertised as `extra.transactionVersions` in `/supported`. Pass `[0]` to reject version-1 transactions (e.g. when your RPC does not support them). |
   </Tab>
   <Tab title="Go">
     | Field | Type | Default | Description |
@@ -616,8 +731,9 @@ Additional options:
     | `SmartWalletMaxPriorityFeeMicroLamports` | `*uint64` | `50000` | Maximum priority fee in microlamports for smart wallet transactions. |
     | `SmartWalletAllowedPrograms` | `[]string` | Built-in list | Allowed smart wallet program addresses. Only transactions invoking a program in this list reach simulation-based verification. |
     | `MaxPriorityFeeMicroLamports` | `*uint64` | `5000000` | Maximum compute unit price in microlamports accepted on the static path. |
-    | `MaxComputeUnits` | `*uint32` | No limit | Maximum compute unit limit accepted on the static path. |
-    | `MaxRequiredSignatures` | `*uint8` | No limit | Maximum number of required signatures. Every signature adds 5,000 lamports of base fee paid by the facilitator. |
+    | `MaxComputeUnits` | `*uint32` | `400000` | Maximum compute unit limit accepted on the static path. |
+    | `MaxRequiredSignatures` | `*uint8` | `2` | Maximum number of required signatures. Every signature adds 5,000 lamports of base fee paid by the facilitator. |
+    | `TransactionVersions` | `[]int` | `[0, 1]` | Accepted Solana transaction message versions. Advertised as `extra.transactionVersions` in `/supported`. Pass `[]int{0}` to reject version-1 transactions. |
     | `SettlementCache` | `*SettlementCache` | New cache | Shared settlement cache for duplicate detection. Pass the same instance to V1 and V2 SVM schemes. |
   </Tab>
 </Tabs>
@@ -662,6 +778,7 @@ Permit2 may require a one-time approval. The gas sponsoring extensions can let t
 * [`exact` Sui spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_sui.md)
 * [`exact` NEAR spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_near.md)
 * [`exact` XRPL spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_xrpl.md)
+* [`exact` Canton spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_canton.md)
 * [`exact` Bitcoin Lightning spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_lnbtc.md)
 
 ### See Also

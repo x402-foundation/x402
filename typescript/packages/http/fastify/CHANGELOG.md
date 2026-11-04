@@ -1,5 +1,43 @@
 # @x402/fastify
 
+## 2.29.0
+
+### Minor Changes
+
+- Updated dependencies [636f585](https://github.com/x402-foundation/x402/commit/636f585)
+- Updated dependencies [c1212ca](https://github.com/x402-foundation/x402/commit/c1212ca)
+- Updated dependencies [87a9877](https://github.com/x402-foundation/x402/commit/87a9877)
+- Updated dependencies [b70da0d](https://github.com/x402-foundation/x402/commit/b70da0d)
+- Updated dependencies [76f2f28](https://github.com/x402-foundation/x402/commit/76f2f28)
+- Updated dependencies [1566e13](https://github.com/x402-foundation/x402/commit/1566e13)
+- Updated dependencies [732c181](https://github.com/x402-foundation/x402/commit/732c181)
+- Updated dependencies [8c2b431](https://github.com/x402-foundation/x402/commit/8c2b431)
+- Updated dependencies [deeb1f4](https://github.com/x402-foundation/x402/commit/deeb1f4)
+- Updated dependencies [3525075](https://github.com/x402-foundation/x402/commit/3525075)
+- Updated dependencies [e95b066](https://github.com/x402-foundation/x402/commit/e95b066)
+- Updated dependencies [3bd3c1d](https://github.com/x402-foundation/x402/commit/3bd3c1d)
+- Updated dependencies [43aaecb](https://github.com/x402-foundation/x402/commit/43aaecb)
+- Updated dependencies [a9772e5](https://github.com/x402-foundation/x402/commit/a9772e5)
+- Updated dependencies [43aaecb](https://github.com/x402-foundation/x402/commit/43aaecb)
+- Updated dependencies [bc31d3e](https://github.com/x402-foundation/x402/commit/bc31d3e)
+- Updated dependencies [db2c98e](https://github.com/x402-foundation/x402/commit/db2c98e)
+- Updated dependencies [7abd80f](https://github.com/x402-foundation/x402/commit/7abd80f)
+- Updated dependencies [fa5eb06](https://github.com/x402-foundation/x402/commit/fa5eb06)
+- Updated dependencies [374216b](https://github.com/x402-foundation/x402/commit/374216b)
+- Updated dependencies [3ca54cb](https://github.com/x402-foundation/x402/commit/3ca54cb)
+- Updated dependencies [b609bf5](https://github.com/x402-foundation/x402/commit/b609bf5)
+- Updated dependencies [8065278](https://github.com/x402-foundation/x402/commit/8065278)
+  - @x402/core@2.29.0
+  - @x402/extensions@2.29.0
+  - @x402/paywall@2.29.0
+
+### Patch Changes
+
+- [606ced0](https://github.com/x402-foundation/x402/commit/606ced0): Fixed a payment gate bypass in `@x402/fastify`: an HTTP/1.1 request using an absolute-form request-target (e.g. `GET https://attacker.com/protected-route HTTP/1.1`, per RFC 7230 §5.3.2) let `request.url` retain the scheme and authority, causing the route-matching regex to fail and skip payment verification, while Fastify's router (`find-my-way`) still stripped the prefix and dispatched to the protected handler. Path extraction in `FastifyAdapter.getPath()` and the `onRequest` hook now mirrors find-my-way's own stripping logic so the payment gate and the router always agree on the routed path. ([#3577](https://github.com/x402-foundation/x402/pull/3577)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe)!
+- [00900b3](https://github.com/x402-foundation/x402/commit/00900b3): Fixed protected Fastify routes hanging after buffered `reply.raw.end()` calls by resuming the response lifecycle. ([#3548](https://github.com/x402-foundation/x402/pull/3548)) - Thanks [@sunruize93-cmyk](https://github.com/sunruize93-cmyk)!
+- [606ced0](https://github.com/x402-foundation/x402/commit/606ced0): The Fastify payment middleware now rejects, with `400 Bad Request`, any request whose target does not start with `/` (absolute-form such as `https://host/protected-route`, `HTTPS://…`, `https://host?x=/protected-route`, etc.) before route matching. The two `find-my-way` versions Fastify 5 allows (9.5–9.8 and 9.9+) resolve these targets to different paths, so the payment gate could disagree with the router and skip payment for a route the router still served. ([#3577](https://github.com/x402-foundation/x402/pull/3577)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe)!
+- [374216b](https://github.com/x402-foundation/x402/commit/374216b): Raise runtime and peer dependency floors so installs no longer resolve known-vulnerable releases of axios, express, hono, fastify, Next.js, the MCP SDK, ajv, and the Hedera SDK. ([#3981](https://github.com/x402-foundation/x402/pull/3981)) - Thanks [@phdargen](https://github.com/phdargen) and [@cursoragent](https://github.com/cursoragent)!
+
 ## 2.28.0
 
 ### Minor Changes

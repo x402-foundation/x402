@@ -679,4 +679,125 @@ func TestHooks_FunctionalOptions(t *testing.T) {
 	}
 }
 
+type mockFailingResponseEnricherScheme struct {
+	mockSchemeNetworkServer
+}
+
+func (m *mockFailingResponseEnricherScheme) EnrichSettlementResponse(SettleResultContext) (map[string]interface{}, error) {
+	return nil, errors.New("enrich failed")
+}
+
+func settleWithAfterSettleHook(
+	t *testing.T,
+	scheme SchemeNetworkServer,
+	facilitatorResult *SettleResponse,
+	hook AfterSettleHook,
+) (*SettleResponse, error) {
+	t.Helper()
+	server := Newx402ResourceServer()
+	server.Register("eip155:8453", scheme)
+	server.OnAfterSettle(hook)
+	server.facilitatorClients[Network("eip155:8453")] = map[string]FacilitatorClient{
+		"exact": &mockFacilitatorClient{
+			settle: func(context.Context, []byte, []byte) (*SettleResponse, error) {
+				return facilitatorResult, nil
+			},
+		},
+	}
+	return server.SettlePayment(
+		context.Background(),
+		types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{}},
+		types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"},
+		nil,
+	)
+}
+
+func TestAfterSettleHook_AbortKeepsOnchainReceipt(t *testing.T) {
+	onchain := &SettleResponse{
+		Success:     true,
+		Transaction: "0xdeposit",
+		Network:     "eip155:8453",
+		Payer:       "0xpayer",
+		Amount:      "1000",
+		Extra:       map[string]interface{}{"channelState": "kept"},
+	}
+	result, err := settleWithAfterSettleHook(t, &mockSchemeNetworkServer{scheme: "exact"}, onchain,
+		func(SettleResultContext) error { return NewAfterSettleAbort("voucher_store_unavailable", "store down") })
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.Success || result.ErrorReason != "voucher_store_unavailable" || result.ErrorMessage != "store down" {
+		t.Fatalf("expected failed receipt with abort reason, got %+v", result)
+	}
+	if result.Transaction != "0xdeposit" || result.Amount != "1000" || result.Payer != "0xpayer" || result.Extra["channelState"] != "kept" {
+		t.Fatalf("expected onchain receipt fields kept, got %+v", result)
+	}
+	if !result.AfterSettleAborted {
+		t.Fatal("expected AfterSettleAborted marker")
+	}
+}
+
+func TestAfterSettleHook_PlainErrorStaysNonFatal(t *testing.T) {
+	onchain := &SettleResponse{Success: true, Transaction: "0xdeposit", Network: "eip155:8453"}
+	result, err := settleWithAfterSettleHook(t, &mockSchemeNetworkServer{scheme: "exact"}, onchain,
+		func(SettleResultContext) error { return errors.New("log only") })
+	if err != nil || !result.Success || result.AfterSettleAborted {
+		t.Fatalf("expected successful settle, got result=%+v err=%v", result, err)
+	}
+}
+
+func TestAfterSettleHook_AbortSkipsResponseEnrichment(t *testing.T) {
+	onchain := &SettleResponse{Success: true, Transaction: "0xdeposit", Network: "eip155:8453"}
+	result, err := settleWithAfterSettleHook(t,
+		&mockFailingResponseEnricherScheme{mockSchemeNetworkServer{scheme: "exact"}}, onchain,
+		func(SettleResultContext) error { return NewAfterSettleAbort("channel_busy", "") })
+	if err != nil {
+		t.Fatalf("expected enrichment to be skipped, got %v", err)
+	}
+	if result.Success || result.Transaction != "0xdeposit" {
+		t.Fatalf("expected aborted receipt with transaction, got %+v", result)
+	}
+}
+
+func TestAfterSettleHook_AbortWithNilSettleResultReturnsError(t *testing.T) {
+	_, err := settleWithAfterSettleHook(t, &mockSchemeNetworkServer{scheme: "exact"}, nil,
+		func(SettleResultContext) error { return NewAfterSettleAbort("channel_busy", "") })
+	var settleErr *SettleError
+	if !errors.As(err, &settleErr) || settleErr.ErrorReason != "channel_busy" {
+		t.Fatalf("expected SettleError channel_busy, got %v", err)
+	}
+}
+
 // Note: mockFacilitatorClient is defined in service_test.go
+
+func TestAfterVerifyHook_RunsOnFacilitatorRejection(t *testing.T) {
+	afterCalled := false
+	server := Newx402ResourceServer()
+	registerExactEvmScheme(server)
+	server.OnAfterVerify(func(ctx VerifyResultContext) (*AfterVerifyResult, error) {
+		afterCalled = true
+		if ctx.Result == nil || ctx.Result.IsValid {
+			t.Fatalf("expected invalid result, got %+v", ctx.Result)
+		}
+		return nil, nil
+	})
+	server.facilitatorClients[Network("eip155:8453")] = map[string]FacilitatorClient{
+		"exact": &mockFacilitatorClient{
+			verify: func(ctx context.Context, payload []byte, reqs []byte) (*VerifyResponse, error) {
+				return &VerifyResponse{IsValid: false, InvalidReason: "mismatch"}, nil
+			},
+		},
+	}
+
+	_, err := server.VerifyPayment(
+		context.Background(),
+		types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{}},
+		types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"},
+	)
+	if err == nil {
+		t.Fatal("expected error for invalid facilitator response")
+	}
+	if !afterCalled {
+		t.Fatal("expected afterVerify to run on facilitator rejection")
+	}
+}

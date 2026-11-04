@@ -7,6 +7,7 @@ import pytest
 from x402 import x402ResourceServer, x402ResourceServerSync
 from x402.schemas import (
     AbortResult,
+    AfterSettleAbortError,
     PaymentPayload,
     PaymentRequirements,
     SettleResponse,
@@ -28,6 +29,7 @@ class MockFacilitatorClient:
         self.settle_calls: list = []
         self.verify_raises: Exception | None = None
         self.verify_result: VerifyResponse | None = None
+        self.settle_result: SettleResponse | None = None
 
     def get_supported(self) -> SupportedResponse:
         return SupportedResponse(
@@ -52,6 +54,8 @@ class MockFacilitatorClient:
 
     async def settle(self, payload, requirements) -> SettleResponse:
         self.settle_calls.append((payload, requirements))
+        if self.settle_result is not None:
+            return self.settle_result
         return SettleResponse(
             success=True,
             transaction="0xmock",
@@ -67,6 +71,7 @@ class MockFacilitatorClientSync:
         self.settle_calls: list = []
         self.verify_raises: Exception | None = None
         self.verify_result: VerifyResponse | None = None
+        self.settle_result: SettleResponse | None = None
 
     def get_supported(self) -> SupportedResponse:
         return SupportedResponse(
@@ -91,6 +96,8 @@ class MockFacilitatorClientSync:
 
     def settle(self, payload, requirements) -> SettleResponse:
         self.settle_calls.append((payload, requirements))
+        if self.settle_result is not None:
+            return self.settle_result
         return SettleResponse(
             success=True,
             transaction="0xmock",
@@ -319,6 +326,34 @@ class TestOnVerifyFailureRecovery:
         assert cancel_reasons == ["after_verify_aborted"]
 
 
+class TestAfterVerifyOnFacilitatorRejection:
+    def test_runs_after_verify_on_facilitator_rejection(self, server):
+        resource_server, client = server
+        client.verify_result = VerifyResponse(is_valid=False, invalid_reason="mismatch")
+        after_called = False
+        failure_called = False
+
+        def after_hook(ctx):
+            nonlocal after_called
+            after_called = True
+            assert ctx.result is not None
+            assert ctx.result.is_valid is False
+
+        def failure_hook(_ctx):
+            nonlocal failure_called
+            failure_called = True
+
+        resource_server.on_after_verify(after_hook)
+        resource_server.on_verify_failure(failure_hook)
+
+        result = _verify(resource_server, build_payload(), build_requirements())
+
+        assert result.is_valid is False
+        assert result.invalid_reason == "mismatch"
+        assert after_called is True
+        assert failure_called is False
+
+
 class TestBeforeSettleSkip:
     def test_skips_facilitator_settlement(self, server):
         resource_server, client = server
@@ -351,3 +386,103 @@ class TestBeforeSettleSkip:
         assert result.success is True
         assert result.transaction == "0xlocal"
         assert execution_order == ["before", "after"]
+
+
+def _settle(resource_server, payload, requirements):
+    if isinstance(resource_server, x402ResourceServer):
+        return asyncio.run(resource_server.settle_payment(payload, requirements))
+    return resource_server.settle_payment(payload, requirements)
+
+
+def _onchain_settle_response() -> SettleResponse:
+    return SettleResponse(
+        success=True,
+        transaction="0xdeposit",
+        network="eip155:8453",
+        payer="0xpayer",
+        amount="1000",
+        extra={"channelState": "kept"},
+    )
+
+
+def _abort_hook(reason: str, message: str | None = None):
+    def hook(_ctx):
+        raise AfterSettleAbortError(reason, message)
+
+    return hook
+
+
+class TestAfterSettleAbort:
+    def test_keeps_onchain_receipt(self, server):
+        resource_server, client = server
+        client.settle_result = _onchain_settle_response()
+        resource_server.on_after_settle(_abort_hook("voucher_store_unavailable", "store down"))
+
+        result = _settle(resource_server, build_payload(), build_requirements())
+
+        assert result.success is False
+        assert result.error_reason == "voucher_store_unavailable"
+        assert result.error_message == "store down"
+        assert result.transaction == "0xdeposit"
+        assert result.amount == "1000"
+        assert result.payer == "0xpayer"
+        assert result.extra == {"channelState": "kept"}
+        assert result.after_settle_aborted is True
+
+    def test_after_settle_aborted_is_not_serialized(self, server):
+        resource_server, client = server
+        client.settle_result = _onchain_settle_response()
+        resource_server.on_after_settle(_abort_hook("channel_busy"))
+
+        result = _settle(resource_server, build_payload(), build_requirements())
+
+        assert result.after_settle_aborted is True
+        assert "after_settle_aborted" not in result.model_dump()
+        assert "afterSettleAborted" not in result.model_dump(by_alias=True)
+
+    def test_skips_response_enrichment(self, server):
+        resource_server, client = server
+        client.settle_result = _onchain_settle_response()
+        enrich_calls: list = []
+
+        class EnrichingScheme(_HookSchemeServer):
+            def enrich_settlement_response(self, ctx):
+                enrich_calls.append(ctx)
+                return {"enriched": True}
+
+        resource_server.register("eip155:8453", EnrichingScheme())
+        resource_server.on_after_settle(_abort_hook("channel_busy"))
+
+        result = _settle(resource_server, build_payload(), build_requirements())
+
+        assert result.success is False
+        assert result.transaction == "0xdeposit"
+        assert result.extra == {"channelState": "kept"}
+        assert enrich_calls == []
+
+    def test_stops_remaining_after_settle_hooks(self, server):
+        resource_server, client = server
+        client.settle_result = _onchain_settle_response()
+        later_hook_calls: list = []
+        resource_server.on_after_settle(_abort_hook("channel_busy"))
+        resource_server.on_after_settle(later_hook_calls.append)
+
+        result = _settle(resource_server, build_payload(), build_requirements())
+
+        assert result.success is False
+        assert later_hook_calls == []
+
+    def test_fails_before_settle_skip_result_closed(self, server):
+        resource_server, client = server
+        resource_server.on_before_settle(
+            lambda _ctx: SkipSettleResult(result=_onchain_settle_response())
+        )
+        resource_server.on_after_settle(_abort_hook("voucher_store_unavailable", "store down"))
+
+        result = _settle(resource_server, build_payload(), build_requirements())
+
+        assert len(client.settle_calls) == 0
+        assert result.success is False
+        assert result.error_reason == "voucher_store_unavailable"
+        assert result.transaction == "0xdeposit"
+        assert result.after_settle_aborted is True

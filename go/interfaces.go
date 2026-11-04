@@ -259,6 +259,10 @@ type AssetDecimalsProvider interface {
 // verified payment is canceled (handler failure/throw or post-verify abort).
 // Core calls SettlePayment with the returned requirements and SettlePhaseCancel.
 // Return nil, nil to skip cancel settle.
+//
+// ctx.SettledPhases lists the settle phases already completed for this payment
+// and may be empty. Only return requirements when cancel settle is appropriate
+// for the completed phases.
 type SettleOnCancelProvider interface {
 	SettleOnCancel(ctx VerifiedPaymentCanceledContext) (*types.PaymentRequirements, error)
 }

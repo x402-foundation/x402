@@ -147,7 +147,9 @@ describe("Stellar RPC Helper Functions", () => {
     describe(STELLAR_TESTNET_CAIP2, () => {
       it("should create RPC client with default testnet URL when no config provided", () => {
         const mockServer = { mock: "testnet-server" };
-        vi.mocked(rpc.Server).mockReturnValue(mockServer as any);
+        vi.mocked(rpc.Server).mockImplementation(function () {
+          return mockServer;
+        });
 
         const result = getRpcClient(STELLAR_TESTNET_CAIP2);
 
@@ -160,7 +162,9 @@ describe("Stellar RPC Helper Functions", () => {
       it("should create RPC client with custom URL when provided in rpcConfig", () => {
         const customUrl = "https://custom-testnet-rpc.com";
         const mockServer = { mock: "testnet-server-custom" };
-        vi.mocked(rpc.Server).mockReturnValue(mockServer as any);
+        vi.mocked(rpc.Server).mockImplementation(function () {
+          return mockServer;
+        });
 
         const rpcConfig: RpcConfig = { url: customUrl };
         const result = getRpcClient(STELLAR_TESTNET_CAIP2, rpcConfig);
@@ -173,7 +177,9 @@ describe("Stellar RPC Helper Functions", () => {
 
       it("should allow HTTP for testnet", () => {
         const mockServer = { mock: "testnet-server" };
-        vi.mocked(rpc.Server).mockReturnValue(mockServer as any);
+        vi.mocked(rpc.Server).mockImplementation(function () {
+          return mockServer;
+        });
 
         getRpcClient(STELLAR_TESTNET_CAIP2);
 
@@ -193,7 +199,9 @@ describe("Stellar RPC Helper Functions", () => {
       it("should create RPC client with custom URL for mainnet", () => {
         const customUrl = "https://custom-mainnet-rpc.com";
         const mockServer = { mock: "mainnet-server" };
-        vi.mocked(rpc.Server).mockReturnValue(mockServer as any);
+        vi.mocked(rpc.Server).mockImplementation(function () {
+          return mockServer;
+        });
 
         const rpcConfig: RpcConfig = { url: customUrl };
         const result = getRpcClient(STELLAR_PUBNET_CAIP2, rpcConfig);
@@ -207,7 +215,9 @@ describe("Stellar RPC Helper Functions", () => {
       it("should not allow HTTP for mainnet", () => {
         const customUrl = "https://custom-mainnet-rpc.com";
         const mockServer = { mock: "mainnet-server" };
-        vi.mocked(rpc.Server).mockReturnValue(mockServer as any);
+        vi.mocked(rpc.Server).mockImplementation(function () {
+          return mockServer;
+        });
 
         const rpcConfig: RpcConfig = { url: customUrl };
         getRpcClient(STELLAR_PUBNET_CAIP2, rpcConfig);
@@ -236,7 +246,9 @@ describe("Stellar RPC Helper Functions", () => {
       const mockOrder = vi.fn().mockReturnValue({ call: mockCall });
       const mockLimit = vi.fn().mockReturnValue({ order: mockOrder });
       const mockLedgers = vi.fn().mockReturnValue({ limit: mockLimit });
-      vi.mocked(Horizon.Server).mockImplementation(() => ({ ledgers: mockLedgers }) as any);
+      vi.mocked(Horizon.Server).mockImplementation(function () {
+        return { ledgers: mockLedgers };
+      });
       return { mockCall, mockOrder, mockLimit, mockLedgers };
     }
 
@@ -262,7 +274,9 @@ describe("Stellar RPC Helper Functions", () => {
       const mockOrder = vi.fn().mockReturnValue({ call: mockCall });
       const mockLimit = vi.fn().mockReturnValue({ order: mockOrder });
       const mockLedgers = vi.fn().mockReturnValue({ limit: mockLimit });
-      vi.mocked(Horizon.Server).mockImplementation(() => ({ ledgers: mockLedgers }) as any);
+      vi.mocked(Horizon.Server).mockImplementation(function () {
+        return { ledgers: mockLedgers };
+      });
 
       const result = await getEstimatedLedgerCloseTimeSeconds(STELLAR_TESTNET_CAIP2);
 

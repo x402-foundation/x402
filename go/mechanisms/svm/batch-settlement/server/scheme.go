@@ -94,7 +94,7 @@ func (s *BatchSvmScheme) PaymentFlows() map[string]x402.PaymentFlowConfig {
 
 // DynamicExtraFields returns extra keys regenerated on each PaymentRequired response.
 func (s *BatchSvmScheme) DynamicExtraFields() []string {
-	return []string{batchsettlement.ExtraRecentBlockhash, batchsettlement.ExtraRecentSlot}
+	return append([]string(nil), batchsettlement.DynamicExtraFields...)
 }
 
 // GetAssetDecimals implements AssetDecimalsProvider for dollar settlement overrides.
@@ -424,7 +424,7 @@ func (s *BatchSvmScheme) EnrichSettlementPayload(ctx x402.SettleContext) (map[st
 				return ChannelState{}, err
 			}
 			if amount != cumulative {
-				return ChannelState{}, errors.New(batchsettlement.ErrCumulativeAmountMismatch)
+				return ChannelState{}, errors.New(batchsettlement.ErrCloseState)
 			}
 			voucher = *parsed.Voucher
 		case !serverMode:
@@ -573,6 +573,13 @@ func (s *BatchSvmScheme) prepareVerify(ctx x402.VerifyContext, raw map[string]an
 			return err
 		}
 	}
+	// Once the payer has started a forced close, settle is unavailable, so a
+	// further paid request is refused (spec 4.5: a voucher or authorization
+	// against a Closing channel fails with channel_closing).
+	if (parsed.Type == batchsettlement.PayloadTypeVoucher || parsed.Type == batchsettlement.PayloadTypeAuthorization) &&
+		state != nil && (state.Status == ChannelStatusClosing || state.CloseRequestedAt != 0) {
+		return errors.New(batchsettlement.ErrChannelClosing)
+	}
 	if parsed.Type == batchsettlement.PayloadTypeDeposit && state == nil {
 		if err := s.verifyDepositOpen(parsed, requirements); err != nil {
 			return err
@@ -684,8 +691,11 @@ func (s *BatchSvmScheme) trackRefund(
 	if err != nil {
 		return err
 	}
+	// A cooperative close settles at the accepted cumulative; a voucher at any
+	// other watermark cannot close the channel (spec 7: close_state).
 	if submitted != state.ChargedCumulativeAmount {
-		return errors.New(batchsettlement.ErrCumulativeAmountMismatch)
+		return fmt.Errorf("%s: refund voucher %d is not the accepted cumulative %d",
+			batchsettlement.ErrCloseState, submitted, state.ChargedCumulativeAmount)
 	}
 	s.putContext(ctx.Payload, &RequestContext{ChannelID: channelID})
 	return nil
@@ -1249,11 +1259,7 @@ func (s *BatchSvmScheme) verifyDepositOpen(parsed batchsettlement.ParsedBatchPay
 		expected.Memo = &memo
 	}
 	if _, err := paymentchannels.VerifyOpenTransaction(parsed.Deposit.Transaction, expected); err != nil {
-		reason := batchsettlement.ErrSetupTransaction
-		if strings.Contains(err.Error(), "receiver binding") {
-			reason = batchsettlement.ErrReceiverAuthorizerMismatch
-		}
-		return fmt.Errorf("%s: %s", reason, err.Error())
+		return batchsettlement.SetupTransactionError(err)
 	}
 	return nil
 }
@@ -1610,6 +1616,9 @@ func classifyError(err error) string {
 	message := errString(err)
 	if strings.Contains(message, ChannelBusy) {
 		return ChannelBusy
+	}
+	if strings.HasPrefix(message, svm.ErrUnsupportedTransactionVersion) {
+		return svm.ErrUnsupportedTransactionVersion
 	}
 	for _, reason := range batchsettlement.ErrorReasons() {
 		if strings.Contains(message, reason) {

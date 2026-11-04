@@ -20,6 +20,15 @@ export interface SvmFacilitatorConfig {
    * Examples: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", ["solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"]
    */
   networks: Network | Network[];
+
+  /**
+   * Transaction message versions to accept and advertise, applied to both the
+   * x402 v2 and v1 exact schemes. Narrow it to `[0]` for a sponsor whose
+   * signer or RPC does not yet handle version 1.
+   *
+   * Default: `[0, 1]`
+   */
+  transactionVersions?: readonly (0 | 1)[];
 }
 
 /**
@@ -53,12 +62,16 @@ export function registerExactSvmScheme(
   const settlementCache = new SettlementCache();
 
   // Register V2 scheme with specified networks
-  facilitator.register(config.networks, new ExactSvmScheme(config.signer, settlementCache));
+  const { transactionVersions } = config;
+  facilitator.register(
+    config.networks,
+    new ExactSvmScheme(config.signer, settlementCache, { transactionVersions }),
+  );
 
   // Register all V1 networks
   facilitator.registerV1(
     NETWORKS as Network[],
-    new ExactSvmSchemeV1(config.signer, settlementCache),
+    new ExactSvmSchemeV1(config.signer, settlementCache, { transactionVersions }),
   );
 
   return facilitator;

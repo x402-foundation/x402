@@ -1,6 +1,6 @@
 {
   "name": "@x402/axios",
-  "version": "2.28.0",
+  "version": "2.29.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/index.d.ts",
@@ -25,8 +25,8 @@
     "@types/node": "^22.13.4",
     "@typescript-eslint/eslint-plugin": "^8.29.1",
     "@typescript-eslint/parser": "^8.29.1",
-    "@vitest/coverage-v8": "^3.2.7",
-    "axios": "^1.7.9",
+    "@vitest/coverage-v8": "^4.1.12",
+    "axios": "^1.20.0",
     "eslint": "^9.24.0",
     "eslint-plugin-import": "^2.31.0",
     "eslint-plugin-jsdoc": "^50.6.9",
@@ -36,15 +36,15 @@
     "tsup": "^8.4.0",
     "tsx": "^4.21.0",
     "typescript": "^5.7.3",
-    "vite": "^6.2.6",
+    "vite": "^6.4.5",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^3.2.7"
+    "vitest": "^4.1.12"
   },
   "dependencies": {
     "@x402/core": "workspace:~"
   },
   "peerDependencies": {
-    "axios": "^1.7.9"
+    "axios": "^1.20.0"
   },
   "exports": {
     ".": {
@@ -59,6 +59,7 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "NOTICE"
   ]
 }

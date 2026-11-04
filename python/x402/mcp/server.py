@@ -35,7 +35,7 @@ from typing import Any
 from ..hook_policy import snapshot_payment_requirements_list
 from ..schemas.errors import PaymentAbortedError, VerifyError
 from ..schemas.payments import PaymentPayload, PaymentRequirements, ResourceInfo
-from ..schemas.responses import VerifyResponse
+from ..schemas.responses import SettleResponse, VerifyResponse
 from .constants import MCP_PAYMENT_META_KEY, MCP_PAYMENT_RESPONSE_META_KEY
 from .types import (
     AfterExecutionContext,
@@ -309,6 +309,7 @@ def create_payment_wrapper(
                         settle_result.error_reason or "Unknown settlement failure",
                         extensions,
                         network=payment_requirements.network,
+                        settle_response=settle_result,
                     )
             except Exception as e:
                 return _create_settlement_failed_result(
@@ -451,6 +452,7 @@ def _create_settlement_failed_result(
     extensions: dict[str, Any] | None = None,
     *,
     network: str | None = None,
+    settle_response: SettleResponse | None = None,
 ) -> Any:
     """Create a settlement failed CallToolResult."""
     from mcp.types import CallToolResult, TextContent
@@ -470,8 +472,18 @@ def _create_settlement_failed_result(
     }
     if extensions:
         error_data["extensions"] = extensions
+    meta = (
+        {
+            MCP_PAYMENT_RESPONSE_META_KEY: settle_response.model_dump(
+                by_alias=True, exclude_none=True
+            )
+        }
+        if settle_response is not None and settle_response.after_settle_aborted
+        else None
+    )
     return CallToolResult(
         content=[TextContent(type="text", text=json.dumps(error_data))],
         structuredContent=error_data,
         isError=True,
+        _meta=meta,
     )

@@ -1049,7 +1049,7 @@ describe("batch server lifecycle boundaries", () => {
         paymentPayload: payment,
         requirements: requirements(),
       }),
-    ).resolves.toMatchObject({ abort: true, reason: BatchError.CUMULATIVE_AMOUNT_MISMATCH });
+    ).resolves.toMatchObject({ abort: true, reason: BatchError.CLOSE_STATE });
   });
 
   it("refuses a first deposit whose open binds a different receiver authorizer", async () => {

@@ -1,6 +1,16 @@
 /** Four Ed25519+settle pairs fit under Solana's transaction packet limit. */
 export const MAX_CHANNELS_PER_SETTLE_TX = 4;
 
+/** Ed25519+settle pairs that fit one version-1 transaction (size-bound). */
+export const V1_MAX_CLAIM_CHANNELS = 18;
+
+/**
+ * `distribute` instructions advertised per version-1 transaction. Bound by the
+ * 64 static account keys; 14 fit when every channel pays the same recipient,
+ * 13 leaves room for one more account per channel.
+ */
+export const V1_MAX_SETTLE_CHANNELS = 13;
+
 /** How many times a post-broadcast channel read retries a transient RPC failure. */
 export const CHANNEL_READ_ATTEMPTS = 5;
 

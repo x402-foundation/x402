@@ -4,7 +4,7 @@ import type { Network } from "@x402/core/types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SOLANA_DEVNET_CAIP2, TOKEN_PROGRAM_ADDRESS } from "../../src/constants";
-import { USDC_DEVNET_ADDRESS } from "../../src/defaultAssets";
+import { USDC_DEVNET_ADDRESS, USDC_MAINNET_ADDRESS } from "../../src/defaultAssets";
 import {
   buildReclaimInstruction,
   ChannelStatus,
@@ -18,10 +18,12 @@ import {
   type PaymentChannelRecord,
 } from "../../src/payment-channels/storage";
 import {
+  DEFAULT_MAX_RECLAIMS_PER_TX_V1,
   MAX_SAFE_RECLAIMS_PER_TX,
   UptoSvmRentCleanupManager,
 } from "../../src/upto/facilitator/rentCleanupManager";
 import { UptoSvmScheme } from "../../src/upto/facilitator/scheme";
+import { peekWireTransactionVersion } from "../../src/utils";
 
 const NETWORK = SOLANA_DEVNET_CAIP2 as Network;
 
@@ -405,38 +407,111 @@ describe("UptoSvmRentCleanupManager — cleanup", () => {
     expect(submitSettleMock).toHaveBeenCalledTimes(1);
   });
 
-  // An operator-configured maxReclaimsPerTx above MAX_SAFE_RECLAIMS_PER_TX
-  // must be clamped, not honored: a larger batch risks failing to serialize
-  // or being rejected on broadcast (see the Go SDK's
-  // TestReclaimBatchFitsInOneTransaction, which proves the same ceiling).
-  it("clamps maxReclaimsPerTx to MAX_SAFE_RECLAIMS_PER_TX", async () => {
-    for (let i = 0; i < MAX_SAFE_RECLAIMS_PER_TX + 1; i++) {
+  // The packer uses actual account/wire limits. A reclaim needs one distinct channel key;
+  // fee payer + program consume the other two v1 account slots.
+  it("packs 62 live channels into one v1 reclaim transaction", async () => {
+    for (let i = 0; i < 62; i++) {
       await seed();
     }
     fetchMaybeChannelMock.mockResolvedValue(channelAccount({ status: ChannelStatus.Distributed }));
     getSlotMock.mockResolvedValue(CURRENT_SLOT_READY);
 
     const onReclaim = vi.fn();
-    await manager.cleanup({ maxReclaimsPerTx: 1_000, maxTxsPerSigner: 10, onReclaim });
+    await manager.cleanup({ maxReclaimsPerTx: 62, maxTxsPerSigner: 1, onReclaim });
 
-    expect(onReclaim).toHaveBeenCalledTimes(2);
-    const batchSizes = onReclaim.mock.calls.map(call => call[0].channelIds.length as number);
-    expect(Math.max(...batchSizes)).toBe(MAX_SAFE_RECLAIMS_PER_TX);
-    expect(batchSizes.reduce((a, b) => a + b, 0)).toBe(MAX_SAFE_RECLAIMS_PER_TX + 1);
+    expect(onReclaim).toHaveBeenCalledTimes(1);
+    expect(onReclaim.mock.calls[0]![0].channelIds).toHaveLength(62);
+    expect(submitSettleMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["unset defaults to v1", undefined, 1],
+    ["explicit v0", 0, 0],
+  ] as const)(
+    "builds the configured facilitator transaction version: %s",
+    async (_name, facilitatorTransactionVersion, wantVersion) => {
+      const actual = await vi.importActual<typeof import("../../src/payment-channels/facilitator")>(
+        "../../src/payment-channels/facilitator",
+      );
+      submitSettleMock.mockImplementation(actual.submitChannelTransactionWithSigner);
+      const sendTransaction = vi.fn().mockResolvedValue(USDC_MAINNET_ADDRESS);
+      const signer = {
+        ...toFacilitatorSvmSigner(feePayer),
+        getLatestBlockhash: async () => ({
+          blockhash: USDC_MAINNET_ADDRESS,
+          lastValidBlockHeight: 1n,
+        }),
+        simulateTransaction: vi.fn().mockResolvedValue(undefined),
+        sendTransaction,
+        confirmTransaction: vi.fn().mockResolvedValue(undefined),
+      };
+      // Built via the scheme to cover config.facilitatorTransactionVersion propagation.
+      manager = new UptoSvmScheme(signer, {
+        channelStorage: storage,
+        facilitatorTransactionVersion,
+      }).createRentCleanupManager(NETWORK);
+      await seed();
+      fetchMaybeChannelMock.mockResolvedValue(
+        channelAccount({ status: ChannelStatus.Distributed }),
+      );
+      getSlotMock.mockResolvedValue(CURRENT_SLOT_READY);
+
+      const onError = vi.fn();
+      await manager.cleanup({ maxTxsPerSigner: 1, onError });
+
+      expect(onError).not.toHaveBeenCalled();
+      expect(sendTransaction).toHaveBeenCalledOnce();
+      expect(peekWireTransactionVersion(sendTransaction.mock.calls[0]![0])).toBe(wantVersion);
+    },
+  );
+
+  it("caps v0 reclaim batches at the safe limit", async () => {
+    manager = new UptoSvmRentCleanupManager({
+      facilitatorTransactionVersion: 0,
+      network: NETWORK,
+      signer: toFacilitatorSvmSigner(feePayer),
+      storage,
+    });
+    for (let i = 0; i < MAX_SAFE_RECLAIMS_PER_TX + 4; i++) {
+      await seed();
+    }
+    fetchMaybeChannelMock.mockResolvedValue(channelAccount({ status: ChannelStatus.Distributed }));
+    getSlotMock.mockResolvedValue(CURRENT_SLOT_READY);
+
+    const onError = vi.fn();
+    await manager.cleanup({ maxReclaimsPerTx: DEFAULT_MAX_RECLAIMS_PER_TX_V1, onError });
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(
+      submitSettleMock,
+      "a v0 batch never exceeds MAX_SAFE_RECLAIMS_PER_TX",
+    ).toHaveBeenCalledTimes(2);
+    for (const call of submitSettleMock.mock.calls) {
+      expect(call[3].length).toBeLessThanOrEqual(MAX_SAFE_RECLAIMS_PER_TX);
+      expect(call[4].facilitatorTransactionVersion ?? 0).toBe(0);
+    }
   });
 
   // A misconfigured non-positive maxReclaimsPerTx must fall back to the
   // default instead of spinning the batching loop forever (`i += 0`).
-  it("falls back to the default when maxReclaimsPerTx is non-positive", async () => {
-    await seed();
-    fetchMaybeChannelMock.mockResolvedValue(channelAccount({ status: ChannelStatus.Distributed }));
-    getSlotMock.mockResolvedValue(CURRENT_SLOT_READY);
+  it.each([undefined, 0, -1, NaN, Infinity])(
+    "defaults maxReclaimsPerTx=%s to the v1 ceiling of 62",
+    async maxReclaimsPerTx => {
+      for (let i = 0; i < DEFAULT_MAX_RECLAIMS_PER_TX_V1 + 1; i++) {
+        await seed();
+      }
+      fetchMaybeChannelMock.mockResolvedValue(
+        channelAccount({ status: ChannelStatus.Distributed }),
+      );
+      getSlotMock.mockResolvedValue(CURRENT_SLOT_READY);
 
-    const onReclaim = vi.fn();
-    await manager.cleanup({ maxReclaimsPerTx: 0, onReclaim });
+      const onReclaim = vi.fn();
+      await manager.cleanup({ maxReclaimsPerTx, maxTxsPerSigner: 1, onReclaim });
 
-    expect(onReclaim).toHaveBeenCalledTimes(1);
-  });
+      expect(onReclaim).toHaveBeenCalledTimes(1);
+      expect(onReclaim.mock.calls[0]![0].channelIds).toHaveLength(DEFAULT_MAX_RECLAIMS_PER_TX_V1);
+    },
+  );
 
   // The two budgets bound different things: maxTxsPerRun stops the storage
   // scan, maxTxsPerSigner caps each rent payer's reclaims. A scan budget of 1

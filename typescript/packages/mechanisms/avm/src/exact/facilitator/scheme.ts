@@ -115,7 +115,7 @@ export class ExactAvmScheme implements SchemeNetworkFacilitator {
         };
       }
 
-      // Validate network (accept legacy full-hash identifiers on input)
+      // Validate network
       if (
         normalizeAlgorandNetwork(payload.accepted.network) !==
         normalizeAlgorandNetwork(requirements.network)

@@ -15,13 +15,18 @@ from x402 import (
     resolve_failure_path_settlement,
     resolve_payment_flow,
     x402ResourceServer,
+    x402ResourceServerSync,
 )
 from x402.http.types import (
     HTTPRequestContext,
     PaymentOption,
     RouteConfig,
 )
-from x402.http.utils import decode_payment_response_header, encode_payment_signature_header
+from x402.http.utils import (
+    decode_payment_required_header,
+    decode_payment_response_header,
+    encode_payment_signature_header,
+)
 from x402.http.x402_http_server import x402HTTPResourceServer
 from x402.schemas import (
     AbortResult,
@@ -70,6 +75,9 @@ class MockFacilitatorClient:
 
     def set_settle_response(self, response: SettleResponse) -> None:
         self._settle_response = response
+
+    def set_verify_response(self, response: VerifyResponse) -> None:
+        self._verify_response = response
 
 
 class FlowScheme:
@@ -265,6 +273,10 @@ class TestResolveFailurePathSettlement:
         )
         assert resolve_failure_path_settlement(None, before) == before.result
 
+    def test_omits_cancel_without_before_handler_settlement(self) -> None:
+        cancel = build_settle_response(success=True, amount="0", transaction="0xcancel")
+        assert resolve_failure_path_settlement(cancel, None, build_payload()) is None
+
     def test_returns_none_when_neither_receipt_applies(self) -> None:
         assert resolve_failure_path_settlement(None) is None
         assert resolve_failure_path_settlement(None, None, build_payload()) is None
@@ -417,6 +429,71 @@ class TestCancellationDispatcherSettledPhases:
         )
         assert settled == ["before-handler"]
 
+    @pytest.mark.asyncio
+    async def test_settles_on_cancel_without_before_handler_deposit(self) -> None:
+        client = MockFacilitatorClient(
+            settle_response=build_settle_response(transaction="0xcancel", amount="0")
+        )
+        server = x402ResourceServer(client)
+        scheme = FlowScheme()
+        scheme.settle_on_cancel = (  # type: ignore[attr-defined]
+            lambda ctx: ctx.requirements.model_copy(update={"amount": "0"})
+        )
+        server.register(NETWORK, scheme)
+        server.initialize()
+        requirements = build_requirements()
+        handle = server.create_payment_cancellation_dispatcher(
+            build_payload(accepted=requirements), requirements
+        )
+
+        got = await handle.cancel(
+            VerifiedPaymentCancelOptions(reason="handler_failed", response_status=500)
+        )
+
+        assert got is not None
+        assert got.success is True
+        assert got.transaction == "0xcancel"
+        assert len(client.settle_calls) == 1
+        assert client.settle_calls[0][1].amount == "0"
+
+    def test_sync_server_settles_on_cancel_without_before_handler_deposit(self) -> None:
+        class SyncFacilitatorClient:
+            def __init__(self) -> None:
+                self.settle_calls: list = []
+
+            def get_supported(self) -> SupportedResponse:
+                return SupportedResponse(
+                    kinds=[SupportedKind(x402_version=2, scheme="exact", network=NETWORK)],
+                    extensions=[],
+                    signers={},
+                )
+
+            def settle(self, payload, requirements) -> SettleResponse:
+                self.settle_calls.append((payload, requirements))
+                return build_settle_response(transaction="0xcancel", amount="0")
+
+        client = SyncFacilitatorClient()
+        server = x402ResourceServerSync(client)
+        scheme = FlowScheme()
+        scheme.settle_on_cancel = (  # type: ignore[attr-defined]
+            lambda ctx: ctx.requirements.model_copy(update={"amount": "0"})
+        )
+        server.register(NETWORK, scheme)
+        server.initialize()
+        requirements = build_requirements()
+        handle = server.create_payment_cancellation_dispatcher(
+            build_payload(accepted=requirements), requirements
+        )
+
+        got = handle.cancel_sync(
+            VerifiedPaymentCancelOptions(reason="handler_failed", response_status=500)
+        )
+
+        assert got is not None
+        assert got.success is True
+        assert got.transaction == "0xcancel"
+        assert len(client.settle_calls) == 1
+
 
 async def _setup_http(
     flow: str,
@@ -559,6 +636,26 @@ class TestHttpOrchestration:
         assert len(facilitator.settle_calls) == 1
         assert result.response is not None
         assert result.response.status == 402
+
+    @pytest.mark.asyncio
+    async def test_includes_the_invalid_reason_in_the_json_402_body_when_verification_fails(
+        self,
+    ) -> None:
+        http_server, _resource_server, facilitator = await _setup_http("authorization")
+        facilitator.set_verify_response(
+            VerifyResponse(is_valid=False, invalid_reason="insufficient_funds")
+        )
+
+        result = await _verified_request(http_server, "authorization")
+
+        assert result.type == "payment-error"
+        assert result.response is not None
+        assert result.response.status == 402
+        assert result.response.is_html is False
+        assert result.response.body == {"error": "insufficient_funds"}
+        decoded = decode_payment_required_header(result.response.headers["PAYMENT-REQUIRED"])
+        assert decoded.error == "insufficient_funds"
+        assert len(facilitator.verify_calls) == 1
 
     @pytest.mark.asyncio
     async def test_escrow_cancel_after_before_handler_returns_refund_receipt(self) -> None:

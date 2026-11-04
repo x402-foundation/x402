@@ -133,6 +133,13 @@ describe("ExactSvmScheme", () => {
       expect(extra).toBeDefined();
       expect(mockSigner.getAddresses()).toContain(extra!.feePayer);
     });
+
+    it("advertises the accepted transaction message versions in getExtra", () => {
+      const facilitator = new ExactSvmScheme(mockSigner);
+      const extra = facilitator.getExtra(SOLANA_DEVNET_CAIP2);
+      expect(extra!.transactionVersions).toEqual([0, 1]);
+      expect(extra!.transactionVersions).not.toContain("legacy");
+    });
   });
 
   describe("verify", () => {
@@ -908,8 +915,16 @@ describe("ExactSvmScheme", () => {
       expect(() => callLimit(facilitator, limitInstruction(60_000))).not.toThrow();
     });
 
-    it("should not cap compute units when maxComputeUnits is unset", () => {
+    it("caps compute units at the 400,000 reference default when maxComputeUnits is unset", () => {
       const facilitator = new ExactSvmScheme(mockSigner);
+      expect(() => callLimit(facilitator, limitInstruction(400_000))).not.toThrow();
+      expect(() => callLimit(facilitator, limitInstruction(400_001))).toThrow(
+        "invalid_exact_svm_payload_transaction_instructions_compute_limit_instruction_too_high",
+      );
+    });
+
+    it("lets an operator raise the compute unit cap", () => {
+      const facilitator = new ExactSvmScheme(mockSigner, undefined, { maxComputeUnits: 1_400_000 });
       expect(() => callLimit(facilitator, limitInstruction(1_400_000))).not.toThrow();
     });
 

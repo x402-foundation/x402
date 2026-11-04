@@ -1,6 +1,6 @@
 {
   "name": "@x402/extensions",
-  "version": "2.28.0",
+  "version": "2.29.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
@@ -30,7 +30,7 @@
     "@types/node": "^22.13.4",
     "@typescript-eslint/eslint-plugin": "^8.29.1",
     "@typescript-eslint/parser": "^8.29.1",
-    "@vitest/coverage-v8": "^3.2.7",
+    "@vitest/coverage-v8": "^4.1.12",
     "eslint": "^9.24.0",
     "eslint-plugin-import": "^2.31.0",
     "eslint-plugin-jsdoc": "^50.6.9",
@@ -40,20 +40,20 @@
     "tsup": "^8.4.0",
     "tsx": "^4.21.0",
     "typescript": "^5.7.3",
-    "vite": "^6.2.6",
+    "vite": "^6.4.5",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^3.2.7"
+    "vitest": "^4.1.12"
   },
   "dependencies": {
     "@noble/curves": "^1.9.0",
     "@scure/base": "^1.2.6",
     "@signinwithethereum/siwe": "^4.1.0",
     "@x402/core": "workspace:~",
-    "ajv": "^8.17.1",
+    "ajv": "^8.18.0",
     "jose": "^5.9.6",
     "tweetnacl": "^1.0.3",
     "viem": "^2.48.11",
-    "zod": "^3.24.2"
+    "zod": "^4.6.6"
   },
   "exports": {
     ".": {
@@ -118,6 +118,7 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "NOTICE"
   ]
 }

@@ -1,6 +1,6 @@
 {
   "name": "@x402/tvm",
-  "version": "2.28.0",
+  "version": "2.29.0",
   "description": "TVM (TON) mechanism for x402 payment protocol",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
@@ -25,7 +25,7 @@
     "@types/node": "^22.13.1",
     "@typescript-eslint/eslint-plugin": "^8.29.1",
     "@typescript-eslint/parser": "^8.29.1",
-    "@vitest/coverage-v8": "^3.2.7",
+    "@vitest/coverage-v8": "^4.1.12",
     "eslint": "^9.24.0",
     "eslint-plugin-import": "^2.31.0",
     "eslint-plugin-jsdoc": "^50.6.9",
@@ -35,9 +35,9 @@
     "tsup": "^8.4.0",
     "tweetnacl": "^1.0.3",
     "typescript": "^5.7.3",
-    "vite": "^6.2.6",
+    "vite": "^6.4.5",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^3.2.7"
+    "vitest": "^4.1.12"
   },
   "exports": {
     ".": {
@@ -82,6 +82,7 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "NOTICE"
   ]
 }

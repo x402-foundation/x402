@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -145,7 +146,7 @@ func TestBatchSettlementRedemptionWorkerEdgeCases(t *testing.T) {
 		assert.Equal(t, uint64(0), stored.Settled)
 	})
 
-	t.Run("caps a configured batch size at the spec's four channels", func(t *testing.T) {
+	t.Run("caps a configured batch size at four when the facilitator advertises no capacity", func(t *testing.T) {
 		store := server.NewMemoryChannelStore()
 		for _, id := range []string{"a", "b", "c", "d", "e"} {
 			require.NoError(t, store.Put(newChannel("chan-"+id)))
@@ -164,6 +165,67 @@ func TestBatchSettlementRedemptionWorkerEdgeCases(t *testing.T) {
 			lengths = append(lengths, len(claim.Claims))
 		}
 		assert.Equal(t, []int{4, 1}, lengths)
+	})
+
+	batchLengths := func(t *testing.T, channels int, extra map[string]any, configured int) (claims, settles []int) {
+		t.Helper()
+		store := server.NewMemoryChannelStore()
+		for i := 0; i < channels; i++ {
+			require.NoError(t, store.Put(newChannel(fmt.Sprintf("chan-%02d", i))))
+		}
+		recorder := recordingSettler(boundDistribute)
+		options := withPayout(managerOptions(store, receiverAuthorizer, recorder.settle), 3000)
+		options.MaxChannelsPerBatch = configured
+		merged := map[string]any{}
+		for key, value := range options.Requirements.Extra {
+			merged[key] = value
+		}
+		for key, value := range extra {
+			merged[key] = value
+		}
+		options.Requirements.Extra = merged
+		_, err := server.NewBatchChannelManager(options).Redeem(context.Background())
+		require.NoError(t, err)
+		for _, payload := range recorder.payloads {
+			switch payload := payload.(type) {
+			case batchsettlement.BatchClaimPayload:
+				claims = append(claims, len(payload.Claims))
+			case batchsettlement.BatchSettlePayload:
+				settles = append(settles, len(payload.Channels))
+			}
+		}
+		return claims, settles
+	}
+
+	t.Run("batches claims and settles up to the facilitator's advertised capacity", func(t *testing.T) {
+		// JSON-decoded /supported numbers arrive as float64.
+		claims, settles := batchLengths(t, 20, map[string]any{
+			batchsettlement.ExtraMaxClaimChannels:  float64(batchsettlement.V1MaxClaimChannels),
+			batchsettlement.ExtraMaxSettleChannels: float64(batchsettlement.V1MaxSettleChannels),
+		}, 0)
+		assert.Equal(t, []int{18, 2}, claims)
+		assert.Equal(t, []int{13, 7}, settles)
+	})
+
+	t.Run("a misadvertised capacity is clamped to the protocol maximum", func(t *testing.T) {
+		claims, settles := batchLengths(t, 30, map[string]any{
+			batchsettlement.ExtraMaxClaimChannels:  float64(50),
+			batchsettlement.ExtraMaxSettleChannels: float64(50),
+		}, 0)
+		assert.Equal(t, []int{18, 12}, claims)
+		assert.Equal(t, []int{13, 13, 4}, settles)
+	})
+
+	t.Run("a configured batch size lowers the advertised capacity", func(t *testing.T) {
+		claims, _ := batchLengths(t, 10, map[string]any{batchsettlement.ExtraMaxClaimChannels: 18}, 8)
+		assert.Equal(t, []int{8, 2}, claims)
+	})
+
+	t.Run("an invalid advertised capacity falls back to four", func(t *testing.T) {
+		for _, value := range []any{"18", 0, -3, 2.5, nil} {
+			claims, _ := batchLengths(t, 5, map[string]any{batchsettlement.ExtraMaxClaimChannels: value}, 0)
+			assert.Equal(t, []int{4, 1}, claims, "%v", value)
+		}
 	})
 
 	t.Run("seals a closing channel with its latest voucher when a claim reports channel_closing", func(t *testing.T) {
