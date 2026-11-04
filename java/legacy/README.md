@@ -1,5 +1,8 @@
 # x402 Java
 
+> **Deprecated (v1)**  
+> The code in `java/legacy` implements x402 **v1**. It is **deprecated** and will only receive **security patches**. Please migrate to the **v2** SDK in [`java/`](../README.md). See the [Migration guide: v1 to v2](https://docs.x402.org/guides/migration-v1-to-v2).
+
 [![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen.svg)](https://github.com/x402-foundation/x402/java)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/x402-foundation/x402/blob/main/LICENSE)
 [![Java Version](https://img.shields.io/badge/java-17%2B-orange)](https://github.com/x402-foundation/x402/java)
@@ -48,7 +51,7 @@ To use this library, you need to build and install it locally:
 ```bash
 # Clone the repository
 git clone https://github.com/x402-foundation/x402.git
-cd x402/java
+cd x402/java/legacy
 
 # Build and install to your local Maven repository
 mvn clean install

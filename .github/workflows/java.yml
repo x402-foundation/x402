@@ -34,13 +34,13 @@ jobs:
         restore-keys: ${{ runner.os }}-m2
         
     - name: Run tests with coverage
-      working-directory: ./java
+      working-directory: ./java/legacy
       run: mvn clean test -Pcoverage
       
     - name: Run checkstyle
-      working-directory: ./java
+      working-directory: ./java/legacy
       run: mvn checkstyle:check
       
     - name: Run SpotBugs
-      working-directory: ./java
+      working-directory: ./java/legacy
       run: mvn spotbugs:check

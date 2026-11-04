@@ -16,7 +16,7 @@ description: Guidelines and conventions for contributing to the x402 codebase. U
 - Address a single issue per contribution, not multiple.
 - Targeted edits, minimal diff, atomic commits.
 - No abstractions or boilerplate that were not explicitly requested.
-- No edits to legacy/v1 code; it is effectively frozen (security patches only). This includes the paths `typescript/packages/legacy/`, `go/legacy`, `python/legacy` and the `java/` SDK.
+- No edits to legacy/v1 code; it is effectively frozen (security patches only). This includes the paths `typescript/packages/legacy/`, `go/legacy`, `python/legacy` and `java/legacy`.
 
 ## Code style
 
