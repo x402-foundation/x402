@@ -242,6 +242,9 @@ Register `BatchSettlementEvmScheme` for `eip155:*`. The client SDK handles depos
 
     batchScheme := batchedclient.NewBatchSettlementEvmScheme(evmSigner, &batchedclient.BatchSettlementEvmSchemeOptions{
         DepositMultiplier: 5,
+        // Optional: configure RPC for EIP-2612 and ERC-20 approval gas-sponsoring
+        // extensions when the signer cannot read contracts directly.
+        // RPCURL: "https://sepolia.base.org",
     })
 
     x402Client := x402.Newx402Client().
