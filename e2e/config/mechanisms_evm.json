@@ -238,7 +238,8 @@
       "sdks": [
         "typescript",
         "go",
-        "python"
+        "python",
+        "java"
       ],
       "price": {
         "usd": "$0.001"

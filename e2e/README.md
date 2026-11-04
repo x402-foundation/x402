@@ -2,13 +2,13 @@
 
 End-to-end test suite for validating client-server-facilitator communication across languages and frameworks.
 
-Layout is `role/language/transport/component` (e.g. `servers/typescript/http/express/index.ts`). One pnpm package per TS language role; Go/Python keep per-component modules and flat language-root modules (`clients/<lang>/client.*`, `servers/<lang>/{catalog,config,routes}.*`) — no `shared/` subdirectory or extra package dir in any language. Vanilla HTTP/MCP components omit `test.config.json`; the harness infers type/language/transport from the path and merges the mechanisms catalog (see below). Custom surfaces (e.g. svm-smart-wallet) keep a local `test.config.json` overlay; Next and MCP use the shared language-root modules with no local endpoint list.
+Layout is `role/language/transport/component` (e.g. `servers/typescript/http/express/index.ts`). One pnpm package per TS language role; Go/Python/Java keep per-component modules and flat language-root modules (`clients/<lang>/client.*`, `servers/<lang>/{catalog,config,routes}.*`; for Java, one Maven module per language root with its classes under `src/main/java`) — no `shared/` subdirectory or extra package dir in any language. Vanilla HTTP/MCP components omit `test.config.json`; the harness infers type/language/transport from the path and merges the mechanisms catalog (see below). Custom surfaces (e.g. svm-smart-wallet) keep a local `test.config.json` overlay; Next and MCP use the shared language-root modules with no local endpoint list.
 
 You do **not** need to edit `generic-server` / `generic-client` / `generic-facilitator`, hand-list proxy env maps, or duplicate env/route blocks across sibling HTTP frameworks.
 
 ## Mechanisms catalog (SSOT)
 
-[`config/mechanisms_global.json`](config/mechanisms_global.json) plus one [`config/mechanisms_<id>.json`](config/) per network are the source of truth for v2 mechanisms. The file id is the network id (`mechanisms_evm.json` → `evm`); the harness has no fixed network-id union — network identity (CAIP-2, env keys, routes) comes from the catalog. CAIP-2 registration patterns are derived from catalog `caip2` (never a per-family string table): clients and TS/Python resource servers use `${namespace}:*` via `networkCaip2Pattern`; Go resource servers register the exact catalog CAIP-2 (Go’s `BuildPaymentRequirements` looks up schemes by exact network); facilitators always register exact CAIP-2 via `resolveNetworkCaip2`. Scheme **classes** still need a one-time register call per language role (see [Add a network](#add-a-network)).
+[`config/mechanisms_global.json`](config/mechanisms_global.json) plus one [`config/mechanisms_<id>.json`](config/) per network are the source of truth for v2 mechanisms. The file id is the network id (`mechanisms_evm.json` → `evm`); the harness has no fixed network-id union — network identity (CAIP-2, env keys, routes) comes from the catalog. CAIP-2 registration patterns are derived from catalog `caip2` (never a per-family string table): clients and TS/Python resource servers use `${namespace}:*` via `networkCaip2Pattern`; Go and Java resource servers register the exact catalog CAIP-2 (both SDKs look up server schemes by exact network); facilitators always register exact CAIP-2 via `resolveNetworkCaip2`. Scheme **classes** still need a one-time register call per language role (see [Add a network](#add-a-network)).
 
 `mechanisms_global.json` holds only cross-cutting harness env (`PORT`, `FACILITATOR_URL`, `RESOURCE_SERVER_URL`, `ENDPOINT_PATH`, `MOCK_FACILITATOR_URL`). Each `mechanisms_<id>.json` holds:
 
@@ -26,7 +26,7 @@ Every SDK reads this same set of files. The harness ([`src/mechanisms.ts`](src/m
 - **Environment** → derived from each network's `env` for networks present in that SDK’s routes, filtered to the requesting role
 - **Legacy v1** under `legacy/` is **not** driven by this catalog
 
-Resource servers resolve the same data at boot — payment middleware config **and** route handlers — through a per-language loader: [`servers/typescript/catalog.ts`](servers/typescript/catalog.ts), [`servers/python/catalog.py`](servers/python/catalog.py), [`servers/go/catalog.go`](servers/go/catalog.go). No framework entrypoint hardcodes a path, price, or extension; each loops over its resolved routes. The harness passes the catalog directory in `E2E_MECHANISMS_CATALOG`, and each loader falls back to walking up to `e2e/config/` so a server still runs standalone from its own directory.
+Resource servers resolve the same data at boot — payment middleware config **and** route handlers — through a per-language loader: [`servers/typescript/catalog.ts`](servers/typescript/catalog.ts), [`servers/python/catalog.py`](servers/python/catalog.py), [`servers/go/catalog.go`](servers/go/catalog.go), [`servers/java/.../Catalog.java`](servers/java/src/main/java/org/x402/e2e/server/Catalog.java). No framework entrypoint hardcodes a path, price, or extension; each loops over its resolved routes. The harness passes the catalog directory in `E2E_MECHANISMS_CATALOG`, and each loader falls back to walking up to `e2e/config/` so a server still runs standalone from its own directory.
 
 Route support is **listed** on each route via `sdks` (and `clientSdks` for SDKs that implement only the client role), never inferred from a cartesian product. Scheme **registration** stays in the language-root client/server modules and facilitator mains.
 
@@ -46,9 +46,9 @@ After a server reports healthy, the harness requests every paid route it declare
 Four edits, no catalog type to touch:
 
 1. **Catalog** — add [`config/mechanisms_<id>.json`](config/) with `env` (per-key `{ required, roles }`), `testnet`/`mainnet` (RPC input keys are pure convention: `${ID}_TESTNET_RPC_URL` / `${ID}_MAINNET_RPC_URL`), and `routes`. Mark wallet credentials `required: true` so CI ([`scripts/ci-select-families.sh`](scripts/ci-select-families.sh)) and harness preflight pick up the family automatically.
-2. **Server** — register the scheme in `servers/<lang>/` (e.g. [`servers/typescript/config.ts`](servers/typescript/config.ts) / [`servers/python/config.py`](servers/python/config.py) / [`servers/go/config.go`](servers/go/config.go)).
-3. **Client** — register the scheme in `clients/<lang>/` (e.g. [`clients/typescript/client.ts`](clients/typescript/client.ts) / [`clients/python/client.py`](clients/python/client.py) / [`clients/go/client.go`](clients/go/client.go)).
-4. **Facilitator** — register the scheme in [`facilitators/typescript`](facilitators/typescript) / [`facilitators/go`](facilitators/go) / [`facilitators/python`](facilitators/python).
+2. **Server** — register the scheme in `servers/<lang>/` (e.g. [`servers/typescript/config.ts`](servers/typescript/config.ts) / [`servers/python/config.py`](servers/python/config.py) / [`servers/go/config.go`](servers/go/config.go) / [`servers/java/.../ServerConfig.java`](servers/java/src/main/java/org/x402/e2e/server/ServerConfig.java)).
+3. **Client** — register the scheme in `clients/<lang>/` (e.g. [`clients/typescript/client.ts`](clients/typescript/client.ts) / [`clients/python/client.py`](clients/python/client.py) / [`clients/go/client.go`](clients/go/client.go) / [`clients/java/.../E2eClient.java`](clients/java/src/main/java/org/x402/e2e/client/E2eClient.java)).
+4. **Facilitator** — register the scheme in [`facilitators/typescript`](facilitators/typescript) / [`facilitators/go`](facilitators/go) / [`facilitators/python`](facilitators/python) / [`facilitators/java`](facilitators/java).
 
 Also add `SERVER_*` / `CLIENT_*` / `FACILITATOR_*` secrets to [`.env-local`](.env-local) and the [Environment Variables](#environment-variables) section below. HTTP frameworks, Next, and MCP all pick up routes and scheme registration from the language-root modules — no per-framework CAIP-2 tables. Custom client surfaces (e.g. svm-smart-wallet) keep a local `test.config.json` overlay for narrowing (`protocolFamilies`, `facilitators`, extra env) — not a separate catalog route.
 
@@ -58,6 +58,7 @@ Also add `SERVER_*` / `CLIENT_*` / `FACILITATOR_*` secrets to [`.env-local`](.en
 |-----|--------|
 | TypeScript | Add `clients/typescript/http/<name>/index.ts` or `servers/typescript/http/<name>/index.ts` using the language-root helpers (`../../client.ts` / `../../index.ts` for servers); add the adapter dep to the language `package.json`. Vanilla components need no local `test.config.json`. |
 | Go / Python | Add component dir with `main.go` / `main.py` + module file. `setup.sh` runs language defaults. Vanilla components need no local `test.config.json`. |
+| Java | Add `clients/java/http/<name>/` or `servers/java/http/<name>/` with a `pom.xml` that depends on the language-root module and builds a shaded jar, a `Main.java`, `build.sh` (installs `java/` and the language-root module, then packages the component), `run.sh` (`exec java -jar target/<name>.jar`) and `test.config.json`. Clients declare `"x402Versions": [2]`; servers declare `"extensions": []` because the Java SDK implements no extensions. Needs JDK 17+ and Maven on `PATH`. |
 
 ## Custom flows (escape hatches)
 
@@ -72,7 +73,7 @@ These keep local `test.config.json` overlays and/or special orchestration — no
 | Solana transaction v0 | SVM-only client overlays `clients/{typescript,go,python}/http/svm-v0/test.config.json` (`protocolFamilies: ["svm"]`). Clients build the highest Solana transaction version the facilitator advertises in `extra.transactionVersions`, so every other client builds v1 against facilitators advertising `[0, 1]`; these narrow the SVM schemes to `transactionVersions: [0]` (Go `PaymentClientOptions`, Python `create_e2e_client(svm_transaction_versions=...)`) to keep v0 covered. TS and Go cover exact, upto and batch-settlement; Python covers exact |
 | Legacy (v1) | `legacy/` trees only — separate configs; do not extend the mechanisms catalog for v1 |
 
-If an SDK implements a route end-to-end (client + server + facilitator), list it in that route’s `sdks`. Omit only when the mechanism package is missing (e.g. Go has no TVM; Python/Go have no AVM/NEAR/XRPL; Python has no SVM upto). Where an SDK has only a client, list it in `clientSdks`.
+If an SDK implements a route end-to-end (client + server + facilitator), list it in that route’s `sdks`. Omit only when the mechanism package is missing (e.g. Go has no TVM; Python/Go have no AVM/NEAR/XRPL; Python has no SVM upto; Java implements only exact EVM with EIP-3009). Where an SDK has only a client, list it in `clientSdks`.
 
 ## Legacy
 
@@ -82,7 +83,7 @@ If an SDK implements a route end-to-end (client + server + facilitator), list it
 
 ### First Time Setup
 
-Install all dependencies (TypeScript via pnpm, Go, Python):
+Install all dependencies (TypeScript via pnpm, Go, Python, Java; Java components need JDK 17+ and Maven on `PATH`):
 
 ```bash
 pnpm install:all
@@ -133,9 +134,9 @@ pnpm test
 ```
 
 Launches an interactive CLI where you can select:
-- **Facilitators** - Payment verification/settlement services (Go, TypeScript, Python)
-- **Servers** - Protected endpoints requiring payment (Express, Gin, Hono, Next.js, FastAPI, Flask, etc.)
-- **Clients** - Payment-capable HTTP clients (axios, fetch, httpx, requests, etc.)
+- **Facilitators** - Payment verification/settlement services (Go, TypeScript, Python, Java)
+- **Servers** - Protected endpoints requiring payment (Express, Gin, Hono, Next.js, FastAPI, Flask, Jetty, etc.)
+- **Clients** - Payment-capable HTTP clients (axios, fetch, httpx, requests, java.net.http, etc.)
 - **Extensions** - Additional features like Bazaar discovery
 - **Protocols** - EVM, SVM, AVM, Aptos, Concordium, Hedera, NEAR, Stellar, and/or TVM networks
 - **Payment schemes** (when multiple apply) - `exact`, `upto`, `batch-settlement`, or `auth-capture`
@@ -298,7 +299,7 @@ Catalog dimensions can also be filtered from the CLI (`pnpm test --help` for the
 pnpm test --testnet --min --families=evm --sdk=ts --paymentflow=upfront --assetTransferMethod=eip3009
 ```
 
-`--sdk` keeps scenarios whose client, server, and facilitator are that language (`ts` / `typescript`, `py` / `python`, `go`). `--paymentflow` and `--assetTransferMethod` match the catalog route fields (omitted `paymentFlow` is `authorization`).
+`--sdk` keeps scenarios whose client, server, and facilitator are that language (`ts` / `typescript`, `py` / `python`, `go`, `java`). `--paymentflow` and `--assetTransferMethod` match the catalog route fields (omitted `paymentFlow` is `authorization`).
 
 Optional environment variables (batch-settlement scheme):
 

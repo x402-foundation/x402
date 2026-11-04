@@ -7,63 +7,89 @@
 
   <groupId>org.x402</groupId>
   <artifactId>x402</artifactId>
-  <version>1.0.0-SNAPSHOT</version>
+  <version>2.0.0-SNAPSHOT</version>
   <packaging>jar</packaging>
 
+  <name>x402</name>
+  <description>Java SDK for the x402 payment protocol (v2)</description>
+  <url>https://github.com/x402-foundation/x402</url>
+
+  <licenses>
+    <license>
+      <name>Apache License, Version 2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+    </license>
+  </licenses>
+
   <properties>
-    <maven.compiler.source>17</maven.compiler.source>
-    <maven.compiler.target>17</maven.compiler.target>
+    <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+    <jackson.version>2.22.4</jackson.version>
+    <bouncycastle.version>1.86</bouncycastle.version>
+    <servlet-api.version>6.1.0</servlet-api.version>
+    <junit.version>5.14.4</junit.version>
+    <mockito.version>5.24.0</mockito.version>
+    <wiremock.version>3.13.2</wiremock.version>
   </properties>
 
   <dependencies>
-    <!-- Runtime / compile -->
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
-      <version>2.17.0</version>
+      <version>${jackson.version}</version>
+    </dependency>
+
+    <!-- secp256k1, Keccak-256 -->
+    <dependency>
+      <groupId>org.bouncycastle</groupId>
+      <artifactId>bcprov-jdk18on</artifactId>
+      <version>${bouncycastle.version}</version>
     </dependency>
 
     <dependency>
       <groupId>jakarta.servlet</groupId>
       <artifactId>jakarta.servlet-api</artifactId>
-      <version>6.1.0</version>
+      <version>${servlet-api.version}</version>
       <scope>provided</scope>
     </dependency>
 
-    <!-- Test -->
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
-      <version>5.10.2</version>
+      <version>${junit.version}</version>
       <scope>test</scope>
     </dependency>
 
     <dependency>
       <groupId>org.mockito</groupId>
       <artifactId>mockito-junit-jupiter</artifactId>
-      <version>5.11.0</version>
+      <version>${mockito.version}</version>
       <scope>test</scope>
     </dependency>
 
+    <!-- Also provides the embedded Jetty 11 used by the servlet integration tests -->
     <dependency>
       <groupId>org.wiremock</groupId>
       <artifactId>wiremock</artifactId>
-      <version>3.13.1</version>
+      <version>${wiremock.version}</version>
       <scope>test</scope>
-    </dependency>
-
-    <dependency>
-      <groupId>org.eclipse.jetty</groupId>
-      <artifactId>jetty-bom</artifactId>
-      <version>12.0.8</version>
-      <type>pom</type>
-      <scope>import</scope>
     </dependency>
   </dependencies>
 
   <build>
     <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+        <configuration>
+          <compilerArgs>
+            <arg>-Xlint:all</arg>
+          </compilerArgs>
+        </configuration>
+      </plugin>
+
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
@@ -72,8 +98,7 @@
           <useModulePath>false</useModulePath>
         </configuration>
       </plugin>
-      
-      <!-- Add checkstyle plugin for linting -->
+
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-checkstyle-plugin</artifactId>
@@ -82,6 +107,7 @@
           <configLocation>checkstyle.xml</configLocation>
           <consoleOutput>true</consoleOutput>
           <failsOnError>true</failsOnError>
+          <violationSeverity>warning</violationSeverity>
           <linkXRef>false</linkXRef>
         </configuration>
         <dependencies>
@@ -101,14 +127,12 @@
           </execution>
         </executions>
       </plugin>
-      
-      <!-- Add SpotBugs plugin for finding potential bugs -->
+
       <plugin>
         <groupId>com.github.spotbugs</groupId>
         <artifactId>spotbugs-maven-plugin</artifactId>
         <version>4.8.2.0</version>
         <configuration>
-          <excludeFilterFile>spotbugs-exclude.xml</excludeFilterFile>
           <effort>Max</effort>
           <threshold>High</threshold>
         </configuration>
@@ -120,8 +144,7 @@
           </dependency>
         </dependencies>
       </plugin>
-      
-      <!-- JaCoCo for code coverage -->
+
       <plugin>
         <groupId>org.jacoco</groupId>
         <artifactId>jacoco-maven-plugin</artifactId>
@@ -144,42 +167,8 @@
       </plugin>
     </plugins>
   </build>
-  
+
   <profiles>
-    <profile>
-      <id>lint</id>
-      <build>
-        <plugins>
-          <plugin>
-            <groupId>org.apache.maven.plugins</groupId>
-            <artifactId>maven-checkstyle-plugin</artifactId>
-            <executions>
-              <execution>
-                <id>lint</id>
-                <phase>validate</phase>
-                <goals>
-                  <goal>check</goal>
-                </goals>
-              </execution>
-            </executions>
-          </plugin>
-          <plugin>
-            <groupId>com.github.spotbugs</groupId>
-            <artifactId>spotbugs-maven-plugin</artifactId>
-            <executions>
-              <execution>
-                <id>lint</id>
-                <phase>verify</phase>
-                <goals>
-                  <goal>check</goal>
-                </goals>
-              </execution>
-            </executions>
-          </plugin>
-        </plugins>
-      </build>
-    </profile>
-    
     <profile>
       <id>coverage</id>
       <build>
@@ -187,22 +176,10 @@
           <plugin>
             <groupId>org.jacoco</groupId>
             <artifactId>jacoco-maven-plugin</artifactId>
-            <version>0.8.11</version>
             <executions>
               <execution>
-                <id>prepare-agent</id>
-                <goals>
-                  <goal>prepare-agent</goal>
-                </goals>
-              </execution>
-              <execution>
-                <id>report</id>
-                <goals>
-                  <goal>report</goal>
-                </goals>
-              </execution>
-              <execution>
                 <id>check</id>
+                <phase>verify</phase>
                 <goals>
                   <goal>check</goal>
                 </goals>

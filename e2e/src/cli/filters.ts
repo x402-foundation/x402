@@ -10,13 +10,14 @@ import {
 /** x402 payment scheme for filtering. */
 export type PaymentSchemeKind = 'exact' | 'upto' | 'batch-settlement' | 'auth-capture';
 
-/** CLI aliases for catalog SDK ids (`typescript` / `python` / `go`). */
+/** CLI aliases for catalog SDK ids (`typescript` / `python` / `go` / `java`). */
 const SDK_ALIASES: Record<string, string> = {
   ts: 'typescript',
   typescript: 'typescript',
   py: 'python',
   python: 'python',
   go: 'go',
+  java: 'java',
 };
 
 /** Normalize `--sdk` values (`ts` → `typescript`). Unknown ids pass through lowercased. */

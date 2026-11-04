@@ -33,6 +33,7 @@ sdk:
           - 'go/extensions/**'
           - 'go/types/**'
           - 'go/test/**'
+          - 'java/src/**'
 
 # Legacy packages and examples
 legacy:
@@ -41,7 +42,7 @@ legacy:
           - 'typescript/packages/legacy/**'
           - 'python/legacy/**'
           - 'go/legacy/**'
-          - 'java/**'
+          - 'java/legacy/**'
           - 'examples/typescript/legacy/**'
           - 'examples/python/legacy/**'
 

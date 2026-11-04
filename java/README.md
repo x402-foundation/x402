@@ -1,286 +1,229 @@
-# x402 Java
+# x402 Java SDK
 
-[![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen.svg)](https://github.com/x402-foundation/x402/java)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/x402-foundation/x402/blob/main/LICENSE)
-[![Java Version](https://img.shields.io/badge/java-17%2B-orange)](https://github.com/x402-foundation/x402/java)
+Java implementation of the [x402 protocol](https://github.com/x402-foundation/x402), version 2. A client pays for x402-protected HTTP resources, a resource server charges for the routes of a servlet application, and a facilitator verifies payments and settles them onchain. Payments use the `exact` scheme on EVM networks with EIP-3009 `transferWithAuthorization`. The core classes `X402Client`, `X402ResourceServer` and `X402Facilitator` do not depend on HTTP. The HTTP layer is built on `java.net.http` and Jakarta Servlet.
 
-Java implementation of [x402](https://github.com/x402-foundation/x402)
+The x402 v1 SDK lives in [`legacy/`](legacy/README.md). It is deprecated and only receives security patches.
 
-## Quick Start
+## Requirements
 
-```bash
-# Build and test
-mvn clean install
-
-# Run tests
-mvn test
-
-# Check code coverage
-mvn jacoco:report
-mvn -P coverage verify  # Enforces 90% coverage
-
-# Check code quality
-mvn checkstyle:check
-mvn spotbugs:check
-```
-
-## Overview
-
-x402 is a system for decentralized payments for API calls, web content, and other HTTP resources. The `402` stands for the HTTP status code `Payment Required`.
-
-This library provides a Java implementation of the `x402` protocol, with the following core components:
-
-- `**PaymentFilter**`: A servlet filter that authenticates payments and rejects unauthorized requests
-- `**FacilitatorClient**`: A client for verifying and settling payments with a facilitator service
-- `**X402HttpClient**`: A convenience HTTP client for making payment-enabled requests
-
-## Compatibility
-
-- Java 17+
-- Jakarta Servlet API or `javax.servlet`
-- Works with any servlet container (Tomcat, Jetty, etc.)
-- Compatible with Spring Boot, Quarkus, and other Java frameworks
+- Java 17 or later.
+- Jakarta Servlet 5.0 or later for `PaymentFilter`, e.g. Tomcat 10+, Jetty 11+ or Spring Boot 3. The servlet API is a `provided` dependency.
+- Jackson Databind and Bouncy Castle (`bcprov-jdk18on`), pulled in by Maven.
 
 ## Installation
 
-To use this library, you need to build and install it locally:
+The SDK is not published to a Maven repository yet. Build it and install it into your local repository:
 
 ```bash
-# Clone the repository
 git clone https://github.com/x402-foundation/x402.git
 cd x402/java
-
-# Build and install to your local Maven repository
-mvn clean install
+mvn -B install
 ```
 
-Then add the dependency to your Maven project:
+Then add the dependency:
 
 ```xml
 <dependency>
-    <groupId>org.x402</groupId>
-    <artifactId>x402</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+  <groupId>org.x402</groupId>
+  <artifactId>x402</artifactId>
+  <version>2.0.0-SNAPSHOT</version>
 </dependency>
 ```
 
-## Usage
+## Quick start
 
-### Server Side - Requiring Payments for Access
+### Client
 
-Integrate the `x402` filter into your servlet-based application to require payment for specific paths:
+`X402HttpClient` wraps `java.net.http.HttpClient`. When a server answers `402`, it selects one of the offered payment options, signs an EIP-3009 authorization and sends the request again with a `PAYMENT-SIGNATURE` header. A request is never paid more than once.
 
 ```java
-import org.x402.server.PaymentFilter;
-import org.x402.client.HttpFacilitatorClient;
+import org.x402.X402Client;
+import org.x402.http.X402HttpClient;
+import org.x402.mechanisms.evm.PrivateKeyEvmSigner;
+import org.x402.mechanisms.evm.exact.ExactEvmClientScheme;
 
-import java.math.BigInteger;
+import java.net.URI;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+
+PrivateKeyEvmSigner signer = PrivateKeyEvmSigner.fromHex(System.getenv("EVM_PRIVATE_KEY"));
+
+X402Client client = X402Client.builder()
+        .register("eip155:*", new ExactEvmClientScheme(signer)) // every EVM network
+        .build();
+
+X402HttpClient http = new X402HttpClient(client);
+HttpResponse<String> response = http.send(
+        HttpRequest.newBuilder(URI.create("http://localhost:8080/weather")).build(),
+        HttpResponse.BodyHandlers.ofString());
+
+X402HttpClient.settleResponse(response)
+        .ifPresent(settlement -> System.out.println("Paid in transaction " + settlement.transaction()));
+```
+
+If none of the offered options can be paid, `send` throws a `PaymentException` whose `reason()` says why. `X402Client.Builder` also takes `spendControls`, `policy` and `selector` to bound, filter and pick the options. To keep the key in a KMS or HSM, implement `ClientEvmSigner` instead of using `PrivateKeyEvmSigner`. Its Javadoc specifies the exact signature format.
+
+### Resource server
+
+`HttpResourceServer` maps route patterns to prices. `PaymentFilter` enforces them in any servlet container.
+
+```java
+import org.x402.Price;
+import org.x402.X402ResourceServer;
+import org.x402.http.HttpFacilitatorClient;
+import org.x402.http.HttpResourceServer;
+import org.x402.http.PaymentOption;
+import org.x402.http.RouteConfig;
+import org.x402.http.servlet.PaymentFilter;
+import org.x402.mechanisms.evm.exact.ExactEvmServerScheme;
+
+import java.util.LinkedHashMap;
 import java.util.Map;
 
-// 1. Define paths that require payment and their prices
-Map<String, BigInteger> priceTable = Map.of(
-    "/api/premium", BigInteger.valueOf(1000), // 1000 wei
-    "/content/exclusive", BigInteger.valueOf(500)
-);
+X402ResourceServer resourceServer = X402ResourceServer.builder()
+        .facilitator(HttpFacilitatorClient.builder().url("https://x402.org/facilitator").build())
+        .register("eip155:84532", new ExactEvmServerScheme())
+        .build();
 
-// 2. Create a facilitator client
-String facilitatorUrl = "https://x402.org/facilitator";
-HttpFacilitatorClient facilitator = new HttpFacilitatorClient(facilitatorUrl);
+Map<String, RouteConfig> routes = new LinkedHashMap<>();
+routes.put("GET /weather", RouteConfig.builder()
+        .accept(PaymentOption.builder()
+                .scheme("exact")
+                .network("eip155:84532")
+                .payTo(System.getenv("EVM_PAYEE_ADDRESS"))
+                .price(Price.money("$0.001")) // 1000 atomic units of Base Sepolia USDC
+                .build())
+        .description("Current weather")
+        .mimeType("application/json")
+        .build());
 
-// 3. Create and register the filter
-String payToAddress = "0xYourReceiverAddress";
-PaymentFilter paymentFilter = new PaymentFilter(payToAddress, priceTable, facilitator);
+PaymentFilter filter = new PaymentFilter(new HttpResourceServer(resourceServer, routes));
+```
 
-// 4. Register the filter with your servlet container
-// In a standard servlet app:
-FilterRegistration.Dynamic registration = servletContext.addFilter("paymentFilter", paymentFilter);
-registration.addMappingForUrlPatterns(EnumSet.of(DispatcherType.REQUEST), true, "/*");
+Register the filter with the container, for example from a `ServletContextListener`:
 
-// Or in Spring Boot:
+```java
+FilterRegistration.Dynamic registration = servletContext.addFilter("x402", filter);
+registration.addMappingForUrlPatterns(EnumSet.of(DispatcherType.REQUEST, DispatcherType.FORWARD), false, "/*");
+```
+
+With Spring Boot 3, declare a `FilterRegistrationBean` in a `@Configuration` class:
+
+```java
 @Bean
-public FilterRegistration paymentFilter(ServletContext servletContext) {
-    FilterRegistration.Dynamic registration = servletContext.addFilter(
-        "paymentFilter", 
-        new PaymentFilter(payToAddress, priceTable, new HttpFacilitatorClient(facilitatorUrl))
-    );
-    registration.addMappingForUrlPatterns(EnumSet.of(DispatcherType.REQUEST), true, "/*");
+FilterRegistrationBean<PaymentFilter> x402Filter(HttpResourceServer payments) {
+    FilterRegistrationBean<PaymentFilter> registration = new FilterRegistrationBean<>(new PaymentFilter(payments));
+    registration.addUrlPatterns("/*");
+    registration.setDispatcherTypes(DispatcherType.REQUEST, DispatcherType.FORWARD);
     return registration;
 }
 ```
 
-### Client Side - Making Requests with Payment
+- Map the filter for `FORWARD` as well as `REQUEST`. Routes match the dispatched path, so without `FORWARD` a free URL that forwards to a paid path serves it unpaid.
+- `PaymentFilter.init` fetches `/supported` from every facilitator and builds the payment requirements of every route. A misconfigured route stops the filter from starting. If a facilitator cannot be reached, the filter logs a warning and starts anyway. Paid requests then retry initialization, at most once every 5 seconds, and get a `503` with `{"error":"facilitator_unavailable"}` until a retry succeeds, or a `500` if a retry finds a misconfigured route.
+- A route pattern is `"METHOD /path"` or a bare `"/path"`, which matches every method except `OPTIONS`. In the path, `*` matches any characters and `:id` or `[id]` matches one segment. Paths are relative to the servlet context path. Routes are tried in map order and the first match wins.
+- The handler finds the verified payment in the request attributes `PaymentFilter.PAYMENT_PAYLOAD_ATTRIBUTE` and `PaymentFilter.PAYMENT_REQUIREMENTS_ATTRIBUTE`.
+- `Price.money` resolves to the network's default asset. To charge in another EIP-3009 token, set the price to an amount in atomic units with the token's EIP-712 domain, e.g. `new AssetAmount("1000", tokenAddress, Map.of("name", "My Token", "version", "1"))`.
 
-To make HTTP requests that include payment proofs:
+### Facilitator
+
+`X402Facilitator` routes each payment to the scheme registered for its network. `ExactEvmFacilitatorScheme` verifies the EIP-3009 authorization, including an `eth_call` simulation of the transfer, and settles it by submitting `transferWithAuthorization` from the facilitator's account, which pays the gas.
 
 ```java
-import org.x402.client.X402HttpClient;
-import org.x402.crypto.CryptoSigner;
+import org.x402.X402Facilitator;
+import org.x402.mechanisms.evm.PrivateKeyEvmSigner;
+import org.x402.mechanisms.evm.exact.ExactEvmFacilitatorScheme;
+import org.x402.mechanisms.evm.rpc.JsonRpcFacilitatorEvmSigner;
 
-import java.math.BigInteger;
 import java.net.URI;
-import java.net.http.HttpResponse;
-import java.util.Map;
+import java.util.List;
 
-// 1. Implement the CryptoSigner interface with your crypto library
-// This example uses a stub - you'd integrate with web3j, Solana-J, etc.
-CryptoSigner signer = new CryptoSigner() {
-    @Override
-    public String sign(Map<String, Object> payload) {
-        // Sign the payload with your private key
-        return "0xYourSignatureHere";
-    }
-};
+JsonRpcFacilitatorEvmSigner signer = JsonRpcFacilitatorEvmSigner
+        .builder("eip155:84532", URI.create(System.getenv("EVM_RPC_URL")),
+                PrivateKeyEvmSigner.fromHex(System.getenv("FACILITATOR_EVM_PRIVATE_KEY")))
+        .connect(); // fails unless eth_chainId is 84532
 
-// 2. Create the client
-X402HttpClient client = new X402HttpClient(signer);
-
-// 3. Make a GET request with payment
-BigInteger amount = BigInteger.valueOf(1000);
-String asset = "0xTokenContractAddress"; // Or "USDC", etc.
-String payTo = "0xReceiverAddress";
-URI uri = URI.create("https://api.example.com/premium");
-
-HttpResponse<String> response = client.get(uri, amount, asset, payTo);
-System.out.println("Response: " + response.body());
+X402Facilitator facilitator = X402Facilitator.builder()
+        .register(List.of("eip155:84532"), new ExactEvmFacilitatorScheme(signer))
+        .build();
 ```
 
-## Complete Example
+A `JsonRpcFacilitatorEvmSigner` is bound to one chain. To serve several networks, create a signer and an `ExactEvmFacilitatorScheme` per network and register each one under its own network. A settle result with the reason `settlement_pending` carries the hash of a broadcast transaction whose receipt did not arrive in time. It is not final and must be reconciled onchain.
 
-Here's a complete example of a Spring Boot application with a paid joke API:
+`X402Facilitator` implements `FacilitatorClient`, so a resource server can use it in-process instead of `HttpFacilitatorClient`:
 
 ```java
-import org.x402.server.PaymentFilter;
-import org.x402.client.HttpFacilitatorClient;
-import javax.servlet.DispatcherType;
-import javax.servlet.FilterRegistration;
-import javax.servlet.ServletContext;
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.web.servlet.ServletContextInitializer;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RestController;
-
-import java.math.BigInteger;
-import java.util.EnumSet;
-import java.util.Map;
-
-@SpringBootApplication
-public class PaidJokeApplication implements ServletContextInitializer {
-
-    public static void main(String[] args) {
-        SpringApplication.run(PaidJokeApplication.class, args);
-    }
-    
-    @Override
-    public void onStartup(ServletContext servletContext) {
-        // Set up the payment filter
-        String facilitatorUrl = "https://x402.org/facilitator";
-        HttpFacilitatorClient facilitator = new HttpFacilitatorClient(facilitatorUrl);
-        
-        // Define which URLs require payment and their prices
-        Map<String, BigInteger> priceTable = Map.of(
-            "/api/joke", BigInteger.valueOf(1000)  // 1000 wei for a premium joke
-        );
-        
-        // Create and register the filter
-        String payToAddress = "0xYourReceiverAddress";
-        PaymentFilter paymentFilter = new PaymentFilter(payToAddress, priceTable, facilitator);
-        
-        FilterRegistration.Dynamic registration = 
-            servletContext.addFilter("paymentFilter", paymentFilter);
-        registration.addMappingForUrlPatterns(
-            EnumSet.of(DispatcherType.REQUEST), true, "/*");
-    }
-    
-    @RestController
-    static class JokeController {
-        @GetMapping("/api/joke")
-        public Map<String, String> getPremiumJoke() {
-            // If this code runs, payment was already verified by the filter
-            return Map.of("joke", "Why do programmers prefer dark mode? Because light attracts bugs!");
-        }
-    }
-}
+X402ResourceServer resourceServer = X402ResourceServer.builder()
+        .facilitator(facilitator)
+        .register("eip155:84532", new ExactEvmServerScheme())
+        .build();
 ```
 
-## How It Works
+The SDK does not include an HTTP server for the facilitator. To run one, delegate `POST /verify` and `POST /settle`, whose body is a `FacilitatorRequest`, and `GET /supported` to `verify`, `settle` and `supported`.
 
-1. The server defines endpoints that require payment and their prices
-2. When a request comes in, the `PaymentFilter` checks if the path requires payment
-3. If payment is required, it looks for the `X-PAYMENT` header
-4. The facilitator verifies the payment and either approves or rejects the request
-5. If approved, the request continues; if rejected, a 402 Payment Required response is returned
-6. After serving the request, the filter calls the facilitator to settle the payment
+## Supported
 
-## Payment Flow
+- x402 protocol version 2, with the `PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE` and `PAYMENT-RESPONSE` headers.
+- The `exact` scheme on EVM (`eip155`) networks with EIP-3009, for clients, resource servers and facilitators.
+- Money prices such as `Price.money("$0.01")` on the networks below, whose default asset supports EIP-3009. The table comes from `DefaultAssets`.
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Server
-    participant Facilitator
-    
-    Client->>Server: GET /resource
-    Server->>Client: 402 Payment Required
-    
-    Client->>Server: GET /resource (with X-PAYMENT header)
-    Server->>Facilitator: Verify payment
-    Facilitator->>Server: Payment verified
-    
-    Server->>Client: 200 OK + content
-    Server->>Facilitator: Settle payment (async)
+| Network | Mainnet | Testnet | Default asset |
+|---------|---------|---------|---------------|
+| Base | `eip155:8453` | `eip155:84532` | USDC |
+| Ethereum | `eip155:1` | | USDC |
+| Arbitrum | `eip155:42161` | `eip155:421614` | USDC |
+| Avalanche C-Chain | `eip155:43114` | | USDC |
+| Polygon | `eip155:137` | | USDC |
+| Monad | `eip155:143` | `eip155:10143` | USDC |
+| Stable | `eip155:988` | `eip155:2201` | USDT0 |
+| ADI | `eip155:36900` | | USDC.e |
+| HPP | `eip155:190415` | `eip155:181228` | USDC.e |
+| XDC | `eip155:50` | `eip155:51` | USDC |
+| Flare | `eip155:14` | | USDT0 |
+| Celo | `eip155:42220` | `eip155:11142220` | USDC, plus USDT and USAT by symbol on mainnet |
+| Sei | `eip155:1329` | `eip155:1328` | USDC |
+| Arc | `eip155:5042` | `eip155:5042002` | USDC |
+| World Chain | `eip155:480` | `eip155:4801` | USDC |
+
+Other EVM networks work with an `AssetAmount` price of an EIP-3009 token. Clients must then allow that token with `SpendControls.Builder.allowAsset`.
+
+Not supported yet:
+
+- The `permit2` asset transfer method. Networks whose default asset uses Permit2 (MegaETH, Mezo, Radius, Igra) need an `AssetAmount` of an EIP-3009 token.
+- The `upto`, `batch-settlement` and `auth-capture` schemes.
+- SVM and every other network family.
+- Extensions, lifecycle hooks, dynamic `payTo` and price, the paywall and MCP.
+- Smart-wallet signatures (ERC-1271, ERC-6492). The facilitator only verifies signatures of externally owned accounts.
+- x402 v1, which lives in [`legacy/`](legacy/README.md).
+
+## Security
+
+- **Spend controls are on by default.** The client only pays in the networks' default assets, which are USD stablecoins, and at most $1 per payment. Raise the cap with `SpendControls.builder().maxAmountPerPayment("$5")` and allow other tokens with `allowAsset`. Use `SpendControls.disabled()` only with servers you trust. The controls are checked again when the payment is signed.
+- **Settlement before delivery.** `PaymentFilter` buffers the handler's response and releases it only after settlement succeeds. If settlement fails, the client gets a `402` with `{"error":"settlement_failed"}` and nothing the handler produced, headers and cookies included. A handler status of 400 or above is released without settling. Paid routes must run synchronously, since `startAsync` is rejected, and their whole body is held in memory.
+- **Path normalization.** Routes are matched against both the raw request URI and the path the container dispatched on, after resolving percent-escapes, `;` parameters and `.` or `..` segments. A request for `/public/..;/premium` or `/public/%2e%2e/premium` cannot reach a paid `/premium` handler without paying. Matching is case-sensitive.
+- **Secrets.** `PrivateKeyEvmSigner` has no key accessor and its `toString` prints only the address. `JsonRpcFacilitatorEvmSigner.toString` omits the RPC URL, which often embeds an API key. `HttpFacilitatorClient` rejects URLs that carry credentials. Pass them with `authHeadersProvider` instead.
+
+## Development
+
+```bash
+cd java
+mvn -B verify -Pcoverage   # build, unit tests, Checkstyle and the JaCoCo coverage gate
+mvn -B spotbugs:check      # static analysis
 ```
 
-## Error Handling
+The coverage gate requires 85% instruction and 75% branch coverage.
 
-The PaymentFilter handles different types of errors with appropriate HTTP status codes:
+`ExactEvmPaymentFlowAnvilTest` verifies and settles real payments against an [anvil](https://github.com/foundry-rs/foundry) fork of Base Sepolia. It is skipped unless `X402_TEST_EVM_RPC_URL` is set:
 
-### Payment Required (402)
-When a payment is required but not provided or is invalid, the filter returns a `402 Payment Required` response with a JSON body:
-
-```json
-{
-  "x402Version": 1,
-  "accepts": [
-    {
-      "scheme": "exact",
-      "network": "base-sepolia",
-      "maxAmountRequired": "1000",
-      "asset": "USDC",
-      "resource": "/api/premium",
-      "mimeType": "application/json",
-      "payTo": "0xReceiverAddress",
-      "maxTimeoutSeconds": 30
-    }
-  ],
-  "error": "missing payment header"
-}
+```bash
+anvil --fork-url https://sepolia.base.org --port 8546 --silent &
+X402_TEST_EVM_RPC_URL=http://127.0.0.1:8546 mvn -B test
 ```
 
-### Server Errors (500)
-When the facilitator service is unavailable or other unexpected errors occur during payment verification:
+## Contributing
 
-```json
-{
-  "error": "Payment verification failed: Connection timeout"
-}
-```
+See [CONTRIBUTING.md](../CONTRIBUTING.md).
 
-Or for unexpected internal errors:
+## License
 
-```json
-{
-  "error": "Internal server error during payment verification"
-}
-```
-
-### Settlement Errors
-When payment settlement fails after successful verification, the filter returns a 402 status to prevent users from receiving content without proper payment completion. This matches the behavior of the Go and TypeScript implementations:
-
-```json
-{
-  "x402Version": 1,
-  "accepts": [...],
-  "error": "settlement failed: insufficient balance"
-}
-```
+Apache 2.0. See [LICENSE](../LICENSE).

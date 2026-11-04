@@ -1,0 +1,10 @@
+{
+  "name": "java",
+  "type": "facilitator",
+  "enabled": true,
+  "language": "java",
+  "x402Versions": [
+    2
+  ],
+  "extensions": []
+}

@@ -19,7 +19,7 @@
 
 ## Code-to-Doc Mapping
 - Changes to `typescript/packages/core/src/` affect Core Concepts docs
-- Changes to `typescript/packages/mechanisms/`, `go/mechanisms/`, or `python/x402/mechanisms/` affect Payment Schemes docs and `sdk-features.md`
+- Changes to `typescript/packages/mechanisms/`, `go/mechanisms/`, `python/x402/mechanisms/`, or `java/src/main/java/org/x402/mechanisms/` affect Payment Schemes docs and `sdk-features.md`
 - Changes to `typescript/packages/extensions/src/` affect Extensions docs (Bazaar, etc.)
 - Changes to `typescript/packages/*/src/` affect SDK references and quickstart guides
 - Changes to `python/x402/` affect Python SDK references
@@ -115,6 +115,7 @@ When triggered by GitHub Actions or other automated workflows:
 | `go/mechanisms/**/*.go` API changes | Payment Schemes docs, SDK Features |
 | `go/extensions/*.go` Extensions changes | Extensions docs |
 | `java/src/**/*.java` API changes | Java SDK reference |
+| `java/src/main/java/org/x402/mechanisms/**/*.java` API changes | Payment Schemes docs, SDK Features |
 | `specs/schemes/*.md` protocol changes | Payment Schemes docs |
 | `specs/*.md` protocol changes | Core Concepts docs |
 | `specs/extensions/*.md` Extensions changes | Extensions docs (only if SDK implementation exists) |
@@ -132,7 +133,7 @@ If the code changes are limited to:
 - CI/build configuration only (`.github/`, `turbo.json`, etc.)
 - Dependency updates without API changes (`package.json`, `go.mod`, etc.)
 - Ecosystem partner metadata (`typescript/site/app/ecosystem/partners-data/`)
-- Legacy packages (`typescript/packages/legacy/*`, `go/legacy`, `python/legacy`)
+- Legacy packages (`typescript/packages/legacy/*`, `go/legacy`, `python/legacy`, `java/legacy`)
 
 Then report "No documentation updates needed" and **do not create a PR**.
 
@@ -143,4 +144,4 @@ When SDK code changes involve:
 - New extensions in `*/extensions/`
 - New hooks in client/server/facilitator files
 
-Update `sdk-features.md` to reflect the current state. Check all three SDKs (typescript/, go/, python/) when updating.
+Update `sdk-features.md` to reflect the current state. Check all four SDKs (typescript/, go/, python/, java/) when updating.

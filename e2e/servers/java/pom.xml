@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!-- Shared e2e resource server logic (catalog, config, routes, handlers); the components under http/ depend on it. -->
+  <groupId>org.x402.e2e</groupId>
+  <artifactId>e2e-server</artifactId>
+  <version>1.0.0-SNAPSHOT</version>
+  <packaging>jar</packaging>
+
+  <properties>
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <x402.version>2.0.0-SNAPSHOT</x402.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.x402</groupId>
+      <artifactId>x402</artifactId>
+      <version>${x402.version}</version>
+    </dependency>
+  </dependencies>
+</project>

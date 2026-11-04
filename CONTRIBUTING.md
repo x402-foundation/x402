@@ -101,6 +101,7 @@ For setup instructions, development workflow, and contribution patterns for each
 - [TypeScript Development Guide](typescript/CONTRIBUTING.md)
 - [Python Development Guide](python/CONTRIBUTING.md)
 - [Go Development Guide](go/CONTRIBUTING.md)
+- [Java Development Guide](java/README.md#development)
 - [Specifications Guide](specs/CONTRIBUTING.md)
 
 ## Contributing Workflow
@@ -140,6 +141,9 @@ cd python/x402 && uv run pytest
 
 # Go
 cd go && make test
+
+# Java
+cd java && mvn -B verify -Pcoverage
 ```
 
 ### 6. Submit PR

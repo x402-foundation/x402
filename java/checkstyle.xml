@@ -7,11 +7,6 @@
   <property name="severity" value="warning"/>
   <property name="fileExtensions" value="java, properties, xml"/>
   
-  <!-- Suppressions configuration -->
-  <module name="SuppressionFilter">
-    <property name="file" value="checkstyle-suppressions.xml"/>
-  </module>
-
   <!-- Excludes all 'module-info.java' files -->
   <module name="BeforeExecutionExclusionFileFilter">
     <property name="fileNamePattern" value="module\-info\.java$"/>
@@ -67,6 +62,10 @@
       <property name="scope" value="public"/>
       <property name="allowMissingPropertyJavadoc" value="true"/>
     </module>
+    <module name="JavadocVariable">
+      <property name="scope" value="public"/>
+    </module>
+    <module name="InvalidJavadocPosition"/>
     <module name="JavadocStyle">
       <property name="checkFirstSentence" value="true"/>
       <property name="checkEmptyJavadoc" value="true"/>
