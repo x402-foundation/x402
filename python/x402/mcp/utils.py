@@ -6,6 +6,7 @@ from typing import Any
 
 from ..schemas import (
     PaymentPayload,
+    PaymentPayloadV1,
     PaymentRequired,
     PaymentRequiredV1,
     SettleResponse,
@@ -132,7 +133,9 @@ def validate_payment_wrapper_accepts(resource_server: Any, accepts: list) -> Non
         resolve_payment_flow(scheme_server, requirement)
 
 
-def attach_payment_to_meta(params: dict[str, Any], payload: PaymentPayload) -> dict[str, Any]:
+def attach_payment_to_meta(
+    params: dict[str, Any], payload: PaymentPayload | PaymentPayloadV1
+) -> dict[str, Any]:
     """Attach payment payload to request params.
 
     Args:

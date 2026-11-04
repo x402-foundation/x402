@@ -35,6 +35,7 @@ class MockAsyncPaymentClient:
 
     def __init__(self):
         self.create_payment_payload = AsyncMock()
+        self.handle_payment_response = AsyncMock(return_value=None)
 
 
 @pytest.mark.asyncio

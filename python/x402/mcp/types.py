@@ -3,7 +3,7 @@
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Optional
 
-from ..schemas import PaymentPayload, PaymentRequirements, SettleResponse
+from ..schemas import PaymentPayload, PaymentPayloadV1, PaymentRequirements, SettleResponse
 from ..schemas.base import Price
 
 if TYPE_CHECKING:
@@ -96,7 +96,7 @@ class AfterPaymentContext:
     def __init__(
         self,
         tool_name: str,
-        payment_payload: PaymentPayload,
+        payment_payload: PaymentPayload | PaymentPayloadV1,
         result: "MCPToolResult",  # type: ignore
         settle_response: SettleResponse | None = None,
     ):
