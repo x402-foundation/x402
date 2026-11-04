@@ -34,13 +34,7 @@ export function setSettlementOverrides(res: NextResponse, overrides: SettlementO
   res.headers.set(SETTLEMENT_OVERRIDES_HEADER, JSON.stringify(overrides));
 }
 
-/**
- * Validation is a static import. Next does not trace the webpackIgnore import.
- *
- * @param httpServer - HTTP server whose routes may declare bazaar
- * @returns Promise awaited on the first protected request, or null when bazaar is unused
- */
-function prepareBazaar(httpServer: x402HTTPResourceServer): Promise<void> | null {
+const prepareBazaar = (httpServer: x402HTTPResourceServer): Promise<void> | null => {
   if (!checkIfBazaarNeeded(httpServer.routes)) {
     return null;
   }
@@ -58,7 +52,7 @@ function prepareBazaar(httpServer: x402HTTPResourceServer): Promise<void> | null
   return registration.then(() => {
     validateBazaarRouteExtensions(httpServer.routes);
   });
-}
+};
 
 /**
  * Configuration for registering a payment scheme with a specific network
