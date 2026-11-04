@@ -2,6 +2,25 @@
 
 <!-- towncrier release notes start -->
 
+## [2.27.0] - 2026-11-04
+
+### Fixed
+
+- Fixed SIWX nonce storage detection so `record_nonce` is called after access is granted and incomplete nonce-tracking implementations are rejected. ([#4080](https://github.com/x402-foundation/x402/pull/4080)) - Thanks [@tahzeer](https://github.com/tahzeer)!
+- Fixed the Python upto Permit2 facilitator to return structured `invalid_upto_evm_payload` verify/settle errors (and `invalid_upto_evm_required_amount` for a malformed required amount) for malformed payloads instead of raising or returning ad-hoc reasons, matching the Go implementation's behavior. ([#4060](https://github.com/x402-foundation/x402/pull/4060)) - Thanks [@scks1](https://github.com/scks1)!
+- Isolate errors from advisory `x402Facilitator` and `x402FacilitatorSync` hooks: a throwing `after_verify`, `after_settle`, `on_verify_failure` or `on_settle_failure` hook is now logged and skipped instead of changing the verify/settle outcome. Previously a throwing `after_settle` hook rejected `settle()` after settlement had already executed onchain. Gate hooks (`before_verify`, `before_settle`) still fail closed: a throw or abort stops verification or settlement before the scheme facilitator is called. ([#4072](https://github.com/x402-foundation/x402/pull/4072)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- Report confirmed or finalized Solana execution failures as terminal settlement errors with their transaction signatures, releasing pending and duplicate entries. Keep uncertain V2 confirmations pending and continue polling processed errors. ([#4033](https://github.com/x402-foundation/x402/pull/4033)) - Thanks [@snuff12](https://github.com/snuff12)!
+
+### Added
+
+- SVM exact payments support transaction version 1 (SIMD-0385). Facilitators advertise and accept `extra.transactionVersions` `[0, 1]`, and clients build the highest version they share with the facilitator; pass `transaction_versions=[0]` to `ExactSvmScheme` / `ExactSvmSchemeV1` to keep a signer that cannot sign version 1 on version 0. A client-built version 1 transaction carries no ComputeBudget instructions: its message config sets the compute unit limit, a 4 MiB loaded-account-data limit (`DEFAULT_LOADED_ACCOUNTS_DATA_SIZE_LIMIT`) and the total priority fee in lamports, and it may be up to 4096 bytes. The facilitator verifies the version 1 layout (TransferChecked first, then up to four Lighthouse/Memo instructions), requires the compute unit and loaded-account-data limits, caps the priority fee as `priorityFee * 1000000 <= maxPriceMicroLamports * computeUnitLimit`, and rejects a requested heap size or any ComputeBudget instruction with the new `invalid_exact_svm_payload_transaction_loaded_accounts_data_size_limit_missing`, `invalid_exact_svm_payload_transaction_v1_heap_size` and `invalid_exact_svm_payload_transaction_v1_compute_budget_instruction` reasons. Verifiers also enforce the serialized size limit of the message version (1232 bytes for legacy and version 0, 4096 bytes for version 1) and reject an oversized payment with the new `invalid_exact_svm_payload_transaction_size_exceeded` reason. ([#3971](https://github.com/x402-foundation/x402/pull/3971)) - Thanks [@lgalabru](https://github.com/lgalabru)!
+- The SVM exact facilitators (`ExactSvmScheme`, `ExactSvmSchemeV1`) and `register_exact_svm_facilitator` take `transaction_versions` (default `[0, 1]`): the message versions they accept and advertise as `extra.transactionVersions`. Pass `[0]` to keep a sponsor whose signer or RPC does not handle version 1 on version 0; any other version is rejected with `unsupported_transaction_version`, and legacy is accepted exactly when 0 is. New helper: `normalize_accepted_transaction_versions`; `is_accepted_transaction_version` takes an optional accepted set. ([#3971](https://github.com/x402-foundation/x402/pull/3971)) - Thanks [@lgalabru](https://github.com/lgalabru)!
+
+### Misc
+
+- `x402[svm]` now requires `solders>=0.29.0` and `httpx`, and no longer installs `solana`: every `solana` release that supports Python 3.10 pins `solders` below 0.28, which cannot decode transaction version 1. The SVM mechanism talks JSON-RPC through the new `x402.mechanisms.svm.rpc.SvmRpcClient`. The facilitator signer signs `to_bytes_versioned(message)`, which applies the right prefix for legacy, version 0 and version 1 messages, and the private `FacilitatorKeypairSigner._is_versioned_transaction` helper is removed. ([#3971](https://github.com/x402-foundation/x402/pull/3971)) - Thanks [@lgalabru](https://github.com/lgalabru)!
+
+
 ## [2.26.0] - 2026-10-28
 
 ### Fixed
