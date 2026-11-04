@@ -11,6 +11,7 @@ import { BATCH_SETTLEMENT_SCHEME } from "../constants";
 import * as Errors from "../errors";
 import { signClaimBatch, signRefund } from "../authorizerSigner";
 import { applyClaimedTotals, selectClaimableVouchers } from "../claims";
+import { channelIdBindingError } from "../utils";
 import type { Channel, ChannelLockStorage, ChannelQuery } from "./storage";
 import { queryChannels, rethrowLockImplementationError } from "./storage";
 
@@ -676,7 +677,11 @@ export class BatchSettlementChannelManager {
     channels: Channel[],
     opts?: { idleSecs?: number },
   ): BatchSettlementVoucherClaim[] {
-    return selectClaimableVouchers(channels, {
+    const networkChannels = channels.filter(
+      channel =>
+        channelIdBindingError(channel.channelConfig, channel.channelId, this.network) === undefined,
+    );
+    return selectClaimableVouchers(networkChannels, {
       now: Date.now(),
       ...(opts?.idleSecs !== undefined ? { idleSecs: opts.idleSecs } : {}),
     });

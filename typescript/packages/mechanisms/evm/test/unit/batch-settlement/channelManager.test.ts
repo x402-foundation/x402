@@ -14,6 +14,7 @@ import {
   type ChannelLockStorage,
 } from "../../../src/batch-settlement/server/storage";
 import { computeChannelId as computeChannelIdForNetwork } from "../../../src/batch-settlement/utils";
+import { EVM_NETWORK_CHAIN_ID_MAP } from "../../../src/constants";
 import type { ChannelConfig, AuthorizerSigner } from "../../../src/batch-settlement/types";
 import * as Errors from "../../../src/batch-settlement/errors";
 import type { FacilitatorClient } from "@x402/core/server";
@@ -168,6 +169,50 @@ describe("BatchSettlementChannelManager — claim()", () => {
     const payload = paymentPayload.payload as Record<string, unknown>;
     expect(payload.type).toBe("claim");
     expect(payload.claims).toHaveLength(1);
+  });
+
+  it("keeps claims scoped to each manager's network when storage is shared", async () => {
+    const { manager, scheme, storage, facilitator } = buildManager();
+    const otherNetwork = `eip155:${EVM_NETWORK_CHAIN_ID_MAP.base}` as const;
+    const local = buildSession({ channelConfig: buildChannelConfig("01") });
+    const otherConfig = buildChannelConfig("02");
+    const other = buildSession({
+      channelConfig: otherConfig,
+      channelId: computeChannelIdForNetwork(otherConfig, otherNetwork),
+    });
+    await storeChannel(storage, local);
+    await storeChannel(storage, other);
+    const otherFacilitator = buildFacilitator();
+    const otherManager = scheme.createChannelManager(otherFacilitator, otherNetwork, TOKEN);
+
+    for (const [claimManager, channel] of [
+      [manager, local],
+      [otherManager, other],
+    ] as const) {
+      expect(await claimManager.getClaimableVouchers()).toEqual([
+        {
+          voucher: {
+            channel: channel.channelConfig,
+            maxClaimableAmount: channel.signedMaxClaimable,
+          },
+          signature: channel.signature,
+          totalClaimed: channel.chargedCumulativeAmount,
+        },
+      ]);
+    }
+
+    const results = await manager.claim();
+
+    expect(results).toHaveLength(1);
+    expect(results[0].vouchers).toBe(1);
+    expect(facilitator.settle).toHaveBeenCalledTimes(1);
+    expect((await storage.get(local.channelId))?.totalClaimed).toBe(local.chargedCumulativeAmount);
+    expect((await storage.get(other.channelId))?.totalClaimed).toBe("0");
+
+    await otherManager.claim();
+
+    expect(otherFacilitator.settle).toHaveBeenCalledTimes(1);
+    expect((await storage.get(other.channelId))?.totalClaimed).toBe(other.chargedCumulativeAmount);
   });
 
   it("splits claims across multiple batches respecting maxClaimsPerBatch", async () => {
