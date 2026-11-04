@@ -153,6 +153,13 @@ jobs:
         if: steps.families.outputs.configured == 'true'
         run: uv python install 3.10
 
+      - name: Setup Java
+        if: steps.families.outputs.configured == 'true'
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
       - name: Install and build TypeScript SDK
         if: steps.families.outputs.configured == 'true'
         working-directory: ./typescript

@@ -1,0 +1,9 @@
+{
+  "name": "java/http/jetty",
+  "type": "server",
+  "enabled": true,
+  "language": "java",
+  "transport": "http",
+  "x402Version": 2,
+  "extensions": []
+}
