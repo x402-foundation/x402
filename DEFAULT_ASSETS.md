@@ -13,6 +13,7 @@ Every mechanism package that supports dollar-string pricing declares defaults in
 | **TypeScript** | `typescript/packages/mechanisms/<family>/src/defaultAssets.ts` | `DEFAULT_ASSETS`, `getDefaultAsset`, `findDefaultAsset` |
 | **Go** | `go/mechanisms/<family>/default_assets.go` | `DefaultAssets`, `GetDefaultAsset`, `FindDefaultAsset` |
 | **Python** | `python/x402/mechanisms/<family>/default_assets.py` | `DEFAULT_ASSETS`, `get_default_asset`, `find_default_asset` |
+| **Java** | `java/src/main/java/org/x402/mechanisms/<family>/DefaultAssets.java` | `DefaultAssets.all`, `DefaultAssets.defaultAsset`, `DefaultAssets.find` |
 
 ### Table shape
 
