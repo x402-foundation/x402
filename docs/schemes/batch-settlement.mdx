@@ -175,6 +175,22 @@ Server storage keeps the latest voucher and channel session state that the chann
 
 Use file storage for single-process deployments. For serverless or multi-instance deployments, use Redis/Valkey storage so channel updates are shared atomically across processes. See the [Next.js batch-settlement Redis example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/fullstack/next-batch-settlement-redis) for a full `withX402` setup with `RedisChannelStorage` and cron-based claim/settle routes.
 
+#### Admission locks (`lockStorage`)
+
+In self-managed mode, the server uses a per-channel admission lock to serialize concurrent requests on the same channel. By default, the lock backend is inferred from `storage`: if the storage object implements `ChannelLockStorage` (all built-in backends do), it is used for both roles. Pass a separate `lockStorage` to mix backends — for example, file storage for durable channel state and Redis for locks shared across multiple hosts:
+
+```typescript
+import { FileChannelStorage } from "@x402/evm/batch-settlement/server/file-storage";
+import { RedisChannelLockStorage } from "@x402/evm/batch-settlement/server/redis-storage";
+
+const scheme = new BatchSettlementEvmScheme(receiverAddress, {
+  storage: new FileChannelStorage({ directory: "./channels" }),
+  lockStorage: new RedisChannelLockStorage({ client: redisClient }),
+});
+```
+
+Hosts that do not share the same file directory need an explicit `lockStorage` (Redis); otherwise each host admits independently and only the charge CAS protects revenue. In facilitator-managed mode, the facilitator owns the admission lock and `lockStorage` is unused.
+
 ### Client Setup
 
 Register `BatchSettlementEvmScheme` for `eip155:*`. The client SDK handles deposits, voucher signing, channel recovery, and corrective 402 resync.
