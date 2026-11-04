@@ -11,6 +11,7 @@ import {
   SettlementOverrides,
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
+import { validateBazaarRouteExtensions } from "@x402/extensions/bazaar";
 import { NextRequest, NextResponse } from "next/server";
 import {
   prepareHttpServer,
@@ -21,7 +22,6 @@ import {
   createInternalErrorResponse,
   getFacilitatorResponseError,
 } from "./utils";
-import { validateBazaarRouteExtensions } from "./bazaarStartup";
 
 /**
  * Set settlement overrides on the response for partial settlement.

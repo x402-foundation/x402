@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
 import type {
   CompletedSettlement,
@@ -25,39 +25,15 @@ import {
 
 import { createHttpServer } from "./utils";
 
-const bazaarState = vi.hoisted(() => ({
-  loads: 0,
-  failDynamicImport: false,
+const bazaarDynamicImport = vi.hoisted(() => ({
+  attempts: 0,
 }));
 
-vi.mock("./bazaarStartup", async () => {
-  const actual =
-    await vi.importActual<typeof import("@x402/extensions/bazaar")>("@x402/extensions/bazaar");
+vi.mock("@x402/extensions/bazaar", async importOriginal => {
+  const actual = await importOriginal<typeof import("@x402/extensions/bazaar")>();
   return {
+    bazaarResourceServerExtension: actual.bazaarResourceServerExtension,
     validateBazaarRouteExtensions: actual.validateBazaarRouteExtensions,
-  };
-});
-
-vi.mock("@x402/extensions/bazaar", async () => {
-  const actual =
-    await vi.importActual<typeof import("@x402/extensions/bazaar")>("@x402/extensions/bazaar");
-  const missing = (): never => {
-    bazaarState.loads += 1;
-    throw new Error("Cannot find module '@x402/extensions/bazaar'");
-  };
-  return {
-    get bazaarResourceServerExtension() {
-      if (bazaarState.failDynamicImport) {
-        return missing();
-      }
-      return actual.bazaarResourceServerExtension;
-    },
-    get validateBazaarRouteExtensions() {
-      if (bazaarState.failDynamicImport) {
-        return missing();
-      }
-      return actual.validateBazaarRouteExtensions;
-    },
   };
 });
 
@@ -1220,20 +1196,18 @@ describe("bazaar startup validation", () => {
   const malformedWarning = 'Route "GET /paid" declares a bazaar extension but it is malformed';
 
   beforeEach(() => {
-    bazaarState.loads = 0;
-    bazaarState.failDynamicImport = false;
+    bazaarDynamicImport.attempts = 0;
+    vi.doMock("@x402/extensions/bazaar", () => {
+      bazaarDynamicImport.attempts += 1;
+      throw new Error("Cannot find module '@x402/extensions/bazaar'");
+    });
     vi.mocked(checkIfBazaarNeeded).mockReturnValue(false);
-  });
-
-  afterEach(() => {
-    bazaarState.failDynamicImport = false;
   });
 
   const expectBazaarValidation = async (
     registered: boolean,
     run: (httpServer: x402HTTPResourceServer) => Promise<number>,
   ): Promise<void> => {
-    bazaarState.failDynamicImport = true;
     vi.mocked(checkIfBazaarNeeded).mockReturnValue(true);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -1255,12 +1229,12 @@ describe("bazaar startup validation", () => {
 
       expect(status).toBe(200);
       expect({
-        loads: bazaarState.loads,
+        dynamicImports: bazaarDynamicImport.attempts,
         errors: consoleError.mock.calls.map(call => String(call[0])),
         registered: resourceServer.registerExtension.mock.calls.length,
         warnings: consoleWarn.mock.calls.map(call => String(call[0])),
       }).toEqual({
-        loads: registered ? 0 : 1,
+        dynamicImports: registered ? 0 : 1,
         errors: registered ? [] : ["Failed to load bazaar extension:"],
         registered: 0,
         warnings: [
