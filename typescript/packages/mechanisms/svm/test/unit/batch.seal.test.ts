@@ -727,6 +727,49 @@ describe("batch-settlement seal", () => {
     },
   );
 
+  it("keeps the signature when a replay cannot read the prepared close", async () => {
+    const pendingSettlementStore = new InMemoryBatchPendingSettlementStore();
+    const record = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("ledger unavailable"))
+      .mockResolvedValue(undefined);
+    const { scheme } = await facilitator({
+      broadcast: true,
+      onDistributionConfirmed: record,
+      pendingSettlementStore,
+    });
+    const payload = await sealPayload(3_000n);
+    const first = await settle(scheme, payload);
+    expect(first).toMatchObject({ errorReason: "settlement_pending", success: false });
+    expect(first.transaction).not.toBe("");
+
+    const key = `batch:seal:${NETWORK}:${channelId}:3000`;
+    const get = pendingSettlementStore.get.bind(pendingSettlementStore);
+    let failed = false;
+    vi.spyOn(pendingSettlementStore, "get").mockImplementation(async name => {
+      if (name.startsWith(`${key}:prepared:`) && !failed) {
+        failed = true;
+        throw new Error("prepared store unavailable");
+      }
+      return get(name);
+    });
+    // The close is confirmed, so a replay that cannot check its receiver stays pending.
+    await expect(settle(scheme, payload)).resolves.toMatchObject({
+      errorMessage: expect.stringContaining("prepared store unavailable"),
+      errorReason: "settlement_pending",
+      success: false,
+      transaction: first.transaction,
+    });
+    expect(record).toHaveBeenCalledOnce();
+
+    await expect(settle(scheme, payload)).resolves.toMatchObject({
+      amount: "2500",
+      success: true,
+      transaction: first.transaction,
+    });
+    expect(record).toHaveBeenCalledTimes(2);
+  });
+
   it("answers a lost broadcast reservation with the winner's prepared close", async () => {
     const pendingSettlementStore = new InMemoryBatchPendingSettlementStore();
     const record = vi.fn().mockResolvedValue(undefined);

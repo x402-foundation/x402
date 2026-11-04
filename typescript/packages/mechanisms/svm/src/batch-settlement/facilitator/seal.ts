@@ -418,7 +418,17 @@ export async function settleSeal(
   const previous = await deps.pendingStore.get(`${key}:result`);
   if (previous) {
     const response = JSON.parse(previous) as SettleResponse;
-    const prepared = await deps.pendingStore.get(preparedResultKey(key, response.transaction));
+    let prepared: string | undefined;
+    try {
+      prepared = await deps.pendingStore.get(preparedResultKey(key, response.transaction));
+    } catch (error) {
+      return settlementPending(
+        network,
+        payer,
+        response.transaction,
+        `${intent} confirmed but its prepared response could not be read: ${String(error)}`,
+      );
+    }
     if (prepared) {
       assertPreparedReceiver(
         JSON.parse(prepared) as PreparedClose,
