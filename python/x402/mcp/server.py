@@ -67,9 +67,10 @@ def create_payment_wrapper(
     - Settles payments after successful execution
     - Returns settlement info in response ``_meta``
 
-    The original handler should return either a ``str`` (JSON text) or a ``dict``
-    (automatically serialized to JSON). The wrapper handles conversion to
-    ``CallToolResult`` and attaches payment metadata.
+    The original handler may return a ``str`` (JSON text), a ``dict``
+    (automatically serialized to JSON), or a ``CallToolResult``. Native MCP
+    results retain their content blocks, structured content, and metadata;
+    successful settlement adds the payment response to ``_meta``.
 
     Note: The wrapper automatically adds a ``ctx: Context`` parameter to the
     function signature so FastMCP injects the request context. Your handler
@@ -247,31 +248,25 @@ def create_payment_wrapper(
                     isError=True,
                 )
 
-            # Convert handler result to text content
-            result_meta: dict[str, Any] = {}
-            is_handler_error = False
-            if isinstance(result, dict):
-                result_text = json.dumps(result)
-            elif isinstance(result, str):
-                result_text = result
-            elif isinstance(result, CallToolResult):
-                result_text = result.content[0].text if result.content else ""
-                if isinstance(result.meta, dict):
-                    result_meta = result.meta.copy()
-                is_handler_error = bool(result.isError)
-            else:
-                result_text = str(result)
+            # Convert plain handler results to MCP content without flattening native results.
+            if not isinstance(result, CallToolResult):
+                result_text = json.dumps(result) if isinstance(result, dict) else str(result)
+                result = CallToolResult(
+                    content=[TextContent(type="text", text=result_text)],
+                    isError=False,
+                )
+            result_meta = result.meta.copy() if result.meta is not None else {}
 
             # Build MCPToolResult for hooks
             from .types import MCPToolResult as MCPToolResultType
 
             mcp_result = MCPToolResultType(
-                content=(
-                    [{"type": "text", "text": result_text}] if isinstance(result_text, str) else []
-                ),
-                is_error=is_handler_error,
+                content=[
+                    block.model_dump(by_alias=True, exclude_none=True) for block in result.content
+                ],
+                is_error=bool(result.isError),
                 meta=result_meta.copy(),
-                structured_content=None,
+                structured_content=result.structuredContent,
             )
 
             # OnAfterExecution hook (before the is_error branch)
@@ -290,7 +285,7 @@ def create_payment_wrapper(
                 except Exception:
                     pass
 
-            if is_handler_error:
+            if result.isError:
                 return result
 
             try:
@@ -340,11 +335,7 @@ def create_payment_wrapper(
             payment_response = settle_result.model_dump(by_alias=True, exclude_none=True)
             response_meta = result_meta.copy()
             response_meta[MCP_PAYMENT_RESPONSE_META_KEY] = payment_response
-            return CallToolResult(
-                content=[TextContent(type="text", text=result_text)],
-                isError=False,
-                _meta=response_meta,
-            )
+            return result.model_copy(update={"meta": response_meta})
 
         # --- Signature manipulation for FastMCP context injection ---
         #

@@ -5,9 +5,10 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from mcp.types import CallToolResult, TextContent
+from mcp.types import CallToolResult, ContentBlock, ImageContent, TextContent
 from x402.mcp.constants import MCP_PAYMENT_META_KEY, MCP_PAYMENT_RESPONSE_META_KEY
 from x402.mcp.server import create_payment_wrapper
+from x402.mcp.types import PaymentWrapperHooks
 from x402.schemas import (
     PaymentPayload,
     PaymentRequirements,
@@ -44,8 +45,19 @@ def _matching_resource_server(**overrides):
 
 
 @pytest.mark.asyncio
-async def test_fastmcp_wrapper_preserves_call_tool_result_meta():
-    """Preserve existing MCP metadata when adding the x402 payment response."""
+@pytest.mark.parametrize(
+    "content",
+    [
+        [TextContent(type="text", text="first"), TextContent(type="text", text="second")],
+        [ImageContent(type="image", data="aW1hZ2U=", mimeType="image/png")],
+        [],
+    ],
+    ids=["multiple-text", "image", "empty"],
+)
+@pytest.mark.parametrize("is_error", [False, True], ids=["success", "handler-error"])
+async def test_fastmcp_wrapper_preserves_call_tool_result(
+    content: list[ContentBlock], is_error: bool
+) -> None:
     requirements = PaymentRequirements(
         scheme="exact",
         network="eip155:84532",
@@ -56,37 +68,114 @@ async def test_fastmcp_wrapper_preserves_call_tool_result_meta():
     )
     payload = PaymentPayload(
         x402_version=2,
-        accepted=requirements.model_dump(by_alias=True),
+        accepted=requirements,
         payload={"signature": "0x123"},
     )
-    resource_server = Mock()
-    resource_server.verify_payment = AsyncMock(return_value=Mock(is_valid=True))
-    resource_server.settle_payment = AsyncMock(
-        return_value=SettleResponse(
-            success=True,
-            transaction="0xtx123",
-            network="eip155:84532",
-        )
+    settlement = SettleResponse(
+        success=True,
+        transaction="0xtx123",
+        network=requirements.network,
     )
-
-    wrapper = create_payment_wrapper(resource_server, accepts=[requirements])
+    resource_server = _matching_resource_server(
+        verify_payment=AsyncMock(return_value=Mock(is_valid=True)),
+        settle_payment=AsyncMock(return_value=settlement),
+    )
+    after_execution = Mock()
+    original = CallToolResult(
+        content=content,
+        structuredContent={"answer": 42},
+        isError=is_error,
+        _meta={"traceId": "trace-123", MCP_PAYMENT_RESPONSE_META_KEY: {"success": False}},
+    )
+    original_data = original.model_dump(by_alias=True)
+    wrapper = create_payment_wrapper(
+        resource_server,
+        accepts=[requirements],
+        hooks=PaymentWrapperHooks(on_after_execution=after_execution),
+    )
 
     @wrapper
     async def paid_tool() -> CallToolResult:
-        return CallToolResult(
-            content=[TextContent(type="text", text="ok")],
-            isError=False,
-            _meta={"traceId": "trace-123"},
-        )
+        return original
 
     result = await paid_tool(
         ctx=MockFastMCPContext({MCP_PAYMENT_META_KEY: payload.model_dump(by_alias=True)})
     )
 
-    assert result.isError is False
-    assert result.content[0].text == "ok"
+    assert result.content == original.content
+    assert result.structuredContent == {"answer": 42}
+    assert result.isError is is_error
     assert result.meta["traceId"] == "trace-123"
-    assert result.meta[MCP_PAYMENT_RESPONSE_META_KEY]["transaction"] == "0xtx123"
+    assert original.model_dump(by_alias=True) == original_data
+    after_execution.assert_called_once()
+    hook_result = after_execution.call_args.args[0].result
+    assert hook_result.content == original.model_dump(by_alias=True, exclude_none=True)["content"]
+    assert hook_result.structured_content == {"answer": 42}
+    assert hook_result.is_error is is_error
+    assert hook_result.meta == original.meta
+    if is_error:
+        assert result is original
+        resource_server.settle_payment.assert_not_awaited()
+    else:
+        resource_server.settle_payment.assert_awaited_once_with(payload, requirements)
+        assert result is not original
+        assert result.meta[MCP_PAYMENT_RESPONSE_META_KEY] == settlement.model_dump(
+            by_alias=True, exclude_none=True
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raises", [False, True], ids=["refused", "exception"])
+async def test_fastmcp_wrapper_withholds_tool_result_when_settlement_fails(raises: bool) -> None:
+    requirements = PaymentRequirements(
+        scheme="exact",
+        network="eip155:84532",
+        amount="1000",
+        asset="USDC",
+        pay_to="0xrecipient",
+        max_timeout_seconds=300,
+    )
+    payload = PaymentPayload(
+        x402_version=2,
+        accepted=requirements,
+        payload={"signature": "0x123"},
+    )
+    resource_server = _matching_resource_server(
+        verify_payment=AsyncMock(return_value=Mock(is_valid=True)),
+        settle_payment=AsyncMock(
+            return_value=SettleResponse(
+                success=False,
+                error_reason="insufficient_balance",
+                transaction="",
+                network=requirements.network,
+            ),
+            side_effect=RuntimeError("settle unavailable") if raises else None,
+        ),
+    )
+    original = CallToolResult(
+        content=[ImageContent(type="image", data="aW1hZ2U=", mimeType="image/png")],
+        structuredContent={"secret": "paid result"},
+        _meta={"private": "handler metadata"},
+    )
+    original_data = original.model_dump(by_alias=True)
+    wrapper = create_payment_wrapper(resource_server, accepts=[requirements])
+
+    @wrapper
+    async def paid_tool() -> CallToolResult:
+        return original
+
+    result = await paid_tool(
+        ctx=MockFastMCPContext({MCP_PAYMENT_META_KEY: payload.model_dump(by_alias=True)})
+    )
+
+    resource_server.settle_payment.assert_awaited_once_with(payload, requirements)
+    assert result.isError is True
+    assert all(block.type == "text" for block in result.content)
+    assert result.structuredContent["x402Version"] == 2
+    assert result.structuredContent[MCP_PAYMENT_RESPONSE_META_KEY]["success"] is False
+    assert "secret" not in result.structuredContent
+    assert result.meta is None
+    assert original.model_dump(by_alias=True) == original_data
 
 
 @pytest.mark.asyncio
