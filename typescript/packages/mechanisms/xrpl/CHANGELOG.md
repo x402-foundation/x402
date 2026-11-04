@@ -1,5 +1,19 @@
 # @x402/xrpl
 
+## 2.30.0
+
+### Minor Changes
+
+- Updated dependencies [0f41a8d](https://github.com/x402-foundation/x402/commit/0f41a8d)
+- Updated dependencies [c349511](https://github.com/x402-foundation/x402/commit/c349511)
+- Updated dependencies [7074943](https://github.com/x402-foundation/x402/commit/7074943)
+- Updated dependencies [3c0a740](https://github.com/x402-foundation/x402/commit/3c0a740)
+  - @x402/core@2.30.0
+
+### Patch Changes
+
+- [7c9d6ad](https://github.com/x402-foundation/x402/commit/7c9d6ad): Fixed whole-number RLUSD payments bypassing client spend caps by using ledger-value units for the default asset scale. ([#4110](https://github.com/x402-foundation/x402/pull/4110)) - Thanks [@mortezashojaei](https://github.com/mortezashojaei)!
+
 ## 2.29.0
 
 ### Minor Changes
