@@ -54,7 +54,7 @@ import {
   settleFailure,
   settlementPending,
 } from "./responses";
-import type { BatchDelegatedSettleContext, BatchTerms } from "./types";
+import type { BatchDelegatedSettleContext, BatchTerms, DurableBroadcastResult } from "./types";
 
 /** Terms `seal` needs: everything {@link BatchTerms} carries except who signs vouchers. */
 export type SealTerms = Omit<BatchTerms, "voucherSigner">;
@@ -115,9 +115,16 @@ export interface SealDependencies {
     instructions: readonly ServerInstruction[],
     key: string,
     payer: string,
+    onPrepared?: (signature: string) => Promise<void>,
   ): Promise<
     { ok: true; replayed: boolean; signature: string } | { ok: false; response: SettleResponse }
   >;
+  /** Replay or reconcile a broadcast recorded under `key`; undefined when none is. */
+  resumeRedemption(
+    key: string,
+    network: Network,
+    payer: string,
+  ): Promise<DurableBroadcastResult | undefined>;
   completeOrPending(
     key: string,
     signature: string,
@@ -201,6 +208,138 @@ async function completeSealDistribution(
 }
 
 /**
+ * Where the response a confirmation of `signature` returns is kept. It is
+ * written before the bytes can be sent, so a retry never needs the channel
+ * the close may have deallocated.
+ *
+ * @param key - Durable close operation key
+ * @param signature - Locally derived signature of the close transaction
+ * @returns The store key
+ */
+function preparedResultKey(key: string, signature: string): string {
+  return `${key}:prepared:${signature}`;
+}
+
+/** A close's confirmed response, stored with the receiver it pays. */
+interface PreparedClose {
+  asset: string;
+  payTo: string;
+  response: SettleResponse;
+}
+
+/**
+ * Refuse requirements naming another receiver than the close was prepared
+ * for. Once the close deallocates the channel, nothing else ties `payTo` to it.
+ *
+ * @param prepared - The stored close
+ * @param requirements - Requirements the caller sent
+ * @param signature - Close transaction, for the message
+ */
+function assertPreparedReceiver(
+  prepared: PreparedClose,
+  requirements: PaymentRequirements,
+  signature: string,
+): void {
+  if (prepared.payTo !== requirements.payTo || prepared.asset !== requirements.asset) {
+    throw new Error(
+      `${BatchError.CHANNEL_STATE}: close ${signature} pays another receiver than these requirements`,
+    );
+  }
+}
+
+/**
+ * Finish a confirmed close from the response prepared with its bytes.
+ *
+ * @param deps - Scheme internals
+ * @param key - Durable close operation key
+ * @param signature - Confirmed close transaction
+ * @param channelId - Channel PDA
+ * @param payer - Payer reported on a pending response
+ * @param requirements - Payment requirements identifying the receiver
+ * @param intent - Close operation kind
+ * @returns The settle response, or undefined when nothing was prepared for `signature`
+ */
+async function finishPrepared(
+  deps: SealDependencies,
+  key: string,
+  signature: string,
+  channelId: string,
+  payer: string,
+  requirements: PaymentRequirements,
+  intent: CloseIntent,
+): Promise<SettleResponse | undefined> {
+  let stored: string | undefined;
+  try {
+    stored = await deps.pendingStore.get(preparedResultKey(key, signature));
+  } catch (error) {
+    return settlementPending(
+      requirements.network,
+      payer,
+      signature,
+      `${intent} confirmed but its prepared response could not be read: ${String(error)}`,
+    );
+  }
+  if (!stored) return undefined;
+  const prepared = JSON.parse(stored) as PreparedClose;
+  assertPreparedReceiver(prepared, requirements, signature);
+  return finishClose(deps, key, prepared.response, channelId, payer, requirements, intent);
+}
+
+/**
+ * Record a close whose transaction is confirmed, then run its payout
+ * accounting. The payout has landed, so every failure from here is a
+ * `settlement_pending` carrying the signature.
+ *
+ * @param deps - Scheme internals
+ * @param key - Durable close operation key
+ * @param response - Confirmed close response, carrying its signature
+ * @param channelId - Channel PDA
+ * @param payer - Payer reported on a pending response
+ * @param requirements - Payment requirements identifying the receiver
+ * @param intent - Close operation kind; decides the pre-close status
+ * @returns The confirmed result, or a retryable pending result
+ */
+async function finishClose(
+  deps: SealDependencies,
+  key: string,
+  response: SettleResponse,
+  channelId: string,
+  payer: string,
+  requirements: PaymentRequirements,
+  intent: CloseIntent,
+): Promise<SettleResponse> {
+  const network = requirements.network;
+  const signature = response.transaction;
+  const requiredStatus = intent === "seal" ? ChannelStatus.Closing : ChannelStatus.Open;
+  try {
+    // The sealed distribute may deallocate the PDA outright; a read still in
+    // the pre-close status means the confirmed state is not visible yet.
+    const observed = await deps.readChannel(network, channelId);
+    if (observed && observed.status === requiredStatus) {
+      return settlementPending(
+        network,
+        payer,
+        signature,
+        `${intent} confirmed but the sealed state is not visible yet`,
+      );
+    }
+    const incomplete = await deps.completeOrPending(key, signature, network, payer);
+    if (incomplete) return incomplete;
+    // Persist the confirmed response first so a callback failure can retry the
+    // same payout without reading a channel the seal may have deallocated.
+    await deps.pendingStore.set(`${key}:result`, JSON.stringify(response));
+  } catch (error) {
+    return settlementPending(
+      network,
+      payer,
+      signature,
+      `${intent} confirmed but its result could not be recorded: ${String(error)}`,
+    );
+  }
+  return completeSealDistribution(deps, key, response, requirements, intent);
+}
+
+/**
  * Reject a `Closing` channel with the dedicated code, so a server can tell
  * "the payer started a forced close, retry with `seal`" from every other
  * channel-state mismatch (spec 4.5).
@@ -279,8 +418,24 @@ export async function settleSeal(
   const previous = await deps.pendingStore.get(`${key}:result`);
   if (previous) {
     const response = JSON.parse(previous) as SettleResponse;
+    const prepared = await deps.pendingStore.get(preparedResultKey(key, response.transaction));
+    if (prepared) {
+      assertPreparedReceiver(
+        JSON.parse(prepared) as PreparedClose,
+        requirements,
+        response.transaction,
+      );
+    }
     return completeSealDistribution(deps, key, response, requirements, intent);
   }
+  // A recorded broadcast may already have closed, and deallocated, the
+  // channel: finish it from the response prepared with its bytes.
+  const resumed = await deps.resumeRedemption(key, network, payer);
+  if (resumed && !resumed.ok) return resumed.response;
+  const finished =
+    resumed &&
+    (await finishPrepared(deps, key, resumed.signature, channelId, payer, requirements, intent));
+  if (finished) return finished;
 
   const channel = await deps.fetchChannel(network, channelId);
   const requiredStatus = intent === "seal" ? ChannelStatus.Closing : ChannelStatus.Open;
@@ -324,38 +479,54 @@ export async function settleSeal(
   if (deps.settlementCache.isDuplicate(key)) {
     return settleFailure(payment.accepted.network, CHANNEL_BUSY, payer);
   }
-  const submitted = await deps.submitRedemption(terms.feePayer, network, instructions, key, payer);
-  if (!submitted.ok) return submitted.response;
-
-  // The sealed distribute may deallocate the PDA outright; a read still in
-  // the pre-close status means the confirmed state is not visible yet.
-  const observed = await deps.readChannel(network, channelId);
-  if (observed && observed.status === requiredStatus) {
-    return settlementPending(
+  const closeResponse = (transaction: string): SettleResponse => {
+    const sealed = sealResponse({
+      channelId,
+      deposit: channel.deposit,
+      finalSettled: cumulative,
       network,
+      paidToReceiver: cumulative - channel.settlement.payoutWatermark,
       payer,
-      submitted.signature,
-      `${intent} confirmed but the sealed state is not visible yet`,
-    );
-  }
-  const incomplete = await deps.completeOrPending(key, submitted.signature, network, payer);
-  if (incomplete) return incomplete;
-
-  const sealed = sealResponse({
-    channelId,
-    deposit: channel.deposit,
-    finalSettled: cumulative,
+      transaction,
+    });
+    return intent === "refund"
+      ? { ...sealed, amount: (channel.deposit - cumulative).toString() }
+      : sealed;
+  };
+  let preparedSignature: string | undefined;
+  const submitted = await deps.submitRedemption(
+    terms.feePayer,
     network,
-    paidToReceiver: cumulative - channel.settlement.payoutWatermark,
+    instructions,
+    key,
     payer,
-    transaction: submitted.signature,
-  });
-  const response =
-    intent === "refund" ? { ...sealed, amount: (channel.deposit - cumulative).toString() } : sealed;
-  // Persist the confirmed response first so a callback failure can retry the
-  // same payout without reading a channel the seal may have deallocated.
-  await deps.pendingStore.set(`${key}:result`, JSON.stringify(response));
-  return completeSealDistribution(deps, key, response, requirements, intent);
+    async signature => {
+      const prepared: PreparedClose = {
+        asset: requirements.asset,
+        payTo: requirements.payTo,
+        response: closeResponse(signature),
+      };
+      await deps.pendingStore.set(preparedResultKey(key, signature), JSON.stringify(prepared));
+      preparedSignature = signature;
+    },
+  );
+  if (!submitted.ok) return submitted.response;
+  // A reservation lost to another worker confirms that worker's bytes, built
+  // from its own channel read: answer with what it prepared.
+  if (submitted.signature !== preparedSignature) {
+    const finished = await finishPrepared(
+      deps,
+      key,
+      submitted.signature,
+      channelId,
+      payer,
+      requirements,
+      intent,
+    );
+    if (finished) return finished;
+  }
+  const response = closeResponse(submitted.signature);
+  return finishClose(deps, key, response, channelId, payer, requirements, intent);
 }
 
 /**
