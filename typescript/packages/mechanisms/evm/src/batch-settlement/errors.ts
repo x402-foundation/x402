@@ -81,3 +81,6 @@ export const ErrMissingChannel = "invalid_batch_settlement_evm_missing_channel";
 export const ErrRefundNoBalance = "invalid_batch_settlement_evm_refund_no_balance";
 export const ErrRefundedEventMismatch = "invalid_batch_settlement_evm_refunded_event_mismatch";
 export const ErrRefundAmountInvalid = "invalid_batch_settlement_evm_refund_amount_invalid";
+
+export const ErrUnexpectedPendingId = "invalid_batch_settlement_evm_unexpected_pending_id";
+export const ErrUnexpectedCancel = "invalid_batch_settlement_evm_unexpected_cancel";

@@ -9,7 +9,7 @@ import type {
   BatchSettlementPaymentRequirementsExtra,
   ChannelConfig,
 } from "../types";
-import { computeChannelId } from "../utils";
+import { computeChannelId, packRefundAuthorizerSalt } from "../utils";
 import type { BatchSettlementClientContext, ClientChannelStorage } from "./storage";
 
 /**
@@ -57,7 +57,12 @@ export function buildChannelConfig(
     token: paymentRequirements.asset as `0x${string}`,
     withdrawDelay:
       typeof extra?.withdrawDelay === "number" ? extra.withdrawDelay : MIN_WITHDRAW_DELAY,
-    salt: deps.salt,
+    salt:
+      extra?.voucherManager === "facilitator" &&
+      extra.refundAuthorizer &&
+      getAddress(extra.refundAuthorizer) !== "0x0000000000000000000000000000000000000000"
+        ? packRefundAuthorizerSalt(deps.salt, extra.refundAuthorizer)
+        : deps.salt,
   };
 }
 

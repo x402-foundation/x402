@@ -124,6 +124,9 @@ export class BatchSettlementChannelManager {
    * @param config - Manager configuration: scheme, facilitator, receiver, token, network.
    */
   constructor(config: ChannelManagerConfig) {
+    if (config.scheme.voucherManager === "facilitator") {
+      throw new Error("Facilitator-managed channels must use the facilitator's redemption worker");
+    }
     this.scheme = config.scheme;
     this.facilitator = config.facilitator;
     this.receiver = config.receiver;

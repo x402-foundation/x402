@@ -99,6 +99,10 @@ export async function handleBeforeVerify(
 > {
   const { paymentPayload, requirements } = ctx;
 
+  if (requirements.extra?.voucherManager === "facilitator") {
+    return { abort: true, reason: Errors.ErrInvalidPayloadType };
+  }
+
   const raw = paymentPayload.payload;
   const isPaidPayload =
     isBatchSettlementVoucherPayload(raw) || isBatchSettlementDepositPayload(raw);

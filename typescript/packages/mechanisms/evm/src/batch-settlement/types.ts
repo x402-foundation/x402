@@ -121,6 +121,8 @@ export type BatchSettlementPaymentRequirementsExtra = {
   assetTransferMethod?: BatchSettlementAssetTransferMethod;
   channelState?: BatchSettlementChannelStateExtra;
   voucherState?: BatchSettlementVoucherStateExtra;
+  voucherManager?: "server" | "facilitator";
+  refundAuthorizer?: `0x${string}`;
 };
 
 export type FileChannelStorageOptions = {
@@ -132,6 +134,7 @@ export type BatchSettlementPaymentResponseExtra = {
   chargedAmount?: string;
   channelState?: BatchSettlementChannelStateExtra;
   voucherState?: BatchSettlementVoucherStateExtra;
+  chargeCount?: number;
 };
 
 export type BatchSettlementClaimPayload = {
