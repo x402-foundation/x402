@@ -140,6 +140,49 @@ export async function handleBeforeVerify(
     requestContextTtlMs(requirements.maxTimeoutSeconds),
   );
 
+  // Thrown hook errors are warned and skipped by core, so any exception after the pendingId
+  // exists must abort here rather than reach facilitator verification.
+  try {
+    return await reserveAndVerifyLocally(scheme, ctx, raw, {
+      isRefund,
+      channelId,
+      pendingId,
+      now,
+    });
+  } catch (err) {
+    console.warn(
+      `[batched] BeforeVerify: admission failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return failVerificationClosed(scheme, paymentPayload);
+  }
+}
+
+/**
+ * Acquires the admission lock, checks the cumulative base against the local channel row,
+ * and attempts local voucher verification. Exceptions propagate to `handleBeforeVerify`,
+ * which converts them into a fail-closed abort.
+ *
+ * @param scheme - Owning scheme for storage and request-context access.
+ * @param ctx - Verify lifecycle context.
+ * @param raw - Decoded batch-settlement payload.
+ * @param state - Request-scoped values derived by `handleBeforeVerify`.
+ * @param state.isRefund - Whether the payload is a refund voucher.
+ * @param state.channelId - Channel id from the voucher.
+ * @param state.pendingId - Server-minted admission lock owner.
+ * @param state.now - Wall-clock timestamp used for cached-state checks.
+ * @returns Nothing to continue verification; `abort` to fail; `skip` with a local result.
+ */
+async function reserveAndVerifyLocally(
+  scheme: BatchSettlementEvmScheme,
+  ctx: VerifyContext,
+  raw: BatchSettlementPayload,
+  state: { isRefund: boolean; channelId: string; pendingId: string; now: number },
+): Promise<
+  void | { abort: true; reason: string; message?: string } | { skip: true; result: VerifyResponse }
+> {
+  const { paymentPayload, requirements } = ctx;
+  const { isRefund, channelId, pendingId, now } = state;
+
   try {
     const locks = scheme.getLockStorage();
     if (locks) {
@@ -210,6 +253,31 @@ export async function handleBeforeVerify(
       return { skip: true, result: localResult };
     }
   }
+}
+
+/**
+ * Fails verification closed after an unexpected exception once the request context exists.
+ * Drops the context first so `handleAfterVerify` cannot proceed without admission state even
+ * if the abort is ignored, then releases the lock best-effort (the lock TTL bounds a failed release).
+ *
+ * @param scheme - Owning scheme for request-context and lock access.
+ * @param paymentPayload - Request-scoped payment payload object.
+ * @returns A fail-closed abort directive.
+ */
+async function failVerificationClosed(
+  scheme: BatchSettlementEvmScheme,
+  paymentPayload: VerifyContext["paymentPayload"],
+): Promise<ReturnType<typeof verificationStateUnavailable>> {
+  const context = scheme.takeRequestContext(paymentPayload);
+  const locks = scheme.getLockStorage();
+  if (locks && context?.reservationCommitted && context.channelId && context.pendingId) {
+    try {
+      await locks.release(context.channelId, context.pendingId);
+    } catch {
+      // The lock TTL bounds a failed release.
+    }
+  }
+  return verificationStateUnavailable();
 }
 
 /**

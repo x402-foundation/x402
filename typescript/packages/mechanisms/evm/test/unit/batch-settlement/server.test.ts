@@ -26,6 +26,7 @@ import type {
 import {
   x402ResourceServer,
   AfterSettleAbortError,
+  isAfterSettleAborted,
   type FacilitatorClient,
 } from "@x402/core/server";
 import { privateKeyToAccount } from "viem/accounts";
@@ -1887,7 +1888,7 @@ describe("BatchSettlementEvmScheme — lock-store implementation errors", () => 
     expect(enrichment?.refundNonce).toBe("0");
   });
 
-  it("rejects deposit afterSettle when isHeld throws a TypeError", async () => {
+  it("aborts deposit afterSettle when isHeld throws a TypeError", async () => {
     const storage = new InMemoryChannelStorage();
     const scheme = new BatchSettlementEvmScheme(RECEIVER, {
       storage,
@@ -1908,27 +1909,26 @@ describe("BatchSettlementEvmScheme — lock-store implementation errors", () => 
       lastRequestTimestamp: 0,
     });
 
-    await expect(
-      scheme.schemeHooks.onAfterSettle!({
-        paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
-        requirements: makeRequirements({ amount: "1000" }),
-        result: {
-          success: true,
-          transaction: "0xtx",
-          network: NETWORK,
-          payer: PAYER,
-          extra: {
-            channelState: {
-              channelId,
-              balance: "10000",
-              totalClaimed: "0",
-              withdrawRequestedAt: 0,
-              refundNonce: "0",
-            },
+    const outcome = await settleAbort(scheme, {
+      paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
+      requirements: makeRequirements({ amount: "1000" }),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+        extra: {
+          channelState: {
+            channelId,
+            balance: "10000",
+            totalClaimed: "0",
+            withdrawRequestedAt: 0,
+            refundNonce: "0",
           },
-        } as SettleResponse,
-      } as never),
-    ).rejects.toThrow(TypeError);
+        },
+      } as SettleResponse,
+    } as never);
+    expect(outcome).toEqual({ abort: true, reason: Errors.ErrVoucherStoreUnavailable });
   });
 
   it("does not resurrect a voucher row from snapshot when isHeld throws a store I/O error", async () => {
@@ -2149,7 +2149,7 @@ describe("BatchSettlementEvmScheme — lock-store implementation errors", () => 
     expect((await storage.get(channelId))?.chargedCumulativeAmount).toBe("1000");
   });
 
-  it("rejects beforeVerify when acquire throws a TypeError", async () => {
+  it("fails beforeVerify closed when acquire throws a TypeError", async () => {
     const lockStorage: ChannelLockStorage = {
       acquire: async () => {
         throw new TypeError("broken acquire");
@@ -2164,10 +2164,14 @@ describe("BatchSettlementEvmScheme — lock-store implementation errors", () => 
     const payload = await buildSignedVoucherPayload(channelId, "1000", config);
     const requirements = makeRequirements({ amount: "1000" });
 
-    await expect(runBeforeVerify(scheme, payload, requirements)).rejects.toThrow(TypeError);
+    await expect(runBeforeVerify(scheme, payload, requirements)).resolves.toMatchObject({
+      abort: true,
+      reason: Errors.ErrVerificationStateUnavailable,
+    });
+    expect(scheme.readRequestContext(payload)).toBeUndefined();
   });
 
-  it("rejects beforeVerify when acquire throws a SyntaxError", async () => {
+  it("fails beforeVerify closed when acquire throws a SyntaxError", async () => {
     const lockStorage: ChannelLockStorage = {
       acquire: async () => {
         throw new SyntaxError("corrupt hold");
@@ -2186,7 +2190,7 @@ describe("BatchSettlementEvmScheme — lock-store implementation errors", () => 
         await buildSignedVoucherPayload(channelId, "1000", config),
         makeRequirements({ amount: "1000" }),
       ),
-    ).rejects.toThrow(SyntaxError);
+    ).resolves.toMatchObject({ abort: true, reason: Errors.ErrVerificationStateUnavailable });
   });
 
   it("rejects releasePendingRequest when release throws a TypeError", async () => {
@@ -2200,6 +2204,181 @@ describe("BatchSettlementEvmScheme — lock-store implementation errors", () => 
 
     await expect(scheme.releasePendingRequest(payload)).rejects.toThrow(TypeError);
     expect(scheme.readRequestContext(payload)?.reservationCommitted).toBe(true);
+  });
+});
+
+describe("BatchSettlementEvmScheme — fail-closed through x402ResourceServer", () => {
+  const validResult = {
+    isValid: true,
+    payer: PAYER,
+    extra: { balance: "10000", totalClaimed: "0", refundNonce: "0" },
+  } as VerifyResponse;
+
+  const depositSettleResult = (channelId: string): SettleResponse =>
+    ({
+      success: true,
+      transaction: "0xdeposittx",
+      network: NETWORK,
+      payer: PAYER,
+      extra: {
+        channelState: {
+          channelId,
+          balance: "10000",
+          totalClaimed: "0",
+          withdrawRequestedAt: 0,
+          refundNonce: "0",
+        },
+      },
+    }) as SettleResponse;
+
+  function buildResourceServer(scheme: BatchSettlementEvmScheme, facilitator: FacilitatorClient) {
+    const resourceServer = new x402ResourceServer(facilitator);
+    resourceServer.register(NETWORK as Network, scheme);
+    return resourceServer;
+  }
+
+  function mockFacilitator(settleResult?: SettleResponse): FacilitatorClient {
+    return {
+      verify: vi.fn().mockResolvedValue(validResult),
+      settle: vi.fn().mockResolvedValue(settleResult),
+      getSupported: vi.fn(),
+    } as unknown as FacilitatorClient;
+  }
+
+  async function seedChannel(
+    storage: InMemoryChannelStorage,
+    channelId: string,
+    config: ChannelConfig,
+    chargedCumulativeAmount: string,
+  ): Promise<void> {
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount,
+      signedMaxClaimable: chargedCumulativeAmount,
+      signature: "0x",
+      balance: "10000",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: 0,
+    });
+  }
+
+  it("does not reach facilitator verify when lock acquire throws an implementation error", async () => {
+    const storage = new InMemoryChannelStorage();
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, {
+      storage,
+      lockStorage: {
+        acquire: async () => {
+          throw new SyntaxError("corrupt hold");
+        },
+        release: async () => undefined,
+        isHeld: async () => false,
+      },
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    // Durable offchain charges exceed onchain totalClaimed; a stale voucher must not be admitted.
+    await seedChannel(storage, channelId, config, "5000");
+    const facilitator = mockFacilitator();
+    const resourceServer = buildResourceServer(scheme, facilitator);
+    const payload = await buildSignedVoucherPayload(channelId, "1000", config);
+
+    const result = await resourceServer.verifyPayment(
+      payload,
+      makeRequirements({ amount: "1000" }),
+    );
+
+    expect(result).toMatchObject({
+      isValid: false,
+      invalidReason: Errors.ErrVerificationStateUnavailable,
+    });
+    expect(facilitator.verify).not.toHaveBeenCalled();
+    expect(scheme.readRequestContext(payload)).toBeUndefined();
+  });
+
+  it("fails verification closed when the stored channel row is corrupt and a lock is held", async () => {
+    const storage = new InMemoryChannelStorage();
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, { storage });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await seedChannel(storage, channelId, config, "not-a-number");
+    const facilitator = mockFacilitator();
+    const resourceServer = buildResourceServer(scheme, facilitator);
+    const payload = await buildSignedVoucherPayload(channelId, "1000", config);
+
+    const result = await resourceServer.verifyPayment(
+      payload,
+      makeRequirements({ amount: "1000" }),
+    );
+
+    expect(result).toMatchObject({
+      isValid: false,
+      invalidReason: Errors.ErrVerificationStateUnavailable,
+    });
+    expect(facilitator.verify).not.toHaveBeenCalled();
+    expect(await storage.isHeld(channelId)).toBe(false);
+    expect(scheme.readRequestContext(payload)).toBeUndefined();
+  });
+
+  it("fails a deposit settle closed when persisting the charge throws an implementation error", async () => {
+    const storage = new InMemoryChannelStorage();
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, { storage });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await seedChannel(storage, channelId, config, "0");
+    vi.spyOn(storage, "updateChannel").mockRejectedValueOnce(new TypeError("corrupt hold"));
+    const resourceServer = buildResourceServer(
+      scheme,
+      mockFacilitator(depositSettleResult(channelId)),
+    );
+
+    const result = await resourceServer.settlePayment(
+      buildDepositPayload(channelId, config, "10000", "1000"),
+      makeRequirements({ amount: "1000" }),
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      errorReason: Errors.ErrVoucherStoreUnavailable,
+      transaction: "0xdeposittx",
+    });
+    expect(isAfterSettleAborted(result)).toBe(true);
+  });
+
+  it("fails a deposit settle closed when the admission lock check throws an implementation error", async () => {
+    const storage = new InMemoryChannelStorage();
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, {
+      storage,
+      lockStorage: {
+        acquire: async () => true,
+        release: async () => undefined,
+        isHeld: async () => {
+          throw new SyntaxError("corrupt hold");
+        },
+      },
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await seedChannel(storage, channelId, config, "0");
+    const resourceServer = buildResourceServer(
+      scheme,
+      mockFacilitator(depositSettleResult(channelId)),
+    );
+
+    const result = await resourceServer.settlePayment(
+      buildDepositPayload(channelId, config, "10000", "1000"),
+      makeRequirements({ amount: "1000" }),
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      errorReason: Errors.ErrVoucherStoreUnavailable,
+      transaction: "0xdeposittx",
+    });
+    expect(isAfterSettleAborted(result)).toBe(true);
+    expect((await storage.get(channelId))?.chargedCumulativeAmount).toBe("0");
   });
 });
 
@@ -3608,7 +3787,7 @@ describe("BatchSettlementEvmScheme — onAfterSettle", () => {
     expect(depositAbort).toEqual({ abort: true, reason: Errors.ErrChannelBusy });
   });
 
-  it("rethrows lock implementation errors from deposit afterSettle persist", async () => {
+  it("aborts deposit afterSettle when persist throws a lock implementation error", async () => {
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);
     await storeChannel(storage, channelId, {
@@ -3625,27 +3804,26 @@ describe("BatchSettlementEvmScheme — onAfterSettle", () => {
     });
     vi.spyOn(storage, "updateChannel").mockRejectedValueOnce(new TypeError("corrupt hold"));
 
-    await expect(
-      server.schemeHooks.onAfterSettle!({
-        paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
-        requirements: makeRequirements({ amount: "1000" }),
-        result: {
-          success: true,
-          transaction: "0xtx",
-          network: NETWORK,
-          payer: PAYER,
-          extra: {
-            channelState: {
-              channelId,
-              balance: "10000",
-              totalClaimed: "0",
-              withdrawRequestedAt: 0,
-              refundNonce: "0",
-            },
+    const outcome = await settleAbort(server, {
+      paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
+      requirements: makeRequirements({ amount: "1000" }),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+        extra: {
+          channelState: {
+            channelId,
+            balance: "10000",
+            totalClaimed: "0",
+            withdrawRequestedAt: 0,
+            refundNonce: "0",
           },
-        } as SettleResponse,
-      } as never),
-    ).rejects.toBeInstanceOf(TypeError);
+        },
+      } as SettleResponse,
+    } as never);
+    expect(outcome).toEqual({ abort: true, reason: Errors.ErrVoucherStoreUnavailable });
   });
 
   it("aborts ChannelBusy when deposit afterSettle update returns no channel row", async () => {

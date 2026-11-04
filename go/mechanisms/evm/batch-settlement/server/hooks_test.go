@@ -675,11 +675,14 @@ func TestBeforeVerifyHook_AcquireSyntaxErrorFailsClosed(t *testing.T) {
 		LockStorage: errLockStorage{acquireErr: corruptHoldError()},
 	})
 	fx := newSignedVoucherFixture(t)
-	_, err := s.BeforeVerifyHook()(x402.VerifyContext{
-		Payload:      &stubPayload{data: fx.payload(t, "10")},
-		Requirements: batchedReqs(),
-	})
-	requireSyntaxError(t, err)
+	stub := &stubPayload{data: fx.payload(t, "10")}
+	res := runBeforeVerify(t, s, stub)
+	if res == nil || !res.Abort || res.Reason != batchsettlement.ErrVerificationStateUnavailable {
+		t.Fatalf("got %+v want verification_state_unavailable abort", res)
+	}
+	if rc := s.ReadRequestContext(stub); rc != nil {
+		t.Fatalf("fail-closed abort must drop the request context: %+v", rc)
+	}
 }
 
 func TestBeforeVerifyHook_NonCanonicalChannelIdAborts(t *testing.T) {
@@ -1891,7 +1894,7 @@ func TestAfterSettleHook_DepositIsHeldSyntaxErrorFailsClosed(t *testing.T) {
 			},
 		},
 	})
-	requireSyntaxError(t, err)
+	requireAfterSettleAbort(t, err, batchsettlement.ErrVoucherStoreUnavailable)
 }
 
 func TestAfterSettleHook_DepositIsHeldLockDownStillCharges(t *testing.T) {
@@ -2145,7 +2148,7 @@ func TestAfterSettleHook_DepositPersistUpdatedWithoutRowBusy(t *testing.T) {
 	requireAfterSettleAbort(t, s.AfterSettleHook()(ctx), batchsettlement.ErrChannelBusy)
 }
 
-func TestAfterSettleHook_DepositPersistLockImplementationErrorRethrown(t *testing.T) {
+func TestAfterSettleHook_DepositPersistLockImplementationErrorAborts(t *testing.T) {
 	inner := NewInMemoryChannelStorage()
 	id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")
 	seedStore(t, inner, id, sampleSession(id, "0"))
@@ -2158,7 +2161,7 @@ func TestAfterSettleHook_DepositPersistLockImplementationErrorRethrown(t *testin
 		PendingId:            "p-deposit",
 		ReservationCommitted: reservationFlag(true),
 	})
-	requireSyntaxError(t, s.AfterSettleHook()(ctx))
+	requireAfterSettleAbort(t, s.AfterSettleHook()(ctx), batchsettlement.ErrVoucherStoreUnavailable)
 }
 
 func TestAfterSettleHook_RefundPersistErrorPropagates(t *testing.T) {
@@ -2300,3 +2303,97 @@ func TestMapIntField(t *testing.T) {
 
 // Avoid unused-import error from context import.
 var _ = context.Background
+
+type depositSettleFacilitator struct{ channelId string }
+
+func (f *depositSettleFacilitator) Verify(context.Context, []byte, []byte) (*x402.VerifyResponse, error) {
+	return nil, errors.New("verify is not expected")
+}
+
+func (f *depositSettleFacilitator) Settle(context.Context, []byte, []byte) (*x402.SettleResponse, error) {
+	return &x402.SettleResponse{
+		Success:     true,
+		Transaction: "0xdeposittx",
+		Network:     "eip155:8453",
+		Payer:       testConfig().Payer,
+		Extra: map[string]interface{}{
+			"channelState": map[string]interface{}{
+				"channelId":    f.channelId,
+				"balance":      "10000",
+				"totalClaimed": "0",
+				"refundNonce":  "0",
+			},
+		},
+	}, nil
+}
+
+func (f *depositSettleFacilitator) GetSupported(context.Context) (x402.SupportedResponse, error) {
+	return x402.SupportedResponse{Kinds: []x402.SupportedKind{{
+		X402Version: 2,
+		Scheme:      batchsettlement.SchemeBatched,
+		Network:     "eip155:8453",
+		Extra: map[string]interface{}{
+			"receiverAuthorizer": testConfig().Payer,
+			"withdrawDelay":      testConfig().WithdrawDelay,
+		},
+	}}}, nil
+}
+
+func TestResourceServer_DepositSettleFailsClosedOnPersistenceImplementationErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		build func(inner *InMemoryChannelStorage) *BatchSettlementEvmSchemeServerConfig
+	}{
+		{
+			name: "isHeld corrupt hold",
+			build: func(inner *InMemoryChannelStorage) *BatchSettlementEvmSchemeServerConfig {
+				return &BatchSettlementEvmSchemeServerConfig{
+					Storage:     inner,
+					LockStorage: errLockStorage{isHeldErr: corruptHoldError()},
+				}
+			},
+		},
+		{
+			name: "updateChannel corrupt hold",
+			build: func(inner *InMemoryChannelStorage) *BatchSettlementEvmSchemeServerConfig {
+				return &BatchSettlementEvmSchemeServerConfig{
+					Storage: &sessionHookStorage{inner: inner, updateErr: corruptHoldError()},
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			id := testChannelId(t)
+			inner := NewInMemoryChannelStorage()
+			seedStore(t, inner, id, sampleSession(id, "0"))
+			scheme := NewBatchSettlementEvmScheme(testConfig().Receiver, tc.build(inner))
+			server := x402.Newx402ResourceServer(
+				x402.WithFacilitatorClient(&depositSettleFacilitator{channelId: id}),
+				x402.WithSchemeServer("eip155:8453", scheme),
+			)
+			if err := server.Initialize(ctx); err != nil {
+				t.Fatalf("Initialize: %v", err)
+			}
+			stub := batchedReqs()
+			requirements := types.PaymentRequirements{
+				Scheme: stub.scheme, Network: stub.network, Asset: stub.asset, Amount: "1000", PayTo: stub.payTo, Extra: stub.extra,
+			}
+			payload := types.PaymentPayload{X402Version: 2, Accepted: requirements, Payload: depositPayloadFor(id, "1000", "0xsig")}
+
+			settle, err := server.SettlePayment(ctx, payload, requirements, nil)
+			if err != nil || settle == nil {
+				t.Fatalf("settle: %+v err=%v", settle, err)
+			}
+			if settle.Success || !settle.AfterSettleAborted {
+				t.Fatalf("expected fail-closed aborted settle, got %+v", settle)
+			}
+			if settle.ErrorReason != batchsettlement.ErrVoucherStoreUnavailable {
+				t.Fatalf("errorReason = %q", settle.ErrorReason)
+			}
+			if settle.Transaction != "0xdeposittx" {
+				t.Fatalf("aborted settle must keep the onchain transaction, got %q", settle.Transaction)
+			}
+		})
+	}
+}

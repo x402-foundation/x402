@@ -2,7 +2,9 @@ package x402
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/x402-foundation/x402/go/v2/types"
@@ -417,6 +419,104 @@ func TestSettlePayment_SettlementFailedCancelOnlyBeforeFacilitator(t *testing.T)
 			}
 			if !errors.Is(got.Err, err) {
 				t.Fatalf("cancel Err = %v, want %v", got.Err, err)
+			}
+		})
+	}
+}
+
+// preflightCancelScheme fails enrichment before the facilitator and records settleOnCancel calls.
+type preflightCancelScheme struct {
+	settleFailureScheme
+	failCancelEnrich bool
+	cancelReasons    []VerifiedPaymentCancellationReason
+	cancelPhases     [][]SettlePhase
+}
+
+func (m *preflightCancelScheme) EnrichSettlementPayload(ctx SettleContext) (map[string]interface{}, error) {
+	if ctx.Phase == SettlePhaseCancel && !m.failCancelEnrich {
+		return nil, nil
+	}
+	return nil, m.enrichErr
+}
+
+func (m *preflightCancelScheme) SettleOnCancel(ctx VerifiedPaymentCanceledContext) (*types.PaymentRequirements, error) {
+	m.cancelReasons = append(m.cancelReasons, ctx.Reason)
+	m.cancelPhases = append(m.cancelPhases, ctx.SettledPhases)
+	reqs := ctx.Requirements.(types.PaymentRequirements)
+	reqs.Amount = "0"
+	return &reqs, nil
+}
+
+func TestSettlePayment_PreflightFailureRunsSettleOnCancel(t *testing.T) {
+	cases := []struct {
+		name             string
+		failCancelEnrich bool
+		wantSettleCalls  int
+	}{
+		{name: "cancel settle reaches the facilitator", wantSettleCalls: 1},
+		{name: "cancel settle also fails before the facilitator without recursing", failCancelEnrich: true, wantSettleCalls: 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			scheme := &preflightCancelScheme{
+				settleFailureScheme: settleFailureScheme{
+					mockSchemeNetworkServer: mockSchemeNetworkServer{scheme: "exact"},
+					flow:                    PaymentFlowAuthorization,
+					enrichErr:               errors.New("signer down"),
+				},
+				failCancelEnrich: tc.failCancelEnrich,
+			}
+			server := Newx402ResourceServer()
+			server.Register("eip155:8453", scheme)
+
+			var settledAmounts []string
+			server.facilitatorClients[Network("eip155:8453")] = map[string]FacilitatorClient{
+				"exact": &mockFacilitatorClient{
+					settle: func(ctx context.Context, payload []byte, reqs []byte) (*SettleResponse, error) {
+						var parsed types.PaymentRequirements
+						if err := json.Unmarshal(reqs, &parsed); err != nil {
+							t.Fatalf("unmarshal requirements: %v", err)
+						}
+						settledAmounts = append(settledAmounts, parsed.Amount)
+						return &SettleResponse{Success: true, Amount: parsed.Amount, Network: "eip155:8453"}, nil
+					},
+				},
+			}
+			cancelHooks := 0
+			server.OnVerifiedPaymentCanceled(func(VerifiedPaymentCanceledContext) error {
+				cancelHooks++
+				return nil
+			})
+			settleFailureHooks := 0
+			server.OnSettleFailure(func(SettleFailureContext) (*SettleFailureHookResult, error) {
+				settleFailureHooks++
+				return nil, nil
+			})
+
+			payload := types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{}}
+			requirements := types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453", Amount: "1000"}
+			_, err := server.SettlePaymentWithExtensions(context.Background(), payload, requirements, nil, nil, SettlePhaseAfterHandler)
+			if err == nil || !strings.Contains(err.Error(), "signer down") {
+				t.Fatalf("expected the original enrichment error, got %v", err)
+			}
+
+			if len(scheme.cancelReasons) != 1 || scheme.cancelReasons[0] != CancellationReasonSettlementPreflightFailed {
+				t.Fatalf("settleOnCancel reasons = %v", scheme.cancelReasons)
+			}
+			if len(scheme.cancelPhases[0]) != 0 {
+				t.Fatalf("settleOnCancel settledPhases = %v", scheme.cancelPhases[0])
+			}
+			if cancelHooks != 1 {
+				t.Fatalf("cancel hooks = %d, want 1", cancelHooks)
+			}
+			if len(settledAmounts) != tc.wantSettleCalls {
+				t.Fatalf("settle amounts = %v, want %d calls", settledAmounts, tc.wantSettleCalls)
+			}
+			if tc.wantSettleCalls == 1 && settledAmounts[0] != "0" {
+				t.Fatalf("cancel settle amount = %q, want 0", settledAmounts[0])
+			}
+			if settleFailureHooks != 0 {
+				t.Fatalf("OnSettleFailure must not run before the facilitator, ran %d times", settleFailureHooks)
 			}
 		})
 	}

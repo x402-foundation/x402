@@ -394,7 +394,17 @@ export async function handleAfterSettle(
     const signedMaxClaimable = raw.voucher.maxClaimableAmount;
     const now = Date.now();
 
-    const hold = await inspectAdmission(scheme, channelId, pendingId);
+    // Only AfterSettleAbortError fails the settle closed; any other exception would leave a
+    // successful settle without a recorded charge.
+    let hold: AdmissionHold;
+    try {
+      hold = await inspectAdmission(scheme, channelId, pendingId);
+    } catch (err) {
+      throw new AfterSettleAbortError(
+        Errors.ErrVoucherStoreUnavailable,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
     if (hold === "other") {
       throw new AfterSettleAbortError(Errors.ErrChannelBusy);
     }
@@ -449,12 +459,15 @@ export async function handleAfterSettle(
         }
       }
     } catch (err) {
-      rethrowLockImplementationError(err);
       abortReason = Errors.ErrVoucherStoreUnavailable;
       abortMessage = err instanceof Error ? err.message : String(err);
     } finally {
       if (hold === "self") {
-        await scheme.releasePendingRequest(paymentPayload);
+        try {
+          await scheme.releasePendingRequest(paymentPayload);
+        } catch {
+          // Best-effort release; the lock TTL bounds a failure, and it must not mask the abort.
+        }
       }
     }
     if (abortReason) {
