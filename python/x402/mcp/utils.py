@@ -1,6 +1,7 @@
 """Utility functions for MCP payment handling."""
 
 import json
+import re
 from datetime import timedelta
 from typing import Any
 
@@ -214,36 +215,119 @@ def attach_payment_response_to_meta(
     )
 
 
+class PaymentRequiredMismatchError(ValueError):
+    """structuredContent and content text both look like PaymentRequired but disagree.
+
+    Auto-payment must not sign one representation while a hook, log, or UI reads the other.
+    """
+
+
 def extract_payment_required_from_result(
     result: MCPToolResult,
 ) -> PaymentRequired | PaymentRequiredV1 | None:
     """Extract PaymentRequired from tool result (dual format, x402 v1 and v2).
 
-    Handles both structuredContent (preferred) and content[0].text (fallback).
+    Prefers structuredContent, then the first payment-required object in content
+    (including items after ``content[0]`` and FastMCP-wrapped error text). When both
+    representations are payment-required objects, they must encode the same terms.
+    A disagreement raises PaymentRequiredMismatchError so callers do not auto-pay
+    ambiguous terms.
+
+    Comparison uses the parsed model dump, not raw JSON, so key order and
+    ``x402Version`` / ``x402_version`` casing do not false-alarm. A reordered
+    ``accepts`` list, or ``payTo`` that differs only by checksum vs lowercase,
+    is a mismatch and fails closed.
+
+    Raises:
+        PaymentRequiredMismatchError: structuredContent and content text both
+            parse as payment-required objects but do not encode the same terms.
     """
     if not result.is_error:
         return None
 
-    if result.structured_content:
-        pr = _extract_payment_required_from_object(result.structured_content)
-        if pr:
-            return pr
+    structured = None
+    if isinstance(result.structured_content, dict):
+        structured = _extract_payment_required_from_object(result.structured_content)
 
-    if result.content and len(result.content) > 0:
-        first_item = result.content[0]
-        if isinstance(first_item, dict) and first_item.get("type") == "text":
-            text = first_item.get("text", "")
-            if text:
-                try:
-                    parsed = json.loads(text)
-                    if isinstance(parsed, dict):
-                        pr = _extract_payment_required_from_object(parsed)
-                        if pr:
-                            return pr
-                except (json.JSONDecodeError, TypeError):
-                    pass
+    from_text = _payment_required_from_content_items(result.content)
 
+    if (
+        structured is not None
+        and from_text is not None
+        and not _payment_required_agree(structured, from_text)
+    ):
+        raise PaymentRequiredMismatchError(
+            "mcp payment required: structuredContent and content text disagree"
+        )
+    if structured is not None:
+        return structured
+    return from_text
+
+
+def _content_item_text(item: Any) -> str | None:
+    """Text from an MCP content item (dict or SDK object)."""
+    if isinstance(item, dict):
+        if item.get("type") not in (None, "text"):
+            return None
+        text = item.get("text")
+    else:
+        text = getattr(item, "text", None)
+    return text if isinstance(text, str) and text else None
+
+
+def _try_parse_payment_json(text: str) -> dict[str, Any] | None:
+    """Parse payment-required JSON, including FastMCP-wrapped error text.
+
+    FastMCP wraps tool errors as ``Error executing tool name: {json}``. A raw
+    ``json.loads`` misses that form, so a later content item can disagree with
+    structuredContent without the caller noticing.
+    """
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict) and "accepts" in parsed:
+            return parsed
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    match = re.search(r'\{.*"accepts"\s*:\s*\[.*\].*\}', text, re.DOTALL)
+    if not match:
+        return None
+    try:
+        parsed = json.loads(match.group(0))
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if isinstance(parsed, dict) and "accepts" in parsed:
+        return parsed
     return None
+
+
+def _payment_required_from_content_items(content: Any) -> Any:
+    """First payment-required object found in any content item, not only [0]."""
+    if not content:
+        return None
+    for item in content:
+        text = _content_item_text(item)
+        if not text:
+            continue
+        parsed = _try_parse_payment_json(text)
+        if not parsed:
+            continue
+        extracted = _extract_payment_required_from_object(parsed)
+        if extracted is not None:
+            return extracted
+    return None
+
+
+def _payment_required_agree(left: Any, right: Any) -> bool:
+    """True when both parsed objects dump to the same JSON terms."""
+    try:
+        left_dump = left.model_dump(by_alias=True, exclude_none=True)
+        right_dump = right.model_dump(by_alias=True, exclude_none=True)
+    except AttributeError:
+        return left == right
+    return json.dumps(left_dump, sort_keys=True, default=str) == json.dumps(
+        right_dump, sort_keys=True, default=str
+    )
 
 
 def _extract_payment_required_from_object(
