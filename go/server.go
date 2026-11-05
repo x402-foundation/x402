@@ -1277,7 +1277,9 @@ func (s *x402ResourceServer) VerifyPaymentWithExtensions(
 	for _, lh := range beforeVerifyHooks {
 		result, err := lh.Hook(hookCtx)
 		if err != nil {
-			return nil, err
+			// Fail closed. The thrown detail stays in the log, not the payer-facing message.
+			log.Printf("[x402] Resource server beforeVerify hook threw (%s): %v", lh.Label, err)
+			return nil, NewVerifyError("before_verify_hook_error", "", "before verify hook failed")
 		}
 		if result == nil {
 			continue
@@ -1579,7 +1581,14 @@ func (s *x402ResourceServer) SettlePaymentWithExtensions(
 	for _, lh := range beforeSettleHooks {
 		result, err := lh.Hook(hookCtx)
 		if err != nil {
-			return nil, err
+			// A SettleError is already the payer-facing failure. Return it unchanged.
+			var se *SettleError
+			if errors.As(err, &se) {
+				return nil, err
+			}
+			// Fail closed. The thrown detail stays in the log, not the payer-facing message.
+			log.Printf("[x402] Resource server beforeSettle hook threw (%s): %v", lh.Label, err)
+			return nil, NewSettleError("before_settle_hook_error", "", Network(effectiveRequirements.Network), "", "before settle hook failed")
 		}
 		if result != nil {
 			if result.Abort {
