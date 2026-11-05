@@ -1,0 +1,1 @@
+Fixed sync and async HTTP facilitator clients to preserve structured non-200 verify and settle responses as typed errors, including transaction hashes. Resource servers now apply their existing single settlement_pending retry to those errors. Failure hooks now handle thrown facilitator errors after retry, and PAYMENT-RESPONSE retains the validated settlement fields.

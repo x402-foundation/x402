@@ -288,21 +288,28 @@ class x402ResourceServer(x402ResourceServerBase):
         try:
             while True:
                 phase_cmd, target, ctx = gen.send(result)
-                if phase_cmd == "call_facilitator":
-                    # target is client, ctx is (method_name, payload, requirements)
-                    method_name, p, r = ctx
-                    if method_name == "verify":
-                        result = await target.verify(p, r)
-                    else:
-                        result = await settle_with_pending_retry_async(target, p, r)
-                else:
+                while True:
                     try:
-                        result = await self._execute_hook(target, ctx)
-                    except AfterSettleAbortError as abort:
-                        # The settle generator receives hook results via send(), so the abort is returned to it.
-                        if phase_cmd != "after":
+                        if phase_cmd == "call_facilitator":
+                            # target is client, ctx is (method_name, payload, requirements)
+                            method_name, p, r = ctx
+                            if method_name == "verify":
+                                result = await target.verify(p, r)
+                            else:
+                                result = await settle_with_pending_retry_async(target, p, r)
+                        else:
+                            try:
+                                result = await self._execute_hook(target, ctx)
+                            except AfterSettleAbortError as abort:
+                                # The settle generator receives hook results via send(), so the abort is returned to it.
+                                if phase_cmd != "after":
+                                    raise
+                                result = abort
+                        break
+                    except Exception as e:
+                        if phase_cmd != "call_facilitator":
                             raise
-                        result = abort
+                        phase_cmd, target, ctx = gen.throw(e)
         except StopIteration as e:
             return await self._finalize_settle_result_async(
                 e.value,
@@ -614,21 +621,28 @@ class x402ResourceServerSync(x402ResourceServerBase):
         try:
             while True:
                 phase_cmd, target, ctx = gen.send(result)
-                if phase_cmd == "call_facilitator":
-                    # target is client, ctx is (method_name, payload, requirements)
-                    method_name, p, r = ctx
-                    if method_name == "verify":
-                        result = target.verify(p, r)
-                    else:
-                        result = settle_with_pending_retry(target, p, r)
-                else:
+                while True:
                     try:
-                        result = self._execute_hook_sync(target, ctx)
-                    except AfterSettleAbortError as abort:
-                        # The settle generator receives hook results via send(), so the abort is returned to it.
-                        if phase_cmd != "after":
+                        if phase_cmd == "call_facilitator":
+                            # target is client, ctx is (method_name, payload, requirements)
+                            method_name, p, r = ctx
+                            if method_name == "verify":
+                                result = target.verify(p, r)
+                            else:
+                                result = settle_with_pending_retry(target, p, r)
+                        else:
+                            try:
+                                result = self._execute_hook_sync(target, ctx)
+                            except AfterSettleAbortError as abort:
+                                # The settle generator receives hook results via send(), so the abort is returned to it.
+                                if phase_cmd != "after":
+                                    raise
+                                result = abort
+                        break
+                    except Exception as e:
+                        if phase_cmd != "call_facilitator":
                             raise
-                        result = abort
+                        phase_cmd, target, ctx = gen.throw(e)
         except StopIteration as e:
             return self._finalize_settle_result(
                 e.value,

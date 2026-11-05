@@ -4,6 +4,8 @@ keeps its transaction hash over the wire so the caller can reconcile onchain.
 
 from __future__ import annotations
 
+import pytest
+
 from x402.http.types import PaymentOption, RouteConfig
 from x402.http.utils import decode_payment_response_header
 from x402.http.x402_http_server_base import x402HTTPServerBase
@@ -84,3 +86,34 @@ def test_settlement_pending_keeps_transaction_from_thrown_settle_error():
     assert result.transaction == "0xpendingtx"
     decoded = decode_payment_response_header(result.headers["PAYMENT-RESPONSE"])
     assert decoded.transaction == "0xpendingtx"
+
+
+@pytest.mark.parametrize("as_error", [False, True], ids=["returned", "thrown"])
+def test_settlement_failure_keeps_validated_response_fields(as_error):
+    response = SettleResponse(
+        success=False,
+        error_reason="settlement_pending",
+        error_message="Confirmation timed out",
+        transaction="0xpendingtx",
+        network="eip155:1",
+        payer="0xpayer",
+        amount="42",
+        extensions={"terms": {"info": {"format": "uri"}}},
+        extra={"status": "pending"},
+        extension_responses={"bazaar": {"status": "processing"}},
+    )
+    error = SettleError(
+        reason=response.error_reason, transaction=response.transaction, response=response
+    )
+    server = _FakeResourceServer(error if as_error else response)
+    http_server = x402HTTPServerBase(server, {"*": _route_config()})  # type: ignore[arg-type]
+
+    result = http_server.process_settlement(None, _requirements())  # type: ignore[arg-type]
+
+    assert result.success is False
+    assert result.network == response.network
+    assert result.settle_response.model_dump() == response.model_dump()
+    assert result.settle_response.extension_responses == response.extension_responses
+    decoded = decode_payment_response_header(result.headers["PAYMENT-RESPONSE"])
+    assert decoded.model_dump() == response.model_dump()
+    assert decoded.extension_responses is None
