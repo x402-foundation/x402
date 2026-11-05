@@ -421,16 +421,12 @@ export class x402ResourceServer {
    * @param facilitatorClients - Optional facilitator client(s) for payment processing
    */
   constructor(facilitatorClients?: FacilitatorClient | FacilitatorClient[]) {
-    // Normalize facilitator clients to array
     if (!facilitatorClients) {
-      // No clients provided, create a default HTTP client
       this.facilitatorClients = [new HTTPFacilitatorClient()];
     } else if (Array.isArray(facilitatorClients)) {
-      // Array of clients provided
       this.facilitatorClients =
         facilitatorClients.length > 0 ? facilitatorClients : [new HTTPFacilitatorClient()];
     } else {
-      // Single client provided
       this.facilitatorClients = [facilitatorClients];
     }
   }
@@ -715,46 +711,38 @@ export class x402ResourceServer {
    * Earlier facilitators in the array get precedence
    */
   async initialize(): Promise<void> {
-    // Clear existing mappings
     this.supportedResponsesMap.clear();
     this.facilitatorClientsMap.clear();
     let lastError: Error | undefined;
 
-    // Fetch supported kinds from all facilitator clients
-    // Process in order to give precedence to earlier facilitators
     for (const facilitatorClient of this.facilitatorClients) {
       try {
         const supported = await facilitatorClient.getSupported();
 
-        // Process each supported kind (now flat array with version in each element)
         for (const kind of supported.kinds) {
           const x402Version = kind.x402Version;
 
-          // Get or create version map for supported responses
           if (!this.supportedResponsesMap.has(x402Version)) {
             this.supportedResponsesMap.set(x402Version, new Map());
           }
           const responseVersionMap = this.supportedResponsesMap.get(x402Version)!;
 
-          // Get or create version map for facilitator clients
           if (!this.facilitatorClientsMap.has(x402Version)) {
             this.facilitatorClientsMap.set(x402Version, new Map());
           }
           const clientVersionMap = this.facilitatorClientsMap.get(x402Version)!;
 
-          // Get or create network map for responses
           if (!responseVersionMap.has(kind.network)) {
             responseVersionMap.set(kind.network, new Map());
           }
           const responseNetworkMap = responseVersionMap.get(kind.network)!;
 
-          // Get or create network map for clients
           if (!clientVersionMap.has(kind.network)) {
             clientVersionMap.set(kind.network, new Map());
           }
           const clientNetworkMap = clientVersionMap.get(kind.network)!;
 
-          // Only store if not already present (gives precedence to earlier facilitators)
+          // Earlier facilitators keep precedence.
           if (!responseNetworkMap.has(kind.scheme)) {
             responseNetworkMap.set(kind.scheme, supported);
             clientNetworkMap.set(kind.scheme, facilitatorClient);
@@ -802,7 +790,6 @@ export class x402ResourceServer {
     const supportedResponse = findByNetworkAndScheme(versionMap, scheme, network);
     if (!supportedResponse) return undefined;
 
-    // Find the specific kind from the response (kinds are flat array with version in each element)
     return supportedResponse.kinds.find(
       kind =>
         kind.x402Version === x402Version && kind.network === network && kind.scheme === scheme,
@@ -834,7 +821,6 @@ export class x402ResourceServer {
   async buildPaymentRequirements(resourceConfig: ResourceConfig): Promise<PaymentRequirements[]> {
     const requirements: PaymentRequirements[] = [];
 
-    // Find the matching server implementation
     const scheme = resourceConfig.scheme;
     const SchemeNetworkServer = findByNetworkAndScheme(
       this.registeredServerSchemes,
@@ -849,7 +835,6 @@ export class x402ResourceServer {
       );
     }
 
-    // Find the matching supported kind from facilitator
     const supportedKind = this.getSupportedKind(
       x402Version,
       resourceConfig.network,
@@ -863,20 +848,17 @@ export class x402ResourceServer {
       );
     }
 
-    // Get facilitator extensions for this combination
     const facilitatorExtensions = this.getFacilitatorExtensions(
       x402Version,
       resourceConfig.network,
       SchemeNetworkServer.scheme,
     );
 
-    // Parse the price using the scheme's price parser
     const parsedPrice = await SchemeNetworkServer.parsePrice(
       resourceConfig.price,
       resourceConfig.network,
     );
 
-    // Build base payment requirements from resource config
     const baseRequirements: PaymentRequirements = {
       scheme: SchemeNetworkServer.scheme,
       network: resourceConfig.network,
@@ -886,11 +868,10 @@ export class x402ResourceServer {
       maxTimeoutSeconds: resourceConfig.maxTimeoutSeconds || 300, // Default 5 minutes
       extra: {
         ...parsedPrice.extra,
-        ...resourceConfig.extra, // Merge user-provided extra
+        ...resourceConfig.extra,
       },
     };
 
-    // Delegate to the implementation for scheme-specific enhancements
     const requirement = await SchemeNetworkServer.enhancePaymentRequirements(
       baseRequirements,
       supportedKind,
@@ -926,7 +907,6 @@ export class x402ResourceServer {
     const allRequirements: PaymentRequirements[] = [];
 
     for (const option of paymentOptions) {
-      // Resolve dynamic payTo and price if they are functions
       const resolvedPayTo =
         typeof option.payTo === "function" ? await option.payTo(context) : option.payTo;
       const resolvedPrice =
@@ -941,7 +921,6 @@ export class x402ResourceServer {
         extra: option.extra,
       };
 
-      // Use existing buildPaymentRequirements for each option
       const requirements = await this.buildPaymentRequirements(resourceConfig);
       allRequirements.push(...requirements);
     }
@@ -983,7 +962,6 @@ export class x402ResourceServer {
       accepts: workingAccepts,
     };
 
-    // Add extensions if provided
     if (extensions && Object.keys(extensions).length > 0) {
       // Shallow copy rather than alias: the enrichment below writes into
       // response.extensions, and sharing the reference would overwrite the
@@ -1027,7 +1005,6 @@ export class x402ResourceServer {
       baselineAccepts = snapshotPaymentRequirementsList(response.accepts);
     }
 
-    // Let declared extensions add data to PaymentRequired response
     if (extensions) {
       for (const [key, declaration] of Object.entries(extensions)) {
         const extension = this.registeredExtensions.get(key);
@@ -1143,7 +1120,6 @@ export class x402ResourceServer {
     }
 
     try {
-      // Find the facilitator that supports this payment type
       const facilitatorClient = this.getFacilitatorClient(
         paymentPayload.x402Version,
         requirements.network,
@@ -1174,7 +1150,6 @@ export class x402ResourceServer {
           );
         }
       } else {
-        // Use the specific facilitator that supports this payment
         verifyResult = await facilitatorClient.verify(paymentPayload, requirements);
       }
 
@@ -1565,7 +1540,6 @@ export class x402ResourceServer {
         }
       }
 
-      // Find the facilitator that supports this payment type
       const facilitatorClient = this.getFacilitatorClient(
         settlePayload.x402Version,
         effectiveRequirements.network,
@@ -1601,7 +1575,6 @@ export class x402ResourceServer {
           );
         }
       } else {
-        // Use the specific facilitator that supports this payment
         progress.facilitatorCalled = true;
         settleResult = await this.settleWithPendingRetry(
           facilitatorClient,
@@ -1640,7 +1613,6 @@ export class x402ResourceServer {
         return settleResult;
       }
 
-      // Execute afterSettle hooks
       const resultContext: SettleResultContext = {
         ...context,
         result: settleResult,

@@ -234,13 +234,11 @@ export class x402Facilitator {
     }> = [];
     const signersByFamily: Record<string, Set<string>> = {};
 
-    // Iterate over registered scheme data (array supports multiple facilitators per version)
     for (const [version, schemeDataArray] of this.registeredFacilitatorSchemes) {
       for (const schemeData of schemeDataArray) {
         const { facilitator, networks } = schemeData;
         const scheme = facilitator.scheme;
 
-        // Iterate over stored concrete networks
         for (const network of networks) {
           const extra = facilitator.getExtra(network);
           kinds.push({
@@ -250,7 +248,6 @@ export class x402Facilitator {
             ...(extra && { extra }),
           });
 
-          // Collect signers by CAIP family for this network
           const family = facilitator.caipFamily;
           if (!signersByFamily[family]) {
             signersByFamily[family] = new Set();
@@ -260,7 +257,6 @@ export class x402Facilitator {
       }
     }
 
-    // Convert signer sets to arrays
     const signers: Record<string, string[]> = {};
     for (const [family, signerSet] of Object.entries(signersByFamily)) {
       signers[family] = Array.from(signerSet);
@@ -310,16 +306,13 @@ export class x402Facilitator {
         );
       }
 
-      // Find matching facilitator from array
       let schemeNetworkFacilitator: SchemeNetworkFacilitator | undefined;
       for (const schemeData of schemeDataArray) {
         if (schemeData.facilitator.scheme === paymentRequirements.scheme) {
-          // Check if network matches
           if (schemeData.networks.has(paymentRequirements.network)) {
             schemeNetworkFacilitator = schemeData.facilitator;
             break;
           }
-          // Try pattern matching
           if (networkMatchesPattern(schemeData.pattern, paymentRequirements.network)) {
             schemeNetworkFacilitator = schemeData.facilitator;
             break;
@@ -360,7 +353,6 @@ export class x402Facilitator {
         error: error as Error,
       };
 
-      // Execute onVerifyFailure hooks
       for (const hook of this.onVerifyFailureHooks) {
         try {
           const result = await hook(failureContext);
@@ -414,16 +406,13 @@ export class x402Facilitator {
         );
       }
 
-      // Find matching facilitator from array
       let schemeNetworkFacilitator: SchemeNetworkFacilitator | undefined;
       for (const schemeData of schemeDataArray) {
         if (schemeData.facilitator.scheme === paymentRequirements.scheme) {
-          // Check if network matches
           if (schemeData.networks.has(paymentRequirements.network)) {
             schemeNetworkFacilitator = schemeData.facilitator;
             break;
           }
-          // Try pattern matching
           if (networkMatchesPattern(schemeData.pattern, paymentRequirements.network)) {
             schemeNetworkFacilitator = schemeData.facilitator;
             break;
@@ -444,7 +433,6 @@ export class x402Facilitator {
         facilitatorContext,
       );
 
-      // Execute afterSettle hooks
       const resultContext: FacilitatorSettleResultContext = {
         ...context,
         result: settleResult,
@@ -468,7 +456,6 @@ export class x402Facilitator {
         error: error as Error,
       };
 
-      // Execute onSettleFailure hooks
       for (const hook of this.onSettleFailureHooks) {
         try {
           const result = await hook(failureContext);
@@ -579,16 +566,13 @@ export class x402Facilitator {
     if (networks.length === 0) return "" as Network;
     if (networks.length === 1) return networks[0];
 
-    // Extract namespaces (e.g., "eip155" from "eip155:84532")
     const namespaces = networks.map(n => n.split(":")[0]);
     const uniqueNamespaces = new Set(namespaces);
 
-    // If all same namespace, use wildcard
     if (uniqueNamespaces.size === 1) {
       return `${namespaces[0]}:*` as Network;
     }
 
-    // Mixed namespaces - use first network for exact matching
     return networks[0];
   }
 }
