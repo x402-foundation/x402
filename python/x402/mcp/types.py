@@ -194,7 +194,6 @@ class PaymentResponseError(Exception):
     """
 
     def __init__(self, message: str, result: Any):
-        """Initialize an error carrying the tool result."""
         super().__init__(message)
         self.result = result
 
