@@ -961,6 +961,28 @@ func TestChannelManager_ClaimSelectsOnlyOwnNetwork(t *testing.T) {
 	}
 }
 
+func TestChannelManager_ClaimSelectorReceivesOnlyOwnNetworkChannels(t *testing.T) {
+	for _, tc := range networkScopeCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := newNetworkFixture(t, tc.stamped)
+
+			var seen []*ChannelSession
+			results, err := fx.baseMgr.Claim(context.Background(), &ClaimOptions{
+				SelectClaimChannels: func(channels []*ChannelSession, _ AutoSettlementContext) ([]*ChannelSession, error) {
+					seen = channels
+					return channels, nil
+				},
+			})
+			if err != nil || len(results) != 1 {
+				t.Fatalf("results=%+v err=%v", results, err)
+			}
+			if len(seen) != 1 || seen[0].ChannelId != fx.base.ChannelId {
+				t.Fatalf("selector saw %+v, want only %s", seen, fx.base.ChannelId)
+			}
+		})
+	}
+}
+
 func TestChannelManager_WithdrawalPendingSessionsAreNetworkScoped(t *testing.T) {
 	for _, tc := range networkScopeCases {
 		t.Run(tc.name, func(t *testing.T) {

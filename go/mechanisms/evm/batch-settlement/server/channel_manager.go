@@ -595,10 +595,12 @@ func normalizeClaimOptions(opts *ClaimOptions) resolvedClaimOptions {
 }
 
 func (m *BatchSettlementChannelManager) selectClaimTargets(ctx context.Context, selector ClaimChannelSelector) ([]*ChannelSession, error) {
-	channels, err := m.scheme.storage.List(ctx)
+	listed, err := m.scheme.storage.List(ctx)
 	if err != nil {
 		return nil, err
 	}
+	// Foreign channels must not reach the selector, or a bounded selector can fill up with them.
+	channels := m.filterInNetwork(listed)
 	if selector == nil {
 		return channels, nil
 	}
