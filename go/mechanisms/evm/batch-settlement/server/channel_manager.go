@@ -181,8 +181,8 @@ type GetClaimableVouchersOpts struct {
 	IdleSecs int
 }
 
-// GetClaimableVouchers returns voucher claims ready for onchain settlement.
-// Skips entries whose `chargedCumulativeAmount` does not exceed `totalClaimed`.
+// GetClaimableVouchers returns voucher claims of this manager's network ready
+// for onchain settlement. Skips entries whose `chargedCumulativeAmount` does not exceed `totalClaimed`.
 func (m *BatchSettlementChannelManager) GetClaimableVouchers(opts *GetClaimableVouchersOpts) ([]batchsettlement.BatchSettlementVoucherClaim, error) {
 	filter := ChannelQuery{Kind: QueryKindClaimable}
 	idleSecs := 0
@@ -200,17 +200,19 @@ func (m *BatchSettlementChannelManager) GetClaimableVouchers(opts *GetClaimableV
 	return m.collectClaimsFromChannels(page.Items, idleSecs), nil
 }
 
-// GetWithdrawalPendingSessions returns sessions that have a pending payer-initiated
-// withdrawal (withdrawRequestedAt > 0).
+// GetWithdrawalPendingSessions returns this network's sessions that have a pending
+// payer-initiated withdrawal (withdrawRequestedAt > 0).
 func (m *BatchSettlementChannelManager) GetWithdrawalPendingSessions() ([]*ChannelSession, error) {
 	page, err := QueryChannels(context.Background(), m.scheme.GetStorage(), ChannelQuery{Kind: QueryKindWithdrawPending}, nil)
 	if err != nil {
 		return nil, err
 	}
-	return page.Items, nil
+	return m.filterInNetwork(page.Items), nil
 }
 
-// Claim collects claimable vouchers and submits them in batches.
+// Claim collects this network's claimable vouchers and submits them in batches.
+// A failed batch does not stop later batches: the results of the successful
+// batches are returned together with the joined batch errors.
 func (m *BatchSettlementChannelManager) Claim(ctx context.Context, opts *ClaimOptions) ([]ClaimResult, error) {
 	resolved := normalizeClaimOptions(opts)
 	channels, err := m.selectClaimTargets(ctx, resolved.SelectClaimChannels)
@@ -236,24 +238,21 @@ func (m *BatchSettlementChannelManager) Settle(ctx context.Context) (*SettleResu
 	return &SettleResult{Transaction: resp.Transaction}, nil
 }
 
-// ClaimAndSettle claims any eligible vouchers, then settles when claims fired.
+// ClaimAndSettle claims any eligible vouchers, then settles when at least one
+// claim batch succeeded. A partial claim failure does not skip the settle for
+// the claims that landed; the returned error joins the claim and settle errors.
 func (m *BatchSettlementChannelManager) ClaimAndSettle(ctx context.Context, opts *ClaimOptions) ([]ClaimResult, *SettleResult, error) {
-	claims, err := m.Claim(ctx, opts)
-	if err != nil {
-		return nil, nil, err
-	}
+	claims, claimErr := m.Claim(ctx, opts)
 	if len(claims) == 0 {
-		return claims, nil, nil
+		return claims, nil, claimErr
 	}
-	settle, err := m.Settle(ctx)
-	if err != nil {
-		return claims, nil, err
-	}
-	return claims, settle, nil
+	settle, settleErr := m.Settle(ctx)
+	return claims, settle, errors.Join(claimErr, settleErr)
 }
 
-// Refund refunds the listed channels. Channels with a live admission lock
-// are skipped. Pass an empty slice to refund every stored channel.
+// Refund refunds the listed channels of this manager's network. Channels with a
+// live admission lock are skipped. Pass an empty slice to refund every stored
+// channel of this network.
 func (m *BatchSettlementChannelManager) Refund(ctx context.Context, channelIds []string) ([]RefundResult, error) {
 	if err := m.assertRefundAllowed(); err != nil {
 		return nil, err
@@ -280,6 +279,7 @@ func (m *BatchSettlementChannelManager) Refund(ctx context.Context, channelIds [
 			}
 		}
 	}
+	targets = m.filterInNetwork(targets)
 	live := make([]*ChannelSession, 0, len(targets))
 	lock := m.scheme.GetLockStorage()
 	for _, c := range targets {
@@ -471,10 +471,10 @@ func (m *BatchSettlementChannelManager) runClaimJob(ctx context.Context) {
 		MaxClaimsPerBatch:   cfg.MaxClaimsPerBatch,
 		SelectClaimChannels: cfg.SelectClaimChannels,
 	})
-	if err != nil {
-		if cfg.OnError != nil {
-			cfg.OnError(fmt.Errorf("auto-claim: %w", err))
-		}
+	if err != nil && cfg.OnError != nil {
+		cfg.OnError(fmt.Errorf("auto-claim: %w", err))
+	}
+	if err != nil && len(results) == 0 {
 		return
 	}
 	m.mu.Lock()
@@ -536,14 +536,14 @@ func (m *BatchSettlementChannelManager) runRefundJob(ctx context.Context) {
 		return
 	}
 	autoCtx := m.buildAutoSettlementContext(time.Now().UnixMilli())
-	targets, err := cfg.SelectRefundChannels(channels, autoCtx)
+	targets, err := cfg.SelectRefundChannels(m.filterInNetwork(channels), autoCtx)
 	if err != nil {
 		if cfg.OnError != nil {
 			cfg.OnError(fmt.Errorf("auto-refund select: %w", err))
 		}
 		return
 	}
-	results, err := m.refundChannels(ctx, targets)
+	results, err := m.refundChannels(ctx, m.filterInNetwork(targets))
 	if err != nil {
 		if cfg.OnError != nil {
 			cfg.OnError(fmt.Errorf("auto-refund: %w", err))
@@ -610,14 +610,44 @@ func (m *BatchSettlementChannelManager) selectClaimTargets(ctx context.Context, 
 	return out, nil
 }
 
+// inNetwork reports whether a session is bound to this manager's network.
+// The persisted Network decides when present; rows written without one fall
+// back to the channel-id binding, which commits the network via the EIP-712
+// domain chain id.
+func (m *BatchSettlementChannelManager) inNetwork(c *ChannelSession) bool {
+	if c == nil {
+		return false
+	}
+	if c.Network != "" {
+		return strings.EqualFold(c.Network, string(m.network))
+	}
+	return batchsettlement.ChannelIdBindingError(c.ChannelConfig, c.ChannelId, string(m.network)) == ""
+}
+
+// filterInNetwork keeps the sessions bound to this manager's network. It runs
+// in memory after the storage query because a `ChannelQuery.Network` filter
+// would hide legacy rows that carry no Network.
+func (m *BatchSettlementChannelManager) filterInNetwork(channels []*ChannelSession) []*ChannelSession {
+	out := make([]*ChannelSession, 0, len(channels))
+	for _, c := range channels {
+		if m.inNetwork(c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 func (m *BatchSettlementChannelManager) collectClaimsFromChannels(channels []*ChannelSession, idleSecs int) []batchsettlement.BatchSettlementVoucherClaim {
 	opts := &SelectClaimableOptions{Now: time.Now().UnixMilli()}
 	if idleSecs > 0 {
 		opts.IdleSecs = &idleSecs
 	}
-	return SelectClaimableVouchers(channels, opts)
+	return SelectClaimableVouchers(m.filterInNetwork(channels), opts)
 }
 
+// claimFromChannels submits claim batches independently. A failed batch leaves
+// its sessions unclaimed for the next pass and does not block later batches;
+// the returned results cover the batches that succeeded.
 func (m *BatchSettlementChannelManager) claimFromChannels(
 	ctx context.Context,
 	channels []*ChannelSession,
@@ -629,6 +659,7 @@ func (m *BatchSettlementChannelManager) claimFromChannels(
 		return nil, nil
 	}
 	results := make([]ClaimResult, 0)
+	var batchErrors []error
 	for i := 0; i < len(all); i += maxClaimsPerBatch {
 		end := i + maxClaimsPerBatch
 		if end > len(all) {
@@ -637,7 +668,11 @@ func (m *BatchSettlementChannelManager) claimFromChannels(
 		batch := all[i:end]
 		res, err := m.submitClaim(ctx, batch)
 		if err != nil {
-			return results, err
+			batchErrors = append(batchErrors, err)
+			if ctx.Err() != nil {
+				break
+			}
+			continue
 		}
 		results = append(results, *res)
 		if err := m.updateClaimedSessions(ctx, batch); err != nil {
@@ -649,7 +684,7 @@ func (m *BatchSettlementChannelManager) claimFromChannels(
 		m.pendingSettle = true
 		m.mu.Unlock()
 	}
-	return results, nil
+	return results, errors.Join(batchErrors...)
 }
 
 // submitClaim sends a single claim batch to the facilitator.
@@ -817,8 +852,9 @@ func (m *BatchSettlementChannelManager) getIdleChannelsForRefund(ctx context.Con
 		return nil, err
 	}
 	lock := m.scheme.GetLockStorage()
-	out := make([]*ChannelSession, 0, len(page.Items))
-	for _, c := range page.Items {
+	inNetwork := m.filterInNetwork(page.Items)
+	out := make([]*ChannelSession, 0, len(inNetwork))
+	for _, c := range inNetwork {
 		held, holdErr := channelIsHeld(ctx, lock, c.ChannelId)
 		if holdErr != nil {
 			return nil, holdErr

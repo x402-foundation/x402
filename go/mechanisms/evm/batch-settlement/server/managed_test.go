@@ -261,6 +261,9 @@ func TestManagedAfterSettle_DepositUsesSettleChannelState(t *testing.T) {
 	if got.ChargedCumulativeAmount != "2000" || got.Balance != "6000" || got.SignedMaxClaimable != "2000" {
 		t.Fatalf("got %+v", got)
 	}
+	if got.Network != "eip155:8453" {
+		t.Fatalf("expected replica bound to the settle network, got %q", got.Network)
+	}
 }
 
 func TestManagedAfterVerify_StashesVoucherProofWithoutChannelState(t *testing.T) {
@@ -572,6 +575,9 @@ func TestManagedAfterVerify_RecordsSnapshot(t *testing.T) {
 	if snap.Balance != "10000" || snap.TotalClaimed != "1000" || snap.ChargedCumulativeAmount != "4000" ||
 		snap.WithdrawRequestedAt != 2 || snap.RefundNonce != 3 || rc.PendingId != "0xpending" {
 		t.Fatalf("got %+v snapshot %+v", rc, snap)
+	}
+	if snap.Network != "eip155:8453" {
+		t.Fatalf("expected snapshot bound to the request network, got %q", snap.Network)
 	}
 }
 
