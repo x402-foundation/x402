@@ -1581,11 +1581,6 @@ func (s *x402ResourceServer) SettlePaymentWithExtensions(
 	for _, lh := range beforeSettleHooks {
 		result, err := lh.Hook(hookCtx)
 		if err != nil {
-			// A SettleError is already the payer-facing failure. Return it unchanged.
-			var se *SettleError
-			if errors.As(err, &se) {
-				return nil, err
-			}
 			// Fail closed. The thrown detail stays in the log, not the payer-facing message.
 			log.Printf("[x402] Resource server beforeSettle hook threw (%s): %v", lh.Label, err)
 			return nil, NewSettleError("before_settle_hook_error", "", Network(effectiveRequirements.Network), "", "before settle hook failed")

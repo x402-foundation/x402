@@ -801,12 +801,11 @@ func TestBeforeSettleHook_ThrowFailsClosed(t *testing.T) {
 	}
 }
 
-func TestBeforeSettleHook_SettleErrorPassesThrough(t *testing.T) {
+func TestBeforeSettleHook_TypedErrorFailsClosed(t *testing.T) {
 	server := Newx402ResourceServer()
 	registerExactEvmScheme(server)
-	typed := NewSettleError("insufficient_balance", "0xpayer", "eip155:8453", "", "Not enough funds")
 	server.OnBeforeSettle(func(ctx SettleContext) (*BeforeHookResult, error) {
-		return nil, typed
+		return nil, NewSettleError("insufficient_balance", "0xpayer", "eip155:8453", "", "Not enough funds")
 	})
 
 	_, err := server.SettlePayment(
@@ -815,8 +814,12 @@ func TestBeforeSettleHook_SettleErrorPassesThrough(t *testing.T) {
 		types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"},
 		nil,
 	)
-	if !errors.Is(err, typed) {
-		t.Fatalf("got %v, want the hook SettleError", err)
+	se := &SettleError{}
+	if !errors.As(err, &se) {
+		t.Fatalf("got %T (%v), want *SettleError", err, err)
+	}
+	if se.ErrorReason != "before_settle_hook_error" || se.ErrorMessage != "before settle hook failed" {
+		t.Fatalf("reason=%q message=%q", se.ErrorReason, se.ErrorMessage)
 	}
 }
 
