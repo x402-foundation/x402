@@ -553,28 +553,6 @@ def build_x402_client_config(
     )
 
 
-def register_schemes(payment_client: Any, schemes: list[dict[str, Any]]) -> None:
-    """Register payment schemes on a payment client.
-
-    Shared helper used by factory functions in both sync and async clients
-    to avoid duplicating scheme registration logic.
-
-    Args:
-        payment_client: x402 payment client (sync or async)
-        schemes: List of scheme registrations, each with 'network' and 'client' keys,
-                 and optional 'x402_version' (defaults to 2)
-    """
-    for scheme in schemes:
-        network = scheme["network"]
-        client_scheme = scheme["client"]
-        x402_version = scheme.get("x402_version", 2)
-
-        if x402_version == 1:
-            payment_client.register_v1(network, client_scheme)
-        else:
-            payment_client.register(network, client_scheme)
-
-
 def is_payment_required_error(error: Exception) -> bool:
     """Check if an error is a PaymentRequiredError.
 

@@ -1831,35 +1831,7 @@ func (s *x402ResourceServer) BuildPaymentRequirementsFromConfig(ctx context.Cont
 		return nil, fmt.Errorf("no scheme server for %s on %s", config.Scheme, config.Network)
 	}
 
-	// Look up cached supported kinds from facilitator
-	// This was populated during Initialize() by querying facilitator's /supported endpoint
-	var supportedKind types.SupportedKind
-	foundKind := false
-
-	// Check each cached facilitator response for matching supported kind
-	s.supportedCache.mu.RLock()
-	for _, cachedResponse := range s.supportedCache.snapshotLocked() {
-		// Iterate through flat kinds array (version is in each element)
-		for _, kind := range cachedResponse.Kinds {
-			// Match on scheme and network (only check V2 kinds)
-			if kind.X402Version == 2 && kind.Scheme == config.Scheme && string(kind.Network) == string(config.Network) {
-				supportedKind = types.SupportedKind{
-					X402Version: kind.X402Version,
-					Scheme:      kind.Scheme,
-					Network:     string(kind.Network),
-					Extra:       kind.Extra, // This includes feePayer for SVM!
-				}
-				foundKind = true
-				break
-			}
-		}
-		if foundKind {
-			break
-		}
-	}
-	s.supportedCache.mu.RUnlock()
-
-	// If no cached kind found, create a basic one (fallback for cases without facilitator)
+	supportedKind, _, foundKind := s.findSupportedKind(config.Network, config.Scheme)
 	if !foundKind {
 		supportedKind = types.SupportedKind{
 			Scheme:  config.Scheme,

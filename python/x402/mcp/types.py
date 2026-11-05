@@ -1,13 +1,10 @@
 """Type definitions for MCP transport integration."""
 
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 from ..schemas import PaymentPayload, PaymentRequirements, SettleResponse
 from ..schemas.base import Price
-
-if TYPE_CHECKING:
-    pass
 
 # Protocol constants for MCP x402 payment integration.
 MCP_PAYMENT_REQUIRED_CODE = 402

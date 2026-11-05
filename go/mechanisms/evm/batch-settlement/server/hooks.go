@@ -360,12 +360,9 @@ func handleBeforeVerify(s *BatchSettlementEvmScheme, ctx x402.VerifyContext) (*x
 		if localResult != nil {
 			if !localResult.IsValid {
 				_ = s.ClearPendingRequest(ctx.Payload)
-				return &x402.BeforeHookResult{
-					Skip:             true,
-					SkipVerifyResult: localResult,
-				}, nil
+			} else {
+				s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{LocalVerify: true})
 			}
-			s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{LocalVerify: true})
 			return &x402.BeforeHookResult{
 				Skip:             true,
 				SkipVerifyResult: localResult,
