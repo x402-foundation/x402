@@ -570,7 +570,7 @@ def wrap_mcp_client_with_payment(
         )
         ```
     """
-    return x402MCPClient(
+    return create_x402_mcp_client(
         mcp_client,
         payment_client,
         auto_payment=auto_payment,

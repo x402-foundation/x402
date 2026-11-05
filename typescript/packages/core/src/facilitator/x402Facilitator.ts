@@ -299,33 +299,10 @@ export class x402Facilitator {
     }
 
     try {
-      const schemeDataArray = this.registeredFacilitatorSchemes.get(paymentPayload.x402Version);
-      if (!schemeDataArray) {
-        throw new Error(
-          `No facilitator registered for x402 version: ${paymentPayload.x402Version}`,
-        );
-      }
-
-      let schemeNetworkFacilitator: SchemeNetworkFacilitator | undefined;
-      for (const schemeData of schemeDataArray) {
-        if (schemeData.facilitator.scheme === paymentRequirements.scheme) {
-          if (schemeData.networks.has(paymentRequirements.network)) {
-            schemeNetworkFacilitator = schemeData.facilitator;
-            break;
-          }
-          if (networkMatchesPattern(schemeData.pattern, paymentRequirements.network)) {
-            schemeNetworkFacilitator = schemeData.facilitator;
-            break;
-          }
-        }
-      }
-
-      if (!schemeNetworkFacilitator) {
-        throw new Error(
-          `No facilitator registered for scheme: ${paymentRequirements.scheme} and network: ${paymentRequirements.network}`,
-        );
-      }
-
+      const schemeNetworkFacilitator = this.resolveSchemeNetworkFacilitator(
+        paymentPayload.x402Version,
+        paymentRequirements,
+      );
       const facilitatorContext = this.buildFacilitatorContext();
       const verifyResult = await schemeNetworkFacilitator.verify(
         paymentPayload,
@@ -399,33 +376,10 @@ export class x402Facilitator {
     }
 
     try {
-      const schemeDataArray = this.registeredFacilitatorSchemes.get(paymentPayload.x402Version);
-      if (!schemeDataArray) {
-        throw new Error(
-          `No facilitator registered for x402 version: ${paymentPayload.x402Version}`,
-        );
-      }
-
-      let schemeNetworkFacilitator: SchemeNetworkFacilitator | undefined;
-      for (const schemeData of schemeDataArray) {
-        if (schemeData.facilitator.scheme === paymentRequirements.scheme) {
-          if (schemeData.networks.has(paymentRequirements.network)) {
-            schemeNetworkFacilitator = schemeData.facilitator;
-            break;
-          }
-          if (networkMatchesPattern(schemeData.pattern, paymentRequirements.network)) {
-            schemeNetworkFacilitator = schemeData.facilitator;
-            break;
-          }
-        }
-      }
-
-      if (!schemeNetworkFacilitator) {
-        throw new Error(
-          `No facilitator registered for scheme: ${paymentRequirements.scheme} and network: ${paymentRequirements.network}`,
-        );
-      }
-
+      const schemeNetworkFacilitator = this.resolveSchemeNetworkFacilitator(
+        paymentPayload.x402Version,
+        paymentRequirements,
+      );
       const facilitatorContext = this.buildFacilitatorContext();
       const settleResult = await schemeNetworkFacilitator.settle(
         paymentPayload,
@@ -469,6 +423,40 @@ export class x402Facilitator {
 
       throw error;
     }
+  }
+
+  /**
+   * Resolves the first registration whose scheme matches. Within a registration,
+   * an exact network match is preferred over that registration's wildcard pattern.
+   *
+   * @param x402Version - Payment payload version
+   * @param requirements - Scheme and network to match
+   * @returns The registered facilitator
+   */
+  private resolveSchemeNetworkFacilitator(
+    x402Version: PaymentPayload["x402Version"],
+    requirements: PaymentRequirements,
+  ): SchemeNetworkFacilitator {
+    const schemeDataArray = this.registeredFacilitatorSchemes.get(x402Version);
+    if (!schemeDataArray) {
+      throw new Error(`No facilitator registered for x402 version: ${x402Version}`);
+    }
+
+    for (const schemeData of schemeDataArray) {
+      if (schemeData.facilitator.scheme !== requirements.scheme) {
+        continue;
+      }
+      if (
+        schemeData.networks.has(requirements.network) ||
+        networkMatchesPattern(schemeData.pattern, requirements.network)
+      ) {
+        return schemeData.facilitator;
+      }
+    }
+
+    throw new Error(
+      `No facilitator registered for scheme: ${requirements.scheme} and network: ${requirements.network}`,
+    );
   }
 
   /**

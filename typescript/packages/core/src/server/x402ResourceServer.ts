@@ -1120,38 +1120,11 @@ export class x402ResourceServer {
     }
 
     try {
-      const facilitatorClient = this.getFacilitatorClient(
+      const verifyResult = await this.invokeFacilitator(
         paymentPayload.x402Version,
-        requirements.network,
-        requirements.scheme,
+        requirements,
+        client => client.verify(paymentPayload, requirements),
       );
-
-      let verifyResult: VerifyResponse;
-
-      if (!facilitatorClient) {
-        // Fallback: try all facilitators if no specific support found
-        let lastError: Error | undefined;
-
-        for (const client of this.facilitatorClients) {
-          try {
-            verifyResult = await client.verify(paymentPayload, requirements);
-            break;
-          } catch (error) {
-            lastError = error as Error;
-          }
-        }
-
-        if (!verifyResult!) {
-          throw (
-            lastError ||
-            new Error(
-              `No facilitator supports ${requirements.scheme} on ${requirements.network} for v${paymentPayload.x402Version}`,
-            )
-          );
-        }
-      } else {
-        verifyResult = await facilitatorClient.verify(paymentPayload, requirements);
-      }
 
       return this.runAfterVerifyHooks(verifyResult, context, extensionKeysInUse, matchedScheme);
     } catch (error) {
@@ -1540,48 +1513,14 @@ export class x402ResourceServer {
         }
       }
 
-      const facilitatorClient = this.getFacilitatorClient(
+      const settleResult = await this.invokeFacilitator(
         settlePayload.x402Version,
-        effectiveRequirements.network,
-        effectiveRequirements.scheme,
+        effectiveRequirements,
+        client => {
+          progress.facilitatorCalled = true;
+          return this.settleWithPendingRetry(client, settlePayload, effectiveRequirements);
+        },
       );
-
-      let settleResult: SettleResponse;
-
-      if (!facilitatorClient) {
-        // Fallback: try all facilitators if no specific support found
-        let lastError: Error | undefined;
-
-        for (const client of this.facilitatorClients) {
-          try {
-            progress.facilitatorCalled = true;
-            settleResult = await this.settleWithPendingRetry(
-              client,
-              settlePayload,
-              effectiveRequirements,
-            );
-            break;
-          } catch (error) {
-            lastError = error as Error;
-          }
-        }
-
-        if (!settleResult!) {
-          throw (
-            lastError ||
-            new Error(
-              `No facilitator supports ${effectiveRequirements.scheme} on ${effectiveRequirements.network} for v${settlePayload.x402Version}`,
-            )
-          );
-        }
-      } else {
-        progress.facilitatorCalled = true;
-        settleResult = await this.settleWithPendingRetry(
-          facilitatorClient,
-          settlePayload,
-          effectiveRequirements,
-        );
-      }
 
       // A returned (non-thrown) settleResult with success:false — e.g. from a
       // remote/HTTP facilitator, or a settlement_pending outcome that
@@ -2110,6 +2049,51 @@ export class x402ResourceServer {
     }
 
     return out;
+  }
+
+  /**
+   * Calls the facilitator selected for this version, scheme, and network.
+   * When none is selected, tries each registered client and keeps the first success.
+   *
+   * @param x402Version - Payment payload version
+   * @param requirements - Scheme and network used to select a client
+   * @param invoke - Verify or settle call for one client
+   * @returns The client result
+   */
+  private async invokeFacilitator<T>(
+    x402Version: number,
+    requirements: PaymentRequirements,
+    invoke: (client: FacilitatorClient) => Promise<T>,
+  ): Promise<T> {
+    const facilitatorClient = this.getFacilitatorClient(
+      x402Version,
+      requirements.network,
+      requirements.scheme,
+    );
+    if (facilitatorClient) {
+      return invoke(facilitatorClient);
+    }
+
+    let lastError: Error | undefined;
+    let result: T | undefined;
+    for (const client of this.facilitatorClients) {
+      try {
+        result = await invoke(client);
+        break;
+      } catch (error) {
+        lastError = error as Error;
+      }
+    }
+
+    if (!result) {
+      throw (
+        lastError ||
+        new Error(
+          `No facilitator supports ${requirements.scheme} on ${requirements.network} for v${x402Version}`,
+        )
+      );
+    }
+    return result;
   }
 
   /**
