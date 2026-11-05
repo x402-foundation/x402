@@ -746,10 +746,6 @@ export class x402MCPClient {
       })
       : undefined;
 
-    // A paid attempt can return a corrective 402. Scheme hooks recover local
-    // state from that response, then we retry once against the accept that was
-    // already approved. Corrective fields repair payment state. They do not
-    // authorize new commercial terms.
     if (recoveryResult?.recovered && paymentRequired) {
       const approvedRequired: PaymentRequired = approvedPaymentRequired ?? {
         x402Version: paymentPayload.x402Version,
