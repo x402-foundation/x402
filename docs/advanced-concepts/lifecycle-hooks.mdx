@@ -496,6 +496,31 @@ Register hooks on the MCP client for payment lifecycle events specific to tool c
       });
     ```
   </Tab>
+  <Tab title="Python">
+    ```python
+    from x402.mcp import wrap_mcp_client_with_payment
+
+    x402_mcp = wrap_mcp_client_with_payment(
+        mcp_client,
+        payment_client,
+        on_payment_required=lambda ctx: True,  # Return False to abort
+        on_before_payment=lambda ctx: None,
+        on_after_payment=lambda ctx: None,
+    )
+    ```
+
+    `payment_made` on a tool result records that a payment payload was submitted,
+    including cases where settlement is pending or failed. It does not prove
+    settlement. `payment_response` and `AfterPaymentContext.settle_response`
+    contain only successful receipts after core response processing; failed
+    receipt details remain in `raw_result` and reach `on_payment_response` hooks
+    for recovery.
+
+    `call_tool` and `call_tool_with_payment` raise `PaymentResponseError` when
+    core receipt processing fails. Its `result` retains the paid tool output and
+    its `__cause__` retains the processing error. Resolve an uncertain payment
+    outcome before submitting another payment.
+  </Tab>
   <Tab title="Go">
     ```go
     import x402mcp "github.com/x402-foundation/x402/go/v2/mcp"
