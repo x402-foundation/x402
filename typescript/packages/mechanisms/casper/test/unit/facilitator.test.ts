@@ -58,7 +58,9 @@ const { RpcClient, rpcClient, tokenPackage, tokenContract, dictionaryU256, dicti
       ),
     };
     return {
-      RpcClient: vi.fn(() => rpcClient),
+      RpcClient: vi.fn(function () {
+        return rpcClient;
+      }),
       rpcClient,
       tokenPackage: {
         storedValue: {

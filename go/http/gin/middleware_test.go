@@ -340,6 +340,72 @@ func TestPaymentMiddleware_CallsNextWhenNoPaymentRequired(t *testing.T) {
 	}
 }
 
+func TestPaymentMiddleware_SendsDeclaredTextPlainPaymentErrorBody(t *testing.T) {
+	expected := "Payment required.\nPreview line 2."
+	mockClient := &mockFacilitatorClient{
+		supportedFunc: func(ctx context.Context) (x402.SupportedResponse, error) {
+			return x402.SupportedResponse{
+				Kinds: []x402.SupportedKind{
+					{X402Version: 2, Scheme: "exact", Network: "eip155:1"},
+				},
+				Extensions: []string{},
+				Signers:    make(map[string][]string),
+			}, nil
+		},
+	}
+
+	mockServer := &mockSchemeServer{scheme: "exact"}
+
+	routes := x402http.RoutesConfig{
+		"GET /api": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  "exact",
+					PayTo:   "0xtest",
+					Price:   "$1.00",
+					Network: "eip155:1",
+				},
+			},
+			Description: "API access",
+			UnpaidResponseBody: func(context.Context, x402http.HTTPRequestContext) (*x402http.UnpaidResponse, error) {
+				return &x402http.UnpaidResponse{
+					ContentType: "text/plain; charset=utf-8",
+					Body:        expected,
+				}, nil
+			},
+		},
+	}
+
+	router := createTestRouter()
+	router.Use(PaymentMiddlewareFromConfig(routes,
+		WithFacilitatorClient(mockClient),
+		WithScheme("eip155:1", mockServer),
+		WithSyncFacilitatorOnStart(true),
+		WithTimeout(5*time.Second),
+	))
+
+	router.GET("/api", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"data": "protected"})
+	})
+
+	req := httptest.NewRequest("GET", "/api", nil)
+	req.Header.Set("Accept", "application/json")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusPaymentRequired {
+		t.Fatalf("Expected status 402, got %d", w.Code)
+	}
+	if got := w.Body.String(); got != expected {
+		t.Fatalf("Expected raw text body %q, got %q (Content-Type %q)", expected, got, w.Header().Get("Content-Type"))
+	}
+	contentType := w.Header().Get("Content-Type")
+	if !strings.Contains(strings.ToLower(contentType), "text/plain") {
+		t.Fatalf("Expected Content-Type to contain text/plain, got %q", contentType)
+	}
+}
+
 func TestPaymentMiddleware_Returns402JSONForPaymentError(t *testing.T) {
 	mockClient := &mockFacilitatorClient{
 		supportedFunc: func(ctx context.Context) (x402.SupportedResponse, error) {
@@ -393,6 +459,14 @@ func TestPaymentMiddleware_Returns402JSONForPaymentError(t *testing.T) {
 
 	if w.Header().Get("PAYMENT-REQUIRED") == "" {
 		t.Error("Expected PAYMENT-REQUIRED header")
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+	if response["error"] != "Payment required" {
+		t.Errorf("Expected body {error: Payment required}, got %v", response)
 	}
 }
 
@@ -667,13 +741,12 @@ func TestPaymentMiddleware_Returns402WhenSettlementFails(t *testing.T) {
 		t.Errorf("Expected status 402, got %d", w.Code)
 	}
 
-	// Empty body by default on settlement failure
 	var response map[string]interface{}
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatalf("Failed to parse response: %v", err)
 	}
-	if len(response) != 0 {
-		t.Errorf("Expected empty body {}, got %v", response)
+	if response["error"] != "settlement_failed" {
+		t.Errorf("Expected body {error: settlement_failed}, got %v", response)
 	}
 
 	// AYMENT-RESPONSE header must be included on settlement failure

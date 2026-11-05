@@ -1,6 +1,10 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
+
+[options]
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer-span = "P3D"
 
 [[package]]
 name = "aiohappyeyeballs"
@@ -2119,7 +2123,7 @@ wheels = [
 [[package]]
 name = "x402"
 version = "1.0.0"
-source = { editable = "../../../../python/legacy" }
+source = { editable = "../../../../../../python/legacy" }
 dependencies = [
     { name = "eth-account" },
     { name = "eth-typing" },
@@ -2170,7 +2174,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.104.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "uvicorn", specifier = ">=0.24.0" },
-    { name = "x402", editable = "../../../../python/legacy" },
+    { name = "x402", editable = "../../../../../../python/legacy" },
 ]
 
 [[package]]

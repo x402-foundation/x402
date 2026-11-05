@@ -5,12 +5,20 @@
  * Use createPaymentWrapper to wrap tool handlers with payment verification and settlement.
  */
 
-import type { Network, PaymentPayload, PaymentRequirements, ResourceInfo } from "@x402/core/types";
+import type {
+  Network,
+  PaymentPayload,
+  PaymentRequirements,
+  ResourceInfo,
+  SettleResponse,
+} from "@x402/core/types";
 import {
   CompletedSettlement,
+  isAfterSettleAborted,
   resolveFailurePathSettlement,
   resolvePaymentFlow,
   resolvePaymentFlowPhases,
+  snapshotPaymentRequirementsList,
   x402ResourceServer,
 } from "@x402/core/server";
 
@@ -384,6 +392,7 @@ async function processPaidToolCall<TArgs extends Record<string, unknown>>(
           config,
           beforeSettle.errorReason || beforeSettle.errorMessage || "Settlement failed",
           transportContext,
+          beforeSettle,
         );
       }
       beforeHandlerSettlement = {
@@ -597,6 +606,7 @@ async function settlePaymentResult(
         config,
         settleResult.errorReason || settleResult.errorMessage || "Settlement failed",
         transportContext,
+        settleResult,
       );
     }
 
@@ -672,9 +682,12 @@ async function createPaymentRequiredResult(
   paymentPayload?: PaymentPayload,
 ): Promise<WrappedToolResult> {
   const resourceInfo = buildToolResourceInfo(toolName, config);
+  // Enrichers may mutate Extra in place (e.g. batch-settlement channelState).
+  // Snapshot so wrapper config stays a stable match baseline across tool calls.
+  const accepts = snapshotPaymentRequirementsList(config.accepts);
 
   const paymentRequired = await resourceServer.createPaymentRequiredResponse(
-    config.accepts,
+    accepts,
     resourceInfo,
     errorMessage,
     config.extensions,
@@ -702,6 +715,7 @@ async function createPaymentRequiredResult(
  * @param config - Payment wrapper configuration
  * @param errorMessage - Error message describing the settlement failure
  * @param transportContext - Optional MCP payment transport context forwarded into the error result.
+ * @param failedSettlement - Failed settle response; its receipt is attached to `_meta` when an afterSettle abort failed an onchain settle closed.
  * @returns Promise resolving to structured 402 error result with settlement failure info
  */
 async function createSettlementFailedResult(
@@ -710,17 +724,25 @@ async function createSettlementFailedResult(
   config: PaymentWrapperConfig,
   errorMessage: string,
   transportContext?: MCPPaymentTransportContext,
+  failedSettlement?: SettleResponse,
 ): Promise<WrappedToolResult> {
   // Per spec R5, settlement failure follows the same format as payment required
   // (structuredContent + content[0].text + isError: true) with the error message
   // describing the settlement failure. We intentionally do NOT embed the
   // x402/payment-response in the PaymentRequired object to avoid clients
   // misinterpreting it as a new 402 and attempting to pay again.
-  return createPaymentRequiredResult(
+  const failedResult = await createPaymentRequiredResult(
     resourceServer,
     toolName,
     config,
     `Payment settlement failed: ${errorMessage}`,
     transportContext,
   );
+  if (!failedSettlement || !isAfterSettleAborted(failedSettlement)) {
+    return failedResult;
+  }
+  return {
+    ...failedResult,
+    _meta: { [MCP_PAYMENT_RESPONSE_META_KEY]: failedSettlement },
+  };
 }

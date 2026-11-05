@@ -302,6 +302,7 @@ describe("AuthCaptureSettlementHooks", () => {
       await hooks.settleOnCancel({
         requirements,
         paymentPayload: { payload: collectPayload() },
+        settledPhases: ["before-handler"],
       } as never),
     ).toBeUndefined();
   });
@@ -315,6 +316,7 @@ describe("AuthCaptureSettlementHooks", () => {
       await hooks.settleOnCancel({
         requirements,
         paymentPayload: { payload: collectPayload() },
+        settledPhases: ["before-handler"],
       } as never),
     ).toEqual(requirements);
   });
@@ -337,6 +339,7 @@ describe("AuthCaptureSettlementHooks", () => {
       await hooks.settleOnCancel({
         requirements,
         paymentPayload: { payload: collectPayload() },
+        settledPhases: ["before-handler"],
       } as never),
     ).toEqual(requirements);
     expect(
@@ -349,6 +352,30 @@ describe("AuthCaptureSettlementHooks", () => {
           }),
         },
         paymentPayload: { payload: collectPayload() },
+        settledPhases: ["before-handler"],
+      } as never),
+    ).toBeUndefined();
+  });
+
+  it("settleOnCancel returns nothing without a before-handler settle", async () => {
+    const hooks = new AuthCaptureSettlementHooks({
+      storage: new InMemoryAuthorizedPaymentStorage(),
+      receiverAuthorizerSigner: authorizerSigner,
+    });
+    const requirements = {
+      scheme: "auth-capture",
+      network: "eip155:84532" as const,
+      amount: "1",
+      asset: BASE_SEPOLIA_USDC,
+      payTo: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      maxTimeoutSeconds: 60,
+      extra: escrowExtra(),
+    };
+    expect(
+      await hooks.settleOnCancel({
+        requirements,
+        paymentPayload: { payload: collectPayload() },
+        settledPhases: [],
       } as never),
     ).toBeUndefined();
   });

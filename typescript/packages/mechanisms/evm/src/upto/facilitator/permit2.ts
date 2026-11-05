@@ -28,6 +28,8 @@ import {
   ErrPermit2AmountMismatch,
   ErrUptoSettlementExceedsAmount,
   ErrUptoFacilitatorMismatch,
+  ErrUptoInvalidPayload,
+  ErrUptoInvalidRequiredAmount,
   ErrUptoInvalidScheme,
   ErrUptoNetworkMismatch,
   ErrUptoTransactionFailed,
@@ -152,6 +154,18 @@ export async function verifyUptoPermit2(
     };
   }
 
+  let requiredAmount: bigint;
+  try {
+    requiredAmount = BigInt(requirements.amount);
+  } catch {
+    return {
+      isValid: false,
+      invalidReason: ErrUptoInvalidRequiredAmount,
+      invalidMessage: "invalid required amount format",
+      payer,
+    };
+  }
+
   const now = Math.floor(Date.now() / 1000);
   if (BigInt(permit2Payload.permit2Authorization.deadline) < BigInt(now + 6)) {
     return {
@@ -169,9 +183,7 @@ export async function verifyUptoPermit2(
     };
   }
 
-  if (
-    BigInt(permit2Payload.permit2Authorization.permitted.amount) !== BigInt(requirements.amount)
-  ) {
+  if (BigInt(permit2Payload.permit2Authorization.permitted.amount) !== requiredAmount) {
     return {
       isValid: false,
       invalidReason: ErrPermit2AmountMismatch,
@@ -243,7 +255,7 @@ export async function verifyUptoPermit2(
   const facilitatorAddress = getAddress(permit2Payload.permit2Authorization.witness.facilitator);
   // Per spec §Phase 3 Step 7: at verify time simulate with requirements.amount (the worst-case
   // charge). Settle passes the actual settlement amount (≤ max) via options.simulationAmount.
-  const simulationAmount = options?.simulationAmount ?? BigInt(requirements.amount);
+  const simulationAmount = options?.simulationAmount ?? requiredAmount;
   const uptoSettleArgs = buildUptoPermit2SettleArgs(
     permit2Payload,
     simulationAmount,
@@ -373,7 +385,19 @@ export async function settleUptoPermit2(
 ): Promise<SettleResponse> {
   const payer = permit2Payload.permit2Authorization.from;
   const signature = permit2Payload.signature;
-  const settlementAmount = BigInt(requirements.amount);
+  let settlementAmount: bigint;
+  try {
+    settlementAmount = BigInt(requirements.amount);
+  } catch {
+    return {
+      success: false,
+      network: payload.accepted.network,
+      transaction: "",
+      errorReason: ErrUptoInvalidPayload,
+      errorMessage: "invalid settlement amount",
+      payer,
+    };
+  }
 
   // Fast path: a prior settle attempt for this exact payload already
   // broadcast a transaction whose receipt wait failed (settlement_pending).
@@ -441,6 +465,7 @@ export async function settleUptoPermit2(
       network: payload.accepted.network,
       transaction: "",
       errorReason: valid.invalidReason ?? "invalid_scheme",
+      errorMessage: valid.invalidMessage,
       payer,
     };
   }

@@ -1,7 +1,9 @@
 /* eslint-disable jsdoc/require-jsdoc */
 /** Wire types for the SVM `batch-settlement` scheme. */
 
+import { BATCH_SETTLEMENT_SCHEME } from "./constants";
 import { BatchError } from "./errors";
+import { V1_MAX_CLAIM_CHANNELS, V1_MAX_SETTLE_CHANNELS } from "./facilitator/constants";
 
 export { BATCH_SETTLEMENT_SCHEME } from "./constants";
 
@@ -26,6 +28,15 @@ export type BatchExtra = {
    * facilitator does not idle-close.
    */
   maxIdleSecs?: number | undefined;
+  /**
+   * Transaction message versions the facilitator accepts, copied from
+   * `/supported`: the JSON integers `0` and/or `1`. Absent means `[0]`.
+   */
+  transactionVersions?: (0 | 1)[] | undefined;
+  /** Channels one `claim` may carry, copied from `/supported`. */
+  maxClaimChannels?: number | undefined;
+  /** Channels one `settle` may carry, copied from `/supported`. */
+  maxSettleChannels?: number | undefined;
 };
 
 export type BatchVoucherSigner = "client" | "server";
@@ -311,7 +322,8 @@ export function isBatchFacilitatorPayload(value: unknown): value is BatchFacilit
     return (
       Array.isArray(value.claims) &&
       value.claims.length > 0 &&
-      value.claims.length <= 4 &&
+      // The protocol maximum; the facilitator checks its advertised capacity.
+      value.claims.length <= V1_MAX_CLAIM_CHANNELS &&
       value.claims.every(isBatchVoucherClaim)
     );
   }
@@ -327,6 +339,7 @@ export function isBatchFacilitatorPayload(value: unknown): value is BatchFacilit
     value.type === "settle" &&
     Array.isArray(value.channels) &&
     value.channels.length > 0 &&
+    value.channels.length <= V1_MAX_SETTLE_CHANNELS &&
     value.channels.every(
       item =>
         isRecord(item) &&
@@ -352,6 +365,186 @@ function isCloseAuthorization(value: unknown): value is CloseAuthorization {
     Number.isSafeInteger(value.validBefore) &&
     value.validBefore > 0 &&
     typeof value.signature === "string"
+  );
+}
+
+/** Batch-settlement `PaymentRequirements`: the route's accept, `extra` typed. */
+export type BatchRequirements = {
+  scheme: typeof BATCH_SETTLEMENT_SCHEME;
+  network: string;
+  amount: string;
+  asset: string;
+  payTo: string;
+  maxTimeoutSeconds: number;
+  extra: BatchExtra;
+};
+
+/** The `PAYMENT-SIGNATURE` envelope of a batch-settlement payment. */
+export type BatchPaymentPayloadEnvelope = {
+  x402Version: 2;
+  accepted: BatchRequirements;
+  payload: BatchPayload;
+  resource?: Record<string, unknown> | undefined;
+  extensions?: Record<string, unknown> | undefined;
+};
+
+/** The `PAYMENT-RESPONSE` of a batch-settlement operation. */
+export type BatchSettlementResponse = {
+  success: boolean;
+  transaction: string;
+  network: string;
+  payer?: string | undefined;
+  amount?: string | undefined;
+  errorReason?: string | undefined;
+  errorMessage?: string | undefined;
+  extra?:
+    | {
+        [key: string]: unknown;
+        channelState?: BatchChannelState | undefined;
+        chargedAmount?: string | undefined;
+        commitmentId?: string | undefined;
+      }
+    | undefined;
+};
+
+/** A batch-settlement `PAYMENT-REQUIRED` (including the corrective 402). */
+export type BatchPaymentRequired = {
+  x402Version: 2;
+  error?: string | undefined;
+  accepts: Record<string, unknown>[];
+  resource?: Record<string, unknown> | undefined;
+  extensions?: Record<string, unknown> | undefined;
+};
+
+const isDecimal = (value: unknown): value is string =>
+  typeof value === "string" && /^\d+$/.test(value);
+
+const isSafeUint = (value: unknown): value is number =>
+  Number.isSafeInteger(value) && (value as number) >= 0;
+
+const isOptional = (value: unknown, guard: (value: unknown) => boolean): boolean =>
+  value === undefined || guard(value);
+
+const isString = (value: unknown): value is string => typeof value === "string";
+
+export function isBatchChannelState(value: unknown): value is BatchChannelState {
+  return (
+    isRecord(value) &&
+    isString(value.channelId) &&
+    isDecimal(value.balance) &&
+    isDecimal(value.totalClaimed) &&
+    isSafeUint(value.withdrawRequestedAt) &&
+    isOptional(value.chargedCumulativeAmount, isDecimal)
+  );
+}
+
+export function isBatchVoucherState(value: unknown): value is BatchVoucherState {
+  return (
+    isRecord(value) &&
+    isDecimal(value.signedMaxClaimable) &&
+    Number.isSafeInteger(value.expiresAt) &&
+    isString(value.signature)
+  );
+}
+
+/**
+ * Whether `value` is a valid `extra.transactionVersions`: a list of the JSON
+ * integers `0` and `1`. Any other entry (`"legacy"`, `"1"`, `2`, `null`)
+ * invalidates the whole field.
+ *
+ * @param value - The field value
+ * @returns Whether it is a valid version list
+ */
+export function isTransactionVersionList(value: unknown): value is (0 | 1)[] {
+  return Array.isArray(value) && value.every(version => version === 0 || version === 1);
+}
+
+export function isBatchExtra(value: unknown): value is BatchExtra {
+  if (!isRecord(value)) return false;
+  const positive = (field: unknown) => Number.isSafeInteger(field) && (field as number) > 0;
+  return (
+    isString(value.feePayer) &&
+    isString(value.receiverAuthorizer) &&
+    isSafeUint(value.withdrawDelay) &&
+    isString(value.tokenProgram) &&
+    isOptional(value.paymentFlow, field => field === "authorization") &&
+    isOptional(value.minDeposit, isDecimal) &&
+    isOptional(value.memo, isString) &&
+    isOptional(value.recentBlockhash, isString) &&
+    isOptional(value.recentSlot, isSafeUint) &&
+    isOptional(value.channelState, isBatchChannelState) &&
+    isOptional(value.voucherState, isBatchVoucherState) &&
+    isOptional(value.voucherSigner, field => field === "client" || field === "server") &&
+    isOptional(value.operator, isString) &&
+    isOptional(value.maxIdleSecs, isSafeUint) &&
+    isOptional(value.transactionVersions, isTransactionVersionList) &&
+    isOptional(value.maxClaimChannels, positive) &&
+    isOptional(value.maxSettleChannels, positive)
+  );
+}
+
+export function isBatchRequirements(value: unknown): value is BatchRequirements {
+  return (
+    isRecord(value) &&
+    value.scheme === BATCH_SETTLEMENT_SCHEME &&
+    isString(value.network) &&
+    value.network.startsWith("solana:") &&
+    isDecimal(value.amount) &&
+    isString(value.asset) &&
+    isString(value.payTo) &&
+    Number.isSafeInteger(value.maxTimeoutSeconds) &&
+    (value.maxTimeoutSeconds as number) > 0 &&
+    isBatchExtra(value.extra)
+  );
+}
+
+export function isBatchPaymentPayloadEnvelope(
+  value: unknown,
+): value is BatchPaymentPayloadEnvelope {
+  return (
+    isRecord(value) &&
+    value.x402Version === 2 &&
+    isBatchRequirements(value.accepted) &&
+    isBatchPayload(value.payload) &&
+    isOptional(value.resource, isRecord) &&
+    isOptional(value.extensions, isRecord)
+  );
+}
+
+export function isBatchSettlementResponse(value: unknown): value is BatchSettlementResponse {
+  if (!isRecord(value)) return false;
+  const extra = value.extra;
+  return (
+    typeof value.success === "boolean" &&
+    isString(value.transaction) &&
+    isString(value.network) &&
+    isOptional(value.payer, isString) &&
+    isOptional(value.amount, field => field === "" || isDecimal(field)) &&
+    isOptional(value.errorReason, isString) &&
+    isOptional(value.errorMessage, isString) &&
+    (extra === undefined ||
+      (isRecord(extra) &&
+        isOptional(extra.channelState, isBatchChannelState) &&
+        isOptional(extra.chargedAmount, isDecimal) &&
+        isOptional(extra.commitmentId, field => isString(field) && field.length > 0)))
+  );
+}
+
+export function isBatchPaymentRequired(value: unknown): value is BatchPaymentRequired {
+  return (
+    isRecord(value) &&
+    value.x402Version === 2 &&
+    isOptional(value.error, isString) &&
+    Array.isArray(value.accepts) &&
+    value.accepts.length > 0 &&
+    // Accepts of other schemes ride along untouched; batch ones must be valid.
+    value.accepts.every(
+      accept =>
+        isRecord(accept) &&
+        (accept.scheme !== BATCH_SETTLEMENT_SCHEME || isBatchRequirements(accept)),
+    ) &&
+    isOptional(value.resource, isRecord) &&
+    isOptional(value.extensions, isRecord)
   );
 }
 

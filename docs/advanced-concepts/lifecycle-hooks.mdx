@@ -11,13 +11,13 @@ Hooks allow you to intercept and modify payment lifecycle events on clients, ser
 
 Register hooks on the core resource server for verification and settlement lifecycle events. Use cases include logging payments, recording analytics, implementing custom access control or recovering from transient failures.
 
-* **onBeforeVerify** — Runs before payment verification. Return `{ abort: true, reason }` to reject, or `{ skip: true, result }` to use a locally produced verification result.
-* **onAfterVerify** — Runs after successful verification. Return `{ skipHandler: true, response? }` to settle without invoking the resource handler, or `{ abort: true, reason, message? }` to reject the payment after verification. When a hook aborts, `onVerifiedPaymentCanceled` is dispatched so schemes can clear any reserved state.
-* **onVerifyFailure** — Runs on verification failure. Return `{ recovered: true, result }` to override.
-* **onBeforeSettle** — Runs before settlement. Return `{ abort: true, reason }` to reject, or `{ skip: true, result }` to use a locally produced settlement result.
-* **onAfterSettle** — Runs after successful settlement.
-* **onSettleFailure** — Runs on settlement failure. Return `{ recovered: true, result }` to override.
-* **onVerifiedPaymentCanceled** — Runs when a verified payment is not settled. Triggered when the protected handler throws or returns an error response (`handler_threw`, `handler_failed`), or when an `onAfterVerify` hook aborts (`after_verify_aborted`).
+* **onBeforeVerify** — Runs before payment verification. Return `{ abort: true, reason }` to reject, or `{ skip: true, result }` to use a locally produced verification result. A throwing hook fails closed: verification is rejected before the facilitator is called, so hooks that cannot complete their check do not inadvertently authorize the payment.
+* **onAfterVerify** — Runs after verification returns a result, including a facilitator response with `isValid: false`. Return `{ skipHandler: true, response? }` to settle without invoking the resource handler, or `{ abort: true, reason, message? }` to reject the payment after verification. When a hook aborts, `onVerifiedPaymentCanceled` is dispatched so schemes can clear any reserved state. Errors thrown by this hook are isolated: they are logged and skipped so they cannot change the verify outcome.
+* **onVerifyFailure** — Runs when verification throws. It does not run for a facilitator response with `isValid: false`. Return `{ recovered: true, result }` to override. Errors thrown by this hook are isolated: they are logged and skipped.
+* **onBeforeSettle** — Runs before settlement. Return `{ abort: true, reason }` to reject, or `{ skip: true, result }` to use a locally produced settlement result. A throwing hook fails closed: settlement is rejected before the facilitator is called.
+* **onAfterSettle** — Runs after successful settlement. Returning an `AfterSettleAbortError` (Go: `x402.NewAfterSettleAbort(reason, message)`) fails the settle closed — the response reports `success: false` while preserving the transaction hash, amount, payer, and any onchain extra. Use this when the onchain transaction confirmed but a critical post-settle step (such as persisting a voucher) failed and you want to surface the failure to the client. All other errors from this hook are non-fatal and are logged.
+* **onSettleFailure** — Runs on settlement failure after the facilitator was reached. It does not run for failures before the facilitator is called (e.g. a `onBeforeSettle` abort or payload enrichment error) — those dispatch `onVerifiedPaymentCanceled` instead. Return `{ recovered: true, result }` to override.
+* **onVerifiedPaymentCanceled** — Runs when a verified payment is not settled. Triggered when the protected handler throws or returns an error response (`handler_threw`, `handler_failed`), when an `onAfterVerify` hook aborts (`after_verify_aborted`), or when settlement fails before reaching the facilitator — for example a `onBeforeSettle` abort or `enrichSettlementPayload` error (`settlement_preflight_failed`). The context includes a `verify_result` field (Python: `verify_result`, TypeScript/Go: `verifyResult`) that is set when the reason is `after_verify_aborted`.
 
 #### Settlement phases and multi-settle flows
 
@@ -365,8 +365,12 @@ Register hooks for HTTP-specific payment required handling. Use cases include tr
 
 Register hooks on the facilitator for verification and settlement lifecycle events. Use cases include populating a bazaar discovery catalog, compliance checks or collecting metrics across all processed payments.
 
-* **onBeforeVerify / onAfterVerify / onVerifyFailure** — Same pattern as server hooks.
-* **onBeforeSettle / onAfterSettle / onSettleFailure** — Same pattern as server hooks.
+* **onBeforeVerify** — Runs before payment verification. Return `{ abort: true, reason, message? }` to reject. The optional `message` is forwarded to `invalidMessage` in the verify response. A throwing hook fails closed: verification is stopped before the scheme facilitator is called.
+* **onAfterVerify** — Runs after verification returns a result, including when verify returns `isValid: false`. A thrown verification error uses `onVerifyFailure` instead. Errors thrown by this hook are isolated: they are logged and skipped so they cannot change the verify outcome.
+* **onVerifyFailure** — Runs when verification throws. It does not run for a result with `isValid: false` — use `onAfterVerify` for that case. Return `{ recovered: true, result }` to override. Errors thrown by this hook are isolated: they are logged and skipped.
+* **onBeforeSettle** — Runs before settlement. Return `{ abort: true, reason, message? }` to reject. The optional `message` is forwarded to `errorMessage` in the settle response (`success: false`). A throwing hook fails closed: settlement is stopped before the scheme facilitator is called.
+* **onAfterSettle** — Runs after successful settlement. Errors thrown by this hook are isolated: they are logged and skipped so a failing observer cannot convert a successful onchain settlement into an error response or trigger `onSettleFailure`.
+* **onSettleFailure** — Runs on settlement failure. Return `{ recovered: true, result }` to override. Errors thrown by this hook are isolated: they are logged and skipped.
 
 <Tabs>
   <Tab title="TypeScript">
@@ -492,6 +496,31 @@ Register hooks on the MCP client for payment lifecycle events specific to tool c
       });
     ```
   </Tab>
+  <Tab title="Python">
+    ```python
+    from x402.mcp import wrap_mcp_client_with_payment
+
+    x402_mcp = wrap_mcp_client_with_payment(
+        mcp_client,
+        payment_client,
+        on_payment_required=lambda ctx: True,  # Return False to abort
+        on_before_payment=lambda ctx: None,
+        on_after_payment=lambda ctx: None,
+    )
+    ```
+
+    `payment_made` on a tool result records that a payment payload was submitted,
+    including cases where settlement is pending or failed. It does not prove
+    settlement. `payment_response` and `AfterPaymentContext.settle_response`
+    contain only successful receipts after core response processing; failed
+    receipt details remain in `raw_result` and reach `on_payment_response` hooks
+    for recovery.
+
+    `call_tool` and `call_tool_with_payment` raise `PaymentResponseError` when
+    core receipt processing fails. Its `result` retains the paid tool output and
+    its `__cause__` retains the processing error. Resolve an uncertain payment
+    outcome before submitting another payment.
+  </Tab>
   <Tab title="Go">
     ```go
     import x402mcp "github.com/x402-foundation/x402/go/v2/mcp"
@@ -524,8 +553,8 @@ Register hooks on the MCP client for payment lifecycle events specific to tool c
 
 Register hooks in the `PaymentWrapperConfig.hooks` object when creating a payment wrapper. Use cases include rate limiting, logging tool executions or sending payment receipts.
 
-* **onBeforeExecution** — Runs after payment verification, before the tool handler executes. Return `false` to abort execution.
-* **onAfterExecution** — Runs after the tool handler returns, before settlement.
+* **onBeforeExecution** — Runs after payment verification, before the tool handler executes. Return `false` to abort execution. May set the settlement amount within its verified ceiling.
+* **onAfterExecution** — Runs after the tool handler returns, before settlement. May set the settlement amount within its verified ceiling.
 * **onAfterSettlement** — Runs after successful payment settlement.
 
 <Tabs>
@@ -550,6 +579,36 @@ Register hooks in the `PaymentWrapperConfig.hooks` object when creating a paymen
       },
     });
     ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from x402.mcp import create_payment_wrapper, PaymentWrapperConfig, PaymentWrapperHooks
+
+    paid = create_payment_wrapper(
+        resource_server,
+        PaymentWrapperConfig(
+            accepts=accepts,
+            hooks=PaymentWrapperHooks(
+                on_before_execution=lambda ctx: True,  # Return False to abort
+                on_after_execution=lambda ctx: None,
+                on_after_settlement=lambda ctx: None,
+            ),
+        ),
+    )
+    ```
+
+    `on_before_execution` and `on_after_execution` may set the settlement amount
+    within its verified ceiling. Amounts accept ASCII decimal strings or
+    nonnegative integers; integers are converted to decimal strings. Booleans,
+    floats, negative amounts, and amounts above the ceiling are rejected with
+    consistent cancellation handling. Invalid metering never falls back to
+    charging the ceiling.
+
+    If cancellation fails after a metering failure or a failed tool result, all
+    wrappers including FastMCP return an error result marked
+    `Payment cancellation outcome unknown` with no payment-required offer.
+    Failed cancellation receipts appear in `structuredContent` for client
+    recovery; they are never placed in success metadata.
   </Tab>
   <Tab title="Go">
     ```go

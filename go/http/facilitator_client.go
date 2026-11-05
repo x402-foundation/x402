@@ -267,7 +267,7 @@ func NewHTTPFacilitatorClient(config *FacilitatorConfig) *HTTPFacilitatorClient 
 		config = &FacilitatorConfig{}
 	}
 
-	url := config.URL
+	url := strings.TrimRight(config.URL, "/")
 	if url == "" {
 		url = DefaultFacilitatorURL
 	}

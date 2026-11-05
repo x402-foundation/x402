@@ -192,6 +192,7 @@ var OperatorEIP712Domain = evm.TypedDataDomain{
 // CaptureTypesV1_1 defines EIP-712 types for the Capture operator signature on
 // v1.1 deployments (absolute feeAmount).
 var CaptureTypesV1_1 = map[string][]evm.TypedDataField{
+	"EIP712Domain": evm.EIP712DomainTypesWithVersion,
 	"Capture": {
 		{Name: "paymentInfoHash", Type: "bytes32"},
 		{Name: "amount", Type: "uint256"},
@@ -205,6 +206,7 @@ var CaptureTypesV1_1 = map[string][]evm.TypedDataField{
 // CaptureTypesV1_0 defines EIP-712 types for the Capture operator signature on
 // v1.0 deployments (feeBps).
 var CaptureTypesV1_0 = map[string][]evm.TypedDataField{
+	"EIP712Domain": evm.EIP712DomainTypesWithVersion,
 	"Capture": {
 		{Name: "paymentInfoHash", Type: "bytes32"},
 		{Name: "amount", Type: "uint256"},
@@ -218,6 +220,7 @@ var CaptureTypesV1_0 = map[string][]evm.TypedDataField{
 // VoidTypes defines EIP-712 types for the Void operator signature (identical
 // across v1.0 and v1.1 — void has no fee parameter).
 var VoidTypes = map[string][]evm.TypedDataField{
+	"EIP712Domain": evm.EIP712DomainTypesWithVersion,
 	"Void": {
 		{Name: "paymentInfoHash", Type: "bytes32"},
 	},
@@ -226,6 +229,7 @@ var VoidTypes = map[string][]evm.TypedDataField{
 // RefundTypes defines EIP-712 types for the Refund operator signature (identical across
 // v1.0 and v1.1; the refund collector is bound, the funding address is not).
 var RefundTypes = map[string][]evm.TypedDataField{
+	"EIP712Domain": evm.EIP712DomainTypesWithVersion,
 	"Refund": {
 		{Name: "paymentInfoHash", Type: "bytes32"},
 		{Name: "amount", Type: "uint256"},
@@ -238,6 +242,7 @@ var RefundTypes = map[string][]evm.TypedDataField{
 // ChargeTypesV1_1 defines EIP-712 types for the Charge operator signature on v1.1
 // deployments (absolute feeAmount). collectorData is signed as its keccak256 hash.
 var ChargeTypesV1_1 = map[string][]evm.TypedDataField{
+	"EIP712Domain": evm.EIP712DomainTypesWithVersion,
 	"Charge": {
 		{Name: "paymentInfoHash", Type: "bytes32"},
 		{Name: "amount", Type: "uint256"},
@@ -251,6 +256,7 @@ var ChargeTypesV1_1 = map[string][]evm.TypedDataField{
 // ChargeTypesV1_0 defines EIP-712 types for the Charge operator signature on v1.0
 // deployments (feeBps).
 var ChargeTypesV1_0 = map[string][]evm.TypedDataField{
+	"EIP712Domain": evm.EIP712DomainTypesWithVersion,
 	"Charge": {
 		{Name: "paymentInfoHash", Type: "bytes32"},
 		{Name: "amount", Type: "uint256"},

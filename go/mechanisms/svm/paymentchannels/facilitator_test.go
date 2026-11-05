@@ -156,6 +156,44 @@ func TestSubmitChannelTransactionWrapsSimulationFailure(t *testing.T) {
 	assert.Equal(t, 0, signer.sends)
 }
 
+func TestSubmitChannelTransactionBuildsTheConfiguredFacilitatorVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		version int
+		want    solana.MessageVersion
+	}{
+		{"zero value is v0", 0, solana.MessageVersionV0},
+		{"explicit v0", FacilitatorTransactionVersion0, solana.MessageVersionV0},
+		{"explicit v1", FacilitatorTransactionVersion1, solana.MessageVersionV1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			feePayer := testKeypair(t).PublicKey()
+			signer := &recordingChannelSigner{sent: solana.Signature{4}}
+			_, err := SubmitChannelTransactionWithSigner(
+				t.Context(), signer, signer, feePayer, svm.SolanaDevnetCAIP2,
+				[]solana.Instruction{memoInstruction("settle")},
+				SubmitSettleOptions{FacilitatorTransactionVersion: test.version},
+			)
+			require.NoError(t, err)
+			require.Len(t, signer.sentTxs, 1)
+			assert.Equal(t, test.want, signer.sentTxs[0].Message.GetVersion())
+		})
+	}
+}
+
+func TestSubmitChannelTransactionRejectsAnUnsupportedFacilitatorVersion(t *testing.T) {
+	feePayer := testKeypair(t).PublicKey()
+	signer := &recordingChannelSigner{}
+	_, err := SubmitChannelTransactionWithSigner(
+		t.Context(), signer, signer, feePayer, svm.SolanaDevnetCAIP2,
+		[]solana.Instruction{memoInstruction("settle")},
+		SubmitSettleOptions{FacilitatorTransactionVersion: 2},
+	)
+	require.ErrorContains(t, err, "unsupported facilitator transaction version 2")
+	assert.Equal(t, 0, signer.sends)
+}
+
 type staticChannelRPC struct {
 	data  []byte
 	calls int
@@ -173,6 +211,7 @@ func (s *staticChannelRPC) GetAccountInfo(
 
 type recordingChannelSigner struct {
 	sent        solana.Signature
+	sentTxs     []*solana.Transaction
 	simErr      error
 	confirmErr  error
 	simulations int
@@ -193,8 +232,9 @@ func (s *recordingChannelSigner) SimulateTransaction(context.Context, *solana.Tr
 	return s.simErr
 }
 
-func (s *recordingChannelSigner) SendTransaction(context.Context, *solana.Transaction, string) (solana.Signature, error) {
+func (s *recordingChannelSigner) SendTransaction(_ context.Context, tx *solana.Transaction, _ string) (solana.Signature, error) {
 	s.sends++
+	s.sentTxs = append(s.sentTxs, tx)
 	return s.sent, nil
 }
 

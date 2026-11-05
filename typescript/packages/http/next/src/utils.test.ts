@@ -21,12 +21,14 @@ let mockInitialize: ReturnType<typeof vi.fn>;
 // Mock @x402/core/server
 vi.mock("@x402/core/server", async importOriginal => {
   const actual = await importOriginal<typeof import("@x402/core/server")>();
-  const MockHTTPResourceServer = vi.fn().mockImplementation(() => ({
-    initialize: mockInitialize,
-    registerPaywallProvider: vi.fn(),
-    processSettlement: vi.fn(),
-    requiresPayment: vi.fn().mockReturnValue(true),
-  }));
+  const MockHTTPResourceServer = vi.fn().mockImplementation(function () {
+    return {
+      initialize: mockInitialize,
+      registerPaywallProvider: vi.fn(),
+      processSettlement: vi.fn(),
+      requiresPayment: vi.fn().mockReturnValue(true),
+    };
+  });
   return {
     ...actual,
     FacilitatorResponseError: class FacilitatorResponseError extends Error {
@@ -262,7 +264,7 @@ describe("createRequestContext", () => {
 });
 
 describe("handlePaymentError", () => {
-  it("returns HTML response when isHtml is true", () => {
+  it("returns HTML response when isHtml is true", async () => {
     const response = handlePaymentError({
       status: 402,
       body: "<html>Paywall</html>",
@@ -273,6 +275,7 @@ describe("handlePaymentError", () => {
     expect(response.status).toBe(402);
     expect(response.headers.get("Content-Type")).toBe("text/html");
     expect(response.headers.get("X-Custom")).toBe("value");
+    expect(await response.text()).toBe("<html>Paywall</html>");
   });
 
   it("returns JSON response when isHtml is false", async () => {

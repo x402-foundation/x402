@@ -221,8 +221,9 @@ def matches_network_pattern(network: Network, pattern: Network) -> bool:
 def derive_network_pattern(networks: list[Network]) -> Network:
     """Derive common pattern from list of networks.
 
-    If all networks share same namespace, returns wildcard pattern.
-    Otherwise returns first network.
+    A single network stays an exact match. Several networks that share one
+    namespace return that namespace's wildcard. Mixed namespaces return the
+    first network.
 
     Args:
         networks: List of networks.
@@ -234,6 +235,8 @@ def derive_network_pattern(networks: list[Network]) -> Network:
         ValueError: If networks list is empty.
 
     Examples:
+        >>> derive_network_pattern(["eip155:8453"])
+        'eip155:8453'
         >>> derive_network_pattern(["eip155:8453", "eip155:84532"])
         'eip155:*'
         >>> derive_network_pattern(["eip155:8453", "solana:mainnet"])
@@ -241,6 +244,8 @@ def derive_network_pattern(networks: list[Network]) -> Network:
     """
     if not networks:
         raise ValueError("At least one network required")
+    if len(networks) == 1:
+        return networks[0]
 
     namespaces = {n.split(":")[0] for n in networks}
     if len(namespaces) == 1:

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PaymentRequirements } from "@x402/core/types";
 import {
+  ALGORAND_GENESIS_HASHES,
   ALGORAND_NETWORK_REFS,
   choosePaymentRequirement,
   getNetworkDisplayName,
@@ -144,17 +145,22 @@ describe("paywallUtils", () => {
   });
 
   describe("resolveAlgorandGenesisRef", () => {
-    it("returns full genesis hashes for canonical and legacy refs", () => {
+    it("returns full genesis hashes for canonical refs", () => {
       expect(resolveAlgorandGenesisRef(`algorand:${ALGORAND_NETWORK_REFS.MAINNET}`)).toBe(
-        ALGORAND_NETWORK_REFS.MAINNET,
+        ALGORAND_GENESIS_HASHES.MAINNET,
       );
-      expect(resolveAlgorandGenesisRef("algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k")).toBe(
-        ALGORAND_NETWORK_REFS.MAINNET,
+      expect(resolveAlgorandGenesisRef(`algorand:${ALGORAND_NETWORK_REFS.TESTNET}`)).toBe(
+        ALGORAND_GENESIS_HASHES.TESTNET,
       );
-      expect(resolveAlgorandGenesisRef("algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe")).toBe(
-        ALGORAND_NETWORK_REFS.TESTNET,
+    });
+
+    it("rejects unsupported and full-hash network identifiers", () => {
+      expect(() => resolveAlgorandGenesisRef("algorand:unknown-ref")).toThrow(
+        "Unsupported Algorand network",
       );
-      expect(resolveAlgorandGenesisRef("algorand:unknown-ref")).toBe("unknown-ref");
+      expect(() =>
+        resolveAlgorandGenesisRef(`algorand:${ALGORAND_GENESIS_HASHES.TESTNET}`),
+      ).toThrow("Unsupported Algorand network");
     });
   });
 
@@ -193,6 +199,8 @@ describe("paywallUtils", () => {
     });
 
     it("rejects non-Algorand networks", () => {
+      expect(isAvmNetwork(`algorand:${ALGORAND_GENESIS_HASHES.TESTNET}`)).toBe(false);
+      expect(isAvmNetwork("algorand:unknown")).toBe(false);
       expect(isAvmNetwork("eip155:8453")).toBe(false);
       expect(isAvmNetwork("solana:5eykt")).toBe(false);
       expect(isAvmNetwork("unknown")).toBe(false);
@@ -218,6 +226,7 @@ describe("paywallUtils", () => {
     it("identifies Algorand testnet and rejects Algorand mainnet", () => {
       expect(isTestnetNetwork(`algorand:${ALGORAND_NETWORK_REFS.TESTNET}`)).toBe(true);
       expect(isTestnetNetwork(`algorand:${ALGORAND_NETWORK_REFS.MAINNET}`)).toBe(false);
+      expect(isTestnetNetwork(`algorand:${ALGORAND_GENESIS_HASHES.TESTNET}`)).toBe(false);
     });
 
     it("rejects unknown network formats", () => {

@@ -43,6 +43,9 @@ export type {
 export type { ExactSvmPayloadV1, ExactSvmPayloadV2, UptoSvmPayloadV2 } from "./types";
 export { isUptoSvmPayload } from "./types";
 
+// The payment-channels treasury owner of each deployed program, for
+// facilitators' paymentChannelsTreasuryOwner override.
+export { getPaymentChannelsTreasuryOwner } from "./payment-channels/onchain";
 export {
   discoverChannelsByRentPayer,
   CHANNEL_ACCOUNT_SIZE,
@@ -96,6 +99,7 @@ export * from "./constants";
 
 // Export utilities
 export * from "./utils";
+export * from "./transactionV1";
 
 export {
   DEFAULT_ASSETS,
@@ -106,3 +110,47 @@ export {
   USDC_TESTNET_ADDRESS,
   type SvmDefaultAsset,
 } from "./defaultAssets";
+
+// Payment-channels primitives shared by the `upto` and `batch-settlement`
+// schemes: the channel PDA, the distribution hash an open commits, and the
+// 50-byte voucher message.
+export { findPaymentChannelPda } from "./payment-channels/open";
+export { getChannelDistributionHash } from "./payment-channels/facilitator";
+export { encodeVoucherMessageBytes } from "./payment-channels/voucher";
+
+// Batch-settlement codecs, wire guards and single-shot client entry points
+export { deriveBatchChannelId, encodeBatchVoucherMessage } from "./batch-settlement/codec";
+export {
+  encodeReceiverBindingMemo,
+  parseReceiverBindingMemo,
+  RECEIVER_BINDING_MEMO_PREFIX,
+} from "./batch-settlement/receiverBinding";
+export {
+  isBatchChannelState,
+  isBatchExtra,
+  isBatchPaymentPayloadEnvelope,
+  isBatchPaymentRequired,
+  isBatchRequirements,
+  isBatchSettlementResponse,
+  isBatchVoucherState,
+  isTransactionVersionList,
+} from "./batch-settlement/types";
+export type {
+  BatchPaymentPayloadEnvelope,
+  BatchPaymentRequired,
+  BatchRequirements,
+  BatchSettlementResponse,
+  BatchVoucherState,
+} from "./batch-settlement/types";
+export {
+  checkCorrectiveState,
+  type AdoptableCorrectiveState,
+} from "./batch-settlement/client/corrective";
+export {
+  buildBatchRefundPayload,
+  buildBatchTopUpPayload,
+  buildBatchVoucherPayload,
+  type BatchBuildArgs,
+  type BatchTrackedChannel,
+  type BatchTransactionBuildArgs,
+} from "./batch-settlement/client/builders";
