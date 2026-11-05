@@ -1875,5 +1875,3 @@ func (s *x402ResourceServer) BuildPaymentRequirementsFromConfig(ctx context.Cont
 
 	return []types.PaymentRequirements{requirement}, nil
 }
-
-// Helper functions use the generic findSchemesByNetwork from utils.go
