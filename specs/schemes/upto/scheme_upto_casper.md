@@ -364,7 +364,7 @@ A reverted `settle`, whether simulated or executed, carries a Casper user error 
 
 ### Contract Addresses
 
-The canonical Permit2 and `x402UptoPermit2Proxy` package hashes are per-network constants of the SDKs and facilitators, not wire fields. Casper has no `CREATE2`, so each network has its own deployment; the package hashes are published with the contracts in [Permit2 for Casper](https://github.com/casper-ecosystem/casper-permit2). Implementations MUST use the canonical package hashes for the selected `network` and MUST NOT accept a Permit2 or proxy address from the payload or `extra`.
+The canonical Permit2 and `x402UptoPermit2Proxy` package hashes are per-network constants of the SDKs and facilitators, not wire fields. Casper has no `CREATE2`, so each network has its own deployment; the package hashes are published with the contracts in [Permit2 for Casper](https://github.com/casper-ecosystem/permit2). Implementations MUST use the canonical package hashes for the selected `network` and MUST NOT accept a Permit2 or proxy address from the payload or `extra`.
 
 ### EIP-712 Typed Data
 
