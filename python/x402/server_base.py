@@ -55,6 +55,7 @@ from .schemas import (
     SchemeNotFoundError,
     ServerPaymentRequiredContext,
     SettleContext,
+    SettleError,
     SettleFailureContext,
     SettlePhase,
     SettleResponse,
@@ -75,6 +76,12 @@ from .schemas import (
 )
 
 logger = logging.getLogger("x402")
+
+
+def _sync_server_rejected_async_hook(error: Exception) -> bool:
+    """True when the sync server refused a coroutine hook, not when a hook raised."""
+    return isinstance(error, TypeError) and str(error).startswith("Async hooks are not supported")
+
 
 if TYPE_CHECKING:
     pass
@@ -1411,13 +1418,27 @@ class x402ResourceServerBase:
         extension_keys = list(declared.keys())
 
         # Execute before hooks
-        for _label, hook in get_labeled_server_hooks(
+        for label, hook in get_labeled_server_hooks(
             "before_verify",
             self,
             extension_keys,
             matched_scheme,
         ):
-            result = yield ("before", hook, context)
+            try:
+                result = yield ("before", hook, context)
+            except Exception as error:
+                if _sync_server_rejected_async_hook(error):
+                    raise
+                # Payer-facing text stays fixed. The thrown message can carry an
+                # RPC URL, path, or storage error; the warning log has the detail.
+                self._warn_resource_server_hook_failure("beforeVerify", label, error)
+                return ResourceVerifyResponse(
+                    verify=VerifyResponse(
+                        is_valid=False,
+                        invalid_reason="before_verify_hook_error",
+                        invalid_message="before verify hook failed",
+                    )
+                )
             if isinstance(result, AbortResult):
                 from .schemas import PaymentAbortedError
 
@@ -1604,13 +1625,26 @@ class x402ResourceServerBase:
         extension_keys = list(declared.keys())
 
         # Execute before hooks
-        for _label, hook in get_labeled_server_hooks(
+        for label, hook in get_labeled_server_hooks(
             "before_settle",
             self,
             extension_keys,
             matched_scheme,
         ):
-            result = yield ("before", hook, context)
+            try:
+                result = yield ("before", hook, context)
+            except SettleError:
+                raise
+            except Exception as error:
+                if _sync_server_rejected_async_hook(error):
+                    raise
+                # Same as before_verify: do not echo the thrown message to the payer.
+                self._warn_resource_server_hook_failure("beforeSettle", label, error)
+                raise SettleError(
+                    "before_settle_hook_error",
+                    "before settle hook failed",
+                    transaction="",
+                ) from None
             if isinstance(result, AbortResult):
                 from .schemas import PaymentAbortedError
 
