@@ -553,8 +553,8 @@ Register hooks on the MCP client for payment lifecycle events specific to tool c
 
 Register hooks in the `PaymentWrapperConfig.hooks` object when creating a payment wrapper. Use cases include rate limiting, logging tool executions or sending payment receipts.
 
-* **onBeforeExecution** — Runs after payment verification, before the tool handler executes. Return `false` to abort execution.
-* **onAfterExecution** — Runs after the tool handler returns, before settlement.
+* **onBeforeExecution** — Runs after payment verification, before the tool handler executes. Return `false` to abort execution. May set the settlement amount within its verified ceiling.
+* **onAfterExecution** — Runs after the tool handler returns, before settlement. May set the settlement amount within its verified ceiling.
 * **onAfterSettlement** — Runs after successful payment settlement.
 
 <Tabs>
@@ -579,6 +579,36 @@ Register hooks in the `PaymentWrapperConfig.hooks` object when creating a paymen
       },
     });
     ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from x402.mcp import create_payment_wrapper, PaymentWrapperConfig, PaymentWrapperHooks
+
+    paid = create_payment_wrapper(
+        resource_server,
+        PaymentWrapperConfig(
+            accepts=accepts,
+            hooks=PaymentWrapperHooks(
+                on_before_execution=lambda ctx: True,  # Return False to abort
+                on_after_execution=lambda ctx: None,
+                on_after_settlement=lambda ctx: None,
+            ),
+        ),
+    )
+    ```
+
+    `on_before_execution` and `on_after_execution` may set the settlement amount
+    within its verified ceiling. Amounts accept ASCII decimal strings or
+    nonnegative integers; integers are converted to decimal strings. Booleans,
+    floats, negative amounts, and amounts above the ceiling are rejected with
+    consistent cancellation handling. Invalid metering never falls back to
+    charging the ceiling.
+
+    If cancellation fails after a metering failure or a failed tool result, all
+    wrappers including FastMCP return an error result marked
+    `Payment cancellation outcome unknown` with no payment-required offer.
+    Failed cancellation receipts appear in `structuredContent` for client
+    recovery; they are never placed in success metadata.
   </Tab>
   <Tab title="Go">
     ```go
