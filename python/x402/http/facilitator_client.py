@@ -14,8 +14,10 @@ from pydantic import ValidationError
 from ..schemas import (
     PaymentPayload,
     PaymentRequirements,
+    SettleError,
     SettleResponse,
     SupportedResponse,
+    VerifyError,
     VerifyResponse,
 )
 from ..schemas.v1 import PaymentPayloadV1, PaymentRequirementsV1
@@ -130,6 +132,43 @@ def _attach_extension_responses(
     return result.model_copy(update={"extension_responses": header_obj})
 
 
+def _parse_payment_response(
+    body: bytes,
+    response: Any,
+    model_cls: type[_ResponseWithSidechannelT],
+    operation: str,
+) -> _ResponseWithSidechannelT:
+    """Preserve structured facilitator failures as typed payment errors."""
+    try:
+        result = _parse_facilitator_response(body, model_cls, operation)
+    except FacilitatorResponseError as exc:
+        if response.status_code == 200:
+            raise
+        raise ValueError(
+            f"Facilitator {operation} failed ({response.status_code}): {_decode_error_body(body)}"
+        ) from exc
+
+    result = _attach_extension_responses(result, response)
+    if response.status_code != 200:
+        if isinstance(result, VerifyResponse):
+            raise VerifyError(
+                result.invalid_reason or "Verification failed",
+                result.invalid_message,
+                result.payer,
+                response=result,
+                status_code=response.status_code,
+            )
+        raise SettleError(
+            result.error_reason or "Settlement failed",
+            result.error_message,
+            result.transaction,
+            result.payer,
+            response=result,
+            status_code=response.status_code,
+        )
+    return result
+
+
 # ============================================================================
 # Async HTTP Facilitator Client (Default)
 # ============================================================================
@@ -199,6 +238,7 @@ class HTTPFacilitatorClient(HTTPFacilitatorClientBase):
 
         Raises:
             httpx.HTTPError: If request fails.
+            VerifyError: If a non-200 response contains a valid payment response.
             ValueError: If response is invalid.
         """
         return await self._verify_http(
@@ -223,6 +263,7 @@ class HTTPFacilitatorClient(HTTPFacilitatorClientBase):
 
         Raises:
             httpx.HTTPError: If request fails.
+            SettleError: If a non-200 response contains a valid payment response.
             ValueError: If response is invalid.
         """
         return await self._settle_http(
@@ -333,13 +374,7 @@ class HTTPFacilitatorClient(HTTPFacilitatorClientBase):
         response = await client.send(request, stream=True)
         body = await _read_async_response_body(response)
 
-        if response.status_code != 200:
-            raise ValueError(
-                f"Facilitator verify failed ({response.status_code}): {_decode_error_body(body)}"
-            )
-
-        result = _parse_facilitator_response(body, VerifyResponse, "verify")
-        return _attach_extension_responses(result, response)
+        return _parse_payment_response(body, response, VerifyResponse, "verify")
 
     async def _settle_http(
         self,
@@ -359,13 +394,7 @@ class HTTPFacilitatorClient(HTTPFacilitatorClientBase):
         response = await client.send(request, stream=True)
         body = await _read_async_response_body(response)
 
-        if response.status_code != 200:
-            raise ValueError(
-                f"Facilitator settle failed ({response.status_code}): {_decode_error_body(body)}"
-            )
-
-        result = _parse_facilitator_response(body, SettleResponse, "settle")
-        return _attach_extension_responses(result, response)
+        return _parse_payment_response(body, response, SettleResponse, "settle")
 
 
 # ============================================================================
@@ -430,6 +459,7 @@ class HTTPFacilitatorClientSync(HTTPFacilitatorClientBase):
 
         Raises:
             httpx.HTTPError: If request fails.
+            VerifyError: If a non-200 response contains a valid payment response.
             ValueError: If response is invalid.
         """
         return self._verify_http(
@@ -454,6 +484,7 @@ class HTTPFacilitatorClientSync(HTTPFacilitatorClientBase):
 
         Raises:
             httpx.HTTPError: If request fails.
+            SettleError: If a non-200 response contains a valid payment response.
             ValueError: If response is invalid.
         """
         return self._settle_http(
@@ -561,13 +592,7 @@ class HTTPFacilitatorClientSync(HTTPFacilitatorClientBase):
         response = client.send(request, stream=True)
         body = _read_sync_response_body(response)
 
-        if response.status_code != 200:
-            raise ValueError(
-                f"Facilitator verify failed ({response.status_code}): {_decode_error_body(body)}"
-            )
-
-        result = _parse_facilitator_response(body, VerifyResponse, "verify")
-        return _attach_extension_responses(result, response)
+        return _parse_payment_response(body, response, VerifyResponse, "verify")
 
     def _settle_http(
         self,
@@ -587,10 +612,4 @@ class HTTPFacilitatorClientSync(HTTPFacilitatorClientBase):
         response = client.send(request, stream=True)
         body = _read_sync_response_body(response)
 
-        if response.status_code != 200:
-            raise ValueError(
-                f"Facilitator settle failed ({response.status_code}): {_decode_error_body(body)}"
-            )
-
-        result = _parse_facilitator_response(body, SettleResponse, "settle")
-        return _attach_extension_responses(result, response)
+        return _parse_payment_response(body, response, SettleResponse, "settle")

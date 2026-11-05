@@ -55,6 +55,7 @@ from .schemas import (
     SchemeNotFoundError,
     ServerPaymentRequiredContext,
     SettleContext,
+    SettleError,
     SettleFailureContext,
     SettlePhase,
     SettleResponse,
@@ -347,16 +348,18 @@ class FacilitatorClientSync(Protocol):
 # settle generator (see `settle_payment` in server.py, both sync and async).
 
 
-def is_retryable_settlement_pending(result: SettleResponse) -> bool:
+def is_retryable_settlement_pending(result: SettleResponse | SettleError) -> bool:
     """Report whether a settle result is a retryable settlement_pending.
 
     True when the result is a non-terminal settlement_pending failure that
     carries a broadcast transaction hash to reconcile against.
     """
+    if isinstance(result, SettleError):
+        success = result.response is not None and result.response.success
+    else:
+        success = result.success
     return (
-        not result.success
-        and result.error_reason == ERR_SETTLEMENT_PENDING
-        and bool(result.transaction)
+        not success and result.error_reason == ERR_SETTLEMENT_PENDING and bool(result.transaction)
     )
 
 
@@ -369,9 +372,14 @@ def settle_with_pending_retry(
 
     See the module-level comment above for the retry semantics.
     """
-    result = client.settle(payload, requirements)
-    if not is_retryable_settlement_pending(result):
-        return result
+    try:
+        result = client.settle(payload, requirements)
+    except SettleError as error:
+        if not is_retryable_settlement_pending(error):
+            raise
+    else:
+        if not is_retryable_settlement_pending(result):
+            return result
     return client.settle(payload, requirements)
 
 
@@ -381,9 +389,14 @@ async def settle_with_pending_retry_async(
     requirements: PaymentRequirements | PaymentRequirementsV1,
 ) -> SettleResponse:
     """Async counterpart of settle_with_pending_retry."""
-    result = await client.settle(payload, requirements)
-    if not is_retryable_settlement_pending(result):
-        return result
+    try:
+        result = await client.settle(payload, requirements)
+    except SettleError as error:
+        if not is_retryable_settlement_pending(error):
+            raise
+    else:
+        if not is_retryable_settlement_pending(result):
+            return result
     return await client.settle(payload, requirements)
 
 
