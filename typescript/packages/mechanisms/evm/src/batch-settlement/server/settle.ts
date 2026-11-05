@@ -100,6 +100,7 @@ export async function handleBeforeSettle(
     recoverFromSnapshot: false,
     now,
     localVerify,
+    map: channel => ({ ...channel, network: requirements.network || channel.network }),
   });
   if (
     outcome.status === "missing" &&
@@ -113,6 +114,7 @@ export async function handleBeforeSettle(
       snapshot,
       now,
       localVerify,
+      map: channel => ({ ...channel, network: requirements.network || channel.network }),
     });
   }
 
@@ -357,6 +359,7 @@ export async function handleAfterSettle(
         return {
           ...existing,
           ...snapshot,
+          network: requirements.network || existing.network,
           onchainSyncedAt: now,
           lastRequestTimestamp: now,
         };
@@ -425,6 +428,7 @@ export async function handleAfterSettle(
         return {
           channelId,
           channelConfig: config,
+          network: requirements.network || existing.network,
           chargedCumulativeAmount: chargedActual,
           signedMaxClaimable,
           signature: raw.voucher.signature,

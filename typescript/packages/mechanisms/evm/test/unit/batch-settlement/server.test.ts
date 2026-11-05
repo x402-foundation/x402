@@ -2611,6 +2611,7 @@ describe("BatchSettlementEvmScheme — onAfterVerify", () => {
     expect(await storage.get(channelId)).toBeUndefined();
     expect(await storage.isHeld(channelId)).toBe(true);
     expect(server.readRequestContext(paymentPayload)?.channelSnapshot?.balance).toBe("10000");
+    expect(server.readRequestContext(paymentPayload)?.channelSnapshot?.network).toBe(NETWORK);
   });
 
   it("does not create channel record when result.isValid is false", async () => {
@@ -2841,6 +2842,7 @@ describe("BatchSettlementEvmScheme — onBeforeSettle", () => {
     const created = await storage.get(channelId);
     expect(created?.chargedCumulativeAmount).toBe("1000");
     expect(created?.balance).toBe("10000");
+    expect(created?.network).toBe(NETWORK);
     expect(created?.onchainSyncedAt).toBeGreaterThan(0);
     expect(await storage.isHeld(channelId)).toBe(false);
     expect(server.readRequestContext(paymentPayload)).toBeUndefined();
@@ -2958,6 +2960,7 @@ describe("BatchSettlementEvmScheme — onBeforeSettle", () => {
     });
 
     const updated = await storage.get(channelId);
+    expect(updated?.network).toBe(NETWORK);
     expect(updated?.chargedCumulativeAmount).toBe("1000");
     expect(updated?.signedMaxClaimable).toBe("1000");
     expect(updated?.onchainSyncedAt).toBeGreaterThan(123);
@@ -3416,6 +3419,7 @@ describe("BatchSettlementEvmScheme — onAfterSettle", () => {
     } as never);
 
     const updated = await storage.get(channelId);
+    expect(updated?.network).toBe(NETWORK);
     expect(updated).toBeDefined();
     expect(updated?.balance).toBe("8000");
     expect(updated?.refundNonce).toBe(3);
@@ -3445,44 +3449,49 @@ describe("BatchSettlementEvmScheme — onAfterSettle", () => {
     expect(await storage.get(channelId)).toBeUndefined();
   });
 
-  it("charges a deposit when no admission lock is present", async () => {
-    const config = buildChannelConfig();
-    const channelId = computeChannelId(config);
-    await storeChannel(storage, channelId, {
-      channelId,
-      channelConfig: config,
-      chargedCumulativeAmount: "0",
-      signedMaxClaimable: "0",
-      signature: "0x",
-      balance: "0",
-      totalClaimed: "0",
-      withdrawRequestedAt: 0,
-      refundNonce: 0,
-      lastRequestTimestamp: 0,
-    });
+  it.each([NETWORK, ""])(
+    "charges a deposit when no admission lock is present (network: %s)",
+    async network => {
+      const config = buildChannelConfig();
+      const channelId = computeChannelId(config);
+      await storeChannel(storage, channelId, {
+        channelId,
+        network: network ? undefined : NETWORK,
+        channelConfig: config,
+        chargedCumulativeAmount: "0",
+        signedMaxClaimable: "0",
+        signature: "0x",
+        balance: "0",
+        totalClaimed: "0",
+        withdrawRequestedAt: 0,
+        refundNonce: 0,
+        lastRequestTimestamp: 0,
+      });
 
-    await server.schemeHooks.onAfterSettle!({
-      paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
-      requirements: makeRequirements({ amount: "1000" }),
-      result: {
-        success: true,
-        transaction: "0xtx",
-        network: NETWORK,
-        payer: PAYER,
-        extra: {
-          channelState: {
-            channelId,
-            balance: "10000",
-            totalClaimed: "0",
-            withdrawRequestedAt: 0,
-            refundNonce: "0",
+      await server.schemeHooks.onAfterSettle!({
+        paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
+        requirements: makeRequirements({ amount: "1000", network: network as Network }),
+        result: {
+          success: true,
+          transaction: "0xtx",
+          network: NETWORK,
+          payer: PAYER,
+          extra: {
+            channelState: {
+              channelId,
+              balance: "10000",
+              totalClaimed: "0",
+              withdrawRequestedAt: 0,
+              refundNonce: "0",
+            },
           },
-        },
-      } as SettleResponse,
-    } as never);
+        } as SettleResponse,
+      } as never);
 
-    expect((await storage.get(channelId))?.chargedCumulativeAmount).toBe("1000");
-  });
+      expect((await storage.get(channelId))?.chargedCumulativeAmount).toBe("1000");
+      expect((await storage.get(channelId))?.network).toBe(NETWORK);
+    },
+  );
 
   it("aborts MissingChannel when a deposit settle has no row and no verify snapshot", async () => {
     const config = buildChannelConfig();

@@ -29,7 +29,7 @@ export {
   sortChannels,
 } from "./storage";
 export { RedisChannelLockStorage } from "./redisStorage";
-export { BatchSettlementChannelManager } from "./channelManager";
+export { BatchSettlementChannelManager, BatchClaimError } from "./channelManager";
 export {
   CHARGE_COUNTS_METADATA_KEY,
   chargeCountsMetadata,
