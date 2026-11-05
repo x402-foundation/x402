@@ -23,6 +23,16 @@ async function capReturnedPaymentRequired(response: Response): Promise<Response>
 }
 
 /**
+ * Reads a response body from a clone, leaving the original readable by the caller.
+ *
+ * @param response - The paid response
+ * @returns The body bytes
+ */
+async function readCopy(response: Response): Promise<Uint8Array> {
+  return new Uint8Array(await response.clone().arrayBuffer());
+}
+
+/**
  * Enables the payment of APIs using the x402 payment protocol v2.
  *
  * This function wraps the native fetch API to automatically handle 402 Payment Required responses
@@ -150,6 +160,7 @@ export function wrapFetchWithPayment(
       paymentPayload,
       name => secondResponse.headers.get(name),
       secondResponse.status,
+      () => readCopy(secondResponse),
     );
 
     if (result.recovered) {
@@ -173,6 +184,7 @@ export function wrapFetchWithPayment(
         freshPayload,
         name => retryResponse.headers.get(name),
         retryResponse.status,
+        () => readCopy(retryResponse),
       );
       return capReturnedPaymentRequired(retryResponse);
     }
