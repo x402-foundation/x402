@@ -624,7 +624,7 @@ export class x402MCPClient {
         }
         if (hookResult.payment) {
           // Use the hook-provided payment
-          return this.callToolWithPayment(name, args, hookResult.payment, options);
+          return this.callToolWithPayment(name, args, hookResult.payment, options, paymentRequired);
         }
       }
     }
@@ -663,7 +663,7 @@ export class x402MCPClient {
     const paymentPayload = await this._paymentClient.createPaymentPayload(paymentRequired);
 
     // Retry with payment
-    return this.callToolWithPayment(name, args, paymentPayload, options);
+    return this.callToolWithPayment(name, args, paymentPayload, options, paymentRequired);
   }
 
   /**
@@ -679,6 +679,7 @@ export class x402MCPClient {
    * @param options.timeout - Request timeout in milliseconds (overrides accept `maxTimeoutSeconds`)
    * @param options.signal - AbortSignal for cancellation
    * @param options.resetTimeoutOnProgress - If true, progress notifications reset the timeout
+   * @param approvedPaymentRequired - Offer already approved for this payload. A corrective retry signs this offer. When omitted, the payload's accepted requirements are used.
    * @returns The tool result with payment metadata
    */
   async callToolWithPayment(
@@ -686,6 +687,7 @@ export class x402MCPClient {
     args: Record<string, unknown>,
     paymentPayload: PaymentPayload,
     options?: { timeout?: number; signal?: AbortSignal; resetTimeoutOnProgress?: boolean },
+    approvedPaymentRequired?: PaymentRequired,
   ): Promise<x402MCPToolCallResult> {
     const paidOptions = {
       ...options,
@@ -745,44 +747,44 @@ export class x402MCPClient {
       : undefined;
 
     // A paid attempt can return a corrective 402. Scheme hooks recover local
-    // state from it, then we retry once with a fresh payload from that response.
-    // Corrective terms (amount/asset/payTo) are server-controlled — re-run the
-    // same approval / abort gates used for the first payment before signing again.
+    // state from that response, then we retry once against the accept that was
+    // already approved. Corrective fields repair payment state. They do not
+    // authorize new commercial terms.
     if (recoveryResult?.recovered && paymentRequired) {
-      const correctiveRequiredContext: PaymentRequiredContext = {
+      const approvedRequired: PaymentRequired = approvedPaymentRequired ?? {
+        x402Version: paymentPayload.x402Version,
+        accepts: [paymentPayload.accepted],
+        resource: paymentPayload.resource ?? { url: "" },
+        ...(paymentPayload.extensions ? { extensions: paymentPayload.extensions } : {}),
+      };
+      const approvedContext: PaymentRequiredContext = {
         toolName: name,
         arguments: args,
-        paymentRequired,
+        paymentRequired: approvedRequired,
       };
-      let correctivePayload: PaymentPayload | undefined;
+      let retryPayload: PaymentPayload | undefined;
       for (const hook of this.paymentRequiredHooks) {
-        const hookResult = await hook(correctiveRequiredContext);
+        const hookResult = await hook(approvedContext);
         if (hookResult?.abort) {
           throw new Error("Payment aborted by hook");
         }
         if (hookResult?.payment) {
-          correctivePayload = hookResult.payment;
+          retryPayload = hookResult.payment;
           break;
         }
       }
-      if (!correctivePayload) {
-        const correctiveRequestedContext: PaymentRequestedContext = {
-          toolName: name,
-          arguments: args,
-          paymentRequired,
-        };
-        const correctiveApproved =
-          await this.options.onPaymentRequested(correctiveRequestedContext);
-        if (!correctiveApproved) {
+      if (!retryPayload) {
+        const approved = await this.options.onPaymentRequested(approvedContext);
+        if (!approved) {
           throw new Error("Payment request denied");
         }
         for (const hook of this.beforePaymentHooks) {
-          await hook(correctiveRequestedContext);
+          await hook(approvedContext);
         }
-        correctivePayload = await this._paymentClient.createPaymentPayload(paymentRequired);
+        retryPayload = await this._paymentClient.createPaymentPayload(approvedRequired);
       }
 
-      const freshPayload = correctivePayload;
+      const freshPayload = retryPayload;
       const retryCallParams = {
         name,
         arguments: args,
