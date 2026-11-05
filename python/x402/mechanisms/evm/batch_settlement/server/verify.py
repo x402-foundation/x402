@@ -412,7 +412,12 @@ def handle_verified_payment_canceled(
     ctx: VerifiedPaymentCanceledContext,
 ) -> None:
     """Clear this request's reservation when handler work is canceled."""
-    if ctx.reason not in ("handler_threw", "handler_failed", "after_verify_aborted"):
+    if ctx.reason not in (
+        "handler_threw",
+        "handler_failed",
+        "after_verify_aborted",
+        "settlement_preflight_failed",
+    ):
         return
     scheme.clear_pending_request(ctx.payment_payload)
 
