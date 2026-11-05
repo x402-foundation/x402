@@ -541,6 +541,18 @@ class TestHandleVerifiedPaymentCanceled:
         handle_verified_payment_canceled(scheme, _Ctx())  # type: ignore[arg-type]
         assert scheme.get_storage().get(_channel_id()).pending_request is None
 
+    def test_settlement_preflight_failed_clears_committed_reservation(self):
+        scheme = _scheme()
+        payload = _voucher_payload()
+        _reserve(scheme, payload)
+
+        class _Ctx:
+            reason = "settlement_preflight_failed"
+            payment_payload = payload
+
+        handle_verified_payment_canceled(scheme, _Ctx())  # type: ignore[arg-type]
+        assert scheme.get_storage().get(_channel_id()).pending_request is None
+
     def test_other_reason_does_not_clear(self):
         scheme = _scheme()
         payload = _voucher_payload()

@@ -1353,8 +1353,26 @@ class x402ResourceServerBase:
             reason=options.reason,
             error=options.error,
             response_status=options.response_status,
+            verify_result=options.verify_result,
             settled_phases=tuple(settled_phases or ()),
         )
+
+    def _should_cancel_unsettled_payment(
+        self,
+        payload: PaymentPayload | PaymentPayloadV1,
+        requirements: PaymentRequirements | PaymentRequirementsV1,
+        phase: SettlePhase,
+    ) -> bool:
+        """Whether a settle that failed before the facilitator leaves a verified payment to cancel."""
+        if not self._initialized or phase == "cancel":
+            return False
+        if phase == "before-handler":
+            return True
+        try:
+            flow = self.get_payment_flow(payload, requirements)  # type: ignore[arg-type]
+            return not resolve_payment_flow_phases(flow).settle_before_handler
+        except ValueError:
+            return False
 
     # ========================================================================
     # Core Logic Generators (shared between async/sync)
@@ -1532,7 +1550,9 @@ class x402ResourceServerBase:
             if isinstance(hook_result, AbortResult):
                 yield (
                     "dispatch_cancel",
-                    VerifiedPaymentCancelOptions(reason="after_verify_aborted"),
+                    VerifiedPaymentCancelOptions(
+                        reason="after_verify_aborted", verify_result=verify_result
+                    ),
                     (payload, requirements, declared_extensions, transport_context),
                 )
                 return ResourceVerifyResponse(
@@ -1561,10 +1581,12 @@ class x402ResourceServerBase:
 
         Yields (phase, hook, context) tuples for hook execution.
         Also yields ("call_facilitator", client, (payload, requirements)) for the actual call.
+        Failures before the facilitator is reached skip on_settle_failure hooks.
         """
         if not self._initialized:
             raise RuntimeError("Server not initialized. Call initialize() first.")
 
+        facilitator_called = False
         declared = declared_extensions or {}
         context = SettleContext(
             payment_payload=payload,
@@ -1642,6 +1664,7 @@ class x402ResourceServerBase:
                 raise SchemeNotFoundError(scheme, network)
 
             # Yield for facilitator call (caller handles sync/async)
+            facilitator_called = True
             settle_result: SettleResponse = yield (
                 "call_facilitator",
                 client,
@@ -1717,6 +1740,9 @@ class x402ResourceServerBase:
             return settle_result
 
         except Exception as e:
+            if not facilitator_called:
+                raise
+
             failure_context = SettleFailureContext(
                 payment_payload=payload,
                 requirements=requirements,

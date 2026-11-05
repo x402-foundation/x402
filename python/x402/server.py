@@ -285,10 +285,12 @@ class x402ResourceServer(x402ResourceServerBase):
             phase,
         )
         result = None
+        facilitator_called = False
         try:
             while True:
                 phase_cmd, target, ctx = gen.send(result)
                 if phase_cmd == "call_facilitator":
+                    facilitator_called = True
                     # target is client, ctx is (method_name, payload, requirements)
                     method_name, p, r = ctx
                     if method_name == "verify":
@@ -314,6 +316,18 @@ class x402ResourceServer(x402ResourceServerBase):
                 transport_context,
                 phase,
             )
+        except Exception as error:
+            if not facilitator_called and self._should_cancel_unsettled_payment(
+                payload, requirements, phase
+            ):
+                await self._dispatch_verified_payment_canceled(
+                    payload,
+                    requirements,
+                    declared_extensions,
+                    VerifiedPaymentCancelOptions(reason="settlement_preflight_failed", error=error),
+                    transport_context,
+                )
+            raise
 
     async def _dispatch_verified_payment_canceled(
         self,
@@ -611,10 +625,12 @@ class x402ResourceServerSync(x402ResourceServerBase):
             phase,
         )
         result = None
+        facilitator_called = False
         try:
             while True:
                 phase_cmd, target, ctx = gen.send(result)
                 if phase_cmd == "call_facilitator":
+                    facilitator_called = True
                     # target is client, ctx is (method_name, payload, requirements)
                     method_name, p, r = ctx
                     if method_name == "verify":
@@ -641,6 +657,18 @@ class x402ResourceServerSync(x402ResourceServerBase):
                 self._run_enrich_hook_sync,
                 phase,
             )
+        except Exception as error:
+            if not facilitator_called and self._should_cancel_unsettled_payment(
+                payload, requirements, phase
+            ):
+                self._dispatch_verified_payment_canceled_sync(
+                    payload,
+                    requirements,
+                    declared_extensions,
+                    VerifiedPaymentCancelOptions(reason="settlement_preflight_failed", error=error),
+                    transport_context,
+                )
+            raise
 
     def _dispatch_verified_payment_canceled_sync(
         self,
