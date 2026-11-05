@@ -25,6 +25,23 @@ import {
 
 import { createHttpServer } from "./utils";
 
+const bazaarValidation = vi.hoisted(() => ({
+  validate: vi.fn(),
+}));
+
+vi.mock("@x402/extensions/bazaar", async importOriginal => {
+  const actual = await importOriginal<typeof import("@x402/extensions/bazaar")>();
+  return {
+    bazaarResourceServerExtension: actual.bazaarResourceServerExtension,
+    validateBazaarRouteExtensions: (
+      ...args: Parameters<typeof actual.validateBazaarRouteExtensions>
+    ) => {
+      bazaarValidation.validate(...args);
+      actual.validateBazaarRouteExtensions(...args);
+    },
+  };
+});
+
 // Mock utils
 vi.mock("./utils", async () => {
   const actual = await vi.importActual("./utils");
@@ -592,7 +609,7 @@ describe("paymentProxy", () => {
     expect(response.status).toBe(200);
   });
 
-  it("paymentProxyFromHTTPServer loads and validates the bazaar extension when routes need it", async () => {
+  it("paymentProxyFromHTTPServer registers the bazaar extension when it is missing", async () => {
     vi.mocked(checkIfBazaarNeeded).mockReturnValueOnce(true);
     const mockServer = createMockHttpServer({ type: "no-payment-required" });
 
@@ -605,7 +622,7 @@ describe("paymentProxy", () => {
     expect(mockServer.server.registerExtension).toHaveBeenCalled();
   });
 
-  it("paymentProxyFromHTTPServer skips bazaar registration when the extension is already present", async () => {
+  it("paymentProxyFromHTTPServer does not re-register an existing bazaar extension", async () => {
     vi.mocked(checkIfBazaarNeeded).mockReturnValueOnce(true);
     const mockServer = createMockHttpServer({ type: "no-payment-required" });
     vi.mocked(mockServer.server.hasExtension).mockReturnValue(true);
@@ -1099,33 +1116,6 @@ describe("withX402", () => {
     expect(handler).toHaveBeenCalled();
     expect(response.status).toBe(200);
   });
-
-  it("withX402FromHTTPServer loads and validates the bazaar extension when routes need it", async () => {
-    vi.mocked(checkIfBazaarNeeded).mockReturnValueOnce(true);
-    const mockServer = createMockHttpServer({ type: "no-payment-required" });
-    const handler = vi.fn().mockResolvedValue(NextResponse.json({ data: "protected" }));
-
-    const wrappedHandler = withX402FromHTTPServer(handler, mockServer, undefined, undefined, false);
-    const response = await wrappedHandler(createMockRequest());
-
-    expect(response.status).toBe(200);
-    expect(handler).toHaveBeenCalled();
-    expect(mockServer.server.hasExtension).toHaveBeenCalledWith("bazaar");
-    expect(mockServer.server.registerExtension).toHaveBeenCalled();
-  });
-
-  it("withX402FromHTTPServer skips bazaar registration when the extension is already present", async () => {
-    vi.mocked(checkIfBazaarNeeded).mockReturnValueOnce(true);
-    const mockServer = createMockHttpServer({ type: "no-payment-required" });
-    vi.mocked(mockServer.server.hasExtension).mockReturnValue(true);
-    const handler = vi.fn().mockResolvedValue(NextResponse.json({ data: "protected" }));
-
-    const wrappedHandler = withX402FromHTTPServer(handler, mockServer, undefined, undefined, false);
-    const response = await wrappedHandler(createMockRequest());
-
-    expect(response.status).toBe(200);
-    expect(mockServer.server.registerExtension).not.toHaveBeenCalled();
-  });
 });
 
 describe("paymentProxyFromConfig", () => {
@@ -1177,5 +1167,48 @@ describe("paymentProxyFromConfig", () => {
     paymentProxyFromConfig(mockRoutes, undefined, undefined, paywallConfig, paywall, false);
 
     expect(x402HTTPResourceServer).toHaveBeenCalledWith(expect.anything(), mockRoutes);
+  });
+});
+
+describe("bazaar startup validation", () => {
+  const malformedWarning = 'Route "GET /paid" declares a bazaar extension but it is malformed';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(checkIfBazaarNeeded).mockReturnValue(false);
+  });
+
+  it("always validates bazaar routes", async () => {
+    vi.mocked(checkIfBazaarNeeded).mockReturnValue(true);
+    const httpServer = createMockHttpServer({ type: "no-payment-required" });
+    vi.mocked(httpServer.server.hasExtension).mockReturnValue(true);
+    const proxy = paymentProxyFromHTTPServer(httpServer, undefined, undefined, false);
+
+    await proxy(createMockRequest());
+
+    expect(bazaarValidation.validate).toHaveBeenCalledWith(httpServer.routes);
+  });
+
+  it("warns when a bazaar route is malformed", async () => {
+    vi.mocked(checkIfBazaarNeeded).mockReturnValue(true);
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const httpServer = createMockHttpServer({ type: "no-payment-required" });
+    httpServer.routes = {
+      "GET /paid": {
+        accepts: { scheme: "exact", payTo: "0x123", price: "$0.01", network: "eip155:84532" },
+        extensions: { bazaar: "not-an-object" },
+      },
+    } as unknown as typeof httpServer.routes;
+    vi.mocked(httpServer.server.hasExtension).mockReturnValue(true);
+    const proxy = paymentProxyFromHTTPServer(httpServer, undefined, undefined, false);
+
+    try {
+      await proxy(createMockRequest());
+      expect(consoleWarn).toHaveBeenCalledWith(
+        `x402: ${malformedWarning} (expected an object with "info" and "schema" fields)`,
+      );
+    } finally {
+      consoleWarn.mockRestore();
+    }
   });
 });

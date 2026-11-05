@@ -42,7 +42,7 @@ export interface FacilitatorSettleFailureContext extends FacilitatorSettleContex
 
 export type FacilitatorBeforeVerifyHook = (
   context: FacilitatorVerifyContext,
-) => Promise<void | { abort: true; reason: string }>;
+) => Promise<void | { abort: true; reason: string; message?: string }>;
 
 export type FacilitatorAfterVerifyHook = (context: FacilitatorVerifyResultContext) => Promise<void>;
 
@@ -52,7 +52,7 @@ export type FacilitatorOnVerifyFailureHook = (
 
 export type FacilitatorBeforeSettleHook = (
   context: FacilitatorSettleContext,
-) => Promise<void | { abort: true; reason: string }>;
+) => Promise<void | { abort: true; reason: string; message?: string }>;
 
 export type FacilitatorAfterSettleHook = (context: FacilitatorSettleResultContext) => Promise<void>;
 
@@ -139,7 +139,7 @@ export class x402Facilitator {
 
   /**
    * Register a hook to execute before facilitator payment verification.
-   * Can abort verification by returning { abort: true, reason: string }
+   * Can abort verification by returning { abort: true, reason: string, message?: string }
    *
    * @param hook - The hook function to register
    * @returns The x402Facilitator instance for chaining
@@ -176,7 +176,7 @@ export class x402Facilitator {
 
   /**
    * Register a hook to execute before facilitator payment settlement.
-   * Can abort settlement by returning { abort: true, reason: string }
+   * Can abort settlement by returning { abort: true, reason: string, message?: string }
    *
    * @param hook - The hook function to register
    * @returns The x402Facilitator instance for chaining
@@ -297,6 +297,7 @@ export class x402Facilitator {
         return {
           isValid: false,
           invalidReason: result.reason,
+          invalidMessage: result.message,
         };
       }
     }
@@ -380,7 +381,8 @@ export class x402Facilitator {
    *
    * @param paymentPayload - The payment payload to settle
    * @param paymentRequirements - The payment requirements for settlement
-   * @returns Promise resolving to the settlement response
+   * @returns Promise resolving to the settlement response. A before-hook abort resolves with
+   * `success: false`.
    */
   async settle(
     paymentPayload: PaymentPayload,
@@ -394,7 +396,13 @@ export class x402Facilitator {
     for (const hook of this.beforeSettleHooks) {
       const result = await hook(context);
       if (result && "abort" in result && result.abort) {
-        throw new Error(`Settlement aborted: ${result.reason}`);
+        return {
+          success: false,
+          errorReason: result.reason,
+          errorMessage: result.message,
+          transaction: "",
+          network: paymentRequirements.network,
+        };
       }
     }
 

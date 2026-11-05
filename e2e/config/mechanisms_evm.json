@@ -163,6 +163,10 @@
       "scheme": "batch-settlement",
       "assetTransferMethod": "eip3009",
       "sdks": [
+        "typescript",
+        "go"
+      ],
+      "facilitatorSdks": [
         "go"
       ],
       "schemeOptions": {
@@ -179,6 +183,10 @@
       "scheme": "batch-settlement",
       "assetTransferMethod": "permit2",
       "sdks": [
+        "typescript",
+        "go"
+      ],
+      "facilitatorSdks": [
         "go"
       ],
       "schemeOptions": {
@@ -198,6 +206,10 @@
       "scheme": "batch-settlement",
       "assetTransferMethod": "permit2",
       "sdks": [
+        "typescript",
+        "go"
+      ],
+      "facilitatorSdks": [
         "go"
       ],
       "schemeOptions": {
@@ -217,6 +229,10 @@
       "scheme": "batch-settlement",
       "assetTransferMethod": "permit2",
       "sdks": [
+        "typescript",
+        "go"
+      ],
+      "facilitatorSdks": [
         "go"
       ],
       "schemeOptions": {
