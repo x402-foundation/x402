@@ -8,13 +8,14 @@ from x402 import x402Facilitator, x402FacilitatorSync
 from x402.interfaces import FacilitatorExtension
 from x402.schemas import (
     AbortResult,
-    PaymentAbortedError,
     PaymentPayload,
     PaymentRequirements,
     RecoveredSettleResult,
     RecoveredVerifyResult,
     SchemeNotFoundError,
+    SettleError,
     SettleResponse,
+    VerifyError,
     VerifyResponse,
 )
 
@@ -699,12 +700,70 @@ class TestX402FacilitatorGateHookErrors:
         facilitator.on_before_verify(lambda ctx: AbortResult(reason="blocked"))
         facilitator.on_before_settle(lambda ctx: AbortResult(reason="blocked"))
 
-        with pytest.raises(PaymentAbortedError):
+        with pytest.raises(VerifyError) as verify_exc:
             await facilitator.verify(_payload(requirements), requirements)
-        with pytest.raises(PaymentAbortedError):
+        with pytest.raises(SettleError) as settle_exc:
             await facilitator.settle(_payload(requirements), requirements)
+        assert verify_exc.value.invalid_reason == "blocked"
+        assert settle_exc.value.error_reason == "blocked"
         assert scheme.verify_calls == []
         assert scheme.settle_calls == []
+
+    @pytest.mark.asyncio
+    async def test_v2_before_verify_abort_forwards_message(self):
+        facilitator = x402Facilitator()
+        scheme = MockSchemeNetworkFacilitator("exact")
+        facilitator.register(["eip155:8453"], scheme)
+        requirements = _requirements("eip155:8453")
+        facilitator.on_before_verify(
+            lambda ctx: AbortResult(
+                reason="Facilitator security check failed",
+                message="Verification aborted by facilitator hook",
+            )
+        )
+
+        with pytest.raises(VerifyError) as exc:
+            await facilitator.verify(_payload(requirements), requirements)
+
+        assert exc.value.invalid_reason == "Facilitator security check failed"
+        assert exc.value.invalid_message == "Verification aborted by facilitator hook"
+        assert scheme.verify_calls == []
+
+    @pytest.mark.asyncio
+    async def test_v2_before_settle_abort_forwards_message(self):
+        facilitator = x402Facilitator()
+        scheme = MockSchemeNetworkFacilitator("exact")
+        facilitator.register(["eip155:8453"], scheme)
+        requirements = _requirements("eip155:8453")
+        facilitator.on_before_settle(
+            lambda ctx: AbortResult(
+                reason="Gas price too high",
+                message="Settlement aborted by facilitator hook",
+            )
+        )
+
+        with pytest.raises(SettleError) as exc:
+            await facilitator.settle(_payload(requirements), requirements)
+
+        assert exc.value.error_reason == "Gas price too high"
+        assert exc.value.error_message == "Settlement aborted by facilitator hook"
+        assert scheme.settle_calls == []
+
+    @pytest.mark.asyncio
+    async def test_before_hook_abort_keeps_missing_and_empty_message(self):
+        facilitator = x402Facilitator()
+        facilitator.register(["eip155:8453"], MockSchemeNetworkFacilitator("exact"))
+        requirements = _requirements("eip155:8453")
+        facilitator.on_before_verify(lambda ctx: AbortResult(reason="blocked"))
+        facilitator.on_before_settle(lambda ctx: AbortResult(reason="blocked", message=""))
+
+        with pytest.raises(VerifyError) as verify_exc:
+            await facilitator.verify(_payload(requirements), requirements)
+        with pytest.raises(SettleError) as settle_exc:
+            await facilitator.settle(_payload(requirements), requirements)
+
+        assert verify_exc.value.invalid_message is None
+        assert settle_exc.value.error_message == ""
 
 
 class TestX402FacilitatorSyncHookErrorIsolation:
@@ -779,3 +838,56 @@ class TestX402FacilitatorSyncHookErrorIsolation:
         assert scheme.verify_calls == []
         assert scheme.settle_calls == []
         assert failure_hook_called is False
+
+    def test_v2_before_verify_abort_forwards_message(self):
+        facilitator = x402FacilitatorSync()
+        scheme = MockSchemeNetworkFacilitator("exact")
+        facilitator.register(["eip155:8453"], scheme)
+        requirements = _requirements("eip155:8453")
+        facilitator.on_before_verify(
+            lambda ctx: AbortResult(
+                reason="Facilitator security check failed",
+                message="Verification aborted by facilitator hook",
+            )
+        )
+
+        with pytest.raises(VerifyError) as exc:
+            facilitator.verify(_payload(requirements), requirements)
+
+        assert exc.value.invalid_reason == "Facilitator security check failed"
+        assert exc.value.invalid_message == "Verification aborted by facilitator hook"
+        assert scheme.verify_calls == []
+
+    def test_v2_before_settle_abort_forwards_message(self):
+        facilitator = x402FacilitatorSync()
+        scheme = MockSchemeNetworkFacilitator("exact")
+        facilitator.register(["eip155:8453"], scheme)
+        requirements = _requirements("eip155:8453")
+        facilitator.on_before_settle(
+            lambda ctx: AbortResult(
+                reason="Gas price too high",
+                message="Settlement aborted by facilitator hook",
+            )
+        )
+
+        with pytest.raises(SettleError) as exc:
+            facilitator.settle(_payload(requirements), requirements)
+
+        assert exc.value.error_reason == "Gas price too high"
+        assert exc.value.error_message == "Settlement aborted by facilitator hook"
+        assert scheme.settle_calls == []
+
+    def test_before_hook_abort_keeps_missing_and_empty_message(self):
+        facilitator = x402FacilitatorSync()
+        facilitator.register(["eip155:8453"], MockSchemeNetworkFacilitator("exact"))
+        requirements = _requirements("eip155:8453")
+        facilitator.on_before_verify(lambda ctx: AbortResult(reason="blocked"))
+        facilitator.on_before_settle(lambda ctx: AbortResult(reason="blocked", message=""))
+
+        with pytest.raises(VerifyError) as verify_exc:
+            facilitator.verify(_payload(requirements), requirements)
+        with pytest.raises(SettleError) as settle_exc:
+            facilitator.settle(_payload(requirements), requirements)
+
+        assert verify_exc.value.invalid_message is None
+        assert settle_exc.value.error_message == ""
