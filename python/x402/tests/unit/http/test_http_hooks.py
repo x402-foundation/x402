@@ -443,8 +443,6 @@ def _drive(result):
 
 
 class TestGateHookThrowHttpOutcomes:
-    """HTTP payers see the fixed gate reason, not the thrown exception text."""
-
     @pytest.mark.parametrize("mode", ["async", "sync"])
     def test_verify_hook_throw_hides_exception_text(self, mode):
         server, client, http_server = _gate_http_server(mode)

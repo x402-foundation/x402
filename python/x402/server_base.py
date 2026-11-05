@@ -78,9 +78,8 @@ from .schemas import (
 logger = logging.getLogger("x402")
 
 
-def _sync_server_rejected_async_hook(error: Exception) -> bool:
-    """True when the sync server refused a coroutine hook, not when a hook raised."""
-    return isinstance(error, TypeError) and str(error).startswith("Async hooks are not supported")
+class _SyncServerAsyncHookError(TypeError):
+    pass
 
 
 if TYPE_CHECKING:
@@ -1426,11 +1425,9 @@ class x402ResourceServerBase:
         ):
             try:
                 result = yield ("before", hook, context)
+            except _SyncServerAsyncHookError:
+                raise
             except Exception as error:
-                if _sync_server_rejected_async_hook(error):
-                    raise
-                # Payer-facing text stays fixed. The thrown message can carry an
-                # RPC URL, path, or storage error; the warning log has the detail.
                 self._warn_resource_server_hook_failure("beforeVerify", label, error)
                 return ResourceVerifyResponse(
                     verify=VerifyResponse(
@@ -1633,12 +1630,9 @@ class x402ResourceServerBase:
         ):
             try:
                 result = yield ("before", hook, context)
-            except SettleError:
+            except (_SyncServerAsyncHookError, SettleError):
                 raise
             except Exception as error:
-                if _sync_server_rejected_async_hook(error):
-                    raise
-                # Same as before_verify: do not echo the thrown message to the payer.
                 self._warn_resource_server_hook_failure("beforeSettle", label, error)
                 raise SettleError(
                     "before_settle_hook_error",

@@ -22,6 +22,7 @@ from x402.schemas import (
     SupportedResponse,
     VerifyResponse,
 )
+from x402.server_base import _SyncServerAsyncHookError
 
 
 class MockFacilitatorClient:
@@ -671,8 +672,6 @@ class TestSettlementPreflightFailedCancel:
 
 
 class TestGateHookThrowOutcomes:
-    """Throwing before-verify and before-settle hooks fail closed with fixed payer text."""
-
     def test_fails_verification_closed_when_before_verify_hook_throws(self, server, caplog):
         resource_server, client = server
 
@@ -743,9 +742,9 @@ class TestGateHookThrowOutcomes:
             return None
 
         resource_server.on_before_verify(hook)
-        with pytest.raises(TypeError, match="Async hooks are not supported"):
+        with pytest.raises(_SyncServerAsyncHookError, match="Async hooks are not supported"):
             resource_server.verify_payment(build_payload(), build_requirements())
 
         resource_server.on_before_settle(hook)
-        with pytest.raises(TypeError, match="Async hooks are not supported"):
+        with pytest.raises(_SyncServerAsyncHookError, match="Async hooks are not supported"):
             resource_server.settle_payment(build_payload(), build_requirements())

@@ -44,6 +44,7 @@ from .server_base import (
     SyncOnSettleFailureHook,
     SyncOnVerifiedPaymentCanceledHook,
     SyncOnVerifyFailureHook,
+    _SyncServerAsyncHookError,
     settle_with_pending_retry,
     settle_with_pending_retry_async,
     x402ResourceServerBase,
@@ -750,7 +751,7 @@ class x402ResourceServerSync(x402ResourceServerBase):
         result = hook(context)
         if asyncio.iscoroutine(result):
             result.close()  # Prevent warning
-            raise TypeError(
+            raise _SyncServerAsyncHookError(
                 "Async hooks are not supported in x402ResourceServerSync. "
                 "Use x402ResourceServer for async hook support."
             )
