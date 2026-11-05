@@ -1,6 +1,7 @@
 """Unit tests for resource server hook skip, skipHandler, and after-verify abort."""
 
 import asyncio
+import logging
 
 import pytest
 
@@ -10,6 +11,7 @@ from x402.schemas import (
     AfterSettleAbortError,
     PaymentPayload,
     PaymentRequirements,
+    SettleError,
     SettlePhase,
     SettleResponse,
     SkipHandlerDirective,
@@ -666,3 +668,84 @@ class TestSettlementPreflightFailedCancel:
             [] if fail_cancel_enrich else ["0"]
         )
         assert settle_failures == []
+
+
+class TestGateHookThrowOutcomes:
+    """Throwing before-verify and before-settle hooks fail closed with fixed payer text."""
+
+    def test_fails_verification_closed_when_before_verify_hook_throws(self, server, caplog):
+        resource_server, client = server
+
+        def hook(_ctx):
+            raise RuntimeError("Hook boom")
+
+        resource_server.on_before_verify(hook)
+
+        with caplog.at_level(logging.WARNING, logger="x402"):
+            result = _verify(resource_server, build_payload(), build_requirements())
+
+        assert result.is_valid is False
+        assert result.invalid_reason == "before_verify_hook_error"
+        assert result.invalid_message == "before verify hook failed"
+        assert "Hook boom" not in (result.invalid_reason or "")
+        assert "Hook boom" not in (result.invalid_message or "")
+        assert client.verify_calls == []
+        assert (
+            "[x402] Resource server beforeVerify hook threw "
+            "(manual before_verify hook #0): Hook boom"
+        ) in caplog.text
+
+    def test_fails_settlement_closed_when_before_settle_hook_throws(self, server, caplog):
+        resource_server, client = server
+
+        def hook(_ctx):
+            raise RuntimeError("Unexpected failure")
+
+        resource_server.on_before_settle(hook)
+
+        with caplog.at_level(logging.WARNING, logger="x402"):
+            with pytest.raises(SettleError) as exc_info:
+                _settle(resource_server, build_payload(), build_requirements())
+
+        assert exc_info.value.error_reason == "before_settle_hook_error"
+        assert exc_info.value.error_message == "before settle hook failed"
+        assert exc_info.value.__cause__ is None
+        assert "Unexpected failure" not in (exc_info.value.error_reason or "")
+        assert "Unexpected failure" not in (exc_info.value.error_message or "")
+        assert client.settle_calls == []
+        assert (
+            "[x402] Resource server beforeSettle hook threw "
+            "(manual before_settle hook #0): Unexpected failure"
+        ) in caplog.text
+
+    def test_before_settle_re_raises_settle_error(self, server):
+        resource_server, client = server
+
+        def hook(_ctx):
+            raise SettleError("custom_gate", "do not replace")
+
+        resource_server.on_before_settle(hook)
+
+        with pytest.raises(SettleError) as exc_info:
+            _settle(resource_server, build_payload(), build_requirements())
+
+        assert exc_info.value.error_reason == "custom_gate"
+        assert exc_info.value.error_message == "do not replace"
+        assert client.settle_calls == []
+
+    def test_sync_server_still_rejects_async_gate_hooks(self):
+        client = MockFacilitatorClientSync()
+        resource_server = x402ResourceServerSync(client)
+        resource_server.register("eip155:8453", _HookSchemeServer())
+        resource_server.initialize()
+
+        async def hook(_ctx):
+            return None
+
+        resource_server.on_before_verify(hook)
+        with pytest.raises(TypeError, match="Async hooks are not supported"):
+            resource_server.verify_payment(build_payload(), build_requirements())
+
+        resource_server.on_before_settle(hook)
+        with pytest.raises(TypeError, match="Async hooks are not supported"):
+            resource_server.settle_payment(build_payload(), build_requirements())
