@@ -1723,6 +1723,40 @@ describe("createPaymentWrapper", () => {
       },
     );
 
+    it("treats a throwing onAfterExecution hook as a metering failure", async () => {
+      const cancel = vi.fn().mockRejectedValue(new Error("cancellation outcome unknown"));
+      mockResourceServer.createPaymentCancellationDispatcher.mockReturnValue({ cancel });
+      const paid = createPaymentWrapper(
+        mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+        {
+          accepts: [mockPaymentRequirements],
+          hooks: {
+            onAfterExecution: () => {
+              throw new Error("meter failed");
+            },
+          },
+        },
+      );
+      const handler = vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: "ok" }],
+      });
+      const result = await paid(handler)(
+        { test: "arg" },
+        { _meta: { "x402/payment": mockPaymentPayload } },
+      );
+
+      expect(result.isError).toBe(true);
+      expect(textsOf(result)).toEqual([meteringFailedText, unknownText]);
+      expect(result.structuredContent).toBeUndefined();
+      expect(result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toBeUndefined();
+      expect(handler).toHaveBeenCalledOnce();
+      expect(mockResourceServer.settlePayment).not.toHaveBeenCalled();
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(cancel).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: "after_verify_aborted" }),
+      );
+    });
+
     it("settles a nonnegative integer amount and ignores other hook edits", async () => {
       const paid = createPaymentWrapper(
         mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],

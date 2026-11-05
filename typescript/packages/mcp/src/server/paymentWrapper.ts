@@ -594,13 +594,12 @@ async function processPaidToolCall<TArgs extends Record<string, unknown>>(
     result,
   };
 
-  // Run onAfterExecution hook if present
-  if (config.hooks?.onAfterExecution) {
-    await config.hooks.onAfterExecution(afterExecContext);
-  }
-
+  // A throwing after-execution hook is a metering failure, same as an invalid amount.
   let meteringError: unknown;
   try {
+    if (config.hooks?.onAfterExecution) {
+      await config.hooks.onAfterExecution(afterExecContext);
+    }
     hookRequirements.amount = meteredSettlementAmount(
       paymentRequirements.amount,
       hookRequirements.amount,
