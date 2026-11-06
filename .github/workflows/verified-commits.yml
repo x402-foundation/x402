@@ -1,0 +1,75 @@
+name: "Verified Commits"
+
+# Signature enforcement is the one check CONTRIBUTING.md names as mandatory
+# ("All commits must be signed"), and today it runs only inside labeler.yml,
+# whose `pull_request_target` trigger GitHub blocks by default from
+# 2 November 2026 on public repositories that have not configured an Actions
+# policy. See #3745.
+#
+# This workflow does not replace that job and removes nothing. It separates
+# the two things that job does:
+#
+#   enforcement  - fail the run when a commit is unsigned. Needs only read
+#                  access, so it works on `pull_request`, including from
+#                  forks, and no policy decision can switch it off.
+#   decoration   - apply the `unverified` label and post the explanatory
+#                  comment. Needs write access, which a fork's
+#                  `pull_request` token does not have, so it stays in
+#                  labeler.yml under `pull_request_target`.
+#
+# The result is that whichever way the policy question in #3745 is decided,
+# an unsigned commit still fails a check rather than merging unnoticed. If
+# the policy is configured and labeler.yml keeps running, both jobs report
+# and the author sees one failure with the label and comment, and one
+# without.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  check-verified-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure commits are verified
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pullRequest = context.payload.pull_request;
+
+            const commits = await github.paginate(github.rest.pulls.listCommits, {
+              owner,
+              repo,
+              pull_number: pullRequest.number,
+              per_page: 100
+            });
+
+            const unverifiedCommits = commits.filter(
+              commit => !commit.commit.verification?.verified
+            );
+
+            if (unverifiedCommits.length === 0) {
+              core.notice('All pull request commits are verified.');
+              return;
+            }
+
+            // The reason is printed per commit because it distinguishes the
+            // cases a contributor has to act on differently: an unsigned
+            // commit needs signing set up, while `unknown_key` means the
+            // signature is there and the key is not on their account.
+            for (const commit of unverifiedCommits) {
+              core.error(
+                commit.sha.slice(0, 7) + ': ' +
+                (commit.commit.verification?.reason || 'unverified')
+              );
+            }
+
+            core.setFailed(
+              unverifiedCommits.length + ' of ' + commits.length +
+              ' commit(s) are not verified. This repository requires signed ' +
+              'commits; rebase with signing enabled and force-push. ' +
+              'https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification'
+            );
