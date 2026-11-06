@@ -324,3 +324,20 @@ func TestSplitsEightFitAndOversizedChargeIsRefused(t *testing.T) {
 	assert.Contains(t, err.Error(), ErrTransactionTooLarge)
 	assert.Contains(t, err.Error(), "1232-byte limit")
 }
+
+func TestSplitsFullVersionOneChargeUsesDefaultComputeCeiling(t *testing.T) {
+	p := newClientSplitParties()
+	_, url := newSplitRPC(t, p.mint)
+	splits := make([]interface{}, 8)
+	for i := range splits {
+		splits[i] = map[string]interface{}{"payTo": solana.NewWallet().PublicKey().String(), "amount": "1000", "ataCreationRequired": true}
+	}
+	req := p.requirements(map[string]interface{}{"transactionVersions": []int{1}, "ataCreationRequired": true, "splits": splits})
+	client := NewExactSvmScheme(p.payer, &svm.ClientConfig{RPCURL: url, ApproveSplits: approveAll})
+	payload, err := client.CreatePaymentPayload(context.Background(), req, x402.PaymentPayloadContext{})
+	require.NoError(t, err)
+	tx := decodePayloadTx(t, payload)
+	require.Equal(t, solana.MessageVersionV1, tx.Message.GetVersion())
+	require.NotNil(t, tx.Message.TransactionConfig.ComputeUnitLimit)
+	assert.Equal(t, uint32(400_000), *tx.Message.TransactionConfig.ComputeUnitLimit)
+}

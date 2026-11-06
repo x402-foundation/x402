@@ -27,6 +27,9 @@ const (
 	// Set to 20000 to accommodate: transfer (~6200 CUs) + memo (~8500 CUs without signer) + budget instructions (~300 CUs) + headroom
 	DefaultComputeUnitLimit uint32 = 20000
 
+	// DefaultMaxComputeUnits is the reference sponsor compute-unit ceiling.
+	DefaultMaxComputeUnits uint32 = 400_000
+
 	// MaxMemoBytes is the maximum byte length for seller-defined memo data (extra.memo)
 	MaxMemoBytes = 256
 

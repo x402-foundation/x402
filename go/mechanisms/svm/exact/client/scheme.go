@@ -187,9 +187,9 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 		// Bind the mint's program to this instruction without changing token.ProgramID globally.
 		transferIxs = append(transferIxs, solana.NewInstruction(tokenProgramID, transferIx.Accounts(), transferData))
 	}
-	computeUnitLimit := svm.DefaultComputeUnitLimit +
-		uint32(len(legs)-1)*svm.SplitTransferComputeUnits +
-		uint32(len(createIxs))*svm.AtaCreationComputeUnits
+	computeUnitLimit := min(svm.DefaultMaxComputeUnits, svm.DefaultComputeUnitLimit+
+		uint32(len(legs)-1)*svm.SplitTransferComputeUnits+
+		uint32(len(createIxs))*svm.AtaCreationComputeUnits)
 
 	// Memo instruction: use seller-defined memo from extra.memo, or random nonce for uniqueness
 	var memoPayload []byte

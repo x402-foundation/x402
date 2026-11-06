@@ -35,6 +35,7 @@ import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { ExactSvmScheme as ExactSvmClient } from "../../src/exact/client/scheme";
 import { ExactSvmScheme as ExactSvmFacilitator } from "../../src/exact/facilitator/scheme";
 import { ExactSvmScheme as ExactSvmServer } from "../../src/exact/server/scheme";
+import { readTransactionV1Config } from "../../src/transactionV1";
 import { verifyPostSettlementLegs } from "../../src/exact/facilitator/smartWalletVerification";
 import * as Errors from "../../src/exact/facilitator/errors";
 import {
@@ -674,6 +675,30 @@ describe("exact facilitator with splits", () => {
     await expect(client.createPaymentPayload(2, withCreates)).rejects.toThrow(/1232-byte limit/);
   });
 
+  it("caps a full version-1 split charge at the default sponsor compute ceiling", async () => {
+    const p = await parties();
+    const recipients = await Promise.all(Array.from({ length: 8 }, () => generateKeyPairSigner()));
+    const req = requirements(p, {
+      transactionVersions: [1],
+      ataCreationRequired: true,
+      splits: recipients.map(r => ({
+        payTo: r.address,
+        amount: "1000",
+        ataCreationRequired: true,
+      })),
+    });
+    const tx = await clientTransaction(p, req);
+    const compiled = compiledOf(tx);
+    expect(compiled.version).toBe(1);
+    if (compiled.version !== 1) throw new Error("expected version 1");
+    expect(readTransactionV1Config(compiled).computeUnitLimit).toBe(400_000);
+    const facilitator = new ExactSvmFacilitator(facilitatorSigner(p.feePayer.address), undefined, {
+      maxSplits: 8,
+      ataCreationSponsored: true,
+    });
+    expect(await facilitator.verify(payment(req, tx), req)).toMatchObject({ isValid: true });
+  });
+
   it("rejects a CreateIdempotent under a different token program than the transfers", async () => {
     const p = await parties();
     const req = requirements(p, { ataCreationRequired: true });
@@ -1277,7 +1302,10 @@ describe("split rule edges", () => {
     // Even a sponsored ATA needs a known baseline: null can mean an RPC error.
     legs.splice(1);
     legs[0].ataCreationRequired = true;
-    expect(await run(async () => 5_000_000n, null)).toEqual({ verified: false, method: "unverified" });
+    expect(await run(async () => 5_000_000n, null)).toEqual({
+      verified: false,
+      method: "unverified",
+    });
     expect(
       await run(async () => {
         throw new Error("rpc down");

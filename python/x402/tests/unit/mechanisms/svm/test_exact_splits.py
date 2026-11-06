@@ -562,6 +562,25 @@ class TestFacilitatorWithSplits:
         )
         assert result.is_valid, result.invalid_reason
 
+    def test_caps_full_version_1_charge_at_default_compute_ceiling(self, p):
+        req = requirements(
+            p,
+            transactionVersions=[1],
+            ataCreationRequired=True,
+            splits=[
+                {"payTo": addr(Keypair()), "amount": "1000", "ataCreationRequired": True}
+                for _ in range(8)
+            ],
+        )
+        tx = client_payload(p, req)
+        message = VersionedTransaction.from_bytes(base64.b64decode(tx)).message
+        assert isinstance(message, MessageV1)
+        assert message.config.compute_unit_limit == 400_000
+        result = facilitator(p, max_splits=8, ata_creation_sponsored=True).verify(
+            payment(req, tx), req
+        )
+        assert result.is_valid, result.invalid_reason
+
     def test_accepts_a_create_for_the_fee_payer_as_recipient(self, p):
         req = requirements(
             p,
