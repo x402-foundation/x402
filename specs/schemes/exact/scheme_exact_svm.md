@@ -550,6 +550,8 @@ This is a deliberate, bounded exception to Fee Payer Isolation (§2.1.1) and Fee
 
 Per transaction, rent exposure is opt-in per Sponsor (advertised), opt-in per recipient (marked), and never charged for an ATA that already exists, since `CreateIdempotent` is then a no-op. It is **not** bounded over time. An owner can close its ATA, reclaiming the rent to an address it chooses, and the next charge funds creation again. A Resource Server that controls its recipients can therefore cycle create and close to extract ≈0.002 SOL per charge, and can rotate `payTo` addresses to the same effect. A Sponsor that advertises `ataCreationSponsored` SHOULD bound this, for example by tracking sponsored creations per owner and mint and refusing or pricing repeats, by rate-limiting sponsored creations per Resource Server (§2.2), or by recovering the cost through a split to itself.
 
+Splits do not automatically reimburse rent. This section defines no sponsorship-fee negotiation or dynamic rent quote; a Sponsor SHOULD apply its own out-of-band controls before advertising sponsored creation.
+
 ### 5.5 Capability Advertisement and Sponsor Acceptance with Splits (MUST)
 
 Split support is not an unadvertised local policy. A Sponsor announces it in the `extra` object of the matching `kinds[]` entry of its `/supported` response, alongside `feePayer`:
@@ -586,6 +588,8 @@ A Sponsor that signs a split transaction as `feePayer` MUST, in addition to the 
 
 Within what it advertises, a Sponsor retains the policy flexibility of §2.3 (for example a lower per-request limit on sponsored ATA creations).
 
+Malformed split schemas or field values without a more specific error code MUST be rejected with `invalid_exact_svm_splits_invalid`. Transfer legs that use different authorities MUST be rejected with `invalid_exact_svm_payload_split_authority_mismatch`. These codes are shared across SDKs; the `split_*` codes above retain their specified names.
+
 ### 5.6 Client-Side Verification (MUST)
 
 Before signing, the client MUST verify that `extra.splits` — when present — contains only the recipients and amounts it expects. A malicious Resource Server could otherwise inject or alter splits to divert a portion of the payment. Specifically, the client MUST:
@@ -593,6 +597,8 @@ Before signing, the client MUST verify that `extra.splits` — when present — 
 - Confirm each split's `payTo`, `amount`, and `memo` (when present) against the terms it agreed to. When asking a user for consent, show the `memo` as the label for that leg alongside its `payTo` address and `amount`, never instead of the address.
 - Independently compute the primary remainder (`amount − Σ splits[].amount`) and confirm it is the amount reaching the merchant.
 - Reject requirements whose split recipients or amounts it did not agree to, and reject any `ataCreationRequired: true` it is unwilling to fund.
+
+Spend limits bound the total debit but do not establish agreement to its distribution. Consent MAY be automated by a policy that validates known recipients and amounts; it need not prompt the user for every charge. ATA rent is paid by the Sponsor, not the client.
 
 ### 5.7 Static Layout with Splits (MUST)
 
@@ -607,7 +613,7 @@ Path 1 (§3.1) generalizes for splits and for ATA creation. With `N` splits and 
 
 A version-1 transaction carries its compute budget in the message header (§1.5), so it omits steps 1 and 2 and MUST contain the protocol instructions in the same relative order from step 3, with assertion guards permitted anywhere. When `K > 0`, the transaction also invokes the Associated Token Account program, whose program data counts against `loadedAccountsDataSizeLimit`, so the client MUST size that limit to include it.
 
-Guard placement and count do not change the payment-leg order: the first `TransferChecked` after the `K` creates is the primary leg, and the next `N` are `extra.splits[0]` through `extra.splits[N - 1]`. A transaction that departs from this protocol layout is a recoverable layout failure (§3.3) and MAY still verify on Path 2; non-recoverable guard or extension policy failures remain non-recoverable. The compute unit limit naturally grows with `N` and `K`, and remains subject to §2.2.1 (and, on version 1, the `TransactionConfig` rules of §1.5).
+Guard placement and count do not change the payment-leg order: the first `TransferChecked` after the `K` creates is the primary leg, and the next `N` are `extra.splits[0]` through `extra.splits[N - 1]`. A transaction that departs from this protocol layout is a recoverable layout failure (§3.3) and MAY still verify on Path 2; non-recoverable guard or extension policy failures remain non-recoverable. Reference clients cap their estimated compute unit limit at the reference default Sponsor ceiling of 400,000 CU. A charge that cannot execute within that budget needs fewer splits or ATA creations; simulation MUST reject it rather than silently increasing Sponsor exposure. The compute unit limit naturally grows with `N` and `K`, and remains subject to §2.2.1 (and, on version 1, the `TransactionConfig` rules of §1.5).
 
 The exactly-one-Memo rule for `extra.memo` (§3.1) is unchanged: a single on-chain Memo governs the whole charge, not one per leg. Smart-wallet (Path 2, §3.2) charges verify the same `N + 1`-leg outcome across the CPI trace, and post-settlement verification (§3.4) confirms every leg landed on-chain, not simulation alone.
 

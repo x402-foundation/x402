@@ -162,9 +162,10 @@ class ExactSvmScheme:
                 ``CreateIdempotent`` for recipients marked
                 ``ataCreationRequired`` (about 0.002 SOL of rent each).
                 Advertised as ``ataCreationSponsored``. Rent is not bounded over
-                time: an owner can close its ATA and the next charge pays again,
-                so operators enabling this should rate-limit or price sponsored
-                creations. Default False.
+                time: an owner can close its ATA, reclaim the rent, and repeat
+                on every charge. Operators must enforce out-of-band limits per
+                owner/mint or Resource Server before enabling this. Splits do
+                not automatically reimburse sponsored rent. Default False.
 
 
             preflight_instruction_allowlist: Instruction tuples that may appear as a
