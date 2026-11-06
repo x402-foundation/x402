@@ -1,0 +1,6 @@
+kind: fixed
+body: >-
+  Exact and upto Permit2 verify now report a failed payer eth_getCode as
+  invalid_permit2_failed_to_verify_signature instead of invalid_permit2_signature,
+  and the signature check reuses that one lookup instead of issuing its own.
+time: 2026-10-05T00:52:18Z

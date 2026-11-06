@@ -3,6 +3,7 @@ package facilitator
 import (
 	"context"
 	"math/big"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 
@@ -338,3 +339,18 @@ func asBigInt(value interface{}) *big.Int {
 }
 
 var splitEip2612Signature = evm.SplitEip2612Signature
+
+// knownCodeSigner answers GetCode for one address from a lookup already made, so the signature
+// check reuses that result instead of issuing a second eth_getCode that could fail on its own.
+type knownCodeSigner struct {
+	evm.FacilitatorEvmSigner
+	address string
+	code    []byte
+}
+
+func (s knownCodeSigner) GetCode(ctx context.Context, address string) ([]byte, error) {
+	if strings.EqualFold(address, s.address) {
+		return s.code, nil
+	}
+	return s.FacilitatorEvmSigner.GetCode(ctx, address)
+}

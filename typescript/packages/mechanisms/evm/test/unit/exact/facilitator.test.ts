@@ -558,6 +558,80 @@ describe("ExactEvmScheme (Facilitator)", () => {
       expect(result.invalidReason).toBe("invalid_permit2_recipient_mismatch");
       expect(result.payer).toBe(mockClientSigner.address);
     });
+
+    describe("RPC failures during the signature check", () => {
+      const asset = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+      const requirements: PaymentRequirements = {
+        scheme: "exact",
+        network: "eip155:84532",
+        amount: "1000000",
+        asset,
+        payTo: "0x742D35CC6634c0532925A3b844BC9E7595F0BEb0",
+        maxTimeoutSeconds: 300,
+        extra: { name: "USDC", version: "2", assetTransferMethod: "permit2" },
+      };
+      const permit2Payload = (): PaymentPayload => ({
+        x402Version: 2,
+        payload: {
+          signature: "0xmocksignature",
+          permit2Authorization: {
+            from: mockClientSigner.address,
+            permitted: { token: asset, amount: requirements.amount },
+            spender: x402ExactPermit2ProxyAddress,
+            nonce: "12345",
+            deadline: "999999999999",
+            witness: { to: requirements.payTo, validAfter: "0" },
+          },
+        },
+        accepted: requirements,
+        resource: { url: "", description: "", mimeType: "" },
+      });
+
+      it("reports a failed payer eth_getCode as failed-to-verify, not an invalid signature", async () => {
+        mockFacilitatorSigner.getCode = vi
+          .fn()
+          .mockImplementation(({ address }) =>
+            address.toLowerCase() === asset.toLowerCase()
+              ? Promise.resolve("0x6080604052")
+              : Promise.reject(new Error("HTTP request failed. Status: 503")),
+          );
+
+        const result = await facilitator.verify(permit2Payload(), requirements);
+
+        expect(result.isValid).toBe(false);
+        expect(result.invalidReason).toBe(Errors.ErrPermit2FailedToVerifySignature);
+        expect(result.invalidMessage).toContain("503");
+        expect(result.payer).toBe(mockClientSigner.address);
+      });
+
+      it("reports an isValidSignature read that fails without a revert as failed-to-verify", async () => {
+        mockFacilitatorSigner.readContract = vi.fn().mockImplementation(async args => {
+          if (args?.functionName === "isValidSignature") {
+            throw new Error("HTTP request failed. Status: 503");
+          }
+          return undefined;
+        });
+
+        const result = await facilitator.verify(permit2Payload(), requirements);
+
+        expect(result.isValid).toBe(false);
+        expect(result.invalidReason).toBe(Errors.ErrPermit2FailedToVerifySignature);
+      });
+
+      it("still rejects as an invalid signature when isValidSignature reverts", async () => {
+        mockFacilitatorSigner.readContract = vi.fn().mockImplementation(async args => {
+          if (args?.functionName === "isValidSignature") {
+            throw new Error('The contract function "isValidSignature" reverted.');
+          }
+          return undefined;
+        });
+
+        const result = await facilitator.verify(permit2Payload(), requirements);
+
+        expect(result.isValid).toBe(false);
+        expect(result.invalidReason).toBe(Errors.ErrPermit2InvalidSignature);
+      });
+    });
   });
 
   describe("Permit2 settlement", () => {

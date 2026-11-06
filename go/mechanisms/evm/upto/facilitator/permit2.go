@@ -107,7 +107,18 @@ func VerifyUptoPermit2(
 		return nil, x402.NewVerifyError(ErrInvalidSignatureFormat, payer, err.Error())
 	}
 
-	sigValid, sigData, sigErr := verifyUptoPermit2Signature(ctx, signer, permit2Payload.Permit2Authorization, signatureBytes, chainID)
+	// One payer code lookup serves the signature check and the deployed-contract fallback below.
+	// A lookup that fails is an RPC failure, not an invalid signature; it is reported after the
+	// asset check so error precedence is unchanged.
+	payerCode, payerCodeErr := signer.GetCode(ctx, payer)
+	var (
+		sigValid bool
+		sigData  *evm.ERC6492SignatureData
+		sigErr   error
+	)
+	if payerCodeErr == nil {
+		sigValid, sigData, sigErr = verifyUptoPermit2Signature(ctx, knownCodeSigner{signer, payer, payerCode}, permit2Payload.Permit2Authorization, signatureBytes, chainID)
+	}
 
 	assetReason, assetErr := assetCheck.Await()
 	if assetErr != nil {
@@ -117,12 +128,16 @@ func VerifyUptoPermit2(
 		return nil, x402.NewVerifyError(assetReason, payer, fmt.Sprintf("asset %s is not a deployed contract", requirements.Asset))
 	}
 
+	if payerCodeErr != nil {
+		return nil, x402.NewVerifyError(ErrPermit2FailedToVerifySignature, payer, evm.TruncateErrorMessage(payerCodeErr.Error()))
+	}
+
 	if sigErr != nil || !sigValid {
 		deployed := false
 		if sigData != nil {
 			deployed = sigData.CodeDeployed
-		} else if code, codeErr := signer.GetCode(ctx, payer); codeErr == nil {
-			deployed = len(code) > 0
+		} else {
+			deployed = len(payerCode) > 0
 		}
 		if !deployed {
 			return nil, x402.NewVerifyError(ErrPermit2InvalidSignature, payer, "invalid signature")
