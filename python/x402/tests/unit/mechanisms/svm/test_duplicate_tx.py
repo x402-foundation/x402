@@ -160,17 +160,24 @@ class TestFixedBlockhashProducesDistinctTransactions:
 
 
 class TestFacilitatorInstructionRules:
-    def test_facilitator_allows_optional_instructions(self):
-        min_instructions = 3
-        max_instructions = 6
-
-        assert min_instructions == 3
-        assert max_instructions > min_instructions
-
-    def test_error_code_for_wrong_instruction_count(self):
+    def test_error_code_for_wrong_instruction_count_v1_only(self):
+        """ERR_INVALID_INSTRUCTION_COUNT is used by the V1 facilitator's positional
+        instruction-layout check. V2 replaced positional checks with identity-based
+        classification (see ERR_UNKNOWN_INSTRUCTION / ERR_PROTOCOL_INSTRUCTION_ORDER)
+        that has no hard instruction-count cap for guard (Lighthouse) instructions.
+        """
         assert (
             ERR_INVALID_INSTRUCTION_COUNT
             == "invalid_exact_svm_payload_transaction_instructions_length"
+        )
+
+    def test_error_codes_for_v2_identity_based_classification(self):
+        from x402.mechanisms.svm import ERR_PROTOCOL_INSTRUCTION_ORDER, ERR_UNKNOWN_INSTRUCTION
+
+        assert ERR_UNKNOWN_INSTRUCTION == "invalid_exact_svm_payload_unknown_instruction"
+        assert (
+            ERR_PROTOCOL_INSTRUCTION_ORDER
+            == "invalid_exact_svm_payload_transaction_instructions_order"
         )
 
 
@@ -197,12 +204,6 @@ class TestAttackScenarioSimulation:
 class TestMitigationHookPoints:
     def test_client_side_memo_mitigation_location(self):
         assert str(Pubkey.from_string(MEMO_PROGRAM_ADDRESS)) == MEMO_PROGRAM_ADDRESS
-
-    def test_facilitator_would_need_instruction_count_update(self):
-        min_instructions = 3
-        max_instructions = 6
-
-        assert max_instructions > min_instructions
 
 
 class TestMemoDataIsValidUTF8:
