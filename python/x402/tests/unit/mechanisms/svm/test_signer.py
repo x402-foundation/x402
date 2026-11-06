@@ -26,8 +26,13 @@ def _legacy_message(payer: Pubkey, instructions: list[Instruction]) -> Message:
     return Message.new_with_blockhash(instructions, payer, Hash.default())
 
 
+def _v1_message(payer: Pubkey, instructions: list[Instruction]) -> MessageV1:
+    config = TransactionConfig(compute_unit_limit=1_000, loaded_accounts_data_size_limit=1)
+    return MessageV1.try_compile(payer, instructions, Hash.default(), config)
+
+
 def _unsigned_tx(
-    compile_message: Callable[[Pubkey, list[Instruction]], Message | MessageV0],
+    compile_message: Callable[[Pubkey, list[Instruction]], Message | MessageV0 | MessageV1],
     fee_payer: Pubkey,
     accounts: list[AccountMeta],
 ) -> VersionedTransaction:
@@ -83,7 +88,7 @@ class TestKeypairSigner:
         # Addresses should match
         assert signer.address == str(keypair.pubkey())
 
-    @pytest.mark.parametrize("compile_message", [_v0_message, _legacy_message])
+    @pytest.mark.parametrize("compile_message", [_v0_message, _v1_message, _legacy_message])
     def test_sign_transaction_should_sign_only_its_own_slot(self, compile_message):
         """sign_transaction should keep the fee payer's signature and add its own."""
         fee_payer = Keypair()
