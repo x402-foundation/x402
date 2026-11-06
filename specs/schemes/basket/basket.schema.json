@@ -1,0 +1,42 @@
+{
+    "$id": "https://x402.org/spec/v2/basket.schema.json",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Basket",
+    "type": "array",
+    "items": {
+        "type": "object",
+        "required": [
+            "name",
+            "price"
+        ],
+        "properties": {
+            "id": {
+                "type": "string",
+                "description": "Optional unique identifier for the line item. Useful for inventory tracking, refunds, and correlation across requests."
+            },
+            "name": {
+                "type": "string"
+            },
+            "price": {
+                "type": "string",
+                "description": "Amount in the smallest unit of the asset."
+            },
+            "quantity": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 1
+            },
+            "tax": {
+                "type": "string"
+            },
+            "discount": {
+                "type": "string"
+            },
+            "metadata": {
+                "type": "object",
+                "additionalProperties": true
+            }
+        },
+        "additionalProperties": false
+    }
+}
