@@ -138,6 +138,7 @@ Each example demonstrates a specific advanced pattern:
 | `all-networks` | `pnpm dev:all-networks` | All supported networks with optional chain configuration |
 | `builder-pattern` | `pnpm dev:builder-pattern` | Fine-grained network registration |
 | `hooks` | `pnpm dev:hooks` | Payment lifecycle hooks |
+| `listing-check` | `pnpm dev:listing-check` | Refuse a payment whose terms differ from your listing |
 | `preferred-network` | `pnpm dev:preferred-network` | Client-side network preferences |
 | `spend-controls` | `pnpm dev:spend-controls` | Default `$1` USD cap, `allowedAssets`, and per-asset caps |
 
@@ -309,6 +310,22 @@ Native assets (XRP, CCD, KTA, ETH, SOL, HBAR) are not in `DEFAULT_ASSETS`. The `
 - Bound spend against a malicious 402 or unbounded custom token
 - Allow a specific custom token without disabling the USD cap on stables
 - Override the cap for one ticker (e.g. PYUSD) without raising it globally
+
+## Example: Listing Check
+
+Use `onBeforePaymentCreation` to compare the selected requirement with what you expected to pay (your catalog, a marketplace listing) before anything is signed. Abort only on a concrete mismatch; when there is no listing or the check errors, let the payment proceed and rely on `spendControls` for the bound.
+
+```typescript
+const client = x402Client
+  .fromConfig({ schemes, spendControls: { maxAmountPerPayment: "$1" } })
+  .onBeforePaymentCreation(async ({ paymentRequired, selectedRequirements }) => {
+    const listing = listings.get(paymentRequired.resource?.url ?? "");
+    const mismatch = listing ? listingMismatch(selectedRequirements, listing) : null;
+    if (mismatch) return { abort: true, reason: `listing mismatch: ${mismatch}` };
+  });
+```
+
+`spendControls` filter requirements before hooks run, so an over-cap payment never reaches the check. If the check calls a remote service, give it a hard timeout and decide up front whether a timeout proceeds or aborts.
 
 ## Hook Best Practices
 
