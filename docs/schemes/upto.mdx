@@ -79,6 +79,33 @@ Set the route `price` to the maximum authorized amount. In the handler, use sett
     });
     ```
   </Tab>
+  <Tab title="TypeScript (Stellar)">
+    ```typescript
+    import { paymentMiddleware, setSettlementOverrides, x402ResourceServer } from "@x402/express";
+    import { UptoStellarScheme } from "@x402/stellar/upto/server";
+
+    const resourceServer = new x402ResourceServer(facilitatorClient)
+      .register("stellar:testnet", new UptoStellarScheme());
+
+    app.use(paymentMiddleware({
+      "GET /api/generate": {
+        accepts: {
+          scheme: "upto",
+          price: "$0.10",
+          network: "stellar:testnet",
+          payTo: "GYourStellarAddress",
+        },
+        description: "AI text generation billed by usage",
+      },
+    }, resourceServer));
+
+    app.get("/api/generate", (req, res) => {
+      const actualUsage = computeActualCost();
+      setSettlementOverrides(res, { amount: String(actualUsage) });
+      res.json({ result: "..." });
+    });
+    ```
+  </Tab>
   <Tab title="Go (EVM)">
     ```go
     routes := x402http.RoutesConfig{
@@ -237,6 +264,20 @@ Register the `upto` scheme alongside `exact` if your client may call both fixed-
     }));  // usage-based services
     ```
   </Tab>
+  <Tab title="TypeScript (Stellar)">
+    ```typescript
+    import { x402Client } from "@x402/core/client";
+    import { createEd25519Signer } from "@x402/stellar";
+    import { ExactStellarScheme } from "@x402/stellar/exact/client";
+    import { UptoStellarScheme } from "@x402/stellar/upto/client";
+
+    const signer = createEd25519Signer(process.env.STELLAR_PRIVATE_KEY, "stellar:testnet");
+
+    const client = new x402Client();
+    client.register("stellar:*", new ExactStellarScheme(signer)); // fixed-price services
+    client.register("stellar:*", new UptoStellarScheme(signer));  // usage-based services
+    ```
+  </Tab>
   <Tab title="Go (EVM)">
     ```go
     import (
@@ -310,7 +351,7 @@ Register the `upto` scheme alongside `exact` if your client may call both fixed-
 | Percentage | `"50%"` | Settle 50% of the route maximum |
 | Dollar price | `"$0.05"` | Convert a dollar-denominated route price to base units |
 
-Setting the amount to `"0"` means no charge for that request. On SVM, a zero-amount close still lands a transaction to release the escrowed deposit and channel rent.
+Setting the amount to `"0"` means no charge for that request. On SVM, a zero-amount close still lands a transaction to release the escrowed deposit and channel rent. On Stellar, a zero-amount settlement lands a transaction that uses up the authorization and moves no funds.
 
 ### EVM Implementation
 
@@ -415,6 +456,22 @@ For custom facilitator implementations, use `UptoSvmScheme` from the facilitator
   </Tab>
 </Tabs>
 
+### Stellar Implementation
+
+`upto` on Stellar uses the `x402-upto-stellar` settlement contract, deployed on `stellar:testnet` at `CBTVKCHLSGQ3WSV3NKSU6FZR4FZMC6ENMDMXUS5XQ66HYVUUHYE3TU7U` and built into `@x402/stellar`. The client signs one Soroban authorization entry over the terms — recipient, token, maximum, expiration and the facilitator's settlement authority — and never over the final amount. The facilitator settles the actual amount as that settlement authority; the contract enforces the maximum, and the Soroban host enforces the signature, the expiration and single use. The facilitator sponsors every fee and never holds the buyer's funds.
+
+The facilitator advertises the settlement authority as `extra.facilitatorAddress` in `/supported`, and the server copies it into the payment requirements. It defaults to the facilitator's first signer:
+
+```typescript
+import { createEd25519Signer } from "@x402/stellar";
+import { UptoStellarScheme } from "@x402/stellar/upto/facilitator";
+
+const signer = createEd25519Signer(process.env.STELLAR_PRIVATE_KEY, "stellar:testnet");
+facilitator.register("stellar:testnet", new UptoStellarScheme([signer]));
+```
+
+Options include `settlementAuthority` (a separate authority account), `feeBumpSigner` (a sponsor that pays fees through a fee bump), `maxTransactionFeeStroops` (default 500,000) and `contracts` for networks without a built-in deployment. Smart-account payers pass their own entry signer to the client (`authorizeEntry`).
+
 ### Examples
 
 * [TypeScript server example (EVM + SVM)](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/upto)
@@ -427,6 +484,7 @@ For custom facilitator implementations, use `UptoSvmScheme` from the facilitator
 * [`upto` spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/upto/scheme_upto.md)
 * [`upto` EVM spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/upto/scheme_upto_evm.md)
 * [`upto` SVM spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/upto/scheme_upto_svm.md)
+* [`upto` Stellar spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/upto/scheme_upto_stellar.md)
 
 ### See Also
 

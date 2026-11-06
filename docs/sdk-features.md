@@ -65,6 +65,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | exact | cardano | `script` | ✅ | ❌ | ❌ |
 | upto | evm | `permit2` | ✅ | ✅ | ✅ |
 | upto | svm | - | ✅ | ✅ | ❌ |
+| upto | stellar | - | ✅ | ❌ | ❌ |
 | batch-settlement | evm | `eip3009` | ✅ | ✅ | ✅ |
 | batch-settlement | evm | `permit2` | ✅ | ✅ | ✅ |
 | batch-settlement | svm | - | ✅ | ✅ | ❌ |
