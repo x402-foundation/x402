@@ -5,6 +5,7 @@ description: "Community-maintained x402 SDKs."
 
 | Name | Description | Languages | Links |
 | ---- | ----------- | --------- | ----- |
+| [Agent Commerce Gateway](https://acg.devlab.group) | Self-hosted, non-custodial gateway that puts x402 payments in front of an existing HTTP API, over HTTP or MCP | TypeScript | [GitHub](https://github.com/devlab-group/agent-commerce) · [npm](https://www.npmjs.com/package/@devlab.group/agent-commerce) |
 | [Mogami](https://mogami.gitbook.io/mogami) | Java x402 stack | Java | [GitHub](https://github.com/mogami-tech/) |
 | [PipRail](https://piprail.com) | Multi-chain x402 SDK + MCP server; backendless self-custody (verify against your own RPC) | TypeScript | [GitHub](https://github.com/piprail/piprail) |
 | [raxol_payments](https://github.com/DROOdotFOO/raxol/tree/master/packages/raxol_payments) | x402 client for Elixir/OTP agents, with ledger-enforced spend limits | Elixir | [GitHub](https://github.com/DROOdotFOO/raxol/tree/master/packages/raxol_payments) · [Hex](https://hex.pm/packages/raxol_payments) |
