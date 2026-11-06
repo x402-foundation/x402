@@ -22,7 +22,7 @@ If you are evaluating a mainnet EVM route, decide on your production facilitator
 | [AlgoVoi](https://pay.algovoi.co.uk) | Chain-agnostic x402 facilitator across 12 mainnet chains incl. Algorand, Base, Solana, Stellar, Hedera, Voi and Tempo; hosted or self-hosted |
 | [Built on Stellar](https://developers.stellar.org/docs/build/apps/x402/built-on-stellar) | Free, public x402 facilitator for Stellar |
 | [CDP Facilitator](https://docs.cdp.coinbase.com/x402/docs/quickstart-sellers) | Coinbase-hosted facilitator with KYT/OFAC checks on every transaction |
-| [Celo Facilitator](https://x402.celo.org) | Gasless x402 facilitator for Celo Mainnet (API: `https://api.x402.celo.org`) and Celo Sepolia (API: `https://api.x402.sepolia.celo.org`), accepting USDC, USD₮ and USA₮ via EIP-3009 and wARS, wBRL and wCOP via Permit2 |
+| [Celo Facilitator](https://x402.celo.org) | Gasless x402 facilitator for Celo Mainnet (API: `https://api.x402.celo.org`) and Celo Sepolia (API: `https://api.x402.sepolia.celo.org`). Mainnet accepts USDC, USD₮ and USA₮ via EIP-3009 and wARS, wBRL, wMXN, wCOP, wPEN, wCLP and cNGN via Permit2 (gas-sponsored approval for every Permit2 asset except cNGN, which needs a one-time approval from the payer). Sepolia accepts USDC. |
 | [Corbits](https://corbits.dev) | Production-grade multi-network, multi-token facilitator supporting EVM and Solana |
 | [Dexter](https://dexter.cash/facilitator) | Free public x402 facilitator across Solana and EVM chains with no fees and no account required |
 | [Fireblocks Facilitator](https://developers.fireblocks.com/docs/x402-facilitator-overview) | Open-source and hosted facilitator with Fireblocks vault settlement; private keys never leave Fireblocks |
