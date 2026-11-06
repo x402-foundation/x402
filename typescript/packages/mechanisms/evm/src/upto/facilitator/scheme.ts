@@ -92,31 +92,16 @@ export class UptoEvmScheme implements SchemeNetworkFacilitator {
     context?: FacilitatorContext,
     _?: Record<string, unknown>,
   ): Promise<VerifyResponse> {
-    const rawPayload = payload.payload as Record<string, unknown>;
-    if (!isUptoPermit2Payload(rawPayload)) {
+    const parsed = readUptoPermit2Payload(payload);
+    if ("message" in parsed) {
       return {
         isValid: false,
         invalidReason: ErrUptoInvalidPayload,
-        invalidMessage: "unsupported payload type: expected upto permit2 payload",
-        payer: "",
+        invalidMessage: parsed.message,
+        payer: parsed.payer,
       };
     }
-    const payloadError = validateUptoPermit2Payload(rawPayload);
-    if (payloadError) {
-      return {
-        isValid: false,
-        invalidReason: ErrUptoInvalidPayload,
-        invalidMessage: payloadError,
-        payer: getExactEvmPayloadPayer(rawPayload),
-      };
-    }
-    return verifyUptoPermit2(
-      this.signer,
-      payload,
-      requirements,
-      rawPayload as UptoPermit2Payload,
-      context,
-    );
+    return verifyUptoPermit2(this.signer, payload, requirements, parsed.payload, context);
   }
 
   /**
@@ -132,35 +117,44 @@ export class UptoEvmScheme implements SchemeNetworkFacilitator {
     requirements: PaymentRequirements,
     context?: FacilitatorContext,
   ): Promise<SettleResponse> {
-    const rawPayload = payload.payload as Record<string, unknown>;
-    if (!isUptoPermit2Payload(rawPayload)) {
+    const parsed = readUptoPermit2Payload(payload);
+    if ("message" in parsed) {
       return {
         success: false,
         network: payload.accepted.network,
         transaction: "",
         errorReason: ErrUptoInvalidPayload,
-        errorMessage: "unsupported payload type: expected upto permit2 payload",
-        payer: "",
-      };
-    }
-    const payloadError = validateUptoPermit2Payload(rawPayload);
-    if (payloadError) {
-      return {
-        success: false,
-        network: payload.accepted.network,
-        transaction: "",
-        errorReason: ErrUptoInvalidPayload,
-        errorMessage: payloadError,
-        payer: getExactEvmPayloadPayer(rawPayload),
+        errorMessage: parsed.message,
+        payer: parsed.payer,
       };
     }
     return settleUptoPermit2(
       this.signer,
       payload,
       requirements,
-      rawPayload as UptoPermit2Payload,
+      parsed.payload,
       context,
       this.pendingStore,
     );
   }
+}
+
+/**
+ * Parses an upto payload into a Permit2 authorization, or the invalid-payload message.
+ *
+ * @param payload - Payment payload whose `payload` field should be upto Permit2
+ * @returns The Permit2 payload, or the field error and payer to surface
+ */
+function readUptoPermit2Payload(
+  payload: PaymentPayload,
+): { payload: UptoPermit2Payload } | { message: string; payer?: string } {
+  const rawPayload = payload.payload as Record<string, unknown>;
+  if (!isUptoPermit2Payload(rawPayload)) {
+    return { message: "unsupported payload type: expected upto permit2 payload", payer: "" };
+  }
+  const payloadError = validateUptoPermit2Payload(rawPayload);
+  if (payloadError) {
+    return { message: payloadError, payer: getExactEvmPayloadPayer(rawPayload) };
+  }
+  return { payload: rawPayload };
 }

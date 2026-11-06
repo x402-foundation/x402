@@ -382,7 +382,6 @@ class ExactSvmScheme:
         # Step 5: Sign and Simulate Transaction
         # CRITICAL: Simulation proves transaction will succeed
         try:
-            # Sign transaction with the feePayer's signer
             fully_signed_tx = self._signer.sign_transaction(
                 svm_payload.transaction, fee_payer_str, network
             )
@@ -537,7 +536,6 @@ class ExactSvmScheme:
             extra = requirements.extra or {}
             fee_payer = extra["feePayer"]
 
-            # Sign transaction with the feePayer's signer
             fully_signed_tx = self._signer.sign_transaction(
                 svm_payload.transaction, fee_payer, network
             )
@@ -553,7 +551,6 @@ class ExactSvmScheme:
             )
 
         try:
-            # Send transaction to network
             signature = self._signer.send_transaction(fully_signed_tx, network)
         except Exception as e:
             self._settlement_cache.delete(tx_key)

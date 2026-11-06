@@ -20,8 +20,6 @@ import (
 
 const zeroAddress = "0x0000000000000000000000000000000000000000"
 
-// Pending reservation TTL bounds. Cleanup hooks normally release admission
-// locks on failure; these bounds release the channel if cleanup never runs.
 type admissionHold int
 
 const (
@@ -362,12 +360,9 @@ func handleBeforeVerify(s *BatchSettlementEvmScheme, ctx x402.VerifyContext) (*x
 		if localResult != nil {
 			if !localResult.IsValid {
 				_ = s.ClearPendingRequest(ctx.Payload)
-				return &x402.BeforeHookResult{
-					Skip:             true,
-					SkipVerifyResult: localResult,
-				}, nil
+			} else {
+				s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{LocalVerify: true})
 			}
-			s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{LocalVerify: true})
 			return &x402.BeforeHookResult{
 				Skip:             true,
 				SkipVerifyResult: localResult,
@@ -698,8 +693,6 @@ func handleBeforeSettle(s *BatchSettlementEvmScheme, ctx x402.SettleContext) (*x
 	if !batchsettlement.IsVoucherPayload(payload) {
 		return nil, nil
 	}
-
-	// --- Voucher path: short-circuit on-chain settlement ---
 
 	voucherMap, _ := payload["voucher"].(map[string]interface{})
 	if voucherMap == nil {
@@ -1234,8 +1227,6 @@ func handleEnrichSettlementResponse(s *BatchSettlementEvmScheme, ctx x402.Settle
 	return out, nil
 }
 
-// readChannelStateFromExtra extracts the nested channelState map from a
-// settle-response extra. Returns nil when absent or wrong-typed.
 func applyChannelStateExtra(next *ChannelSession, cs *batchsettlement.BatchSettlementChannelStateExtra) {
 	if cs.Balance != "" {
 		next.Balance = cs.Balance

@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable, Generator
 from dataclasses import asdict, dataclass, is_dataclass
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel
 from typing_extensions import Self
@@ -75,9 +75,6 @@ from .schemas import (
 )
 
 logger = logging.getLogger("x402")
-
-if TYPE_CHECKING:
-    pass
 
 # Invalid reason returned when a client's echoed extension info drops or changes a
 # server-advertised (non-dynamic) field.

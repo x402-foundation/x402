@@ -234,13 +234,11 @@ export class x402Facilitator {
     }> = [];
     const signersByFamily: Record<string, Set<string>> = {};
 
-    // Iterate over registered scheme data (array supports multiple facilitators per version)
     for (const [version, schemeDataArray] of this.registeredFacilitatorSchemes) {
       for (const schemeData of schemeDataArray) {
         const { facilitator, networks } = schemeData;
         const scheme = facilitator.scheme;
 
-        // Iterate over stored concrete networks
         for (const network of networks) {
           const extra = facilitator.getExtra(network);
           kinds.push({
@@ -250,7 +248,6 @@ export class x402Facilitator {
             ...(extra && { extra }),
           });
 
-          // Collect signers by CAIP family for this network
           const family = facilitator.caipFamily;
           if (!signersByFamily[family]) {
             signersByFamily[family] = new Set();
@@ -260,7 +257,6 @@ export class x402Facilitator {
       }
     }
 
-    // Convert signer sets to arrays
     const signers: Record<string, string[]> = {};
     for (const [family, signerSet] of Object.entries(signersByFamily)) {
       signers[family] = Array.from(signerSet);
@@ -303,36 +299,10 @@ export class x402Facilitator {
     }
 
     try {
-      const schemeDataArray = this.registeredFacilitatorSchemes.get(paymentPayload.x402Version);
-      if (!schemeDataArray) {
-        throw new Error(
-          `No facilitator registered for x402 version: ${paymentPayload.x402Version}`,
-        );
-      }
-
-      // Find matching facilitator from array
-      let schemeNetworkFacilitator: SchemeNetworkFacilitator | undefined;
-      for (const schemeData of schemeDataArray) {
-        if (schemeData.facilitator.scheme === paymentRequirements.scheme) {
-          // Check if network matches
-          if (schemeData.networks.has(paymentRequirements.network)) {
-            schemeNetworkFacilitator = schemeData.facilitator;
-            break;
-          }
-          // Try pattern matching
-          if (networkMatchesPattern(schemeData.pattern, paymentRequirements.network)) {
-            schemeNetworkFacilitator = schemeData.facilitator;
-            break;
-          }
-        }
-      }
-
-      if (!schemeNetworkFacilitator) {
-        throw new Error(
-          `No facilitator registered for scheme: ${paymentRequirements.scheme} and network: ${paymentRequirements.network}`,
-        );
-      }
-
+      const schemeNetworkFacilitator = this.resolveSchemeNetworkFacilitator(
+        paymentPayload.x402Version,
+        paymentRequirements,
+      );
       const facilitatorContext = this.buildFacilitatorContext();
       const verifyResult = await schemeNetworkFacilitator.verify(
         paymentPayload,
@@ -360,7 +330,6 @@ export class x402Facilitator {
         error: error as Error,
       };
 
-      // Execute onVerifyFailure hooks
       for (const hook of this.onVerifyFailureHooks) {
         try {
           const result = await hook(failureContext);
@@ -407,36 +376,10 @@ export class x402Facilitator {
     }
 
     try {
-      const schemeDataArray = this.registeredFacilitatorSchemes.get(paymentPayload.x402Version);
-      if (!schemeDataArray) {
-        throw new Error(
-          `No facilitator registered for x402 version: ${paymentPayload.x402Version}`,
-        );
-      }
-
-      // Find matching facilitator from array
-      let schemeNetworkFacilitator: SchemeNetworkFacilitator | undefined;
-      for (const schemeData of schemeDataArray) {
-        if (schemeData.facilitator.scheme === paymentRequirements.scheme) {
-          // Check if network matches
-          if (schemeData.networks.has(paymentRequirements.network)) {
-            schemeNetworkFacilitator = schemeData.facilitator;
-            break;
-          }
-          // Try pattern matching
-          if (networkMatchesPattern(schemeData.pattern, paymentRequirements.network)) {
-            schemeNetworkFacilitator = schemeData.facilitator;
-            break;
-          }
-        }
-      }
-
-      if (!schemeNetworkFacilitator) {
-        throw new Error(
-          `No facilitator registered for scheme: ${paymentRequirements.scheme} and network: ${paymentRequirements.network}`,
-        );
-      }
-
+      const schemeNetworkFacilitator = this.resolveSchemeNetworkFacilitator(
+        paymentPayload.x402Version,
+        paymentRequirements,
+      );
       const facilitatorContext = this.buildFacilitatorContext();
       const settleResult = await schemeNetworkFacilitator.settle(
         paymentPayload,
@@ -444,7 +387,6 @@ export class x402Facilitator {
         facilitatorContext,
       );
 
-      // Execute afterSettle hooks
       const resultContext: FacilitatorSettleResultContext = {
         ...context,
         result: settleResult,
@@ -468,7 +410,6 @@ export class x402Facilitator {
         error: error as Error,
       };
 
-      // Execute onSettleFailure hooks
       for (const hook of this.onSettleFailureHooks) {
         try {
           const result = await hook(failureContext);
@@ -482,6 +423,40 @@ export class x402Facilitator {
 
       throw error;
     }
+  }
+
+  /**
+   * Resolves the first registration whose scheme matches. Within a registration,
+   * an exact network match is preferred over that registration's wildcard pattern.
+   *
+   * @param x402Version - Payment payload version
+   * @param requirements - Scheme and network to match
+   * @returns The registered facilitator
+   */
+  private resolveSchemeNetworkFacilitator(
+    x402Version: PaymentPayload["x402Version"],
+    requirements: PaymentRequirements,
+  ): SchemeNetworkFacilitator {
+    const schemeDataArray = this.registeredFacilitatorSchemes.get(x402Version);
+    if (!schemeDataArray) {
+      throw new Error(`No facilitator registered for x402 version: ${x402Version}`);
+    }
+
+    for (const schemeData of schemeDataArray) {
+      if (schemeData.facilitator.scheme !== requirements.scheme) {
+        continue;
+      }
+      if (
+        schemeData.networks.has(requirements.network) ||
+        networkMatchesPattern(schemeData.pattern, requirements.network)
+      ) {
+        return schemeData.facilitator;
+      }
+    }
+
+    throw new Error(
+      `No facilitator registered for scheme: ${requirements.scheme} and network: ${requirements.network}`,
+    );
   }
 
   /**
@@ -579,16 +554,13 @@ export class x402Facilitator {
     if (networks.length === 0) return "" as Network;
     if (networks.length === 1) return networks[0];
 
-    // Extract namespaces (e.g., "eip155" from "eip155:84532")
     const namespaces = networks.map(n => n.split(":")[0]);
     const uniqueNamespaces = new Set(namespaces);
 
-    // If all same namespace, use wildcard
     if (uniqueNamespaces.size === 1) {
       return `${namespaces[0]}:*` as Network;
     }
 
-    // Mixed namespaces - use first network for exact matching
     return networks[0];
   }
 }
