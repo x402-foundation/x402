@@ -1,4 +1,5 @@
 import { PaymentPayload, PaymentRequirements, SettleResponse } from "@x402/core/types";
+import { parsePaymentPayload, parsePaymentRequirements } from "@x402/core/schemas";
 import { getFacilitator } from "../index";
 
 /**
@@ -9,13 +10,13 @@ import { getFacilitator } from "../index";
  */
 export async function POST(req: Request) {
   // Parse request body - only use "unknown:unknown" if parsing fails
-  let paymentPayload: PaymentPayload | undefined;
-  let paymentRequirements: PaymentRequirements | undefined;
+  let rawPaymentPayload: unknown;
+  let rawPaymentRequirements: unknown;
 
   try {
     const body = await req.json();
-    paymentPayload = body.paymentPayload as PaymentPayload;
-    paymentRequirements = body.paymentRequirements as PaymentRequirements;
+    rawPaymentPayload = body.paymentPayload;
+    rawPaymentRequirements = body.paymentRequirements;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error("Failed to parse request body:", errorMessage);
@@ -33,7 +34,7 @@ export async function POST(req: Request) {
   }
 
   // Check for missing parameters
-  if (!paymentPayload || !paymentRequirements) {
+  if (!rawPaymentPayload || !rawPaymentRequirements) {
     return Response.json(
       {
         success: false,
@@ -41,12 +42,52 @@ export async function POST(req: Request) {
         errorMessage: "Missing paymentPayload or paymentRequirements",
         error: "Missing paymentPayload or paymentRequirements",
         transaction: "",
-        // Use network from paymentRequirements if available, otherwise unknown
-        network: (paymentRequirements?.network || "unknown:unknown") as `${string}:${string}`,
+        network: "unknown:unknown" as `${string}:${string}`,
       } as SettleResponse,
       { status: 400 },
     );
   }
+
+  // Validate against the real x402 (V1 or V2) schemas before ever touching
+  // the payload's fields — see the identical guard in ../verify/route.ts for
+  // the full rationale. Without this, a malformed or wrong-version body
+  // reaches the scheme-specific settle handlers as an untyped `unknown`, and
+  // a missing/mis-shaped field throws an uncaught TypeError surfaced as an
+  // opaque HTTP 500 instead of a specific, actionable 400.
+  const payloadResult = parsePaymentPayload(rawPaymentPayload);
+
+  if (!payloadResult.success) {
+    return Response.json(
+      {
+        success: false,
+        errorReason: "invalid_payment_payload",
+        errorMessage: `paymentPayload failed schema validation: ${payloadResult.error.message}`,
+        error: payloadResult.error.message,
+        transaction: "",
+        network: "unknown:unknown" as `${string}:${string}`,
+      } as SettleResponse,
+      { status: 400 },
+    );
+  }
+
+  const requirementsResult = parsePaymentRequirements(rawPaymentRequirements);
+
+  if (!requirementsResult.success) {
+    return Response.json(
+      {
+        success: false,
+        errorReason: "invalid_payment_requirements",
+        errorMessage: `paymentRequirements failed schema validation: ${requirementsResult.error.message}`,
+        error: requirementsResult.error.message,
+        transaction: "",
+        network: "unknown:unknown" as `${string}:${string}`,
+      } as SettleResponse,
+      { status: 400 },
+    );
+  }
+
+  const paymentPayload = payloadResult.data as PaymentPayload;
+  const paymentRequirements = requirementsResult.data as PaymentRequirements;
 
   // At this point we know we have both paymentPayload and paymentRequirements
   const network = paymentRequirements.network;
