@@ -90,6 +90,7 @@ Every `auth-capture` network binding MUST specify:
 ### Network bindings
 
 - [`scheme_auth_capture_evm.md`](./scheme_auth_capture_evm.md) — EVM.
+- [`scheme_auth_capture_svm.md`](./scheme_auth_capture_svm.md) — SVM (Solana), on the payment-channels program.
 
 ## Version History
 
