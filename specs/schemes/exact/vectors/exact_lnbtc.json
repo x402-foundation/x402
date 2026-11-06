@@ -1,0 +1,3666 @@
+{
+  "fixture_version": 1,
+  "spec": "specs/schemes/exact/scheme_exact_lnbtc.md",
+  "test_key": {
+    "private_key": "0000000000000000000000000000000000000000000000000000000000000001",
+    "pay_to": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+    "other_private_key": "0000000000000000000000000000000000000000000000000000000000000002"
+  },
+  "open_questions": {
+    "mcp-integer-range": {
+      "question": "Are JSON integers outside the IEEE-754 exact range (|n| > 2^53 - 1) bindable in mcp:1 arguments and metadata?",
+      "outcomes": {
+        "bind_as_double": "Parse as a double and serialize with JCS (two distinct literals can share a hash).",
+        "reject": "Reject as outside the JCS data model: invalid_exact_lnbtc_request_binding."
+      }
+    },
+    "client-expiry-boundary": {
+      "question": "Before paying, is an invoice expired at exactly created + expiry?",
+      "outcomes": {
+        "pay": "Unexpired while now <= created + expiry.",
+        "reject": "Expired once now >= created + expiry: invalid_exact_lnbtc_invoice_expired."
+      }
+    },
+    "http-adapter-origin-policy": {
+      "question": "How does a server adapter treat a request whose authority differs from its configured public origin, or that carries no authority header? Invariant for every outcome: the hashed origin is never chosen by a requester-controlled authority.",
+      "outcomes": {
+        "bind_configured_origin": "Hash the configured origin with the request target.",
+        "bind": "Hash the request URL (no authority header to cross-check).",
+        "reject": "Refuse the request.",
+        "reject_binding": "Refuse with invalid_exact_lnbtc_request_binding.",
+        "reject_mismatch": "Refuse with invalid_exact_lnbtc_request_mismatch."
+      }
+    },
+    "http-port-zero": {
+      "question": "May an http:1 URL name port 0?",
+      "outcomes": {"bind":"RFC 3986 syntax allows it.","reject":"Refuse: invalid_exact_lnbtc_request_binding."}
+    }
+  },
+  "http_binding": [
+    {
+      "id": "published-article-a",
+      "note": "Spec HTTP example: GET article A, empty body, no bound headers.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "body_hex": "",
+        "bound_headers": [],
+        "header_lines": []
+      },
+      "expect": {
+        "request_hash": "0d6623f775e025501fa7f0a30b54da25aad62b6ccfe35c85da38016711e6c018",
+        "canonical_description": "{\"bodyHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"domain\":\"x402:exact:lnbtc:bolt11:http:1\",\"headers\":[],\"method\":\"GET\",\"url\":\"https://api.example.com/article/A\"}"
+      }
+    },
+    {
+      "id": "published-article-b",
+      "note": "Spec HTTP example with only the URL changed to article B.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/B",
+        "body_hex": "",
+        "bound_headers": [],
+        "header_lines": []
+      },
+      "expect": {
+        "request_hash": "4a99860f75eed1ea8178a5db488e044173bc570c8a6210f2c8590cdf8622d509",
+        "canonical_description": "{\"bodyHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"domain\":\"x402:exact:lnbtc:bolt11:http:1\",\"headers\":[],\"method\":\"GET\",\"url\":\"https://api.example.com/article/B\"}"
+      }
+    },
+    {
+      "id": "method-post",
+      "note": "Method change alone.",
+      "input": {
+        "method": "POST",
+        "url": "https://api.example.com/article/A",
+        "body_hex": "",
+        "bound_headers": [],
+        "header_lines": []
+      },
+      "expect": {
+        "request_hash": "a66ae81d2b71d1d7f852985ee9db1388df785560d57114524bf7c77512962d08",
+        "canonical_description": "{\"bodyHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"domain\":\"x402:exact:lnbtc:bolt11:http:1\",\"headers\":[],\"method\":\"POST\",\"url\":\"https://api.example.com/article/A\"}"
+      }
+    },
+    {
+      "id": "method-case-preserved",
+      "note": "Method case is preserved, not normalized.",
+      "input": {
+        "method": "get",
+        "url": "https://api.example.com/article/A",
+        "body_hex": "",
+        "bound_headers": [],
+        "header_lines": []
+      },
+      "expect": {
+        "request_hash": "ae78c3c247698ef6e25d4bb27fe5aa340535bad028d9b4a0716167b239489fc6",
+        "canonical_description": "{\"bodyHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"domain\":\"x402:exact:lnbtc:bolt11:http:1\",\"headers\":[],\"method\":\"get\",\"url\":\"https://api.example.com/article/A\"}"
+      }
+    },
+    {
+      "id": "body-single-byte-78",
+      "note": "Spec settlement case body: the single byte 0x78.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "body_hex": "78",
+        "bound_headers": [],
+        "header_lines": []
+      },
+      "expect": {
+        "request_hash": "c51115dd8855d57e7f55c2a57ef957c2c15b4acd627232c88abd0d5d1f4d0c57",
+        "canonical_description": "{\"bodyHash\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\",\"domain\":\"x402:exact:lnbtc:bolt11:http:1\",\"headers\":[],\"method\":\"GET\",\"url\":\"https://api.example.com/article/A\"}"
+      }
+    },
+    {
+      "id": "body-json-compact",
+      "note": "Body bytes are hashed raw.",
+      "input": {
+        "method": "POST",
+        "url": "https://api.example.com/article/A",
+        "body_hex": "7b2261223a317d",
+        "bound_headers": [],
+        "header_lines": []
+      },
+      "expect": {
+        "request_hash": "bb7f8350652f2332572e25e9cde535f32cac717de22f3ac05f8331d57c3bca68",
+        "canonical_description": "{\"bodyHash\":\"015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862\",\"domain\":\"x402:exact:lnbtc:bolt11:http:1\",\"headers\":[],\"method\":\"POST\",\"url\":\"https://api.example.com/article/A\"}"
+      }
+    },
+    {
+      "id": "body-json-spaced",
+      "note": "Same JSON value, different bytes, different hash.",
+      "input": {
+        "method": "POST",
+        "url": "https://api.example.com/article/A",
+        "body_hex": "7b2261223a20317d",
+        "bound_headers": [],
+        "header_lines": []
+      },
+      "expect": {
+        "request_hash": "0807ffd5f59692e814bc38d8d3a7057632e461eb3dc0074c23fe59abc1c71362",
+        "canonical_description": "{\"bodyHash\":\"f9d86028c6e0d64e225186f96acb69338b2c59764df79162107f5c4bb34d1310\",\"domain\":\"x402:exact:lnbtc:bolt11:http:1\",\"headers\":[],\"method\":\"POST\",\"url\":\"https://api.example.com/article/A\"}"
+      }
+    },
+    {
+      "id": "target-percent-lower",
+      "note": "Percent escapes are not normalized (%2f).",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/%2f",
+        "body_hex": "",
+        "bound_headers": [],
+        "header_lines": []
+      },
+      "expect": {
+        "request_hash": "a1d01afa1afcb018fdb18cd50de79eda4b032613636002fc2b436f8beaa2c8d1",
+        "canonical_description": "{\"bodyHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"domain\":\"x402:exact:lnbtc:bolt11:http:1\",\"headers\":[],\"method\":\"GET\",\"url\":\"https://api.example.com/%2f\"}"
+      }
+    },
+    {
+      "id": "target-percent-upper",
+      "note": "Percent escapes are not normalized (%2F).",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/%2F",
+        "body_hex": "",
+        "bound_headers": [],
+        "header_lines": []
+      },
+      "expect": {
+        "request_hash": "b72e60277f6f14bab83747ac4c4e111a1257d1960288fbeac440b201fc904f8a",
+        "canonical_description": "{\"bodyHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"domain\":\"x402:exact:lnbtc:bolt11:http:1\",\"headers\":[],\"method\":\"GET\",\"url\":\"https://api.example.com/%2F\"}"
+      }
+    },
+    {
+      "id": "target-query-order-ab",
+      "note": "Query parameter order is preserved.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/?a=1&b=2",
+        "body_hex": "",
+        "bound_headers": [],
+        "header_lines": []
+      },
+      "expect": {
+        "request_hash": "4877f49a336836be73dbabca1ced250e5280690682dd2e97ec1805f96faff277",
+        "canonical_description": "{\"bodyHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"domain\":\"x402:exact:lnbtc:bolt11:http:1\",\"headers\":[],\"method\":\"GET\",\"url\":\"https://api.example.com/?a=1&b=2\"}"
+      }
+    },
+    {
+      "id": "target-query-order-ba",
+      "note": "Query parameter order is preserved.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/?b=2&a=1",
+        "body_hex": "",
+        "bound_headers": [],
+        "header_lines": []
+      },
+      "expect": {
+        "request_hash": "a061f00271c2e7b18393acf8c6283b9d3e27d0abecc957576dc6dd7f481432dc",
+        "canonical_description": "{\"bodyHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"domain\":\"x402:exact:lnbtc:bolt11:http:1\",\"headers\":[],\"method\":\"GET\",\"url\":\"https://api.example.com/?b=2&a=1\"}"
+      }
+    },
+    {
+      "id": "target-ipv6-authority",
+      "note": "Bracketed IPv6 authority with a port and an escape in the query.",
+      "input": {
+        "method": "GET",
+        "url": "https://[::1]:8443/article/A?x=%2F",
+        "body_hex": "",
+        "bound_headers": [],
+        "header_lines": []
+      },
+      "expect": {
+        "request_hash": "980a3a54eae008e4be8ee2d2b98483892f1dc7bd7e52aac5a434ff2394ca2dc7",
+        "canonical_description": "{\"bodyHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"domain\":\"x402:exact:lnbtc:bolt11:http:1\",\"headers\":[],\"method\":\"GET\",\"url\":\"https://[::1]:8443/article/A?x=%2F\"}"
+      }
+    },
+    {
+      "id": "header-bound-absent",
+      "note": "Bound header absent: valueHash = SHA-256(0x00).",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "body_hex": "",
+        "bound_headers": ["cookie"],
+        "header_lines": []
+      },
+      "expect": {
+        "request_hash": "14ad9a145b7f28cb786994fd6342aded5acd795dc5ab3bdc27b905d9c58b2337",
+        "canonical_description": "{\"bodyHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"domain\":\"x402:exact:lnbtc:bolt11:http:1\",\"headers\":[{\"name\":\"cookie\",\"valueHash\":\"6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d\"}],\"method\":\"GET\",\"url\":\"https://api.example.com/article/A\"}"
+      }
+    },
+    {
+      "id": "header-bound-empty",
+      "note": "Bound header present and empty: valueHash = SHA-256(0x01).",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "body_hex": "",
+        "bound_headers": ["cookie"],
+        "header_lines": [["cookie",""]]
+      },
+      "expect": {
+        "request_hash": "7770b6930fee0af113be89a84430aae74c7a3ce1cc5b06c6730feec384db7e7f",
+        "canonical_description": "{\"bodyHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"domain\":\"x402:exact:lnbtc:bolt11:http:1\",\"headers\":[{\"name\":\"cookie\",\"valueHash\":\"4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a\"}],\"method\":\"GET\",\"url\":\"https://api.example.com/article/A\"}"
+      }
+    },
+    {
+      "id": "header-repeated-lines",
+      "note": "Two field lines, any name case, OWS trimmed, joined with ', ' (RFC 9421 2.1).",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "body_hex": "",
+        "bound_headers": ["cookie"],
+        "header_lines": [["Cookie"," a "],["COOKIE","\tb\t"]]
+      },
+      "expect": {
+        "request_hash": "0158d93518bd708dfb5762590fecec0999a0f1632856b22934b828001c8404ef",
+        "canonical_description": "{\"bodyHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"domain\":\"x402:exact:lnbtc:bolt11:http:1\",\"headers\":[{\"name\":\"cookie\",\"valueHash\":\"598731aa2464b5aad8004d8cbd9410e427bafb0963a9e573a39ee38777aa0e9b\"}],\"method\":\"GET\",\"url\":\"https://api.example.com/article/A\"}"
+      }
+    },
+    {
+      "id": "header-single-line-combined",
+      "note": "One line equal to the combined value; same hash as header-repeated-lines.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "body_hex": "",
+        "bound_headers": ["cookie"],
+        "header_lines": [["cookie","a, b"]]
+      },
+      "expect": {
+        "request_hash": "0158d93518bd708dfb5762590fecec0999a0f1632856b22934b828001c8404ef",
+        "canonical_description": "{\"bodyHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"domain\":\"x402:exact:lnbtc:bolt11:http:1\",\"headers\":[{\"name\":\"cookie\",\"valueHash\":\"598731aa2464b5aad8004d8cbd9410e427bafb0963a9e573a39ee38777aa0e9b\"}],\"method\":\"GET\",\"url\":\"https://api.example.com/article/A\"}"
+      }
+    },
+    {
+      "id": "header-two-bound-sorted",
+      "note": "Two bound headers in ascending order, one absent.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "body_hex": "",
+        "bound_headers": ["accept","content-type"],
+        "header_lines": [["Content-Type","application/json"]]
+      },
+      "expect": {
+        "request_hash": "90d6e7604cd1ad486da4b335f704fa5ec58d4a0e0a2a9e465c65fce4084339a0",
+        "canonical_description": "{\"bodyHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"domain\":\"x402:exact:lnbtc:bolt11:http:1\",\"headers\":[{\"name\":\"accept\",\"valueHash\":\"6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d\"},{\"name\":\"content-type\",\"valueHash\":\"b2ec0efb460ab23169a6cfc6bd623cca0865f32297a1fd3585a974fc78d441a5\"}],\"method\":\"GET\",\"url\":\"https://api.example.com/article/A\"}"
+      }
+    },
+    {
+      "id": "bound-name-uppercase",
+      "note": "Bound names must be lowercase.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "body_hex": "",
+        "bound_headers": ["Cookie"],
+        "header_lines": []
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "bound-names-unsorted",
+      "note": "Bound names must be in ascending ASCII order.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "body_hex": "",
+        "bound_headers": ["z","a"],
+        "header_lines": []
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "bound-names-duplicate",
+      "note": "Bound names must be unique.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "body_hex": "",
+        "bound_headers": ["a","a"],
+        "header_lines": []
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "bound-payment-signature",
+      "note": "payment-signature must not be bound.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "body_hex": "",
+        "bound_headers": ["payment-signature"],
+        "header_lines": []
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "header-value-crlf",
+      "note": "CR/LF in a bound header value is unsupported.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "body_hex": "",
+        "bound_headers": ["a"],
+        "header_lines": [["a","bad\r\nvalue"]]
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "header-value-non-ascii",
+      "note": "Non-ASCII bound header value is unsupported.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "body_hex": "",
+        "bound_headers": ["a"],
+        "header_lines": [["a","é"]]
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "url-relative",
+      "note": "URL must be absolute.",
+      "input": {"method":"GET","url":"/article/A","body_hex":"","bound_headers":[],"header_lines":[]},
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "url-userinfo",
+      "note": "URL must not carry user information.",
+      "input": {
+        "method": "GET",
+        "url": "https://user:pass@api.example.com/a",
+        "body_hex": "",
+        "bound_headers": [],
+        "header_lines": []
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "url-fragment",
+      "note": "URL must not carry a fragment.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A#fragment",
+        "body_hex": "",
+        "bound_headers": [],
+        "header_lines": []
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "url-bad-percent",
+      "note": "Malformed percent escape.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A%zz",
+        "body_hex": "",
+        "bound_headers": [],
+        "header_lines": []
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "url-non-ascii",
+      "note": "URL must be ASCII.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/é",
+        "body_hex": "",
+        "bound_headers": [],
+        "header_lines": []
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "url-port-65536",
+      "note": "Port out of range.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com:65536/a",
+        "body_hex": "",
+        "bound_headers": [],
+        "header_lines": []
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "url-not-http",
+      "note": "Scheme must be http or https.",
+      "input": {
+        "method": "GET",
+        "url": "ftp://api.example.com/a",
+        "body_hex": "",
+        "bound_headers": [],
+        "header_lines": []
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "method-not-token",
+      "note": "Method must be an HTTP token.",
+      "input": {
+        "method": "GE T",
+        "url": "https://api.example.com/article/A",
+        "body_hex": "",
+        "bound_headers": [],
+        "header_lines": []
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "url-port-zero",
+      "note": "Port 0: RFC 3986 syntax allows it; whether a binding may name it is open.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com:0/a",
+        "body_hex": "",
+        "bound_headers": [],
+        "header_lines": []
+      },
+      "expect": {
+        "open": "http-port-zero",
+        "outcomes": {
+          "bind": {
+            "request_hash": "b49b5068d6296b2406552a611c6e84e1615f759c15323920fdcf97053d280296",
+            "canonical_description": "{\"bodyHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"domain\":\"x402:exact:lnbtc:bolt11:http:1\",\"headers\":[],\"method\":\"GET\",\"url\":\"https://api.example.com:0/a\"}"
+          },
+          "reject": {"error":"invalid_exact_lnbtc_request_binding"}
+        }
+      }
+    }
+  ],
+  "http_server_adapter": [
+    {
+      "id": "host-matches",
+      "note": "Host equals the configured authority.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["Host","api.example.com"]],
+        "body_hex": ""
+      },
+      "expect": {"request_hash":"0d6623f775e025501fa7f0a30b54da25aad62b6ccfe35c85da38016711e6c018"}
+    },
+    {
+      "id": "host-uppercase",
+      "note": "Authority comparison is case-insensitive.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["Host","API.EXAMPLE.COM"]],
+        "body_hex": ""
+      },
+      "expect": {"request_hash":"0d6623f775e025501fa7f0a30b54da25aad62b6ccfe35c85da38016711e6c018"}
+    },
+    {
+      "id": "host-default-port",
+      "note": "The scheme's default port is equivalent.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["Host","api.example.com:443"]],
+        "body_hex": ""
+      },
+      "expect": {"request_hash":"0d6623f775e025501fa7f0a30b54da25aad62b6ccfe35c85da38016711e6c018"}
+    },
+    {
+      "id": "authority-pseudo-header",
+      "note": "HTTP/2 :authority.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [[":authority","api.example.com"]],
+        "body_hex": ""
+      },
+      "expect": {"request_hash":"0d6623f775e025501fa7f0a30b54da25aad62b6ccfe35c85da38016711e6c018"}
+    },
+    {
+      "id": "forwarded-host-hop",
+      "note": "A trusted proxy's X-Forwarded-Host hop supplies the public authority.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["Host","internal:8080"],["X-Forwarded-Host","api.example.com, proxy:8080"]],
+        "body_hex": ""
+      },
+      "expect": {"request_hash":"0d6623f775e025501fa7f0a30b54da25aad62b6ccfe35c85da38016711e6c018"}
+    },
+    {
+      "id": "forwarded-proto-hops",
+      "note": "X-Forwarded-Proto hops that are scheme tokens.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["Host","api.example.com"],["X-Forwarded-Proto","https, http"]],
+        "body_hex": ""
+      },
+      "expect": {"request_hash":"0d6623f775e025501fa7f0a30b54da25aad62b6ccfe35c85da38016711e6c018"}
+    },
+    {
+      "id": "ipv6-authority",
+      "note": "Bracketed IPv6 authority binds without rewriting the target.",
+      "config": {"public_origin":"https://[::1]:8443","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://[::1]:8443/article/A?x=%2F",
+        "header_lines": [["Host","[::1]:8443"]],
+        "body_hex": ""
+      },
+      "expect": {"request_hash":"980a3a54eae008e4be8ee2d2b98483892f1dc7bd7e52aac5a434ff2394ca2dc7"}
+    },
+    {
+      "id": "authority-host-path-and-query",
+      "note": "A malformed Host cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["Host","api.example.com/article/A?q="]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-host-query",
+      "note": "A malformed Host cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["Host","api.example.com?query="]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-host-fragment",
+      "note": "A malformed Host cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["Host","api.example.com#fragment"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-host-backslash",
+      "note": "A malformed Host cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["Host","api.example.com\\other"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-host-userinfo",
+      "note": "A malformed Host cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["Host","user@api.example.com"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-host-port-not-numeric",
+      "note": "A malformed Host cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["Host","api.example.com:bad"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-host-port-65536",
+      "note": "A malformed Host cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["Host","api.example.com:65536"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-host-bad-percent",
+      "note": "A malformed Host cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["Host","api.example.com%zz"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-host-brackets-inside-name",
+      "note": "A malformed Host cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["Host","foo[::1]bar"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-host-crlf",
+      "note": "A malformed Host cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["Host","api.example.com\r\n"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-host-empty",
+      "note": "A malformed Host cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["Host",""]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-authority-path-and-query",
+      "note": "A malformed :authority cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [[":authority","api.example.com/article/A?q="]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-authority-query",
+      "note": "A malformed :authority cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [[":authority","api.example.com?query="]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-authority-fragment",
+      "note": "A malformed :authority cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [[":authority","api.example.com#fragment"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-authority-backslash",
+      "note": "A malformed :authority cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [[":authority","api.example.com\\other"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-authority-userinfo",
+      "note": "A malformed :authority cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [[":authority","user@api.example.com"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-authority-port-not-numeric",
+      "note": "A malformed :authority cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [[":authority","api.example.com:bad"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-authority-port-65536",
+      "note": "A malformed :authority cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [[":authority","api.example.com:65536"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-authority-bad-percent",
+      "note": "A malformed :authority cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [[":authority","api.example.com%zz"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-authority-brackets-inside-name",
+      "note": "A malformed :authority cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [[":authority","foo[::1]bar"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-authority-crlf",
+      "note": "A malformed :authority cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [[":authority","api.example.com\r\n"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-authority-empty",
+      "note": "A malformed :authority cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [[":authority",""]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-x-forwarded-host-path-and-query",
+      "note": "A malformed X-Forwarded-Host cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["X-Forwarded-Host","api.example.com/article/A?q="]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-x-forwarded-host-query",
+      "note": "A malformed X-Forwarded-Host cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["X-Forwarded-Host","api.example.com?query="]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-x-forwarded-host-fragment",
+      "note": "A malformed X-Forwarded-Host cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["X-Forwarded-Host","api.example.com#fragment"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-x-forwarded-host-backslash",
+      "note": "A malformed X-Forwarded-Host cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["X-Forwarded-Host","api.example.com\\other"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-x-forwarded-host-userinfo",
+      "note": "A malformed X-Forwarded-Host cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["X-Forwarded-Host","user@api.example.com"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-x-forwarded-host-port-not-numeric",
+      "note": "A malformed X-Forwarded-Host cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["X-Forwarded-Host","api.example.com:bad"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-x-forwarded-host-port-65536",
+      "note": "A malformed X-Forwarded-Host cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["X-Forwarded-Host","api.example.com:65536"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-x-forwarded-host-bad-percent",
+      "note": "A malformed X-Forwarded-Host cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["X-Forwarded-Host","api.example.com%zz"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-x-forwarded-host-brackets-inside-name",
+      "note": "A malformed X-Forwarded-Host cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["X-Forwarded-Host","foo[::1]bar"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-x-forwarded-host-crlf",
+      "note": "A malformed X-Forwarded-Host cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["X-Forwarded-Host","api.example.com\r\n"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "authority-x-forwarded-host-empty",
+      "note": "A malformed X-Forwarded-Host cannot inject a request target.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["X-Forwarded-Host",""]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "forwarded-proto-url",
+      "note": "X-Forwarded-Proto hops must be scheme tokens.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["Host","api.example.com"],["X-Forwarded-Proto","https://api.example.com/path?"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "forwarded-proto-crlf",
+      "note": "X-Forwarded-Proto hops must be scheme tokens.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["Host","api.example.com"],["X-Forwarded-Proto","https\r\n"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "forwarded-proto-empty-hop",
+      "note": "X-Forwarded-Proto hops must be scheme tokens.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["Host","api.example.com"],["X-Forwarded-Proto","https, "]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "forwarded-host-malformed-hop",
+      "note": "Every authority hop present must be well formed.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["Host","api.example.com"],["X-Forwarded-Host","bad/path"]],
+        "body_hex": ""
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "request-origin-not-configured",
+      "note": "The request arrived for another origin, consistently in the URL and Host.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://evil.example/a",
+        "header_lines": [["Host","evil.example"]],
+        "body_hex": ""
+      },
+      "expect": {
+        "open": "http-adapter-origin-policy",
+        "outcomes": {
+          "bind_configured_origin": {"request_hash":"b6c409af56532b6edb1f09bea5442e3fe0bd131a19683cde432a63674d3718cc"},
+          "reject": {"error":"invalid_exact_lnbtc_request_mismatch"}
+        },
+        "forbidden_request_hash": "16c4f2d6e282188e630ff4f7318dae2bb89ea69a5343f0f4575cafeb5a33c96a"
+      }
+    },
+    {
+      "id": "host-differs-from-url",
+      "note": "A well-formed Host naming an authority other than the request URL's.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.com/article/A",
+        "header_lines": [["Host","other.example.com"]],
+        "body_hex": ""
+      },
+      "expect": {
+        "open": "http-adapter-origin-policy",
+        "outcomes": {
+          "reject_binding": {"error":"invalid_exact_lnbtc_request_binding"},
+          "reject_mismatch": {"error":"invalid_exact_lnbtc_request_mismatch"}
+        },
+        "forbidden_request_hash": "6e6a4a4f5b0fc413ef9f45b58500251d5188074cd9c80affb37e858e230e6da6"
+      }
+    },
+    {
+      "id": "no-authority-header",
+      "note": "No Host, :authority, or X-Forwarded-Host at all.",
+      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "input": {"method":"GET","url":"https://api.example.com/article/A","header_lines":[],"body_hex":""},
+      "expect": {
+        "open": "http-adapter-origin-policy",
+        "outcomes": {
+          "bind": {"request_hash":"0d6623f775e025501fa7f0a30b54da25aad62b6ccfe35c85da38016711e6c018"},
+          "reject": {"error":"invalid_exact_lnbtc_request_binding"}
+        }
+      }
+    }
+  ],
+  "mcp_binding": [
+    {
+      "id": "published-article-a",
+      "note": "Spec MCP example.",
+      "input": {
+        "server": "https://api.example.com/mcp",
+        "bound_metadata": [],
+        "params": {"name":"get_article","arguments":{"article":"A"}}
+      },
+      "expect": {
+        "request_hash": "03941bfedc6af8a09b2f459fe83470284a76a8c75801caa9e1487a9276a693f4",
+        "canonical_description": "{\"arguments\":{\"article\":\"A\"},\"domain\":\"x402:exact:lnbtc:bolt11:mcp:1\",\"metadata\":[],\"method\":\"tools/call\",\"name\":\"get_article\",\"server\":\"https://api.example.com/mcp\"}"
+      }
+    },
+    {
+      "id": "published-article-b",
+      "note": "Spec MCP example, arguments.article = B.",
+      "input": {
+        "server": "https://api.example.com/mcp",
+        "bound_metadata": [],
+        "params": {"name":"get_article","arguments":{"article":"B"}}
+      },
+      "expect": {
+        "request_hash": "b3e425970d64cd4f08fc4d57a11b76da59ce6a5760d92687398c91f063120678",
+        "canonical_description": "{\"arguments\":{\"article\":\"B\"},\"domain\":\"x402:exact:lnbtc:bolt11:mcp:1\",\"metadata\":[],\"method\":\"tools/call\",\"name\":\"get_article\",\"server\":\"https://api.example.com/mcp\"}"
+      }
+    },
+    {
+      "id": "published-delete-article",
+      "note": "Spec MCP example, name = delete_article.",
+      "input": {
+        "server": "https://api.example.com/mcp",
+        "bound_metadata": [],
+        "params": {"name":"delete_article","arguments":{"article":"A"}}
+      },
+      "expect": {
+        "request_hash": "3a52bbf19dda8b5765a27246b12e805770298273b48526956c421f02fe043455",
+        "canonical_description": "{\"arguments\":{\"article\":\"A\"},\"domain\":\"x402:exact:lnbtc:bolt11:mcp:1\",\"metadata\":[],\"method\":\"tools/call\",\"name\":\"delete_article\",\"server\":\"https://api.example.com/mcp\"}"
+      }
+    },
+    {
+      "id": "published-other-server",
+      "note": "Spec MCP example, server = https://other.example.com/mcp.",
+      "input": {
+        "server": "https://other.example.com/mcp",
+        "bound_metadata": [],
+        "params": {"name":"get_article","arguments":{"article":"A"}}
+      },
+      "expect": {
+        "request_hash": "96903c29186c6aabc95e48abafd8ce3ad32b4060f5d5bf22cf75f3fbfe816e45",
+        "canonical_description": "{\"arguments\":{\"article\":\"A\"},\"domain\":\"x402:exact:lnbtc:bolt11:mcp:1\",\"metadata\":[],\"method\":\"tools/call\",\"name\":\"get_article\",\"server\":\"https://other.example.com/mcp\"}"
+      }
+    },
+    {
+      "id": "arguments-member-order",
+      "note": "Member order inside arguments does not change the hash.",
+      "input": {
+        "server": "https://api.example.com/mcp",
+        "bound_metadata": [],
+        "params_json": "{\"name\":\"get_article\",\"arguments\":{\"b\":2,\"a\":1}}"
+      },
+      "expect": {
+        "request_hash": "aa5886940da79b269a85818a7b1ed98f18c2925125ee734cc7333a199dfce606",
+        "canonical_description": "{\"arguments\":{\"a\":1,\"b\":2},\"domain\":\"x402:exact:lnbtc:bolt11:mcp:1\",\"metadata\":[],\"method\":\"tools/call\",\"name\":\"get_article\",\"server\":\"https://api.example.com/mcp\"}"
+      }
+    },
+    {
+      "id": "unbound-meta-ignored",
+      "note": "progressToken and x402/payment in _meta are not binding inputs.",
+      "input": {
+        "server": "https://api.example.com/mcp",
+        "bound_metadata": [],
+        "params": {
+          "name": "get_article",
+          "arguments": {"a":1,"b":2},
+          "_meta": {"progressToken":"new","x402/payment":{"preimage":"proof"}}
+        }
+      },
+      "expect": {
+        "request_hash": "aa5886940da79b269a85818a7b1ed98f18c2925125ee734cc7333a199dfce606",
+        "canonical_description": "{\"arguments\":{\"a\":1,\"b\":2},\"domain\":\"x402:exact:lnbtc:bolt11:mcp:1\",\"metadata\":[],\"method\":\"tools/call\",\"name\":\"get_article\",\"server\":\"https://api.example.com/mcp\"}"
+      }
+    },
+    {
+      "id": "arguments-omitted",
+      "note": "Omitted arguments bind as {}.",
+      "input": {"server":"https://api.example.com/mcp","bound_metadata":[],"params":{"name":"get_article"}},
+      "expect": {
+        "request_hash": "c4ba2588ec820d46601685d57efa5b56425af89a0e075b54d2096bd10e549477",
+        "canonical_description": "{\"arguments\":{},\"domain\":\"x402:exact:lnbtc:bolt11:mcp:1\",\"metadata\":[],\"method\":\"tools/call\",\"name\":\"get_article\",\"server\":\"https://api.example.com/mcp\"}"
+      }
+    },
+    {
+      "id": "arguments-empty",
+      "note": "Explicit {} arguments; same hash as arguments-omitted.",
+      "input": {
+        "server": "https://api.example.com/mcp",
+        "bound_metadata": [],
+        "params": {"name":"get_article","arguments":{}}
+      },
+      "expect": {
+        "request_hash": "c4ba2588ec820d46601685d57efa5b56425af89a0e075b54d2096bd10e549477",
+        "canonical_description": "{\"arguments\":{},\"domain\":\"x402:exact:lnbtc:bolt11:mcp:1\",\"metadata\":[],\"method\":\"tools/call\",\"name\":\"get_article\",\"server\":\"https://api.example.com/mcp\"}"
+      }
+    },
+    {
+      "id": "metadata-absent",
+      "note": "Bound metadata member absent: valueHash = SHA-256(0x00).",
+      "input": {
+        "server": "https://api.example.com/mcp",
+        "bound_metadata": ["account"],
+        "params": {"name":"get_article"}
+      },
+      "expect": {
+        "request_hash": "310a43a0283ffe50393bf1daa3abb8b5cba4ad60c266aa9fb6d41a57b8cd5b85",
+        "canonical_description": "{\"arguments\":{},\"domain\":\"x402:exact:lnbtc:bolt11:mcp:1\",\"metadata\":[{\"name\":\"account\",\"valueHash\":\"6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d\"}],\"method\":\"tools/call\",\"name\":\"get_article\",\"server\":\"https://api.example.com/mcp\"}"
+      }
+    },
+    {
+      "id": "metadata-null",
+      "note": "Bound metadata member present as null; differs from absent.",
+      "input": {
+        "server": "https://api.example.com/mcp",
+        "bound_metadata": ["account"],
+        "params": {"name":"get_article","_meta":{"account":null}}
+      },
+      "expect": {
+        "request_hash": "88c4de6dedfe63dcef29a4b4a081a765b8153e45fc436f461dd4cd8b1a6ec94b",
+        "canonical_description": "{\"arguments\":{},\"domain\":\"x402:exact:lnbtc:bolt11:mcp:1\",\"metadata\":[{\"name\":\"account\",\"valueHash\":\"c58dcb77cee9027d1f4b3207bd876d232e61f79ee9f9dbd4e6d834778da78b16\"}],\"method\":\"tools/call\",\"name\":\"get_article\",\"server\":\"https://api.example.com/mcp\"}"
+      }
+    },
+    {
+      "id": "metadata-value",
+      "note": "Bound metadata member with a string value.",
+      "input": {
+        "server": "https://api.example.com/mcp",
+        "bound_metadata": ["account"],
+        "params": {"name":"get_article","_meta":{"account":"acct_1"}}
+      },
+      "expect": {
+        "request_hash": "fd87b1c0ce931202901c02c531dc60453975185ffe41cb5cc112a525903ddbfe",
+        "canonical_description": "{\"arguments\":{},\"domain\":\"x402:exact:lnbtc:bolt11:mcp:1\",\"metadata\":[{\"name\":\"account\",\"valueHash\":\"826d88554a49d7e8e95dbf79c2a400c07ec69566dbe865669c247bd1cff17c85\"}],\"method\":\"tools/call\",\"name\":\"get_article\",\"server\":\"https://api.example.com/mcp\"}"
+      }
+    },
+    {
+      "id": "integer-max-safe",
+      "note": "2^53 - 1 is inside the JCS number domain.",
+      "input": {
+        "server": "https://api.example.com/mcp",
+        "bound_metadata": [],
+        "params_json": "{\"name\":\"get_article\",\"arguments\":{\"x\":9007199254740991}}"
+      },
+      "expect": {
+        "request_hash": "bd755cb7da899cc3e9cda1821c4cf1f368704b0e7368eb5c00dd224cc6f61315",
+        "canonical_description": "{\"arguments\":{\"x\":9007199254740991},\"domain\":\"x402:exact:lnbtc:bolt11:mcp:1\",\"metadata\":[],\"method\":\"tools/call\",\"name\":\"get_article\",\"server\":\"https://api.example.com/mcp\"}"
+      }
+    },
+    {
+      "id": "arguments-unicode",
+      "note": "Non-ASCII strings are hashed as UTF-8 of the JCS output.",
+      "input": {
+        "server": "https://api.example.com/mcp",
+        "bound_metadata": [],
+        "params": {"name":"get_article","arguments":{"title":"ナンセンス"}}
+      },
+      "expect": {
+        "request_hash": "9fb4614b67a74e12a9228595fe0d4d1c0bb9638e08192e307d2882cebed8898e",
+        "canonical_description": "{\"arguments\":{\"title\":\"ナンセンス\"},\"domain\":\"x402:exact:lnbtc:bolt11:mcp:1\",\"metadata\":[],\"method\":\"tools/call\",\"name\":\"get_article\",\"server\":\"https://api.example.com/mcp\"}"
+      }
+    },
+    {
+      "id": "arguments-null",
+      "note": "Null arguments are rejected.",
+      "input": {
+        "server": "https://api.example.com/mcp",
+        "bound_metadata": [],
+        "params": {"name":"get_article","arguments":null}
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "arguments-array",
+      "note": "Non-object arguments are rejected.",
+      "input": {
+        "server": "https://api.example.com/mcp",
+        "bound_metadata": [],
+        "params": {"name":"get_article","arguments":[]}
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "meta-null",
+      "note": "A present non-object _meta is rejected.",
+      "input": {
+        "server": "https://api.example.com/mcp",
+        "bound_metadata": [],
+        "params": {"name":"get_article","_meta":null}
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "name-empty",
+      "note": "params.name must be non-empty.",
+      "input": {"server":"https://api.example.com/mcp","bound_metadata":[],"params":{"name":""}},
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "metadata-progress-token",
+      "note": "progressToken must not be bound.",
+      "input": {
+        "server": "https://api.example.com/mcp",
+        "bound_metadata": ["progressToken"],
+        "params": {"name":"get_article"}
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "metadata-x402-payment",
+      "note": "x402/payment must not be bound.",
+      "input": {
+        "server": "https://api.example.com/mcp",
+        "bound_metadata": ["x402/payment"],
+        "params": {"name":"get_article"}
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "metadata-unsorted",
+      "note": "Bound metadata names must be in JCS order.",
+      "input": {
+        "server": "https://api.example.com/mcp",
+        "bound_metadata": ["z","a"],
+        "params": {"name":"get_article"}
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "metadata-empty-name",
+      "note": "Bound metadata names must be non-empty.",
+      "input": {"server":"https://api.example.com/mcp","bound_metadata":[""],"params":{"name":"get_article"}},
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "server-fragment",
+      "note": "Server URI must not carry a fragment.",
+      "input": {"server":"https://api.example.com/mcp#x","bound_metadata":[],"params":{"name":"get_article"}},
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "arguments-lone-surrogate",
+      "note": "Strings must be valid Unicode.",
+      "input": {
+        "server": "https://api.example.com/mcp",
+        "bound_metadata": [],
+        "params_json": "{\"name\":\"get_article\",\"arguments\":{\"x\":\"\\ud800\"}}"
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "integer-2-53-plus-1",
+      "note": "Integer literal 9007199254740993 is outside the IEEE-754 exact range.",
+      "input": {
+        "server": "https://api.example.com/mcp",
+        "bound_metadata": [],
+        "params_json": "{\"name\":\"get_article\",\"arguments\":{\"x\":9007199254740993}}"
+      },
+      "expect": {
+        "open": "mcp-integer-range",
+        "outcomes": {
+          "bind_as_double": {
+            "request_hash": "c342f9dec594b7e3e9e5d01c6d7dd1eaf8ecd3d39be85972ea10f97c477c56a0",
+            "canonical_description": "{\"arguments\":{\"x\":9007199254740992},\"domain\":\"x402:exact:lnbtc:bolt11:mcp:1\",\"metadata\":[],\"method\":\"tools/call\",\"name\":\"get_article\",\"server\":\"https://api.example.com/mcp\"}"
+          },
+          "reject": {"error":"invalid_exact_lnbtc_request_binding"}
+        }
+      }
+    },
+    {
+      "id": "integer-2-64",
+      "note": "Integer literal 18446744073709551616 is outside the IEEE-754 exact range.",
+      "input": {
+        "server": "https://api.example.com/mcp",
+        "bound_metadata": [],
+        "params_json": "{\"name\":\"get_article\",\"arguments\":{\"x\":18446744073709551616}}"
+      },
+      "expect": {
+        "open": "mcp-integer-range",
+        "outcomes": {
+          "bind_as_double": {
+            "request_hash": "8fb36435c9dbdbe9177613ff4a7593e411b133dbc3b68caf238b0d6a0b1db2e0",
+            "canonical_description": "{\"arguments\":{\"x\":18446744073709552000},\"domain\":\"x402:exact:lnbtc:bolt11:mcp:1\",\"metadata\":[],\"method\":\"tools/call\",\"name\":\"get_article\",\"server\":\"https://api.example.com/mcp\"}"
+          },
+          "reject": {"error":"invalid_exact_lnbtc_request_binding"}
+        }
+      }
+    }
+  ],
+  "client": {
+    "base": {
+      "intended_request": {
+        "profile": "http:1",
+        "http": {
+          "method": "GET",
+          "url": "https://api.example.com/article/A",
+          "body_hex": "",
+          "bound_headers": [],
+          "header_lines": []
+        }
+      },
+      "payment_required": {
+        "x402Version": 2,
+        "resource": {"url":"https://api.example.com/article/A"},
+        "accepts": [
+          {
+            "scheme": "exact",
+            "network": "lnbtc:000000000019d6689c085ae165831e93",
+            "amount": "25000",
+            "asset": "BTC",
+            "payTo": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "assetTransferMethod": "bolt11",
+              "paymentFlow": "upfront",
+              "requestHash": "0d6623f775e025501fa7f0a30b54da25aad62b6ccfe35c85da38016711e6c018",
+              "requestBindingProfile": "http:1",
+              "requestBindingParams": {"headers":[]},
+              "invoice": "lnbc250n1pj48ugqpp54y3u9s8ylemsv8l3ewyzzu0klhujvuvmkl6llchq23vy8rzjsf0qsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjr4rx6ls6j5rpwknuea64evlk7yfx56wmqcer5eerekdsn9tlv6v4ex9mlz5dtm9qapl3svwlqcf7837dmjkru9z9w4h2rvm0md52w2sqxrwu5f"
+            }
+          }
+        ]
+      },
+      "payer_result": {
+        "status": "paid",
+        "invoice": "lnbc250n1pj48ugqpp54y3u9s8ylemsv8l3ewyzzu0klhujvuvmkl6llchq23vy8rzjsf0qsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjr4rx6ls6j5rpwknuea64evlk7yfx56wmqcer5eerekdsn9tlv6v4ex9mlz5dtm9qapl3svwlqcf7837dmjkru9z9w4h2rvm0md52w2sqxrwu5f",
+        "payment_hash": "a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+        "amount_msat": "25000",
+        "preimage": "0001020304050607080900010203040506070809000102030405060708090102"
+      }
+    },
+    "cases": [
+      {
+        "id": "pays-spec-example",
+        "note": "Valid challenge: pays once and returns the preimage.",
+        "now": 1700000000,
+        "skew": 60,
+        "patch": [],
+        "expect": {"preimage":"0001020304050607080900010203040506070809000102030405060708090102"}
+      },
+      {
+        "id": "request-hash-differs",
+        "note": "Advertised requestHash differs from the intended request.",
+        "now": 1700000000,
+        "skew": 60,
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/payment_required/accepts",
+            "value": [
+              {
+                "scheme": "exact",
+                "network": "lnbtc:000000000019d6689c085ae165831e93",
+                "amount": "25000",
+                "asset": "BTC",
+                "payTo": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+                "maxTimeoutSeconds": 300,
+                "extra": {
+                  "assetTransferMethod": "bolt11",
+                  "paymentFlow": "upfront",
+                  "requestHash": "0000000000000000000000000000000000000000000000000000000000000000",
+                  "requestBindingProfile": "http:1",
+                  "requestBindingParams": {"headers":[]},
+                  "invoice": "lnbc250n1pj48ugqpp54y3u9s8ylemsv8l3ewyzzu0klhujvuvmkl6llchq23vy8rzjsf0qsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjr4rx6ls6j5rpwknuea64evlk7yfx56wmqcer5eerekdsn9tlv6v4ex9mlz5dtm9qapl3svwlqcf7837dmjkru9z9w4h2rvm0md52w2sqxrwu5f"
+                }
+              }
+            ]
+          }
+        ],
+        "expect": {"error":"invalid_exact_lnbtc_request_mismatch","payer_called":false}
+      },
+      {
+        "id": "resource-url-differs",
+        "note": "PaymentRequired.resource.url differs from the intended URL.",
+        "now": 1700000000,
+        "skew": 60,
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/payment_required/resource/url",
+            "value": "https://api.example.com/article/A/wrong"
+          }
+        ],
+        "expect": {"error":"invalid_exact_lnbtc_request_mismatch","payer_called":false}
+      },
+      {
+        "id": "mcp-profile-for-http-request",
+        "note": "mcp:1 advertised for an HTTP request.",
+        "now": 1700000000,
+        "skew": 60,
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/payment_required/accepts",
+            "value": [
+              {
+                "scheme": "exact",
+                "network": "lnbtc:000000000019d6689c085ae165831e93",
+                "amount": "25000",
+                "asset": "BTC",
+                "payTo": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+                "maxTimeoutSeconds": 300,
+                "extra": {
+                  "assetTransferMethod": "bolt11",
+                  "paymentFlow": "upfront",
+                  "requestHash": "03941bfedc6af8a09b2f459fe83470284a76a8c75801caa9e1487a9276a693f4",
+                  "requestBindingProfile": "mcp:1",
+                  "requestBindingParams": {"server":"https://api.example.com/mcp","metadata":[]},
+                  "invoice": "lnbc250n1pj48ugqpp54y3u9s8ylemsv8l3ewyzzu0klhujvuvmkl6llchq23vy8rzjsf0qsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjr4rx6ls6j5rpwknuea64evlk7yfx56wmqcer5eerekdsn9tlv6v4ex9mlz5dtm9qapl3svwlqcf7837dmjkru9z9w4h2rvm0md52w2sqxrwu5f"
+                }
+              }
+            ]
+          }
+        ],
+        "expect": {"error":"invalid_exact_lnbtc_request_mismatch","payer_called":false}
+      },
+      {
+        "id": "http-profile-for-mcp-call",
+        "note": "http:1 advertised for an MCP tool call.",
+        "now": 1700000000,
+        "skew": 60,
+        "patch": [
+          {"op":"remove","path":"/intended_request/http"},
+          {"op":"replace","path":"/intended_request/profile","value":"mcp:1"},
+          {
+            "op": "add",
+            "path": "/intended_request/mcp",
+            "value": {
+              "server": "https://api.example.com/mcp",
+              "bound_metadata": [],
+              "params": {"name":"get_article","arguments":{"article":"A"}}
+            }
+          }
+        ],
+        "expect": {"error":"invalid_exact_lnbtc_request_mismatch","payer_called":false}
+      },
+      {
+        "id": "invoice-expired",
+        "note": "Invoice ended one second before validation time.",
+        "now": 1700000000,
+        "skew": 60,
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/payment_required/accepts",
+            "value": [
+              {
+                "scheme": "exact",
+                "network": "lnbtc:000000000019d6689c085ae165831e93",
+                "amount": "25000",
+                "asset": "BTC",
+                "payTo": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+                "maxTimeoutSeconds": 300,
+                "extra": {
+                  "assetTransferMethod": "bolt11",
+                  "paymentFlow": "upfront",
+                  "requestHash": "0d6623f775e025501fa7f0a30b54da25aad62b6ccfe35c85da38016711e6c018",
+                  "requestBindingProfile": "http:1",
+                  "requestBindingParams": {"headers":[]},
+                  "invoice": "lnbc250n1pj48m7npp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjgjf7838hfgc88tzy9ssvxgfa0psth532jezgsecaet73h3v3vlu80vwxzw58kvvvhyp443kntwtx7cm0uyp55xy7n7v23fkwxl3a6jqplqkgty"
+                }
+              }
+            ]
+          },
+          {
+            "op": "replace",
+            "path": "/payer_result/invoice",
+            "value": "lnbc250n1pj48m7npp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjgjf7838hfgc88tzy9ssvxgfa0psth532jezgsecaet73h3v3vlu80vwxzw58kvvvhyp443kntwtx7cm0uyp55xy7n7v23fkwxl3a6jqplqkgty"
+          },
+          {
+            "op": "replace",
+            "path": "/payer_result/payment_hash",
+            "value": "425ed4e4a36b30ea21b90e21c712c649e8214c29b7eaf68089d1039c6e55384c"
+          },
+          {
+            "op": "replace",
+            "path": "/payer_result/preimage",
+            "value": "4242424242424242424242424242424242424242424242424242424242424242"
+          }
+        ],
+        "expect": {"error":"invalid_exact_lnbtc_invoice_expired","payer_called":false}
+      },
+      {
+        "id": "invoice-created-in-future",
+        "note": "Created 61 s after validation time.",
+        "now": 1700000000,
+        "skew": 60,
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/payment_required/accepts",
+            "value": [
+              {
+                "scheme": "exact",
+                "network": "lnbtc:000000000019d6689c085ae165831e93",
+                "amount": "25000",
+                "asset": "BTC",
+                "payTo": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+                "maxTimeoutSeconds": 300,
+                "extra": {
+                  "assetTransferMethod": "bolt11",
+                  "paymentFlow": "upfront",
+                  "requestHash": "0d6623f775e025501fa7f0a30b54da25aad62b6ccfe35c85da38016711e6c018",
+                  "requestBindingProfile": "http:1",
+                  "requestBindingParams": {"headers":[]},
+                  "invoice": "lnbc250n1pj48ufapp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjrc7p6q79tr8at05z3zkllkgx44563v7qcnqt38lhcrarxsmczutzlgvpe8yhtdgzckexzpaahhc27elh465sk2r2m6rtkz59zdgsjycpw4nnaw"
+                }
+              }
+            ]
+          },
+          {
+            "op": "replace",
+            "path": "/payer_result/invoice",
+            "value": "lnbc250n1pj48ufapp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjrc7p6q79tr8at05z3zkllkgx44563v7qcnqt38lhcrarxsmczutzlgvpe8yhtdgzckexzpaahhc27elh465sk2r2m6rtkz59zdgsjycpw4nnaw"
+          },
+          {
+            "op": "replace",
+            "path": "/payer_result/payment_hash",
+            "value": "425ed4e4a36b30ea21b90e21c712c649e8214c29b7eaf68089d1039c6e55384c"
+          },
+          {
+            "op": "replace",
+            "path": "/payer_result/preimage",
+            "value": "4242424242424242424242424242424242424242424242424242424242424242"
+          }
+        ],
+        "expect": {"error":"invalid_exact_lnbtc_invoice_created_in_future","payer_called":false}
+      },
+      {
+        "id": "invoice-at-end",
+        "note": "Validation time equals created + expiry.",
+        "now": 1700000300,
+        "skew": 60,
+        "patch": [],
+        "expect": {
+          "open": "client-expiry-boundary",
+          "outcomes": {
+            "pay": {"preimage":"0001020304050607080900010203040506070809000102030405060708090102"},
+            "reject": {"error":"invalid_exact_lnbtc_invoice_expired","payer_called":false}
+          }
+        }
+      },
+      {
+        "id": "payer-other-invoice",
+        "note": "The payer adapter's result cannot stand in for a proven payment.",
+        "now": 1700000000,
+        "skew": 60,
+        "patch": [{"op":"replace","path":"/payer_result/invoice","value":"other"}],
+        "expect": {"error":"invalid_exact_lnbtc_payer_invoice_mismatch","payer_called":true}
+      },
+      {
+        "id": "payer-other-payment-hash",
+        "note": "The payer adapter's result cannot stand in for a proven payment.",
+        "now": 1700000000,
+        "skew": 60,
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/payer_result/payment_hash",
+            "value": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        ],
+        "expect": {"error":"invalid_exact_lnbtc_payer_payment_hash_mismatch","payer_called":true}
+      },
+      {
+        "id": "payer-other-amount",
+        "note": "The payer adapter's result cannot stand in for a proven payment.",
+        "now": 1700000000,
+        "skew": 60,
+        "patch": [{"op":"replace","path":"/payer_result/amount_msat","value":"25001"}],
+        "expect": {"error":"invalid_exact_lnbtc_payer_amount_mismatch","payer_called":true}
+      },
+      {
+        "id": "payer-preimage-null",
+        "note": "The payer adapter's result cannot stand in for a proven payment.",
+        "now": 1700000000,
+        "skew": 60,
+        "patch": [{"op":"replace","path":"/payer_result/preimage","value":null}],
+        "expect": {"error":"invalid_exact_lnbtc_payer_preimage_required","payer_called":true}
+      },
+      {
+        "id": "payer-preimage-uppercase",
+        "note": "The payer adapter's result cannot stand in for a proven payment.",
+        "now": 1700000000,
+        "skew": 60,
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/payer_result/preimage",
+            "value": "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+          }
+        ],
+        "expect": {"error":"invalid_exact_lnbtc_payer_preimage_malformed","payer_called":true}
+      },
+      {
+        "id": "payer-preimage-wrong",
+        "note": "The payer adapter's result cannot stand in for a proven payment.",
+        "now": 1700000000,
+        "skew": 60,
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/payer_result/preimage",
+            "value": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        ],
+        "expect": {"error":"invalid_exact_lnbtc_payer_preimage_hash_mismatch","payer_called":true}
+      },
+      {
+        "id": "payer-unpaid",
+        "note": "The payer adapter's result cannot stand in for a proven payment.",
+        "now": 1700000000,
+        "skew": 60,
+        "patch": [{"op":"replace","path":"/payer_result/status","value":"unpaid"}],
+        "expect": {"error":"exact_lnbtc_payment_not_paid","payer_called":true}
+      },
+      {
+        "id": "payer-in-flight",
+        "note": "The payer adapter's result cannot stand in for a proven payment.",
+        "now": 1700000000,
+        "skew": 60,
+        "patch": [{"op":"replace","path":"/payer_result/status","value":"in_flight"}],
+        "expect": {"error":"exact_lnbtc_payment_in_flight","payer_called":true}
+      }
+    ]
+  },
+  "facilitator_settle": {
+    "base": {
+      "requirements": {
+        "scheme": "exact",
+        "network": "lnbtc:000000000019d6689c085ae165831e93",
+        "amount": "25000",
+        "asset": "BTC",
+        "payTo": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+        "maxTimeoutSeconds": 300,
+        "extra": {
+          "assetTransferMethod": "bolt11",
+          "paymentFlow": "upfront",
+          "requestHash": "0d6623f775e025501fa7f0a30b54da25aad62b6ccfe35c85da38016711e6c018",
+          "requestBindingProfile": "http:1",
+          "requestBindingParams": {"headers":[]},
+          "invoice": "lnbc250n1pj48ugqpp54y3u9s8ylemsv8l3ewyzzu0klhujvuvmkl6llchq23vy8rzjsf0qsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjr4rx6ls6j5rpwknuea64evlk7yfx56wmqcer5eerekdsn9tlv6v4ex9mlz5dtm9qapl3svwlqcf7837dmjkru9z9w4h2rvm0md52w2sqxrwu5f"
+        }
+      },
+      "payload": {
+        "x402Version": 2,
+        "accepted": {
+          "scheme": "exact",
+          "network": "lnbtc:000000000019d6689c085ae165831e93",
+          "amount": "25000",
+          "asset": "BTC",
+          "payTo": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+          "maxTimeoutSeconds": 300,
+          "extra": {
+            "assetTransferMethod": "bolt11",
+            "paymentFlow": "upfront",
+            "requestHash": "0d6623f775e025501fa7f0a30b54da25aad62b6ccfe35c85da38016711e6c018",
+            "requestBindingProfile": "http:1",
+            "requestBindingParams": {"headers":[]},
+            "invoice": "lnbc250n1pj48ugqpp54y3u9s8ylemsv8l3ewyzzu0klhujvuvmkl6llchq23vy8rzjsf0qsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjr4rx6ls6j5rpwknuea64evlk7yfx56wmqcer5eerekdsn9tlv6v4ex9mlz5dtm9qapl3svwlqcf7837dmjkru9z9w4h2rvm0md52w2sqxrwu5f"
+          }
+        },
+        "payload": {"preimage":"0001020304050607080900010203040506070809000102030405060708090102"}
+      }
+    },
+    "cases": [
+      {
+        "id": "spec-example",
+        "note": "The spec's HTTP example settles once; the same proof again is a duplicate.",
+        "group": "replay",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [],
+            "expect": {
+              "success": true,
+              "transaction": "a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "network": "lnbtc:000000000019d6689c085ae165831e93",
+              "replay_key": "lnbtc:000000000019d6689c085ae165831e93:a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "retain_until_at_least": 1700003960
+            }
+          },
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [],
+            "expect": {"success":false,"error_reason":"duplicate_settlement","step":"replay"}
+          }
+        ]
+      },
+      {
+        "id": "fresh-requirements-invoice",
+        "note": "requirements.extra.invoice is a fresh invoice for the same request; the accepted invoice settles.",
+        "group": "valid",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/requirements/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5u22y9es66d2wtjcgx83wsdv7376seupy44dg7sru37w7vw7lwdcssp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpj3rlkkqfx32qa792qhmpgcw2a674wf90nswtp7w44h7fqmc5hdpxk07hksha9ek04uaekj4lsux7kzgc8vzh9rm9xfv3swwmtpltsvzsqs04rqj"
+              }
+            ],
+            "expect": {
+              "success": true,
+              "transaction": "a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "network": "lnbtc:000000000019d6689c085ae165831e93",
+              "replay_key": "lnbtc:000000000019d6689c085ae165831e93:a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "retain_until_at_least": 1700003960
+            }
+          }
+        ]
+      },
+      {
+        "id": "two-paid-invoices",
+        "note": "Two paid invoices for the same request and terms each settle once.",
+        "group": "replay",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [],
+            "expect": {
+              "success": true,
+              "transaction": "a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "network": "lnbtc:000000000019d6689c085ae165831e93",
+              "replay_key": "lnbtc:000000000019d6689c085ae165831e93:a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "retain_until_at_least": 1700003960
+            }
+          },
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjfxevavgdka8487x7a3whlz4ujgk0rx6p4r9c57nwhahwqwvgh6j9e4xxmwj862env32h7c3hf7h3nh6ltdql5dkjqsvr9ks6rq2nm0qpqyd8md"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "4242424242424242424242424242424242424242424242424242424242424242"
+              }
+            ],
+            "expect": {
+              "success": true,
+              "transaction": "425ed4e4a36b30ea21b90e21c712c649e8214c29b7eaf68089d1039c6e55384c",
+              "network": "lnbtc:000000000019d6689c085ae165831e93",
+              "replay_key": "lnbtc:000000000019d6689c085ae165831e93:425ed4e4a36b30ea21b90e21c712c649e8214c29b7eaf68089d1039c6e55384c",
+              "retain_until_at_least": 1700003960
+            }
+          }
+        ]
+      },
+      {
+        "id": "defaults-and-additive-fields",
+        "note": "Accepted omits assetTransferMethod and adds a client field.",
+        "group": "valid",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {"op":"remove","path":"/payload/accepted/extra/assetTransferMethod"},
+              {"op":"add","path":"/payload/accepted/extra/clientNote","value":"ignored"}
+            ],
+            "expect": {
+              "success": true,
+              "transaction": "a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "network": "lnbtc:000000000019d6689c085ae165831e93",
+              "replay_key": "lnbtc:000000000019d6689c085ae165831e93:a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "retain_until_at_least": 1700003960
+            }
+          }
+        ]
+      },
+      {
+        "id": "payee-field-present",
+        "note": "An invoice carrying an n field equal to payTo.",
+        "group": "valid",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqnp4qfumuen7l8wthtz45p3ftn58pvrs9xlumvkuu2xet8egzkcklqtesxqzfvcqpjyf6xmg6wrfgmucwurqdd8s453jvezshh4apvk2krtxm034rz02f5ru0t23ye05nm8s2k3zepx6xmcmz0tlg3nve4mam3tuvu20jyckcqcy9t5e"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "4242424242424242424242424242424242424242424242424242424242424242"
+              }
+            ],
+            "expect": {
+              "success": true,
+              "transaction": "425ed4e4a36b30ea21b90e21c712c649e8214c29b7eaf68089d1039c6e55384c",
+              "network": "lnbtc:000000000019d6689c085ae165831e93",
+              "replay_key": "lnbtc:000000000019d6689c085ae165831e93:425ed4e4a36b30ea21b90e21c712c649e8214c29b7eaf68089d1039c6e55384c",
+              "retain_until_at_least": 1700003960
+            }
+          }
+        ]
+      },
+      {
+        "id": "same-hash-each-network",
+        "note": "One payment hash settles once per network: the keys differ.",
+        "group": "replay",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjfxevavgdka8487x7a3whlz4ujgk0rx6p4r9c57nwhahwqwvgh6j9e4xxmwj862env32h7c3hf7h3nh6ltdql5dkjqsvr9ks6rq2nm0qpqyd8md"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "4242424242424242424242424242424242424242424242424242424242424242"
+              }
+            ],
+            "expect": {
+              "success": true,
+              "transaction": "425ed4e4a36b30ea21b90e21c712c649e8214c29b7eaf68089d1039c6e55384c",
+              "network": "lnbtc:000000000019d6689c085ae165831e93",
+              "replay_key": "lnbtc:000000000019d6689c085ae165831e93:425ed4e4a36b30ea21b90e21c712c649e8214c29b7eaf68089d1039c6e55384c",
+              "retain_until_at_least": 1700003960
+            }
+          },
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/requirements/network",
+                "value": "lnbtc:000000000933ea01ad0ee984209779ba"
+              },
+              {
+                "op": "replace",
+                "path": "/requirements/extra/invoice",
+                "value": "lntb250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjesqz56c9tujj73av0ckqrxkjf4f65xdxkp07fp6cdj6kxaf7hzm3en4yn5r0cwqt2myz9kh3sm8t3fhjmpvfxas42zlkvr3gxkup4zqqhn0tj5"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/network",
+                "value": "lnbtc:000000000933ea01ad0ee984209779ba"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lntb250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjesqz56c9tujj73av0ckqrxkjf4f65xdxkp07fp6cdj6kxaf7hzm3en4yn5r0cwqt2myz9kh3sm8t3fhjmpvfxas42zlkvr3gxkup4zqqhn0tj5"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "4242424242424242424242424242424242424242424242424242424242424242"
+              }
+            ],
+            "expect": {
+              "success": true,
+              "transaction": "425ed4e4a36b30ea21b90e21c712c649e8214c29b7eaf68089d1039c6e55384c",
+              "network": "lnbtc:000000000933ea01ad0ee984209779ba",
+              "replay_key": "lnbtc:000000000933ea01ad0ee984209779ba:425ed4e4a36b30ea21b90e21c712c649e8214c29b7eaf68089d1039c6e55384c",
+              "retain_until_at_least": 1700003960
+            }
+          }
+        ]
+      },
+      {
+        "id": "preimage-missing-does-not-consume",
+        "note": "A failed proof leaves the invoice usable for the valid proof.",
+        "group": "replay",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [{"op":"remove","path":"/payload/payload/preimage"}],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_preimage_missing","step":6}
+          },
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [],
+            "expect": {
+              "success": true,
+              "transaction": "a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "network": "lnbtc:000000000019d6689c085ae165831e93",
+              "replay_key": "lnbtc:000000000019d6689c085ae165831e93:a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "retain_until_at_least": 1700003960
+            }
+          }
+        ]
+      },
+      {
+        "id": "preimage-uppercase-does-not-consume",
+        "note": "A failed proof leaves the invoice usable for the valid proof.",
+        "group": "replay",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_preimage_malformed","step":6}
+          },
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [],
+            "expect": {
+              "success": true,
+              "transaction": "a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "network": "lnbtc:000000000019d6689c085ae165831e93",
+              "replay_key": "lnbtc:000000000019d6689c085ae165831e93:a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "retain_until_at_least": 1700003960
+            }
+          }
+        ]
+      },
+      {
+        "id": "preimage-non-hex-does-not-consume",
+        "note": "A failed proof leaves the invoice usable for the valid proof.",
+        "group": "replay",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [{"op":"replace","path":"/payload/payload/preimage","value":"ABC"}],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_preimage_malformed","step":6}
+          },
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [],
+            "expect": {
+              "success": true,
+              "transaction": "a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "network": "lnbtc:000000000019d6689c085ae165831e93",
+              "replay_key": "lnbtc:000000000019d6689c085ae165831e93:a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "retain_until_at_least": 1700003960
+            }
+          }
+        ]
+      },
+      {
+        "id": "preimage-63-chars-does-not-consume",
+        "note": "A failed proof leaves the invoice usable for the valid proof.",
+        "group": "replay",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_preimage_length","step":6}
+          },
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [],
+            "expect": {
+              "success": true,
+              "transaction": "a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "network": "lnbtc:000000000019d6689c085ae165831e93",
+              "replay_key": "lnbtc:000000000019d6689c085ae165831e93:a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "retain_until_at_least": 1700003960
+            }
+          }
+        ]
+      },
+      {
+        "id": "preimage-66-chars-does-not-consume",
+        "note": "A failed proof leaves the invoice usable for the valid proof.",
+        "group": "replay",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "000102030405060708090001020304050607080900010203040506070809010200"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_preimage_length","step":6}
+          },
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [],
+            "expect": {
+              "success": true,
+              "transaction": "a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "network": "lnbtc:000000000019d6689c085ae165831e93",
+              "replay_key": "lnbtc:000000000019d6689c085ae165831e93:a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "retain_until_at_least": 1700003960
+            }
+          }
+        ]
+      },
+      {
+        "id": "preimage-wrong-does-not-consume",
+        "note": "A failed proof leaves the invoice usable for the valid proof.",
+        "group": "replay",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "0000000000000000000000000000000000000000000000000000000000000000"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_preimage_hash_mismatch","step":6}
+          },
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [],
+            "expect": {
+              "success": true,
+              "transaction": "a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "network": "lnbtc:000000000019d6689c085ae165831e93",
+              "replay_key": "lnbtc:000000000019d6689c085ae165831e93:a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "retain_until_at_least": 1700003960
+            }
+          }
+        ]
+      },
+      {
+        "id": "expiry-at-invoice-end",
+        "note": "Settles at invoice_end.",
+        "group": "valid",
+        "steps": [
+          {
+            "now": 1700000300,
+            "skew": 60,
+            "patch": [],
+            "expect": {
+              "success": true,
+              "transaction": "a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "network": "lnbtc:000000000019d6689c085ae165831e93",
+              "replay_key": "lnbtc:000000000019d6689c085ae165831e93:a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "retain_until_at_least": 1700003960
+            }
+          }
+        ]
+      },
+      {
+        "id": "expiry-at-end-plus-skew",
+        "note": "Equality at invoice_end + skew is valid.",
+        "group": "valid",
+        "steps": [
+          {
+            "now": 1700000360,
+            "skew": 60,
+            "patch": [],
+            "expect": {
+              "success": true,
+              "transaction": "a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "network": "lnbtc:000000000019d6689c085ae165831e93",
+              "replay_key": "lnbtc:000000000019d6689c085ae165831e93:a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e",
+              "retain_until_at_least": 1700003960
+            }
+          }
+        ]
+      },
+      {
+        "id": "expiry-after-end-plus-skew",
+        "note": "One second after invoice_end + skew fails.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000361,
+            "skew": 60,
+            "patch": [],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_expired","step":7}
+          }
+        ]
+      },
+      {
+        "id": "created-at-skew-boundary",
+        "note": "Creation time equal to settlement time + skew is valid.",
+        "group": "valid",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ufupp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjnxlcs8n6knknsh8vvqw6ln96khtkch65zepcjrfecscgpwxjef0znlwu958l82zgt49v3l5xl0kt8vtv05f63gskmu2wcyrv7mh534qqzeaf5s"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "4242424242424242424242424242424242424242424242424242424242424242"
+              }
+            ],
+            "expect": {
+              "success": true,
+              "transaction": "425ed4e4a36b30ea21b90e21c712c649e8214c29b7eaf68089d1039c6e55384c",
+              "network": "lnbtc:000000000019d6689c085ae165831e93",
+              "replay_key": "lnbtc:000000000019d6689c085ae165831e93:425ed4e4a36b30ea21b90e21c712c649e8214c29b7eaf68089d1039c6e55384c",
+              "retain_until_at_least": 1700004020
+            }
+          }
+        ]
+      },
+      {
+        "id": "accepted-scheme-differs",
+        "note": "accepted.scheme differs from the requirement.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [{"op":"replace","path":"/payload/accepted/scheme","value":"other"}],
+            "expect": {"success":false,"error_reason":"unsupported_scheme","step":1}
+          }
+        ]
+      },
+      {
+        "id": "accepted-network-differs",
+        "note": "accepted.network differs from the requirement.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/network",
+                "value": "lnbtc:000000000933ea01ad0ee984209779ba"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"network_mismatch","step":1}
+          }
+        ]
+      },
+      {
+        "id": "accepted-amount-differs",
+        "note": "accepted.amount differs from the requirement.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [{"op":"replace","path":"/payload/accepted/amount","value":"1"}],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_amount_mismatch","step":1}
+          }
+        ]
+      },
+      {
+        "id": "accepted-asset-differs",
+        "note": "accepted.asset differs from the requirement.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [{"op":"replace","path":"/payload/accepted/asset","value":"btc"}],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_asset","step":1}
+          }
+        ]
+      },
+      {
+        "id": "accepted-payTo-differs",
+        "note": "accepted.payTo differs from the requirement.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [{"op":"replace","path":"/payload/accepted/payTo","value":"bad"}],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_pay_to_mismatch","step":1}
+          }
+        ]
+      },
+      {
+        "id": "accepted-maxTimeoutSeconds-differs",
+        "note": "accepted.maxTimeoutSeconds differs from the requirement.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [{"op":"replace","path":"/payload/accepted/maxTimeoutSeconds","value":1}],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_max_timeout_mismatch","step":1}
+          }
+        ]
+      },
+      {
+        "id": "both-scheme-unsupported",
+        "note": "Both sides carry scheme = \"upto\".",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {"op":"replace","path":"/requirements/scheme","value":"upto"},
+              {"op":"replace","path":"/payload/accepted/scheme","value":"upto"}
+            ],
+            "expect": {"success":false,"error_reason":"unsupported_scheme","step":2}
+          }
+        ]
+      },
+      {
+        "id": "both-network-unsupported",
+        "note": "Both sides carry network = \"lnbtc:00000000000000000000000000000000\".",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/requirements/network",
+                "value": "lnbtc:00000000000000000000000000000000"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/network",
+                "value": "lnbtc:00000000000000000000000000000000"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"unsupported_network","step":2}
+          }
+        ]
+      },
+      {
+        "id": "both-asset-not-btc",
+        "note": "Both sides carry asset = \"ETH\".",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {"op":"replace","path":"/requirements/asset","value":"ETH"},
+              {"op":"replace","path":"/payload/accepted/asset","value":"ETH"}
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_asset","step":2}
+          }
+        ]
+      },
+      {
+        "id": "both-amount-zero",
+        "note": "Both sides carry amount = \"0\".",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {"op":"replace","path":"/requirements/amount","value":"0"},
+              {"op":"replace","path":"/payload/accepted/amount","value":"0"}
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_amount","step":2}
+          }
+        ]
+      },
+      {
+        "id": "both-amount-decimal",
+        "note": "Both sides carry amount = \"25000.0\".",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {"op":"replace","path":"/requirements/amount","value":"25000.0"},
+              {"op":"replace","path":"/payload/accepted/amount","value":"25000.0"}
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_amount","step":2}
+          }
+        ]
+      },
+      {
+        "id": "both-amount-signed",
+        "note": "Both sides carry amount = \"+25000\".",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {"op":"replace","path":"/requirements/amount","value":"+25000"},
+              {"op":"replace","path":"/payload/accepted/amount","value":"+25000"}
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_amount","step":2}
+          }
+        ]
+      },
+      {
+        "id": "both-amount-exponent",
+        "note": "Both sides carry amount = \"2.5e4\".",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {"op":"replace","path":"/requirements/amount","value":"2.5e4"},
+              {"op":"replace","path":"/payload/accepted/amount","value":"2.5e4"}
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_amount","step":2}
+          }
+        ]
+      },
+      {
+        "id": "both-pay-to-short",
+        "note": "Both sides carry payTo = \"bad\".",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {"op":"replace","path":"/requirements/payTo","value":"bad"},
+              {"op":"replace","path":"/payload/accepted/payTo","value":"bad"}
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_pay_to_malformed","step":2}
+          }
+        ]
+      },
+      {
+        "id": "both-pay-to-uppercase",
+        "note": "Both sides carry payTo = \"0279BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798\".",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/requirements/payTo",
+                "value": "0279BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/payTo",
+                "value": "0279BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_pay_to_malformed","step":2}
+          }
+        ]
+      },
+      {
+        "id": "both-pay-to-off-curve",
+        "note": "Both sides carry payTo = \"020000000000000000000000000000000000000000000000000000000000000000\".",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/requirements/payTo",
+                "value": "020000000000000000000000000000000000000000000000000000000000000000"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/payTo",
+                "value": "020000000000000000000000000000000000000000000000000000000000000000"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_pay_to_malformed","step":2}
+          }
+        ]
+      },
+      {
+        "id": "both-max-timeout-zero",
+        "note": "Both sides carry maxTimeoutSeconds = 0.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {"op":"replace","path":"/requirements/maxTimeoutSeconds","value":0},
+              {"op":"replace","path":"/payload/accepted/maxTimeoutSeconds","value":0}
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_max_timeout","step":2}
+          }
+        ]
+      },
+      {
+        "id": "accepted-request-hash-null",
+        "note": "accepted requestHash is null.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [{"op":"replace","path":"/payload/accepted/extra/requestHash","value":null}],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_request_binding","step":3}
+          }
+        ]
+      },
+      {
+        "id": "accepted-request-hash-missing",
+        "note": "accepted requestHash is absent.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [{"op":"remove","path":"/payload/accepted/extra/requestHash"}],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_request_binding","step":3}
+          }
+        ]
+      },
+      {
+        "id": "required-request-hash-missing",
+        "note": "requirements requestHash is absent.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [{"op":"remove","path":"/requirements/extra/requestHash"}],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_request_binding","step":3}
+          }
+        ]
+      },
+      {
+        "id": "both-request-hash-uppercase",
+        "note": "requestHash must be lowercase hex on both sides.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/requirements/extra/requestHash",
+                "value": "0D6623F775E025501FA7F0A30B54DA25AAD62B6CCFE35C85DA38016711E6C018"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/requestHash",
+                "value": "0D6623F775E025501FA7F0A30B54DA25AAD62B6CCFE35C85DA38016711E6C018"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_request_binding","step":3}
+          }
+        ]
+      },
+      {
+        "id": "accepted-profile-missing",
+        "note": "accepted requestBindingProfile is absent.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [{"op":"remove","path":"/payload/accepted/extra/requestBindingProfile"}],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_request_binding","step":3}
+          }
+        ]
+      },
+      {
+        "id": "accepted-profile-unknown",
+        "note": "accepted profile is unknown.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/requestBindingProfile",
+                "value": "unknown"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_request_binding","step":3}
+          }
+        ]
+      },
+      {
+        "id": "accepted-params-missing",
+        "note": "accepted requestBindingParams is absent.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [{"op":"remove","path":"/payload/accepted/extra/requestBindingParams"}],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_request_binding","step":3}
+          }
+        ]
+      },
+      {
+        "id": "accepted-params-unknown-member",
+        "note": "accepted parameters carry an unknown member.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "add",
+                "path": "/payload/accepted/extra/requestBindingParams/unknown",
+                "value": true
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_request_binding","step":3}
+          }
+        ]
+      },
+      {
+        "id": "accepted-params-header-list",
+        "note": "Only the accepted header list differs.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/requestBindingParams/headers",
+                "value": ["accept"]
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_request_mismatch","step":3}
+          }
+        ]
+      },
+      {
+        "id": "actual-request-differs",
+        "note": "Article A's proof for an actual request for article B (requirements carry B's binding).",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/requirements/extra/requestHash",
+                "value": "4a99860f75eed1ea8178a5db488e044173bc570c8a6210f2c8590cdf8622d509"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_request_mismatch","step":3}
+          }
+        ]
+      },
+      {
+        "id": "accepted-transfer-method",
+        "note": "accepted assetTransferMethod is not bolt11.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [{"op":"replace","path":"/payload/accepted/extra/assetTransferMethod","value":"other"}],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_asset_transfer_method","step":3}
+          }
+        ]
+      },
+      {
+        "id": "accepted-payment-flow-null",
+        "note": "accepted paymentFlow is null.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [{"op":"replace","path":"/payload/accepted/extra/paymentFlow","value":null}],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_payment_flow","step":3}
+          }
+        ]
+      },
+      {
+        "id": "both-payment-flow-deferred",
+        "note": "Both sides carry paymentFlow = deferred.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {"op":"replace","path":"/requirements/extra/paymentFlow","value":"deferred"},
+              {"op":"replace","path":"/payload/accepted/extra/paymentFlow","value":"deferred"}
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_payment_flow","step":3}
+          }
+        ]
+      },
+      {
+        "id": "server-declared-extra",
+        "note": "A server-declared extra field is missing from accepted.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [{"op":"add","path":"/requirements/extra/merchant","value":"expected"}],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_extra_mismatch","step":3}
+          }
+        ]
+      },
+      {
+        "id": "accepted-invoice-empty",
+        "note": "accepted invoice is the empty string.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [{"op":"replace","path":"/payload/accepted/extra/invoice","value":""}],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_missing","step":4}
+          }
+        ]
+      },
+      {
+        "id": "accepted-invoice-missing",
+        "note": "accepted invoice is absent.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [{"op":"remove","path":"/payload/accepted/extra/invoice"}],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_missing","step":4}
+          }
+        ]
+      },
+      {
+        "id": "required-invoice-empty",
+        "note": "requirements invoice is the empty string.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [{"op":"replace","path":"/requirements/extra/invoice","value":""}],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_missing","step":4}
+          }
+        ]
+      },
+      {
+        "id": "invoice-garbage",
+        "note": "Not a BOLT11 string.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [{"op":"replace","path":"/payload/accepted/extra/invoice","value":"garbage"}],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_decode_failed","step":5}
+          }
+        ]
+      },
+      {
+        "id": "invoice-mixed-case",
+        "note": "Mixed-case Bech32.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "LNBC250n1pj48ugqpp54y3u9s8ylemsv8l3ewyzzu0klhujvuvmkl6llchq23vy8rzjsf0qsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjr4rx6ls6j5rpwknuea64evlk7yfx56wmqcer5eerekdsn9tlv6v4ex9mlz5dtm9qapl3svwlqcf7837dmjkru9z9w4h2rvm0md52w2sqxrwu5f"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_decode_failed","step":5}
+          }
+        ]
+      },
+      {
+        "id": "invoice-bad-checksum",
+        "note": "Bech32 checksum broken.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp54y3u9s8ylemsv8l3ewyzzu0klhujvuvmkl6llchq23vy8rzjsf0qsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjr4rx6ls6j5rpwknuea64evlk7yfx56wmqcer5eerekdsn9tlv6v4ex9mlz5dtm9qapl3svwlqcf7837dmjkru9z9w4h2rvm0md52w2sqxrwu5q"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_decode_failed","step":5}
+          }
+        ]
+      },
+      {
+        "id": "invoice-fractional-msat",
+        "note": "Amount 1.1 msat (pico multiplier not divisible by 10).",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc11p1pj48ugqpp54y3u9s8ylemsv8l3ewyzzu0klhujvuvmkl6llchq23vy8rzjsf0qsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjr4rx6ls6j5rpwknuea64evlk7yfx56wmqcer5eerekdsn9tlv6v4ex9mlz5dtm9qapl3svwlqcf7837dmjkru9z9w4h2rvm0md52w2sqfc47dc"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_decode_failed","step":5}
+          }
+        ]
+      },
+      {
+        "id": "invoice-nonzero-padding",
+        "note": "Non-zero padding bits in the p field (re-checksummed).",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp54y3u9s8ylemsv8l3ewyzzu0klhujvuvmkl6llchq23vy8rzjsf0psp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjr4rx6ls6j5rpwknuea64evlk7yfx56wmqcer5eerekdsn9tlv6v4ex9mlz5dtm9qapl3svwlqcf7837dmjkru9z9w4h2rvm0md52w2sqavc4a0"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_decode_failed","step":5}
+          }
+        ]
+      },
+      {
+        "id": "invoice-duplicate-description-hash",
+        "note": "A second h field (re-checksummed).",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp54y3u9s8ylemsv8l3ewyzzu0klhujvuvmkl6llchq23vy8rzjsf0qsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjhp5qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqr4rx6ls6j5rpwknuea64evlk7yfx56wmqcer5eerekdsn9tlv6v4ex9mlz5dtm9qapl3svwlqcf7837dmjkru9z9w4h2rvm0md52w2sqms554k"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_description","step":5}
+          }
+        ]
+      },
+      {
+        "id": "invoice-inline-description",
+        "note": "Signed invoice with d instead of h.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsdq8w3jhxaqxqzfvcqpjsytqhfd3eljlg8j0gahldrre56amueq3f4grchmwah098lv65syndyavkaxscghl3jnd984fgn0qma99hd0pnzd6tqgja0g6saxjmdqq90rkmz"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "4242424242424242424242424242424242424242424242424242424242424242"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_description","step":5}
+          }
+        ]
+      },
+      {
+        "id": "invoice-no-description",
+        "note": "Signed invoice with neither h nor d.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsxqzfvcqpjc92a4zr4vhqf5n7twmt2ayzr90v2vk6j6y2ta9ntdh49wcewfrryhj8eaf2wmdc6uc7p9gu0yevetrehqazasf9hgxy2uh7e5je683cqsns2rg"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "4242424242424242424242424242424242424242424242424242424242424242"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_description","step":5}
+          }
+        ]
+      },
+      {
+        "id": "invoice-other-signer",
+        "note": "Signed by a key other than payTo.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjf0zlmrmdxsde2qvntzmtpq7zm4777ywnzdnhl2wu695xuqa5lutsp4u45hxu8q76s9vw3uf2fg3vsw5fatls9062wte5mt6hfp5fw0qplv4v5y"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "4242424242424242424242424242424242424242424242424242424242424242"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_payee_mismatch","step":5}
+          }
+        ]
+      },
+      {
+        "id": "invoice-testnet-currency",
+        "note": "tb invoice under the mainnet network.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lntb250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjesqz56c9tujj73av0ckqrxkjf4f65xdxkp07fp6cdj6kxaf7hzm3en4yn5r0cwqt2myz9kh3sm8t3fhjmpvfxas42zlkvr3gxkup4zqqhn0tj5"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "4242424242424242424242424242424242424242424242424242424242424242"
+              }
+            ],
+            "expect": {
+              "success": false,
+              "error_reason": "invalid_exact_lnbtc_invoice_currency_mismatch",
+              "step": 5
+            }
+          }
+        ]
+      },
+      {
+        "id": "invoice-amount",
+        "note": "Invoice amount 1 msat.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc10p1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjm80sc7kp2j7l7fv4dpyylpz42syyp65axul7fmf68fq93aespa65ulwuckqzcjdyhff8l5l6r078gqkg8xf7zaewg30ngkkz7vnk7sgpnqv8h0"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "4242424242424242424242424242424242424242424242424242424242424242"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_amount_mismatch","step":5}
+          }
+        ]
+      },
+      {
+        "id": "invoice-expiry",
+        "note": "Invoice expiry 1 s.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqppcqpjg2huvthjm372tgnpgvlc0nzc0p2fe83mgt0e0kmvfuure0lludy96t9anj096cyxf6rqhhd0fzymgvkw44dss3xejg467ujrnsz8dtqps0xc6a"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "4242424242424242424242424242424242424242424242424242424242424242"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_expiry_mismatch","step":5}
+          }
+        ]
+      },
+      {
+        "id": "invoice-created-in-future",
+        "note": "Created 61 s after settlement time.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ufapp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjrc7p6q79tr8at05z3zkllkgx44563v7qcnqt38lhcrarxsmczutzlgvpe8yhtdgzckexzpaahhc27elh465sk2r2m6rtkz59zdgsjycpw4nnaw"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "4242424242424242424242424242424242424242424242424242424242424242"
+              }
+            ],
+            "expect": {
+              "success": false,
+              "error_reason": "invalid_exact_lnbtc_invoice_created_in_future",
+              "step": 5
+            }
+          }
+        ]
+      },
+      {
+        "id": "echo-article-b",
+        "note": "Both sides carry article B's binding; the invoice still commits to A.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/requirements/extra/requestHash",
+                "value": "4a99860f75eed1ea8178a5db488e044173bc570c8a6210f2c8590cdf8622d509"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/requestHash",
+                "value": "4a99860f75eed1ea8178a5db488e044173bc570c8a6210f2c8590cdf8622d509"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_request_mismatch","step":5}
+          }
+        ]
+      },
+      {
+        "id": "echo-method-post",
+        "note": "Actual method POST, echoed.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/requirements/extra/requestHash",
+                "value": "a66ae81d2b71d1d7f852985ee9db1388df785560d57114524bf7c77512962d08"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/requestHash",
+                "value": "a66ae81d2b71d1d7f852985ee9db1388df785560d57114524bf7c77512962d08"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_request_mismatch","step":5}
+          }
+        ]
+      },
+      {
+        "id": "echo-body-78",
+        "note": "Actual body 0x78, echoed.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/requirements/extra/requestHash",
+                "value": "c51115dd8855d57e7f55c2a57ef957c2c15b4acd627232c88abd0d5d1f4d0c57"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/requestHash",
+                "value": "c51115dd8855d57e7f55c2a57ef957c2c15b4acd627232c88abd0d5d1f4d0c57"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_request_mismatch","step":5}
+          }
+        ]
+      },
+      {
+        "id": "mcp-settles",
+        "note": "MCP article A settles.",
+        "group": "valid",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/requirements/extra/requestHash",
+                "value": "03941bfedc6af8a09b2f459fe83470284a76a8c75801caa9e1487a9276a693f4"
+              },
+              {"op":"replace","path":"/requirements/extra/requestBindingProfile","value":"mcp:1"},
+              {"op":"remove","path":"/requirements/extra/requestBindingParams/headers"},
+              {
+                "op": "add",
+                "path": "/requirements/extra/requestBindingParams/server",
+                "value": "https://api.example.com/mcp"
+              },
+              {"op":"add","path":"/requirements/extra/requestBindingParams/metadata","value":[]},
+              {
+                "op": "replace",
+                "path": "/requirements/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5qw2phlkudtu2pxe0gk07sdrs9p98d2x8tqqu420pfpafya4xj06qxqzfvcqpjm4wa5rfng2g8qqmzh920ay6j7u5snjvcjrr8qf6eva48c46wvs2yf24pq3plxmfe6g08vrccdee3juscvmdn40klz234765qk2aw7hcqwddred"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/requestHash",
+                "value": "03941bfedc6af8a09b2f459fe83470284a76a8c75801caa9e1487a9276a693f4"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/requestBindingProfile",
+                "value": "mcp:1"
+              },
+              {"op":"remove","path":"/payload/accepted/extra/requestBindingParams/headers"},
+              {
+                "op": "add",
+                "path": "/payload/accepted/extra/requestBindingParams/server",
+                "value": "https://api.example.com/mcp"
+              },
+              {"op":"add","path":"/payload/accepted/extra/requestBindingParams/metadata","value":[]},
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5qw2phlkudtu2pxe0gk07sdrs9p98d2x8tqqu420pfpafya4xj06qxqzfvcqpjm4wa5rfng2g8qqmzh920ay6j7u5snjvcjrr8qf6eva48c46wvs2yf24pq3plxmfe6g08vrccdee3juscvmdn40klz234765qk2aw7hcqwddred"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "4242424242424242424242424242424242424242424242424242424242424242"
+              }
+            ],
+            "expect": {
+              "success": true,
+              "transaction": "425ed4e4a36b30ea21b90e21c712c649e8214c29b7eaf68089d1039c6e55384c",
+              "network": "lnbtc:000000000019d6689c085ae165831e93",
+              "replay_key": "lnbtc:000000000019d6689c085ae165831e93:425ed4e4a36b30ea21b90e21c712c649e8214c29b7eaf68089d1039c6e55384c",
+              "retain_until_at_least": 1700003960
+            }
+          }
+        ]
+      },
+      {
+        "id": "mcp-actual-call-differs",
+        "note": "Actual arguments B; accepted keeps A.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/requirements/extra/requestHash",
+                "value": "b3e425970d64cd4f08fc4d57a11b76da59ce6a5760d92687398c91f063120678"
+              },
+              {"op":"replace","path":"/requirements/extra/requestBindingProfile","value":"mcp:1"},
+              {"op":"remove","path":"/requirements/extra/requestBindingParams/headers"},
+              {
+                "op": "add",
+                "path": "/requirements/extra/requestBindingParams/server",
+                "value": "https://api.example.com/mcp"
+              },
+              {"op":"add","path":"/requirements/extra/requestBindingParams/metadata","value":[]},
+              {
+                "op": "replace",
+                "path": "/requirements/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5qw2phlkudtu2pxe0gk07sdrs9p98d2x8tqqu420pfpafya4xj06qxqzfvcqpjm4wa5rfng2g8qqmzh920ay6j7u5snjvcjrr8qf6eva48c46wvs2yf24pq3plxmfe6g08vrccdee3juscvmdn40klz234765qk2aw7hcqwddred"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/requestHash",
+                "value": "03941bfedc6af8a09b2f459fe83470284a76a8c75801caa9e1487a9276a693f4"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/requestBindingProfile",
+                "value": "mcp:1"
+              },
+              {"op":"remove","path":"/payload/accepted/extra/requestBindingParams/headers"},
+              {
+                "op": "add",
+                "path": "/payload/accepted/extra/requestBindingParams/server",
+                "value": "https://api.example.com/mcp"
+              },
+              {"op":"add","path":"/payload/accepted/extra/requestBindingParams/metadata","value":[]},
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5qw2phlkudtu2pxe0gk07sdrs9p98d2x8tqqu420pfpafya4xj06qxqzfvcqpjm4wa5rfng2g8qqmzh920ay6j7u5snjvcjrr8qf6eva48c46wvs2yf24pq3plxmfe6g08vrccdee3juscvmdn40klz234765qk2aw7hcqwddred"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "4242424242424242424242424242424242424242424242424242424242424242"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_request_mismatch","step":3}
+          }
+        ]
+      },
+      {
+        "id": "mcp-echo-call-differs",
+        "note": "Actual arguments B, echoed.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/requirements/extra/requestHash",
+                "value": "b3e425970d64cd4f08fc4d57a11b76da59ce6a5760d92687398c91f063120678"
+              },
+              {"op":"replace","path":"/requirements/extra/requestBindingProfile","value":"mcp:1"},
+              {"op":"remove","path":"/requirements/extra/requestBindingParams/headers"},
+              {
+                "op": "add",
+                "path": "/requirements/extra/requestBindingParams/server",
+                "value": "https://api.example.com/mcp"
+              },
+              {"op":"add","path":"/requirements/extra/requestBindingParams/metadata","value":[]},
+              {
+                "op": "replace",
+                "path": "/requirements/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5qw2phlkudtu2pxe0gk07sdrs9p98d2x8tqqu420pfpafya4xj06qxqzfvcqpjm4wa5rfng2g8qqmzh920ay6j7u5snjvcjrr8qf6eva48c46wvs2yf24pq3plxmfe6g08vrccdee3juscvmdn40klz234765qk2aw7hcqwddred"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/requestHash",
+                "value": "b3e425970d64cd4f08fc4d57a11b76da59ce6a5760d92687398c91f063120678"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/requestBindingProfile",
+                "value": "mcp:1"
+              },
+              {"op":"remove","path":"/payload/accepted/extra/requestBindingParams/headers"},
+              {
+                "op": "add",
+                "path": "/payload/accepted/extra/requestBindingParams/server",
+                "value": "https://api.example.com/mcp"
+              },
+              {"op":"add","path":"/payload/accepted/extra/requestBindingParams/metadata","value":[]},
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5qw2phlkudtu2pxe0gk07sdrs9p98d2x8tqqu420pfpafya4xj06qxqzfvcqpjm4wa5rfng2g8qqmzh920ay6j7u5snjvcjrr8qf6eva48c46wvs2yf24pq3plxmfe6g08vrccdee3juscvmdn40klz234765qk2aw7hcqwddred"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "4242424242424242424242424242424242424242424242424242424242424242"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_request_mismatch","step":5}
+          }
+        ]
+      },
+      {
+        "id": "mcp-echo-server-differs",
+        "note": "Configured server changed, echoed.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/requirements/extra/requestHash",
+                "value": "96903c29186c6aabc95e48abafd8ce3ad32b4060f5d5bf22cf75f3fbfe816e45"
+              },
+              {"op":"replace","path":"/requirements/extra/requestBindingProfile","value":"mcp:1"},
+              {"op":"remove","path":"/requirements/extra/requestBindingParams/headers"},
+              {
+                "op": "add",
+                "path": "/requirements/extra/requestBindingParams/server",
+                "value": "https://other.example.com/mcp"
+              },
+              {"op":"add","path":"/requirements/extra/requestBindingParams/metadata","value":[]},
+              {
+                "op": "replace",
+                "path": "/requirements/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5qw2phlkudtu2pxe0gk07sdrs9p98d2x8tqqu420pfpafya4xj06qxqzfvcqpjm4wa5rfng2g8qqmzh920ay6j7u5snjvcjrr8qf6eva48c46wvs2yf24pq3plxmfe6g08vrccdee3juscvmdn40klz234765qk2aw7hcqwddred"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/requestHash",
+                "value": "96903c29186c6aabc95e48abafd8ce3ad32b4060f5d5bf22cf75f3fbfe816e45"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/requestBindingProfile",
+                "value": "mcp:1"
+              },
+              {"op":"remove","path":"/payload/accepted/extra/requestBindingParams/headers"},
+              {
+                "op": "add",
+                "path": "/payload/accepted/extra/requestBindingParams/server",
+                "value": "https://other.example.com/mcp"
+              },
+              {"op":"add","path":"/payload/accepted/extra/requestBindingParams/metadata","value":[]},
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5qw2phlkudtu2pxe0gk07sdrs9p98d2x8tqqu420pfpafya4xj06qxqzfvcqpjm4wa5rfng2g8qqmzh920ay6j7u5snjvcjrr8qf6eva48c46wvs2yf24pq3plxmfe6g08vrccdee3juscvmdn40klz234765qk2aw7hcqwddred"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "4242424242424242424242424242424242424242424242424242424242424242"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_request_mismatch","step":5}
+          }
+        ]
+      },
+      {
+        "id": "mcp-binding-on-http-invoice",
+        "note": "HTTP article A invoice with MCP binding fields on both sides.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/requirements/extra/requestHash",
+                "value": "03941bfedc6af8a09b2f459fe83470284a76a8c75801caa9e1487a9276a693f4"
+              },
+              {"op":"replace","path":"/requirements/extra/requestBindingProfile","value":"mcp:1"},
+              {"op":"remove","path":"/requirements/extra/requestBindingParams/headers"},
+              {
+                "op": "add",
+                "path": "/requirements/extra/requestBindingParams/server",
+                "value": "https://api.example.com/mcp"
+              },
+              {"op":"add","path":"/requirements/extra/requestBindingParams/metadata","value":[]},
+              {
+                "op": "replace",
+                "path": "/requirements/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjfxevavgdka8487x7a3whlz4ujgk0rx6p4r9c57nwhahwqwvgh6j9e4xxmwj862env32h7c3hf7h3nh6ltdql5dkjqsvr9ks6rq2nm0qpqyd8md"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/requestHash",
+                "value": "03941bfedc6af8a09b2f459fe83470284a76a8c75801caa9e1487a9276a693f4"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/requestBindingProfile",
+                "value": "mcp:1"
+              },
+              {"op":"remove","path":"/payload/accepted/extra/requestBindingParams/headers"},
+              {
+                "op": "add",
+                "path": "/payload/accepted/extra/requestBindingParams/server",
+                "value": "https://api.example.com/mcp"
+              },
+              {"op":"add","path":"/payload/accepted/extra/requestBindingParams/metadata","value":[]},
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjfxevavgdka8487x7a3whlz4ujgk0rx6p4r9c57nwhahwqwvgh6j9e4xxmwj862env32h7c3hf7h3nh6ltdql5dkjqsvr9ks6rq2nm0qpqyd8md"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "4242424242424242424242424242424242424242424242424242424242424242"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_request_mismatch","step":5}
+          }
+        ]
+      },
+      {
+        "id": "mcp-accepted-profile-http",
+        "note": "Only the accepted profile and parameters switched to a valid http:1 binding.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/requirements/extra/requestHash",
+                "value": "03941bfedc6af8a09b2f459fe83470284a76a8c75801caa9e1487a9276a693f4"
+              },
+              {"op":"replace","path":"/requirements/extra/requestBindingProfile","value":"mcp:1"},
+              {"op":"remove","path":"/requirements/extra/requestBindingParams/headers"},
+              {
+                "op": "add",
+                "path": "/requirements/extra/requestBindingParams/server",
+                "value": "https://api.example.com/mcp"
+              },
+              {"op":"add","path":"/requirements/extra/requestBindingParams/metadata","value":[]},
+              {
+                "op": "replace",
+                "path": "/requirements/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5qw2phlkudtu2pxe0gk07sdrs9p98d2x8tqqu420pfpafya4xj06qxqzfvcqpjm4wa5rfng2g8qqmzh920ay6j7u5snjvcjrr8qf6eva48c46wvs2yf24pq3plxmfe6g08vrccdee3juscvmdn40klz234765qk2aw7hcqwddred"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5qw2phlkudtu2pxe0gk07sdrs9p98d2x8tqqu420pfpafya4xj06qxqzfvcqpjm4wa5rfng2g8qqmzh920ay6j7u5snjvcjrr8qf6eva48c46wvs2yf24pq3plxmfe6g08vrccdee3juscvmdn40klz234765qk2aw7hcqwddred"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "4242424242424242424242424242424242424242424242424242424242424242"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_request_mismatch","step":3}
+          }
+        ]
+      },
+      {
+        "id": "mcp-metadata-absent-to-null",
+        "note": "Invoice binds an absent account; actual call carries null, echoed.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/requirements/extra/requestHash",
+                "value": "17456e42174b14ca336a42dabcf21f353408a45dea260c75b2112b1eaf5a8f6b"
+              },
+              {"op":"replace","path":"/requirements/extra/requestBindingProfile","value":"mcp:1"},
+              {"op":"remove","path":"/requirements/extra/requestBindingParams/headers"},
+              {
+                "op": "add",
+                "path": "/requirements/extra/requestBindingParams/server",
+                "value": "https://api.example.com/mcp"
+              },
+              {
+                "op": "add",
+                "path": "/requirements/extra/requestBindingParams/metadata",
+                "value": ["account"]
+              },
+              {
+                "op": "replace",
+                "path": "/requirements/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp596rdukct7ma0ajdtqzs4rkw3qc43pke38cyjtrfmewgk8nkmhynqxqzfvcqpjpa0z7h0x06hq8fmwjxajssheamkd84ksfh8apsk3s5uguyc7malqgkqzmzy429a05ud7zc7skqpnq4epc8kpnvpcwkesww4frkd0z3qqh7242v"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/requestHash",
+                "value": "17456e42174b14ca336a42dabcf21f353408a45dea260c75b2112b1eaf5a8f6b"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/requestBindingProfile",
+                "value": "mcp:1"
+              },
+              {"op":"remove","path":"/payload/accepted/extra/requestBindingParams/headers"},
+              {
+                "op": "add",
+                "path": "/payload/accepted/extra/requestBindingParams/server",
+                "value": "https://api.example.com/mcp"
+              },
+              {
+                "op": "add",
+                "path": "/payload/accepted/extra/requestBindingParams/metadata",
+                "value": ["account"]
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp596rdukct7ma0ajdtqzs4rkw3qc43pke38cyjtrfmewgk8nkmhynqxqzfvcqpjpa0z7h0x06hq8fmwjxajssheamkd84ksfh8apsk3s5uguyc7malqgkqzmzy429a05ud7zc7skqpnq4epc8kpnvpcwkesww4frkd0z3qqh7242v"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "4242424242424242424242424242424242424242424242424242424242424242"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_request_mismatch","step":5}
+          }
+        ]
+      },
+      {
+        "id": "mcp-metadata-lists-payment",
+        "note": "Both sides bind x402/payment.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/requirements/extra/requestHash",
+                "value": "03941bfedc6af8a09b2f459fe83470284a76a8c75801caa9e1487a9276a693f4"
+              },
+              {"op":"replace","path":"/requirements/extra/requestBindingProfile","value":"mcp:1"},
+              {"op":"remove","path":"/requirements/extra/requestBindingParams/headers"},
+              {
+                "op": "add",
+                "path": "/requirements/extra/requestBindingParams/server",
+                "value": "https://api.example.com/mcp"
+              },
+              {
+                "op": "add",
+                "path": "/requirements/extra/requestBindingParams/metadata",
+                "value": ["x402/payment"]
+              },
+              {
+                "op": "replace",
+                "path": "/requirements/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5qw2phlkudtu2pxe0gk07sdrs9p98d2x8tqqu420pfpafya4xj06qxqzfvcqpjm4wa5rfng2g8qqmzh920ay6j7u5snjvcjrr8qf6eva48c46wvs2yf24pq3plxmfe6g08vrccdee3juscvmdn40klz234765qk2aw7hcqwddred"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/requestHash",
+                "value": "03941bfedc6af8a09b2f459fe83470284a76a8c75801caa9e1487a9276a693f4"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/requestBindingProfile",
+                "value": "mcp:1"
+              },
+              {"op":"remove","path":"/payload/accepted/extra/requestBindingParams/headers"},
+              {
+                "op": "add",
+                "path": "/payload/accepted/extra/requestBindingParams/server",
+                "value": "https://api.example.com/mcp"
+              },
+              {
+                "op": "add",
+                "path": "/payload/accepted/extra/requestBindingParams/metadata",
+                "value": ["x402/payment"]
+              },
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5qw2phlkudtu2pxe0gk07sdrs9p98d2x8tqqu420pfpafya4xj06qxqzfvcqpjm4wa5rfng2g8qqmzh920ay6j7u5snjvcjrr8qf6eva48c46wvs2yf24pq3plxmfe6g08vrccdee3juscvmdn40klz234765qk2aw7hcqwddred"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_request_binding","step":3}
+          }
+        ]
+      },
+      {
+        "id": "order-amount-zero",
+        "note": "accepted.amount = 0: step 1 (equality) before step 2 (format).",
+        "group": "order",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [{"op":"replace","path":"/payload/accepted/amount","value":"0"}],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_amount_mismatch","step":1}
+          }
+        ]
+      },
+      {
+        "id": "order-flow-before-required-invoice",
+        "note": "accepted paymentFlow absent and requirements invoice empty: step 3 before step 4.",
+        "group": "order",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {"op":"replace","path":"/requirements/extra/invoice","value":""},
+              {"op":"remove","path":"/payload/accepted/extra/paymentFlow"}
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_payment_flow","step":3}
+          }
+        ]
+      },
+      {
+        "id": "order-binding-before-accepted-invoice",
+        "note": "accepted invoice empty and accepted requestHash = B: step 3 before step 4.",
+        "group": "order",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/requestHash",
+                "value": "4a99860f75eed1ea8178a5db488e044173bc570c8a6210f2c8590cdf8622d509"
+              },
+              {"op":"replace","path":"/payload/accepted/extra/invoice","value":""}
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_request_mismatch","step":3}
+          }
+        ]
+      },
+      {
+        "id": "order-invoice-before-preimage",
+        "note": "Invoice signed by another key and a wrong preimage: step 5 before step 6.",
+        "group": "order",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp5gf0dfe9rdvcw5gdepcsuwykxf85zznpfkl40dqyf6ypecmj48pxqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjf0zlmrmdxsde2qvntzmtpq7zm4777ywnzdnhl2wu695xuqa5lutsp4u45hxu8q76s9vw3uf2fg3vsw5fatls9062wte5mt6hfp5fw0qplv4v5y"
+              },
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "0000000000000000000000000000000000000000000000000000000000000000"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_payee_mismatch","step":5}
+          }
+        ]
+      },
+      {
+        "id": "order-preimage-before-expiry",
+        "note": "Wrong preimage after invoice_end + skew: step 6 before step 7.",
+        "group": "order",
+        "steps": [
+          {
+            "now": 1700000361,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/payload/preimage",
+                "value": "0000000000000000000000000000000000000000000000000000000000000000"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_preimage_hash_mismatch","step":6}
+          }
+        ]
+      }
+    ]
+  }
+}
