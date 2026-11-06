@@ -13,6 +13,7 @@ Packages that **read or write** the `extensions` property on x402 payloads (`Pay
 
 | Name | Description | Languages | Links |
 | ---- | ----------- | --------- | ----- |
+| [Agent Guild](https://agent-guild-5d5r.onrender.com/for-agents) | Fail-closed wallet-risk policy for x402 clients that issues signed, exact-payment allow or block credentials before payment signing | TypeScript | [GitHub](https://github.com/AgentTanuki/agent-guild/blob/main/sdk/integrations/x402_payment_policy.mjs) · [Hosted adapter](https://agent-guild-5d5r.onrender.com/sdk/integrations/x402_payment_policy.mjs) |
 | [World AgentKit](https://docs.world.org/agents/agent-kit/integrate) | Verify human-backed agents | TypeScript | [GitHub](https://github.com/worldcoin/agentkit) · [npm](https://www.npmjs.com/package/@worldcoin/agentkit) |
 | [PEAC Protocol](https://x402.peacprotocol.org) | Verifiable receipts for x402 payments | TypeScript | [GitHub](https://github.com/peacprotocol/peac) · [npm](https://www.npmjs.com/package/@peac/adapter-x402) |
 | [x402aff](https://github.com/MiroShark/x402aff) | Affiliate builder-code revenue splits | Python, TypeScript | [GitHub](https://github.com/MiroShark/x402aff) · [PyPI](https://pypi.org/project/x402aff/) · [npm](https://www.npmjs.com/package/x402aff) |
