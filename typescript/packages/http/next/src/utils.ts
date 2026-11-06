@@ -162,6 +162,18 @@ export function createRequestContext(request: NextRequest): HTTPRequestContext {
 }
 
 /**
+ * Checks whether a Content-Type names JSON (`application/json` or a `+json` suffix).
+ * A missing Content-Type counts as JSON, the adapter's default.
+ *
+ * @param contentType - Content-Type header value, if any
+ * @returns True when string bodies should be JSON-encoded
+ */
+function isJsonContentType(contentType: string | null | undefined): boolean {
+  const mediaType = contentType?.split(";")[0].trim().toLowerCase();
+  return !mediaType || mediaType === "application/json" || mediaType.endsWith("+json");
+}
+
+/**
  * Handles payment error result by creating a 402 response
  *
  * @param response - The HTTP response instructions from payment verification
@@ -177,9 +189,7 @@ export function handlePaymentError(response: HTTPResponseInstructions): NextResp
       headers,
     });
   }
-  const mediaType = headers.get("Content-Type")?.split(";")[0].trim().toLowerCase();
-  const isJson = !mediaType || mediaType === "application/json" || mediaType.endsWith("+json");
-  if (typeof response.body === "string" && !isJson) {
+  if (typeof response.body === "string" && !isJsonContentType(headers.get("Content-Type"))) {
     return new NextResponse(response.body, {
       status: response.status,
       headers,
@@ -259,7 +269,11 @@ export async function handleSettlement(
     if (!result.success) {
       // Settlement failed - do not return the protected resource
       const { response } = result;
-      const body = response.isHtml ? response.body : JSON.stringify(response.body ?? {});
+      const contentType = new Headers(response.headers).get("Content-Type");
+      const body =
+        response.isHtml || (typeof response.body === "string" && !isJsonContentType(contentType))
+          ? (response.body as string)
+          : JSON.stringify(response.body ?? {});
       return new NextResponse(body, {
         status: response.status,
         headers: response.headers,
