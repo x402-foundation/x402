@@ -8,9 +8,20 @@ import type {
   Price,
   SchemeNetworkServer,
 } from "@x402/core/types";
+import { SDK_DEFAULT_ASSET_TRANSFER_METHOD } from "@x402/core/server";
 import { convertToTokenAmount, parseMoney } from "@x402/core/utils";
+import {
+  HEDERA_DEFAULT_ASSET_TRANSFER_METHOD,
+  HEDERA_TRANSFER_EXECUTOR_METHOD,
+} from "../../constants";
 import { findDefaultAsset, getDefaultAsset, type HederaDefaultAsset } from "../../defaultAssets";
-import { assertSupportedHederaNetwork, isValidHederaAsset } from "../../utils";
+import { executorListAdmits, hasSplits, isStringArray } from "../../internal";
+import type { HederaAssetTransferMethod } from "../../types";
+import {
+  assertSupportedHederaNetwork,
+  isValidHederaAsset,
+  resolveHederaAssetTransferMethod,
+} from "../../utils";
 
 /** HTS token used when converting Money strings on the resource server. */
 export type HederaServerDefaultAsset = Pick<HederaDefaultAsset, "asset" | "decimals">;
@@ -23,14 +34,70 @@ export type HederaServerConfig = {
 };
 
 /**
+ * Payment flows of `cryptoTransfer`, also served under core's `"default"` key.
+ */
+const CRYPTO_TRANSFER_FLOWS = {
+  supported: ["authorization", "upfront"],
+  default: "authorization",
+} as const satisfies PaymentFlowConfig;
+
+/**
+ * Executors a `transferExecutor` quote publishes, taken from the facilitator's supported kind.
+ *
+ * @param network - Network being quoted
+ * @param kindExtra - `extra` of the facilitator's supported kind
+ * @param requested - The merchant's `extra.executors`, if any
+ * @returns The executor list for the quote
+ */
+function quoteExecutors(
+  network: Network,
+  kindExtra: Record<string, unknown> | undefined,
+  requested: unknown,
+): string[] {
+  const methods = kindExtra?.assetTransferMethods;
+  const advertised = kindExtra?.executors;
+  if (
+    (methods !== undefined &&
+      !(isStringArray(methods) && methods.includes(HEDERA_TRANSFER_EXECUTOR_METHOD))) ||
+    !isStringArray(advertised) ||
+    advertised.length === 0
+  ) {
+    throw new Error(`Facilitator does not offer transferExecutor on ${network}`);
+  }
+  if (requested === undefined) {
+    return [...advertised];
+  }
+  if (!isStringArray(requested) || requested.length === 0) {
+    throw new Error("transferExecutor extra.executors must be a non-empty array of executor ids");
+  }
+  // The merchant may narrow the facilitator's list, never widen it.
+  const unadvertised = requested.find(executor => !executorListAdmits(advertised, executor));
+  if (unadvertised !== undefined) {
+    throw new Error(
+      `Merchant executor ${unadvertised} is not advertised by the facilitator on ${network}`,
+    );
+  }
+  return [...requested];
+}
+
+/**
  * Hedera server implementation for the Exact payment scheme.
  */
 export class ExactHederaScheme implements SchemeNetworkServer {
   readonly scheme = "exact";
-  readonly defaultAssetTransferMethod = "default";
+  readonly defaultAssetTransferMethod = HEDERA_DEFAULT_ASSET_TRANSFER_METHOD;
   readonly paymentFlows = {
-    default: { supported: ["authorization", "upfront"], default: "authorization" },
-  } as const satisfies Record<string, PaymentFlowConfig>;
+    // A route may still name core's sentinel explicitly; core strips it from the wire.
+    [SDK_DEFAULT_ASSET_TRANSFER_METHOD]: CRYPTO_TRANSFER_FLOWS,
+    cryptoTransfer: CRYPTO_TRANSFER_FLOWS,
+    // `upfront` settles before the handler, and settle re-runs verification
+    // (re-simulating) before it submits, so it skips no check. Offered because an
+    // executor's authorization may expire within the handler's run.
+    transferExecutor: { supported: ["authorization", "upfront"], default: "authorization" },
+  } as const satisfies Record<
+    HederaAssetTransferMethod | typeof SDK_DEFAULT_ASSET_TRANSFER_METHOD,
+    PaymentFlowConfig
+  >;
   private moneyParsers: MoneyParser[] = [];
 
   /**
@@ -100,7 +167,13 @@ export class ExactHederaScheme implements SchemeNetworkServer {
   }
 
   /**
-   * Merge facilitator-provided values into payment requirements.
+   * Merge facilitator-provided values into payment requirements: `feePayer` for every
+   * method, and for `transferExecutor` the facilitator's `executors`, or the merchant's
+   * `extra.executors` when given. Rejects a `transferExecutor` quote whose facilitator
+   * kind lists `assetTransferMethods` without `transferExecutor` or advertises no
+   * executor, one whose merchant list is empty or names an executor the
+   * facilitator does not advertise, and one carrying any `extra.splits` other than
+   * an empty array or `null`.
    *
    * @param paymentRequirements - Base requirements
    * @param supportedKind - Supported kind metadata
@@ -111,7 +184,7 @@ export class ExactHederaScheme implements SchemeNetworkServer {
    * @param extensionKeys - Extension keys
    * @returns Enhanced requirements
    */
-  enhancePaymentRequirements(
+  async enhancePaymentRequirements(
     paymentRequirements: PaymentRequirements,
     supportedKind: {
       x402Version: number;
@@ -123,10 +196,21 @@ export class ExactHederaScheme implements SchemeNetworkServer {
   ): Promise<PaymentRequirements> {
     void extensionKeys;
     const extra: Record<string, unknown> = { ...(paymentRequirements.extra || {}) };
+    if (resolveHederaAssetTransferMethod(extra) === HEDERA_TRANSFER_EXECUTOR_METHOD) {
+      // No facilitator advertises split support for it, so no quote may carry splits.
+      if (hasSplits(extra)) {
+        throw new Error("transferExecutor does not implement extra.splits");
+      }
+      extra.executors = quoteExecutors(
+        paymentRequirements.network,
+        supportedKind.extra,
+        extra.executors,
+      );
+    }
     if (typeof supportedKind.extra?.feePayer === "string") {
       extra.feePayer = supportedKind.extra.feePayer;
     }
-    return Promise.resolve({ ...paymentRequirements, extra });
+    return { ...paymentRequirements, extra };
   }
 
   /**

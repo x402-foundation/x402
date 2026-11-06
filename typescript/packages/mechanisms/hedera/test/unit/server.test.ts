@@ -4,11 +4,14 @@ import { ExactHederaScheme } from "../../src/exact/server/scheme";
 
 describe("ExactHedera server scheme", () => {
   describe("paymentFlows", () => {
-    it("declares authorization and upfront with authorization as the default", () => {
+    it("declares cryptoTransfer as the default method, and authorization and upfront for both methods", () => {
       const scheme = new ExactHederaScheme();
-      expect(scheme.defaultAssetTransferMethod).toBe("default");
+      const flows = { supported: ["authorization", "upfront"], default: "authorization" };
+      expect(scheme.defaultAssetTransferMethod).toBe("cryptoTransfer");
       expect(scheme.paymentFlows).toEqual({
-        default: { supported: ["authorization", "upfront"], default: "authorization" },
+        default: flows,
+        cryptoTransfer: flows,
+        transferExecutor: flows,
       });
     });
   });
