@@ -613,6 +613,7 @@ export class x402HTTPResourceServer {
       !paymentPayload ? "Payment required" : undefined,
       extensions,
       transportContext,
+      paymentPayload ?? undefined,
     );
 
     // If no payment provided
@@ -653,6 +654,7 @@ export class x402HTTPResourceServer {
           "No matching payment requirements",
           extensions,
           transportContext,
+          paymentPayload ?? undefined,
         );
         return {
           type: "payment-error",
@@ -769,6 +771,7 @@ export class x402HTTPResourceServer {
         error instanceof Error ? error.message : "Payment verification failed",
         extensions,
         transportContext,
+        paymentPayload ?? undefined,
       );
       return {
         type: "payment-error",

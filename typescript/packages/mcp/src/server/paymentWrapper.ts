@@ -298,6 +298,7 @@ async function processPaidToolCall<TArgs extends Record<string, unknown>>(
     undefined,
     config.extensions,
     transportContext,
+    paymentPayload,
   );
   const paymentRequirements = resourceServer.findMatchingRequirements(
     paymentRequiredForMatch.accepts,
@@ -311,6 +312,7 @@ async function processPaidToolCall<TArgs extends Record<string, unknown>>(
       config,
       "No matching payment requirements found",
       transportContext,
+      paymentPayload,
     );
   }
 
@@ -431,6 +433,7 @@ async function processPaidToolCall<TArgs extends Record<string, unknown>>(
         config,
         "Execution blocked by hook",
         transportContext,
+        paymentPayload,
       );
     }
   }

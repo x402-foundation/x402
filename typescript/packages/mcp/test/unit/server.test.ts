@@ -7,7 +7,9 @@ import {
   AfterSettleAbortError,
   type FacilitatorClient,
 } from "@x402/core/server";
+import { WorkServerScheme, type WorkJobIssuer } from "@x402/work/server";
 import type {
+  Network,
   PaymentPayload,
   PaymentRequirements,
   SchemeNetworkServer,
@@ -181,6 +183,66 @@ describe("createPaymentWrapper", () => {
       expect(handler).toHaveBeenCalled();
       expect(result.content).toEqual([{ type: "text", text: "success" }]);
       expect(result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toEqual(mockSettleResponse);
+    });
+
+    it("should preserve a work job through an MCP paid retry", async () => {
+      const network = "quai:9" as Network;
+      const issuer: WorkJobIssuer = {
+        profile: "quai/sha256d-v1",
+        asset: "hash",
+        networks: [network],
+        issue: vi.fn(async () => ({
+          id: "mcp-job",
+          expiresAt: Math.floor(Date.now() / 1000) + 30,
+          work: { header: "native" },
+        })),
+      };
+      const facilitator: FacilitatorClient = {
+        getSupported: async () => ({
+          kinds: [
+            {
+              x402Version: 2,
+              scheme: "work",
+              network,
+              extra: {
+                name: "x402-work",
+                version: "1",
+                profiles: [issuer.profile],
+              },
+            },
+          ],
+          extensions: [],
+          signers: {},
+        }),
+        verify: async () => ({ isValid: true }),
+        settle: async () => ({ success: true, transaction: "0xwork", network }),
+      };
+      const server = new x402ResourceServer(facilitator).register(
+        network,
+        new WorkServerScheme({ issuers: [issuer] }),
+      );
+      await server.initialize();
+      const accepts = await server.buildPaymentRequirements({
+        scheme: "work",
+        network,
+        payTo: "0x0123456789abcdef0123456789abcdef01234567",
+        price: { amount: "65536", asset: "hash", extra: { profile: issuer.profile } },
+      });
+      const paid = createPaymentWrapper(server, { accepts });
+      const handler = vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: "success" }],
+      });
+      const unpaid = await paid(handler)({ test: "arg" }, {});
+      const accepted = (unpaid.structuredContent as { accepts: PaymentRequirements[] }).accepts[0];
+      const payment: PaymentPayload = {
+        x402Version: 2,
+        accepted,
+        payload: { solution: { nonce: "7" } },
+      };
+      const result = await paid(handler)({ test: "arg" }, { _meta: { "x402/payment": payment } });
+      expect(result.isError).not.toBe(true);
+      expect(handler).toHaveBeenCalledOnce();
+      expect(issuer.issue).toHaveBeenCalledOnce();
     });
 
     it("should settle payment after successful execution", async () => {
@@ -857,6 +919,7 @@ describe("createPaymentWrapper", () => {
         undefined,
         undefined,
         expectedContext,
+        mockPaymentPayload,
       );
       expect(mockResourceServer.verifyPayment).toHaveBeenCalledWith(
         mockPaymentPayload,
