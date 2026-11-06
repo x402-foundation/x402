@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { wrapFetchWithPayment, wrapFetchWithPaymentFromConfig } from "./index";
+import {
+  PaymentOutcomeUnknownError,
+  wrapFetchWithPayment,
+  wrapFetchWithPaymentFromConfig,
+} from "./index";
 import type { x402Client, x402HTTPClient, x402ClientConfig } from "@x402/core/client";
 import type { PaymentPayload, PaymentRequired, PaymentRequirements } from "@x402/core/types";
 import { ResponseBodyTooLargeError } from "@x402/core/http";
@@ -16,6 +20,7 @@ vi.mock("@x402/core/client", () => {
     fromConfig: ReturnType<typeof vi.fn>;
   };
   MockX402Client.prototype.createPaymentPayload = vi.fn();
+  MockX402Client.prototype.reconcilePaymentPayload = vi.fn();
   MockX402Client.fromConfig = vi.fn();
 
   return {
@@ -84,6 +89,7 @@ describe("wrapFetchWithPayment()", () => {
     (mockClient.createPaymentPayload as ReturnType<typeof vi.fn>).mockResolvedValue(
       validPaymentPayload,
     );
+    (mockClient.reconcilePaymentPayload as ReturnType<typeof vi.fn>).mockResolvedValue("unknown");
 
     (
       MockX402HTTPClient.prototype.getPaymentRequiredResponse as ReturnType<typeof vi.fn>
@@ -158,6 +164,7 @@ describe("wrapFetchWithPayment()", () => {
         headers: { "PAYMENT-SIGNATURE": "already-present" },
       }),
     ).rejects.toThrow("Payment already attempted");
+    expect(mockClient.createPaymentPayload).not.toHaveBeenCalled();
   });
 
   it("should not retry if already retried (X-PAYMENT header present)", async () => {
@@ -169,6 +176,7 @@ describe("wrapFetchWithPayment()", () => {
         headers: { "X-PAYMENT": "already-present" },
       }),
     ).rejects.toThrow("Payment already attempted");
+    expect(mockClient.createPaymentPayload).not.toHaveBeenCalled();
   });
 
   it("should allow optional fetch request config", async () => {
@@ -461,7 +469,8 @@ describe("wrapFetchWithPayment()", () => {
     expect(result).toBe(successResponse);
     expect(mockFetch).toHaveBeenCalledTimes(3);
     expect(observedBodies).toEqual([bodyContent, bodyContent, bodyContent]);
-    expect(mockClient.createPaymentPayload).toHaveBeenCalledTimes(2);
+    // No settle response on the 402: the sent payment may have settled, so it is re-presented.
+    expect(mockClient.createPaymentPayload).toHaveBeenCalledTimes(1);
 
     const recoveryRequest = mockFetch.mock.calls[2][0] as Request;
     expect(recoveryRequest.headers.get("PAYMENT-SIGNATURE")).toBe("encoded-payment-header");
@@ -725,6 +734,237 @@ describe("wrapFetchWithPayment()", () => {
 
     expect(result).toBe(retryResponse);
     expect(MockX402HTTPClient.prototype.processPaymentResult).toHaveBeenCalledTimes(2);
+  });
+  describe("held payments", () => {
+    const paidHeader = (call: number) =>
+      (mockFetch.mock.calls[call][0] as Request).headers.get("PAYMENT-SIGNATURE");
+    const freshPayload = (signature: string): PaymentPayload => ({
+      ...validPaymentPayload,
+      payload: { signature },
+    });
+
+    it("re-presents the held payment when the paid attempt is not delivered", async () => {
+      mockFetch
+        .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+        .mockResolvedValueOnce(createResponse(402, { error: "settlement_failed" }))
+        .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+        .mockResolvedValueOnce(createResponse(200, { data: "success" }));
+
+      const first = await wrappedFetch("https://api.example.com", { method: "GET" });
+      expect(first.status).toBe(402);
+      const second = await wrappedFetch("https://api.example.com", { method: "GET" });
+      expect(second.status).toBe(200);
+
+      expect(mockClient.createPaymentPayload).toHaveBeenCalledTimes(1);
+      expect(paidHeader(1)).toBe("encoded-payment-header");
+      expect(paidHeader(3)).toBe("encoded-payment-header");
+    });
+
+    it("re-presents after the paid attempt throws", async () => {
+      mockFetch
+        .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+        .mockRejectedValueOnce(new Error("socket hang up"))
+        .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+        .mockResolvedValueOnce(createResponse(200, { data: "success" }));
+
+      await expect(wrappedFetch("https://api.example.com")).rejects.toThrow("socket hang up");
+      const second = await wrappedFetch("https://api.example.com");
+
+      expect(second.status).toBe(200);
+      expect(mockClient.createPaymentPayload).toHaveBeenCalledTimes(1);
+    });
+
+    it("throws PaymentOutcomeUnknownError when a re-presented payment is still not delivered", async () => {
+      mockFetch
+        .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+        .mockResolvedValueOnce(createResponse(502))
+        .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+        .mockResolvedValueOnce(createResponse(502));
+
+      await wrappedFetch("https://api.example.com");
+      const error = await wrappedFetch("https://api.example.com").catch(e => e);
+
+      expect(error).toBeInstanceOf(PaymentOutcomeUnknownError);
+      expect(error.paymentPayload).toBe(validPaymentPayload);
+      expect(error.response.status).toBe(502);
+      expect(mockClient.createPaymentPayload).toHaveBeenCalledTimes(1);
+    });
+
+    it("signs a fresh payment after a definite settle failure", async () => {
+      const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+      (
+        MockX402HTTPClient.prototype.processPaymentResult as ReturnType<typeof vi.fn>
+      ).mockResolvedValueOnce({
+        recovered: false,
+        settleResponse: {
+          success: false,
+          errorReason: "insufficient_funds",
+          transaction: "",
+          network: "eip155:84532",
+        },
+      });
+      (mockClient.createPaymentPayload as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(freshPayload("0xfirst"))
+        .mockResolvedValueOnce(freshPayload("0xsecond"));
+      mockFetch
+        .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+        .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+        .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+        .mockResolvedValueOnce(createResponse(200, { data: "success" }));
+
+      await wrappedFetch("https://api.example.com");
+      const second = await wrappedFetch("https://api.example.com");
+
+      expect(second.status).toBe(200);
+      expect(mockClient.createPaymentPayload).toHaveBeenCalledTimes(2);
+    });
+
+    it("re-presents when the settle failure is free text the resource server synthesized", async () => {
+      const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+      (
+        MockX402HTTPClient.prototype.processPaymentResult as ReturnType<typeof vi.fn>
+      ).mockResolvedValueOnce({
+        recovered: false,
+        settleResponse: {
+          success: false,
+          errorReason: "Facilitator settle failed (502): bad gateway",
+          transaction: "",
+          network: "eip155:84532",
+        },
+      });
+      mockFetch
+        .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+        .mockResolvedValueOnce(createResponse(402, { error: "settlement_failed" }))
+        .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+        .mockResolvedValueOnce(createResponse(200, { data: "success" }));
+
+      await wrappedFetch("https://api.example.com");
+      const second = await wrappedFetch("https://api.example.com");
+
+      expect(second.status).toBe(200);
+      expect(mockClient.createPaymentPayload).toHaveBeenCalledTimes(1);
+    });
+
+    it("treats a nonce-already-used rejection of the re-presented payment as outcome unknown", async () => {
+      const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+      (MockX402HTTPClient.prototype.processPaymentResult as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ recovered: false })
+        .mockResolvedValueOnce({
+          recovered: false,
+          settleResponse: {
+            success: false,
+            errorReason: "invalid_exact_evm_nonce_already_used",
+            transaction: "",
+            network: "eip155:84532",
+          },
+        });
+      mockFetch
+        .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+        .mockResolvedValueOnce(createResponse(502))
+        .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+        .mockResolvedValueOnce(createResponse(402, { error: "nonce used" }));
+
+      await wrappedFetch("https://api.example.com");
+      await expect(wrappedFetch("https://api.example.com")).rejects.toBeInstanceOf(
+        PaymentOutcomeUnknownError,
+      );
+      expect(mockClient.createPaymentPayload).toHaveBeenCalledTimes(1);
+    });
+
+    it("signs a fresh payment during recovery only after a definite settle failure", async () => {
+      const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+      (
+        MockX402HTTPClient.prototype.processPaymentResult as ReturnType<typeof vi.fn>
+      ).mockResolvedValueOnce({
+        recovered: true,
+        settleResponse: {
+          success: false,
+          errorReason: "invalid_signature",
+          transaction: "",
+          network: "eip155:84532",
+        },
+      });
+      mockFetch
+        .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+        .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+        .mockResolvedValueOnce(createResponse(200, { data: "success" }));
+
+      const result = await wrappedFetch("https://api.example.com");
+
+      expect(result.status).toBe(200);
+      expect(mockClient.createPaymentPayload).toHaveBeenCalledTimes(2);
+    });
+
+    it("signs a fresh payment once the window closed and the payment is unsettled", async () => {
+      const start = 1_700_000_000_000;
+      const windowMs = validPaymentRequired.accepts[0].maxTimeoutSeconds * 1000;
+      const now = vi.spyOn(Date, "now").mockReturnValue(start);
+      (mockClient.reconcilePaymentPayload as ReturnType<typeof vi.fn>).mockResolvedValue(
+        "unsettled",
+      );
+      mockFetch
+        .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+        .mockResolvedValueOnce(createResponse(502))
+        .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+        .mockResolvedValueOnce(createResponse(200, { data: "success" }));
+
+      await wrappedFetch("https://api.example.com");
+      now.mockReturnValue(start + windowMs + 60_000);
+      const second = await wrappedFetch("https://api.example.com");
+
+      expect(second.status).toBe(200);
+      expect(mockClient.reconcilePaymentPayload).toHaveBeenCalledWith(validPaymentPayload);
+      expect(mockClient.createPaymentPayload).toHaveBeenCalledTimes(2);
+      now.mockRestore();
+    });
+
+    it("keeps re-presenting after the window when settlement cannot be ruled out", async () => {
+      const start = 1_700_000_000_000;
+      const windowMs = validPaymentRequired.accepts[0].maxTimeoutSeconds * 1000;
+      const now = vi.spyOn(Date, "now").mockReturnValue(start);
+      (mockClient.reconcilePaymentPayload as ReturnType<typeof vi.fn>).mockResolvedValue("settled");
+      mockFetch
+        .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+        .mockResolvedValueOnce(createResponse(502))
+        .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+        .mockResolvedValueOnce(createResponse(402, { error: "nonce_already_used" }));
+
+      await wrappedFetch("https://api.example.com");
+      now.mockReturnValue(start + windowMs + 60_000);
+      await expect(wrappedFetch("https://api.example.com")).rejects.toBeInstanceOf(
+        PaymentOutcomeUnknownError,
+      );
+
+      expect(mockClient.createPaymentPayload).toHaveBeenCalledTimes(1);
+      now.mockRestore();
+    });
+
+    it("releases the held payment after delivery so a later purchase signs fresh", async () => {
+      mockFetch
+        .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+        .mockResolvedValueOnce(createResponse(200, { data: "one" }))
+        .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+        .mockResolvedValueOnce(createResponse(200, { data: "two" }));
+
+      await wrappedFetch("https://api.example.com");
+      await wrappedFetch("https://api.example.com");
+
+      expect(mockClient.createPaymentPayload).toHaveBeenCalledTimes(2);
+    });
+
+    it("keys held payments by request body", async () => {
+      mockFetch
+        .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+        .mockResolvedValueOnce(createResponse(502))
+        .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+        .mockResolvedValueOnce(createResponse(200, { data: "success" }));
+
+      await wrappedFetch("https://api.example.com", { method: "POST", body: "a" });
+      const other = await wrappedFetch("https://api.example.com", { method: "POST", body: "b" });
+
+      expect(other.status).toBe(200);
+      expect(mockClient.createPaymentPayload).toHaveBeenCalledTimes(2);
+    });
   });
 });
 

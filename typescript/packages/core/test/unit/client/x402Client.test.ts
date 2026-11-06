@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { x402Client } from "../../../src/client/x402Client";
 import { PaymentPolicy } from "../../../src/client/x402Client";
 import { MockSchemeNetworkClient } from "../../mocks";
@@ -2082,6 +2082,48 @@ describe("x402Client", () => {
         }),
       );
       expect(mockClient.createPaymentPayloadCalls[0].context?.maxAmountPerPayment).toBe("500000");
+    });
+  });
+  describe("reconcilePaymentPayload", () => {
+    const accepted = buildPaymentRequirements({
+      scheme: "exact",
+      network: "eip155:8453" as Network,
+    });
+    const paymentPayload = { x402Version: 2, accepted, payload: {} };
+
+    it("returns unknown when no scheme is registered for the payload", async () => {
+      const client = new x402Client();
+
+      expect(await client.reconcilePaymentPayload(paymentPayload)).toBe("unknown");
+    });
+
+    it("returns unknown when the scheme cannot reconcile", async () => {
+      const client = new x402Client().register(
+        "eip155:8453" as Network,
+        new MockSchemeNetworkClient("exact"),
+      );
+
+      expect(await client.reconcilePaymentPayload(paymentPayload)).toBe("unknown");
+    });
+
+    it("delegates to the scheme that created the payload", async () => {
+      const mockClient = new MockSchemeNetworkClient("exact");
+      const reconcile = vi.fn().mockResolvedValue("settled");
+      Object.assign(mockClient, { reconcilePaymentPayload: reconcile });
+      const client = new x402Client().register("eip155:8453" as Network, mockClient);
+
+      expect(await client.reconcilePaymentPayload(paymentPayload)).toBe("settled");
+      expect(reconcile).toHaveBeenCalledWith(paymentPayload);
+    });
+
+    it("returns unknown when the scheme check throws", async () => {
+      const mockClient = new MockSchemeNetworkClient("exact");
+      Object.assign(mockClient, {
+        reconcilePaymentPayload: vi.fn().mockRejectedValue(new Error("rpc down")),
+      });
+      const client = new x402Client().register("eip155:8453" as Network, mockClient);
+
+      expect(await client.reconcilePaymentPayload(paymentPayload)).toBe("unknown");
     });
   });
 });
