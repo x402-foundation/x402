@@ -1,0 +1,21 @@
+{
+  "name": "ruby",
+  "type": "facilitator",
+  "language": "ruby",
+  "protocolFamilies": [
+    "evm"
+  ],
+  "x402Versions": [
+    2
+  ],
+  "environment": {
+    "required": [
+      "PORT",
+      "EVM_PRIVATE_KEY"
+    ],
+    "optional": [
+      "EVM_NETWORK",
+      "EVM_RPC_URL"
+    ]
+  }
+}
