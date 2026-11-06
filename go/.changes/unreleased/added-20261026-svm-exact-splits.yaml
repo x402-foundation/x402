@@ -1,0 +1,13 @@
+kind: added
+body: >-
+  Add multi-payee splits to the SVM exact scheme (scheme_exact_svm.md §5).
+  Facilitators opt in with Config.MaxSplits (0-8) and
+  Config.AtaCreationSponsored, advertised as maxSplits and ataCreationSponsored
+  in /supported. Verify checks one TransferChecked per leg on Path 1 (with
+  fee-payer-funded CreateIdempotent for recipients marked ataCreationRequired),
+  matches every leg across the CPI trace on Path 2, and confirms every leg after
+  settlement. Servers refuse requirements the facilitator does not advertise.
+  Clients build one transfer per leg and require consent through
+  ClientConfig.ApproveSplits before signing a charge with splits. Split charges
+  work on transaction versions 0 and 1.
+time: 2026-10-26T12:00:00Z
