@@ -13,6 +13,7 @@ import {
   AccountRole,
   appendTransactionMessageInstructions,
   createNoopSigner,
+  compressTransactionMessageUsingAddressLookupTables,
   createTransactionMessage,
   decompileTransactionMessage,
   generateKeyPairSigner,
@@ -31,11 +32,13 @@ import {
   type Instruction,
   type KeyPairSigner,
 } from "@solana/kit";
+import { InMemoryPendingSettlementStore } from "@x402/core/facilitator";
+import { readTransactionV1Config } from "../../src/transactionV1";
+import { decodeTransactionFromPayload, transactionMessageHash } from "../../src/utils";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { ExactSvmScheme as ExactSvmClient } from "../../src/exact/client/scheme";
 import { ExactSvmScheme as ExactSvmFacilitator } from "../../src/exact/facilitator/scheme";
 import { ExactSvmScheme as ExactSvmServer } from "../../src/exact/server/scheme";
-import { readTransactionV1Config } from "../../src/transactionV1";
 import { verifyPostSettlementLegs } from "../../src/exact/facilitator/smartWalletVerification";
 import * as Errors from "../../src/exact/facilitator/errors";
 import {
@@ -178,7 +181,11 @@ async function transfer(p: Parties, owner: string, amount: bigint): Promise<Inst
   );
 }
 
-async function buildTransaction(p: Parties, instructions: Instruction[]): Promise<string> {
+async function buildTransaction(
+  p: Parties,
+  instructions: Instruction[],
+  lookups: Record<string, Address[]> = {},
+): Promise<string> {
   const tx = pipe(
     createTransactionMessage({ version: 0 }),
     m => setTransactionMessageComputeUnitPrice(1, m),
@@ -186,6 +193,7 @@ async function buildTransaction(p: Parties, instructions: Instruction[]): Promis
     m =>
       prependTransactionMessageInstruction(getSetComputeUnitLimitInstruction({ units: 60_000 }), m),
     m => appendTransactionMessageInstructions(instructions, m),
+    m => compressTransactionMessageUsingAddressLookupTables(m, lookups),
     m =>
       setTransactionMessageLifetimeUsingBlockhash(
         { blockhash: BLOCKHASH as Blockhash, lastValidBlockHeight: 1n },
@@ -698,6 +706,57 @@ describe("exact facilitator with splits", () => {
     });
     expect(await facilitator.verify(payment(req, tx), req)).toMatchObject({ isValid: true });
   });
+
+  it.each([false, true])(
+    "reconciles a static split charge without simulating or requiring CPI evidence (ALT=%s)",
+    async useLookup => {
+      const p = await parties();
+      const req = requirements(p);
+      const table = (await generateKeyPairSigner()).address;
+      const lookup = useLookup
+        ? { [table]: [await ata(p.merchant.address), await ata(p.platform.address)] }
+        : {};
+      const tx = await buildTransaction(
+        p,
+        [
+          await transfer(p, p.merchant.address, 1_000_000n),
+          await transfer(p, p.platform.address, 40_000n),
+          await transfer(p, p.referrer.address, 10_000n),
+          memo("nonce"),
+        ],
+        lookup,
+      );
+      if (useLookup) {
+        const compiled = compiledOf(tx);
+        expect("addressTableLookups" in compiled && compiled.addressTableLookups?.length).toBe(1);
+      }
+      const store = new InMemoryPendingSettlementStore();
+      await store.set(
+        transactionMessageHash(decodeTransactionFromPayload({ transaction: tx })),
+        "sig",
+      );
+      const signer = facilitatorSigner(p.feePayer.address);
+      vi.mocked(signer.fetchAddressLookupTables!).mockResolvedValue(lookup);
+      const facilitator = new ExactSvmFacilitator(signer, undefined, {
+        maxSplits: 8,
+        enableSmartWalletVerification: true,
+        pendingSettlementStore: store,
+      });
+      expect(
+        await facilitator["hasStaticTransferLayout"](
+          decodeTransactionFromPayload({ transaction: tx }),
+          req,
+        ),
+      ).toBe(true);
+      expect(await facilitator.settle(payment(req, tx), req)).toMatchObject({
+        success: true,
+        transaction: "sig",
+      });
+      expect(signer.simulateTransaction).not.toHaveBeenCalled();
+      expect(signer.getConfirmedTransactionInnerInstructions).not.toHaveBeenCalled();
+      expect(signer.sendTransaction).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects a CreateIdempotent under a different token program than the transfers", async () => {
     const p = await parties();

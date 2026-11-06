@@ -726,9 +726,7 @@ func TestSplits_PendingReconciliationConfirmsEveryLeg(t *testing.T) {
 }
 
 func TestSplits_PendingReconciliationTrustsTopLevelLegs(t *testing.T) {
-	// A Path 1 split charge with a creation does not have the single-payee
-	// static layout, so reconciliation treats it as Path 2; its legs are all
-	// top-level transfers and need no confirmed trace.
+	// A pending static split charge needs no second simulation or CPI evidence.
 	p := newSplitParties(t)
 	req := p.requirements(map[string]interface{}{"ataCreationRequired": true})
 	payload := splitPayment(req, p.clientTransaction(t, req))
@@ -741,6 +739,7 @@ func TestSplits_PendingReconciliationTrustsTopLevelLegs(t *testing.T) {
 	resp, err := scheme.Settle(context.Background(), payload, req, nil)
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
+	assert.Zero(t, signer.simulateCalls)
 }
 
 // ─── matching and post-settlement units ─────────────────────────────────────
@@ -919,4 +918,32 @@ func TestSplits_UnknownSponsoredBalanceFailsClosed(t *testing.T) {
 	verified, method := verifyPostSettlementLegs(context.Background(), signer, solana.Signature{}, "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", legs, p.mint, nil, nil, []legBalance{{ata: ata}})
 	assert.False(t, verified)
 	assert.Equal(t, postSettlementUnverified, method)
+}
+
+func TestSplits_PendingReconciliationResolvesLookupTable(t *testing.T) {
+	p := newSplitParties(t)
+	req := p.requirements(nil)
+	table := solana.NewWallet().PublicKey()
+	tables := map[solana.PublicKey]solana.PublicKeySlice{table: {p.ata(t, p.merchant), p.ata(t, p.platform)}}
+	limit, err := computebudget.NewSetComputeUnitLimitInstructionBuilder().SetUnits(60_000).ValidateAndBuild()
+	require.NoError(t, err)
+	price, err := computebudget.NewSetComputeUnitPriceInstructionBuilder().SetMicroLamports(1).ValidateAndBuild()
+	require.NoError(t, err)
+	tx, err := solana.NewTransaction([]solana.Instruction{limit, price, p.transfer(t, p.merchant, 1_000_000), p.transfer(t, p.platform, 40_000), p.transfer(t, p.referrer, 10_000), memoIx("nonce")}, solana.MustHashFromBase58(splitBlockhash), solana.TransactionPayer(p.feePayer), solana.TransactionAddressTables(tables))
+	require.NoError(t, err)
+	require.Len(t, tx.Message.AddressTableLookups, 1)
+	signTransaction(t, tx, p.payer)
+	encoded, err := svm.EncodeTransaction(tx)
+	require.NoError(t, err)
+	payload := splitPayment(req, encoded)
+	signer := p.signer()
+	signer.lookupTables = tables
+	cfg := path2Config
+	scheme := NewExactSvmScheme(signer, &cfg)
+	require.NoError(t, scheme.pendingStore.Set(context.Background(), messageHashForPayload(t, payload), solana.SignatureFromBytes(append([]byte{8}, make([]byte, 63)...)).String()))
+	resp, err := scheme.Settle(context.Background(), payload, req, nil)
+	require.NoError(t, err)
+	assert.True(t, resp.Success)
+	assert.Zero(t, signer.simulateCalls)
+	assert.Zero(t, signer.sendCalls)
 }

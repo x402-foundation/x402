@@ -291,8 +291,9 @@ export type ExactSvmSchemeOptions = {
    * Whether the fee payer funds `CreateIdempotent` for recipients marked
    * `ataCreationRequired` (≈0.002 SOL of rent each). Advertised as
    * `ataCreationSponsored` in `/supported`. Rent is not bounded over time: an
-   * owner can close its ATA and the next charge pays again, so operators
-   * enabling this should rate-limit or price sponsored creations.
+   * owner can close its ATA, reclaim the rent, and repeat this on every charge.
+   * Operators must enforce out-of-band limits per owner/mint or Resource Server
+   * before enabling this. Splits do not automatically reimburse sponsored rent.
    *
    * Default: false
    */
@@ -513,19 +514,20 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
         // doesn't block reconciliation (the payload already broadcast
         // successfully).
         let payer = "";
-        let isSmartWalletSettlement = false;
+        let isSmartWalletSettlement = !!this.options?.enableSmartWalletVerification;
         try {
           payer = getTokenPayerFromTransaction(decodedTransaction!) ?? "";
+        } catch {
+          // Best-effort payer extraction must not prevent ALT-aware layout resolution.
+        }
+        try {
           // Re-derive which verification path the original settle used;
           // verificationPath itself isn't available here.
           isSmartWalletSettlement =
             !!this.options?.enableSmartWalletVerification &&
-            !this.hasStaticTransferLayout(
-              decodedTransaction!,
-              requirements.extra?.feePayer as string,
-            );
+            !(await this.hasStaticTransferLayout(decodedTransaction!, requirements));
         } catch {
-          // Ignore; payer stays "" and isSmartWalletSettlement stays false.
+          // Keep post-settlement verification enabled when layout resolution fails.
         }
         return this.reconcilePendingSettlement(
           txKey,
@@ -855,15 +857,47 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
    * settlement originally used, without re-simulating.
    *
    * @param transaction - Decoded transaction to inspect
-   * @param feePayerAddress - Facilitator fee payer (for allowlisted block isolation)
+   * @param requirements - Requirements that the pending payment was verified against
    * @returns Whether the transaction has Path 1's static transfer shape
    */
-  private hasStaticTransferLayout(transaction: Transaction, feePayerAddress: string): boolean {
+  private async hasStaticTransferLayout(
+    transaction: Transaction,
+    requirements: PaymentRequirements,
+  ): Promise<boolean> {
     const compiled = compiledMessageDecoder.decode(transaction.messageBytes);
-    const instructions = decompileTransactionMessage(compiled).instructions ?? [];
+    const lookups = "addressTableLookups" in compiled ? compiled.addressTableLookups : [];
+    const lookupMap: Record<string, Address[]> = {};
+    if (lookups && lookups.length > 0) {
+      if (!this.signer.fetchAddressLookupTables) return false;
+      const resolved = await this.signer.fetchAddressLookupTables(
+        lookups.map(lookup => lookup.lookupTableAddress.toString()),
+        requirements.network,
+      );
+      for (const [key, addresses] of Object.entries(resolved)) {
+        lookupMap[key] = addresses.map(address => address as Address);
+      }
+    }
+    const decompiled = decompileTransactionMessage(compiled, {
+      addressesByLookupTableAddress: lookupMap,
+    });
+    if (usesSplitTerms(requirements)) {
+      const result = await this.verifyStaticSplitLayout(
+        compiled,
+        decompiled,
+        requirements,
+        this.signer.getAddresses().map(address => address.toString()),
+        parsePaymentLegs(requirements),
+      );
+      return result.isValid;
+    }
     return !(
       "errorReason" in
-      resolveProtocolLayout(instructions, this.options, feePayerAddress, compiled.version)
+      resolveProtocolLayout(
+        decompiled.instructions ?? [],
+        this.options,
+        requirements.extra?.feePayer as string,
+        compiled.version,
+      )
     );
   }
 
@@ -1553,6 +1587,45 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     signerAddresses: string[],
     legs: readonly PaymentLeg[],
   ): Promise<VerifyResponse> {
+    const result = await this.verifyStaticSplitLayout(
+      compiled,
+      decompiled,
+      requirements,
+      signerAddresses,
+      legs,
+    );
+    if (!result.isValid) return result;
+    try {
+      await this.signer.simulateTransaction(exactSvmPayload.transaction, requirements.network);
+    } catch (error) {
+      return {
+        isValid: false,
+        invalidReason: Errors.ErrTransactionSimulationFailed,
+        payer: result.payer,
+        invalidMessage: error instanceof Error ? error.message : String(error),
+      };
+    }
+    return result;
+  }
+
+  /**
+   * Local split checks shared by initial verification and pending reconciliation.
+   * Reconciliation must not simulate a payment that may already have landed.
+   *
+   * @param compiled - Compiled message
+   * @param decompiled - Message with lookup tables resolved
+   * @param requirements - Original payment terms
+   * @param signerAddresses - Facilitator addresses that cannot transfer tokens
+   * @param legs - Required payment legs
+   * @returns Local verification result
+   */
+  private async verifyStaticSplitLayout(
+    compiled: ReturnType<typeof compiledMessageDecoder.decode>,
+    decompiled: ReturnType<typeof decompileTransactionMessage>,
+    requirements: PaymentRequirements,
+    signerAddresses: string[],
+    legs: readonly PaymentLeg[],
+  ): Promise<VerifyResponse> {
     const instructions = decompiled.instructions ?? [];
     const fail = (invalidReason: string, payer = "", invalidMessage?: string): VerifyResponse => ({
       isValid: false,
@@ -1692,16 +1765,6 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     const memoError = this.verifyExpectedMemo(optionalInstructions, requirements);
     if (memoError) {
       return fail(memoError, payer);
-    }
-
-    try {
-      await this.signer.simulateTransaction(exactSvmPayload.transaction, requirements.network);
-    } catch (error) {
-      return fail(
-        Errors.ErrTransactionSimulationFailed,
-        payer,
-        error instanceof Error ? error.message : String(error),
-      );
     }
 
     return { isValid: true, invalidReason: undefined, payer };
