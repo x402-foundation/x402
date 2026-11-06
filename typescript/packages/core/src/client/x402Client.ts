@@ -23,6 +23,7 @@ import {
  * Client Hook Context Interfaces
  */
 
+/** Context shared by all creation hooks for one createPaymentPayload call. */
 export interface PaymentCreationContext {
   paymentRequired: PaymentRequired;
   selectedRequirements: PaymentRequirements;
@@ -479,7 +480,8 @@ export class x402Client {
 
   /**
    * Register a hook to execute when payment payload creation fails.
-   * Can recover from failure by returning { recovered: true, payload: PaymentPayload }
+   * Can recover by returning { recovered: true, payload: PaymentPayload }, except
+   * when a before hook aborts or throws; those failures only notify hooks for cleanup.
    *
    * @param hook - The hook function to register
    * @returns The x402Client instance for chaining
@@ -548,20 +550,22 @@ export class x402Client {
       paymentRequired,
       selectedRequirements: requirements,
     };
-
-    for (const hook of this.getLabeledHooks(
-      "beforePaymentCreation",
-      paymentRequired.x402Version,
-      requirements,
-      paymentRequired.extensions,
-    )) {
-      const result = await hook(context);
-      if (result && "abort" in result && result.abort) {
-        throw new Error(`Payment creation aborted: ${result.reason}`);
-      }
-    }
+    let beforeHooksCompleted = false;
 
     try {
+      for (const hook of this.getLabeledHooks(
+        "beforePaymentCreation",
+        paymentRequired.x402Version,
+        requirements,
+        paymentRequired.extensions,
+      )) {
+        const result = await hook(context);
+        if (result && "abort" in result && result.abort) {
+          throw new Error(`Payment creation aborted: ${result.reason}`);
+        }
+      }
+      beforeHooksCompleted = true;
+
       const schemeNetworkClient = findByNetworkAndScheme(clientSchemesByNetwork, requirements.scheme, requirements.network);
       if (!schemeNetworkClient) {
         throw new Error(`No client registered for scheme: ${requirements.scheme} and network: ${requirements.network}`);
@@ -603,10 +607,9 @@ export class x402Client {
       // Enrich payload via registered client extensions (for non-scheme extensions)
       paymentPayload = await this.enrichPaymentPayloadWithExtensions(paymentPayload, paymentRequired);
 
-      const createdContext: PaymentCreatedContext = {
-        ...context,
+      const createdContext: PaymentCreatedContext = Object.assign(context, {
         paymentPayload,
-      };
+      });
 
       for (const hook of this.getLabeledHooks(
         "afterPaymentCreation",
@@ -619,10 +622,9 @@ export class x402Client {
 
       return paymentPayload;
     } catch (error) {
-      const failureContext: PaymentCreationFailureContext = {
-        ...context,
+      const failureContext: PaymentCreationFailureContext = Object.assign(context, {
         error: error as Error,
-      };
+      });
 
       for (const hook of this.getLabeledHooks(
         "onPaymentCreationFailure",
@@ -630,9 +632,14 @@ export class x402Client {
         requirements,
         paymentRequired.extensions,
       )) {
-        const result = await hook(failureContext);
-        if (result && "recovered" in result && result.recovered) {
-          return result.payload;
+        try {
+          const result = await hook(failureContext);
+          if (beforeHooksCompleted && result && "recovered" in result && result.recovered) {
+            return result.payload;
+          }
+        } catch (hookError) {
+          // A rejected before hook remains rejected, and later hooks can still clean up.
+          if (beforeHooksCompleted) throw hookError;
         }
       }
 
