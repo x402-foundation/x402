@@ -17,8 +17,8 @@ const FILE_LOCK_STALE_MS = 30_000;
 /**
  * Owner record written into every exclusive lock marker.
  *
- * The on-disk protocol is shared with the Go SDK: a lock file contains JSON
- * `{ pid, token, createdAt }`. Stealing is only allowed when the owner is
+ * A lock file contains JSON `{ pid, token, createdAt }`. Stealing is only allowed
+ * when the owner is
  * provably gone (dead PID) or when an unreadable legacy marker is older than
  * `staleMs`. A live owner is never stolen, no matter how old the marker is.
  */
@@ -261,8 +261,8 @@ export class FileChannelStorage<T extends Channel = Channel>
 /**
  * Creates an exclusive lock file with an owner marker.
  *
- * The marker holds JSON `{ pid, token, createdAt }` under the same on-disk
- * protocol as the Go SDK. A contended marker is unlinked only when its owner
+ * The marker holds JSON `{ pid, token, createdAt }`. A contended marker is
+ * unlinked only when its owner
  * is provably gone (dead PID) or when a legacy/unreadable marker is older
  * than `staleMs`. A live owner is never stolen: slow writers keep the lock
  * and contenders fail with `contended` after `maxAttempts`.

@@ -208,7 +208,6 @@ async function reserveAndVerifyLocally(
     return verificationStateUnavailable();
   }
 
-  // No local row: onchain totalClaimed is the baseline; fail closed if absent.
   if (channelSnapshot) {
     if (requirements.network) {
       channelSnapshot = { ...channelSnapshot, network: requirements.network };
@@ -567,12 +566,6 @@ export async function handleAfterVerify(
 }
 
 /**
- * Cleanup hook: clears this request's reservation after verify throws.
- *
- * @param scheme - Owning `BatchSettlementEvmScheme` instance.
- * @param ctx - Verify failure context for the current payment.
- */
-/**
  * Releases a reservation after verification fails.
  *
  * @param scheme - Owning scheme.
@@ -585,12 +578,6 @@ export async function handleVerifyFailure(
   await scheme.clearPendingRequest(ctx.paymentPayload);
 }
 
-/**
- * Cleanup hook: clears this request's reservation when handler work is canceled.
- *
- * @param scheme - Owning `BatchSettlementEvmScheme` instance.
- * @param ctx - Verified-payment cancellation context.
- */
 /**
  * Releases a reservation after verified payment handling is canceled.
  *

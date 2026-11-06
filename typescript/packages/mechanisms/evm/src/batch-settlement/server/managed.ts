@@ -325,7 +325,7 @@ export async function handleManagedAfterSettle(
 }
 
 /**
- * Replica upsert after a successful managed settle. Not read on the hot path.
+ * Not read on the hot path.
  * Cancel settles leave the replica watermark unchanged, so this is a no-op.
  *
  * @param scheme - Owning scheme.
