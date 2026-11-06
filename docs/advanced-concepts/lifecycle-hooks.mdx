@@ -230,7 +230,7 @@ Register hooks on the core client for payment payload creation lifecycle events.
 * **onBeforePaymentCreation** — Runs before creating a payment payload. Return `{ abort: true, reason }` to cancel.
 * **onAfterPaymentCreation** — Runs after successful payload creation.
 * **onPaymentCreationFailure** — Runs on failure. Return `{ recovered: true, payload }` to provide fallback.
-* **onPaymentResponse** — Runs after a paid request completes. Return `{ recovered: true }` to tell the transport to retry with a fresh payload.
+* **onPaymentResponse** — Runs after a paid request completes. Return `{ recovered: true }` to tell the transport to retry with a fresh payload. In TypeScript, `ctx.response` carries the paid response's `status` and `getHeader`, and, with `@x402/fetch`, a `body()` that reads a copy of the body.
 
 For static USD caps and asset allowlists, use [`spendControls`](/getting-started/quickstart-for-buyers#spend-controls) on the client config — it runs before hooks and is the preferred way to enforce spend limits. Use `onBeforePaymentCreation` for dynamic or interactive checks (e.g. prompting the user for approval).
 
