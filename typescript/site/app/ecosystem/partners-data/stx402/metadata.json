@@ -1,0 +1,8 @@
+{
+  "name": "STX402",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/stx402.svg",
+  "description": "x402-powered registry on Stacks. Discover endpoints, register services, and explore working examples with STX, sBTC, and USDCx payments.",
+  "websiteUrl": "https://stx402.com",
+  "githubUrl": "https://github.com/whoabuddy/stx402"
+}
