@@ -610,6 +610,14 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 		}
 	}
 
+	// A HEAD response carries no content (RFC 9110 9.3.2), so settling on one
+	// charges for a result that cannot be delivered. HEAD reaches a paid route
+	// because getRouteConfig falls back to the GET rule, which is what closes
+	// the bypass; this stops the other half, where the buyer pays and receives
+	// an empty body. The challenge is still served, so the price stays
+	// discoverable over HEAD and only the settlement is refused.
+	headCannotSettle := strings.EqualFold(reqCtx.Method, http.MethodHead) && typedPayload != nil
+
 	// Build requirements from all payment options (resolves dynamic values inline)
 	requirements, err := s.BuildPaymentRequirementsFromOptions(ctx, paymentOptions, reqCtx)
 	if err != nil {
@@ -658,11 +666,15 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 		extensions = s.EnrichExtensions(extensions, enrichmentCtx)
 	}
 
-	if typedPayload == nil {
+	if typedPayload == nil || headCannotSettle {
+		challengeError := "Payment required"
+		if headCannotSettle {
+			challengeError = "a HEAD response cannot carry the result; retry as GET"
+		}
 		paymentRequired := s.CreatePaymentRequiredResponse(
 			requirements,
 			resourceInfo,
-			"Payment required",
+			challengeError,
 			extensions,
 		)
 
