@@ -117,6 +117,48 @@ function paidTimeoutMs(
   return clampTimeoutMs(Math.min(acceptSeconds, capSeconds));
 }
 
+/**
+ * Freezes a value and everything reachable from it.
+ *
+ * @param value - Value to freeze
+ * @returns The same value, frozen
+ */
+function deepFreeze<T>(value: T): T {
+  if (typeof value === "object" && value !== null && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const key of Reflect.ownKeys(value)) {
+      deepFreeze((value as Record<PropertyKey, unknown>)[key]);
+    }
+  }
+  return value;
+}
+
+/**
+ * Takes the snapshot of a tool invocation that every RPC of one call transmits
+ * and the payment binds to. Fails closed, before any RPC, when the tool name is
+ * empty or the arguments cannot be structurally cloned.
+ *
+ * @param name - Tool name
+ * @param args - Caller's arguments
+ * @returns Frozen deep copy of the arguments
+ */
+function snapshotToolArguments(
+  name: string,
+  args: Record<string, unknown>,
+): Readonly<Record<string, unknown>> {
+  if (typeof name !== "string" || name === "") {
+    throw new Error("invalid_mcp_call_context: tool name must be a non-empty string");
+  }
+  if (typeof args !== "object" || args === null || Array.isArray(args)) {
+    throw new Error("invalid_mcp_call_context: arguments must be an object");
+  }
+  try {
+    return deepFreeze(structuredClone(args));
+  } catch {
+    throw new Error("invalid_mcp_call_context: arguments must be structured-cloneable");
+  }
+}
+
 // ============================================================================
 // MCP SDK Result Types
 // ============================================================================
@@ -564,6 +606,10 @@ export class x402MCPClient {
     args: Record<string, unknown> = {},
     options?: { timeout?: number; signal?: AbortSignal; resetTimeoutOnProgress?: boolean },
   ): Promise<x402MCPToolCallResult> {
+    // One frozen snapshot of the invocation: the unpaid, paid and recovery RPCs
+    // all transmit it, and the payment binds to it, whatever the caller or a hook
+    // does to `args` afterwards. Hooks keep receiving the caller's object.
+    const committedArgs = snapshotToolArguments(name, args);
     const capSeconds = this.options.maxRequestTimeoutSeconds;
     const probeOptions = {
       ...options,
@@ -576,7 +622,7 @@ export class x402MCPClient {
 
     try {
       const rawResult = await this.mcpClient.callTool(
-        { name, arguments: args },
+        { name, arguments: committedArgs },
         undefined,
         probeOptions,
       );
@@ -624,7 +670,7 @@ export class x402MCPClient {
         }
         if (hookResult.payment) {
           // Use the hook-provided payment
-          return this.callToolWithPayment(name, args, hookResult.payment, options);
+          return this.paidCall(name, args, committedArgs, hookResult.payment, options);
         }
       }
     }
@@ -660,10 +706,12 @@ export class x402MCPClient {
     }
 
     // Create payment payload
-    const paymentPayload = await this._paymentClient.createPaymentPayload(paymentRequired);
+    const paymentPayload = await this._paymentClient.createPaymentPayload(paymentRequired, {
+      call: { kind: "mcp", toolName: name, arguments: committedArgs },
+    });
 
     // Retry with payment
-    return this.callToolWithPayment(name, args, paymentPayload, options);
+    return this.paidCall(name, args, committedArgs, paymentPayload, options);
   }
 
   /**
@@ -687,6 +735,88 @@ export class x402MCPClient {
     paymentPayload: PaymentPayload,
     options?: { timeout?: number; signal?: AbortSignal; resetTimeoutOnProgress?: boolean },
   ): Promise<x402MCPToolCallResult> {
+    return this.paidCall(name, args, snapshotToolArguments(name, args), paymentPayload, options);
+  }
+
+  /**
+   * Probes a tool to discover its payment requirements.
+   *
+   * **WARNING: Side Effects** - This method actually calls the tool to trigger a 402 response.
+   * If the tool is free (no payment required), it will execute and return null.
+   * Use with caution on tools that have side effects or are expensive to run.
+   *
+   * Useful for displaying pricing information to users before calling paid tools.
+   *
+   * @param name - The name of the tool to probe
+   * @param args - Arguments that may affect pricing (for dynamic pricing scenarios)
+   * @returns The payment requirements if the tool requires payment, null if the tool is free
+   *
+   * @example
+   * ```typescript
+   * // Check if a tool requires payment before calling
+   * const requirements = await client.getToolPaymentRequirements("expensive_analysis");
+   *
+   * if (requirements) {
+   *   const price = requirements.accepts[0];
+   *   console.log(`This tool costs ${price.amount} on ${price.network}`);
+   *   // Optionally show user and get confirmation before calling
+   * } else {
+   *   console.log("This tool is free");
+   *   // Note: the tool has already executed!
+   * }
+   * ```
+   */
+  async getToolPaymentRequirements(
+    name: string,
+    args: Record<string, unknown> = {},
+  ): Promise<PaymentRequired | null> {
+    // Note: This actually calls the tool to trigger 402 if paid.
+    // If the tool is free, it will execute as a side effect.
+    try {
+      const result = await this.mcpClient.callTool({ name, arguments: args });
+
+      if (!isMCPCallToolResult(result)) {
+        return null;
+      }
+
+      return this.extractPaymentRequiredFromResult(result);
+    } catch (error: unknown) {
+      // Handle McpError(-32042) payment challenges; re-throw anything else
+      // so non-payment failures aren't indistinguishable from "free tool"
+      // (mirrors callTool's catch above).
+      const extracted = this.extractPaymentRequiredFromError(error);
+      if (extracted) {
+        return extracted;
+      }
+      throw error;
+    }
+  }
+
+  // ============================================================================
+  // Private Methods
+  // ============================================================================
+
+  /**
+   * Sends the paid call, and the recovery call if a hook recovers, with the
+   * committed arguments snapshot.
+   *
+   * @param name - The name of the tool to call
+   * @param args - The caller's arguments, as shown to hooks
+   * @param committedArgs - Frozen snapshot transmitted on every RPC
+   * @param paymentPayload - The payment payload to include
+   * @param options - Optional MCP request options
+   * @param options.timeout - Request timeout in milliseconds
+   * @param options.signal - AbortSignal for cancellation
+   * @param options.resetTimeoutOnProgress - If true, progress notifications reset the timeout
+   * @returns The tool result with payment metadata
+   */
+  private async paidCall(
+    name: string,
+    args: Record<string, unknown>,
+    committedArgs: Readonly<Record<string, unknown>>,
+    paymentPayload: PaymentPayload,
+    options?: { timeout?: number; signal?: AbortSignal; resetTimeoutOnProgress?: boolean },
+  ): Promise<x402MCPToolCallResult> {
     const paidOptions = {
       ...options,
       timeout: paidTimeoutMs(
@@ -700,7 +830,7 @@ export class x402MCPClient {
     // Note: The MCP SDK's callTool accepts _meta but the types don't always expose it
     const callParams = {
       name,
-      arguments: args,
+      arguments: committedArgs,
       _meta: {
         [MCP_PAYMENT_META_KEY]: paymentPayload,
       },
@@ -779,13 +909,15 @@ export class x402MCPClient {
         for (const hook of this.beforePaymentHooks) {
           await hook(correctiveRequestedContext);
         }
-        correctivePayload = await this._paymentClient.createPaymentPayload(paymentRequired);
+        correctivePayload = await this._paymentClient.createPaymentPayload(paymentRequired, {
+          call: { kind: "mcp", toolName: name, arguments: committedArgs },
+        });
       }
 
       const freshPayload = correctivePayload;
       const retryCallParams = {
         name,
-        arguments: args,
+        arguments: committedArgs,
         _meta: {
           [MCP_PAYMENT_META_KEY]: freshPayload,
         },
@@ -848,64 +980,6 @@ export class x402MCPClient {
       paymentMade: true,
     };
   }
-
-  /**
-   * Probes a tool to discover its payment requirements.
-   *
-   * **WARNING: Side Effects** - This method actually calls the tool to trigger a 402 response.
-   * If the tool is free (no payment required), it will execute and return null.
-   * Use with caution on tools that have side effects or are expensive to run.
-   *
-   * Useful for displaying pricing information to users before calling paid tools.
-   *
-   * @param name - The name of the tool to probe
-   * @param args - Arguments that may affect pricing (for dynamic pricing scenarios)
-   * @returns The payment requirements if the tool requires payment, null if the tool is free
-   *
-   * @example
-   * ```typescript
-   * // Check if a tool requires payment before calling
-   * const requirements = await client.getToolPaymentRequirements("expensive_analysis");
-   *
-   * if (requirements) {
-   *   const price = requirements.accepts[0];
-   *   console.log(`This tool costs ${price.amount} on ${price.network}`);
-   *   // Optionally show user and get confirmation before calling
-   * } else {
-   *   console.log("This tool is free");
-   *   // Note: the tool has already executed!
-   * }
-   * ```
-   */
-  async getToolPaymentRequirements(
-    name: string,
-    args: Record<string, unknown> = {},
-  ): Promise<PaymentRequired | null> {
-    // Note: This actually calls the tool to trigger 402 if paid.
-    // If the tool is free, it will execute as a side effect.
-    try {
-      const result = await this.mcpClient.callTool({ name, arguments: args });
-
-      if (!isMCPCallToolResult(result)) {
-        return null;
-      }
-
-      return this.extractPaymentRequiredFromResult(result);
-    } catch (error: unknown) {
-      // Handle McpError(-32042) payment challenges; re-throw anything else
-      // so non-payment failures aren't indistinguishable from "free tool"
-      // (mirrors callTool's catch above).
-      const extracted = this.extractPaymentRequiredFromError(error);
-      if (extracted) {
-        return extracted;
-      }
-      throw error;
-    }
-  }
-
-  // ============================================================================
-  // Private Methods
-  // ============================================================================
 
   /**
    * Extracts PaymentRequired from a tool result (structured 402 response).

@@ -5,7 +5,11 @@ import {
 } from ".";
 import { SettleResponse } from "../types";
 import { PaymentPayload, PaymentRequired } from "../types/payments";
-import { x402Client, type PaymentResponseContext } from "../client/x402Client";
+import {
+  x402Client,
+  type CreatePaymentPayloadOptions,
+  type PaymentResponseContext,
+} from "../client/x402Client";
 
 /**
  * Context provided to onPaymentRequired hooks.
@@ -164,10 +168,15 @@ export class x402HTTPClient {
    * Delegates to the underlying x402Client.
    *
    * @param paymentRequired - The payment required response from the server
+   * @param options - Optional per-call options, forwarded to the x402Client
+   * @param options.call - The call being paid for
    * @returns Promise resolving to the payment payload
    */
-  async createPaymentPayload(paymentRequired: PaymentRequired): Promise<PaymentPayload> {
-    return this.client.createPaymentPayload(paymentRequired);
+  async createPaymentPayload(
+    paymentRequired: PaymentRequired,
+    options?: CreatePaymentPayloadOptions,
+  ): Promise<PaymentPayload> {
+    return this.client.createPaymentPayload(paymentRequired, options);
   }
 
   /**
