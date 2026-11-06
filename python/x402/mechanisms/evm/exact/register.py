@@ -16,7 +16,7 @@ if TYPE_CHECKING:
         x402ResourceServerSync,
     )
 
-    from ..signer import ClientEvmSigner, FacilitatorEvmSigner
+    from ..signer import ClientEvmSigner, FacilitatorEvmSigner, RPCConfig
 
 # Type vars for accepting both async and sync variants
 ClientT = TypeVar("ClientT", "x402Client", "x402ClientSync")
@@ -29,6 +29,7 @@ def register_exact_evm_client(
     signer: "ClientEvmSigner",
     networks: str | list[str] | None = None,
     policies: list | None = None,
+    config: "RPCConfig | None" = None,
 ) -> ClientT:
     """Register EVM exact payment schemes to x402Client.
 
@@ -41,6 +42,8 @@ def register_exact_evm_client(
         signer: EVM signer for payment authorizations.
         networks: Optional specific network(s) (default: wildcard).
         policies: Optional payment policies.
+        config: Optional RPC settings for the V2 scheme. Used for onchain reads
+            when the signer cannot read the chain. V1 registration ignores it.
 
     Returns:
         Client for chaining.
@@ -50,7 +53,7 @@ def register_exact_evm_client(
     from .v1.client import ExactEvmSchemeV1 as ExactEvmClientSchemeV1
 
     signer = _wrap_if_local_account(signer)
-    scheme = ExactEvmClientScheme(signer)
+    scheme = ExactEvmClientScheme(signer, config)
 
     if networks:
         if isinstance(networks, str):

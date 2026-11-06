@@ -25,6 +25,7 @@ except ImportError as e:
 
 from .constants import EIP1271_MAGIC_VALUE, IS_VALID_SIGNATURE_ABI, TX_STATUS_SUCCESS  # noqa: E402
 from .data_suffix import append_data_suffix  # noqa: E402
+from .signer import ClientEvmSigner, ClientEvmSignerWithReadContract  # noqa: E402
 from .types import TransactionReceipt, TypedDataDomain, TypedDataField  # noqa: E402
 
 # Gas limit for facilitator-sent transactions (settle transferWithAuthorization and
@@ -259,6 +260,59 @@ class EthAccountSignerWithRPC(EthAccountSigner):
         max_priority_fee = self._w3.eth.max_priority_fee
         max_fee = base_fee * 2 + max_priority_fee
         return (max_fee, max_priority_fee)
+
+
+class ResolvedReadSigner:
+    """Wraps a signer with an RPC-backed read_contract."""
+
+    def __init__(self, base: ClientEvmSigner, rpc_url: str) -> None:
+        self._base = base
+        self._w3 = Web3(Web3.HTTPProvider(rpc_url))
+
+    @property
+    def address(self) -> str:
+        return self._base.address
+
+    def sign_typed_data(
+        self,
+        domain: TypedDataDomain,
+        types: dict[str, list[TypedDataField]],
+        primary_type: str,
+        message: dict[str, Any],
+    ) -> bytes:
+        return self._base.sign_typed_data(domain, types, primary_type, message)
+
+    def read_contract(
+        self,
+        address: str,
+        abi: list[dict[str, Any]],
+        function_name: str,
+        *args: Any,
+    ) -> Any:
+        contract = self._w3.eth.contract(
+            address=Web3.to_checksum_address(address),
+            abi=abi,
+        )
+        return getattr(contract.functions, function_name)(*args).call()
+
+
+def resolve_read_signer(
+    signer: ClientEvmSigner, rpc_url: str
+) -> ClientEvmSignerWithReadContract | None:
+    """Return a signer that can read contracts, or None when no read path exists.
+
+    A signer with read_contract is returned as-is unless it reports
+    has_rpc_client() == False, in which case reads go through rpc_url. Returns
+    None when the signer cannot read and rpc_url is empty.
+    """
+    has_rpc_client = getattr(signer, "has_rpc_client", None)
+    if isinstance(signer, ClientEvmSignerWithReadContract) and (
+        has_rpc_client is None or has_rpc_client()
+    ):
+        return signer
+    if not rpc_url:
+        return None
+    return ResolvedReadSigner(signer, rpc_url)
 
 
 class FacilitatorWeb3Signer:
