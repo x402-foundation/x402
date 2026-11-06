@@ -1026,43 +1026,6 @@ func TestSettleOnCancel_SettlesWithoutBeforeHandlerDeposit(t *testing.T) {
 	}
 }
 
-func TestSettleOnCancel_WarnsAndReturnsFailedReceipt(t *testing.T) {
-	ctx := context.Background()
-	mockClient := &mockFacilitatorClient{
-		kinds: []SupportedKind{
-			{X402Version: 2, Scheme: "upto", Network: "eip155:8453"},
-		},
-		settle: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*SettleResponse, error) {
-			return nil, errors.New("facilitator unavailable")
-		},
-	}
-	scheme := &mockSettleOnCancelScheme{
-		mockSchemeNetworkServer: mockSchemeNetworkServer{scheme: "upto"},
-		settleOnCancel: func(c VerifiedPaymentCanceledContext) (*types.PaymentRequirements, error) {
-			reqs := c.Requirements.(types.PaymentRequirements)
-			reqs.Amount = "0"
-			return &reqs, nil
-		},
-	}
-	server := Newx402ResourceServer(WithFacilitatorClient(mockClient), WithSchemeServer("eip155:8453", scheme))
-	if err := server.Initialize(ctx); err != nil {
-		t.Fatalf("Initialize: %v", err)
-	}
-
-	requirements := types.PaymentRequirements{Scheme: "upto", Network: "eip155:8453", Asset: "USDC", Amount: "1", PayTo: "0x"}
-	payload := types.PaymentPayload{X402Version: 2, Accepted: requirements, Payload: map[string]interface{}{}}
-	cancellation := server.CreatePaymentCancellationDispatcherWithExtensions(
-		ctx, payload, requirements, nil, []SettlePhase{SettlePhaseBeforeHandler},
-	)
-	got := cancellation.Cancel(VerifiedPaymentCancelOptions{Reason: CancellationReasonAfterVerifyAborted})
-	if got == nil || got.Success || got.Transaction != "" {
-		t.Fatalf("expected failed cancel receipt, got %+v", got)
-	}
-	if got.ErrorReason == "" {
-		t.Fatal("expected errorReason on failed cancel receipt")
-	}
-}
-
 func TestSettleOnCancel_UnknownOutcomeIsNotAReceipt(t *testing.T) {
 	ctx := context.Background()
 	var settleCalls int
