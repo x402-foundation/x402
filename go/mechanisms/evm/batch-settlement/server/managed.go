@@ -87,7 +87,7 @@ func handleManagedAfterVerify(s *BatchSettlementEvmScheme, ctx x402.VerifyResult
 	if !ok {
 		return verificationStateUnavailableAfter(), nil
 	}
-	snapshot := toChannelView(raw, state)
+	snapshot := toChannelView(raw, state, ctx.Requirements.GetNetwork())
 	s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{ChannelSnapshot: &snapshot})
 
 	if batchsettlement.IsRefundPayload(raw) {
@@ -259,7 +259,7 @@ func handleManagedAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResult
 		return nil
 	}
 
-	state := toChannelView(raw, replicaState)
+	state := toChannelView(raw, replicaState, ctx.Requirements.GetNetwork())
 	if isRefund && bigOrZero(state.Balance).Cmp(bigOrZero(state.ChargedCumulativeAmount)) <= 0 {
 		_, err := s.GetStorage().UpdateChannel(ctx.Ctx, channelId, func(*ChannelSession) *ChannelSession {
 			return nil
@@ -281,7 +281,7 @@ func handleManagedAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResult
 	return err
 }
 
-func toChannelView(raw map[string]interface{}, state ChannelSession) ChannelSession {
+func toChannelView(raw map[string]interface{}, state ChannelSession, network string) ChannelSession {
 	voucher, _ := raw["voucher"].(map[string]interface{})
 	cfgMap, _ := raw["channelConfig"].(map[string]interface{})
 	state.ChannelId, _ = voucher["channelId"].(string)
@@ -289,6 +289,7 @@ func toChannelView(raw map[string]interface{}, state ChannelSession) ChannelSess
 	state.SignedMaxClaimable, _ = voucher["maxClaimableAmount"].(string)
 	state.Signature, _ = voucher["signature"].(string)
 	state.LastRequestTimestamp = time.Now().UnixMilli()
+	stampNetwork(&state, network)
 	return state
 }
 

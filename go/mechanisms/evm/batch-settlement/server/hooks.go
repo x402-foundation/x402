@@ -463,10 +463,18 @@ func invalidLocalVerifyResponse(payer, invalidReason string) *x402.VerifyRespons
 	}
 }
 
+// stampNetwork binds a session to the network of the request that wrote it.
+// An empty network never overwrites an already-bound row.
+func stampNetwork(session *ChannelSession, network string) {
+	if network != "" {
+		session.Network = network
+	}
+}
+
 // buildProvisionalChannelFromPayload constructs the minimal ChannelSession
 // needed to host a pending reservation when storage has no row yet.
 func buildProvisionalChannelFromPayload(
-	channelId, signedMax, signature string,
+	channelId, signedMax, signature, network string,
 	payload map[string]interface{},
 	chargedCumulativeAmount string,
 	now int64,
@@ -477,7 +485,7 @@ func buildProvisionalChannelFromPayload(
 			cfg = parsed
 		}
 	}
-	return &ChannelSession{
+	session := &ChannelSession{
 		ChannelId:               channelId,
 		ChannelConfig:           cfg,
 		ChargedCumulativeAmount: chargedCumulativeAmount,
@@ -489,6 +497,8 @@ func buildProvisionalChannelFromPayload(
 		RefundNonce:             0,
 		LastRequestTimestamp:    now,
 	}
+	stampNetwork(session, network)
+	return session
 }
 
 // AfterVerifyHook stashes facilitator extras on the request snapshot.
@@ -608,7 +618,7 @@ func handleAfterVerify(s *BatchSettlementEvmScheme, ctx x402.VerifyResultContext
 		stale := prior
 		if stale == nil {
 			stale = buildProvisionalChannelFromPayload(
-				normalizedId, signedMaxClaimable, signature, payload, base, now,
+				normalizedId, signedMaxClaimable, signature, ctx.Requirements.GetNetwork(), payload, base, now,
 			)
 			stale.Balance = balance
 			stale.TotalClaimed = totalClaimed
@@ -642,6 +652,7 @@ func handleAfterVerify(s *BatchSettlementEvmScheme, ctx x402.VerifyResultContext
 		OnchainSyncedAt:         onchainSyncedAt,
 		LastRequestTimestamp:    now,
 	}
+	stampNetwork(channelSnapshot, ctx.Requirements.GetNetwork())
 
 	s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{ChannelSnapshot: channelSnapshot})
 
@@ -1103,6 +1114,7 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 			next.ChargedCumulativeAmount = new(big.Int).Add(curCharged, reqAmount).String()
 			next.SignedMaxClaimable = dp.Voucher.MaxClaimableAmount
 			next.Signature = dp.Voucher.Signature
+			stampNetwork(&next, ctx.Requirements.GetNetwork())
 			if cs != nil {
 				applyChannelStateExtra(&next, cs)
 			}
@@ -1174,6 +1186,7 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 				return nil
 			}
 			next := *existing
+			stampNetwork(&next, ctx.Requirements.GetNetwork())
 			applyChannelStateExtra(&next, snapshot)
 			next.OnchainSyncedAt = now
 			next.LastRequestTimestamp = now
