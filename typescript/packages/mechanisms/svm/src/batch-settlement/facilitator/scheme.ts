@@ -1384,19 +1384,8 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     payer: string,
     broadcast: (onPrepared: (signature: string, wire: string) => Promise<void>) => Promise<string>,
   ): Promise<DurableBroadcastResult> {
-    const completed = await this.pendingStore.get(this.completedBroadcastKey(key));
-    if (completed) return { ok: true, replayed: true, signature: completed };
-    const recorded = await this.pendingStore.get(key);
-    if (recorded) {
-      // Reconciled before the record is dropped, not after. Dropping it first
-      // would leave a concurrent retry — one that read no record because this
-      // call had already removed it — to broadcast the work a second time,
-      // with only the in-memory duplicate cache in the way. That cache is
-      // empty after a restart, which is exactly when a pending record is being
-      // reconciled. Two callers reconciling the same signature is harmless:
-      // they confirm the same transaction and reach the same answer.
-      return this.reconcileBroadcast(key, recorded, network, payer);
-    }
+    const resumed = await this.resumeBroadcast(key, network, payer);
+    if (resumed) return resumed;
     let signature: string;
     try {
       signature = await broadcast(async (broadcastSignature, wire) => {
@@ -1436,6 +1425,34 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     // requests are load-balanced across nodes.
     // Submission helpers already confirmed it (with its slot): no further status RPC.
     return { ok: true, replayed: false, signature };
+  }
+
+  /**
+   * Resume work already broadcast under `key`: replay its completed
+   * signature, or reconcile its recorded one.
+   *
+   * @param key - Deterministic key for this exact piece of work
+   * @param network - Network the work was submitted to
+   * @param payer - Payer reported on a pending or failed response
+   * @returns The broadcast's outcome, or undefined when none is recorded
+   */
+  private async resumeBroadcast(
+    key: string,
+    network: Network,
+    payer: string,
+  ): Promise<DurableBroadcastResult | undefined> {
+    const completed = await this.pendingStore.get(this.completedBroadcastKey(key));
+    if (completed) return { ok: true, replayed: true, signature: completed };
+    const recorded = await this.pendingStore.get(key);
+    if (!recorded) return undefined;
+    // Reconciled before the record is dropped, not after. Dropping it first
+    // would leave a concurrent retry — one that read no record because this
+    // call had already removed it — to broadcast the work a second time,
+    // with only the in-memory duplicate cache in the way. That cache is
+    // empty after a restart, which is exactly when a pending record is being
+    // reconciled. Two callers reconciling the same signature is harmless:
+    // they confirm the same transaction and reach the same answer.
+    return this.reconcileBroadcast(key, recorded, network, payer);
   }
 
   /**
@@ -1595,6 +1612,8 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
    * @param instructions - The batch's channel instructions
    * @param key - Deterministic key for this exact batch
    * @param payer - Payer reported on a pending or failed response
+   * @param onPrepared - Persists what a confirmation of this signature means,
+   *   before its bytes are recorded or sent
    * @returns The confirmed signature, or the response to answer with
    */
   private async submitRedemption(
@@ -1603,6 +1622,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     instructions: readonly ServerInstruction[],
     key: string,
     payer: string,
+    onPrepared?: (signature: string) => Promise<void>,
   ): Promise<
     { ok: true; replayed: boolean; signature: Signature } | { ok: false; response: SettleResponse }
   > {
@@ -1613,7 +1633,10 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
         network,
         instructions,
         this.redemption.version,
-        onBroadcast,
+        async (signature, wire) => {
+          await onPrepared?.(signature);
+          await onBroadcast(signature, wire);
+        },
       ),
     );
     return broadcast.ok
@@ -1904,9 +1927,10 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       resolveDelegatedIdentity: ctx => resolveDelegatedIdentity(this.delegatedReceiverAuth, ctx),
       resolveTerms: (config, requirements, binding) =>
         this.resolveTerms(config, requirements, binding ?? "requirements"),
+      resumeRedemption: (key, network, payer) => this.resumeBroadcast(key, network, payer),
       settlementCache: this.settlementCache,
-      submitRedemption: (feePayer, network, instructions, key, payer) =>
-        this.submitRedemption(feePayer, network, instructions, key, payer),
+      submitRedemption: (feePayer, network, instructions, key, payer, onPrepared) =>
+        this.submitRedemption(feePayer, network, instructions, key, payer, onPrepared),
     };
   }
 }
