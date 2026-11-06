@@ -128,6 +128,16 @@ func TestDecodePaymentResponseHeader_Errors(t *testing.T) {
 	}
 }
 
+func TestDecodeHeaders_RejectNull(t *testing.T) {
+	null := base64.StdEncoding.EncodeToString([]byte("null"))
+	if _, err := decodePaymentRequiredHeader(null); err == nil {
+		t.Fatal("expected error for null PAYMENT-REQUIRED")
+	}
+	if _, err := decodePaymentResponseHeader(null); err == nil {
+		t.Fatal("expected error for null PAYMENT-RESPONSE")
+	}
+}
+
 // ---------- UpdateSessionAfterRefund ----------
 
 func TestUpdateSessionAfterRefund_FullRefundDeletes(t *testing.T) {
