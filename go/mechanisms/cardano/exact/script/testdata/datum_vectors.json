@@ -1,0 +1,106 @@
+[
+ {
+  "input": "d87981182a",
+  "evolution": "d8799f182aff"
+ },
+ {
+  "input": "d8799f182aff",
+  "evolution": "d8799f182aff"
+ },
+ {
+  "input": "d87980",
+  "evolution": "d87980"
+ },
+ {
+  "input": "d87a80",
+  "evolution": "d87a80"
+ },
+ {
+  "input": "d905008101",
+  "evolution": "d905009f01ff"
+ },
+ {
+  "input": "d9050a9f01ff",
+  "evolution": "d9050a9f01ff"
+ },
+ {
+  "input": "d8668218c88101",
+  "evolution": "d8669f18c89f01ffff"
+ },
+ {
+  "input": "9f0102ff",
+  "evolution": "9f0102ff"
+ },
+ {
+  "input": "820102",
+  "evolution": "9f0102ff"
+ },
+ {
+  "input": "80",
+  "evolution": "80"
+ },
+ {
+  "input": "a10102",
+  "evolution": "bf0102ff"
+ },
+ {
+  "input": "bf0102ff",
+  "evolution": "bf0102ff"
+ },
+ {
+  "input": "a0",
+  "evolution": "a0"
+ },
+ {
+  "input": "a2014102024103",
+  "evolution": "bf014102024103ff"
+ },
+ {
+  "input": "5841ababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+  "evolution": "5f5840abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab41abff"
+ },
+ {
+  "input": "5f5840abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab41abff",
+  "evolution": "5f5840abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab41abff"
+ },
+ {
+  "input": "4100",
+  "evolution": "4100"
+ },
+ {
+  "input": "40",
+  "evolution": "40"
+ },
+ {
+  "input": "00",
+  "evolution": "00"
+ },
+ {
+  "input": "20",
+  "evolution": "20"
+ },
+ {
+  "input": "1b7fffffffffffffff",
+  "evolution": "1b7fffffffffffffff"
+ },
+ {
+  "input": "3b7fffffffffffffff",
+  "evolution": "3b7fffffffffffffff"
+ },
+ {
+  "input": "c249010000000000000000",
+  "evolution": "c249010000000000000000"
+ },
+ {
+  "input": "c349010000000000000000",
+  "evolution": "c349010000000000000000"
+ },
+ {
+  "input": "d8799f9f01a10203ff4568656c6c6fd87a80ff",
+  "evolution": "d8799f9f01bf0203ffff4568656c6c6fd87a80ff"
+ },
+ {
+  "input": "d87982a0815840cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+  "evolution": "d8799fa09f5840cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdffff"
+ }
+]

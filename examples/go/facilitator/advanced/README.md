@@ -74,6 +74,8 @@ For production deployments with additional features (Bazaar discovery, multiple 
 ```bash
 EVM_PRIVATE_KEY=<your-evm-private-key>
 SVM_PRIVATE_KEY=<your-svm-private-key>
+# Optional: Cardano for the all-networks example (needs no key; the client pays fees)
+BLOCKFROST_PROJECT_ID=<your-blockfrost-project-id>
 ```
 
 **⚠️ Security Note:** The facilitator private key needs ETH/SOL for gas fees. Use a dedicated testnet account.
