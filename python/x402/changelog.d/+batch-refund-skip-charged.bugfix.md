@@ -1,0 +1,1 @@
+Fixed the batch-settlement channel manager aborting a refund sweep on a channel whose balance is already fully charged. `refund` and `refund_idle_channels` now skip such channels instead of sending a zero-amount cooperative refund, which the contract rejects, so the channels after it are still refunded.

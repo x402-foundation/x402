@@ -120,6 +120,10 @@ def has_live_pending_request(channel: Channel, now_ms: int) -> bool:
     return channel.pending_request is not None and channel.pending_request.expires_at > now_ms
 
 
+def has_refundable_balance(channel: Channel) -> bool:
+    return int(channel.balance) > int(channel.charged_cumulative_amount)
+
+
 def get_claimable_vouchers_from_channels(
     channels: list[Channel], idle_secs: int | None
 ) -> list[VoucherClaim]:
@@ -260,5 +264,6 @@ __all__ = [
     "get_claimable_vouchers_from_channels",
     "get_idle_channels_for_refund",
     "has_live_pending_request",
+    "has_refundable_balance",
     "now_ms",
 ]

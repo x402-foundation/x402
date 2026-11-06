@@ -347,6 +347,18 @@ class TestSyncRefundIdleChannels:
         assert len(results) == 1
         assert results[0].channel == ch_old.channel_id
 
+    def test_skips_fully_charged_channel(self):
+        old_ms = int(time.time() * 1000) - 120_000
+        ch_charged = _channel(_channel_config("01"), balance="500", charged="500")
+        ch_charged.last_request_timestamp = old_ms
+        ch_refundable = _channel(_channel_config("02"), balance="500", charged="100")
+        ch_refundable.last_request_timestamp = old_ms
+        cm, scheme, fac = _make_sync_manager(seed_channels=[ch_charged, ch_refundable])
+        results = cm.refund_idle_channels(60)
+        assert [r.channel for r in results] == [ch_refundable.channel_id]
+        assert len(fac.calls) == 1
+        assert scheme.get_storage().get(ch_charged.channel_id) is not None
+
 
 class TestSyncClaimableAndPendingViews:
     def test_get_claimable_vouchers(self):
@@ -475,6 +487,16 @@ class TestAsyncClaimAndSettle:
         assert len(out["claims"]) == 1
         assert out["settle"].transaction == "0xs"
         assert len(fac.calls) == 2
+
+
+class TestAsyncRefund:
+    @pytest.mark.asyncio
+    async def test_skips_fully_charged_channel(self):
+        ch = _channel(_channel_config(), balance="500", charged="500")
+        cm, scheme, fac = _make_async_manager(seed_channels=[ch])
+        assert await cm.refund([ch.channel_id]) == []
+        assert fac.calls == []
+        assert scheme.get_storage().get(ch.channel_id) is not None
 
 
 class TestAsyncAutoLoopLifecycle:
