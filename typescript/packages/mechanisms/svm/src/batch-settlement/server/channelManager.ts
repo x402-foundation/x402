@@ -114,6 +114,8 @@ export class BatchChannelManager {
   private timer: ReturnType<typeof setInterval> | undefined;
   private passInFlight: Promise<unknown> = Promise.resolve();
   private running = false;
+  private generation = 0;
+  private tickInFlight = false;
   private readonly graceElapsedReported = new Set<string>();
 
   /**
@@ -133,16 +135,11 @@ export class BatchChannelManager {
    * @returns The channels claimed and distributed
    */
   async redeem(): Promise<RedemptionResult> {
-    const pass = this.passInFlight.then(
-      () => this.runPass(),
-      () => this.runPass(),
-    );
-    this.passInFlight = pass.catch(() => undefined);
-    return pass;
+    return this.enqueue(() => this.runPass());
   }
 
   /**
-   * Redeem every `intervalSecs`.
+   * Redeem every `intervalSecs`, skipping ticks while an automatic pass is queued or running.
    *
    * Claim well inside the forced-close grace period: a voucher still unclaimed
    * when a close completes is value the server gives back to the payer.
@@ -152,28 +149,64 @@ export class BatchChannelManager {
   start(intervalSecs: number): void {
     if (this.running) return;
     this.running = true;
+    const generation = ++this.generation;
     this.timer = setInterval(() => {
-      void this.redeem().catch(error => this.config.onError?.(error));
+      void this.tick(generation);
     }, intervalSecs * 1_000);
   }
 
   /**
-   * Stop the interval and wait for a pass already under way.
+   * Stop the interval, discard queued automatic work, and await work already queued.
+   * An executing pass finishes normally. Later work or a restarted interval is not awaited.
    *
    * @param opts - Stop options.
    * @param opts.flush - When true, run one final {@link redeem} before returning.
-   * @returns Resolves when the interval is stopped (and flush work completes, if requested).
+   * @returns Resolves when the captured work and requested final pass complete.
    */
   async stop(opts?: { flush?: boolean }): Promise<void> {
     this.running = false;
+    this.generation += 1;
     if (this.timer !== undefined) {
       clearInterval(this.timer);
       this.timer = undefined;
     }
-    if (opts?.flush) {
-      await this.redeem().catch(error => this.config.onError?.(error));
+    const stopped = opts?.flush
+      ? this.redeem().catch(error => this.config.onError?.(error))
+      : this.passInFlight;
+    await stopped;
+  }
+
+  /**
+   * Serialize an operation while preserving its caller's result or rejection.
+   *
+   * @param pass - Operation to run after previously queued work
+   * @returns The operation's own result
+   */
+  private enqueue<T>(pass: () => Promise<T>): Promise<T> {
+    const queued = this.passInFlight.then(pass, pass);
+    this.passInFlight = queued.catch(() => undefined);
+    return queued;
+  }
+
+  /**
+   * Run at most one automatic pass for the current interval lifecycle.
+   *
+   * @param generation - Interval lifecycle that scheduled this tick
+   * @returns Resolves when the pass finishes or an obsolete tick is skipped
+   */
+  private async tick(generation: number): Promise<void> {
+    if (!this.running || this.generation !== generation || this.tickInFlight) return;
+    this.tickInFlight = true;
+    try {
+      await this.enqueue(async () => {
+        if (!this.running || this.generation !== generation) return;
+        await this.runPass();
+      });
+    } catch (error) {
+      this.config.onError?.(error);
+    } finally {
+      this.tickInFlight = false;
     }
-    await this.passInFlight;
   }
 
   /**
