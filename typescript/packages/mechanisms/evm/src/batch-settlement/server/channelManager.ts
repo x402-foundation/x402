@@ -11,6 +11,7 @@ import { BATCH_SETTLEMENT_SCHEME } from "../constants";
 import * as Errors from "../errors";
 import { signClaimBatch, signRefund } from "../authorizerSigner";
 import { applyClaimedTotals, selectClaimableVouchers } from "../claims";
+import { channelIdBindingError } from "../utils";
 import type { Channel, ChannelLockStorage, ChannelQuery } from "./storage";
 import { queryChannels, rethrowLockImplementationError } from "./storage";
 
@@ -64,6 +65,25 @@ export interface ClaimResult {
 
 export interface SettleResult {
   transaction: string;
+}
+
+/** Failed claim batches and the results of batches that succeeded. */
+export class BatchClaimError extends Error {
+  /**
+   * Creates a partial-claim failure, optionally including a completed settlement.
+   *
+   * @param errors - Claim, persistence, or settlement failures.
+   * @param results - Successfully submitted claim batches.
+   * @param settle - Settlement of the successful claims, when completed.
+   */
+  constructor(
+    readonly errors: unknown[],
+    readonly results: ClaimResult[],
+    readonly settle?: SettleResult,
+  ) {
+    super(errors.map(error => (error instanceof Error ? error.message : String(error))).join("; "));
+    this.name = "BatchClaimError";
+  }
 }
 
 export interface RefundResult {
@@ -153,6 +173,7 @@ export class BatchSettlementChannelManager {
    * @param opts.idleSecs - When set, only include channels idle for at least this many seconds.
    * @param opts.selectClaimChannels - Optional selector for choosing channels before claimability checks.
    * @returns Array of claim results (one per batch).
+   * @throws {BatchClaimError} If any batch fails; successful batches are available in `results`.
    */
   async claim(opts?: ClaimOptions): Promise<ClaimResult[]> {
     const channels = await this.selectClaimTargets(opts);
@@ -186,20 +207,40 @@ export class BatchSettlementChannelManager {
 
   /**
    * Convenience: claims all eligible vouchers then settles in one call.
+   * Successful claims are settled even when another batch fails.
    *
    * @param opts - Optional claim execution and target selection options.
    * @param opts.maxClaimsPerBatch - Max vouchers per claim batch before settling.
    * @param opts.idleSecs - When set, only include channels idle for at least this many seconds.
    * @param opts.selectClaimChannels - Optional selector for choosing channels before claimability checks.
    * @returns Combined claim and settle results.
+   * @throws {BatchClaimError} Batch failures, successful claims, and any completed settlement.
    */
   async claimAndSettle(
     opts?: ClaimOptions,
   ): Promise<{ claims: ClaimResult[]; settle?: SettleResult }> {
-    const claims = await this.claim(opts);
+    let claims: ClaimResult[];
+    let claimError: BatchClaimError | undefined;
+    try {
+      claims = await this.claim(opts);
+    } catch (error) {
+      if (!(error instanceof BatchClaimError)) throw error;
+      claims = error.results;
+      claimError = error;
+    }
     let settleResult: SettleResult | undefined;
     if (claims.length > 0) {
-      settleResult = await this.settle();
+      try {
+        settleResult = await this.settle();
+      } catch (error) {
+        if (claimError) {
+          throw new BatchClaimError([...claimError.errors, error], claims);
+        }
+        throw error;
+      }
+    }
+    if (claimError) {
+      throw new BatchClaimError(claimError.errors, claims, settleResult);
     }
     return { claims, settle: settleResult };
   }
@@ -216,7 +257,7 @@ export class BatchSettlementChannelManager {
 
     const lock = this.scheme.getLockStorage();
     const targets: Channel[] = [];
-    for (const channel of channels) {
+    for (const channel of this.filterInNetwork(channels)) {
       if (!(await channelIsHeld(lock, channel.channelId))) {
         targets.push(channel);
       }
@@ -273,7 +314,7 @@ export class BatchSettlementChannelManager {
     const { items } = await queryChannels(this.scheme.getStorage(), {
       kind: "withdrawPending",
     });
-    return items;
+    return this.filterInNetwork(items);
   }
 
   /**
@@ -490,9 +531,17 @@ export class BatchSettlementChannelManager {
       const targets = await this.selectClaimTargets({
         selectClaimChannels: cfg.selectClaimChannels,
       });
-      const results = await this.claimFromChannels(targets, {
-        maxClaimsPerBatch: cfg.maxClaimsPerBatch ?? 100,
-      });
+      let results: ClaimResult[];
+      try {
+        results = await this.claimFromChannels(targets, {
+          maxClaimsPerBatch: cfg.maxClaimsPerBatch ?? 100,
+        });
+      } catch (error) {
+        if (!(error instanceof BatchClaimError)) throw error;
+        cfg.onError?.(error);
+        if (error.results.length === 0) return;
+        results = error.results;
+      }
 
       this.lastClaimTime = Date.now();
       for (const result of results) {
@@ -541,7 +590,7 @@ export class BatchSettlementChannelManager {
     try {
       const context = this.buildAutoSettlementContext(Date.now());
       const channels = await this.scheme.getStorage().list();
-      const targets = await cfg.selectRefundChannels(channels, context);
+      const targets = await cfg.selectRefundChannels(this.filterInNetwork(channels), context);
       for (const result of await this.refundChannels(targets)) {
         cfg.onRefund?.(result);
       }
@@ -576,17 +625,22 @@ export class BatchSettlementChannelManager {
     }
 
     const results: ClaimResult[] = [];
+    const errors: unknown[] = [];
     for (let i = 0; i < allClaims.length; i += opts.maxClaimsPerBatch) {
       const batch = allClaims.slice(i, i + opts.maxClaimsPerBatch);
-      const result = await this.submitClaim(batch);
-      results.push(result);
-      await this.updateClaimedSessions(batch);
+      try {
+        const result = await this.submitClaim(batch);
+        results.push(result);
+        this.pendingSettle = true;
+        await this.updateClaimedSessions(batch);
+      } catch (error) {
+        errors.push(error);
+      }
     }
 
-    if (results.length > 0) {
-      this.pendingSettle = true;
+    if (errors.length > 0) {
+      throw new BatchClaimError(errors, results);
     }
-
     return results;
   }
 
@@ -599,13 +653,13 @@ export class BatchSettlementChannelManager {
   private async selectClaimTargets(
     opts?: Pick<ClaimOptions, "selectClaimChannels">,
   ): Promise<Channel[]> {
-    const channels = await this.scheme.getStorage().list();
+    const channels = this.filterInNetwork(await this.scheme.getStorage().list());
     if (!opts?.selectClaimChannels) {
       return channels;
     }
 
     const context = this.buildAutoSettlementContext(Date.now());
-    return opts.selectClaimChannels(channels, context);
+    return this.filterInNetwork(await opts.selectClaimChannels(channels, context));
   }
 
   /**
@@ -617,7 +671,7 @@ export class BatchSettlementChannelManager {
   private async refundChannels(channels: Channel[]): Promise<RefundResult[]> {
     const lock = this.scheme.getLockStorage();
     const results: RefundResult[] = [];
-    for (const channel of channels) {
+    for (const channel of this.filterInNetwork(channels)) {
       if (await channelIsHeld(lock, channel.channelId)) {
         continue;
       }
@@ -676,7 +730,7 @@ export class BatchSettlementChannelManager {
     channels: Channel[],
     opts?: { idleSecs?: number },
   ): BatchSettlementVoucherClaim[] {
-    return selectClaimableVouchers(channels, {
+    return selectClaimableVouchers(this.filterInNetwork(channels), {
       now: Date.now(),
       ...(opts?.idleSecs !== undefined ? { idleSecs: opts.idleSecs } : {}),
     });
@@ -693,9 +747,27 @@ export class BatchSettlementChannelManager {
       kind: "idleRefundable",
       idleAtOrBefore: Date.now() - idleSecs * 1000,
     });
+    const networkChannels = this.filterInNetwork(channels);
     const lock = this.scheme.getLockStorage();
-    const held = await Promise.all(channels.map(channel => channelIsHeld(lock, channel.channelId)));
-    return channels.filter((_, index) => !held[index]);
+    const held = await Promise.all(
+      networkChannels.map(channel => channelIsHeld(lock, channel.channelId)),
+    );
+    return networkChannels.filter((_, index) => !held[index]);
+  }
+
+  /**
+   * Scopes stored rows without hiding legacy rows that lack a persisted network.
+   *
+   * @param channels - Stored channels or selector results.
+   * @returns Channels bound to this manager's network.
+   */
+  private filterInNetwork(channels: Channel[]): Channel[] {
+    return channels.filter(channel =>
+      channel.network
+        ? channel.network.toLowerCase() === this.network.toLowerCase()
+        : channelIdBindingError(channel.channelConfig, channel.channelId, this.network) ===
+          undefined,
+    );
   }
 
   /**

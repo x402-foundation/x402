@@ -188,11 +188,9 @@ class MCPToolCallResult:
 
 
 class PaymentResponseError(Exception):
-    """Payment response validation failed after a tool returned.
+    """Receipt validation failed after a tool returned.
 
-    ``result`` preserves the tool output for inspection without treating its
-    receipt as validated. The validation error is available as ``__cause__``.
-    Retrying automatically is unsafe because payment may already have settled.
+    ``result`` keeps the tool output. Retrying is unsafe because payment may already have settled.
     """
 
     def __init__(self, message: str, result: Any):
@@ -368,8 +366,7 @@ DynamicPrice = Callable[[MCPToolContext], Price]
 class PaymentRequiredError(Exception):
     """Error indicating payment is required.
 
-    ``result`` is set when a payload was already submitted, for example when a
-    corrective retry is refused; it carries that paid attempt's tool result.
+    ``result`` carries the paid tool result when a submitted retry is refused.
     """
 
     def __init__(

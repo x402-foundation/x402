@@ -1,4 +1,5 @@
 import type { ChannelConfig } from "../types";
+import type { Network } from "@x402/core/types";
 import { normalizeChannelId } from "../utils";
 import type {
   ChannelQuery,
@@ -27,6 +28,7 @@ export {
 export interface Channel {
   channelId: string;
   channelConfig: ChannelConfig;
+  network?: Network;
   chargedCumulativeAmount: string;
   signedMaxClaimable: string;
   signature: string;

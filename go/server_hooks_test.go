@@ -1,9 +1,12 @@
 package x402
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
+	"os"
 	"strings"
 	"testing"
 
@@ -91,6 +94,49 @@ func TestBeforeVerifyHook_Abort(t *testing.T) {
 		}
 	} else {
 		t.Errorf("Expected *VerifyError, got %T", err)
+	}
+}
+
+func TestBeforeVerifyHook_ThrowFailsClosed(t *testing.T) {
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	server := Newx402ResourceServer()
+	registerExactEvmScheme(server)
+	verifyCalls := 0
+	server.facilitatorClients[Network("eip155:8453")] = map[string]FacilitatorClient{
+		"exact": &mockFacilitatorClient{
+			verify: func(ctx context.Context, payload []byte, reqs []byte) (*VerifyResponse, error) {
+				verifyCalls++
+				return &VerifyResponse{IsValid: true, Payer: "0xpayer"}, nil
+			},
+		},
+	}
+	server.OnBeforeVerify(func(ctx VerifyContext) (*BeforeHookResult, error) {
+		return nil, errors.New("Hook boom")
+	})
+
+	result, err := server.VerifyPayment(
+		context.Background(),
+		types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{}},
+		types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"},
+	)
+	if result != nil {
+		t.Fatalf("result = %+v, want nil", result)
+	}
+	ve := &VerifyError{}
+	if !errors.As(err, &ve) {
+		t.Fatalf("got %T (%v), want *VerifyError", err, err)
+	}
+	if ve.InvalidReason != "before_verify_hook_error" || ve.InvalidMessage != "before verify hook failed" {
+		t.Fatalf("reason=%q message=%q", ve.InvalidReason, ve.InvalidMessage)
+	}
+	if verifyCalls != 0 {
+		t.Fatalf("facilitator verify calls = %d", verifyCalls)
+	}
+	if !strings.Contains(logs.String(), "[x402] Resource server beforeVerify hook threw (manual beforeVerify hook #0): Hook boom") {
+		t.Fatalf("log = %q", logs.String())
 	}
 }
 
@@ -692,6 +738,88 @@ func TestBeforeSettleHook_Abort(t *testing.T) {
 		}
 	} else {
 		t.Errorf("Expected *SettleError, got %T", err)
+	}
+}
+
+func TestBeforeSettleHook_ThrowFailsClosed(t *testing.T) {
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	server := Newx402ResourceServer()
+	registerExactEvmScheme(server)
+	settleCalls := 0
+	server.facilitatorClients[Network("eip155:8453")] = map[string]FacilitatorClient{
+		"exact": &mockFacilitatorClient{
+			settle: func(ctx context.Context, payload []byte, reqs []byte) (*SettleResponse, error) {
+				settleCalls++
+				return &SettleResponse{Success: true, Transaction: "0xabc", Network: "eip155:8453", Payer: "0xpayer"}, nil
+			},
+		},
+	}
+	server.OnBeforeSettle(func(ctx SettleContext) (*BeforeHookResult, error) {
+		return nil, errors.New("Unexpected failure")
+	})
+	var canceled *VerifiedPaymentCanceledContext
+	server.OnVerifiedPaymentCanceled(func(ctx VerifiedPaymentCanceledContext) error {
+		copied := ctx
+		canceled = &copied
+		return nil
+	})
+
+	result, err := server.SettlePayment(
+		context.Background(),
+		types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{}},
+		types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"},
+		nil,
+	)
+	if result != nil {
+		t.Fatalf("result = %+v, want nil", result)
+	}
+	se := &SettleError{}
+	if !errors.As(err, &se) {
+		t.Fatalf("got %T (%v), want *SettleError", err, err)
+	}
+	if se.ErrorReason != "before_settle_hook_error" || se.ErrorMessage != "before settle hook failed" {
+		t.Fatalf("reason=%q message=%q", se.ErrorReason, se.ErrorMessage)
+	}
+	if settleCalls != 0 {
+		t.Fatalf("facilitator settle calls = %d", settleCalls)
+	}
+	if !strings.Contains(logs.String(), "[x402] Resource server beforeSettle hook threw (manual beforeSettle hook #0): Unexpected failure") {
+		t.Fatalf("log = %q", logs.String())
+	}
+	if canceled == nil {
+		t.Fatal("expected settlement_preflight_failed cancellation")
+	}
+	if canceled.Reason != CancellationReasonSettlementPreflightFailed || len(canceled.SettledPhases) != 0 {
+		t.Fatalf("reason=%q phases=%v", canceled.Reason, canceled.SettledPhases)
+	}
+	cancelErr := &SettleError{}
+	if !errors.As(canceled.Err, &cancelErr) || cancelErr.ErrorReason != "before_settle_hook_error" {
+		t.Fatalf("cancel err = %v", canceled.Err)
+	}
+}
+
+func TestBeforeSettleHook_TypedErrorFailsClosed(t *testing.T) {
+	server := Newx402ResourceServer()
+	registerExactEvmScheme(server)
+	server.OnBeforeSettle(func(ctx SettleContext) (*BeforeHookResult, error) {
+		return nil, NewSettleError("insufficient_balance", "0xpayer", "eip155:8453", "", "Not enough funds")
+	})
+
+	_, err := server.SettlePayment(
+		context.Background(),
+		types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{}},
+		types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"},
+		nil,
+	)
+	se := &SettleError{}
+	if !errors.As(err, &se) {
+		t.Fatalf("got %T (%v), want *SettleError", err, err)
+	}
+	if se.ErrorReason != "before_settle_hook_error" || se.ErrorMessage != "before settle hook failed" {
+		t.Fatalf("reason=%q message=%q", se.ErrorReason, se.ErrorMessage)
 	}
 }
 

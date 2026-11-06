@@ -110,7 +110,7 @@ def detect_payment_required_version(
     if body:
         try:
             data = json.loads(body.decode("utf-8"))
-            version = data.get("x402Version")
+            version = data.get("x402Version") if isinstance(data, dict) else None
             if version in [1, 2]:
                 return version
         except (json.JSONDecodeError, UnicodeDecodeError):

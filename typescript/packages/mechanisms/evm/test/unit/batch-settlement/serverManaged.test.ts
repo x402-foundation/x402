@@ -416,6 +416,7 @@ describe("facilitator-managed server hooks", () => {
     } as never);
 
     expect(await storage.get(channelId)).toMatchObject({
+      network: NETWORK,
       chargedCumulativeAmount: "1000",
       balance: "5000",
       signedMaxClaimable: "2000",
@@ -821,6 +822,7 @@ describe("facilitator-managed server hooks", () => {
     } as never);
 
     expect(server.readRequestContext(paymentPayload)?.channelSnapshot).toMatchObject({
+      network: NETWORK,
       channelId,
       balance: "10000",
       totalClaimed: "1000",
@@ -1518,60 +1520,65 @@ describe("facilitator-managed server hooks", () => {
     expect(result).toBeUndefined();
   });
 
-  it("updates replica storage after a partial managed refund leaves escrow open", async () => {
-    const storage = new InMemoryChannelStorage();
-    const server = buildManagedServer(storage);
-    const config = buildConfig();
-    const channelId = computeChannelId(config);
-    await storage.updateChannel(channelId, () => ({
-      channelId,
-      channelConfig: config,
-      chargedCumulativeAmount: "3000",
-      signedMaxClaimable: "5000",
-      signature: "0xdeadbeef",
-      balance: "10000",
-      totalClaimed: "2000",
-      withdrawRequestedAt: 0,
-      refundNonce: 0,
-      lastRequestTimestamp: Date.now(),
-    }));
+  it.each([NETWORK, ""])(
+    "updates replica storage after a partial managed refund leaves escrow open (network: %s)",
+    async network => {
+      const storage = new InMemoryChannelStorage();
+      const server = buildManagedServer(storage);
+      const config = buildConfig();
+      const channelId = computeChannelId(config);
+      await storage.updateChannel(channelId, () => ({
+        channelId,
+        network: network ? undefined : NETWORK,
+        channelConfig: config,
+        chargedCumulativeAmount: "3000",
+        signedMaxClaimable: "5000",
+        signature: "0xdeadbeef",
+        balance: "10000",
+        totalClaimed: "2000",
+        withdrawRequestedAt: 0,
+        refundNonce: 0,
+        lastRequestTimestamp: Date.now(),
+      }));
 
-    await handleManagedAfterSettle(server, {
-      paymentPayload: {
-        x402Version: 2,
-        accepted: { scheme: "batch-settlement", network: NETWORK },
-        payload: {
-          type: "refund",
-          channelConfig: config,
-          voucher: { channelId, maxClaimableAmount: "5000", signature: "0xdeadbeef" },
-          amount: "1000",
-        },
-      } as PaymentPayload,
-      requirements: { network: NETWORK } as never,
-      result: {
-        success: true,
-        transaction: "0xrefundpartial",
-        network: NETWORK,
-        extra: {
-          channelState: {
-            channelId,
-            balance: "9000",
-            totalClaimed: "2000",
-            chargedCumulativeAmount: "2000",
-            withdrawRequestedAt: 1,
-            refundNonce: "1",
+      await handleManagedAfterSettle(server, {
+        paymentPayload: {
+          x402Version: 2,
+          accepted: { scheme: "batch-settlement", network: NETWORK },
+          payload: {
+            type: "refund",
+            channelConfig: config,
+            voucher: { channelId, maxClaimableAmount: "5000", signature: "0xdeadbeef" },
+            amount: "1000",
+          },
+        } as PaymentPayload,
+        requirements: { network } as never,
+        result: {
+          success: true,
+          transaction: "0xrefundpartial",
+          network: NETWORK,
+          extra: {
+            channelState: {
+              channelId,
+              balance: "9000",
+              totalClaimed: "2000",
+              chargedCumulativeAmount: "2000",
+              withdrawRequestedAt: 1,
+              refundNonce: "1",
+            },
           },
         },
-      },
-    } as never);
+      } as never);
 
-    expect(await storage.get(channelId)).toMatchObject({
-      balance: "9000",
-      chargedCumulativeAmount: "2000",
-      withdrawRequestedAt: 1,
-      refundNonce: 1,
-    });
-  });
+      expect(await storage.get(channelId)).toMatchObject({
+        network: NETWORK,
+        balance: "9000",
+        chargedCumulativeAmount: "2000",
+        withdrawRequestedAt: 1,
+        refundNonce: 1,
+      });
+    },
+  );
 
   it("drops the replica row after a managed refund fully closes the channel", async () => {
     const storage = new InMemoryChannelStorage();

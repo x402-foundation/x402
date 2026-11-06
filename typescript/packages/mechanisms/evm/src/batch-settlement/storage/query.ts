@@ -259,8 +259,7 @@ function matchesUnclaimedThreshold(channel: Channel, minUnclaimed: string): bool
  * @returns The network or undefined.
  */
 function channelNetwork(channel: Channel): Network | undefined {
-  const network = (channel as Channel & { network?: unknown }).network;
-  return typeof network === "string" ? (network as Network) : undefined;
+  return channel.network;
 }
 
 /**

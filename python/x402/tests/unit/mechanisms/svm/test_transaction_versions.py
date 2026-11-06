@@ -43,7 +43,7 @@ from x402.pending_settlement_store import InMemoryPendingSettlementStore
 from x402.schemas import PaymentPayload, PaymentRequirements, ResourceInfo, SupportedKind
 from x402.schemas.v1 import PaymentPayloadV1, PaymentRequirementsV1
 
-FEE_PAYER = "FeePayer1111111111111111111111111111"
+FEE_PAYER = str(Keypair.from_seed(bytes([2] * 32)).pubkey())
 FIXED_BLOCKHASH = "5Tx8F3jgSHx21CbtjwmdaKPLM5tWmreWAnPrbqHomSJF"
 
 

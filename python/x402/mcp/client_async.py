@@ -257,7 +257,6 @@ class x402MCPClient:
         **kwargs: Any,
     ) -> MCPToolCallResult:
         for attempt in range(2):
-            # Build call params with payment in _meta
             call_params = attach_payment_to_meta({"name": name, "arguments": args}, payload)
 
             accepted = payload.accepted
@@ -269,10 +268,7 @@ class x402MCPClient:
             )
             paid_kwargs = {**kwargs, "read_timeout_seconds": paid_timeout}
 
-            # Call with payment
             result = await self._call_mcp_tool(call_params, **paid_kwargs)
-
-            # Extract payment response
             settle_response = extract_payment_response_from_result(result)
 
             corrective = extract_payment_required_from_result(result) if result.is_error else None

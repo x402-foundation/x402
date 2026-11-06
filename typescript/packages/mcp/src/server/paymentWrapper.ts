@@ -236,6 +236,35 @@ export function createPaymentWrapper(
   };
 }
 
+const PAYMENT_METERING_FAILED = "Payment metering failed";
+const PAYMENT_CANCELLATION_UNKNOWN = "Payment cancellation outcome unknown";
+
+/**
+ * Accept an atomic settlement amount within the verified ceiling.
+ *
+ * Nonnegative integers are decimal strings. Anything else, including a value
+ * above the verified amount, is rejected so settlement cannot charge it.
+ *
+ * @param verifiedAmount - Amount on the verified payment requirements
+ * @param amount - Amount proposed by a metering hook
+ * @returns Decimal amount to settle
+ */
+function meteredSettlementAmount(verifiedAmount: string, amount: unknown): string {
+  const normalized =
+    typeof amount === "number" && Number.isInteger(amount) && amount >= 0 ? String(amount) : amount;
+  if (
+    typeof normalized !== "string" ||
+    !/^[0-9]+$/.test(normalized) ||
+    !/^[0-9]+$/.test(verifiedAmount)
+  ) {
+    throw new Error("Settlement amount must be an ASCII decimal string");
+  }
+  if (BigInt(normalized) > BigInt(verifiedAmount)) {
+    throw new Error("Settlement amount exceeds the verified ceiling");
+  }
+  return normalized;
+}
+
 /**
  * Runs verify / settle / handler for a single paid MCP tool call.
  *
@@ -333,11 +362,12 @@ async function processPaidToolCall<TArgs extends Record<string, unknown>>(
   const flow = resourceServer.getPaymentFlow(paymentPayload, paymentRequirements);
   const phases = resolvePaymentFlowPhases(flow);
 
-  // Build hook context
+  // Hooks see a copy so amount edits do not rewrite the verified terms used to cancel.
+  const hookRequirements: PaymentRequirements = { ...paymentRequirements };
   const hookContext: ServerHookContext = {
     toolName,
     arguments: args,
-    paymentRequirements,
+    paymentRequirements: hookRequirements,
     paymentPayload,
   };
 
@@ -420,6 +450,89 @@ async function processPaidToolCall<TArgs extends Record<string, unknown>>(
     transportContext,
     beforeHandlerSettlement ? ["before-handler"] : [],
   );
+  // Re-bind after the null checks. A nested function does not keep that narrowing.
+  const verifiedPayload = paymentPayload;
+  const verifiedRequirements = paymentRequirements;
+
+  /**
+   * Cancel a verified payment after metering or a failed tool result.
+   *
+   * A thrown cancel is an unknown outcome: keep the tool error, append the
+   * unknown-outcome text, and attach only a receipt that is already known.
+   *
+   * @param failedResult - Tool error to return to the client
+   * @param meteringError - Set when settlement amount validation failed
+   * @returns Tool result for the failure path
+   */
+  async function cancelFailedExecution(
+    failedResult: ToolResult,
+    meteringError?: unknown,
+  ): Promise<WrappedToolResult> {
+    let cancelSettlement: SettleResponse | undefined;
+    let cancellationCompleted = false;
+    let outcomeUnknown = false;
+    try {
+      const settled = await cancellationDispatcher.cancel(
+        meteringError === undefined
+          ? { reason: "handler_failed" }
+          : { reason: "after_verify_aborted", error: meteringError },
+      );
+      cancellationCompleted = true;
+      if (settled) {
+        cancelSettlement = settled;
+      }
+    } catch {
+      // The authorization may still be open. Do not offer another payment.
+      outcomeUnknown = true;
+    }
+
+    const reported: ToolResult = outcomeUnknown
+      ? {
+          ...failedResult,
+          content: [...failedResult.content, { type: "text", text: PAYMENT_CANCELLATION_UNKNOWN }],
+          isError: true,
+        }
+      : failedResult;
+    const failureReceipt = resolveFailurePathSettlement(
+      cancelSettlement,
+      beforeHandlerSettlement,
+      verifiedPayload,
+    );
+    if (!failureReceipt) {
+      if (meteringError !== undefined && cancellationCompleted) {
+        const failedResultBody = await createSettlementFailedResult(
+          resourceServer,
+          toolName,
+          config,
+          PAYMENT_METERING_FAILED,
+          transportContext,
+        );
+        const errorData = {
+          ...(failedResultBody.structuredContent ?? {}),
+          [MCP_PAYMENT_RESPONSE_META_KEY]: {
+            success: false,
+            errorReason: PAYMENT_METERING_FAILED,
+            transaction: "",
+            network: verifiedRequirements.network,
+          },
+        };
+        return {
+          structuredContent: errorData,
+          content: [{ type: "text", text: JSON.stringify(errorData) }],
+          isError: true,
+        };
+      }
+      return { ...reported, isError: true };
+    }
+    return {
+      ...reported,
+      isError: true,
+      _meta: {
+        ...(reported._meta as Record<string, unknown> | undefined),
+        [MCP_PAYMENT_RESPONSE_META_KEY]: failureReceipt,
+      },
+    };
+  }
 
   // Run onBeforeExecution hook if present
   if (config.hooks?.onBeforeExecution) {
@@ -431,6 +544,20 @@ async function processPaidToolCall<TArgs extends Record<string, unknown>>(
         config,
         "Execution blocked by hook",
         transportContext,
+      );
+    }
+    try {
+      hookRequirements.amount = meteredSettlementAmount(
+        paymentRequirements.amount,
+        hookRequirements.amount,
+      );
+    } catch (error) {
+      return cancelFailedExecution(
+        {
+          content: [{ type: "text", text: PAYMENT_METERING_FAILED }],
+          isError: true,
+        },
+        error,
       );
     }
   }
@@ -467,38 +594,41 @@ async function processPaidToolCall<TArgs extends Record<string, unknown>>(
     result,
   };
 
-  // Run onAfterExecution hook if present
-  if (config.hooks?.onAfterExecution) {
-    await config.hooks.onAfterExecution(afterExecContext);
+  // A throwing after-execution hook is a metering failure, same as an invalid amount.
+  let meteringError: unknown;
+  try {
+    if (config.hooks?.onAfterExecution) {
+      await config.hooks.onAfterExecution(afterExecContext);
+    }
+    hookRequirements.amount = meteredSettlementAmount(
+      paymentRequirements.amount,
+      hookRequirements.amount,
+    );
+  } catch (error) {
+    meteringError = error;
+    result = {
+      content: [{ type: "text", text: PAYMENT_METERING_FAILED }],
+      isError: true,
+    };
   }
 
   // If the tool handler returned an error, don't proceed to settlement
   if (result.isError) {
-    const cancelSettlement = await cancellationDispatcher.cancel({ reason: "handler_failed" });
-    const failureReceipt = resolveFailurePathSettlement(
-      cancelSettlement,
-      beforeHandlerSettlement,
-      paymentPayload,
-    );
-    if (!failureReceipt) {
-      return result;
-    }
-    return {
-      ...result,
-      _meta: {
-        ...(result._meta as Record<string, unknown> | undefined),
-        [MCP_PAYMENT_RESPONSE_META_KEY]: failureReceipt,
-      },
-    };
+    return cancelFailedExecution(result, meteringError);
   }
+
+  const settlementRequirements =
+    hookRequirements.amount === paymentRequirements.amount
+      ? paymentRequirements
+      : { ...paymentRequirements, amount: hookRequirements.amount };
 
   return settlePaymentResult(
     resourceServer,
     toolName,
     config,
-    hookContext,
+    { ...hookContext, paymentRequirements: settlementRequirements },
     paymentPayload,
-    paymentRequirements,
+    settlementRequirements,
     extMap,
     transportContext,
     result,
