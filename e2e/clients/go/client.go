@@ -172,13 +172,13 @@ func BuildPaymentClientWithOptions(opts PaymentClientOptions) *PaymentClientCont
 			return nil
 		}
 
-		var svmCfg *svmconfig.ClientConfig
 		svmRpcURL := os.Getenv("SVM_RPC_URL")
-		if svmRpcURL != "" || opts.SvmTransactionVersions != nil {
-			svmCfg = &svmconfig.ClientConfig{
-				RPCURL:              svmRpcURL,
-				TransactionVersions: opts.SvmTransactionVersions,
-			}
+		svmCfg := &svmconfig.ClientConfig{
+			RPCURL:              svmRpcURL,
+			TransactionVersions: opts.SvmTransactionVersions,
+			ApproveSplits: func(_ context.Context, splits []svmconfig.SplitTerms, info svmconfig.SplitApprovalInfo) bool {
+				return len(splits) == 1 && splits[0].PayTo == "4AdS22kC7xzb4bcqg9JATuCfAMNcQYcZa1u5eWzs6cSJ" && splits[0].Amount == "100" && splits[0].Memo == "" && info.PrimaryAmount == "900"
+			},
 		}
 
 		batchCfg := &batchsvmclient.BatchSvmClientConfig{
@@ -420,7 +420,7 @@ func decodePaymentRequiredError(header string) string {
 	var required struct {
 		Error   string `json:"error"`
 		Accepts []struct {
-			Scheme string `json:"scheme"`
+			Scheme string                 `json:"scheme"`
 			Extra  map[string]interface{} `json:"extra"`
 		} `json:"accepts"`
 	}

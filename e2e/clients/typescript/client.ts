@@ -252,7 +252,15 @@ export async function createE2EClient(options: E2EClientOptions = {}): Promise<E
     schemes.push(
       {
         network: networkCaip2Pattern("svm"),
-        client: new ExactSvmScheme(svmSigner, svmSchemeOptions),
+        client: new ExactSvmScheme(svmSigner, {
+          ...svmSchemeOptions,
+          approveSplits: (splits, context) =>
+            splits.length === 1 &&
+            splits[0].payTo === "4AdS22kC7xzb4bcqg9JATuCfAMNcQYcZa1u5eWzs6cSJ" &&
+            splits[0].amount === "100" &&
+            splits[0].memo === undefined &&
+            context.primaryAmount === "900",
+        }),
       },
       {
         network: networkCaip2Pattern("svm"),

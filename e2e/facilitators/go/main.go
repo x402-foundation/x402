@@ -44,9 +44,9 @@ import (
 	exactevmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/v1/facilitator"
 	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/facilitator"
 	svmmech "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+	batchsvmfac "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement/facilitator"
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
 	svmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/v1/facilitator"
-	batchsvmfac "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement/facilitator"
 	uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/facilitator"
 	x402types "github.com/x402-foundation/x402/go/v2/types"
 )
@@ -1105,8 +1105,8 @@ func main() {
 		facilitator.Register(
 			[]x402.Network{x402.Network(evmNetwork)},
 			authcapturefacilitator.NewAuthCaptureEvmScheme(evmSigner, authcapturefacilitator.AuthCaptureEvmSchemeConfig{
-				CaptureAuthorizer: addresses[0],
-				AuthorizerSigner:  authCaptureAuthorizer,
+				CaptureAuthorizer:    addresses[0],
+				AuthorizerSigner:     authCaptureAuthorizer,
 				DelegatedAuthStorage: authCaptureDelegatedStorage,
 				ResolveCallerIdentity: func(ctx context.Context, _ authcapturefacilitator.DelegatedSettleContext) (string, error) {
 					return "x402-e2e", nil
@@ -1142,7 +1142,7 @@ func main() {
 
 		facilitator.Register(
 			[]x402.Network{x402.Network(svmNetwork)},
-			svm.NewExactSvmScheme(svmSigner, &svm.Config{EnableSmartWalletVerification: true}),
+			svm.NewExactSvmScheme(svmSigner, &svm.Config{EnableSmartWalletVerification: true, MaxSplits: 8, AtaCreationSponsored: true}),
 		)
 		facilitator.Register(
 			[]x402.Network{x402.Network(svmNetwork)},
