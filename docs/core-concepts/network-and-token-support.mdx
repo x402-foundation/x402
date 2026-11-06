@@ -41,7 +41,7 @@ x402 supports tokens on EVM, Solana, TON, Algorand (AVM), Stellar, Aptos, Hedera
 | **Concordium** | CCD or any PLT token (e.g., EURR) | Sponsored V1 transfer |
 | **XRPL** | XRP or any issued currency (e.g., RLUSD) | Payer-signed `Payment` transaction |
 | **Cardano** | ADA (lovelace) or any Cardano Native Token (e.g., USDM) | Client-signed, facilitator-submitted transaction |
-| **Sui** | Any `Coin<T>` type (e.g., USDC) | Effects-only verification of the transaction's balance changes |
+| **Sui** | Any coin type (e.g., USDC) | Payer-signed transaction, verified by balance changes |
 
 Facilitators support **networks**, not specific tokens — any compatible token works on any facilitator that supports that network.
 
@@ -216,6 +216,13 @@ HBAR (native token) is also supported using asset ID `0.0.0`, with amounts in ti
 
 ADA (lovelace) is also supported natively using asset `lovelace`, with amounts in lovelace (1 ADA = 1,000,000 lovelace). The client pays the Cardano network fee; the facilitator only broadcasts the signed transaction and requires no funded wallet.
 
+### Sui
+
+| Chain | CAIP-2 | Coin Type | Decimals |
+|-------|--------|-----------|----------|
+| Sui Mainnet | `sui:mainnet` | `0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC` (USDC) | 6 |
+| Sui Testnet | `sui:testnet` | `0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC` (USDC) | 6 |
+
 ## Adding Support for New Networks
 
 There are two distinct paths, depending on your goal:
@@ -361,7 +368,7 @@ Video Guide: [Adding EVM Chains to x402](https://x.com/jaycoolh/status/192085155
 
 Key takeaways:
 
-* **Any EVM chain** is supported via `eip155:<chainId>` — plus Solana, TON (TVM), Algorand (AVM), Stellar, Aptos, Hedera, Keeta, NEAR, Concordium, XRPL, Cardano, and Canton
+* **Any EVM chain** is supported via `eip155:<chainId>` — plus Solana, TON (TVM), Algorand (AVM), Stellar, Aptos, Hedera, Keeta, NEAR, Concordium, XRPL, Cardano, Canton, and Sui
 * [Default assets](#default-assets-for-dollar-string-pricing) are a convenience for `"$0.01"` dollar-string pricing; explicit `TokenAmount` works on any chain
 * Any ERC-20 token works on any EVM facilitator (via EIP-3009 or Permit2)
 * CAIP-2 identifiers provide unambiguous cross-chain support
