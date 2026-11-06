@@ -147,7 +147,7 @@ export class UptoEvmScheme implements SchemeNetworkFacilitator {
  */
 function readUptoPermit2Payload(
   payload: PaymentPayload,
-): { payload: UptoPermit2Payload } | { message: string; payer: string } {
+): { payload: UptoPermit2Payload } | { message: string; payer?: string } {
   const rawPayload = payload.payload as Record<string, unknown>;
   if (!isUptoPermit2Payload(rawPayload)) {
     return { message: "unsupported payload type: expected upto permit2 payload", payer: "" };
