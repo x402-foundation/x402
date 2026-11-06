@@ -234,8 +234,8 @@ func (cancellationOutcomeUnknownError) Error() string {
 }
 
 // ErrCancellationOutcomeUnknown means cancel did not produce a receipt and the
-// authorization may still be open. Return it from SettleOnCancel instead of a
-// failed receipt when the outcome cannot be known.
+// authorization may still be open. Return it from SettleOnCancel, or when the
+// cancel facilitator call fails, instead of a failed receipt.
 var ErrCancellationOutcomeUnknown error = cancellationOutcomeUnknownError{}
 
 // PaymentCancellationDispatcher fires onVerifiedPaymentCanceled hooks at most once,

@@ -722,10 +722,11 @@ func (s *x402ResourceServer) CreatePaymentCancellationDispatcherWithExtensions(
 	return dispatcher
 }
 
+var errCancelFacilitatorCallFailed = errors.New("cancel facilitator call failed")
+
 // settleOnCancelAfterHooks asks the matched scheme for cancel settle requirements
 // and settles once when provided, including when no before-handler settle has
-// completed. The scheme decides whether cancel settle applies. Settlement
-// errors become a failed receipt.
+// completed. The scheme decides whether cancel settle applies.
 func (s *x402ResourceServer) settleOnCancelAfterHooks(
 	ctx context.Context,
 	payload types.PaymentPayload,
@@ -757,6 +758,9 @@ func (s *x402ResourceServer) settleOnCancelAfterHooks(
 	)
 	if settleErr != nil {
 		log.Printf("[x402] Resource server settleOnCancel failed (%s): %v", label, settleErr)
+		if errors.Is(settleErr, errCancelFacilitatorCallFailed) {
+			return nil, ErrCancellationOutcomeUnknown
+		}
 		return failedCancelSettleResponse(requirements, settleErr), nil
 	}
 	return settleResp, nil
@@ -1670,6 +1674,9 @@ func (s *x402ResourceServer) SettlePaymentWithExtensions(
 			if result != nil && result.Recovered {
 				return result.Result, nil
 			}
+		}
+		if phase == SettlePhaseCancel {
+			return nil, fmt.Errorf("%w: %w", errCancelFacilitatorCallFailed, settleErr)
 		}
 		return settleResult, settleErr
 	}
