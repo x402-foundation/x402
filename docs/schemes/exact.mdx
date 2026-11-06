@@ -718,6 +718,8 @@ Additional options:
     | `smartWalletMaxComputeUnits` | `number` | `400000` | Maximum compute units allowed for smart wallet transactions. |
     | `smartWalletMaxPriorityFeeMicroLamports` | `number` | `50000` | Maximum priority fee in microlamports for smart wallet transactions. |
     | `smartWalletAllowedPrograms` | `string[]` | Built-in list | Allowed smart wallet program addresses. Only transactions invoking a program in this list reach simulation-based verification. |
+    | `preflightInstructionAllowlist` | `InstructionTuple[]` | `[]` | Ordered instruction tuples (program address + discriminator) permitted as a contiguous block immediately before the required protocol instructions on Path 1. A matched block is fee-payer-isolation-checked. Defaults to empty (no preflight instructions accepted). |
+    | `postflightInstructionAllowlist` | `InstructionTuple[]` | `[]` | Like `preflightInstructionAllowlist`, but immediately after the protocol instructions. Defaults to empty (no postflight instructions accepted). |
     | `maxPriorityFeeMicroLamports` | `number` | `5000000` | Maximum compute unit price in microlamports accepted on the static path. The facilitator pays the transaction fee, so this bounds the priority fee a payer can make it pay. |
     | `maxComputeUnits` | `number` | `400000` | Maximum compute unit limit accepted on the static path. An SPL transfer with a memo uses ~20k CU; a low ceiling still leaves ample headroom for wallet-injected instructions. |
     | `maxRequiredSignatures` | `number` | `2` | Maximum number of required signatures. Every signature adds 5,000 lamports of base fee paid by the facilitator. A typical x402 payment needs two (payer + fee payer). |
@@ -735,6 +737,14 @@ Additional options:
     | `MaxRequiredSignatures` | `*uint8` | `2` | Maximum number of required signatures. Every signature adds 5,000 lamports of base fee paid by the facilitator. |
     | `TransactionVersions` | `[]int` | `[0, 1]` | Accepted Solana transaction message versions. Advertised as `extra.transactionVersions` in `/supported`. Pass `[]int{0}` to reject version-1 transactions. |
     | `SettlementCache` | `*SettlementCache` | New cache | Shared settlement cache for duplicate detection. Pass the same instance to V1 and V2 SVM schemes. |
+
+  </Tab>
+  <Tab title="Python">
+    | Parameter | Type | Default | Description |
+    |-----------|------|---------|-------------|
+    | `preflight_instruction_allowlist` | `list[InstructionTuple]` | `[]` | Ordered instruction tuples (program address + discriminator) permitted as a contiguous block immediately before the required protocol instructions on Path 1. A matched block is fee-payer-isolation-checked. Defaults to empty (no preflight instructions accepted). |
+    | `postflight_instruction_allowlist` | `list[InstructionTuple]` | `[]` | Like `preflight_instruction_allowlist`, but immediately after the protocol instructions. Defaults to empty (no postflight instructions accepted). |
+    | `transaction_versions` | `list[int]` | `[0, 1]` | Accepted Solana transaction message versions. Advertised as `extra.transactionVersions` in `/supported`. Pass `[0]` to reject version-1 transactions. |
   </Tab>
 </Tabs>
 
