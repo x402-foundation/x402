@@ -337,7 +337,7 @@ func (f *ExactSvmScheme) verifyStaticSplitPath(
 }
 
 // legBalance is a leg ATA and its pre-broadcast balance (nil when the
-// account did not exist or could not be read).
+// account could not be read).
 type legBalance struct {
 	ata    solana.PublicKey
 	before *uint64
@@ -433,17 +433,10 @@ func verifyPostSettlementLegs(
 			return false, postSettlementUnverified
 		}
 		entry := balances[i]
-		// A missing ATA has no balance; it starts from zero only when this
-		// transaction may have created it.
-		var before uint64
-		switch {
-		case entry.before != nil:
-			before = *entry.before
-		case leg.AtaCreationRequired:
-			before = 0
-		default:
+		if entry.before == nil {
 			return false, postSettlementUnverified
 		}
+		before := *entry.before
 		after, exists, err := caps.GetTokenAccountBalance(ctx, entry.ata, network)
 		if err != nil || !exists {
 			return false, postSettlementUnverified

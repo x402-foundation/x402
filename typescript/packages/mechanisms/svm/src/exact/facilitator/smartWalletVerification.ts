@@ -1055,9 +1055,8 @@ export async function verifyPostSettlementLegs(
   if (balances && typeof signer.getTokenAccountBalance === "function") {
     for (const { leg, index } of pending) {
       const entry = balances[index];
-      // A missing ATA has no balance; it starts from zero only when this
-      // transaction may have created it.
-      const before = entry?.before ?? (leg.ataCreationRequired ? 0n : null);
+      // A null read can mean an RPC failure, even for a sponsored ATA.
+      const before = entry?.before ?? null;
       if (!entry || before === null) {
         return { verified: false, method: "unverified" };
       }

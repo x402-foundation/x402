@@ -944,7 +944,7 @@ describe("verifyPostSettlementLegs", () => {
     expect(result).toEqual({ verified: false, method: "innerInstructions" });
   });
 
-  it("checks per-leg balance deltas, starting a created ATA from zero", async () => {
+  it("checks per-leg balance deltas with known baselines", async () => {
     const p = await parties();
     const legs = await legsFor(p, {
       splits: [{ payTo: p.platform.address, amount: "50000", ataCreationRequired: true }],
@@ -963,7 +963,7 @@ describe("verifyPostSettlementLegs", () => {
     } as unknown as FacilitatorSvmSigner;
     const balances = [
       { ata: atas[0], before: 5_000_000n },
-      { ata: atas[1], before: null },
+      { ata: atas[1], before: 0n },
     ];
     expect(
       await verifyPostSettlementLegs(
@@ -1274,8 +1274,10 @@ describe("split rule edges", () => {
         [],
         atas.map(a => ({ ata: a, before })),
       );
-    // Unmarked leg with no pre-balance: no baseline to compare against.
-    expect(await run(async () => 1n, null)).toEqual({ verified: false, method: "unverified" });
+    // Even a sponsored ATA needs a known baseline: null can mean an RPC error.
+    legs.splice(1);
+    legs[0].ataCreationRequired = true;
+    expect(await run(async () => 5_000_000n, null)).toEqual({ verified: false, method: "unverified" });
     expect(
       await run(async () => {
         throw new Error("rpc down");
