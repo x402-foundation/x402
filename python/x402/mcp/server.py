@@ -194,14 +194,8 @@ def create_payment_wrapper(
 
             # Match the payload against post-enrichment accepts
             try:
-                payment_required_for_match = (
-                    await resource_server.create_payment_required_response(
-                        snapshot_payment_requirements_list(accepts), tool_resource, None, extensions
-                    )
-                    if asyncio.iscoroutinefunction(resource_server.create_payment_required_response)
-                    else resource_server.create_payment_required_response(
-                        snapshot_payment_requirements_list(accepts), tool_resource, None, extensions
-                    )
+                payment_required_for_match = resource_server.create_payment_required_response(
+                    snapshot_payment_requirements_list(accepts), tool_resource, None, extensions
                 )
                 if asyncio.iscoroutine(payment_required_for_match):
                     payment_required_for_match = await payment_required_for_match
