@@ -273,13 +273,6 @@ export function wrapAxiosWithPayment(
           setAxiosHeader(paidConfig.headers, key, value);
         });
 
-        // Add CORS header to expose payment response
-        setAxiosHeader(
-          paidConfig.headers,
-          "Access-Control-Expose-Headers",
-          "PAYMENT-RESPONSE,X-PAYMENT-RESPONSE",
-        );
-
         // Retry the request with payment
         const secondResponse = await axiosInstance.request(paidConfig);
         if (secondResponse.status === 402) {
@@ -305,11 +298,6 @@ export function wrapAxiosWithPayment(
           Object.entries(retryHeaders).forEach(([key, value]) => {
             setAxiosHeader(retryConfig.headers, key, value);
           });
-          setAxiosHeader(
-            retryConfig.headers,
-            "Access-Control-Expose-Headers",
-            "PAYMENT-RESPONSE,X-PAYMENT-RESPONSE",
-          );
           const retryResponse = await axiosInstance.request(retryConfig);
           if (retryResponse.status === 402) {
             assertAxiosResponseBodyWithinLimit(retryResponse.data);
