@@ -37,6 +37,103 @@ type HTTPClientTransportExtension = {
 };
 
 /**
+ * Parses a v1 or v2 payment-required JSON body.
+ *
+ * @param body - Optional response body
+ * @returns The body when it is a v1 or v2 PaymentRequired object
+ */
+function parsePaymentRequiredBody(body?: unknown): PaymentRequired | undefined {
+  if (!body || typeof body !== "object" || !("x402Version" in body)) {
+    return undefined;
+  }
+
+  const version = (body as PaymentRequired).x402Version;
+  if (version === 1 || version === 2) {
+    return body as PaymentRequired;
+  }
+
+  return undefined;
+}
+
+/** Own keys that must not be assigned during a merge (`target[key] =` follows `__proto__`). */
+const BLOCKED_EXTENSION_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+/**
+ * Returns whether a value is a mergeable plain object.
+ *
+ * @param value - Candidate extension value
+ * @returns True for plain objects; false for arrays, null, and class instances
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * Deep-merges extension records. Header fields (`primary`) win, including inside nested objects.
+ * Arrays and other non-plain values are taken from the header when present. Body-only fields are kept.
+ *
+ * @param primary - Header extension fields
+ * @param secondary - Body extension fields
+ * @returns Merged extension record with prototype-pollution keys omitted
+ */
+function mergeExtensionRecords(
+  primary: Record<string, unknown>,
+  secondary: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = {};
+
+  for (const key of Object.keys(secondary)) {
+    if (BLOCKED_EXTENSION_KEYS.has(key) || Object.prototype.hasOwnProperty.call(primary, key)) {
+      continue;
+    }
+    merged[key] = secondary[key];
+  }
+
+  for (const key of Object.keys(primary)) {
+    if (BLOCKED_EXTENSION_KEYS.has(key)) {
+      continue;
+    }
+    const primaryValue = primary[key];
+    const secondaryValue = secondary[key];
+    if (isPlainObject(primaryValue) && isPlainObject(secondaryValue)) {
+      merged[key] = mergeExtensionRecords(primaryValue, secondaryValue);
+    } else {
+      merged[key] = primaryValue;
+    }
+  }
+
+  return merged;
+}
+
+/**
+ * Fills header-decoded v2 payment requirements with extension fields from the JSON body.
+ *
+ * @param primary - Payment requirements decoded from the PAYMENT-REQUIRED header
+ * @param secondary - Payment requirements parsed from the JSON body
+ * @returns Header requirements, with extensions deep-merged for v2
+ */
+function mergePaymentRequiredFromBody(
+  primary: PaymentRequired,
+  secondary?: PaymentRequired,
+): PaymentRequired {
+  if (!secondary || secondary.x402Version !== primary.x402Version || primary.x402Version !== 2) {
+    return primary;
+  }
+
+  if (!secondary.extensions) {
+    return primary;
+  }
+
+  const merged = mergeExtensionRecords(primary.extensions ?? {}, secondary.extensions);
+  const extensions = Object.keys(merged).length > 0 ? merged : undefined;
+  return { ...primary, extensions };
+}
+
+/**
  * HTTP-specific client for handling x402 payment protocol over HTTP.
  *
  * Wraps a x402Client to provide HTTP-specific encoding/decoding functionality
@@ -111,27 +208,23 @@ export class x402HTTPClient {
    * Extracts payment required information from HTTP response.
    *
    * @param getHeader - Function to retrieve header value by name (case-insensitive)
-   * @param body - Optional response body for v1 compatibility
+   * @param body - Optional JSON body (v1/v2) when headers are unavailable or omit fields
    * @returns The payment required object
    */
   getPaymentRequiredResponse(
     getHeader: (name: string) => string | null | undefined,
     body?: unknown,
   ): PaymentRequired {
-    // v2
-    const paymentRequired = getHeader("PAYMENT-REQUIRED");
-    if (paymentRequired) {
-      return decodePaymentRequiredHeader(paymentRequired);
+    const bodyPaymentRequired = parsePaymentRequiredBody(body);
+
+    const paymentRequiredHeader = getHeader("PAYMENT-REQUIRED");
+    if (paymentRequiredHeader) {
+      const fromHeader = decodePaymentRequiredHeader(paymentRequiredHeader);
+      return mergePaymentRequiredFromBody(fromHeader, bodyPaymentRequired);
     }
 
-    // v1
-    if (
-      body &&
-      body instanceof Object &&
-      "x402Version" in body &&
-      (body as PaymentRequired).x402Version === 1
-    ) {
-      return body as PaymentRequired;
+    if (bodyPaymentRequired) {
+      return bodyPaymentRequired;
     }
 
     throw new Error("Invalid payment required response");
