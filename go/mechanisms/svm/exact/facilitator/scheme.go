@@ -71,15 +71,16 @@ type Config struct {
 	// AtaCreationSponsored makes the fee payer fund CreateIdempotent for
 	// recipients marked ataCreationRequired (about 0.002 SOL of rent each).
 	// Advertised as ataCreationSponsored in /supported. Rent is not bounded
-	// over time: an owner can close its ATA and the next charge pays again, so
-	// operators enabling this should rate-limit or price sponsored creations.
+	// over time: an owner can close its ATA, reclaim the rent, and repeat on every charge.
+	// Operators must enforce out-of-band limits per owner/mint or Resource Server
+	// before enabling this. Splits do not automatically reimburse sponsored rent.
 	// Default false.
 	AtaCreationSponsored bool
 }
 
 // DefaultMaxComputeUnits is the static-path compute unit ceiling when
 // Config.MaxComputeUnits is unset (scheme_exact_svm.md §2.2.1 reference default).
-const DefaultMaxComputeUnits uint32 = 400_000
+const DefaultMaxComputeUnits uint32 = svm.DefaultMaxComputeUnits
 
 // DefaultMaxRequiredSignatures is the required-signature ceiling when
 // Config.MaxRequiredSignatures is unset: the client and the fee payer.
@@ -711,8 +712,16 @@ func (f *ExactSvmScheme) Settle(
 					feePayer = tx.Message.AccountKeys[0]
 					err = nil
 				}
-				if err == nil {
-					isSmartWallet = !f.hasStaticTransferLayout(tx, feePayer)
+				if err == nil && f.resolveLookups(ctx, tx, string(requirements.Network)) == nil {
+					if svm.UsesSplitTerms(requirements) {
+						legs, parseErr := svm.ParsePaymentLegs(requirements)
+						if parseErr == nil {
+							_, layoutErr := f.verifyStaticSplitLayout(tx, requirements, []string{feePayer.String()}, legs)
+							isSmartWallet = layoutErr != nil
+						}
+					} else {
+						isSmartWallet = !f.hasStaticTransferLayout(tx, feePayer)
+					}
 				}
 			}
 			return f.reconcilePendingSettlement(ctx, txKey, sigStr, payer, network, string(requirements.Network), isSmartWallet, requirements, tx)

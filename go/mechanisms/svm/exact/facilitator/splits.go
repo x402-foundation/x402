@@ -216,6 +216,23 @@ func (f *ExactSvmScheme) verifyStaticSplitPath(
 	signerAddressStrs []string,
 	legs []svm.PaymentLeg,
 ) (string, error) {
+	payer, err := f.verifyStaticSplitLayout(tx, requirements, signerAddressStrs, legs)
+	if err != nil {
+		return "", err
+	}
+	if err := f.signer.SimulateTransaction(ctx, tx, string(requirements.Network), nil); err != nil {
+		return "", x402.NewVerifyError(ErrTransactionSimulationFailed, payer, err.Error())
+	}
+	return payer, nil
+}
+
+// verifyStaticSplitLayout runs local checks without simulating an already-broadcast payment.
+func (f *ExactSvmScheme) verifyStaticSplitLayout(
+	tx *solana.Transaction,
+	requirements types.PaymentRequirements,
+	signerAddressStrs []string,
+	legs []svm.PaymentLeg,
+) (string, error) {
 	instructions := tx.Message.Instructions
 	isAtaProgram := func(ix solana.CompiledInstruction) bool {
 		programID, err := tx.Message.Program(ix.ProgramIDIndex)
@@ -330,9 +347,6 @@ func (f *ExactSvmScheme) verifyStaticSplitPath(
 		return "", x402.NewVerifyError(reason, payer, reason)
 	}
 
-	if err := f.signer.SimulateTransaction(ctx, tx, string(requirements.Network), nil); err != nil {
-		return "", x402.NewVerifyError(ErrTransactionSimulationFailed, payer, err.Error())
-	}
 	return payer, nil
 }
 
