@@ -351,6 +351,9 @@ func (f *BatchSvmScheme) Settle(ctx context.Context, payload types.PaymentPayloa
 		}
 		return SettleFailure(x402.Network(payload.Accepted.Network), ClassifyError(err), payer, err.Error()), nil
 	}
+	if !response.Success && response.Transaction != "" {
+		return nil, x402.NewSettleError(response.ErrorReason, response.Payer, response.Network, response.Transaction, response.ErrorMessage)
+	}
 	return response, nil
 }
 
