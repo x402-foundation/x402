@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "aptos" before "canton" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
+ * (e.g., "algorand" before "aptos" before "canton" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "sui" before "tvm" before "xrpl").
  */
 
 import {
@@ -72,6 +72,7 @@ import { base58 } from "@scure/base";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/facilitator";
+import { ExactSuiScheme } from "@x402/sui/exact/facilitator";
 import {
   HighloadV3Config,
   toFacilitatorTvmSigner,
@@ -140,6 +141,7 @@ const nearNetwork = process.env.NEAR_NETWORK || NEAR_TESTNET_CAIP2;
 const nearRpcUrl = process.env.NEAR_RPC_URL as string | undefined;
 const svmPrivateKey = process.env.SVM_PRIVATE_KEY as string | undefined;
 const stellarPrivateKey = process.env.STELLAR_PRIVATE_KEY as string | undefined;
+const suiNetwork = process.env.SUI_NETWORK as Network | undefined;
 const tvmPrivateKey = process.env.TVM_PRIVATE_KEY as string | undefined;
 const hederaAccountId = process.env.HEDERA_ACCOUNT_ID;
 // Hedera private key should be an ECDSA key string (0x-prefixed or DER-encoded).
@@ -460,6 +462,16 @@ if (stellarPrivateKey) {
   facilitator.register(
     STELLAR_NETWORK,
     new ExactStellarScheme([stellarSigner]),
+  );
+}
+
+// Register Sui scheme if SUI_NETWORK is set (e.g. "sui:testnet"). Without a
+// sponsor the facilitator needs no key: it verifies and broadcasts the
+// payer-signed transaction.
+if (suiNetwork) {
+  facilitator.register(suiNetwork, new ExactSuiScheme());
+  console.info(
+    `Sui facilitator enabled on ${suiNetwork} (no facilitator signer)`,
   );
 }
 
