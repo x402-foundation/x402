@@ -6,7 +6,7 @@ import type {
   VerifyContext,
   VerifyResultContext,
 } from "@x402/core/server";
-import type { PaymentRequirements, SchemePaymentRequiredContext } from "@x402/core/types";
+import type { Network, PaymentRequirements, SchemePaymentRequiredContext } from "@x402/core/types";
 import { isBatchSettlementPayload, isBatchSettlementRefundPayload } from "../types";
 import type {
   BatchSettlementChannelStateExtra,
@@ -31,7 +31,12 @@ import type { BatchSettlementEvmScheme } from "./scheme";
 
 type ManagedChannelState = Pick<
   Channel,
-  "chargedCumulativeAmount" | "balance" | "totalClaimed" | "withdrawRequestedAt" | "refundNonce"
+  | "chargedCumulativeAmount"
+  | "balance"
+  | "totalClaimed"
+  | "withdrawRequestedAt"
+  | "refundNonce"
+  | "network"
 >;
 
 /**
@@ -144,7 +149,7 @@ export async function handleManagedAfterVerify(
   }
 
   scheme.mergeRequestContext(paymentPayload, {
-    channelSnapshot: toChannelView(raw, state),
+    channelSnapshot: toChannelView(raw, state, ctx.requirements.network),
   });
 
   if (isBatchSettlementRefundPayload(raw)) {
@@ -342,7 +347,7 @@ async function upsertReplicaAfterSettle(
     return;
   }
 
-  const state = toChannelView(raw, replicaState);
+  const state = toChannelView(raw, replicaState, ctx.requirements.network);
   if (isRefund && BigInt(state.balance) <= BigInt(state.chargedCumulativeAmount)) {
     await storage.updateChannel(channelId, current => (current ? undefined : current));
     return;
@@ -358,7 +363,7 @@ async function upsertReplicaAfterSettle(
         // Non-numeric watermarks fall through to the normal upsert below.
       }
     }
-    return state;
+    return { ...state, network: state.network || current?.network };
   });
 }
 
@@ -387,11 +392,17 @@ function managedReplicaState(
  *
  * @param raw - Batch-settlement payload being verified or settled.
  * @param state - Trusted facilitator channel state.
+ * @param network - Network from the request requirements.
  * @returns Complete channel view.
  */
-function toChannelView(raw: BatchSettlementPayload, state: ManagedChannelState): Channel {
+function toChannelView(
+  raw: BatchSettlementPayload,
+  state: ManagedChannelState,
+  network: Network,
+): Channel {
   return {
     ...state,
+    network: network || state.network,
     channelId: raw.voucher.channelId,
     channelConfig: raw.channelConfig,
     signedMaxClaimable: raw.voucher.maxClaimableAmount,

@@ -4,7 +4,7 @@ import type {
   VerifyFailureContext,
   VerifyResultContext,
 } from "@x402/core/server";
-import type { VerifyResponse } from "@x402/core/types";
+import type { Network, VerifyResponse } from "@x402/core/types";
 import type { SchemePaymentRequiredContext } from "@x402/core/types";
 import {
   type BatchSettlementChannelStateExtra,
@@ -213,6 +213,9 @@ async function reserveAndVerifyLocally(
 
   // No local row: onchain totalClaimed is the baseline; fail closed if absent.
   if (channelSnapshot) {
+    if (requirements.network) {
+      channelSnapshot = { ...channelSnapshot, network: requirements.network };
+    }
     const expectedMaxClaimable = isRefund
       ? BigInt(channelSnapshot.chargedCumulativeAmount)
       : BigInt(channelSnapshot.chargedCumulativeAmount) + BigInt(requirements.amount);
@@ -547,7 +550,7 @@ export async function handleAfterVerify(
     scheme.rememberChannelSnapshot(
       paymentPayload,
       prior ??
-        buildProvisionalChannel(raw, base, {
+        buildProvisionalChannel(raw, base, requirements.network, {
           balance,
           totalClaimed,
           withdrawRequestedAt,
@@ -565,6 +568,7 @@ export async function handleAfterVerify(
   const channelSnapshot: Channel = {
     channelId,
     channelConfig,
+    network: requirements.network || prior?.network,
     chargedCumulativeAmount: base,
     signedMaxClaimable,
     signature,
@@ -644,6 +648,7 @@ function isNonNegativeIntegerString(value: string): boolean {
  *
  * @param raw - Batch-settlement payload.
  * @param chargedCumulativeAmount - Charge baseline.
+ * @param network - Network from the verified request requirements.
  * @param onchain - Facilitator channel state.
  * @param onchain.balance - Onchain balance.
  * @param onchain.totalClaimed - Onchain claimed total.
@@ -654,6 +659,7 @@ function isNonNegativeIntegerString(value: string): boolean {
 function buildProvisionalChannel(
   raw: BatchSettlementVoucherPayload | BatchSettlementDepositPayload | BatchSettlementRefundPayload,
   chargedCumulativeAmount: string,
+  network: Network,
   onchain: {
     balance: string;
     totalClaimed: string;
@@ -664,6 +670,7 @@ function buildProvisionalChannel(
   return {
     channelId: raw.voucher.channelId,
     channelConfig: raw.channelConfig,
+    ...(network ? { network } : {}),
     chargedCumulativeAmount,
     signedMaxClaimable: raw.voucher.maxClaimableAmount,
     signature: raw.voucher.signature,
