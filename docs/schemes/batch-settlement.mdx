@@ -1,6 +1,6 @@
 ---
 title: "Batch Settlement"
-description: "High-throughput EVM payments with escrow, off-chain vouchers, and batched onchain redemption."
+description: "High-throughput payments with escrow, off-chain vouchers, and batched onchain redemption. Available on EVM and Solana (SVM)."
 ---
 
 The `batch-settlement` scheme is for high-throughput payments where many requests are authorized individually and redeemed later in batches. The EVM implementation uses stateless unidirectional payment channels: a buyer deposits funds into onchain escrow once, then signs off-chain cumulative vouchers for each request. The seller verifies vouchers quickly and redeems them onchain later in batches.
@@ -175,6 +175,22 @@ Server storage keeps the latest voucher and channel session state that the chann
 
 Use file storage for single-process deployments. For serverless or multi-instance deployments, use Redis/Valkey storage so channel updates are shared atomically across processes. See the [Next.js batch-settlement Redis example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/fullstack/next-batch-settlement-redis) for a full `withX402` setup with `RedisChannelStorage` and cron-based claim/settle routes.
 
+#### Admission locks (`lockStorage`)
+
+In self-managed mode, the server uses a per-channel admission lock to serialize concurrent requests on the same channel. By default, the lock backend is inferred from `storage`: if the storage object implements `ChannelLockStorage` (all built-in backends do), it is used for both roles. Pass a separate `lockStorage` to mix backends — for example, file storage for durable channel state and Redis for locks shared across multiple hosts:
+
+```typescript
+import { FileChannelStorage } from "@x402/evm/batch-settlement/server/file-storage";
+import { RedisChannelLockStorage } from "@x402/evm/batch-settlement/server/redis-storage";
+
+const scheme = new BatchSettlementEvmScheme(receiverAddress, {
+  storage: new FileChannelStorage({ directory: "./channels" }),
+  lockStorage: new RedisChannelLockStorage({ client: redisClient }),
+});
+```
+
+Hosts that do not share the same file directory need an explicit `lockStorage` (Redis); otherwise each host admits independently and only the charge CAS protects revenue. In facilitator-managed mode, the facilitator owns the admission lock and `lockStorage` is unused.
+
 ### Client Setup
 
 Register `BatchSettlementEvmScheme` for `eip155:*`. The client SDK handles deposits, voucher signing, channel recovery, and corrective 402 resync.
@@ -275,8 +291,45 @@ The deposit policy controls how much the client deposits when a channel needs fu
 
 | Field | Description |
 |-------|-------------|
-| `depositMultiplier` / `DepositMultiplier` | Deposits `amount x multiplier` for the advertised per-request maximum. The default is `5`; the minimum is `3`. |
+| `depositMultiplier` / `DepositMultiplier` | Deposits `amount x multiplier` for the advertised per-request maximum. The default is `5`; the minimum is `3`. Used as a fallback when no `minDeposit` hint is present. |
 | `depositStrategy` / `DepositStrategy` | Optional callback for caps, dynamic deposits, or opting out of automatic top-up. |
+
+#### Server-announced `minDeposit` hint
+
+Servers always include `extra.minDeposit` in their 402 response. The default is `10 × amount`; servers can override it per route via `accepts.extra.minDeposit` (an atomic integer string or a money string like `"$1.00"` for default assets).
+
+When the client receives a valid `minDeposit` hint (a positive integer `>= amount`), it uses that as the deposit target instead of `depositMultiplier × amount`. This lets servers guide clients toward a deposit size that reduces top-up frequency without requiring clients to configure a multiplier.
+
+If a spend cap is set via `spendControls.maxAmountPerPayment`, the deposit is clamped to `maxAmountPerPayment × depositMultiplier`. Payments without a spend cap leave deposits uncapped.
+
+Servers can opt in to rejecting deposits below the announced hint by setting `enforceMinDeposit: true` (default `false`). The facilitator never enforces this limit. When a deposit is rejected for being below the hint, the server returns `invalid_batch_settlement_evm_deposit_below_min_deposit`.
+
+To set a per-route `minDeposit` override on the server:
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    app.use(paymentMiddleware({
+      "GET /weather": {
+        accepts: {
+          scheme: "batch-settlement",
+          price: "$0.01",
+          network,
+          payTo: receiverAddress,
+          extra: {
+            minDeposit: "$1.00",  // money string for default assets
+            // or: minDeposit: "1000000",  // atomic integer string
+          },
+        },
+      },
+    }, resourceServer));
+    ```
+  </Tab>
+</Tabs>
+
+#### Custom deposit strategy
+
+Use `depositStrategy` for fine-grained control: cap deposits, skip top-ups, or return a custom amount. The callback receives the computed deposit amount (already incorporating the `minDeposit` hint) and can return a capped value, `false` to skip the deposit, or `undefined` to accept the computed amount.
 
 <Tabs>
   <Tab title="TypeScript">
@@ -445,6 +498,113 @@ The server validates this configuration at startup. If no `receiverAuthorizerSig
 
 On the facilitator side, the `authorizerSigner` passed to `BatchSettlementEvmScheme` is optional. When provided, the facilitator advertises its address as `receiverAuthorizer` in `/supported` and signs missing authorizer signatures. When omitted, no `receiverAuthorizer` is advertised and servers must supply their own `receiverAuthorizerSigner`.
 
+### Facilitator-managed custody
+
+By default, the server owns the voucher store, per-channel locks, and the claim/settle/refund schedule (`voucherStoreMode: "self"` / `VoucherStoreMode: "self"`). In facilitator-managed mode, the facilitator takes over that responsibility. The server becomes a pass-through: it calls `/verify` then `/settle` for every request (including voucher payloads), and the facilitator's channel manager handles batched claims, settlements, and refunds.
+
+Use facilitator-managed custody when you want to centralize channel operations at the facilitator, or when your server is stateless and cannot run a background channel manager.
+
+#### Server configuration
+
+Set `voucherStoreMode: "facilitator"` (TypeScript) or `VoucherStoreMode: server.VoucherStoreModeFacilitator` (Go). The server no longer runs a channel manager for claims or refunds. `storage` / `Storage` is a post-settle replica only — it is never read on the hot path.
+
+For cooperative refunds, choose one of:
+
+- **`refundAuthorizerSigner` / `RefundAuthorizerSigner`** — the server's own refund EOA. The 402 carries `extra.refundAuthorizer`; the client packs it into the channel salt; the facilitator verifies the server's signature before executing the refund.
+- **Facilitator `delegatedRefund`** — omit the refund signer and rely on the facilitator advertising `delegatedRefund: true` in `/supported`. The 402 omits `extra.refundAuthorizer` and the facilitator authenticates the caller identity instead.
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/server";
+    import { FileChannelStorage } from "@x402/evm/batch-settlement/server/file-storage";
+    import { privateKeyToAccount } from "viem/accounts";
+
+    // Optional: server-owned refund key. Omit when relying on facilitator delegatedRefund.
+    const refundAuthorizerSigner = process.env.EVM_REFUND_AUTHORIZER_PRIVATE_KEY
+      ? privateKeyToAccount(process.env.EVM_REFUND_AUTHORIZER_PRIVATE_KEY as `0x${string}`)
+      : undefined;
+
+    const scheme = new BatchSettlementEvmScheme(receiverAddress, {
+      voucherStoreMode: "facilitator",
+      refundAuthorizerSigner, // omit when relying on facilitator delegatedRefund
+      storage: new FileChannelStorage({ directory: "./channels" }), // replica only
+    });
+    ```
+
+    <Callout type="warning">
+    `receiverAuthorizerSigner` cannot be combined with `voucherStoreMode: "facilitator"`. The facilitator owns the `receiverAuthorizer` in this mode.
+    </Callout>
+
+    The server validates facilitator support at startup (`initialize()`). It fails if the facilitator does not advertise `voucherManager` including `"facilitator"`, a non-zero `receiverAuthorizer`, and an in-range `withdrawDelay`. It also fails if no refund consent path is available (no `refundAuthorizerSigner` and the facilitator does not advertise `delegatedRefund: true`).
+
+    In facilitator-managed mode, `createChannelManager` can still run optional claim/settle passes from the replica store. Refund operations (`refundIntervalSecs`, `refundIdleChannels`) are blocked in this mode — cooperative refunds are handled by the facilitator's channel manager or by client-initiated cancel settles.
+  </Tab>
+  <Tab title="Go">
+    ```go
+    scheme := server.NewBatchSettlementEvmScheme(receiverAddress, &server.BatchSettlementEvmSchemeServerConfig{
+        VoucherStoreMode:       server.VoucherStoreModeFacilitator,
+        RefundAuthorizerSigner: refundAuthorizerSigner, // omit when relying on facilitator delegatedRefund
+        Storage: server.NewFileChannelStorage(batchsettlement.FileChannelStorageOptions{
+            Directory: "./channels", // replica only
+        }),
+    })
+    ```
+
+    <Callout type="warning">
+    `ReceiverAuthorizerSigner` cannot be combined with `VoucherStoreMode: "facilitator"`. The facilitator owns the `receiverAuthorizer` in this mode.
+    </Callout>
+  </Tab>
+</Tabs>
+
+#### Facilitator configuration
+
+Enable the voucher store on the facilitator. This requires an `authorizerSigner`. The facilitator then advertises `voucherManager: ["server", "facilitator"]` and `delegatedRefund` in `/supported`.
+
+<Tabs>
+  <Tab title="Go">
+    ```go
+    import (
+        "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/facilitator"
+    )
+
+    scheme, err := facilitator.NewBatchSettlementEvmSchemeWithConfig(evmSigner, authorizerSigner, &facilitator.BatchSettlementEvmSchemeConfig{
+        VoucherStore: &facilitator.VoucherStoreConfig{
+            Storage: facilitator.NewFileChannelStorage(batchsettlement.FileChannelStorageOptions{
+                Directory: "./voucher-store",
+            }),
+            // LockStorage is inferred when storage implements ChannelLockStorage.
+            // WithdrawDelay defaults to 900 seconds.
+        },
+        // Optional: authenticate /settle callers so the facilitator can authorize
+        // cooperative refunds by caller identity (delegatedRefund: true).
+        // ResolveCallerIdentity: resolveCallerIdentity,
+        // DelegatedAuthStore:    delegatedAuthStore, // required with ResolveCallerIdentity
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    manager, err := scheme.CreateChannelManager(fctx)
+    if err != nil {
+        log.Fatal(err)
+    }
+    claimSecs, settleSecs, refundSecs, refundIdle := 60, 300, 3600, 3600
+    manager.Start(facilitator.FacilitatorAutoConfig{
+        ClaimIntervalSecs:  &claimSecs,
+        SettleIntervalSecs: &settleSecs,
+        RefundIntervalSecs: &refundSecs,
+        RefundIdleSecs:     &refundIdle,
+        MaxClaimsPerBatch:  100,
+    })
+    ```
+
+    `delegatedRefund` is `true` only when `ResolveCallerIdentity` is configured. Without it, servers must supply a `RefundAuthorizerSigner` for cooperative refunds.
+
+    See the [Go facilitator example](https://github.com/x402-foundation/x402/tree/main/examples/go/facilitator/batch-settlement) and [Go server example](https://github.com/x402-foundation/x402/tree/main/examples/go/servers/batch-settlement) for a working pair.
+  </Tab>
+</Tabs>
+
 ### Facilitator Setup
 
 The batch-settlement facilitator scheme accepts an optional `authorizerSigner`. Pass one to enable facilitator-delegated authorization; omit it to require servers to supply their own.
@@ -523,6 +683,332 @@ Set `withdrawDelay` greater than your claim cadence plus an operational safety m
 * [Python client](https://github.com/x402-foundation/x402/tree/main/examples/python/clients/batch-settlement)
 * [Python server](https://github.com/x402-foundation/x402/tree/main/examples/python/servers/batch-settlement)
 * [Python facilitator](https://github.com/x402-foundation/x402/tree/main/examples/python/facilitator/batch-settlement)
+
+### SVM Implementation
+
+`batch-settlement` on Solana uses the same [payment-channels program](https://github.com/solana-foundation/payment-channels) as `upto`. Unlike `upto`, which closes after one metered charge, `batch-settlement` keeps the channel open across many requests and advances a cumulative watermark. The client deposits once, then signs off-chain cumulative vouchers per request; the server verifies offchain, serves immediately, and redeems accumulated vouchers later through the facilitator.
+
+Two voucher modes are supported:
+
+| Mode | Who signs vouchers | Per-request payload | Typical use |
+|------|--------------------|---------------------|-------------|
+| **Client-signed** (default) | Client (`payerAuthorizer`) | Cumulative Ed25519 voucher | Fixed price per request; client retains full voucher authority |
+| **Server-signed** | Resource `operator` | Expiring payer proof + request id; operator signs the metered cumulative charge after serving | Usage-based billing without a client signature on every request |
+
+In server mode the channel's onchain `authorized_signer` is the operator, who could claim the full unspent deposit. Clients enter that mode only for operator keys they have explicitly trusted out of band.
+
+#### Server Setup (SVM)
+
+Every channel is bound at open to a `receiverAuthorizer` key that signs cooperative close authorizations. Pass `receiverAuthorizer` to self-manage closes (recommended), or omit it to delegate to the facilitator's advertised key.
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { BatchSvmScheme, MemoryChannelStore } from "@x402/svm/batch-settlement/server";
+    import { createKeyPairSignerFromBytes } from "@solana/kit";
+    import { base58 } from "@scure/base";
+
+    const receiverAuthorizer = await createKeyPairSignerFromBytes(
+      base58.decode(process.env.SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY!),
+    );
+
+    const batchSvmScheme = new BatchSvmScheme({
+      receiverAuthorizer,
+      withdrawDelay: 86_400,
+      store: new MemoryChannelStore(),
+    });
+
+    const resourceServer = new x402ResourceServer(facilitatorClient)
+      .register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", batchSvmScheme);
+
+    app.use(paymentMiddleware({
+      "GET /api/data": {
+        accepts: {
+          scheme: "batch-settlement",
+          price: "$0.01",
+          network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+          payTo: "YourSolanaAddress",
+        },
+        description: "Data API",
+      },
+    }, resourceServer));
+    ```
+
+    For server-signed (metered) routes, configure an `operator` signer and use `setSettlementOverrides` to charge actual usage:
+
+    ```typescript
+    const operator = await createKeyPairSignerFromBytes(
+      base58.decode(process.env.SVM_OPERATOR_PRIVATE_KEY!),
+    );
+
+    const batchSvmScheme = new BatchSvmScheme({
+      receiverAuthorizer,
+      operator,
+      store: new MemoryChannelStore(),
+    });
+
+    // In your handler:
+    app.get("/api/generate", (req, res) => {
+      setSettlementOverrides(res, { amount: "50%" }); // or raw atomic units / dollar price
+      res.json({ result: "..." });
+    });
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        x402 "github.com/x402-foundation/x402/go/v2"
+        svmmech "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+        batchserver "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement/server"
+        svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
+    )
+
+    authorizer, err := svmsigners.NewReceiverAuthorizerSignerFromPrivateKey(
+        os.Getenv("SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"),
+    )
+
+    delay := 86400
+    scheme := batchserver.NewBatchSvmScheme(&batchserver.Config{
+        ReceiverAuthorizer: authorizer,
+        WithdrawDelay:      &delay,
+        Store:              batchserver.NewMemoryChannelStore(),
+    })
+
+    resource.Register(svmmech.SolanaDevnetCAIP2, scheme)
+
+    routes := x402http.RoutesConfig{
+        "GET /api/data": {
+            Accepts: x402http.PaymentOptions{
+                {
+                    Scheme:  "batch-settlement",
+                    Price:   "$0.01",
+                    Network: x402.Network("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"),
+                    PayTo:   "YourSolanaAddress",
+                },
+            },
+            Description: "Data API",
+        },
+    }
+    ```
+
+    For server-signed (metered) routes, configure an `Operator` signer and use `SetSettlementOverrides`:
+
+    ```go
+    operator, err := svmsigners.NewOperatorSignerFromPrivateKey(
+        os.Getenv("SVM_OPERATOR_PRIVATE_KEY"),
+    )
+
+    scheme := batchserver.NewBatchSvmScheme(&batchserver.Config{
+        ReceiverAuthorizer: authorizer,
+        Operator:           operator,
+        Store:              batchserver.NewMemoryChannelStore(),
+    })
+
+    // In your handler:
+    mux.HandleFunc("GET /api/generate", func(w http.ResponseWriter, r *http.Request) {
+        nethttpmw.SetSettlementOverrides(w, &x402.SettlementOverrides{Amount: "50%"})
+        _ = json.NewEncoder(w).Encode(map[string]any{"result": "..."})
+    })
+    ```
+  </Tab>
+</Tabs>
+
+#### Batch Capacity (SVM)
+
+The facilitator builds its redemption transactions (claim, settle, seal, refund, rent cleanup) as Solana transaction v1 by default. Version 1 supports up to **18 claim channels** and **13 settle channels** per transaction; version 0 supports 4 of each. The facilitator advertises these limits as `extra.maxClaimChannels` and `extra.maxSettleChannels` in its `/supported` response, and the server uses them to size its claim and settle batches. A claim or settle request that exceeds the advertised capacity is rejected with `invalid_batch_settlement_svm_payload_type`.
+
+#### Redemption Worker (SVM)
+
+Start `BatchChannelManager` outside the request path to claim batches and distribute payouts:
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    const manager = batchSvmScheme.createChannelManager(facilitatorClient, requirements, {
+      rpcUrl: process.env.SVM_RPC_URL,
+      onClaim: r => console.log(`Claimed ${r.vouchers} vouchers (tx: ${r.transaction})`),
+      onSettle: r => console.log(`Distributed to payTo (tx: ${r.transaction})`),
+      onSeal: r => console.log(`Sealed channel ${r.channel} (tx: ${r.transaction})`),
+      onError: e => console.error(e),
+    });
+    manager.start(60); // seconds between passes
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    manager, err := scheme.CreateChannelManager(facilitatorClient, requirements, batchserver.BatchChannelManagerConfig{
+        RPCURL: os.Getenv("SVM_RPC_URL"),
+    })
+    // requirements must include extra.feePayer from the facilitator's supported kind
+    ```
+  </Tab>
+</Tabs>
+
+Claim promptly: if the facilitator or payer forces a close before your latest voucher is claimed, unclaimed value returns to the payer. Set `withdrawDelay` comfortably above your claim cadence.
+
+#### Client Setup (SVM)
+
+Register `BatchSvmScheme` for `solana:*`. The SDK opens or tops up the channel on first use and attaches the correct payload per mode:
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { x402Client } from "@x402/core/client";
+    import { ExactSvmScheme } from "@x402/svm/exact/client";
+    import { BatchSvmScheme } from "@x402/svm/batch-settlement/client";
+    import { createKeyPairSignerFromBytes } from "@solana/kit";
+    import { base58 } from "@scure/base";
+
+    const signer = await createKeyPairSignerFromBytes(
+      base58.decode(process.env.SVM_PRIVATE_KEY!),
+    );
+
+    const client = new x402Client();
+    client.register("solana:*", new ExactSvmScheme(signer));
+    client.register("solana:*", new BatchSvmScheme(signer, {
+      depositPolicy: { depositMultiplier: 5 },
+      rpcUrl: process.env.SVM_RPC_URL,
+      // Optional: restrict to version-0 transactions only (e.g. for signers that
+      // cannot sign version-1). Default: build the highest version the facilitator supports.
+      // transactionVersions: [0],
+    }));
+    ```
+
+    To opt into server-signed channels for a trusted operator:
+
+    ```typescript
+    const batch = new BatchSvmScheme(signer, {
+      serverSignedChannelsPolicy: {
+        allowedOperators: ["OperatorBase58Pubkey"],
+        maxDeposit: "$1", // USD cap for default assets
+      },
+    });
+    client.register("solana:*", batch);
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        x402 "github.com/x402-foundation/x402/go/v2"
+        exactsvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
+        batchclient "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement/client"
+        svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
+    )
+
+    svmSigner, err := svmsigners.NewClientSignerFromPrivateKey(os.Getenv("SVM_PRIVATE_KEY"))
+
+    multiplier := 5
+    batch, err := batchclient.NewBatchSvmScheme(svmSigner, &batchclient.BatchSvmClientConfig{
+        DepositPolicy: &batchclient.DepositPolicy{DepositMultiplier: &multiplier},
+        RPCURL:        os.Getenv("SVM_RPC_URL"),
+        // Optional: restrict to version-0 transactions only (e.g. for signers that
+        // cannot sign version-1). Default: build the highest version the facilitator supports.
+        // TransactionVersions: []int{0},
+    })
+
+    x402Client := x402.Newx402Client().
+        Register("solana:*", exactsvm.NewExactSvmScheme(svmSigner)).
+        Register("solana:*", batch)
+    ```
+
+    To opt into server-signed channels for a trusted operator:
+
+    ```go
+    batch, err := batchclient.NewBatchSvmScheme(svmSigner, &batchclient.BatchSvmClientConfig{
+        ServerSignedChannelsPolicy: &batchclient.BatchServerSignedChannelsPolicy{
+            AllowedOperators: []string{"OperatorBase58Pubkey"},
+            MaxDeposit:       "$1", // USD cap for default assets
+        },
+    })
+    x402Client.Register("solana:*", batch)
+    x402Client.RegisterPolicy(batch.PaymentPolicy())
+    ```
+  </Tab>
+</Tabs>
+
+#### Facilitator Setup (SVM)
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { toFacilitatorSvmSigner } from "@x402/svm";
+    import {
+      BatchSvmScheme,
+      InMemoryBatchChannelStorage,
+    } from "@x402/svm/batch-settlement/facilitator";
+
+    const svmSigner = toFacilitatorSvmSigner(
+      keypair,
+      process.env.SVM_RPC_URL ? { defaultRpcUrl: process.env.SVM_RPC_URL } : undefined,
+    );
+
+    const scheme = new BatchSvmScheme(svmSigner, {
+      channelStorage: new InMemoryBatchChannelStorage(),
+      // Optional: accepted transaction versions (default [0, 1]).
+      // Pass [0] to reject version-1 client transactions.
+      // transactionVersions: [0, 1],
+      // Optional: message version (0 or 1) for facilitator-built redemption transactions
+      // (claim, settle, seal, refund, rent cleanup). Default: 1.
+      // Version 1 supports up to 18 claim channels and 13 settle channels per batch;
+      // version 0 supports 4 of each.
+      // facilitatorTransactionVersion: 1,
+      // Optional: override the treasury owner the payment-channels program was built with.
+      // Useful when running against a custom or local program build.
+      // paymentChannelsTreasuryOwner: "YourTreasuryOwnerPubkey",
+    });
+
+    facilitator.register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", scheme);
+
+    // Reclaim PDA rent from abandoned channels
+    const rentCleanup = scheme.createRentCleanupManager("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1");
+    rentCleanup.start({ intervalSecs: 60, abandonGraceSecs: 120 });
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        x402 "github.com/x402-foundation/x402/go/v2"
+        svmmech "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+        batchfacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement/facilitator"
+        svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
+    )
+
+    svmSigner, err := svmsigners.NewFacilitatorSignerFromPrivateKey(
+        os.Getenv("SVM_PRIVATE_KEY"),
+        os.Getenv("SVM_RPC_URL"),
+    )
+
+    scheme := batchfacilitator.NewBatchSvmScheme(context.Background(), svmSigner, &batchfacilitator.Config{
+        // ChannelStorage defaults to in-memory; inject a durable store for production
+        // Optional: accepted transaction versions (default [0, 1]).
+        // Pass []int{0} to reject version-1 client transactions.
+        // TransactionVersions: []int{0, 1},
+        // Optional: message version (0 or 1) for facilitator-built redemption transactions
+        // (claim, settle, seal, refund, rent cleanup). Default: 1.
+        // Version 1 supports up to 18 claim channels and 13 settle channels per batch;
+        // version 0 supports 4 of each.
+        // FacilitatorTransactionVersion: 1,
+        // Optional: override the treasury owner the payment-channels program was built with.
+        // Useful when running against a custom or local program build.
+        // PaymentChannelsTreasuryOwner: "YourTreasuryOwnerPubkey",
+    })
+
+    facilitator.Register([]x402.Network{svmmech.SolanaDevnetCAIP2}, scheme)
+
+    // Reclaim PDA rent from abandoned channels
+    cleanup := scheme.CreateRentCleanupManager(svmmech.SolanaDevnetCAIP2)
+    ```
+  </Tab>
+</Tabs>
+
+#### SVM Examples
+
+* [TypeScript batch-settlement server (EVM + SVM)](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/batch-settlement)
+* [TypeScript batch-settlement client](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/batch-settlement)
+* [TypeScript batch-settlement facilitator](https://github.com/x402-foundation/x402/tree/main/examples/typescript/facilitator/batch-settlement)
+* [Go batch-settlement client (SVM)](https://github.com/x402-foundation/x402/tree/main/examples/go/clients/batch-settlement)
+* [Go batch-settlement server (SVM)](https://github.com/x402-foundation/x402/tree/main/examples/go/servers/batch-settlement)
+* [Go batch-settlement facilitator (SVM)](https://github.com/x402-foundation/x402/tree/main/examples/go/facilitator/batch-settlement)
 
 ### Specs
 

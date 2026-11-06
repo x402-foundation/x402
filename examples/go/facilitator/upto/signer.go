@@ -70,12 +70,9 @@ func (s *facilitatorSvmSigner) SignTransaction(
 }
 
 func (s *facilitatorSvmSigner) SimulateTransaction(
-	ctx context.Context, tx *solana.Transaction, _ string,
+	ctx context.Context, tx *solana.Transaction, _ string, opts *svmmech.FacilitatorSimulateTransactionOptions,
 ) error {
-	result, err := s.rpcClient.SimulateTransactionWithOpts(ctx, tx, &rpc.SimulateTransactionOpts{
-		SigVerify:  false,
-		Commitment: svmmech.DefaultCommitment,
-	})
+	result, err := s.rpcClient.SimulateTransactionWithOpts(ctx, tx, svmmech.SimulationRPCOpts(opts))
 	if err != nil {
 		return fmt.Errorf("simulation failed: %w", err)
 	}
@@ -150,22 +147,6 @@ func (s *facilitatorSvmSigner) GetLatestBlockhash(ctx context.Context, _ string)
 
 func (s *facilitatorSvmSigner) GetSlot(ctx context.Context, _ string, commitment rpc.CommitmentType) (uint64, error) {
 	return s.rpcClient.GetSlot(ctx, commitment)
-}
-
-func (s *facilitatorSvmSigner) SimulateTransactionWithOpts(
-	ctx context.Context,
-	tx *solana.Transaction,
-	_ string,
-	opts *rpc.SimulateTransactionOpts,
-) error {
-	result, err := s.rpcClient.SimulateTransactionWithOpts(ctx, tx, opts)
-	if err != nil {
-		return fmt.Errorf("simulation failed: %w", err)
-	}
-	if result != nil && result.Value != nil && result.Value.Err != nil {
-		return fmt.Errorf("simulation failed: %v", result.Value.Err)
-	}
-	return nil
 }
 
 func (s *facilitatorSvmSigner) GetProgramAccounts(

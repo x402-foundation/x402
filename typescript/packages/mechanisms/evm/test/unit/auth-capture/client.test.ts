@@ -123,6 +123,71 @@ describe("AuthCaptureEvmScheme", () => {
       );
     });
 
+    it("should throw when captureDeadline is missing", async () => {
+      const scheme = new AuthCaptureEvmScheme(mockSigner);
+      const bad = {
+        ...mockRequirements,
+        extra: { ...mockRequirements.extra, captureDeadline: undefined as unknown as number },
+      };
+      await expect(scheme.createPaymentPayload(2, bad)).rejects.toThrow(
+        "'captureDeadline' is required",
+      );
+    });
+
+    it("should throw when refundDeadline is missing", async () => {
+      const scheme = new AuthCaptureEvmScheme(mockSigner);
+      const bad = {
+        ...mockRequirements,
+        extra: { ...mockRequirements.extra, refundDeadline: undefined as unknown as number },
+      };
+      await expect(scheme.createPaymentPayload(2, bad)).rejects.toThrow(
+        "'refundDeadline' is required",
+      );
+    });
+
+    it("should throw when minFeeBps is missing", async () => {
+      const scheme = new AuthCaptureEvmScheme(mockSigner);
+      const bad = {
+        ...mockRequirements,
+        extra: { ...mockRequirements.extra, minFeeBps: undefined as unknown as number },
+      };
+      await expect(scheme.createPaymentPayload(2, bad)).rejects.toThrow("'minFeeBps' is required");
+    });
+
+    it("should throw when maxFeeBps is missing", async () => {
+      const scheme = new AuthCaptureEvmScheme(mockSigner);
+      const bad = {
+        ...mockRequirements,
+        extra: { ...mockRequirements.extra, maxFeeBps: undefined as unknown as number },
+      };
+      await expect(scheme.createPaymentPayload(2, bad)).rejects.toThrow("'maxFeeBps' is required");
+    });
+
+    it("should throw when maxTimeoutSeconds is missing", async () => {
+      const scheme = new AuthCaptureEvmScheme(mockSigner);
+      const bad = {
+        ...mockRequirements,
+        maxTimeoutSeconds: undefined as unknown as number,
+      };
+      await expect(scheme.createPaymentPayload(2, bad)).rejects.toThrow(
+        "'maxTimeoutSeconds' is required",
+      );
+    });
+
+    it("should throw when authCaptureEscrow is an unknown address", async () => {
+      const scheme = new AuthCaptureEvmScheme(mockSigner);
+      const bad = {
+        ...mockRequirements,
+        extra: {
+          ...mockRequirements.extra,
+          authCaptureEscrow: "0x0000000000000000000000000000000000000001" as `0x${string}`,
+        },
+      };
+      await expect(scheme.createPaymentPayload(2, bad)).rejects.toThrow(
+        "Invalid authCaptureEscrow",
+      );
+    });
+
     it("should set authorization.from to signer address", async () => {
       const scheme = new AuthCaptureEvmScheme(mockSigner);
       const result = await scheme.createPaymentPayload(2, mockRequirements);
@@ -237,6 +302,21 @@ describe("AuthCaptureEvmScheme", () => {
       // uint256 stringified — should parse as a valid bigint
       expect(() => BigInt(payload.permit2Authorization.nonce)).not.toThrow();
       expect(payload.permit2Authorization.nonce.length).toBeGreaterThan(0);
+    });
+
+    it("should emit saltNonce on a Permit2 payload when salt binding is on", async () => {
+      const scheme = new AuthCaptureEvmScheme(mockSigner);
+      const result = await scheme.createPaymentPayload(2, {
+        ...mockRequirements,
+        extra: {
+          ...mockRequirements.extra,
+          assetTransferMethod: "permit2" as const,
+          receiverAuthorizer: "0x1111111111111111111111111111111111111111" as `0x${string}`,
+        },
+      });
+      const payload = result.payload as unknown as Permit2Payload;
+      expect(payload.saltNonce).toMatch(/^0x[a-fA-F0-9]{64}$/);
+      expect(payload.salt).not.toBe(payload.saltNonce);
     });
 
     it("should sign with EIP-712 domain bound to canonical Permit2 (NOT the token)", async () => {

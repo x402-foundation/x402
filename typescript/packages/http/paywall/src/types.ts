@@ -15,6 +15,17 @@ export interface PaywallConfig {
    * renders "No faucet configured." instead of a fallback link.
    */
   faucetUrls?: Record<string, string>;
+  /**
+   * Per-chain RPC endpoint the paywall uses from the browser, keyed by CAIP-2
+   * network identifier (e.g. `"solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"`).
+   * Currently read by the SVM paywall only; chains without an entry use the
+   * public default.
+   *
+   * The URL is embedded in the page and visible to every visitor. Use a
+   * browser-safe endpoint (origin-restricted key or your own proxy), never a
+   * secret key.
+   */
+  rpcUrls?: Record<string, string>;
 }
 
 /**

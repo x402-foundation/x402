@@ -86,6 +86,17 @@ class FacilitatorContext:
 # ============================================================================
 
 
+@dataclass
+class PaymentPayloadContext:
+    """Context passed to scheme ``create_payment_payload``.
+
+    ``max_amount_per_payment`` is the resolved atomic spend cap; omitted when uncapped.
+    """
+
+    extensions: dict[str, Any] | None = None
+    max_amount_per_payment: str | None = None
+
+
 class SchemeNetworkClient(Protocol):
     """V2 client-side payment mechanism.
 

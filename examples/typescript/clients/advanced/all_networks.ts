@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
+ * (e.g., "algorand" before "aptos" before "canton" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
  */
 
 import {
@@ -20,6 +20,12 @@ import { x402Client, wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
 import { ExactAptosScheme } from "@x402/aptos/exact/client";
 import { toClientAvmSigner } from "@x402/avm";
 import { ExactAvmScheme } from "@x402/avm/exact/client";
+import { toClientCardanoSigner } from "@x402/cardano";
+import { ExactCardanoScheme } from "@x402/cardano/exact/client";
+import { createClientCasperSigner } from "@x402/casper";
+import { ExactCasperScheme } from "@x402/casper/exact/client";
+import { toClientCantonSigner } from "@x402/canton";
+import { ExactCantonScheme } from "@x402/canton/exact/client";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/client";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { UptoEvmScheme } from "@x402/evm/upto/client";
@@ -53,7 +59,32 @@ config();
 
 // Configuration - optional per network
 const avmPrivateKey = process.env.AVM_PRIVATE_KEY as string | undefined;
+const cardanoMnemonic = process.env.CARDANO_MNEMONIC as string | undefined;
+const cardanoNetwork = process.env.CARDANO_NETWORK || "cardano:preprod";
+const blockfrostBaseUrl = process.env.BLOCKFROST_PREPROD_URL;
+const blockfrostProjectId = process.env.BLOCKFROST_PROJECT_ID;
 const aptosPrivateKey = process.env.APTOS_PRIVATE_KEY as string | undefined;
+const casperPrivateKey = process.env.CASPER_PRIVATE_KEY as string | undefined;
+// Canton: the payer's hosted participant + SV Scan + self-custody key.
+// Network id is the CAIP-2 tier (canton:mainnet | canton:devnet); the
+// synchronizer/domain is carried separately, not encoded in the network id.
+const cantonParticipantUrl = process.env.CANTON_PARTICIPANT_URL as string | undefined;
+const cantonToken = process.env.CANTON_TOKEN as string | undefined;
+const cantonUserId = process.env.CANTON_USER_ID as string | undefined;
+const cantonSynchronizerId = process.env.CANTON_SYNCHRONIZER_ID as string | undefined;
+const cantonScanUrl = process.env.CANTON_SCAN_URL as string | undefined;
+const cantonParty = process.env.CANTON_PARTY as string | undefined;
+const cantonPrivateKeyPem = process.env.CANTON_PRIVATE_KEY as string | undefined;
+const cantonNetwork = (process.env.CANTON_NETWORK || "canton:mainnet") as Network;
+const cantonConfigured = Boolean(
+  cantonParticipantUrl &&
+    cantonToken &&
+    cantonUserId &&
+    cantonSynchronizerId &&
+    cantonScanUrl &&
+    cantonParty &&
+    cantonPrivateKeyPem,
+);
 const ccdPrivateKey = process.env.CCD_PRIVATE_KEY as string | undefined;
 const ccdAddress = process.env.CCD_ADDRESS as string | undefined;
 const evmPrivateKey = process.env.EVM_PRIVATE_KEY as `0x${string}` | undefined;
@@ -108,7 +139,9 @@ async function main(): Promise<void> {
   // Validate at least one private key is provided
   if (
     !avmPrivateKey &&
+    !cardanoMnemonic &&
     !aptosPrivateKey &&
+    !casperPrivateKey &&
     !(ccdPrivateKey && ccdAddress) &&
     !evmPrivateKey &&
     !keetaMnemonic &&
@@ -120,7 +153,7 @@ async function main(): Promise<void> {
     !xrplSeed
   ) {
     console.error(
-      "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CCD_PRIVATE_KEY + CCD_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_ACCOUNT_ID + NEAR_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY, TVM_PRIVATE_KEY, or XRPL_SEED is required",
+      "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CARDANO_MNEMONIC, CASPER_PRIVATE_KEY, CCD_PRIVATE_KEY + CCD_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_ACCOUNT_ID + NEAR_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY, TVM_PRIVATE_KEY, or XRPL_SEED is required",
     );
     process.exit(1);
   }
@@ -148,6 +181,48 @@ async function main(): Promise<void> {
     const account = Account.fromPrivateKey({ privateKey: new Ed25519PrivateKey(formattedKey) });
     client.register("aptos:*", new ExactAptosScheme(account));
     console.log(`Initialized Aptos account: ${account.accountAddress.toStringLong()}`);
+  }
+
+  // Register Cardano scheme if a mnemonic and Blockfrost connection are provided
+  if (cardanoMnemonic) {
+    if (!blockfrostBaseUrl || !blockfrostProjectId) {
+      console.error(
+        "❌ CARDANO_MNEMONIC requires BLOCKFROST_PREPROD_URL and BLOCKFROST_PROJECT_ID",
+      );
+      process.exit(1);
+    }
+    const cardanoSigner = toClientCardanoSigner({
+      mnemonic: cardanoMnemonic,
+      network: cardanoNetwork,
+      provider: { blockfrost: { baseUrl: blockfrostBaseUrl, projectId: blockfrostProjectId } },
+    });
+    client.register("cardano:*", new ExactCardanoScheme(cardanoSigner));
+    console.log(`Initialized Cardano signer on ${cardanoNetwork}`);
+  }
+
+  // Register Casper scheme if private key is provided
+  if (casperPrivateKey) {
+    const casperSigner = await createClientCasperSigner(
+      casperPrivateKey,
+      process.env.CASPER_PRIVATE_KEY_ALGORITHM === "secp256k1" ? 2 : 1, // Default to ED25519 if not specified
+    );
+    client.register("casper:*", new ExactCasperScheme(casperSigner));
+    console.log(`Initialized Casper account: ${casperSigner.accountAddress()}`);
+  }
+
+  // Register Canton scheme if a participant + Scan + payer key are provided
+  if (cantonConfigured) {
+    const cantonSigner = toClientCantonSigner({
+      participantUrl: cantonParticipantUrl!,
+      token: cantonToken!,
+      userId: cantonUserId!,
+      synchronizerId: cantonSynchronizerId!,
+      scanUrl: cantonScanUrl!,
+      party: cantonParty!,
+      privateKeyPem: cantonPrivateKeyPem!,
+    });
+    client.register(cantonNetwork, new ExactCantonScheme(cantonSigner));
+    console.log(`Initialized Canton party: ${cantonParty} on ${cantonNetwork}`);
   }
 
   // Register Concordium scheme if private key and address are provided

@@ -1,5 +1,113 @@
 # @x402/evm Changelog
 
+## 2.30.0
+
+### Minor Changes
+
+- [c349511](https://github.com/x402-foundation/x402/commit/c349511): Move batch-settlement admission locks off the durable `Channel` record onto `ChannelLockStorage`. Acquire in `onBeforeVerify` after cheap local rejects (one channel Get under the lock); `onAfterVerify` only stashes facilitator extras. `pendingRequest` is removed from `Channel`. **Breaking (custom storage):** implementors of `ChannelStorage` must drop `pendingRequest` handling and implement `ChannelLockStorage` for admission locks (leftover `pendingRequest` JSON is ignored, no backfill). InMemory, Redis, and File implement both roles; pass `lockStorage` to mix backends (e.g. File durable + Redis locks). Redis channel delete also drops the `:server:lock:` key; contested `updateChannel` CAS retries are bounded by `maxUpdateWaitMs` (default 5s). Unreadable file lock markers older than 30s are stolen so a crash cannot pin the channel. ([#4061](https://github.com/x402-foundation/x402/pull/4061)) - Thanks [@phdargen](https://github.com/phdargen) and [@cursoragent](https://github.com/cursoragent)!
+- [c349511](https://github.com/x402-foundation/x402/commit/c349511): Facilitator-managed voucher custody for the batch-settlement client and server: `voucherStoreMode: "facilitator"`, `extra.voucherManager` / `extra.refundAuthorizer` on managed 402s, server pass-through `/verify` + `/settle` for every payload (including `voucher`) with a facilitator-minted `pendingId`, managed refund consent via `refundAuthorizerSigner` or the facilitator's `delegatedRefund`, and an optional server-side replica store. The client packs `extra.refundAuthorizer` into `ChannelConfig.salt` as `bytes12(entropy) || bytes20(refundAuthorizer)` and accepts a channel index as `salt`. Also adds the `m.x402ChargeCounts` claim attestation (`decodeClaimAttestation`) and the `@x402/evm/batch-settlement` export. Self-managed custody stays the default and is unchanged on the wire. ([#4061](https://github.com/x402-foundation/x402/pull/4061)) - Thanks [@phdargen](https://github.com/phdargen) and [@cursoragent](https://github.com/cursoragent)!
+- Updated dependencies [0f41a8d](https://github.com/x402-foundation/x402/commit/0f41a8d)
+- Updated dependencies [c349511](https://github.com/x402-foundation/x402/commit/c349511)
+- Updated dependencies [7074943](https://github.com/x402-foundation/x402/commit/7074943)
+- Updated dependencies [3c0a740](https://github.com/x402-foundation/x402/commit/3c0a740)
+  - @x402/core@2.30.0
+
+### Patch Changes
+
+- [f99b2dc](https://github.com/x402-foundation/x402/commit/f99b2dc): Fixed synchronous auth-capture settlement and cancellation bookkeeping so stored payment balances remain usable for later refunds. ([#4092](https://github.com/x402-foundation/x402/pull/4092)) - Thanks [@mortezashojaei](https://github.com/mortezashojaei)!
+- [c349511](https://github.com/x402-foundation/x402/commit/c349511): Harden facilitator-managed batch settlement: managed EVM state parsing fails closed without releasing or corrupting facilitator admission state. Abandoned request contexts expire after the server's own `maxTimeoutSeconds` (minimum 5 seconds) plus a 10-second grace, malformed replica state is ignored, and refund enrichment failures retain the pending lock handle so `settlement_preflight_failed` cancellation can still release it. Self-managed batch settlement now also releases its admission lock on `settlement_preflight_failed`, so a pre-facilitator settle failure no longer holds the lock until its TTL. The wire contract is unchanged. ([#4061](https://github.com/x402-foundation/x402/pull/4061)) - Thanks [@phdargen](https://github.com/phdargen) and [@cursoragent](https://github.com/cursoragent)!
+- [c349511](https://github.com/x402-foundation/x402/commit/c349511): Fail closed on batch-settlement lock-store and storage implementation errors. A `TypeError`, `SyntaxError`, or `RangeError` while persisting a deposit charge after a successful settle now aborts the settle (`AfterSettleAbortError`, `voucher_store_unavailable`) instead of escaping core's `afterSettle` handling and returning a successful settle without a recorded charge. Any exception in `beforeVerify` after the admission `pendingId` is minted (lock acquire errors, corrupt stored channel rows) now returns a `verification_state_unavailable` abort and drops the request context, rather than being warned by core and continuing to facilitator verification with only the onchain `totalClaimed` baseline. ([#4061](https://github.com/x402-foundation/x402/pull/4061)) - Thanks [@phdargen](https://github.com/phdargen) and [@cursoragent](https://github.com/cursoragent)!
+- [70303ce](https://github.com/x402-foundation/x402/commit/70303ce): The exact EVM facilitator reports `invalid_exact_evm_payload` when an EIP-3009 or Permit2 payload is malformed, on v1 and v2 verify and settle. This reason replaces `invalid_payload`. The message names the first bad field, and `payer` is set when `from` is a string. The legacy `x402` `ErrorReasons` enum accepts this reason. ([#4052](https://github.com/x402-foundation/x402/pull/4052)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- [58e667f](https://github.com/x402-foundation/x402/commit/58e667f): The upto EVM facilitator reports `invalid_upto_evm_payload` on verify and settle when a Permit2 payload is malformed, and `invalid_upto_evm_required_amount` on verify when `requirements.amount` is not a number. This reason replaces `unsupported_payload_type`. The message names the first bad field, and `payer` is set when `from` is a string. ([#4115](https://github.com/x402-foundation/x402/pull/4115)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+
+## 2.29.0
+
+### Minor Changes
+
+- [28376d6](https://github.com/x402-foundation/x402/commit/28376d6): Bring the EVM auth-capture SDK to the v1.1 proposed spec: `paymentFlow` / `captureMode` replace `autoCapture`, facilitator-relayed capture/void/refund, salt binding, and namespaced `invalid_auth_capture_evm_*` error codes. **Breaking:** `extra.autoCapture` is rejected. Error reasons move from `invalid_*` to `invalid_auth_capture_evm_*`. Settle target is selected by `operatorType`, not `getCode`. Deadlines must be both-absolute or both-relative (mixing throws). Escrow routes with `operatorType: "custom"` must set `captureMode: "deferred"`; the sync default now throws at enhance time rather than escrowing funds the facilitator will not finalize. ([#3203](https://github.com/x402-foundation/x402/pull/3203)) - Thanks [@phdargen](https://github.com/phdargen) and [@A1igator](https://github.com/A1igator)!
+- [1566e13](https://github.com/x402-foundation/x402/commit/1566e13): Added facilitator-authored settlement metadata (`m`) to the builder-code ERC-8021 Schema 2 suffix. `DataSuffixContext` accepts `metadata`, `encodeBuilderCodeSuffix` and `parseBuilderCodeSuffixFromCalldata` handle `m`, and encoding now throws instead of truncating when the CBOR exceeds 65,535 bytes. ([#3666](https://github.com/x402-foundation/x402/pull/3666)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Updated dependencies [636f585](https://github.com/x402-foundation/x402/commit/636f585)
+- Updated dependencies [76f2f28](https://github.com/x402-foundation/x402/commit/76f2f28)
+- Updated dependencies [732c181](https://github.com/x402-foundation/x402/commit/732c181)
+- Updated dependencies [8c2b431](https://github.com/x402-foundation/x402/commit/8c2b431)
+- Updated dependencies [3525075](https://github.com/x402-foundation/x402/commit/3525075)
+- Updated dependencies [e95b066](https://github.com/x402-foundation/x402/commit/e95b066)
+- Updated dependencies [3bd3c1d](https://github.com/x402-foundation/x402/commit/3bd3c1d)
+- Updated dependencies [bc31d3e](https://github.com/x402-foundation/x402/commit/bc31d3e)
+- Updated dependencies [db2c98e](https://github.com/x402-foundation/x402/commit/db2c98e)
+- Updated dependencies [7abd80f](https://github.com/x402-foundation/x402/commit/7abd80f)
+- Updated dependencies [fa5eb06](https://github.com/x402-foundation/x402/commit/fa5eb06)
+- Updated dependencies [3ca54cb](https://github.com/x402-foundation/x402/commit/3ca54cb)
+- Updated dependencies [b609bf5](https://github.com/x402-foundation/x402/commit/b609bf5)
+- Updated dependencies [8065278](https://github.com/x402-foundation/x402/commit/8065278)
+  - @x402/core@2.29.0
+
+### Patch Changes
+
+- [636f585](https://github.com/x402-foundation/x402/commit/636f585): Add `AfterSettleAbortError`: an `afterSettle` hook can throw it to fail an onchain-successful settle closed (`success: false`) while keeping transaction, amount, payer, and onchain extra. HTTP `PAYMENT-RESPONSE` and MCP `_meta` forward that receipt, and other `afterSettle` errors stay non-fatal. EVM batch-settlement deposit persistence failures now abort this way instead of surfacing as successful settles. ([#3994](https://github.com/x402-foundation/x402/pull/3994)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- [2430637](https://github.com/x402-foundation/x402/commit/2430637): Fixed a facilitator crash when an asset-contract `eth_getCode` fails before verify awaits the check. The stored promise now has a rejection handler, and awaiting the check still throws that error. ([#3974](https://github.com/x402-foundation/x402/pull/3974)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- [470419d](https://github.com/x402-foundation/x402/commit/470419d): Fail closed when a batch-settlement refund receipt has no positive Refunded amount (possible no-op early return). ([#3096](https://github.com/x402-foundation/x402/pull/3096)) - Thanks [@SashaMIT](https://github.com/SashaMIT)!
+- [8355435](https://github.com/x402-foundation/x402/commit/8355435): Fixed batch-settlement charged-amount baseline when the server has no local channel record (after a full refund, idle auto-refund, or restart). The server now uses the facilitator-verified onchain `totalClaimed` instead of inferring it from the client voucher, and rejects the request if it is missing. The facilitator now requires non-refund vouchers and deposits to advance `maxClaimableAmount` to at least `totalClaimed + amount`. The facilitator also rejects a malformed or negative `requirements.amount` with a typed invalid response, keeps the minimum advance strictly above `totalClaimed` (so zero-price routes behave identically across SDKs), and the server parses `totalClaimed` with one canonical rule (no leading zeros, bounded numeric fallback). ([#3655](https://github.com/x402-foundation/x402/pull/3655)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe)!
+- [53486aa](https://github.com/x402-foundation/x402/commit/53486aa): Preserve recognized EIP-3009 contract revert reasons during exact/EVM verification. Probe unclassified simulation failures only when the node answered; transport errors retain the generic simulation-failed reason without extra diagnostic reads. ([#3101](https://github.com/x402-foundation/x402/pull/3101)) - Thanks [@shuhei0866](https://github.com/shuhei0866)!
+- [9da8085](https://github.com/x402-foundation/x402/commit/9da8085): Normalize the EIP-3009 signature `v` to 27 or 28 before calling `transferWithAuthorization`, so signatures that encode `v` as 0 or 1 are no longer rejected on-chain. ([#3822](https://github.com/x402-foundation/x402/pull/3822)) - Thanks [@notorious-d-e-v](https://github.com/notorious-d-e-v)!
+- [ec61ea5](https://github.com/x402-foundation/x402/commit/ec61ea5): Reject ERC-6492 wrappers whose factory calldata is empty. `classifyErc6492Payer` treats viem's `"0x"` as no deployment info, so exact verify returns `invalid_exact_evm_signature` instead of accepting a payment that settle cannot broadcast. v1 exact verify and auth-capture collect use the same helper. ([#4021](https://github.com/x402-foundation/x402/pull/4021)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- [7438976](https://github.com/x402-foundation/x402/commit/7438976): Fixed exact EVM verify reporting a failed payer `eth_getCode` as `invalid_exact_evm_signature`. The lookup failure is now `invalid_exact_evm_failed_to_verify_signature`, matching Go and Python, so a transient RPC error is not treated as a bad signature. ([#3690](https://github.com/x402-foundation/x402/pull/3690)) - Thanks [@Bartok9](https://github.com/Bartok9)!
+- [39b5440](https://github.com/x402-foundation/x402/commit/39b5440): Fixed exact EVM verify and settle throwing on a malformed payload. Both now return `invalid_payload` when the EIP-3009 or Permit2 authorization is missing or the wrong shape. ([#3975](https://github.com/x402-foundation/x402/pull/3975)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- [97a3625](https://github.com/x402-foundation/x402/commit/97a3625): Reject non-canonical (high-s) EOA signatures in exact-scheme EIP-3009 verify (v1 and v2) with `invalid_exact_evm_non_canonical_signature`. Only a 65-byte signature from a payer with no bytecode is rejected. Adds the exported `isCanonicalEcdsaSignature` and `isPlainNonCanonicalEcdsaSignature` helpers. ([#2728](https://github.com/x402-foundation/x402/pull/2728)) - Thanks [@kakedashi3](https://github.com/kakedashi3) and [@claude](https://github.com/claude)!
+- [306fd36](https://github.com/x402-foundation/x402/commit/306fd36): Propagate `invalidMessage` from the settle-time re-verification into `SettleResponse.errorMessage`, including the EVM auth-capture collect and lifecycle settle paths, matching the behavior already present in the avm, casper, cardano, hedera, tvm, and xrpl mechanisms. Settle failures previously returned only `errorReason`, so the diagnostic detail (e.g. the underlying Solana simulation error) was dropped even though `/verify` returned it. ([#3119](https://github.com/x402-foundation/x402/pull/3119)) - Thanks [@notorious-d-e-v](https://github.com/notorious-d-e-v)!
+- [7abd80f](https://github.com/x402-foundation/x402/commit/7abd80f): Call scheme `settleOnCancel` even when no before-handler settle has completed, passing the completed `settledPhases` so the scheme decides. A failure-path receipt includes a cancel settle only when a before-handler settlement exists; otherwise it echoes that settlement or is omitted, and MCP rethrows the handler error when there is no failure receipt. SVM `upto` and auth-capture `settleOnCancel` return nothing unless the before-handler settle already completed. ([#3993](https://github.com/x402-foundation/x402/pull/3993)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- [b5ee357](https://github.com/x402-foundation/x402/commit/b5ee357): Warn (once per network) when gas sponsoring is advertised but the client cannot read the chain, instead of silently skipping the sponsored permit/approval; document that `rpcUrl` or a reading signer is required for sponsored Permit2 payments. ([#3459](https://github.com/x402-foundation/x402/pull/3459)) - Thanks [@GigaHierz](https://github.com/GigaHierz) and [@claude](https://github.com/claude)!
+- [8065278](https://github.com/x402-foundation/x402/commit/8065278): Depend on zod ^4.6.6 so GHSA-mrhx-c7xc-m3w5 (CVE-2023-54404) is fixed. There is no patched zod 3.x. `PaymentRequired` `accepts`, the legacy `x402Response` and discovered-resource `accepts` arrays, legacy discovery `items`, legacy supported `kinds`, and SIWX `resources` now reject more than 1024 entries. Inferred payment object types are unchanged. The re-exported `z`, schema classes, and `parsePaymentRequired` / `parsePaymentRequirements` / `parsePaymentPayload` results are zod 4. Code that passed those schemas into a zod 3 API, or read `ZodError.errors`, needs zod 4 (use `.issues`). Legacy `processPriceToAtomicAmount` error text now uses zod 4 issue messages, for example "expected number to be >=0.0001". ([#3983](https://github.com/x402-foundation/x402/pull/3983)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+
+## 2.28.0
+
+### Minor Changes
+
+- [dd89698](https://github.com/x402-foundation/x402/commit/dd89698): Add Arc mainnet (chain ID 5042) and Arc Testnet (chain ID 5042002) with native USDC as the default stablecoin ([#3590](https://github.com/x402-foundation/x402/pull/3590)) - Thanks [@NotMcAfee](https://github.com/NotMcAfee)!
+
+### Patch Changes
+
+- [a9955ae](https://github.com/x402-foundation/x402/commit/a9955ae): Add Monad testnet USDC (`0x534b2f3A21130d7a60830c2Df862319e593943A3`, EIP-3009) as the default asset for `eip155:10143` so `"$0.10"` dollar-string pricing resolves on Monad testnet. Register v1 network name `monad-testnet`. ([#3570](https://github.com/x402-foundation/x402/pull/3570)) - Thanks [@phdargen](https://github.com/phdargen) and [@cursoragent](https://github.com/cursoragent)!
+  - @x402/core@2.28.0
+
+## 2.27.0
+
+### Minor Changes
+
+- Updated dependencies [5d3a2b2](https://github.com/x402-foundation/x402/commit/5d3a2b2)
+  - @x402/core@2.27.0
+
+### Patch Changes
+
+- [59f1347](https://github.com/x402-foundation/x402/commit/59f1347): `getEvmChainId` now requires a bare decimal CAIP-2 reference (`eip155:<digits>`). It used to call `parseInt`, which stops at the first non-digit, so `eip155:0x2105` resolved to chain ID `0` and `eip155:8453abc` to `8453` instead of being rejected — and that chain ID is signed into the EIP-712 domain for Permit2, EIP-3009 and batch-settlement. Chain IDs beyond `Number.MAX_SAFE_INTEGER` are now rejected instead of silently rounded. The Go and Python SDKs already reject all of these. ([#3521](https://github.com/x402-foundation/x402/pull/3521)) - Thanks [@HereForTheTechNFT](https://github.com/HereForTheTechNFT)!
+
+## 2.26.0
+
+### Minor Changes
+
+- [c10d3bb](https://github.com/x402-foundation/x402/commit/c10d3bb): EVM facilitators now cache a positive asset-contract check for 15 minutes instead of issuing a fresh eth_getCode on the payment token for every payment. Only positive results are cached, so a token observed mid-deployment still recovers on the next request. The cache is keyed by network and asset so entries cannot collide across chains. ([#3363](https://github.com/x402-foundation/x402/pull/3363)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- [76fe973](https://github.com/x402-foundation/x402/commit/76fe973): Pass the resolved atomic `spendControls` cap to every scheme on `PaymentPayloadContext.maxAmountPerPayment` (omitted when uncapped) so capital-locking schemes can reuse client policy without re-resolving it. Batch-settlement EVM servers always announce `extra.minDeposit` (default `10 × amount`, optional per-route override via `accepts.extra.minDeposit`). Clients size deposits from the hint when valid, clamped to that cap × `depositMultiplier` when a spend cap is set. Uncapped payments (`spendControls: false` or no per-asset cap) also leave deposits uncapped. Older 402s fall back to `depositMultiplier` for sizing. Servers may opt in to SDK enforcement via `enforceMinDeposit: true` (default off; facilitator never enforces). Export `invalid_batch_settlement_evm_deposit_below_min_deposit` for custom server enforcement. ([#3372](https://github.com/x402-foundation/x402/pull/3372)) - Thanks [@phdargen](https://github.com/phdargen) and [@cursoragent](https://github.com/cursoragent)!
+- Updated dependencies [76fe973](https://github.com/x402-foundation/x402/commit/76fe973)
+  - @x402/core@2.26.0
+
+### Patch Changes
+
+- [4fb5d07](https://github.com/x402-foundation/x402/commit/4fb5d07): Add Celo mainnet USDT (`0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e`) and USAT (`0xD2ab3C9A02DBBAB236BfEC45D1d755DF4267F771`), both EIP-3009, as default assets for `eip155:42220`, so `"$0.10 USDT"` and `"$0.10 USAT"` resolve on Celo. Bare `"$0.10"` still resolves to USDC. ([#3457](https://github.com/x402-foundation/x402/pull/3457)) - Thanks [@GigaHierz](https://github.com/GigaHierz)!
+- [20e525c](https://github.com/x402-foundation/x402/commit/20e525c): EVM exact settle's ERC-6492 branch now reads payer deployment from the verify it already awaited rather than issuing a second eth_getCode. Both reads happen within one settle call and before any deploy transaction, so this is not the post-deploy re-read that races RPC state propagation. ([#3365](https://github.com/x402-foundation/x402/pull/3365)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+
+## 2.25.0
+
+### Minor Changes
+
+- Updated dependencies [1bc2ae8](https://github.com/x402-foundation/x402/commit/1bc2ae8)
+- Updated dependencies [299b9bc](https://github.com/x402-foundation/x402/commit/299b9bc)
+- Updated dependencies [bbcb974](https://github.com/x402-foundation/x402/commit/bbcb974)
+  - @x402/core@2.25.0
+
+### Patch Changes
+
+- Update commerce-payments v1.1 auth-capture deployment addresses (AuthCaptureEscrow, EIP-3009 token collector, Permit2 token collector, and OperatorRefundCollector) to the current canonical CREATE2 set on Base. v1.0 addresses are unchanged; default exports still point at v1.1.
+
 ## 2.24.0
 
 ### Minor Changes

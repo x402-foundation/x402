@@ -42,6 +42,7 @@ func (c *ExactEvmSchemeV1) FindDefaultAsset(asset string, network x402.Network) 
 func (c *ExactEvmSchemeV1) CreatePaymentPayload(
 	ctx context.Context,
 	requirements types.PaymentRequirementsV1,
+	_ x402.PaymentPayloadContext,
 ) (types.PaymentPayloadV1, error) {
 	networkStr := requirements.Network
 

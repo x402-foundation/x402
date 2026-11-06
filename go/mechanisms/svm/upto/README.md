@@ -33,13 +33,43 @@ x402Client := x402.Newx402Client().
 
 ### Key Difference from Exact
 
-The upto client requires `PaymentRequirements.Extra["feePayer"]` (from the facilitator's `GetExtra()`) and `Extra["receiverAuthorizer"]` (from the server). The client signs only the channel `open`; the facilitator co-signs as fee and rent payer, then later submits the settlement carrying the server's voucher.
+The upto client requires `PaymentRequirements.Extra["feePayer"]` (from the facilitator's `GetExtra()`) and `Extra["receiverAuthorizer"]` (from the server). The client signs only the channel `open`; the facilitator co-signs as fee and rent payer, then later submits the settlement carrying a `receiverAuthorizer` voucher (server-signed, or facilitator-signed when delegated).
 
 Pass a `*svm.ClientConfig` with `RPCURL` to control which endpoint the client uses when the challenge omits the `recentBlockhash` / `recentSlot` hints.
 
 ## Server Usage
 
-Register `UptoSvmScheme` with middleware and use `SetSettlementOverrides` in your handler to specify the actual charge. The server must supply a hot `ReceiverAuthorizerSigner` that signs settlement vouchers; that key never signs a transaction and needs no SOL or token balance.
+Register `UptoSvmScheme` with middleware and use `SetSettlementOverrides` in your handler to specify the actual charge.
+
+### Receiver Authorizer
+
+The `receiverAuthorizer` signs settlement vouchers and is committed as the channel `authorized_signer` at deposit:
+
+- **Self-managed** (recommended): pass a `ReceiverAuthorizerSigner` (a hot Ed25519 key; it does not need SOL or tokens). Channels survive facilitator changes — any facilitator can relay your signed vouchers.
+- **Facilitator-delegated**: omit `ReceiverAuthorizerSigner`. The scheme picks up `extra.receiverAuthorizer` advertised by the facilitator's `/supported`. The server needs no voucher-signing key; the facilitator signs after authenticating that the claim settle comes from the same service that opened the channel. Delegation requires an out-of-band agreement with the facilitator plus authenticated server→facilitator settle calls — it is not part of the client payment flow.
+
+Self-managed:
+
+```go
+authorizer, err := svmsigners.NewReceiverAuthorizerSignerFromPrivateKey(
+    os.Getenv("SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"),
+)
+
+uptosvm.NewUptoSvmScheme(&uptosvm.Config{
+    ReceiverAuthorizerSigner: authorizer,
+    RPCURL:                   os.Getenv("SVM_RPC_URL"), // optional: embeds recentBlockhash/recentSlot in the 402
+})
+```
+
+Facilitator-delegated (omit `ReceiverAuthorizerSigner` only; `RPCURL` unchanged):
+
+```go
+uptosvm.NewUptoSvmScheme(&uptosvm.Config{
+    RPCURL: os.Getenv("SVM_RPC_URL"), // optional: same as self-managed
+})
+```
+
+Full server wiring:
 
 ```go
 import (
@@ -73,8 +103,8 @@ r.Use(ginmw.X402Payment(ginmw.Config{
         {
             Network: x402.Network("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"),
             Server: uptosvm.NewUptoSvmScheme(&uptosvm.Config{
-                ReceiverAuthorizerSigner: authorizer,
-                RPCURL:                   os.Getenv("SVM_RPC_URL"), // optional: embeds recentBlockhash/recentSlot in the 402
+                ReceiverAuthorizerSigner: authorizer, // omit for facilitator-delegated mode
+                RPCURL:                   os.Getenv("SVM_RPC_URL"),
             }),
         },
     },
@@ -124,8 +154,12 @@ import (
 
 maxChannelLifetimeSecs := 3600
 scheme := uptosvm.NewUptoSvmScheme(svmSigner, &uptosvm.Config{
-    RPCURL:                 os.Getenv("SVM_RPC_URL"),
     MaxChannelLifetimeSecs: &maxChannelLifetimeSecs,
+    // Optional: advertise a receiverAuthorizer so servers can delegate.
+    // Requires ResolveCallerIdentity — construction panics without it.
+    AuthorizerSigner:      authorizer,
+    ResolveCallerIdentity: resolveCallerIdentity,
+    // Optional: shared store for multi-replica facilitators. Default is in-memory.
 })
 facilitator.Register([]x402.Network{network}, scheme)
 
@@ -138,15 +172,19 @@ cleanup.Start(ctx, uptosvm.StartConfig{
 defer cleanup.Stop()
 ```
 
-The upto facilitator's `GetExtra()` returns a `feePayer` address. That key is set as the channel `payee` (with a zero distribution share) and `rent_payer`: it co-signs `open`, sponsors fees and rent, and signs `settle_and_seal`. Any nonzero settlement still requires the server's `receiverAuthorizer` voucher.
+The upto facilitator's `GetExtra()` returns a `feePayer` address and, when `AuthorizerSigner` is set, a `receiverAuthorizer`. `feePayer` is set as the channel `payee` (with a zero distribution share) and `rent_payer`: it co-signs `open`, sponsors fees and rent, and signs `settle_and_seal`.
+
+A facilitator that advertises a `receiverAuthorizer` (so servers can delegate to it) must authenticate that each claim settle originates from the service whose deposit settle opened the channel (e.g. SIWX, JWT, or an API credential correlated across the two settles). The scheme records that identity at deposit and requires an exact match at claim. If the facilitator has no such authentication mechanism, omit `AuthorizerSigner` so no `receiverAuthorizer` is advertised; servers then supply their own voucher signatures.
+
+Delegated mode stores the caller identity from `ResolveCallerIdentity` on the channel row. A deposit records the row before broadcast and reverts it if that open fails definitively. Claims do not write storage; a delegated claim without `voucherSignature` reads the row and treats it as absent once `ExpiresAt` has passed. A missing or different identity rejects the claim.
 
 ### Channel Storage and Rent Cleanup
 
-The scheme records every channel it sponsors in a `ChannelStorage` at settle time, and `RentCleanupManager` reads that store rather than scanning the chain. The default store is in-memory; inject a durable one so cleanup survives restarts and works across replicas:
+The scheme records every channel it sponsors in a `paymentchannels.PaymentChannelStorage` before broadcasting the deposit, and `RentCleanupManager` reads that store rather than scanning the chain. The default store is in-memory; inject a durable one so cleanup survives restarts and works across replicas:
 
 ```go
 scheme := uptosvm.NewUptoSvmScheme(svmSigner, &uptosvm.Config{
-    ChannelStorage: myDurableChannelStorage, // implements uptosvm.ChannelStorage
+    ChannelStorage: myDurableChannelStorage, // implements paymentchannels.PaymentChannelStorage
 })
 ```
 
@@ -171,7 +209,7 @@ Canonical program id: `CHNLxYvVA28MJP9PrFuDXccuoGXAx7jBacfLEkahyGsX`
 2. Facilitator advertises `extra.feePayer`
 3. Client derives the channel PDA and signs a payment-channel `open` that escrows the max amount
 4. Facilitator deposits by co-signing and broadcasting `open` (escrow settle, before the handler)
-5. Server performs work, calculates the actual cost, and signs a voucher for it
+5. Server performs work, calculates the actual cost, and attaches `type` plus a voucher when it owns the key
 6. Facilitator claims with `settle_and_seal` + `distribute` for the actual amount (≤ max)
 7. If the actual amount is `0`, the channel closes with a full refund to the client
 

@@ -19,6 +19,7 @@ import { address as toAddress } from "@solana/kit";
 type Params = {
   activeAccount: WalletAccount | null;
   paymentRequired: PaymentRequired;
+  rpcUrl?: string;
   onStatus: (message: string) => void;
 };
 
@@ -36,12 +37,14 @@ type BalanceState = {
  * @param params - Hook parameters containing account details and callbacks.
  * @param params.activeAccount - Wallet account whose balance is being tracked.
  * @param params.paymentRequired - Payment required response with accepts array.
+ * @param params.rpcUrl - Optional RPC endpoint; defaults to the public endpoint for the network.
  * @param params.onStatus - Callback for reporting status messages to the UI.
  * @returns Balance state and helper methods for refreshing/resetting data.
  */
 export function useSolanaBalance({
   activeAccount,
   paymentRequired,
+  rpcUrl,
   onStatus,
 }: Params): BalanceState {
   const [usdcBalance, setUsdcBalance] = useState<bigint | null>(null);
@@ -65,7 +68,7 @@ export function useSolanaBalance({
       try {
         setIsFetchingBalance(true);
 
-        const rpc = getRpcClient(firstRequirement.network);
+        const rpc = getRpcClient(firstRequirement.network, rpcUrl);
         const mint = await fetchMint(rpc, firstRequirement.asset as Address);
         const tokenProgramAddress = mint.programAddress;
         const [ata] = await findAssociatedTokenPda({
@@ -99,7 +102,7 @@ export function useSolanaBalance({
         setIsFetchingBalance(false);
       }
     },
-    [activeAccount, firstRequirement, onStatus, resetBalance],
+    [activeAccount, firstRequirement, rpcUrl, onStatus, resetBalance],
   );
 
   useEffect(() => {

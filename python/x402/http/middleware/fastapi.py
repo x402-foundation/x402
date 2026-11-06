@@ -21,11 +21,13 @@ except ImportError as e:
     ) from e
 
 from ...schemas import SettleResponse, VerifiedPaymentCancelOptions
+from ..background_init import handle_background_init_error
 from ..constants import SETTLEMENT_OVERRIDES_HEADER
 from ..facilitator_client_base import FacilitatorResponseError
 from ..types import (
     HTTPAdapter,
     HTTPRequestContext,
+    HTTPResponseInstructions,
     HTTPTransportContext,
     PaywallConfig,
     RoutesConfig,
@@ -164,6 +166,31 @@ def _facilitator_error_response(error: FacilitatorResponseError) -> JSONResponse
     )
 
 
+def _declared_plain_text_body(response: HTTPResponseInstructions) -> str | None:
+    content_type = (
+        response.headers.get("Content-Type") or response.headers.get("content-type") or ""
+    )
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    if media_type == "text/plain" and isinstance(response.body, str):
+        return response.body
+    return None
+
+
+def _decoded_route_path(request: Request) -> str:
+    """request.url.path with any ASGI root_path mount prefix stripped,
+    mirroring Starlette's own get_route_path so mounted apps stay protected.
+    """
+    path = request.url.path
+    root_path = request.scope.get("root_path", "")
+    if not root_path or not path.startswith(root_path):
+        return path
+    if path == root_path:
+        return ""
+    if path[len(root_path)] == "/":
+        return path[len(root_path) :]
+    return path
+
+
 def payment_middleware(
     routes: RoutesConfig,
     server: x402ResourceServer,
@@ -178,7 +205,7 @@ def payment_middleware(
         server: Pre-configured x402ResourceServer.
         paywall_config: Optional paywall UI configuration.
         paywall_provider: Optional custom paywall provider.
-        sync_facilitator_on_start: Fetch facilitator support on first request.
+        sync_facilitator_on_start: Fetch facilitator support when the middleware is created.
 
     Returns:
         FastAPI middleware function.
@@ -226,24 +253,39 @@ def payment_middleware(
     if paywall_provider:
         http_server.register_paywall_provider(paywall_provider)
 
-    # Lazy initialization state with async lock for concurrency safety
     init_done = False
-    init_lock = asyncio.Lock()
+    init_task: asyncio.Task[None] | None = None
+
+    # Initialize if requested - queries facilitator /supported to populate
+    # facilitator clients. Fatal capability / route mismatches exit the process
+    # so a misconfigured server does not stay up until the first paid request.
+    if sync_facilitator_on_start:
+        try:
+            http_server.initialize()
+            init_done = True
+        except Exception as error:
+            handle_background_init_error(error)
+
+    async def initialize_in_background() -> None:
+        nonlocal init_done
+        await asyncio.to_thread(http_server.initialize)
+        init_done = True
 
     async def middleware(
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        nonlocal init_done
+        nonlocal init_task
 
         # Create adapter and context
         adapter = FastAPIAdapter(request)
-        # Routers dispatch on the escaped path, so route matching must use the
-        # raw request path rather than the decoded URL path.
+        # Starlette dispatches literal routes on the decoded path but
+        # wildcard/param routes on the escaped one, so match both.
         raw_path = request.scope["raw_path"].decode("ascii").split("?")[0]
         context = HTTPRequestContext(
             adapter=adapter,
             path=raw_path,
+            decoded_path=_decoded_route_path(request),
             method=request.method,
             payment_header=(
                 adapter.get_header("payment-signature") or adapter.get_header("x-payment")
@@ -254,15 +296,18 @@ def payment_middleware(
         if not http_server.requires_payment(context):
             return await call_next(request)
 
-        # Initialize on first protected request (double-checked locking)
+        # Share initialization across requests, even if one waiter is cancelled.
         if sync_facilitator_on_start and not init_done:
-            async with init_lock:
-                if not init_done:
-                    try:
-                        http_server.initialize()
-                    except FacilitatorResponseError as error:
-                        return _facilitator_error_response(error)
-                    init_done = True
+            if init_task is None or init_task.done():
+                init_task = asyncio.create_task(initialize_in_background())
+                # Retrieve failures even when every waiting request has disconnected.
+                init_task.add_done_callback(
+                    lambda task: None if task.cancelled() else task.exception()
+                )
+            try:
+                await asyncio.shield(init_task)
+            except FacilitatorResponseError as error:
+                return _facilitator_error_response(error)
 
         # Process payment request
         try:
@@ -288,18 +333,25 @@ def payment_middleware(
                     status_code=402,
                 )
 
+            plain_text = _declared_plain_text_body(response)
             if response.is_html:
                 return HTMLResponse(
                     content=response.body,
                     status_code=response.status,
                     headers=response.headers,
                 )
-            else:
-                return JSONResponse(
-                    content=response.body or {},
+            if plain_text is not None:
+                return Response(
+                    content=plain_text,
                     status_code=response.status,
                     headers=response.headers,
+                    media_type="text/plain",
                 )
+            return JSONResponse(
+                content=response.body or {},
+                status_code=response.status,
+                headers=response.headers,
+            )
 
         if result.type == "payment-verified":
             # Store payment info in request state
@@ -384,12 +436,20 @@ def payment_middleware(
                     resp = settle_result.response
                     if resp is None:
                         return JSONResponse(content={}, status_code=402)
+                    plain_text = _declared_plain_text_body(resp)
                     if resp.is_html:
                         return Response(
                             content=resp.body,
                             status_code=resp.status,
                             headers=resp.headers,
                             media_type="text/html",
+                        )
+                    if plain_text is not None:
+                        return Response(
+                            content=plain_text,
+                            status_code=resp.status,
+                            headers=resp.headers,
+                            media_type="text/plain",
                         )
                     return JSONResponse(
                         content=resp.body or {},
@@ -430,7 +490,7 @@ def payment_middleware(
                     settle_response, result.payment_requirements
                 )
                 return JSONResponse(
-                    content={},
+                    content={"error": "settlement_failed"},
                     status_code=402,
                     headers={
                         "Content-Type": "application/json",
@@ -478,7 +538,7 @@ def payment_middleware_from_config(
         schemes: Scheme registrations for server-side processing.
         paywall_config: Optional paywall UI configuration.
         paywall_provider: Optional custom paywall provider.
-        sync_facilitator_on_start: Fetch facilitator support on first request.
+        sync_facilitator_on_start: Fetch facilitator support when the middleware is created.
 
     Returns:
         FastAPI middleware function.

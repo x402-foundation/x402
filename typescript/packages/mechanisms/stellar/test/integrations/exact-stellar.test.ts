@@ -1,3 +1,4 @@
+import { Keypair, Networks as StellarNetworks, authorizeEntry, xdr } from "@stellar/stellar-sdk";
 import { x402Client, x402HTTPClient } from "@x402/core/client";
 import { x402Facilitator } from "@x402/core/facilitator";
 import {
@@ -18,10 +19,16 @@ import {
 } from "@x402/core/types";
 import { convertToTokenAmount } from "@x402/core/utils";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createEd25519Signer, Ed25519Signer, STELLAR_TESTNET_CAIP2 } from "../../src";
+import {
+  createEd25519Signer,
+  Ed25519Signer,
+  InsufficientBalanceError,
+  STELLAR_TESTNET_CAIP2,
+} from "../../src";
 import { ExactStellarScheme as ExactStellarClient } from "../../src/exact/client";
 import { ExactStellarScheme as ExactStellarFacilitator } from "../../src/exact/facilitator";
 import { ExactStellarScheme as ExactStellarServer } from "../../src/exact/server";
+import { getAddressCredentials } from "../../src/shared";
 import type { ExactStellarPayloadV2 } from "../../src/types";
 
 // Load private keys and addresses from environment
@@ -158,17 +165,70 @@ function buildStellarPaymentRequirements(
 }
 
 /**
- * Helper to check if an error is due to insufficient balance
+ * Reads the protocol version the testnet is currently running, so CAP-71 V2
+ * assertions only apply once Protocol 28 has been voted in.
+ *
+ * @returns The network's current protocol version
+ */
+async function getTestnetProtocolVersion(): Promise<number> {
+  const res = await fetch(`${HORIZON_TESTNET}/`);
+  if (!res.ok) {
+    throw new Error(`Horizon root request failed: ${res.status}`);
+  }
+  const root = (await res.json()) as { current_protocol_version: number };
+  return root.current_protocol_version;
+}
+
+/**
+ * Returns the credential arm and the single authorization entry of a transaction.
+ *
+ * @param transactionXDR - The base64 transaction envelope XDR
+ * @returns The credential type name and the entry it was read from
+ */
+function readSingleAuthEntry(transactionXDR: string): {
+  credentialType: string;
+  entry: xdr.SorobanAuthorizationEntry;
+} {
+  const envelope = xdr.TransactionEnvelope.fromXDR(transactionXDR, "base64");
+  const auth = envelope.v1().tx().operations()[0].body().invokeHostFunctionOp().auth();
+
+  if (auth.length !== 1) {
+    throw new Error(`Expected exactly 1 auth entry, got ${auth.length}`);
+  }
+  return { credentialType: auth[0].credentials().switch().name, entry: auth[0] };
+}
+
+/**
+ * Replaces the authorization entries on a transaction's InvokeHostFunction
+ * operation, leaving the rest of the envelope untouched.
+ *
+ * @param transactionXDR - The base64 transaction envelope XDR
+ * @param auth - The replacement authorization entries
+ * @returns The re-serialized base64 transaction envelope XDR
+ */
+function replaceAuthEntries(transactionXDR: string, auth: xdr.SorobanAuthorizationEntry[]): string {
+  const envelope = xdr.TransactionEnvelope.fromXDR(transactionXDR, "base64");
+  envelope.v1().tx().operations()[0].body().invokeHostFunctionOp().auth(auth);
+  return envelope.toXDR("base64");
+}
+
+/**
+ * Checks whether an error represents an insufficient Stellar balance.
+ *
+ * @param error - Error to inspect
+ * @returns Whether the error indicates insufficient balance
  */
 function isInsufficientBalanceError(error: unknown): boolean {
-  if (error instanceof Error) {
-    return (
-      error.message.includes("resulting balance is not within the allowed range") ||
-      error.message.includes("insufficient balance") ||
-      error.message.includes("Error(Contract, #10)")
-    );
+  if (error instanceof InsufficientBalanceError) {
+    return true;
   }
-  return false;
+
+  return (
+    error instanceof Error &&
+    (error.message.includes("resulting balance is not within the allowed range") ||
+      error.message.includes("insufficient balance") ||
+      error.message.includes("Error(Contract, #10)"))
+  );
 }
 
 describe.skipIf(missingEnvVars)("Stellar Integration Tests", () => {
@@ -256,6 +316,211 @@ describe.skipIf(missingEnvVars)("Stellar Integration Tests", () => {
       expect(settleResponse.transaction).toBeDefined();
       expect(settleResponse.payer).toBe(clientAddress);
       logStellarExpertTxUrl(settleResponse.transaction);
+    });
+  });
+
+  describe("CAP-71 V2 address credentials (Protocol 28)", () => {
+    let protocolVersion: number;
+    let client: x402Client;
+    let server: x402ResourceServer;
+    let facilitatorScheme: ExactStellarFacilitator;
+
+    beforeAll(async () => {
+      protocolVersion = await getTestnetProtocolVersion();
+      console.log(`Stellar testnet is running protocol version ${protocolVersion}\n`);
+    });
+
+    beforeEach(async () => {
+      // Default spend controls reject the XLM test asset; these tests cover the
+      // scheme and facilitator, not spend controls (matches the suites above).
+      client = new x402Client()
+        .setSpendControls(false)
+        .register(STELLAR_TESTNET_CAIP2, new ExactStellarClient(clientSigner));
+
+      facilitatorScheme = new ExactStellarFacilitator([facilitatorSigner]);
+      const facilitator = new x402Facilitator().register(STELLAR_TESTNET_CAIP2, facilitatorScheme);
+
+      server = new x402ResourceServer(new StellarFacilitatorClient(facilitator));
+      server.register(STELLAR_TESTNET_CAIP2, new ExactStellarServer());
+      await server.initialize();
+    });
+
+    /**
+     * Builds a payment payload through the real client, so the auth entries come
+     * from live recording-mode simulation rather than a fixture.
+     *
+     * @param amount - The payment amount in smallest units
+     * @returns The payment payload and the requirements it matched
+     */
+    async function createLivePayload(
+      amount = "1000",
+    ): Promise<{ paymentPayload: PaymentPayload; accepted: PaymentRequirements }> {
+      const accepts = [buildStellarPaymentRequirements(RESOURCE_SERVER_ADDRESS, amount)];
+      const paymentRequired = await server.createPaymentRequiredResponse(accepts, {
+        url: "https://company.co",
+        description: "CAP-71 V2 credential coverage",
+        mimeType: "application/json",
+      });
+
+      let paymentPayload: PaymentPayload;
+      try {
+        paymentPayload = await client.createPaymentPayload(paymentRequired);
+      } catch (error) {
+        if (isInsufficientBalanceError(error)) {
+          throw new Error(
+            `Insufficient balance on testnet account ${clientAddress}. ` +
+              `Asset: ${XLM_TESTNET_ASSET}. Ensure the account is funded (e.g. via Friendbot).`,
+          );
+        }
+        throw error;
+      }
+
+      const accepted = server.findMatchingRequirements(accepts, paymentPayload);
+      if (!accepted) {
+        throw new Error("No matching payment requirements for the built payload");
+      }
+      return { paymentPayload, accepted };
+    }
+
+    it("should verify and settle whichever credential arm live simulation returns", async () => {
+      const { paymentPayload, accepted } = await createLivePayload();
+      const { transaction } = paymentPayload.payload as ExactStellarPayloadV2;
+      const { credentialType, entry } = readSingleAuthEntry(transaction);
+
+      console.log(
+        `Recording-mode simulation on protocol ${protocolVersion} returned ` +
+          `credential arm: ${credentialType}\n`,
+      );
+
+      // Simulation currently returns the legacy arm on Protocol 28; the point of
+      // this assertion is that whatever arm it returns is address-based and the
+      // shared helper reads it, so a future flip to V2 keeps working.
+      expect(["sorobanCredentialsAddress", "sorobanCredentialsAddressV2"]).toContain(
+        credentialType,
+      );
+      expect(getAddressCredentials(entry.credentials())).toBeDefined();
+
+      const verifyResponse = await server.verifyPayment(paymentPayload, accepted);
+      expect(verifyResponse.isValid).toBe(true);
+      expect(verifyResponse.payer).toBe(clientAddress);
+
+      const settleResponse = await server.settlePayment(paymentPayload, accepted);
+      expect(settleResponse.success).toBe(true);
+      expect(settleResponse.payer).toBe(clientAddress);
+      logStellarExpertTxUrl(settleResponse.transaction);
+    });
+
+    it("should verify and settle a genuinely V2-signed auth entry", async ctx => {
+      // The V2 arm only exists on the network from Protocol 28 onward
+      if (protocolVersion < 28) {
+        ctx.skip();
+      }
+
+      const { paymentPayload, accepted } = await createLivePayload();
+      const { transaction } = paymentPayload.payload as ExactStellarPayloadV2;
+      const { entry } = readSingleAuthEntry(transaction);
+
+      const credentials = getAddressCredentials(entry.credentials());
+      if (!credentials) {
+        throw new Error("Expected address credentials on the simulated auth entry");
+      }
+
+      // Re-sign the simulated invocation on the V2 arm, over the address-bound
+      // CAP-71 preimage. This is what a client (or a future recording-mode
+      // simulation) emitting V2 produces, and enforce-mode simulation on a
+      // Protocol 28 network validates the signature for real.
+      const v2Signed = await authorizeEntry(
+        new xdr.SorobanAuthorizationEntry({
+          credentials: xdr.SorobanCredentials.sorobanCredentialsAddressV2(
+            new xdr.SorobanAddressCredentials({
+              address: credentials.address(),
+              nonce: credentials.nonce(),
+              signatureExpirationLedger: 0, // replaced by authorizeEntry
+              signature: xdr.ScVal.scvVoid(),
+            }),
+          ),
+          rootInvocation: entry.rootInvocation(),
+        }),
+        Keypair.fromSecret(CLIENT_PRIVATE_KEY),
+        credentials.signatureExpirationLedger(),
+        StellarNetworks.TESTNET,
+      );
+
+      const v2Payload: PaymentPayload = {
+        ...paymentPayload,
+        payload: { transaction: replaceAuthEntries(transaction, [v2Signed]) },
+      };
+      expect(
+        readSingleAuthEntry((v2Payload.payload as ExactStellarPayloadV2).transaction)
+          .credentialType,
+      ).toBe("sorobanCredentialsAddressV2");
+
+      const verifyResponse = await server.verifyPayment(v2Payload, accepted);
+      expect(verifyResponse.isValid).toBe(true);
+      expect(verifyResponse.payer).toBe(clientAddress);
+
+      const settleResponse = await server.settlePayment(v2Payload, accepted);
+      expect(settleResponse.success).toBe(true);
+      expect(settleResponse.payer).toBe(clientAddress);
+      logStellarExpertTxUrl(settleResponse.transaction);
+    });
+
+    it("should reject a V2 entry whose signature commits to the legacy V1 preimage", async ctx => {
+      // Below Protocol 28 the host rejects the V2 arm outright, so there is
+      // nothing to distinguish here.
+      if (protocolVersion < 28) {
+        ctx.skip();
+      }
+
+      const { paymentPayload, accepted } = await createLivePayload();
+      const { transaction } = paymentPayload.payload as ExactStellarPayloadV2;
+      const { entry } = readSingleAuthEntry(transaction);
+
+      const credentials = getAddressCredentials(entry.credentials());
+      if (!credentials) {
+        throw new Error("Expected address credentials on the simulated auth entry");
+      }
+      const expirationLedger = credentials.signatureExpirationLedger();
+
+      // Sign the legacy, non-address-bound preimage...
+      const v1Signed = await authorizeEntry(
+        new xdr.SorobanAuthorizationEntry({
+          credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
+            new xdr.SorobanAddressCredentials({
+              address: credentials.address(),
+              nonce: credentials.nonce(),
+              signatureExpirationLedger: 0, // replaced by authorizeEntry
+              signature: xdr.ScVal.scvVoid(),
+            }),
+          ),
+          rootInvocation: entry.rootInvocation(),
+        }),
+        Keypair.fromSecret(CLIENT_PRIVATE_KEY),
+        expirationLedger,
+        StellarNetworks.TESTNET,
+      );
+
+      // ...then relabel that entry as V2, leaving a signature over the wrong
+      // preimage. Accepting the V2 arm must not mean accepting V1 signatures on
+      // it: enforce-mode simulation has to reject this.
+      const relabelledEntry = new xdr.SorobanAuthorizationEntry({
+        credentials: xdr.SorobanCredentials.sorobanCredentialsAddressV2(
+          v1Signed.credentials().address(),
+        ),
+        rootInvocation: v1Signed.rootInvocation(),
+      });
+
+      const tamperedPayload: PaymentPayload = {
+        ...paymentPayload,
+        payload: { transaction: replaceAuthEntries(transaction, [relabelledEntry]) },
+      };
+
+      const verifyResponse = await facilitatorScheme.verify(tamperedPayload, accepted);
+      expect(verifyResponse.isValid).toBe(false);
+      // Pin the reason so this cannot pass for an unrelated failure (fee,
+      // expiration, malformed envelope): the network's enforce-mode simulation
+      // must be what rejects the mismatched signature.
+      expect(verifyResponse.invalidReason).toBe("invalid_exact_stellar_payload_simulation_failed");
     });
   });
 

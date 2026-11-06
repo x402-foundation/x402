@@ -1,3 +1,0 @@
-kind: fixed
-body: Prevented overflow when resolving large percentage settlement overrides.
-time: 2026-07-27T14:09:53.922115+09:00

@@ -7,11 +7,15 @@
 
 export const ErrAssetNotDeployedContract = "asset_not_deployed_contract";
 
+export const ErrInvalidPayload = "invalid_exact_evm_payload";
 export const ErrInvalidScheme = "invalid_exact_evm_scheme";
 export const ErrNetworkMismatch = "invalid_exact_evm_network_mismatch";
 export const ErrMissingEip712Domain = "invalid_exact_evm_missing_eip712_domain";
 export const ErrRecipientMismatch = "invalid_exact_evm_recipient_mismatch";
 export const ErrInvalidSignature = "invalid_exact_evm_signature";
+export const ErrInvalidSignatureS = "invalid_exact_evm_non_canonical_signature";
+/** Payer code lookup or signature RPC failed. Matches Go/Python `invalid_exact_evm_failed_to_verify_signature`. */
+export const ErrFailedToVerifySignature = "invalid_exact_evm_failed_to_verify_signature";
 export const ErrValidBeforeExpired = "invalid_exact_evm_payload_authorization_valid_before";
 export const ErrValidAfterInFuture = "invalid_exact_evm_payload_authorization_valid_after";
 export const ErrInvalidAuthorizationValue = "invalid_exact_evm_authorization_value";
@@ -73,6 +77,7 @@ export const ErrEip2612SpenderNotPermit2 = "eip2612_spender_not_permit2";
 export const ErrEip2612DeadlineExpired = "eip2612_deadline_expired";
 
 // Shared settle errors
+export const ErrFailedToParseSignature = "invalid_exact_evm_failed_to_parse_signature";
 export const ErrUnsupportedPayloadType = "unsupported_payload_type";
 export const ErrInvalidTransactionState = "invalid_transaction_state";
 export const ErrFactoryNotAllowed = "eip6492_factory_not_allowed";

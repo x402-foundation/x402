@@ -38,6 +38,9 @@ var DefaultAssets = map[string][]DefaultAssetInfo{
 	"eip155:143": {
 		{Asset: "0x754704Bc059F8C67012fEd69BC8A327a5aafb603", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
 	},
+	"eip155:10143": {
+		{Asset: "0x534b2f3A21130d7a60830c2Df862319e593943A3", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
+	},
 	"eip155:988": {
 		{Asset: "0x779Ded0c9e1022225f8E0630b35a9b54bE713736", Name: "USDT0", Version: "1", Decimals: 6, Symbol: "USDT0"},
 	},
@@ -88,6 +91,8 @@ var DefaultAssets = map[string][]DefaultAssetInfo{
 	},
 	"eip155:42220": {
 		{Asset: "0xcebA9300f2b948710d2653dD7B07f33A8B32118C", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
+		{Asset: "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e", Name: "Tether USD", Version: "1", Decimals: 6, Symbol: "USDT"},
+		{Asset: "0xD2ab3C9A02DBBAB236BfEC45D1d755DF4267F771", Name: "Tether America USD", Version: "1", Decimals: 6, Symbol: "USAT"},
 	},
 	"eip155:11142220": {
 		{Asset: "0x01C5C0122039549AD1493B8220cABEdD739BC44E", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
@@ -97,6 +102,18 @@ var DefaultAssets = map[string][]DefaultAssetInfo{
 	},
 	"eip155:1328": {
 		{Asset: "0x4fCF1784B31630811181f670Aea7A7bEF803eaED", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
+	},
+	"eip155:5042": {
+		{Asset: "0x3600000000000000000000000000000000000000", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
+	},
+	"eip155:5042002": {
+		{Asset: "0x3600000000000000000000000000000000000000", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
+	},
+	"eip155:480": {
+		{Asset: "0x79A02482A880bCE3F13e09Da970dC34db4CD24d1", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
+	},
+	"eip155:4801": {
+		{Asset: "0x66145f38cBAC35Ca6F1Dfb4914dF98F1614aeA88", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
 	},
 }
 
@@ -121,6 +138,7 @@ var legacyNetworkChainIDs = map[string]int64{
 	"skale-base-sepolia": 324705682,
 	"megaeth":            4326,
 	"monad":              143,
+	"monad-testnet":      10143,
 	"stable":             988,
 	"stable-testnet":     2201,
 	"celo":               42220,

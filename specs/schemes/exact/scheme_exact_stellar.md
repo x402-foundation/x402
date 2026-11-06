@@ -123,7 +123,9 @@ A facilitator verifying an `exact` scheme on Stellar MUST enforce all of the fol
 ### 3. Authorization Entries
 
 - The transaction MUST contain signed authorization entries for the `from` address.
-- Auth entries MUST use credential type `sorobanCredentialsAddress` only.
+- Auth entries MUST use an address-based credential type: either `sorobanCredentialsAddress` (legacy) or `sorobanCredentialsAddressV2` ([CAP-71](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0071.md)). Both carry the same `SorobanAddressCredentials` fields and differ only in the preimage the signer commits to: `ENVELOPE_TYPE_SOROBAN_AUTHORIZATION` for the legacy arm and the address-bound `ENVELOPE_TYPE_SOROBAN_AUTHORIZATION_WITH_ADDRESS` for V2.
+  - NOTE: Protocol 28 activates the V2 arm on the network, so clients may submit V2-signed entries from that point on. Recording-mode simulation still returns the legacy arm as of Protocol 28, but facilitators MUST accept both so they keep working when a client opts into V2 or the simulation default changes.
+- Auth entries MUST NOT use `sorobanCredentialsSourceAccount` or `sorobanCredentialsAddressWithDelegates` credentials.
 - The `rootInvocation` MUST NOT contain `subInvocations` that authorize additional operations beyond the transfer.
 - The facilitator MUST verify that all required signers have signed their auth entries.
 - The auth entry expiration ledger MUST NOT exceed `currentLedger + ceil(maxTimeoutSeconds / estimatedLedgerSeconds)`.

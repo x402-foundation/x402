@@ -10,7 +10,6 @@ import (
 	"strconv"
 
 	solana "github.com/gagliardetto/solana-go"
-	computebudget "github.com/gagliardetto/solana-go/programs/compute-budget"
 	"github.com/gagliardetto/solana-go/programs/token"
 	"github.com/gagliardetto/solana-go/rpc"
 
@@ -57,12 +56,23 @@ func (c *ExactSvmSchemeV1) FindDefaultAsset(asset string, network x402.Network) 
 func (c *ExactSvmSchemeV1) CreatePaymentPayload(
 	ctx context.Context,
 	requirements types.PaymentRequirementsV1,
+	_ x402.PaymentPayloadContext,
 ) (types.PaymentPayloadV1, error) {
 
 	// Validate network (V1 uses simple names, normalize to CAIP-2 internally)
 	networkStr := requirements.Network
 	if !svm.IsValidNetwork(networkStr) {
 		return types.PaymentPayloadV1{}, fmt.Errorf(ErrUnsupportedNetwork+": %s", requirements.Network)
+	}
+	var extraMap map[string]interface{}
+	if requirements.Extra != nil {
+		if err := json.Unmarshal(*requirements.Extra, &extraMap); err != nil {
+			return types.PaymentPayloadV1{}, fmt.Errorf(ErrInvalidExtraField+": %w", err)
+		}
+	}
+	version, err := svm.ResolveTransactionVersionFor(extraMap, c.config.ClientTransactionVersions())
+	if err != nil {
+		return types.PaymentPayloadV1{}, err
 	}
 
 	// Get network configuration
@@ -128,13 +138,6 @@ func (c *ExactSvmSchemeV1) CreatePaymentPayload(
 	}
 
 	// Get fee payer from requirements.extra (unmarshal Extra from json.RawMessage)
-	var extraMap map[string]interface{}
-	if requirements.Extra != nil {
-		if err := json.Unmarshal(*requirements.Extra, &extraMap); err != nil {
-			return types.PaymentPayloadV1{}, fmt.Errorf(ErrInvalidExtraField+": %w", err)
-		}
-	}
-
 	feePayerAddr, ok := extraMap["feePayer"].(string)
 	if !ok {
 		return types.PaymentPayloadV1{}, errors.New(ErrFeePayerRequired)
@@ -151,21 +154,6 @@ func (c *ExactSvmSchemeV1) CreatePaymentPayload(
 		return types.PaymentPayloadV1{}, fmt.Errorf(ErrFailedToGetLatestBlockhash+": %w", err)
 	}
 	recentBlockhash := latestBlockhash.Value.Blockhash
-
-	// Build compute budget instructions
-	cuLimit, err := computebudget.NewSetComputeUnitLimitInstructionBuilder().
-		SetUnits(svm.DefaultComputeUnitLimit).
-		ValidateAndBuild()
-	if err != nil {
-		return types.PaymentPayloadV1{}, fmt.Errorf(ErrFailedToBuildComputeLimitIx+": %w", err)
-	}
-
-	cuPrice, err := computebudget.NewSetComputeUnitPriceInstructionBuilder().
-		SetMicroLamports(svm.DefaultComputeUnitPriceMicrolamports).
-		ValidateAndBuild()
-	if err != nil {
-		return types.PaymentPayloadV1{}, fmt.Errorf(ErrFailedToBuildComputePriceIx+": %w", err)
-	}
 
 	// Build final transfer instruction
 	transferIx, err := token.NewTransferCheckedInstructionBuilder().
@@ -200,23 +188,20 @@ func (c *ExactSvmSchemeV1) CreatePaymentPayload(
 		memoPayload,
 	)
 
-	// Create final transaction
-	tx, err := solana.NewTransactionBuilder().
-		AddInstruction(cuLimit).
-		AddInstruction(cuPrice).
-		AddInstruction(transferIx).
-		AddInstruction(memoIx).
-		SetRecentBlockHash(recentBlockhash).
-		SetFeePayer(feePayer).
-		Build()
+	// Build the highest message version shared with extra.transactionVersions
+	// (version 0 when absent). Version 0 carries the compute budget as
+	// ComputeBudget instructions; version 1 carries it in the message config.
+	tx, err := svm.BuildClientTransaction(
+		version,
+		feePayer,
+		recentBlockhash,
+		[]solana.Instruction{transferIx, memoIx},
+		svm.DefaultComputeUnitLimit,
+		svm.DefaultComputeUnitPriceMicrolamports,
+	)
 	if err != nil {
 		return types.PaymentPayloadV1{}, fmt.Errorf(ErrFailedToCreateTransaction+": %w", err)
 	}
-
-	// Set message version to V0 (versioned transaction) for cross-platform compatibility
-	// This ensures the transaction can be correctly signed by facilitators in all languages
-	// (TypeScript, Python, Go) as they all expect versioned transactions
-	tx.Message.SetVersion(solana.MessageVersionV0)
 
 	// Partially sign with client's key
 	if err := c.signer.SignTransaction(ctx, tx); err != nil {

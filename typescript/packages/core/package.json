@@ -1,13 +1,13 @@
 {
   "name": "@x402/core",
-  "version": "2.24.0",
+  "version": "2.30.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
   "scripts": {
     "start": "tsx --env-file=.env index.ts",
-    "build": "tsup",
-    "test": "vitest run",
+    "build": "tsup && node ../../scripts/mirror-cjs-dts.mjs",
+    "test": "vitest run --coverage",
     "test:watch": "vitest",
     "test:integration": "vitest run test/integrations",
     "watch": "tsc --watch",
@@ -26,20 +26,22 @@
     "@types/node": "^22.13.4",
     "@typescript-eslint/eslint-plugin": "^8.29.1",
     "@typescript-eslint/parser": "^8.29.1",
+    "@vitest/coverage-v8": "^4.1.12",
     "eslint": "^9.24.0",
     "eslint-plugin-import": "^2.31.0",
     "eslint-plugin-jsdoc": "^50.6.9",
     "eslint-plugin-prettier": "^5.2.6",
+    "eslint-plugin-sonarjs": "^3.0.7",
     "prettier": "3.5.2",
     "tsup": "^8.4.0",
     "tsx": "^4.21.0",
     "typescript": "^5.7.3",
-    "vite": "^6.2.6",
+    "vite": "^6.4.5",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^3.0.5"
+    "vitest": "^4.1.12"
   },
   "dependencies": {
-    "zod": "^3.24.2"
+    "zod": "^4.6.6"
   },
   "exports": {
     ".": {
@@ -134,6 +136,7 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "NOTICE"
   ]
 }

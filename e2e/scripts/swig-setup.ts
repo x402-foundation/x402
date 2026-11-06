@@ -38,19 +38,24 @@ import {
 import {
   addSignersToTransactionMessage,
   appendTransactionMessageInstructions,
+  createDefaultRpcTransport,
   createKeyPairSignerFromBytes,
-  createSolanaRpc,
+  createSolanaRpcFromTransport,
   createTransactionMessage,
   getBase64EncodedWireTransaction,
   getSignatureFromTransaction,
+  isSolanaError,
   pipe,
   setTransactionMessageFeePayerSigner,
   setTransactionMessageLifetimeUsingBlockhash,
   signTransactionMessageWithSigners,
+  SOLANA_ERROR__RPC__TRANSPORT_HTTP_ERROR,
   type Address,
   type Instruction,
   type KeyPairSigner,
   type Rpc,
+  type RpcTransport,
+  type SolanaError,
   type SolanaRpcApi,
 } from "@solana/kit";
 import {
@@ -69,14 +74,56 @@ const MIN_AUTHORITY_SOL = 5_000_000n;
 /** Standard e2e exact endpoint price: $0.001 USDC (6 decimals). */
 const E2E_EXACT_PAYMENT_BASE_UNITS = 1_000n;
 const SWIG_FUND_MULTIPLIER = 10n;
+const RPC_RATE_LIMIT_ATTEMPTS = 6;
+const RPC_RATE_LIMIT_BASE_DELAY_MS = 1_000;
+const RPC_RATE_LIMIT_MAX_DELAY_MS = 30_000;
 
 function resolveRpcUrl(rpcUrl?: string): string {
   const trimmed = rpcUrl?.trim();
   return trimmed || DEVNET_RPC_URL;
 }
 
+function isRpcRateLimit(
+  error: unknown,
+): error is SolanaError<typeof SOLANA_ERROR__RPC__TRANSPORT_HTTP_ERROR> {
+  return (
+    isSolanaError(error, SOLANA_ERROR__RPC__TRANSPORT_HTTP_ERROR) &&
+    error.context.statusCode === 429
+  );
+}
+
+function rpcRateLimitDelayMs(attempt: number, retryAfter: string | null): number {
+  const seconds = retryAfter?.trim();
+  if (seconds && /^\d+$/.test(seconds)) {
+    const delay = Number(seconds) * 1_000;
+    if (delay > 0) {
+      return Math.min(delay, RPC_RATE_LIMIT_MAX_DELAY_MS);
+    }
+  }
+  return Math.min(RPC_RATE_LIMIT_BASE_DELAY_MS * 2 ** attempt, RPC_RATE_LIMIT_MAX_DELAY_MS);
+}
+
+/** Public devnet returns HTTP 429 under a setup burst. Resubmitting the same payload is idempotent. */
 function createRpc(rpcUrl?: string): Rpc<SolanaRpcApi> {
-  return createSolanaRpc(resolveRpcUrl(rpcUrl));
+  const inner = createDefaultRpcTransport({ url: resolveRpcUrl(rpcUrl) });
+  const transport: RpcTransport = async config => {
+    for (let attempt = 0; attempt < RPC_RATE_LIMIT_ATTEMPTS; attempt++) {
+      try {
+        return await inner(config);
+      } catch (error) {
+        if (!isRpcRateLimit(error) || attempt === RPC_RATE_LIMIT_ATTEMPTS - 1) {
+          throw error;
+        }
+        const delayMs = rpcRateLimitDelayMs(attempt, error.context.headers.get("retry-after"));
+        console.log(
+          `⏳ Solana RPC rate limited (429); retrying in ${delayMs}ms (${attempt + 1}/${RPC_RATE_LIMIT_ATTEMPTS - 1})`,
+        );
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+    }
+    throw new Error("Solana RPC rate limit retries exhausted");
+  };
+  return createSolanaRpcFromTransport(transport);
 }
 
 /** Poll signature status over HTTP RPC (same approach as @x402/svm facilitator signer). */

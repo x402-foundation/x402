@@ -18,14 +18,27 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import type { PaymentFlowName } from '@x402/core/types';
 
+/** always-succeeds Plutus V3 fixture (same bytes as cardano test stubs). */
+const CARDANO_ALWAYS_SUCCEEDS_SCRIPT = '4d01000033222220051200120011';
+const CARDANO_ALWAYS_SUCCEEDS_DATUM = 'd8799f182aff';
+const CARDANO_ALWAYS_SUCCEEDS_ADDRESS =
+  'addr_test1wp8l7eylksmjas7ypzm0q35dwnjdxxvsfn0z0lflqzgs55stpd682';
+
 /** Keep local types here to avoid circular imports with types.ts / networks.ts. */
 export type SdkId = 'typescript' | 'python' | 'go';
 export type ConfigRole = 'server' | 'client' | 'facilitator';
 /** Network id, e.g. "evm" — one per `mechanisms_<id>.json` file. No fixed union: adding a network is a catalog-only edit. */
 export type CatalogNetworkId = string;
 
-type PaymentScheme = 'exact' | 'upto' | 'batch-settlement';
-type AssetTransferMethod = 'eip3009' | 'permit2' | 'sequence' | 'ticketSequence';
+type PaymentScheme = 'exact' | 'upto' | 'batch-settlement' | 'auth-capture';
+type AssetTransferMethod =
+  | 'eip3009'
+  | 'permit2'
+  | 'sequence'
+  | 'ticketSequence'
+  | 'default'
+  | 'masumi'
+  | 'script';
 /** Payment ordering on the accept; mirrors core {@link PaymentFlowName}. */
 export type PaymentFlow = PaymentFlowName;
 export type NetworkMode = 'testnet' | 'mainnet';
@@ -104,8 +117,12 @@ export type RouteDefinition = {
   scheme: PaymentScheme;
   network: CatalogNetworkId;
   assetTransferMethod?: AssetTransferMethod;
-  /** SDKs that implement this route. */
+  /** SDKs that implement this route end to end (client, server and facilitator). */
   sdks: SdkId[];
+  /** SDKs that implement only the client role. Servers and facilitators never see them. */
+  clientSdks?: SdkId[];
+  /** SDKs that implement the facilitator role for this route. */
+  facilitatorSdks?: SdkId[];
   schemeOptions?: Record<string, boolean>;
   /** Every route declares its own price. */
   price: PriceSpec;
@@ -121,6 +138,14 @@ export type RouteDefinition = {
   paymentFlow?: PaymentFlow;
   /** Omit this route unless the named env var is set (optional add-on routes). */
   requiresEnv?: string;
+  /** Omit this route when the named env var is set (mutually exclusive add-on routes). */
+  requiresEnvAbsent?: string;
+  /** Payment completion window advertised on this route. */
+  maxTimeoutSeconds?: number;
+  /** Merged into the route payment option's `extra` (wire `PaymentRequirements.extra`). */
+  requirementsExtra?: Record<string, unknown>;
+  /** Scheme-specific `accepts.extra` fields (e.g. auth-capture deadlines and flow). */
+  schemeExtra?: Record<string, string | number | boolean>;
 };
 
 /** Fixed success body for every paid route (`timestamp` is added by the server). */
@@ -171,6 +196,13 @@ type EndpointLike = {
   paymentFlow?: PaymentFlow;
   schemeOptions?: Record<string, boolean>;
   extensions?: string[];
+  schemeExtra?: Record<string, string | number | boolean>;
+  /** Catalog SDKs that implement this route for every role. */
+  sdks?: SdkId[];
+  /** Catalog SDKs that implement only the client role. */
+  clientSdks?: SdkId[];
+  /** Catalog SDKs that implement the facilitator role for this route. */
+  facilitatorSdks?: SdkId[];
   health?: boolean;
   close?: boolean;
   /** MCP tool name, equal to `path` for MCP endpoints (`method: 'tool'`). */
@@ -266,9 +298,17 @@ export function getRouteDefinition(path: string): RouteDefinition {
   return def;
 }
 
-export function sdkRoutesFor(sdk: string): SdkRoute[] {
+/** Routes an SDK implements. With `role: 'client'`, routes it implements only as a client are included. */
+export function sdkRoutesFor(sdk: string, role?: ConfigRole): SdkRoute[] {
   return Object.entries(catalog.routes)
-    .filter(([, def]) => def.sdks.includes(sdk as SdkId))
+    .filter(
+      ([, def]) =>
+        (def.sdks.includes(sdk as SdkId) ||
+          (role === 'client' && def.clientSdks?.includes(sdk as SdkId))) &&
+        (role !== 'facilitator' ||
+          !def.facilitatorSdks ||
+          def.facilitatorSdks.includes(sdk as SdkId)),
+    )
     .map(([path, def]) => ({ path, ...def }));
 }
 
@@ -291,9 +331,13 @@ export function schemesForSdk(sdk: string): PaymentScheme[] {
 }
 
 /** Schemes an SDK implements for one catalog network (from route `sdks`). */
-export function schemesForSdkNetwork(sdk: string, network: CatalogNetworkId): PaymentScheme[] {
+export function schemesForSdkNetwork(
+  sdk: string,
+  network: CatalogNetworkId,
+  role?: ConfigRole,
+): PaymentScheme[] {
   const schemes = new Set<PaymentScheme>();
-  for (const route of sdkRoutesFor(sdk)) {
+  for (const route of sdkRoutesFor(sdk, role)) {
     if (route.network === network) {
       schemes.add(route.scheme);
     }
@@ -310,8 +354,9 @@ export function schemesForComponent(
   sdk: string,
   network: CatalogNetworkId,
   declaredSchemes: PaymentScheme[] | undefined,
+  role?: ConfigRole,
 ): PaymentScheme[] {
-  const sdkSchemes = schemesForSdkNetwork(sdk, network);
+  const sdkSchemes = schemesForSdkNetwork(sdk, network, role);
   if (!declaredSchemes?.length) {
     return sdkSchemes;
   }
@@ -374,6 +419,10 @@ export function sdkRouteToEndpoint(route: SdkRoute, transport: RouteTransport = 
       paymentFlow: route.paymentFlow,
       schemeOptions: route.schemeOptions,
       extensions: route.extensions,
+      sdks: route.sdks,
+      ...(route.clientSdks ? { clientSdks: route.clientSdks } : {}),
+      ...(route.facilitatorSdks ? { facilitatorSdks: route.facilitatorSdks } : {}),
+      ...(route.schemeExtra ? { schemeExtra: route.schemeExtra } : {}),
     };
   }
 
@@ -388,6 +437,10 @@ export function sdkRouteToEndpoint(route: SdkRoute, transport: RouteTransport = 
     paymentFlow: route.paymentFlow,
     schemeOptions: route.schemeOptions,
     extensions: route.extensions,
+    sdks: route.sdks,
+    ...(route.clientSdks ? { clientSdks: route.clientSdks } : {}),
+    ...(route.facilitatorSdks ? { facilitatorSdks: route.facilitatorSdks } : {}),
+    ...(route.schemeExtra ? { schemeExtra: route.schemeExtra } : {}),
   };
 }
 
@@ -459,12 +512,84 @@ export type RouteFilter = {
   excludeNetworks?: string[];
 };
 
-export function routeEnvSatisfied(route: SdkRoute, env: EnvLookup): boolean {
-  if (!route.requiresEnv) {
-    return true;
-  }
-  return Boolean(env(route.requiresEnv)?.trim());
+/** Which custody side a server process serves (dual-server batch harness). */
+export type BatchServerRole = 'standard' | 'managed-batch';
+
+/** True when schemeOptions selects facilitator-managed batch custody. */
+export function isFacilitatorManagedBatchOptions(
+  schemeOptions?: Record<string, boolean>,
+): boolean {
+  return schemeOptions?.facilitatorManaged === true;
 }
+
+/** True for batch-settlement routes with `facilitatorManaged: true`. */
+export function isFacilitatorManagedBatchRoute(route: {
+  scheme?: PaymentScheme;
+  schemeOptions?: Record<string, boolean>;
+}): boolean {
+  return route.scheme === 'batch-settlement' && isFacilitatorManagedBatchOptions(route.schemeOptions);
+}
+
+/**
+ * Narrow a route list to one batch custody side.
+ * `standard` keeps everything except facilitator-managed batch routes;
+ * `managed-batch` keeps only facilitator-managed batch routes.
+ */
+export function filterRoutesByBatchCustody<T extends { scheme?: PaymentScheme; schemeOptions?: Record<string, boolean> }>(
+  routes: T[],
+  role: BatchServerRole,
+): T[] {
+  switch (role) {
+    case 'standard':
+      return routes.filter(route => !isFacilitatorManagedBatchRoute(route));
+    case 'managed-batch':
+      return routes.filter(route => isFacilitatorManagedBatchRoute(route));
+    default:
+      throw new Error(`Unknown batch server role: ${(role as never) satisfies never}`);
+  }
+}
+
+/** Read the harness-assigned server custody role (`E2E_BATCH_SERVER_ROLE`). */
+export function batchServerRoleFromEnv(env: EnvLookup): BatchServerRole | undefined {
+  const raw = env('E2E_BATCH_SERVER_ROLE')?.trim().toLowerCase();
+  if (!raw) return undefined;
+  if (raw === 'standard' || raw === 'managed-batch') return raw;
+  throw new Error(`E2E_BATCH_SERVER_ROLE must be "standard" or "managed-batch", got "${raw}"`);
+}
+
+/**
+ * Debug/CI-only custody override (`EVM_BATCH_SETTLEMENT_VOUCHER_STORE_MODE=self|facilitator`).
+ * When set, the harness runs only one custody side.
+ */
+export function batchVoucherStoreOverrideFromEnv(
+  env: EnvLookup,
+): 'self' | 'facilitator' | undefined {
+  const raw = env('EVM_BATCH_SETTLEMENT_VOUCHER_STORE_MODE')?.trim().toLowerCase();
+  if (!raw) return undefined;
+  if (raw === 'self' || raw === 'facilitator') return raw;
+  throw new Error(
+    `EVM_BATCH_SETTLEMENT_VOUCHER_STORE_MODE must be "self" or "facilitator", got "${raw}"`,
+  );
+}
+
+/** True when the facilitator process must enable its voucher store + channel manager. */
+export function facilitatorVoucherStoreEnabled(env: EnvLookup): boolean {
+  const raw = env('E2E_FACILITATOR_VOUCHER_STORE')?.trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
+}
+
+export function routeEnvSatisfied(route: SdkRoute, env: EnvLookup): boolean {
+  if (route.requiresEnv && !env(route.requiresEnv)?.trim()) {
+    return false;
+  }
+  if (route.requiresEnvAbsent && env(route.requiresEnvAbsent)?.trim()) {
+    return false;
+  }
+  return true;
+}
+
+/** Harness-only POST path to trigger deferred auth-capture lifecycle capture on e2e servers. */
+export const AUTH_CAPTURE_E2E_CAPTURE_PATH = '/__e2e/auth-capture/capture';
 
 export function filterRoutes(routes: SdkRoute[], filter?: RouteFilter): SdkRoute[] {
   if (!filter?.excludeSchemes?.length && !filter?.excludeNetworks?.length) {
@@ -473,6 +598,24 @@ export function filterRoutes(routes: SdkRoute[], filter?: RouteFilter): SdkRoute
   const schemes = new Set(filter.excludeSchemes ?? []);
   const networks = new Set(filter.excludeNetworks ?? []);
   return routes.filter(route => !schemes.has(route.scheme) && !networks.has(route.network));
+}
+
+/** True when a catalog network/scheme pair is excluded by a harness or component route filter. */
+export function isRouteExcludedByFilter(
+  network: string,
+  scheme: string,
+  filter?: RouteFilter,
+): boolean {
+  if (!filter) {
+    return false;
+  }
+  if (filter.excludeNetworks?.includes(network)) {
+    return true;
+  }
+  if (filter.excludeSchemes?.includes(scheme)) {
+    return true;
+  }
+  return false;
 }
 
 export function availableRoutes(
@@ -637,7 +780,7 @@ export function enrichConfigFromMechanisms(
     excludeSchemes: config.excludeSchemes as string[] | undefined,
     excludeNetworks: config.excludeNetworks as string[] | undefined,
   };
-  const routes = availableRoutes(sdkRoutesFor(sdk), key => process.env[key], filter);
+  const routes = availableRoutes(sdkRoutesFor(sdk, type), key => process.env[key], filter);
 
   const fromCatalog = NETWORK_IDS.filter(id => routes.some(route => route.network === id));
   const protocolFamilies =
@@ -834,7 +977,8 @@ export type ResolvedRoute = {
   payTo: string;
   price: ResolvedPrice;
   /** PaymentOption-level `extra`, used when `price` is a USD string. */
-  extra?: Record<string, string>;
+  extra?: Record<string, unknown>;
+  maxTimeoutSeconds?: number;
   extensions: string[];
   settlementOverride?: { amount: string };
 };
@@ -847,16 +991,83 @@ function serverAddressEnvKey(network: CatalogNetworkId): string {
 /** Merge price-derived `extra` with catalog `paymentFlow` (authorization omitted on wire). */
 function mergeRouteExtra(
   priceExtra: Record<string, string> | undefined,
+  routeExtra: Record<string, unknown> | undefined,
   paymentFlow?: PaymentFlow,
-): Record<string, string> | undefined {
+): Record<string, unknown> | undefined {
   const wireFlow = paymentFlow && paymentFlow !== 'authorization' ? paymentFlow : undefined;
-  if (!wireFlow && !priceExtra) {
+  if (!wireFlow && !priceExtra && !routeExtra) {
     return undefined;
   }
   return {
+    ...routeExtra,
     ...priceExtra,
     ...(wireFlow ? { paymentFlow: wireFlow } : {}),
   };
+}
+
+function cardanoConfirmationPolicy(env: EnvLookup): Record<string, unknown> | undefined {
+  const raw = env('CARDANO_L1_CONFIRMATIONS')?.trim();
+  if (!raw) return undefined;
+  if (!/^-?(0|[1-9]\d?)$/.test(raw)) {
+    throw new Error(`CARDANO_L1_CONFIRMATIONS must be a plain integer from -1 to 20, got "${raw}"`);
+  }
+  const l1Confirmations = Number(raw);
+  if (l1Confirmations < -1 || l1Confirmations > 20) {
+    throw new Error(`CARDANO_L1_CONFIRMATIONS must be an integer from -1 to 20, got "${raw}"`);
+  }
+  return { confirmationPolicy: { l1Confirmations } };
+}
+
+function resolvePayTo(
+  route: SdkRoute,
+  caip2: string,
+  serverPayTo: string | undefined,
+  env: EnvLookup,
+  masumiEscrowAddress: (network: string) => string,
+): string | undefined {
+  if (route.network !== 'cardano') {
+    return serverPayTo;
+  }
+  switch (route.assetTransferMethod) {
+    case 'masumi':
+      return masumiEscrowAddress(caip2);
+    case 'script':
+      return env('SERVER_CARDANO_SCRIPT_ADDRESS') ?? CARDANO_ALWAYS_SUCCEEDS_ADDRESS;
+    default:
+      return serverPayTo;
+  }
+}
+
+/** Canton pins the instrument in `extra.instrumentId` ({admin, id}); verify
+ *  rejects a requirement without it. `CC` is the Amulet instrument. */
+function cantonRouteExtra(route: SdkRoute, env: EnvLookup): Record<string, unknown> | undefined {
+  if (route.network !== 'canton') {
+    return undefined;
+  }
+  const admin = env('SERVER_CANTON_INSTRUMENT_ADMIN');
+  if (!admin) {
+    throw new Error(`Route ${route.path}: SERVER_CANTON_INSTRUMENT_ADMIN is required`);
+  }
+  return { instrumentId: { admin, id: 'Amulet' } };
+}
+
+function cardanoRouteExtra(route: SdkRoute, env: EnvLookup): Record<string, unknown> | undefined {
+  if (route.network !== 'cardano') {
+    return undefined;
+  }
+  const extra: Record<string, unknown> = {};
+  const policy = cardanoConfirmationPolicy(env);
+  if (policy) {
+    Object.assign(extra, policy);
+  }
+  if (route.assetTransferMethod === 'script') {
+    extra.script = {
+      type: 'plutusV3',
+      code: env('SERVER_CARDANO_SCRIPT_CODE') ?? CARDANO_ALWAYS_SUCCEEDS_SCRIPT,
+    };
+    extra.datum = env('SERVER_CARDANO_SCRIPT_DATUM') ?? CARDANO_ALWAYS_SUCCEEDS_DATUM;
+  }
+  return Object.keys(extra).length > 0 ? extra : undefined;
 }
 
 function resolvePrice(
@@ -892,7 +1103,7 @@ function resolvePrice(
   const assetOverridden = Boolean(assetDefault) && asset !== assetDefault;
 
   const extra: Record<string, string> = {};
-  if (route.assetTransferMethod) {
+  if (route.assetTransferMethod && route.assetTransferMethod !== 'default') {
     extra.assetTransferMethod = route.assetTransferMethod;
   }
   if (spec.permit2Domain && modeConfig.permit2AssetName) {
@@ -920,18 +1131,28 @@ function resolvePrice(
 export function resolvePaymentRoutes(
   sdk: string,
   env: EnvLookup,
-  filter?: RouteFilter,
+  filter: RouteFilter | undefined,
+  masumiEscrowAddress: (network: string) => string,
 ): ResolvedRoute[] {
   const resolved: ResolvedRoute[] = [];
 
   for (const route of availableRoutes(sdkRoutesFor(sdk), env, filter)) {
     const def = getNetworkDefinition(route.network);
-    const payTo = env(serverAddressEnvKey(route.network));
-    if (!payTo) continue;
+    const serverPayTo = env(serverAddressEnvKey(route.network));
+    if (!serverPayTo) continue;
 
     const caip2 = env(derivedNetworkKey(route.network)) ?? def.networks.testnet.caip2;
+    const payTo = resolvePayTo(route, caip2, serverPayTo, env, masumiEscrowAddress);
+    if (!payTo) continue;
+
     const { price, extra: priceExtra } = resolvePrice(route, caip2, env);
-    const extra = mergeRouteExtra(priceExtra, route.paymentFlow);
+    const networkExtra = cardanoRouteExtra(route, env) ?? cantonRouteExtra(route, env);
+    const extra = mergeRouteExtra(
+      priceExtra,
+      route.requirementsExtra ? { ...route.requirementsExtra, ...networkExtra } : networkExtra,
+      route.paymentFlow,
+    );
+    const mergedExtra = route.schemeExtra ? { ...(extra ?? {}), ...route.schemeExtra } : extra;
 
     resolved.push({
       path: route.path,
@@ -940,7 +1161,8 @@ export function resolvePaymentRoutes(
       network: caip2,
       payTo,
       price,
-      ...(extra ? { extra } : {}),
+      ...(mergedExtra ? { extra: mergedExtra } : {}),
+      ...(route.maxTimeoutSeconds ? { maxTimeoutSeconds: route.maxTimeoutSeconds } : {}),
       extensions: route.extensions ?? [],
       ...(route.settlementOverride ? { settlementOverride: route.settlementOverride } : {}),
     });
@@ -963,6 +1185,53 @@ export function routeDiscoveryOutput(): {
     properties[key] = { type: 'string' };
   }
   return { example, schema: { properties, required: Object.keys(example) } };
+}
+
+const HARNESS_PAYMENT_SCHEMES = ['exact', 'upto', 'batch-settlement', 'auth-capture'] as const;
+
+/** Merge component-level and run-level route exclusions (union of exclude lists). */
+export function mergeRouteFilters(...filters: (RouteFilter | undefined)[]): RouteFilter {
+  const excludeSchemes = new Set<string>();
+  const excludeNetworks = new Set<string>();
+  for (const filter of filters) {
+    if (!filter) continue;
+    for (const scheme of filter.excludeSchemes ?? []) {
+      excludeSchemes.add(scheme);
+    }
+    for (const network of filter.excludeNetworks ?? []) {
+      excludeNetworks.add(network);
+    }
+  }
+  return {
+    ...(excludeSchemes.size > 0 ? { excludeSchemes: [...excludeSchemes] } : {}),
+    ...(excludeNetworks.size > 0 ? { excludeNetworks: [...excludeNetworks] } : {}),
+  };
+}
+
+/** Serialize a {@link RouteFilter} into env vars read by TS/Go/Python e2e servers. */
+export function routeFilterToEnv(filter: RouteFilter): Record<string, string> {
+  const env: Record<string, string> = {};
+  if (filter.excludeSchemes?.length) {
+    env.E2E_EXCLUDE_SCHEMES = filter.excludeSchemes.join(',');
+  }
+  if (filter.excludeNetworks?.length) {
+    env.E2E_EXCLUDE_NETWORKS = filter.excludeNetworks.join(',');
+  }
+  return env;
+}
+
+/**
+ * Route exclusions for the current harness run from selected scenarios
+ * (`--families`, `--schemes`, and other filters that narrow `filteredScenarios`).
+ */
+export function runRouteFilterForHarness(
+  selectedFamilies: ReadonlySet<string>,
+  selectedSchemes: ReadonlySet<string>,
+): RouteFilter {
+  return {
+    excludeNetworks: NETWORK_IDS.filter(id => !selectedFamilies.has(id)),
+    excludeSchemes: HARNESS_PAYMENT_SCHEMES.filter(scheme => !selectedSchemes.has(scheme)),
+  };
 }
 
 /** Route filter parsed from the exclude env vars the harness injects. */

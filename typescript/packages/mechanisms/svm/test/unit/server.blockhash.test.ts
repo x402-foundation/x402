@@ -138,4 +138,20 @@ describe("UptoSvmScheme — recent blockhash + slot in the 402 challenge", () =>
     expect(req.extra?.feePayer).toBe("FeePay3r1111111111111111111111111111111111");
     expect(req.extra?.receiverAuthorizer).toBe(authorizer.address);
   });
+
+  it("omits the blockhash and slot when the configured RPC fails", async () => {
+    getLatestBlockhashSend.mockRejectedValueOnce(new Error("RPC unavailable"));
+    const scheme = new UptoSvmScheme({
+      receiverAuthorizerSigner: authorizer,
+      rpcUrl: "https://rpc.example",
+    });
+
+    const req = await scheme.enhancePaymentRequirements(base as never, supportedKind as never, []);
+
+    expect(req.extra?.recentBlockhash).toBeUndefined();
+    expect(req.extra?.lastValidBlockHeight).toBeUndefined();
+    expect(req.extra?.recentSlot).toBeUndefined();
+    expect(req.extra?.feePayer).toBe("FeePay3r1111111111111111111111111111111111");
+    expect(req.extra?.receiverAuthorizer).toBe(authorizer.address);
+  });
 });

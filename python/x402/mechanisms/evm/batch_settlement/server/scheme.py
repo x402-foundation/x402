@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -41,13 +42,18 @@ from .....schemas.hooks import (
 )
 from ...default_assets import find_default_asset, get_default_asset
 from ...utils import get_asset_info, parse_amount
-from ..constants import MIN_WITHDRAW_DELAY, SCHEME_BATCH_SETTLEMENT
+from ..constants import (
+    DEFAULT_SERVER_MIN_DEPOSIT_MULTIPLIER,
+    MIN_WITHDRAW_DELAY,
+    SCHEME_BATCH_SETTLEMENT,
+)
 from ..types import AuthorizerSigner
 from .storage import Channel, ChannelStorage, InMemoryChannelStorage
 
 MoneyParser = Callable[[str | int | float, str], AssetAmount | None]
 
 _ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
+_DIGITS = re.compile(r"^\d+$")
 
 
 @dataclass
@@ -56,6 +62,7 @@ class BatchSettlementEvmSchemeServerConfig:
     receiver_authorizer_signer: AuthorizerSigner | None = None
     withdraw_delay: int | None = None
     onchain_state_ttl_ms: int | None = None
+    enforce_min_deposit: bool | None = None
 
 
 @dataclass
@@ -105,6 +112,7 @@ class BatchSettlementEvmScheme:
             if cfg.onchain_state_ttl_ms is not None
             else _default_onchain_state_ttl_ms(self._withdraw_delay)
         )
+        self._enforce_min_deposit = cfg.enforce_min_deposit if cfg.enforce_min_deposit else False
         self._money_parsers: list[MoneyParser] = []
 
         self._request_lock = threading.Lock()
@@ -121,6 +129,10 @@ class BatchSettlementEvmScheme:
 
     def get_onchain_state_ttl_ms(self) -> int:
         return self._onchain_state_ttl_ms
+
+    def get_enforce_min_deposit(self) -> bool:
+        """Return whether deposits below the announced ``extra.minDeposit`` hint are rejected."""
+        return self._enforce_min_deposit
 
     def get_receiver_authorizer_signer(self) -> AuthorizerSigner | None:
         return self._receiver_authorizer_signer
@@ -266,8 +278,53 @@ class BatchSettlementEvmScheme:
             if "assetTransferMethod" not in extra and atm:
                 extra["assetTransferMethod"] = atm
 
+        extra["minDeposit"] = self.resolve_min_deposit_hint(requirements)
+
         requirements.extra = extra
         return requirements
+
+    def resolve_min_deposit_hint(self, payment_requirements: PaymentRequirements) -> str:
+        """Resolve the ``extra.minDeposit`` hint written on every 402."""
+        amount = int(payment_requirements.amount)
+        extra = payment_requirements.extra or {}
+        route_override = extra.get("minDeposit")
+
+        configured_min: int | None = None
+        if isinstance(route_override, str):
+            if _DIGITS.fullmatch(route_override):
+                configured_min = self._parse_atomic_min_deposit(route_override)
+            else:
+                configured_min = self._resolve_route_money_min_deposit(
+                    route_override, payment_requirements
+                )
+
+        if configured_min is None:
+            return str(amount * DEFAULT_SERVER_MIN_DEPOSIT_MULTIPLIER)
+
+        return str(amount if amount > configured_min else configured_min)
+
+    def _resolve_route_money_min_deposit(self, money: str, requirement: PaymentRequirements) -> int:
+        """Convert a route-level Money ``extra.minDeposit`` override to atomic units."""
+        default_asset = find_default_asset(requirement.asset, str(requirement.network))
+        if not default_asset:
+            raise ValueError(
+                "extra.minDeposit money values are only supported for default assets; "
+                f"use an integer atomic string for {requirement.asset} on {requirement.network}."
+            )
+
+        parsed = parse_money(money)
+        return self._parse_atomic_min_deposit(
+            convert_to_token_amount(parsed["amount"], default_asset["decimals"])
+        )
+
+    def _parse_atomic_min_deposit(self, amount: str) -> int:
+        """Validate and normalize an atomic min deposit amount."""
+        if not _DIGITS.fullmatch(amount):
+            raise ValueError("minDeposit must resolve to a positive integer")
+        value = int(amount)
+        if value <= 0:
+            raise ValueError("minDeposit must resolve to a positive integer")
+        return value
 
     def validate_facilitator_support(
         self,

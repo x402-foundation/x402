@@ -214,7 +214,7 @@ func (c *BazaarFacilitatorClient) ListDiscoveryResources(
 	defer resp.Body.Close()
 
 	// Read response body
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
@@ -275,7 +275,7 @@ func (c *BazaarFacilitatorClient) SearchDiscoveryResources(
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
@@ -367,4 +367,22 @@ func (c *BazaarFacilitatorClient) buildSearchURL(params *SearchDiscoveryResource
 
 	u.RawQuery = q.Encode()
 	return u.String(), nil
+}
+
+// maxDiscoveryResponseBytes bounds discovery responses. Catalog pages carry
+// resource extensions and MCP JSON schemas, so they need more room than
+// control-plane JSON.
+const maxDiscoveryResponseBytes int64 = 4 << 20
+
+// readLimitedBody reads at most maxDiscoveryResponseBytes from r. A larger body
+// returns x402http.ErrResponseBodyTooLarge without buffering the rest.
+func readLimitedBody(r io.Reader) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(r, maxDiscoveryResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > maxDiscoveryResponseBytes {
+		return nil, fmt.Errorf("%w: limit %d bytes", x402http.ErrResponseBodyTooLarge, maxDiscoveryResponseBytes)
+	}
+	return body, nil
 }

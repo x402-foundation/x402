@@ -7,12 +7,13 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "build:vercel": "cd .. && pnpm install && cd site && pnpm -r --filter=site... run build",
+    "build:vercel": "cd .. && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=4096 pnpm turbo run build --filter=site... --concurrency=1 && node scripts/verify-package-exports.mjs",
     "start": "next start",
     "format": "prettier -c .prettierrc --write \"**/*.{ts,js,cjs,json,md}\"",
     "format:check": "prettier -c .prettierrc --check \"**/*.{ts,js,cjs,json,md}\"",
     "lint": "eslint . --ext .ts --fix",
-    "lint:check": "eslint . --ext .ts"
+    "lint:check": "eslint . --ext .ts",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts"
   },
   "dependencies": {
     "@aptos-labs/ts-sdk": "^5.2.1",
@@ -31,7 +32,7 @@
     "@x402/stellar": "workspace:*",
     "@x402/svm": "workspace:*",
     "@x402/xrpl": "workspace:*",
-    "next": "^16.2.6",
+    "next": "^16.4.1",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "viem": "^2.48.11"
@@ -43,11 +44,14 @@
     "@types/react-dom": "^19",
     "@typescript-eslint/eslint-plugin": "^8.29.1",
     "@typescript-eslint/parser": "^8.29.1",
+    "@x402/fetch": "workspace:*",
     "eslint": "^9.24.0",
     "eslint-plugin-import": "^2.31.0",
     "eslint-plugin-jsdoc": "^50.6.9",
     "eslint-plugin-prettier": "^5.2.6",
     "prettier": "3.5.2",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "vite": "^6.4.5",
+    "vitest": "^4.1.12"
   }
 }

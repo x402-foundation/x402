@@ -474,19 +474,13 @@ func (s *facilitatorSvmSigner) SignTransaction(ctx context.Context, tx *solana.T
 	return nil
 }
 
-func (s *facilitatorSvmSigner) SimulateTransaction(ctx context.Context, tx *solana.Transaction, network string) error {
+func (s *facilitatorSvmSigner) SimulateTransaction(ctx context.Context, tx *solana.Transaction, network string, opts *svmmech.FacilitatorSimulateTransactionOptions) error {
 	rpcClient, err := s.getRPC(ctx, network)
 	if err != nil {
 		return err
 	}
 
-	opts := rpc.SimulateTransactionOpts{
-		SigVerify:              false,
-		ReplaceRecentBlockhash: false,
-		Commitment:             svmmech.DefaultCommitment,
-	}
-
-	simResult, err := rpcClient.SimulateTransactionWithOpts(ctx, tx, &opts)
+	simResult, err := rpcClient.SimulateTransactionWithOpts(ctx, tx, svmmech.SimulationRPCOpts(opts))
 	if err != nil {
 		return fmt.Errorf("simulation failed: %w", err)
 	}

@@ -19,12 +19,40 @@ import (
 type VerifyPermit2Options struct {
 	// Simulate enables onchain simulation. Defaults to true when zero-value.
 	Simulate *bool
+	// EnableParallelSimulation starts the standard settle() simulation concurrently with the
+	// signature check rather than after it, removing one RPC round trip. Opt-in, because the
+	// cost is one wasted eth_call for payments rejected on signature grounds.
+	EnableParallelSimulation bool
 }
 
-// assetContractCheck carries evm.ValidateAssetIsContract's result out of a goroutine.
-type assetContractCheck struct {
-	reason string
-	err    error
+type simulationResult struct {
+	succeeded bool
+	err       error
+}
+
+// startSimulation runs simulate in the background. Cancelling stops the in-flight eth_call, so
+// a payment rejected before the result is read does not leave one running.
+func startSimulation(
+	ctx context.Context,
+	simulate func(context.Context) (bool, error),
+) (chan simulationResult, context.CancelFunc) {
+	simulationCtx, cancel := context.WithCancel(ctx)
+	results := make(chan simulationResult, 1)
+	go func() {
+		succeeded, err := simulate(simulationCtx)
+		results <- simulationResult{succeeded: succeeded, err: err}
+	}()
+	return results, cancel
+}
+
+// awaitSimulation reads the result of a simulation started by startSimulation, or runs simulate
+// inline when none was started.
+func awaitSimulation(started chan simulationResult, simulate func() (bool, error)) (bool, error) {
+	if started == nil {
+		return simulate()
+	}
+	result := <-started
+	return result.succeeded, result.err
 }
 
 func (o *VerifyPermit2Options) shouldSimulate() bool {
@@ -32,6 +60,32 @@ func (o *VerifyPermit2Options) shouldSimulate() bool {
 		return true
 	}
 	return *o.Simulate
+}
+
+func (o *VerifyPermit2Options) shouldSimulateInParallel() bool {
+	return o != nil && o.EnableParallelSimulation && o.shouldSimulate()
+}
+
+// resolveErc20ApprovalSponsor extracts the ERC-20 approval gas-sponsoring info and resolves the
+// extension signer for the payment's network. A nil signer means the ERC-20 approval branch does
+// not apply even when info is present, matching the fall-through to standard settle.
+func resolveErc20ApprovalSponsor(
+	payload types.PaymentPayload,
+	facilCtx *x402.FacilitatorContext,
+) (*erc20approvalgassponsor.Info, erc20approvalgassponsor.Erc20ApprovalGasSponsoringSigner) {
+	info, _ := erc20approvalgassponsor.ExtractInfo(payload.Extensions)
+	if info == nil || facilCtx == nil {
+		return nil, nil
+	}
+
+	ext, ok := facilCtx.GetExtension(
+		erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key(),
+	).(*erc20approvalgassponsor.Erc20ApprovalFacilitatorExtension)
+	if !ok || ext == nil {
+		return info, nil
+	}
+
+	return info, ext.ResolveSigner(payload.Accepted.Network)
 }
 
 // VerifyPermit2 verifies a Permit2 payment payload.
@@ -64,11 +118,7 @@ func VerifyPermit2(
 	tokenAddress := evm.NormalizeAddress(requirements.Asset)
 
 	// Run the asset-contract check concurrently with the signature check below.
-	assetCheckCh := make(chan assetContractCheck, 1)
-	go func() {
-		reason, err := evm.ValidateAssetIsContract(ctx, signer, requirements.Asset)
-		assetCheckCh <- assetContractCheck{reason: reason, err: err}
-	}()
+	assetCheck := evm.StartAssetContractCheck(ctx, signer, string(requirements.Network), requirements.Asset)
 
 	// Verify spender is x402ExactPermit2Proxy
 	if !strings.EqualFold(permit2Payload.Permit2Authorization.Spender, evm.X402ExactPermit2ProxyAddress) {
@@ -123,14 +173,31 @@ func VerifyPermit2(
 		return nil, x402.NewVerifyError(ErrInvalidSignatureFormat, payer, err.Error())
 	}
 
+	// Both inputs are local, so the applicable simulation branch is known before any RPC.
+	eip2612Info, _ := eip2612gassponsor.ExtractEip2612GasSponsoringInfo(payload.Extensions)
+	erc20Info, erc20Signer := resolveErc20ApprovalSponsor(payload, facilCtx)
+
+	// The standard settle() simulation depends only on permit2Payload, never on the eth_getCode
+	// that verifyPermit2Signature issues, so it can start concurrently. The result is still read
+	// after the signature and asset checks below, leaving error precedence unchanged. The
+	// gas-sponsoring branches simulate different calls and stay sequential.
+	var simulationCh chan simulationResult
+	if eip2612Info == nil && erc20Signer == nil && opts.shouldSimulateInParallel() {
+		var cancelSimulation context.CancelFunc
+		simulationCh, cancelSimulation = startSimulation(ctx, func(ctx context.Context) (bool, error) {
+			return SimulatePermit2Settle(ctx, signer, permit2Payload)
+		})
+		defer cancelSimulation()
+	}
+
 	sigValid, sigData, sigErr := verifyPermit2Signature(ctx, signer, permit2Payload.Permit2Authorization, signatureBytes, chainID)
 
-	assetResult := <-assetCheckCh
-	if assetResult.err != nil {
-		return nil, fmt.Errorf("asset contract check failed: %w", assetResult.err)
+	assetReason, assetErr := assetCheck.Await()
+	if assetErr != nil {
+		return nil, fmt.Errorf("asset contract check failed: %w", assetErr)
 	}
-	if assetResult.reason != "" {
-		return nil, x402.NewVerifyError(assetResult.reason, payer, fmt.Sprintf("asset %s is not a deployed contract", requirements.Asset))
+	if assetReason != "" {
+		return nil, x402.NewVerifyError(assetReason, payer, fmt.Sprintf("asset %s is not a deployed contract", requirements.Asset))
 	}
 
 	if sigErr != nil || !sigValid {
@@ -153,7 +220,6 @@ func VerifyPermit2(
 	}
 
 	// EIP-2612 gas sponsoring (atomic settleWithPermit via contract)
-	eip2612Info, _ := eip2612gassponsor.ExtractEip2612GasSponsoringInfo(payload.Extensions)
 	if eip2612Info != nil {
 		if validErr := validateEip2612PermitForPayment(eip2612Info, payer, tokenAddress); validErr != "" {
 			return nil, x402.NewVerifyError(validErr, payer, "eip2612 validation failed")
@@ -168,51 +234,44 @@ func VerifyPermit2(
 	}
 
 	// ERC-20 approval gas sponsoring
-	erc20Info, _ := erc20approvalgassponsor.ExtractInfo(payload.Extensions)
-	if erc20Info != nil && facilCtx != nil {
-		ext, ok := facilCtx.GetExtension(erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key()).(*erc20approvalgassponsor.Erc20ApprovalFacilitatorExtension)
-		var extensionSigner erc20approvalgassponsor.Erc20ApprovalGasSponsoringSigner
-		if ok && ext != nil {
-			extensionSigner = ext.ResolveSigner(payload.Accepted.Network)
+	if erc20Signer != nil {
+		if reason, msg := ValidateErc20ApprovalForPayment(erc20Info, payer, tokenAddress); reason != "" {
+			return nil, x402.NewVerifyError(reason, payer, msg)
 		}
 
-		if extensionSigner != nil {
-			if reason, msg := ValidateErc20ApprovalForPayment(erc20Info, payer, tokenAddress); reason != "" {
-				return nil, x402.NewVerifyError(reason, payer, msg)
-			}
-
-			// If the signer supports SimulateTransactions, use it for the approve+settle bundle
-			if simulator, ok := extensionSigner.(erc20approvalgassponsor.Erc20ApprovalGasSponsoringSimulator); ok {
-				simArgs, buildErr := BuildPermit2SettleArgs(permit2Payload)
-				if buildErr == nil {
-					simOk, simErr := simulator.SimulateTransactions(ctx, []erc20approvalgassponsor.TransactionRequest{
-						{Serialized: erc20Info.SignedTransaction},
-						{Call: &erc20approvalgassponsor.WriteContractCall{
-							Address:  evm.X402ExactPermit2ProxyAddress,
-							ABI:      evm.X402ExactPermit2ProxySettleABI,
-							Function: evm.FunctionSettle,
-							Args:     []interface{}{simArgs.permitStruct(), simArgs.Owner, simArgs.witnessStruct(), simArgs.Signature},
-						}},
-					})
-					if simErr == nil && simOk {
-						return &x402.VerifyResponse{IsValid: true, Payer: payer}, nil
-					}
+		// If the signer supports SimulateTransactions, use it for the approve+settle bundle
+		if simulator, ok := erc20Signer.(erc20approvalgassponsor.Erc20ApprovalGasSponsoringSimulator); ok {
+			simArgs, buildErr := BuildPermit2SettleArgs(permit2Payload)
+			if buildErr == nil {
+				simOk, simErr := simulator.SimulateTransactions(ctx, []erc20approvalgassponsor.TransactionRequest{
+					{Serialized: erc20Info.SignedTransaction},
+					{Call: &erc20approvalgassponsor.WriteContractCall{
+						Address:  evm.X402ExactPermit2ProxyAddress,
+						ABI:      evm.X402ExactPermit2ProxySettleABI,
+						Function: evm.FunctionSettle,
+						Args:     []interface{}{simArgs.permitStruct(), simArgs.Owner, simArgs.witnessStruct(), simArgs.Signature},
+					}},
+				})
+				if simErr == nil && simOk {
+					return &x402.VerifyResponse{IsValid: true, Payer: payer}, nil
 				}
-				resp := DiagnosePermit2SimulationFailure(ctx, signer, tokenAddress, permit2Payload, requirements.Amount)
-				return nil, x402.NewVerifyError(resp.InvalidReason, payer, "simulation failed")
 			}
-
-			// Fallback: signer does not support simulation; check prerequisites only
-			prereqResp := CheckPermit2Prerequisites(ctx, signer, tokenAddress, payer, requirements.Amount)
-			if !prereqResp.IsValid {
-				return nil, x402.NewVerifyError(prereqResp.InvalidReason, payer, "prerequisites check failed")
-			}
-			return &x402.VerifyResponse{IsValid: true, Payer: payer}, nil
+			resp := DiagnosePermit2SimulationFailure(ctx, signer, tokenAddress, permit2Payload, requirements.Amount)
+			return nil, x402.NewVerifyError(resp.InvalidReason, payer, "simulation failed")
 		}
+
+		// Fallback: signer does not support simulation; check prerequisites only
+		prereqResp := CheckPermit2Prerequisites(ctx, signer, tokenAddress, payer, requirements.Amount)
+		if !prereqResp.IsValid {
+			return nil, x402.NewVerifyError(prereqResp.InvalidReason, payer, "prerequisites check failed")
+		}
+		return &x402.VerifyResponse{IsValid: true, Payer: payer}, nil
 	}
 
 	// Standard settle (allowance already on-chain)
-	simOk, simErr := SimulatePermit2Settle(ctx, signer, permit2Payload)
+	simOk, simErr := awaitSimulation(simulationCh, func() (bool, error) {
+		return SimulatePermit2Settle(ctx, signer, permit2Payload)
+	})
 	if simErr != nil || !simOk {
 		resp := DiagnosePermit2SimulationFailure(ctx, signer, tokenAddress, permit2Payload, requirements.Amount)
 		return nil, x402.NewVerifyError(resp.InvalidReason, payer, "simulation failed")
@@ -231,6 +290,10 @@ type Permit2FacilitatorConfig struct {
 	// re-verifying and re-broadcasting. A nil value falls back to a fresh
 	// in-memory store (equivalent to no cross-call sharing).
 	PendingSettlementStore x402.PendingSettlementStore
+	// EnableParallelSimulation is forwarded to VerifyPermit2 as
+	// VerifyPermit2Options.EnableParallelSimulation. It only has an effect when
+	// SimulateInSettle is true, since otherwise settle runs no simulation at all.
+	EnableParallelSimulation bool
 }
 
 // ResolvePermit2ReceiptWaitSigner returns the signer that should wait for the
@@ -278,10 +341,12 @@ func SettlePermit2(
 	payer := permit2Payload.Permit2Authorization.From
 
 	simulate := false
+	enableParallelSimulation := false
 	var store x402.PendingSettlementStore
 	if config != nil {
 		simulate = config.SimulateInSettle
 		store = config.PendingSettlementStore
+		enableParallelSimulation = config.EnableParallelSimulation
 	}
 	if store == nil {
 		store = x402.NewInMemoryPendingSettlementStore()
@@ -302,7 +367,8 @@ func SettlePermit2(
 		}
 	}
 
-	if _, err := VerifyPermit2(ctx, signer, payload, requirements, permit2Payload, facilCtx, &VerifyPermit2Options{Simulate: &simulate}); err != nil {
+	verifyOpts := &VerifyPermit2Options{Simulate: &simulate, EnableParallelSimulation: enableParallelSimulation}
+	if _, err := VerifyPermit2(ctx, signer, payload, requirements, permit2Payload, facilCtx, verifyOpts); err != nil {
 		ve := &x402.VerifyError{}
 		if errors.As(err, &ve) {
 			return nil, x402.NewSettleError(ve.InvalidReason, ve.Payer, network, "", ve.InvalidMessage)

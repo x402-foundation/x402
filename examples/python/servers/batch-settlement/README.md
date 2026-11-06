@@ -37,5 +37,5 @@ uv run python main.py
 
 ## Endpoints
 
-- `GET /weather` — protected; usage-based-priced at a random 1–100% of `$0.01`.
+- `GET /weather` — protected; usage-based-priced at a random 1–100% of `$0.01`. Every 402 also includes `extra.minDeposit` (SDK default `10 × amount`) so clients can size the channel deposit. Override per route with `accepts.extra.minDeposit` (`"$0.10"` on the default asset, or an atomic string). The server announces the hint only; it does not reject smaller deposits unless you set `enforce_min_deposit=True`.
 - `GET /health` — unprotected.

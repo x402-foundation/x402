@@ -51,6 +51,9 @@ export type BatchSettlementPermit2Authorization = {
 
 export type BatchSettlementAssetTransferMethod = "eip3009" | "permit2";
 
+/** Voucher-management mode named on the wire (`extra.voucherManager`). */
+export type BatchSettlementVoucherManager = "server" | "facilitator";
+
 export type BatchSettlementDepositAuthorization =
   | {
       erc3009Authorization: BatchSettlementErc3009Authorization;
@@ -119,18 +122,22 @@ export type BatchSettlementPaymentRequirementsExtra = {
   name: string;
   version: string;
   assetTransferMethod?: BatchSettlementAssetTransferMethod;
+  /** Who manages vouchers for this 402. Omitted means `"server"`. */
+  voucherManager?: BatchSettlementVoucherManager;
+  /** Address that consents to cooperative refunds. See spec "Refund authorizer". */
+  refundAuthorizer?: `0x${string}`;
   channelState?: BatchSettlementChannelStateExtra;
   voucherState?: BatchSettlementVoucherStateExtra;
 };
 
 export type FileChannelStorageOptions = {
-  /** Root directory; channels are stored under `{directory}/{client|server}/{channelId}.json`. */
   directory: string;
 };
 
 export type BatchSettlementPaymentResponseExtra = {
-  chargedAmount?: string;
   channelState?: BatchSettlementChannelStateExtra;
+  chargedAmount?: string;
+  chargeCount?: number;
   voucherState?: BatchSettlementVoucherStateExtra;
 };
 
@@ -146,12 +153,24 @@ export type BatchSettlementSettlePayload = {
   token: `0x${string}`;
 };
 
+export type BatchSettlementEnrichedDepositPayload = BatchSettlementDepositPayload & {
+  pendingId?: string;
+  cancel?: boolean;
+};
+
+export type BatchSettlementEnrichedVoucherPayload = BatchSettlementVoucherPayload & {
+  pendingId?: string;
+  cancel?: boolean;
+};
+
 export type BatchSettlementEnrichedRefundPayload = BatchSettlementRefundPayload & {
   amount: string;
   refundNonce: string;
   claims: BatchSettlementVoucherClaim[];
   refundAuthorizerSignature?: `0x${string}`;
   claimAuthorizerSignature?: `0x${string}`;
+  pendingId?: string;
+  cancel?: boolean;
 };
 
 export type BatchSettlementPayload =
@@ -160,7 +179,7 @@ export type BatchSettlementPayload =
   | BatchSettlementRefundPayload;
 
 export type BatchSettlementFacilitatorSettlePayload =
-  | BatchSettlementDepositPayload
+  | BatchSettlementEnrichedDepositPayload
   | BatchSettlementClaimPayload
   | BatchSettlementSettlePayload
   | BatchSettlementEnrichedRefundPayload;
@@ -241,6 +260,20 @@ export function isBatchSettlementRefundPayload(
     payload.type === "refund" &&
     "channelConfig" in payload &&
     isVoucherFields(payload.voucher)
+  );
+}
+
+/**
+ * Returns whether a value is a batch-settlement payment payload.
+ *
+ * @param payload - Unknown value to inspect.
+ * @returns Whether the value is a batch-settlement payload.
+ */
+export function isBatchSettlementPayload(payload: unknown): payload is BatchSettlementPayload {
+  return (
+    isBatchSettlementDepositPayload(payload) ||
+    isBatchSettlementVoucherPayload(payload) ||
+    isBatchSettlementRefundPayload(payload)
   );
 }
 

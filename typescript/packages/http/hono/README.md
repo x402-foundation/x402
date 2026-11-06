@@ -5,7 +5,7 @@ Hono middleware integration for the x402 Payment Protocol. This package provides
 ## Installation
 
 ```bash
-pnpm install @x402/hono
+pnpm install @x402/core @x402/hono @x402/evm @x402/svm
 ```
 
 ## Quick Start
@@ -15,25 +15,35 @@ import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 
 const app = new Hono();
 
 const facilitatorClient = new HTTPFacilitatorClient({ url: "https://x402.org/facilitator" });
 const resourceServer = new x402ResourceServer(facilitatorClient)
-  .register("eip155:84532", new ExactEvmScheme());
+  .register("eip155:84532", new ExactEvmScheme())
+  .register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", new ExactSvmScheme());
 
 // Apply the payment middleware with your configuration
 app.use(
   paymentMiddleware(
     {
       "GET /protected-route": {
-        accepts: {
-          scheme: "exact",
-          price: "$0.10",
-          network: "eip155:84532",
-          payTo: "0xYourAddress",
-        },
+        accepts: [
+          {
+            scheme: "exact",
+            price: "$0.10",
+            network: "eip155:84532",
+            payTo: "0xYourEvmAddress",
+          },
+          {
+            scheme: "exact",
+            price: "$0.10",
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+            payTo: "YourSolanaAddress",
+          },
+        ],
         description: "Access to premium content",
       },
     },
@@ -42,7 +52,7 @@ app.use(
 );
 
 // Implement your protected route
-app.get("/protected-route", (c) => {
+app.get("/protected-route", c => {
   return c.json({ message: "This content is behind a paywall" });
 });
 
@@ -116,13 +126,22 @@ Routes are passed as the first parameter to `paymentMiddleware`:
 ```typescript
 const routes: RoutesConfig = {
   "GET /api/protected": {
-    accepts: {
-      scheme: "exact",
-      price: "$0.10",
-      network: "eip155:84532",
-      payTo: "0xYourAddress",
-      maxTimeoutSeconds: 60,
-    },
+    accepts: [
+      {
+        scheme: "exact",
+        price: "$0.10",
+        network: "eip155:84532",
+        payTo: "0xYourEvmAddress",
+        maxTimeoutSeconds: 60,
+      },
+      {
+        scheme: "exact",
+        price: "$0.10",
+        network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+        payTo: "YourSolanaAddress",
+        maxTimeoutSeconds: 60,
+      },
+    ],
     description: "Premium API access",
   },
 };
@@ -170,63 +189,59 @@ app.use(paymentMiddleware(routes, resourceServer, paywallConfig, customPaywallPr
 
 ### Multiple Protected Routes
 
+Set `facilitatorUrl` to a facilitator whose `/supported` response includes all four networks used below. The default `https://x402.org/facilitator` supports testnets only.
+
 ```typescript
+const multiNetworkFacilitator = new HTTPFacilitatorClient({
+  url: facilitatorUrl,
+});
+const multiNetworkServer = new x402ResourceServer(multiNetworkFacilitator)
+  .register("eip155:8453", new ExactEvmScheme())
+  .register("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", new ExactSvmScheme())
+  .register("eip155:84532", new ExactEvmScheme())
+  .register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", new ExactSvmScheme());
+
 app.use(
   paymentMiddleware(
     {
       "GET /api/premium/*": {
-        accepts: {
-          scheme: "exact",
-          price: "$1.00",
-          network: "eip155:8453",
-          payTo: "0xYourAddress",
-        },
-        description: "Premium API access",
-      },
-      "GET /api/data": {
-        accepts: {
-          scheme: "exact",
-          price: "$0.50",
-          network: "eip155:84532",
-          payTo: "0xYourAddress",
-          maxTimeoutSeconds: 120,
-        },
-        description: "Data endpoint access",
-      },
-    },
-    resourceServer,
-  ),
-);
-```
-
-### Multiple Payment Networks
-
-```typescript
-app.use(
-  paymentMiddleware(
-    {
-      "GET /weather": {
         accepts: [
           {
             scheme: "exact",
-            price: "$0.001",
-            network: "eip155:84532",
-            payTo: evmAddress,
+            price: "$1.00",
+            network: "eip155:8453",
+            payTo: "0xYourEvmAddress",
           },
           {
             scheme: "exact",
-            price: "$0.001",
-            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
-            payTo: svmAddress,
+            price: "$1.00",
+            network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+            payTo: "YourSolanaAddress",
           },
         ],
-        description: "Weather data",
-        mimeType: "application/json",
+        description: "Premium API access",
+      },
+      "GET /api/data": {
+        accepts: [
+          {
+            scheme: "exact",
+            price: "$0.50",
+            network: "eip155:84532",
+            payTo: "0xYourEvmAddress",
+            maxTimeoutSeconds: 120,
+          },
+          {
+            scheme: "exact",
+            price: "$0.50",
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+            payTo: "YourSolanaAddress",
+            maxTimeoutSeconds: 120,
+          },
+        ],
+        description: "Data endpoint access",
       },
     },
-    new x402ResourceServer(facilitatorClient)
-      .register("eip155:84532", new ExactEvmScheme())
-      .register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", new ExactSvmScheme()),
+    multiNetworkServer,
   ),
 );
 ```
@@ -239,6 +254,7 @@ If you need to use a custom facilitator server, configure it when creating the x
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { x402ResourceServer } from "@x402/hono";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { ExactSvmScheme } from "@x402/svm/exact/server";
 
 const customFacilitator = new HTTPFacilitatorClient({
   url: "https://your-facilitator.com",
@@ -249,7 +265,8 @@ const customFacilitator = new HTTPFacilitatorClient({
 });
 
 const resourceServer = new x402ResourceServer(customFacilitator)
-  .register("eip155:84532", new ExactEvmScheme());
+  .register("eip155:84532", new ExactEvmScheme())
+  .register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", new ExactSvmScheme());
 
 app.use(paymentMiddleware(routes, resourceServer, paywallConfig));
 ```

@@ -36,8 +36,8 @@ Each method MUST declare:
 
 Each method MUST satisfy:
 
-- **Transfer correctness**: settlement MUST produce exactly one identifiable transfer of `amount` of `asset` to `payTo`. Operations incidental to making that payment, such as fee payment or change outputs, do not disqualify it; a binding MAY constrain transaction structure further as sponsor policy.
-- **Facilitator safety**: where the facilitator sponsors the fee, no operation in the signed payment may debit the facilitator beyond that fee.
+- **Transfer correctness**: settlement MUST produce exactly one identifiable transfer of `amount` of `asset` to `payTo`. When the optional `extra.splits` extension is present (see Multi-Payee Splits below), this applies per payment leg: `payTo` receives the remainder and each split recipient its declared amount, each in a distinct transfer. Operations incidental to making that payment, such as fee payment or change outputs, do not disqualify it; a binding MAY constrain transaction structure further as sponsor policy.
+- **Facilitator safety**: where the facilitator sponsors the fee, no operation in the signed payment may debit the facilitator beyond that fee. The only exception is a cost the facilitator explicitly advertises that it covers and the binding bounds, such as sponsored recipient ATA rent on SVM (see Multi-Payee Splits below).
 - **Replay**: the network's own primitive is authoritative. A consumed primitive MUST produce a settlement failure, never a success.
 - **Duplicate delivery**: the network primitive prevents double-spend, not double-delivery. Where a resubmission is indistinguishable from the original, submission returns success to every caller and one payment yields several resources. Such methods MUST deduplicate settlements atomically across every process serving `/settle`, retaining each key until its payment can no longer land.
 
@@ -61,14 +61,14 @@ While implementation details vary by network, facilitators MUST enforce security
 
 ### SVM
 
-- Fee payer safety: the fee payer MUST NOT appear as an account in sensitive instructions or be the transfer authority/source.
-- Destination correctness: the receiver MUST match the `payTo` derived destination for the specified `asset`.
-- Amount exactness: the transferred amount MUST equal `maxAmountRequired`.
+- Fee payer safety: the fee payer MUST NOT appear as an account in sensitive instructions or be the transfer authority/source. The sole bounded exception is fee-payer-funded ATA creation for recipients the Resource Server marks `ataCreationRequired`, and only when the facilitator advertises that it sponsors ATA creation, in the account positions listed in `scheme_exact_svm.md` §2.1.1 (see Multi-Payee Splits below).
+- Destination correctness: the receiver MUST match the `payTo` derived destination for the specified `asset`. With splits, each leg's receiver MUST match the destination derived from that leg's `payTo`.
+- Amount: the transfer to `payTo` MUST be at least `amount` (overpayment is tolerated for smart-wallet rounding, `scheme_exact_svm.md` §1.4). With splits, `payTo` MUST receive at least the remainder and each split recipient exactly its declared amount (see Multi-Payee Splits below).
 
 ### Stellar
 
 - Facilitator safety: the facilitator's address MUST NOT appear as transaction source, operation source, transfer `from` address, or in authorization entries.
-- Authorization integrity: auth entries MUST use `sorobanCredentialsAddress` only, MUST NOT contain sub-invocations, and expiration MUST NOT exceed `currentLedger + ceil(maxTimeoutSeconds / estimatedLedgerSeconds)` (fallback to `5` seconds).
+- Authorization integrity: auth entries MUST use address-based credentials only, either `sorobanCredentialsAddress` or `sorobanCredentialsAddressV2` (CAP-71). It MUST NOT contain sub-invocations, and expiration MUST NOT exceed `currentLedger + ceil(maxTimeoutSeconds / estimatedLedgerSeconds)` (fallback to `5` seconds).
 - Transfer correctness: `to` MUST equal `payTo` and `amount` MUST equal `requirements.amount` exactly.
 - Simulation verification: MUST emit events showing only the expected balance changes (recipient increase, payer decrease) for `requirements.amount`—no other balance changes allowed.
 
@@ -82,11 +82,35 @@ While implementation details vary by network, facilitators MUST enforce security
 
 ### Starknet
 
-- Facilitator safety: the submitting executor MUST come from facilitator configuration, never client input, and MUST NOT be the payer or the recipient.
+- Facilitator safety: the submitting executor MUST come from facilitator configuration, never client input, and MUST NOT be the payer (it MAY equal `payTo` for merchant-sponsored settlement).
 - Transfer correctness: the signed SNIP-9 OutsideExecution MUST contain exactly one call — `transfer` on `requirements.asset` with calldata `[payTo, amount_low, amount_high]` — and the u256 amount MUST equal `requirements.amount` exactly.
 - Signature validity: the SNIP-12 hash MUST be computed from the facilitator's own canonical reconstruction of the typed data and validate via SNIP-6 `is_valid_signature`.
 - Caller binding and expiry: `Caller` MUST equal `extra.feePayer` — the required sponsor address the facilitator announces via `/supported` and the resource server puts in the requirements; `Execute Before` MUST cover the advertised `maxTimeoutSeconds` window (within a skew margin) at verification, with a minimum remaining window at settlement.
-- Replay protection: the SNIP-9 nonce MUST be unused at verification; it is consumed on-chain at execution.
-- Simulation verification: MUST simulate the settlement and fail closed unless it shows exactly one asset `Transfer` from payer to `payTo` for the exact amount.
+- Replay protection: the SNIP-9 nonce MUST be unused at verification; it is consumed onchain at execution.
+- Simulation verification: MUST simulate the settlement and fail closed unless it shows exactly one asset `Transfer` sent by the payer, to `payTo`, for the exact amount.
 
-Network-specific rules are in per-network documents: `scheme_exact_svm.md` (Solana), `scheme_exact_stellar.md` (Stellar), `scheme_exact_evm.md` (EVM), `scheme_exact_sui.md` (SUI), `scheme_exact_ton.md` (TON), `scheme_exact_starknet.md` (Starknet).
+### Hedera
+
+- Fee payer safety: the fee payer MUST NOT be debited beyond the network fee. Under `cryptoTransfer` it MUST NOT appear as a negative entry in any transfer list; under `transferExecutor` its net HBAR debit MUST equal the transaction fee, or the fee plus `requirements.amount` when it is also the payer.
+- Transfer correctness: the net credit to `payTo` in `asset` MUST equal `requirements.amount` exactly, and no other account may be credited in `asset` beyond the network's fee collection accounts.
+- Payer signature validity (`cryptoTransfer`): the facilitator MUST confirm the payload carries a signature satisfying the payer's on-chain account key before sponsoring.
+- Executor admission (`transferExecutor`): the executor is client-chosen contract code, so admission MUST be default deny, the call MUST be built by the facilitator rather than from client calldata, and the gas limit MUST be the facilitator's own.
+- Outcome from the record (`transferExecutor`): settlement success MUST be established from the merged parent and child consensus records, never from the receipt status.
+
+Network-specific rules are in per-network documents: `scheme_exact_svm.md` (Solana), `scheme_exact_stellar.md` (Stellar), `scheme_exact_evm.md` (EVM), `scheme_exact_sui.md` (SUI), `scheme_exact_ton.md` (TON), `scheme_exact_starknet.md` (Starknet), `scheme_exact_lnbtc.md` (Bitcoin Lightning), `scheme_exact_hedera.md` (Hedera).
+
+## Multi-Payee Splits (Optional Extension)
+
+The `exact` scheme MAY carry an optional `extra.splits` array that distributes a single client payment across the primary recipient (`payTo`) and one or more additional recipients in the same atomic settlement. This enables platform fees, revenue sharing, referral commissions, and fee-payer cost recovery without multiple round-trips or separate transactions.
+
+The extension is network-agnostic in shape but network-specific in encoding and verification. Common rules across networks:
+
+- Each split entry declares an absolute `amount` in base units of the same `asset` (not a percentage or basis points). It MUST be a positive integer within the asset's base-unit range on that network.
+- The primary recipient (`payTo`) receives the remainder: `amount − Σ splits[].amount`. This remainder MUST be greater than zero; requirements that consume the entire amount with splits MUST be rejected.
+- Each payment leg (primary plus each split) MUST be settled to its declared recipient, and a verifier MUST match each leg to a distinct on-chain transfer. Split legs MUST settle for exactly their declared amount. The primary leg MUST settle for at least the remainder, keeping whatever overpayment tolerance the network binding allows for a single-payee payment, so any excess goes to `payTo` and never to a split recipient.
+- Clients MUST verify that `splits` contains only recipients, amounts, and (when present) labels such as `memo` that they agreed to before authorizing payment, and MUST show any label alongside the recipient address rather than in place of it; a malicious server could otherwise inject splits to divert funds.
+- Split support is an advertised facilitator capability, not an unadvertised local policy. A facilitator MUST announce the maximum number of splits it accepts (and any related sponsorship, such as recipient account creation) in the `extra` of the matching `kinds[]` entry of its `/supported` response; absent advertisement means no support. Resource servers MUST NOT issue requirements exceeding what the selected facilitator advertises.
+
+When `extra.splits` is absent or empty, the scheme behaves as a single-payee `exact` payment. Networks that do not implement the extension MUST reject requirements that carry a non-empty `splits` array rather than silently ignoring it (which would misdirect the merchant's expected distribution).
+
+Solana defines the full schema, transaction structure, ATA-creation authorization, and verification rules for this extension in `scheme_exact_svm.md` (§5). Other networks MAY specify their own encoding of the same model.

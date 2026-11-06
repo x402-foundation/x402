@@ -23,9 +23,9 @@ from ....schemas import (  # noqa: E402
     SettleResponse,
     VerifyResponse,
 )
+from ..asset_cache import start_asset_contract_check  # noqa: E402
 from ..constants import (  # noqa: E402
     BALANCE_OF_ABI,
-    ERR_ASSET_NOT_DEPLOYED_CONTRACT,
     ERR_ERC20_APPROVAL_BROADCAST_FAILED,
     ERR_ERC20_APPROVAL_TX_FAILED,
     ERR_PERMIT2_AMOUNT_MISMATCH,
@@ -41,6 +41,8 @@ from ..constants import (  # noqa: E402
     ERR_UPTO_AMOUNT_EXCEEDS_PERMITTED,
     ERR_UPTO_FACILITATOR_MISMATCH,
     ERR_UPTO_FAILED_TO_GET_NETWORK_CONFIG,
+    ERR_UPTO_INVALID_PAYLOAD,
+    ERR_UPTO_INVALID_REQUIRED_AMOUNT,
     ERR_UPTO_INVALID_SCHEME,
     ERR_UPTO_NETWORK_MISMATCH,
     ERR_UPTO_SETTLEMENT_EXCEEDS_AMOUNT,
@@ -120,11 +122,9 @@ def verify_upto_permit2(
         )
     token_address = normalize_address(requirements.asset)
 
-    code = signer.get_code(token_address)
-    if len(code) == 0:
-        return VerifyResponse(
-            is_valid=False, invalid_reason=ERR_ASSET_NOT_DEPLOYED_CONTRACT, payer=payer
-        )
+    # Start after network/asset are known; await after signature work so a failed
+    # pre-check does not RPC or populate the positive cache.
+    asset_check = start_asset_contract_check(signer, str(requirements.network), requirements.asset)
 
     # 3. Spender check
     try:
@@ -178,12 +178,39 @@ def verify_upto_permit2(
     # 6-8. Parse numeric fields
     try:
         deadline_val = int(permit2_payload.permit2_authorization.deadline)
+    except (ValueError, TypeError):
+        return VerifyResponse(
+            is_valid=False,
+            invalid_reason=ERR_UPTO_INVALID_PAYLOAD,
+            invalid_message="invalid deadline format",
+            payer=payer,
+        )
+    try:
         valid_after_val = int(permit2_payload.permit2_authorization.witness.valid_after)
+    except (ValueError, TypeError):
+        return VerifyResponse(
+            is_valid=False,
+            invalid_reason=ERR_UPTO_INVALID_PAYLOAD,
+            invalid_message="invalid validAfter format",
+            payer=payer,
+        )
+    try:
         amount_val = int(permit2_payload.permit2_authorization.permitted.amount)
+    except (ValueError, TypeError):
+        return VerifyResponse(
+            is_valid=False,
+            invalid_reason=ERR_UPTO_INVALID_PAYLOAD,
+            invalid_message="invalid permitted amount format",
+            payer=payer,
+        )
+    try:
         required_amount = int(requirements.amount)
     except (ValueError, TypeError):
         return VerifyResponse(
-            is_valid=False, invalid_reason="invalid_permit2_payload_format", payer=payer
+            is_valid=False,
+            invalid_reason=ERR_UPTO_INVALID_REQUIRED_AMOUNT,
+            invalid_message="invalid required amount format",
+            payer=payer,
         )
 
     # 6. Deadline check (6 second buffer)
@@ -242,6 +269,10 @@ def verify_upto_permit2(
         return VerifyResponse(
             is_valid=False, invalid_reason=ERR_PERMIT2_INVALID_SIGNATURE, payer=payer
         )
+
+    asset_reason = asset_check.await_result()
+    if asset_reason:
+        return VerifyResponse(is_valid=False, invalid_reason=asset_reason, payer=payer)
 
     # If simulation is disabled, skip allowance/balance/simulation checks (matches Go/TS).
     if not simulate:
@@ -505,7 +536,8 @@ def settle_upto_permit2(
     except (ValueError, TypeError):
         return SettleResponse(
             success=False,
-            error_reason="invalid_permit2_payload_format",
+            error_reason=ERR_UPTO_INVALID_PAYLOAD,
+            error_message="invalid settlement amount",
             network=network,
             payer=payer,
             transaction="",

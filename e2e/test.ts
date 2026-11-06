@@ -6,22 +6,29 @@ import { createWalletClient, createPublicClient, http, parseEther, formatEther, 
 import { privateKeyToAccount } from 'viem/accounts';
 import { base, baseSepolia } from 'viem/chains';
 import { TestDiscovery } from './src/discovery';
-import { ClientConfig, ScenarioResult, ServerConfig, TestScenario, endpointAssetTransferMethod, endpointPaymentScheme, endpointUsesBatchSettlement } from './src/types';
+import { ClientConfig, ScenarioResult, ServerConfig, TestScenario, endpointAssetTransferMethod, endpointAuthCaptureCoverageBranch, endpointAuthCaptureNeedsDeferredCapture, endpointPaymentFlow, endpointPaymentScheme, endpointUsesBatchSettlement, endpointUsesFacilitatorManagedBatch, type BatchServerRole } from './src/types';
+import { AUTH_CAPTURE_E2E_CAPTURE_PATH } from './src/mechanisms';
 import { config as loggerConfig, log, verboseLog, errorLog, close as closeLogger, createComboLogger } from './src/logger';
 import { handleDiscoveryValidation, shouldRunDiscoveryValidation, type TestedDiscoveryScenario } from './extensions/bazaar';
 import { parseArgs, printHelp } from './src/cli/args';
 import { runInteractiveMode } from './src/cli/interactive';
-import { filterScenarios, TestFilters, shouldShowExtensionOutput } from './src/cli/filters';
+import { filterScenarios, TestFilters, shouldShowExtensionOutput, getUniquePaymentSchemes } from './src/cli/filters';
 import { minimizeScenarios } from './src/sampling';
 import { getNetworkSet, NetworkMode, NetworkConfig, getNetworkModeDescription, resolveEvmPermit2Asset, PROTOCOL_FAMILIES, requiredEnvForFamily, requiredRpcEnvForFamily, protocolFamilyForCredentialKey } from './src/networks/networks';
 import { injectNetworkEnv } from './src/env';
-import { FACILITATOR_ENV_PREFLIGHT_ALLOWLIST } from './src/mechanisms';
+import {
+  FACILITATOR_ENV_PREFLIGHT_ALLOWLIST,
+  batchVoucherStoreOverrideFromEnv,
+  runRouteFilterForHarness,
+} from './src/mechanisms';
 import { GenericServerProxy } from './src/servers/generic-server';
 import { Semaphore, ResourceLock } from './src/concurrency';
 import { FacilitatorManager } from './src/facilitators/facilitator-manager';
 import { waitForHealth } from './src/health';
 import { probeMcpReady } from './src/mcpHealth';
 import { createPortAllocator } from './src/ports';
+import { base58 } from '@scure/base';
+import { createKeyPairSignerFromBytes } from '@solana/kit';
 
 /**
  * Generates a fresh 32-byte hex salt for a batch-settlement test scenario so
@@ -29,6 +36,27 @@ import { createPortAllocator } from './src/ports';
  *
  * @returns Hex-encoded 32-byte salt prefixed with `0x`.
  */
+/**
+ * Operator pubkeys the SVM client should trust for server-signed batch routes.
+ * Uses CLIENT_SVM_SERVER_SIGNED_OPERATORS when set; otherwise derives the pubkey
+ * from SERVER_SVM_OPERATOR_PRIVATE_KEY for /batch-settlement-server-signed/* routes.
+ */
+async function resolveSvmServerSignedOperators(endpointPath: string): Promise<string | undefined> {
+  const explicit = process.env.CLIENT_SVM_SERVER_SIGNED_OPERATORS?.trim();
+  if (explicit) {
+    return explicit;
+  }
+  if (!endpointPath.includes('/batch-settlement-server-signed/')) {
+    return undefined;
+  }
+  const operatorKey = process.env.SERVER_SVM_OPERATOR_PRIVATE_KEY?.trim();
+  if (!operatorKey) {
+    return undefined;
+  }
+  const signer = await createKeyPairSignerFromBytes(base58.decode(operatorKey));
+  return signer.address;
+}
+
 function generateChannelSalt(): `0x${string}` {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
@@ -61,6 +89,7 @@ function isTransientPaymentFailure(error?: string): boolean {
     e.includes('replacement transaction') ||
     e.includes('underpriced') ||
     e.includes('insufficient allowance') ||
+    e.includes('allowance_required') ||
     e.includes('timeout') ||
     e.includes('timed out') ||
     e.includes('econnreset') ||
@@ -345,6 +374,10 @@ function getScenarioResourceKeys(
   scenario: TestScenario,
   ctx: EvmResourceKeyContext,
 ): string[] {
+  // Serialize Cardano scenarios in --parallel mode: shared wallet UTXO contention.
+  if (scenario.protocolFamily === 'cardano') {
+    return ['cardano:client-wallet'];
+  }
   if (scenario.protocolFamily !== 'evm') {
     return [];
   }
@@ -508,7 +541,11 @@ async function startServer(
 
   if (options?.transport !== 'mcp') {
     if (typeof server.verifyPaidRoutes === 'function') {
-      const { ok, problems } = await server.verifyPaidRoutes(serverConfig.enabledFamilies);
+      const { ok, problems } = await server.verifyPaidRoutes(
+        serverConfig.enabledFamilies,
+        serverConfig.runRouteFilter,
+        serverConfig.batchServerRole ?? 'standard',
+      );
       if (!ok) {
         errorLog(
           `  ❌ Server does not mount every paid route it declares in the mechanisms catalog:\n     ${problems.join('\n     ')}`,
@@ -683,7 +720,11 @@ function validateBatchPaymentStep(
   }
 
   if (!stepResult.success) {
-    const reason = stepResult.payment_response?.errorReason || stepResult.error || 'unknown error';
+    const reason =
+      stepResult.payment_response?.errorReason ||
+      stepResult.error ||
+      (stepResult.data as { error?: unknown })?.error ||
+      `unknown error (status_code=${stepResult.status_code ?? "n/a"}, data=${JSON.stringify(stepResult.data ?? null)})`;
     return `Batch-settlement ${label} failed: ${reason}`;
   }
 
@@ -718,6 +759,17 @@ function mergeVerboseLogs(...results: ClientTestResult[]): string[] {
 function envFlagDefaultTrue(value: string | undefined): boolean {
   if (value === undefined) return true;
   return !['0', 'false', 'no', 'off'].includes(value.toLowerCase());
+}
+
+function batchSettlementRecoveryForFamily(protocolFamily: string): boolean {
+  switch (protocolFamily) {
+    case 'evm':
+      return envFlagDefaultTrue(process.env.EVM_BATCH_SETTLEMENT_RECOVERY);
+    case 'svm':
+      return envFlagDefaultTrue(process.env.SVM_BATCH_SETTLEMENT_RECOVERY);
+    default:
+      return true;
+  }
 }
 
 function waitForChildProcess(child: ChildProcess, timeoutMs: number): Promise<boolean> {
@@ -783,10 +835,6 @@ async function runTest() {
   // Env keys used below (preflight + funding use catalog/process.env directly)
   const clientEvmPrivateKey = process.env.CLIENT_EVM_PRIVATE_KEY;
   const facilitatorEvmPrivateKey = process.env.FACILITATOR_EVM_PRIVATE_KEY;
-  const facilitatorHederaAccountId = process.env.FACILITATOR_HEDERA_ACCOUNT_ID;
-  const facilitatorHederaPrivateKey = process.env.FACILITATOR_HEDERA_PRIVATE_KEY;
-  const batchSettlementRecovery = envFlagDefaultTrue(process.env.EVM_BATCH_SETTLEMENT_RECOVERY);
-
   // Discover all servers, clients, and facilitators (always include legacy)
   const discovery = new TestDiscovery('.');
 
@@ -877,6 +925,27 @@ async function runTest() {
   // Apply filters to scenarios
   let filteredScenarios = filterScenarios(allScenarios, filters);
 
+  // Facilitator-managed batch custody override (debug/CI-only): run only one custody side.
+  // CLI `--batchVoucherStore=self|facilitator` wins; otherwise honor
+  // `EVM_BATCH_SETTLEMENT_VOUCHER_STORE_MODE=self|facilitator` from env.
+  const batchCustodyOverride =
+    parsedArgs.batchVoucherStore ?? batchVoucherStoreOverrideFromEnv(key => process.env[key]);
+  if (batchCustodyOverride) {
+    const before = filteredScenarios.length;
+    if (batchCustodyOverride === 'self') {
+      filteredScenarios = filteredScenarios.filter(
+        scenario => !endpointUsesFacilitatorManagedBatch(scenario.endpoint),
+      );
+    } else {
+      filteredScenarios = filteredScenarios.filter(scenario =>
+        endpointUsesFacilitatorManagedBatch(scenario.endpoint),
+      );
+    }
+    log(
+      `\n🔀 Batch custody override: ${batchCustodyOverride} (${before} → ${filteredScenarios.length} scenarios)`,
+    );
+  }
+
   if (filteredScenarios.length === 0) {
     log('❌ No scenarios match the selections');
     log('💡 Try selecting more options or run without filters\n');
@@ -903,6 +972,8 @@ async function runTest() {
   }
 
   const selectedProtocolFamilies = new Set(filteredScenarios.map(scenario => scenario.protocolFamily));
+  const selectedPaymentSchemes = new Set(getUniquePaymentSchemes(filteredScenarios));
+  const runRouteFilter = runRouteFilterForHarness(selectedProtocolFamilies, selectedPaymentSchemes);
   const missingRequiredEnv = new Set<string>();
   for (const family of selectedProtocolFamilies) {
     for (const [name, value] of requiredEnvByFamily[family] || []) {
@@ -916,6 +987,21 @@ async function runTest() {
     errorLog('❌ Missing required environment variables for selected protocol families:');
     Array.from(missingRequiredEnv).forEach(name => errorLog(` ${name}`));
     process.exit(1);
+  }
+
+  // Facilitator-managed batch preflight: every managed scenario settles through a
+  // facilitator voucher store. Refund consent is either the server-owned refund key
+  // (SERVER_EVM_BATCH_SETTLEMENT_REFUND_AUTHORIZER_PRIVATE_KEY: `extra.refundAuthorizer` →
+  // client salt packing) or, when unset, the facilitator's `delegatedRefund: true`
+  // (402 omits `extra.refundAuthorizer`, raw salt).
+  const hasManagedBatchScenarios = filteredScenarios.some(scenario =>
+    endpointUsesFacilitatorManagedBatch(scenario.endpoint),
+  );
+  if (hasManagedBatchScenarios) {
+    log('🗄️ Facilitator-managed batch scenarios detected — facilitator voucher store + dual servers enabled');
+    if (!process.env.SERVER_EVM_BATCH_SETTLEMENT_REFUND_AUTHORIZER_PRIVATE_KEY?.trim()) {
+      log('ℹ️ No refund authorizer key set — managed refunds use the facilitator delegatedRefund path');
+    }
   }
 
   if (selectedExtensions && selectedExtensions.length > 0) {
@@ -998,6 +1084,12 @@ async function runTest() {
         endpointAssetTransferMethod(s.endpoint) === 'permit2' &&
         s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring'),
     );
+    const hasManagedBatch = evmScenarios.some(s => endpointUsesFacilitatorManagedBatch(s.endpoint));
+    const hasSelfBatch = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'batch-settlement' &&
+        !endpointUsesFacilitatorManagedBatch(s.endpoint),
+    );
 
     log('🔍 EVM Branch Coverage Check:');
     log(`   Exact EIP-3009 route:          ${hasExactEip3009 ? '✅' : '⚠️  not found'}`);
@@ -1014,6 +1106,23 @@ async function runTest() {
     log(`   Batch-settlement+direct:       ${hasBatchSettlementPermit2Direct ? '✅' : '⚠️  not found'}`);
     log(`   Batch-settlement+EIP2612:      ${hasBatchSettlementPermit2Eip2612 ? '✅' : '⚠️  not found'}`);
     log(`   Batch-settlement+ERC20:        ${hasBatchSettlementPermit2Erc20 ? '✅' : '⚠️  not found'}`);
+    log(`   Batch self-managed custody:    ${hasSelfBatch ? '✅' : '⚠️  not found'}`);
+    log(`   Batch facilitator-managed:     ${hasManagedBatch ? '✅' : '⚠️  not found'}`);
+    log('');
+  }
+
+  const authCaptureScenarios = filteredScenarios.filter(
+    s => endpointPaymentScheme(s.endpoint) === 'auth-capture',
+  );
+  if (authCaptureScenarios.length > 0) {
+    const branchSelected = (branch: string) =>
+      authCaptureScenarios.some(s => endpointAuthCaptureCoverageBranch(s.endpoint) === branch);
+    log('🔍 Auth-capture branch coverage (--min requires each branch once; one permit2 globally):');
+    log(`   Self-managed sync EIP-3009:    ${branchSelected('self-sync-eip3009') ? '✅' : '⚠️  not in selected set'}`);
+    log(`   Self-managed sync Permit2:     ${branchSelected('self-sync-permit2') ? '✅' : '⚠️  not in selected set'}`);
+    log(`   Facilitator-authorizer sync:   ${branchSelected('facilitator-sync') ? '✅' : '⚠️  not in selected set'}`);
+    log(`   Deferred delegated:            ${branchSelected('deferred-delegated') ? '✅' : '⚠️  not in selected set'}`);
+    log(`   Custom forwarding (collect):   ${branchSelected('custom-forwarding') ? '✅' : '⚠️  not in selected set'}`);
     log('');
   }
 
@@ -1049,6 +1158,15 @@ async function runTest() {
     uniqueServers.set(scenario.server.name, scenario.server);
     uniqueClients.set(scenario.client.name, scenario.client);
   });
+
+  for (const facilitator of uniqueFacilitators.values()) {
+    const families = facilitator.config?.protocolFamilies as string[] | undefined;
+    if (families?.length) {
+      facilitator.config.protocolFamilies = families.filter(family =>
+        selectedProtocolFamilies.has(family),
+      );
+    }
+  }
 
   // Validate facilitator and client env against catalog-declared requirements.
   log('\n🔍 Validating facilitator and client environment variables...\n');
@@ -1129,6 +1247,11 @@ async function runTest() {
     endpoint: string;
     facilitator: string;
     protocolFamily: string;
+    scheme: string;
+    assetTransferMethod: string;
+    paymentFlow: string;
+    transport: string;
+    version: string;
     passed: boolean;
     error?: string;
     transaction?: string;
@@ -1137,30 +1260,84 @@ async function runTest() {
     network?: string;
   }
 
+  function scenarioDimensions(
+    scenario: TestScenario,
+  ): Pick<DetailedTestResult, 'scheme' | 'assetTransferMethod' | 'paymentFlow' | 'transport' | 'version'> {
+    return {
+      scheme: endpointPaymentScheme(scenario.endpoint),
+      assetTransferMethod: endpointAssetTransferMethod(scenario.endpoint) ?? 'n/a',
+      paymentFlow: endpointPaymentFlow(scenario.endpoint),
+      transport: scenario.server.config.transport || 'http',
+      version: String(scenario.server.config.x402Version ?? 1),
+    };
+  }
+
+  function buildBreakdown(
+    results: DetailedTestResult[],
+    key: keyof DetailedTestResult,
+  ): Record<string, { passed: number; failed: number }> {
+    return results.reduce((acc, test) => {
+      const k = String(test[key]);
+      if (!acc[k]) acc[k] = { passed: 0, failed: 0 };
+      if (test.passed) acc[k].passed++;
+      else acc[k].failed++;
+      return acc;
+    }, {} as Record<string, { passed: number; failed: number }>);
+  }
+
+  function logBreakdown(
+    title: string,
+    breakdown: Record<string, { passed: number; failed: number }>,
+    padEnd = 15,
+    style: 'rate' | 'total' = 'rate',
+  ): void {
+    log(`📊 ${title}:`);
+    Object.entries(breakdown).forEach(([name, stats]) => {
+      const total = stats.passed + stats.failed;
+      if (style === 'total') {
+        log(` ${name.toUpperCase()}: ✅ ${stats.passed} / ❌ ${stats.failed} / 📈 ${total} total`);
+        return;
+      }
+      const passRate = total > 0 ? Math.round((stats.passed / total) * 100) : 0;
+      log(` ${name.padEnd(padEnd)} ✅ ${stats.passed} / ❌ ${stats.failed} (${passRate}%)`);
+    });
+    log('');
+  }
+
   let testResults: DetailedTestResult[] = [];
   const allocatePort = createPortAllocator(4022);
 
   // Assign ports and start all facilitators
   const facilitatorManagers = new Map<string, FacilitatorManager>();
 
-  // Group scenarios by server + facilitator combination
-  // This ensures we restart servers when switching facilitators
+  // Group scenarios by server + facilitator + batch custody combination.
+  // `voucherStoreMode` is constructor-wide on the server scheme, so one process
+  // cannot mix self-managed and facilitator-managed batch routes. Spawn two
+  // servers per (server, facilitator) pair when both sides are in scope; a single
+  // facilitator with a voucher store serves both (discriminant is
+  // `extra.voucherManager` on each 402).
   interface ServerFacilitatorCombo {
     serverName: string;
     facilitatorName: string | undefined;
+    batchServerRole: BatchServerRole;
     scenarios: typeof filteredScenarios;
     comboIndex: number;
     port: number;
   }
 
   const serverFacilitatorCombos: ServerFacilitatorCombo[] = [];
-  const groupKey = (serverName: string, facilitatorName: string | undefined) =>
-    `${serverName}::${facilitatorName || 'none'}`;
+  const batchRoleForScenario = (scenario: TestScenario): BatchServerRole =>
+    endpointUsesFacilitatorManagedBatch(scenario.endpoint) ? 'managed-batch' : 'standard';
+  const groupKey = (
+    serverName: string,
+    facilitatorName: string | undefined,
+    batchServerRole: BatchServerRole,
+  ) => `${serverName}::${facilitatorName || 'none'}::${batchServerRole}`;
 
   const comboMap = new Map<string, typeof filteredScenarios>();
 
   for (const scenario of filteredScenarios) {
-    const key = groupKey(scenario.server.name, scenario.facilitator?.name);
+    const key = groupKey(scenario.server.name, scenario.facilitator?.name, batchRoleForScenario(scenario));
     if (!comboMap.has(key)) {
       comboMap.set(key, []);
     }
@@ -1187,6 +1364,7 @@ async function runTest() {
     serverFacilitatorCombos.push({
       serverName: firstScenario.server.name,
       facilitatorName: firstScenario.facilitator?.name,
+      batchServerRole: batchRoleForScenario(firstScenario),
       scenarios: sorted,
       comboIndex,
       port: allocatePort(),
@@ -1194,16 +1372,23 @@ async function runTest() {
     comboIndex++;
   }
 
+  // One facilitator serves both custody sides; enable its voucher store + channel
+  // manager whenever any managed-batch scenario is in the run.
+  const facilitatorVoucherStore = filteredScenarios.some(scenario =>
+    endpointUsesFacilitatorManagedBatch(scenario.endpoint),
+  );
+  if (facilitatorVoucherStore) {
+    log('\n🗄️ Facilitator voucher store enabled (managed-batch scenarios in scope)');
+  }
+
   // Start all facilitators with unique ports
   for (const [facilitatorName, facilitator] of uniqueFacilitators) {
     const port = allocatePort();
     log(`\n🏛️ Starting facilitator: ${facilitatorName} on port ${port}`);
 
-    const manager = new FacilitatorManager(
-      facilitator.proxy,
-      port,
-      networks
-    );
+    const manager = new FacilitatorManager(facilitator.proxy, port, networks, {
+      voucherStore: facilitatorVoucherStore,
+    });
     facilitatorManagers.set(facilitatorName, manager);
   }
 
@@ -1267,7 +1452,9 @@ async function runTest() {
 
   log(`🔧 Server/Facilitator combinations: ${serverFacilitatorCombos.length}`);
   serverFacilitatorCombos.forEach(combo => {
-    log(`   • ${combo.serverName} + ${combo.facilitatorName || 'none'}: ${combo.scenarios.length} test(s)`);
+    log(
+      `   • ${combo.serverName} + ${combo.facilitatorName || 'none'} [${combo.batchServerRole}]: ${combo.scenarios.length} test(s)`,
+    );
   });
   if (parsedArgs.parallel) {
     log(`\n⚡ Parallel mode enabled (concurrency: ${parsedArgs.concurrency})`);
@@ -1300,12 +1487,14 @@ async function runTest() {
 
       if (isBatchSettlement) {
         const channelSalt = generateChannelSalt();
+        const svmServerSignedOperators = await resolveSvmServerSignedOperators(scenario.endpoint.path);
         const batchBase = {
           channelSalt,
           ...(voucherSignerPrivateKey ? { voucherSignerPrivateKey } : {}),
+          ...(svmServerSignedOperators ? { svmServerSignedOperators } : {}),
         };
 
-        if (!batchSettlementRecovery) {
+        if (!batchSettlementRecoveryForFamily(scenario.protocolFamily)) {
           const fullResult = await runClientTest(scenario.client.proxy, {
             ...baseClientConfig,
             batchSettlement: { ...batchBase, phase: 'full' },
@@ -1330,6 +1519,7 @@ async function runTest() {
             endpoint: scenario.endpoint.path,
             facilitator: scenario.facilitator?.name || 'none',
             protocolFamily: scenario.protocolFamily,
+            ...scenarioDimensions(scenario),
             passed: !fullError,
             error: fullError,
             transaction: refundTransaction || depositTransaction,
@@ -1370,6 +1560,7 @@ async function runTest() {
             endpoint: scenario.endpoint.path,
             facilitator: scenario.facilitator?.name || 'none',
             protocolFamily: scenario.protocolFamily,
+            ...scenarioDimensions(scenario),
             passed: false,
             error: initialError,
             depositTransaction: getBatchStep(initialResult, 'deposit')?.payment_response?.transaction,
@@ -1384,6 +1575,18 @@ async function runTest() {
           cLog.verboseLog(`  🔍 Error details: ${JSON.stringify(initialResult, null, 2)}`);
           return detailedResult;
         }
+
+        // Let the initial deposit propagate across load-balanced RPCs before
+        // the fresh recovery process reads onchain state for cold-start
+        // recovery. Without this, the recovery voucher can rebuild against a
+        // stale balance/totalClaimed and fail as a cumulative mismatch that
+        // corrective recovery cannot resync (notably on facilitator-managed
+        // channels where the watermark lives offchain). Managed channels get
+        // a longer settle so the facilitator voucher-store write + RPC
+        // propagation both land before the recovery probe.
+        // See: go/http/nethttp+go managed-batch recovery 402s with a 2s gap.
+        const recoverySettleMs = endpointUsesFacilitatorManagedBatch(scenario.endpoint) ? 5000 : 2000;
+        await new Promise(resolve => setTimeout(resolve, recoverySettleMs));
 
         const recoveryResult = await runClientTest(scenario.client.proxy, {
           ...baseClientConfig,
@@ -1410,6 +1613,7 @@ async function runTest() {
             endpoint: scenario.endpoint.path,
             facilitator: scenario.facilitator?.name || 'none',
             protocolFamily: scenario.protocolFamily,
+            ...scenarioDimensions(scenario),
             passed: false,
             error: recoveryError,
             transaction: refundTransaction || depositTransaction,
@@ -1434,6 +1638,7 @@ async function runTest() {
           endpoint: scenario.endpoint.path,
           facilitator: scenario.facilitator?.name || 'none',
           protocolFamily: scenario.protocolFamily,
+          ...scenarioDimensions(scenario),
           passed: true,
           transaction: refundTransaction || depositTransaction,
           depositTransaction,
@@ -1447,6 +1652,43 @@ async function runTest() {
 
       const result = await runClientTest(scenario.client.proxy, baseClientConfig);
 
+      let deferredCaptureError: string | undefined;
+      let captureTransaction: string | undefined;
+      if (result.success && endpointAuthCaptureNeedsDeferredCapture(scenario.endpoint)) {
+        try {
+          const captureResponse = await fetch(
+            `http://localhost:${port}${AUTH_CAPTURE_E2E_CAPTURE_PATH}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ path: scenario.endpoint.path }),
+            },
+          );
+          const captureBody = (await captureResponse.json()) as {
+            success?: boolean;
+            transaction?: string;
+            error?: string;
+            errorReason?: string;
+          };
+          if (!captureResponse.ok) {
+            deferredCaptureError =
+              captureBody.error || `Deferred capture HTTP ${captureResponse.status}`;
+          } else if (!captureBody.success) {
+            deferredCaptureError =
+              captureBody.errorReason || captureBody.error || 'Deferred capture settle failed';
+          } else if (!captureBody.transaction) {
+            deferredCaptureError = 'Deferred capture succeeded but no transaction hash returned';
+          } else {
+            captureTransaction = captureBody.transaction;
+            cLog.verboseLog(`  🔗 Deferred capture transaction: ${captureTransaction}`);
+          }
+        } catch (error) {
+          deferredCaptureError =
+            error instanceof Error ? error.message : 'Deferred capture request failed';
+        }
+      }
+
+      const passed = result.success && !deferredCaptureError;
       const detailedResult: DetailedTestResult = {
         testNumber: localTestNumber,
         client: scenario.client.name,
@@ -1454,16 +1696,17 @@ async function runTest() {
         endpoint: scenario.endpoint.path,
         facilitator: scenario.facilitator?.name || 'none',
         protocolFamily: scenario.protocolFamily,
-        passed: result.success,
-        error: result.error,
-        transaction: result.payment_response?.transaction,
+        ...scenarioDimensions(scenario),
+        passed,
+        error: deferredCaptureError || result.error,
+        transaction: captureTransaction || result.payment_response?.transaction,
         network: result.payment_response?.network,
       };
 
-      if (result.success) {
+      if (passed) {
         cLog.log(`  ✅ Test passed`);
       } else {
-        cLog.log(`  ❌ Test failed: ${result.error}`);
+        cLog.log(`  ❌ Test failed: ${detailedResult.error}`);
         if (result.verboseLogs && result.verboseLogs.length > 0) {
           cLog.log(`  🔍 Verbose logs:`);
           result.verboseLogs.forEach(logLine => cLog.log(logLine));
@@ -1483,6 +1726,7 @@ async function runTest() {
         endpoint: scenario.endpoint.path,
         facilitator: scenario.facilitator?.name || 'none',
         protocolFamily: scenario.protocolFamily,
+        ...scenarioDimensions(scenario),
         passed: false,
         error: errorMsg,
       };
@@ -1496,9 +1740,10 @@ async function runTest() {
     evmResourceKeyContext: EvmResourceKeyContext,
     nextTestNumber: () => number,
   ): Promise<DetailedTestResult[]> {
-    const { serverName, facilitatorName, scenarios, port } = combo;
+    const { serverName, facilitatorName, batchServerRole, scenarios, port } = combo;
     const server = uniqueServers.get(serverName)!;
-    const cLog = createComboLogger(combo.comboIndex, serverName, facilitatorName);
+    const comboLabel = `${serverName}+${facilitatorName || 'none'} [${batchServerRole}]`;
+    const cLog = createComboLogger(combo.comboIndex, serverName, `${facilitatorName || 'none'} [${batchServerRole}]`);
 
     // Track facilitator→server mapping
     if (facilitatorName) {
@@ -1515,33 +1760,28 @@ async function runTest() {
       ? facilitatorUrls.get(facilitatorName)
       : undefined;
 
-    cLog.log(`🚀 Starting server: ${serverName} (port ${port}) with facilitator: ${facilitatorName || 'none'}`);
+    cLog.log(`🚀 Starting server: ${serverName} (port ${port}, role ${batchServerRole}) with facilitator: ${facilitatorName || 'none'}`);
 
-    const facilitatorConfig = facilitatorName ? uniqueFacilitators.get(facilitatorName)?.config : undefined;
-
-    const enabledFamilies: import('./src/types').ProtocolFamily[] = ['evm', 'svm'];
-    for (const family of PROTOCOL_FAMILIES) {
-      if (family === 'evm' || family === 'svm') continue;
-      if (!(facilitatorConfig?.protocolFamilies?.includes(family) ?? false)) continue;
-      if (family === 'hedera' && (!facilitatorHederaAccountId || !facilitatorHederaPrivateKey)) {
-        continue;
-      }
-      enabledFamilies.push(family);
-    }
+    const enabledFamilies = Array.from(selectedProtocolFamilies) as import('./src/types').ProtocolFamily[];
 
     // Optional SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY (server role only) opts
     // into self-managed batch-settlement claim/refund signing; omit to delegate
-    // to the facilitator's /supported receiverAuthorizer.
+    // to the facilitator's /supported receiverAuthorizer. Managed-batch servers
+    // must not set it (GenericServerProxy strips it from the child env); they may set
+    // SERVER_EVM_BATCH_SETTLEMENT_REFUND_AUTHORIZER_PRIVATE_KEY instead, or rely on the
+    // facilitator's delegatedRefund.
     const serverConfig: ServerConfig = {
       port,
       networks,
       enabledFamilies,
+      runRouteFilter,
       facilitatorUrl,
       mockFacilitatorUrl,
+      batchServerRole,
     };
 
     const serverStartFailures = (error: string) => {
-      cLog.log(`❌ Failed to start server ${serverName}${error ? `: ${error}` : ''}`);
+      cLog.log(`❌ Failed to start server ${comboLabel}${error ? `: ${error}` : ''}`);
       return scenarios.map(scenario => ({
         testNumber: nextTestNumber(),
         client: scenario.client.name,
@@ -1549,6 +1789,7 @@ async function runTest() {
         endpoint: scenario.endpoint.path,
         facilitator: scenario.facilitator?.name || 'none',
         protocolFamily: scenario.protocolFamily,
+        ...scenarioDimensions(scenario),
         passed: false,
         error: 'Server failed to start',
       }));
@@ -1563,7 +1804,7 @@ async function runTest() {
     if (!started) {
       return serverStartFailures('');
     }
-    cLog.log(`  ✅ Server ${serverName} ready`);
+    cLog.log(`  ✅ Server ${comboLabel} ready`);
 
     const results: DetailedTestResult[] = [];
     // Track which endpoint paths have already been "cold started" in this combo.
@@ -1585,6 +1826,7 @@ async function runTest() {
             endpoint: scenario.endpoint.path,
             facilitator: scenario.facilitator?.name || 'none',
             protocolFamily: scenario.protocolFamily,
+            ...scenarioDimensions(scenario),
             passed: false,
             error,
           });
@@ -1682,7 +1924,7 @@ async function runTest() {
         }
       }
     } finally {
-      cLog.verboseLog(`  🛑 Stopping ${serverName} (finished combo)`);
+      cLog.verboseLog(`  🛑 Stopping ${comboLabel} (finished combo)`);
       await serverProxy.stop();
     }
 
@@ -1846,99 +2088,45 @@ async function runTest() {
     log('');
   }
 
-  // Breakdown by facilitator
-  const facilitatorBreakdown = testResults.reduce((acc, test) => {
-    const key = test.facilitator;
-    if (!acc[key]) acc[key] = { passed: 0, failed: 0 };
-    if (test.passed) acc[key].passed++;
-    else acc[key].failed++;
-    return acc;
-  }, {} as Record<string, { passed: number; failed: number }>);
+  logBreakdown('Breakdown by Facilitator', buildBreakdown(testResults, 'facilitator'));
+  logBreakdown('Breakdown by Server', buildBreakdown(testResults, 'server'), 20);
+  logBreakdown('Breakdown by Client', buildBreakdown(testResults, 'client'), 20);
+  logBreakdown('Breakdown by Scheme', buildBreakdown(testResults, 'scheme'));
+  logBreakdown('Breakdown by Asset Transfer Method', buildBreakdown(testResults, 'assetTransferMethod'), 20);
+  logBreakdown('Breakdown by Transport', buildBreakdown(testResults, 'transport'));
+  logBreakdown('Breakdown by Version', buildBreakdown(testResults, 'version'));
 
-  log('📊 Breakdown by Facilitator:');
-  Object.entries(facilitatorBreakdown).forEach(([facilitator, stats]) => {
-    const total = stats.passed + stats.failed;
-    const passRate = total > 0 ? Math.round((stats.passed / total) * 100) : 0;
-    log(` ${facilitator.padEnd(15)} ✅ ${stats.passed} / ❌ ${stats.failed} (${passRate}%)`);
-  });
-  log('');
+  const paymentFlowBreakdown = buildBreakdown(testResults, 'paymentFlow');
+  if (Object.keys(paymentFlowBreakdown).length > 1) {
+    logBreakdown('Breakdown by Payment Flow', paymentFlowBreakdown);
+  }
 
-  // Breakdown by server
-  const serverBreakdown = testResults.reduce((acc, test) => {
-    const key = test.server;
-    if (!acc[key]) acc[key] = { passed: 0, failed: 0 };
-    if (test.passed) acc[key].passed++;
-    else acc[key].failed++;
-    return acc;
-  }, {} as Record<string, { passed: number; failed: number }>);
-
-  log('📊 Breakdown by Server:');
-  Object.entries(serverBreakdown).forEach(([server, stats]) => {
-    const total = stats.passed + stats.failed;
-    const passRate = total > 0 ? Math.round((stats.passed / total) * 100) : 0;
-    log(` ${server.padEnd(20)} ✅ ${stats.passed} / ❌ ${stats.failed} (${passRate}%)`);
-  });
-  log('');
-
-  // Breakdown by client
-  const clientBreakdown = testResults.reduce((acc, test) => {
-    const key = test.client;
-    if (!acc[key]) acc[key] = { passed: 0, failed: 0 };
-    if (test.passed) acc[key].passed++;
-    else acc[key].failed++;
-    return acc;
-  }, {} as Record<string, { passed: number; failed: number }>);
-
-  log('📊 Breakdown by Client:');
-  Object.entries(clientBreakdown).forEach(([client, stats]) => {
-    const total = stats.passed + stats.failed;
-    const passRate = total > 0 ? Math.round((stats.passed / total) * 100) : 0;
-    log(`   ${client.padEnd(20)} ✅ ${stats.passed} / ❌ ${stats.failed} (${passRate}%)`);
-  });
-  log('');
-
-  // Protocol family breakdown
-  const protocolBreakdown = testResults.reduce((acc, test) => {
-    const key = test.protocolFamily;
-    if (!acc[key]) acc[key] = { passed: 0, failed: 0 };
-    if (test.passed) acc[key].passed++;
-    else acc[key].failed++;
-    return acc;
-  }, {} as Record<string, { passed: number; failed: number }>);
-
+  const protocolBreakdown = buildBreakdown(testResults, 'protocolFamily');
   if (Object.keys(protocolBreakdown).length > 1) {
-    log('📊 Protocol Family Breakdown:');
-    Object.entries(protocolBreakdown).forEach(([protocol, stats]) => {
-      const total = stats.passed + stats.failed;
-      log(` ${protocol.toUpperCase()}: ✅ ${stats.passed} / ❌ ${stats.failed} / 📈 ${total} total`);
-    });
-    log('');
+    logBreakdown('Protocol Family Breakdown', protocolBreakdown, 15, 'total');
   }
 
   // Write structured JSON output if requested
   if (parsedArgs.outputJson) {
-    const breakdown = (results: DetailedTestResult[], key: keyof DetailedTestResult) =>
-      results.reduce((acc, test) => {
-        const k = String(test[key]);
-        if (!acc[k]) acc[k] = { passed: 0, failed: 0 };
-        if (test.passed) acc[k].passed++;
-        else acc[k].failed++;
-        return acc;
-      }, {} as Record<string, { passed: number; failed: number }>);
-
     const jsonOutput = {
       summary: {
         total: passed + failed,
         passed,
         failed,
         networkMode,
+        durationMinutes: Number(((Date.now() - startTime) / 60_000).toFixed(2)),
       },
       results: testResults,
       breakdowns: {
-        byFacilitator: breakdown(testResults, 'facilitator'),
-        byServer: breakdown(testResults, 'server'),
-        byClient: breakdown(testResults, 'client'),
-        byProtocolFamily: breakdown(testResults, 'protocolFamily'),
+        byFacilitator: buildBreakdown(testResults, 'facilitator'),
+        byServer: buildBreakdown(testResults, 'server'),
+        byClient: buildBreakdown(testResults, 'client'),
+        byScheme: buildBreakdown(testResults, 'scheme'),
+        byAssetTransferMethod: buildBreakdown(testResults, 'assetTransferMethod'),
+        byTransport: buildBreakdown(testResults, 'transport'),
+        byVersion: buildBreakdown(testResults, 'version'),
+        byPaymentFlow: buildBreakdown(testResults, 'paymentFlow'),
+        byProtocolFamily: buildBreakdown(testResults, 'protocolFamily'),
       },
     };
 

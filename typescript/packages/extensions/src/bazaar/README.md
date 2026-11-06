@@ -1,6 +1,6 @@
 # Bazaar Discovery Extension
 
-Part of [`@x402/extensions`](../README.md). Import from `@x402/extensions/bazaar`.
+Part of [`@x402/extensions`](../../README.md). Import from `@x402/extensions/bazaar`.
 
 The Bazaar Discovery Extension enables facilitators to automatically catalog and index x402-enabled resources by following server-declared discovery instructions. This allows users to discover paid APIs and services through facilitator catalogs.
 

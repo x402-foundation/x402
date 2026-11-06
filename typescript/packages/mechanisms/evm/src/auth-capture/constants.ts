@@ -30,13 +30,13 @@ export const OPERATOR_REFUND_COLLECTOR_V1_0_ADDRESS =
 
 // commerce-payments v1.1 (default)
 export const AUTH_CAPTURE_ESCROW_V1_1_ADDRESS =
-  "0x13AC3b34322D12FE27D5e192D0c2b2266d4F29CB" as const satisfies `0x${string}`;
+  "0xf96815976523E00e65Be8f34cA5e64b4f41EB19c" as const satisfies `0x${string}`;
 export const EIP3009_TOKEN_COLLECTOR_V1_1_ADDRESS =
-  "0xEA902B37036bcb4944577ec2101ABdEDF56EbD28" as const satisfies `0x${string}`;
+  "0x8612dfdc421f80336cd14E8EF9cb1E765dB5ab88" as const satisfies `0x${string}`;
 export const PERMIT2_TOKEN_COLLECTOR_V1_1_ADDRESS =
-  "0x1aacb38b16a1a8709e80746825E53A0C9Cae9b70" as const satisfies `0x${string}`;
+  "0xD69831Aed5bfe262067ec4c751f4F830EcdD446e" as const satisfies `0x${string}`;
 export const OPERATOR_REFUND_COLLECTOR_V1_1_ADDRESS =
-  "0x6a1ADdEEb4bD9c5811a613e20c172b6CE61A4aaB" as const satisfies `0x${string}`;
+  "0x7a03443724d14798c4AB4622F1DAAcA761Fea486" as const satisfies `0x${string}`;
 
 /** Default deployment aliases (v1.1). */
 export const AUTH_CAPTURE_ESCROW_ADDRESS = AUTH_CAPTURE_ESCROW_V1_1_ADDRESS;

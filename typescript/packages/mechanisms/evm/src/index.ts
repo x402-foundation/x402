@@ -50,6 +50,8 @@ export type {
   BatchSettlementVoucherFields,
   BatchSettlementErc3009Authorization,
   BatchSettlementClaimPayload,
+  BatchSettlementEnrichedDepositPayload,
+  BatchSettlementEnrichedVoucherPayload,
   BatchSettlementEnrichedRefundPayload,
   BatchSettlementVoucherClaim,
   BatchSettlementPayload,
@@ -78,6 +80,13 @@ export {
   claimBatchTypes,
 } from "./batch-settlement/constants";
 
+export {
+  DEFAULT_ASSET_CONTRACT_CACHE_TTL_MS,
+  resetAssetContractCache,
+  startAssetContractCheck,
+  validateAssetIsContract,
+} from "./assetCache";
+
 export { getDefaultAsset, findDefaultAsset } from "./defaultAssets";
 export type { DefaultAssetInfo, ExactDefaultAssetInfo } from "./defaultAssets";
 
@@ -100,6 +109,8 @@ export {
   verifyHashSignature,
   verifyHashSignatureWithCode,
   classifyErc6492Payer,
+  isCanonicalEcdsaSignature,
+  isPlainNonCanonicalEcdsaSignature,
 } from "./shared/verifySignature";
 export type { Erc6492Classification } from "./shared/verifySignature";
 

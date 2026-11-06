@@ -41,17 +41,18 @@ async function buildTestResourceServer(): Promise<x402ResourceServer> {
 }
 
 /**
- * Issue a single HTTP GET to the given port + raw path and return the
+ * Issue a single HTTP request to the given port + raw path and return the
  * response status. The path is sent verbatim — Node does not re-encode
  * it — which is exactly what an attacker on the wire could do.
  *
  * @param port - The local server port.
  * @param rawPath - The raw HTTP path (already percent-encoded as desired).
+ * @param method - The HTTP method to issue.
  * @returns The response status code.
  */
-async function statusFor(port: number, rawPath: string): Promise<number> {
+async function statusFor(port: number, rawPath: string, method: string = "GET"): Promise<number> {
   return new Promise((resolve, reject) => {
-    const req = http.request({ host: "127.0.0.1", port, method: "GET", path: rawPath }, res => {
+    const req = http.request({ host: "127.0.0.1", port, method, path: rawPath }, res => {
       res.resume();
       res.on("end", () => resolve(res.statusCode ?? 0));
     });
@@ -128,5 +129,58 @@ describe("fastify end-to-end: percent-encoded line terminator under wildcard rou
 
   it("returns 200 (middleware skipped) for an unrelated path", async () => {
     expect(await statusFor(port, "/health")).toBe(200);
+  });
+});
+
+describe("fastify end-to-end: literal route percent-encoded separator", () => {
+  let app: FastifyInstance;
+  let port: number;
+
+  beforeAll(async () => {
+    app = Fastify();
+    const resourceServer = await buildTestResourceServer();
+    paymentMiddleware(
+      app,
+      {
+        "GET /api/premium": {
+          accepts: {
+            scheme: "exact",
+            payTo: "0xabc",
+            price: "$0.01",
+            network: TEST_NETWORK,
+          },
+        },
+      },
+      resourceServer,
+      undefined,
+      undefined,
+      false,
+    );
+    app.get("/api/premium", async () => "paid content");
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    port = (app.server.address() as AddressInfo).port;
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it("returns 402 for the baseline literal route", async () => {
+    expect(await statusFor(port, "/api/premium")).toBe(402);
+  });
+
+  it("returns 402 for HEAD when Fastify dispatches it to the GET handler", async () => {
+    expect(await statusFor(port, "/api/premium", "HEAD")).toBe(402);
+  });
+
+  it.each([["/api%2Fpremium"], ["/api%2fpremium"], ["/%61pi%2Fpremium"]])(
+    "returns 402 for percent-encoded separator %s",
+    async path => {
+      expect(await statusFor(port, path)).toBe(402);
+    },
+  );
+
+  it("does not gate an unrelated path", async () => {
+    expect(await statusFor(port, "/health")).toBe(404);
   });
 });

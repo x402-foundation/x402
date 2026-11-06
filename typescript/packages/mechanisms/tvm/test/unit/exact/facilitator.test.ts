@@ -1,9 +1,11 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { keyPairFromSeed } from "@ton/crypto";
-import { beginCell, Cell } from "@ton/core";
+import { Address, beginCell, Cell } from "@ton/core";
 import { ExactTvmScheme } from "../../../src/exact/facilitator/scheme";
-import { buildJettonTransferBodyFields } from "../../../src/codecs/jetton";
+import { buildJettonTransferBodyFields, parseJettonTransfer } from "../../../src/codecs/jetton";
+import { SettlementBatcher } from "../../../src/exact/settlement-batcher";
+import { SettlementCache } from "../../../src/settlement-cache";
 import {
   DEFAULT_JETTON_WALLET_MESSAGE_AMOUNT,
   ERR_EXACT_TVM_DUPLICATE_SETTLEMENT,
@@ -12,21 +14,41 @@ import {
   ERR_EXACT_TVM_INVALID_AMOUNT,
   ERR_EXACT_TVM_INVALID_ASSET,
   ERR_EXACT_TVM_INVALID_CODE_HASH,
+  ERR_EXACT_TVM_INVALID_JETTON_TRANSFER,
   ERR_EXACT_TVM_INVALID_RECIPIENT,
   ERR_EXACT_TVM_INVALID_SEQNO,
+  ERR_EXACT_TVM_INVALID_SETTLEMENT_BOC,
+  ERR_EXACT_TVM_INVALID_W5_MESSAGE,
   ERR_EXACT_TVM_INVALID_WALLET_ID,
   ERR_EXACT_TVM_SIMULATION_FAILED,
+  ERR_EXACT_TVM_TRANSACTION_FAILED,
   ERR_EXACT_TVM_UNSUPPORTED_NETWORK,
   ERR_EXACT_TVM_UNSUPPORTED_SCHEME,
   ERR_EXACT_TVM_UNSUPPORTED_VERSION,
+  JETTON_TRANSFER_OPCODE,
   MIN_FACILITATOR_TON_BALANCE,
   TVM_TESTNET,
   USDT_TESTNET_MINTER,
   W5R1_CODE_HEX,
 } from "../../../src/constants";
 import { toClientTvmSigner, type FacilitatorTvmSigner } from "../../../src/signer";
-import type { ParsedTvmSettlement, TvmAccountState, TvmJettonWalletData } from "../../../src/types";
+import type {
+  ParsedTvmSettlement,
+  TvmAccountState,
+  TvmJettonWalletData,
+  TvmRelayRequest,
+} from "../../../src/types";
 import { parseExactTvmPayload } from "../../../src/exact/codec";
+import {
+  messageBodyHashMatches,
+  parseTraceTransactions,
+  traceTransactionBalanceBefore,
+  traceTransactionComputeFees,
+  traceTransactionFwdFees,
+  traceTransactionHashToHex,
+  traceTransactionStorageFees,
+  transactionSucceeded,
+} from "../../../src/trace-utils";
 
 const PAY_TO = "0:2222222222222222222222222222222222222222222222222222222222222222";
 const SOURCE_JETTON_WALLET = "0:3333333333333333333333333333333333333333333333333333333333333333";
@@ -248,6 +270,223 @@ describe("ExactTvmScheme facilitator", () => {
     });
   });
 });
+
+describe("exact codec and jetton parsing", () => {
+  it("rejects malformed settlement BoCs and invalid W5 payloads", async () => {
+    expect(() => parseExactTvmPayload("not-a-boc")).toThrow(ERR_EXACT_TVM_INVALID_SETTLEMENT_BOC);
+
+    const externalOnly = beginCell().storeUint(0, 1).endCell().toBoc().toString("base64");
+    expect(() => parseExactTvmPayload(externalOnly)).toThrow(ERR_EXACT_TVM_INVALID_SETTLEMENT_BOC);
+
+    const fixture = await createFixture();
+    const invalidOpcodeBoc = await toClientTvmSigner(keyPairFromSeed(Buffer.alloc(32, 12)), {
+      network: TVM_TESTNET,
+    }).signTransfer(
+      0,
+      Math.floor(Date.now() / 1000) + 60,
+      [
+        {
+          address: SOURCE_JETTON_WALLET,
+          amount: 1n,
+          body: beginCell().storeUint(0, 1).endCell(),
+        },
+      ],
+      { includeStateInit: false },
+    );
+    const tampered = Buffer.from(invalidOpcodeBoc, "base64");
+    tampered[20] ^= 0xff;
+    expect(() => parseExactTvmPayload(tampered.toString("base64"))).toThrow(
+      new RegExp(`${ERR_EXACT_TVM_INVALID_W5_MESSAGE}|${ERR_EXACT_TVM_INVALID_SETTLEMENT_BOC}`),
+    );
+
+    expect(fixture.settlement.transfer.destination).toBe(PAY_TO);
+  });
+
+  it("rejects invalid jetton transfer bodies", () => {
+    const wallet = SOURCE_JETTON_WALLET;
+    expect(() => parseJettonTransfer(wallet, beginCell().endCell())).toThrow(
+      ERR_EXACT_TVM_INVALID_JETTON_TRANSFER,
+    );
+
+    const wrongOpcode = beginCell().storeUint(0xdeadbeef, 32).endCell();
+    expect(() => parseJettonTransfer(wallet, wrongOpcode)).toThrow(
+      ERR_EXACT_TVM_INVALID_JETTON_TRANSFER,
+    );
+
+    const withCustomPayload = beginCell()
+      .storeUint(JETTON_TRANSFER_OPCODE, 32)
+      .storeUint(0, 64)
+      .storeCoins(1n)
+      .storeAddress(Address.parse(PAY_TO))
+      .storeAddress(null)
+      .storeBit(true)
+      .endCell();
+    expect(() => parseJettonTransfer(wallet, withCustomPayload)).toThrow(
+      ERR_EXACT_TVM_INVALID_JETTON_TRANSFER,
+    );
+  });
+
+  it("builds jetton transfer bodies with optional forward payload", () => {
+    const forwardPayload = beginCell().storeUint(7, 8).endCell().toBoc().toString("base64");
+    const body = buildJettonTransferBodyFields({
+      amount: 100n,
+      payTo: PAY_TO,
+      extra: {
+        forwardTonAmount: "1",
+        responseDestination: PAY_TO,
+        forwardPayload,
+      },
+    });
+    const parsed = parseJettonTransfer(SOURCE_JETTON_WALLET, body);
+    expect(parsed.forwardTonAmount).toBe(1n);
+    expect(parsed.responseDestination).toBe(PAY_TO);
+    expect(() =>
+      buildJettonTransferBodyFields({
+        amount: 1n,
+        payTo: PAY_TO,
+        extra: { forwardTonAmount: "-1" },
+      }),
+    ).toThrow(/Forward TON amount should be >= 0/);
+  });
+});
+
+describe("trace utils", () => {
+  it("parses trace transactions and fee metadata", () => {
+    const trace = {
+      transactions: {
+        one: {
+          description: {
+            aborted: false,
+            compute_ph: { skipped: false, success: true, gas_fees: "100" },
+            action: { success: true, total_fwd_fees: "250" },
+            storage_ph: { storage_fees_collected: "10", storage_fees_due: "5" },
+          },
+          out_msgs: [{ fwd_fee: "250" }],
+          account_state_before: { balance: "1000" },
+        },
+      },
+    };
+    expect(parseTraceTransactions(trace)).toHaveLength(1);
+    expect(transactionSucceeded(trace.transactions.one)).toBe(true);
+    expect(traceTransactionFwdFees(trace.transactions.one)).toBe(250n);
+    expect(traceTransactionComputeFees(trace.transactions.one)).toBe(100n);
+    expect(traceTransactionStorageFees(trace.transactions.one)).toBe(15n);
+    expect(traceTransactionBalanceBefore(trace.transactions.one)).toBe(1000n);
+    expect(traceTransactionHashToHex("YWJj")).toBe("616263");
+    expect(traceTransactionHashToHex("a".repeat(64))).toBe("a".repeat(64));
+    expect(
+      messageBodyHashMatches(
+        { message_content: { hash: beginCell().endCell().hash().toString("base64") } },
+        beginCell().endCell().hash(),
+      ),
+    ).toBe(true);
+    expect(() => parseTraceTransactions({ transactions: [] })).toThrow(
+      /did not return transactions dict/,
+    );
+  });
+});
+
+describe("SettlementBatcher", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("fails queued settlements when broadcast or confirmation fails", async () => {
+    const cache = new SettlementCache();
+    const fixture = await createFixture();
+    const settlementVerifier = vi.fn(() => "confirmed-tx");
+
+    const failingBroadcastSigner = createMockSigner({
+      trace: traceForSettlement(fixture.settlement),
+    });
+    failingBroadcastSigner.buildRelayExternalBocBatch.mockRejectedValue(
+      new Error("broadcast failed"),
+    );
+    const broadcastBatcher = new SettlementBatcher(failingBroadcastSigner, cache, {
+      batchFlushSize: 1,
+      settlementVerifier,
+    });
+    await expect(broadcastBatcher.enqueue(createQueuedSettlement(fixture))).resolves.toMatchObject({
+      success: false,
+      errorReason: ERR_EXACT_TVM_TRANSACTION_FAILED,
+      errorMessage: "broadcast failed",
+    });
+
+    const failingConfirmationSigner = createMockSigner({
+      trace: traceForSettlement(fixture.settlement),
+    });
+    failingConfirmationSigner.waitForTraceConfirmation.mockRejectedValue(
+      new Error("confirmation failed"),
+    );
+    const confirmationBatcher = new SettlementBatcher(failingConfirmationSigner, cache, {
+      batchFlushSize: 1,
+      settlementVerifier,
+    });
+    await expect(
+      confirmationBatcher.enqueue(createQueuedSettlement(fixture)),
+    ).resolves.toMatchObject({
+      success: false,
+      errorMessage: "confirmation failed",
+    });
+
+    settlementVerifier.mockImplementation(() => {
+      throw new Error("verification failed");
+    });
+    const verificationBatcher = new SettlementBatcher(
+      createMockSigner({ trace: traceForSettlement(fixture.settlement) }),
+      cache,
+      { batchFlushSize: 1, settlementVerifier },
+    );
+    await expect(
+      verificationBatcher.enqueue(createQueuedSettlement(fixture)),
+    ).resolves.toMatchObject({
+      success: false,
+      errorMessage: "verification failed",
+    });
+  });
+
+  it("flushes queued settlements when the timer elapses", async () => {
+    vi.useFakeTimers();
+    const cache = new SettlementCache();
+    const fixture = await createFixture();
+    const settlementVerifier = vi.fn(() => "confirmed-tx");
+    const batcher = new SettlementBatcher(
+      createMockSigner({ trace: traceForSettlement(fixture.settlement) }),
+      cache,
+      {
+        flushIntervalSeconds: 1,
+        batchFlushSize: 10,
+        settlementVerifier,
+      },
+    );
+
+    const resultPromise = batcher.enqueue(createQueuedSettlement(fixture));
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(resultPromise).resolves.toMatchObject({
+      success: true,
+      transaction: "confirmed-tx",
+    });
+  });
+});
+
+function createQueuedSettlement(fixture: Awaited<ReturnType<typeof createFixture>>): {
+  network: string;
+  settlementHash: string;
+  settlement: ParsedTvmSettlement;
+  relayRequest: TvmRelayRequest;
+} {
+  return {
+    network: TVM_TESTNET,
+    settlementHash: fixture.settlement.settlementHash,
+    settlement: fixture.settlement,
+    relayRequest: {
+      destination: fixture.settlement.transfer.sourceWallet,
+      body: fixture.settlement.transfer.forwardPayload,
+      stateInit: fixture.settlement.stateInit,
+      forwardTonAmount: fixture.settlement.transfer.attachedTonAmount,
+    },
+  };
+}
 
 async function createFixture(
   overrides: Partial<PaymentRequirements> = {},

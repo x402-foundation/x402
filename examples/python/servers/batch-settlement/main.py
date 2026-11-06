@@ -66,6 +66,7 @@ scheme_config = BatchSettlementEvmSchemeServerConfig(
     receiver_authorizer_signer=(
         LocalAuthorizerSigner(RECEIVER_AUTH_KEY) if RECEIVER_AUTH_KEY else None
     ),
+    enforce_min_deposit=False,
     storage=FileChannelStorage(STORAGE_DIR) if STORAGE_DIR else None,
 )
 scheme = BatchSettlementEvmScheme(EVM_ADDRESS, scheme_config)
@@ -113,6 +114,8 @@ routes = {
             "payTo": EVM_ADDRESS,
             "price": MAX_PRICE,
             "network": EVM_NETWORK,
+            # Optional: override the default 10× deposit hint (Money strings require the network default asset).
+            # "extra": {"minDeposit": "$0.10"},
         },
     },
 }

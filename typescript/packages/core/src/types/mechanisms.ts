@@ -48,12 +48,12 @@ export type PaymentPayloadResult = Pick<PaymentPayload, "x402Version" | "payload
 };
 
 /**
- * Context passed to scheme's createPaymentPayload for extensions awareness.
- * Contains the server-declared extensions from PaymentRequired so the scheme
- * can check which extensions are advertised and respond accordingly.
+ * Context passed to scheme `createPaymentPayload`.
+ * `maxAmountPerPayment` is the resolved atomic spend cap; omitted when uncapped.
  */
 export interface PaymentPayloadContext {
   extensions?: Record<string, unknown>;
+  maxAmountPerPayment?: string;
 }
 
 export interface SchemeClientHooks {
@@ -263,8 +263,12 @@ export interface SchemeNetworkServer {
 
   /**
    * Optional: return payment requirements to settle when a verified payment is
-   * canceled (handler failure/throw or post-verify abort). Core calls
-   * `settlePayment` with the returned requirements; return void to skip settle.
+   * canceled (handler failure/throw, post-verify abort, or pre-facilitator settlement
+   * failure). Core calls `settlePayment` with the returned requirements; return void to skip settle.
+   *
+   * `context.settledPhases` lists the settle phases already completed for this
+   * payment and may be empty. Only return requirements when cancel settle is
+   * appropriate for the completed phases.
    *
    * @param context - Cancellation context for the verified payment
    * @returns Requirements to settle, or void to leave the payment unsettled

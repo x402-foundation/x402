@@ -38,6 +38,9 @@ DEFAULT_MAX_CLAIMS_PER_BATCH = 100
 CHANNEL_STATE_POLL_S = 2.0
 CHANNEL_STATE_POLL_INTERVAL_S = 0.15
 
+# Default server SDK multiplier for `extra.minDeposit` when no floor is configured.
+DEFAULT_SERVER_MIN_DEPOSIT_MULTIPLIER = 10
+
 # EIP-712 domain shared by all batch-settlement typed-data signatures
 BATCH_SETTLEMENT_DOMAIN_NAME = "x402 Batch Settlement"
 BATCH_SETTLEMENT_DOMAIN_VERSION = "1"
@@ -152,6 +155,7 @@ __all__: list[Any] = [
     "DEFAULT_MAX_CLAIMS_PER_BATCH",
     "CHANNEL_STATE_POLL_S",
     "CHANNEL_STATE_POLL_INTERVAL_S",
+    "DEFAULT_SERVER_MIN_DEPOSIT_MULTIPLIER",
     "DEFAULT_ONCHAIN_STATE_TTL_MS",
     "PAYLOAD_TYPE_DEPOSIT",
     "PAYLOAD_TYPE_VOUCHER",

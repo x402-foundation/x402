@@ -21,7 +21,7 @@ import {
 
 export async function createResourceServer(cfg: ServerEnvConfig): Promise<x402ResourceServer> {
   const server = new x402ResourceServer(createFacilitatorClients(cfg.facilitatorUrl));
-  await configureResourceServer(server, cfg);
+  await configureResourceServer(server, cfg, createFacilitatorClients(cfg.facilitatorUrl)[0]);
   return server;
 }
 

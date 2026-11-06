@@ -8,6 +8,7 @@ import {
   RoutesConfig,
   FacilitatorResponseError,
   getFacilitatorResponseError as getCoreFacilitatorResponseError,
+  attachBackgroundInitHandler,
   PaymentCancellationDispatcher,
   CompletedSettlement,
   SETTLEMENT_OVERRIDES_HEADER,
@@ -54,6 +55,20 @@ export function createInternalErrorResponse(error: unknown): NextResponse {
 }
 
 /**
+ * Decode percent-escapes in a request path.
+ *
+ * @param path - Request path
+ * @returns Decoded path, or the original if decoding fails
+ */
+function decodedRoutePath(path: string): string {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
  * Prepares an existing x402HTTPResourceServer with initialization logic
  *
  * @param httpServer - Pre-configured x402HTTPResourceServer instance
@@ -74,11 +89,11 @@ export function prepareHttpServer(
   // Store initialization promise (not the result)
   // httpServer.initialize() fetches facilitator support and validates routes
   let initPromise: Promise<void> | null = syncFacilitatorOnStart ? httpServer.initialize() : null;
-  // Attach a no-op rejection handler so an early failure (e.g. a facilitator
-  // request timeout) cannot become an unhandled rejection before the first
-  // protected request awaits initPromise. The original promise is kept, so that
-  // request still observes the failure and triggers the retry path.
-  void initPromise?.catch(() => {});
+  // Retryable failures (e.g. a facilitator timeout) must not become unhandled
+  // rejections; the original promise is still awaited on the first protected
+  // request. Fatal capability / route mismatches exit the process so a
+  // misconfigured server does not stay up until that request.
+  attachBackgroundInitHandler(initPromise);
   let isInitialized = false;
 
   return {
@@ -136,9 +151,11 @@ export function createHttpServer(
 export function createRequestContext(request: NextRequest): HTTPRequestContext {
   // Create adapter and context
   const adapter = new NextAdapter(request);
+  const path = request.nextUrl.pathname;
   return {
     adapter,
-    path: request.nextUrl.pathname,
+    path,
+    decodedPath: decodedRoutePath(path),
     method: request.method,
     paymentHeader: adapter.getHeader("payment-signature") || adapter.getHeader("x-payment"),
   };
@@ -160,7 +177,17 @@ export function handlePaymentError(response: HTTPResponseInstructions): NextResp
       headers,
     });
   }
-  headers.set("Content-Type", "application/json");
+  const mediaType = headers.get("Content-Type")?.split(";")[0].trim().toLowerCase();
+  const isJson = !mediaType || mediaType === "application/json" || mediaType.endsWith("+json");
+  if (typeof response.body === "string" && !isJson) {
+    return new NextResponse(response.body, {
+      status: response.status,
+      headers,
+    });
+  }
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
   return new NextResponse(JSON.stringify(response.body || {}), {
     status: response.status,
     headers,
@@ -213,7 +240,7 @@ export async function handleSettlement(
 
   try {
     // Get response body for extensions
-    const responseBody = Buffer.from(await response.clone().arrayBuffer());
+    const responseBody = Buffer.from(await response.arrayBuffer());
 
     const responseHeaders: Record<string, string> = {};
     response.headers.forEach((value, key) => {
@@ -239,19 +266,24 @@ export async function handleSettlement(
       });
     }
 
-    // Settlement succeeded - add headers and return original response.
-    Object.entries(result.headers).forEach(([key, value]) => {
-      response.headers.set(key, value);
+    // Settlement succeeded - add headers and return the buffered response.
+    const settled = new NextResponse(response.body === null ? null : responseBody, {
+      status: response.status,
+      headers: response.headers,
     });
-    response.headers.set(
+    settled.headers.delete("transfer-encoding");
+    Object.entries(result.headers).forEach(([key, value]) => {
+      settled.headers.set(key, value);
+    });
+    settled.headers.set(
       "Cache-Control",
-      withPrivateCacheControl(response.headers.get("Cache-Control")),
+      withPrivateCacheControl(settled.headers.get("Cache-Control")),
     );
 
     // Strip internal settlement override header before sending to client.
-    response.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
+    settled.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
 
-    return response;
+    return settled;
   } catch (error) {
     if (error instanceof FacilitatorResponseError) {
       return createFacilitatorErrorResponse(error);

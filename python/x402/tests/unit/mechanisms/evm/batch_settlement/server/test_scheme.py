@@ -81,6 +81,13 @@ class TestConstruction:
         assert s.get_receiver_authorizer_signer() is None
         assert isinstance(s.get_storage(), InMemoryChannelStorage)
         assert s.scheme == SCHEME_BATCH_SETTLEMENT
+        assert s.get_enforce_min_deposit() is False
+
+    def test_allows_enforce_min_deposit_to_be_enabled(self):
+        s = BatchSettlementEvmScheme(
+            RECEIVER, BatchSettlementEvmSchemeServerConfig(enforce_min_deposit=True)
+        )
+        assert s.get_enforce_min_deposit() is True
 
     def test_overrides_applied(self):
         storage = InMemoryChannelStorage()
@@ -194,6 +201,7 @@ class TestEnhancePaymentRequirements:
         out = s.enhance_payment_requirements(self._req(), self._kind(), [])
         assert out.extra["receiverAuthorizer"] == AUTHORIZER_ADDR
         assert out.extra["withdrawDelay"] == 1800
+        assert out.extra["minDeposit"] == "10000"
 
     def test_falls_back_to_facilitator_authorizer(self):
         s = BatchSettlementEvmScheme(RECEIVER)
@@ -244,6 +252,67 @@ class TestEnhancePaymentRequirements:
         kind = self._kind(extra={"receiverAuthorizer": "0x" + "00" * 20})
         with pytest.raises(ValueError, match="receiverAuthorizer"):
             s.enhance_payment_requirements(self._req(), kind, [])
+
+    def test_defaults_extra_min_deposit_to_10x_amount(self):
+        s = BatchSettlementEvmScheme(RECEIVER)
+        enhanced = s.enhance_payment_requirements(
+            self._req(amount="2500"),
+            self._kind(extra={"receiverAuthorizer": AUTHORIZER_ADDR}),
+            [],
+        )
+        assert enhanced.extra["minDeposit"] == "25000"
+
+    def test_converts_route_extra_min_deposit_money_on_default_assets(self):
+        s = BatchSettlementEvmScheme(RECEIVER)
+        enhanced = s.enhance_payment_requirements(
+            self._req(
+                amount="1000",
+                extra={"receiverAuthorizer": AUTHORIZER_ADDR, "minDeposit": "$1"},
+            ),
+            self._kind(extra={"receiverAuthorizer": AUTHORIZER_ADDR}),
+            [],
+        )
+        assert enhanced.extra["minDeposit"] == "1000000"
+
+    def test_uses_request_amount_when_it_exceeds_route_extra_min_deposit_money(self):
+        s = BatchSettlementEvmScheme(RECEIVER)
+        enhanced = s.enhance_payment_requirements(
+            self._req(
+                amount="2000000",
+                extra={"receiverAuthorizer": AUTHORIZER_ADDR, "minDeposit": "$1"},
+            ),
+            self._kind(extra={"receiverAuthorizer": AUTHORIZER_ADDR}),
+            [],
+        )
+        assert enhanced.extra["minDeposit"] == "2000000"
+
+    def test_accepts_route_extra_min_deposit_atomic_strings_for_any_asset(self):
+        custom_asset = "0x00000000000000000000000000000000000000aa"
+        s = BatchSettlementEvmScheme(RECEIVER)
+        enhanced = s.enhance_payment_requirements(
+            self._req(
+                amount="1000",
+                asset=custom_asset,
+                extra={"receiverAuthorizer": AUTHORIZER_ADDR, "minDeposit": "5000000"},
+            ),
+            self._kind(extra={"receiverAuthorizer": AUTHORIZER_ADDR}),
+            [],
+        )
+        assert enhanced.extra["minDeposit"] == "5000000"
+
+    def test_rejects_route_extra_min_deposit_money_for_non_default_assets(self):
+        custom_asset = "0x00000000000000000000000000000000000000aa"
+        s = BatchSettlementEvmScheme(RECEIVER)
+        with pytest.raises(ValueError, match="only supported for default assets"):
+            s.enhance_payment_requirements(
+                self._req(
+                    amount="1000",
+                    asset=custom_asset,
+                    extra={"receiverAuthorizer": AUTHORIZER_ADDR, "minDeposit": "$1"},
+                ),
+                self._kind(extra={"receiverAuthorizer": AUTHORIZER_ADDR}),
+                [],
+            )
 
 
 class TestRequestContext:

@@ -7,6 +7,8 @@ import (
 	solana "github.com/gagliardetto/solana-go"
 	computebudget "github.com/gagliardetto/solana-go/programs/compute-budget"
 	"github.com/stretchr/testify/require"
+
+	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels/generated"
 )
 
 func testKeypair(t *testing.T) solana.PrivateKey {
@@ -115,12 +117,15 @@ func (f *openFixture) openInstruction(t *testing.T) solana.Instruction {
 		Mint:             f.mint,
 		AuthorizedSigner: f.authorizer,
 		TokenProgram:     f.tokenProgram,
-		Args: OpenArgs{
+		Args: generated.OpenArgs{
 			Salt:        f.salt,
 			Deposit:     f.deposit,
 			GracePeriod: f.graceSeconds,
 			OpenSlot:    f.openSlot,
-			Recipients:  []Split{{Recipient: f.payTo.String(), BPS: BasisPointsDenominator}},
+			Recipients: []generated.DistributionEntry{{
+				Recipient: f.payTo,
+				Bps:       BasisPointsDenominator,
+			}},
 		},
 	})
 	require.NoError(t, err)

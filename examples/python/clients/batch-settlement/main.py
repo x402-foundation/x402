@@ -15,7 +15,7 @@ Environment variables:
     EVM_VOUCHER_SIGNER_PRIVATE_KEY   Optional. Dedicated voucher-signing key (payerAuthorizer).
     EVM_RPC_URL                      Optional. Defaults to https://sepolia.base.org.
     CHANNEL_SALT                     Optional. 32-byte hex salt for channel ID derivation.
-    DEPOSIT_MULTIPLIER               Optional. Deposit = multiplier * request_price (default 5).
+    DEPOSIT_MULTIPLIER               Optional. Deposit target is amount × this multiplier when extra.minDeposit is absent; lock ceiling is spendCap × this multiplier (integer ≥ 3; default 5).
     STORAGE_DIR                      Optional. Directory for persistent file-backed channel storage.
     NUMBER_OF_REQUESTS               Optional. Number of paid requests to issue (default 3).
     REFUND_AFTER_REQUESTS            Optional. Set to "true" to issue a cooperative refund at the end.
@@ -94,6 +94,9 @@ async def main() -> None:
         ),
     )
     client = x402Client().register("eip155:*", batch_scheme)
+    # Per-request cap on PaymentRequirements.amount (default "$1" if omitted).
+    # Deposit ceiling is this cap × deposit_multiplier ($5 at the defaults).
+    client.set_spend_controls({"max_amount_per_payment": "$1"})
     http_client = x402HTTPClient(client)
 
     url = f"{RESOURCE_SERVER_URL}{ENDPOINT_PATH}"

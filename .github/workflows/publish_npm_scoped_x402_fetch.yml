@@ -36,6 +36,10 @@ jobs:
           pnpm install --frozen-lockfile --ignore-scripts
           pnpm -r --filter=@x402/core --filter=@x402/fetch run build
       
+      - name: Verify package exports
+        working-directory: ./typescript
+        run: pnpm verify:exports
+
       - name: Publish @x402/fetch package
         working-directory: ./typescript/packages/http/fetch
         run: |

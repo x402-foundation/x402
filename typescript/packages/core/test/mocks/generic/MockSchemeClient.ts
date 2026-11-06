@@ -1,6 +1,7 @@
 import {
   DefaultAsset,
   FindDefaultAsset,
+  PaymentPayloadContext,
   SchemeClientHooks,
   SchemeNetworkClient,
 } from "../../../src/types/mechanisms";
@@ -19,6 +20,7 @@ export class MockSchemeNetworkClient implements SchemeNetworkClient {
   public createPaymentPayloadCalls: Array<{
     x402Version: number;
     requirements: PaymentRequirements;
+    context?: PaymentPayloadContext;
   }> = [];
 
   /**
@@ -68,8 +70,13 @@ export class MockSchemeNetworkClient implements SchemeNetworkClient {
   async createPaymentPayload(
     x402Version: number,
     paymentRequirements: PaymentRequirements,
+    context?: PaymentPayloadContext,
   ): Promise<Pick<PaymentPayload, "x402Version" | "payload">> {
-    this.createPaymentPayloadCalls.push({ x402Version, requirements: paymentRequirements });
+    this.createPaymentPayloadCalls.push({
+      x402Version,
+      requirements: paymentRequirements,
+      context,
+    });
 
     if (this.payloadResult instanceof Error) {
       throw this.payloadResult;

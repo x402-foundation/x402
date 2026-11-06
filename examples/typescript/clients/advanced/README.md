@@ -38,7 +38,12 @@ cp .env-local .env
 
 and fill required environment variables:
 
+- `CARDANO_MNEMONIC` - Cardano wallet seed phrase for signing payments (optional)
+- `CARDANO_NETWORK` - Cardano network (optional, defaults to `cardano:preprod`)
+- `BLOCKFROST_PREPROD_URL` / `BLOCKFROST_PROJECT_ID` - Blockfrost endpoint + project id (required when `CARDANO_MNEMONIC` is set)
 - `APTOS_PRIVATE_KEY` - Aptos Ed25519 private key for Aptos payments (optional; `all-networks`)
+- `CASPER_PRIVATE_KEY` - Casper private key for Casper payments (optional; `all-networks`)
+- `CASPER_PRIVATE_KEY_ALGORITHM` - Casper private key algorithm, either `ed25519` (default) or `secp256k1` (optional; `all-networks`)
 - `CCD_PRIVATE_KEY` - Concordium Ed25519 private key for Concordium payments (optional; `all-networks`)
 - `CCD_ADDRESS` - Concordium account address for Concordium payments (optional; `all-networks`)
 - `EVM_PRIVATE_KEY` - Ethereum private key for EVM payments
@@ -67,6 +72,10 @@ pnpm dev
 ```
 
 ### Account Setup Instructions
+
+#### Cardano Testnet
+
+The client wallet must hold the asset it pays with. Get test ADA (tADA) for `cardano:preprod` (or `cardano:preview`) from the [Cardano testnets faucet](https://docs.cardano.org/cardano-testnets/tools/faucet/), and supply a Blockfrost project id via `BLOCKFROST_PROJECT_ID` + `BLOCKFROST_PREPROD_URL`. Use `asset: "lovelace"` for quick testing (fundable directly from the faucet); preprod **tUSDM** comes from the [tUSDM faucet](https://tusdm.moneta.global).
 
 #### Stellar Testnet
 
@@ -113,6 +122,12 @@ To create and fund an XRPL Testnet payer account:
 1. Use the [XRPL Testnet faucet](https://xrpl.org/resources/dev-tools/xrp-faucets) to generate a funded account, and copy its family seed (starts with `s`) into `XRPL_SEED`.
 2. Keep the [base reserve](https://xrpl.org/docs/concepts/accounts/reserves) funded (currently 1 XRP; the faucet funding is more than enough). The `all-networks` example pays in XRP drops, so no further setup is needed.
 3. For issued-currency (IOU) payments, the payer needs a sufficient issued-currency balance, and the receiving account must hold a [trust line](https://xrpl.org/docs/concepts/tokens/fungible-tokens) to the issuer.
+
+#### Casper Testnet
+
+Create or reuse a dedicated Casper testnet account or wallet key, then fund any account that submits Casper transactions with testnet CSPR from the [CSPR.live testnet faucet](https://testnet.cspr.live/tools/faucet). CSPR is required for gas on Casper Testnet.
+
+Use [testnet.cspr.trade](https://testnet.cspr.trade) to get wrapped CSPR (WCSPR) or csprUSD for the client payments.
 
 ## Available Examples
 

@@ -38,6 +38,10 @@ jobs:
         working-directory: ./typescript
         run: pnpm turbo run build --filter='@x402/*'
 
+      - name: Verify package exports
+        working-directory: ./typescript
+        run: pnpm verify:exports
+
       - name: Publish all packages in release order
         working-directory: ./typescript
         run: |
@@ -71,12 +75,15 @@ jobs:
           publish_package "packages/mechanisms/svm"
           publish_package "packages/mechanisms/avm"
           publish_package "packages/mechanisms/aptos"
+          publish_package "packages/mechanisms/cardano"
+          publish_package "packages/mechanisms/casper"
           publish_package "packages/mechanisms/stellar"
           publish_package "packages/mechanisms/hedera"
           publish_package "packages/mechanisms/keeta"
           publish_package "packages/mechanisms/near"
           publish_package "packages/mechanisms/tvm"
           publish_package "packages/mechanisms/xrpl"
+          publish_package "packages/mechanisms/canton"
           publish_package "packages/http/paywall"
           publish_package "packages/http/axios"
           publish_package "packages/http/fetch"

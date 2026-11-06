@@ -94,6 +94,16 @@ describe("NextAdapter", () => {
   });
 
   describe("getQueryParams", () => {
+    it.each([
+      ["tag=&tag=b", ["", "b"]],
+      ["tag=&tag=", ["", ""]],
+      ["tag=&tag=b&tag=c", ["", "b", "c"]],
+    ])("preserves empty values in %s", (query, expected) => {
+      const adapter = new NextAdapter(new NextRequest(`https://example.com/api?${query}`));
+      expect(adapter.getQueryParams()).toEqual({ tag: expected });
+      expect(adapter.getQueryParams().tag).toEqual(adapter.getQueryParam("tag"));
+    });
+
     it("returns all query parameters", () => {
       const req = createMockRequest({ url: "https://example.com/api?foo=bar&baz=qux" });
       const adapter = new NextAdapter(req);
@@ -134,7 +144,7 @@ describe("NextAdapter", () => {
   });
 
   describe("getBody", () => {
-    it("returns parsed JSON body", async () => {
+    it("returns parsed JSON body without consuming the original request", async () => {
       const body = { data: "test" };
       const req = new NextRequest("https://example.com/api", {
         method: "POST",
@@ -143,6 +153,31 @@ describe("NextAdapter", () => {
       });
       const adapter = new NextAdapter(req);
       expect(await adapter.getBody()).toEqual(body);
+      expect(await req.json()).toEqual(body);
+    });
+
+    it("returns parsed JSON body on repeated calls", async () => {
+      const body = { data: "test" };
+      const req = new NextRequest("https://example.com/api", {
+        method: "POST",
+        body: JSON.stringify(body),
+        headers: { "Content-Type": "application/json" },
+      });
+      const adapter = new NextAdapter(req);
+      expect(await adapter.getBody()).toEqual(body);
+      expect(await adapter.getBody()).toEqual(body);
+    });
+
+    it("returns undefined for invalid JSON without consuming the original request", async () => {
+      const body = "invalid JSON";
+      const req = new NextRequest("https://example.com/api", {
+        method: "POST",
+        body,
+        headers: { "Content-Type": "application/json" },
+      });
+      const adapter = new NextAdapter(req);
+      expect(await adapter.getBody()).toBeUndefined();
+      expect(await req.text()).toBe(body);
     });
 
     it("returns undefined when body parsing fails", async () => {

@@ -15,7 +15,7 @@ registers the EVM upto scheme alongside `exact`.
 
 ## Prerequisites
 
-- Go 1.24+
+- Go 1.26.10+
 - A Solana Devnet key with SOL. The facilitator fronts channel rent and pays
   every transaction fee; it holds the channel payee seat with a **zero**
   distribution share, so it needs no token balance.
@@ -58,6 +58,69 @@ scheme := uptosvm.NewUptoSvmScheme(signer, &uptosvm.Config{
 })
 ```
 
+## SVM receiver authorizer (optional delegation)
+
+By default this example registers `UptoSvmScheme` with a **fee payer only** — no
+`AuthorizerSigner`, so `/supported` advertises `extra.feePayer` but not
+`extra.receiverAuthorizer`. [`servers/upto/`](../../servers/upto/) without a
+local `SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY` delegates to whatever
+`receiverAuthorizer` the facilitator advertises and fails fast at startup if
+none is offered.
+
+Advertise delegation only when you can **authenticate resource-server settle
+requests out of band** (SIWX, JWT, mTLS, API credentials correlated across
+deposit and claim, and so on). You must pass an `AuthorizerSigner` and
+implement `ResolveCallerIdentity` so each delegated deposit/claim settle
+resolves to a stable caller identity; the scheme records that identity on the
+channel storage row at deposit and rejects claim settles that do not match.
+**Do not advertise `receiverAuthorizer` without that authentication.** This
+example does not configure delegation — wire it in your own facilitator as
+sketched below.
+
+| Signer | Role | Onchain effect |
+| ------ | ---- | -------------- |
+| `SVM_PRIVATE_KEY` | **Fee payer** — co-signs channel `open`, submits claim/cleanup txs | Pays SOL for opens, settlement, and rent cleanup |
+| `AuthorizerSigner` (optional) | **Receiver authorizer** — signs claim vouchers when servers delegate | Committed as the channel `authorized_signer` for delegating servers |
+
+When `AuthorizerSigner` is set, `GET /supported` includes both `feePayer` and
+`receiverAuthorizer`:
+
+```json
+{
+  "kinds": [
+    {
+      "x402Version": 2,
+      "scheme": "upto",
+      "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+      "extra": {
+        "feePayer": "...",
+        "receiverAuthorizer": "..."
+      }
+    }
+  ]
+}
+```
+
+Wire it in your facilitator:
+
+```go
+authorizer, err := svmsigners.NewReceiverAuthorizerSignerFromPrivateKey(/* dedicated Ed25519 key */)
+
+scheme := uptosvm.NewUptoSvmScheme(signer, &uptosvm.Config{
+    ChannelStorage:         channelStorage,
+    MaxChannelLifetimeSecs: &maxChannelLifetimeSecs,
+    AuthorizerSigner:       authorizer,
+    ResolveCallerIdentity:  resolveCallerIdentity, // out-of-band auth — your implementation
+})
+
+// Authenticate the resource server, then call Verify/Settle with that identity
+// available to ResolveCallerIdentity (deposit and claim must see the same value).
+```
+
+Delegated caller identity is stored on the same `ChannelStorage` row as the
+channel (default in-memory). Use durable, shared `ChannelStorage` when more
+than one facilitator replica can settle the same channel.
+
 ## API endpoints
 
 The standard x402 facilitator surface: `POST /verify`, `POST /settle`,
@@ -69,10 +132,9 @@ The standard x402 facilitator surface: `POST /verify`, `POST /settle`,
 # Terminal 1 — facilitator (this example)
 go run .
 
-# Terminal 2 — resource server
+# Terminal 2 — resource server (self-managed authorizer key, or omit key to delegate)
 cd ../../servers/upto
 SVM_PAYEE_ADDRESS=<base58> \
-SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY=<base58> \
 FACILITATOR_URL=http://localhost:4022 go run .
 
 # Terminal 3 — client

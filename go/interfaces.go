@@ -28,7 +28,7 @@ type MoneyParser func(amount string, network Network) (*AssetAmount, error)
 // SchemeNetworkClientV1 is implemented by client-side V1 payment mechanisms
 type SchemeNetworkClientV1 interface {
 	Scheme() string
-	CreatePaymentPayload(ctx context.Context, requirements types.PaymentRequirementsV1) (types.PaymentPayloadV1, error)
+	CreatePaymentPayload(ctx context.Context, requirements types.PaymentRequirementsV1, payloadCtx PaymentPayloadContext) (types.PaymentPayloadV1, error)
 }
 
 // SchemeNetworkFacilitatorV1 is implemented by facilitator-side V1 payment mechanisms
@@ -86,16 +86,14 @@ type SchemeNetworkFacilitatorV1 interface {
 // SchemeNetworkClient is implemented by client-side payment mechanisms (V2)
 type SchemeNetworkClient interface {
 	Scheme() string
-	CreatePaymentPayload(ctx context.Context, requirements types.PaymentRequirements) (types.PaymentPayload, error)
+	CreatePaymentPayload(ctx context.Context, requirements types.PaymentRequirements, payloadCtx PaymentPayloadContext) (types.PaymentPayload, error)
 }
 
-// ExtensionAwareClient is an optional interface for schemes that can handle extensions.
-// When a scheme implements this, x402Client will call CreatePaymentPayloadWithExtensions
-// instead of CreatePaymentPayload, passing the server-declared extensions so the scheme
-// can enrich the payload (e.g., EIP-2612 gas sponsoring).
-type ExtensionAwareClient interface {
-	SchemeNetworkClient
-	CreatePaymentPayloadWithExtensions(ctx context.Context, requirements types.PaymentRequirements, extensions map[string]interface{}) (types.PaymentPayload, error)
+// PaymentPayloadContext is passed to scheme CreatePaymentPayload.
+// MaxAmountPerPayment is the resolved atomic spend cap; omitted when uncapped.
+type PaymentPayloadContext struct {
+	Extensions          map[string]interface{}
+	MaxAmountPerPayment string
 }
 
 // DefaultAssetFinder is an optional reverse lookup for USD spend caps.
@@ -129,10 +127,18 @@ type PaymentResponseResult struct {
 	Recovered bool
 }
 
+// PaymentCreationFailureHandler is an optional interface that SchemeNetworkClient
+// implementations satisfy to recover from a failed payload build. The client
+// invokes it after user-registered creation-failure hooks. The first recovered
+// payload wins.
+type PaymentCreationFailureHandler interface {
+	OnPaymentCreationFailure(ctx context.Context, failure PaymentCreationFailureContext) (*PaymentCreationFailureHookResult, error)
+}
+
 // PaymentResponseHandler is an optional interface that SchemeNetworkClient
 // implementations satisfy to reconcile local state after a paid response.
-// The transport (PaymentRoundTripper) invokes this hook automatically — user
-// code does not need to update local channel state manually.
+// HTTP (PaymentRoundTripper) and MCP (X402MCPClient) invoke this hook
+// automatically — user code does not need to update local channel state manually.
 //
 // Mirrors the TS schemeHooks.onPaymentResponse field on SchemeClientHooks.
 type PaymentResponseHandler interface {
@@ -253,6 +259,10 @@ type AssetDecimalsProvider interface {
 // verified payment is canceled (handler failure/throw or post-verify abort).
 // Core calls SettlePayment with the returned requirements and SettlePhaseCancel.
 // Return nil, nil to skip cancel settle.
+//
+// ctx.SettledPhases lists the settle phases already completed for this payment
+// and may be empty. Only return requirements when cancel settle is appropriate
+// for the completed phases.
 type SettleOnCancelProvider interface {
 	SettleOnCancel(ctx VerifiedPaymentCanceledContext) (*types.PaymentRequirements, error)
 }

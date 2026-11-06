@@ -20,11 +20,13 @@ except ImportError as e:
     ) from e
 
 from ...schemas import SettleResponse, VerifiedPaymentCancelOptions
+from ..background_init import handle_background_init_error
 from ..constants import SETTLEMENT_OVERRIDES_HEADER
 from ..facilitator_client_base import FacilitatorResponseError
 from ..types import (
     HTTPAdapter,
     HTTPRequestContext,
+    HTTPResponseInstructions,
     HTTPTransportContext,
     PaywallConfig,
     RoutesConfig,
@@ -190,6 +192,16 @@ def _internal_error_wsgi_response(
     return [body]
 
 
+def _declared_plain_text_body(response: HTTPResponseInstructions) -> str | None:
+    content_type = (
+        response.headers.get("Content-Type") or response.headers.get("content-type") or ""
+    )
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    if media_type == "text/plain" and isinstance(response.body, str):
+        return response.body
+    return None
+
+
 class ResponseWrapper:
     """Wrapper to capture and buffer WSGI response for settlement.
 
@@ -313,7 +325,7 @@ class PaymentMiddleware:
             server: x402ResourceServerSync instance (must be sync variant).
             paywall_config: Optional paywall configuration.
             paywall_provider: Optional custom paywall provider.
-            sync_facilitator_on_start: Initialize on first protected request.
+            sync_facilitator_on_start: Initialize when the middleware is created.
         """
         # Auto-register bazaar extension if routes declare it
         if _check_if_bazaar_needed(routes):
@@ -330,6 +342,16 @@ class PaymentMiddleware:
 
         if paywall_provider:
             self._http_server.register_paywall_provider(paywall_provider)
+
+        # Initialize if requested - queries facilitator /supported to populate
+        # facilitator clients. Fatal capability / route mismatches exit the process
+        # so a misconfigured server does not stay up until the first paid request.
+        if self._sync_on_start:
+            try:
+                self._http_server.initialize()
+                self._init_done = True
+            except Exception as error:
+                handle_background_init_error(error)
 
         # Replace WSGI app
         app.wsgi_app = self._wsgi_middleware  # type: ignore
@@ -351,9 +373,12 @@ class PaymentMiddleware:
         with self._app.request_context(environ):
             # Create adapter and context
             adapter = FlaskAdapter(request)
+            # Werkzeug dispatches literal routes on decoded PATH_INFO but
+            # wildcard/param routes on the escaped path, so match both.
             context = HTTPRequestContext(
                 adapter=adapter,
                 path=_route_matching_path(environ),
+                decoded_path=str(environ.get("PATH_INFO", "/")),
                 method=request.method,
                 payment_header=(
                     adapter.get_header("payment-signature") or adapter.get_header("x-payment")
@@ -398,6 +423,7 @@ class PaymentMiddleware:
 
                 status = f"{response.status} Payment Required"
                 headers = list(response.headers.items())
+                plain_text = _declared_plain_text_body(response)
 
                 if response.is_html:
                     headers.append(("Content-Type", "text/html; charset=utf-8"))
@@ -406,6 +432,8 @@ class PaymentMiddleware:
                         if isinstance(response.body, str)
                         else response.body
                     )
+                elif plain_text is not None:
+                    body = plain_text.encode("utf-8")
                 else:
                     headers.append(("Content-Type", "application/json"))
                     body = json.dumps(response.body or {}).encode("utf-8")
@@ -536,12 +564,15 @@ class PaymentMiddleware:
                             else:
                                 status = f"{response.status} Payment Required"
                                 headers = list(response.headers.items())
+                                plain_text = _declared_plain_text_body(response)
                                 if response.is_html:
                                     body = (
                                         response.body.encode("utf-8")
                                         if isinstance(response.body, str)
                                         else response.body
                                     )
+                                elif plain_text is not None:
+                                    body = plain_text.encode("utf-8")
                                 else:
                                     body = json.dumps(response.body or {}).encode("utf-8")
                             start_response(status, headers)
@@ -579,7 +610,7 @@ class PaymentMiddleware:
                                 *settle_headers.items(),
                             ],
                         )
-                        return [json.dumps({}).encode("utf-8")]
+                        return [json.dumps({"error": "settlement_failed"}).encode("utf-8")]
 
                 # Send buffered response
                 response_wrapper.send_response(body_chunks)
@@ -623,7 +654,7 @@ def payment_middleware(
         server: Pre-configured x402ResourceServerSync (must be sync variant).
         paywall_config: Optional paywall UI configuration.
         paywall_provider: Optional custom paywall provider.
-        sync_facilitator_on_start: Fetch facilitator support on first request.
+        sync_facilitator_on_start: Fetch facilitator support when the middleware is created.
 
     Returns:
         PaymentMiddleware instance.
@@ -651,7 +682,7 @@ def payment_middleware_from_config(
         schemes: Scheme registrations for server-side processing.
         paywall_config: Optional paywall UI configuration.
         paywall_provider: Optional custom paywall provider.
-        sync_facilitator_on_start: Fetch facilitator support on first request.
+        sync_facilitator_on_start: Fetch facilitator support when the middleware is created.
 
     Returns:
         PaymentMiddleware instance.

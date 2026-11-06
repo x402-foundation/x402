@@ -4,6 +4,8 @@ package http
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -64,4 +66,30 @@ func Post(ctx context.Context, url string, body io.Reader, x402Client *x402HTTPC
 // Do performs an HTTP request with automatic payment handling
 func Do(ctx context.Context, req *http.Request, x402Client *x402HTTPClient) (*http.Response, error) {
 	return x402Client.DoWithPayment(ctx, req)
+}
+
+// ============================================================================
+// Response body limits
+// ============================================================================
+
+// ErrResponseBodyTooLarge indicates that an HTTP response body exceeded the
+// buffering limit applied by x402 clients.
+var ErrResponseBodyTooLarge = errors.New("http response body too large")
+
+// maxControlPlaneResponseBytes bounds the payment-required and facilitator
+// responses buffered by this package. Control-plane JSON is small, so a tight
+// limit is enough.
+const maxControlPlaneResponseBytes int64 = 1 << 20
+
+// readLimitedBody reads at most maxControlPlaneResponseBytes from r. A larger
+// body returns ErrResponseBodyTooLarge without buffering the rest.
+func readLimitedBody(r io.Reader) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(r, maxControlPlaneResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > maxControlPlaneResponseBytes {
+		return nil, fmt.Errorf("%w: limit %d bytes", ErrResponseBodyTooLarge, maxControlPlaneResponseBytes)
+	}
+	return body, nil
 }

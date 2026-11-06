@@ -12,6 +12,9 @@ const baseConfig = {
     "upto/client/index": "src/upto/client/index.ts",
     "upto/server/index": "src/upto/server/index.ts",
     "upto/facilitator/index": "src/upto/facilitator/index.ts",
+    "batch-settlement/client/index": "src/batch-settlement/client/index.ts",
+    "batch-settlement/server/index": "src/batch-settlement/server/index.ts",
+    "batch-settlement/facilitator/index": "src/batch-settlement/facilitator/index.ts",
   },
   dts: {
     resolve: true,
@@ -32,5 +35,6 @@ export default defineConfig([
     format: "cjs",
     outDir: "dist/cjs",
     clean: false,
+    dts: false,
   },
 ]);

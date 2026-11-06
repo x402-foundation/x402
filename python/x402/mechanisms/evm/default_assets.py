@@ -83,6 +83,15 @@ DEFAULT_ASSETS: dict[str, list[ExactDefaultAssetInfo]] = {
             "symbol": "USDC",
         },
     ],  # Monad mainnet USDC
+    "eip155:10143": [
+        {
+            "asset": "0x534b2f3A21130d7a60830c2Df862319e593943A3",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+            "symbol": "USDC",
+        },
+    ],  # Monad testnet USDC
     "eip155:988": [
         {
             "asset": "0x779Ded0c9e1022225f8E0630b35a9b54bE713736",
@@ -244,7 +253,21 @@ DEFAULT_ASSETS: dict[str, list[ExactDefaultAssetInfo]] = {
             "decimals": 6,
             "symbol": "USDC",
         },
-    ],  # Celo mainnet USDC (EIP-3009 supported)
+        {
+            "asset": "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e",
+            "name": "Tether USD",
+            "version": "1",
+            "decimals": 6,
+            "symbol": "USDT",
+        },
+        {
+            "asset": "0xD2ab3C9A02DBBAB236BfEC45D1d755DF4267F771",
+            "name": "Tether America USD",
+            "version": "1",
+            "decimals": 6,
+            "symbol": "USAT",
+        },
+    ],  # Celo mainnet USDC, USDT, USAT (EIP-3009 supported)
     "eip155:11142220": [
         {
             "asset": "0x01C5C0122039549AD1493B8220cABEdD739BC44E",
@@ -272,6 +295,24 @@ DEFAULT_ASSETS: dict[str, list[ExactDefaultAssetInfo]] = {
             "symbol": "USDC",
         },
     ],  # Sei testnet USDC (EIP-3009 supported)
+    "eip155:5042": [
+        {
+            "asset": "0x3600000000000000000000000000000000000000",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+            "symbol": "USDC",
+        },
+    ],  # Arc mainnet USDC (EIP-3009 supported)
+    "eip155:5042002": [
+        {
+            "asset": "0x3600000000000000000000000000000000000000",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+            "symbol": "USDC",
+        },
+    ],  # Arc Testnet USDC (EIP-3009 supported)
 }
 
 

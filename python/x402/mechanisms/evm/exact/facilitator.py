@@ -13,13 +13,15 @@ from ....schemas import (
     SettleResponse,
     VerifyResponse,
 )
+from ..asset_cache import start_asset_contract_check
 from ..constants import (
-    ERR_ASSET_NOT_DEPLOYED_CONTRACT,
     ERR_AUTHORIZATION_VALUE_MISMATCH,
     ERR_FACTORY_NOT_ALLOWED,
     ERR_FAILED_TO_GET_NETWORK_CONFIG,
     ERR_FAILED_TO_VERIFY_SIGNATURE,
+    ERR_INVALID_PAYLOAD,
     ERR_INVALID_SIGNATURE,
+    ERR_INVALID_SIGNATURE_S,
     ERR_MISSING_EIP712_DOMAIN,
     ERR_NETWORK_MISMATCH,
     ERR_RECIPIENT_MISMATCH,
@@ -35,12 +37,14 @@ from ..constants import (
     TX_STATUS_SUCCESS,
 )
 from ..data_suffix import resolve_data_suffix
-from ..erc6492 import has_deployment_info, parse_erc6492_signature
+from ..erc6492 import has_deployment_info
 from ..exact.eip3009_utils import (
+    EIP3009SignatureClassification,
     ParsedEIP3009Authorization,
     classify_eip3009_signature,
     diagnose_eip3009_simulation_failure,
     execute_transfer_with_authorization,
+    is_plain_non_canonical_ecdsa_signature,
     parse_eip3009_authorization,
     parse_eip3009_transfer_error,
     simulate_eip3009_transfer_result,
@@ -53,7 +57,9 @@ from ..types import (
     ERC6492SignatureData,
     ExactEIP3009Payload,
     TransactionReceipt,
+    get_payload_payer,
     is_permit2_payload,
+    validate_exact_evm_payload,
 )
 from ..utils import (
     bytes_to_hex,
@@ -147,16 +153,25 @@ class ExactEvmScheme:
         requirements: PaymentRequirements,
         context=None,
     ) -> VerifyResponse:
+        payload_error = validate_exact_evm_payload(payload.payload)
+        if payload_error:
+            return VerifyResponse(
+                is_valid=False,
+                invalid_reason=ERR_INVALID_PAYLOAD,
+                invalid_message=payload_error,
+                payer=get_payload_payer(payload.payload),
+            )
         if is_permit2_payload(payload.payload):
             return verify_permit2(self._signer, payload, requirements, context)
-        return self._verify(payload, requirements, simulate=True)
+        verify_result, _ = self._verify(payload, requirements, simulate=True)
+        return verify_result
 
     def _verify(
         self,
         payload: PaymentPayload,
         requirements: PaymentRequirements,
         simulate: bool,
-    ) -> VerifyResponse:
+    ) -> tuple[VerifyResponse, EIP3009SignatureClassification | None]:
         """Verify EIP-3009 payment payload.
 
         Validates:
@@ -168,12 +183,15 @@ class ExactEvmScheme:
         - Nonce hasn't been used
         - Payer has sufficient balance
 
+        On success also returns the signature classification so settle can reuse
+        the payer code lookup instead of issuing a second eth_getCode.
+
         Args:
             payload: Payment payload from client.
             requirements: Payment requirements.
 
         Returns:
-            VerifyResponse with is_valid and payer.
+            (VerifyResponse, classification) where classification is set on success.
         """
         evm_payload = ExactEIP3009Payload.from_dict(payload.payload)
         payer = evm_payload.authorization.from_address
@@ -181,23 +199,30 @@ class ExactEvmScheme:
 
         # Validate scheme
         if payload.accepted.scheme != SCHEME_EXACT:
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_UNSUPPORTED_SCHEME, payer=payer
+            return (
+                VerifyResponse(is_valid=False, invalid_reason=ERR_UNSUPPORTED_SCHEME, payer=payer),
+                None,
             )
 
         # Validate network
         if payload.accepted.network != requirements.network:
-            return VerifyResponse(is_valid=False, invalid_reason=ERR_NETWORK_MISMATCH, payer=payer)
+            return (
+                VerifyResponse(is_valid=False, invalid_reason=ERR_NETWORK_MISMATCH, payer=payer),
+                None,
+            )
 
         # Parse chain ID from network identifier
         try:
             chain_id = get_evm_chain_id(network)
         except ValueError as e:
-            return VerifyResponse(
-                is_valid=False,
-                invalid_reason=ERR_FAILED_TO_GET_NETWORK_CONFIG,
-                invalid_message=str(e),
-                payer=payer,
+            return (
+                VerifyResponse(
+                    is_valid=False,
+                    invalid_reason=ERR_FAILED_TO_GET_NETWORK_CONFIG,
+                    invalid_message=str(e),
+                    payer=payer,
+                ),
+                None,
             )
 
         token_address = normalize_address(requirements.asset)
@@ -205,22 +230,29 @@ class ExactEvmScheme:
         # Check EIP-712 domain params
         extra = requirements.extra or {}
         if "name" not in extra or "version" not in extra:
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_MISSING_EIP712_DOMAIN, payer=payer
+            return (
+                VerifyResponse(
+                    is_valid=False, invalid_reason=ERR_MISSING_EIP712_DOMAIN, payer=payer
+                ),
+                None,
             )
 
         # Validate recipient
         if evm_payload.authorization.to.lower() != requirements.pay_to.lower():
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_RECIPIENT_MISMATCH, payer=payer
+            return (
+                VerifyResponse(is_valid=False, invalid_reason=ERR_RECIPIENT_MISMATCH, payer=payer),
+                None,
             )
 
         # Validate amount
         if int(evm_payload.authorization.value) != int(requirements.amount):
-            return VerifyResponse(
-                is_valid=False,
-                invalid_reason=ERR_AUTHORIZATION_VALUE_MISMATCH,
-                payer=payer,
+            return (
+                VerifyResponse(
+                    is_valid=False,
+                    invalid_reason=ERR_AUTHORIZATION_VALUE_MISMATCH,
+                    payer=payer,
+                ),
+                None,
             )
 
         # Validate timing
@@ -228,22 +260,39 @@ class ExactEvmScheme:
 
         # Check validBefore is in future (6 second buffer)
         if int(evm_payload.authorization.valid_before) < now + 6:
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_VALID_BEFORE_EXPIRED, payer=payer
+            return (
+                VerifyResponse(
+                    is_valid=False, invalid_reason=ERR_VALID_BEFORE_EXPIRED, payer=payer
+                ),
+                None,
             )
 
         # Check validAfter is not in future
         if int(evm_payload.authorization.valid_after) > now:
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_VALID_AFTER_FUTURE, payer=payer
+            return (
+                VerifyResponse(is_valid=False, invalid_reason=ERR_VALID_AFTER_FUTURE, payer=payer),
+                None,
             )
 
         # Verify signature
         if not evm_payload.signature:
-            return VerifyResponse(is_valid=False, invalid_reason=ERR_INVALID_SIGNATURE, payer=payer)
+            return (
+                VerifyResponse(is_valid=False, invalid_reason=ERR_INVALID_SIGNATURE, payer=payer),
+                None,
+            )
 
         try:
             signature = hex_to_bytes(evm_payload.signature)
+            payer_code = self._signer.get_code(payer)
+            if is_plain_non_canonical_ecdsa_signature(signature, len(payer_code) > 0):
+                return (
+                    VerifyResponse(
+                        is_valid=False,
+                        invalid_reason=ERR_INVALID_SIGNATURE_S,
+                        payer=payer,
+                    ),
+                    None,
+                )
             classification = classify_eip3009_signature(
                 self._signer,
                 evm_payload.authorization,
@@ -252,25 +301,35 @@ class ExactEvmScheme:
                 token_address,
                 extra["name"],
                 extra["version"],
+                payer_code,
             )
             if not classification.valid and classification.is_undeployed:
                 if not has_deployment_info(classification.sig_data):
-                    return VerifyResponse(
-                        is_valid=False,
-                        invalid_reason=ERR_UNDEPLOYED_SMART_WALLET,
-                        payer=payer,
+                    return (
+                        VerifyResponse(
+                            is_valid=False,
+                            invalid_reason=ERR_UNDEPLOYED_SMART_WALLET,
+                            payer=payer,
+                        ),
+                        None,
                     )
 
             if not classification.valid and not classification.is_smart_wallet:
-                return VerifyResponse(
-                    is_valid=False, invalid_reason=ERR_INVALID_SIGNATURE, payer=payer
+                return (
+                    VerifyResponse(
+                        is_valid=False, invalid_reason=ERR_INVALID_SIGNATURE, payer=payer
+                    ),
+                    None,
                 )
         except Exception as e:
-            return VerifyResponse(
-                is_valid=False,
-                invalid_reason=ERR_FAILED_TO_VERIFY_SIGNATURE,
-                invalid_message=str(e),
-                payer=payer,
+            return (
+                VerifyResponse(
+                    is_valid=False,
+                    invalid_reason=ERR_FAILED_TO_VERIFY_SIGNATURE,
+                    invalid_message=str(e),
+                    payer=payer,
+                ),
+                None,
             )
 
         # Counterfactual ERC-6492 wallet (undeployed + carries factory deployment info):
@@ -284,27 +343,36 @@ class ExactEvmScheme:
             factory_addr = bytes_to_hex(classification.sig_data.factory).lower()
             allowed = {f.strip().lower() for f in self._config.eip6492_allowed_factories}
             if factory_addr not in allowed:
-                return VerifyResponse(
-                    is_valid=False, invalid_reason=ERR_FACTORY_NOT_ALLOWED, payer=payer
+                return (
+                    VerifyResponse(
+                        is_valid=False, invalid_reason=ERR_FACTORY_NOT_ALLOWED, payer=payer
+                    ),
+                    None,
                 )
 
-        code = self._signer.get_code(token_address)
-        if len(code) == 0:
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_ASSET_NOT_DEPLOYED_CONTRACT, payer=payer
+        asset_reason = start_asset_contract_check(
+            self._signer, str(requirements.network), requirements.asset
+        ).await_result()
+        if asset_reason:
+            return (
+                VerifyResponse(is_valid=False, invalid_reason=asset_reason, payer=payer),
+                None,
             )
 
         if not simulate:
-            return VerifyResponse(is_valid=True, payer=payer)
+            return VerifyResponse(is_valid=True, payer=payer), classification
 
         try:
             parsed_authorization = parse_eip3009_authorization(evm_payload.authorization)
         except Exception as e:
-            return VerifyResponse(
-                is_valid=False,
-                invalid_reason=ERR_FAILED_TO_VERIFY_SIGNATURE,
-                invalid_message=str(e),
-                payer=payer,
+            return (
+                VerifyResponse(
+                    is_valid=False,
+                    invalid_reason=ERR_FAILED_TO_VERIFY_SIGNATURE,
+                    invalid_message=str(e),
+                    payer=payer,
+                ),
+                None,
             )
 
         sim_ok, sim_error = simulate_eip3009_transfer_result(
@@ -340,14 +408,17 @@ class ExactEvmScheme:
                 reason,
                 sim_error,
             )
-            return VerifyResponse(
-                is_valid=False,
-                invalid_reason=reason,
-                invalid_message=str(sim_error) if sim_error is not None else None,
-                payer=payer,
+            return (
+                VerifyResponse(
+                    is_valid=False,
+                    invalid_reason=reason,
+                    invalid_message=str(sim_error) if sim_error is not None else None,
+                    payer=payer,
+                ),
+                None,
             )
 
-        return VerifyResponse(is_valid=True, payer=payer)
+        return VerifyResponse(is_valid=True, payer=payer), classification
 
     def settle(
         self,
@@ -371,12 +442,23 @@ class ExactEvmScheme:
         Returns:
             SettleResponse with success, transaction, and payer.
         """
+        network = str(requirements.network)
+
+        payload_error = validate_exact_evm_payload(payload.payload)
+        if payload_error:
+            return SettleResponse(
+                success=False,
+                error_reason=ERR_INVALID_PAYLOAD,
+                error_message=payload_error,
+                network=network,
+                payer=get_payload_payer(payload.payload),
+                transaction="",
+            )
+
         if is_permit2_payload(payload.payload):
             return settle_permit2(
                 self._signer, payload, requirements, context, pending_store=self._pending_store
             )
-
-        network = str(requirements.network)
 
         # Fast path: a prior settle attempt for this exact payload already broadcast a
         # transaction whose receipt wait failed (settlement_pending). The resource server's
@@ -398,7 +480,7 @@ class ExactEvmScheme:
                 )
 
         # First verify
-        verify_result = self._verify(
+        verify_result, classification = self._verify(
             payload,
             requirements,
             simulate=self._config.simulate_in_settle,
@@ -416,9 +498,18 @@ class ExactEvmScheme:
         payer = evm_payload.authorization.from_address
         token_address = normalize_address(requirements.asset)
 
+        if classification is None:
+            return SettleResponse(
+                success=False,
+                error_reason=ERR_FAILED_TO_VERIFY_SIGNATURE,
+                error_message="verify returned no signature classification",
+                network=network,
+                payer=payer,
+                transaction="",
+            )
+        sig_data = classification.sig_data
+
         try:
-            signature = hex_to_bytes(evm_payload.signature or "")
-            sig_data = parse_erc6492_signature(signature)
             parsed_authorization = parse_eip3009_authorization(evm_payload.authorization)
         except Exception as e:
             return SettleResponse(
@@ -432,8 +523,10 @@ class ExactEvmScheme:
 
         # Deploy smart wallet if needed (allowlist is the sole gate)
         if has_deployment_info(sig_data):
-            code = self._signer.get_code(payer)
-            if len(code) == 0:
+            # code_deployed comes from the eth_getCode the verify above already issued for this
+            # payer. Both reads happen before any deploy transaction, so reusing it does not
+            # reintroduce the post-deploy re-read that races RPC state propagation across replicas.
+            if not sig_data.code_deployed:
                 factory_addr = bytes_to_hex(sig_data.factory)
                 allowed = [f.lower() for f in self._config.eip6492_allowed_factories]
                 if factory_addr.lower() not in allowed:

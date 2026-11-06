@@ -38,6 +38,8 @@ from .pending_settlement_store import ERR_SETTLEMENT_PENDING
 from .schemas import (
     X402_VERSION,
     AbortResult,
+    AfterSettleAbortError,
+    FacilitatorCapabilityError,
     Network,
     PaymentCancellationDispatcher,
     PaymentPayload,
@@ -53,6 +55,7 @@ from .schemas import (
     SchemeNotFoundError,
     ServerPaymentRequiredContext,
     SettleContext,
+    SettleError,
     SettleFailureContext,
     SettlePhase,
     SettleResponse,
@@ -73,6 +76,11 @@ from .schemas import (
 )
 
 logger = logging.getLogger("x402")
+
+
+class _SyncServerAsyncHookError(TypeError):
+    pass
+
 
 if TYPE_CHECKING:
     pass
@@ -115,6 +123,31 @@ def _get_extension_info(value: Any) -> Any:
     return value
 
 
+def _server_owned_info_fields_match(
+    advertised: Any,
+    echoed: Any,
+    server_owned_fields: set[str],
+) -> bool:
+    """Return whether client-echoed server-owned fields match the advertisement.
+
+    When the server did not declare the extension, ``advertised`` is treated as
+    empty so clients cannot invent fields such as builder-code ``a``.
+    """
+    if not isinstance(echoed, dict):
+        return True
+
+    advertised_record = advertised if isinstance(advertised, dict) else {}
+
+    for field in server_owned_fields:
+        if field not in echoed:
+            continue
+        echoed_value = echoed[field]
+        if field not in advertised_record or advertised_record[field] != echoed_value:
+            return False
+
+    return True
+
+
 def _omit_fields(value: Any, fields: list[str] | None) -> Any:
     """Return a copy of ``value`` without the named dynamic fields."""
     if not fields or not isinstance(value, dict):
@@ -145,6 +178,14 @@ def _to_comparable_list(value: Any) -> list[Any] | None:
 # sign-in-with-x's "resources") keep exact list matching in both directions.
 _ADDITIVE_LIST_INFO_FIELDS: dict[str, set[str]] = {
     "builder-code": {"s"},
+}
+
+# Extension info fields, keyed by extension key, that only the resource server
+# may declare. Clients MUST NOT invent these on echo; this package has no
+# dependency on extension packages, so the key/field list is duplicated here
+# (same as _ADDITIVE_LIST_INFO_FIELDS).
+_SERVER_OWNED_INFO_FIELDS: dict[str, set[str]] = {
+    "builder-code": {"a"},
 }
 
 # Caps the combined echoed length of an additive list field (see
@@ -397,6 +438,15 @@ SyncOnVerifiedPaymentCanceledHook = Callable[[VerifiedPaymentCanceledContext], N
 HookPhase = Literal["before", "after", "failure", "call_facilitator", "dispatch_cancel"]
 HookCommand = tuple[HookPhase, Any, Any]  # (phase, hook|client|options, context)
 
+
+def _apply_after_settle_abort(result: SettleResponse, abort: AfterSettleAbortError) -> None:
+    """Flip an onchain successful settle to success=False, keeping its receipt fields."""
+    result.success = False
+    result.error_reason = abort.reason
+    result.error_message = abort.message
+    result.after_settle_aborted = True
+
+
 # Type alias for facilitator clients (either async or sync)
 _AnyFacilitatorClient = FacilitatorClient | FacilitatorClientSync
 
@@ -583,6 +633,14 @@ class x402ResourceServerBase:
                 if scheme not in self._supported_responses[network]:
                     self._supported_responses[network][scheme] = supported
 
+        # Empty /supported is transient (timeout, deploy blip) and must stay
+        # retryable. Route validation would otherwise raise RouteConfigurationError
+        # (missing_facilitator) and HTTP adapters would treat that as fatal.
+        if not self._supported_responses:
+            raise RuntimeError(
+                "Failed to initialize: no supported payment kinds loaded from any facilitator."
+            )
+
         self._validate_facilitator_capabilities()
         self._initialized = True
 
@@ -594,7 +652,7 @@ class x402ResourceServerBase:
         schemes exposing a `validate_facilitator_support` hook participate.
 
         Raises:
-            ValueError: Listing every capability problem when one or more are reported.
+            FacilitatorCapabilityError: Listing every capability problem when one or more are reported.
         """
         problems: list[str] = []
 
@@ -614,8 +672,7 @@ class x402ResourceServerBase:
                     problems.append(f"{scheme} on {network}: {problem}")
 
         if problems:
-            details = "\n".join(f"  - {p}" for p in problems)
-            raise ValueError(f"x402 facilitator capability errors:\n{details}")
+            raise FacilitatorCapabilityError(problems)
 
     def _facilitator_extensions(self, network: Network, scheme: str) -> list[str]:
         """Return the extensions a facilitator advertises for a scheme/network."""
@@ -1055,9 +1112,11 @@ class x402ResourceServerBase:
     ) -> ExtensionValidationResult:
         """Validate optional client extension echoes against server declarations.
 
-        Skips v1, and passes when either extension map is empty. For each key the
+        Skips v1, and passes when the client omits extensions. For each key the
         server declared, the echoed ``info`` must contain every advertised field
-        (clients may add their own). Fields listed by a registered extension's
+        (clients may add their own). Server-owned fields (e.g. builder-code ``a``)
+        must also match the advertisement when present, including when the server
+        did not declare the extension. Fields listed by a registered extension's
         ``dynamic_info_fields`` are regenerated per response and dropped before
         comparison; every other advertised field stays strict.
         """
@@ -1065,32 +1124,39 @@ class x402ResourceServerBase:
             return ExtensionValidationResult(valid=True)
 
         server_extensions = payment_required.extensions
-        if not server_extensions:
-            return ExtensionValidationResult(valid=True)
-
         client_extensions = getattr(payment_payload, "extensions", None)
         if not client_extensions:
             return ExtensionValidationResult(valid=True)
 
         for key, echoed_value in client_extensions.items():
-            if key not in server_extensions:
-                continue
-
             advertised_info = _get_extension_info(
-                _normalize_extension_value(server_extensions[key])
+                _normalize_extension_value(
+                    server_extensions.get(key) if server_extensions else None
+                )
             )
             echoed_info = _get_extension_info(_normalize_extension_value(echoed_value))
 
-            extension = self._extensions.get(key)
-            dynamic_fields = getattr(extension, "dynamic_info_fields", None)
-            additive_fields = _ADDITIVE_LIST_INFO_FIELDS.get(key)
-            max_lengths = _ADDITIVE_LIST_MAX_LENGTHS.get(key)
+            if server_extensions and key in server_extensions:
+                extension = self._extensions.get(key)
+                dynamic_fields = getattr(extension, "dynamic_info_fields", None)
+                additive_fields = _ADDITIVE_LIST_INFO_FIELDS.get(key)
+                max_lengths = _ADDITIVE_LIST_MAX_LENGTHS.get(key)
 
-            if not _object_contains_subset(
-                _omit_fields(advertised_info, dynamic_fields),
-                _omit_fields(echoed_info, dynamic_fields),
-                additive_fields,
-                max_lengths,
+                if not _object_contains_subset(
+                    _omit_fields(advertised_info, dynamic_fields),
+                    _omit_fields(echoed_info, dynamic_fields),
+                    additive_fields,
+                    max_lengths,
+                ):
+                    return ExtensionValidationResult(
+                        valid=False,
+                        invalid_reason=ERR_EXTENSION_ECHO_MISMATCH,
+                        extension_key=key,
+                    )
+
+            server_owned_fields = _SERVER_OWNED_INFO_FIELDS.get(key)
+            if server_owned_fields and not _server_owned_info_fields_match(
+                advertised_info, echoed_info, server_owned_fields
             ):
                 return ExtensionValidationResult(
                     valid=False,
@@ -1293,8 +1359,26 @@ class x402ResourceServerBase:
             reason=options.reason,
             error=options.error,
             response_status=options.response_status,
+            verify_result=options.verify_result,
             settled_phases=tuple(settled_phases or ()),
         )
+
+    def _should_cancel_unsettled_payment(
+        self,
+        payload: PaymentPayload | PaymentPayloadV1,
+        requirements: PaymentRequirements | PaymentRequirementsV1,
+        phase: SettlePhase,
+    ) -> bool:
+        """Whether a settle that failed before the facilitator leaves a verified payment to cancel."""
+        if not self._initialized or phase == "cancel":
+            return False
+        if phase == "before-handler":
+            return True
+        try:
+            flow = self.get_payment_flow(payload, requirements)  # type: ignore[arg-type]
+            return not resolve_payment_flow_phases(flow).settle_before_handler
+        except ValueError:
+            return False
 
     # ========================================================================
     # Core Logic Generators (shared between async/sync)
@@ -1333,13 +1417,25 @@ class x402ResourceServerBase:
         extension_keys = list(declared.keys())
 
         # Execute before hooks
-        for _label, hook in get_labeled_server_hooks(
+        for label, hook in get_labeled_server_hooks(
             "before_verify",
             self,
             extension_keys,
             matched_scheme,
         ):
-            result = yield ("before", hook, context)
+            try:
+                result = yield ("before", hook, context)
+            except _SyncServerAsyncHookError:
+                raise
+            except Exception as error:
+                self._warn_resource_server_hook_failure("beforeVerify", label, error)
+                return ResourceVerifyResponse(
+                    verify=VerifyResponse(
+                        is_valid=False,
+                        invalid_reason="before_verify_hook_error",
+                        invalid_message="before verify hook failed",
+                    )
+                )
             if isinstance(result, AbortResult):
                 from .schemas import PaymentAbortedError
 
@@ -1382,40 +1478,6 @@ class x402ResourceServerBase:
                 client,
                 ("verify", payload, requirements),
             )
-
-            # Check if verification failed
-            if not verify_result.is_valid:
-                failure_context = VerifyFailureContext(
-                    payment_payload=payload,
-                    requirements=requirements,
-                    payload_bytes=payload_bytes,
-                    requirements_bytes=requirements_bytes,
-                    declared_extensions=declared_extensions or {},
-                    transport_context=transport_context,
-                    error=Exception(verify_result.invalid_reason or "Verification failed"),
-                )
-                for _label, hook in get_labeled_server_hooks(
-                    "on_verify_failure",
-                    self,
-                    extension_keys,
-                    matched_scheme,
-                ):
-                    result = yield ("failure", hook, failure_context)
-                    if isinstance(result, RecoveredVerifyResult):
-                        verify_response = yield from self._run_after_verify_hooks(
-                            payload,
-                            requirements,
-                            payload_bytes,
-                            requirements_bytes,
-                            declared_extensions,
-                            transport_context,
-                            result.result,
-                            matched_scheme,
-                            extension_keys,
-                        )
-                        return verify_response
-
-                return ResourceVerifyResponse(verify=verify_result)
 
             verify_response = yield from self._run_after_verify_hooks(
                 payload,
@@ -1506,7 +1568,9 @@ class x402ResourceServerBase:
             if isinstance(hook_result, AbortResult):
                 yield (
                     "dispatch_cancel",
-                    VerifiedPaymentCancelOptions(reason="after_verify_aborted"),
+                    VerifiedPaymentCancelOptions(
+                        reason="after_verify_aborted", verify_result=verify_result
+                    ),
                     (payload, requirements, declared_extensions, transport_context),
                 )
                 return ResourceVerifyResponse(
@@ -1535,10 +1599,12 @@ class x402ResourceServerBase:
 
         Yields (phase, hook, context) tuples for hook execution.
         Also yields ("call_facilitator", client, (payload, requirements)) for the actual call.
+        Failures before the facilitator is reached skip on_settle_failure hooks.
         """
         if not self._initialized:
             raise RuntimeError("Server not initialized. Call initialize() first.")
 
+        facilitator_called = False
         declared = declared_extensions or {}
         context = SettleContext(
             payment_payload=payload,
@@ -1556,13 +1622,23 @@ class x402ResourceServerBase:
         extension_keys = list(declared.keys())
 
         # Execute before hooks
-        for _label, hook in get_labeled_server_hooks(
+        for label, hook in get_labeled_server_hooks(
             "before_settle",
             self,
             extension_keys,
             matched_scheme,
         ):
-            result = yield ("before", hook, context)
+            try:
+                result = yield ("before", hook, context)
+            except (_SyncServerAsyncHookError, SettleError):
+                raise
+            except Exception as error:
+                self._warn_resource_server_hook_failure("beforeSettle", label, error)
+                raise SettleError(
+                    "before_settle_hook_error",
+                    "before settle hook failed",
+                    transaction="",
+                ) from None
             if isinstance(result, AbortResult):
                 from .schemas import PaymentAbortedError
 
@@ -1584,7 +1660,10 @@ class x402ResourceServerBase:
                     extension_keys,
                     matched_scheme,
                 ):
-                    yield ("after", after_hook, result_context)
+                    after_result = yield ("after", after_hook, result_context)
+                    if isinstance(after_result, AfterSettleAbortError):
+                        _apply_after_settle_abort(result.result, after_result)
+                        break
                 return result.result
 
         try:
@@ -1613,6 +1692,7 @@ class x402ResourceServerBase:
                 raise SchemeNotFoundError(scheme, network)
 
             # Yield for facilitator call (caller handles sync/async)
+            facilitator_called = True
             settle_result: SettleResponse = yield (
                 "call_facilitator",
                 client,
@@ -1655,7 +1735,10 @@ class x402ResourceServerBase:
                             extension_keys,
                             matched_scheme,
                         ):
-                            yield ("after", after_hook, result_context)
+                            after_result = yield ("after", after_hook, result_context)
+                            if isinstance(after_result, AfterSettleAbortError):
+                                _apply_after_settle_abort(result.result, after_result)
+                                break
                         return result.result
 
                 return settle_result
@@ -1677,11 +1760,17 @@ class x402ResourceServerBase:
                 extension_keys,
                 matched_scheme,
             ):
-                yield ("after", hook, result_context)
+                after_result = yield ("after", hook, result_context)
+                if isinstance(after_result, AfterSettleAbortError):
+                    _apply_after_settle_abort(settle_result, after_result)
+                    return settle_result
 
             return settle_result
 
         except Exception as e:
+            if not facilitator_called:
+                raise
+
             failure_context = SettleFailureContext(
                 payment_payload=payload,
                 requirements=requirements,

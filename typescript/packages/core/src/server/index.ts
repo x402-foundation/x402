@@ -1,4 +1,8 @@
-export { x402ResourceServer } from "./x402ResourceServer";
+export {
+  x402ResourceServer,
+  AfterSettleAbortError,
+  isAfterSettleAborted,
+} from "./x402ResourceServer";
 export type {
   ResourceConfig,
   PaymentRequiredContext,
@@ -61,8 +65,10 @@ export type { FacilitatorClient, FacilitatorConfig } from "../http/httpFacilitat
 export {
   FacilitatorResponseError,
   FacilitatorTimeoutError,
+  FacilitatorCapabilityError,
   getFacilitatorResponseError,
 } from "../types";
+export { attachBackgroundInitHandler, isFatalStartupInitError } from "../http/backgroundInit";
 
 export {
   x402HTTPResourceServer,

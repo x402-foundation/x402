@@ -353,17 +353,40 @@ class x402HTTPServerBase:
         method = context.method or context.adapter.get_method()
         # _get_route_config returns tuple[RouteConfig, str] | None; 'is not None' is the
         # correct check for a union-with-None return type and does not rely on tuple truthiness.
-        return self._get_route_config(context.path, method) is not None
+        return self._get_route_config(context.path, method, context.decoded_path) is not None
 
-    def _get_route_config(self, path: str, method: str) -> tuple[RouteConfig, str] | None:
-        """Find matching route configuration, returning (config, pattern) or None."""
-        normalized_path = self._normalize_path(path)
+    def _get_route_config(
+        self, path: str, method: str, decoded_path: str | None = None
+    ) -> tuple[RouteConfig, str] | None:
+        """Find matching route configuration, returning (config, pattern) or None.
+
+        Checks the escaped ``path`` first, then the framework's ``decoded_path``
+        (if distinct), so a route can't be bypassed via either representation.
+        """
         upper_method = method.upper()
 
-        for route in self._compiled_routes:
-            if route.regex.match(normalized_path):
-                if route.verb == "*" or route.verb == upper_method:
+        def verb_matches(verb: str) -> bool:
+            # A method-less route must not gate the CORS preflight: the browser sends
+            # OPTIONS without a payment and only sends the paid request if it succeeds.
+            # An explicit "OPTIONS /path" route still matches.
+            return verb == upper_method or (verb == "*" and upper_method != "OPTIONS")
+
+        def find_match(candidate: str) -> tuple[RouteConfig, str] | None:
+            for route in self._compiled_routes:
+                if route.regex.match(candidate) and verb_matches(route.verb):
                     return route.config, route.pattern
+            if upper_method == "HEAD":
+                for route in self._compiled_routes:
+                    if route.regex.match(candidate) and route.verb == "GET":
+                        return route.config, route.pattern
+            return None
+
+        match = find_match(self._normalize_path(path))
+        if match is not None:
+            return match
+
+        if decoded_path is not None and decoded_path != path:
+            return find_match(self._normalize_decoded_path(decoded_path))
 
         return None
 
@@ -388,7 +411,7 @@ class x402HTTPServerBase:
             context = dataclasses.replace(context, method=context.adapter.get_method())
 
         # Find matching route
-        route_match = self._get_route_config(context.path, context.method)
+        route_match = self._get_route_config(context.path, context.method, context.decoded_path)
         if route_match is None:
             return HTTPProcessResult(type=RESULT_NO_PAYMENT_REQUIRED)
         route_config, route_pattern = route_match
@@ -702,18 +725,26 @@ class x402HTTPServerBase:
             dec_part = (parts[1] if len(parts) > 1 else "").ljust(2, "0")[:2]
             scaled_percent = int(int_part) * 100 + int(dec_part)
             base = int(requirements.amount)
-            return str(base * scaled_percent // 10000)
+            resolved = str(base * scaled_percent // 10000)
+        else:
+            dollar_match = re.match(r"^\$(\d+(?:\.\d+)?)$", raw_amount)
+            if dollar_match:
+                if decimals is None:
+                    raise ValueError(
+                        f'Cannot convert dollar settlement override "{raw_amount}" to atomic units: '
+                        "asset decimals are unknown. Pass an atomic amount or register the asset."
+                    )
+                resolved = convert_to_token_amount(dollar_match.group(1), decimals)
+            else:
+                resolved = raw_amount
 
-        dollar_match = re.match(r"^\$(\d+(?:\.\d+)?)$", raw_amount)
-        if dollar_match:
-            if decimals is None:
-                raise ValueError(
-                    f'Cannot convert dollar settlement override "{raw_amount}" to atomic units: '
-                    "asset decimals are unknown. Pass an atomic amount or register the asset."
-                )
-            return convert_to_token_amount(dollar_match.group(1), decimals)
+        if int(resolved) > int(requirements.amount):
+            raise ValueError(
+                f'Settlement override amount "{raw_amount}" resolves to {resolved} atomic units, '
+                f"which exceeds the authorized maximum of {requirements.amount} in PaymentRequirements."
+            )
 
-        return raw_amount
+        return resolved
 
     def _apply_settlement_overrides(
         self,
@@ -887,7 +918,7 @@ class x402HTTPServerBase:
     # Internal Methods
     # =========================================================================
 
-    def _extract_payment(self, adapter: HTTPAdapter) -> PaymentPayload | PaymentPayloadV1 | None:
+    def _extract_payment(self, adapter: HTTPAdapter) -> PaymentPayload | None:
         """Extract payment from HTTP headers (V2 only)."""
         # Check V2 header (case-insensitive)
         header = adapter.get_header(PAYMENT_SIGNATURE_HEADER) or adapter.get_header(
@@ -896,9 +927,14 @@ class x402HTTPServerBase:
 
         if header:
             try:
-                return decode_payment_signature_header(header)
+                payload = decode_payment_signature_header(header)
             except Exception:
                 return None
+            # V2 server only accepts V2 payments. A V1 payload has no `accepted`
+            # field and would fail requirement matching.
+            if isinstance(payload, PaymentPayloadV1):
+                return None
+            return payload
 
         return None
 
@@ -941,6 +977,8 @@ class x402HTTPServerBase:
         if unpaid_response:
             content_type = unpaid_response.content_type
             body = unpaid_response.body
+        elif payment_required.error:
+            body = {"error": payment_required.error}
 
         return HTTPResponseInstructions(
             status=402,
@@ -1063,7 +1101,11 @@ class x402HTTPServerBase:
         settlement_headers = failure.headers
         if context and not context.method:
             context = dataclasses.replace(context, method=context.adapter.get_method())
-        route_match = self._get_route_config(context.path, context.method) if context else None
+        route_match = (
+            self._get_route_config(context.path, context.method, context.decoded_path)
+            if context
+            else None
+        )
         route_config = route_match[0] if route_match else None
 
         custom_body = None
@@ -1269,6 +1311,18 @@ class x402HTTPServerBase:
 
         return path or "/"
 
+    @staticmethod
+    def _normalize_decoded_path(path: str) -> str:
+        """Normalize an already framework-decoded path. Does not decode
+        percent-escapes, unlike ``_normalize_path``, since this input was
+        already decoded once by the router.
+        """
+        path = path.split("?")[0].split("#")[0]
+        path = re.sub(r"/+", "/", path)
+        path = path.rstrip("/")
+
+        return path or "/"
+
     def _generate_paywall_html(
         self,
         payment_required: PaymentRequired,
@@ -1342,6 +1396,10 @@ class x402HTTPServerBase:
             "displayAmount": round(display_amount, 2),
             "currentUrl": current_url,
         }
+        if config and config.faucet_urls:
+            x402_config["faucetUrls"] = config.faucet_urls
+        if config and config.rpc_urls:
+            x402_config["rpcUrls"] = config.rpc_urls
         config_script = (
             f"<script>\n    window.x402 = {htmlsafe_json_dumps(x402_config)};\n</script>"
         )

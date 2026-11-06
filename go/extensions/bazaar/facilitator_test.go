@@ -4,6 +4,7 @@ package bazaar
 // Uses package bazaar (not bazaar_test) to access unexported functions.
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 
@@ -54,6 +55,44 @@ func TestIsValidRouteTemplate(t *testing.T) {
 	t.Run("rejects percent-encoded traversal sequences", func(t *testing.T) {
 		assert.False(t, isValidRouteTemplate("/users/%2e%2e/admin"))
 		assert.False(t, isValidRouteTemplate("/users/%2E%2E/admin"))
+	})
+
+	t.Run("rejects double-encoded traversal sequences (regression for double-decode bypass)", func(t *testing.T) {
+		// %25 decodes to "%", so %252e%252e decodes-once to "%2e%2e" (still
+		// encoded) and only decodes-twice to "..". A single-pass decode
+		// wouldn't see the traversal here.
+		assert.False(t, isValidRouteTemplate("/users/%252e%252e/admin"))
+		assert.False(t, isValidRouteTemplate("/users/%252E%252E/admin"))
+	})
+
+	t.Run("rejects triple-encoded traversal sequences", func(t *testing.T) {
+		assert.False(t, isValidRouteTemplate("/users/%25252e%25252e/admin"))
+	})
+
+	t.Run("rejects double-encoded scheme injection", func(t *testing.T) {
+		// %3a decodes to ":", %2f decodes to "/" — %253a%252f%252f decodes-once
+		// to "%3a%2f%2f" (still encoded) and decodes-twice to "://".
+		assert.False(t, isValidRouteTemplate("/users/javascript%253a%252f%252fevil"))
+	})
+
+	t.Run("still accepts a legitimate single percent-encoded segment", func(t *testing.T) {
+		// One decode pass resolves this to plain text with no further
+		// encoding, reaching a fixed point immediately — must not be rejected
+		// just for containing a "%".
+		assert.True(t, isValidRouteTemplate("/search/caf%C3%A9"))
+	})
+
+	t.Run("rejects a value whose percent-encoding never resolves to a fixed point", func(t *testing.T) {
+		// Pathologically deep encoding (more than the decode-pass budget) has
+		// no safe canonical form to validate — reject rather than decode
+		// indefinitely. ":" is re-encoded ("%3A" → "%253A" → ...) on every
+		// encodeURIComponent pass, so this compounds correctly (unlike "..",
+		// whose dots encodeURIComponent leaves untouched).
+		value := ":"
+		for i := 0; i < 8; i++ {
+			value = url.QueryEscape(value)
+		}
+		assert.False(t, isValidRouteTemplate("/users/x"+value+"/admin"))
 	})
 }
 

@@ -6,14 +6,18 @@ import {
   UptoEvmScheme as UptoEvmClientScheme,
   type UptoEvmSchemeOptions,
 } from "@x402/evm/upto/client";
+import { AuthCaptureEvmScheme } from "@x402/evm/auth-capture/client";
 import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/client";
 import { ExactEvmSchemeV1 } from "@x402/evm/v1";
 import { toClientEvmSigner } from "@x402/evm";
+import { BatchSvmScheme as BatchSettlementSvmScheme } from "@x402/svm/batch-settlement/client";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { UptoSvmScheme } from "@x402/svm/upto/client";
 import { ExactSvmSchemeV1 } from "@x402/svm/v1";
 import { ExactAptosScheme } from "@x402/aptos/exact/client";
 import { Account, Ed25519PrivateKey, PrivateKey, PrivateKeyVariants } from "@aptos-labs/ts-sdk";
+import { ExactCasperScheme } from "@x402/casper/exact/client";
+import { ClientCasperSigner, createClientCasperSigner } from "@x402/casper";
 import { createClientHederaSigner, PrivateKey as HederaPrivateKey } from "@x402/hedera";
 import { ExactHederaScheme } from "@x402/hedera/exact/client";
 import { ExactKeetaScheme } from "@x402/keeta/exact/client";
@@ -30,6 +34,10 @@ import { Wallet } from "xrpl";
 import { ExactAvmScheme as ExactAvmClientScheme } from "@x402/avm/exact/client";
 import { toClientAvmSigner } from "@x402/avm";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/client";
+import { ExactCardanoScheme as ExactCardanoClientScheme } from "@x402/cardano/exact/client";
+import { toClientCardanoSigner } from "@x402/cardano";
+import { toClientCantonSigner } from "@x402/canton";
+import { ExactCantonScheme as ExactCantonClientScheme } from "@x402/canton/exact/client";
 import { AccountAddress, buildBasicAccountSigner } from "@concordium/web-sdk";
 import * as KeetaNet from "@keetanetwork/keetanet-client";
 import { base58 } from "@scure/base";
@@ -44,9 +52,32 @@ export type RequestResult = {
   data: unknown;
   status_code: number;
   payment_response?: unknown;
+  error?: string;
 };
 
 export type BatchSettlementPhase = "initial" | "recovery-refund" | "full";
+
+function refundResult(settleResponse: SettleResponse): RequestResult {
+  const success = settleResponse.success;
+  return {
+    success,
+    data: { refund: success },
+    status_code: success ? 200 : 500,
+    payment_response: settleResponse,
+    ...(success
+      ? {}
+      : { error: `Refund failed: ${settleResponse.errorReason ?? "settle unsuccessful"}` }),
+  };
+}
+
+function refundErrorResult(error: unknown): RequestResult {
+  return {
+    success: false,
+    data: { refund: false },
+    status_code: 500,
+    error: error instanceof Error ? error.message : String(error),
+  };
+}
 
 /**
  * Parses the TVM private key accepted by e2e env fixtures.
@@ -76,22 +107,58 @@ export type E2EClientContext = {
    * setup instead of duplicating it.
    */
   schemes: SchemeRegistration[];
-  batchSettlementScheme: BatchSettlementEvmScheme | undefined;
+  batchSettlementScheme: BatchSettlementScheme | undefined;
   batchSettlementPhase: BatchSettlementPhase | undefined;
+};
+
+/** Either family's batch-settlement client: both expose `refund(url)`. */
+export type BatchSettlementScheme = BatchSettlementEvmScheme | BatchSettlementSvmScheme;
+
+/**
+ * The harness derives one 32-byte hex salt per scenario. The SVM channel PDA
+ * takes a u64 salt, so fold the hex down to 64 bits.
+ *
+ * @param channelSalt - 0x-prefixed hex salt from the harness
+ * @returns Decimal u64 salt for the SVM client
+ */
+function svmChannelSalt(channelSalt: string): string {
+  return (BigInt(channelSalt) % (1n << 64n)).toString();
+}
+
+/** Narrows what {@link createE2EClient} registers, for family-specific clients. */
+export type E2EClientOptions = {
+  /**
+   * Catalog network ids (e.g. `"svm"`) to register schemes for. Defaults to
+   * every family whose client credentials are set.
+   */
+  families?: readonly string[];
+  /**
+   * Solana transaction message versions the SVM schemes may build. Defaults
+   * to the SDK default (`[0, 1]`); `[0]` keeps a client on version 0 even when
+   * the facilitator advertises version 1.
+   */
+  svmTransactionVersions?: readonly (0 | 1)[];
 };
 
 /**
  * Builds the shared x402 client with all e2e scheme registrations.
+ *
+ * @param options - Optional family and SVM transaction-version narrowing
  */
-export async function createE2EClient(): Promise<E2EClientContext> {
+export async function createE2EClient(options: E2EClientOptions = {}): Promise<E2EClientContext> {
+  const wants = (family: string): boolean => !options.families || options.families.includes(family);
   const baseURL = process.env.RESOURCE_SERVER_URL as string;
   const endpointPath = process.env.ENDPOINT_PATH as string;
   const url = `${baseURL}${endpointPath}`;
 
   const schemes: SchemeRegistration[] = [];
-  let batchSettlementScheme: BatchSettlementEvmScheme | undefined;
+  let batchSettlementScheme: BatchSettlementScheme | undefined;
+  let svmServerSignedOperators: string[] = [];
+  // One process runs one endpoint, so the route path picks which family's
+  // batch-settlement scheme drives the phases and the refund.
+  const batchFamily: "svm" | "evm" = endpointPath.includes("/svm") ? "svm" : "evm";
 
-  if (process.env.CLIENT_EVM_PRIVATE_KEY) {
+  if (wants("evm") && process.env.CLIENT_EVM_PRIVATE_KEY) {
     const evmAccount = privateKeyToAccount(process.env.CLIENT_EVM_PRIVATE_KEY as `0x${string}`);
 
     const evmNetwork = resolveNetworkCaip2("evm");
@@ -115,7 +182,8 @@ export async function createE2EClient(): Promise<E2EClientContext> {
     // concurrent e2e runs don't collide on the same on-chain channel id. An optional
     // voucher signer (CLIENT_EVM_BATCH_SETTLEMENT_VOUCHER_SIGNER_PRIVATE_KEY) exercises
     // the alt-EOA voucher branch while deposits keep using the main client signer.
-    const channelSalt = process.env.EVM_BATCH_SETTLEMENT_CHANNEL as `0x${string}` | undefined;
+    const channelSalt = (process.env.BATCH_SETTLEMENT_CHANNEL ??
+      process.env.EVM_BATCH_SETTLEMENT_CHANNEL) as `0x${string}` | undefined;
     const voucherSignerKey = process.env.CLIENT_EVM_BATCH_SETTLEMENT_VOUCHER_SIGNER_PRIVATE_KEY as
       | `0x${string}`
       | undefined;
@@ -126,7 +194,8 @@ export async function createE2EClient(): Promise<E2EClientContext> {
       channelSalt || voucherSigner
         ? { ...(channelSalt ? { salt: channelSalt } : {}), ...(voucherSigner ? { voucherSigner } : {}) }
         : undefined;
-    batchSettlementScheme = new BatchSettlementEvmScheme(evmSigner, batchSettlementOptions);
+    const evmBatchSettlementScheme = new BatchSettlementEvmScheme(evmSigner, batchSettlementOptions);
+    if (batchFamily === "evm") batchSettlementScheme = evmBatchSettlementScheme;
 
     schemes.push(
       { network: networkCaip2Pattern("evm"), client: new ExactEvmScheme(evmSigner, evmSchemeOptions) },
@@ -134,17 +203,51 @@ export async function createE2EClient(): Promise<E2EClientContext> {
         network: networkCaip2Pattern("evm"),
         client: new UptoEvmClientScheme(evmSigner, uptoSchemeOptions),
       },
-      { network: networkCaip2Pattern("evm"), client: batchSettlementScheme },
+      { network: networkCaip2Pattern("evm"), client: evmBatchSettlementScheme },
+      { network: networkCaip2Pattern("evm"), client: new AuthCaptureEvmScheme(evmSigner) },
       { network: "base-sepolia", client: new ExactEvmSchemeV1(evmSigner), x402Version: 1 },
       { network: "base", client: new ExactEvmSchemeV1(evmSigner), x402Version: 1 },
     );
   }
 
-  if (process.env.CLIENT_SVM_PRIVATE_KEY) {
+  if (wants("svm") && process.env.CLIENT_SVM_PRIVATE_KEY) {
     const svmSigner = await createKeyPairSignerFromBytes(
       base58.decode(process.env.CLIENT_SVM_PRIVATE_KEY),
     );
-    const svmSchemeOptions = process.env.SVM_RPC_URL ? { rpcUrl: process.env.SVM_RPC_URL } : undefined;
+    const svmSchemeOptions =
+      process.env.SVM_RPC_URL || options.svmTransactionVersions
+        ? {
+          ...(process.env.SVM_RPC_URL ? { rpcUrl: process.env.SVM_RPC_URL } : {}),
+          ...(options.svmTransactionVersions
+            ? { transactionVersions: options.svmTransactionVersions }
+            : {}),
+        }
+        : undefined;
+
+    // Batch-settlement derives the channel PDA from a per-scenario salt so
+    // concurrent e2e runs do not collide on one onchain channel. Discovery
+    // stays on: the recovery phase runs in a fresh process and must find the
+    // channel the initial phase opened.
+    const svmSaltHex = process.env.BATCH_SETTLEMENT_CHANNEL ?? process.env.EVM_BATCH_SETTLEMENT_CHANNEL;
+    svmServerSignedOperators =
+      process.env.CLIENT_SVM_SERVER_SIGNED_OPERATORS
+        ?.split(",")
+        .map(part => part.trim())
+        .filter(Boolean) ?? [];
+    const serverSignedMaxDeposit = process.env.CLIENT_SVM_SERVER_SIGNED_MAX_DEPOSIT?.trim();
+    const svmBatchSettlementScheme = new BatchSettlementSvmScheme(svmSigner, {
+      ...svmSchemeOptions,
+      ...(svmSaltHex ? { salt: svmChannelSalt(svmSaltHex) } : {}),
+      ...(svmServerSignedOperators.length > 0
+        ? {
+          serverSignedChannelsPolicy: {
+            allowedOperators: svmServerSignedOperators,
+            ...(serverSignedMaxDeposit ? { maxDeposit: serverSignedMaxDeposit } : {}),
+          },
+        }
+        : {}),
+    });
+    if (batchFamily === "svm") batchSettlementScheme = svmBatchSettlementScheme;
 
     schemes.push(
       {
@@ -155,6 +258,7 @@ export async function createE2EClient(): Promise<E2EClientContext> {
         network: networkCaip2Pattern("svm"),
         client: new UptoSvmScheme(svmSigner, svmSchemeOptions),
       },
+      { network: networkCaip2Pattern("svm"), client: svmBatchSettlementScheme },
       {
         network: "solana-devnet",
         client: new ExactSvmSchemeV1(svmSigner, svmSchemeOptions),
@@ -168,7 +272,7 @@ export async function createE2EClient(): Promise<E2EClientContext> {
   const ccdAddress = process.env.CLIENT_CCD_ADDRESS;
 
   let aptosAccount: Account | undefined;
-  if (process.env.CLIENT_APTOS_PRIVATE_KEY) {
+  if (wants("aptos") && process.env.CLIENT_APTOS_PRIVATE_KEY) {
     const formattedKey = PrivateKey.formatPrivateKey(
       process.env.CLIENT_APTOS_PRIVATE_KEY,
       PrivateKeyVariants.Ed25519,
@@ -177,8 +281,16 @@ export async function createE2EClient(): Promise<E2EClientContext> {
     aptosAccount = Account.fromPrivateKey({ privateKey: aptosPrivateKey });
   }
 
+  let casperClientSigner: ClientCasperSigner | undefined;
+  if (wants("casper") && process.env.CLIENT_CASPER_PRIVATE_KEY) {
+    casperClientSigner = await createClientCasperSigner(
+      process.env.CLIENT_CASPER_PRIVATE_KEY,
+      process.env.CLIENT_CASPER_PRIVATE_KEY_ALGORITHM === "secp256k1" ? 2 : 1, // Default to ED25519 if not specified
+    );
+  }
+
   let hederaClientSigner: ReturnType<typeof createClientHederaSigner> | undefined;
-  if (process.env.CLIENT_HEDERA_ACCOUNT_ID && process.env.CLIENT_HEDERA_PRIVATE_KEY) {
+  if (wants("hedera") && process.env.CLIENT_HEDERA_ACCOUNT_ID && process.env.CLIENT_HEDERA_PRIVATE_KEY) {
     hederaClientSigner = createClientHederaSigner(
       process.env.CLIENT_HEDERA_ACCOUNT_ID,
       HederaPrivateKey.fromStringECDSA(process.env.CLIENT_HEDERA_PRIVATE_KEY),
@@ -190,7 +302,7 @@ export async function createE2EClient(): Promise<E2EClientContext> {
   }
 
   let keetaSigner: ClientKeetaSigner | undefined;
-  if (process.env.CLIENT_KEETA_MNEMONIC) {
+  if (wants("keeta") && process.env.CLIENT_KEETA_MNEMONIC) {
     const keetaAccount = KeetaNet.lib.Account.fromSeed(
       await KeetaNet.lib.Account.seedFromPassphrase(process.env.CLIENT_KEETA_MNEMONIC),
       0,
@@ -199,33 +311,33 @@ export async function createE2EClient(): Promise<E2EClientContext> {
   }
 
   let stellarSigner: Ed25519Signer | undefined;
-  if (process.env.CLIENT_STELLAR_PRIVATE_KEY) {
+  if (wants("stellar") && process.env.CLIENT_STELLAR_PRIVATE_KEY) {
     stellarSigner = createEd25519Signer(process.env.CLIENT_STELLAR_PRIVATE_KEY);
   }
 
   let avmSigner: ReturnType<typeof toClientAvmSigner> | undefined;
-  if (process.env.CLIENT_AVM_PRIVATE_KEY) {
+  if (wants("avm") && process.env.CLIENT_AVM_PRIVATE_KEY) {
     avmSigner = toClientAvmSigner(process.env.CLIENT_AVM_PRIVATE_KEY);
   }
 
   const tvmNetwork = resolveNetworkCaip2("tvm");
   const tvmPrivateKey = process.env.CLIENT_TVM_PRIVATE_KEY;
   const tvmProvider = (process.env.TVM_PROVIDER || TVM_PROVIDER_TONCENTER).toLowerCase();
-  const tvmScheme = tvmPrivateKey
+  const tvmScheme = wants("tvm") && tvmPrivateKey
     ? new ExactTvmScheme(
-        toClientTvmSigner(parseTvmKeyPair(tvmPrivateKey), {
-          network: tvmNetwork,
-          provider: tvmProvider,
-          apiKey:
-            tvmProvider === TVM_PROVIDER_TONAPI
-              ? process.env.TVM_TONAPI_API_KEY
-              : process.env.TVM_TONCENTER_API_KEY,
-          providerBaseUrl: process.env.TVM_RPC_URL,
-        }),
-      )
+      toClientTvmSigner(parseTvmKeyPair(tvmPrivateKey), {
+        network: tvmNetwork,
+        provider: tvmProvider,
+        apiKey:
+          tvmProvider === TVM_PROVIDER_TONAPI
+            ? process.env.TVM_TONAPI_API_KEY
+            : process.env.TVM_TONCENTER_API_KEY,
+        providerBaseUrl: process.env.TVM_RPC_URL,
+      }),
+    )
     : undefined;
 
-  if (ccdPrivateKey && ccdAddress) {
+  if (wants("ccd") && ccdPrivateKey && ccdAddress) {
     schemes.push({
       network: networkCaip2Pattern("ccd"),
       client: new ExactConcordiumScheme(
@@ -241,6 +353,12 @@ export async function createE2EClient(): Promise<E2EClientContext> {
     schemes.push({
       network: networkCaip2Pattern("aptos"),
       client: new ExactAptosScheme(aptosAccount),
+    });
+  }
+  if (casperClientSigner) {
+    schemes.push({
+      network: networkCaip2Pattern("casper"),
+      client: new ExactCasperScheme(casperClientSigner),
     });
   }
   if (hederaClientSigner) {
@@ -270,7 +388,7 @@ export async function createE2EClient(): Promise<E2EClientContext> {
   if (tvmScheme) {
     schemes.push({ network: networkCaip2Pattern("tvm"), client: tvmScheme });
   }
-  if (process.env.CLIENT_NEAR_ACCOUNT_ID && process.env.CLIENT_NEAR_PRIVATE_KEY) {
+  if (wants("near") && process.env.CLIENT_NEAR_ACCOUNT_ID && process.env.CLIENT_NEAR_PRIVATE_KEY) {
     const nearNetwork = resolveNetworkCaip2("near") as `${string}:${string}`;
     const nearSigner = createClientNearSigner({
       accountId: process.env.CLIENT_NEAR_ACCOUNT_ID,
@@ -282,7 +400,60 @@ export async function createE2EClient(): Promise<E2EClientContext> {
       client: new ExactNearClientScheme(nearSigner),
     });
   }
-  if (process.env.CLIENT_XRPL_SEED) {
+  if (
+    wants("cardano") &&
+    process.env.CLIENT_CARDANO_MNEMONIC &&
+    process.env.BLOCKFROST_PROJECT_ID &&
+    process.env.CARDANO_RPC_URL
+  ) {
+    const cardanoSigner = toClientCardanoSigner({
+      mnemonic: process.env.CLIENT_CARDANO_MNEMONIC,
+      network: resolveNetworkCaip2("cardano"),
+      provider: {
+        blockfrost: {
+          baseUrl: process.env.CARDANO_RPC_URL,
+          projectId: process.env.BLOCKFROST_PROJECT_ID,
+        },
+      },
+    });
+    schemes.push({
+      network: networkCaip2Pattern("cardano"),
+      client: new ExactCardanoClientScheme(cardanoSigner),
+    });
+  }
+  if (
+    wants("canton") &&
+    process.env.CLIENT_CANTON_PARTY &&
+    process.env.CLIENT_CANTON_PRIVATE_KEY &&
+    process.env.CANTON_PARTICIPANT_URL &&
+    process.env.CANTON_TOKEN &&
+    process.env.CANTON_USER_ID &&
+    process.env.CANTON_SYNCHRONIZER_ID &&
+    process.env.CANTON_SCAN_URL
+  ) {
+    const cantonSigner = toClientCantonSigner({
+      participantUrl: process.env.CANTON_PARTICIPANT_URL,
+      token: process.env.CANTON_TOKEN,
+      userId: process.env.CANTON_USER_ID,
+      synchronizerId: process.env.CANTON_SYNCHRONIZER_ID,
+      scanUrl: process.env.CANTON_SCAN_URL,
+      ...(process.env.CANTON_SCAN_TOKEN ? { scanToken: process.env.CANTON_SCAN_TOKEN } : {}),
+      party: process.env.CLIENT_CANTON_PARTY,
+      privateKeyPem: process.env.CLIENT_CANTON_PRIVATE_KEY,
+      ...(process.env.CANTON_TOKEN_REGISTRIES
+        ? { tokenRegistries: JSON.parse(process.env.CANTON_TOKEN_REGISTRIES) }
+        : {}),
+    });
+    schemes.push({
+      network: networkCaip2Pattern("canton"),
+      client: new ExactCantonClientScheme(cantonSigner, {
+        ...(process.env.CANTON_REGISTRY_TRUSTED_PARTIES
+          ? { registryTrustedParties: JSON.parse(process.env.CANTON_REGISTRY_TRUSTED_PARTIES) }
+          : {}),
+      }),
+    });
+  }
+  if (wants("xrpl") && process.env.CLIENT_XRPL_SEED) {
     const xrplNetwork = resolveNetworkCaip2("xrpl") as `xrpl:${number}`;
     const xrplSigner = createXrplWalletSigner(Wallet.fromSeed(process.env.CLIENT_XRPL_SEED));
     schemes.push({
@@ -302,7 +473,12 @@ export async function createE2EClient(): Promise<E2EClientContext> {
     spendControls: false,
   });
 
-  const batchSettlementPhase = process.env.EVM_BATCH_SETTLEMENT_PHASE as BatchSettlementPhase | undefined;
+  if (batchSettlementScheme instanceof BatchSettlementSvmScheme && svmServerSignedOperators.length > 0) {
+    client.registerPolicy(batchSettlementScheme.paymentPolicy);
+  }
+
+  const batchSettlementPhase = (process.env.BATCH_SETTLEMENT_PHASE ??
+    process.env.EVM_BATCH_SETTLEMENT_PHASE) as BatchSettlementPhase | undefined;
 
   return { url, client, schemes, batchSettlementScheme, batchSettlementPhase };
 }
@@ -312,7 +488,9 @@ function aggregateBatchResult(
   results: RequestResult[],
   details: Record<string, RequestResult>,
 ) {
+  const firstFailure = results.find(result => !result.success);
   const last = results[results.length - 1]!;
+  const statusSource = firstFailure ?? last;
   return {
     success: results.every(result => result.success),
     data: {
@@ -322,15 +500,15 @@ function aggregateBatchResult(
         ...details,
       },
     },
-    status_code: last.status_code,
-    payment_response: last.payment_response,
+    status_code: statusSource.status_code,
+    payment_response: statusSource.payment_response,
   };
 }
 
 export type ClientScenarioDeps = {
   url: string;
   batchSettlementPhase: BatchSettlementPhase | undefined;
-  batchSettlementScheme: BatchSettlementEvmScheme | undefined;
+  batchSettlementScheme: BatchSettlementScheme | undefined;
   issueRequest: () => Promise<RequestResult>;
   /**
    * Overrides how the cooperative refund request is sent. Defaults to
@@ -341,20 +519,55 @@ export type ClientScenarioDeps = {
 };
 
 /**
+ * Waits until Blockfrost lists this payment's change output. Sequential e2e
+ * clients are separate processes, and Blockfrost cannot observe mempool
+ * spends, so the next client would otherwise rebuild against the same input.
+ *
+ * @param result - The completed request result, carrying the settlement receipt.
+ */
+async function awaitCardanoWalletSettled(result: RequestResult): Promise<void> {
+  const receipt = result.payment_response as
+    | { network?: string; transaction?: string; payer?: string }
+    | undefined;
+  if (!receipt?.network?.startsWith("cardano:")) return;
+  const { transaction, payer } = receipt;
+  const projectId = process.env.BLOCKFROST_PROJECT_ID;
+  const baseUrl = process.env.CARDANO_RPC_URL;
+  if (!transaction || !payer || !projectId || !baseUrl) return;
+
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${baseUrl}/addresses/${payer}/utxos`, {
+        headers: { project_id: projectId },
+      });
+      if (response.ok) {
+        const utxos = (await response.json()) as Array<{ tx_hash?: string }>;
+        if (Array.isArray(utxos) && utxos.some(utxo => utxo.tx_hash === transaction)) return;
+      }
+    } catch {
+      // Transient Blockfrost/network error — keep polling until the deadline.
+    }
+    await new Promise(resolve => setTimeout(resolve, 3000));
+  }
+}
+
+/**
  * Runs the standard single-request or batch-settlement client scenario and prints JSON.
  */
 export async function runClientScenario(deps: ClientScenarioDeps): Promise<void> {
   const { url, batchSettlementPhase, batchSettlementScheme, issueRequest } = deps;
   if (batchSettlementPhase && !batchSettlementScheme) {
     throw new Error(
-      "EVM_BATCH_SETTLEMENT_PHASE is set but no CLIENT_EVM_PRIVATE_KEY was provided to build a " +
-        "batch-settlement scheme from.",
+      "BATCH_SETTLEMENT_PHASE is set but no CLIENT_EVM_PRIVATE_KEY / CLIENT_SVM_PRIVATE_KEY was " +
+      "provided to build the batch-settlement scheme for this endpoint from.",
     );
   }
   const sendRefund = deps.refund ?? (() => batchSettlementScheme!.refund(url));
 
   if (!batchSettlementPhase) {
     const result = await issueRequest();
+    await awaitCardanoWalletSettled(result);
     console.log(JSON.stringify(result));
     process.exit(0);
   }
@@ -370,13 +583,12 @@ export async function runClientScenario(deps: ClientScenarioDeps): Promise<void>
 
   if (batchSettlementPhase === "recovery-refund") {
     const recoveryVoucher = await issueRequest();
-    const refundSettle = await sendRefund();
-    const refund = {
-      success: refundSettle.success,
-      data: { refund: true },
-      status_code: 200,
-      payment_response: refundSettle,
-    };
+    let refund: RequestResult;
+    try {
+      refund = refundResult(await sendRefund());
+    } catch (error) {
+      refund = refundErrorResult(error);
+    }
     console.log(
       JSON.stringify(
         aggregateBatchResult("recovery-refund", [recoveryVoucher, refund], {
@@ -391,13 +603,12 @@ export async function runClientScenario(deps: ClientScenarioDeps): Promise<void>
   if (batchSettlementPhase === "full") {
     const deposit = await issueRequest();
     const voucher = await issueRequest();
-    const refundSettle = await sendRefund();
-    const refund = {
-      success: refundSettle.success,
-      data: { refund: true },
-      status_code: 200,
-      payment_response: refundSettle,
-    };
+    let refund: RequestResult;
+    try {
+      refund = refundResult(await sendRefund());
+    } catch (error) {
+      refund = refundErrorResult(error);
+    }
     console.log(
       JSON.stringify(
         aggregateBatchResult("full", [deposit, voucher, refund], { deposit, voucher, refund }),
@@ -406,5 +617,5 @@ export async function runClientScenario(deps: ClientScenarioDeps): Promise<void>
     process.exit(0);
   }
 
-  throw new Error(`Unknown EVM_BATCH_SETTLEMENT_PHASE: ${batchSettlementPhase}`);
+  throw new Error(`Unknown BATCH_SETTLEMENT_PHASE: ${batchSettlementPhase}`);
 }

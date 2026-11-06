@@ -6,6 +6,8 @@ import time
 from unittest.mock import patch
 
 import pytest
+from eth_account import Account
+from eth_keys.constants import SECPK1_N
 
 try:
     from eth_abi import encode as abi_encode
@@ -13,11 +15,13 @@ except ImportError:
     pytest.skip("eth-abi not available", allow_module_level=True)
 
 from x402.mechanisms.evm import ERC6492_MAGIC_VALUE, get_default_asset
+from x402.mechanisms.evm.asset_cache import reset_asset_contract_cache
 from x402.mechanisms.evm.constants import (
     ERR_ASSET_NOT_DEPLOYED_CONTRACT,
     ERR_AUTHORIZATION_VALUE_MISMATCH,
     ERR_FACTORY_NOT_ALLOWED,
     ERR_INSUFFICIENT_BALANCE,
+    ERR_INVALID_PAYLOAD,
     ERR_INVALID_SIGNATURE,
     ERR_NONCE_ALREADY_USED,
     ERR_SETTLEMENT_PENDING,
@@ -26,7 +30,12 @@ from x402.mechanisms.evm.constants import (
     ERR_TRANSACTION_SIMULATION_FAILED,
     ERR_UNDEPLOYED_SMART_WALLET,
 )
-from x402.mechanisms.evm.exact import ExactEvmFacilitatorScheme, ExactEvmSchemeConfig
+from x402.mechanisms.evm.exact import (
+    ExactEvmClientScheme,
+    ExactEvmFacilitatorScheme,
+    ExactEvmSchemeConfig,
+)
+from x402.mechanisms.evm.exact.v1.client import ExactEvmSchemeV1 as ExactEvmClientSchemeV1
 from x402.mechanisms.evm.exact.v1.facilitator import ExactEvmSchemeV1
 from x402.mechanisms.evm.types import TransactionReceipt
 from x402.schemas import PaymentPayload, PaymentRequirements, ResourceInfo
@@ -100,6 +109,46 @@ def make_requirements(
         max_timeout_seconds=3600,
         extra=extra if extra is not None else {"name": "USD Coin", "version": "2"},
     )
+
+
+_MISSING = object()
+
+# (parent, key, value): set payload[parent][key] (or payload[key] when parent is None);
+# _MISSING deletes the key.
+MALFORMED_EIP3009_PAYLOADS = [
+    pytest.param(None, "authorization", _MISSING, id="authorization_missing"),
+    pytest.param(None, "authorization", "oops", id="authorization_not_object"),
+    pytest.param(None, "signature", 123, id="signature_not_string"),
+    pytest.param("authorization", "from", _MISSING, id="from_missing"),
+    pytest.param("authorization", "value", _MISSING, id="value_missing"),
+    pytest.param("authorization", "value", "abc", id="value_not_numeric"),
+    pytest.param("authorization", "value", None, id="value_null"),
+    pytest.param("authorization", "value", 100000, id="value_json_number"),
+    pytest.param("authorization", "value", "-1", id="value_negative"),
+    pytest.param("authorization", "value", "1" * 5000, id="value_over_int_digit_limit"),
+    pytest.param("authorization", "value", str(2**256), id="value_above_uint256"),
+    pytest.param("authorization", "validBefore", _MISSING, id="valid_before_missing"),
+    pytest.param("authorization", "validBefore", "9" * 79, id="valid_before_too_long"),
+    pytest.param("authorization", "validAfter", [], id="valid_after_not_string"),
+    pytest.param("authorization", "to", 123, id="to_not_string"),
+    pytest.param("authorization", "nonce", 123, id="nonce_not_string"),
+    pytest.param("authorization", "nonce", "zz", id="nonce_not_hex"),
+    pytest.param("authorization", "nonce", "0x0001", id="nonce_not_32_bytes"),
+]
+
+
+def malformed_field(parent: str | None, key: str) -> str:
+    return key if parent is None else f"{parent}.{key}"
+
+
+def make_malformed_payload(parent: str | None, key: str, value, make=None):
+    payload = (make or make_payment_payload)()
+    target = payload.payload if parent is None else payload.payload[parent]
+    if value is _MISSING:
+        del target[key]
+    else:
+        target[key] = value
+    return payload
 
 
 def make_payment_payload_v1(
@@ -182,6 +231,15 @@ def make_erc6492_signature(inner_signature: bytes) -> str:
     return "0x" + (payload + ERC6492_MAGIC_VALUE).hex()
 
 
+def make_high_s_signature(signature_hex: str) -> str:
+    signature = bytes.fromhex(signature_hex.removeprefix("0x"))
+    s = int.from_bytes(signature[32:64], "big")
+    v = signature[64]
+    flipped_v = ((v - 27) ^ 1) + 27 if v >= 27 else v ^ 1
+    high_s = SECPK1_N - s
+    return "0x" + (signature[:32] + high_s.to_bytes(32, "big") + bytes([flipped_v])).hex()
+
+
 class MockFacilitatorSigner:
     """Mock signer that exposes just enough behavior for facilitator tests."""
 
@@ -213,6 +271,7 @@ class MockFacilitatorSigner:
         self.transfer_simulation_calls = 0
         self.write_calls = 0
         self.send_calls = 0
+        self.get_code_calls: dict[str, int] = {}
 
     def get_addresses(self) -> list[str]:
         return self._addresses
@@ -271,7 +330,9 @@ class MockFacilitatorSigner:
         return 8453
 
     def get_code(self, address: str) -> bytes:
-        explicit = self._code_by_address.get(address.lower())
+        key = address.lower()
+        self.get_code_calls[key] = self.get_code_calls.get(key, 0) + 1
+        explicit = self._code_by_address.get(key)
         if explicit is not None:
             return explicit
         # After a factory deployment (send_transaction called), simulate that the
@@ -319,6 +380,51 @@ class TestExactEvmSchemeConstructor:
 
 
 class TestVerify:
+    def test_rejects_high_s_eoa_signature(self):
+        account = Account.from_key("0x" + "a" * 64)
+        requirements = make_requirements()
+        inner_payload = ExactEvmClientScheme(account).create_payment_payload(requirements)
+        inner_payload["signature"] = make_high_s_signature(inner_payload["signature"])
+        payload = PaymentPayload(
+            x402_version=2,
+            resource=ResourceInfo(
+                url="http://example.com/protected",
+                description="Test resource",
+                mime_type="application/json",
+            ),
+            accepted=requirements,
+            payload=inner_payload,
+        )
+
+        signer = MockFacilitatorSigner()
+        result = ExactEvmFacilitatorScheme(signer).verify(payload, requirements)
+
+        assert result.is_valid is False
+        assert result.invalid_reason == "invalid_exact_evm_non_canonical_signature"
+        assert signer.get_code_calls.get(account.address.lower(), 0) == 1
+
+    def test_allows_high_s_deployed_wallet_signature(self):
+        account = Account.from_key("0x" + "a" * 64)
+        requirements = make_requirements()
+        inner_payload = ExactEvmClientScheme(account).create_payment_payload(requirements)
+        inner_payload["signature"] = make_high_s_signature(inner_payload["signature"])
+        payload = PaymentPayload(
+            x402_version=2,
+            resource=ResourceInfo(
+                url="http://example.com/protected",
+                description="Test resource",
+                mime_type="application/json",
+            ),
+            accepted=requirements,
+            payload=inner_payload,
+        )
+
+        signer = MockFacilitatorSigner(code=b"\x60")
+        result = ExactEvmFacilitatorScheme(signer).verify(payload, requirements)
+
+        assert result.is_valid is True
+        assert signer.get_code_calls.get(account.address.lower(), 0) == 1
+
     def test_rejects_wrong_scheme(self):
         signer = MockFacilitatorSigner()
         facilitator = ExactEvmFacilitatorScheme(signer)
@@ -498,6 +604,20 @@ class TestVerify:
 
         assert result.is_valid is False
         assert result.invalid_reason == ERR_FACTORY_NOT_ALLOWED
+        assert signer.get_code_calls.get(PAYER.lower(), 0) == 1
+
+    def test_wrapped_high_s_signature_is_not_rejected_as_non_canonical(self):
+        inner = bytes.fromhex(make_high_s_signature("0x" + "00" * 65).removeprefix("0x"))
+        signer = MockFacilitatorSigner(code=b"")
+        facilitator = ExactEvmFacilitatorScheme(signer)
+
+        result = facilitator.verify(
+            make_payment_payload(signature=make_erc6492_signature(inner)),
+            make_requirements(),
+        )
+
+        assert result.invalid_reason != "invalid_exact_evm_non_canonical_signature"
+        assert signer.get_code_calls.get(PAYER.lower(), 0) == 1
 
     def test_undeployed_smart_wallet_without_deployment_info_is_rejected(self):
         signer = MockFacilitatorSigner(typed_data_valid=False, code=b"")
@@ -556,9 +676,13 @@ class TestVerify:
 
         assert result.is_valid is False
         assert result.invalid_reason == ERR_INVALID_SIGNATURE
+        assert signer.get_code_calls.get(PAYER.lower(), 0) == 1
 
     def test_rejects_eoa_asset(self):
         # When the asset address has no bytecode (EOA), verify must reject before signature checks.
+        # Other tests share TOKEN_ADDRESS but model it as deployed, and positive asset checks are
+        # cached process-wide, so drop those entries to force a real get_code here.
+        reset_asset_contract_cache()
         signer = MockFacilitatorSigner(
             code_by_address={
                 TOKEN_ADDRESS.lower(): b"",  # token = EOA
@@ -576,6 +700,8 @@ class TestVerify:
         # An RPC error on get_code must propagate as an exception (internal error), not a 400.
         # Payer returns code so verify_typed_data_strict can complete via EIP-1271;
         # the RPC error fires on the asset-contract check (outside the sig try/except).
+        reset_asset_contract_cache()
+
         class _RPCErrorSigner(MockFacilitatorSigner):
             def get_code(self, address: str) -> bytes:
                 if address.lower() == PAYER.lower():
@@ -586,6 +712,71 @@ class TestVerify:
 
         with pytest.raises(RuntimeError, match="rpc: connection refused"):
             facilitator.verify(make_payment_payload(), make_requirements())
+
+    def test_asset_contract_check_is_cached_but_payer_code_is_not(self):
+        # The asset check is cached across payments; the payer's code is not, being mutable under
+        # ERC-6492.
+        reset_asset_contract_cache()
+
+        signer = MockFacilitatorSigner(code_by_address={PAYER.lower(): b"\x01"})
+        facilitator = ExactEvmFacilitatorScheme(signer)
+
+        for attempt in range(1, 4):
+            result = facilitator.verify(make_payment_payload(), make_requirements())
+            assert result.is_valid is True, f"verify {attempt} failed: {result.invalid_reason}"
+
+        assert signer.get_code_calls.get(TOKEN_ADDRESS.lower(), 0) == 1, (
+            "expected the asset eth_getCode to be cached after the first verify"
+        )
+        assert signer.get_code_calls.get(PAYER.lower(), 0) == 3, (
+            "expected one payer eth_getCode per verify (never cached)"
+        )
+
+    def test_asset_contract_cache_is_scoped_per_network(self):
+        # The same address can hold bytecode on one chain and nothing on another, so a hit on one
+        # network must not answer for another.
+        reset_asset_contract_cache()
+
+        signer = MockFacilitatorSigner(code_by_address={PAYER.lower(): b"\x01"})
+        facilitator = ExactEvmFacilitatorScheme(signer)
+
+        result = facilitator.verify(make_payment_payload(), make_requirements())
+        assert result.is_valid is True, (
+            f"verify on the first network failed: {result.invalid_reason}"
+        )
+
+        other_network = "eip155:84532"
+        result = facilitator.verify(
+            make_payment_payload(accepted_network=other_network),
+            make_requirements(network=other_network),
+        )
+        assert result.is_valid is True, (
+            f"verify on the second network failed: {result.invalid_reason}"
+        )
+
+        assert signer.get_code_calls.get(TOKEN_ADDRESS.lower(), 0) == 2, (
+            "expected the asset to be re-checked on a different network"
+        )
+
+    @pytest.mark.parametrize(("parent", "key", "value"), MALFORMED_EIP3009_PAYLOADS)
+    def test_rejects_malformed_eip3009_payload(self, parent, key, value):
+        facilitator = ExactEvmFacilitatorScheme(MockFacilitatorSigner())
+
+        result = facilitator.verify(make_malformed_payload(parent, key, value), make_requirements())
+
+        assert result.is_valid is False
+        assert result.invalid_reason == ERR_INVALID_PAYLOAD
+        assert result.invalid_message.startswith(f"{malformed_field(parent, key)} must be ")
+
+    def test_malformed_payload_reports_payer(self):
+        facilitator = ExactEvmFacilitatorScheme(MockFacilitatorSigner())
+
+        result = facilitator.verify(
+            make_malformed_payload("authorization", "value", "abc"), make_requirements()
+        )
+
+        assert result.invalid_reason == ERR_INVALID_PAYLOAD
+        assert result.payer == PAYER
 
 
 class TestSettle:
@@ -662,6 +853,29 @@ class TestSettle:
         assert result.success is False
         assert result.error_reason == ERR_SETTLEMENT_PENDING
         assert result.transaction == "0x" + "34" * 32
+
+    @pytest.mark.parametrize(("parent", "key", "value"), MALFORMED_EIP3009_PAYLOADS)
+    def test_rejects_malformed_eip3009_payload(self, parent, key, value):
+        signer = MockFacilitatorSigner()
+        facilitator = ExactEvmFacilitatorScheme(signer)
+
+        result = facilitator.settle(make_malformed_payload(parent, key, value), make_requirements())
+
+        assert result.success is False
+        assert result.error_reason == ERR_INVALID_PAYLOAD
+        assert result.error_message.startswith(f"{malformed_field(parent, key)} must be ")
+        assert result.network == NETWORK
+        assert signer.write_calls == 0
+
+    def test_malformed_payload_reports_payer(self):
+        facilitator = ExactEvmFacilitatorScheme(MockFacilitatorSigner())
+
+        result = facilitator.settle(
+            make_malformed_payload("authorization", "value", "abc"), make_requirements()
+        )
+
+        assert result.error_reason == ERR_INVALID_PAYLOAD
+        assert result.payer == PAYER
 
 
 class TestEip3009PendingSettlementStore:
@@ -872,7 +1086,93 @@ class TestSettleFactoryAllowlist:
         assert signer.send_calls == 0
 
 
+class TestSettleReusesVerifyPayerCode:
+    """Settle's ERC-6492 branch must decide whether to deploy from the code lookup
+    verify already performed, not a second eth_getCode for the same payer.
+    """
+
+    def test_settle_eip3009_reuses_verify_payer_code_on_erc6492_path(self):
+        signer = MockFacilitatorSigner(
+            typed_data_valid=True,
+            code=b"",
+            code_by_address={
+                TOKEN_ADDRESS.lower(): b"\x60\x60",
+                PAYER.lower(): b"",
+            },
+        )
+        facilitator = ExactEvmFacilitatorScheme(
+            signer,
+            ExactEvmSchemeConfig(eip6492_allowed_factories=[FACTORY]),
+        )
+
+        result = facilitator.settle(
+            make_payment_payload(signature=make_erc6492_signature(b"\x33" * 66)),
+            make_requirements(),
+        )
+
+        assert result.success is True
+        assert signer.get_code_calls.get(PAYER.lower(), 0) == 1
+
+
 class TestVerifyV1:
+    def test_rejects_high_s_eoa_signature(self):
+        account = Account.from_key("0x" + "a" * 64)
+        requirements = make_requirements_v1()
+        inner_payload = ExactEvmClientSchemeV1(account).create_payment_payload(requirements)
+        inner_payload["signature"] = make_high_s_signature(inner_payload["signature"])
+        payload = PaymentPayloadV1(
+            x402_version=1,
+            scheme="exact",
+            network="base",
+            payload=inner_payload,
+        )
+
+        signer = MockFacilitatorSigner()
+        result = ExactEvmSchemeV1(signer).verify(payload, requirements)
+
+        assert result.is_valid is False
+        assert result.invalid_reason == "invalid_exact_evm_non_canonical_signature"
+        assert signer.get_code_calls.get(account.address.lower(), 0) == 1
+
+    def test_allows_high_s_deployed_wallet_signature(self):
+        account = Account.from_key("0x" + "b" * 64)
+        requirements = make_requirements_v1()
+        inner_payload = ExactEvmClientSchemeV1(account).create_payment_payload(requirements)
+        inner_payload["signature"] = make_high_s_signature(inner_payload["signature"])
+        payload = PaymentPayloadV1(
+            x402_version=1,
+            scheme="exact",
+            network="base",
+            payload=inner_payload,
+        )
+
+        signer = MockFacilitatorSigner(code=b"\x60")
+        result = ExactEvmSchemeV1(signer).verify(payload, requirements)
+
+        assert result.is_valid is True
+        assert signer.get_code_calls.get(account.address.lower(), 0) == 1
+
+    def test_low_s_eoa_signature_is_not_a_non_canonical_rejection(self):
+        signer = MockFacilitatorSigner()
+        result = ExactEvmSchemeV1(signer).verify(
+            make_payment_payload_v1(),
+            make_requirements_v1(),
+        )
+
+        assert result.invalid_reason != "invalid_exact_evm_non_canonical_signature"
+        assert signer.get_code_calls.get(PAYER.lower(), 0) == 1
+
+    def test_wrapped_high_s_signature_is_not_rejected_as_non_canonical(self):
+        inner = bytes.fromhex(make_high_s_signature("0x" + "00" * 65).removeprefix("0x"))
+        signer = MockFacilitatorSigner(code=b"")
+        result = ExactEvmSchemeV1(signer).verify(
+            make_payment_payload_v1(signature=make_erc6492_signature(inner)),
+            make_requirements_v1(),
+        )
+
+        assert result.invalid_reason != "invalid_exact_evm_non_canonical_signature"
+        assert signer.get_code_calls.get(PAYER.lower(), 0) == 1
+
     def test_rejects_overpayment_amount_mismatch(self):
         signer = MockFacilitatorSigner()
         facilitator = ExactEvmSchemeV1(signer)
@@ -884,6 +1184,30 @@ class TestVerifyV1:
 
         assert result.is_valid is False
         assert result.invalid_reason == ERR_AUTHORIZATION_VALUE_MISMATCH
+
+    @pytest.mark.parametrize(("parent", "key", "value"), MALFORMED_EIP3009_PAYLOADS)
+    def test_verify_rejects_malformed_payload(self, parent, key, value):
+        facilitator = ExactEvmSchemeV1(MockFacilitatorSigner())
+        payload = make_malformed_payload(parent, key, value, make=make_payment_payload_v1)
+
+        result = facilitator.verify(payload, make_requirements_v1())
+
+        assert result.is_valid is False
+        assert result.invalid_reason == ERR_INVALID_PAYLOAD
+        assert result.invalid_message.startswith(f"{malformed_field(parent, key)} must be ")
+
+    @pytest.mark.parametrize(("parent", "key", "value"), MALFORMED_EIP3009_PAYLOADS)
+    def test_settle_rejects_malformed_payload(self, parent, key, value):
+        signer = MockFacilitatorSigner()
+        facilitator = ExactEvmSchemeV1(signer)
+        payload = make_malformed_payload(parent, key, value, make=make_payment_payload_v1)
+
+        result = facilitator.settle(payload, make_requirements_v1())
+
+        assert result.success is False
+        assert result.error_reason == ERR_INVALID_PAYLOAD
+        assert result.error_message.startswith(f"{malformed_field(parent, key)} must be ")
+        assert signer.write_calls == 0
 
 
 class TestFacilitatorSchemeAttributes:

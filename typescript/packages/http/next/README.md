@@ -5,7 +5,7 @@ Next.js integration for the x402 Payment Protocol. This package allows you to ea
 ## Installation
 
 ```bash
-pnpm install @x402/next
+pnpm install @x402/core @x402/next @x402/evm @x402/svm
 ```
 
 ## Quick Start
@@ -18,20 +18,30 @@ Page routes are protected using the `paymentProxy`. Create a proxy (middleware) 
 import { paymentProxy, x402ResourceServer } from "@x402/next";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { ExactSvmScheme } from "@x402/svm/exact/server";
 
 const facilitatorClient = new HTTPFacilitatorClient({ url: "https://x402.org/facilitator" });
 const resourceServer = new x402ResourceServer(facilitatorClient)
-  .register("eip155:84532", new ExactEvmScheme());
+  .register("eip155:84532", new ExactEvmScheme())
+  .register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", new ExactSvmScheme());
 
 export const proxy = paymentProxy(
   {
     "/protected": {
-      accepts: {
-        scheme: "exact",
-        price: "$0.01",
-        network: "eip155:84532",
-        payTo: "0xYourAddress",
-      },
+      accepts: [
+        {
+          scheme: "exact",
+          price: "$0.01",
+          network: "eip155:84532",
+          payTo: "0xYourEvmAddress",
+        },
+        {
+          scheme: "exact",
+          price: "$0.01",
+          network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+          payTo: "YourSolanaAddress",
+        },
+      ],
       description: "Access to protected content",
     },
   },
@@ -62,12 +72,20 @@ const handler = async (_: NextRequest) => {
 export const GET = withX402(
   handler,
   {
-    accepts: {
-      scheme: "exact",
-      price: "$0.01",
-      network: "eip155:84532",
-      payTo: "0xYourAddress",
-    },
+    accepts: [
+      {
+        scheme: "exact",
+        price: "$0.01",
+        network: "eip155:84532",
+        payTo: "0xYourEvmAddress",
+      },
+      {
+        scheme: "exact",
+        price: "$0.01",
+        network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+        payTo: "YourSolanaAddress",
+      },
+    ],
     description: "Access to API endpoint",
   },
   server, // your configured x402ResourceServer
@@ -81,12 +99,20 @@ export const GET = withX402(
   handler,
   {
     "/api/users/[id]": {
-      accepts: {
-        scheme: "exact",
-        price: "$0.01",
-        network: "eip155:84532",
-        payTo: "0xYourAddress",
-      },
+      accepts: [
+        {
+          scheme: "exact",
+          price: "$0.01",
+          network: "eip155:84532",
+          payTo: "0xYourEvmAddress",
+        },
+        {
+          scheme: "exact",
+          price: "$0.01",
+          network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+          payTo: "YourSolanaAddress",
+        },
+      ],
       description: "Access to user API",
     },
   },
@@ -168,58 +194,28 @@ class NextAdapter implements HTTPAdapter {
 ```typescript
 const routes: RoutesConfig = {
   "/api/protected": {
-    accepts: {
-      scheme: "exact",
-      price: "$0.10",
-      network: "eip155:84532",
-      payTo: "0xYourAddress",
-      maxTimeoutSeconds: 60,
-    },
+    accepts: [
+      {
+        scheme: "exact",
+        price: "$0.10",
+        network: "eip155:84532",
+        payTo: "0xYourEvmAddress",
+        maxTimeoutSeconds: 60,
+      },
+      {
+        scheme: "exact",
+        price: "$0.10",
+        network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+        payTo: "YourSolanaAddress",
+        maxTimeoutSeconds: 60,
+      },
+    ],
     description: "Premium API access",
   },
 };
 ```
 
 ## Advanced Usage
-
-### Multiple Payment Networks
-
-```typescript
-import { paymentProxy, x402ResourceServer } from "@x402/next";
-import { HTTPFacilitatorClient } from "@x402/core/server";
-import { registerExactEvmScheme } from "@x402/evm/exact/server";
-import { registerExactSvmScheme } from "@x402/svm/exact/server";
-
-const facilitatorClient = new HTTPFacilitatorClient({ url: facilitatorUrl });
-const server = new x402ResourceServer(facilitatorClient);
-
-registerExactEvmScheme(server);
-registerExactSvmScheme(server);
-
-export const middleware = paymentProxy(
-  {
-    "/protected": {
-      accepts: [
-        {
-          scheme: "exact",
-          price: "$0.001",
-          network: "eip155:84532",
-          payTo: evmAddress,
-        },
-        {
-          scheme: "exact",
-          price: "$0.001",
-          network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
-          payTo: svmAddress,
-        },
-      ],
-      description: "Premium content",
-      mimeType: "text/html",
-    },
-  },
-  server,
-);
-```
 
 ### Custom Paywall
 
@@ -245,6 +241,7 @@ export const middleware = paymentProxy(
   paywall,
 );
 ```
+
 ## Migration from x402-next
 
 If you're migrating from the legacy `x402-next` package:
@@ -279,20 +276,30 @@ export const middleware = paymentMiddleware(
 import { paymentProxy, x402ResourceServer } from "@x402/next";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { ExactSvmScheme } from "@x402/svm/exact/server";
 
-const facilitator = new HTTPFacilitatorClient({ url: facilitatorUrl });
+const facilitator = new HTTPFacilitatorClient({ url: "https://x402.org/facilitator" });
 const resourceServer = new x402ResourceServer(facilitator)
-  .register("eip155:84532", new ExactEvmScheme());
+  .register("eip155:84532", new ExactEvmScheme())
+  .register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", new ExactSvmScheme());
 
 export const middleware = paymentProxy(
   {
     "/protected": {
-      accepts: {
-        scheme: "exact",
-        price: "$0.01",
-        network: "eip155:84532",
-        payTo: "0xYourAddress",
-      },
+      accepts: [
+        {
+          scheme: "exact",
+          price: "$0.01",
+          network: "eip155:84532",
+          payTo: "0xYourEvmAddress",
+        },
+        {
+          scheme: "exact",
+          price: "$0.01",
+          network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+          payTo: "YourSolanaAddress",
+        },
+      ],
       description: "Access to protected content",
     },
   },
@@ -300,5 +307,4 @@ export const middleware = paymentProxy(
 );
 ```
 
-Note: The `payTo` address is now specified within each route configuration rather than as a separate parameter.
-
+Note: Each payment option now specifies its own `payTo` address within the route configuration.

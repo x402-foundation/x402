@@ -1,20 +1,24 @@
 {
   "name": "@x402/svm",
-  "version": "2.24.0",
+  "version": "2.30.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
   "scripts": {
     "start": "tsx --env-file=.env index.ts",
-    "build": "tsup",
-    "test": "vitest run",
+    "build": "tsup && node ../../../scripts/mirror-cjs-dts.mjs",
+    "test": "vitest run --coverage",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:watch": "vitest",
     "watch": "tsc --watch",
     "format": "prettier -c .prettierrc --write \"**/*.{ts,js,cjs,json,md}\"",
     "format:check": "prettier -c .prettierrc --check \"**/*.{ts,js,cjs,json,md}\"",
     "lint": "eslint . --ext .ts --fix",
-    "lint:check": "eslint . --ext .ts"
+    "lint:check": "eslint . --ext .ts",
+    "payment-channels:pull-idl": "pnpm --dir ../../../../scripts/payment-channels-codegen pull-idl",
+    "payment-channels:generate": "pnpm --dir ../../../../scripts/payment-channels-codegen generate",
+    "payment-channels:sync": "pnpm payment-channels:pull-idl && pnpm payment-channels:generate",
+    "payment-channels:check": "pnpm payment-channels:generate && git diff --exit-code -- src/payment-channels/generated"
   },
   "keywords": [
     "x402",
@@ -33,27 +37,30 @@
     "@types/node": "^22.13.4",
     "@typescript-eslint/eslint-plugin": "^8.29.1",
     "@typescript-eslint/parser": "^8.29.1",
+    "@vitest/coverage-v8": "^4.1.12",
     "eslint": "^9.24.0",
     "eslint-plugin-import": "^2.31.0",
     "eslint-plugin-jsdoc": "^50.6.9",
     "eslint-plugin-prettier": "^5.2.6",
+    "eslint-plugin-sonarjs": "^3.0.7",
     "prettier": "3.5.2",
     "tsup": "^8.4.0",
     "tsx": "^4.21.0",
     "typescript": "^5.7.3",
-    "vite": "^6.2.6",
+    "vite": "^6.4.5",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^3.0.5"
+    "vitest": "^4.1.12"
   },
   "dependencies": {
-    "@x402/core": "workspace:~",
     "@noble/hashes": "^1.8.0",
-    "@solana-program/compute-budget": "^0.11.0",
-    "@solana-program/token": "^0.9.0",
-    "@solana-program/token-2022": "^0.6.1"
+    "@solana-program/compute-budget": "^0.18.0",
+    "@solana-program/token": "^0.16.0",
+    "@solana-program/token-2022": "^0.16.0",
+    "@solana/program-client-core": "^8.0.0",
+    "@x402/core": "workspace:~"
   },
   "peerDependencies": {
-    "@solana/kit": ">=5.1.0"
+    "@solana/kit": ">=8.0.0"
   },
   "exports": {
     ".": {
@@ -155,9 +162,40 @@
         "types": "./dist/cjs/upto/facilitator/index.d.ts",
         "default": "./dist/cjs/upto/facilitator/index.js"
       }
+    },
+    "./batch-settlement/client": {
+      "import": {
+        "types": "./dist/esm/batch-settlement/client/index.d.mts",
+        "default": "./dist/esm/batch-settlement/client/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/batch-settlement/client/index.d.ts",
+        "default": "./dist/cjs/batch-settlement/client/index.js"
+      }
+    },
+    "./batch-settlement/server": {
+      "import": {
+        "types": "./dist/esm/batch-settlement/server/index.d.mts",
+        "default": "./dist/esm/batch-settlement/server/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/batch-settlement/server/index.d.ts",
+        "default": "./dist/cjs/batch-settlement/server/index.js"
+      }
+    },
+    "./batch-settlement/facilitator": {
+      "import": {
+        "types": "./dist/esm/batch-settlement/facilitator/index.d.mts",
+        "default": "./dist/esm/batch-settlement/facilitator/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/batch-settlement/facilitator/index.d.ts",
+        "default": "./dist/cjs/batch-settlement/facilitator/index.js"
+      }
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "NOTICE"
   ]
 }

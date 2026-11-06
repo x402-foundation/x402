@@ -34,7 +34,7 @@ func (c *SchemeNetworkClient) Scheme() string {
 }
 
 // CreatePaymentPayload creates a V2 payment payload for the cash scheme
-func (c *SchemeNetworkClient) CreatePaymentPayload(ctx context.Context, requirements types.PaymentRequirements) (types.PaymentPayload, error) {
+func (c *SchemeNetworkClient) CreatePaymentPayload(ctx context.Context, requirements types.PaymentRequirements, _ x402.PaymentPayloadContext) (types.PaymentPayload, error) {
 	validUntil := time.Now().Add(time.Duration(requirements.MaxTimeoutSeconds) * time.Second).Unix()
 
 	return types.PaymentPayload{

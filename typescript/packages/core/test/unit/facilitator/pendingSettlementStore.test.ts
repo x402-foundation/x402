@@ -36,6 +36,17 @@ describe("InMemoryPendingSettlementStore", () => {
     await expect(store.delete("missing-key")).resolves.toBeUndefined();
   });
 
+  it("entriesSnapshot returns a plain map of stored transaction hashes", async () => {
+    const store = new InMemoryPendingSettlementStore();
+    await store.set("key1", "0xabc");
+    await store.set("key2", "0xdef");
+
+    expect(store.entriesSnapshot()).toEqual({
+      key1: "0xabc",
+      key2: "0xdef",
+    });
+  });
+
   it("keeps entries independent by key", async () => {
     const store = new InMemoryPendingSettlementStore();
     await store.set("key1", "0xabc");

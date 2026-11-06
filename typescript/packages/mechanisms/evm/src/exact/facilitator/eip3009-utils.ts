@@ -127,7 +127,7 @@ export async function simulateEip3009TransferResult(
         functionName: "transferWithAuthorization",
         args: [
           ...transferArgs,
-          (parsedSig.v as number | undefined) ?? parsedSig.yParity,
+          parsedSig.v !== undefined ? Number(parsedSig.v) : parsedSig.yParity + 27,
           parsedSig.r,
           parsedSig.s,
         ],
@@ -330,7 +330,7 @@ export async function executeTransferWithAuthorization(
   if (isECDSA) {
     const parsedSig = parseSignature(signature);
     signatureArgs = [
-      (parsedSig.v as number | undefined) || parsedSig.yParity,
+      parsedSig.v !== undefined ? Number(parsedSig.v) : parsedSig.yParity + 27,
       parsedSig.r,
       parsedSig.s,
     ];

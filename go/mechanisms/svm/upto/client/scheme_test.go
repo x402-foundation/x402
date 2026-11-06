@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	x402 "github.com/x402-foundation/x402/go/v2"
+
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -160,7 +162,7 @@ func TestCreatePaymentPayloadBuildsAVerifiableOpen(t *testing.T) {
 	requirements := newRequirements(t, feePayer, authorizer, challengeOptions{memo: &memo})
 	scheme := NewUptoSvmScheme(signer)
 
-	payload, err := scheme.CreatePaymentPayload(context.Background(), requirements)
+	payload, err := scheme.CreatePaymentPayload(context.Background(), requirements, x402.PaymentPayloadContext{})
 	require.NoError(t, err)
 
 	assert.Equal(t, 2, payload.X402Version)
@@ -216,7 +218,7 @@ func TestCreatePaymentPayloadTreatsAnEmptyMemoAsUnset(t *testing.T) {
 	requirements := newRequirements(t, feePayer, authorizer, challengeOptions{memo: &empty})
 	scheme := NewUptoSvmScheme(signer)
 
-	payload, err := scheme.CreatePaymentPayload(context.Background(), requirements)
+	payload, err := scheme.CreatePaymentPayload(context.Background(), requirements, x402.PaymentPayloadContext{})
 	require.NoError(t, err)
 
 	decoded, err := svm.UptoPayloadFromMap(payload.Payload)
@@ -258,7 +260,7 @@ func TestCreatePaymentPayloadFallsBackToRPCHints(t *testing.T) {
 	rpcURL := stubRPC(t, 341_000_123, solana.Hash(solana.SysVarRentPubkey))
 	scheme := NewUptoSvmScheme(signer, &svm.ClientConfig{RPCURL: rpcURL})
 
-	payload, err := scheme.CreatePaymentPayload(context.Background(), requirements)
+	payload, err := scheme.CreatePaymentPayload(context.Background(), requirements, x402.PaymentPayloadContext{})
 	require.NoError(t, err)
 
 	decoded, err := svm.UptoPayloadFromMap(payload.Payload)
@@ -279,7 +281,7 @@ func TestCreatePaymentPayloadUsesChallengeHintsWithoutRPC(t *testing.T) {
 	requirements := newRequirements(t, feePayer, authorizer, challengeOptions{})
 	scheme := NewUptoSvmScheme(signer, &svm.ClientConfig{RPCURL: unreachableRPC(t)})
 
-	payload, err := scheme.CreatePaymentPayload(context.Background(), requirements)
+	payload, err := scheme.CreatePaymentPayload(context.Background(), requirements, x402.PaymentPayloadContext{})
 	require.NoError(t, err)
 
 	decoded, err := svm.UptoPayloadFromMap(payload.Payload)
@@ -300,7 +302,7 @@ func TestCreatePaymentPayloadUsesTheOpenComputeBudgetDefaults(t *testing.T) {
 	requirements := newRequirements(t, feePayer, authorizer, challengeOptions{})
 	scheme := NewUptoSvmScheme(signer, &svm.ClientConfig{})
 
-	payload, err := scheme.CreatePaymentPayload(context.Background(), requirements)
+	payload, err := scheme.CreatePaymentPayload(context.Background(), requirements, x402.PaymentPayloadContext{})
 	require.NoError(t, err)
 
 	decoded, err := svm.UptoPayloadFromMap(payload.Payload)
@@ -398,7 +400,7 @@ func TestCreatePaymentPayloadRejectsInvalidChallenges(t *testing.T) {
 			test.mutate(&requirements)
 			scheme := NewUptoSvmScheme(newTestSigner(t))
 
-			_, err := scheme.CreatePaymentPayload(context.Background(), requirements)
+			_, err := scheme.CreatePaymentPayload(context.Background(), requirements, x402.PaymentPayloadContext{})
 
 			require.ErrorContains(t, err, test.wantError)
 		})

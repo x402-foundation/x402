@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"time"
+
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
@@ -63,6 +65,9 @@ type Options struct {
 	// OnPaymentRequested is called before creating a payment, allowing the caller
 	// to approve or deny. Return (true, nil) to approve, (false, nil) to deny.
 	OnPaymentRequested func(context PaymentRequiredContext) (bool, error)
+
+	// MaxRequestTimeout caps derived waits from accept maxTimeoutSeconds (zero → 10m).
+	MaxRequestTimeout time.Duration
 }
 
 // BoolPtr returns a pointer to the given bool value.

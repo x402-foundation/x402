@@ -38,6 +38,7 @@ class BatchSettlementDepositStrategyContext:
     current_balance: str
     minimum_deposit_amount: str
     deposit_amount: str
+    max_deposit: str | None = None
 
 
 # Return either a positive integer string, False to skip the deposit, or None
@@ -128,16 +129,70 @@ def validate_deposit_policy(policy: BatchSettlementDepositPolicy | None) -> None
         raise ValueError("deposit_multiplier must be an integer >= 3")
 
 
+_DIGITS = re.compile(r"^\d+$")
+
+
+def parse_announced_min_deposit(value: Any, request_amount: int) -> int | None:
+    """Parse a server-announced ``extra.minDeposit`` when it is a valid deposit target.
+
+    Returns the parsed minimum deposit target, or ``None`` when invalid or below
+    ``request_amount``.
+    """
+    if not isinstance(value, str) or not _DIGITS.fullmatch(value):
+        return None
+
+    parsed = int(value)
+    if parsed <= 0 or parsed < request_amount:
+        return None
+
+    return parsed
+
+
+def max_deposit_from_spend_cap(
+    max_amount_per_payment: Any,
+    deposit_multiplier: int = 5,
+) -> int | None:
+    """Derive the deposit ceiling as ``deposit_multiplier ×`` the resolved spend cap.
+
+    Returns the atomic deposit ceiling, or ``None`` when the payment is uncapped.
+    """
+    if (
+        not isinstance(max_amount_per_payment, str)
+        or not _DIGITS.fullmatch(max_amount_per_payment)
+        or int(max_amount_per_payment) <= 0
+    ):
+        return None
+    return int(max_amount_per_payment) * deposit_multiplier
+
+
+def apply_max_deposit(deposit: int, needed: int, max_deposit: int | None = None) -> str:
+    """Clamp a computed deposit to ``max_deposit``. Throw when the voucher gap exceeds the cap."""
+    if max_deposit is None:
+        return str(deposit)
+    if needed > max_deposit:
+        raise ValueError(
+            f"Required deposit {needed} exceeds deposit_multiplier × "
+            f"spend_controls.max_amount_per_payment ({max_deposit}). "
+            "Raise max_amount_per_payment or deposit_multiplier."
+        )
+    return str(max_deposit if deposit > max_deposit else deposit)
+
+
 def deposit_amount_for_request(
     policy: BatchSettlementDepositPolicy | None,
     request_amount: int,
+    needed: int,
+    extra: dict[str, Any] | None,
+    max_deposit: int | None = None,
 ) -> str:
-    """Compute the deposit amount based on the policy multiplier (default 5x)."""
-    mult = policy.deposit_multiplier if (policy and policy.deposit_multiplier) else 5
-    return str(mult * int(request_amount))
-
-
-_DIGITS = re.compile(r"^\d+$")
+    """Compute the deposit amount from the voucher gap, server hint, or deposit multiplier."""
+    announced = parse_announced_min_deposit(
+        extra.get("minDeposit") if extra else None, request_amount
+    )
+    multiplier = policy.deposit_multiplier if (policy and policy.deposit_multiplier) else 5
+    target = announced if announced is not None else multiplier * int(request_amount)
+    deposit = needed if needed > target else target
+    return apply_max_deposit(deposit, needed, max_deposit)
 
 
 def normalize_strategy_deposit_amount(value: str | int | bool) -> str:
@@ -164,6 +219,9 @@ __all__ = [
     "is_batch_settlement_evm_scheme_options",
     "resolve_client_options",
     "validate_deposit_policy",
+    "parse_announced_min_deposit",
+    "max_deposit_from_spend_cap",
+    "apply_max_deposit",
     "deposit_amount_for_request",
     "normalize_strategy_deposit_amount",
 ]

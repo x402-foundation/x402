@@ -30,12 +30,26 @@ describe("defaultAssets (EVM)", () => {
         findDefaultAsset("0x0000000000000000000000000000000000000001", "eip155:8453"),
       ).toBeUndefined();
     });
+
+    it("returns undefined when the network has no default asset table", () => {
+      expect(findDefaultAsset(BASE_USDC.asset, "eip155:999999")).toBeUndefined();
+    });
   });
 
   describe("getDefaultAsset", () => {
     it("returns the first list entry as the network default", () => {
       expect(getDefaultAsset("eip155:8453")).toEqual(BASE_USDC);
       expect(getDefaultAsset("base")).toEqual(BASE_USDC);
+    });
+
+    it("looks up a configured symbol case-insensitively", () => {
+      expect(getDefaultAsset("eip155:8453", "usdc")).toEqual(BASE_USDC);
+    });
+
+    it("throws when the network has no default asset table", () => {
+      expect(() => getDefaultAsset("eip155:999999")).toThrow(
+        /No default asset configured for network/,
+      );
     });
 
     it("throws when requesting a symbol that is not configured on the network", () => {

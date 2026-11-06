@@ -173,6 +173,9 @@ export interface x402MCPClientOptions {
    * This can be used to implement human-in-the-loop approval.
    */
   onPaymentRequested?: (context: PaymentRequestedContext) => Promise<boolean> | boolean;
+
+  /** Cap on derived MCP waits from accept `maxTimeoutSeconds`. @default 600 */
+  maxRequestTimeoutSeconds?: number;
 }
 
 /**

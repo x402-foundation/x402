@@ -421,6 +421,48 @@ func ExtractDiscoveredResourceFromPaymentPayload(
 // Expected format: "/users/:userId", "/weather/:country/:city", "/api/v1/items".
 var routeTemplateRegex = regexp.MustCompile(`^/[a-zA-Z0-9_/:.\-~%]+$`)
 
+// Maximum number of successive PathUnescape passes applied while
+// canonicalizing a routeTemplate before giving up and rejecting it.
+//
+// A legitimate single-encoded value reaches a fixed point (further decoding
+// changes nothing) after one pass. This allows a few extra passes so
+// multiply-encoded traversal/injection payloads (not just doubly-encoded
+// ones) are still caught, while bounding the work done on adversarial input.
+const maxRouteTemplateDecodePasses = 5
+
+// fullyDecodeRouteTemplate repeatedly percent-decodes value until a fixed
+// point is reached (further decoding produces no change) or
+// maxRouteTemplateDecodePasses is exhausted, returning the fully-canonicalized
+// string.
+//
+// A single decode pass only catches a payload encoded exactly once (e.g.
+// %2e%2e); a double- or triple-encoded payload (%252e%252e,
+// %25252e%25252e, ...) would still contain literal % sequences after one
+// pass and slip past a traversal/injection substring check performed on that
+// partially-decoded result. Decoding to a fixed point closes that gap for any
+// encoding depth, not just the double-encoded case.
+//
+// Returns the fully-decoded string and true, or ("", false) if any pass fails
+// to parse (malformed percent-encoding) or the pass budget is exhausted
+// without reaching a fixed point.
+func fullyDecodeRouteTemplate(value string) (string, bool) {
+	decoded := value
+	for i := 0; i < maxRouteTemplateDecodePasses; i++ {
+		next, err := url.PathUnescape(decoded)
+		if err != nil {
+			return "", false
+		}
+		if next == decoded {
+			return decoded, true
+		}
+		decoded = next
+	}
+	// Still changing after the pass budget: either pathologically deep
+	// encoding or a % that never resolves to a fixed point. Either way,
+	// there's no safe canonical form to validate against. Reject.
+	return "", false
+}
+
 // isValidRouteTemplate checks whether a routeTemplate value is structurally valid.
 //
 // Expected format: ":param" segments using colon-prefixed identifiers
@@ -431,8 +473,8 @@ var routeTemplateRegex = regexp.MustCompile(`^/[a-zA-Z0-9_/:.\-~%]+$`)
 // payment under an arbitrary URL (catalog poisoning). This enforces minimal structural requirements:
 //   - Must be a non-empty string starting with "/"
 //   - Must match the safe URL path character set (alphanumeric, _, :, /, ., -, ~, %)
-//   - Must not contain ".." (path traversal)
-//   - Must not contain "://" (URL injection)
+//   - Must not contain ".." (path traversal), at any percent-encoding depth
+//   - Must not contain "://" (URL injection), at any percent-encoding depth
 func isValidRouteTemplate(s string) bool {
 	if s == "" {
 		return false
@@ -440,9 +482,11 @@ func isValidRouteTemplate(s string) bool {
 	if !routeTemplateRegex.MatchString(s) {
 		return false
 	}
-	// Decode percent-encoding before traversal checks so that %2e%2e is caught.
-	decoded, err := url.PathUnescape(s)
-	if err != nil {
+	// Decode to a fixed point before traversal checks, so that %2e%2e,
+	// %252e%252e, and deeper encodings are all caught rather than just the
+	// single-encoded case.
+	decoded, ok := fullyDecodeRouteTemplate(s)
+	if !ok {
 		return false
 	}
 	if strings.Contains(decoded, "..") {

@@ -3,6 +3,7 @@
 Re-exports the scheme, storage backends, and channel managers.
 """
 
+from ..errors import ERR_DEPOSIT_BELOW_MIN_DEPOSIT
 from .channel_manager import (
     AutoSettlementConfig,
     AutoSettlementContext,
@@ -53,4 +54,5 @@ __all__ = [
     "RefundChannelSelector",
     "AutoSettlementConfig",
     "AutoSettlementContext",
+    "ERR_DEPOSIT_BELOW_MIN_DEPOSIT",
 ]

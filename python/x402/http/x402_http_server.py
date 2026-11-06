@@ -323,7 +323,11 @@ class x402HTTPResourceServer(x402HTTPServerBase):
         Awaits settlement_failed_response_body hook if it returns a coroutine.
         """
         settlement_headers = failure.headers
-        route_match = self._get_route_config(context.path, context.method) if context else None
+        route_match = (
+            self._get_route_config(context.path, context.method, context.decoded_path)
+            if context
+            else None
+        )
         route_config = route_match[0] if route_match else None
 
         custom_body = None

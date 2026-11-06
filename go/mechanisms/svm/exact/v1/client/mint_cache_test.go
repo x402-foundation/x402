@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	x402 "github.com/x402-foundation/x402/go/v2"
+
 	bin "github.com/gagliardetto/binary"
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/programs/token"
@@ -142,10 +144,10 @@ func TestMintMetadataCacheAvoidsRepeatedMintRPC(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	_, err := client.CreatePaymentPayload(ctx, requirements)
+	_, err := client.CreatePaymentPayload(ctx, requirements, x402.PaymentPayloadContext{})
 	require.NoError(t, err)
 
-	_, err = client.CreatePaymentPayload(ctx, requirements)
+	_, err = client.CreatePaymentPayload(ctx, requirements, x402.PaymentPayloadContext{})
 	require.NoError(t, err)
 
 	assert.Equal(t, int32(1), atomic.LoadInt32(&accountInfoCalls))

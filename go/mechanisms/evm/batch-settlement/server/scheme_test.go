@@ -41,6 +41,13 @@ func TestNewBatchSettlementEvmScheme_NilConfigDefaults(t *testing.T) {
 	if s.GetStorage() == nil {
 		t.Fatal("expected default in-memory storage")
 	}
+	if s.GetEnforceMinDeposit() {
+		t.Fatal("enforceMinDeposit should default to false")
+	}
+	lock, ok := s.GetStorage().(ChannelLockStorage)
+	if !ok || s.GetLockStorage() != lock {
+		t.Fatal("expected default lock store to be the in-memory storage")
+	}
 	if s.Scheme() != batchsettlement.SchemeBatched {
 		t.Fatalf("scheme = %s", s.Scheme())
 	}
@@ -62,6 +69,42 @@ func TestNewBatchSettlementEvmScheme_OverridesApplied(t *testing.T) {
 	}
 	if s.GetStorage() != storage {
 		t.Fatalf("expected provided storage")
+	}
+	if s.GetLockStorage() != storage {
+		t.Fatal("expected lock store inferred from storage")
+	}
+}
+
+func TestNewBatchSettlementEvmScheme_SeparateLockStoreWhenStorageHasNoLockMethods(t *testing.T) {
+	inner := NewInMemoryChannelStorage()
+	storage := storageOnly{inner: inner}
+	s := NewBatchSettlementEvmScheme("0xreceiver", &BatchSettlementEvmSchemeServerConfig{Storage: storage})
+	if s.GetStorage() != storage {
+		t.Fatal("expected wrapped storage")
+	}
+	if _, ok := s.GetLockStorage().(*InMemoryChannelStorage); !ok {
+		t.Fatalf("expected a separate in-memory lock store, got %T", s.GetLockStorage())
+	}
+}
+
+type storageOnly struct {
+	inner SessionStorage
+}
+
+func (s storageOnly) Get(ctx context.Context, channelId string) (*ChannelSession, error) {
+	return s.inner.Get(ctx, channelId)
+}
+func (s storageOnly) List(ctx context.Context) ([]*ChannelSession, error) {
+	return s.inner.List(ctx)
+}
+func (s storageOnly) UpdateChannel(ctx context.Context, channelId string, update func(current *ChannelSession) *ChannelSession) (*ChannelUpdateResult, error) {
+	return s.inner.UpdateChannel(ctx, channelId, update)
+}
+
+func TestNewBatchSettlementEvmScheme_EnforceMinDepositEnabled(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", &BatchSettlementEvmSchemeServerConfig{EnforceMinDeposit: true})
+	if !s.GetEnforceMinDeposit() {
+		t.Fatal("expected enforceMinDeposit true")
 	}
 }
 
@@ -165,6 +208,9 @@ func TestEnhancePaymentRequirements_ExplicitAsset(t *testing.T) {
 	if out.Extra["withdrawDelay"] != 1800 {
 		t.Fatalf("withdrawDelay = %v", out.Extra["withdrawDelay"])
 	}
+	if out.Extra["minDeposit"] != "10000" {
+		t.Fatalf("minDeposit = %v", out.Extra["minDeposit"])
+	}
 }
 
 // In delegated-authorizer mode (no local ReceiverAuthorizerSigner) the server
@@ -235,6 +281,102 @@ func TestEnhancePaymentRequirements_PassesThroughAssetTransferMethod(t *testing.
 	}
 	if got, _ := out.Extra["assetTransferMethod"].(string); got != "permit2" {
 		t.Fatalf("expected assetTransferMethod=permit2 to pass through, got %q", got)
+	}
+}
+
+func TestEnhancePaymentRequirements_DefaultsMinDepositTo10xAmount(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	req := types.PaymentRequirements{
+		Network: "eip155:8453",
+		Asset:   "0x1234567890abcdef1234567890abcdef12345678",
+		Amount:  "2500",
+		Extra: map[string]interface{}{
+			"receiverAuthorizer": "0x4444444444444444444444444444444444444444",
+		},
+	}
+	out, err := s.EnhancePaymentRequirements(context.Background(), req, types.SupportedKind{}, nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if out.Extra["minDeposit"] != "25000" {
+		t.Fatalf("minDeposit = %v", out.Extra["minDeposit"])
+	}
+}
+
+func TestEnhancePaymentRequirements_ConvertsRouteMinDepositMoneyOnDefaultAssets(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	req := types.PaymentRequirements{
+		Network: "eip155:8453",
+		Asset:   "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+		Amount:  "1000",
+		Extra: map[string]interface{}{
+			"receiverAuthorizer": "0x4444444444444444444444444444444444444444",
+			"minDeposit":         "$1",
+		},
+	}
+	out, err := s.EnhancePaymentRequirements(context.Background(), req, types.SupportedKind{}, nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if out.Extra["minDeposit"] != "1000000" {
+		t.Fatalf("minDeposit = %v", out.Extra["minDeposit"])
+	}
+}
+
+func TestEnhancePaymentRequirements_UsesRequestAmountWhenItExceedsRouteMoney(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	req := types.PaymentRequirements{
+		Network: "eip155:8453",
+		Asset:   "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+		Amount:  "2000000",
+		Extra: map[string]interface{}{
+			"receiverAuthorizer": "0x4444444444444444444444444444444444444444",
+			"minDeposit":         "$1",
+		},
+	}
+	out, err := s.EnhancePaymentRequirements(context.Background(), req, types.SupportedKind{}, nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if out.Extra["minDeposit"] != "2000000" {
+		t.Fatalf("minDeposit = %v", out.Extra["minDeposit"])
+	}
+}
+
+func TestEnhancePaymentRequirements_AcceptsAtomicMinDepositForAnyAsset(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	req := types.PaymentRequirements{
+		Network: "eip155:8453",
+		Asset:   "0x00000000000000000000000000000000000000aa",
+		Amount:  "1000",
+		Extra: map[string]interface{}{
+			"receiverAuthorizer": "0x4444444444444444444444444444444444444444",
+			"minDeposit":         "5000000",
+		},
+	}
+	out, err := s.EnhancePaymentRequirements(context.Background(), req, types.SupportedKind{}, nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if out.Extra["minDeposit"] != "5000000" {
+		t.Fatalf("minDeposit = %v", out.Extra["minDeposit"])
+	}
+}
+
+func TestEnhancePaymentRequirements_RejectsMinDepositMoneyForNonDefaultAssets(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	req := types.PaymentRequirements{
+		Network: "eip155:8453",
+		Asset:   "0x00000000000000000000000000000000000000aa",
+		Amount:  "1000",
+		Extra: map[string]interface{}{
+			"receiverAuthorizer": "0x4444444444444444444444444444444444444444",
+			"minDeposit":         "$1",
+		},
+	}
+	_, err := s.EnhancePaymentRequirements(context.Background(), req, types.SupportedKind{}, nil)
+	if err == nil || !strings.Contains(err.Error(), "only supported for default assets") {
+		t.Fatalf("expected default-asset error, got %v", err)
 	}
 }
 
@@ -382,7 +524,7 @@ func TestSession_RoundTrip_CaseInsensitive(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
 	upper := "0x" + strings.ToUpper(strings.TrimPrefix(testChA, "0x"))
 	in := sampleSession(upper, "10")
-	if err := s.UpdateSession(upper, in); err != nil {
+	if _, err := s.GetStorage().UpdateChannel(context.Background(), upper, func(*ChannelSession) *ChannelSession { return in.Clone() }); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	got, err := s.GetSession(testChA)
@@ -392,7 +534,7 @@ func TestSession_RoundTrip_CaseInsensitive(t *testing.T) {
 	if got == nil || got.ChannelId != upper {
 		t.Fatalf("got %+v", got)
 	}
-	if err := s.DeleteSession(upper); err != nil {
+	if _, err := s.GetStorage().UpdateChannel(context.Background(), upper, func(*ChannelSession) *ChannelSession { return nil }); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	if got2, _ := s.GetSession(testChA); got2 != nil {
@@ -580,7 +722,7 @@ func TestEnrichPaymentRequiredResponse_FallsBackToStorage(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
 	id := testChannelId(t)
 	pp := makeBatchedPayload(id)
-	_ = s.UpdateSession(id, sampleSession(id, "77"))
+	seedSession(t, s, id, sampleSession(id, "77"))
 
 	reqs := enrich(s, pp, batchsettlement.ErrCumulativeAmountMismatch,
 		[]types.PaymentRequirements{{Scheme: batchsettlement.SchemeBatched, Network: "eip155:8453"}})

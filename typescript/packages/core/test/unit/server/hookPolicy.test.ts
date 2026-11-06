@@ -173,6 +173,47 @@ describe("hookPolicy", () => {
         ).toThrow(new RegExp(`extra\\["${key}"\\]`));
       });
     });
+
+    it("rejects changing payment terms on a matching accept", () => {
+      const baseline = snapshotPaymentRequirementsList([
+        buildPaymentRequirements({ payTo: "0xabc", amount: "1000", asset: "USDC" }),
+      ]);
+      const current = snapshotPaymentRequirementsList(baseline);
+      current[0].payTo = "0xdef";
+      expect(() =>
+        assertAcceptsAdditiveExtraAfterSchemeEnrich(
+          baseline,
+          current,
+          baseline[0].scheme,
+          baseline[0].network,
+        ),
+      ).toThrow(/payment terms are immutable/);
+    });
+
+    it("rejects adding extra keys on a non-matching accept", () => {
+      const baseline = snapshotPaymentRequirementsList([
+        buildPaymentRequirements({
+          scheme: "exact",
+          network: "eip155:8453" as Network,
+          extra: { name: "USDC" },
+        }),
+        buildPaymentRequirements({
+          scheme: "exact",
+          network: "eip155:1" as Network,
+          extra: { name: "USDC" },
+        }),
+      ]);
+      const current = snapshotPaymentRequirementsList(baseline);
+      current[1].extra = { ...current[1].extra, injected: true };
+      expect(() =>
+        assertAcceptsAdditiveExtraAfterSchemeEnrich(
+          baseline,
+          current,
+          "exact",
+          "eip155:8453" as Network,
+        ),
+      ).toThrow(/only matching accepts may receive new extra fields/);
+    });
   });
 
   describe("assertSettleResponseCoreUnchanged", () => {

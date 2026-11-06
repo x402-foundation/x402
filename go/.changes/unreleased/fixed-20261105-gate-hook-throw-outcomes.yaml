@@ -1,0 +1,3 @@
+kind: fixed
+body: 'Resource server: a beforeVerify or beforeSettle hook that returns an error now fails closed with before_verify_hook_error / "before verify hook failed" or before_settle_hook_error / "before settle hook failed". The hook error stays in the warning log. An abort result is unchanged.'
+time: 2026-11-05T08:15:00Z

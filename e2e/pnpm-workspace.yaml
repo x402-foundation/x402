@@ -11,6 +11,9 @@ packages:
   - "../typescript/packages/http/*"
   - "../typescript/packages/mechanisms/*"
   - "../typescript/packages/legacy/*"
+overrides:
+  # GHSA-mrhx-c7xc-m3w5 has no patched zod 3.x.
+  zod: ^4.6.6
 packageExtensions:
   # @keetanetwork/anchor imports tslib at runtime but does not declare it.
   "@keetanetwork/anchor@*":
@@ -20,10 +23,12 @@ minimumReleaseAge: 4320 # Only install package versions that have been published
 minimumReleaseAgeStrict: false
 allowBuilds:
   '@coinbase/x402': true # Required for /external-proxies/* CDP testing due to post-install script that prints TOS
+  '@parcel/watcher': true
   bigint-buffer: true
   bufferutil: true
   esbuild: true
   keccak: true
+  msgpackr-extract: true
   protobufjs: true
   secp256k1: true
   sharp: true

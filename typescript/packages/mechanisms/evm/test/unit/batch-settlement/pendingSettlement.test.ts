@@ -307,6 +307,60 @@ describe("BatchSettlementEvmScheme deposit pending-settlement store integration"
     expect(await store.get("0xfeedface5")).toBeUndefined();
   });
 
+  it("cache-hit: maps a Permit2 execution failure instead of re-broadcasting", async () => {
+    const signer = buildSigner({
+      readContract: vi.fn().mockImplementation(args => {
+        if (args.functionName === "isValidSignature") return Promise.resolve("0x1626ba7e");
+        if (args.functionName === "allowance") return Promise.reject(new Error("rpc down"));
+        return Promise.resolve(undefined);
+      }),
+    });
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer, {
+      pendingSettlementStore: store,
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const now = Math.floor(Date.now() / 1000);
+    const dp: BatchSettlementDepositPayload = {
+      type: "deposit",
+      channelConfig: config,
+      voucher: { channelId, maxClaimableAmount: "1000", signature: "0xcafebabe" },
+      deposit: {
+        amount: "10000",
+        authorization: {
+          permit2Authorization: {
+            from: PAYER,
+            permitted: { token: ASSET, amount: "10000" },
+            spender: "0x0000000000000000000000000000000000000001",
+            nonce: "123",
+            deadline: String(now + 3600),
+            witness: { channelId },
+            signature: "0xfeedface-permit2",
+          },
+        },
+      },
+    };
+    await store.set("0xfeedface-permit2", MOCK_TX_HASH);
+
+    const result = await scheme.settle(
+      envelopeDeposit(dp),
+      makeRequirements({
+        extra: {
+          name: "USDC",
+          version: "2",
+          receiverAuthorizer: RECEIVER_AUTHORIZER,
+          assetTransferMethod: "permit2",
+          withdrawDelay: 900,
+        },
+      }),
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrPermit2AllowanceRequired);
+    expect(signer.writeContract).not.toHaveBeenCalled();
+    expect(signer.waitForTransactionReceipt).not.toHaveBeenCalled();
+  });
+
   it("defaults to a fresh in-memory store when none is provided", async () => {
     mockedMulticall
       .mockResolvedValueOnce(VERIFY_MULTICALL_RESULT)

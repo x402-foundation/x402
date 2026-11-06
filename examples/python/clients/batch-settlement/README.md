@@ -12,6 +12,22 @@ at the end to claw back any unused channel balance.
 uv sync --reinstall-package x402
 ```
 
+## Deposit policy
+
+The client deposits `extra.minDeposit` when the server announced a valid hint, otherwise `amount × DEPOSIT_MULTIPLIER` (default `5`, minimum `3`).
+
+`x402Client` spend controls still cap each request's `amount` (default `$1` on USDC). That same atomic cap is the escrow ceiling:
+
+`maxDeposit = maxAmountPerPayment × depositMultiplier`
+
+So the default `$1` cap and multiplier `5` lock at most `$5`. `spend_controls=False` (or any uncapped asset) leaves the deposit uncapped too.
+
+Use `deposit_strategy` only for app-specific decisions:
+
+- **`None`** — use the SDK default (`deposit_amount` in context).
+- **`False`** — skip this deposit attempt.
+- **Base-unit string or `int`** — custom amount; must be **≥ `minimum_deposit_amount`**, and still respects `max_deposit` when a spend cap is set.
+
 ## Environment
 
 | Variable | Required | Description |
@@ -22,7 +38,7 @@ uv sync --reinstall-package x402
 | `EVM_VOUCHER_SIGNER_PRIVATE_KEY` | no | Dedicated voucher-signing key (`payerAuthorizer`). Defaults to `EVM_PRIVATE_KEY`. |
 | `EVM_RPC_URL` | no | EVM JSON-RPC endpoint. Defaults to `https://sepolia.base.org`. |
 | `CHANNEL_SALT` | no | 32-byte hex salt for channel ID derivation. Defaults to all-zeros. |
-| `DEPOSIT_MULTIPLIER` | no | Deposit = multiplier × request price (default `5`). |
+| `DEPOSIT_MULTIPLIER` | no | Deposit target is `amount ×` this multiplier when `extra.minDeposit` is absent; lock ceiling is `spendCap ×` this multiplier (integer **≥ 3**; default `5`). |
 | `STORAGE_DIR` | no | Directory for persistent file-backed channel storage. Defaults to in-memory. |
 | `NUMBER_OF_REQUESTS` | no | Number of paid requests to issue (default `3`). |
 | `REFUND_AFTER_REQUESTS` | no | Set to `true` to issue a cooperative refund at the end. |

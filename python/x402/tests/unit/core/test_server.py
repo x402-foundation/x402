@@ -2,7 +2,7 @@
 
 import pytest
 
-from x402 import x402ResourceServer, x402ResourceServerSync
+from x402 import FacilitatorCapabilityError, x402ResourceServer, x402ResourceServerSync
 from x402.schemas import (
     PaymentPayload,
     PaymentRequirements,
@@ -276,6 +276,19 @@ class TestServerInitialization:
         # First client should be registered
         assert server._facilitator_clients_map["eip155:8453"]["exact"] is client1
 
+    def test_initialize_raises_when_no_kinds_loaded(self):
+        """Empty /supported must fail retryably, matching TypeScript."""
+        server = x402ResourceServer(MockFacilitatorClient([]))
+
+        with pytest.raises(
+            RuntimeError,
+            match="no supported payment kinds loaded from any facilitator",
+        ):
+            server.initialize()
+
+        assert server._initialized is False
+        assert server._supported_responses == {}
+
 
 class _ValidatingSchemeServer(MockSchemeServer):
     """Mock scheme exposing the optional validate_facilitator_support hook."""
@@ -302,7 +315,7 @@ class TestValidateFacilitatorCapabilities:
         server = x402ResourceServer(self._client())
         server.register("eip155:8453", _ValidatingSchemeServer("mock", problem="needs authorizer"))
 
-        with pytest.raises(ValueError, match="needs authorizer"):
+        with pytest.raises(FacilitatorCapabilityError, match="needs authorizer"):
             server.initialize()
 
     def test_initialize_succeeds_when_hook_returns_none(self):

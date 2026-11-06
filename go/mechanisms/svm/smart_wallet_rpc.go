@@ -12,9 +12,9 @@ import (
 	"github.com/gagliardetto/solana-go/rpc"
 )
 
-// maxSupportedTxVersion is passed to getTransaction so v0 (lookup-table)
-// transactions are returned instead of rejected.
-var maxSupportedTxVersion uint64
+// MaxSupportedTxVersion is passed to getTransaction so v0 (lookup-table) and
+// v1 (SIMD-0385) transactions are returned instead of rejected.
+const MaxSupportedTxVersion uint64 = 1
 
 const ixTokenTransferChecked = 12
 
@@ -176,10 +176,11 @@ func normalizeSimulatedInnerInstructions(groups []simulateInnerGroup, keys solan
 // ConfirmedTransactionInnerInstructions fetches a confirmed transaction's CPI
 // trace and the loaded account-key list inner-instruction indices address.
 func ConfirmedTransactionInnerInstructions(ctx context.Context, client *rpc.Client, signature solana.Signature) ([]rpc.InnerInstruction, solana.PublicKeySlice, error) {
+	maxVersion := MaxSupportedTxVersion
 	result, err := client.GetTransaction(ctx, signature, &rpc.GetTransactionOpts{
 		Encoding:                       solana.EncodingBase64,
 		Commitment:                     DefaultCommitment,
-		MaxSupportedTransactionVersion: &maxSupportedTxVersion,
+		MaxSupportedTransactionVersion: &maxVersion,
 	})
 	if err != nil {
 		return nil, nil, err

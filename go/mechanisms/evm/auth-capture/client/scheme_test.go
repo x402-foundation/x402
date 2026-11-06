@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	x402 "github.com/x402-foundation/x402/go/v2"
+
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 	authcapture "github.com/x402-foundation/x402/go/v2/mechanisms/evm/auth-capture"
 	"github.com/x402-foundation/x402/go/v2/types"
@@ -58,19 +60,12 @@ func mockRequirements(extra map[string]interface{}) types.PaymentRequirements {
 	}
 }
 
-func TestAuthCaptureEvmScheme_Scheme(t *testing.T) {
-	scheme := NewAuthCaptureEvmScheme(&mockSigner{address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
-	if scheme.Scheme() != authcapture.SchemeAuthCapture {
-		t.Fatalf("scheme = %q", scheme.Scheme())
-	}
-}
-
 func TestCreatePaymentPayload_InvalidAuthCaptureEscrow(t *testing.T) {
 	scheme := NewAuthCaptureEvmScheme(&mockSigner{address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
 	req := mockRequirements(map[string]interface{}{
 		"authCaptureEscrow": "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
 	})
-	if _, err := scheme.CreatePaymentPayload(context.Background(), req); err == nil || !strings.Contains(err.Error(), "authCaptureEscrow") {
+	if _, err := scheme.CreatePaymentPayload(context.Background(), req, x402.PaymentPayloadContext{}); err == nil || !strings.Contains(err.Error(), "authCaptureEscrow") {
 		t.Fatalf("expected authCaptureEscrow error, got %v", err)
 	}
 }
@@ -85,7 +80,7 @@ func TestCreatePaymentPayload_V1_0EscrowPin(t *testing.T) {
 
 	result, err := scheme.CreatePaymentPayload(context.Background(), mockRequirements(map[string]interface{}{
 		"authCaptureEscrow": authcapture.AuthCaptureEscrowV1_0Address,
-	}))
+	}), x402.PaymentPayloadContext{})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -103,7 +98,7 @@ func TestCreatePaymentPayload_EIP3009(t *testing.T) {
 	scheme := NewAuthCaptureEvmScheme(signer)
 	scheme.now = func() time.Time { return time.Unix(1700000000, 0) }
 
-	result, err := scheme.CreatePaymentPayload(context.Background(), mockRequirements(nil))
+	result, err := scheme.CreatePaymentPayload(context.Background(), mockRequirements(nil), x402.PaymentPayloadContext{})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -151,22 +146,22 @@ func TestCreatePaymentPayload_MissingExtraFields(t *testing.T) {
 	scheme := NewAuthCaptureEvmScheme(&mockSigner{address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
 
 	req := mockRequirements(map[string]interface{}{"name": ""})
-	if _, err := scheme.CreatePaymentPayload(context.Background(), req); err == nil || !strings.Contains(err.Error(), "name") {
+	if _, err := scheme.CreatePaymentPayload(context.Background(), req, x402.PaymentPayloadContext{}); err == nil || !strings.Contains(err.Error(), "name") {
 		t.Fatalf("expected name error, got %v", err)
 	}
 
 	req = mockRequirements(map[string]interface{}{"version": ""})
-	if _, err := scheme.CreatePaymentPayload(context.Background(), req); err == nil || !strings.Contains(err.Error(), "version") {
+	if _, err := scheme.CreatePaymentPayload(context.Background(), req, x402.PaymentPayloadContext{}); err == nil || !strings.Contains(err.Error(), "version") {
 		t.Fatalf("expected version error, got %v", err)
 	}
 
 	req = mockRequirements(map[string]interface{}{"captureAuthorizer": ""})
-	if _, err := scheme.CreatePaymentPayload(context.Background(), req); err == nil || !strings.Contains(err.Error(), "captureAuthorizer") {
+	if _, err := scheme.CreatePaymentPayload(context.Background(), req, x402.PaymentPayloadContext{}); err == nil || !strings.Contains(err.Error(), "captureAuthorizer") {
 		t.Fatalf("expected captureAuthorizer error, got %v", err)
 	}
 
 	req = mockRequirements(map[string]interface{}{"feeRecipient": ""})
-	if _, err := scheme.CreatePaymentPayload(context.Background(), req); err == nil || !strings.Contains(err.Error(), "feeRecipient") {
+	if _, err := scheme.CreatePaymentPayload(context.Background(), req, x402.PaymentPayloadContext{}); err == nil || !strings.Contains(err.Error(), "feeRecipient") {
 		t.Fatalf("expected feeRecipient error, got %v", err)
 	}
 }
@@ -178,7 +173,7 @@ func TestCreatePaymentPayload_BoundSalt(t *testing.T) {
 	})
 	result, err := scheme.CreatePaymentPayload(context.Background(), mockRequirements(map[string]interface{}{
 		"receiverAuthorizer": "0x1111111111111111111111111111111111111111",
-	}))
+	}), x402.PaymentPayloadContext{})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -200,11 +195,11 @@ func TestCreatePaymentPayload_FreshUnboundSalt(t *testing.T) {
 		address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		sig:     []byte{0x01},
 	})
-	a, err := scheme.CreatePaymentPayload(context.Background(), mockRequirements(nil))
+	a, err := scheme.CreatePaymentPayload(context.Background(), mockRequirements(nil), x402.PaymentPayloadContext{})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	b, err := scheme.CreatePaymentPayload(context.Background(), mockRequirements(nil))
+	b, err := scheme.CreatePaymentPayload(context.Background(), mockRequirements(nil), x402.PaymentPayloadContext{})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -217,7 +212,7 @@ func TestCreatePaymentPayload_BadNetwork(t *testing.T) {
 	scheme := NewAuthCaptureEvmScheme(&mockSigner{address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
 	req := mockRequirements(nil)
 	req.Network = "solana:mainnet"
-	if _, err := scheme.CreatePaymentPayload(context.Background(), req); err == nil || !strings.Contains(err.Error(), "solana:mainnet") {
+	if _, err := scheme.CreatePaymentPayload(context.Background(), req, x402.PaymentPayloadContext{}); err == nil || !strings.Contains(err.Error(), "solana:mainnet") {
 		t.Fatalf("expected network error, got %v", err)
 	}
 }
@@ -230,7 +225,7 @@ func TestCreatePaymentPayload_Permit2(t *testing.T) {
 	scheme := NewAuthCaptureEvmScheme(signer)
 	result, err := scheme.CreatePaymentPayload(context.Background(), mockRequirements(map[string]interface{}{
 		"assetTransferMethod": "permit2",
-	}))
+	}), x402.PaymentPayloadContext{})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}

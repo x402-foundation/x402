@@ -546,6 +546,7 @@ class PaymentRequirementsExtra:
     name: str
     version: str
     asset_transfer_method: str | None = None  # "eip3009" (default) or "permit2"
+    min_deposit: str | None = None
     channel_state: ChannelStateExtra | None = None
     voucher_state: VoucherStateExtra | None = None
 
@@ -558,6 +559,8 @@ class PaymentRequirementsExtra:
         }
         if self.asset_transfer_method is not None:
             out["assetTransferMethod"] = self.asset_transfer_method
+        if self.min_deposit is not None:
+            out["minDeposit"] = self.min_deposit
         if self.channel_state is not None:
             out["channelState"] = self.channel_state.to_dict()
         if self.voucher_state is not None:
@@ -574,6 +577,7 @@ class PaymentRequirementsExtra:
             name=data["name"],
             version=data["version"],
             asset_transfer_method=data.get("assetTransferMethod"),
+            min_deposit=str(data["minDeposit"]) if data.get("minDeposit") is not None else None,
             channel_state=ChannelStateExtra.from_dict(cs) if cs else None,
             voucher_state=VoucherStateExtra.from_dict(vs) if vs else None,
         )

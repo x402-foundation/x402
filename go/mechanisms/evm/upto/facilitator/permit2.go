@@ -16,12 +16,6 @@ import (
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
-// assetContractCheck carries evm.ValidateAssetIsContract's result out of a goroutine.
-type assetContractCheck struct {
-	reason string
-	err    error
-}
-
 // VerifyUptoPermit2 verifies an upto Permit2 payment payload against the given requirements.
 // simulate controls whether to run an eth_call simulation as part of verification.
 func VerifyUptoPermit2(
@@ -51,11 +45,7 @@ func VerifyUptoPermit2(
 	tokenAddress := evm.NormalizeAddress(requirements.Asset)
 
 	// Run the asset-contract check concurrently with the signature check below.
-	assetCheckCh := make(chan assetContractCheck, 1)
-	go func() {
-		reason, err := evm.ValidateAssetIsContract(ctx, signer, requirements.Asset)
-		assetCheckCh <- assetContractCheck{reason: reason, err: err}
-	}()
+	assetCheck := evm.StartAssetContractCheck(ctx, signer, string(requirements.Network), requirements.Asset)
 
 	if !strings.EqualFold(permit2Payload.Permit2Authorization.Spender, evm.X402UptoPermit2ProxyAddress) {
 		return nil, x402.NewVerifyError(ErrPermit2InvalidSpender, payer, "invalid spender")
@@ -119,12 +109,12 @@ func VerifyUptoPermit2(
 
 	sigValid, sigData, sigErr := verifyUptoPermit2Signature(ctx, signer, permit2Payload.Permit2Authorization, signatureBytes, chainID)
 
-	assetResult := <-assetCheckCh
-	if assetResult.err != nil {
-		return nil, fmt.Errorf("asset contract check failed: %w", assetResult.err)
+	assetReason, assetErr := assetCheck.Await()
+	if assetErr != nil {
+		return nil, fmt.Errorf("asset contract check failed: %w", assetErr)
 	}
-	if assetResult.reason != "" {
-		return nil, x402.NewVerifyError(assetResult.reason, payer, fmt.Sprintf("asset %s is not a deployed contract", requirements.Asset))
+	if assetReason != "" {
+		return nil, x402.NewVerifyError(assetReason, payer, fmt.Sprintf("asset %s is not a deployed contract", requirements.Asset))
 	}
 
 	if sigErr != nil || !sigValid {

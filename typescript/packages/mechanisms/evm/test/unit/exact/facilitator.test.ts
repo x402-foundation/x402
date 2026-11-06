@@ -3,11 +3,26 @@ import { ExactEvmScheme } from "../../../src/exact/facilitator/scheme";
 import { ExactEvmScheme as ClientExactEvmScheme } from "../../../src/exact/client/scheme";
 import type { ClientEvmSigner, FacilitatorEvmSigner } from "../../../src/signer";
 import { PaymentRequirements, PaymentPayload } from "@x402/core/types";
+import { x402Facilitator } from "@x402/core/facilitator";
+import { registerExactEvmScheme } from "../../../src/exact/facilitator/register";
+import { NETWORKS } from "../../../src/v1";
 import { x402ExactPermit2ProxyAddress, PERMIT2_ADDRESS } from "../../../src/constants";
 import { ERC20_APPROVAL_GAS_SPONSORING_KEY } from "../../../src/exact/extensions";
 import { MULTICALL3_ADDRESS } from "../../../src/multicall";
 import { concat, encodeAbiParameters } from "viem";
 import * as Errors from "../../../src/exact/facilitator/errors";
+import { resetAssetContractCache } from "../../../src/assetCache";
+import {
+  checkPermit2Prerequisites,
+  diagnosePermit2SimulationFailure,
+  mapSettleError,
+  simulatePermit2Settle,
+  simulatePermit2SettleWithErc20Approval,
+  simulatePermit2SettleWithPermit,
+  splitEip2612Signature,
+  validateEip2612PermitForPayment,
+} from "../../../src/shared/permit2";
+import { validateErc20ApprovalForPayment } from "../../../src/shared/erc20approval";
 
 // Mock viem's transaction parsing utilities for ERC-20 approval tests
 // Uses importOriginal to preserve all other viem exports (getAddress, etc.)
@@ -62,6 +77,8 @@ describe("ExactEvmScheme (Facilitator)", () => {
   let mockClientSigner: ClientEvmSigner;
 
   beforeEach(() => {
+    resetAssetContractCache();
+
     // Create mock client signer
     mockClientSigner = {
       address: "0x1234567890123456789012345678901234567890",
@@ -153,7 +170,7 @@ describe("ExactEvmScheme (Facilitator)", () => {
             value: requirements.amount,
             validAfter: "0",
             validBefore: "999999999999",
-            nonce: "0x00",
+            nonce: `0x${"00".repeat(32)}`,
           },
           signature: "0x",
         },
@@ -828,7 +845,7 @@ describe("ExactEvmScheme (Facilitator)", () => {
             value: requirements.amount,
             validAfter: "0",
             validBefore: "999999999999",
-            nonce: "0x00",
+            nonce: `0x${"00".repeat(32)}`,
           },
           signature: "0xinvalid", // Invalid signature
         },
@@ -836,7 +853,7 @@ describe("ExactEvmScheme (Facilitator)", () => {
         resource: { url: "", description: "", mimeType: "" },
       };
 
-      // Mock verifyTypedData to return false for invalid signature
+      mockFacilitatorSigner.getCode = vi.fn().mockResolvedValue("0x");
       mockFacilitatorSigner.verifyTypedData = vi.fn().mockResolvedValue(false);
 
       const result = await facilitator.verify(payload, requirements);
@@ -1100,6 +1117,29 @@ describe("ExactEvmScheme (Facilitator)", () => {
       expect(result.isValid).toBe(false);
       expect(result.invalidReason).toBe(Errors.ErrFactoryNotAllowed);
       expect(result.payer).toBe(erc6492Payer);
+    });
+
+    it("rejects a wrapper whose factory calldata is empty, even with the factory allowlisted", async () => {
+      mockFacilitatorSigner.getCode = vi
+        .fn()
+        .mockImplementation(mockGetCodeEOAPayer("0x036CbD53842c5426634e7929541eC2318f3dCF7e"));
+      mockFacilitatorSigner.readContract = rcWithSig(({ address }: { address: string }) => {
+        if (address === MULTICALL3_ADDRESS) {
+          return Promise.resolve([
+            { success: false, returnData: "0x" },
+            { success: true, returnData: "0x" },
+          ]);
+        }
+        return Promise.resolve(BigInt("10000000"));
+      });
+
+      const result = await cfFacilitator.verify(
+        makeERC6492Payload(makeERC6492Sig(factory, "0x", garbageInnerSig)),
+        erc6492Requirements,
+      );
+
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe(Errors.ErrInvalidSignature);
     });
 
     it("should accept ERC-6492 when verifyTypedData returns true and simulation passes", async () => {
@@ -2300,6 +2340,28 @@ describe("ExactEvmScheme (Facilitator)", () => {
       expect(mockFacilitatorSigner.sendTransaction).not.toHaveBeenCalled();
     });
 
+    it("should fail settle when the ERC-6492 factory transaction reverts", async () => {
+      mockFacilitatorSigner.getCode = vi
+        .fn()
+        .mockImplementation(mockGetCodeEOAPayer("0x036CbD53842c5426634e7929541eC2318f3dCF7e"));
+      mockFacilitatorSigner.sendTransaction = vi.fn().mockResolvedValue("0xdeploytxhash");
+      mockFacilitatorSigner.waitForTransactionReceipt = vi
+        .fn()
+        .mockResolvedValue({ status: "reverted" });
+      const scheme = new ExactEvmScheme(mockFacilitatorSigner, {
+        eip6492AllowedFactories: [SETTLE_FACTORY],
+      });
+
+      const result = await scheme.settle(
+        makeSettlePayload(makeSettleErc6492Sig(SETTLE_FACTORY)),
+        settleRequirements,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe(Errors.ErrSmartWalletDeploymentFailed);
+      expect(mockFacilitatorSigner.writeContract).not.toHaveBeenCalled();
+    });
+
     it("should deploy and settle when factory is in allowlist", async () => {
       // After sendTransaction (factory deploy), getCode must return deployed bytecode
       // so the polling loop exits. Track deploy state via sendTransaction call count.
@@ -2328,6 +2390,28 @@ describe("ExactEvmScheme (Facilitator)", () => {
       expect(result.success).toBe(true);
       expect(mockFacilitatorSigner.sendTransaction).toHaveBeenCalledOnce();
       expect(mockFacilitatorSigner.writeContract).toHaveBeenCalled();
+    });
+
+    // Settle's ERC-6492 branch must decide whether to deploy from the code lookup verify already
+    // performed, not a second eth_getCode for the same payer.
+    it("should reuse verify payer code on ERC-6492 path", async () => {
+      mockFacilitatorSigner.getCode = vi
+        .fn()
+        .mockImplementation(mockGetCodeEOAPayer("0x036CbD53842c5426634e7929541eC2318f3dCF7e"));
+      const scheme = new ExactEvmScheme(mockFacilitatorSigner, {
+        eip6492AllowedFactories: [SETTLE_FACTORY],
+      });
+
+      const result = await scheme.settle(
+        makeSettlePayload(makeSettleErc6492Sig(SETTLE_FACTORY)),
+        settleRequirements,
+      );
+
+      expect(result.success).toBe(true);
+      const payerGetCodeCalls = vi
+        .mocked(mockFacilitatorSigner.getCode)
+        .mock.calls.filter(([args]) => args.address.toLowerCase() === SETTLE_PAYER.toLowerCase());
+      expect(payerGetCodeCalls).toHaveLength(1);
     });
 
     it("should match factory address case-insensitively", async () => {
@@ -2427,4 +2511,833 @@ describe("ExactEvmScheme (Facilitator)", () => {
       expect(mockFacilitatorSigner.sendTransaction).not.toHaveBeenCalled();
     });
   });
+
+  describe("asset contract cache", () => {
+    async function deployedPayment(): Promise<{
+      payload: PaymentPayload;
+      requirements: PaymentRequirements;
+    }> {
+      const requirements: PaymentRequirements = {
+        scheme: "exact",
+        network: "eip155:84532",
+        amount: "1000000",
+        asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        payTo: "0x742D35CC6634c0532925A3b844BC9E7595F0BEb0",
+        maxTimeoutSeconds: 300,
+        extra: { name: "USDC", version: "2" },
+      };
+      const paymentPayload = await client.createPaymentPayload(2, requirements);
+      return {
+        payload: {
+          ...paymentPayload,
+          accepted: requirements,
+          resource: { url: "test", description: "", mimeType: "" },
+        },
+        requirements,
+      };
+    }
+
+    function getCodeCount(address: string): number {
+      return vi
+        .mocked(mockFacilitatorSigner.getCode)
+        .mock.calls.filter(([args]) => args.address.toLowerCase() === address.toLowerCase()).length;
+    }
+
+    it("caches the asset contract check but not the payer code lookup", async () => {
+      const { payload, requirements } = await deployedPayment();
+      const payer = mockClientSigner.address;
+
+      const first = await facilitator.verify(payload, requirements);
+      expect(first.isValid).toBe(true);
+      const payerCallsAfterFirst = getCodeCount(payer);
+      expect(payerCallsAfterFirst).toBeGreaterThan(0);
+
+      for (let attempt = 2; attempt <= 3; attempt++) {
+        const result = await facilitator.verify(payload, requirements);
+        expect(result.isValid).toBe(true);
+      }
+
+      expect(getCodeCount(requirements.asset)).toBe(1);
+      expect(getCodeCount(payer)).toBe(payerCallsAfterFirst * 3);
+    });
+
+    it("does not cache a positive asset check when Permit2 fails a cheap pre-check", async () => {
+      const requirements: PaymentRequirements = {
+        scheme: "exact",
+        network: "eip155:84532",
+        amount: "1000000",
+        asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        payTo: "0x742D35CC6634c0532925A3b844BC9E7595F0BEb0",
+        maxTimeoutSeconds: 300,
+        extra: { name: "USDC", version: "2", assetTransferMethod: "permit2" },
+      };
+      const permit2Payload: PaymentPayload = {
+        x402Version: 2,
+        payload: {
+          signature: "0xmocksignature",
+          permit2Authorization: {
+            from: mockClientSigner.address,
+            permitted: {
+              token: requirements.asset,
+              amount: requirements.amount,
+            },
+            spender: "0x0000000000000000000000000000000000000001",
+            nonce: "12345",
+            deadline: "999999999999",
+            witness: {
+              to: requirements.payTo,
+              validAfter: "0",
+            },
+          },
+        },
+        accepted: requirements,
+        resource: { url: "", description: "", mimeType: "" },
+      };
+
+      const rejected = await facilitator.verify(permit2Payload, requirements);
+      expect(rejected.invalidReason).toBe("invalid_permit2_spender");
+
+      await vi.waitFor(() => expect(getCodeCount(requirements.asset)).toBeGreaterThanOrEqual(1));
+      const assetCallsAfterReject = getCodeCount(requirements.asset);
+
+      const { payload, requirements: eip3009Req } = await deployedPayment();
+      const accepted = await facilitator.verify(payload, eip3009Req);
+      expect(accepted.isValid).toBe(true);
+      expect(getCodeCount(eip3009Req.asset)).toBe(assetCallsAfterReject + 1);
+    });
+
+    it("scopes the cache per network so a hit on one chain does not answer for another", async () => {
+      const { payload, requirements } = await deployedPayment();
+      const first = await facilitator.verify(payload, requirements);
+      expect(first.isValid).toBe(true);
+
+      const otherNetwork = "eip155:8453";
+      requirements.network = otherNetwork;
+      payload.accepted.network = otherNetwork;
+      const second = await facilitator.verify(payload, requirements);
+      expect(second.isValid).toBe(true);
+
+      expect(getCodeCount(requirements.asset)).toBe(2);
+    });
+  });
+});
+
+describe("shared Permit2 helpers", () => {
+  it("mapSettleError maps known revert strings and truncates unknown ones", () => {
+    const payload = {
+      accepted: { scheme: "exact", network: "eip155:84532" },
+    } as PaymentPayload;
+    const payer = "0x1234567890123456789012345678901234567890" as `0x${string}`;
+
+    expect(mapSettleError(new Error("Permit2612AmountMismatch"), payload, payer).errorReason).toBe(
+      Errors.ErrPermit2612AmountMismatch,
+    );
+    expect(mapSettleError(new Error("InvalidAmount()"), payload, payer).errorReason).toBe(
+      Errors.ErrPermit2InvalidAmount,
+    );
+    expect(mapSettleError(new Error("InvalidDestination"), payload, payer).errorReason).toBe(
+      Errors.ErrPermit2InvalidDestination,
+    );
+    expect(mapSettleError(new Error("InvalidOwner"), payload, payer).errorReason).toBe(
+      Errors.ErrPermit2InvalidOwner,
+    );
+    expect(mapSettleError(new Error("PaymentTooEarly"), payload, payer).errorReason).toBe(
+      Errors.ErrPermit2PaymentTooEarly,
+    );
+    expect(mapSettleError(new Error("InvalidSignature"), payload, payer).errorReason).toBe(
+      Errors.ErrPermit2InvalidSignature,
+    );
+    expect(mapSettleError(new Error("SignatureExpired"), payload, payer).errorReason).toBe(
+      Errors.ErrPermit2InvalidSignature,
+    );
+    expect(mapSettleError(new Error("InvalidNonce"), payload, payer).errorReason).toBe(
+      Errors.ErrPermit2InvalidNonce,
+    );
+    expect(
+      mapSettleError(new Error(Errors.ErrErc20ApprovalTxFailed), payload, payer).errorReason,
+    ).toBe(Errors.ErrErc20ApprovalBroadcastFailed);
+    expect(mapSettleError(new Error("AmountExceedsPermitted"), payload, payer).errorReason).toBe(
+      "upto_amount_exceeds_permitted",
+    );
+    expect(mapSettleError(new Error("UnauthorizedFacilitator"), payload, payer).errorReason).toBe(
+      "upto_unauthorized_facilitator",
+    );
+    expect(
+      mapSettleError(new Error("something else exploded"), payload, payer).errorReason,
+    ).toContain(Errors.ErrTransactionFailed);
+    expect(mapSettleError("not-an-error", payload, payer).errorReason).toBe(
+      Errors.ErrTransactionFailed,
+    );
+
+    const sig = "aa".repeat(64) + "1b";
+    expect(splitEip2612Signature(sig)).toEqual({
+      r: `0x${"aa".repeat(32)}`,
+      s: `0x${"aa".repeat(32)}`,
+      v: 27,
+    });
+    expect(splitEip2612Signature(`0x${sig}`).v).toBe(27);
+    expect(() => splitEip2612Signature("0xab")).toThrow(/invalid EIP-2612 signature length/);
+
+    const future = String(Math.floor(Date.now() / 1000) + 3600);
+    const token = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+    const valid = {
+      from: payer,
+      asset: token,
+      spender: PERMIT2_ADDRESS,
+      amount: "1000",
+      nonce: "1",
+      deadline: future,
+      signature: `0x${sig}`,
+      version: "1",
+    };
+    expect(validateEip2612PermitForPayment(valid, payer, token as `0x${string}`)).toEqual({
+      isValid: true,
+    });
+    expect(
+      validateEip2612PermitForPayment(
+        { ...valid, from: "0x0000000000000000000000000000000000000001" },
+        payer,
+        token as `0x${string}`,
+      ).invalidReason,
+    ).toBe(Errors.ErrEip2612FromMismatch);
+    expect(
+      validateEip2612PermitForPayment(
+        { ...valid, asset: "0x0000000000000000000000000000000000000002" },
+        payer,
+        token as `0x${string}`,
+      ).invalidReason,
+    ).toBe(Errors.ErrEip2612AssetMismatch);
+    expect(
+      validateEip2612PermitForPayment(
+        { ...valid, spender: "0x0000000000000000000000000000000000000003" },
+        payer,
+        token as `0x${string}`,
+      ).invalidReason,
+    ).toBe(Errors.ErrEip2612SpenderNotPermit2);
+    expect(
+      validateEip2612PermitForPayment({ ...valid, deadline: "1" }, payer, token as `0x${string}`)
+        .invalidReason,
+    ).toBe(Errors.ErrEip2612DeadlineExpired);
+  });
+});
+
+describe("registerExactEvmScheme (facilitator)", () => {
+  it("installs exact v2 on the requested networks and exact v1 on every supported network", () => {
+    const facilitator = new x402Facilitator();
+    const signer: FacilitatorEvmSigner = {
+      getAddresses: () => ["0x742D35CC6634c0532925A3b844BC9E7595F0BEb0"],
+      readContract: vi.fn(),
+      verifyTypedData: vi.fn(),
+      writeContract: vi.fn(),
+      sendTransaction: vi.fn(),
+      waitForTransactionReceipt: vi.fn(),
+      getCode: vi.fn(),
+    };
+    registerExactEvmScheme(facilitator, {
+      signer,
+      networks: ["eip155:84532", "eip155:8453"],
+      eip6492AllowedFactories: ["0x1111111111111111111111111111111111111111"],
+      simulateInSettle: true,
+    });
+
+    const supported = facilitator.getSupported();
+    const v2 = supported.kinds.filter(k => k.x402Version === 2 && k.scheme === "exact");
+    const v1 = supported.kinds.filter(k => k.x402Version === 1 && k.scheme === "exact");
+    expect(v2.map(k => k.network).sort()).toEqual(["eip155:8453", "eip155:84532"]);
+    expect(v1.map(k => k.network).sort()).toEqual([...NETWORKS].sort());
+  });
+});
+
+describe("validateErc20ApprovalForPayment", () => {
+  const payer = "0x1234567890123456789012345678901234567890" as `0x${string}`;
+  const token = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as `0x${string}`;
+  const validInfo = {
+    from: payer,
+    asset: token,
+    spender: PERMIT2_ADDRESS,
+    amount: "1000",
+    signedTransaction: ("0x" + "ab".repeat(32)) as `0x${string}`,
+    version: "1",
+  };
+
+  it("rejects invalid format, from/asset/spender mismatches, and parse failures", async () => {
+    expect(
+      (
+        await validateErc20ApprovalForPayment(
+          { ...validInfo, from: "not-an-address" },
+          payer,
+          token,
+        )
+      ).invalidReason,
+    ).toBe(Errors.ErrErc20ApprovalInvalidFormat);
+    expect(
+      (
+        await validateErc20ApprovalForPayment(
+          { ...validInfo, from: "0x0000000000000000000000000000000000000001" },
+          payer,
+          token,
+        )
+      ).invalidReason,
+    ).toBe(Errors.ErrErc20ApprovalFromMismatch);
+    expect(
+      (
+        await validateErc20ApprovalForPayment(
+          { ...validInfo, asset: "0x0000000000000000000000000000000000000002" },
+          payer,
+          token,
+        )
+      ).invalidReason,
+    ).toBe(Errors.ErrErc20ApprovalAssetMismatch);
+    expect(
+      (
+        await validateErc20ApprovalForPayment(
+          { ...validInfo, spender: "0x0000000000000000000000000000000000000003" },
+          payer,
+          token,
+        )
+      ).invalidReason,
+    ).toBe(Errors.ErrErc20ApprovalSpenderNotPermit2);
+
+    const { parseTransaction } = await import("viem");
+    vi.mocked(parseTransaction).mockImplementation(() => {
+      throw new Error("bad tx");
+    });
+    expect((await validateErc20ApprovalForPayment(validInfo, payer, token)).invalidReason).toBe(
+      Errors.ErrErc20ApprovalTxParseFailed,
+    );
+  });
+
+  it("rejects a parsed tx that targets the wrong contract or selector", async () => {
+    const { parseTransaction, recoverTransactionAddress } = await import("viem");
+    vi.mocked(parseTransaction).mockReturnValue({ to: undefined, data: "0x" } as never);
+    expect((await validateErc20ApprovalForPayment(validInfo, payer, token)).invalidReason).toBe(
+      Errors.ErrErc20ApprovalTxWrongTarget,
+    );
+
+    vi.mocked(parseTransaction).mockReturnValue({
+      to: token,
+      data: "0xdeadbeef",
+    } as never);
+    expect((await validateErc20ApprovalForPayment(validInfo, payer, token)).invalidReason).toBe(
+      Errors.ErrErc20ApprovalTxWrongSelector,
+    );
+
+    vi.mocked(parseTransaction).mockReturnValue({
+      to: token,
+      data: "0x095ea7b3",
+    } as never);
+    expect((await validateErc20ApprovalForPayment(validInfo, payer, token)).invalidReason).toBe(
+      Errors.ErrErc20ApprovalTxInvalidCalldata,
+    );
+
+    const approveWrongSpender =
+      "0x095ea7b3" +
+      "0000000000000000000000000000000000000000000000000000000000000001" +
+      "0000000000000000000000000000000000000000000000000000000000000001";
+    vi.mocked(parseTransaction).mockReturnValue({
+      to: token,
+      data: approveWrongSpender,
+    } as never);
+    expect((await validateErc20ApprovalForPayment(validInfo, payer, token)).invalidReason).toBe(
+      Errors.ErrErc20ApprovalTxWrongSpender,
+    );
+
+    const approvePermit2 =
+      "0x095ea7b3" +
+      PERMIT2_ADDRESS.slice(2).toLowerCase().padStart(64, "0") +
+      "0000000000000000000000000000000000000000000000000000000000000001";
+    vi.mocked(parseTransaction).mockReturnValue({
+      to: token,
+      data: approvePermit2,
+    } as never);
+    vi.mocked(recoverTransactionAddress).mockRejectedValue(new Error("bad sig"));
+    expect((await validateErc20ApprovalForPayment(validInfo, payer, token)).invalidReason).toBe(
+      Errors.ErrErc20ApprovalTxInvalidSignature,
+    );
+
+    vi.mocked(recoverTransactionAddress).mockResolvedValue(
+      "0x0000000000000000000000000000000000000001",
+    );
+    expect((await validateErc20ApprovalForPayment(validInfo, payer, token)).invalidReason).toBe(
+      Errors.ErrErc20ApprovalTxSignerMismatch,
+    );
+  });
+});
+
+describe("shared Permit2 simulation helpers", () => {
+  const payer = "0x1234567890123456789012345678901234567890" as `0x${string}`;
+  const token = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as `0x${string}`;
+  const config = { proxyAddress: x402ExactPermit2ProxyAddress, proxyABI: [] };
+  const permit2Payload = {
+    signature: "0xsig",
+    permit2Authorization: {
+      from: payer,
+      permitted: { token, amount: "1000" },
+      spender: x402ExactPermit2ProxyAddress,
+      nonce: "1",
+      deadline: "9",
+      witness: { to: payer, validAfter: "0" },
+    },
+  };
+
+  it("simulate helpers return false on RPC failure and when simulateTransactions is missing", async () => {
+    const signer = {
+      readContract: vi.fn().mockRejectedValue(new Error("rpc")),
+    } as unknown as FacilitatorEvmSigner;
+
+    const failing = await diagnosePermit2SimulationFailure(
+      config,
+      signer,
+      token,
+      permit2Payload,
+      "1000",
+    );
+    expect(failing.invalidReason).toBe(Errors.ErrPermit2SimulationFailed);
+
+    const prereqFailOpen = await checkPermit2Prerequisites(config, signer, token, payer, "1000");
+    expect(prereqFailOpen.isValid).toBe(true);
+
+    expect(await simulatePermit2Settle(config, signer, [])).toBe(false);
+    expect(
+      await simulatePermit2SettleWithPermit(config, signer, [], {
+        from: payer,
+        asset: token,
+        spender: PERMIT2_ADDRESS,
+        amount: "1000",
+        nonce: "1",
+        deadline: "9",
+        signature: `0x${"aa".repeat(65)}`,
+        version: "1",
+      }),
+    ).toBe(false);
+    expect(
+      await simulatePermit2SettleWithErc20Approval(config, signer, [], {
+        signedTransaction: "0x01",
+      }),
+    ).toBe(false);
+    expect(
+      await simulatePermit2SettleWithErc20Approval(
+        config,
+        {
+          ...signer,
+          simulateTransactions: vi.fn().mockRejectedValue(new Error("sim failed")),
+        },
+        [],
+        { signedTransaction: "0x01" },
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("x402Facilitator malformed exact EVM payloads", () => {
+  const network = "eip155:84532";
+  const payer = "0x1234567890123456789012345678901234567890";
+  const payTo = "0x742D35CC6634c0532925A3b844BC9E7595F0BEb0";
+  const asset = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+  const requirements: PaymentRequirements = {
+    scheme: "exact",
+    network,
+    amount: "1000000",
+    asset,
+    payTo,
+    maxTimeoutSeconds: 300,
+    extra: { name: "USDC", version: "2" },
+  };
+  const authorization = {
+    from: payer,
+    to: payTo,
+    value: requirements.amount,
+    validAfter: "0",
+    validBefore: "999999999999",
+    nonce: "0x00",
+  };
+  const permit2Authorization = {
+    from: payer,
+    spender: x402ExactPermit2ProxyAddress,
+    nonce: "1",
+    deadline: "999999999999",
+    permitted: { token: asset, amount: requirements.amount },
+    witness: { to: payTo, validAfter: "0" },
+  };
+
+  const cases: { name: string; payload: Record<string, unknown> }[] = [
+    { name: "empty authorization", payload: { authorization: {} } },
+    {
+      name: "missing value",
+      payload: {
+        authorization: {
+          from: payer,
+          to: payTo,
+          validAfter: "0",
+          validBefore: "999999999999",
+          nonce: "0x00",
+        },
+      },
+    },
+    {
+      name: "non-numeric value",
+      payload: { authorization: { ...authorization, value: "abc" } },
+    },
+    { name: "missing authorization", payload: {} },
+    { name: "empty permit2 authorization", payload: { permit2Authorization: {} } },
+    {
+      name: "non-numeric permit2 amount",
+      payload: {
+        permit2Authorization: {
+          ...permit2Authorization,
+          permitted: { token: asset, amount: "abc" },
+        },
+      },
+    },
+    {
+      name: "missing validBefore",
+      payload: {
+        authorization: {
+          from: payer,
+          to: payTo,
+          value: requirements.amount,
+          validAfter: "0",
+          nonce: "0x00",
+        },
+      },
+    },
+    {
+      name: "missing nonce",
+      payload: {
+        authorization: {
+          from: payer,
+          to: payTo,
+          value: requirements.amount,
+          validAfter: "0",
+          validBefore: "999999999999",
+        },
+      },
+    },
+    {
+      name: "non-string value",
+      payload: { authorization: { ...authorization, value: 1000000 } },
+    },
+    {
+      name: "non-string validBefore",
+      payload: { authorization: { ...authorization, validBefore: 999999999999 } },
+    },
+    {
+      name: "non-string permit2 amount",
+      payload: {
+        permit2Authorization: {
+          ...permit2Authorization,
+          permitted: { token: asset, amount: 1000000 },
+        },
+      },
+    },
+    { name: "missing signature", payload: { authorization } },
+    { name: "missing permit2 signature", payload: { permit2Authorization } },
+  ];
+
+  function makeFacilitator() {
+    const getCode = vi.fn().mockResolvedValue("0x6080604052" as `0x${string}`);
+    const signer: FacilitatorEvmSigner = {
+      getAddresses: () => [payTo as `0x${string}`],
+      readContract: vi.fn().mockResolvedValue("0x1626ba7e"),
+      verifyTypedData: vi.fn().mockResolvedValue(true),
+      writeContract: vi.fn(),
+      sendTransaction: vi.fn(),
+      waitForTransactionReceipt: vi.fn(),
+      getCode,
+    };
+    const facilitator = registerExactEvmScheme(new x402Facilitator(), {
+      signer,
+      networks: network,
+    });
+    return { facilitator, getCode };
+  }
+
+  function payment(payload: Record<string, unknown>): PaymentPayload {
+    return {
+      x402Version: 2,
+      payload,
+      accepted: requirements,
+      resource: { url: "https://example.com", description: "", mimeType: "" },
+    };
+  }
+
+  it.each(cases)(
+    "verify returns invalid_exact_evm_payload for $name",
+    async ({ payload: body }) => {
+      const { facilitator, getCode } = makeFacilitator();
+      const result = await facilitator.verify(payment(body), requirements);
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe("invalid_exact_evm_payload");
+      expect(getCode).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(cases)(
+    "settle returns invalid_exact_evm_payload for $name",
+    async ({ payload: body }) => {
+      const { facilitator, getCode } = makeFacilitator();
+      const result = await facilitator.settle(payment(body), requirements);
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe("invalid_exact_evm_payload");
+      expect(result.transaction).toBe("");
+      expect(result.network).toBe(network);
+      expect(getCode).not.toHaveBeenCalled();
+    },
+  );
+});
+
+const MISSING = Symbol("missing");
+const UINT256_PLUS_ONE = (1n << 256n).toString();
+
+function fieldPath(parent: string | undefined, key: string): string {
+  return parent === undefined ? key : `${parent}.${key}`;
+}
+
+function applyField(
+  payload: Record<string, unknown>,
+  parent: string | undefined,
+  key: string,
+  value: unknown,
+): void {
+  const target = parent === undefined ? payload : (payload[parent] as Record<string, unknown>);
+  if (value === MISSING) {
+    delete target[key];
+    return;
+  }
+  target[key] = value;
+}
+
+function setPath(root: Record<string, unknown>, path: string[], value: unknown): void {
+  let cursor = root;
+  for (const key of path.slice(0, -1)) {
+    cursor = cursor[key] as Record<string, unknown>;
+  }
+  const leaf = path[path.length - 1];
+  if (value === MISSING) {
+    delete cursor[leaf];
+    return;
+  }
+  cursor[leaf] = value;
+}
+
+describe("exact EVM malformed payload field errors", () => {
+  const network = "eip155:84532";
+  const payer = "0x1234567890123456789012345678901234567890";
+  const recipient = "0x0987654321098765432109876543210987654321";
+  const asset = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+  const nonce = `0x${"11".repeat(32)}`;
+  const requirements: PaymentRequirements = {
+    scheme: "exact",
+    network,
+    amount: "100000",
+    asset,
+    payTo: recipient,
+    maxTimeoutSeconds: 3600,
+    extra: { name: "USD Coin", version: "2" },
+  };
+
+  const eip3009Cases: { name: string; parent?: string; key: string; value: unknown }[] = [
+    { name: "authorization missing", key: "authorization", value: MISSING },
+    { name: "authorization not object", key: "authorization", value: "oops" },
+    { name: "signature not string", key: "signature", value: 123 },
+    { name: "from missing", parent: "authorization", key: "from", value: MISSING },
+    { name: "from not an address", parent: "authorization", key: "from", value: "not-an-address" },
+    { name: "value missing", parent: "authorization", key: "value", value: MISSING },
+    { name: "value not numeric", parent: "authorization", key: "value", value: "abc" },
+    { name: "value null", parent: "authorization", key: "value", value: null },
+    { name: "value json number", parent: "authorization", key: "value", value: 100000 },
+    { name: "value negative", parent: "authorization", key: "value", value: "-1" },
+    {
+      name: "value over digit limit",
+      parent: "authorization",
+      key: "value",
+      value: "1".repeat(5000),
+    },
+    { name: "value above uint256", parent: "authorization", key: "value", value: UINT256_PLUS_ONE },
+    { name: "validBefore missing", parent: "authorization", key: "validBefore", value: MISSING },
+    {
+      name: "validBefore too long",
+      parent: "authorization",
+      key: "validBefore",
+      value: "9".repeat(79),
+    },
+    { name: "validAfter not string", parent: "authorization", key: "validAfter", value: [] },
+    { name: "to not string", parent: "authorization", key: "to", value: 123 },
+    { name: "nonce not string", parent: "authorization", key: "nonce", value: 123 },
+    { name: "nonce not hex", parent: "authorization", key: "nonce", value: "zz" },
+    { name: "nonce not 32 bytes", parent: "authorization", key: "nonce", value: "0x0001" },
+  ];
+
+  const permit2Cases: { name: string; path: string[]; value: unknown }[] = [
+    { name: "authorization not object", path: ["permit2Authorization"], value: "oops" },
+    { name: "permitted not object", path: ["permit2Authorization", "permitted"], value: null },
+    { name: "witness not object", path: ["permit2Authorization", "witness"], value: [] },
+    { name: "from not string", path: ["permit2Authorization", "from"], value: 123 },
+    { name: "spender missing", path: ["permit2Authorization", "spender"], value: MISSING },
+    { name: "token not string", path: ["permit2Authorization", "permitted", "token"], value: null },
+    { name: "witness to not string", path: ["permit2Authorization", "witness", "to"], value: 123 },
+    { name: "nonce not numeric", path: ["permit2Authorization", "nonce"], value: "abc" },
+    {
+      name: "nonce above uint256",
+      path: ["permit2Authorization", "nonce"],
+      value: UINT256_PLUS_ONE,
+    },
+    { name: "deadline missing", path: ["permit2Authorization", "deadline"], value: MISSING },
+    {
+      name: "deadline over digit limit",
+      path: ["permit2Authorization", "deadline"],
+      value: "1".repeat(5000),
+    },
+    { name: "amount negative", path: ["permit2Authorization", "permitted", "amount"], value: "-1" },
+    {
+      name: "amount json number",
+      path: ["permit2Authorization", "permitted", "amount"],
+      value: 1000,
+    },
+    { name: "validAfter list", path: ["permit2Authorization", "witness", "validAfter"], value: [] },
+    { name: "signature not string", path: ["signature"], value: 123 },
+  ];
+
+  function eip3009Body(): Record<string, unknown> {
+    return {
+      signature: `0x${"00".repeat(65)}`,
+      authorization: {
+        from: payer,
+        to: recipient,
+        value: "100000",
+        validAfter: "0",
+        validBefore: "9999999999",
+        nonce,
+      },
+    };
+  }
+
+  function permit2Body(): Record<string, unknown> {
+    return {
+      signature: `0x${"aa".repeat(65)}`,
+      permit2Authorization: {
+        from: payer,
+        permitted: { token: asset, amount: "1000" },
+        spender: x402ExactPermit2ProxyAddress,
+        nonce: "12345678901234567890",
+        deadline: "9999999999",
+        witness: { to: recipient, validAfter: "0" },
+      },
+    };
+  }
+
+  function payment(body: Record<string, unknown>): PaymentPayload {
+    return {
+      x402Version: 2,
+      payload: body,
+      accepted: requirements,
+      resource: { url: "https://example.com", description: "", mimeType: "" },
+    };
+  }
+
+  function facilitatorWithWrite() {
+    const getCode = vi.fn().mockResolvedValue("0x6080604052" as `0x${string}`);
+    const writeContract = vi.fn();
+    const signer: FacilitatorEvmSigner = {
+      getAddresses: () => [recipient as `0x${string}`],
+      readContract: vi.fn().mockResolvedValue("0x1626ba7e"),
+      verifyTypedData: vi.fn().mockResolvedValue(true),
+      writeContract,
+      sendTransaction: vi.fn(),
+      waitForTransactionReceipt: vi.fn(),
+      getCode,
+    };
+    const facilitator = registerExactEvmScheme(new x402Facilitator(), {
+      signer,
+      networks: network,
+    });
+    return { facilitator, getCode, writeContract };
+  }
+
+  it.each(eip3009Cases)(
+    "verify rejects malformed EIP-3009 payload: $name",
+    async ({ parent, key, value }) => {
+      const body = eip3009Body();
+      applyField(body, parent, key, value);
+      const { facilitator, getCode } = facilitatorWithWrite();
+      const result = await facilitator.verify(payment(body), requirements);
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe("invalid_exact_evm_payload");
+      expect(result.invalidMessage?.startsWith(`${fieldPath(parent, key)} must be `)).toBe(true);
+      expect(getCode).not.toHaveBeenCalled();
+    },
+  );
+
+  it("verify reports payer for a malformed EIP-3009 payload with a readable from", async () => {
+    const body = eip3009Body();
+    applyField(body, "authorization", "value", "abc");
+    const { facilitator } = facilitatorWithWrite();
+    const result = await facilitator.verify(payment(body), requirements);
+    expect(result.invalidReason).toBe("invalid_exact_evm_payload");
+    expect(result.payer).toBe(payer);
+  });
+
+  it.each(eip3009Cases)(
+    "settle rejects malformed EIP-3009 payload: $name",
+    async ({ parent, key, value }) => {
+      const body = eip3009Body();
+      applyField(body, parent, key, value);
+      const { facilitator, writeContract } = facilitatorWithWrite();
+      const result = await facilitator.settle(payment(body), requirements);
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe("invalid_exact_evm_payload");
+      expect(result.errorMessage?.startsWith(`${fieldPath(parent, key)} must be `)).toBe(true);
+      expect(result.network).toBe(network);
+      expect(result.transaction).toBe("");
+      expect(writeContract).not.toHaveBeenCalled();
+    },
+  );
+
+  it("settle reports payer for a malformed EIP-3009 payload with a readable from", async () => {
+    const body = eip3009Body();
+    applyField(body, "authorization", "value", "abc");
+    const { facilitator } = facilitatorWithWrite();
+    const result = await facilitator.settle(payment(body), requirements);
+    expect(result.errorReason).toBe("invalid_exact_evm_payload");
+    expect(result.payer).toBe(payer);
+  });
+
+  it.each(permit2Cases)(
+    "verify rejects malformed Permit2 payload: $name",
+    async ({ path, value }) => {
+      const body = permit2Body();
+      setPath(body, path, value);
+      const { facilitator, getCode } = facilitatorWithWrite();
+      const result = await facilitator.verify(payment(body), requirements);
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe("invalid_exact_evm_payload");
+      expect(result.invalidMessage?.startsWith(`${path.join(".")} must be `)).toBe(true);
+      expect(getCode).not.toHaveBeenCalled();
+    },
+  );
+
+  it("verify reports payer for a malformed Permit2 payload with a readable from", async () => {
+    const body = permit2Body();
+    setPath(body, ["permit2Authorization", "deadline"], "abc");
+    const { facilitator } = facilitatorWithWrite();
+    const result = await facilitator.verify(payment(body), requirements);
+    expect(result.invalidReason).toBe("invalid_exact_evm_payload");
+    expect(result.payer).toBe(payer);
+  });
+
+  it.each(permit2Cases)(
+    "settle rejects malformed Permit2 payload: $name",
+    async ({ path, value }) => {
+      const body = permit2Body();
+      setPath(body, path, value);
+      const { facilitator, writeContract } = facilitatorWithWrite();
+      const result = await facilitator.settle(payment(body), requirements);
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe("invalid_exact_evm_payload");
+      expect(result.errorMessage?.startsWith(`${path.join(".")} must be `)).toBe(true);
+      expect(result.network).toBe(network);
+      expect(result.transaction).toBe("");
+      expect(writeContract).not.toHaveBeenCalled();
+    },
+  );
 });

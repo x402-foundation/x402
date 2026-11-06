@@ -32,6 +32,7 @@ from x402.http.types import (
     RouteConfig,
 )
 from x402.schemas import PaymentPayload, PaymentRequirements
+from x402.schemas.errors import FacilitatorCapabilityError
 from x402.schemas.hooks import (
     CompletedSettlement,
     PaymentCancellationDispatcher,
@@ -472,16 +473,100 @@ class TestFlaskMiddlewareConcurrency:
             mock_http_server.return_value = mock_http_server_instance
 
             PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=True)
+            assert call_count == 1
 
             with app.test_client() as client:
-                # First request fails
+                # First request retries after the eager attempt failed
                 response1 = client.get("/api/protected")
                 assert response1.status_code == 502
 
                 # Second request retries init since first failed
                 response2 = client.get("/api/protected")
                 assert response2.status_code == 502
-                assert call_count == 2
+                assert call_count == 3
+
+
+class TestFlaskBackgroundInit:
+    """Fatal capability errors at eager initialize must exit the process."""
+
+    def test_eager_init_exits_on_capability_mismatch(self):
+        app = Flask(__name__)
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+        exit_codes: list[int] = []
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            instance = MagicMock()
+            instance.initialize.side_effect = FacilitatorCapabilityError(
+                ["upto on solana:devnet: missing"]
+            )
+            mock_http_server.return_value = instance
+            with patch(
+                "x402.http.background_init._process_exit",
+                lambda code: exit_codes.append(code),
+            ):
+                PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=True)
+        assert exit_codes == [1]
+
+    def test_eager_init_does_not_exit_on_retryable_timeout(self):
+        app = Flask(__name__)
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+        exit_codes: list[int] = []
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            instance = MagicMock()
+            instance.initialize.side_effect = Exception("facilitator request timed out")
+            mock_http_server.return_value = instance
+            with patch(
+                "x402.http.background_init._process_exit",
+                lambda code: exit_codes.append(code),
+            ):
+                PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=True)
+        assert exit_codes == []
+
+    def test_eager_init_does_not_exit_on_empty_supported(self):
+        app = Flask(__name__)
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+        exit_codes: list[int] = []
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            instance = MagicMock()
+            instance.initialize.side_effect = RuntimeError(
+                "Failed to initialize: no supported payment kinds loaded from any facilitator."
+            )
+            mock_http_server.return_value = instance
+            with patch(
+                "x402.http.background_init._process_exit",
+                lambda code: exit_codes.append(code),
+            ):
+                PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=True)
+        assert exit_codes == []
 
 
 class TestPaymentMiddlewareFunction:
@@ -598,6 +683,49 @@ class TestFlaskMiddlewareIntegration:
             with app.test_client() as client:
                 response = client.get("/api/protected")
                 assert response.status_code == 402
+
+    def test_sends_declared_text_plain_payment_error_body_without_json_encoding(self):
+        """A declared text/plain payment-error string is sent as raw text."""
+        expected = "Payment required.\nPreview line 2."
+        app = Flask(__name__)
+
+        @app.route("/api/protected")
+        def protected_route():
+            return "Protected content"
+
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request.return_value = HTTPProcessResult(
+                type="payment-error",
+                response=HTTPResponseInstructions(
+                    status=402,
+                    headers={"Content-Type": "text/plain; charset=utf-8"},
+                    body=expected,
+                    is_html=False,
+                ),
+            )
+            mock_http_server.return_value = mock_http_server_instance
+
+            PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=False)
+
+            with app.test_client() as client:
+                response = client.get("/api/protected")
+                assert response.status_code == 402
+                assert response.headers.getlist("Content-Type") == ["text/plain; charset=utf-8"]
+                assert response.data == expected.encode("utf-8")
 
     def test_verified_payment_proceeds_to_route(self):
         """Test that verified payment allows route access."""
@@ -793,6 +921,53 @@ class TestFlaskMiddlewareIntegration:
                 assert data == {}
                 assert "PAYMENT-RESPONSE" in response.headers
 
+    def test_sends_declared_text_plain_settlement_failure_body_without_json_encoding(self):
+        """A declared text/plain settlement-failure string is sent as raw text."""
+        expected = "Payment required.\nPreview line 2."
+        app = Flask(__name__)
+
+        @app.route("/api/protected")
+        def protected_route():
+            return "Protected content"
+
+        mock_server = MagicMock()
+        routes = {}
+
+        payment_payload = make_v2_payload()
+        payment_requirements = make_payment_requirements()
+
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request.return_value = HTTPProcessResult(
+                type="payment-verified",
+                payment_payload=payment_payload,
+                payment_requirements=payment_requirements,
+            )
+            mock_http_server_instance.process_settlement.return_value = ProcessSettleResult(
+                success=False,
+                error_reason="Insufficient funds",
+                response=HTTPResponseInstructions(
+                    status=402,
+                    headers={
+                        "Content-Type": "text/plain; charset=utf-8",
+                        "PAYMENT-RESPONSE": "base64encoded",
+                    },
+                    body=expected,
+                    is_html=False,
+                ),
+            )
+            mock_http_server.return_value = mock_http_server_instance
+
+            PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=False)
+
+            with app.test_client() as client:
+                response = client.get("/api/protected")
+                assert response.status_code == 402
+                assert response.headers.getlist("Content-Type") == ["text/plain; charset=utf-8"]
+                assert response.data == expected.encode("utf-8")
+                assert response.headers["PAYMENT-RESPONSE"] == "base64encoded"
+
     def test_settlement_unexpected_exception_returns_402_with_payment_response(self, caplog):
         """An unexpected settlement error must be LOGGED and surfaced as a settle
         failure (402 + PAYMENT-RESPONSE, success=False) - not a silent empty-body
@@ -833,7 +1008,7 @@ class TestFlaskMiddlewareIntegration:
                     response = client.get("/api/protected")
 
             assert response.status_code == 402
-            assert json.loads(response.data) == {}
+            assert json.loads(response.data) == {"error": "settlement_failed"}
             assert "PAYMENT-RESPONSE" in response.headers
             # raw exception detail is logged for operators...
             assert "boom: RPC node unreachable mid-settle" in caplog.text
@@ -1196,6 +1371,7 @@ def test_payment_middleware_from_config_builds_with_sync_server():
         app,
         {"/api/protected": {"price": "$0.01", "pay_to": "0x" + "1" * 40}},
         facilitator_client=facilitator,
+        sync_facilitator_on_start=False,
     )
 
     assert middleware is not None
@@ -1259,3 +1435,69 @@ class TestEncodedPathBypass:
 
     def test_unrelated_path_is_not_gated(self, client) -> None:
         assert client.get("/health").status_code == 200
+
+
+class TestLiteralRoutePercentEncodedSeparatorBypass:
+    """A literal route must stay gated when a WSGI server reports an escaped
+    ``RAW_URI`` that diverges from the decoded ``PATH_INFO`` Werkzeug dispatches on.
+    """
+
+    @staticmethod
+    def _routes() -> dict[str, RouteConfig]:
+        option = PaymentOption(
+            scheme="cash",
+            pay_to="Alice",
+            price="$0.01",
+            network="x402:cash",
+        )
+        return {"GET /api/premium": RouteConfig(accepts=option)}
+
+    @staticmethod
+    def _cash_server() -> x402ResourceServerSync:
+        facilitator = x402FacilitatorSync().register(
+            ["x402:cash"],
+            CashSchemeNetworkFacilitator(),
+        )
+        server = x402ResourceServerSync(CashFacilitatorClientSync(facilitator))
+        server.register("x402:cash", CashSchemeNetworkServer())
+        server.initialize()
+        return server
+
+    @pytest.fixture()
+    def client(self):
+        app = Flask(__name__)
+        payment_middleware(
+            app,
+            self._routes(),
+            self._cash_server(),
+            sync_facilitator_on_start=False,
+        )
+
+        @app.route("/api/premium")
+        def premium() -> tuple[str, int]:
+            return "paid content", 200
+
+        return app.test_client()
+
+    def test_baseline_literal_route_returns_402(self, client) -> None:
+        assert client.get("/api/premium").status_code == 402
+
+    def test_head_uses_get_payment_rule(self, client) -> None:
+        assert client.head("/api/premium").status_code == 402
+
+    @pytest.mark.parametrize(
+        "raw_uri",
+        [
+            "/api%2Fpremium",
+            "/api%2fpremium",
+            "/%61pi%2Fpremium",
+        ],
+        ids=["encoded-slash", "lowercase-encoded-slash", "encoded-slash-and-letter"],
+    )
+    def test_percent_encoded_raw_uri_still_returns_402(self, client, raw_uri: str) -> None:
+        # PATH_INFO stays decoded; RAW_URI carries the escaped target.
+        response = client.get("/api/premium", environ_overrides={"RAW_URI": raw_uri})
+        assert response.status_code == 402
+
+    def test_unrelated_path_is_not_gated(self, client) -> None:
+        assert client.get("/health").status_code == 404

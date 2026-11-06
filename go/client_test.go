@@ -32,7 +32,7 @@ func (m *mockSchemeNetworkClientV1) FindDefaultAsset(asset string, network Netwo
 	return &DefaultAsset{Asset: asset, Decimals: 6, Symbol: "MOCK"}
 }
 
-func (m *mockSchemeNetworkClientV1) CreatePaymentPayload(ctx context.Context, requirements types.PaymentRequirementsV1) (types.PaymentPayloadV1, error) {
+func (m *mockSchemeNetworkClientV1) CreatePaymentPayload(ctx context.Context, requirements types.PaymentRequirementsV1, _ PaymentPayloadContext) (types.PaymentPayloadV1, error) {
 	return types.PaymentPayloadV1{
 		X402Version: 1,
 		Scheme:      m.scheme,
@@ -46,9 +46,15 @@ func (m *mockSchemeNetworkClientV1) CreatePaymentPayload(ctx context.Context, re
 
 // Mock V2 client for testing
 type mockSchemeNetworkClientV2 struct {
-	scheme             string
-	findDefaultAsset   func(asset string, network Network) *DefaultAsset
-	noFindDefaultAsset bool
+	scheme                    string
+	findDefaultAsset          func(asset string, network Network) *DefaultAsset
+	noFindDefaultAsset        bool
+	createPaymentPayloadCalls []mockCreatePaymentPayloadCall
+}
+
+type mockCreatePaymentPayloadCall struct {
+	requirements types.PaymentRequirements
+	context      PaymentPayloadContext
 }
 
 func (m *mockSchemeNetworkClientV2) Scheme() string {
@@ -65,7 +71,11 @@ func (m *mockSchemeNetworkClientV2) FindDefaultAsset(asset string, network Netwo
 	return &DefaultAsset{Asset: asset, Decimals: 6, Symbol: "MOCK"}
 }
 
-func (m *mockSchemeNetworkClientV2) CreatePaymentPayload(ctx context.Context, requirements types.PaymentRequirements) (types.PaymentPayload, error) {
+func (m *mockSchemeNetworkClientV2) CreatePaymentPayload(ctx context.Context, requirements types.PaymentRequirements, payloadCtx PaymentPayloadContext) (types.PaymentPayload, error) {
+	m.createPaymentPayloadCalls = append(m.createPaymentPayloadCalls, mockCreatePaymentPayloadCall{
+		requirements: requirements,
+		context:      payloadCtx,
+	})
 	return types.PaymentPayload{
 		X402Version: 2,
 		Payload: map[string]interface{}{
@@ -527,6 +537,7 @@ func (m *mockFailableV1) Scheme() string { return "mock" }
 func (m *mockFailableV1) CreatePaymentPayload(
 	_ context.Context,
 	_ types.PaymentRequirementsV1,
+	_ PaymentPayloadContext,
 ) (types.PaymentPayloadV1, error) {
 	if m.fail {
 		return types.PaymentPayloadV1{}, fmt.Errorf("fail")
@@ -540,6 +551,7 @@ func (m *mockFailableV2) Scheme() string { return "mock" }
 func (m *mockFailableV2) CreatePaymentPayload(
 	_ context.Context,
 	_ types.PaymentRequirements,
+	_ PaymentPayloadContext,
 ) (types.PaymentPayload, error) {
 	if m.fail {
 		return types.PaymentPayload{}, fmt.Errorf("fail")
@@ -1148,5 +1160,135 @@ func TestSpendControls(t *testing.T) {
 		_, err = client.SelectPaymentRequirements([]types.PaymentRequirements{req(rlusd.Asset, "1.01", xrpl)})
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "maxAmountPerPayment")
+	})
+}
+
+func TestCreatePaymentPayloadSpendCapContext(t *testing.T) {
+	network := Network("eip155:8453")
+	usdc := DefaultAsset{
+		Asset:    "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+		Decimals: 6,
+		Symbol:   "USDC",
+	}
+
+	clientWithDefaultAsset := func(entry DefaultAsset, controls *SpendControls, disabled bool) (*x402Client, *mockSchemeNetworkClientV2) {
+		mockClient := &mockSchemeNetworkClientV2{scheme: "exact"}
+		mockClient.findDefaultAsset = func(asset string, _ Network) *DefaultAsset {
+			if strings.EqualFold(asset, entry.Asset) {
+				copied := entry
+				return &copied
+			}
+			return nil
+		}
+		client := Newx402Client()
+		client.Register(network, mockClient)
+		if disabled {
+			client.DisableSpendControls()
+		} else if controls != nil {
+			client.SetSpendControls(*controls)
+		}
+		return client, mockClient
+	}
+
+	req := func(amount string) types.PaymentRequirements {
+		return types.PaymentRequirements{
+			Scheme:  "exact",
+			Network: string(network),
+			Asset:   usdc.Asset,
+			Amount:  amount,
+			PayTo:   "0xpay",
+		}
+	}
+
+	t.Run("passes the resolved atomic spend cap on payment payload context", func(t *testing.T) {
+		client, mockClient := clientWithDefaultAsset(usdc, nil, false)
+		_, err := client.CreatePaymentPayload(context.Background(), req("1000"), nil, nil)
+		require.NoError(t, err)
+		require.Equal(t, "1000000", mockClient.createPaymentPayloadCalls[0].context.MaxAmountPerPayment)
+	})
+
+	t.Run("omits the spend cap on context when spend controls are disabled", func(t *testing.T) {
+		client, mockClient := clientWithDefaultAsset(usdc, nil, true)
+		_, err := client.CreatePaymentPayload(context.Background(), req("5000000"), nil, nil)
+		require.NoError(t, err)
+		require.Empty(t, mockClient.createPaymentPayloadCalls[0].context.MaxAmountPerPayment)
+	})
+
+	t.Run("omits the spend cap on context when the USD cap is disabled", func(t *testing.T) {
+		client, mockClient := clientWithDefaultAsset(usdc, &SpendControls{DisableMaxAmountPerPayment: true}, false)
+		_, err := client.CreatePaymentPayload(context.Background(), req("5000000"), nil, nil)
+		require.NoError(t, err)
+		require.Empty(t, mockClient.createPaymentPayloadCalls[0].context.MaxAmountPerPayment)
+	})
+
+	t.Run("passes a custom Money USD cap on context in atomic units", func(t *testing.T) {
+		client, mockClient := clientWithDefaultAsset(usdc, &SpendControls{MaxAmountPerPayment: "$5"}, false)
+		_, err := client.CreatePaymentPayload(context.Background(), req("1000"), nil, nil)
+		require.NoError(t, err)
+		require.Equal(t, "5000000", mockClient.createPaymentPayloadCalls[0].context.MaxAmountPerPayment)
+	})
+
+	t.Run("passes an allowedAssets atomic cap on context", func(t *testing.T) {
+		client, mockClient := clientWithDefaultAsset(usdc, &SpendControls{
+			AllowedAssets: []SpendControlAsset{{Asset: usdc.Asset, Network: network, MaxAmountPerPayment: "500000"}},
+		}, false)
+		_, err := client.CreatePaymentPayload(context.Background(), req("100"), nil, nil)
+		require.NoError(t, err)
+		require.Equal(t, "500000", mockClient.createPaymentPayloadCalls[0].context.MaxAmountPerPayment)
+	})
+}
+
+type recoveringScheme struct {
+	mockFailableV2
+	calls *[]string
+}
+
+func (s *recoveringScheme) OnPaymentCreationFailure(ctx context.Context, failure PaymentCreationFailureContext) (*PaymentCreationFailureHookResult, error) {
+	*s.calls = append(*s.calls, "scheme")
+	if failure.PaymentRequired == nil {
+		return nil, nil
+	}
+	return &PaymentCreationFailureHookResult{
+		Recovered: true,
+		Payload: types.PaymentPayload{
+			X402Version: 2,
+			Accepted:    types.PaymentRequirements{Scheme: "mock", Network: "test", Amount: "1"},
+		},
+	}, nil
+}
+
+func TestSchemePaymentCreationFailureHandlerRunsAfterUserHooks(t *testing.T) {
+	requirements := types.PaymentRequirements{Scheme: "mock", Network: "test", Amount: "1"}
+	required := types.PaymentRequired{X402Version: 2, Accepts: []types.PaymentRequirements{requirements}}
+
+	t.Run("scheme handler runs after a user hook that does not recover", func(t *testing.T) {
+		var calls []string
+		client := Newx402Client()
+		client.Register(Network("test"), &recoveringScheme{mockFailableV2: mockFailableV2{fail: true}, calls: &calls})
+		client.OnPaymentCreationFailure(func(PaymentCreationFailureContext) (*PaymentCreationFailureHookResult, error) {
+			calls = append(calls, "failure")
+			return nil, nil
+		})
+		payload, err := client.CreatePaymentPayload(WithPaymentRequired(context.Background(), required), requirements, nil, nil)
+		require.NoError(t, err)
+		require.Equal(t, 2, payload.X402Version)
+		require.Equal(t, []string{"failure", "scheme"}, calls)
+	})
+
+	t.Run("user hook recovery skips the scheme handler", func(t *testing.T) {
+		var calls []string
+		client := Newx402Client()
+		client.Register(Network("test"), &recoveringScheme{mockFailableV2: mockFailableV2{fail: true}, calls: &calls})
+		client.OnPaymentCreationFailure(func(PaymentCreationFailureContext) (*PaymentCreationFailureHookResult, error) {
+			calls = append(calls, "failure")
+			return &PaymentCreationFailureHookResult{
+				Recovered: true,
+				Payload:   types.PaymentPayload{X402Version: 2, Accepted: requirements},
+			}, nil
+		})
+		payload, err := client.CreatePaymentPayload(WithPaymentRequired(context.Background(), required), requirements, nil, nil)
+		require.NoError(t, err)
+		require.Equal(t, requirements, payload.Accepted)
+		require.Equal(t, []string{"failure"}, calls)
 	})
 }

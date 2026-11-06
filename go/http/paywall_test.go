@@ -272,6 +272,18 @@ func TestRegisterPaywallProvider(t *testing.T) {
 			t.Error("expected built-in template with window.x402 injection")
 		}
 	})
+
+	t.Run("no provider passes RPCURLs to the built-in template", func(t *testing.T) {
+		server := Newx402HTTPResourceServer(routes)
+		network := "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
+		config := &PaywallConfig{RPCURLs: map[string]string{network: "https://rpc.example.com"}}
+
+		got := server.generatePaywallHTMLV2(makePaymentRequired(network), config, "")
+		want := `rpcUrls: {"solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp":"https://rpc.example.com"}`
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in built-in template output", want)
+		}
+	})
 }
 
 // --- injectPaywallConfig tests ---
@@ -346,6 +358,26 @@ func TestInjectPaywallConfig(t *testing.T) {
 		got := injectPaywallConfig(template, paymentReq, nil)
 		if !strings.Contains(got, "faucetUrls: undefined") {
 			t.Errorf("expected faucetUrls: undefined in output, got %q", got)
+		}
+	})
+
+	t.Run("injects RPCURLs map when set", func(t *testing.T) {
+		config := &PaywallConfig{
+			RPCURLs: map[string]string{
+				"solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp": "https://rpc.example.com/?key=k",
+			},
+		}
+		got := injectPaywallConfig(template, paymentReq, config)
+		want := `rpcUrls: {"solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp":"https://rpc.example.com/?key=k"}`
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in output, got %q", want, got)
+		}
+	})
+
+	t.Run("emits rpcUrls: undefined when RPCURLs unset", func(t *testing.T) {
+		got := injectPaywallConfig(template, paymentReq, nil)
+		if !strings.Contains(got, "rpcUrls: undefined") {
+			t.Errorf("expected rpcUrls: undefined in output, got %q", got)
 		}
 	})
 }

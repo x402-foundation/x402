@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -1004,6 +1005,20 @@ func (m *mockEscrowScheme) SettleOnCancel(ctx x402.VerifiedPaymentCanceledContex
 	return nil, nil
 }
 
+// mockAfterHandlerCancelScheme is authorization-flow with SettleOnCancel so
+// cancel settle can run without a before-handler deposit.
+type mockAfterHandlerCancelScheme struct {
+	mockSchemeNetworkServer
+	settleOnCancel func(ctx x402.VerifiedPaymentCanceledContext) (*types.PaymentRequirements, error)
+}
+
+func (m *mockAfterHandlerCancelScheme) SettleOnCancel(ctx x402.VerifiedPaymentCanceledContext) (*types.PaymentRequirements, error) {
+	if m.settleOnCancel != nil {
+		return m.settleOnCancel(ctx)
+	}
+	return nil, nil
+}
+
 // recordingEnricherScheme records the payload passed to 402 enrichers without
 // mutating Extra (so matching still succeeds).
 type recordingEnricherScheme struct {
@@ -1335,6 +1350,463 @@ func TestPaymentWrapper_SettleOnCancelPrefersCancelReceipt(t *testing.T) {
 	}
 }
 
+func TestPaymentWrapper_CancelWithoutBeforeHandlerOmitsPaymentMeta(t *testing.T) {
+	var settleCalls int
+	mockFacilitator := &mockFacilitatorClient{
+		settleFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {
+			settleCalls++
+			var reqs types.PaymentRequirements
+			_ = json.Unmarshal(requirementsBytes, &reqs)
+			return &x402.SettleResponse{
+				Success: true, Transaction: "0xcancel", Amount: reqs.Amount, Network: "x402:cash", Payer: "p",
+			}, nil
+		},
+	}
+	scheme := &mockAfterHandlerCancelScheme{
+		mockSchemeNetworkServer: mockSchemeNetworkServer{scheme: "cash"},
+		settleOnCancel: func(c x402.VerifiedPaymentCanceledContext) (*types.PaymentRequirements, error) {
+			reqs := c.Requirements.(types.PaymentRequirements)
+			reqs.Amount = "0"
+			return &reqs, nil
+		},
+	}
+	server := x402.Newx402ResourceServer(
+		x402.WithFacilitatorClient(mockFacilitator),
+		x402.WithSchemeServer("x402:cash", scheme),
+	)
+	ctx := context.Background()
+	if err := server.Initialize(ctx); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+
+	wrapper := NewPaymentWrapper(server, PaymentWrapperConfig{
+		Accepts: []types.PaymentRequirements{
+			{Scheme: "cash", Network: "x402:cash", Amount: "1000", PayTo: "test-recipient"},
+		},
+	})
+	wrapped := wrapper.Wrap(func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return nil, fmt.Errorf("boom")
+	})
+
+	payload := types.PaymentPayload{
+		X402Version: 2,
+		Accepted:    types.PaymentRequirements{Scheme: "cash", Network: "x402:cash", Amount: "1000", PayTo: "test-recipient"},
+		Payload:     map[string]interface{}{"signature": "~test-payer"},
+	}
+	result, err := wrapped(ctx, makeCallToolRequest(nil, mcp.Meta{MCP_PAYMENT_META_KEY: payload}))
+	if err == nil || err.Error() != "boom" {
+		t.Fatalf("expected the original handler error without a failure receipt, got result=%#v err=%v", result, err)
+	}
+	if settleCalls != 1 {
+		t.Fatalf("expected cancel settle without a before-handler deposit, got %d settle calls", settleCalls)
+	}
+}
+
+func toolTexts(result *mcp.CallToolResult) []string {
+	if result == nil {
+		return nil
+	}
+	texts := make([]string, 0, len(result.Content))
+	for _, item := range result.Content {
+		text, ok := item.(*mcp.TextContent)
+		if !ok {
+			continue
+		}
+		texts = append(texts, text.Text)
+	}
+	return texts
+}
+
+func TestPaymentWrapper_UnknownCancellationReturnsErrorWithoutNewOffer(t *testing.T) {
+	const unknownText = "Payment cancellation outcome unknown"
+	payload := types.PaymentPayload{
+		X402Version: 2,
+		Accepted:    types.PaymentRequirements{Scheme: "cash", Network: "x402:cash", Amount: "1000", PayTo: "test-recipient"},
+		Payload:     map[string]interface{}{"signature": "~test-payer"},
+	}
+	accepts := []types.PaymentRequirements{
+		{Scheme: "cash", Network: "x402:cash", Amount: "1000", PayTo: "test-recipient"},
+	}
+
+	tests := []struct {
+		name         string
+		upfront      bool
+		handlerErr   error
+		handlerText  string
+		wantMessage  bool
+		wantInternal bool
+		wantDeposit  bool
+		wantReturn   bool
+	}{
+		{name: "handler failed", handlerText: "tool failed", wantMessage: true},
+		{name: "handler threw", handlerErr: fmt.Errorf("boom"), wantReturn: true},
+		{name: "handler failed upfront", upfront: true, handlerText: "tool failed", wantMessage: true, wantDeposit: true},
+		{name: "handler threw upfront", upfront: true, handlerErr: fmt.Errorf("boom"), wantInternal: true, wantDeposit: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var settleCalls int
+			var cancelCalls int
+			var cancelReason x402.VerifiedPaymentCancellationReason
+			mockFacilitator := &mockFacilitatorClient{
+				settleFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {
+					settleCalls++
+					return &x402.SettleResponse{
+						Success: true, Transaction: "0xdeposit", Amount: "1000", Network: "x402:cash", Payer: "p",
+					}, nil
+				},
+			}
+			settleOnCancel := func(x402.VerifiedPaymentCanceledContext) (*types.PaymentRequirements, error) {
+				return nil, fmt.Errorf("timeout: %w", x402.ErrCancellationOutcomeUnknown)
+			}
+			var scheme x402.SchemeNetworkServer
+			if tt.upfront {
+				scheme = &mockEscrowScheme{
+					mockSchemeNetworkServer: mockSchemeNetworkServer{scheme: "cash"},
+					settleOnCancel:          settleOnCancel,
+				}
+			} else {
+				scheme = &mockAfterHandlerCancelScheme{
+					mockSchemeNetworkServer: mockSchemeNetworkServer{scheme: "cash"},
+					settleOnCancel:          settleOnCancel,
+				}
+			}
+			server := x402.Newx402ResourceServer(
+				x402.WithFacilitatorClient(mockFacilitator),
+				x402.WithSchemeServer("x402:cash", scheme),
+			)
+			ctx := context.Background()
+			if err := server.Initialize(ctx); err != nil {
+				t.Fatalf("Initialize: %v", err)
+			}
+			server.OnVerifiedPaymentCanceled(func(c x402.VerifiedPaymentCanceledContext) error {
+				cancelCalls++
+				cancelReason = c.Reason
+				return nil
+			})
+			wrapper := NewPaymentWrapper(server, PaymentWrapperConfig{Accepts: accepts})
+			wrapped := wrapper.Wrap(func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				if tt.handlerErr != nil {
+					return nil, tt.handlerErr
+				}
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{&mcp.TextContent{Text: tt.handlerText}},
+					IsError: true,
+				}, nil
+			})
+
+			result, err := wrapped(ctx, makeCallToolRequest(nil, mcp.Meta{MCP_PAYMENT_META_KEY: payload}))
+			if cancelCalls != 1 {
+				t.Fatalf("expected one cancel, got %d", cancelCalls)
+			}
+			if tt.wantReturn {
+				if !errors.Is(err, x402.ErrCancellationOutcomeUnknown) {
+					t.Fatalf("expected unknown cancellation error, got result=%#v err=%v", result, err)
+				}
+				if result != nil {
+					t.Fatalf("expected no tool result when cancel outcome is unknown and nothing settled, got %#v", result)
+				}
+				if settleCalls != 0 {
+					t.Fatalf("expected no settlement, got %d", settleCalls)
+				}
+				if cancelReason != x402.CancellationReasonHandlerThrew {
+					t.Fatalf("expected handler_threw, got %q", cancelReason)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !result.IsError {
+				t.Fatal("expected error result")
+			}
+			texts := toolTexts(result)
+			if tt.wantMessage && !strings.Contains(strings.Join(texts, "\n"), unknownText) {
+				t.Fatalf("expected %q in %#v", unknownText, texts)
+			}
+			if !tt.wantMessage && strings.Contains(strings.Join(texts, "\n"), unknownText) {
+				t.Fatalf("did not expect %q in %#v", unknownText, texts)
+			}
+			if tt.handlerText != "" && !strings.Contains(strings.Join(texts, "\n"), tt.handlerText) {
+				t.Fatalf("expected tool output %q in %#v", tt.handlerText, texts)
+			}
+			if tt.wantInternal && !strings.Contains(strings.Join(texts, "\n"), "Internal Server Error") {
+				t.Fatalf("expected internal error text, got %#v", texts)
+			}
+			if result.StructuredContent != nil {
+				t.Fatalf("expected no payment-required body, got %#v", result.StructuredContent)
+			}
+			resp, hasReceipt := result.Meta[MCP_PAYMENT_RESPONSE_META_KEY].(*x402.SettleResponse)
+			if tt.wantDeposit {
+				if !hasReceipt || resp == nil || !resp.Success || resp.Transaction != "0xdeposit" {
+					t.Fatalf("expected deposit receipt, got %#v", result.Meta[MCP_PAYMENT_RESPONSE_META_KEY])
+				}
+				if settleCalls != 1 {
+					t.Fatalf("expected only the upfront deposit, got %d settlements", settleCalls)
+				}
+			} else if hasReceipt {
+				t.Fatalf("expected no payment response, got %+v", resp)
+			}
+			if !tt.wantDeposit && settleCalls != 0 {
+				t.Fatalf("expected no settlement, got %d", settleCalls)
+			}
+		})
+	}
+}
+
+func TestPaymentWrapper_KnownCancelFailureOmitsUnknownMessage(t *testing.T) {
+	var settleCalls int
+	mockFacilitator := &mockFacilitatorClient{
+		settleFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {
+			settleCalls++
+			return &x402.SettleResponse{Success: true, Transaction: "0x", Network: "x402:cash"}, nil
+		},
+	}
+	scheme := &mockAfterHandlerCancelScheme{
+		mockSchemeNetworkServer: mockSchemeNetworkServer{scheme: "cash"},
+		settleOnCancel: func(x402.VerifiedPaymentCanceledContext) (*types.PaymentRequirements, error) {
+			return nil, errors.New("refund rpc failed")
+		},
+	}
+	server := x402.Newx402ResourceServer(
+		x402.WithFacilitatorClient(mockFacilitator),
+		x402.WithSchemeServer("x402:cash", scheme),
+	)
+	ctx := context.Background()
+	if err := server.Initialize(ctx); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	wrapper := NewPaymentWrapper(server, PaymentWrapperConfig{
+		Accepts: []types.PaymentRequirements{
+			{Scheme: "cash", Network: "x402:cash", Amount: "1000", PayTo: "test-recipient"},
+		},
+	})
+	wrapped := wrapper.Wrap(func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: "tool failed"}},
+			IsError: true,
+		}, nil
+	})
+	payload := types.PaymentPayload{
+		X402Version: 2,
+		Accepted:    types.PaymentRequirements{Scheme: "cash", Network: "x402:cash", Amount: "1000", PayTo: "test-recipient"},
+		Payload:     map[string]interface{}{"signature": "~test-payer"},
+	}
+	result, err := wrapped(ctx, makeCallToolRequest(nil, mcp.Meta{MCP_PAYMENT_META_KEY: payload}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected tool error")
+	}
+	texts := strings.Join(toolTexts(result), "\n")
+	if strings.Contains(texts, "Payment cancellation outcome unknown") {
+		t.Fatalf("known cancel failure must not use the unknown message, got %q", texts)
+	}
+	if !strings.Contains(texts, "tool failed") {
+		t.Fatalf("expected tool output, got %q", texts)
+	}
+	if _, ok := result.Meta[MCP_PAYMENT_RESPONSE_META_KEY]; ok {
+		t.Fatalf("expected no receipt without an upfront deposit, got %#v", result.Meta[MCP_PAYMENT_RESPONSE_META_KEY])
+	}
+	if result.StructuredContent != nil {
+		t.Fatalf("expected no payment-required body, got %#v", result.StructuredContent)
+	}
+	if settleCalls != 0 {
+		t.Fatalf("expected no facilitator settle, got %d", settleCalls)
+	}
+}
+
+func TestPaymentWrapper_CancelFacilitatorFailureReportsUnknown(t *testing.T) {
+	const unknownText = "Payment cancellation outcome unknown"
+	payload := types.PaymentPayload{
+		X402Version: 2,
+		Accepted:    types.PaymentRequirements{Scheme: "cash", Network: "x402:cash", Amount: "1000", PayTo: "test-recipient"},
+		Payload:     map[string]interface{}{"signature": "~test-payer"},
+	}
+	accepts := []types.PaymentRequirements{
+		{Scheme: "cash", Network: "x402:cash", Amount: "1000", PayTo: "test-recipient"},
+	}
+	returnCancelRequirements := func(c x402.VerifiedPaymentCanceledContext) (*types.PaymentRequirements, error) {
+		reqs := c.Requirements.(types.PaymentRequirements)
+		reqs.Amount = "0"
+		return &reqs, nil
+	}
+
+	t.Run("handler failed", func(t *testing.T) {
+		mockFacilitator := &mockFacilitatorClient{
+			settleFunc: func(context.Context, []byte, []byte) (*x402.SettleResponse, error) {
+				return nil, errors.New("facilitator unavailable")
+			},
+		}
+		scheme := &mockAfterHandlerCancelScheme{
+			mockSchemeNetworkServer: mockSchemeNetworkServer{scheme: "cash"},
+			settleOnCancel:          returnCancelRequirements,
+		}
+		server := x402.Newx402ResourceServer(
+			x402.WithFacilitatorClient(mockFacilitator),
+			x402.WithSchemeServer("x402:cash", scheme),
+		)
+		ctx := context.Background()
+		if err := server.Initialize(ctx); err != nil {
+			t.Fatalf("Initialize: %v", err)
+		}
+		wrapper := NewPaymentWrapper(server, PaymentWrapperConfig{Accepts: accepts})
+		wrapped := wrapper.Wrap(func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: "tool failed"}},
+				IsError: true,
+			}, nil
+		})
+		result, err := wrapped(ctx, makeCallToolRequest(nil, mcp.Meta{MCP_PAYMENT_META_KEY: payload}))
+		if err != nil {
+			t.Fatalf("unexpected protocol error: %v", err)
+		}
+		if !result.IsError {
+			t.Fatal("expected tool error")
+		}
+		texts := strings.Join(toolTexts(result), "\n")
+		if !strings.Contains(texts, unknownText) || !strings.Contains(texts, "tool failed") {
+			t.Fatalf("expected tool failure and unknown outcome, got %q", texts)
+		}
+		if _, ok := result.Meta[MCP_PAYMENT_RESPONSE_META_KEY]; ok {
+			t.Fatalf("expected no receipt, got %#v", result.Meta[MCP_PAYMENT_RESPONSE_META_KEY])
+		}
+		if result.StructuredContent != nil {
+			t.Fatalf("expected no payment-required body, got %#v", result.StructuredContent)
+		}
+	})
+
+	t.Run("handler threw", func(t *testing.T) {
+		mockFacilitator := &mockFacilitatorClient{
+			settleFunc: func(context.Context, []byte, []byte) (*x402.SettleResponse, error) {
+				return nil, errors.New("facilitator unavailable")
+			},
+		}
+		scheme := &mockAfterHandlerCancelScheme{
+			mockSchemeNetworkServer: mockSchemeNetworkServer{scheme: "cash"},
+			settleOnCancel:          returnCancelRequirements,
+		}
+		server := x402.Newx402ResourceServer(
+			x402.WithFacilitatorClient(mockFacilitator),
+			x402.WithSchemeServer("x402:cash", scheme),
+		)
+		ctx := context.Background()
+		if err := server.Initialize(ctx); err != nil {
+			t.Fatalf("Initialize: %v", err)
+		}
+		wrapper := NewPaymentWrapper(server, PaymentWrapperConfig{Accepts: accepts})
+		wrapped := wrapper.Wrap(func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return nil, errors.New("boom")
+		})
+		result, err := wrapped(ctx, makeCallToolRequest(nil, mcp.Meta{MCP_PAYMENT_META_KEY: payload}))
+		if result != nil {
+			t.Fatalf("expected no tool result, got %#v", result)
+		}
+		if !errors.Is(err, x402.ErrCancellationOutcomeUnknown) {
+			t.Fatalf("expected unknown cancellation error, got %v", err)
+		}
+	})
+
+	t.Run("upfront deposit stays attached", func(t *testing.T) {
+		var settleCalls int
+		mockFacilitator := &mockFacilitatorClient{
+			settleFunc: func(context.Context, []byte, []byte) (*x402.SettleResponse, error) {
+				settleCalls++
+				if settleCalls == 1 {
+					return &x402.SettleResponse{
+						Success: true, Transaction: "0xdeposit", Amount: "1000", Network: "x402:cash", Payer: "p",
+					}, nil
+				}
+				return nil, errors.New("facilitator unavailable")
+			},
+		}
+		scheme := &mockEscrowScheme{
+			mockSchemeNetworkServer: mockSchemeNetworkServer{scheme: "cash"},
+			settleOnCancel:          returnCancelRequirements,
+		}
+		server := x402.Newx402ResourceServer(
+			x402.WithFacilitatorClient(mockFacilitator),
+			x402.WithSchemeServer("x402:cash", scheme),
+		)
+		ctx := context.Background()
+		if err := server.Initialize(ctx); err != nil {
+			t.Fatalf("Initialize: %v", err)
+		}
+		wrapper := NewPaymentWrapper(server, PaymentWrapperConfig{Accepts: accepts})
+		wrapped := wrapper.Wrap(func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: "tool failed"}},
+				IsError: true,
+			}, nil
+		})
+		result, err := wrapped(ctx, makeCallToolRequest(nil, mcp.Meta{MCP_PAYMENT_META_KEY: payload}))
+		if err != nil {
+			t.Fatalf("unexpected protocol error: %v", err)
+		}
+		texts := strings.Join(toolTexts(result), "\n")
+		if !strings.Contains(texts, unknownText) {
+			t.Fatalf("expected unknown outcome, got %q", texts)
+		}
+		resp, _ := result.Meta[MCP_PAYMENT_RESPONSE_META_KEY].(*x402.SettleResponse)
+		if resp == nil || !resp.Success || resp.Transaction != "0xdeposit" {
+			t.Fatalf("expected the known deposit receipt, got %#v", result.Meta[MCP_PAYMENT_RESPONSE_META_KEY])
+		}
+		if settleCalls != 2 {
+			t.Fatalf("expected deposit and cancel settle, got %d", settleCalls)
+		}
+	})
+}
+
+func TestPaymentWrapper_AfterSettleAbortAttachesReceipt(t *testing.T) {
+	mockFacilitator := &mockFacilitatorClient{
+		settleFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {
+			return &x402.SettleResponse{
+				Success: true, Transaction: "0xdeposit", Amount: "1000", Network: "x402:cash", Payer: "p",
+			}, nil
+		},
+	}
+	scheme := &mockSchemeNetworkServer{scheme: "cash"}
+	server := x402.Newx402ResourceServer(
+		x402.WithFacilitatorClient(mockFacilitator),
+		x402.WithSchemeServer("x402:cash", scheme),
+		x402.WithAfterSettleHook(func(x402.SettleResultContext) error {
+			return x402.NewAfterSettleAbort("voucher_store_unavailable", "store down")
+		}),
+	)
+	ctx := context.Background()
+	if err := server.Initialize(ctx); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+
+	wrapper := NewPaymentWrapper(server, PaymentWrapperConfig{
+		Accepts: []types.PaymentRequirements{
+			{Scheme: "cash", Network: "x402:cash", Amount: "1000", PayTo: "test-recipient"},
+		},
+	})
+	wrapped := wrapper.Wrap(func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil
+	})
+
+	payload := types.PaymentPayload{
+		X402Version: 2,
+		Accepted:    types.PaymentRequirements{Scheme: "cash", Network: "x402:cash", Amount: "1000", PayTo: "test-recipient"},
+		Payload:     map[string]interface{}{"signature": "~test-payer"},
+	}
+	result, err := wrapped(ctx, makeCallToolRequest(nil, mcp.Meta{MCP_PAYMENT_META_KEY: payload}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected settlement failure result")
+	}
+	resp, ok := result.Meta[MCP_PAYMENT_RESPONSE_META_KEY].(*x402.SettleResponse)
+	if !ok || resp == nil || resp.Success || resp.Transaction != "0xdeposit" || resp.ErrorReason != "voucher_store_unavailable" {
+		t.Fatalf("expected aborted receipt with transaction in meta, got %#v", result.Meta[MCP_PAYMENT_RESPONSE_META_KEY])
+	}
+}
+
 func TestPaymentWrapper_FailedCancelIncludesDepositRecovery(t *testing.T) {
 	mockFacilitator := &mockFacilitatorClient{
 		settleFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {
@@ -1512,5 +1984,220 @@ func TestPaymentWrapper_CreatePaymentRequiredResponseEnricher(t *testing.T) {
 	extra, _ := first["extra"].(map[string]interface{})
 	if extra["EnrichedBy"] != "mcp-enricher" {
 		t.Fatalf("expected enricher mutation, got %#v", extra)
+	}
+}
+
+func TestPaymentRequiredErrorFromVerify_PrefersInvalidReason(t *testing.T) {
+	ve := x402.NewVerifyError(
+		"invalid_batch_settlement_evm_cumulative_amount_mismatch",
+		"",
+		"Client voucher base does not match server state",
+	)
+	if got := paymentRequiredErrorFromVerify(ve, nil); got != ve.InvalidReason {
+		t.Fatalf("got %q, want InvalidReason %q", got, ve.InvalidReason)
+	}
+
+	resp := &x402.VerifyResponse{IsValid: false, InvalidReason: "insufficient_balance"}
+	if got := paymentRequiredErrorFromVerify(nil, resp); got != "insufficient_balance" {
+		t.Fatalf("got %q, want VerifyResponse.InvalidReason", got)
+	}
+
+	if got := paymentRequiredErrorFromVerify(fmt.Errorf("network down"), nil); got != "network down" {
+		t.Fatalf("got %q, want wrapped non-VerifyError", got)
+	}
+}
+
+func TestPaymentWrapper_VerifyAbortUsesInvalidReason(t *testing.T) {
+	const reason = "invalid_batch_settlement_evm_cumulative_amount_mismatch"
+	mockFacilitator := &mockFacilitatorClient{
+		verifyFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+			t.Fatal("facilitator should not run after BeforeVerify abort")
+			return nil, nil
+		},
+	}
+	server := x402.Newx402ResourceServer(
+		x402.WithFacilitatorClient(mockFacilitator),
+		x402.WithSchemeServer("x402:cash", &mockSchemeNetworkServer{scheme: "cash"}),
+	)
+	ctx := context.Background()
+	if err := server.Initialize(ctx); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	server.OnBeforeVerify(func(c x402.VerifyContext) (*x402.BeforeHookResult, error) {
+		return &x402.BeforeHookResult{
+			Abort:   true,
+			Reason:  reason,
+			Message: "Client voucher base does not match server state",
+		}, nil
+	})
+
+	wrapper := NewPaymentWrapper(server, PaymentWrapperConfig{
+		Accepts: []types.PaymentRequirements{
+			{Scheme: "cash", Network: "x402:cash", Amount: "1000", PayTo: "test-recipient"},
+		},
+	})
+	wrapped := wrapper.Wrap(func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{}, nil
+	})
+
+	payload := types.PaymentPayload{
+		X402Version: 2,
+		Accepted:    types.PaymentRequirements{Scheme: "cash", Network: "x402:cash", Amount: "1000", PayTo: "test-recipient"},
+		Payload:     map[string]interface{}{"signature": "~test-payer"},
+	}
+	result, err := wrapped(ctx, makeCallToolRequest(nil, mcp.Meta{MCP_PAYMENT_META_KEY: payload}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected payment required error")
+	}
+	sc, ok := result.StructuredContent.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected structuredContent map, got %T", result.StructuredContent)
+	}
+	if sc["error"] != reason {
+		t.Fatalf("PaymentRequired.error = %q, want protocol InvalidReason %q", sc["error"], reason)
+	}
+}
+
+func TestPaymentWrapper_FacilitatorVerifyErrorUsesInvalidReason(t *testing.T) {
+	const reason = "custom_failure_reason"
+	mockFacilitator := &mockFacilitatorClient{
+		verifyFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+			return nil, x402.NewVerifyError(reason, "0xpayer", "human-readable detail")
+		},
+	}
+	server := x402.Newx402ResourceServer(
+		x402.WithFacilitatorClient(mockFacilitator),
+		x402.WithSchemeServer("x402:cash", &mockSchemeNetworkServer{scheme: "cash"}),
+	)
+	ctx := context.Background()
+	if err := server.Initialize(ctx); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+
+	wrapper := NewPaymentWrapper(server, PaymentWrapperConfig{
+		Accepts: []types.PaymentRequirements{
+			{Scheme: "cash", Network: "x402:cash", Amount: "1000", PayTo: "test-recipient"},
+		},
+	})
+	wrapped := wrapper.Wrap(func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{}, nil
+	})
+
+	payload := types.PaymentPayload{
+		X402Version: 2,
+		Accepted:    types.PaymentRequirements{Scheme: "cash", Network: "x402:cash", Amount: "1000", PayTo: "test-recipient"},
+		Payload:     map[string]interface{}{"signature": "~test-payer"},
+	}
+	result, err := wrapped(ctx, makeCallToolRequest(nil, mcp.Meta{MCP_PAYMENT_META_KEY: payload}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected payment required error")
+	}
+	sc, ok := result.StructuredContent.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected structuredContent map, got %T", result.StructuredContent)
+	}
+	if sc["error"] != reason {
+		t.Fatalf("PaymentRequired.error = %q, want InvalidReason %q", sc["error"], reason)
+	}
+}
+
+// mismatchOnlyEnricher mirrors batch-settlement: it writes recovery extra only on
+// a corrective verify-failure 402, never on the unpaid / match-path 402.
+type mismatchOnlyEnricher struct {
+	mockSchemeNetworkServer
+	calls int
+}
+
+func (m *mismatchOnlyEnricher) EnrichPaymentRequiredResponse(ctx x402.PaymentRequiredContext) {
+	if ctx.Error != "invalid_batch_settlement_evm_cumulative_amount_mismatch" || ctx.PaymentPayload == nil {
+		return
+	}
+	m.calls++
+	for i := range ctx.Requirements {
+		if ctx.Requirements[i].Extra == nil {
+			ctx.Requirements[i].Extra = map[string]interface{}{}
+		}
+		ctx.Requirements[i].Extra["channelState"] = map[string]interface{}{
+			"chargedCumulativeAmount": "2000",
+		}
+	}
+}
+
+func TestPaymentWrapper_PaymentRequiredDoesNotMutateConfigAccepts(t *testing.T) {
+	const reason = "invalid_batch_settlement_evm_cumulative_amount_mismatch"
+	verifyCalls := 0
+	abortOnce := true
+	mockFacilitator := &mockFacilitatorClient{
+		verifyFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+			verifyCalls++
+			return &x402.VerifyResponse{IsValid: true, Payer: "test-payer"}, nil
+		},
+	}
+	scheme := &mismatchOnlyEnricher{mockSchemeNetworkServer: mockSchemeNetworkServer{scheme: "cash"}}
+	server := x402.Newx402ResourceServer(
+		x402.WithFacilitatorClient(mockFacilitator),
+		x402.WithSchemeServer("x402:cash", scheme),
+	)
+	ctx := context.Background()
+	if err := server.Initialize(ctx); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	server.OnBeforeVerify(func(c x402.VerifyContext) (*x402.BeforeHookResult, error) {
+		if abortOnce {
+			abortOnce = false
+			return &x402.BeforeHookResult{
+				Abort:   true,
+				Reason:  reason,
+				Message: "Client voucher base does not match server state",
+			}, nil
+		}
+		return nil, nil
+	})
+
+	config := PaymentWrapperConfig{
+		Accepts: []types.PaymentRequirements{
+			{Scheme: "cash", Network: "x402:cash", Amount: "1000", PayTo: "test-recipient"},
+		},
+	}
+	wrapper := NewPaymentWrapper(server, config)
+	wrapped := wrapper.Wrap(func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil
+	})
+
+	payload := types.PaymentPayload{
+		X402Version: 2,
+		Accepted:    types.PaymentRequirements{Scheme: "cash", Network: "x402:cash", Amount: "1000", PayTo: "test-recipient"},
+		Payload:     map[string]interface{}{"signature": "~test-payer"},
+	}
+
+	first, err := wrapped(ctx, makeCallToolRequest(nil, mcp.Meta{MCP_PAYMENT_META_KEY: payload}))
+	if err != nil {
+		t.Fatalf("first paid call: %v", err)
+	}
+	if !first.IsError {
+		t.Fatal("expected corrective 402")
+	}
+	if scheme.calls != 1 {
+		t.Fatalf("expected mismatch enricher once, got %d", scheme.calls)
+	}
+	if config.Accepts[0].Extra != nil {
+		t.Fatalf("config.Accepts Extra mutated by corrective enricher: %#v", config.Accepts[0].Extra)
+	}
+
+	second, err := wrapped(ctx, makeCallToolRequest(nil, mcp.Meta{MCP_PAYMENT_META_KEY: payload}))
+	if err != nil {
+		t.Fatalf("recovery retry: %v", err)
+	}
+	if second.IsError {
+		t.Fatalf("expected original accepts to still match after corrective 402, got %#v", second.StructuredContent)
+	}
+	if verifyCalls != 1 {
+		t.Fatalf("expected facilitator verify on retry, got %d", verifyCalls)
 	}
 }

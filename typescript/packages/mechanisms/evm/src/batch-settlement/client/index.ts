@@ -14,11 +14,23 @@ export { signVoucher } from "./voucher";
 export { refundChannel } from "./refund";
 export type { RefundOptions } from "./refund";
 export { createBatchSettlementClientHooks } from "./hooks";
-export { computeChannelId } from "../utils";
+export { computeChannelId, normalizeChannelSalt } from "../utils";
+export type { ChannelSalt } from "../utils";
+export {
+  CHARGE_COUNTS_METADATA_KEY,
+  chargeCountsMetadata,
+  parseChargeCountsMetadata,
+} from "../chargeCounts";
+export type { ChargeCountsMetadata } from "../chargeCounts";
+export { decodeClaimAttestation } from "../attestation";
+export type { ClaimAttestation, ClaimAttestationRow } from "../attestation";
 
 export {
+  applyMaxDeposit,
   depositAmountForRequest,
   isBatchSettlementEvmSchemeOptions,
+  maxDepositFromSpendCap,
+  parseAnnouncedMinDeposit,
   resolveClientOptions,
   validateDepositPolicy,
 } from "./config";

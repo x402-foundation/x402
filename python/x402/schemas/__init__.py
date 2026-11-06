@@ -33,6 +33,8 @@ from .config import (
 
 # Error types
 from .errors import (
+    AfterSettleAbortError,
+    FacilitatorCapabilityError,
     NoMatchingRequirementsError,
     PaymentAbortedError,
     PaymentError,
@@ -215,5 +217,7 @@ __all__ = [
     "SettleError",
     "SchemeNotFoundError",
     "NoMatchingRequirementsError",
+    "AfterSettleAbortError",
     "PaymentAbortedError",
+    "FacilitatorCapabilityError",
 ]

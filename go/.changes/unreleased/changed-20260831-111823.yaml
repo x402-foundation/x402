@@ -1,3 +1,0 @@
-kind: changed
-body: Speed up EVM exact and upto facilitator verify by overlapping the asset-contract GetCode with signature checks and reusing VerifyUniversalSignature's bytecode result via ERC6492SignatureData.CodeDeployed instead of a second payer GetCode
-time: 2026-08-31T11:18:23.734559-04:00

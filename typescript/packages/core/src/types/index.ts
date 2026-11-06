@@ -11,6 +11,7 @@ export {
   SettleError,
   FacilitatorResponseError,
   FacilitatorTimeoutError,
+  FacilitatorCapabilityError,
   getFacilitatorResponseError,
 } from "./facilitator";
 export type {

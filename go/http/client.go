@@ -223,7 +223,7 @@ func (t *PaymentRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 	}
 
 	// Read response body for V1 support
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body)
 	resp.Body.Close()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
@@ -284,7 +284,7 @@ func (t *PaymentRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 
 	// Recovery succeeded: rebuild payload from refreshed session state and retry.
 	freshPayload, err := t.x402Client.client.CreatePaymentPayload(
-		ctx,
+		x402.WithPaymentRequired(ctx, build.paymentRequired),
 		build.requirements,
 		build.paymentRequired.Resource,
 		build.paymentRequired.Extensions,
@@ -297,7 +297,7 @@ func (t *PaymentRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 		return newResp, nil
 	}
 
-	// Drain the corrective 402 body so connection can be reused.
+	// The cap already closed the transport body. Drop the buffered 402 before the recovery retry.
 	_, _ = io.Copy(io.Discard, newResp.Body)
 	newResp.Body.Close()
 
@@ -387,7 +387,7 @@ func (t *PaymentRoundTripper) tryPaymentRequiredHooks(
 		}
 
 		authHeaders := responseHeaders(authResp)
-		authBody, err := io.ReadAll(authResp.Body)
+		authBody, err := readLimitedBody(authResp.Body)
 		authResp.Body.Close()
 		if err != nil {
 			return nil, headers, body, false, fmt.Errorf("failed to read auth retry body: %w", err)
@@ -475,7 +475,37 @@ func (t *PaymentRoundTripper) sendPaymentRetry(
 		paymentReq.Body = body
 	}
 
-	return t.Transport.RoundTrip(paymentReq)
+	resp, err := t.Transport.RoundTrip(paymentReq)
+	if err != nil {
+		return nil, err
+	}
+	if err := replacePaymentRequiredBody(resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// Paid resource payloads are left untouched.
+func replacePaymentRequiredBody(resp *http.Response) error {
+	if resp == nil || resp.StatusCode != http.StatusPaymentRequired {
+		return nil
+	}
+	body, err := readLimitedBody(resp.Body)
+	closeErr := resp.Body.Close()
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %w", err)
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.ContentLength = int64(len(body))
+	if resp.Header == nil {
+		resp.Header = make(http.Header)
+	} else {
+		resp.Header.Del("Transfer-Encoding")
+	}
+	return nil
 }
 
 // dispatchPaymentResponseHooks decodes PAYMENT-RESPONSE / PAYMENT-REQUIRED on the
@@ -520,8 +550,8 @@ func (t *PaymentRoundTripper) dispatchPaymentResponseHooks(
 
 // v2PaymentBuild captures all the V2 state PaymentRoundTripper needs across the
 // payment retry: the parsed PaymentRequired (so corrective recovery can rebuild),
-// the chosen requirements (for hook dispatch), the resulting payload, and its
-// marshaled bytes (to put in PAYMENT-SIGNATURE).
+// the accept on the payload that was sent (for hook dispatch), the payload, and
+// its marshaled bytes (to put in PAYMENT-SIGNATURE).
 type v2PaymentBuild struct {
 	paymentRequired types.PaymentRequired
 	requirements    types.PaymentRequirements
@@ -545,7 +575,7 @@ func (t *PaymentRoundTripper) buildV2Payment(
 	}
 
 	payload, err := t.x402Client.client.CreatePaymentPayload(
-		ctx,
+		x402.WithPaymentRequired(ctx, paymentRequiredV2),
 		selected,
 		paymentRequiredV2.Resource,
 		paymentRequiredV2.Extensions,
@@ -561,7 +591,7 @@ func (t *PaymentRoundTripper) buildV2Payment(
 
 	return &v2PaymentBuild{
 		paymentRequired: paymentRequiredV2,
-		requirements:    selected,
+		requirements:    payload.Accepted,
 		paymentPayload:  payload,
 		payloadBytes:    bytes,
 	}, nil

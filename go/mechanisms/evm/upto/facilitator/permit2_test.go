@@ -178,6 +178,10 @@ func buildValidRequirements() types.PaymentRequirements {
 
 func TestVerifyUptoPermit2_AssetIsEOA(t *testing.T) {
 	// When GetCode for the asset returns empty bytes, verify must reject with asset_not_deployed_contract.
+	// Other tests share testTokenAddr but model it as deployed, and positive asset checks are cached
+	// process-wide, so drop those entries to force a real GetCode here.
+	evm.ResetAssetContractCache()
+
 	signer := newMockSigner()
 	signer.getCodeByAddress = map[string][]byte{
 		strings.ToLower(testTokenAddr): {}, // token = EOA
@@ -189,6 +193,8 @@ func TestVerifyUptoPermit2_AssetIsEOA(t *testing.T) {
 
 func TestVerifyUptoPermit2_AssetGetCodeRPCError(t *testing.T) {
 	// An RPC error on GetCode must propagate as an internal error, not a 400.
+	evm.ResetAssetContractCache()
+
 	signer := newMockSigner()
 	signer.getCodeError = fmt.Errorf("rpc: connection refused")
 	p := buildValidUptoPayload(testFacilitatorAddr)

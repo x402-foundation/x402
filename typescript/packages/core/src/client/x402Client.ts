@@ -1,5 +1,5 @@
 import { x402Version } from "..";
-import { SchemeNetworkClient } from "../types/mechanisms";
+import { DefaultAsset, SchemeNetworkClient } from "../types/mechanisms";
 import { PaymentPayload, PaymentRequirements } from "../types/payments";
 import {
   Money,
@@ -190,6 +190,80 @@ export interface SpendControls {
    * - list: defaults plus listed entries; optional integer atomic `maxAmountPerPayment` per entry
    */
   allowedAssets?: true | SpendControlAsset[];
+}
+
+/**
+ * Returns whether `amount` is an integer atomic string.
+ *
+ * @param amount - Amount to test
+ * @returns True when the value is all digits
+ */
+function isAtomicAmount(amount: string): boolean {
+  return /^\d+$/.test(amount);
+}
+
+/**
+ * Finds the matching `allowedAssets` entry for a requirement.
+ *
+ * @param controls - Active spend controls
+ * @param requirement - Payment requirement
+ * @param defaultAsset - Default-asset lookup result
+ * @returns Matching entry, if any
+ */
+function findSpendControlAssetEntry(
+  controls: SpendControls,
+  requirement: PaymentRequirements,
+  defaultAsset: DefaultAsset | undefined,
+): SpendControlAsset | undefined {
+  if (controls.allowedAssets === true) {
+    return undefined;
+  }
+  return controls.allowedAssets?.find(entry => {
+    if (!networkMatchesPattern(entry.network, requirement.network)) {
+      return false;
+    }
+    if (entry.asset.toLowerCase() === requirement.asset.toLowerCase()) {
+      return true;
+    }
+    return (
+      defaultAsset != null && defaultAsset.symbol.toLowerCase() === entry.asset.toLowerCase()
+    );
+  });
+}
+
+/**
+ * Resolves the atomic spend cap for filtering and payload context.
+ *
+ * @param controls - Client spend controls
+ * @param requirement - Payment requirement
+ * @param defaultAsset - Default-asset lookup result
+ * @returns Atomic cap, or undefined when uncapped
+ */
+function resolveAtomicSpendCap(
+  controls: SpendControls | false,
+  requirement: PaymentRequirements,
+  defaultAsset: DefaultAsset | undefined,
+): string | undefined {
+  if (controls === false) {
+    return undefined;
+  }
+
+  const assetEntry = findSpendControlAssetEntry(controls, requirement, defaultAsset);
+  if (assetEntry?.maxAmountPerPayment != null) {
+    if (!isAtomicAmount(assetEntry.maxAmountPerPayment)) {
+      throw new Error(
+        `spendControls.allowedAssets[].maxAmountPerPayment must be an integer atomic amount, not a dollar value; got ${JSON.stringify(assetEntry.maxAmountPerPayment)}`,
+      );
+    }
+    return assetEntry.maxAmountPerPayment;
+  }
+
+  if (!defaultAsset || controls.maxAmountPerPayment === false) {
+    return undefined;
+  }
+
+  const usdLimit = controls.maxAmountPerPayment ?? DEFAULT_MAX_AMOUNT_PER_PAYMENT;
+  return convertToTokenAmount(parseMoney(usdLimit).amount, defaultAsset.decimals);
 }
 
 /**
@@ -496,7 +570,14 @@ export class x402Client {
       const partialPayload = await schemeNetworkClient.createPaymentPayload(
         paymentRequired.x402Version,
         requirements,
-        { extensions: paymentRequired.extensions },
+        {
+          extensions: paymentRequired.extensions,
+          maxAmountPerPayment: resolveAtomicSpendCap(
+            this.spendControls,
+            requirements,
+            schemeNetworkClient.findDefaultAsset?.(requirements.asset, requirements.network),
+          ),
+        },
       );
 
       let paymentPayload: PaymentPayload;
@@ -788,8 +869,6 @@ export class x402Client {
       x402Version === 1
         ? (requirement as unknown as PaymentRequirementsV1).maxAmountRequired
         : requirement.amount;
-    const isAtomicAmount = (amount: string) => /^\d+$/.test(amount);
-    const amountOf = (requirement: PaymentRequirements) => BigInt(rawAmountOf(requirement));
     const schemeFor = (requirement: PaymentRequirements) =>
       findByNetworkAndScheme(
         clientSchemesByNetwork,
@@ -798,27 +877,9 @@ export class x402Client {
       );
     const defaultAssetFor = (requirement: PaymentRequirements) =>
       schemeFor(requirement)?.findDefaultAsset?.(requirement.asset, requirement.network);
-    const matchesAssetEntry = (
-      entry: SpendControlAsset,
-      requirement: PaymentRequirements,
-    ) => {
-      if (!networkMatchesPattern(entry.network, requirement.network)) {
-        return false;
-      }
-      if (entry.asset.toLowerCase() === requirement.asset.toLowerCase()) {
-        return true;
-      }
-      const defaultAsset = defaultAssetFor(requirement);
-      return (
-        defaultAsset != null &&
-        defaultAsset.symbol.toLowerCase() === entry.asset.toLowerCase()
-      );
-    };
-    const assetEntries =
-      controls.allowedAssets === true ? undefined : controls.allowedAssets;
-    const allowAnyAsset = controls.allowedAssets === true;
     const findAssetEntry = (requirement: PaymentRequirements) =>
-      assetEntries?.find(entry => matchesAssetEntry(entry, requirement));
+      findSpendControlAssetEntry(controls, requirement, defaultAssetFor(requirement));
+    const allowAnyAsset = controls.allowedAssets === true;
 
     let filtered = allowAnyAsset
       ? requirements
@@ -846,47 +907,38 @@ export class x402Client {
     let rejectedUsdSymbol: string | undefined;
 
     filtered = filtered.filter(requirement => {
-      const assetEntry = findAssetEntry(requirement);
-      if (assetEntry?.maxAmountPerPayment != null) {
-        if (!isAtomicAmount(assetEntry.maxAmountPerPayment)) {
-          throw new Error(
-            `spendControls.allowedAssets[].maxAmountPerPayment must be an integer atomic amount, not a dollar value; got ${JSON.stringify(assetEntry.maxAmountPerPayment)}`,
-          );
-        }
-        if (!isAtomicAmount(rawAmountOf(requirement))) {
-          rejectedByAssetCap = true;
-          return false;
-        }
-        const ok = amountOf(requirement) <= BigInt(assetEntry.maxAmountPerPayment);
-        if (!ok) rejectedByAssetCap = true;
-        return ok;
-      }
-
       const defaultAsset = defaultAssetFor(requirement);
-      if (!defaultAsset) {
-        // Opt-in non-default asset without a per-entry cap: uncapped.
-        return true;
-      }
-
-      if (usdLimit === false) {
+      const assetEntry = findSpendControlAssetEntry(controls, requirement, defaultAsset);
+      const cap = resolveAtomicSpendCap(controls, requirement, defaultAsset);
+      if (cap === undefined) {
         return true;
       }
 
       const rawAmount = rawAmountOf(requirement);
       if (!isAtomicAmount(rawAmount)) {
+        if (assetEntry?.maxAmountPerPayment != null) {
+          rejectedByAssetCap = true;
+          return false;
+        }
         // Decimal ledger value (e.g. XRPL IOU "0.01") — 1:1 USD vs the Money cap.
+        if (usdLimit === false) {
+          return true;
+        }
         const valueScaled = BigInt(convertToTokenAmount(rawAmount, 18));
         const capScaled = BigInt(convertToTokenAmount(parseMoney(usdLimit).amount, 18));
         const ok = valueScaled <= capScaled;
-        if (!ok) rejectedUsdSymbol = defaultAsset.symbol;
+        if (!ok) rejectedUsdSymbol = defaultAsset?.symbol;
         return ok;
       }
 
-      const maxAtomic = BigInt(
-        convertToTokenAmount(parseMoney(usdLimit).amount, defaultAsset.decimals),
-      );
-      const ok = amountOf(requirement) <= maxAtomic;
-      if (!ok) rejectedUsdSymbol = defaultAsset.symbol;
+      const ok = BigInt(rawAmount) <= BigInt(cap);
+      if (!ok) {
+        if (assetEntry?.maxAmountPerPayment != null) {
+          rejectedByAssetCap = true;
+        } else {
+          rejectedUsdSymbol = defaultAsset?.symbol;
+        }
+      }
       return ok;
     });
 

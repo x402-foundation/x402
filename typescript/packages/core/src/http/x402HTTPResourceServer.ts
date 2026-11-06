@@ -273,6 +273,7 @@ export interface HTTPRequestContext {
   method: string;
   paymentHeader?: string;
   routePattern?: string;
+  decodedPath?: string;
 }
 
 /**
@@ -399,6 +400,22 @@ const FALLBACK_PAYWALL_HTML = `<!DOCTYPE html>
   </body>
 </html>`;
 
+// Optional package, imported by a non-literal specifier so TypeScript and
+// bundlers do not try to resolve it from core.
+const PAYWALL_PACKAGE = "@x402/paywall";
+
+/**
+ * Network handler exported by @x402/paywall (its PaywallNetworkHandler)
+ */
+interface PaywallNetworkHandler {
+  supports(requirement: PaymentRequirements): boolean;
+  generateHtml(
+    requirement: PaymentRequirements,
+    paymentRequired: PaymentRequired,
+    config: PaywallConfig,
+  ): string;
+}
+
 /**
  * HTTP-enhanced x402 resource server
  * Provides framework-agnostic HTTP protocol handling
@@ -408,6 +425,8 @@ export class x402HTTPResourceServer {
   private compiledRoutes: CompiledRoute[] = [];
   private routesConfig: RoutesConfig;
   private paywallProvider?: PaywallProvider;
+  private defaultPaywallHandlers?: PaywallNetworkHandler[];
+  private defaultPaywallLoad?: Promise<void>;
   private protectedRequestHooks: ProtectedRequestHook[] = [];
   private warnedMissingBeforeHandlerSettlement = false;
 
@@ -533,7 +552,7 @@ export class x402HTTPResourceServer {
     const { adapter, path } = context;
 
     // Find matching route
-    const routeMatch = this.getRouteConfig(path, method);
+    const routeMatch = this.getRouteConfig(path, method, context.decodedPath);
     if (!routeMatch) {
       return { type: "no-payment-required" }; // No payment required for this route
     }
@@ -603,11 +622,16 @@ export class x402HTTPResourceServer {
         ? await routeConfig.unpaidResponseBody(enrichedContext)
         : undefined;
 
+      const isWebBrowser = this.isWebBrowser(adapter);
+      if (isWebBrowser && !this.paywallProvider && !routeConfig.customPaywallHtml) {
+        await this.loadDefaultPaywallHandlers();
+      }
+
       return {
         type: "payment-error",
         response: this.createHTTPResponse(
           paymentRequired,
-          this.isWebBrowser(adapter),
+          isWebBrowser,
           paywallConfig,
           routeConfig.customPaywallHtml,
           unpaidBody,
@@ -913,7 +937,7 @@ export class x402HTTPResourceServer {
    */
   requiresPayment(context: HTTPRequestContext): boolean {
     const method = context.method || context.adapter.getMethod();
-    return this.getRouteConfig(context.path, method) !== undefined;
+    return this.getRouteConfig(context.path, method, context.decodedPath) !== undefined;
   }
 
   /**
@@ -1045,7 +1069,11 @@ export class x402HTTPResourceServer {
   ): Promise<HTTPResponseInstructions> {
     const settlementHeaders = failure.headers;
     const routeConfig = transportContext
-      ? this.getRouteConfig(transportContext.request.path, transportContext.request.method)
+      ? this.getRouteConfig(
+          transportContext.request.path,
+          transportContext.request.method,
+          transportContext.request.decodedPath,
+        )
       : undefined;
 
     const customBody = routeConfig?.config.settlementFailedResponseBody
@@ -1230,22 +1258,44 @@ export class x402HTTPResourceServer {
    *
    * @param path - Request path
    * @param method - HTTP method
+   * @param decodedPath - Framework decoded routing view, if distinct from path
    * @returns Route configuration and pattern, or undefined if no match
    */
   private getRouteConfig(
     path: string,
     method: string,
+    decodedPath?: string,
   ): { config: RouteConfig; pattern: string } | undefined {
-    const normalizedPath = this.normalizePath(path);
     const upperMethod = method.toUpperCase();
+    // A method-less route must not gate the CORS preflight: the browser sends
+    // OPTIONS without a payment and only sends the paid request if it succeeds.
+    // An explicit "OPTIONS /path" route still matches.
+    const matchesVerb = (verb: string): boolean =>
+      verb === upperMethod || (verb === "*" && upperMethod !== "OPTIONS");
 
-    const matchingRoute = this.compiledRoutes.find(
-      route =>
-        route.regex.test(normalizedPath) && (route.verb === "*" || route.verb === upperMethod),
-    );
+    const findMatch = (candidate: string): { config: RouteConfig; pattern: string } | undefined => {
+      let matchingRoute = this.compiledRoutes.find(
+        route => route.regex.test(candidate) && matchesVerb(route.verb),
+      );
+      if (!matchingRoute && upperMethod === "HEAD") {
+        matchingRoute = this.compiledRoutes.find(
+          route => route.regex.test(candidate) && route.verb === "GET",
+        );
+      }
+      if (!matchingRoute) return undefined;
+      return { config: matchingRoute.config, pattern: matchingRoute.pattern };
+    };
 
-    if (!matchingRoute) return undefined;
-    return { config: matchingRoute.config, pattern: matchingRoute.pattern };
+    const match = findMatch(this.normalizePath(path));
+    if (match !== undefined) {
+      return match;
+    }
+
+    if (decodedPath !== undefined && decodedPath !== path) {
+      return findMatch(this.normalizeDecodedPath(decodedPath));
+    }
+
+    return undefined;
   }
 
   /**
@@ -1316,9 +1366,15 @@ export class x402HTTPResourceServer {
       };
     }
 
-    // Use callback result if provided, otherwise default to JSON with empty object
+    // Use callback result if provided, otherwise include the error reason so
+    // non-browser clients can tell WHY a payment was rejected without decoding
+    // the PAYMENT-REQUIRED header (e.g. insufficient_funds vs. signature error).
     const contentType = unpaidResponse ? unpaidResponse.contentType : "application/json";
-    const body = unpaidResponse ? unpaidResponse.body : {};
+    const body = unpaidResponse
+      ? unpaidResponse.body
+      : paymentRequired.error
+        ? { error: paymentRequired.error }
+        : {};
 
     return {
       status,
@@ -1417,6 +1473,17 @@ export class x402HTTPResourceServer {
   }
 
   /**
+   * Normalize a framework-decoded path without re-decoding percent-escapes.
+   *
+   * @param path - Framework-decoded path
+   * @returns Normalized path
+   */
+  private normalizeDecodedPath(path: string): string {
+    const pathWithoutQuery = path.split(/[?#]/)[0];
+    return pathWithoutQuery.replace(/\/+/g, "/").replace(/(.+?)\/+$/, "$1") || "/";
+  }
+
+  /**
    * Generate paywall HTML for browser requests
    *
    * @param paymentRequired - Payment required response
@@ -1438,45 +1505,40 @@ export class x402HTTPResourceServer {
       return this.paywallProvider.generateHtml(paymentRequired, paywallConfig);
     }
 
-    // Try to use @x402/paywall if available (optional dependency)
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const paywall = require("@x402/paywall");
-      const displayAmount = this.getDisplayAmount(paymentRequired);
-      const resource = paymentRequired.resource;
-
-      return paywall.getPaywallHtml({
-        amount: displayAmount,
-        paymentRequired,
-        currentUrl: resource?.url || paywallConfig?.currentUrl || "",
-        testnet: paywallConfig?.testnet ?? true,
-        appName: paywallConfig?.appName,
-        appLogo: paywallConfig?.appLogo,
-        sessionTokenEndpoint: paywallConfig?.sessionTokenEndpoint,
-      });
-    } catch {
-      // @x402/paywall not installed, fall back to basic HTML
+    // Use @x402/paywall if installed (see loadDefaultPaywallHandlers). Only
+    // accepts[0] is inspected: createPaywall() iterates accepts, but the bundled
+    // UIs render accepts[0] (the EVM one derives its chain from it and throws
+    // for any other network), so a handler picked for a later option would
+    // serve a page for an option it cannot show. The UIs also only register
+    // the exact scheme clients. Anything else keeps the static page.
+    const [requirement] = paymentRequired.accepts;
+    const handler =
+      requirement?.scheme === "exact"
+        ? this.defaultPaywallHandlers?.find(h => h.supports(requirement))
+        : undefined;
+    if (handler) {
+      return handler.generateHtml(requirement, paymentRequired, paywallConfig ?? {});
     }
 
     return FALLBACK_PAYWALL_HTML;
   }
 
   /**
-   * Extract display amount from payment requirements.
-   * Uses the registered scheme's decimal precision for the asset, falling back to 6.
+   * Load the @x402/paywall network handlers, if the package is installed.
+   * Resolved at runtime so core neither depends on nor bundles it.
    *
-   * @param paymentRequired - The payment required object
-   * @returns The display amount in decimal format
+   * @returns Promise that resolves once loading has been attempted
    */
-  private getDisplayAmount(paymentRequired: PaymentRequired): number {
-    const accepts = paymentRequired.accepts;
-    if (accepts && accepts.length > 0) {
-      const firstReq = accepts[0];
-      if ("amount" in firstReq) {
-        const decimals = this.ResourceServer.getAssetDecimalsForRequirements(firstReq);
-        return parseFloat(firstReq.amount) / 10 ** decimals;
-      }
+  private loadDefaultPaywallHandlers(): Promise<void> {
+    if (!this.defaultPaywallLoad) {
+      this.defaultPaywallLoad = import(/* webpackIgnore: true */ PAYWALL_PACKAGE)
+        .then(({ evmPaywall, svmPaywall, avmPaywall }) => {
+          this.defaultPaywallHandlers = [evmPaywall, svmPaywall, avmPaywall];
+        })
+        .catch(() => {
+          // @x402/paywall not installed, fall back to basic HTML
+        });
     }
-    return 0;
+    return this.defaultPaywallLoad;
   }
 }

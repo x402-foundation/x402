@@ -1,5 +1,103 @@
 # @x402/express Changelog
 
+## 2.30.0
+
+### Minor Changes
+
+- Updated dependencies [0f41a8d](https://github.com/x402-foundation/x402/commit/0f41a8d)
+- Updated dependencies [c349511](https://github.com/x402-foundation/x402/commit/c349511)
+- Updated dependencies [7074943](https://github.com/x402-foundation/x402/commit/7074943)
+- Updated dependencies [6f1a533](https://github.com/x402-foundation/x402/commit/6f1a533)
+- Updated dependencies [3c0a740](https://github.com/x402-foundation/x402/commit/3c0a740)
+  - @x402/core@2.30.0
+  - @x402/paywall@2.30.0
+  - @x402/extensions@2.30.0
+
+## 2.29.0
+
+### Minor Changes
+
+- Updated dependencies [636f585](https://github.com/x402-foundation/x402/commit/636f585)
+- Updated dependencies [c1212ca](https://github.com/x402-foundation/x402/commit/c1212ca)
+- Updated dependencies [87a9877](https://github.com/x402-foundation/x402/commit/87a9877)
+- Updated dependencies [b70da0d](https://github.com/x402-foundation/x402/commit/b70da0d)
+- Updated dependencies [76f2f28](https://github.com/x402-foundation/x402/commit/76f2f28)
+- Updated dependencies [1566e13](https://github.com/x402-foundation/x402/commit/1566e13)
+- Updated dependencies [732c181](https://github.com/x402-foundation/x402/commit/732c181)
+- Updated dependencies [8c2b431](https://github.com/x402-foundation/x402/commit/8c2b431)
+- Updated dependencies [deeb1f4](https://github.com/x402-foundation/x402/commit/deeb1f4)
+- Updated dependencies [3525075](https://github.com/x402-foundation/x402/commit/3525075)
+- Updated dependencies [e95b066](https://github.com/x402-foundation/x402/commit/e95b066)
+- Updated dependencies [3bd3c1d](https://github.com/x402-foundation/x402/commit/3bd3c1d)
+- Updated dependencies [43aaecb](https://github.com/x402-foundation/x402/commit/43aaecb)
+- Updated dependencies [a9772e5](https://github.com/x402-foundation/x402/commit/a9772e5)
+- Updated dependencies [43aaecb](https://github.com/x402-foundation/x402/commit/43aaecb)
+- Updated dependencies [bc31d3e](https://github.com/x402-foundation/x402/commit/bc31d3e)
+- Updated dependencies [db2c98e](https://github.com/x402-foundation/x402/commit/db2c98e)
+- Updated dependencies [7abd80f](https://github.com/x402-foundation/x402/commit/7abd80f)
+- Updated dependencies [fa5eb06](https://github.com/x402-foundation/x402/commit/fa5eb06)
+- Updated dependencies [374216b](https://github.com/x402-foundation/x402/commit/374216b)
+- Updated dependencies [3ca54cb](https://github.com/x402-foundation/x402/commit/3ca54cb)
+- Updated dependencies [b609bf5](https://github.com/x402-foundation/x402/commit/b609bf5)
+- Updated dependencies [8065278](https://github.com/x402-foundation/x402/commit/8065278)
+  - @x402/core@2.29.0
+  - @x402/extensions@2.29.0
+  - @x402/paywall@2.29.0
+
+### Patch Changes
+
+- [732c181](https://github.com/x402-foundation/x402/commit/732c181): Include the rejection reason (`error`) in the JSON 402 body for non-browser clients when no custom unpaid response is provided, and return `{ error: "settlement_failed" }` instead of `{}` from the Express adapter's settlement catch-all, so agent clients that read the body instead of the PAYMENT-REQUIRED header can tell why a payment was rejected. ([#3795](https://github.com/x402-foundation/x402/pull/3795)) - Thanks [@clawdbotworker](https://github.com/clawdbotworker)!
+- [5e8688a](https://github.com/x402-foundation/x402/commit/5e8688a): Fixed `@x402/express` JSON-encoding a payment-error body when the response declares `text/plain`. A string body with that content type is now sent as text, preserving newlines. JSON object bodies are unchanged. ([#3668](https://github.com/x402-foundation/x402/pull/3668)) - Thanks [@Bartok9](https://github.com/Bartok9)!
+- [374216b](https://github.com/x402-foundation/x402/commit/374216b): Raise runtime and peer dependency floors so installs no longer resolve known-vulnerable releases of axios, express, hono, fastify, Next.js, the MCP SDK, ajv, and the Hedera SDK. ([#3981](https://github.com/x402-foundation/x402/pull/3981)) - Thanks [@phdargen](https://github.com/phdargen) and [@cursoragent](https://github.com/cursoragent)!
+
+## 2.28.0
+
+### Minor Changes
+
+- Updated dependencies [dd89698](https://github.com/x402-foundation/x402/commit/dd89698)
+  - @x402/paywall@2.28.0
+  - @x402/core@2.28.0
+  - @x402/extensions@2.28.0
+
+## 2.27.0
+
+### Minor Changes
+
+- Updated dependencies [5d3a2b2](https://github.com/x402-foundation/x402/commit/5d3a2b2)
+  - @x402/core@2.27.0
+  - @x402/extensions@2.27.0
+  - @x402/paywall@2.27.0
+
+### Patch Changes
+
+- [5d3a2b2](https://github.com/x402-foundation/x402/commit/5d3a2b2): HTTP resource servers now match protected routes against both the escaped request path and the framework's decoded routing view, requiring payment if either matches. A literal route such as `GET /api/premium` could previously be reached unpaid by encoding its path separator (`/api%2Fpremium`) when the adapter only consulted the escaped path while the framework dispatched on the decoded one. ([#3542](https://github.com/x402-foundation/x402/pull/3542)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+
+## 2.26.0
+
+### Minor Changes
+
+- Updated dependencies [76fe973](https://github.com/x402-foundation/x402/commit/76fe973)
+- Updated dependencies [8ae5ff6](https://github.com/x402-foundation/x402/commit/8ae5ff6)
+  - @x402/core@2.26.0
+  - @x402/extensions@2.26.0
+  - @x402/paywall@2.26.0
+
+## 2.25.0
+
+### Minor Changes
+
+- Updated dependencies [a140d2b](https://github.com/x402-foundation/x402/commit/a140d2b)
+- Updated dependencies [1bc2ae8](https://github.com/x402-foundation/x402/commit/1bc2ae8)
+- Updated dependencies [299b9bc](https://github.com/x402-foundation/x402/commit/299b9bc)
+- Updated dependencies [bbcb974](https://github.com/x402-foundation/x402/commit/bbcb974)
+  - @x402/extensions@2.25.0
+  - @x402/core@2.25.0
+  - @x402/paywall@2.25.0
+
+### Patch Changes
+
+- [299b9bc](https://github.com/x402-foundation/x402/commit/299b9bc): Exit the process when eager facilitator sync fails with a permanent capability or route-configuration error, instead of staying up until the first paid request. Transient facilitator timeouts remain retryable. ([#3346](https://github.com/x402-foundation/x402/pull/3346)) - Thanks [@phdargen](https://github.com/phdargen)!
+
 ## 2.24.0
 
 ### Minor Changes

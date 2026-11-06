@@ -11,12 +11,12 @@ const channelMocks = vi.hoisted(() => ({
   channelExists: vi.fn(),
   fetchAndVerifyOpenChannel: vi.fn(),
   simulateOpenSettleDistribute: vi.fn(),
-  submitSettle: vi.fn(),
+  submitChannelTransactionWithSigner: vi.fn(),
 }));
 
-vi.mock("../../src/upto/facilitator/channel", async () => {
-  const actual = await vi.importActual<typeof import("../../src/upto/facilitator/channel")>(
-    "../../src/upto/facilitator/channel",
+vi.mock("../../src/payment-channels/facilitator", async () => {
+  const actual = await vi.importActual<typeof import("../../src/payment-channels/facilitator")>(
+    "../../src/payment-channels/facilitator",
   );
   return {
     ...actual,
@@ -24,7 +24,7 @@ vi.mock("../../src/upto/facilitator/channel", async () => {
     channelExists: channelMocks.channelExists,
     fetchAndVerifyOpenChannel: channelMocks.fetchAndVerifyOpenChannel,
     simulateOpenSettleDistribute: channelMocks.simulateOpenSettleDistribute,
-    submitSettle: channelMocks.submitSettle,
+    submitChannelTransactionWithSigner: channelMocks.submitChannelTransactionWithSigner,
   };
 });
 
@@ -56,9 +56,9 @@ import {
 import { UptoSvmScheme } from "../../src/upto/facilitator/scheme";
 import { ErrSettlementPending } from "../../src/exact/facilitator/errors";
 import {
-  ChannelOpenConfirmationError,
+  ChannelBroadcastConfirmationError as ChannelOpenConfirmationError,
   SettlementConfirmationTimeoutError,
-} from "../../src/upto/facilitator/channel";
+} from "../../src/payment-channels/facilitator";
 import type { UptoSvmPayloadV2 } from "../../src/types";
 import { challengeExpiresAt, MAX_TIMEOUT_SECONDS } from "./upto.testUtils";
 
@@ -163,7 +163,7 @@ describe("UptoSvmScheme deposit pending-settlement store integration", () => {
     channelMocks.channelExists.mockResolvedValue(false);
     channelMocks.simulateOpenSettleDistribute.mockResolvedValue(undefined);
     channelMocks.broadcastOpen.mockResolvedValue(USDC_MAINNET_ADDRESS);
-    channelMocks.submitSettle.mockResolvedValue(USDC_MAINNET_ADDRESS);
+    channelMocks.submitChannelTransactionWithSigner.mockResolvedValue(USDC_MAINNET_ADDRESS);
     store = new InMemoryPendingSettlementStore();
   });
 
@@ -281,7 +281,7 @@ describe("UptoSvmScheme claim pending-settlement store integration", () => {
     channelMocks.channelExists.mockResolvedValue(false);
     channelMocks.simulateOpenSettleDistribute.mockResolvedValue(undefined);
     channelMocks.broadcastOpen.mockResolvedValue(USDC_MAINNET_ADDRESS);
-    channelMocks.submitSettle.mockResolvedValue(USDC_MAINNET_ADDRESS);
+    channelMocks.submitChannelTransactionWithSigner.mockResolvedValue(USDC_MAINNET_ADDRESS);
     store = new InMemoryPendingSettlementStore();
   });
 
@@ -305,12 +305,12 @@ describe("UptoSvmScheme claim pending-settlement store integration", () => {
     const result = await fixture.facilitator.settle(payload, requirements);
 
     expect(result.success).toBe(true);
-    expect(channelMocks.submitSettle).toHaveBeenCalledTimes(1);
+    expect(channelMocks.submitChannelTransactionWithSigner).toHaveBeenCalledTimes(1);
     expect(await store.get(settlementKey)).toBeUndefined();
   });
 
   it("cache-miss + settle confirmation timeout: returns settlement_pending and populates the store keyed by the channel", async () => {
-    channelMocks.submitSettle.mockRejectedValue(
+    channelMocks.submitChannelTransactionWithSigner.mockRejectedValue(
       new SettlementConfirmationTimeoutError(
         "ClaimSig1111111111111111111111111111111111111" as never,
       ),
@@ -341,7 +341,7 @@ describe("UptoSvmScheme claim pending-settlement store integration", () => {
     expect(result.success).toBe(true);
     expect(result.transaction).toBe("CachedClaimSig11111111111111111111111111111");
     expect(channelMocks.fetchAndVerifyOpenChannel).not.toHaveBeenCalled();
-    expect(channelMocks.submitSettle).not.toHaveBeenCalled();
+    expect(channelMocks.submitChannelTransactionWithSigner).not.toHaveBeenCalled();
     expect(confirmTransaction).toHaveBeenCalledWith(
       "CachedClaimSig11111111111111111111111111111",
       requirements.network,
@@ -363,7 +363,7 @@ describe("UptoSvmScheme claim pending-settlement store integration", () => {
     expect(result.success).toBe(false);
     expect(result.errorReason).toBe(ErrSettlementPending);
     expect(result.transaction).toBe("CachedClaimSig22222222222222222222222222222");
-    expect(channelMocks.submitSettle).not.toHaveBeenCalled();
+    expect(channelMocks.submitChannelTransactionWithSigner).not.toHaveBeenCalled();
     expect(await store.get(settlementKey)).toBe("CachedClaimSig22222222222222222222222222222");
   });
 
@@ -379,7 +379,7 @@ describe("UptoSvmScheme claim pending-settlement store integration", () => {
 
     expect(result.success).toBe(false);
     expect(result.errorReason).toBe("invalid_upto_svm_payload_settlement_exceeds_amount");
-    expect(channelMocks.submitSettle).not.toHaveBeenCalled();
+    expect(channelMocks.submitChannelTransactionWithSigner).not.toHaveBeenCalled();
     expect(await store.get(settlementKey)).toBeUndefined();
   });
 });

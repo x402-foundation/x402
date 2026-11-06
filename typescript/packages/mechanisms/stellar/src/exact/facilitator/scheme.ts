@@ -12,7 +12,7 @@ import {
 } from "@stellar/stellar-sdk";
 import { Api } from "@stellar/stellar-sdk/rpc";
 import { STELLAR_WILDCARD_CAIP2 } from "../../constants";
-import { gatherAuthEntrySignatureStatus } from "../../shared";
+import { gatherAuthEntrySignatureStatus, getAddressCredentials } from "../../shared";
 import { ExactStellarPayloadV2 } from "../../types";
 import {
   getEstimatedLedgerCloseTimeSeconds,
@@ -90,9 +90,18 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
   public readonly areFeesSponsored: boolean;
   public readonly rpcConfig?: RpcConfig;
   public readonly maxTransactionFeeStroops: number;
+  public readonly inclusionFeeStroops: number;
   public readonly feeBumpSigner?: FacilitatorStellarSigner;
   private readonly signerMap: Map<string, FacilitatorStellarSigner>;
   private readonly selectSigner: (addresses: readonly string[]) => string;
+  /**
+   * Addresses the facilitator-safety checks must treat as facilitator-controlled.
+   * Deliberately a separate set from `signingAddresses`: that set also backs
+   * signer *selection* (`signerMap.get(...)` in `settle()`), and `feeBumpSigner`
+   * has no entry in `signerMap`, so merging it into `signingAddresses` directly
+   * would let round-robin selection pick an address `settle()` can't sign with.
+   */
+  private readonly facilitatorSafetyAddresses: ReadonlySet<string>;
 
   /**
    * Creates a new ExactStellarScheme instance.
@@ -100,8 +109,12 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
    * @param signers - One or more Stellar signers managed by the facilitator for settlement
    * @param options - Configuration options
    * @param options.rpcConfig - Optional RPC configuration with custom RPC URL
-   * @param options.areFeesSponsored - Indicates if fees are sponsored (default: true)
+   * @param options.areFeesSponsored - Indicates if fees are sponsored (default: true). The spec
+   *   currently only supports `true`; setting `false` here still constructs successfully, but the
+   *   official client rejects any payment built against the resulting `areFeesSponsored: false`.
    * @param options.maxTransactionFeeStroops - Safety ceiling in stroops; verify rejects if the simulation-derived fee exceeds this (default: 50_000)
+   * @param options.inclusionFeeStroops - Inclusion fee bid in stroops for the settlement transaction and the fee bump, on top of the resource fee (default: 100).
+   *   Mainnet often needs more than the minimum for Soroban transactions to be included.
    * @param options.selectSigner - Callback to select which signer to use (default: round-robin)
    * @param options.feeBumpSigner - Optional signer used as fee source in a fee bump transaction wrapper.
    *   When provided, settle() wraps the inner transaction (signed by the selected signer) in a
@@ -114,15 +127,18 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
       rpcConfig,
       areFeesSponsored = true,
       maxTransactionFeeStroops = DEFAULT_MAX_TRANSACTION_FEE_STROOPS,
+      inclusionFeeStroops = Number(BASE_FEE),
       selectSigner = roundRobinSelectSigner(),
       feeBumpSigner,
     }: {
       /** Optional RPC configuration with custom RPC URL */
       rpcConfig?: RpcConfig;
-      /** Indicates if fees are sponsored (default: true) */
+      /** Indicates if fees are sponsored (default: true). See the constructor's own @param doc above: `false` is accepted here but not yet usable end-to-end. */
       areFeesSponsored?: boolean;
       /** Safety ceiling in stroops; verify rejects if the simulation-derived fee exceeds this (default: 50_000) */
       maxTransactionFeeStroops?: number;
+      /** Inclusion fee bid in stroops for the settlement transaction and the fee bump (default: 100) */
+      inclusionFeeStroops?: number;
       /** Optional callback to select which signer to use. Receives addresses array, returns selected address. Defaults to round-robin. */
       selectSigner?: (addresses: readonly string[]) => string;
       /** Optional signer used as fee source in a fee bump transaction wrapper. Decouples fee payment from sequence number management. */
@@ -140,8 +156,12 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
     this.rpcConfig = rpcConfig;
     this.areFeesSponsored = areFeesSponsored ?? true;
     this.maxTransactionFeeStroops = maxTransactionFeeStroops ?? DEFAULT_MAX_TRANSACTION_FEE_STROOPS;
+    this.inclusionFeeStroops = inclusionFeeStroops ?? Number(BASE_FEE);
     this.selectSigner = selectSigner ?? roundRobinSelectSigner();
     this.feeBumpSigner = feeBumpSigner;
+    this.facilitatorSafetyAddresses = this.feeBumpSigner
+      ? new Set([...this.signingAddresses, this.feeBumpSigner.address])
+      : this.signingAddresses;
   }
 
   /**
@@ -213,6 +233,7 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
           network: payload.accepted.network,
           transaction: "",
           errorReason: verifyResult.invalidReason ?? "verification_failed",
+          errorMessage: verifyResult.invalidMessage,
           payer: verifyResult.payer,
         };
       }
@@ -251,9 +272,9 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
       const facilitatorAccount = await server.getAccount(signer.address);
 
       // SDK v16: `fee` is the inclusion buffer only; build() adds sorobanData.resourceFee()
-      // from the settle-time simulation, so tx.fee = BASE_FEE + minResourceFee.
+      // from the settle-time simulation, so tx.fee = inclusionFeeStroops + minResourceFee.
       const rebuiltTx = new TransactionBuilder(facilitatorAccount, {
-        fee: BASE_FEE,
+        fee: String(this.inclusionFeeStroops),
         networkPassphrase,
         ledgerbounds: transaction.ledgerBounds,
         memo: transaction.memo,
@@ -296,7 +317,7 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
         const feeBumpTx = TransactionBuilder.buildFeeBumpTransaction(
           this.feeBumpSigner.address,
           // Same inclusion-only base fee; SDK adds the inner tx resource fee.
-          BASE_FEE,
+          String(this.inclusionFeeStroops),
           signedInnerTx,
           networkPassphrase,
         );
@@ -326,12 +347,28 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
       const sendResult = await server.sendTransaction(txToSubmit);
 
       if (sendResult.status !== "PENDING") {
+        // TRY_AGAIN_LATER means nothing reached a ledger and nothing was spent, so
+        // the caller can safely retry. Every other non-PENDING status (e.g. ERROR)
+        // is terminal for this payload and must not be retried as-is.
+        const isRetryable = sendResult.status === "TRY_AGAIN_LATER";
+        const errorResultCode = sendResult.errorResult?.result().switch().name;
         return {
           success: false,
           network: payload.accepted.network,
           transaction: "",
-          errorReason: "settle_exact_stellar_transaction_submission_failed",
+          errorReason: isRetryable
+            ? "settle_exact_stellar_transaction_submission_retryable"
+            : "settle_exact_stellar_transaction_submission_failed",
+          errorMessage: `Soroban RPC sendTransaction returned status ${sendResult.status}${
+            errorResultCode ? ` (${errorResultCode})` : ""
+          }`,
           payer,
+          extra: {
+            rpcStatus: sendResult.status,
+            retryable: isRetryable,
+            latestLedger: sendResult.latestLedger,
+            ...(errorResultCode ? { errorResultCode } : {}),
+          },
         };
       }
 
@@ -426,8 +463,8 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
       }
 
       if (
-        this.signingAddresses.has(operation.source ?? "") ||
-        this.signingAddresses.has(transaction.source)
+        this.facilitatorSafetyAddresses.has(operation.source ?? "") ||
+        this.facilitatorSafetyAddresses.has(transaction.source)
       ) {
         return {
           response: invalidVerifyResponse("invalid_exact_stellar_payload_unsafe_tx_or_op_source"),
@@ -465,7 +502,7 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
       const toAddress = scValToNative(args[1]) as string;
       const amount = scValToNative(args[2]) as bigint;
 
-      if (this.signingAddresses.has(fromAddress)) {
+      if (this.facilitatorSafetyAddresses.has(fromAddress)) {
         return {
           response: invalidVerifyResponse("invalid_exact_stellar_payload_facilitator_is_payer"),
         };
@@ -505,7 +542,7 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
 
       // Step 8: Validate the simulation-derived settlement fee against the safety ceiling
       const minResourceFee = parseInt(simResponse.minResourceFee, 10);
-      const settlementFeeStroops = minResourceFee + parseInt(BASE_FEE, 10);
+      const settlementFeeStroops = minResourceFee + this.inclusionFeeStroops;
       if (settlementFeeStroops > this.maxTransactionFeeStroops) {
         return {
           response: invalidVerifyResponse(
@@ -538,7 +575,7 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
       // Step 10: Validate auth entries (structure, credential type, expiration, facilitator safety, and signature status).
       const authValidation = this.validateAuthEntries(
         invokeOp,
-        this.signingAddresses,
+        this.facilitatorSafetyAddresses,
         fromAddress,
         maxLedger,
         transaction,
@@ -742,18 +779,17 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
     }
 
     for (const auth of invokeOp.auth) {
-      const credentialsType = auth.credentials().switch();
-
-      // Only address-based credentials are allowed
-      if (credentialsType !== xdr.SorobanCredentialsType.sorobanCredentialsAddress()) {
+      // Only address-based credentials are allowed: legacy V1 or CAP-71 V2,
+      // which the network accepts from Protocol 28 onward. Source-account and
+      // delegated credentials are rejected.
+      const addressCredentials = getAddressCredentials(auth.credentials());
+      if (!addressCredentials) {
         return invalidVerifyResponse(
           "invalid_exact_stellar_payload_unsupported_credential_type",
           fromAddress,
         );
       }
 
-      // Extract address from credentials
-      const addressCredentials = auth.credentials().address();
       const authAddress = Address.fromScAddress(addressCredentials.address()).toString();
 
       // Facilitator must not appear in auth entries

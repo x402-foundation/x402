@@ -5,7 +5,10 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import pytest
+
 from x402.mechanisms.evm import get_default_asset
+from x402.mechanisms.evm.asset_cache import reset_asset_contract_cache
 from x402.mechanisms.evm.constants import (
     ERR_ASSET_NOT_DEPLOYED_CONTRACT,
     ERR_ERC20_APPROVAL_BROADCAST_FAILED,
@@ -18,6 +21,7 @@ from x402.mechanisms.evm.constants import (
     ERR_PERMIT2_TOKEN_MISMATCH,
     ERR_SETTLEMENT_PENDING,
     ERR_UPTO_FACILITATOR_MISMATCH,
+    ERR_UPTO_INVALID_PAYLOAD,
     ERR_UPTO_INVALID_SCHEME,
     ERR_UPTO_NETWORK_MISMATCH,
     ERR_UPTO_SETTLEMENT_EXCEEDS_AMOUNT,
@@ -127,6 +131,127 @@ def make_requirements(
     )
 
 
+_MISSING = object()
+
+# (path, value, message_prefix): set the field at `path` in the payload dict;
+# _MISSING deletes it. Cases the upto payload guard rejects outright (wrong
+# container types, no witness.facilitator) surface with the unsupported-type
+# message; cases inside an upto-shaped payload are rejected by the shape
+# validator with a message naming the field. Both must return
+# ERR_UPTO_INVALID_PAYLOAD from verify and settle instead of raising.
+MALFORMED_UPTO_PAYLOADS = [
+    pytest.param(
+        ("permit2Authorization",), "oops", "unsupported payload type", id="authorization_not_object"
+    ),
+    pytest.param(
+        ("permit2Authorization", "witness"), [], "unsupported payload type", id="witness_not_object"
+    ),
+    pytest.param(
+        ("permit2Authorization", "witness", "facilitator"),
+        _MISSING,
+        "unsupported payload type",
+        id="facilitator_missing",
+    ),
+    pytest.param(
+        ("permit2Authorization", "permitted"),
+        None,
+        "permit2Authorization.permitted must be ",
+        id="permitted_not_object",
+    ),
+    pytest.param(
+        ("permit2Authorization", "from"),
+        123,
+        "permit2Authorization.from must be ",
+        id="from_not_string",
+    ),
+    pytest.param(
+        ("permit2Authorization", "spender"),
+        _MISSING,
+        "permit2Authorization.spender must be ",
+        id="spender_missing",
+    ),
+    pytest.param(
+        ("permit2Authorization", "permitted", "token"),
+        None,
+        "permit2Authorization.permitted.token must be ",
+        id="token_not_string",
+    ),
+    pytest.param(
+        ("permit2Authorization", "witness", "to"),
+        123,
+        "permit2Authorization.witness.to must be ",
+        id="witness_to_not_string",
+    ),
+    pytest.param(
+        ("permit2Authorization", "witness", "facilitator"),
+        123,
+        "permit2Authorization.witness.facilitator must be ",
+        id="facilitator_not_string",
+    ),
+    pytest.param(
+        ("permit2Authorization", "nonce"),
+        "abc",
+        "permit2Authorization.nonce must be ",
+        id="nonce_not_numeric",
+    ),
+    pytest.param(
+        ("permit2Authorization", "nonce"),
+        123,
+        "permit2Authorization.nonce must be ",
+        id="nonce_json_number",
+    ),
+    pytest.param(
+        ("permit2Authorization", "nonce"),
+        str(2**256),
+        "permit2Authorization.nonce must be ",
+        id="nonce_above_uint256",
+    ),
+    pytest.param(
+        ("permit2Authorization", "deadline"),
+        _MISSING,
+        "permit2Authorization.deadline must be ",
+        id="deadline_missing",
+    ),
+    pytest.param(
+        ("permit2Authorization", "deadline"),
+        "1" * 5000,
+        "permit2Authorization.deadline must be ",
+        id="deadline_over_digit_limit",
+    ),
+    pytest.param(
+        ("permit2Authorization", "permitted", "amount"),
+        "-1",
+        "permit2Authorization.permitted.amount must be ",
+        id="amount_negative",
+    ),
+    pytest.param(
+        ("permit2Authorization", "permitted", "amount"),
+        1000,
+        "permit2Authorization.permitted.amount must be ",
+        id="amount_json_number",
+    ),
+    pytest.param(
+        ("permit2Authorization", "witness", "validAfter"),
+        [],
+        "permit2Authorization.witness.validAfter must be ",
+        id="valid_after_list",
+    ),
+    pytest.param(("signature",), 123, "signature must be ", id="signature_not_string"),
+]
+
+
+def make_malformed_upto_payload(path: tuple[str, ...], value) -> PaymentPayload:
+    payload_dict = make_upto_payload_dict()
+    target = payload_dict
+    for key in path[:-1]:
+        target = target[key]
+    if value is _MISSING:
+        del target[path[-1]]
+    else:
+        target[path[-1]] = value
+    return make_payment_payload(payload_dict=payload_dict)
+
+
 class MockFacilitatorSigner:
     def __init__(
         self,
@@ -199,6 +324,19 @@ class MockFacilitatorSigner:
 
     def get_code(self, address: str) -> bytes:
         return self._code_by_address.get(address.lower(), self._code)
+
+
+class _CountingAssetCodeSigner(MockFacilitatorSigner):
+    """Counts get_code calls for the payment token."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.asset_get_code_calls = 0
+
+    def get_code(self, address: str) -> bytes:
+        if address.lower() == TOKEN_ADDRESS.lower():
+            self.asset_get_code_calls += 1
+        return super().get_code(address)
 
 
 class _ReceiptTimeoutSigner(MockFacilitatorSigner):
@@ -295,6 +433,17 @@ class TestVerify:
         result = facilitator.verify(payload, make_requirements())
         assert result.is_valid is False
         assert result.invalid_reason == ERR_PERMIT2_INVALID_SPENDER
+
+    def test_invalid_spender_does_not_check_asset_contract(self):
+        reset_asset_contract_cache()
+        signer = _CountingAssetCodeSigner()
+        facilitator = UptoEvmFacilitatorScheme(signer)
+        auth = make_upto_permit2_authorization(spender="0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+        payload = make_payment_payload(payload_dict=make_upto_payload_dict(auth))
+        result = facilitator.verify(payload, make_requirements())
+        assert result.is_valid is False
+        assert result.invalid_reason == ERR_PERMIT2_INVALID_SPENDER
+        assert signer.asset_get_code_calls == 0
 
     def test_rejects_recipient_mismatch(self):
         facilitator = self._make_facilitator()
@@ -396,29 +545,70 @@ class TestVerify:
         )
         result = facilitator.verify(payload, make_requirements())
         assert result.is_valid is False
-        assert result.invalid_reason == "unsupported_payload_type"
+        assert result.invalid_reason == ERR_UPTO_INVALID_PAYLOAD
+        assert result.invalid_message == "unsupported payload type: expected upto permit2 payload"
+
+    @pytest.mark.parametrize(("path", "value", "message_prefix"), MALFORMED_UPTO_PAYLOADS)
+    def test_verify_rejects_malformed_payload(self, path, value, message_prefix):
+        facilitator = self._make_facilitator()
+
+        result = facilitator.verify(make_malformed_upto_payload(path, value), make_requirements())
+
+        assert result.is_valid is False
+        assert result.invalid_reason == ERR_UPTO_INVALID_PAYLOAD
+        assert result.invalid_message.startswith(message_prefix)
+
+    def test_verify_malformed_payload_reports_payer(self):
+        facilitator = self._make_facilitator()
+        payload = make_malformed_upto_payload(
+            ("permit2Authorization", "permitted", "amount"), "abc"
+        )
+
+        result = facilitator.verify(payload, make_requirements())
+
+        assert result.invalid_reason == ERR_UPTO_INVALID_PAYLOAD
+        assert result.payer == PAYER
 
     def test_rejects_eoa_asset(self):
         # When the token address has no bytecode, verify must reject with asset_not_deployed_contract.
+        # Other tests share TOKEN_ADDRESS but model it as deployed, and positive asset checks are
+        # cached process-wide, so drop those entries to force a real get_code here.
+        reset_asset_contract_cache()
+        from unittest.mock import patch
+
         facilitator = self._make_facilitator(
             code_by_address={TOKEN_ADDRESS.lower(): b""},  # token = EOA
         )
-        result = facilitator.verify(make_payment_payload(), make_requirements())
+        with patch(
+            "x402.mechanisms.evm.upto.permit2_utils._verify_upto_permit2_signature",
+            return_value=True,
+        ):
+            result = facilitator.verify(make_payment_payload(), make_requirements())
         assert result.is_valid is False
         assert result.invalid_reason == ERR_ASSET_NOT_DEPLOYED_CONTRACT
 
     def test_getcode_rpc_error_raises(self):
         # An RPC error on get_code must propagate as an exception, not a 400 response.
+        from unittest.mock import patch
+
         import pytest
+
+        reset_asset_contract_cache()
 
         class _RPCErrorSigner(MockFacilitatorSigner):
             def get_code(self, address: str) -> bytes:
-                raise RuntimeError("rpc: connection refused")
+                if address.lower() == TOKEN_ADDRESS.lower():
+                    raise RuntimeError("rpc: connection refused")
+                return b""
 
         facilitator = UptoEvmFacilitatorScheme(_RPCErrorSigner())
 
-        with pytest.raises(RuntimeError, match="rpc: connection refused"):
-            facilitator.verify(make_payment_payload(), make_requirements())
+        with patch(
+            "x402.mechanisms.evm.upto.permit2_utils._verify_upto_permit2_signature",
+            return_value=True,
+        ):
+            with pytest.raises(RuntimeError, match="rpc: connection refused"):
+                facilitator.verify(make_payment_payload(), make_requirements())
 
 
 class TestSettle:
@@ -498,6 +688,30 @@ class TestSettle:
         facilitator = self._make_facilitator(sig_valid=False)
         result = facilitator.settle(make_payment_payload(), make_requirements())
         assert result.success is False
+
+    @pytest.mark.parametrize(("path", "value", "message_prefix"), MALFORMED_UPTO_PAYLOADS)
+    def test_settle_rejects_malformed_payload(self, path, value, message_prefix):
+        signer = MockFacilitatorSigner()
+        facilitator = UptoEvmFacilitatorScheme(signer)
+
+        result = facilitator.settle(make_malformed_upto_payload(path, value), make_requirements())
+
+        assert result.success is False
+        assert result.error_reason == ERR_UPTO_INVALID_PAYLOAD
+        assert result.error_message.startswith(message_prefix)
+        assert result.network == NETWORK
+        assert signer.write_calls == []
+
+    def test_settle_malformed_payload_reports_payer(self):
+        facilitator = self._make_facilitator()
+        payload = make_malformed_upto_payload(
+            ("permit2Authorization", "permitted", "amount"), "abc"
+        )
+
+        result = facilitator.settle(payload, make_requirements())
+
+        assert result.error_reason == ERR_UPTO_INVALID_PAYLOAD
+        assert result.payer == PAYER
 
     def test_settle_fails_on_transaction_failure(self):
         from unittest.mock import patch

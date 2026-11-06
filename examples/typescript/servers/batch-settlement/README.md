@@ -2,7 +2,7 @@
 
 Express server that protects a resource with the **batch-settlement** EVM scheme. Each request is paid by an off-chain voucher; the server batches voucher claims and onchain settlements via a `ChannelManager` running in the background.
 
-The route demonstrates **dynamic pricing**: the client authorizes up to `$0.01` per request, and the handler bills a random fraction of that via `setSettlementOverrides`.
+The route demonstrates **dynamic pricing on EVM**: the client authorizes up to `$0.01` per request, and the handler bills a random fraction of that via `setSettlementOverrides`. Every 402 also includes `extra.minDeposit` (SDK default `10 × amount`) so clients can size the channel deposit. Override per route with `accepts.extra.minDeposit` (`"$0.10"` on the default asset, or an atomic string). The server announces the hint only; it does not reject smaller deposits unless you set `enforceMinDeposit: true`. SVM `batch-settlement` is fixed-price by default, so Solana payments settle at the advertised amount. Set `SVM_OPERATOR_PRIVATE_KEY` to also offer the route **server-signed**: the client signs a per-request proof, the handler meters, and the operator signs the actual cumulative charge. Because that gives the operator authority over the whole channel escrow, the server keeps a client-signed accept on the same route (`extra.voucherSigner: "client"`) and clients use the server-signed one only for origins they have configured as trusted.
 
 See the [scheme specification](../../../../specs/schemes/batch-settlement/scheme_batch_settlement_evm.md) and the [scheme README](../../../../typescript/packages/mechanisms/evm/src/batch-settlement/README.md) for protocol details.
 
@@ -30,6 +30,20 @@ new BatchSettlementEvmScheme(evmAddress, { /* no receiverAuthorizerSigner */ });
 ```
 
 This is simpler operationally but binds each channel to the current facilitator authorizer. **Switching facilitators (or rotating their authorizer key) requires opening new channels.** Before swapping, claim outstanding vouchers and refund remaining balances on the old channels.
+
+### 3. Facilitator-managed custody (spec v1.1)
+
+Set `VOUCHER_STORE_MODE=facilitator` and point `FACILITATOR_URL` at a facilitator that advertises `voucherManager: ["server", "facilitator"]` in `/supported` (for example the Go facilitator with its voucher store enabled). The server becomes a pass-through: every voucher goes through facilitator `/verify` and `/settle`; the facilitator channel manager owns claim/settle/refund scheduling.
+
+```typescript
+new BatchSettlementEvmScheme(evmAddress, {
+  voucherStoreMode: "facilitator",
+  refundAuthorizerSigner, // or rely on the facilitator's delegatedRefund: true
+  storage: new FileChannelStorage({ directory: "./channels" }), // optional replica
+});
+```
+
+Do **not** set `EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY` in this mode. Optional `STORAGE_DIR` is a replica updated after successful `/settle` (not used on the verify hot path). Do **not** start a server `ChannelManager` — claim, settle, and idle refunds run on the facilitator.
 
 ## Settlement Policy
 
@@ -105,6 +119,8 @@ demo for stable assertions across stacks.
 |----------|----------|-------------|
 | `EVM_ADDRESS` | yes | `payTo` address (channel receiver) |
 | `FACILITATOR_URL` | yes | Batch-settlement facilitator endpoint |
-| `EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY` | no | Self-managed authorizer key (omit to delegate to facilitator) |
+| `EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY` | no | Self-managed authorizer key (omit to delegate to facilitator; incompatible with `VOUCHER_STORE_MODE=facilitator`) |
+| `VOUCHER_STORE_MODE` | no | `facilitator` for facilitator-managed custody; default is self-managed |
+| `EVM_REFUND_AUTHORIZER_PRIVATE_KEY` | no | Managed mode only: signs cooperative refunds when the facilitator does not advertise `delegatedRefund: true` |
 | `STORAGE_DIR` | no | Persist channel sessions on disk (defaults to in-memory) |
-| `DEFERRED_WITHDRAW_DELAY_SECONDS` | no | Channel `withdrawDelay`; defaults to 86,400 (1 day) |
+| `DEFERRED_WITHDRAW_DELAY_SECONDS` | no | Self-managed channel `withdrawDelay`; ignored in facilitator-managed mode (facilitator advertises `withdrawDelay`) |

@@ -201,6 +201,7 @@ class TestErrorCodes:
             E.ERR_CHARGE_EXCEEDS_SIGNED_CUMULATIVE,
             E.ERR_REFUND_NO_BALANCE,
             E.ERR_REFUND_AMOUNT_INVALID,
+            E.ERR_DEPOSIT_BELOW_MIN_DEPOSIT,
         ],
     )
     def test_documented_codes_present(self, code: str):
@@ -222,3 +223,6 @@ class TestDefaultIntervals:
 
     def test_onchain_state_ttl_ms(self):
         assert C.DEFAULT_ONCHAIN_STATE_TTL_MS == 60_000
+
+    def test_default_server_min_deposit_multiplier(self):
+        assert C.DEFAULT_SERVER_MIN_DEPOSIT_MULTIPLIER == 10

@@ -7,6 +7,7 @@ import pytest
 try:
     from eth_account import Account
 
+    from x402.interfaces import PaymentPayloadContext
     from x402.mechanisms.evm.batch_settlement.client.channel import (
         BatchSettlementClientDeps,
         build_channel_config,
@@ -27,6 +28,7 @@ try:
     )
     from x402.mechanisms.evm.batch_settlement.types import ChannelConfig, is_voucher_payload
     from x402.mechanisms.evm.batch_settlement.utils import compute_channel_id
+    from x402.mechanisms.evm.signer import _reset_sponsoring_warnings
     from x402.mechanisms.evm.signers import EthAccountSigner
     from x402.schemas import (
         PaymentPayload,
@@ -43,6 +45,7 @@ TOKEN = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
 RECEIVER = "0x3333333333333333333333333333333333333333"
 RECEIVER_AUTHORIZER = "0x4444444444444444444444444444444444444444"
 TEST_PRIVATE_KEY = "0xa915e4eaadfaa5e6f59574d2c8e1d2a4cd2b6c0c0b9f6a3c7d9e2b8f5a4e3c2d"
+SPEND_CAP = PaymentPayloadContext(max_amount_per_payment="1000000")
 
 
 def _signer() -> EthAccountSigner:
@@ -183,6 +186,106 @@ class TestCreatePaymentPayload:
         )
         with pytest.raises(ValueError, match="assetTransferMethod"):
             s.create_payment_payload(req)
+
+    def test_uses_deposit_multiplier_when_depositing(self):
+        signer = _signer()
+        s = BatchSettlementEvmScheme(signer, BatchSettlementDepositPolicy(deposit_multiplier=7))
+        result = s.create_payment_payload(_requirements(amount="1000"), context=SPEND_CAP)
+        assert result["deposit"]["amount"] == "7000"
+
+    def test_honors_valid_extra_min_deposit_over_deposit_multiplier(self):
+        signer = _signer()
+        s = BatchSettlementEvmScheme(signer, BatchSettlementDepositPolicy(deposit_multiplier=7))
+        result = s.create_payment_payload(
+            _requirements(
+                amount="1000",
+                extra={
+                    "name": "USDC",
+                    "version": "2",
+                    "receiverAuthorizer": RECEIVER_AUTHORIZER,
+                    "withdrawDelay": 900,
+                    "minDeposit": "15000",
+                },
+            ),
+            context=SPEND_CAP,
+        )
+        assert result["deposit"]["amount"] == "15000"
+
+    def test_falls_back_to_deposit_multiplier_when_extra_min_deposit_is_below_amount(self):
+        signer = _signer()
+        s = BatchSettlementEvmScheme(signer, BatchSettlementDepositPolicy(deposit_multiplier=5))
+        result = s.create_payment_payload(
+            _requirements(
+                amount="1000",
+                extra={
+                    "name": "USDC",
+                    "version": "2",
+                    "receiverAuthorizer": RECEIVER_AUTHORIZER,
+                    "withdrawDelay": 900,
+                    "minDeposit": "500",
+                },
+            ),
+            context=SPEND_CAP,
+        )
+        assert result["deposit"]["amount"] == "5000"
+
+    def test_clamps_extra_min_deposit_to_spend_cap_times_deposit_multiplier(self):
+        signer = _signer()
+        s = BatchSettlementEvmScheme(signer, BatchSettlementDepositPolicy(deposit_multiplier=5))
+        result = s.create_payment_payload(
+            _requirements(
+                amount="1000",
+                extra={
+                    "name": "USDC",
+                    "version": "2",
+                    "receiverAuthorizer": RECEIVER_AUTHORIZER,
+                    "withdrawDelay": 900,
+                    "minDeposit": "15000",
+                },
+            ),
+            context=PaymentPayloadContext(max_amount_per_payment="800"),
+        )
+        assert result["deposit"]["amount"] == "4000"
+
+    def test_rejects_a_deposit_when_the_voucher_gap_exceeds_spend_cap_times_multiplier(self):
+        signer = _signer()
+        s = BatchSettlementEvmScheme(signer)
+        with pytest.raises(ValueError, match="exceeds deposit_multiplier"):
+            s.create_payment_payload(
+                _requirements(amount="1000"),
+                context=PaymentPayloadContext(max_amount_per_payment="100"),
+            )
+
+    def test_allows_a_deposit_when_no_spend_cap_is_configured(self):
+        signer = _signer()
+        s = BatchSettlementEvmScheme(signer)
+        result = s.create_payment_payload(_requirements(amount="1000"))
+        assert result["deposit"]["amount"] == "5000"
+
+    def test_warns_once_and_skips_sponsored_permit_when_signer_cannot_read(self, caplog):
+        _reset_sponsoring_warnings()
+        signer = _signer()
+        scheme = BatchSettlementEvmScheme(signer)
+        requirements = _requirements(
+            amount="100",
+            extra={
+                "receiverAuthorizer": RECEIVER_AUTHORIZER,
+                "name": "USDC",
+                "version": "2",
+                "assetTransferMethod": "permit2",
+            },
+        )
+        advertised = {"eip2612GasSponsoring": {}}
+
+        with caplog.at_level("WARNING", logger="x402.mechanisms.evm.signer"):
+            result = scheme.create_payment_payload(requirements, advertised)
+
+        extensions = result.get("__extensions") or {}
+        assert "eip2612GasSponsoring" not in extensions
+        warnings = [
+            record for record in caplog.records if "cannot read the chain" in record.getMessage()
+        ]
+        assert len(warnings) == 1
 
 
 def _make_payment_payload(payload: dict) -> PaymentPayload:

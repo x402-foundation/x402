@@ -23,6 +23,9 @@ export const PERMIT2_DEPOSIT_COLLECTOR_ADDRESS =
 export const CHANNEL_STATE_POLL_MS = 2_000;
 export const CHANNEL_STATE_POLL_INTERVAL_MS = 150;
 
+/** Default server SDK multiplier for `extra.minDeposit` when no floor is configured. */
+export const DEFAULT_SERVER_MIN_DEPOSIT_MULTIPLIER = 10;
+
 /** Minimum withdraw delay in seconds (15 minutes), matching the onchain constant. */
 export const MIN_WITHDRAW_DELAY = 900;
 

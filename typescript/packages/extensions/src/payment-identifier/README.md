@@ -1,6 +1,6 @@
 # Payment-Identifier extension
 
-Part of [`@x402/extensions`](../README.md). Import from `@x402/extensions/payment-identifier`.
+Part of [`@x402/extensions`](../../README.md). Import from `@x402/extensions/payment-identifier`.
 
 For x402 v2, this extension lets clients attach an idempotency key (`id`) on `PaymentPayload.extensions` so resource servers and facilitators can deduplicate payment attempts.
 

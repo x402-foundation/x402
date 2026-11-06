@@ -7,7 +7,9 @@
 // Export V2 implementations (default)
 export { ExactSvmScheme } from "./exact";
 export type { ExactSvmSchemeOptions } from "./exact/facilitator/scheme";
+export type { InstructionIdentity, InstructionTuple } from "./exact/facilitator/instructionLayout";
 export { UptoSvmScheme } from "./upto";
+export { BatchSvmScheme } from "./batch-settlement";
 
 // Export smart wallet verification helpers
 export {
@@ -42,6 +44,54 @@ export type {
 export type { ExactSvmPayloadV1, ExactSvmPayloadV2, UptoSvmPayloadV2 } from "./types";
 export { isUptoSvmPayload } from "./types";
 
+// The payment-channels treasury owner of each deployed program, for
+// facilitators' paymentChannelsTreasuryOwner override.
+export { getPaymentChannelsTreasuryOwner } from "./payment-channels/onchain";
+export {
+  discoverChannelsByRentPayer,
+  CHANNEL_ACCOUNT_SIZE,
+  CHANNEL_RENT_PAYER_OFFSET,
+} from "./payment-channels/discovery";
+export type { DiscoveredChannel } from "./payment-channels/discovery";
+
+// Export batch-settlement wire types
+export type {
+  BatchExtra,
+  BatchAuthorization,
+  BatchAuthorizationPayload,
+  BatchVoucherSigner,
+  BatchVoucher,
+  CloseAuthorization,
+  BatchChannelConfig,
+  BatchPayload,
+  BatchDepositPayload,
+  BatchVoucherPayload,
+  BatchRefundPayload,
+  BatchClaimPayload,
+  BatchSettlePayload,
+  BatchVoucherClaim,
+  BatchFacilitatorPayload,
+  BatchChannelState,
+} from "./batch-settlement/types";
+export {
+  encodeBatchAuthorizationMessage,
+  signBatchAuthorization,
+  verifyBatchAuthorization,
+} from "./batch-settlement/authorization";
+export {
+  encodeCloseAuthorizationDigest,
+  signCloseAuthorization,
+  verifyCloseAuthorization,
+  type CloseAuthorizationBinding,
+} from "./batch-settlement/closeAuthorization";
+export {
+  BATCH_SETTLEMENT_SCHEME,
+  isBatchChannelConfig,
+  isBatchPayload,
+  isBatchFacilitatorPayload,
+  isBatchVoucher,
+} from "./batch-settlement/types";
+
 // Export settlement cache (shared across V1/V2 facilitator instances)
 export { SettlementCache } from "./settlement-cache";
 
@@ -50,6 +100,7 @@ export * from "./constants";
 
 // Export utilities
 export * from "./utils";
+export * from "./transactionV1";
 
 export {
   DEFAULT_ASSETS,
@@ -60,3 +111,47 @@ export {
   USDC_TESTNET_ADDRESS,
   type SvmDefaultAsset,
 } from "./defaultAssets";
+
+// Payment-channels primitives shared by the `upto` and `batch-settlement`
+// schemes: the channel PDA, the distribution hash an open commits, and the
+// 50-byte voucher message.
+export { findPaymentChannelPda } from "./payment-channels/open";
+export { getChannelDistributionHash } from "./payment-channels/facilitator";
+export { encodeVoucherMessageBytes } from "./payment-channels/voucher";
+
+// Batch-settlement codecs, wire guards and single-shot client entry points
+export { deriveBatchChannelId, encodeBatchVoucherMessage } from "./batch-settlement/codec";
+export {
+  encodeReceiverBindingMemo,
+  parseReceiverBindingMemo,
+  RECEIVER_BINDING_MEMO_PREFIX,
+} from "./batch-settlement/receiverBinding";
+export {
+  isBatchChannelState,
+  isBatchExtra,
+  isBatchPaymentPayloadEnvelope,
+  isBatchPaymentRequired,
+  isBatchRequirements,
+  isBatchSettlementResponse,
+  isBatchVoucherState,
+  isTransactionVersionList,
+} from "./batch-settlement/types";
+export type {
+  BatchPaymentPayloadEnvelope,
+  BatchPaymentRequired,
+  BatchRequirements,
+  BatchSettlementResponse,
+  BatchVoucherState,
+} from "./batch-settlement/types";
+export {
+  checkCorrectiveState,
+  type AdoptableCorrectiveState,
+} from "./batch-settlement/client/corrective";
+export {
+  buildBatchRefundPayload,
+  buildBatchTopUpPayload,
+  buildBatchVoucherPayload,
+  type BatchBuildArgs,
+  type BatchTrackedChannel,
+  type BatchTransactionBuildArgs,
+} from "./batch-settlement/client/builders";

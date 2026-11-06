@@ -120,11 +120,54 @@ async function createFacilitator(): Promise<x402Facilitator> {
   const svmSigner = toFacilitatorSvmSigner(svmAccount);
 
   // Create and configure the facilitator with all networks
-  // EIP6492 allowed factory addresses for x402.org testnet facilitator
+  // EIP6492 allowed factory addresses for x402.org testnet facilitator.
+  // Ported from the CDP Facilitator's allowlist to keep trusted factories in parity.
   // To extend support for new factories, add more factory addresses to the array.
   const eip6492AllowedFactories = [
-    "0x0BA5ED0c6AA8c49038F819E587E2633c4A9F428a", // CoinbaseSmartWalletFactory v1
-    "0xBA5ED110eFDBa3D005bfC882d75358ACBbB85842", // CoinbaseSmartWalletFactory v1.1
+    // Coinbase Smart Wallet (CoinbaseSmartWalletFactory)
+    "0x0BA5ED0c6AA8c49038F819E587E2633c4A9F428a", // v1
+    "0xBA5ED110eFDBa3D005bfC882d75358ACBbB85842", // v1.1
+    // Safe / Gnosis Safe (SafeProxyFactory)
+    "0x76E2cFc1F5Fa8F6a5b3fC4c8F4788F0116861F9B", // v1.1.1
+    "0x6851D6fDFAfD08c0295C392436245E5bc78B0185", // v1.2.0
+    "0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2", // v1.3.0 (canonical)
+    "0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC", // v1.3.0 (singleton)
+    "0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67", // v1.4.0/v1.4.1 (also used by Candide SafeAccountV2)
+    "0xc329D02fd8CB2fc13aa919005aF46320794a8629", // v1.4.1 zkSync
+    "0x14F2982D601c9458F93bd70B218933A6f8165e7b", // v1.5.0
+    // ZeroDev Kernel (KernelFactory) — also used by Crossmint
+    "0xd703aaE79538628d27099B8c4f621bE4CCd142d5", // Kernel MetaFactory (v3.x shared, all v3 deployments)
+    "0x4E4946298614FC299B50c947289F4aD0572CB9ce", // v1.0 (EP v0.6)
+    "0x12358cA00141D09cB90253F05a1DD16bE93A8EE6", // v2.0 (EP v0.6)
+    "0x5de4839a76cf55d0c90e2061ef4386d962E15ae3", // v2.1-v2.4 (EP v0.6)
+    "0x6723b44Abeec4E71eBE3232BD5B455805baDD22f", // v3.0 (EP v0.7)
+    "0xaac5D4240AF87249B3f71BC8E4A2cae074A3E419", // v3.1 (EP v0.7)
+    "0x7a1dBAB750f12a90EB1B60D2Ae3aD17D4D81EfFe", // v3.2 (EP v0.7)
+    "0x2577507b78c2008Ff367261CB6285d44ba5eF2E9", // v3.3 (EP v0.7)
+    // Biconomy (NexusAccountFactory / BiconomySmartAccountFactory)
+    "0x000000F9eE1842Bb72F6BBDD75E6D3d4e3e9594C", // Smart Account V1 (EP v0.6)
+    "0x000000a56Aaca3e9a4C479ea6b6CD0DbcB6634F5", // Smart Account V2 (EP v0.6)
+    "0x0000002D6DB27c52E3C11c1Cf24072004AC0562a", // Nexus v1.0.0
+    "0x0000000C8B6b3329cEa5d15C9d8C15F1f254ec3C", // Nexus v1.0.2
+    "0x000000001D1D5004a02bAfAb9de2D6CE5b7B13de", // Nexus v1.2.0 (chain-specific)
+    "0x0000006648ED9B2B842552BE63Af870bC74af837", // Nexus v1.2.0 (MEE v2.0.0)
+    "0x000000002c9A405a196f2dc766F2476B731693c3", // Nexus v1.3.0 (MEE v2.1.0)
+    "0x5836Bdb35913c7CBA6ef40675354445121449917", // Nexus v1.3.1 (MEE v2.1.0 latest)
+    // Alchemy Light Account (LightAccountFactory)
+    "0x000000893A26168158fbeaDD9335Be5bC96592E2", // v1.0.1
+    "0x00000055C0b4fA41dde26A74435ff03692292FBD", // v1.0.2
+    "0x00004EC70002a32400f8ae005A26081065620D20", // v1.1.0
+    "0x0000000000400CdFef5E2714E63d8040b700BC24", // v2.0.0
+    "0x000000000019d2Ee9F2729A65AfE20bb0020AefC", // MultiOwner v2.0.0
+    // Alchemy Modular Account
+    "0x000000e92D78D90000007F0082006FDA09BD5f11", // V1 MultiOwnerModularAccountFactory (EP v0.6)
+    "0x00000000000017c61b5bEe81050EC8eFc9c6fecd", // V2 AccountFactory (EP v0.7)
+    // eth-infinitism SimpleAccount
+    "0x9406Cc6185a346906296840746125a0E44976454", // SimpleAccountFactory (EP v0.6)
+    "0x91E60e0613810449d098b0b5Ec8b51A0FE8c8985", // SimpleAccountFactory (EP v0.7)
+    // Thirdweb (AccountFactory)
+    "0x85e23b94e7F5E9cC1fF78BCe78cfb15B81f0DF00", // EP v0.6
+    "0x4bE0ddfebcA9A5A4a617dee4DeCe99E7c862dceb", // EP v0.7
   ];
 
   const facilitator = new x402Facilitator()

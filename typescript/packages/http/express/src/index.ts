@@ -8,6 +8,7 @@ import {
   FacilitatorClient,
   FacilitatorResponseError,
   getFacilitatorResponseError,
+  attachBackgroundInitHandler,
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
   checkIfBazaarNeeded,
@@ -65,6 +66,42 @@ function sendInternalError(res: Response, error: unknown): void {
 }
 
 /**
+ * Write a payment-error body without JSON-encoding a declared plain-text payload.
+ *
+ * @param res - The Express response to write to
+ * @param response - Payment-error instructions from the HTTP resource server
+ * @param response.body - Optional response body to write
+ * @param response.headers - Response headers, including Content-Type
+ * @param response.isHtml - Whether the body should be sent as HTML
+ */
+function sendPaymentErrorBody(
+  res: Response,
+  response: { body?: unknown; headers: Record<string, string>; isHtml?: boolean },
+): void {
+  const contentType = response.headers["Content-Type"] ?? response.headers["content-type"] ?? "";
+  const mediaType = contentType.split(";")[0]?.trim().toLowerCase();
+  if (response.isHtml || (mediaType === "text/plain" && typeof response.body === "string")) {
+    res.send(response.body ?? "");
+    return;
+  }
+  res.json(response.body ?? {});
+}
+
+/**
+ * Decode percent-escapes in a request path.
+ *
+ * @param path - Request path
+ * @returns Decoded path, or the original if decoding fails
+ */
+function decodedRoutePath(path: string): string {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
  * Express payment middleware for x402 protocol (direct HTTP server instance).
  *
  * Use this when you need to configure HTTP-level hooks.
@@ -102,11 +139,11 @@ export function paymentMiddlewareFromHTTPServer(
   // Store initialization promise (not the result)
   // httpServer.initialize() fetches facilitator support and validates routes
   let initPromise: Promise<void> | null = syncFacilitatorOnStart ? httpServer.initialize() : null;
-  // Attach a no-op rejection handler so an early failure (e.g. a facilitator
-  // request timeout) cannot become an unhandled rejection before the first
-  // protected request awaits initPromise. The original promise is kept, so that
-  // request still observes the failure and triggers the retry path.
-  void initPromise?.catch(() => {});
+  // Retryable failures (e.g. a facilitator timeout) must not become unhandled
+  // rejections; the original promise is still awaited on the first protected
+  // request. Fatal capability / route mismatches exit the process so a
+  // misconfigured server does not stay up until that request.
+  attachBackgroundInitHandler(initPromise);
   let isInitialized = false;
 
   /**
@@ -152,9 +189,11 @@ export function paymentMiddlewareFromHTTPServer(
   return async (req: Request, res: Response, next: NextFunction) => {
     // Create adapter and context
     const adapter = new ExpressAdapter(req);
+    const path = req.path;
     const context: HTTPRequestContext = {
       adapter,
-      path: req.path,
+      path,
+      decodedPath: decodedRoutePath(path),
       method: req.method,
       paymentHeader: adapter.getHeader("payment-signature") || adapter.getHeader("x-payment"),
     };
@@ -211,11 +250,7 @@ export function paymentMiddlewareFromHTTPServer(
         Object.entries(response.headers).forEach(([key, value]) => {
           res.setHeader(key, value);
         });
-        if (response.isHtml) {
-          res.send(response.body);
-        } else {
-          res.json(response.body || {});
-        }
+        sendPaymentErrorBody(res, response);
         return;
 
       case "payment-verified":
@@ -384,11 +419,8 @@ export function paymentMiddlewareFromHTTPServer(
             Object.entries(response.headers).forEach(([key, value]) => {
               res.setHeader(key, value);
             });
-            if (response.isHtml) {
-              res.status(response.status).send(response.body);
-            } else {
-              res.status(response.status).json(response.body ?? {});
-            }
+            res.status(response.status);
+            sendPaymentErrorBody(res, response);
             return;
           }
 
@@ -413,7 +445,7 @@ export function paymentMiddlewareFromHTTPServer(
           console.error(error);
           // If settlement fails, don't send the buffered response
           bufferedCalls = [];
-          res.status(402).json({});
+          res.status(402).json({ error: "settlement_failed" });
           return;
         } finally {
           restoreResponseMethods();

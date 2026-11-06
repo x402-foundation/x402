@@ -8,6 +8,7 @@ import { createPaywall } from "@x402/paywall";
 import { evmPaywall } from "@x402/paywall/evm";
 import { svmPaywall } from "@x402/paywall/svm";
 import { avmPaywall } from "@x402/paywall/avm";
+import { SYNC_FACILITATOR_ON_START } from "@/lib/testnetProtectedResources";
 
 const evmPayeeAddress = process.env.RESOURCE_EVM_ADDRESS as `0x${string}`;
 const svmPayeeAddress = process.env.RESOURCE_SVM_ADDRESS as string;
@@ -89,6 +90,7 @@ const x402PaymentProxy = paymentProxyFromConfig(
   ],
   undefined, // paywallConfig
   paywall, // paywall provider
+  SYNC_FACILITATOR_ON_START,
 );
 
 const geolocationProxy = async (req: NextRequest) => {

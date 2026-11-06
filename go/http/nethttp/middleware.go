@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -137,7 +138,7 @@ func PaymentMiddleware(routes x402http.RoutesConfig, server *x402.X402ResourceSe
 		ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
 		defer cancel()
 		if err := httpServer.Initialize(ctx); err != nil {
-			fmt.Printf("Warning: failed to initialize x402 server: %v\n", err)
+			x402http.HandleBackgroundInitError(err)
 		}
 	}
 
@@ -177,7 +178,7 @@ func PaymentMiddlewareFromConfig(routes x402http.RoutesConfig, opts ...Middlewar
 		ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
 		defer cancel()
 		if err := httpServer.Initialize(ctx); err != nil {
-			fmt.Printf("Warning: failed to initialize x402 server: %v\n", err)
+			x402http.HandleBackgroundInitError(err)
 		}
 	}
 
@@ -214,7 +215,7 @@ func PaymentMiddlewareFromHTTPServer(httpServer *x402http.HTTPServer, opts ...Mi
 		ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
 		defer cancel()
 		if err := httpServer.Initialize(ctx); err != nil {
-			fmt.Printf("Warning: failed to initialize x402 server: %v\n", err)
+			x402http.HandleBackgroundInitError(err)
 		}
 	}
 
@@ -228,11 +229,11 @@ func createMiddlewareHandler(server *x402http.HTTPServer, config *MiddlewareConf
 			adapter := NewNetHTTPAdapter(r)
 			reqCtx := x402http.HTTPRequestContext{
 				Adapter: adapter,
-				// EscapedPath, not Path: routers dispatch on the escaped path, so
-				// matching on the decoded one lets "%2F" split a segment here but
-				// not in the router, bypassing the payment gate.
-				Path:   r.URL.EscapedPath(),
-				Method: r.Method,
+				// Match both EscapedPath and URL.Path (the decoded routing view)
+				// so a route can't be bypassed via either representation.
+				Path:        r.URL.EscapedPath(),
+				DecodedPath: r.URL.Path,
+				Method:      r.Method,
 			}
 
 			// Check if route requires payment
@@ -267,10 +268,20 @@ func handlePaymentError(w http.ResponseWriter, response *x402http.HTTPResponseIn
 		w.Header().Set(key, value)
 	}
 
+	contentType := response.Headers["Content-Type"]
+	if contentType == "" {
+		contentType = response.Headers["content-type"]
+	}
+	mediaType, _, _ := strings.Cut(contentType, ";")
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+
 	if response.IsHTML {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(response.Status)
 		fmt.Fprint(w, response.Body)
+	} else if text, ok := response.Body.(string); ok && mediaType == "text/plain" {
+		w.WriteHeader(response.Status)
+		fmt.Fprint(w, text)
 	} else {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(response.Status)
@@ -403,7 +414,7 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 		default:
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusPaymentRequired)
-			_ = json.NewEncoder(w).Encode(map[string]any{})
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": x402.ErrCodeSettlementFailed})
 		}
 		return
 	}
