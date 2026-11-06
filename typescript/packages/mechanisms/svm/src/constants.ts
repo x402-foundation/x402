@@ -10,10 +10,9 @@ export const MEMO_PROGRAM_ADDRESS = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr
 /**
  * Phantom/Solflare Lighthouse program address
  * Phantom and Solflare wallets inject Lighthouse assertion instructions for
- * user protection on mainnet transactions. These instructions only assert
- * conditions and abort the transaction if they fail — they never mutate
- * payment-relevant state — so the facilitator treats Lighthouse as a "guard"
- * program allowed anywhere in the instruction list (before, after, or
+ * user protection on mainnet transactions. The facilitator treats only
+ * assertion variants as guards; other Lighthouse variants can mutate state.
+ * Guards are allowed anywhere in the instruction list (before, after, or
  * interspersed among the protocol instructions), rather than assuming a
  * fixed count or position. Wallets do not guarantee a stable instruction
  * count or position for these; treat any such assumption as unsupported.

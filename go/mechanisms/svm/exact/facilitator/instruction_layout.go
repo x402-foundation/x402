@@ -82,8 +82,8 @@ type partitionedInstructions struct {
 
 // partitionProtocolInstructions finds the protocol instructions (ComputeLimit,
 // ComputePrice, TransferChecked, optional Memo(s), in that relative order) by
-// identity. Guards may appear anywhere since they only assert/abort. Any other
-// program, a duplicate or out-of-order protocol instruction, or a missing
+// identity. Permitted Lighthouse assertion variants may appear anywhere as guards.
+// Any other program, a duplicate or out-of-order protocol instruction, or a missing
 // transfer returns an error whose message is the invalid reason.
 func partitionProtocolInstructions(tx *solana.Transaction, instructions []solana.CompiledInstruction) (*partitionedInstructions, error) {
 	var found [kindMemo + 1]*solana.CompiledInstruction

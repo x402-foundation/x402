@@ -259,9 +259,9 @@ class ExactSvmScheme:
         # Protocol instructions (ComputeLimit, ComputePrice, TransferChecked, and
         # optional Memo) are identified by program ID + instruction discriminator and
         # MUST appear in that fixed relative order. Guard instructions (currently only
-        # Lighthouse -- Phantom/Solflare's wallet-protection assertions) may appear
-        # anywhere, since they only assert/abort and never mutate payment-relevant
-        # state. A configured preflight/postflight allowlist block is stripped (and
+        # permitted Lighthouse assertion variants -- Phantom/Solflare's
+        # wallet-protection assertions) may appear anywhere. A configured
+        # preflight/postflight allowlist block is stripped (and
         # fee-payer-isolation-checked) first.
         # See: https://github.com/x402-foundation/x402/issues/828
         #  and: https://github.com/x402-foundation/x402/issues/2097

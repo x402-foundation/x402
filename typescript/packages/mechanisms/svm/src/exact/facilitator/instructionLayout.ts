@@ -115,8 +115,8 @@ export type PartitionedInstructions = {
  * the front and postflight block from the back (each fee-payer-isolation-checked,
  * since it is operator-configured arbitrary code), then partitions the rest by
  * identity. Protocol instructions (ComputeLimit, ComputePrice, TransferChecked,
- * optional Memo(s)) must appear in that relative order; guards may appear
- * anywhere since they only assert/abort. Anything else, a duplicate or
+ * optional Memo(s)) must appear in that relative order; permitted Lighthouse
+ * assertion variants may appear anywhere as guards. Anything else, a duplicate or
  * out-of-order protocol instruction, or a missing transfer is rejected.
  *
  * @param instructions - Decompiled top-level instructions
