@@ -212,11 +212,6 @@ async function verifySharedDepositState(
   const payer = config.payer;
   const chainId = getEvmChainId(requirements.network);
 
-  const configErr = validateChannelConfig(config, voucher.channelId, requirements);
-  if (configErr) {
-    return { ok: false, response: { isValid: false, invalidReason: configErr, payer } };
-  }
-
   const price = parseRequirementsAmount(requirements.amount);
   if (price === undefined) {
     return {

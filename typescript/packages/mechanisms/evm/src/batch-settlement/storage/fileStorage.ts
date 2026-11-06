@@ -77,15 +77,10 @@ export class FileChannelStorage<T extends Channel = Channel>
     const channels: T[] = [];
     for (const name of names) {
       if (!name.endsWith(".json")) continue;
-      const path = join(dir, name);
-      try {
-        const raw = await readFile(path, "utf8");
-        channels.push(JSON.parse(raw) as T);
-      } catch (err: unknown) {
-        // Skip files that disappeared between readdir and readFile (e.g. concurrent delete).
-        // Rethrow other failures (corrupt JSON, permission denied) so callers see them.
-        if (isNodeEnoent(err)) continue;
-        throw err;
+      // A file removed between readdir and read is skipped; other read errors still throw.
+      const parsed = await readJsonFile<T>(join(dir, name));
+      if (parsed !== undefined) {
+        channels.push(parsed);
       }
     }
     return channels.sort((a, b) => a.channelId.localeCompare(b.channelId));
@@ -108,13 +103,7 @@ export class FileChannelStorage<T extends Channel = Channel>
 
     try {
       const path = this.filePath(channelId);
-      let current: T | undefined;
-      try {
-        const raw = await readFile(path, "utf8");
-        current = JSON.parse(raw) as T;
-      } catch (err: unknown) {
-        if (!isNodeEnoent(err)) throw err;
-      }
+      const current = await readJsonFile<T>(path);
 
       const next = update(current);
       if (next === current) {

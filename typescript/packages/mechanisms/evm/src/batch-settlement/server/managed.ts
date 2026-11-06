@@ -111,8 +111,14 @@ export async function handleManagedAfterVerify(
   if (!result.isValid) {
     if (isCorrectiveMismatch(result.invalidReason)) {
       const ex = result.extra ?? {};
-      const channelState = readCorrectiveChannelState(ex);
-      const voucherState = readCorrectiveVoucherState(ex);
+      const channelState = readChannelStateExtra(ex) as
+        | BatchSettlementChannelStateExtra
+        | undefined;
+      const voucherValue = ex.voucherState;
+      const voucherState =
+        typeof voucherValue === "object" && voucherValue !== null
+          ? (voucherValue as BatchSettlementVoucherStateExtra)
+          : undefined;
       if (channelState || voucherState) {
         scheme.mergeRequestContext(
           paymentPayload,
@@ -462,36 +468,4 @@ function parseManagedChannelState(
 function readPendingId(extra: Record<string, unknown> | undefined): string | undefined {
   const value = extra?.pendingId;
   return typeof value === "string" && value ? value : undefined;
-}
-
-/**
- * Reads typed channel state from facilitator extras.
- *
- * @param extra - Facilitator response extras.
- * @returns Channel state or undefined.
- */
-function readCorrectiveChannelState(
-  extra: Record<string, unknown>,
-): BatchSettlementChannelStateExtra | undefined {
-  const value = extra.channelState;
-  if (typeof value !== "object" || value === null) {
-    return undefined;
-  }
-  return value as BatchSettlementChannelStateExtra;
-}
-
-/**
- * Reads typed voucher state from facilitator extras.
- *
- * @param extra - Facilitator response extras.
- * @returns Voucher state or undefined.
- */
-function readCorrectiveVoucherState(
-  extra: Record<string, unknown>,
-): BatchSettlementVoucherStateExtra | undefined {
-  const value = extra.voucherState;
-  if (typeof value !== "object" || value === null) {
-    return undefined;
-  }
-  return value as BatchSettlementVoucherStateExtra;
 }
