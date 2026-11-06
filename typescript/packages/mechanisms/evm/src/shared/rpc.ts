@@ -98,10 +98,11 @@ export function resolveExtensionRpcCapabilities(
   signer: ClientEvmSigner,
   options?: EvmSchemeOptions,
 ): ExtensionRpcCapabilities {
+  const trustSignerRpc = signer.hasRpcClient?.() !== false;
   const capabilities: ExtensionRpcCapabilities = {
     signTransaction: signer.signTransaction,
-    readContract: signer.readContract,
-    getTransactionCount: signer.getTransactionCount,
+    readContract: trustSignerRpc ? signer.readContract : undefined,
+    getTransactionCount: trustSignerRpc ? signer.getTransactionCount : undefined,
     estimateFeesPerGas: signer.estimateFeesPerGas,
   };
 
