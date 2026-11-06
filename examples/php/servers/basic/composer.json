@@ -1,0 +1,19 @@
+{
+    "name": "x402/example-server-basic",
+    "description": "Gate a route behind an x402 payment",
+    "type": "project",
+    "license": "Apache-2.0",
+    "require": {
+        "php": "^8.2",
+        "x402/x402": "@dev",
+        "nyholm/psr7": "^1.8",
+        "nyholm/psr7-server": "^1.1",
+        "symfony/http-client": "^7.0"
+    },
+    "repositories": [
+        { "type": "path", "url": "../../../../php" }
+    ],
+    "autoload": { "psr-4": { "X402\\Example\\Server\\": "src/" } },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
