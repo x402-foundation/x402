@@ -267,7 +267,7 @@ describe("ExactEvmScheme (Facilitator)", () => {
       const result = await facilitator.verify(fullPayload, modifiedRequirements);
 
       expect(result.isValid).toBe(false);
-      expect(result.invalidReason).toBe(Errors.ErrRecipientMismatch);
+      expect(result.invalidReason).toBe("invalid_exact_evm_payload_recipient_mismatch");
     });
 
     it("should reject if amount doesn't match", async () => {

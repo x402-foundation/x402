@@ -1,0 +1,3 @@
+kind: fixed
+body: 'Exact EVM facilitator: a recipient mismatch is now reported as invalid_exact_evm_payload_recipient_mismatch, the reason listed in the x402 v2 specification and emitted by the Python facilitator, instead of invalid_exact_evm_recipient_mismatch.'
+time: 2026-11-06T12:00:00Z
