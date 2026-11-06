@@ -206,11 +206,9 @@ def metered_payment_requirements(
 
 
 def extract_payment_response_from_result(result: MCPToolResult) -> SettleResponse | None:
-    """Read receipts for state reconciliation, including structured failures.
+    """Read a success receipt from metadata, or a failed receipt from the error body.
 
-    Successful receipts belong in metadata. Failed settlements belong in the
-    error body; their transaction and scheme fields must still reach client
-    response hooks so an uncertain payment cannot be submitted again blindly.
+    Hooks still receive the failure so an uncertain payment is not submitted again.
     """
     response = extract_payment_response_from_meta(result)
     if response is not None or not result.is_error:

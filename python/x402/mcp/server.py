@@ -282,7 +282,6 @@ def create_payment_wrapper(
             if skip_handler is not None:
                 result = getattr(skip_handler, "body", None) or {}
             else:
-                # OnBeforeExecution hook
                 if hooks and hooks.on_before_execution:
                     hook_ctx = ServerHookContext(
                         tool_name=tool_name,
@@ -328,7 +327,6 @@ def create_payment_wrapper(
                             network=payment_requirements.network,
                         )
 
-                # Execute the original handler
                 try:
                     if is_async:
                         result = await handler(**kwargs)
@@ -343,7 +341,6 @@ def create_payment_wrapper(
                     return failed
 
             try:
-                # Convert handler result to text content
                 result_meta: dict[str, Any] = {}
                 is_handler_error = False
                 if isinstance(result, dict):
