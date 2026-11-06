@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "aptos" before "canton" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
+ * (e.g., "algorand" before "aptos" before "canton" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "sui" before "tvm" before "xrpl").
  */
 
 import {
@@ -40,6 +40,7 @@ import {
 } from "@x402/near";
 import { ExactNearScheme } from "@x402/near/exact/client";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
+import { ExactSuiScheme } from "@x402/sui/exact/client";
 import { ExactTvmScheme } from "@x402/tvm/exact/client";
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactHederaScheme } from "@x402/hedera/exact/client";
@@ -49,6 +50,7 @@ import { keyPairFromSeed, type KeyPair } from "@ton/crypto";
 import { createXrplWalletSigner, XRPL_TESTNET } from "@x402/xrpl";
 import { ExactXrplScheme } from "@x402/xrpl/exact/client";
 import { Wallet } from "xrpl";
+import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { buildBasicAccountSigner, AccountAddress } from "@concordium/web-sdk";
 import { base58 } from "@scure/base";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
@@ -97,6 +99,7 @@ const nearNetwork = (process.env.NEAR_NETWORK || NEAR_TESTNET_CAIP2) as Network;
 const nearRpcUrl = process.env.NEAR_RPC_URL as string | undefined;
 const svmPrivateKey = process.env.SVM_PRIVATE_KEY as string | undefined;
 const stellarPrivateKey = process.env.STELLAR_PRIVATE_KEY as string | undefined;
+const suiPrivateKey = process.env.SUI_PRIVATE_KEY as string | undefined;
 const hederaAccountId = process.env.HEDERA_ACCOUNT_ID;
 // Hedera private key should be an ECDSA key string (0x-prefixed or DER-encoded).
 const hederaPrivateKey = process.env.HEDERA_PRIVATE_KEY;
@@ -148,12 +151,13 @@ async function main(): Promise<void> {
     !(nearAccountId && nearPrivateKey) &&
     !svmPrivateKey &&
     !stellarPrivateKey &&
+    !suiPrivateKey &&
     !(hederaAccountId && hederaPrivateKey) &&
     !tvmPrivateKey &&
     !xrplSeed
   ) {
     console.error(
-      "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CARDANO_MNEMONIC, CASPER_PRIVATE_KEY, CCD_PRIVATE_KEY + CCD_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_ACCOUNT_ID + NEAR_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY, TVM_PRIVATE_KEY, or XRPL_SEED is required",
+      "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CARDANO_MNEMONIC, CASPER_PRIVATE_KEY, CCD_PRIVATE_KEY + CCD_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_ACCOUNT_ID + NEAR_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, SUI_PRIVATE_KEY, HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY, TVM_PRIVATE_KEY, or XRPL_SEED is required",
     );
     process.exit(1);
   }
@@ -288,6 +292,13 @@ async function main(): Promise<void> {
     const stellarSigner = createEd25519Signer(stellarPrivateKey);
     client.register("stellar:*", new ExactStellarScheme(stellarSigner));
     console.log(`Initialized Stellar account: ${stellarSigner.address}`);
+  }
+
+  // Register Sui scheme if private key is provided (a `suiprivkey1...` string)
+  if (suiPrivateKey) {
+    const suiKeypair = Ed25519Keypair.fromSecretKey(suiPrivateKey);
+    client.register("sui:*", new ExactSuiScheme(suiKeypair));
+    console.log(`Initialized Sui account: ${suiKeypair.toSuiAddress()}`);
   }
 
   // Register TVM scheme if private key is provided
