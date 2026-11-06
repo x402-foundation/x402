@@ -1,0 +1,22 @@
+{
+  "id": "X4-002",
+  "title": "Malformed Payment Authorization Rejection",
+  "category": "payment_challenge",
+  "requirement": "HC-2: Server must validate payment authorization format",
+  "method": "GET",
+  "request": {
+    "variants": [
+      "empty",
+      "garbage",
+      "truncated_b64",
+      "null_bytes",
+      "oversized"
+    ]
+  },
+  "owasp_asi": "ASI03",
+  "severity": "critical",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-002"
+}

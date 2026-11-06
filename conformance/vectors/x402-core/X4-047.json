@@ -1,0 +1,19 @@
+{
+  "id": "X4-047",
+  "title": "Expired Auth Token Reuse",
+  "category": "authorization_bypass",
+  "requirement": "HC-37: Payment authorization tokens with past expiry must be rejected",
+  "method": "GET",
+  "request": {
+    "expired_variants": [
+      "expired_b64",
+      "expired_jwt"
+    ]
+  },
+  "owasp_asi": "ASI02",
+  "severity": "critical",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-047"
+}
