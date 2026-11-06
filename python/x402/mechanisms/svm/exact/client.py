@@ -18,6 +18,7 @@ from ..constants import (
     ASSOCIATED_TOKEN_PROGRAM_ADDRESS,
     ATA_CREATION_COMPUTE_UNITS,
     DEFAULT_COMPUTE_UNIT_LIMIT,
+    DEFAULT_MAX_COMPUTE_UNITS,
     MAX_MEMO_BYTES,
     MAX_TRANSACTION_SIZE_V0,
     MAX_TRANSACTION_SIZE_V1,
@@ -216,10 +217,11 @@ class ExactSvmScheme:
                         )
                 transfer_ixs.append(transfer_checked(leg.owner, leg.amount))
             payment_ixs = create_ixs + transfer_ixs
-            compute_unit_limit = (
+            compute_unit_limit = min(
+                DEFAULT_MAX_COMPUTE_UNITS,
                 DEFAULT_COMPUTE_UNIT_LIMIT
                 + (len(legs) - 1) * SPLIT_TRANSFER_COMPUTE_UNITS
-                + len(create_ixs) * ATA_CREATION_COMPUTE_UNITS
+                + len(create_ixs) * ATA_CREATION_COMPUTE_UNITS,
             )
         else:
             payment_ixs = [transfer_checked(requirements.pay_to, int(requirements.amount))]

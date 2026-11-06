@@ -21,6 +21,7 @@ import type { PaymentPayload, PaymentRequirements, SchemeNetworkClient } from "@
 import {
   ATA_CREATION_COMPUTE_UNITS,
   DEFAULT_COMPUTE_UNIT_LIMIT,
+  DEFAULT_MAX_COMPUTE_UNITS,
   DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
   MAX_MEMO_BYTES,
   MEMO_PROGRAM_ADDRESS,
@@ -164,10 +165,12 @@ export class ExactSvmScheme implements SchemeNetworkClient {
         ),
       );
     }
-    const computeUnitLimit =
+    const computeUnitLimit = Math.min(
+      DEFAULT_MAX_COMPUTE_UNITS,
       DEFAULT_COMPUTE_UNIT_LIMIT +
-      (legs.length - 1) * SPLIT_TRANSFER_COMPUTE_UNITS +
-      createIxs.length * ATA_CREATION_COMPUTE_UNITS;
+        (legs.length - 1) * SPLIT_TRANSFER_COMPUTE_UNITS +
+        createIxs.length * ATA_CREATION_COMPUTE_UNITS,
+    );
 
     const latestBlockhash = await resolveBlockhash(rpc, paymentRequirements);
 
