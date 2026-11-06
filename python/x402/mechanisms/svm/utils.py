@@ -486,24 +486,61 @@ def check_exact_compute_budget(
         ``(invalid_reason, transfer_index)``; the reason is None when the
         layout and budget are within policy.
     """
+    transfer_index = exact_budget_prefix_length(message)
+    max_optional = (
+        MAX_OPTIONAL_INSTRUCTIONS_V1
+        if isinstance(message, MessageV1)
+        else MAX_OPTIONAL_INSTRUCTIONS_V0
+    )
+    if not transfer_index + 1 <= len(message.instructions) <= transfer_index + 1 + max_optional:
+        return ERR_INVALID_INSTRUCTION_COUNT, transfer_index
+    return (
+        check_exact_budget(message, max_compute_unit_price_micro_lamports),
+        transfer_index,
+    )
+
+
+def exact_budget_prefix_length(message: Message | MessageV0 | MessageV1) -> int:
+    """Number of ComputeBudget instructions an exact payment starts with.
+
+    Two (``SetComputeUnitLimit`` + ``SetComputeUnitPrice``) on legacy and
+    version 0; none on version 1, which carries its budget in the message config.
+
+    Args:
+        message: Decoded message of an accepted version.
+
+    Returns:
+        The index of the first payment instruction.
+    """
+    return 0 if isinstance(message, MessageV1) else 2
+
+
+def check_exact_budget(
+    message: Message | MessageV0 | MessageV1,
+    max_compute_unit_price_micro_lamports: int = MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
+) -> str | None:
+    """Check an exact payment's compute budget, whatever its instruction count.
+
+    The caller checks the instruction count for its layout first; on legacy
+    and version 0 the message must hold at least the two-instruction prefix.
+
+    Args:
+        message: Decoded message of an accepted version.
+        max_compute_unit_price_micro_lamports: Price cap in microlamports per CU.
+
+    Returns:
+        The invalid reason, or None when the budget is within policy.
+    """
     instructions = message.instructions
     static_accounts = list(message.account_keys)
     compute_budget_program = Pubkey.from_string(COMPUTE_BUDGET_PROGRAM_ADDRESS)
 
     if isinstance(message, MessageV1):
-        if not 1 <= len(instructions) <= 1 + MAX_OPTIONAL_INSTRUCTIONS_V1:
-            return ERR_INVALID_INSTRUCTION_COUNT, 0
         if any(
             static_accounts[ix.program_id_index] == compute_budget_program for ix in instructions
         ):
-            return ERR_V1_COMPUTE_BUDGET_INSTRUCTION, 0
-        return (
-            check_transaction_v1_config(message.config, max_compute_unit_price_micro_lamports),
-            0,
-        )
-
-    if not 3 <= len(instructions) <= 3 + MAX_OPTIONAL_INSTRUCTIONS_V0:
-        return ERR_INVALID_INSTRUCTION_COUNT, 2
+            return ERR_V1_COMPUTE_BUDGET_INSTRUCTION
+        return check_transaction_v1_config(message.config, max_compute_unit_price_micro_lamports)
 
     cu_limit_ix = instructions[0]
     cu_limit_data = bytes(cu_limit_ix.data)
@@ -512,7 +549,7 @@ def check_exact_compute_budget(
         or len(cu_limit_data) < 1
         or cu_limit_data[0] != 2  # SetComputeUnitLimit discriminator
     ):
-        return ERR_INVALID_COMPUTE_LIMIT, 2
+        return ERR_INVALID_COMPUTE_LIMIT
 
     cu_price_ix = instructions[1]
     cu_price_data = bytes(cu_price_ix.data)
@@ -521,13 +558,13 @@ def check_exact_compute_budget(
         or len(cu_price_data) < 9
         or cu_price_data[0] != 3  # SetComputeUnitPrice discriminator
     ):
-        return ERR_INVALID_COMPUTE_PRICE, 2
+        return ERR_INVALID_COMPUTE_PRICE
 
     # microLamports is a u64, little-endian
     micro_lamports = int.from_bytes(cu_price_data[1:9], "little")
     if micro_lamports > max_compute_unit_price_micro_lamports:
-        return ERR_COMPUTE_PRICE_TOO_HIGH, 2
-    return None, 2
+        return ERR_COMPUTE_PRICE_TOO_HIGH
+    return None
 
 
 def get_transaction_version(message: object) -> int | str:

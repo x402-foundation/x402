@@ -310,6 +310,8 @@ if svm_signer is not None:
         facilitator,
         svm_signer,
         networks=SVM_NETWORK,
+        max_splits=8,
+        ata_creation_sponsored=True,
     )
 
 # Register TVM schemes (V2)
