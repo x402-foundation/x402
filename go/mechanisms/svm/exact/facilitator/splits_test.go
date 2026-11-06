@@ -879,7 +879,8 @@ func TestVerifyPostSettlementLegs(t *testing.T) {
 			platformATA.String(): 50_000,
 		}
 		before := uint64(5_000_000)
-		balances := []legBalance{{ata: merchantATA, before: &before}, {ata: platformATA}}
+		zero := uint64(0)
+		balances := []legBalance{{ata: merchantATA, before: &before}, {ata: platformATA, before: &zero}}
 		verified, method := verifyPostSettlementLegs(ctx, signer, sig, svm.SolanaDevnetCAIP2, legs, p.mint,
 			[]string{p.feePayer.String()}, nil, balances)
 		assert.True(t, verified)
@@ -906,4 +907,16 @@ func TestVerifyPostSettlementLegs(t *testing.T) {
 		assert.False(t, verified)
 		assert.Equal(t, postSettlementUnverified, method)
 	})
+}
+
+func TestSplits_UnknownSponsoredBalanceFailsClosed(t *testing.T) {
+	p := newSplitParties(t)
+	legs, err := deriveLegDestinations([]svm.PaymentLeg{{Owner: p.merchant, Amount: 1, IsPrimary: true, AtaCreationRequired: true}}, p.mint)
+	require.NoError(t, err)
+	signer := p.signer()
+	ata := p.ata(t, p.merchant)
+	signer.tokenBalances = map[string]uint64{ata.String(): 5_000_000}
+	verified, method := verifyPostSettlementLegs(context.Background(), signer, solana.Signature{}, "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", legs, p.mint, nil, nil, []legBalance{{ata: ata}})
+	assert.False(t, verified)
+	assert.Equal(t, postSettlementUnverified, method)
 }

@@ -866,13 +866,16 @@ func (f *ExactSvmScheme) postSettlementVerified(
 }
 
 // snapshotLegBalances reads each matched leg ATA's balance before broadcast,
-// in leg order. A missing or unreadable account has a nil balance.
+// in leg order. A confirmed missing account has a zero balance; an unreadable account has a nil balance.
 func snapshotLegBalances(ctx context.Context, caps svm.SmartWalletRPCCapabilities, transfers []transferCheckedInfo, network string) []legBalance {
 	balances := make([]legBalance, len(transfers))
 	for i, t := range transfers {
 		balances[i] = legBalance{ata: t.destination}
-		if b, exists, err := caps.GetTokenAccountBalance(ctx, t.destination, network); err == nil && exists {
-			before := b
+		if b, exists, err := caps.GetTokenAccountBalance(ctx, t.destination, network); err == nil {
+			before := uint64(0)
+			if exists {
+				before = b
+			}
 			balances[i].before = &before
 		}
 	}
