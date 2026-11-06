@@ -214,8 +214,6 @@ export class BatchSettlementEvmScheme implements SchemeNetworkServer {
       this.refundAuthorizerSigner = config.refundAuthorizerSigner;
       this.lockStorage = undefined;
       this.withdrawDelay = MIN_WITHDRAW_DELAY;
-      this.onchainStateTtlMs =
-        config.onchainStateTtlMs ?? defaultOnchainStateTtlMs(this.withdrawDelay);
     } else {
       this.configuredMode = "self";
       this.receiverAuthorizerSigner = config.receiverAuthorizerSigner;
@@ -224,9 +222,9 @@ export class BatchSettlementEvmScheme implements SchemeNetworkServer {
         config.lockStorage ??
         (isChannelLockStorage(this.storage) ? this.storage : new InMemoryChannelStorage());
       this.withdrawDelay = config.withdrawDelay ?? MIN_WITHDRAW_DELAY;
-      this.onchainStateTtlMs =
-        config.onchainStateTtlMs ?? defaultOnchainStateTtlMs(this.withdrawDelay);
     }
+    this.onchainStateTtlMs =
+      config.onchainStateTtlMs ?? defaultOnchainStateTtlMs(this.withdrawDelay);
 
     const mismatch = {
       abort: true as const,
