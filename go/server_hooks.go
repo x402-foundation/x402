@@ -227,16 +227,29 @@ type VerifiedPaymentCancelOptions struct {
 	VerifyResult   *VerifyResponse
 }
 
+type cancellationOutcomeUnknownError struct{}
+
+func (cancellationOutcomeUnknownError) Error() string {
+	return "Payment cancellation outcome unknown"
+}
+
+// ErrCancellationOutcomeUnknown means cancel did not produce a receipt and the
+// authorization may still be open. Return it from SettleOnCancel instead of a
+// failed receipt when the outcome cannot be known.
+var ErrCancellationOutcomeUnknown error = cancellationOutcomeUnknownError{}
+
 // PaymentCancellationDispatcher fires onVerifiedPaymentCanceled hooks at most once,
 // then optionally settles via SchemeNetworkServer SettleOnCancelProvider.
 type PaymentCancellationDispatcher struct {
-	once sync.Once
-	fire func(VerifiedPaymentCancelOptions) *SettleResponse
+	once    sync.Once
+	fire    func(VerifiedPaymentCancelOptions) *SettleResponse
+	unknown error
 }
 
 // Cancel fires the underlying hooks (and optional cancel settle) at most once.
 // Returns the cancel settle response when the scheme provides settleOnCancel
-// requirements and settle runs; nil when cancel settle is skipped.
+// requirements and settle runs; nil when cancel settle is skipped or the
+// outcome is unknown. After Cancel returns, Err reports an unknown outcome.
 func (d *PaymentCancellationDispatcher) Cancel(opts VerifiedPaymentCancelOptions) *SettleResponse {
 	if d == nil || d.fire == nil {
 		return nil
@@ -244,6 +257,15 @@ func (d *PaymentCancellationDispatcher) Cancel(opts VerifiedPaymentCancelOptions
 	var result *SettleResponse
 	d.once.Do(func() { result = d.fire(opts) })
 	return result
+}
+
+// Err reports an unknown cancellation outcome. The value stays set for the
+// dispatcher, including when a later Cancel is a no-op.
+func (d *PaymentCancellationDispatcher) Err() error {
+	if d == nil {
+		return nil
+	}
+	return d.unknown
 }
 
 // ============================================================================

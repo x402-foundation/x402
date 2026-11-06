@@ -1063,6 +1063,95 @@ func TestSettleOnCancel_WarnsAndReturnsFailedReceipt(t *testing.T) {
 	}
 }
 
+func TestSettleOnCancel_UnknownOutcomeIsNotAReceipt(t *testing.T) {
+	ctx := context.Background()
+	var settleCalls int
+	var hookCalls int
+	mockClient := &mockFacilitatorClient{
+		kinds: []SupportedKind{
+			{X402Version: 2, Scheme: "upto", Network: "eip155:8453"},
+		},
+		settle: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*SettleResponse, error) {
+			settleCalls++
+			return &SettleResponse{Success: true, Transaction: "0x", Network: "eip155:8453"}, nil
+		},
+	}
+
+	t.Run("sentinel is not a receipt", func(t *testing.T) {
+		settleCalls = 0
+		hookCalls = 0
+		scheme := &mockSettleOnCancelScheme{
+			mockSchemeNetworkServer: mockSchemeNetworkServer{scheme: "upto"},
+			settleOnCancel: func(VerifiedPaymentCanceledContext) (*types.PaymentRequirements, error) {
+				return nil, fmt.Errorf("timeout: %w", ErrCancellationOutcomeUnknown)
+			},
+		}
+		server := Newx402ResourceServer(WithFacilitatorClient(mockClient), WithSchemeServer("eip155:8453", scheme))
+		if err := server.Initialize(ctx); err != nil {
+			t.Fatalf("Initialize: %v", err)
+		}
+		server.OnVerifiedPaymentCanceled(func(VerifiedPaymentCanceledContext) error {
+			hookCalls++
+			return nil
+		})
+
+		requirements := types.PaymentRequirements{Scheme: "upto", Network: "eip155:8453", Asset: "USDC", Amount: "1", PayTo: "0x"}
+		payload := types.PaymentPayload{X402Version: 2, Accepted: requirements, Payload: map[string]interface{}{}}
+		cancellation := server.CreatePaymentCancellationDispatcherWithExtensions(
+			ctx, payload, requirements, nil, []SettlePhase{SettlePhaseBeforeHandler},
+		)
+		got := cancellation.Cancel(VerifiedPaymentCancelOptions{Reason: CancellationReasonHandlerFailed, ResponseStatus: 500})
+		if got != nil {
+			t.Fatalf("expected no receipt for an unknown cancel, got %+v", got)
+		}
+		if !errors.Is(cancellation.Err(), ErrCancellationOutcomeUnknown) {
+			t.Fatalf("expected unknown outcome, got %v", cancellation.Err())
+		}
+		if settleCalls != 0 {
+			t.Fatalf("expected cancel settle to be skipped, got %d calls", settleCalls)
+		}
+		if hookCalls != 1 {
+			t.Fatalf("expected cancel hook once, got %d", hookCalls)
+		}
+		if again := cancellation.Cancel(VerifiedPaymentCancelOptions{Reason: CancellationReasonHandlerThrew}); again != nil {
+			t.Fatalf("second cancel must stay a no-op, got %+v", again)
+		}
+		if !errors.Is(cancellation.Err(), ErrCancellationOutcomeUnknown) {
+			t.Fatalf("unknown outcome must stick, got %v", cancellation.Err())
+		}
+		if settleCalls != 0 || hookCalls != 1 {
+			t.Fatalf("second cancel must not re-fire, settle=%d hook=%d", settleCalls, hookCalls)
+		}
+	})
+
+	t.Run("known error stays a failed receipt", func(t *testing.T) {
+		settleCalls = 0
+		scheme := &mockSettleOnCancelScheme{
+			mockSchemeNetworkServer: mockSchemeNetworkServer{scheme: "upto"},
+			settleOnCancel: func(VerifiedPaymentCanceledContext) (*types.PaymentRequirements, error) {
+				return nil, errors.New("refund rpc failed")
+			},
+		}
+		server := Newx402ResourceServer(WithFacilitatorClient(mockClient), WithSchemeServer("eip155:8453", scheme))
+		if err := server.Initialize(ctx); err != nil {
+			t.Fatalf("Initialize: %v", err)
+		}
+		requirements := types.PaymentRequirements{Scheme: "upto", Network: "eip155:8453", Asset: "USDC", Amount: "1", PayTo: "0x"}
+		payload := types.PaymentPayload{X402Version: 2, Accepted: requirements, Payload: map[string]interface{}{}}
+		cancellation := server.CreatePaymentCancellationDispatcherWithExtensions(ctx, payload, requirements, nil, nil)
+		got := cancellation.Cancel(VerifiedPaymentCancelOptions{Reason: CancellationReasonHandlerFailed})
+		if got == nil || got.Success || got.ErrorReason != "refund rpc failed" {
+			t.Fatalf("expected failed cancel receipt, got %+v", got)
+		}
+		if cancellation.Err() != nil {
+			t.Fatalf("known failure must not be unknown, got %v", cancellation.Err())
+		}
+		if settleCalls != 0 {
+			t.Fatalf("expected no facilitator settle, got %d", settleCalls)
+		}
+	})
+}
+
 func TestBuildFailurePathSettlementResponse_PrefersSuccessfulCancel(t *testing.T) {
 	cancel := &SettleResponse{
 		Success:     true,
