@@ -1,0 +1,43 @@
+{
+  "name": "dotnet-asp-mvc",
+  "type": "server",
+  "language": "dotnet",
+  "x402Version": 2,
+  "evm": {
+    "assetTransferMethods": [
+      "eip3009"
+    ]
+  },
+  "description": ".NET ASP.NET Core MVC attribute-based x402 server",
+  "endpoints": [
+    {
+      "path": "/premium/data",
+      "method": "GET",
+      "description": "Protected endpoint requiring EVM exact payment",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "scheme": "exact",
+      "assetTransferMethod": "eip3009"
+    },
+    {
+      "path": "/health",
+      "method": "GET",
+      "description": "Health check endpoint",
+      "health": true
+    },
+    {
+      "path": "/close",
+      "method": "POST",
+      "description": "Graceful shutdown endpoint",
+      "close": true
+    }
+  ],
+  "environment": {
+    "required": [
+      "PORT",
+      "EVM_PAYEE_ADDRESS",
+      "FACILITATOR_URL"
+    ],
+    "optional": []
+  }
+}
