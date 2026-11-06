@@ -106,6 +106,7 @@ class CatalogRoute:
     payment_flow: str | None
     max_timeout_seconds: int | None = None
     scheme_extra: dict[str, Any] | None = None
+    requirements_extra: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -191,6 +192,7 @@ def catalog_routes() -> list[CatalogRoute]:
                 payment_flow=definition.get("paymentFlow"),
                 max_timeout_seconds=definition.get("maxTimeoutSeconds"),
                 scheme_extra=definition.get("schemeExtra"),
+                requirements_extra=definition.get("requirementsExtra"),
             )
         )
 
@@ -341,7 +343,9 @@ def resolve_routes(env: Callable[[str], str | None] = os.getenv) -> list[Resolve
 
         caip2 = network_caip2(route.network, env)
         price, extra = _resolve_price(route, caip2, env)
-        extra = _merge_route_extra(extra, route.payment_flow)
+        extra = _merge_route_extra(
+            {**(route.requirements_extra or {}), **(extra or {})}, route.payment_flow
+        )
         if route.network == "cardano":
             pay_to, cardano_extra = _cardano_route(route, caip2, pay_to, env)
             extra = {**(extra or {}), **cardano_extra} or None
