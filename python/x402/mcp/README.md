@@ -201,9 +201,7 @@ before-handler settlement exists, so FastMCP, which settles after the handler,
 never reports one.
 
 Failed `settle_on_cancel` receipts are returned in `structuredContent` and a
-text fallback. Python clients read both for recovery. The current TypeScript
-MCP client reads receipts only from `_meta`, so it does not automatically
-process these failed cancellation receipts from third-party schemes.
+text fallback. Python clients read both for recovery.
 
 ### Utilities
 
