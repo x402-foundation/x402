@@ -907,14 +907,60 @@ const SettlementOverridesHeader = "Settlement-Overrides"
 // carrying PAYMENT-REQUIRED or 402 settlement-failure PAYMENT-RESPONSE.
 const PaymentRequiredCacheControl = "no-store"
 
+// splitCacheControlDirectives splits on commas outside quoted values.
+// Commas inside quotes, including escaped quotes, stay in the value.
+func splitCacheControlDirectives(value string) []string {
+	var directives []string
+	var current strings.Builder
+	quoted := false
+
+	for i := 0; i < len(value); i++ {
+		char := value[i]
+		if char == '\\' && quoted {
+			current.WriteByte(char)
+			if i+1 < len(value) {
+				i++
+				current.WriteByte(value[i])
+			}
+			continue
+		}
+		if char == '"' {
+			quoted = !quoted
+			current.WriteByte(char)
+			continue
+		}
+		if char == ',' && !quoted {
+			directives = append(directives, current.String())
+			current.Reset()
+			continue
+		}
+		current.WriteByte(char)
+	}
+	directives = append(directives, current.String())
+	return directives
+}
+
+// cacheControlIsUnqualifiedPrivate reports a whole-response private directive.
+// RFC 9111 §5.2.2.7 treats private="field-name" as field-qualified, so a shared
+// cache may still store the rest of the response. Only an unqualified private
+// token satisfies the settlement-receipt guard.
+func cacheControlIsUnqualifiedPrivate(directive string) bool {
+	name := strings.TrimSpace(directive)
+	if eq := strings.IndexByte(name, '='); eq >= 0 {
+		return false
+	}
+	return strings.EqualFold(name, "private")
+}
+
 // WithPrivateCacheControl appends the private directive for 200 responses with
 // PAYMENT-RESPONSE without clobbering existing handler Cache-Control values.
+// Commas inside quoted directive values are not treated as separators.
 func WithPrivateCacheControl(value string) string {
 	if value == "" {
 		return "private"
 	}
-	for _, directive := range strings.Split(value, ",") {
-		if strings.EqualFold(strings.TrimSpace(directive), "private") {
+	for _, directive := range splitCacheControlDirectives(value) {
+		if cacheControlIsUnqualifiedPrivate(directive) {
 			return value
 		}
 	}
