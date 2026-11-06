@@ -1152,6 +1152,96 @@ func TestSettleOnCancel_UnknownOutcomeIsNotAReceipt(t *testing.T) {
 	})
 }
 
+func TestSettleOnCancel_FacilitatorCallFailureIsUnknown(t *testing.T) {
+	ctx := context.Background()
+	requirements := types.PaymentRequirements{Scheme: "upto", Network: "eip155:8453", Asset: "USDC", Amount: "1", PayTo: "0x"}
+	payload := types.PaymentPayload{X402Version: 2, Accepted: requirements, Payload: map[string]interface{}{}}
+	scheme := &mockSettleOnCancelScheme{
+		mockSchemeNetworkServer: mockSchemeNetworkServer{scheme: "upto"},
+		settleOnCancel: func(c VerifiedPaymentCanceledContext) (*types.PaymentRequirements, error) {
+			reqs := c.Requirements.(types.PaymentRequirements)
+			reqs.Amount = "0"
+			return &reqs, nil
+		},
+	}
+
+	newServer := func(settle func(context.Context, []byte, []byte) (*SettleResponse, error)) *x402ResourceServer {
+		server := Newx402ResourceServer(
+			WithFacilitatorClient(&mockFacilitatorClient{
+				kinds:  []SupportedKind{{X402Version: 2, Scheme: "upto", Network: "eip155:8453"}},
+				settle: settle,
+			}),
+			WithSchemeServer("eip155:8453", scheme),
+		)
+		if err := server.Initialize(ctx); err != nil {
+			t.Fatalf("Initialize: %v", err)
+		}
+		return server
+	}
+	cancel := func(server *x402ResourceServer) (*SettleResponse, error) {
+		dispatcher := server.CreatePaymentCancellationDispatcherWithExtensions(
+			ctx, payload, requirements, nil, []SettlePhase{SettlePhaseBeforeHandler},
+		)
+		got := dispatcher.Cancel(VerifiedPaymentCancelOptions{Reason: CancellationReasonHandlerFailed, ResponseStatus: 500})
+		return got, dispatcher.Err()
+	}
+
+	t.Run("facilitator error", func(t *testing.T) {
+		var settleCalls int
+		server := newServer(func(context.Context, []byte, []byte) (*SettleResponse, error) {
+			settleCalls++
+			return nil, errors.New("facilitator unavailable")
+		})
+		got, err := cancel(server)
+		if got != nil {
+			t.Fatalf("expected no receipt when the cancel facilitator call fails, got %+v", got)
+		}
+		if !errors.Is(err, ErrCancellationOutcomeUnknown) {
+			t.Fatalf("expected unknown outcome, got %v", err)
+		}
+		if settleCalls != 1 {
+			t.Fatalf("expected one facilitator call, got %d", settleCalls)
+		}
+	})
+
+	t.Run("facilitator rejection stays a failed receipt", func(t *testing.T) {
+		server := newServer(func(context.Context, []byte, []byte) (*SettleResponse, error) {
+			return &SettleResponse{Success: false, ErrorReason: "insufficient_funds", Network: "eip155:8453"}, nil
+		})
+		got, err := cancel(server)
+		if got == nil || got.Success || got.ErrorReason != "insufficient_funds" {
+			t.Fatalf("expected failed cancel receipt, got %+v", got)
+		}
+		if err != nil {
+			t.Fatalf("known facilitator rejection must not be unknown, got %v", err)
+		}
+	})
+
+	t.Run("preflight failure stays a failed receipt", func(t *testing.T) {
+		var settleCalls int
+		server := newServer(func(context.Context, []byte, []byte) (*SettleResponse, error) {
+			settleCalls++
+			return &SettleResponse{Success: true, Transaction: "0x", Network: "eip155:8453"}, nil
+		})
+		server.OnBeforeSettle(func(c SettleContext) (*BeforeHookResult, error) {
+			if c.Phase != SettlePhaseCancel {
+				return nil, nil
+			}
+			return &BeforeHookResult{Abort: true, Reason: "settle_denied"}, nil
+		})
+		got, err := cancel(server)
+		if got == nil || got.Success || got.ErrorReason != "settle_denied" {
+			t.Fatalf("expected failed cancel receipt, got %+v", got)
+		}
+		if err != nil {
+			t.Fatalf("preflight failure must not be unknown, got %v", err)
+		}
+		if settleCalls != 0 {
+			t.Fatalf("preflight failure must not call the facilitator, got %d", settleCalls)
+		}
+	})
+}
+
 func TestBuildFailurePathSettlementResponse_PrefersSuccessfulCancel(t *testing.T) {
 	cancel := &SettleResponse{
 		Success:     true,
