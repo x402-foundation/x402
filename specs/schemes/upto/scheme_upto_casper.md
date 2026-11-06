@@ -28,7 +28,7 @@ The Client's signature commits to the token, the maximum amount, the spender (th
 | Requirement ([`scheme_upto.md`](https://github.com/x402-foundation/x402/blob/main/specs/schemes/upto/scheme_upto.md)) | Casper mechanism |
 | :--- | :--- |
 | Single-use authorization | Permit2 unordered nonce. Each `(owner, nonce)` pair is recorded in Permit2's `used_nonces` dictionary on the first successful transfer; a second transfer with the same pair reverts with `NonceAlreadyUsed` (38003). |
-| Time-bound authorization | `deadline` is signed and enforced by Permit2 (`now <= deadline`). `validAfter` is signed inside the witness and enforced by the proxy (`now >= validAfter`). Both are Unix seconds compared against block time. |
+| Time-bound authorization | `deadline` is signed and enforced by Permit2 (`now <= deadline`). `validAfter` is signed inside the witness and enforced by the proxy (`now >= validAfter`). Both are Unix seconds compared against block time in seconds, `floor(block_time_ms / 1000)`. |
 | Recipient binding | `witness.to` is part of the signed digest. The proxy passes `witness.to` as the transfer recipient, so a different recipient changes the digest and fails signature verification. |
 | Maximum amount enforcement | `settlement_amount <= permitted.amount` is checked by the proxy and again by Permit2 (`AmountExceedsPermitted`, 38007). |
 | Phase-dependent `amount` | `PaymentRequirements.amount` is the maximum at `/verify` and the actual charge at `/settle`. The facilitator always verifies the signature against `permitted.amount`. |
@@ -158,7 +158,7 @@ The Client SHOULD set `deadline` no later than `now + maxTimeoutSeconds` and `va
 
 ## Phase 3: Verification Logic
 
-A facilitator verifying an `upto` payment on Casper MUST reject any payload that fails a rule below, with the error code given (see [Error Codes](#error-codes)). "Chain time" means the timestamp of the latest block, in seconds. Checks run in this order:
+A facilitator verifying an `upto` payment on Casper MUST reject any payload that fails a rule below, with the error code given (see [Error Codes](#error-codes)). "Chain time" means the timestamp of the latest block in seconds, `floor(block_time_ms / 1000)`, the same conversion Permit2 and the proxy apply on chain. Checks run in this order:
 
 1. **Verify** `accepted.scheme` is `"upto"` (`unsupported_scheme`) and `PaymentRequirements.network` is a supported `casper:*` network (`invalid_network`). A payload whose fields do not parse, such as a malformed hex `Address` or a `deadline` that does not fit in a `u64`, fails with `invalid_payload`.
 
@@ -179,7 +179,7 @@ A facilitator verifying an `upto` payment on Casper MUST reject any payload that
 
 5. **Verify the time window** against chain time: `now >= validAfter` (`permit2_not_yet_valid`) and `now <= deadline` (`permit2_deadline_expired`). The facilitator SHOULD reject an authorization whose `deadline` leaves too little time to settle after the resource runs, or is later than `now + maxTimeoutSeconds` plus allowed clock skew (`invalid_upto_casper_payload_deadline`).
 
-6. **Verify the nonce is unused** (`permit2_invalid_nonce`): `(from, nonce)` MUST NOT be present in Permit2's `used_nonces` dictionary.
+6. **Verify the nonce is unused** (`permit2_invalid_nonce`): `(from, nonce)` MUST NOT be marked used in Permit2. The facilitator can read Permit2's `used_nonces` dictionary, keyed by `hex(blake2b(from ‖ nonce))`, or call Permit2's `is_nonce_used(owner, nonce)` view.
 
 7. **Verify the Permit2 allowance**: the token's `allowance(from, Permit2)` MUST be at least `permitted.amount`. Otherwise return `412 Precondition Failed` with `permit2_allowance_required`.
 
@@ -366,6 +366,8 @@ A reverted `settle`, whether simulated or executed, carries a Casper user error 
 
 The canonical Permit2 and `x402UptoPermit2Proxy` package hashes are per-network constants of the SDKs and facilitators, not wire fields. Casper has no `CREATE2`, so each network has its own deployment; the package hashes are published with the contracts in [Permit2 for Casper](https://github.com/casper-ecosystem/permit2). Implementations MUST use the canonical package hashes for the selected `network` and MUST NOT accept a Permit2 or proxy address from the payload or `extra`.
 
+The canonical Permit2 and `x402UptoPermit2Proxy` packages MUST be deployed locked (`lock_status: Locked`). Facilitators SHOULD check at startup that both packages are locked, that the proxy's `permit2()` view returns the canonical Permit2 address for `network`, and that Permit2's `chain_name()` view equals `network`. Permit2's `init(chain_name)` takes a free string; a mis-set name does not open replay, since the package hash differs per network, but it makes every signature fail.
+
 ### EIP-712 Typed Data
 
 **Domain**
@@ -376,6 +378,14 @@ The canonical Permit2 and `x402UptoPermit2Proxy` package hashes are per-network 
 | `version` | `string` | `"1"` |
 | `chain_name` | `string` | The CAIP-2 `network`, e.g. `"casper:casper-test"`. Stored in Permit2 at deployment and readable through its `chain_name()` view. |
 | `contract_package_hash` | `bytes32` | Canonical Permit2 package hash for `network` (see [Contract Addresses](#contract-addresses)) |
+
+The domain type string fixes the field order:
+
+```
+EIP712Domain(string name,string version,string chain_name,bytes32 contract_package_hash)
+```
+
+Its type hash is `e20dd13933eeb9d6099b53d5ffd59cfd50fe774983038681a378371664fad4fb`.
 
 **Types**
 
@@ -419,6 +429,16 @@ Golden vector, computed with an independent EIP-712 encoder:
 | Witness hash | `6790d321a629f19074b1be4cf6c0aff3766d2bf073182613d014f4bcbdf5f420` |
 | Struct hash | `f5cad14e4e8ceadccbdbdb21f495f8f9ae1701a8266cf71c72338fff424ed09c` |
 | Digest | `b6bad959ddbf464b12434bacd0c2edc30c4282d2f352a14fb9b12ae803ff48bd` |
+
+Signature vectors over the digest above, with test-only secret keys (never use them on a live network):
+
+| Output | ed25519 (secret key `01` × 32) | secp256k1 (secret key `01` × 32) |
+| --- | --- | --- |
+| `publicKey` | `018a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c` | `02031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f` |
+| Account hash | `ef4687f74d465826239bab05c4e1bdd2223dd8c201b96f361f775125e624ef70` | `28bbf7efd9be97339596ef441ff27d1e32195e90ddb17253c13951d23e5137a5` |
+| `signature` | `015868837539215813bc699ebecc22dd1322af548e8c02920680324b5fbb77f544`<br>`be1fd084ac823db6390e40b7c13a5bfc809cb243b322c01fcb2fec0a00728707` | `027dbca1dcd78e78c433524ccf27302b243be01e4a53892472d50a1f8f19a1d99f`<br>`111e95b2b8ea629713d4132b212829bc625134f8da23b9d12901dc6a5dcaca1b` |
+
+ed25519 signs the 32-byte digest. secp256k1 signs SHA-256 of the digest, as Casper's `crypto::sign` does; EVM wallets instead sign the digest directly. Passing the digest straight to ECDSA gives `02ac297179bb02d49ac1921fe1f8c83b6613299c1680d4d861c68a874ab4e88ed7192dbe3a9d5217d4b935b9c4ecdd327448c3daa8805701e91035b0438ee15595`, which Permit2 rejects with `InvalidSignature`.
 
 ### Permit2 Entry Point
 
@@ -477,6 +497,8 @@ The entry point SHOULD be non-reentrant. Proxy errors use the 39000 range, which
 
 `payTo`, `from`, `token`, `spender`, `witness.to` and `witness.facilitator` use the 33-byte `Address` encoding from the [`exact` Casper spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_casper.md#address-format): a 1-byte tag (`0x00` account, `0x01` contract package) followed by the 32-byte hash, as 66 hex characters with no prefix.
 
+On chain, Permit2 and the proxy take these arguments as `Key` CLValues: tag `0x00` is `Key::Account` (`account-hash-…`) and `0x01` is `Key::Hash` (`hash-…`). The 33 bytes are that `Key`'s serialization, so SDKs build the CLValue from the tag and hash directly.
+
 ### Signature Schemes
 
 As in the [`exact` Casper spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_casper.md#signature-schemes): `0x01` ed25519, `0x02` secp256k1; the `publicKey` and `signature` tags MUST agree; secp256k1 signatures MUST be low-s.
@@ -489,3 +511,14 @@ As in the [`exact` Casper spec](https://github.com/x402-foundation/x402/blob/mai
 - [Casper EIP-712 toolkit](https://github.com/casper-ecosystem/casper-eip-712)
 - [CAIP-2 for Casper](https://github.com/ChainAgnostic/namespaces/blob/main/casper/caip2.md)
 - [Casper `speculative_exec` JSON-RPC](https://docs.casper.network/developers/json-rpc/json-rpc-transactional#speculative_exec_txn)
+
+## Security Considerations
+
+1. **Server trust.** The server can charge anything up to `permitted.amount`, and clients trust it to meter honestly within that maximum. The maximum, recipient, and single use are enforced on chain; the metered amount is not.
+2. **Facilitator binding.** The signed payload travels in an HTTP header and may be seen by others. Binding `witness.facilitator` and checking the caller in the proxy stops a third party from settling first, for example with a tiny amount that burns the nonce and denies the server its payment.
+3. **Spender binding.** Permit2 takes the spender from the caller, which is the proxy package. A signature for this proxy cannot be used directly against Permit2 or through any other contract.
+4. **Signer binding.** EVM Permit2 recovers the signer from the signature. On Casper the caller passes `owner` and `public_key` as separate arguments, and Permit2 reverts with `InvalidSigner` (38002) unless `owner` is the account hash of `public_key`. `owner` is therefore always an account; contract packages cannot sign. Facilitators apply the same rule off chain when they verify the signature.
+5. **Key rotation.** A Casper account hash is derived from the account's original public key and never changes, and Permit2 accepts only that key. It keeps signing valid authorizations after it is removed from the account's associated keys, and a rotated-in key cannot sign at all. An account rotating out a key, for example after a compromise, SHOULD revoke the Permit2 allowance with `token.approve(Permit2, 0)` on each token.
+6. **Multi-key accounts.** Permit2 checks a single signature from that key and ignores the account's associated keys and action thresholds. Accounts that rely on weighted keys or multisig, such as treasuries, SHOULD NOT approve Permit2.
+7. **Replay.** The EIP-712 domain binds `chain_name` and the Permit2 package hash, and Permit2 consumes the nonce on first use, so a signature works once, on one network, against one deployment.
+8. **Reentrancy.** Permit2 calls `transfer_from` on whatever token the signed permit names; the facilitator checks it against `asset`, but Permit2 itself does not restrict it. As in Uniswap's Permit2, Permit2 marks the nonce used before the token call, so a malicious token that reenters Permit2 or the proxy with the same authorization reverts with `NonceAlreadyUsed` (38003). The proxy entry point SHOULD also be non-reentrant.
