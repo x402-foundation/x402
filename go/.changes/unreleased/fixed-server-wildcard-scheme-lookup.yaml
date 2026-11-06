@@ -1,0 +1,3 @@
+kind: fixed
+body: 'Resolve resource server scheme lookups through wildcard registrations such as `eip155:*`. Route validation, `GetRegisteredScheme`, payment requirement building, payment flow resolution and scheme hooks previously required an exact network key, so a server registered with `Register("eip155:*", ...)` failed `Initialize` and answered protected requests with 500.'
+time: 2026-10-21T09:57:08Z
