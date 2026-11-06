@@ -55,6 +55,7 @@ Servers that put a paywall in front of a resource. See [`servers/`](./servers/).
 | [`builder-code/`](./servers/builder-code/) | ERC-8021 builder-code attribution on paid endpoints |
 | [`offer-receipt/`](./servers/offer-receipt/) | Signed offers (payment terms) and receipts (proof of delivery) |
 | [`payment-identifier/`](./servers/payment-identifier/) | Idempotency via the `payment-identifier` extension |
+| [`replay-guard/`](./servers/replay-guard/) | Runs a paid handler once per payment authorization (`onAfterVerify` hook) |
 | [`sign-in-with-x/`](./servers/sign-in-with-x/) | Auth-only routes and pay-once-then-authenticate routes |
 | [`cloudfront-lambda-edge/`](./servers/cloudfront-lambda-edge/) | Adds x402 at the CDN edge without modifying the backend |
 | [`mcp/`](./servers/mcp/) | MCP server exposing paid tools |
