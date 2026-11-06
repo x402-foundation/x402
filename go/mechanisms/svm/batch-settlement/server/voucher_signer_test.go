@@ -3,12 +3,14 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"testing"
 	"time"
 
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/mr-tron/base58"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
@@ -818,6 +820,179 @@ func TestBatchServerVoucherSignerBoundaries(t *testing.T) {
 		require.Equal(t, batchsettlement.ErrOperationCeilingChanged, repricedReplay.Reason)
 	})
 
+	t.Run("failed charge cleanup", func(t *testing.T) {
+		for _, scenario := range []struct {
+			name, fault string
+			sibling     bool
+		}{
+			{"successful charge control", "none", false},
+			{"handler cancellation control", "cancel", false},
+			{"signer failure releases capacity and permits close verification", "signer", false},
+			{"signer failure preserves another request's reservation", "signer", true},
+			{"over-ceiling charge releases its reservation", "limit", false},
+			{"channel cleanup failure preserves the abort and can be retried", "cleanup-update", true},
+			{"operation release failure preserves the abort and can be retried", "cleanup-release", true},
+			{"lost write acknowledgement preserves the committed charge and voucher", "ambiguous", true},
+		} {
+			t.Run(scenario.name, func(t *testing.T) {
+				store := &cleanupChannelStore{MemoryChannelStore: NewMemoryChannelStore()}
+				operations := &cleanupOperationStore{MemoryBatchOperationStore: NewMemoryBatchOperationStore()}
+				signing := &cleanupSigner{ReceiverAuthorizerSigner: operator}
+				scheme := NewBatchSvmScheme(&Config{Operator: signing, OperationStore: operations, ReceiverAuthorizer: receiverAuthorizer, Store: store})
+				open := types.PaymentPayload{Accepted: requirements(), Payload: serverDepositMap, X402Version: 2}
+				openCtx := verifyContext(open, requirements())
+				_, err := scheme.BeforeVerifyHook()(openCtx)
+				require.NoError(t, err)
+				_, err = scheme.AfterVerifyHook()(x402.VerifyResultContext{VerifyContext: openCtx, Result: &x402.VerifyResponse{IsValid: true, Payer: payer.Address().String()}})
+				require.NoError(t, err)
+				require.NoError(t, scheme.AfterSettleHook()(x402.SettleResultContext{
+					SettleContext: x402.SettleContext{Ctx: ctx, Payload: open, Requirements: requirements(), Phase: x402.SettlePhaseAfterHandler},
+					Result: &x402.SettleResponse{Success: true, Transaction: "synthetic-open", Network: svm.SolanaDevnetCAIP2,
+						Extra: map[string]any{"channelState": map[string]any{"balance": "10000", "totalClaimed": "0", "withdrawRequestedAt": 0}}},
+				}))
+				initial, err := store.Get(channelID)
+				require.NoError(t, err)
+				require.Equal(t, uint64(1000), initial.ChargedCumulativeAmount)
+				facade := &cleanupFacilitator{channelID: channelID, payer: payer.Address().String(), feePayer: feePayer.Address().String()}
+				resource := x402.Newx402ResourceServer(x402.WithFacilitatorClient(facade)).Register(x402.Network(svm.SolanaDevnetCAIP2), scheme)
+				require.NoError(t, resource.Initialize(ctx))
+				failureHooks, cancellationHooks := 0, 0
+				resource.OnSettleFailure(func(x402.SettleFailureContext) (*x402.SettleFailureHookResult, error) {
+					failureHooks++
+					return &x402.SettleFailureHookResult{Recovered: true, Result: &x402.SettleResponse{Success: true, Transaction: "unexpected-recovery", Network: svm.SolanaDevnetCAIP2}}, nil
+				})
+				resource.OnVerifiedPaymentCanceled(func(x402.VerifiedPaymentCanceledContext) error { cancellationHooks++; return nil })
+				ceiling := requirements()
+				ceiling.Amount = "4000"
+				payment := types.PaymentPayload{Accepted: ceiling, X402Version: 2,
+					Payload: mustPayloadMap(t, batchsettlement.BatchAuthorizationPayload{Authorization: authorizationFor(t, "cleanup-paid", 4000), ChannelConfig: serverDeposit.ChannelConfig, Type: batchsettlement.PayloadTypeAuthorization}),
+				}
+				verified, err := resource.VerifyPayment(ctx, payment, ceiling)
+				require.NoError(t, err)
+				require.True(t, verified.IsValid)
+				reserved, err := store.Get(channelID)
+				require.NoError(t, err)
+				require.Len(t, reserved.Reservations, 1)
+				var targetID string
+				for id := range reserved.Reservations {
+					targetID = id
+				}
+				var sibling *types.PaymentPayload
+				siblingRequirements := requirements()
+				siblingRequirements.Amount = "1000"
+				if scenario.sibling {
+					value := types.PaymentPayload{Accepted: siblingRequirements, X402Version: 2,
+						Payload: mustPayloadMap(t, batchsettlement.BatchAuthorizationPayload{Authorization: authorizationFor(t, "cleanup-sibling", 1000), ChannelConfig: serverDeposit.ChannelConfig, Type: batchsettlement.PayloadTypeAuthorization}),
+					}
+					sibling = &value
+					verified, err := resource.VerifyPayment(ctx, *sibling, siblingRequirements)
+					require.NoError(t, err)
+					require.True(t, verified.IsValid)
+				}
+				reserved, err = store.Get(channelID)
+				require.NoError(t, err)
+				siblingReservations := map[string]ChannelReservation{}
+				for id, reservation := range reserved.Reservations {
+					if id != targetID {
+						siblingReservations[id] = reservation
+					}
+				}
+				store.calls = 0
+				store.failCleanup = scenario.fault == "cleanup-update"
+				store.loseAcknowledgement = scenario.fault == "ambiguous"
+				operations.failRelease = scenario.fault == "cleanup-release"
+				signing.fail = scenario.fault == "signer" || scenario.fault == "cleanup-update" || scenario.fault == "cleanup-release"
+				charge := ceiling
+				charge.Amount = "400"
+				if scenario.fault == "limit" {
+					charge.Amount = "5000"
+				}
+				if scenario.fault == "cancel" {
+					resource.CreatePaymentCancellationDispatcher(ctx, payment, ceiling).Cancel(x402.VerifiedPaymentCancelOptions{Reason: x402.CancellationReasonHandlerFailed})
+				} else {
+					result, settleErr := resource.SettlePayment(ctx, payment, charge, nil)
+					if scenario.fault == "none" {
+						require.NoError(t, settleErr)
+						require.True(t, result.Success)
+					} else {
+						var failure *x402.SettleError
+						require.ErrorAs(t, settleErr, &failure)
+						message, reason := "synthetic operator unavailable", "transaction_failed"
+						if scenario.fault == "limit" {
+							message, reason = batchsettlement.ErrCumulativeAmountMismatch, batchsettlement.ErrCumulativeAmountMismatch
+						}
+						if scenario.fault == "ambiguous" {
+							message = "synthetic channel write acknowledgement lost"
+						}
+						assert.Equal(t, reason, failure.ErrorReason)
+						assert.Contains(t, failure.ErrorMessage, message)
+						if scenario.fault == "cleanup-update" || scenario.fault == "cleanup-release" {
+							assert.Equal(t, message+"; reservation cleanup failed: "+cleanupFailureMessage, failure.ErrorMessage)
+							afterFailure, err := store.Get(channelID)
+							require.NoError(t, err)
+							_, held := afterFailure.Reservations[targetID]
+							assert.Equal(t, scenario.fault == "cleanup-update", held)
+							cancellation := x402.VerifiedPaymentCanceledContext{SettleContext: x402.SettleContext{Ctx: ctx, Payload: payment, Requirements: ceiling, Phase: x402.SettlePhaseCancel}, Reason: x402.CancellationReasonHandlerFailed}
+							require.NoError(t, scheme.OnVerifiedPaymentCanceledHook()(cancellation))
+							calls := store.calls
+							require.NoError(t, scheme.OnVerifiedPaymentCanceledHook()(cancellation))
+							assert.Equal(t, calls, store.calls)
+						}
+					}
+				}
+				state, err := store.Get(channelID)
+				require.NoError(t, err)
+				assert.Equal(t, siblingReservations, state.Reservations)
+				charged := scenario.fault == "none" || scenario.fault == "ambiguous"
+				wantCharge, wantStatus := uint64(1000), operationReserved
+				if charged {
+					wantCharge, wantStatus = 1400, operationCompleted
+				}
+				assert.Equal(t, wantCharge, state.ChargedCumulativeAmount)
+				if scenario.fault == "ambiguous" {
+					require.NotNil(t, store.committed)
+					assert.Equal(t, *store.committed, *state)
+				} else if !charged {
+					assert.Equal(t, initial.SignedMaxClaimable, state.SignedMaxClaimable)
+					assert.Equal(t, initial.HighestVoucherSignature, state.HighestVoucherSignature)
+				}
+				operation, err := operations.Get(channelID, "cleanup-paid")
+				require.NoError(t, err)
+				require.NotNil(t, operation)
+				assert.Equal(t, wantStatus, operation.Status)
+				assert.Zero(t, failureHooks)
+				assert.Zero(t, facade.settles)
+				wantCanceled := 0
+				if scenario.fault == "cancel" {
+					wantCanceled = 1
+				}
+				assert.Equal(t, wantCanceled, cancellationHooks)
+				replay := payment
+				replay.Payload = mustPayloadMap(t, batchsettlement.BatchAuthorizationPayload{Authorization: authorizationFor(t, "cleanup-paid", 4000), ChannelConfig: serverDeposit.ChannelConfig, Type: batchsettlement.PayloadTypeAuthorization})
+				duplicate, err := resource.VerifyPayment(ctx, replay, ceiling)
+				require.ErrorContains(t, err, ChannelBusy)
+				require.NotNil(t, duplicate)
+				assert.False(t, duplicate.IsValid)
+				assert.Equal(t, ChannelBusy, duplicate.InvalidReason)
+				refundAuth := authorizationFor(t, "cleanup-close", 0)
+				refund, err := batchclient.BuildRefundPayload(ctx, batchclient.BuildRefundArgs{Authorization: &refundAuth, ChannelConfig: serverDeposit.ChannelConfig, ChannelID: channelID, FeePayer: feePayer.Address().String(), Payer: payer})
+				require.NoError(t, err)
+				if sibling != nil {
+					busyAuth := authorizationFor(t, "cleanup-close-busy", 0)
+					busyRefund := refund
+					busyRefund.Authorization = &busyAuth
+					blocked, _ := resource.VerifyPayment(ctx, types.PaymentPayload{Accepted: requirements(), Payload: mustPayloadMap(t, busyRefund), X402Version: 2}, requirements())
+					require.NotNil(t, blocked)
+					assert.False(t, blocked.IsValid)
+					resource.CreatePaymentCancellationDispatcher(ctx, *sibling, siblingRequirements).Cancel(x402.VerifiedPaymentCancelOptions{Reason: x402.CancellationReasonHandlerFailed})
+				}
+				closed, err := resource.VerifyPayment(ctx, types.PaymentPayload{Accepted: requirements(), Payload: mustPayloadMap(t, refund), X402Version: 2}, requirements())
+				require.NoError(t, err)
+				assert.True(t, closed.IsValid)
+			})
+		}
+	})
+
 	t.Run("enriches server-mode refunds with the stored operator voucher", func(t *testing.T) {
 		store := NewMemoryChannelStore()
 		scheme := NewBatchSvmScheme(&Config{
@@ -885,6 +1060,75 @@ func TestBatchServerVoucherSignerBoundaries(t *testing.T) {
 		require.Equal(t, "2000", voucher["maxClaimableAmount"])
 		require.Equal(t, "stored-operator-sig", voucher["signature"])
 	})
+}
+
+const cleanupFailureMessage = batchsettlement.ErrChannelState + ": synthetic cleanup unavailable"
+
+type cleanupSigner struct {
+	svm.ReceiverAuthorizerSigner
+	fail bool
+}
+
+func (s *cleanupSigner) SignMessage(ctx context.Context, message []byte) ([]byte, error) {
+	if s.fail {
+		return nil, errors.New("synthetic operator unavailable")
+	}
+	return s.ReceiverAuthorizerSigner.SignMessage(ctx, message)
+}
+
+type cleanupOperationStore struct {
+	*MemoryBatchOperationStore
+	failRelease bool
+}
+
+func (s *cleanupOperationStore) Release(channelID, requestID string) error {
+	if s.failRelease {
+		s.failRelease = false
+		return errors.New(cleanupFailureMessage)
+	}
+	return s.MemoryBatchOperationStore.Release(channelID, requestID)
+}
+
+type cleanupChannelStore struct {
+	*MemoryChannelStore
+	calls                            int
+	failCleanup, loseAcknowledgement bool
+	committed                        *ChannelState
+}
+
+func (s *cleanupChannelStore) Update(channelID string, updater func(*ChannelState) (ChannelState, error)) (ChannelState, error) {
+	s.calls++
+	if s.failCleanup && s.calls == 2 {
+		return ChannelState{}, errors.New(cleanupFailureMessage)
+	}
+	next, err := s.MemoryChannelStore.Update(channelID, updater)
+	if err != nil {
+		return next, err
+	}
+	if s.loseAcknowledgement && s.calls == 1 {
+		snapshot := cloneState(next)
+		s.committed = &snapshot
+		return ChannelState{}, errors.New("synthetic channel write acknowledgement lost")
+	}
+	return next, nil
+}
+
+type cleanupFacilitator struct {
+	channelID, payer, feePayer string
+	settles                    int
+}
+
+func (f *cleanupFacilitator) Verify(context.Context, []byte, []byte) (*x402.VerifyResponse, error) {
+	return &x402.VerifyResponse{IsValid: true, Payer: f.payer, Extra: map[string]any{"channelId": f.channelID, "balance": "10000", "totalClaimed": "0", "withdrawRequestedAt": 0}}, nil
+}
+
+func (f *cleanupFacilitator) Settle(context.Context, []byte, []byte) (*x402.SettleResponse, error) {
+	f.settles++
+	return nil, errors.New("unexpected facilitator settlement")
+}
+
+func (f *cleanupFacilitator) GetSupported(context.Context) (x402.SupportedResponse, error) {
+	return x402.SupportedResponse{Kinds: []x402.SupportedKind{{X402Version: 2, Scheme: batchsettlement.Scheme, Network: svm.SolanaDevnetCAIP2, Extra: map[string]any{"feePayer": f.feePayer}}}}, nil
 }
 
 func newVoucherSigner(t *testing.T) *batchclient.PrivateKeySigner {

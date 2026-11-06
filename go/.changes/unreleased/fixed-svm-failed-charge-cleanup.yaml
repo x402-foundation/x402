@@ -1,0 +1,3 @@
+kind: fixed
+body: Release SVM batch capacity after a failed local charge attempt, preserve consumed request IDs, and retain cleanup context when storage fails.
+time: 2026-10-22T17:21:00Z
