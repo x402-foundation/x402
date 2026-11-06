@@ -125,6 +125,7 @@ Not all extensions use the same hooks. Here's how the built-in extensions map to
 | Payment Identifier | — | ✅ | ✅ | — |
 | Sign-In-With-X | — | — | — | — |
 | Signed Offers & Receipts | — | ✅ (signs offers) | ✅ (signs receipts) | — |
+| Authorization Evidence | — | ✅ | — | — |
 
 Bazaar is unique in that it spans both sides: the resource server extension enriches declarations, while the facilitator component handles discovery cataloging and validation. Sign-In-With-X manages its own session lifecycle outside the standard hooks.
 
@@ -140,6 +141,7 @@ Bazaar is unique in that it spans both sides: the resource server extension enri
 | [Payment Identifier](./payment-identifier) | Server + Client | Attaches a unique identifier to each payment for tracking, reconciliation, and idempotency. | TypeScript, Go, Python |
 | [Sign-In-With-X](./sign-in-with-x) | Server + Client | CAIP-122 wallet authentication. Lets clients prove wallet ownership to access previously purchased content without repaying. | TypeScript, Go, Python |
 | [Signed Offers & Receipts](./offer-receipt) | Server + Client | Signs offers on 402 responses and receipts on 200 responses, producing cryptographic proof-of-interaction artifacts. | TypeScript |
+| [Authorization Evidence](/extensions/authorization-evidence) | Server + Client | Pre-payment mandate verification through a pluggable external verifier | TypeScript |
 
 ## Building a Custom Extension
 
