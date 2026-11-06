@@ -1,0 +1,37 @@
+{
+  "schema_version": "3.0.0",
+  "verifies": "attempt-identity",
+  "requires_chain_read": false,
+  "provenance": [
+    "x402 specification v2 section 5.5, Settlement and Refusal Identity Invariant, as proposed in x402-foundation/x402 pull request 3776 on branch spec/settlement-refusal-identity-invariant and not on main; checked against commit 2819ed7 (arrival-order query canonicalization) on 26 October 2026",
+    "the gap these cover was named by ruiruii in erc-8004/erc-8004-contracts#99 on 18 October 2026: each of the four evidence layers depends on an attempt identity that none of them defines",
+    "the section names these vectors as the interim normative home until a permanent location in the x402 repository is agreed"
+  ],
+  "id": "attempt-identity-known-answer-body-gzip-then-rfc8785-wrong",
+  "clause": "canonical-members",
+  "encodes": "The compressed bytes were hashed.",
+  "description": "An implementation that gives a different value than the text prescribes.",
+  "input": {
+    "known_answers": [
+      {
+        "raw": {
+          "method": "POST",
+          "path": "/p",
+          "contentType": "application/json",
+          "contentEncoding": "gzip",
+          "bodyBase64": "H4sIAAAAAAAACqtWqlKyMtRRSlSyqlaqVLIqKSpN1VGqULLKK83Jqa0FAEQXBxwfAAAA"
+        },
+        "observed": {
+          "body_sha256": "869a0106d69c0d374d516fe63d41dfe8c56b062be5ba24534909aed8af7f83ba"
+        }
+      }
+    ]
+  },
+  "expected": {
+    "outcome": "FAIL",
+    "reason_code": "CANONICAL_MEMBER_MISMATCH"
+  },
+  "limits": [
+    "This shows one wrong value. Other wrong values are rejected the same way."
+  ]
+}
