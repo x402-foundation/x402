@@ -33,8 +33,22 @@ describe("ExactStellarScheme - getExtra", () => {
 
     const result = scheme.getExtra(STELLAR_TESTNET_CAIP2);
 
-    expect(result).toEqual({ areFeesSponsored: true });
+    expect(result).toEqual({ areFeesSponsored: true, maxTransactionFeeStroops: 50_000 });
     expect(mockRpcClient.getLatestLedger).not.toHaveBeenCalled();
+  });
+
+  it("should return a custom maxTransactionFeeStroops", () => {
+    const signer = createEd25519Signer(
+      "SDV3OZOPGIO6GQAVI7T6ZJ7NSNFB26JX6QZYCI64TBC7BAZY6FQVAXXK",
+      STELLAR_TESTNET_CAIP2,
+    );
+
+    scheme = new ExactStellarScheme([signer], { maxTransactionFeeStroops: 500_000 });
+
+    expect(scheme.getExtra(STELLAR_TESTNET_CAIP2)).toEqual({
+      areFeesSponsored: true,
+      maxTransactionFeeStroops: 500_000,
+    });
   });
 
   it("should return consistent areFeesSponsored on each call", () => {
@@ -46,10 +60,10 @@ describe("ExactStellarScheme - getExtra", () => {
     scheme = new ExactStellarScheme([signer]);
 
     const result1 = scheme.getExtra(STELLAR_TESTNET_CAIP2);
-    expect(result1).toEqual({ areFeesSponsored: true });
+    expect(result1).toEqual({ areFeesSponsored: true, maxTransactionFeeStroops: 50_000 });
 
     const result2 = scheme.getExtra(STELLAR_TESTNET_CAIP2);
-    expect(result2).toEqual({ areFeesSponsored: true });
+    expect(result2).toEqual({ areFeesSponsored: true, maxTransactionFeeStroops: 50_000 });
 
     expect(mockRpcClient.getLatestLedger).not.toHaveBeenCalled();
   });
@@ -63,7 +77,7 @@ describe("ExactStellarScheme - getExtra", () => {
     scheme = new ExactStellarScheme([signer], { areFeesSponsored: false });
 
     const result = scheme.getExtra(STELLAR_TESTNET_CAIP2);
-    expect(result).toEqual({ areFeesSponsored: false });
+    expect(result).toEqual({ areFeesSponsored: false, maxTransactionFeeStroops: 50_000 });
   });
 
   it("should return consistent areFeesSponsored with multiple signers", () => {
@@ -81,7 +95,7 @@ describe("ExactStellarScheme - getExtra", () => {
     // Call getExtra multiple times to ensure consistency
     for (let i = 0; i < 10; i++) {
       const result = scheme.getExtra(STELLAR_TESTNET_CAIP2);
-      expect(result).toEqual({ areFeesSponsored: true });
+      expect(result).toEqual({ areFeesSponsored: true, maxTransactionFeeStroops: 50_000 });
     }
 
     expect(mockRpcClient.getLatestLedger).not.toHaveBeenCalled();
