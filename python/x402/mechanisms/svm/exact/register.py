@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     )
 
     from ..signer import ClientSvmSigner, FacilitatorSvmSigner
+    from .client import ApproveSplits
 
 # Type vars for accepting both async and sync variants
 ClientT = TypeVar("ClientT", "x402Client", "x402ClientSync")
@@ -30,6 +31,7 @@ def register_exact_svm_client(
     networks: str | list[str] | None = None,
     policies: list | None = None,
     rpc_url: str | None = None,
+    approve_splits: "ApproveSplits | None" = None,
 ) -> ClientT:
     """Register SVM exact payment schemes to x402Client.
 
@@ -43,6 +45,8 @@ def register_exact_svm_client(
         networks: Optional specific network(s) (default: wildcard).
         policies: Optional payment policies.
         rpc_url: Optional custom RPC URL.
+        approve_splits: Optional consent hook for requirements carrying
+            ``extra.splits`` (V2 only); without it such requirements are refused.
 
     Returns:
         Client for chaining.
@@ -50,7 +54,7 @@ def register_exact_svm_client(
     from .client import ExactSvmScheme as ExactSvmClientScheme
     from .v1.client import ExactSvmSchemeV1 as ExactSvmClientSchemeV1
 
-    scheme = ExactSvmClientScheme(signer, rpc_url)
+    scheme = ExactSvmClientScheme(signer, rpc_url, approve_splits=approve_splits)
 
     if networks:
         if isinstance(networks, str):
@@ -118,6 +122,8 @@ def register_exact_svm_facilitator(
     facilitator: FacilitatorT,
     signer: "FacilitatorSvmSigner",
     networks: str | list[str],
+    max_splits: int = 0,
+    ata_creation_sponsored: bool = False,
     transaction_versions: Sequence[int] | None = None,
 ) -> FacilitatorT:
     """Register SVM exact payment schemes to x402Facilitator.
@@ -133,6 +139,9 @@ def register_exact_svm_facilitator(
         facilitator: x402Facilitator instance.
         signer: SVM signer for verification/settlement.
         networks: Network(s) to register.
+        max_splits: Maximum ``extra.splits`` entries the V2 scheme accepts (0-8).
+        ata_creation_sponsored: Whether the V2 scheme's fee payer funds ATA
+            creation for recipients marked ``ataCreationRequired``.
         transaction_versions: Transaction message versions to accept and
             advertise, applied to both the V2 and V1 schemes. Defaults to
             ``[0, 1]``.
@@ -147,7 +156,11 @@ def register_exact_svm_facilitator(
     settlement_cache = SettlementCache()
 
     scheme = ExactSvmFacilitatorScheme(
-        signer, settlement_cache, transaction_versions=transaction_versions
+        signer,
+        settlement_cache,
+        max_splits=max_splits,
+        ata_creation_sponsored=ata_creation_sponsored,
+        transaction_versions=transaction_versions,
     )
 
     if isinstance(networks, str):
