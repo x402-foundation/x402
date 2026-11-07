@@ -216,6 +216,19 @@ class TestHandleBeforeVerify:
         assert request_ctx.pending_id is not None
         assert request_ctx.reservation_committed is False
 
+    def test_snapshot_is_bound_to_request_network_without_mutating_storage(self):
+        scheme = _scheme()
+        _seed_channel(scheme, charged_cumulative_amount="0", signed_max_claimable="100")
+        payload = _voucher_payload(max_claimable="100")
+        ctx = VerifyContext(payment_payload=payload, requirements=_requirements(amount="100"))
+
+        assert handle_before_verify(scheme, ctx) is None
+
+        snapshot = scheme.read_request_context(payload).channel_snapshot
+        assert snapshot is not None
+        assert snapshot.network == NETWORK
+        assert scheme.get_storage().get(_channel_id()).network is None
+
     def test_non_canonical_channel_id_aborts_before_storage(self):
         scheme = _scheme()
         ctx = VerifyContext(
@@ -361,7 +374,16 @@ class TestHandleAfterVerify:
         assert ch is not None
         assert ch.pending_request is not None
         assert ch.charged_cumulative_amount == "0"
+        assert ch.network == NETWORK
         assert scheme.read_request_context(payload).reservation_committed is True
+
+    def test_reservation_binds_legacy_row_to_request_network(self):
+        scheme = _scheme()
+        _seed_channel(scheme, charged_cumulative_amount="0", signed_max_claimable="100")
+        payload = _voucher_payload(max_claimable="100")
+        _reserve(scheme, payload)
+
+        assert scheme.get_storage().get(_channel_id()).network == NETWORK
 
     def _after_verify_no_record(self, max_claimable: str, extra: dict, *, deposit: bool = False):
         scheme = _scheme()
@@ -396,6 +418,7 @@ class TestHandleAfterVerify:
         assert ch is not None
         assert ch.charged_cumulative_amount == "1000"
         assert ch.total_claimed == "1000"
+        assert ch.network == NETWORK
 
     def test_no_record_shortfall_voucher_aborts_with_onchain_baseline_snapshot(self):
         scheme, payload, out = self._after_verify_no_record(
@@ -410,6 +433,7 @@ class TestHandleAfterVerify:
         assert snapshot.balance == "5000"
         assert snapshot.total_claimed == "1000"
         assert snapshot.refund_nonce == 2
+        assert snapshot.network == NETWORK
 
     def test_no_record_shortfall_deposit_aborts(self):
         _, _, out = self._after_verify_no_record(
@@ -637,6 +661,7 @@ class TestHandleBeforeSettle:
         ch = scheme.get_storage().get(_channel_id())
         assert ch is not None
         assert ch.charged_cumulative_amount == "700"
+        assert ch.network == NETWORK
 
 
 class _FaultyStorage(InMemoryChannelStorage):
@@ -756,4 +781,65 @@ class TestHandleAfterSettleDeposit:
         channel = storage.get(_channel_id())
         assert channel is not None
         assert channel.charged_cumulative_amount == "1000"
+        assert channel.network == NETWORK
+        assert channel.pending_request is None
+
+
+class TestHandleAfterSettleRefund:
+    def test_partial_refund_binds_legacy_row_to_settle_network(self):
+        scheme = BatchSettlementEvmScheme(RECEIVER)
+        _seed_channel(
+            scheme,
+            charged_cumulative_amount="100",
+            pending_request=PendingRequest(
+                pending_id="p-refund",
+                signed_max_claimable="100",
+                expires_at=int(time.time() * 1000) + 600_000,
+            ),
+        )
+        payload = PaymentPayload(
+            x402_version=2,
+            payload={
+                "type": "refund",
+                "channelConfig": _channel_config().to_dict(),
+                "voucher": {"channelId": _channel_id()},
+            },
+            accepted=_requirements(amount="0"),
+        )
+        scheme.merge_request_context(
+            payload,
+            BatchSettlementRequestContext(
+                channel_id=_channel_id(),
+                pending_id="p-refund",
+                reservation_committed=True,
+            ),
+        )
+
+        handle_after_settle(
+            scheme,
+            SettleResultContext(
+                payment_payload=payload,
+                requirements=_requirements(amount="0"),
+                result=SettleResponse(
+                    success=True,
+                    transaction="0xrefund",
+                    network=NETWORK,
+                    payer="0xpayer",
+                    extra={
+                        "channelState": {
+                            "balance": "600",
+                            "totalClaimed": "100",
+                            "withdrawRequestedAt": 0,
+                            "refundNonce": "1",
+                        }
+                    },
+                ),
+            ),
+        )
+
+        channel = scheme.get_storage().get(_channel_id())
+        assert channel is not None
+        assert channel.network == NETWORK
+        assert channel.balance == "600"
+        assert channel.refund_nonce == 1
         assert channel.pending_request is None
