@@ -2725,6 +2725,7 @@ describe("BatchSettlementEvmScheme — onAfterVerify", () => {
       expect(corrective?.totalClaimed).toBe("5000");
       expect(corrective?.balance).toBe("10000");
       expect(corrective?.refundNonce).toBe(2);
+      expect(corrective?.network).toBe(NETWORK);
     });
 
     it("rejects a deposit advancing by less than the price above the onchain totalClaimed", async () => {

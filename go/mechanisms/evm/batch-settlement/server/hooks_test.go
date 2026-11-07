@@ -813,6 +813,9 @@ func TestAfterVerifyHook_VoucherStoresSession(t *testing.T) {
 	if rc.ChannelSnapshot.ChargedCumulativeAmount != "0" {
 		t.Fatalf("expected baseline from onchain totalClaimed=0, got charged=%s", rc.ChannelSnapshot.ChargedCumulativeAmount)
 	}
+	if rc.ChannelSnapshot.Network != "eip155:8453" {
+		t.Fatalf("expected verify snapshot bound to the request network, got %q", rc.ChannelSnapshot.Network)
+	}
 }
 
 func verifyResultWithTotalClaimed(totalClaimed string) *x402.VerifyResponse {
@@ -858,6 +861,9 @@ func TestAfterVerifyHook_NoRecordRejectsVoucherAdvancingByLessThanPrice(t *testi
 	snap := s.TakeChannelSnapshot(stub)
 	if snap == nil || snap.ChargedCumulativeAmount != "500" || snap.TotalClaimed != "500" || snap.Balance != "1000" {
 		t.Fatalf("corrective snapshot must carry onchain state, got %+v", snap)
+	}
+	if snap.Network != "eip155:8453" {
+		t.Fatalf("provisional snapshot must be bound to the request network, got %q", snap.Network)
 	}
 }
 
@@ -1505,7 +1511,9 @@ func reserveDepositPending(t *testing.T, s *BatchSettlementEvmScheme, id, pendin
 func TestAfterSettleHook_DepositUpdatesBalance(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
 	id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")
-	seedSession(t, s, id, sampleSession(id, "0"))
+	legacy := sampleSession(id, "0")
+	legacy.Network = ""
+	seedSession(t, s, id, legacy)
 	reserveDepositPending(t, s, id, "p-deposit")
 	payload := depositPayloadFor(id, "100", "0xsig")
 	stub := &stubPayload{data: payload}
@@ -1537,6 +1545,9 @@ func TestAfterSettleHook_DepositUpdatesBalance(t *testing.T) {
 	got, _ := s.GetSession(id)
 	if got == nil || got.Balance != "2000" || got.ChargedCumulativeAmount != "10" {
 		t.Fatalf("session = %+v", got)
+	}
+	if got.Network != "eip155:8453" {
+		t.Fatalf("expected legacy row bound to the settle network, got %q", got.Network)
 	}
 }
 
@@ -1688,6 +1699,7 @@ func TestAfterSettleHook_RefundPartialUpdates(t *testing.T) {
 	sess.ChannelConfig = testConfig()
 	sess.Balance = "1000"
 	sess.RefundNonce = 0
+	sess.Network = ""
 	seedSession(t, s, id, sess)
 	reserveDepositPending(t, s, id, "p-refund")
 	rp := map[string]interface{}{
@@ -1737,6 +1749,9 @@ func TestAfterSettleHook_RefundPartialUpdates(t *testing.T) {
 	}
 	if got.RefundNonce != 1 {
 		t.Fatalf("nonce = %d", got.RefundNonce)
+	}
+	if got.Network != "eip155:8453" {
+		t.Fatalf("expected legacy row bound to the settle network, got %q", got.Network)
 	}
 	if lockHeld(t, s, id, "") {
 		t.Fatal("admission lock not released after partial refund")

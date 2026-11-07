@@ -313,10 +313,7 @@ export function evaluateVoucherAgainstCachedState(
     return { isValid: false, invalidReason: configErr, payer };
   }
 
-  if (
-    computeChannelId(raw.channelConfig, requirements.network).toLowerCase() !==
-    channel.channelId.toLowerCase()
-  ) {
+  if (raw.voucher.channelId.toLowerCase() !== channel.channelId.toLowerCase()) {
     return { isValid: false, invalidReason: Errors.ErrChannelIdMismatch, payer };
   }
 

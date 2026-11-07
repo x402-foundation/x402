@@ -55,6 +55,7 @@ from .schemas import (
     SchemeNotFoundError,
     ServerPaymentRequiredContext,
     SettleContext,
+    SettleError,
     SettleFailureContext,
     SettlePhase,
     SettleResponse,
@@ -75,6 +76,11 @@ from .schemas import (
 )
 
 logger = logging.getLogger("x402")
+
+
+class _SyncServerAsyncHookError(TypeError):
+    pass
+
 
 if TYPE_CHECKING:
     pass
@@ -1411,13 +1417,25 @@ class x402ResourceServerBase:
         extension_keys = list(declared.keys())
 
         # Execute before hooks
-        for _label, hook in get_labeled_server_hooks(
+        for label, hook in get_labeled_server_hooks(
             "before_verify",
             self,
             extension_keys,
             matched_scheme,
         ):
-            result = yield ("before", hook, context)
+            try:
+                result = yield ("before", hook, context)
+            except _SyncServerAsyncHookError:
+                raise
+            except Exception as error:
+                self._warn_resource_server_hook_failure("beforeVerify", label, error)
+                return ResourceVerifyResponse(
+                    verify=VerifyResponse(
+                        is_valid=False,
+                        invalid_reason="before_verify_hook_error",
+                        invalid_message="before verify hook failed",
+                    )
+                )
             if isinstance(result, AbortResult):
                 from .schemas import PaymentAbortedError
 
@@ -1604,13 +1622,23 @@ class x402ResourceServerBase:
         extension_keys = list(declared.keys())
 
         # Execute before hooks
-        for _label, hook in get_labeled_server_hooks(
+        for label, hook in get_labeled_server_hooks(
             "before_settle",
             self,
             extension_keys,
             matched_scheme,
         ):
-            result = yield ("before", hook, context)
+            try:
+                result = yield ("before", hook, context)
+            except (_SyncServerAsyncHookError, SettleError):
+                raise
+            except Exception as error:
+                self._warn_resource_server_hook_failure("beforeSettle", label, error)
+                raise SettleError(
+                    "before_settle_hook_error",
+                    "before settle hook failed",
+                    transaction="",
+                ) from None
             if isinstance(result, AbortResult):
                 from .schemas import PaymentAbortedError
 
