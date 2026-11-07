@@ -1,0 +1,3 @@
+kind: Added
+body: Add `ErrUptoFailedToVerifySignature` (`invalid_upto_evm_failed_to_verify_signature`) so the upto error constants match the TypeScript SDK, which now reports a failed payer signature lookup with it.
+time: 2026-10-22T00:00:00Z
