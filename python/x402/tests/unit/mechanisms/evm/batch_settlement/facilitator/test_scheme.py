@@ -10,12 +10,17 @@ try:
     from x402.mechanisms.evm.batch_settlement.constants import SCHEME_BATCH_SETTLEMENT
     from x402.mechanisms.evm.batch_settlement.errors import (
         ERR_AUTHORIZER_NOT_CONFIGURED,
+        ERR_CLAIM_PAYLOAD,
         ERR_CLAIM_TRANSACTION_FAILED,
+        ERR_DEPOSIT_PAYLOAD,
         ERR_DEPOSIT_TRANSACTION_FAILED,
         ERR_INVALID_PAYLOAD_TYPE,
         ERR_INVALID_SCHEME,
         ERR_NETWORK_MISMATCH,
+        ERR_REFUND_PAYLOAD,
+        ERR_SETTLE_PAYLOAD,
         ERR_SETTLE_TRANSACTION_FAILED,
+        ERR_VOUCHER_PAYLOAD,
     )
     from x402.mechanisms.evm.batch_settlement.facilitator import refund as refund_mod
     from x402.mechanisms.evm.batch_settlement.facilitator.claim import (
@@ -32,9 +37,21 @@ try:
         ChannelConfig,
         ChannelState,
         ClaimPayload,
+        DepositAuthorization,
+        DepositFields,
+        DepositPayload,
         EnrichedRefundPayload,
+        Erc3009Authorization,
+        Permit2Authorization,
+        Permit2DepositWitness,
+        Permit2TokenPermissions,
+        RefundPayload,
         SettlePayload,
         VoucherClaim,
+        VoucherFields,
+        VoucherPayload,
+        validate_batch_settlement_payload,
+        validate_batch_settlement_settle_payload,
     )
     from x402.mechanisms.evm.constants import ERR_SETTLEMENT_PENDING, TX_STATUS_SUCCESS
     from x402.schemas import PaymentPayload, PaymentRequirements, VerifyResponse
@@ -187,6 +204,320 @@ class _SignerNotExpected:
 
     def wait_for_transaction_receipt(self, tx):  # pragma: no cover - must not run
         raise AssertionError("wait_for_transaction_receipt should not be called")
+
+
+_ADDRESS = "0x" + "66" * 20
+_SIGNATURE = "0x" + "bb" * 65
+
+
+def _voucher_fields() -> VoucherFields:
+    return VoucherFields(
+        channel_id="0x" + "aa" * 32, max_claimable_amount="1000", signature=_SIGNATURE
+    )
+
+
+def _deposit_body(authorization: DepositAuthorization | None = None) -> dict:
+    if authorization is None:
+        authorization = DepositAuthorization(
+            erc3009_authorization=Erc3009Authorization(
+                valid_after="0",
+                valid_before="9999999999",
+                salt="0x" + "00" * 32,
+                signature=_SIGNATURE,
+            )
+        )
+    return DepositPayload(
+        channel_config=_channel_config(),
+        voucher=_voucher_fields(),
+        deposit=DepositFields(amount="1000", authorization=authorization),
+    ).to_dict()
+
+
+def _deposit_permit2_body() -> dict:
+    return _deposit_body(
+        DepositAuthorization(
+            permit2_authorization=Permit2Authorization(
+                from_address=_ADDRESS,
+                permitted=Permit2TokenPermissions(token=_ADDRESS, amount="1000"),
+                spender=_ADDRESS,
+                nonce="1",
+                deadline="9999999999",
+                witness=Permit2DepositWitness(channel_id="0x" + "aa" * 32),
+                signature=_SIGNATURE,
+            )
+        )
+    )
+
+
+def _voucher_body() -> dict:
+    return VoucherPayload(channel_config=_channel_config(), voucher=_voucher_fields()).to_dict()
+
+
+def _refund_body() -> dict:
+    return RefundPayload(channel_config=_channel_config(), voucher=_voucher_fields()).to_dict()
+
+
+def _claim_body() -> dict:
+    return ClaimPayload(claims=[_voucher_claim()], claim_authorizer_signature=_SIGNATURE).to_dict()
+
+
+def _settle_body() -> dict:
+    return SettlePayload(receiver=_ADDRESS, token=_ADDRESS).to_dict()
+
+
+def _enriched_refund_body() -> dict:
+    return EnrichedRefundPayload(
+        channel_config=_channel_config(),
+        voucher=_voucher_fields(),
+        amount="10",
+        refund_nonce="0",
+        claims=[_voucher_claim()],
+    ).to_dict()
+
+
+_MISSING = object()
+
+# (body builder, path to the field, malformed value, expected reason); _MISSING deletes the field.
+_MALFORMED_VERIFY_PAYLOADS = [
+    pytest.param(_deposit_body, ("channelConfig",), "x", ERR_DEPOSIT_PAYLOAD, id="deposit-config"),
+    pytest.param(
+        _deposit_body,
+        ("channelConfig", "withdrawDelay"),
+        "900",
+        ERR_DEPOSIT_PAYLOAD,
+        id="deposit-withdraw-delay-string",
+    ),
+    pytest.param(
+        _deposit_body, ("channelConfig", "payer"), "zz", ERR_DEPOSIT_PAYLOAD, id="deposit-payer"
+    ),
+    pytest.param(_deposit_body, ("voucher",), "x", ERR_DEPOSIT_PAYLOAD, id="deposit-voucher"),
+    pytest.param(
+        _deposit_body,
+        ("voucher", "maxClaimableAmount"),
+        1000,
+        ERR_DEPOSIT_PAYLOAD,
+        id="deposit-amount-json-number",
+    ),
+    pytest.param(
+        _deposit_body,
+        ("deposit", "authorization"),
+        None,
+        ERR_DEPOSIT_PAYLOAD,
+        id="deposit-authorization",
+    ),
+    pytest.param(
+        _deposit_body,
+        ("deposit", "authorization", "erc3009Authorization", "validBefore"),
+        "abc",
+        ERR_DEPOSIT_PAYLOAD,
+        id="deposit-valid-before",
+    ),
+    pytest.param(
+        _deposit_permit2_body,
+        ("deposit", "authorization", "permit2Authorization", "witness"),
+        "x",
+        ERR_DEPOSIT_PAYLOAD,
+        id="deposit-permit2-witness",
+    ),
+    pytest.param(_voucher_body, ("channelConfig",), None, ERR_VOUCHER_PAYLOAD, id="voucher-config"),
+    pytest.param(
+        _voucher_body, ("channelConfig", "salt"), "0x", ERR_VOUCHER_PAYLOAD, id="voucher-salt"
+    ),
+    pytest.param(
+        _voucher_body, ("voucher", "signature"), 123, ERR_VOUCHER_PAYLOAD, id="voucher-signature"
+    ),
+    pytest.param(_refund_body, ("channelConfig",), "x", ERR_REFUND_PAYLOAD, id="refund-config"),
+    pytest.param(_refund_body, ("amount",), "-1", ERR_REFUND_PAYLOAD, id="refund-amount"),
+    # Right type, bad content: each of these passed a type-only check and raised later.
+    pytest.param(
+        _voucher_body,
+        ("voucher", "signature"),
+        "0xzz",
+        ERR_VOUCHER_PAYLOAD,
+        id="voucher-signature-not-hex",
+    ),
+    pytest.param(
+        _voucher_body,
+        ("voucher", "channelId"),
+        "0X" + "aa" * 32,
+        ERR_VOUCHER_PAYLOAD,
+        id="voucher-channel-id-uppercase-prefix",
+    ),
+    pytest.param(
+        _voucher_body,
+        ("channelConfig", "payer"),
+        "0x-" + "1" * 39,
+        ERR_VOUCHER_PAYLOAD,
+        id="payer-signed-hex",
+    ),
+    pytest.param(
+        _voucher_body,
+        ("channelConfig", "payer"),
+        "0x0x" + "1" * 38,
+        ERR_VOUCHER_PAYLOAD,
+        id="payer-double-prefix",
+    ),
+    pytest.param(
+        _voucher_body,
+        ("channelConfig", "withdrawDelay"),
+        -1,
+        ERR_VOUCHER_PAYLOAD,
+        id="withdraw-delay-negative",
+    ),
+    pytest.param(
+        _voucher_body,
+        ("channelConfig", "withdrawDelay"),
+        2**40,
+        ERR_VOUCHER_PAYLOAD,
+        id="withdraw-delay-over-uint40",
+    ),
+    pytest.param(
+        _deposit_body,
+        ("deposit", "authorization", "erc3009Authorization", "salt"),
+        "abc",
+        ERR_DEPOSIT_PAYLOAD,
+        id="erc3009-salt-not-hex",
+    ),
+    pytest.param(
+        _deposit_body,
+        ("deposit", "authorization", "erc3009Authorization", "salt"),
+        "0x" + "11" * 33,
+        ERR_DEPOSIT_PAYLOAD,
+        id="erc3009-salt-33-bytes",
+    ),
+]
+
+_MALFORMED_SETTLE_PAYLOADS = [
+    pytest.param(_deposit_body, ("voucher",), "x", ERR_DEPOSIT_PAYLOAD, id="deposit-voucher"),
+    pytest.param(_claim_body, ("claims",), "x", ERR_CLAIM_PAYLOAD, id="claim-claims"),
+    pytest.param(_claim_body, ("claims", 0), {}, ERR_CLAIM_PAYLOAD, id="claim-entry-empty"),
+    pytest.param(
+        _claim_body, ("claims", 0, "signature"), "zz", ERR_CLAIM_PAYLOAD, id="claim-signature"
+    ),
+    pytest.param(
+        _claim_body,
+        ("claims", 0, "voucher", "channel", "token"),
+        "",
+        ERR_CLAIM_PAYLOAD,
+        id="claim-channel-token",
+    ),
+    pytest.param(
+        _claim_body,
+        ("claimAuthorizerSignature",),
+        "zz",
+        ERR_CLAIM_PAYLOAD,
+        id="claim-authorizer-signature",
+    ),
+    pytest.param(_settle_body, ("receiver",), 123, ERR_SETTLE_PAYLOAD, id="settle-receiver"),
+    pytest.param(_settle_body, ("token",), None, ERR_SETTLE_PAYLOAD, id="settle-token"),
+    pytest.param(
+        _enriched_refund_body, ("refundNonce",), "abc", ERR_REFUND_PAYLOAD, id="refund-nonce"
+    ),
+    pytest.param(_enriched_refund_body, ("claims",), "x", ERR_REFUND_PAYLOAD, id="refund-claims"),
+    pytest.param(
+        _claim_body,
+        ("claims", 0, "totalClaimed"),
+        str(2**128),
+        ERR_CLAIM_PAYLOAD,
+        id="claim-total-claimed-over-uint128",
+    ),
+    pytest.param(
+        _claim_body,
+        ("claims", 0, "voucher", "maxClaimableAmount"),
+        str(2**128),
+        ERR_CLAIM_PAYLOAD,
+        id="claim-max-claimable-over-uint128",
+    ),
+]
+
+
+def _malformed_payload(build, path: tuple, value) -> PaymentPayload:
+    body = build()
+    target = body
+    for key in path[:-1]:
+        target = target[key]
+    if value is _MISSING:
+        del target[path[-1]]
+    else:
+        target[path[-1]] = value
+    return _payload(body)
+
+
+class TestMalformedPayloads:
+    """Malformed payloads are rejected with the payload type's reason before any chain call."""
+
+    def _fac(self):
+        return BatchSettlementEvmFacilitator(
+            _SignerNotExpected(),  # type: ignore[arg-type]
+            _FakeAuthorizerSigner("0xauth"),  # type: ignore[arg-type]
+        )
+
+    @pytest.mark.parametrize(("build", "path", "value", "reason"), _MALFORMED_VERIFY_PAYLOADS)
+    def test_verify_returns_invalid(self, build, path, value, reason):
+        out = self._fac().verify(_malformed_payload(build, path, value), _requirements())
+
+        assert out.is_valid is False
+        assert out.invalid_reason == reason
+        assert str(path[-1]) in out.invalid_message
+
+    @pytest.mark.parametrize(("build", "path", "value", "reason"), _MALFORMED_SETTLE_PAYLOADS)
+    def test_settle_returns_failure(self, build, path, value, reason):
+        out = self._fac().settle(_malformed_payload(build, path, value), _requirements())
+
+        assert out.success is False
+        assert out.error_reason == reason
+        assert str(path[-1]) in out.error_message
+        assert out.network == NETWORK
+
+    def test_verify_missing_key_is_unknown_payload_type(self):
+        # A missing key fails the payload type guard, so validation leaves it to the fallback.
+        payload = _malformed_payload(_voucher_body, ("channelConfig",), _MISSING)
+
+        out = self._fac().verify(payload, _requirements())
+
+        assert out.is_valid is False
+        assert out.invalid_reason == ERR_INVALID_PAYLOAD_TYPE
+
+    def test_settle_missing_key_is_unknown_payload_type(self):
+        payload = _malformed_payload(_settle_body, ("token",), _MISSING)
+
+        out = self._fac().settle(payload, _requirements())
+
+        assert out.success is False
+        assert out.error_reason == ERR_INVALID_PAYLOAD_TYPE
+
+    @pytest.mark.parametrize(
+        "build", [_deposit_body, _deposit_permit2_body, _voucher_body, _refund_body]
+    )
+    def test_well_formed_client_payloads_pass(self, build):
+        assert validate_batch_settlement_payload(build()) is None
+
+    @pytest.mark.parametrize(
+        "build",
+        [_deposit_body, _deposit_permit2_body, _claim_body, _settle_body, _enriched_refund_body],
+    )
+    def test_well_formed_settle_payloads_pass(self, build):
+        assert validate_batch_settlement_settle_payload(build()) is None
+
+    def test_enriched_refund_ignores_voucher_contents(self):
+        body = _enriched_refund_body()
+        body["voucher"]["maxClaimableAmount"] = ""
+
+        assert validate_batch_settlement_settle_payload(body) is None
+
+    def test_deposit_ignores_empty_erc3009_authorization_next_to_permit2(self):
+        body = _deposit_permit2_body()
+        body["deposit"]["authorization"]["erc3009Authorization"] = {}
+
+        assert validate_batch_settlement_payload(body) is None
+        assert validate_batch_settlement_settle_payload(body) is None
+
+    def test_erc3009_salt_accepts_short_hex(self):
+        body = _deposit_body()
+        body["deposit"]["authorization"]["erc3009Authorization"]["salt"] = "0x1"
+
+        assert validate_batch_settlement_payload(body) is None
+        assert validate_batch_settlement_settle_payload(body) is None
 
 
 class _FakeReceipt:
