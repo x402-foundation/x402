@@ -1,0 +1,3 @@
+kind: fixed
+body: 'Gin, Echo and net/http middleware: the handler-threw, handler-aborted and handler-failed paths now resolve settlement cancellation through one shared helper. Behavior is unchanged except that a handler which sets settlement overrides and then fails no longer leaks the internal Settlement-Overrides header to the client.'
+time: 2026-11-07T17:05:00Z

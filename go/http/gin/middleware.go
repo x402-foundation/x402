@@ -403,26 +403,22 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 		func() {
 			defer func() {
 				if rec := recover(); rec != nil {
-					var cancelSettlement *x402.SettleResponse
-					if result.CancellationDispatcher != nil {
-						err, ok := rec.(error)
-						if !ok {
-							err = fmt.Errorf("%v", rec)
-						}
-						cancelSettlement = result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+					err, ok := rec.(error)
+					if !ok {
+						err = fmt.Errorf("%v", rec)
+					}
+					headers := server.ResolveCancelledSettlement(
+						result.CancellationDispatcher,
+						x402.VerifiedPaymentCancelOptions{
 							Reason: x402.CancellationReasonHandlerThrew,
 							Err:    err,
-						})
-					}
-					if headers := server.CreateFailurePathSettlementHeaders(
-						cancelSettlement,
+						},
 						result.BeforeHandlerSettlement,
 						result.PaymentPayload,
-						writer.Header().Get("Cache-Control"),
-					); headers != nil {
-						for key, value := range headers {
-							c.Header(key, value)
-						}
+						writer.Header(),
+					)
+					for key, value := range headers {
+						c.Header(key, value)
 					}
 					panic(rec)
 				}
@@ -433,22 +429,18 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 
 	// Check if aborted by the handler (SkipHandler is an intentional bypass, not a failure).
 	if !skipHandler && c.IsAborted() {
-		var cancelSettlement *x402.SettleResponse
-		if result.CancellationDispatcher != nil {
-			cancelSettlement = result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+		headers := server.ResolveCancelledSettlement(
+			result.CancellationDispatcher,
+			x402.VerifiedPaymentCancelOptions{
 				Reason:         x402.CancellationReasonHandlerFailed,
 				ResponseStatus: writer.statusCode,
-			})
-		}
-		if headers := server.CreateFailurePathSettlementHeaders(
-			cancelSettlement,
+			},
 			result.BeforeHandlerSettlement,
 			result.PaymentPayload,
-			writer.Header().Get("Cache-Control"),
-		); headers != nil {
-			for key, value := range headers {
-				c.Header(key, value)
-			}
+			writer.Header(),
+		)
+		for key, value := range headers {
+			c.Header(key, value)
 		}
 		return
 	}
@@ -458,22 +450,18 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 
 	// Don't settle if response failed
 	if writer.statusCode >= 400 {
-		var cancelSettlement *x402.SettleResponse
-		if result.CancellationDispatcher != nil {
-			cancelSettlement = result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+		headers := server.ResolveCancelledSettlement(
+			result.CancellationDispatcher,
+			x402.VerifiedPaymentCancelOptions{
 				Reason:         x402.CancellationReasonHandlerFailed,
 				ResponseStatus: writer.statusCode,
-			})
-		}
-		if headers := server.CreateFailurePathSettlementHeaders(
-			cancelSettlement,
+			},
 			result.BeforeHandlerSettlement,
 			result.PaymentPayload,
-			writer.Header().Get("Cache-Control"),
-		); headers != nil {
-			for key, value := range headers {
-				c.Header(key, value)
-			}
+			writer.Header(),
+		)
+		for key, value := range headers {
+			c.Header(key, value)
 		}
 		// Write captured response
 		c.Writer.WriteHeader(writer.statusCode)
