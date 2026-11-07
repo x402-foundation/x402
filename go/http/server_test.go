@@ -2426,3 +2426,115 @@ func TestWithPrivateCacheControl(t *testing.T) {
 		})
 	}
 }
+
+// ResolveCancelledSettlement is the single place the adapters resolve a
+// cancellation into failure-path headers. The dispatcher must fire exactly once
+// and the caller's Cache-Control must survive as private.
+func TestResolveCancelledSettlement_CancelsOnceAndPreservesCacheControl(t *testing.T) {
+	server := Newx402HTTPResourceServer(RoutesConfig{})
+
+	var calls int
+	server.OnVerifiedPaymentCanceled(func(x402.VerifiedPaymentCanceledContext) error {
+		calls++
+		return nil
+	})
+
+	requirements := types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"}
+	dispatcher := server.CreatePaymentCancellationDispatcher(
+		context.Background(),
+		types.PaymentPayload{},
+		requirements,
+	)
+	// A before-handler settle gives the failure path a receipt to echo.
+	beforeHandlerSettlement := &x402.CompletedSettlement{
+		Phase:        x402.SettlePhaseBeforeHandler,
+		Flow:         x402.PaymentFlowAuthorization,
+		Result:       &x402.SettleResponse{Success: true, Transaction: "0xdeposit", Network: "eip155:8453"},
+		Requirements: requirements,
+	}
+
+	responseHeaders := http.Header{
+		"Cache-Control":           {"max-age=60"},
+		SettlementOverridesHeader: {`{"amount":"500"}`},
+	}
+	headers := server.ResolveCancelledSettlement(
+		dispatcher,
+		x402.VerifiedPaymentCancelOptions{
+			Reason:         x402.CancellationReasonHandlerFailed,
+			ResponseStatus: http.StatusInternalServerError,
+		},
+		beforeHandlerSettlement,
+		nil,
+		responseHeaders,
+	)
+
+	if calls != 1 {
+		t.Errorf("cancel hook fired %d times, want 1", calls)
+	}
+	// The internal override header must not survive onto the client response.
+	if got := responseHeaders.Get(SettlementOverridesHeader); got != "" {
+		t.Errorf("Settlement-Overrides header not stripped, got %q", got)
+	}
+	if headers == nil || headers["PAYMENT-RESPONSE"] == "" {
+		t.Fatal("expected the before-handler receipt to be echoed")
+	}
+	if got := headers["Cache-Control"]; got != "max-age=60, private" {
+		t.Errorf("Cache-Control = %q, want %q", got, "max-age=60, private")
+	}
+
+	// Cancel is idempotent: a second resolve must not fire the hook again.
+	server.ResolveCancelledSettlement(
+		dispatcher,
+		x402.VerifiedPaymentCancelOptions{Reason: x402.CancellationReasonHandlerThrew},
+		beforeHandlerSettlement, nil, http.Header{},
+	)
+	if calls != 1 {
+		t.Errorf("cancel hook fired %d times after second resolve, want 1", calls)
+	}
+}
+
+// With nothing to echo and no cancel settle, there are no failure headers. The
+// adapters range over a nil map safely, so this must not panic.
+func TestResolveCancelledSettlement_NoReceiptReturnsNil(t *testing.T) {
+	server := Newx402HTTPResourceServer(RoutesConfig{})
+
+	requirements := types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"}
+	dispatcher := server.CreatePaymentCancellationDispatcher(
+		context.Background(),
+		types.PaymentPayload{},
+		requirements,
+	)
+
+	headers := server.ResolveCancelledSettlement(
+		dispatcher,
+		x402.VerifiedPaymentCancelOptions{Reason: x402.CancellationReasonHandlerFailed},
+		nil, nil, http.Header{},
+	)
+
+	if headers != nil {
+		t.Errorf("expected nil headers, got %v", headers)
+	}
+}
+
+// A nil dispatcher must not panic and must still return headers when there is a
+// before-handler settle to echo.
+func TestResolveCancelledSettlement_NilDispatcher(t *testing.T) {
+	server := Newx402HTTPResourceServer(RoutesConfig{})
+
+	headers := server.ResolveCancelledSettlement(
+		nil,
+		x402.VerifiedPaymentCancelOptions{Reason: x402.CancellationReasonHandlerFailed},
+		&x402.CompletedSettlement{
+			Phase:        x402.SettlePhaseBeforeHandler,
+			Flow:         x402.PaymentFlowAuthorization,
+			Result:       &x402.SettleResponse{Success: true, Transaction: "0xdeposit", Network: "eip155:8453"},
+			Requirements: types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"},
+		},
+		nil,
+		http.Header{},
+	)
+
+	if headers == nil || headers["PAYMENT-RESPONSE"] == "" {
+		t.Fatal("expected the before-handler receipt to be echoed")
+	}
+}
