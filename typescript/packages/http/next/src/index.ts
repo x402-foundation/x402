@@ -9,11 +9,11 @@ import {
   checkIfBazaarNeeded,
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
+  prepareHttpServer,
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
 import { NextRequest, NextResponse } from "next/server";
 import {
-  prepareHttpServer,
   createRequestContext,
   handlePaymentError,
   handleSettlement,
