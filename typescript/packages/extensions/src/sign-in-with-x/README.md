@@ -190,6 +190,30 @@ const response = await fetch(url, {
 });
 ```
 
+### EVM-only manual flow
+
+Import from `@x402/extensions/sign-in-with-x/evm` to create and verify EVM proofs without loading the Solana runtime dependencies.
+
+```typescript
+import {
+  createSIWxPayload,
+  encodeSIWxHeader,
+} from '@x402/extensions/sign-in-with-x/evm';
+
+const evmChain = extension.supportedChains.find(chain => chain.chainId.startsWith('eip155:'));
+if (!evmChain) throw new Error('No supported EVM chain');
+const payload = await createSIWxPayload({ ...extension.info, ...evmChain }, signer, response.url);
+const header = encodeSIWxHeader(payload);
+```
+
+Select an EVM entry from the challenge's `supportedChains` and combine it with `extension.info`. Pass the final response URL after redirects. Payload creation checks the challenge origin before asking the wallet to sign. Cross-origin `resources` are allowed.
+
+The EVM entry also exports `createSIWxMessage`, `getEVMAddress`, `signEVMMessage`, `assertSIWxChallengeBoundToOrigin`, `parseSIWxHeader`, `validateSIWxMessage`, and `verifySIWxSignature`. When signing a message directly, call `assertSIWxChallengeBoundToOrigin(info, response.url)` before signing.
+
+Use `validateSIWxMessage` with your configured public origin and nonce check before verifying a proof. Signature verification defaults to local EOA verification. Pass `{ evmVerifier: publicClient.verifyMessage }` for smart wallets. The server still owns payment eligibility and recording consumed nonces.
+
+The EVM message and payload helpers reject non-EVM or malformed chain IDs. Its `verifySIWxSignature` reports `invalid_siwx_chain_id` for those inputs. Automatic client hooks, fetch wrapping, resource-server factories, and Solana support remain available from `@x402/extensions/sign-in-with-x`.
+
 ## SIWx API Reference
 
 ### `declareSIWxExtension(options?)`
