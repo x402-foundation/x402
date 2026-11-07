@@ -7,6 +7,8 @@
 
 import { encodeBase58 } from "./solana";
 
+export { getEVMAddress, signEVMMessage } from "./evm";
+
 /**
  * Signer interface for EVM SIWX message signing.
  * Compatible with viem WalletClient and PrivateKeyAccount.
@@ -55,22 +57,6 @@ export type SolanaSigner = WalletAdapterSigner | SolanaKitSigner;
 export type SIWxSigner = EVMSigner | SolanaSigner;
 
 /**
- * Get address from an EVM signer.
- *
- * @param signer - EVM wallet signer instance
- * @returns The wallet address as a hex string
- */
-export function getEVMAddress(signer: EVMSigner): string {
-  if (signer.account?.address) {
-    return signer.account.address;
-  }
-  if (signer.address) {
-    return signer.address;
-  }
-  throw new Error("EVM signer missing address");
-}
-
-/**
  * Get address from a Solana signer.
  * Supports both wallet adapter (publicKey) and @solana/kit (address) interfaces.
  *
@@ -88,21 +74,6 @@ export function getSolanaAddress(signer: SolanaSigner): string {
     return typeof pk === "string" ? pk : pk.toBase58();
   }
   throw new Error("Solana signer missing address or publicKey");
-}
-
-/**
- * Sign a message with an EVM wallet.
- * Returns hex-encoded signature.
- *
- * @param message - The message to sign
- * @param signer - EVM wallet signer instance
- * @returns Hex-encoded signature
- */
-export async function signEVMMessage(message: string, signer: EVMSigner): Promise<string> {
-  if (signer.account) {
-    return signer.signMessage({ message, account: signer.account });
-  }
-  return signer.signMessage({ message });
 }
 
 /**
