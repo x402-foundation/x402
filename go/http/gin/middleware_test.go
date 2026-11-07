@@ -681,6 +681,80 @@ func TestPaymentMiddleware_SkipsSettlementWhenHandlerReturns400OrHigher(t *testi
 	}
 }
 
+// A handler (or a downstream middleware) that aborts after writing a response
+// must still deliver that response. Previously this branch discarded the
+// captured body and status, sending an empty 200 while withholding the payment.
+func TestPaymentMiddleware_AbortedResponseReachesClient(t *testing.T) {
+	settleCalled := false
+
+	mockClient := &mockFacilitatorClient{
+		verifyFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+			return &x402.VerifyResponse{IsValid: true, Payer: "0xpayer"}, nil
+		},
+		settleFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {
+			settleCalled = true
+			return &x402.SettleResponse{Success: true, Transaction: "0xtx"}, nil
+		},
+		supportedFunc: func(ctx context.Context) (x402.SupportedResponse, error) {
+			return x402.SupportedResponse{
+				Kinds: []x402.SupportedKind{
+					{X402Version: 2, Scheme: "exact", Network: "eip155:1"},
+				},
+				Extensions: []string{},
+				Signers:    make(map[string][]string),
+			}, nil
+		},
+	}
+
+	routes := x402http.RoutesConfig{
+		"POST /api": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  "exact",
+					PayTo:   "0xtest",
+					Price:   "$1.00",
+					Network: "eip155:1",
+				},
+			},
+		},
+	}
+
+	router := createTestRouter()
+	router.Use(PaymentMiddlewareFromConfig(routes,
+		WithFacilitatorClient(mockClient),
+		WithScheme("eip155:1", &mockSchemeServer{scheme: "exact"}),
+		WithSyncFacilitatorOnStart(true),
+		WithTimeout(5*time.Second),
+	))
+
+	// A downstream middleware rejects the request after payment verification.
+	router.Use(func(c *gin.Context) {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "bad token"})
+	})
+	router.POST("/api", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"secret": "data"})
+	})
+
+	req := httptest.NewRequest("POST", "/api", nil)
+	req.Header.Set("PAYMENT-SIGNATURE", createPaymentHeader("0xtest"))
+	req.Host = "example.com"
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401, got %d", w.Code)
+	}
+
+	if !strings.Contains(w.Body.String(), "bad token") {
+		t.Errorf("Expected aborted body to reach the client, got %q", w.Body.String())
+	}
+
+	if settleCalled {
+		t.Error("Settlement should NOT be called when the handler aborts")
+	}
+}
+
 func TestPaymentMiddleware_Returns402WhenSettlementFails(t *testing.T) {
 	mockClient := &mockFacilitatorClient{
 		verifyFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {

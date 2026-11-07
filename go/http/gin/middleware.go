@@ -450,6 +450,12 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 				c.Header(key, value)
 			}
 		}
+		// The handler (or middleware after this one) aborted with a response.
+		// Restore the writer and emit what it captured, otherwise the client
+		// receives an empty 200 while the payment is withheld.
+		c.Writer = writer.ResponseWriter
+		c.Writer.WriteHeader(writer.statusCode)
+		_, _ = c.Writer.Write(writer.body.Bytes())
 		return
 	}
 
