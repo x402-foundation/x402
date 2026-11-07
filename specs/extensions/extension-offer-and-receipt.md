@@ -260,7 +260,7 @@ This allows servers to limit how long they commit to specific pricing or terms. 
 
 **5. Receipt**
 
-A receipt is a signed statement returned by the resource server **only on success**, confirming that payment was received and service was delivered.
+A receipt is a signed statement returned by the resource server **only on success**, in which the server attests that payment was received and service was delivered.
 
 **5.1 Placement**
 
@@ -855,11 +855,11 @@ This extension defines signed offers and signed receipts that can be carried alo
 
 - **Attestation-backed discovery and trust for paid endpoints**: Signed offers and receipts can be embedded as evidence in attestations (e.g., user reviews). Those attestations can support discovery, filtering, and reputation scoring for paid API/service endpoints — an area that typically lacks the trust provided by user reviews in app stores and ecommerce sites.
 
-- **Auditability and dispute/feedback evidence**: Signed artifacts provide verifiable evidence of what terms were presented and, when applicable, that service was delivered. This supports auditing, customer support, and dispute workflows, including scenarios involving automated purchasers (agents) and enterprise procurement.
+- **Auditability and dispute/feedback evidence**: Signed artifacts provide verifiable evidence of what terms were presented and, when applicable, that the server attested to delivery. This supports auditing, customer support, and dispute workflows, including scenarios involving automated purchasers (agents) and enterprise procurement.
 
-- **Agent-to-agent commerce**: Autonomous agents making purchasing decisions need machine-verifiable proof of terms and delivery. Signed offers let an agent's principal (human or system) audit what deals the agent accepted; receipts prove the agent received the promised service.
+- **Agent-to-agent commerce**: Autonomous agents making purchasing decisions need machine-verifiable proof of terms and delivery. Signed offers let an agent's principal (human or system) audit what deals the agent accepted; receipts prove the server attested that the agent received the promised service.
 
-- **Why offers matter even without receipts**: A signed offer can be used as evidence even when no receipt is available (e.g., the user did not complete payment, the service did not return a receipt, or the user wants to provide feedback about pricing/terms). Offers prove the server's stated terms at a point in time; receipts prove successful service delivery.
+- **Why offers matter even without receipts**: A signed offer can be used as evidence even when no receipt is available (e.g., the user did not complete payment, the service did not return a receipt, or the user wants to provide feedback about pricing/terms). Offers prove the server's stated terms at a point in time; receipts prove the server attested, at a point in time, that service was delivered.
 
 **9. Integration with Proof Systems**
 
@@ -871,6 +871,7 @@ The `offer` and `receipt` objects defined in this extension are designed to be u
 - Servers MUST NOT include the `signature` field in the payload being signed to avoid circularity.
 - Servers should consider replay implications of long-lived signed offers; including `validUntil` can reduce risk.
 - Receipts and offers are transferable artifacts; possession of a valid server signature is sufficient for verification. Transport-layer security (HTTPS) is essential.
+- **Evidence scope**: A receipt binds `resourceUrl`, `payer`, and `issuedAt` under the server's signature; the payload carries no amount and no usage fields (see §5.2). A valid receipt therefore proves the server attested to a successful interaction. It does not prove what amount was settled or what usage occurred. For schemes where the settled amount is determined by the server after authorization (e.g., the `upto` scheme; see its Server Trust consideration), offers and receipts together evidence the terms offered and that an interaction occurred; they do not by themselves evidence the amount ultimately charged.
 
 **11. Privacy Considerations**
 
@@ -884,6 +885,7 @@ The `offer` and `receipt` objects defined in this extension are designed to be u
 
 | Version | Date       | Changes                                                        | Author     |
 | ------- | ---------- | -------------------------------------------------------------- | ---------- |
+| 0.7     | 2026-08-23 | Scope evidence claims to the signed payload (§5, §8); add Evidence scope to §10. | David Ngene |
 | 0.6     | 2026-02-04 | Make EIP-712 chain-agnostic: chainId=1, payTo type=string.     | Alfred Tom |
 | 0.5     | 2026-01-29 | First approved release.                                        | Alfred Tom |
 | 0.4     | 2026-01-26 | Add acceptIndex as unsigned envelope field.                    | Alfred Tom |
