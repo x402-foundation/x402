@@ -22,7 +22,7 @@ section 5 makes the default: "Unless clarified otherwise, "base64" refers to the
 base 64 in the previous section." Under that reading, RFC 4648 section 3.3
 requires a decoder to reject data containing characters outside the base64
 alphabet, unless the referring specification explicitly states otherwise, and
-http.md does not. The `alphabet-*` cases test this.
+http.md does not. The `alphabet-*` and `padding-*` cases test this.
 
 ## Layout
 
@@ -48,6 +48,10 @@ The four `spec-*` cases are the examples in http.md, unchanged.
 - Whether a decoder must reject base64 whose `=` padding is missing. RFC 4648
   section 3.2 requires pad characters at the end of encoded data, but gives no
   rule for a decoder that receives none.
+- Whether a decoder must reject base64 whose pad bits (the unused low bits of
+  the last character before the padding) are not zero. RFC 4648 section 3.5
+  lets a decoder reject it and leaves the choice to the referring
+  specification.
 - Bytes under the base64 that are not valid UTF-8, or that start with a byte
   order mark (RFC 8259 section 8.1 lets a parser ignore one).
 - Duplicate member names in the decoded object (RFC 8259 section 4).
