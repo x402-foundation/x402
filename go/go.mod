@@ -15,12 +15,14 @@ require (
 	github.com/make-software/casper-go-sdk/v2 v2.1.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/mr-tron/base58 v1.2.0
-	github.com/quic-go/quic-go v0.55.0 // indirect; Security fix for GHSA-47m2-4cr7-mhcw
+	github.com/quic-go/quic-go v0.64.1 // indirect; Security fix for GHSA-47m2-4cr7-mhcw
 	github.com/signinwithethereum/siwe-go v1.0.0
 	github.com/stretchr/testify v1.12.1
 	github.com/xeipuuv/gojsonschema v1.2.0
 	golang.org/x/net v0.62.0
 )
+
+require golang.org/x/crypto v0.58.0
 
 require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
@@ -68,7 +70,6 @@ require (
 	github.com/oasisprotocol/curve25519-voi v0.0.0-20251114093237-2ab5a27a1729 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	github.com/quic-go/quic-go v0.64.1 // indirect; security fixes for GHSA-g754-hx8w-x2g6 and GHSA-vvgj-x9jq-8cj9
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/shirou/gopsutil v3.21.4-0.20210419000835-c7a38de76ee5+incompatible // indirect
@@ -95,7 +96,6 @@ require (
 	go.uber.org/zap v1.27.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/arch v0.20.0 // indirect
-	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
