@@ -89,7 +89,7 @@ func (c *ExactCasperScheme) CreatePaymentPayload(
 	domain := eip712.BuildDomain(name, version, requirements.Network, contractPackageHash)
 
 	now := time.Now().Unix()
-	validAfter := now - 600
+	const validAfter = 0
 	validBefore := now + int64(requirements.MaxTimeoutSeconds)
 
 	var nonce [32]byte

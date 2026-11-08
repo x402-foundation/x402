@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -80,6 +81,27 @@ func TestVerify_CAIP2SigningDomain(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestVerify_ClientClockAheadOfChain(t *testing.T) {
+	fixture := newPreflightFixture(t)
+	fixture.block = preflightBlock(time.Now().Add(-15 * time.Minute))
+	config, err := casper.GetNetworkConfig(testNetwork)
+	require.NoError(t, err)
+	signer := &domainFacilitatorSigner{mockFacilitatorSigner: defaultSigner(t), config: *config}
+	signer.config.RPCURL = fixture.url
+	client, err := casperSigners.NewClientSignerFromSecret(strings.Repeat("11", 32), "ed25519")
+	require.NoError(t, err)
+	_, requirements := buildValidPayload(t)
+	requirements.MaxTimeoutSeconds = 300
+	payload, err := casperClient.NewExactCasperScheme(client).CreatePaymentPayload(context.Background(), requirements, x402.PaymentPayloadContext{})
+	require.NoError(t, err)
+	payload.Accepted = requirements
+
+	response, err := casperFacilitator.NewExactCasperScheme(signer, nil).Verify(context.Background(), payload, requirements, nil)
+	require.NoError(t, err)
+	assert.True(t, response.IsValid)
+	assert.Equal(t, client.AccountAddress(), response.Payer)
 }
 
 func TestVerify_Secp256k1SignatureReasons(t *testing.T) {

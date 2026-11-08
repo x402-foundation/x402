@@ -57,7 +57,7 @@ func (f *ExactCasperScheme) validateTargetedPreflight(
 		return fail(ErrNotYetValid, "authorization is not yet valid at current chain time")
 	}
 	if chainNow >= validBefore {
-		return fail(ErrPayloadExpired, "authorization has expired at current chain time")
+		return fail(ErrExpired, "authorization has expired at current chain time")
 	}
 
 	stateRoot := block.Block.StateRootHash.String()

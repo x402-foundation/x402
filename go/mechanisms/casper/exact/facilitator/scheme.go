@@ -156,11 +156,9 @@ func (f *ExactCasperScheme) Verify(
 	if validAfter >= now {
 		return nil, x402.NewVerifyError(ErrNotYetValid, "", fmt.Sprintf("validAfter=%d >= now=%d", validAfter, now))
 	}
-	if validBefore <= now {
-		return nil, x402.NewVerifyError(ErrPayloadExpired, "", fmt.Sprintf("validBefore=%d <= now=%d", validBefore, now))
-	}
-	if validBefore-now < 6 {
-		return nil, x402.NewVerifyError(ErrInsufficientTime, "", "less than 6s to settle")
+	// Leave eight seconds for settlement, matching Casper's block time.
+	if now+8 >= validBefore {
+		return nil, x402.NewVerifyError(ErrExpired, p.Authorization.From, fmt.Sprintf("validBefore=%d now=%d", validBefore, now))
 	}
 
 	// verify we have a signer for the network in requirements

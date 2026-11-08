@@ -216,7 +216,40 @@ func TestVerify_Expired(t *testing.T) {
 	auth["validBefore"] = fmt.Sprintf("%d", time.Now().Unix()-1)
 
 	_, err := scheme.Verify(context.Background(), payload, req, nil)
-	assert.ErrorContains(t, err, casperFacilitator.ErrPayloadExpired)
+	var verifyErr *x402.VerifyError
+	require.ErrorAs(t, err, &verifyErr)
+	assert.Equal(t, "invalid_exact_casper_facilitator_expired", verifyErr.InvalidReason)
+	assert.Equal(t, testFrom, verifyErr.Payer)
+}
+
+func TestVerify_ExpiryCushion(t *testing.T) {
+	for _, secondsRemaining := range []int64{7, 8, 9} {
+		t.Run(fmt.Sprintf("%ds remaining", secondsRemaining), func(t *testing.T) {
+			signer := defaultSigner(t)
+			scheme := casperFacilitator.NewExactCasperScheme(signer, nil)
+			payload, requirements := buildValidPayload(t)
+			now := startOfNextSecond()
+			payload.Payload["authorization"].(map[string]interface{})["validBefore"] = fmt.Sprintf("%d", now+secondsRemaining)
+
+			response, err := scheme.Verify(context.Background(), payload, requirements, nil)
+			if secondsRemaining > 8 {
+				require.NoError(t, err)
+				assert.True(t, response.IsValid)
+				return
+			}
+			assert.Nil(t, response)
+			var verifyErr *x402.VerifyError
+			require.ErrorAs(t, err, &verifyErr)
+			assert.Equal(t, "invalid_exact_casper_facilitator_expired", verifyErr.InvalidReason)
+			assert.Equal(t, testFrom, verifyErr.Payer)
+
+			_, err = scheme.Settle(context.Background(), payload, requirements, nil)
+			settleErr := requireSettleError(t, err)
+			assert.Equal(t, verifyErr.InvalidReason, settleErr.ErrorReason)
+			assert.Equal(t, testFrom, settleErr.Payer)
+			assert.Zero(t, signer.putCalls.Load())
+		})
+	}
 }
 
 func TestVerify_NotYetValid(t *testing.T) {
@@ -262,8 +295,8 @@ func TestVerify_StrictTimeBounds(t *testing.T) {
 		auth["validBefore"] = fmt.Sprintf("%d", now)
 
 		_, err := scheme.Verify(context.Background(), payload, req, nil)
-		assert.ErrorContains(t, err, casperFacilitator.ErrPayloadExpired)
-		assert.ErrorContains(t, err, fmt.Sprintf("validBefore=%d <= now=%d", now, now))
+		assert.ErrorContains(t, err, casperFacilitator.ErrExpired)
+		assert.ErrorContains(t, err, fmt.Sprintf("validBefore=%d now=%d", now, now))
 	})
 }
 

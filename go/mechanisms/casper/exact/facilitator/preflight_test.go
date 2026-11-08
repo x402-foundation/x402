@@ -211,7 +211,7 @@ func TestVerify_TargetedPreflight(t *testing.T) {
 			f.block = json.RawMessage(strings.Replace(string(f.block), `"2.0.0"`, `""`, 2))
 		}, casperFacilitator.ErrPreflightFailed},
 		{"chain behind validity window", func(f *preflightFixture) { f.block = preflightBlock(time.Now().Add(-2 * time.Minute)) }, casperFacilitator.ErrNotYetValid},
-		{"chain past validity window", func(f *preflightFixture) { f.block = preflightBlock(time.Now().Add(10 * time.Minute)) }, casperFacilitator.ErrPayloadExpired},
+		{"chain past validity window", func(f *preflightFixture) { f.block = preflightBlock(time.Now().Add(10 * time.Minute)) }, casperFacilitator.ErrExpired},
 	}
 	for _, stage := range []string{"block", "package", "contract", "balance", "nonce"} {
 		tests = append(tests, struct {
@@ -281,22 +281,29 @@ func TestVerify_TargetedPreflightCanceledContext(t *testing.T) {
 
 func TestVerify_TargetedPreflightStrictTimeBounds(t *testing.T) {
 	for _, bound := range []string{"validAfter", "validBefore"} {
-		t.Run(bound, func(t *testing.T) {
-			f := newPreflightFixture(t)
-			signer := defaultSigner(t)
-			signer.rpcURL = f.url
-			payload, requirements := buildValidPayload(t)
-			authorization := payload.Payload["authorization"].(map[string]interface{})
-			seconds, err := time.ParseDuration(authorization[bound].(string) + "s")
-			require.NoError(t, err)
-			f.block = preflightBlock(time.Unix(int64(seconds/time.Second), 0))
-			_, err = casperFacilitator.NewExactCasperScheme(signer, nil).Verify(context.Background(), payload, requirements, nil)
-			reason := casperFacilitator.ErrNotYetValid
-			if bound == "validBefore" {
-				reason = casperFacilitator.ErrPayloadExpired
-			}
-			require.ErrorContains(t, err, reason)
-		})
+		for _, offset := range []int64{-1, 0, 1} {
+			t.Run(fmt.Sprintf("%s%+ds", bound, offset), func(t *testing.T) {
+				f := newPreflightFixture(t)
+				signer := defaultSigner(t)
+				signer.rpcURL = f.url
+				payload, requirements := buildValidPayload(t)
+				authorization := payload.Payload["authorization"].(map[string]interface{})
+				seconds, err := time.ParseDuration(authorization[bound].(string) + "s")
+				require.NoError(t, err)
+				f.block = preflightBlock(time.Unix(int64(seconds/time.Second)+offset, 0))
+				response, err := casperFacilitator.NewExactCasperScheme(signer, nil).Verify(context.Background(), payload, requirements, nil)
+				if (bound == "validAfter" && offset > 0) || (bound == "validBefore" && offset < 0) {
+					require.NoError(t, err)
+					assert.True(t, response.IsValid)
+					return
+				}
+				reason := casperFacilitator.ErrNotYetValid
+				if bound == "validBefore" {
+					reason = casperFacilitator.ErrExpired
+				}
+				require.ErrorContains(t, err, reason)
+			})
+		}
 	}
 }
 

@@ -72,12 +72,7 @@ func TestCreatePaymentPayload_HappyPath(t *testing.T) {
 	assert.NotEmpty(t, auth["nonce"])
 
 	now := time.Now().Unix()
-	validAfterStr, ok := auth["validAfter"].(string)
-	require.True(t, ok)
-	var validAfter int64
-	_, err = fmt.Sscanf(validAfterStr, "%d", &validAfter)
-	require.NoError(t, err)
-	assert.LessOrEqual(t, validAfter, now)
+	assert.Equal(t, "0", auth["validAfter"])
 
 	validBeforeStr, ok := auth["validBefore"].(string)
 	require.True(t, ok)
