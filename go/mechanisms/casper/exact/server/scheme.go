@@ -203,7 +203,7 @@ func validateAssetAmount(amount x402.AssetAmount) error {
 		return fmt.Errorf("%s: %s", ErrInvalidAsset, amount.Asset)
 	}
 	value, ok := new(big.Int).SetString(amount.Amount, 10)
-	if !ok || value.Sign() <= 0 || value.BitLen() > 256 || strings.HasPrefix(amount.Amount, "+") {
+	if !casper.IsValidAmountFormat(amount.Amount) || !ok || value.BitLen() > 256 {
 		return fmt.Errorf("%s: amount must be a positive U256 integer in atomic units", ErrFailedToParseAmount)
 	}
 	return nil

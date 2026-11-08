@@ -132,8 +132,8 @@ func (f *ExactCasperScheme) Verify(
 		return nil, x402.NewVerifyError(ErrInvalidPayTo, "", "invalid payTo account-hash")
 	}
 
-	if requirements.Amount == "" || requirements.Amount == "0" || p.Authorization.Value == "" || p.Authorization.Value == "0" {
-		return nil, x402.NewVerifyError(ErrInvalidAmount, "", "amount must be non-zero")
+	if !casperMechanism.IsValidAmountFormat(requirements.Amount) || !casperMechanism.IsValidAmountFormat(p.Authorization.Value) {
+		return nil, x402.NewVerifyError(ErrInvalidAmount, p.Authorization.From, "amount must be a positive decimal integer without leading zeros")
 	}
 
 	if !casperMechanism.IsValidContractPackageHash(requirements.Asset) {

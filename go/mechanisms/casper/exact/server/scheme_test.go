@@ -618,7 +618,7 @@ func TestPricing_AtomicAmountBounds(t *testing.T) {
 	}{
 		{"18446744073709551616", true}, // One above u64::MAX must remain exact.
 		{maxU256, true},
-		{"000123", true},
+		{"000123", false},
 		{"115792089237316195423570985008687907853269984665640564039457584007913129639936", false},
 		{"1.5", false},
 		{"18446744073709.551616", false},

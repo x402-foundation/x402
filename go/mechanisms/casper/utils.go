@@ -15,6 +15,7 @@ import (
 
 var addressHashRegex = regexp.MustCompile(`^(00|01)[0-9a-fA-F]{64}$`)
 var contractPackageHashRegex = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
+var amountRegex = regexp.MustCompile(`^[1-9]\d*$`)
 
 func GetNetworkConfig(network string) (*NetworkConfig, error) {
 	cfg, ok := NetworkConfigs[network]
@@ -40,6 +41,11 @@ func IsValidAddress(s string) bool {
 
 func IsValidContractPackageHash(s string) bool {
 	return contractPackageHashRegex.MatchString(s)
+}
+
+// IsValidAmountFormat reports whether amount is a positive decimal integer without leading zeros.
+func IsValidAmountFormat(amount string) bool {
+	return amountRegex.MatchString(amount)
 }
 
 func DecodeContractPackageHash(hexStr string) ([32]byte, error) {

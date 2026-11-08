@@ -62,6 +62,9 @@ func (c *ExactCasperScheme) CreatePaymentPayload(
 	if !casper.IsValidContractPackageHash(requirements.Asset) {
 		return types.PaymentPayload{}, fmt.Errorf("%s: %s", ErrInvalidAsset, requirements.Asset)
 	}
+	if !casper.IsValidAmountFormat(requirements.Amount) {
+		return types.PaymentPayload{}, fmt.Errorf("invalid amount: %s", requirements.Amount)
+	}
 	contractPackageHash, err := casper.DecodeContractPackageHash(requirements.Asset)
 	if err != nil {
 		return types.PaymentPayload{}, fmt.Errorf("%s: %w", ErrInvalidAsset, err)
