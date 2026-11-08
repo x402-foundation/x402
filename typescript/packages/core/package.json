@@ -4,6 +4,34 @@
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "client": [
+        "./dist/cjs/client/index.d.ts"
+      ],
+      "facilitator": [
+        "./dist/cjs/facilitator/index.d.ts"
+      ],
+      "http": [
+        "./dist/cjs/http/index.d.ts"
+      ],
+      "server": [
+        "./dist/cjs/server/index.d.ts"
+      ],
+      "types": [
+        "./dist/cjs/types/index.d.ts"
+      ],
+      "types/v1": [
+        "./dist/cjs/types/v1/index.d.ts"
+      ],
+      "utils": [
+        "./dist/cjs/utils/index.d.ts"
+      ],
+      "schemas": [
+        "./dist/cjs/schemas/index.d.ts"
+      ]
+    }
+  },
   "scripts": {
     "start": "tsx --env-file=.env index.ts",
     "build": "tsup && node ../../scripts/mirror-cjs-dts.mjs",
