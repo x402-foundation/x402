@@ -639,9 +639,15 @@ class TestSyncNetworkScope:
             ClaimOptions(select_claim_channels=_selector_recording(seen, [fx.sepolia]))
         )
 
+        submitted_salts = [
+            claim["voucher"]["channel"]["salt"]
+            for payload, _requirements in fx.base_fac.calls
+            for claim in payload.payload["claims"]
+        ]
         assert [c.channel_id for c in seen] == [fx.base.channel_id]
-        assert len(results) == 1
         assert fx.total_claimed(fx.sepolia) == "100"
+        assert submitted_salts == [fx.base.channel_config.salt]
+        assert [r.vouchers for r in results] == [1]
 
     @stamped_params
     def test_withdrawal_pending_sessions_are_network_scoped(self, stamped):
@@ -847,9 +853,15 @@ class TestAsyncNetworkScope:
             ClaimOptions(select_claim_channels=_selector_recording(seen, [fx.sepolia]))
         )
 
+        submitted_salts = [
+            claim["voucher"]["channel"]["salt"]
+            for payload, _requirements in fx.base_fac.calls
+            for claim in payload.payload["claims"]
+        ]
         assert [c.channel_id for c in seen] == [fx.base.channel_id]
-        assert len(results) == 1
         assert fx.total_claimed(fx.sepolia) == "100"
+        assert submitted_salts == [fx.base.channel_config.salt]
+        assert [r.vouchers for r in results] == [1]
 
     @pytest.mark.asyncio
     @stamped_params
