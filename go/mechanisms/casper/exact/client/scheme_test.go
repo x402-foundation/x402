@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -115,6 +116,21 @@ func TestCreatePaymentPayload_InvalidAsset(t *testing.T) {
 	assert.ErrorContains(t, err, ErrInvalidAsset)
 }
 
+func TestCreatePaymentPayload_InvalidPayTo(t *testing.T) {
+	for _, payTo := range []string{"", "not-an-address", "02" + strings.Repeat("ab", 32), "00" + strings.Repeat("gg", 32), "00" + strings.Repeat("ab", 31)} {
+		t.Run(payTo, func(t *testing.T) {
+			signer := newTestSigner()
+			signer.address = "invalid"
+			req := validRequirements()
+			req.PayTo = payTo
+
+			payload, err := NewExactCasperScheme(signer).CreatePaymentPayload(context.Background(), req, x402.PaymentPayloadContext{})
+			require.ErrorContains(t, err, "invalid_exact_casper_client_invalid_pay_to")
+			assert.Empty(t, payload.Payload)
+		})
+	}
+}
+
 func TestCreatePaymentPayload_UnsupportedNetwork(t *testing.T) {
 	scheme := NewExactCasperScheme(newTestSigner())
 
@@ -171,20 +187,27 @@ func signedDigest(t *testing.T, payload types.PaymentPayload, req types.PaymentR
 	return sig[:32], digest[:]
 }
 
-func TestCreatePaymentPayload_DefaultAssetDomainFallback(t *testing.T) {
-	for name, extra := range map[string]map[string]interface{}{
-		"nil extra":          nil,
-		"empty name/version": {"name": "", "version": ""},
+func TestCreatePaymentPayload_DefaultAssetRequiresDomain(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		extra  map[string]interface{}
+		reason string
+	}{
+		{"nil extra", nil, ErrMissingTokenName},
+		{"empty name/version", map[string]interface{}{"name": "", "version": ""}, ErrMissingTokenName},
+		{"missing name", map[string]interface{}{"version": "1"}, ErrMissingTokenName},
+		{"missing version", map[string]interface{}{"name": casper.CSPRUSDName}, ErrMissingTokenVersion},
+		{"non-string name", map[string]interface{}{"name": 1, "version": "1"}, ErrMissingTokenName},
+		{"non-string version", map[string]interface{}{"name": casper.CSPRUSDName, "version": 1}, ErrMissingTokenVersion},
 	} {
-		t.Run(name, func(t *testing.T) {
+		t.Run(test.name, func(t *testing.T) {
 			req := validRequirements()
 			req.Asset = casper.CSPRUSDTestnetAsset
-			req.Extra = extra
+			req.Extra = test.extra
 
 			payload, err := NewExactCasperScheme(newTestSigner()).CreatePaymentPayload(context.Background(), req, x402.PaymentPayloadContext{})
-			require.NoError(t, err)
-			got, want := signedDigest(t, payload, req, casper.CSPRUSDName, "1")
-			assert.Equal(t, want, got)
+			require.ErrorContains(t, err, test.reason)
+			assert.Empty(t, payload.Payload)
 		})
 	}
 }

@@ -24,7 +24,7 @@ github.com/x402-foundation/x402/go/v2/mechanisms/casper/exact/client
 **Exports:**
 - `NewExactCasperScheme(signer)` - Creates client-side Casper exact payment mechanism
 - Used for creating payment payloads signed with an ed25519 or secp256k1 key
-- Falls back to the registered `name`/`version` of a default asset when `extra` omits them
+- Requires `extra.name` and `extra.version`, and rejects invalid `payTo` addresses before signing
 
 #### For Servers
 

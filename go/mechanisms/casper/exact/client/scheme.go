@@ -62,6 +62,9 @@ func (c *ExactCasperScheme) CreatePaymentPayload(
 	if !casper.IsValidContractPackageHash(requirements.Asset) {
 		return types.PaymentPayload{}, fmt.Errorf("%s: %s", ErrInvalidAsset, requirements.Asset)
 	}
+	if !casper.IsValidAddress(requirements.PayTo) {
+		return types.PaymentPayload{}, fmt.Errorf("%s: %s", ErrInvalidPayTo, requirements.PayTo)
+	}
 	if !casper.IsValidAmountFormat(requirements.Amount) {
 		return types.PaymentPayload{}, fmt.Errorf("invalid amount: %s", requirements.Amount)
 	}
@@ -70,18 +73,8 @@ func (c *ExactCasperScheme) CreatePaymentPayload(
 		return types.PaymentPayload{}, fmt.Errorf("%s: %w", ErrInvalidAsset, err)
 	}
 
-	// The EIP-712 domain comes from requirements.extra, falling back to the
-	// registered metadata of a default asset.
 	name, _ := requirements.Extra["name"].(string)
 	version, _ := requirements.Extra["version"].(string)
-	if defaultAsset := casper.FindDefaultAsset(requirements.Asset, network); defaultAsset != nil {
-		if name == "" {
-			name = defaultAsset.Name
-		}
-		if version == "" {
-			version = defaultAsset.Version
-		}
-	}
 	if name == "" {
 		return types.PaymentPayload{}, errors.New(ErrMissingTokenName)
 	}
