@@ -131,7 +131,7 @@ func ValidateSignatureFormat(signature [65]byte) error {
 			return fmt.Errorf("invalid secp256k1 signature s scalar")
 		}
 		if s.IsOverHalfOrder() {
-			return fmt.Errorf("secp256k1 signature must use low-s")
+			return ErrNonCanonicalSignature
 		}
 		return nil
 	default:

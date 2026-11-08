@@ -16,6 +16,7 @@ const (
 	ErrMissingTokenVersion        = "invalid_exact_casper_missing_token_version"
 	ErrFailedToHash               = "invalid_exact_casper_failed_to_hash"
 	ErrInvalidSignature           = "invalid_exact_casper_invalid_signature"
+	ErrNonCanonicalSignature      = "invalid_exact_casper_facilitator_non_canonical_signature"
 	ErrPayerMismatch              = "invalid_exact_casper_payer_mismatch"
 	ErrSpeculativeExecutionFailed = "invalid_exact_casper_speculative_execution_failed"
 	ErrPreflightFailed            = "invalid_exact_casper_preflight_failed"

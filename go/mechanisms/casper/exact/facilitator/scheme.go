@@ -240,6 +240,9 @@ func (f *ExactCasperScheme) Verify(
 	var sig65 [65]byte
 	copy(sig65[:], sigBytes)
 	if err := casperMechanism.ValidateSignatureFormat(sig65); err != nil {
+		if errors.Is(err, casperMechanism.ErrNonCanonicalSignature) {
+			return nil, x402.NewVerifyError(ErrNonCanonicalSignature, p.Authorization.From, err.Error())
+		}
 		return nil, x402.NewVerifyError(ErrInvalidSignature, "", err.Error())
 	}
 

@@ -81,3 +81,57 @@ func TestVerify_CAIP2SigningDomain(t *testing.T) {
 		}
 	}
 }
+
+func TestVerify_Secp256k1SignatureReasons(t *testing.T) {
+	const (
+		zero             = "0000000000000000000000000000000000000000000000000000000000000000"
+		one              = "0000000000000000000000000000000000000000000000000000000000000001"
+		halfOrder        = "7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0"
+		halfOrderPlusOne = "7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a1"
+		orderMinusOne    = "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140"
+		order            = "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141"
+		nonCanonical     = "invalid_exact_casper_facilitator_non_canonical_signature"
+	)
+	client, err := casperSigners.NewClientSignerFromSecret(strings.Repeat("11", 32), "secp256k1")
+	require.NoError(t, err)
+	for _, test := range []struct{ name, r, s, reason string }{
+		{"low-s boundary", one, halfOrder, ""},
+		{"high-s boundary", one, halfOrderPlusOne, nonCanonical},
+		{"highest valid s scalar", one, orderMinusOne, nonCanonical},
+		{"zero r with high-s", zero, halfOrderPlusOne, casperFacilitator.ErrInvalidSignature},
+		{"out-of-range r", order, one, casperFacilitator.ErrInvalidSignature},
+		{"zero s", one, zero, casperFacilitator.ErrInvalidSignature},
+		{"out-of-range s", one, order, casperFacilitator.ErrInvalidSignature},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			signer := defaultSigner(t)
+			scheme := casperFacilitator.NewExactCasperScheme(signer, nil)
+			_, requirements := buildValidPayload(t)
+			requirements.MaxTimeoutSeconds = 300
+			payload, err := casperClient.NewExactCasperScheme(client).CreatePaymentPayload(context.Background(), requirements, x402.PaymentPayloadContext{})
+			require.NoError(t, err)
+			payload.Accepted = requirements
+			payload.Payload["signature"] = "02" + test.r + test.s
+
+			response, err := scheme.Verify(context.Background(), payload, requirements, nil)
+			if test.reason == "" {
+				require.NoError(t, err)
+				assert.True(t, response.IsValid)
+				return
+			}
+			assert.Nil(t, response)
+			var verifyErr *x402.VerifyError
+			require.ErrorAs(t, err, &verifyErr)
+			assert.Equal(t, test.reason, verifyErr.InvalidReason)
+			if test.reason == nonCanonical {
+				assert.Equal(t, client.AccountAddress(), verifyErr.Payer)
+			}
+
+			_, err = scheme.Settle(context.Background(), payload, requirements, nil)
+			settleErr := requireSettleError(t, err)
+			assert.Equal(t, test.reason, settleErr.ErrorReason)
+			assert.Empty(t, settleErr.Transaction)
+			assert.Zero(t, signer.putCalls.Load())
+		})
+	}
+}
