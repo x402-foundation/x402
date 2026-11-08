@@ -192,6 +192,10 @@ func TestParsePrice_MoneyString_UsesDefaultAsset(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "1000000", result.Amount) // 1.00 * 10^6
 	assert.Equal(t, testCSPRUSD, result.Asset)
+	assert.Equal(t, map[string]interface{}{
+		"name":    casper.CSPRUSDName,
+		"version": "1",
+	}, result.Extra)
 }
 
 func TestParsePrice_MoneyFloat_UsesDefaultAsset(t *testing.T) {

@@ -188,9 +188,8 @@ func (s *ExactCasperScheme) defaultMoneyConversion(amount string, network x402.N
 		Amount: tokenAmount,
 		Asset:  assetInfo.Asset,
 		Extra: map[string]interface{}{
-			"decimals": assetInfo.Decimals,
-			"name":     assetInfo.Name,
-			"version":  assetInfo.Version,
+			"name":    assetInfo.Name,
+			"version": assetInfo.Version,
 		},
 	}
 	if err := validateAssetAmount(result); err != nil {
