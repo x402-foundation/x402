@@ -57,6 +57,14 @@ type CloseResult struct {
 	Action      CloseAction
 }
 
+// CloseCandidate is a channel about to be closed or distributed.
+type CloseCandidate struct {
+	ChannelID string
+	Payer     string
+	PayTo     string
+	Action    CloseAction
+}
+
 // ReclaimResult reports a successful batched reclaim transaction.
 type ReclaimResult struct {
 	ChannelIDs  []string
@@ -78,6 +86,10 @@ type CleanupOptions struct {
 	// adding managed keys adds throughput rather than dividing a fixed pool.
 	MaxTxsPerSigner int
 	MaxClosesPerRun int
+
+	// BeforeCloseOrDistribute runs before a close or distribute is built; an
+	// error skips the channel and reports it to OnError. Reclaim never calls it.
+	BeforeCloseOrDistribute func(ctx context.Context, candidate CloseCandidate) error
 
 	OnClose   func(result CloseResult)
 	OnReclaim func(result ReclaimResult)
@@ -111,6 +123,17 @@ func (o CleanupOptions) toShared() paymentchannels.RentCleanupOptions {
 		MaxTxsPerSigner:  o.MaxTxsPerSigner,
 		MaxClosesPerRun:  o.MaxClosesPerRun,
 		OnError:          o.OnError,
+	}
+	if o.BeforeCloseOrDistribute != nil {
+		before := o.BeforeCloseOrDistribute
+		shared.BeforeCloseOrDistribute = func(ctx context.Context, candidate paymentchannels.RentCleanupCloseCandidate) error {
+			return before(ctx, CloseCandidate{
+				ChannelID: candidate.ChannelID,
+				Payer:     candidate.Payer,
+				PayTo:     candidate.PayTo,
+				Action:    CloseAction(candidate.Action),
+			})
+		}
 	}
 	if o.OnClose != nil {
 		onClose := o.OnClose

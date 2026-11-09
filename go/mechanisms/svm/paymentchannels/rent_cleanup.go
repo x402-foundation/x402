@@ -103,6 +103,14 @@ type RentCleanupReclaimResult struct {
 	Transaction string
 }
 
+// RentCleanupCloseCandidate is a channel about to be closed or distributed.
+type RentCleanupCloseCandidate struct {
+	ChannelID string
+	Payer     string
+	PayTo     string
+	Action    RentCleanupCloseAction
+}
+
 // RentCleanupOptions bound one cleanup pass and receive its results.
 type RentCleanupOptions struct {
 	AbandonGraceSecs int64
@@ -111,9 +119,12 @@ type RentCleanupOptions struct {
 	MaxTxsPerRun     int
 	MaxTxsPerSigner  int
 	MaxClosesPerRun  int
-	OnClose          func(RentCleanupCloseResult)
-	OnReclaim        func(RentCleanupReclaimResult)
-	OnError          func(err error, channelID string)
+	// BeforeCloseOrDistribute runs before a close or distribute is built; an
+	// error skips the channel and reports it to OnError. Reclaim never calls it.
+	BeforeCloseOrDistribute func(ctx context.Context, candidate RentCleanupCloseCandidate) error
+	OnClose                 func(RentCleanupCloseResult)
+	OnReclaim               func(RentCleanupReclaimResult)
+	OnError                 func(err error, channelID string)
 }
 
 func (o RentCleanupOptions) withDefaults(configuredIdle *int64, useTransactionV1 bool) (RentCleanupOptions, int64) {
@@ -401,11 +412,22 @@ func (m *PaymentChannelRentCleanupManager) Cleanup(ctx context.Context, opts Ren
 			if status == generated.ChannelStatus_Closing && now < channel.ClosureStartedAt+int64(channel.GracePeriod) {
 				continue
 			}
-			if closesUsed >= opts.MaxClosesPerRun {
-				continue
-			}
 			if record.PayTo == "" {
 				opts.reportError(fmt.Errorf("channel %s has no stored payTo; cannot rebuild its distribution", record.ChannelID), record.ChannelID)
+				continue
+			}
+			if opts.BeforeCloseOrDistribute != nil {
+				if err := opts.BeforeCloseOrDistribute(ctx, RentCleanupCloseCandidate{
+					ChannelID: record.ChannelID,
+					Payer:     channel.Payer.String(),
+					PayTo:     record.PayTo,
+					Action:    closeAction(status),
+				}); err != nil {
+					opts.reportError(err, record.ChannelID)
+					continue
+				}
+			}
+			if closesUsed >= opts.MaxClosesPerRun {
 				continue
 			}
 			signature, err := m.submitCloseOrDistribute(ctx, record, channel, channelID)

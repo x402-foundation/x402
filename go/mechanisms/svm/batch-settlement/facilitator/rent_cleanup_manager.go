@@ -21,6 +21,9 @@ const (
 // CloseResult reports one successful close or distribute.
 type CloseResult = paymentchannels.RentCleanupCloseResult
 
+// CloseCandidate is a channel about to be closed or distributed.
+type CloseCandidate = paymentchannels.RentCleanupCloseCandidate
+
 // ReclaimResult reports one successful batched reclaim.
 type ReclaimResult = paymentchannels.RentCleanupReclaimResult
 
