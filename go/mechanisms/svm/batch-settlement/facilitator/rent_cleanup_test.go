@@ -278,6 +278,53 @@ func TestBatchSvmRentCleanupManagerCleanup(t *testing.T) {
 		assert.ElementsMatch(t, []string{a.ChannelID, b.ChannelID}, ids)
 	})
 
+	t.Run("builds cleanup transactions as version 1 by default", func(t *testing.T) {
+		h := newHarness(t)
+		for i := 0; i < MaxSafeReclaimsPerTx+1; i++ {
+			h.seed(channelSeed{status: generated.ChannelStatus_Distributed, openSlot: openSlot, expiresAt: farFuture})
+		}
+		var sizes []int
+		require.NoError(t, h.manager.Cleanup(context.Background(), CleanupOptions{
+			MaxReclaimsPerTx: 1_000, MaxTxsPerSigner: 10,
+			OnReclaim: func(result ReclaimResult) { sizes = append(sizes, len(result.ChannelIDs)) },
+		}))
+		// Above the version-0 clamp, in one version-1 transaction.
+		assert.Equal(t, []int{MaxSafeReclaimsPerTx + 1}, sizes)
+		require.Len(t, h.signer.sentTransactions(), 1)
+		assert.Equal(t, solana.MessageVersionV1, h.signer.sentTransactions()[0].Message.GetVersion())
+	})
+
+	t.Run("createRentCleanupManager forwards the scheme's facilitator transaction version", func(t *testing.T) {
+		tests := []struct {
+			name        string
+			version     *int
+			wantVersion solana.MessageVersion
+		}{
+			{"unset defaults to v1", nil, solana.MessageVersionV1},
+			{"explicit v0", intPtr(paymentchannels.FacilitatorTransactionVersion0), solana.MessageVersionV0},
+		}
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				h := newHarness(t)
+				scheme := NewBatchSvmScheme(context.Background(), h.signer, &Config{
+					ChannelStorage:                h.storage,
+					FacilitatorTransactionVersion: test.version,
+				})
+				h.manager = scheme.CreateRentCleanupManager(svm.SolanaDevnetCAIP2)
+				h.seed(channelSeed{status: generated.ChannelStatus_Distributed, openSlot: openSlot, expiresAt: farFuture})
+				var reclaims int
+				require.NoError(t, h.manager.Cleanup(context.Background(), CleanupOptions{
+					MaxTxsPerSigner: 1,
+					OnReclaim:       func(ReclaimResult) { reclaims++ },
+				}))
+				assert.Equal(t, 1, reclaims)
+				sent := h.signer.sentTransactions()
+				require.Len(t, sent, 1)
+				assert.Equal(t, test.wantVersion, sent[0].Message.GetVersion())
+			})
+		}
+	})
+
 	t.Run("respects maxReclaimsPerTx and maxTxsPerSigner for reclaim batching", func(t *testing.T) {
 		h := newHarness(t)
 		for i := 0; i < 3; i++ {
@@ -293,7 +340,12 @@ func TestBatchSvmRentCleanupManagerCleanup(t *testing.T) {
 	})
 
 	t.Run("clamps maxReclaimsPerTx to MAX_SAFE_RECLAIMS_PER_TX", func(t *testing.T) {
+		// The clamp is the version-0 packet bound; version 1 packs by encoded fit.
 		h := newHarness(t)
+		h.manager = NewBatchSvmRentCleanupManager(RentCleanupConfig{
+			Network: network, Signer: h.signer, Storage: h.storage,
+			FacilitatorTransactionVersion: intPtr(paymentchannels.FacilitatorTransactionVersion0),
+		})
 		for i := 0; i < MaxSafeReclaimsPerTx+1; i++ {
 			h.seed(channelSeed{status: generated.ChannelStatus_Distributed, openSlot: openSlot, expiresAt: farFuture})
 		}
@@ -845,6 +897,11 @@ func programInstructions(t *testing.T, tx *solana.Transaction) [][]byte {
 
 func computeLimit(t *testing.T, tx *solana.Transaction) uint32 {
 	t.Helper()
+	// Version 1 carries the limit in the message config, version 0 as an instruction.
+	if tx.Message.GetVersion() == solana.MessageVersionV1 {
+		require.NotNil(t, tx.Message.TransactionConfig.ComputeUnitLimit)
+		return *tx.Message.TransactionConfig.ComputeUnitLimit
+	}
 	for _, instruction := range tx.Message.Instructions {
 		program, err := tx.Message.Program(instruction.ProgramIDIndex)
 		require.NoError(t, err)

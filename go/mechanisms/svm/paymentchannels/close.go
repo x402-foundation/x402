@@ -23,7 +23,20 @@ type BuildRequestCloseArgs struct {
 	Memo *string
 	// Program overrides the payment-channels program id. The zero key uses ProgramID.
 	Program solana.PublicKey
+	// TransactionVersion is the message version to build; the zero value
+	// builds version 0. Version 0 carries no ComputeBudget instruction;
+	// version 1 must set computeUnitLimit in its message config.
+	TransactionVersion solana.MessageVersion
+	// ComputeUnitLimit is the version-1 computeUnitLimit. Defaults to
+	// RequestCloseV1ComputeUnitLimit when nil; ignored on version 0.
+	ComputeUnitLimit *uint32
 }
+
+// RequestCloseV1ComputeUnitLimit is the computeUnitLimit of a version-1
+// request_close. Version 0 omits SetComputeUnitLimit and gets the runtime's
+// 200,000 CU per-instruction default; version 1 has no default, so it requests
+// the same budget explicitly.
+const RequestCloseV1ComputeUnitLimit uint32 = 200_000
 
 // BuildRequestCloseTransaction builds an unsigned request_close transaction.
 // The payer signs it and the sponsor co-signs the fee-payer slot before broadcast.
@@ -44,16 +57,25 @@ func BuildRequestCloseTransaction(args BuildRequestCloseArgs) (*solana.Transacti
 	if err != nil {
 		return nil, err
 	}
-	tx, err := solana.NewTransactionBuilder().
-		SetRecentBlockHash(args.Blockhash).
-		SetFeePayer(args.FeePayer).
-		AddInstruction(requestClose).
-		AddInstruction(solana.NewInstruction(memoProgramID, solana.AccountMetaSlice{}, memoData)).
-		Build()
+	instructions := []solana.Instruction{
+		requestClose,
+		solana.NewInstruction(memoProgramID, solana.AccountMetaSlice{}, memoData),
+	}
+	version := clientTransactionVersion(args.TransactionVersion)
+	limit := uint32(0)
+	if version == solana.MessageVersionV1 {
+		limit = RequestCloseV1ComputeUnitLimit
+		if args.ComputeUnitLimit != nil {
+			limit = *args.ComputeUnitLimit
+		}
+		if limit > OpenMaxComputeUnitLimit {
+			return nil, fmt.Errorf("computeUnitLimit must be in [1, %d], received %d", OpenMaxComputeUnitLimit, limit)
+		}
+	}
+	tx, err := svm.BuildClientTransaction(version, args.FeePayer, args.Blockhash, instructions, limit, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build request_close transaction: %w", err)
 	}
-	tx.Message.SetVersion(solana.MessageVersionV0)
 	return tx, nil
 }
 
@@ -66,6 +88,9 @@ type VerifyRequestCloseExpected struct {
 	Program                     solana.PublicKey
 	MaxComputeUnits             *uint32
 	MaxPriorityFeeMicroLamports *uint64
+	// AcceptedTransactionVersions is the facilitator's accepted message
+	// versions; nil accepts AdvertisedTransactionVersions.
+	AcceptedTransactionVersions []int
 }
 
 // VerifyRequestCloseTransaction checks that the sponsor may authorize only the
@@ -74,9 +99,9 @@ func VerifyRequestCloseTransaction(transactionBase64 string, expected VerifyRequ
 	if expected.Payer.Equals(expected.FeePayer) {
 		return fmt.Errorf("verifyRequestCloseTransaction: payer must differ from feePayer")
 	}
-	tx, err := svm.DecodeTransaction(transactionBase64)
+	tx, err := decodeAcceptedChannelTransaction(transactionBase64, "verifyRequestCloseTransaction", expected.AcceptedTransactionVersions)
 	if err != nil {
-		return fmt.Errorf("verifyRequestCloseTransaction: %w", err)
+		return err
 	}
 	message := &tx.Message
 	if len(message.AddressTableLookups) > 0 {
@@ -110,6 +135,14 @@ func VerifyRequestCloseTransaction(transactionBase64 string, expected VerifyRequ
 	maxPriorityFee := MaxComputeUnitPriceMicroLamports
 	if expected.MaxPriorityFeeMicroLamports != nil && *expected.MaxPriorityFeeMicroLamports < maxPriorityFee {
 		maxPriorityFee = *expected.MaxPriorityFeeMicroLamports
+	}
+
+	// Version 1 carries the compute budget in its message config instead of a
+	// ComputeBudget prefix; the prefix must then be absent.
+	if message.GetVersion() == solana.MessageVersionV1 {
+		if violation := svm.ValidateTransactionV1Config(message, maxComputeUnits, maxPriorityFee); violation != svm.TransactionV1ConfigOK {
+			return fmt.Errorf("verifyRequestCloseTransaction: %s", violation)
+		}
 	}
 
 	seenLimit, seenPrice := false, false

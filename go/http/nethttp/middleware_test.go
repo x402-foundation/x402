@@ -288,6 +288,62 @@ func TestPaymentMiddleware_CallsNextWhenNoPaymentRequired(t *testing.T) {
 	}
 }
 
+func TestPaymentMiddleware_SendsDeclaredTextPlainPaymentErrorBody(t *testing.T) {
+	expected := "Payment required.\nPreview line 2."
+	mockClient := &mockFacilitatorClient{supportedFunc: defaultSupportedFunc()}
+	mockServer := &mockSchemeServer{scheme: "exact"}
+
+	routes := x402http.RoutesConfig{
+		"GET /api": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  "exact",
+					PayTo:   "0xtest",
+					Price:   "$1.00",
+					Network: "eip155:1",
+				},
+			},
+			Description: "API access",
+			UnpaidResponseBody: func(context.Context, x402http.HTTPRequestContext) (*x402http.UnpaidResponse, error) {
+				return &x402http.UnpaidResponse{
+					ContentType: "text/plain; charset=utf-8",
+					Body:        expected,
+				}, nil
+			},
+		},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{"data": "protected"})
+	})
+
+	middleware := PaymentMiddlewareFromConfig(routes,
+		WithFacilitatorClient(mockClient),
+		WithScheme("eip155:1", mockServer),
+		WithSyncFacilitatorOnStart(true),
+		WithTimeout(5*time.Second),
+	)
+	wrapped := middleware(handler)
+
+	req := httptest.NewRequest("GET", "/api", nil)
+	req.Header.Set("Accept", "application/json")
+
+	w := httptest.NewRecorder()
+	wrapped.ServeHTTP(w, req)
+
+	if w.Code != http.StatusPaymentRequired {
+		t.Fatalf("Expected status 402, got %d", w.Code)
+	}
+	if got := w.Body.String(); got != expected {
+		t.Fatalf("Expected raw text body %q, got %q (Content-Type %q)", expected, got, w.Header().Get("Content-Type"))
+	}
+	contentType := w.Header().Get("Content-Type")
+	if !strings.Contains(strings.ToLower(contentType), "text/plain") {
+		t.Fatalf("Expected Content-Type to contain text/plain, got %q", contentType)
+	}
+}
+
 func TestPaymentMiddleware_Returns402JSONForPaymentError(t *testing.T) {
 	mockClient := &mockFacilitatorClient{supportedFunc: defaultSupportedFunc()}
 	mockServer := &mockSchemeServer{scheme: "exact"}
@@ -337,8 +393,8 @@ func TestPaymentMiddleware_Returns402JSONForPaymentError(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatalf("Failed to parse response: %v", err)
 	}
-	if len(response) != 0 {
-		t.Errorf("Expected empty body {}, got %v", response)
+	if response["error"] != "Payment required" {
+		t.Errorf("Expected body {error: Payment required}, got %v", response)
 	}
 }
 
@@ -651,13 +707,12 @@ func TestPaymentMiddleware_Returns402WhenSettlementFails(t *testing.T) {
 		t.Errorf("Expected status 402, got %d", w.Code)
 	}
 
-	// Empty body by default on settlement failure
 	var response map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatalf("Failed to parse response: %v", err)
 	}
-	if len(response) != 0 {
-		t.Errorf("Expected empty body {}, got %v", response)
+	if response["error"] != "settlement_failed" {
+		t.Errorf("Expected body {error: settlement_failed}, got %v", response)
 	}
 
 	// PAYMENT-RESPONSE header must be included on settlement failure
@@ -1541,6 +1596,42 @@ func TestValidateBazaarExtensions_MalformedExtension(t *testing.T) {
 	}
 	if !strings.Contains(output, "malformed") {
 		t.Errorf("Expected 'malformed' in warning output, got: %q", output)
+	}
+}
+
+// TestPaymentMiddleware_HEADUsesGETPaymentRule verifies net/http's GET-to-HEAD
+// dispatch cannot run a paid GET handler without passing the payment gate.
+func TestPaymentMiddleware_HEADUsesGETPaymentRule(t *testing.T) {
+	routes := x402http.RoutesConfig{
+		"GET /api/premium": {
+			Accepts: x402http.PaymentOptions{
+				{Scheme: "exact", PayTo: "0xtest", Price: "$1.00", Network: "eip155:1"},
+			},
+		},
+	}
+	handlerRan := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/premium", func(w http.ResponseWriter, r *http.Request) {
+		handlerRan = true
+		w.Header().Set("ETag", `"paid"`)
+		w.WriteHeader(http.StatusOK)
+	})
+	middleware := PaymentMiddlewareFromConfig(routes,
+		WithFacilitatorClient(&mockFacilitatorClient{supportedFunc: defaultSupportedFunc()}),
+		WithScheme("eip155:1", &mockSchemeServer{scheme: "exact"}),
+		WithSyncFacilitatorOnStart(true),
+		WithTimeout(5*time.Second),
+	)
+
+	req := httptest.NewRequest(http.MethodHead, "/api/premium", nil)
+	w := httptest.NewRecorder()
+	middleware(mux).ServeHTTP(w, req)
+
+	if handlerRan {
+		t.Error("payment bypassed: GET handler ran for an unpaid HEAD request")
+	}
+	if w.Code != http.StatusPaymentRequired {
+		t.Errorf("Expected status 402, got %d", w.Code)
 	}
 }
 

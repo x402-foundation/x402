@@ -62,6 +62,7 @@ __all__ = [
     "MCP_PAYMENT_META_KEY",
     "MCP_PAYMENT_RESPONSE_META_KEY",
     "PaymentRequiredError",
+    "PaymentResponseError",
     # Utils
     "is_object",
     "create_payment_required_error",
@@ -130,6 +131,10 @@ def __getattr__(name: str):
         from .types import PaymentRequiredError
 
         return PaymentRequiredError
+    if name == "PaymentResponseError":
+        from .types import PaymentResponseError
+
+        return PaymentResponseError
     if name in (
         "is_object",
         "create_payment_required_error",

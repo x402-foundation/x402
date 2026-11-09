@@ -2,6 +2,7 @@ package facilitator
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"testing"
 
@@ -170,31 +171,32 @@ func TestExactSvmScheme_LookupTableRejectedWithoutCapabilities(t *testing.T) {
 	assert.Contains(t, ve.InvalidReason, ErrSmartWalletAltResolutionUnavailable)
 }
 
-func TestExactSvmScheme_Path1AcceptsSevenLighthouseInstructions(t *testing.T) {
-	f := buildExactFixtureWithOptional(t,
-		lighthouseInstruction(),
-		lighthouseInstruction(),
-		lighthouseInstruction(),
-		lighthouseInstruction(),
-	)
-	require.Equal(t, 7, len(f.tx.Message.Instructions))
+func TestExactSvmScheme_Path1RejectsDuplicateTransferInstruction(t *testing.T) {
+	f := buildExactFixture(t)
+	dup := f.tx.Message.Instructions[2]
+	f.tx.Message.Instructions = append(f.tx.Message.Instructions, dup)
+	signTransaction(t, f.tx, f.ownerKey)
+	encoded, err := svm.EncodeTransaction(f.tx)
+	require.NoError(t, err)
+	f.payload.Payload = (&svm.ExactSvmPayload{Transaction: encoded}).ToMap()
 
 	signer := &mockExactSvmSigner{addresses: []solana.PublicKey{f.facilitatorAddr}}
 	scheme := NewExactSvmScheme(signer)
-	resp, err := scheme.Verify(context.Background(), f.payload, f.requirements, nil)
-	require.NoError(t, err)
-	assert.True(t, resp.IsValid)
+	_, err = scheme.Verify(context.Background(), f.payload, f.requirements, nil)
+	var ve *x402.VerifyError
+	require.Error(t, err)
+	require.True(t, errors.As(err, &ve))
+	assert.Equal(t, ErrProtocolInstructionOrder, ve.InvalidReason)
 }
 
-func TestExactSvmScheme_Path1RejectsEightInstructions(t *testing.T) {
+func TestExactSvmScheme_Path1RejectsUnknownProgramAnywhere(t *testing.T) {
 	f := buildExactFixtureWithOptional(t,
-		lighthouseInstruction(),
-		lighthouseInstruction(),
-		lighthouseInstruction(),
-		lighthouseInstruction(),
-		lighthouseInstruction(),
+		solana.NewInstruction(
+			solana.SystemProgramID,
+			solana.AccountMetaSlice{},
+			[]byte{0x00},
+		),
 	)
-	require.Equal(t, 8, len(f.tx.Message.Instructions))
 
 	signer := &mockExactSvmSigner{addresses: []solana.PublicKey{f.facilitatorAddr}}
 	scheme := NewExactSvmScheme(signer)
@@ -202,7 +204,7 @@ func TestExactSvmScheme_Path1RejectsEightInstructions(t *testing.T) {
 	var ve *x402.VerifyError
 	require.Error(t, err)
 	require.True(t, errors.As(err, &ve))
-	assert.Equal(t, ErrTransactionInstructionsLength, ve.InvalidReason)
+	assert.Equal(t, ErrUnknownInstruction, ve.InvalidReason)
 }
 
 func TestExactSvmScheme_Path1RejectsOverpayment(t *testing.T) {
@@ -226,4 +228,47 @@ func TestGetTokenPayerFromTransaction_LookupProgramIndexDoesNotPanic(t *testing.
 		_, err := svm.GetTokenPayerFromTransaction(f.tx)
 		require.Error(t, err)
 	})
+}
+
+func TestExactSvmScheme_DefaultLimits(t *testing.T) {
+	signer := &mockExactSvmSigner{addresses: []solana.PublicKey{solana.NewWallet().PublicKey()}}
+	scheme := NewExactSvmScheme(signer)
+	// scheme_exact_svm.md §2.2.1 reference default and §2.1.4 signer set.
+	assert.Equal(t, uint32(400_000), scheme.maxComputeUnits())
+	assert.Equal(t, uint8(2), scheme.maxRequiredSignatures())
+
+	f := buildExactFixture(t)
+	limit := func(units uint32) solana.CompiledInstruction {
+		data := make([]byte, 5)
+		data[0] = ixSetComputeUnitLimit
+		binary.LittleEndian.PutUint32(data[1:], units)
+		return solana.CompiledInstruction{ProgramIDIndex: f.tx.Message.Instructions[0].ProgramIDIndex, Data: data}
+	}
+	require.NoError(t, scheme.verifyComputeLimitInstruction(limit(400_000)))
+	err := scheme.verifyComputeLimitInstruction(limit(400_001))
+	require.Error(t, err)
+	assert.Equal(t, ErrComputeLimitInstructionTooHigh, err.Error())
+
+	raised := uint32(1_400_000)
+	assert.NoError(t, NewExactSvmScheme(signer, &Config{MaxComputeUnits: &raised}).verifyComputeLimitInstruction(limit(1_400_000)))
+}
+
+func TestExactSvmScheme_ConfiguredTransactionVersions(t *testing.T) {
+	payload, requirements, facilitatorAddr := buildValidExactSvmFixture(t)
+	signer := &mockExactSvmSigner{addresses: []solana.PublicKey{facilitatorAddr}}
+
+	narrowed := NewExactSvmScheme(signer, &Config{TransactionVersions: []int{1}})
+	assert.Equal(t, []int{1}, narrowed.GetExtra(x402.Network(svm.SolanaDevnetCAIP2))[svm.ExtraTransactionVersions])
+	_, err := narrowed.Verify(context.Background(), payload, requirements, nil)
+	var ve *x402.VerifyError
+	require.True(t, errors.As(err, &ve))
+	assert.Equal(t, ErrUnsupportedTransactionVersion, ve.InvalidReason)
+	assert.Equal(t, 0, signer.simulateCalls)
+
+	defaults := NewExactSvmScheme(signer)
+	assert.Equal(t, []int{0, 1}, defaults.GetExtra(x402.Network(svm.SolanaDevnetCAIP2))[svm.ExtraTransactionVersions])
+
+	for _, invalid := range [][]int{{}, {2}, {0, -1}} {
+		assert.Panics(t, func() { NewExactSvmScheme(signer, &Config{TransactionVersions: invalid}) })
+	}
 }

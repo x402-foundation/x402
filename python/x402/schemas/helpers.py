@@ -26,6 +26,8 @@ def detect_version(data: bytes | dict[str, Any]) -> int:
         parsed = json.loads(data)
     else:
         parsed = data
+    if not isinstance(parsed, dict):
+        raise ValueError("Payment data must be a JSON object")
 
     version = parsed.get("x402Version")
     if version is None:
@@ -57,6 +59,8 @@ def get_scheme_and_network(
         parsed = json.loads(payload)
     else:
         parsed = payload
+    if not isinstance(parsed, dict):
+        raise ValueError("Payment payload must be a JSON object")
 
     if version == 1:
         # V1: scheme/network at top level
@@ -65,6 +69,8 @@ def get_scheme_and_network(
     else:
         # V2: scheme/network in accepted field
         accepted = parsed.get("accepted", {})
+        if not isinstance(accepted, dict):
+            raise ValueError("Payment payload accepted must be a JSON object")
         scheme = accepted.get("scheme")
         network = accepted.get("network")
 
@@ -90,11 +96,18 @@ def match_payload_to_requirements(
 
     Returns:
         True if payload matches requirements.
+
+    Raises:
+        ValueError: If payload, requirements or accepted is not a JSON object.
     """
     if isinstance(payload, bytes):
         payload = json.loads(payload)
     if isinstance(requirements, bytes):
         requirements = json.loads(requirements)
+    if not isinstance(payload, dict):
+        raise ValueError("Payment payload must be a JSON object")
+    if not isinstance(requirements, dict):
+        raise ValueError("Payment requirements must be a JSON object")
 
     if version == 1:
         # V1: Compare scheme and network
@@ -104,6 +117,8 @@ def match_payload_to_requirements(
     else:
         # V2: Compare scheme, network, amount, asset, payTo
         accepted = payload.get("accepted", {})
+        if not isinstance(accepted, dict):
+            raise ValueError("Payment payload accepted must be a JSON object")
         return (
             accepted.get("scheme") == requirements.get("scheme")
             and accepted.get("network") == requirements.get("network")
@@ -221,8 +236,9 @@ def matches_network_pattern(network: Network, pattern: Network) -> bool:
 def derive_network_pattern(networks: list[Network]) -> Network:
     """Derive common pattern from list of networks.
 
-    If all networks share same namespace, returns wildcard pattern.
-    Otherwise returns first network.
+    A single network stays an exact match. Several networks that share one
+    namespace return that namespace's wildcard. Mixed namespaces return the
+    first network.
 
     Args:
         networks: List of networks.
@@ -234,6 +250,8 @@ def derive_network_pattern(networks: list[Network]) -> Network:
         ValueError: If networks list is empty.
 
     Examples:
+        >>> derive_network_pattern(["eip155:8453"])
+        'eip155:8453'
         >>> derive_network_pattern(["eip155:8453", "eip155:84532"])
         'eip155:*'
         >>> derive_network_pattern(["eip155:8453", "solana:mainnet"])
@@ -241,6 +259,8 @@ def derive_network_pattern(networks: list[Network]) -> Network:
     """
     if not networks:
         raise ValueError("At least one network required")
+    if len(networks) == 1:
+        return networks[0]
 
     namespaces = {n.split(":")[0] for n in networks}
     if len(namespaces) == 1:

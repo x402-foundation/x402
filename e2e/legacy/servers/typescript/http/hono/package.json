@@ -10,9 +10,9 @@
     "lint:check": "eslint . --ext .ts"
   },
   "dependencies": {
-    "@hono/node-server": "^1.13.8",
+    "@hono/node-server": "^1.19.15",
     "dotenv": "^16.4.7",
-    "hono": "^4.7.1",
+    "hono": "^4.13.7",
     "x402-hono": "workspace:*"
   },
   "devDependencies": {

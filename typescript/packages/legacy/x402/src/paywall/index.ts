@@ -14,19 +14,13 @@ interface PaywallOptions {
 }
 
 /**
- * Escapes a string for safe injection into JavaScript string literals
+ * Serializes paywall configuration for an inline HTML script element
  *
- * @param str - The string to escape
- * @returns The escaped string
+ * @param value - The configuration value to serialize
+ * @returns JSON with every less-than character escaped
  */
-function escapeString(str: string): string {
-  return str
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/'/g, "\\'")
-    .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r")
-    .replace(/\t/g, "\\t");
+function toScriptJson(value: string | PaymentRequirements[]): string {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
 }
 
 /**
@@ -62,20 +56,20 @@ export function getPaywallHtml({
   <script>
     window.x402 = {
       amount: ${amount},
-      paymentRequirements: ${JSON.stringify(paymentRequirements)},
+      paymentRequirements: ${toScriptJson(paymentRequirements)},
       testnet: ${testnet},
-      currentUrl: "${escapeString(currentUrl)}",
+      currentUrl: ${toScriptJson(currentUrl)},
       config: {
         chainConfig: ${JSON.stringify(config)},
       },
-      cdpClientKey: "${escapeString(cdpClientKey || "")}",
-      appName: "${escapeString(appName || "")}",
-      appLogo: "${escapeString(appLogo || "")}",
-      sessionTokenEndpoint: "${escapeString(sessionTokenEndpoint || "")}",
+      cdpClientKey: ${toScriptJson(cdpClientKey || "")},
+      appName: ${toScriptJson(appName || "")},
+      appLogo: ${toScriptJson(appLogo || "")},
+      sessionTokenEndpoint: ${toScriptJson(sessionTokenEndpoint || "")},
     };
     ${logOnTestnet}
   </script>`;
 
   // Inject the configuration script into the head
-  return PAYWALL_TEMPLATE.replace("</head>", `${configScript}\n</head>`);
+  return PAYWALL_TEMPLATE.replace("</head>", () => `${configScript}\n</head>`);
 }

@@ -219,10 +219,11 @@ func TestAmbiguousPayoutAttribution(t *testing.T) {
 				}},
 			}),
 		}, requirements, nil)
-		require.NoError(t, err)
-		assert.False(t, response.Success)
-		assert.Equal(t, batchsettlement.ErrPayoutAttributionAmbiguous, response.ErrorReason)
-		assert.Equal(t, signature.String(), response.Transaction)
+		require.Nil(t, response)
+		var settleErr *x402.SettleError
+		require.ErrorAs(t, err, &settleErr)
+		assert.Equal(t, batchsettlement.ErrPayoutAttributionAmbiguous, settleErr.ErrorReason)
+		assert.Equal(t, signature.String(), settleErr.Transaction)
 		assert.Zero(t, recorded)
 		_, ok, err := store.Get(context.Background(), key)
 		require.NoError(t, err)
