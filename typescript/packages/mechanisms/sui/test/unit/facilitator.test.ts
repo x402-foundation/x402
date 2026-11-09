@@ -776,6 +776,50 @@ describe("ExactSuiScheme facilitator", () => {
     });
 
     describe("ambiguous submission", () => {
+      it.each([false, true])(
+        "reports an acknowledged submission as pending and allows retry (sponsored: %s)",
+        async sponsored => {
+          const requirements = testRequirements({ extra: sponsored ? { feePayer } : {} });
+          const payload = await payment({ sponsored }, requirements);
+          const digest = await digestOf((payload.payload as { transaction: string }).transaction);
+          const submitted = { $kind: "Transaction", Transaction: successRecord([], digest) };
+          const executor = vi.fn().mockResolvedValue(submitted);
+          const facilitator = sponsored
+            ? new ExactSuiScheme({
+                clients: { [SUI_TESTNET_CAIP2]: mock.client },
+                feePayer,
+                executeTransaction: executor,
+              })
+            : scheme;
+          mock.core.executeTransaction.mockResolvedValue(submitted);
+          mock.core.waitForTransaction.mockRejectedValueOnce(new Error("confirmation timeout"));
+          if (sponsored) {
+            mock.core.getTransaction.mockRejectedValueOnce(new Error("lookup unavailable"));
+          }
+
+          expect(await facilitator.settle(payload, requirements)).toMatchObject({
+            success: false,
+            errorReason: "settlement_pending",
+            errorMessage: "confirmation timeout",
+            transaction: digest,
+            network: SUI_TESTNET_CAIP2,
+            payer,
+          });
+
+          settled(successRecord(exactBalanceChanges(), digest));
+          expect(await facilitator.settle(payload, requirements)).toMatchObject({
+            success: true,
+            transaction: digest,
+          });
+          const submit = sponsored ? executor : mock.core.executeTransaction;
+          expect(submit).toHaveBeenCalledTimes(2);
+          expect(submit.mock.calls[1][0]).toEqual(submit.mock.calls[0][0]);
+          expect((await facilitator.settle(payload, requirements)).errorReason).toBe(
+            "duplicate_settlement",
+          );
+        },
+      );
+
       it("reports the real outcome found by digest after a thrown execute", async () => {
         const payload = await payment();
         const digest = await digestOf((payload.payload as { transaction: string }).transaction);
