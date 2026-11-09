@@ -191,6 +191,7 @@ function guardReplyRaw(reply: FastifyReply): RawGuard {
       const data =
         typeof args[0] === "function" ? undefined : (args[0] as string | Buffer | undefined);
       guard.buffer.push({ method: "end", data });
+      reply.send();
       return this;
     }
     return Reflect.apply(origEnd, this, args) as ServerResponse;
@@ -345,6 +346,13 @@ export function paymentMiddlewareFromHTTPServer(
   }
 
   app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
+    // find-my-way 9.5-9.8 and 9.9+ (both allowed by fastify ^5) resolve absolute-form and other
+    // non-origin-form request-targets to different paths, so the gate cannot mirror the router.
+    // Reject them before route matching instead.
+    if (request.url.charCodeAt(0) !== 47 /* "/" */) {
+      return reply.status(400).send({ error: "Bad Request" });
+    }
+
     const path = request.url.split("?")[0];
     const adapter = new FastifyAdapter(request);
     const context: HTTPRequestContext = {
@@ -455,6 +463,8 @@ export function paymentMiddlewareFromHTTPServer(
       if (bodyChunks.length > 0) {
         effectivePayload = Buffer.concat(bodyChunks);
       }
+      // Error responses can re-enter onSend; do not replay the original response.
+      rawGuard.buffer.length = 0;
     }
 
     if (reply.statusCode >= 400) {

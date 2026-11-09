@@ -4,7 +4,7 @@ import { toClientEvmSigner } from "@x402/evm";
 import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/client";
 import { FileClientChannelStorage } from "@x402/evm/batch-settlement/client/file-storage";
 import { x402Client, wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
-import { BatchSvmScheme } from "@x402/svm/batch-settlement/client";
+import { BatchSvmScheme, NoBatchChannelToRefundError } from "@x402/svm/batch-settlement/client";
 import { config } from "dotenv";
 import { createPublicClient, http } from "viem";
 import { baseSepolia } from "viem/chains";
@@ -19,8 +19,12 @@ const baseURL = process.env.RESOURCE_SERVER_URL || "http://localhost:4021";
 const endpointPath = process.env.ENDPOINT_PATH || "/weather";
 const url = `${baseURL}${endpointPath}`;
 const storageDir = process.env.STORAGE_DIR;
-const channelSalt = (process.env.CHANNEL_SALT ??
-  "0x0000000000000000000000000000000000000000000000000000000000000000") as `0x${string}`;
+const channelSaltRaw = (
+  process.env.CHANNEL_SALT ?? "0x0000000000000000000000000000000000000000000000000000000000000000"
+).trim();
+const channelSalt = /^\d+$/.test(channelSaltRaw)
+  ? Number(channelSaltRaw)
+  : (channelSaltRaw as `0x${string}`);
 const svmChannelSalt = process.env.SVM_CHANNEL_SALT?.trim() || "0";
 const numberOfRequests = Number(process.env.NUMBER_OF_REQUESTS ?? "3");
 const refundAfterRequests = process.env.REFUND_AFTER_REQUESTS === "true";
@@ -166,11 +170,19 @@ async function main(): Promise<void> {
     }
     if (svmScheme) {
       const refundT0 = performance.now();
-      const settle = await svmScheme.refund(url);
-      console.log("[SVM]", JSON.stringify(settle, null, 2));
-      console.log(
-        `[SVM] Refund completed in ${((performance.now() - refundT0) / 1000).toFixed(3)}s`,
-      );
+      try {
+        const settle = await svmScheme.refund(url);
+        console.log("[SVM]", JSON.stringify(settle, null, 2));
+        console.log(
+          `[SVM] Refund completed in ${((performance.now() - refundT0) / 1000).toFixed(3)}s`,
+        );
+      } catch (error) {
+        if (error instanceof NoBatchChannelToRefundError) {
+          console.log("[SVM] No open channel to refund (skipped)");
+        } else {
+          throw error;
+        }
+      }
     }
   }
 }

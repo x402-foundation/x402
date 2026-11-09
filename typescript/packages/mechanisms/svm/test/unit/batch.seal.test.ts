@@ -4,7 +4,8 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { signCloseAuthorization } from "../../src/batch-settlement/closeAuthorization";
 import { BatchError } from "../../src/batch-settlement/errors";
-import { InMemoryBatchReceiverAuthorizerStore } from "../../src/batch-settlement/facilitator/receiverAuthorizerStore";
+import { InMemoryBatchPendingSettlementStore } from "../../src/batch-settlement/facilitator/recovery";
+import { InMemoryPaymentChannelStorage } from "../../src/payment-channels/storage";
 import { BatchSvmScheme } from "../../src/batch-settlement/facilitator/scheme";
 import { encodeReceiverBindingMemo } from "../../src/batch-settlement/receiverBinding";
 import {
@@ -109,7 +110,9 @@ function signer() {
     confirmTransaction: vi.fn().mockResolvedValue(undefined),
     getAccountInfo: vi.fn().mockResolvedValue({ owner: TOKEN_PROGRAM_ADDRESS }),
     getAddresses: vi.fn(() => [feePayer.address]),
+    getLatestBlockhash: vi.fn(),
     getSigner: vi.fn(() => feePayer),
+    getSlot: vi.fn(),
     sendTransaction: vi.fn().mockResolvedValue(SIGNATURE),
     signTransaction: vi.fn().mockResolvedValue("signed"),
     simulateTransaction: vi.fn().mockResolvedValue(undefined),
@@ -123,7 +126,6 @@ type Internals = {
   readChannel: ReturnType<typeof vi.fn>;
   distributeInstruction: ReturnType<typeof vi.fn>;
   submitRedemption: ReturnType<typeof vi.fn>;
-  trackChannel: ReturnType<typeof vi.fn>;
   sealDependencies(): { nowSeconds(): number };
 };
 
@@ -158,20 +160,33 @@ async function sealPayload(cumulative: bigint, overrides: Partial<BatchSealPaylo
  * @param options - Binding seed and live channel
  * @param options.live - The channel account the facilitator reads
  * @param options.bound - Whether the receiver authorizer was bound at deposit
- * @returns The scheme, its stubbed internals, and its binding store
+ * @returns The scheme and its stubbed internals
  */
 async function facilitator(
   options: {
     live?: Channel;
     bound?: boolean;
+    onDistributionConfirmed?: ReturnType<typeof vi.fn>;
+    pendingSettlementStore?: InMemoryBatchPendingSettlementStore;
   } = {},
 ) {
-  const store = new InMemoryBatchReceiverAuthorizerStore();
+  const store = new InMemoryPaymentChannelStorage();
   if (options.bound ?? true) {
-    await store.bind({ channelId, network: NETWORK, receiverAuthorizer: authorizer.address });
+    await store.recordOpen({
+      callerIdentity: "",
+      channelId,
+      expiresAt: 0,
+      lastActivityAt: Date.now(),
+      network: NETWORK,
+      payTo: RECEIVER,
+      receiverAuthorizer: authorizer.address,
+      tokenProgram: TOKEN_PROGRAM_ADDRESS,
+    });
   }
   const scheme = new BatchSvmScheme(signer() as never, {
-    receiverAuthorizerStore: store,
+    channelStorage: store,
+    onDistributionConfirmed: options.onDistributionConfirmed,
+    pendingSettlementStore: options.pendingSettlementStore,
   });
   const api = scheme as unknown as Internals;
   api.resolveTerms = vi.fn().mockResolvedValue({
@@ -195,7 +210,6 @@ async function facilitator(
     replayed: false,
     signature: SIGNATURE,
   });
-  api.trackChannel = vi.fn().mockResolvedValue(undefined);
   const original = api.sealDependencies.bind(scheme);
   api.sealDependencies = () => ({ ...original(), nowSeconds: () => NOW });
   return { api, scheme, store };
@@ -219,7 +233,8 @@ describe("batch-settlement seal", () => {
   });
 
   it("applies the final voucher with settle_and_seal and a sealed distribute in one transaction", async () => {
-    const { api, scheme } = await facilitator();
+    const record = vi.fn().mockResolvedValue(undefined);
+    const { api, scheme } = await facilitator({ onDistributionConfirmed: record });
     const response = await settle(scheme, await sealPayload(3_000n));
     expect(response).toMatchObject({
       // 3000 settled less the 500 already paid out reaches the receiver now.
@@ -231,6 +246,7 @@ describe("batch-settlement seal", () => {
           totalClaimed: "3000",
           withdrawRequestedAt: 0,
         },
+        paidToReceiver: "2500",
       },
       payer: payer.address,
       success: true,
@@ -242,7 +258,8 @@ describe("batch-settlement seal", () => {
     // Ed25519 precompile, settle_and_seal, distribute.
     expect(instructions).toHaveLength(3);
     expect(key).toBe(`batch:seal:${NETWORK}:${channelId}:3000`);
-    expect(api.trackChannel).toHaveBeenCalledOnce();
+    expect(record).toHaveBeenCalledOnce();
+    expect(record).toHaveBeenCalledWith(response, requirements());
 
     // The same close replays from the recorded result without a second broadcast.
     await expect(settle(scheme, await sealPayload(3_000n))).resolves.toMatchObject({
@@ -250,7 +267,121 @@ describe("batch-settlement seal", () => {
       success: true,
     });
     expect(api.submitRedemption).toHaveBeenCalledOnce();
+    expect(record).toHaveBeenCalledOnce();
   });
+
+  it("retries payout recording from the durable seal result without rebroadcasting", async () => {
+    const record = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("ledger unavailable"))
+      .mockResolvedValue(undefined);
+    const { api, scheme } = await facilitator({ onDistributionConfirmed: record });
+    const payload = await sealPayload(3_000n);
+
+    await expect(settle(scheme, payload)).resolves.toMatchObject({
+      errorReason: "settlement_pending",
+      success: false,
+      transaction: SIGNATURE,
+    });
+    await expect(settle(scheme, payload)).resolves.toMatchObject({
+      amount: "2500",
+      success: true,
+      transaction: SIGNATURE,
+    });
+    expect(api.submitRedemption).toHaveBeenCalledOnce();
+    expect(record).toHaveBeenCalledTimes(2);
+    await expect(settle(scheme, payload)).resolves.toMatchObject({ success: true });
+    expect(record).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { intent: "seal", fail: false },
+    { intent: "refund", fail: false },
+    { intent: "seal", fail: true },
+    { intent: "refund", fail: true },
+  ] as const)(
+    "coalesces overlapping $intent accounting across schemes (callback failure: $fail)",
+    async ({ intent, fail }) => {
+      const pendingSettlementStore = new InMemoryBatchPendingSettlementStore();
+      let release!: () => void;
+      const accounting = new Promise<void>(resolve => (release = resolve));
+      let entered!: () => void;
+      const callbackEntered = new Promise<void>(resolve => (entered = resolve));
+      const record = vi.fn(async () => {
+        entered();
+        await accounting;
+        if (fail) throw new Error("ledger unavailable");
+      });
+      const options = {
+        live:
+          intent === "refund"
+            ? channel({ closureStartedAt: 0n, status: ChannelStatus.Open })
+            : channel(),
+        onDistributionConfirmed: record,
+        pendingSettlementStore,
+      };
+      const first = await facilitator(options);
+      const second = await facilitator(options);
+      const payment = {
+        accepted: requirements(),
+        payload: { ...(await sealPayload(3_000n)), type: intent },
+        x402Version: 2,
+      } as never;
+      const original = first.scheme.settle(payment, requirements());
+      await callbackEntered;
+
+      // Start a retry from another scheme while the original callback is blocked.
+      let read!: () => void;
+      const replayRead = new Promise<void>(resolve => (read = resolve));
+      const get = pendingSettlementStore.get.bind(pendingSettlementStore);
+      vi.spyOn(pendingSettlementStore, "get").mockImplementation(async key => {
+        const result = await get(key);
+        if (key === `batch:${intent}:${NETWORK}:${channelId}:3000:result`) read();
+        return result;
+      });
+      let finished = false;
+      const overlapping = Promise.all([
+        original,
+        second.scheme.settle(payment, requirements()).then(response => {
+          finished = true;
+          return response;
+        }),
+      ]);
+      await replayRead;
+      await new Promise<void>(resolve => setImmediate(resolve));
+      const callsWhilePending = record.mock.calls.length;
+      const finishedBeforeAccounting = finished;
+      release();
+      const responses = await overlapping;
+
+      expect(callsWhilePending).toBe(1);
+      expect(finishedBeforeAccounting).toBe(false);
+      expect(responses[0]).toEqual(responses[1]);
+      expect(responses[0]).toMatchObject(
+        fail
+          ? { errorReason: "settlement_pending", success: false, transaction: SIGNATURE }
+          : { amount: intent === "refund" ? "7000" : "2500", success: true },
+      );
+      expect(first.api.submitRedemption).toHaveBeenCalledOnce();
+      expect(second.api.submitRedemption).not.toHaveBeenCalled();
+
+      // A new scheme can retry a failed callback, or skip one durably recorded.
+      record.mockResolvedValue(undefined);
+      const restarted = await facilitator(options);
+      const recovered = await restarted.scheme.settle(payment, requirements());
+      expect(recovered).toMatchObject({
+        amount: intent === "refund" ? "7000" : "2500",
+        extra: { paidToReceiver: "2500" },
+        success: true,
+        transaction: SIGNATURE,
+      });
+      expect(record).toHaveBeenCalledTimes(fail ? 2 : 1);
+      expect(record).toHaveBeenLastCalledWith({ ...recovered, amount: "2500" }, requirements());
+      expect(restarted.api.submitRedemption).not.toHaveBeenCalled();
+      await expect(restarted.scheme.settle(payment, requirements())).resolves.toEqual(recovered);
+      expect(record).toHaveBeenCalledTimes(fail ? 2 : 1);
+    },
+  );
 
   it("seals at the current watermark without a precompile when the voucher equals settled", async () => {
     const { api, scheme } = await facilitator();
@@ -330,7 +461,16 @@ describe("batch-settlement seal", () => {
 
     // A key other than the binding cannot authorize, even when validly signed.
     const rebound = await facilitator({ bound: false });
-    await rebound.store.bind({ channelId, network: NETWORK, receiverAuthorizer: payer.address });
+    await rebound.store.recordOpen({
+      callerIdentity: "",
+      channelId,
+      expiresAt: 0,
+      lastActivityAt: Date.now(),
+      network: NETWORK,
+      payTo: RECEIVER,
+      receiverAuthorizer: payer.address,
+      tokenProgram: TOKEN_PROGRAM_ADDRESS,
+    });
     await expect(settle(rebound.scheme, payload)).resolves.toMatchObject({
       errorReason: BatchError.RECEIVER_AUTHORIZER_MISMATCH,
       success: false,
@@ -343,30 +483,42 @@ describe("batch-settlement seal", () => {
 
   it("refunds an open channel cooperatively with the server-authorized voucher", async () => {
     const open = channel({ closureStartedAt: 0n, status: ChannelStatus.Open });
-    const refund = async (cumulative: bigint) => {
+    const refund = async (
+      cumulative: bigint,
+      onDistributionConfirmed?: ReturnType<typeof vi.fn>,
+    ) => {
       const { closeAuthorization, voucher } = await sealPayload(cumulative);
-      const { api, scheme } = await facilitator({ live: open });
-      const response = await scheme.settle(
-        {
-          accepted: requirements(),
-          payload: { channelConfig, closeAuthorization, type: "refund", voucher },
-          x402Version: 2,
-        } as never,
-        requirements(),
-      );
-      return { api, response };
+      const { api, scheme } = await facilitator({ live: open, onDistributionConfirmed });
+      const payment = {
+        accepted: requirements(),
+        payload: { channelConfig, closeAuthorization, type: "refund", voucher },
+        x402Version: 2,
+      } as never;
+      const response = await scheme.settle(payment, requirements());
+      return { api, payment, response, scheme };
     };
 
-    const above = await refund(3_000n);
+    const record = vi.fn().mockResolvedValue(undefined);
+    const above = await refund(3_000n, record);
     expect(above.response).toMatchObject({
       amount: "7000",
-      extra: { channelState: { channelId, withdrawRequestedAt: 0 } },
+      extra: {
+        channelState: { channelId, withdrawRequestedAt: 0 },
+        paidToReceiver: "2500",
+      },
       success: true,
       transaction: SIGNATURE,
     });
+    expect(record).toHaveBeenCalledOnce();
+    expect(record).toHaveBeenCalledWith({ ...above.response, amount: "2500" }, requirements());
     const [, , instructions, key] = above.api.submitRedemption.mock.calls[0]!;
     expect(instructions).toHaveLength(3);
     expect(key).toBe(`batch:refund:${NETWORK}:${channelId}:3000`);
+    await expect(above.scheme.settle(above.payment, requirements())).resolves.toEqual(
+      above.response,
+    );
+    expect(above.api.submitRedemption).toHaveBeenCalledOnce();
+    expect(record).toHaveBeenCalledOnce();
 
     // At the watermark the channel seals without a voucher precompile.
     const equal = await refund(1_000n);
@@ -388,6 +540,41 @@ describe("batch-settlement seal", () => {
         requirements(),
       ),
     ).resolves.toMatchObject({ errorReason: BatchError.CLOSE_STATE, success: false });
+  });
+
+  it("recovers refund recording with the receiver amount without rebroadcasting", async () => {
+    const record = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("ledger unavailable"))
+      .mockResolvedValue(undefined);
+    const { api, scheme } = await facilitator({
+      live: channel({ closureStartedAt: 0n, status: ChannelStatus.Open }),
+      onDistributionConfirmed: record,
+    });
+    const { closeAuthorization, voucher } = await sealPayload(3_000n);
+    const payment = {
+      accepted: requirements(),
+      payload: { channelConfig, closeAuthorization, type: "refund", voucher },
+      x402Version: 2,
+    } as never;
+
+    await expect(scheme.settle(payment, requirements())).resolves.toMatchObject({
+      errorReason: "settlement_pending",
+      success: false,
+      transaction: SIGNATURE,
+    });
+    const recovered = await scheme.settle(payment, requirements());
+    expect(recovered).toMatchObject({
+      amount: "7000",
+      extra: { paidToReceiver: "2500" },
+      success: true,
+      transaction: SIGNATURE,
+    });
+    expect(record).toHaveBeenLastCalledWith({ ...recovered, amount: "2500" }, requirements());
+    expect(record).toHaveBeenCalledTimes(2);
+    expect(api.submitRedemption).toHaveBeenCalledOnce();
+    await expect(scheme.settle(payment, requirements())).resolves.toEqual(recovered);
+    expect(record).toHaveBeenCalledTimes(2);
   });
 
   it("rejects a claim against a closing channel with the dedicated code", async () => {

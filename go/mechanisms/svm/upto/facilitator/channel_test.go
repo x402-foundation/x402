@@ -12,21 +12,22 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels/generated"
 )
 
 // Pins the exact schedule, so a change back to `backoffStep << (attempt-1)` fails here.
 func TestChannelReadPolicyBackoffIsLinear(t *testing.T) {
-	policy := channelReadPolicy{}.resolve()
+	policy := paymentchannels.ResolveChannelReadPolicy(paymentchannels.ChannelReadPolicy{})
 
-	assert.Equal(t, DefaultChannelReadMaxAttempts, policy.maxAttempts)
-	assert.Equal(t, DefaultChannelReadBackoffStep, policy.backoffStep)
+	assert.Equal(t, paymentchannels.DefaultChannelReadMaxAttempts, policy.MaxAttempts)
+	assert.Equal(t, paymentchannels.DefaultChannelReadBackoffStep, policy.BackoffStep)
 
 	var (
 		delays []time.Duration
 		total  time.Duration
 	)
-	for attempt := 1; attempt < policy.maxAttempts; attempt++ {
-		delay := policy.delayAfterAttempt(attempt)
+	for attempt := 1; attempt < policy.MaxAttempts; attempt++ {
+		delay := paymentchannels.DelayAfterAttempt(policy, attempt)
 		delays = append(delays, delay)
 		total += delay
 	}
@@ -51,10 +52,10 @@ func TestChannelReadPolicyHonoursSchemeConfig(t *testing.T) {
 		ChannelReadBackoffStep: &step,
 	}}
 
-	policy := scheme.resolveChannelReadPolicy().resolve()
-	assert.Equal(t, attempts, policy.maxAttempts)
-	assert.Equal(t, step, policy.backoffStep)
-	assert.Equal(t, 400*time.Millisecond, policy.delayAfterAttempt(8))
+	policy := paymentchannels.ResolveChannelReadPolicy(scheme.resolveChannelReadPolicy())
+	assert.Equal(t, attempts, policy.MaxAttempts)
+	assert.Equal(t, step, policy.BackoffStep)
+	assert.Equal(t, 400*time.Millisecond, paymentchannels.DelayAfterAttempt(policy, 8))
 }
 
 // A channel that never becomes visible must be read exactly maxAttempts times.
@@ -64,21 +65,20 @@ func TestFetchAndVerifyOpenChannelStopsAtConfiguredAttemptCount(t *testing.T) {
 	rpcStub := newStubRPC(t)
 	signer.attachRPC(rpc.New(rpcStub.url))
 
-	_, err := fetchAndVerifyOpenChannel(
+	_, err := paymentchannels.FetchAndVerifyOpenChannel(
 		context.Background(),
-		signer,
-		testNetwork,
+		paymentchannels.AccountFetchRPC(signer, testNetwork),
 		fixture.channelID,
 		expectedFrom(fixture),
-		channelReadPolicy{maxAttempts: 3, backoffStep: time.Millisecond},
+		paymentchannels.ChannelReadPolicy{MaxAttempts: 3, BackoffStep: time.Millisecond},
 	)
 	require.Error(t, err)
 	assert.Len(t, rpcStub.commitments["getAccountInfo"], 3)
 }
 
 // expectedFrom derives the binding the facilitator checks for a fixture channel.
-func expectedFrom(fixture *paymentFixture) expectedOpenChannel {
-	return expectedOpenChannel{
+func expectedFrom(fixture *paymentFixture) paymentchannels.ExpectedOpenChannel {
+	return paymentchannels.ExpectedOpenChannel{
 		AuthorizedSigner: fixture.authorizer.PublicKey().String(),
 		Mint:             fixture.mint.String(),
 		Payee:            fixture.feePayer.String(),
@@ -98,13 +98,12 @@ func TestFetchAndVerifyOpenChannelRetriesMissingAccount(t *testing.T) {
 	rpcStub.setAccount(fixture.channelID.String(), fixture.openChannel().encode(t))
 	rpcStub.hideAccountForReads(fixture.channelID.String(), 1)
 
-	verified, err := fetchAndVerifyOpenChannel(
+	verified, err := paymentchannels.FetchAndVerifyOpenChannel(
 		context.Background(),
-		signer,
-		testNetwork,
+		paymentchannels.AccountFetchRPC(signer, testNetwork),
 		fixture.channelID,
 		expectedFrom(fixture),
-		channelReadPolicy{},
+		paymentchannels.ChannelReadPolicy{},
 	)
 	require.NoError(t, err)
 	assert.Equal(t, fixture.channelID, verified.ChannelID)
@@ -119,13 +118,12 @@ func TestFetchAndVerifyOpenChannelStopsRetryingWhenContextEnds(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 
-	_, err := fetchAndVerifyOpenChannel(
+	_, err := paymentchannels.FetchAndVerifyOpenChannel(
 		ctx,
-		signer,
-		testNetwork,
+		paymentchannels.AccountFetchRPC(signer, testNetwork),
 		fixture.channelID,
 		expectedFrom(fixture),
-		channelReadPolicy{},
+		paymentchannels.ChannelReadPolicy{},
 	)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.Len(t, rpcStub.commitments["getAccountInfo"], 1)
@@ -137,7 +135,7 @@ func TestVerifyOpenChannelAccountBindsTheOnchainState(t *testing.T) {
 	channel, err := paymentchannels.DecodeChannel(fixture.openChannel().encode(t))
 	require.NoError(t, err)
 
-	verified, err := verifyOpenChannelAccount(fixture.channelID, channel, expectedFrom(fixture))
+	verified, err := paymentchannels.VerifyOpenChannelAccount(fixture.channelID, channel, expectedFrom(fixture))
 	require.NoError(t, err)
 
 	// The parsed keys are what settlement signs against.
@@ -158,75 +156,75 @@ func TestVerifyOpenChannelAccountRejectsEveryUnboundTerm(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		mutate    func(account *channelAccount, expected *expectedOpenChannel)
+		mutate    func(account *channelAccount, expected *paymentchannels.ExpectedOpenChannel)
 		wantError string
 	}{
 		{
 			name: "channel already sealed",
-			mutate: func(account *channelAccount, _ *expectedOpenChannel) {
-				account.Status = paymentchannels.StatusSealed
+			mutate: func(account *channelAccount, _ *paymentchannels.ExpectedOpenChannel) {
+				account.Status = generated.ChannelStatus_Sealed
 			},
 			wantError: "is not open",
 		},
 		{
 			name: "channel closing",
-			mutate: func(account *channelAccount, _ *expectedOpenChannel) {
-				account.Status = paymentchannels.StatusClosing
+			mutate: func(account *channelAccount, _ *paymentchannels.ExpectedOpenChannel) {
+				account.Status = generated.ChannelStatus_Closing
 			},
 			wantError: "is not open",
 		},
 		{
 			name: "mint rotated",
-			mutate: func(account *channelAccount, _ *expectedOpenChannel) {
+			mutate: func(account *channelAccount, _ *paymentchannels.ExpectedOpenChannel) {
 				account.Mint = stranger.PublicKey()
 			},
 			wantError: "mint",
 		},
 		{
 			name: "payee rotated",
-			mutate: func(account *channelAccount, _ *expectedOpenChannel) {
+			mutate: func(account *channelAccount, _ *paymentchannels.ExpectedOpenChannel) {
 				account.Payee = stranger.PublicKey()
 			},
 			wantError: "payee",
 		},
 		{
 			name: "authorized signer rotated",
-			mutate: func(account *channelAccount, _ *expectedOpenChannel) {
+			mutate: func(account *channelAccount, _ *paymentchannels.ExpectedOpenChannel) {
 				account.AuthorizedSigner = stranger.PublicKey()
 			},
 			wantError: "authorized signer",
 		},
 		{
 			name: "rent payer rotated",
-			mutate: func(account *channelAccount, _ *expectedOpenChannel) {
+			mutate: func(account *channelAccount, _ *paymentchannels.ExpectedOpenChannel) {
 				account.RentPayer = stranger.PublicKey()
 			},
 			wantError: "rent payer",
 		},
 		{
 			name: "payer is not the payload sender",
-			mutate: func(account *channelAccount, _ *expectedOpenChannel) {
+			mutate: func(account *channelAccount, _ *paymentchannels.ExpectedOpenChannel) {
 				account.Payer = stranger.PublicKey()
 			},
 			wantError: "payer",
 		},
 		{
 			name: "grace period shortened",
-			mutate: func(account *channelAccount, _ *expectedOpenChannel) {
+			mutate: func(account *channelAccount, _ *paymentchannels.ExpectedOpenChannel) {
 				account.GracePeriod = 60
 			},
 			wantError: "grace period",
 		},
 		{
 			name: "deposit below the authorized ceiling",
-			mutate: func(account *channelAccount, _ *expectedOpenChannel) {
+			mutate: func(account *channelAccount, _ *paymentchannels.ExpectedOpenChannel) {
 				account.Deposit = 1
 			},
 			wantError: "deposit",
 		},
 		{
 			name: "distribution pays a different recipient",
-			mutate: func(account *channelAccount, _ *expectedOpenChannel) {
+			mutate: func(account *channelAccount, _ *paymentchannels.ExpectedOpenChannel) {
 				account.Splits = []paymentchannels.Split{
 					{Recipient: stranger.PublicKey().String(), BPS: paymentchannels.BasisPointsDenominator},
 				}
@@ -235,7 +233,7 @@ func TestVerifyOpenChannelAccountRejectsEveryUnboundTerm(t *testing.T) {
 		},
 		{
 			name: "distribution splits the payout",
-			mutate: func(_ *channelAccount, expected *expectedOpenChannel) {
+			mutate: func(_ *channelAccount, expected *paymentchannels.ExpectedOpenChannel) {
 				expected.Splits = append(expected.Splits,
 					paymentchannels.Split{Recipient: stranger.PublicKey().String(), BPS: 1})
 			},
@@ -253,7 +251,7 @@ func TestVerifyOpenChannelAccountRejectsEveryUnboundTerm(t *testing.T) {
 			channel, err := paymentchannels.DecodeChannel(account.encode(t))
 			require.NoError(t, err)
 
-			_, err = verifyOpenChannelAccount(fixture.channelID, channel, expected)
+			_, err = paymentchannels.VerifyOpenChannelAccount(fixture.channelID, channel, expected)
 
 			require.ErrorContains(t, err, test.wantError)
 		})
@@ -303,7 +301,7 @@ func TestBuildSettleAndDistributeCarriesTheVoucherPrecompile(t *testing.T) {
 
 		seal, err := instructions[1].Data()
 		require.NoError(t, err)
-		assert.Equal(t, []byte{paymentchannels.SettleAndSealDiscriminator, 1}, seal,
+		assert.Equal(t, []byte{uint8(generated.SettleAndSealDiscriminator), 1}, seal,
 			"settle_and_seal must read the voucher from the preceding instruction")
 	})
 
@@ -314,7 +312,7 @@ func TestBuildSettleAndDistributeCarriesTheVoucherPrecompile(t *testing.T) {
 
 		seal, err := instructions[0].Data()
 		require.NoError(t, err)
-		assert.Equal(t, []byte{paymentchannels.SettleAndSealDiscriminator, 0}, seal)
+		assert.Equal(t, []byte{uint8(generated.SettleAndSealDiscriminator), 0}, seal)
 	})
 
 	t.Run("malformed voucher signature", func(t *testing.T) {
@@ -365,7 +363,7 @@ func TestSettleSimulationReplacesTheClientComputeUnitLimitButKeepsItsPriorityFee
 
 	assert.Equal(t, 1, limitCount,
 		"the client's compute-unit limit must be replaced, not duplicated alongside the facilitator's")
-	assert.Equal(t, uint32(simComputeUnitLimit), simulatedLimitUnits,
+	assert.Equal(t, uint32(1_400_000), simulatedLimitUnits,
 		"simulation must raise the limit to the per-transaction max, not keep the client's own budget")
 	assert.Equal(t, 1, priceCount, "the client's priority fee must survive into the simulated transaction")
 }

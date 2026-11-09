@@ -224,7 +224,9 @@ describe("@x402/svm", () => {
           new PaymentChannelRentCleanupManager({
             signer: exactOnlySigner,
             storage: {
-              upsert: async () => {},
+              recordOpen: async record => ({ record, revertToken: "1" }),
+              revertOpen: async () => {},
+              recordActivity: async () => {},
               get: async () => undefined,
               list: async () => [],
               delete: async () => {},

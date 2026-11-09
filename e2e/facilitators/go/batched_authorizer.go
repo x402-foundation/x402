@@ -37,6 +37,16 @@ func newBatchedAuthorizerSigner(privateKeyHex string) (*batchedAuthorizerSigner,
 
 func (a *batchedAuthorizerSigner) Address() string { return a.address.Hex() }
 
+func (a *batchedAuthorizerSigner) SignTypedData(
+	_ context.Context,
+	domain evmmech.TypedDataDomain,
+	types map[string][]evmmech.TypedDataField,
+	primaryType string,
+	message map[string]interface{},
+) ([]byte, error) {
+	return a.signTypedData(domain, types, primaryType, message)
+}
+
 func (a *batchedAuthorizerSigner) SignClaimBatch(ctx context.Context, claims []batchsettlement.BatchSettlementVoucherClaim, network string) ([]byte, error) {
 	chainId, err := evmmech.GetEvmChainId(network)
 	if err != nil {

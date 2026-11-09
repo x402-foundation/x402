@@ -1,4 +1,6 @@
-import { isAddress } from "@solana/kit";
+import { address, type Address, isAddress } from "@solana/kit";
+import type { FacilitatorTransactionVersion } from "../../payment-channels/facilitator";
+import { getPaymentChannelsTreasuryOwner } from "../../payment-channels/onchain";
 import type {
   FacilitatorContext,
   Network,
@@ -6,20 +8,23 @@ import type {
   SettleResponse,
 } from "@x402/core/types";
 
-import type { PaymentChannelStorage } from "../../payment-channels/storage";
+import {
+  assertPaymentChannelStorage,
+  CallerIdentityConflictError,
+  checkOpenBindings,
+  ReceiverAuthorizerConflictError,
+  type PaymentChannelRecord,
+  type PaymentChannelStorage,
+} from "../../payment-channels/storage";
 import type { BatchPendingSettlementStore } from "./recovery";
 
 import { BatchError } from "../errors";
 import { readReceiverBindingFromOpen } from "../receiverBinding";
-import type { BatchDelegatedReceiverAuth, BatchDelegatedSettleContext } from "./delegatedAuthStore";
-import {
-  BatchReceiverAuthorizerConflictError,
-  type BatchReceiverAuthorizerStore,
-} from "./receiverAuthorizerStore";
 import type {
+  BatchDelegatedReceiverAuth,
+  BatchDelegatedSettleContext,
   BatchReceiverBindingHistoryReader,
   BatchReceiverBindingHistorySignature,
-  BindingSourceConfig,
 } from "./types";
 import { BINDING_HISTORY_PAGE_LIMIT } from "./constants";
 
@@ -32,13 +37,27 @@ export interface BatchSvmFacilitatorConfig {
    * shared durable store whose TTL covers their client retry window.
    */
   pendingSettlementStore?: BatchPendingSettlementStore | undefined;
-  /** Called before completing a payout; implementations must deduplicate by transaction. */
+  /**
+   * Called before completing a payout. Implementations must atomically
+   * deduplicate by transaction, including concurrent calls from separate
+   * processes and retries after a crash before the recording marker is saved.
+   */
   onDistributionConfirmed?: (
     response: SettleResponse,
     requirements: PaymentRequirements,
   ) => Promise<void>;
-  /** Shared, facilitator-owned lifecycle index used for rent cleanup. */
+  /**
+   * Shared channel storage: lifecycle index, receiver-authorizer binding, and
+   * delegated caller identity. Defaults to an in-memory store. Use a durable
+   * implementation when more than one process must read the row. A failed
+   * write does not broadcast the transaction.
+   */
   channelStorage?: PaymentChannelStorage | undefined;
+  /**
+   * Called when reverting a failed open fails. The settle error is unchanged.
+   * Defaults to a warning.
+   */
+  onStorageError?: ((error: unknown, network: string, channelId: string) => void) | undefined;
   /**
    * Idle window advertised as `extra.maxIdleSecs`: seconds without
    * facilitator-visible lifecycle activity after which rent cleanup MAY
@@ -46,55 +65,69 @@ export interface BatchSvmFacilitatorConfig {
    * is not advertised. Defaults to `DEFAULT_MAX_IDLE_SECS` (seven days).
    */
   maxIdleSecs?: number | undefined;
+  /**
+   * Message version (0 or 1) of the claim, settle, seal, refund, and
+   * rent-cleanup transactions the facilitator builds and signs itself. It does
+   * not affect which client-built versions are accepted. Any other value
+   * throws. `1` advertises `maxClaimChannels` 18 and `maxSettleChannels` 13
+   * and sizes an inline compute budget per batch; `0` advertises four of each
+   * and keeps the version-0 compute-budget defaults.
+   *
+   * Default: `DEFAULT_FACILITATOR_TRANSACTION_VERSION` (1)
+   */
+  facilitatorTransactionVersion?: FacilitatorTransactionVersion | undefined;
+  /**
+   * Treasury owner the payment-channels program was built with, used to derive
+   * the treasury token account `distribute` pays the protocol fee to. Defaults
+   * to the deployed program's owner for the requirement's network; set it for
+   * a custom or local build.
+   */
+  paymentChannelsTreasuryOwner?: string | undefined;
   maxPriorityFeeMicroLamports?: number | undefined;
   maxComputeUnits?: number | undefined;
   maxRequiredSignatures?: number | undefined;
   /**
-   * Receiver authorizer each channel was opened for. Required unless
-   * {@link receiverBindingHistoryReader} is set. When this is the only source,
-   * the open is bound and read back before broadcast, and a failed write does
-   * not send the transaction. When a history reader is also set, a failed
-   * write still broadcasts. A missing row is resolved from that reader and
-   * written back here.
+   * Transaction message versions this facilitator accepts for client-built
+   * setup transactions (`open`, `top_up`, `request_close`), advertised as
+   * `extra.transactionVersions` in `/supported`. A transaction of any other
+   * version is rejected with `unsupported_transaction_version` before any
+   * instruction is inspected; a legacy message is accepted exactly when
+   * version 0 is. Defaults to `[0, 1]`.
    */
-  receiverAuthorizerStore?: BatchReceiverAuthorizerStore | undefined;
+  transactionVersions?: readonly (0 | 1)[] | undefined;
   /**
-   * Explicit full-history reader of the open transaction's binding memo.
-   * Used only when set here: the facilitator does not adopt one from the
-   * signer or a public RPC. Used when the store misses, and as the only
-   * record when no store is configured. Configuring both is allowed: the
-   * store is primary, a failed store write still broadcasts the open, and
-   * the history reader is the fallback plus the source for write-back.
+   * Optional fallback for a channel row with no receiver-authorizer binding.
+   * Reads the open transaction's binding memo and writes it back through
+   * `recordOpen` when the row is absent. Used only when set here: the
+   * facilitator does not adopt one from the signer or a public RPC. A failed
+   * channel write still does not broadcast the open.
    */
   receiverBindingHistoryReader?: BatchReceiverBindingHistoryReader | undefined;
   /**
    * Opt in to facilitator-delegated close authorization. Advertised as
-   * `/supported` `extra.receiverAuthorizer`. The caller identity is kept only
-   * in {@link BatchDelegatedReceiverAuth.identityStore}; losing it fails
-   * closed and the client falls back to `request_close`.
+   * `/supported` `extra.receiverAuthorizer`. Requires
+   * {@link BatchDelegatedReceiverAuth.resolveCallerIdentity}; the identity
+   * it returns is written on the channel row. A missing or different
+   * identity fails the close, and the client falls back to `request_close`.
    */
   delegatedReceiverAuth?: BatchDelegatedReceiverAuth | undefined;
 }
 
 /**
- * Require a store or an explicit history reader, and reject a value that lacks its methods.
+ * Reject a channel store or history reader that lacks its methods. Both may
+ * be omitted: storage then defaults to in-memory, and history stays off.
  *
- * @param config - Facilitator configuration
+ * @param channelStorage - Configured channel storage, when set
+ * @param historyReader - Configured open-transaction reader, when set
  */
-export function assertBindingSource(config: BindingSourceConfig): void {
-  const store = config.receiverAuthorizerStore;
-  const historyReader = config.receiverBindingHistoryReader;
-  if (store !== undefined && !isReceiverAuthorizerStore(store)) {
-    throw new Error("receiverAuthorizerStore must implement bind, get, and delete");
-  }
+export function assertBindingSource(
+  channelStorage: object | undefined,
+  historyReader: BatchReceiverBindingHistoryReader | undefined,
+): void {
+  if (channelStorage !== undefined) assertPaymentChannelStorage(channelStorage);
   if (historyReader !== undefined && !isReceiverBindingHistoryReader(historyReader)) {
     throw new Error(
       "receiverBindingHistoryReader must implement getSignaturesForAddress and getTransaction",
-    );
-  }
-  if (store === undefined && historyReader === undefined) {
-    throw new Error(
-      "BatchSvmScheme requires a receiverAuthorizerStore or a receiverBindingHistoryReader",
     );
   }
 }
@@ -117,51 +150,94 @@ export function assertDelegatedReceiverAuth(
       "delegatedReceiverAuth requires a receiverAuthorizer address and resolveCallerIdentity",
     );
   }
-  const store = delegated.identityStore;
-  if (
-    !store ||
-    typeof store.bind !== "function" ||
-    typeof store.get !== "function" ||
-    typeof store.delete !== "function"
-  ) {
-    throw new Error("delegatedReceiverAuth.identityStore must implement bind, get, and delete");
-  }
   return delegated;
 }
 
+/** Receiver authorizer and caller identity read from one channel row, then history. */
+export interface ChannelBinding {
+  receiverAuthorizer: string | undefined;
+  callerIdentity: string;
+}
+
 /**
- * Receiver authorizer bound to a channel: the store, then the open
- * transaction. A store hit is not re-read. A history read is written back
- * when a store is configured.
+ * Receiver authorizer bound to a channel: the channel row, then the open
+ * transaction. A stored key is not re-read. A history read is written back
+ * with `recordOpen` when the row is absent. An empty stored key is a miss:
+ * discovery indexes a channel without the binding memo.
  *
- * @param store - Binding store, when configured
+ * @param storage - Channel storage
  * @param historyReader - Full-history open reader, when configured
  * @param network - CAIP-2 network the channel was opened on
  * @param channelId - Channel PDA
- * @returns The bound key, or undefined when neither source has it
+ * @param loaded - Row already read, so seal and refund do not get twice
+ * @returns The bound key and the caller identity on the row
  */
 export async function readReceiverAuthorizer(
-  store: BatchReceiverAuthorizerStore | undefined,
+  storage: PaymentChannelStorage,
   historyReader: BatchReceiverBindingHistoryReader | undefined,
   network: Network,
   channelId: string,
-): Promise<string | undefined> {
-  const stored = store ? (await store.get(network, channelId))?.receiverAuthorizer : undefined;
-  if (stored !== undefined) return stored;
-  if (!historyReader) return undefined;
+  loaded?: PaymentChannelRecord | undefined,
+): Promise<ChannelBinding> {
+  const record = loaded ?? (await storage.get(network, channelId));
+  const callerIdentity = record?.callerIdentity ?? "";
+  if (record?.receiverAuthorizer) {
+    return { callerIdentity, receiverAuthorizer: record.receiverAuthorizer };
+  }
+  if (!historyReader) return { callerIdentity, receiverAuthorizer: undefined };
   const fromHistory = await readBindingFromHistory(historyReader, network, channelId);
-  if (fromHistory === undefined) return undefined;
-  if (store) {
+  if (fromHistory === undefined) return { callerIdentity, receiverAuthorizer: undefined };
+  if (record === undefined) {
+    const requested: PaymentChannelRecord = {
+      callerIdentity: "",
+      channelId,
+      expiresAt: 0,
+      lastActivityAt: Date.now(),
+      network,
+      payTo: "",
+      receiverAuthorizer: fromHistory,
+      tokenProgram: "",
+    };
     try {
-      await store.bind({ channelId, network, receiverAuthorizer: fromHistory });
+      const write = await storage.recordOpen(requested);
+      checkOpenBindings(requested, write.record);
     } catch (error) {
-      if (error instanceof BatchReceiverAuthorizerConflictError) {
+      if (
+        error instanceof ReceiverAuthorizerConflictError ||
+        error instanceof CallerIdentityConflictError
+      ) {
         throw new Error(`${BatchError.RECEIVER_AUTHORIZER_MISMATCH}: ${error.message}`);
       }
       throw error;
     }
   }
-  return fromHistory;
+  return { callerIdentity, receiverAuthorizer: fromHistory };
+}
+
+/**
+ * Require a channel's stored binding to be the advertised key.
+ *
+ * @param bound - Resolved binding, undefined when unavailable
+ * @param advertised - `extra.receiverAuthorizer` of the request
+ * @param channelId - Channel PDA, for the message
+ * @returns The bound key
+ */
+export function requireReceiverAuthorizer(
+  bound: string | undefined,
+  advertised: string,
+  channelId: string,
+): string {
+  if (bound === undefined) {
+    throw new Error(
+      `${BatchError.RECEIVER_BINDING_UNAVAILABLE}: no receiver authorizer is bound to ${channelId}`,
+    );
+  }
+  if (bound !== advertised) {
+    throw new Error(
+      `${BatchError.RECEIVER_AUTHORIZER_MISMATCH}: advertised key is not the channel's binding`,
+    );
+  }
+  return bound;
 }
 
 /**
@@ -237,24 +313,6 @@ export async function resolveDelegatedIdentity(
 }
 
 /**
- * Identity recorded for a delegated channel.
- *
- * @param delegated - Delegated receiver-authorizer config, when opted in
- * @param network - CAIP-2 network the channel was opened on
- * @param channelId - Channel PDA
- * @returns Stored identity, or undefined when this facilitator has no row
- */
-export async function storedDelegatedIdentity(
-  delegated: BatchDelegatedReceiverAuth | undefined,
-  network: Network,
-  channelId: string,
-): Promise<string | undefined> {
-  const store = delegated?.identityStore;
-  if (!store) return undefined;
-  return (await store.get(network, channelId))?.callerIdentity;
-}
-
-/**
  * Sum the still-undistributed settled amount across channels.
  *
  * @param channels - Settled and already-paid watermarks
@@ -314,21 +372,6 @@ async function readBindingFromHistory(
 }
 
 /**
- * Whether a value can record and read receiver-authorizer bindings.
- *
- * @param value - Configured store
- * @returns True when bind, get, and delete are functions
- */
-function isReceiverAuthorizerStore(value: object): value is BatchReceiverAuthorizerStore {
-  const store = value as Partial<BatchReceiverAuthorizerStore>;
-  return (
-    typeof store.bind === "function" &&
-    typeof store.get === "function" &&
-    typeof store.delete === "function"
-  );
-}
-
-/**
  * Whether a value can page channel signatures and read their transactions.
  *
  * @param value - Configured history reader
@@ -340,4 +383,31 @@ function isReceiverBindingHistoryReader(value: object): value is BatchReceiverBi
     typeof historyReader.getSignaturesForAddress === "function" &&
     typeof historyReader.getTransaction === "function"
   );
+}
+
+/**
+ * The payment-channels treasury owner for `network`: the configured override,
+ * else the deployed program's owner for that network.
+ *
+ * @param config - Facilitator configuration
+ * @param network - CAIP-2 network of the requirements
+ * @returns Treasury owner address
+ */
+export function treasuryOwnerOf(config: BatchSvmFacilitatorConfig, network: string): Address {
+  if (config.paymentChannelsTreasuryOwner === undefined) {
+    return getPaymentChannelsTreasuryOwner(network);
+  }
+  if (!isAddress(config.paymentChannelsTreasuryOwner)) {
+    throw new Error("paymentChannelsTreasuryOwner must be a base58 Solana address");
+  }
+  return address(config.paymentChannelsTreasuryOwner);
+}
+
+/**
+ * Reject a configured treasury owner that is not a Solana address.
+ *
+ * @param config - Facilitator configuration
+ */
+export function assertTreasuryOwner(config: BatchSvmFacilitatorConfig): void {
+  if (config.paymentChannelsTreasuryOwner !== undefined) treasuryOwnerOf(config, "");
 }

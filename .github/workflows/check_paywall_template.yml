@@ -1,6 +1,16 @@
 name: Check Paywall Template
 
 on:
+  # Paywall source and generated files only: PRs that change bundled packages
+  # (core, mechanisms, lockfile) or only bump versions don't trigger this.
+  pull_request:
+    paths:
+      - "typescript/packages/http/paywall/src/**"
+      - "!typescript/packages/http/paywall/src/**/*.test.ts"
+      - "!typescript/packages/http/paywall/src/test-setup.ts"
+      - "python/x402/http/paywall/*_paywall_template.py"
+      - "go/http/*_paywall_template.go"
+      - ".github/workflows/check_paywall_template.yml"
   workflow_dispatch:
 
 permissions:

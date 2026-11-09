@@ -172,8 +172,13 @@ git config --global commit.gpgsign true
 The paywall is a browser UI component that exists across TypeScript, Go, and Python. If you modify paywall source files in TypeScript:
 
 ```bash
-cd typescript && pnpm --filter @x402/paywall build:paywall
+cd typescript
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm run build:paywall-deps
+pnpm --filter @x402/paywall build:paywall
 ```
+
+These are the steps CI runs. `build:paywall-deps` matters: the templates bundle the built `@x402/core` and mechanism packages, so stale builds produce different output.
 
 This generates template files in:
 - `typescript/packages/http/paywall/src/evm/gen/template.ts`
@@ -189,7 +194,7 @@ This generates template files in:
 
 **EVM `decimals.ts`:** The paywall assumes **6** decimals for EVM chains (the usual USDC-style default). The generated map only lists chains where `DEFAULT_ASSETS` uses a different `decimals` value on the first entry for that network. If you add or change one of those entries, run `build:paywall` and commit the updated `decimals.ts` with the template files above. For a plain 6-decimal default, nothing new is added to the map.
 
-Commit the generated files with your PR.
+Commit the generated files with your PR. The Check Paywall Template workflow regenerates them on pull requests that touch paywall source or the generated files, and fails if they differ. Because the bundle includes other packages and the lockfile, a regen can also pick up changes merged since the last one. Commit those too.
 
 ## New Schemes
 

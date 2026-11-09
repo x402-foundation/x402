@@ -34,7 +34,7 @@ Default listen address: `http://localhost:4022` (`PORT` to override).
 
 When `SVM_PRIVATE_KEY` is set, the example:
 
-1. Registers `UptoSvmScheme` with shared `InMemoryUptoChannelStorage`.
+1. Registers `UptoSvmScheme` with shared `InMemoryPaymentChannelStorage`.
 2. Creates a rent cleanup manager via `scheme.createRentCleanupManager(network)`.
 3. Starts an interval loop (`RENT_CLEANUP_INTERVAL_SECS`, default 300s).
 
@@ -46,13 +46,13 @@ Tune policy with:
 | `RENT_CLEANUP_ABANDON_GRACE_SECS` | `120`   | Grace after voucher expiry before abandon-close         |
 | `MAX_CHANNEL_LIFETIME_SECS`       | `3600`  | Max `maxTimeoutSeconds` / `expiresAt` at verify/deposit |
 
-For production, replace `InMemoryUptoChannelStorage` with a durable store so cleanup survives restarts and works across facilitator replicas.
+For production, replace `InMemoryPaymentChannelStorage` with a durable store so cleanup survives restarts and works across facilitator replicas.
 
 ## SVM receiver authorizer (optional delegation)
 
-This example registers `UptoSvmScheme` with a **fee payer only** — no `authorizerSigner` is configured, so `/supported` advertises `extra.feePayer` but not `extra.receiverAuthorizer`. Servers must sign their own claim vouchers (self-managed mode).
+By default this example registers `UptoSvmScheme` with a **fee payer only** — no `authorizerSigner`, so `/supported` advertises `extra.feePayer` but not `extra.receiverAuthorizer`. [`servers/upto/`](../../servers/upto/) without a local `SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY` delegates to whatever `receiverAuthorizer` the facilitator advertises and fails fast at startup if none is offered.
 
-To let resource servers delegate voucher signing to your facilitator, extend the SVM registration with a separate Ed25519 key and a `resolveCallerIdentity` hook. Delegation is not negotiated in x402 — it requires an out-of-band agreement with each resource server, and authenticated settle requests so claim vouchers are signed only for that server.
+Advertise delegation only when you can **authenticate resource-server settle requests out of band** (SIWX, JWT, mTLS, API credentials correlated across deposit and claim, and so on). You must pass an `authorizerSigner` and implement `resolveCallerIdentity` so each delegated deposit/claim settle resolves to a stable caller identity; the scheme records that identity at deposit and rejects claim settles that do not match. **Do not advertise `receiverAuthorizer` without that authentication.** This example does not configure delegation — wire it in your own facilitator as sketched below.
 
 | Signer                        | Role                                                                 | Onchain effect                                                      |
 | ----------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------- |
@@ -82,14 +82,12 @@ Wire it in your facilitator:
 ```typescript
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
-import { base58 } from "@scure/base";
 import { UptoSvmScheme } from "@x402/svm/upto/facilitator";
 
-const authorizerSigner = await createKeyPairSignerFromBytes(
-  base58.decode(process.env.SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY!),
-);
+const authorizerSigner =
+  await createKeyPairSignerFromBytes(/* dedicated Ed25519 key */);
 
-// Request-scoped identity for resolveCallerIdentity (replace with JWT/SIWX/mTLS in production).
+// Carry authenticated server identity into resolveCallerIdentity (JWT/SIWX/mTLS/etc.).
 const callerIdentity = new AsyncLocalStorage<string | undefined>();
 
 const scheme = new UptoSvmScheme(svmSigner, {
@@ -97,13 +95,12 @@ const scheme = new UptoSvmScheme(svmSigner, {
   maxChannelLifetimeSecs,
   authorizerSigner,
   resolveCallerIdentity: () => callerIdentity.getStore(),
-  // Optional for multi-replica facilitators; default is in-memory.
-  // delegatedAuthStore: sharedRedisDelegatedAuthStore,
 });
 
-// In POST /settle, authenticate the server and run settle inside the store:
+// Authenticate the resource server, then run verify/settle with that identity available
+// to resolveCallerIdentity (deposit and claim must see the same value).
 app.post("/settle", async (req, res) => {
-  const identity = authenticateServerSettleRequest(req); // your JWT / API credential check
+  const identity = authenticateResourceServer(req); // out-of-band auth — your implementation
   const response = await callerIdentity.run(identity, () =>
     facilitator.settle(paymentPayload, paymentRequirements),
   );
@@ -111,7 +108,7 @@ app.post("/settle", async (req, res) => {
 });
 ```
 
-> ⚠️ A facilitator that advertises `receiverAuthorizer` **must** authenticate that each claim settle comes from the same service whose deposit settle opened the channel (SIWX, JWT, mTLS, or an API credential correlated across both settles). The scheme records that identity at deposit and requires an exact match at claim. **Do not advertise `receiverAuthorizer` without real authentication.** The default identity binding store is in-memory; inject a shared `delegatedAuthStore` for multi-replica facilitators.
+Delegated caller identity is stored on the same `channelStorage` row as the channel (default in-memory). Use a durable, shared `channelStorage` when more than one facilitator replica can settle the same channel.
 
 ## API Endpoints
 

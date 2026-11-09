@@ -2,7 +2,7 @@ import { generateKeyPairSigner } from "@solana/kit";
 import { describe, expect, it, vi } from "vitest";
 
 import { BatchSvmScheme as BatchFacilitatorScheme } from "../../src/batch-settlement/facilitator/scheme";
-import { InMemoryBatchReceiverAuthorizerStore } from "../../src/batch-settlement/facilitator/receiverAuthorizerStore";
+import { InMemoryPaymentChannelStorage } from "../../src/payment-channels/storage";
 import { SOLANA_DEVNET_CAIP2 } from "../../src/constants";
 import { toFacilitatorSvmSigner } from "../../src/signer";
 
@@ -25,7 +25,7 @@ async function facilitator(getAccountInfo: ReturnType<typeof vi.fn>): Promise<In
   const wallet = await generateKeyPairSigner();
   const transport = { ...toFacilitatorSvmSigner(wallet), getAccountInfo };
   const scheme = new BatchFacilitatorScheme(transport, {
-    receiverAuthorizerStore: new InMemoryBatchReceiverAuthorizerStore(),
+    channelStorage: new InMemoryPaymentChannelStorage(),
   }) as unknown as Internals;
   vi.spyOn(scheme, "waitForChannelRead").mockResolvedValue(undefined);
   return scheme;

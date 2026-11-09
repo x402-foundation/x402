@@ -47,6 +47,7 @@ export const svmPaywall: PaywallNetworkHandler = {
       appName: config.appName,
       appLogo: config.appLogo,
       faucetUrls: config.faucetUrls,
+      rpcUrls: config.rpcUrls,
     });
   },
 };

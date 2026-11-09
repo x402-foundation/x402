@@ -1237,3 +1237,58 @@ func TestCreatePaymentPayloadSpendCapContext(t *testing.T) {
 		require.Equal(t, "500000", mockClient.createPaymentPayloadCalls[0].context.MaxAmountPerPayment)
 	})
 }
+
+type recoveringScheme struct {
+	mockFailableV2
+	calls *[]string
+}
+
+func (s *recoveringScheme) OnPaymentCreationFailure(ctx context.Context, failure PaymentCreationFailureContext) (*PaymentCreationFailureHookResult, error) {
+	*s.calls = append(*s.calls, "scheme")
+	if failure.PaymentRequired == nil {
+		return nil, nil
+	}
+	return &PaymentCreationFailureHookResult{
+		Recovered: true,
+		Payload: types.PaymentPayload{
+			X402Version: 2,
+			Accepted:    types.PaymentRequirements{Scheme: "mock", Network: "test", Amount: "1"},
+		},
+	}, nil
+}
+
+func TestSchemePaymentCreationFailureHandlerRunsAfterUserHooks(t *testing.T) {
+	requirements := types.PaymentRequirements{Scheme: "mock", Network: "test", Amount: "1"}
+	required := types.PaymentRequired{X402Version: 2, Accepts: []types.PaymentRequirements{requirements}}
+
+	t.Run("scheme handler runs after a user hook that does not recover", func(t *testing.T) {
+		var calls []string
+		client := Newx402Client()
+		client.Register(Network("test"), &recoveringScheme{mockFailableV2: mockFailableV2{fail: true}, calls: &calls})
+		client.OnPaymentCreationFailure(func(PaymentCreationFailureContext) (*PaymentCreationFailureHookResult, error) {
+			calls = append(calls, "failure")
+			return nil, nil
+		})
+		payload, err := client.CreatePaymentPayload(WithPaymentRequired(context.Background(), required), requirements, nil, nil)
+		require.NoError(t, err)
+		require.Equal(t, 2, payload.X402Version)
+		require.Equal(t, []string{"failure", "scheme"}, calls)
+	})
+
+	t.Run("user hook recovery skips the scheme handler", func(t *testing.T) {
+		var calls []string
+		client := Newx402Client()
+		client.Register(Network("test"), &recoveringScheme{mockFailableV2: mockFailableV2{fail: true}, calls: &calls})
+		client.OnPaymentCreationFailure(func(PaymentCreationFailureContext) (*PaymentCreationFailureHookResult, error) {
+			calls = append(calls, "failure")
+			return &PaymentCreationFailureHookResult{
+				Recovered: true,
+				Payload:   types.PaymentPayload{X402Version: 2, Accepted: requirements},
+			}, nil
+		})
+		payload, err := client.CreatePaymentPayload(WithPaymentRequired(context.Background(), required), requirements, nil, nil)
+		require.NoError(t, err)
+		require.Equal(t, requirements, payload.Accepted)
+		require.Equal(t, []string{"failure"}, calls)
+	})
+}

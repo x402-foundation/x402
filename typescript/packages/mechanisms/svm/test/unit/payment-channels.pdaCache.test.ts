@@ -4,9 +4,7 @@ vi.mock("@solana/kit", async importOriginal => {
   const actual = await importOriginal<typeof import("@solana/kit")>();
   return {
     ...actual,
-    getProgramDerivedAddress: vi.fn((...args: Parameters<typeof actual.getProgramDerivedAddress>) =>
-      actual.getProgramDerivedAddress(...args),
-    ),
+    getProgramDerivedAddress: vi.fn(),
   };
 });
 
@@ -14,6 +12,7 @@ import {
   address,
   generateKeyPairSigner,
   getAddressEncoder,
+  getBase64Codec,
   getProgramDerivedAddress,
   getU64Encoder,
   getUtf8Encoder,
@@ -23,20 +22,20 @@ import { PAYMENT_CHANNELS_PROGRAM_ID } from "../../src/payment-channels/onchain"
 import { findPaymentChannelPda } from "../../src/payment-channels/open";
 
 type Seeds = Parameters<typeof findPaymentChannelPda>[0];
+type DeriveArgs = Parameters<typeof getProgramDerivedAddress>[0];
 
-const actualKit = await vi.importActual<typeof import("@solana/kit")>("@solana/kit");
 const derive = vi.mocked(getProgramDerivedAddress);
 
 /**
- * Derives the channel PDA with the real kit and no cache, as the reference the
- * cached path must always agree with.
+ * Builds the same derivation inputs as {@link findPaymentChannelPda}.
  *
  * @param seeds - Channel PDA inputs
- * @returns The uncached channel PDA
+ * @returns Args passed to `getProgramDerivedAddress`
  */
-async function uncachedPda(seeds: Seeds): Promise<string> {
-  const [pda] = await actualKit.getProgramDerivedAddress({
-    programAddress: address(seeds.programId ?? PAYMENT_CHANNELS_PROGRAM_ID),
+function buildDeriveArgs(seeds: Seeds): DeriveArgs {
+  const programAddress = address(seeds.programId ?? PAYMENT_CHANNELS_PROGRAM_ID);
+  return {
+    programAddress,
     seeds: [
       getUtf8Encoder().encode("channel"),
       getAddressEncoder().encode(address(seeds.payer)),
@@ -46,7 +45,31 @@ async function uncachedPda(seeds: Seeds): Promise<string> {
       getU64Encoder().encode(seeds.salt),
       getU64Encoder().encode(seeds.openSlot),
     ],
-  });
+  };
+}
+
+/**
+ * Deterministic stand-in for on-chain PDA derivation (no RPC, no bump search).
+ *
+ * @param args - Program address and seed bytes
+ * @returns Mock PDA and bump
+ */
+async function fakeDerive(args: DeriveArgs): Promise<readonly [string, number]> {
+  const base64 = getBase64Codec();
+  const tag = [String(args.programAddress), ...args.seeds.map(seed => base64.decode(seed))].join(
+    ":",
+  );
+  return [`pda:${tag}`, 255];
+}
+
+/**
+ * Expected PDA from the stand-in derivation, bypassing the LRU cache and spy.
+ *
+ * @param seeds - Channel PDA inputs
+ * @returns The uncached channel PDA
+ */
+async function uncachedPda(seeds: Seeds): Promise<string> {
+  const [pda] = await fakeDerive(buildDeriveArgs(seeds));
   return pda;
 }
 
@@ -86,8 +109,8 @@ function settle(derivation: Promise<string>): Promise<string> {
 
 describe("findPaymentChannelPda cache", () => {
   beforeEach(() => {
-    derive.mockClear();
-    derive.mockImplementation(actualKit.getProgramDerivedAddress);
+    derive.mockReset();
+    derive.mockImplementation(fakeDerive);
   });
 
   it("returns the uncached PDA and derives each seed set only once", async () => {
@@ -293,7 +316,6 @@ describe("findPaymentChannelPda cache", () => {
   });
 
   it("holds 4,096 seed sets, evicting the least recently used", async () => {
-    // A stand-in derivation keeps this fast; only the cache is under test.
     let calls = 0;
     derive.mockImplementation(async () => [`pda-${calls++}`, 255] as never);
     const seeds = await freshSeeds();

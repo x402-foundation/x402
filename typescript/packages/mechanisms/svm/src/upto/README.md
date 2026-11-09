@@ -159,7 +159,7 @@ The upto facilitator's `getExtra()` returns a `feePayer` address and, when `auth
 
 A facilitator that advertises a `receiverAuthorizer` (so servers can delegate to it) must authenticate that each claim settle originates from the service whose deposit settle opened the channel (e.g. SIWX, JWT, or an API credential correlated across the two settles). The scheme records that identity at deposit and requires an exact match at claim. If the facilitator has no such authentication mechanism, omit `authorizerSigner` so no `receiverAuthorizer` is advertised; servers then supply their own voucher signatures.
 
-The default identity store is in-memory. A multi-replica facilitator must inject a shared `delegatedAuthStore`; a lost binding fails closed and the server cannot settle (the client still has `request_close`).
+Delegated mode stores the caller identity from `resolveCallerIdentity` on the channel row. A deposit records the row before broadcast and reverts it if that open fails definitively. Claims do not write storage; a delegated claim without `voucherSignature` reads the row and treats it as absent once `expiresAt` has passed. A missing or different identity rejects the claim.
 
 ## Supported Networks
 

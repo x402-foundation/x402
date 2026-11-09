@@ -18,7 +18,17 @@ export {
 } from "./trust";
 export {
   type BatchRefundOptions,
+  NoBatchChannelToRefundError,
   probeBatchRequirements,
   refundBatchChannel,
   type RefundPayloadOptions,
 } from "./refund";
+export {
+  buildBatchRefundPayload,
+  buildBatchTopUpPayload,
+  buildBatchVoucherPayload,
+  type BatchBuildArgs,
+  type BatchTrackedChannel,
+  type BatchTransactionBuildArgs,
+} from "./builders";
+export { checkCorrectiveState, type AdoptableCorrectiveState } from "./corrective";

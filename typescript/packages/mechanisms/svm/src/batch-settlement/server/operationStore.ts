@@ -19,7 +19,11 @@ export type BatchOperation =
 export interface BatchOperationStore {
   /** Fetch a reserved or completed request operation. */
   get(channelId: string, requestId: string): Promise<BatchOperation | undefined>;
-  /** Atomically create a request reservation unless the operation already exists. */
+  /**
+   * Atomically create a request reservation unless the operation already exists.
+   * An existing operation is returned unchanged, whatever its ceiling; the
+   * scheme rejects the reuse.
+   */
   reserve(
     channelId: string,
     requestId: string,
@@ -50,9 +54,6 @@ export class MemoryBatchOperationStore implements BatchOperationStore {
     return this.withLock(channelId, requestId, () => {
       const key = operationKey(channelId, requestId);
       const existing = this.operations.get(key);
-      if (existing && existing.ceiling !== ceiling) {
-        throw new Error("batch operation ceiling changed for a request id");
-      }
       if (existing) return { created: false, operation: existing };
       const operation: BatchOperation = {
         status: "reserved",

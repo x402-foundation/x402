@@ -15,7 +15,7 @@ registers the EVM upto scheme alongside `exact`.
 
 ## Prerequisites
 
-- Go 1.24+
+- Go 1.26.10+
 - A Solana Devnet key with SOL. The facilitator fronts channel rent and pays
   every transaction fee; it holds the channel payee seat with a **zero**
   distribution share, so it needs no token balance.
@@ -60,16 +60,22 @@ scheme := uptosvm.NewUptoSvmScheme(signer, &uptosvm.Config{
 
 ## SVM receiver authorizer (optional delegation)
 
-This example registers `UptoSvmScheme` with a **fee payer only** — no
-`AuthorizerSigner` is configured, so `/supported` advertises `extra.feePayer`
-but not `extra.receiverAuthorizer`. Servers must sign their own claim vouchers
-(self-managed mode).
+By default this example registers `UptoSvmScheme` with a **fee payer only** — no
+`AuthorizerSigner`, so `/supported` advertises `extra.feePayer` but not
+`extra.receiverAuthorizer`. [`servers/upto/`](../../servers/upto/) without a
+local `SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY` delegates to whatever
+`receiverAuthorizer` the facilitator advertises and fails fast at startup if
+none is offered.
 
-To let resource servers delegate voucher signing to your facilitator, extend
-the SVM registration with a separate Ed25519 key and a `ResolveCallerIdentity`
-hook. Delegation is not negotiated in x402 — it requires an out-of-band
-agreement with each resource server, and authenticated settle requests so
-claim vouchers are signed only for that server.
+Advertise delegation only when you can **authenticate resource-server settle
+requests out of band** (SIWX, JWT, mTLS, API credentials correlated across
+deposit and claim, and so on). You must pass an `AuthorizerSigner` and
+implement `ResolveCallerIdentity` so each delegated deposit/claim settle
+resolves to a stable caller identity; the scheme records that identity on the
+channel storage row at deposit and rejects claim settles that do not match.
+**Do not advertise `receiverAuthorizer` without that authentication.** This
+example does not configure delegation — wire it in your own facilitator as
+sketched below.
 
 | Signer | Role | Onchain effect |
 | ------ | ---- | -------------- |
@@ -98,27 +104,22 @@ When `AuthorizerSigner` is set, `GET /supported` includes both `feePayer` and
 Wire it in your facilitator:
 
 ```go
-authorizer, err := svmsigners.NewReceiverAuthorizerSignerFromPrivateKey(
-    os.Getenv("SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"),
-)
+authorizer, err := svmsigners.NewReceiverAuthorizerSignerFromPrivateKey(/* dedicated Ed25519 key */)
 
 scheme := uptosvm.NewUptoSvmScheme(signer, &uptosvm.Config{
-    ChannelStorage:            channelStorage,
-    MaxChannelLifetimeSecs:    &maxChannelLifetimeSecs,
-    AuthorizerSigner:          authorizer,
-    ResolveCallerIdentity:     resolveCallerIdentity, // JWT / SIWX / mTLS subject
-    // Optional for multi-replica facilitators; default is in-memory.
-    // DelegatedAuthStore: sharedRedisDelegatedAuthStore,
+    ChannelStorage:         channelStorage,
+    MaxChannelLifetimeSecs: &maxChannelLifetimeSecs,
+    AuthorizerSigner:       authorizer,
+    ResolveCallerIdentity:  resolveCallerIdentity, // out-of-band auth — your implementation
 })
+
+// Authenticate the resource server, then call Verify/Settle with that identity
+// available to ResolveCallerIdentity (deposit and claim must see the same value).
 ```
 
-> ⚠️ A facilitator that advertises `receiverAuthorizer` **must** authenticate
-> that each claim settle comes from the same service whose deposit settle
-> opened the channel (SIWX, JWT, mTLS, or an API credential correlated across
-> both settles). The scheme records that identity at deposit and requires an
-> exact match at claim. **Do not advertise `receiverAuthorizer` without real
-> authentication.** The default identity binding store is in-memory; inject a
-> shared `DelegatedAuthStore` for multi-replica facilitators.
+Delegated caller identity is stored on the same `ChannelStorage` row as the
+channel (default in-memory). Use durable, shared `ChannelStorage` when more
+than one facilitator replica can settle the same channel.
 
 ## API endpoints
 
@@ -131,10 +132,9 @@ The standard x402 facilitator surface: `POST /verify`, `POST /settle`,
 # Terminal 1 — facilitator (this example)
 go run .
 
-# Terminal 2 — resource server
+# Terminal 2 — resource server (self-managed authorizer key, or omit key to delegate)
 cd ../../servers/upto
 SVM_PAYEE_ADDRESS=<base58> \
-SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY=<base58> \
 FACILITATOR_URL=http://localhost:4022 go run .
 
 # Terminal 3 — client

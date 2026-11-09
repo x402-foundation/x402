@@ -14,7 +14,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { BatchSvmScheme as BatchClientScheme } from "../../src/batch-settlement/client/scheme";
 import { BatchSvmScheme as BatchFacilitatorScheme } from "../../src/batch-settlement/facilitator/scheme";
-import { InMemoryBatchReceiverAuthorizerStore } from "../../src/batch-settlement/facilitator/receiverAuthorizerStore";
+import { InMemoryPaymentChannelStorage } from "../../src/payment-channels/storage";
 import { BatchSvmScheme as BatchServerScheme } from "../../src/batch-settlement/server/scheme";
 import { BatchChannelManager } from "../../src/batch-settlement/server/channelManager";
 import { MemoryChannelStore } from "../../src/batch-settlement/server/storage";
@@ -185,7 +185,7 @@ describe("batch-settlement SVM onchain", () => {
       const facilitator = new x402Facilitator().register(
         NETWORK,
         new BatchFacilitatorScheme(toFacilitatorSvmSigner(operator, { defaultRpcUrl: RPC_URL }), {
-          receiverAuthorizerStore: new InMemoryBatchReceiverAuthorizerStore(),
+          channelStorage: new InMemoryPaymentChannelStorage(),
         }),
       );
       const server = new x402ResourceServer(new SvmFacilitatorClient(facilitator));
@@ -380,7 +380,7 @@ describe("batch-settlement SVM onchain", () => {
       const facilitator = new x402Facilitator().register(
         NETWORK,
         new BatchFacilitatorScheme(facilitatorSigner, {
-          receiverAuthorizerStore: new InMemoryBatchReceiverAuthorizerStore(),
+          channelStorage: new InMemoryPaymentChannelStorage(),
         }),
       );
       const before = await usdcBalance(receiver.address);
@@ -421,7 +421,7 @@ describe("batch-settlement SVM onchain", () => {
       const facilitator = new x402Facilitator().register(
         NETWORK,
         new BatchFacilitatorScheme(toFacilitatorSvmSigner(operator, { defaultRpcUrl: RPC_URL }), {
-          receiverAuthorizerStore: new InMemoryBatchReceiverAuthorizerStore(),
+          channelStorage: new InMemoryPaymentChannelStorage(),
         }),
       );
       const server = new x402ResourceServer(new SvmFacilitatorClient(facilitator));
@@ -508,7 +508,7 @@ describe("batch-settlement SVM onchain", () => {
         const facilitator = new x402Facilitator().register(
           NETWORK,
           new BatchFacilitatorScheme(facilitatorSigner, {
-            receiverAuthorizerStore: new InMemoryBatchReceiverAuthorizerStore(),
+            channelStorage: new InMemoryPaymentChannelStorage(),
           }),
         );
         const server = new x402ResourceServer(new SvmFacilitatorClient(facilitator));

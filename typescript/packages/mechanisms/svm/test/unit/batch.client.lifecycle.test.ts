@@ -4,6 +4,7 @@ import type { PaymentRequirements } from "@x402/core/types";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BatchChannelTracker } from "../../src/batch-settlement/client/channel";
+import { NoBatchChannelToRefundError } from "../../src/batch-settlement/client/refund";
 import {
   BatchSvmScheme,
   type BatchClientChannelRecord,
@@ -787,5 +788,82 @@ describe("batch client lifecycle", () => {
       x402Version: 2,
       payload: { type: "refund", voucher: { channelId: RECEIVER, maxClaimableAmount: "1000" } },
     });
+  });
+
+  it("refunds a persisted server-signed channel after restart without discovery", async () => {
+    const operator = await generateKeyPairSigner();
+    const { records, storage } = memoryStorage();
+    const serverRequirements = requirements({
+      extra: {
+        ...requirements().extra,
+        operator: operator.address,
+        voucherSigner: "server",
+      },
+    });
+    const client = new BatchSvmScheme(payer, {
+      channelStorage: storage,
+      discoverChannels: false,
+      serverSignedChannelsPolicy: { allowedOperators: [operator.address] },
+    });
+    const api = internals(client);
+    const key = api.channelKey(serverRequirements, feePayer.address, 900);
+    records.set(key, {
+      channelConfig: {
+        openSlot: 123,
+        payer: payer.address,
+        payerAuthorizer: operator.address,
+        receiver: RECEIVER,
+        receiverAuthorizer: receiverAuthorizer.address,
+        salt: "0",
+        token: MINT,
+        voucherSigner: "server",
+        withdrawDelay: 900,
+      },
+      channelId: RECEIVER,
+      chargedCumulativeAmount: "1000",
+      deposit: "5000",
+    });
+
+    await expect(
+      new BatchSvmScheme(payer, {
+        channelStorage: storage,
+        discoverChannels: false,
+      }).createRefundPayload(2, serverRequirements),
+    ).rejects.toBeInstanceOf(NoBatchChannelToRefundError);
+    expect(storage.get).not.toHaveBeenCalledWith(key);
+    vi.clearAllMocks();
+
+    const restarted = new BatchSvmScheme(payer, {
+      channelStorage: storage,
+      discoverChannels: false,
+      serverSignedChannelsPolicy: { allowedOperators: [operator.address] },
+    });
+    const cooperative = await restarted.createRefundPayload(2, serverRequirements);
+
+    expect(cooperative).toMatchObject({
+      x402Version: 2,
+      payload: {
+        authorization: { authorizedAmount: "0", channelId: RECEIVER },
+        type: "refund",
+      },
+    });
+    expect(storage.get).toHaveBeenCalledWith(key);
+    expect(storage.set).not.toHaveBeenCalled();
+    expect(records.size).toBe(1);
+  });
+
+  it("reports no channel when the probe is server-signed and nothing is open", async () => {
+    const operator = await generateKeyPairSigner();
+    const client = new BatchSvmScheme(payer, { discoverChannels: false });
+    const serverFirstProbe = requirements({
+      extra: {
+        ...requirements().extra,
+        operator: operator.address,
+        voucherSigner: "server",
+      },
+    });
+    await expect(client.createRefundPayload(2, serverFirstProbe)).rejects.toBeInstanceOf(
+      NoBatchChannelToRefundError,
+    );
   });
 });

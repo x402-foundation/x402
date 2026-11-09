@@ -285,6 +285,20 @@ describe("Network Handlers", () => {
       expect(html).toContain("https://fallback.example/path");
       expect(html).toContain('appName: "App \\"Name\\""');
     });
+
+    it("injects rpcUrls as a script-safe JSON object keyed by CAIP-2 network", () => {
+      const html = svmPaywall.generateHtml(svmRequirement, mockPaymentRequired, {
+        rpcUrls: { [svmRequirement.network]: 'https://rpc.example/?key="k"</script>' },
+      });
+      expect(html).toContain(
+        'rpcUrls: {"solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp":"https://rpc.example/?key=\\"k\\"\\u003c/script>"},',
+      );
+    });
+
+    it("leaves rpcUrls undefined when not configured so the public default is used", () => {
+      const html = svmPaywall.generateHtml(svmRequirement, mockPaymentRequired, {});
+      expect(html).toContain("rpcUrls: undefined,");
+    });
   });
 
   describe("avmPaywall", () => {

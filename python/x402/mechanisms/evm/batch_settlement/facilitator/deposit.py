@@ -42,6 +42,7 @@ from ..constants import (
 from ..errors import (
     ERR_CUMULATIVE_AMOUNT_BELOW_CLAIMED,
     ERR_CUMULATIVE_EXCEEDS_BALANCE,
+    ERR_DEPOSIT_PAYLOAD,
     ERR_DEPOSIT_SIMULATION_FAILED,
     ERR_DEPOSIT_TRANSACTION_FAILED,
     ERR_FACTORY_NOT_ALLOWED,
@@ -64,6 +65,7 @@ from .deposit_permit2 import (
     verify_permit2_deposit_authorization,
 )
 from .utils import (
+    parse_requirements_amount,
     read_channel_state,
     to_contract_channel_config,
     validate_channel_config,
@@ -674,6 +676,15 @@ def _verify_shared_deposit_state(
     if config_err:
         return VerifyResponse(is_valid=False, invalid_reason=config_err, payer=payer)
 
+    price = parse_requirements_amount(requirements.amount)
+    if price is None:
+        return VerifyResponse(
+            is_valid=False,
+            invalid_reason=ERR_DEPOSIT_PAYLOAD,
+            invalid_message="invalid requirements amount",
+            payer=payer,
+        )
+
     voucher_ok = verify_batch_settlement_voucher_typed_data(
         signer,
         channel_id=voucher.channel_id,
@@ -738,7 +749,7 @@ def _verify_shared_deposit_state(
         return VerifyResponse(
             is_valid=False, invalid_reason=ERR_CUMULATIVE_EXCEEDS_BALANCE, payer=payer
         )
-    if max_claimable <= ch_total_claimed:
+    if max_claimable < ch_total_claimed + price or max_claimable <= ch_total_claimed:
         return VerifyResponse(
             is_valid=False,
             invalid_reason=ERR_CUMULATIVE_AMOUNT_BELOW_CLAIMED,

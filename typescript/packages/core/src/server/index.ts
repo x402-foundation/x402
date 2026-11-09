@@ -1,4 +1,8 @@
-export { x402ResourceServer } from "./x402ResourceServer";
+export {
+  x402ResourceServer,
+  AfterSettleAbortError,
+  isAfterSettleAborted,
+} from "./x402ResourceServer";
 export type {
   ResourceConfig,
   PaymentRequiredContext,

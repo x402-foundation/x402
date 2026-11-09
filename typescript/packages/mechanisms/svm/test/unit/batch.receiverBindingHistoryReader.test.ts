@@ -9,12 +9,12 @@ import {
   readReceiverAuthorizer,
   resolveDelegatedIdentity,
 } from "../../src/batch-settlement/facilitator/bindingSource";
-import { InMemoryBatchDelegatedAuthStore } from "../../src/batch-settlement/facilitator/delegatedAuthStore";
-import {
-  BatchReceiverAuthorizerConflictError,
-  InMemoryBatchReceiverAuthorizerStore,
-} from "../../src/batch-settlement/facilitator/receiverAuthorizerStore";
 import type { BatchReceiverBindingHistoryReader } from "../../src/batch-settlement/facilitator/types";
+import {
+  InMemoryPaymentChannelStorage,
+  ReceiverAuthorizerConflictError,
+  type PaymentChannelStorage,
+} from "../../src/payment-channels/storage";
 import { BatchError } from "../../src/batch-settlement/errors";
 import { BatchSvmScheme } from "../../src/batch-settlement/facilitator/scheme";
 import {
@@ -61,7 +61,9 @@ function signer() {
   return {
     getAccountInfo: vi.fn(),
     getAddresses: () => [feePayer.address],
+    getLatestBlockhash: vi.fn(),
     getSigner: () => feePayer,
+    getSlot: vi.fn(),
   };
 }
 
@@ -84,16 +86,18 @@ describe("readReceiverBindingFromOpen", () => {
 });
 
 describe("batch-settlement binding source", () => {
-  it("rejects a facilitator with neither a store nor a history reader", () => {
-    expect(() => new BatchSvmScheme(signer() as never)).toThrow(/receiverAuthorizerStore/);
+  it("defaults channel storage and does not adopt history methods from the signer", () => {
+    expect(() => new BatchSvmScheme(signer() as never)).not.toThrow();
+    const withSignerHistory = new BatchSvmScheme({
+      ...signer(),
+      getSignaturesForAddress: vi.fn(),
+      getTransaction: vi.fn(),
+    } as never);
+    expect(withSignerHistory.getChannelStorage()).toBeDefined();
     expect(
-      () =>
-        new BatchSvmScheme({
-          ...signer(),
-          getSignaturesForAddress: vi.fn(),
-          getTransaction: vi.fn(),
-        } as never),
-    ).toThrow(/receiverAuthorizerStore/);
+      (withSignerHistory as unknown as { receiverBindingHistoryReader?: unknown })
+        .receiverBindingHistoryReader,
+    ).toBeUndefined();
     expect(
       () =>
         new BatchSvmScheme(signer() as never, {
@@ -106,7 +110,7 @@ describe("batch-settlement binding source", () => {
 
   it("resolves an open from history, skips a failed transaction, and writes the store back", async () => {
     const open = await buildOpenPaymentChannelTransaction(openArgs());
-    const store = new InMemoryBatchReceiverAuthorizerStore();
+    const store = new InMemoryPaymentChannelStorage();
     const fetched: string[] = [];
     const historyReader: BatchReceiverBindingHistoryReader = {
       getSignaturesForAddress: async (_network, _address, options) => {
@@ -130,7 +134,7 @@ describe("batch-settlement binding source", () => {
     };
     await expect(
       readReceiverAuthorizer(store, historyReader, NETWORK, open.channelId),
-    ).resolves.toBe(server.address);
+    ).resolves.toMatchObject({ receiverAuthorizer: server.address });
     expect(fetched).toEqual(["the-open"]);
     expect((await store.get(NETWORK, open.channelId))?.receiverAuthorizer).toBe(server.address);
   });
@@ -141,7 +145,7 @@ describe("batch-settlement binding source", () => {
       openArgs({ memo: encodeReceiverBindingMemo(payer.address) }),
     );
     let wire = missing.transaction;
-    const store = new InMemoryBatchReceiverAuthorizerStore();
+    const store = new InMemoryPaymentChannelStorage();
     const historyReader: BatchReceiverBindingHistoryReader = {
       getSignaturesForAddress: async () => [{ err: null, signature: "only" }],
       getTransaction: async () => wire,
@@ -149,19 +153,28 @@ describe("batch-settlement binding source", () => {
 
     await expect(
       readReceiverAuthorizer(store, historyReader, NETWORK, missing.channelId),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ receiverAuthorizer: undefined });
     wire = doubled.transaction;
     await expect(
       readReceiverAuthorizer(store, historyReader, NETWORK, doubled.channelId),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ receiverAuthorizer: undefined });
     expect(await store.get(NETWORK, missing.channelId)).toBeUndefined();
     expect(await store.get(NETWORK, doubled.channelId)).toBeUndefined();
   });
 
   it("returns a store hit without consulting history", async () => {
-    const store = new InMemoryBatchReceiverAuthorizerStore();
+    const store = new InMemoryPaymentChannelStorage();
     const channelId = "stored-channel";
-    await store.bind({ channelId, network: NETWORK, receiverAuthorizer: server.address });
+    await store.recordOpen({
+      callerIdentity: "",
+      channelId,
+      expiresAt: 0,
+      lastActivityAt: Date.now(),
+      network: NETWORK,
+      payTo: "",
+      receiverAuthorizer: server.address,
+      tokenProgram: TOKEN_PROGRAM_ADDRESS,
+    });
     const historyReader: BatchReceiverBindingHistoryReader = {
       getSignaturesForAddress: vi.fn(async () => {
         throw new Error("history should not run");
@@ -169,9 +182,11 @@ describe("batch-settlement binding source", () => {
       getTransaction: vi.fn(),
     };
 
-    await expect(readReceiverAuthorizer(store, historyReader, NETWORK, channelId)).resolves.toBe(
-      server.address,
-    );
+    await expect(
+      readReceiverAuthorizer(store, historyReader, NETWORK, channelId),
+    ).resolves.toMatchObject({
+      receiverAuthorizer: server.address,
+    });
     expect(historyReader.getSignaturesForAddress).not.toHaveBeenCalled();
   });
 
@@ -181,23 +196,29 @@ describe("batch-settlement binding source", () => {
       getSignaturesForAddress: async () => [{ err: null, signature: "open" }],
       getTransaction: async () => open.transaction,
     };
-    const conflictStore = {
-      bind: vi.fn(async () => {
-        throw new BatchReceiverAuthorizerConflictError();
-      }),
+    const conflictStore: PaymentChannelStorage = {
       delete: vi.fn(),
       get: vi.fn(async () => undefined),
+      list: vi.fn(),
+      recordActivity: vi.fn(),
+      recordOpen: vi.fn(async () => {
+        throw new ReceiverAuthorizerConflictError();
+      }),
+      revertOpen: vi.fn(),
     };
     await expect(
       readReceiverAuthorizer(conflictStore, historyReader, NETWORK, open.channelId),
     ).rejects.toThrow(BatchError.RECEIVER_AUTHORIZER_MISMATCH);
 
-    const failingStore = {
-      bind: vi.fn(async () => {
-        throw new Error("disk full");
-      }),
+    const failingStore: PaymentChannelStorage = {
       delete: vi.fn(),
       get: vi.fn(async () => undefined),
+      list: vi.fn(),
+      recordActivity: vi.fn(),
+      recordOpen: vi.fn(async () => {
+        throw new Error("disk full");
+      }),
+      revertOpen: vi.fn(),
     };
     await expect(
       readReceiverAuthorizer(failingStore, historyReader, NETWORK, open.channelId),
@@ -206,9 +227,7 @@ describe("batch-settlement binding source", () => {
 
   it("validates binding-source and delegated-auth configuration", () => {
     expect(assertDelegatedReceiverAuth(undefined)).toBeUndefined();
-    const identityStore = new InMemoryBatchDelegatedAuthStore();
     const delegated = {
-      identityStore,
       receiverAuthorizer: server.address,
       resolveCallerIdentity: async () => "caller",
     };
@@ -223,25 +242,21 @@ describe("batch-settlement binding source", () => {
     expect(() =>
       assertDelegatedReceiverAuth({
         ...delegated,
-        identityStore: { bind: vi.fn() } as never,
+        resolveCallerIdentity: undefined as never,
       }),
-    ).toThrow(/identityStore must implement/);
+    ).toThrow(/resolveCallerIdentity/);
 
+    expect(() => assertBindingSource(undefined, undefined)).not.toThrow();
+    expect(() => assertBindingSource({ recordOpen: vi.fn() } as never, undefined)).toThrow(
+      /channelStorage must implement/,
+    );
     expect(() =>
-      assertBindingSource({
-        receiverAuthorizerStore: { bind: vi.fn() } as never,
-      }),
-    ).toThrow(/receiverAuthorizerStore must implement/);
-    expect(() =>
-      assertBindingSource({
-        receiverBindingHistoryReader: { getSignaturesForAddress: vi.fn() } as never,
-      }),
+      assertBindingSource(undefined, { getSignaturesForAddress: vi.fn() } as never),
     ).toThrow(/receiverBindingHistoryReader must implement/);
   });
 
   it("resolves delegated identity and recognizes the delegated authorizer key", async () => {
     const delegated = {
-      identityStore: new InMemoryBatchDelegatedAuthStore(),
       receiverAuthorizer: server.address,
       resolveCallerIdentity: vi.fn(),
     };

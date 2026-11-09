@@ -10,6 +10,15 @@ import type { PaymentRequirements, SettleResponse } from "@x402/core/types";
 import { BatchError } from "../errors";
 import { BATCH_SETTLEMENT_SCHEME, isBatchPayload, type BatchChannelConfig } from "../types";
 
+/** No open batch-settlement channel exists for this route on the SVM scheme. */
+export class NoBatchChannelToRefundError extends Error {
+  /** Creates an error when no open batch-settlement channel exists to refund. */
+  constructor() {
+    super("no batch-settlement channel to refund");
+    this.name = "NoBatchChannelToRefundError";
+  }
+}
+
 /**
  * Match probed 402 requirements to the channel the refund payload closes.
  *
@@ -41,6 +50,16 @@ export function alignRefundRequirements(
   const { operator: _operator, ...clientExtra } = extra ?? {};
   void _operator;
   return { ...probed, extra: { ...clientExtra, voucherSigner: "client" } };
+}
+
+/**
+ * Strip server-signed probe fields before refund discovery when no channel is cached.
+ *
+ * @param probed - Requirements from an unpaid GET on the route
+ * @returns Requirements with client voucher-signer mode for discovery
+ */
+export function clientSignedRefundRequirements(probed: PaymentRequirements): PaymentRequirements {
+  return alignRefundRequirements(probed, { voucherSigner: "client" } as BatchChannelConfig);
 }
 
 /**

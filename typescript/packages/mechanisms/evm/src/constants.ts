@@ -19,6 +19,7 @@ export const EVM_NETWORK_CHAIN_ID_MAP = {
   "skale-base-sepolia": 324705682,
   megaeth: 4326,
   monad: 143,
+  "monad-testnet": 10143,
   stable: 988,
   "stable-testnet": 2201,
   celo: 42220,

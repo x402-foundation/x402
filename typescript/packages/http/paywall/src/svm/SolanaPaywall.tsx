@@ -1,16 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { WalletAccount } from "@wallet-standard/base";
 import type { WalletWithSolanaFeatures } from "@solana/wallet-standard-features";
 
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { x402Client } from "@x402/core/client";
 import { encodePaymentSignatureHeader } from "@x402/core/http";
-import type { PaymentRequired } from "@x402/core/types";
+import type { Network, PaymentRequired } from "@x402/core/types";
 
 import { Spinner } from "./Spinner";
 import { getNetworkDisplayName, isTestnetNetwork, SOLANA_NETWORK_REFS } from "../paywallUtils";
 import { resolveFaucetUrl } from "../faucetUrls";
-import { getStandardConnectFeature, getStandardDisconnectFeature } from "./solana/features";
+import {
+  getSolanaSignTransactionFeature,
+  getStandardConnectFeature,
+  getStandardDisconnectFeature,
+} from "./solana/features";
+import { getClientTransactionVersions } from "./solana/transactionVersions";
 import { useSolanaBalance } from "./solana/useSolanaBalance";
 import { useSolanaSigner } from "./solana/useSolanaSigner";
 import { useSolanaWalletEvents } from "./solana/useSolanaWalletEvents";
@@ -50,6 +55,7 @@ export function SolanaPaywall({ paymentRequired, onSuccessfulResponse }: SolanaP
   }
 
   const network = firstRequirement.network;
+  const rpcUrl = x402.rpcUrls?.[network];
   const chainName = getNetworkDisplayName(network);
   const tokenName = (firstRequirement.extra?.name as string) || "USDC";
   const testnet = isTestnetNetwork(network);
@@ -61,6 +67,7 @@ export function SolanaPaywall({ paymentRequired, onSuccessfulResponse }: SolanaP
     useSolanaBalance({
       activeAccount,
       paymentRequired,
+      rpcUrl,
       onStatus: setStatus,
     });
 
@@ -69,6 +76,17 @@ export function SolanaPaywall({ paymentRequired, onSuccessfulResponse }: SolanaP
     activeAccount,
     targetChain,
   });
+
+  // Build transaction v1 only for wallets that declare they can sign it.
+  const transactionVersions = useMemo(
+    () =>
+      getClientTransactionVersions(
+        activeWallet
+          ? getSolanaSignTransactionFeature(activeWallet)?.supportedTransactionVersions
+          : undefined,
+      ),
+    [activeWallet],
+  );
 
   useEffect(() => {
     if (!selectedWalletValue && walletOptions.length === 1) {
@@ -186,7 +204,17 @@ export function SolanaPaywall({ paymentRequired, onSuccessfulResponse }: SolanaP
 
       const client = new x402Client();
       client.setSpendControls(false); // UI already confirms
-      client.register("solana:*", new ExactSvmScheme(walletSigner));
+      client.register("solana:*", new ExactSvmScheme(walletSigner, { transactionVersions }));
+      // Exact network matches take precedence over the wildcard, so each
+      // configured network gets its own RPC whichever requirement is selected.
+      for (const [rpcNetwork, url] of Object.entries(x402.rpcUrls ?? {})) {
+        if (rpcNetwork.startsWith("solana:")) {
+          client.register(
+            rpcNetwork as Network,
+            new ExactSvmScheme(walletSigner, { rpcUrl: url, transactionVersions }),
+          );
+        }
+      }
 
       const paymentPayload = await client.createPaymentPayload(paymentRequired);
 
@@ -213,6 +241,7 @@ export function SolanaPaywall({ paymentRequired, onSuccessfulResponse }: SolanaP
   }, [
     x402,
     walletSigner,
+    transactionVersions,
     activeAccount,
     usdcBalance,
     refreshBalance,

@@ -1,14 +1,16 @@
 import { address, generateKeyPairSigner, type Signature } from "@solana/kit";
 import type { PaymentRequirements } from "@x402/core/types";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { settlementAtaReader } from "./helpers/tokenAccount";
 
 import { buildDepositPayload } from "../../src/batch-settlement/client/channel";
 import { BatchError } from "../../src/batch-settlement/errors";
 import {
-  BatchDelegatedAuthIdentityConflictError,
-  InMemoryBatchDelegatedAuthStore,
-} from "../../src/batch-settlement/facilitator/delegatedAuthStore";
-import { InMemoryBatchReceiverAuthorizerStore } from "../../src/batch-settlement/facilitator/receiverAuthorizerStore";
+  CallerIdentityConflictError,
+  InMemoryPaymentChannelStorage,
+  checkOpenBindings,
+  type PaymentChannelRecord,
+} from "../../src/payment-channels/storage";
 import { BatchSvmScheme } from "../../src/batch-settlement/facilitator/scheme";
 import type {
   BatchChannelConfig,
@@ -19,7 +21,7 @@ import { SOLANA_DEVNET_CAIP2, TOKEN_PROGRAM_ADDRESS } from "../../src/constants"
 import { USDC_DEVNET_ADDRESS, USDC_MAINNET_ADDRESS } from "../../src/defaultAssets";
 import type { Channel } from "../../src/payment-channels/generated/accounts/channel";
 import { getChannelDistributionHash } from "../../src/payment-channels/facilitator";
-import { ChannelStatus } from "../../src/payment-channels/onchain";
+import { ChannelStatus, getPaymentChannelsTreasuryOwner } from "../../src/payment-channels/onchain";
 import { signVoucher } from "../../src/payment-channels/voucher";
 
 const NETWORK = SOLANA_DEVNET_CAIP2;
@@ -59,7 +61,12 @@ function requirements(receiverAuthorizer = server.address): PaymentRequirements 
 function signer() {
   return {
     confirmTransaction: vi.fn().mockResolvedValue(undefined),
-    getAccountInfo: vi.fn().mockResolvedValue({ owner: TOKEN_PROGRAM_ADDRESS }),
+    getAccountInfo: vi.fn().mockImplementation(
+      settlementAtaReader({
+        mint: MINT,
+        owners: () => [payer.address, RECEIVER, getPaymentChannelsTreasuryOwner(NETWORK)],
+      }),
+    ),
     getAddresses: () => [feePayer.address],
     getLatestBlockhash: vi.fn(),
     getSigner: () => feePayer,
@@ -93,27 +100,53 @@ function channel(channelConfig: BatchChannelConfig, overrides: Partial<Channel> 
   };
 }
 
+function channelRecord(
+  channelId: string,
+  overrides: Partial<PaymentChannelRecord> = {},
+): PaymentChannelRecord {
+  return {
+    callerIdentity: "",
+    channelId,
+    expiresAt: 0,
+    lastActivityAt: Date.now(),
+    network: NETWORK,
+    payTo: RECEIVER,
+    receiverAuthorizer: server.address,
+    tokenProgram: TOKEN_PROGRAM_ADDRESS,
+    ...overrides,
+  };
+}
+
 function delegatedScheme(identity: string | undefined, options: { delegate?: boolean } = {}) {
-  const identities = new InMemoryBatchDelegatedAuthStore();
-  const bindings = new InMemoryBatchReceiverAuthorizerStore();
+  const storage = new InMemoryPaymentChannelStorage();
   const scheme = new BatchSvmScheme(signer() as never, {
-    receiverAuthorizerStore: bindings,
+    channelStorage: storage,
     ...(options.delegate === false
       ? {}
       : {
           delegatedReceiverAuth: {
-            identityStore: identities,
             receiverAuthorizer: server.address,
             resolveCallerIdentity: () => identity,
           },
         }),
   });
-  return { bindings, identities, scheme };
+  return { scheme, storage };
 }
 
 describe("batch-settlement delegated receiver authorization", () => {
+  it("offers delegated mode with the default channel storage", () => {
+    const scheme = new BatchSvmScheme(signer() as never, {
+      delegatedReceiverAuth: {
+        receiverAuthorizer: server.address,
+        resolveCallerIdentity: () => CALLER,
+      },
+    });
+    expect(scheme.getExtra(NETWORK)).toMatchObject({ receiverAuthorizer: server.address });
+    expect(scheme.getChannelStorage()).toBeDefined();
+  });
+
   it("advertises the delegated key and binds the caller on open", async () => {
-    const { identities, scheme } = delegatedScheme(CALLER);
+    const { scheme, storage } = delegatedScheme(CALLER);
     expect(scheme.getExtra(NETWORK)).toMatchObject({ receiverAuthorizer: server.address });
 
     const opened = await buildDepositPayload({
@@ -139,20 +172,20 @@ describe("batch-settlement delegated receiver authorization", () => {
       );
     api.broadcastDurably = vi.fn().mockResolvedValue({ ok: true, signature: SIGNATURE });
     api.completeOrPending = vi.fn().mockResolvedValue(undefined);
-    api.trackChannel = vi.fn().mockResolvedValue(undefined);
 
     const openedResult = await scheme.settle(
       { accepted: requirements(), payload: opened.payload, x402Version: 2 },
       requirements(),
     );
     expect(openedResult.success, JSON.stringify(openedResult)).toBe(true);
-    expect(await identities.get(NETWORK, opened.channelId)).toMatchObject({
+    expect(await storage.get(NETWORK, opened.channelId)).toMatchObject({
       callerIdentity: CALLER,
+      receiverAuthorizer: server.address,
     });
   });
 
   it("rejects a delegated open with no caller identity", async () => {
-    const { identities, scheme } = delegatedScheme(undefined);
+    const { scheme, storage } = delegatedScheme(undefined);
     const opened = await buildDepositPayload({
       blockhash: { blockhash: RECEIVER, lastValidBlockHeight: 1n },
       depositAmount: 10_000n,
@@ -170,7 +203,6 @@ describe("batch-settlement delegated receiver authorization", () => {
     const api = scheme as unknown as Record<string, ReturnType<typeof vi.fn>>;
     api.readChannel = vi.fn().mockResolvedValue(undefined);
     api.broadcastDurably = vi.fn();
-    api.trackChannel = vi.fn().mockResolvedValue(undefined);
 
     await expect(
       scheme.settle(
@@ -182,7 +214,7 @@ describe("batch-settlement delegated receiver authorization", () => {
       success: false,
     });
     expect(api.broadcastDurably).not.toHaveBeenCalled();
-    expect(await identities.get(NETWORK, opened.channelId)).toBeUndefined();
+    expect(await storage.get(NETWORK, opened.channelId)).toBeUndefined();
   });
 
   it("seals and refunds a matching caller without closeAuthorization", async () => {
@@ -200,17 +232,8 @@ describe("batch-settlement delegated receiver authorization", () => {
       tokenProgram: TOKEN_PROGRAM_ADDRESS,
       withdrawDelay: 900,
     });
-    const { bindings, identities, scheme } = delegatedScheme(CALLER);
-    await bindings.bind({
-      channelId: opened.channelId,
-      network: NETWORK,
-      receiverAuthorizer: server.address,
-    });
-    await identities.bind({
-      callerIdentity: CALLER,
-      channelId: opened.channelId,
-      network: NETWORK,
-    });
+    const { scheme, storage } = delegatedScheme(CALLER);
+    await storage.recordOpen(channelRecord(opened.channelId, { callerIdentity: CALLER }));
     const live = channel(opened.payload.channelConfig);
     stubClose(scheme, opened.channelId, live);
 
@@ -259,16 +282,9 @@ describe("batch-settlement delegated receiver authorization", () => {
       withdrawDelay: 900,
     });
     const mismatched = delegatedScheme("someone-else");
-    await mismatched.bindings.bind({
-      channelId: opened.channelId,
-      network: NETWORK,
-      receiverAuthorizer: server.address,
-    });
-    await mismatched.identities.bind({
-      callerIdentity: CALLER,
-      channelId: opened.channelId,
-      network: NETWORK,
-    });
+    await mismatched.storage.recordOpen(
+      channelRecord(opened.channelId, { callerIdentity: CALLER }),
+    );
     stubClose(mismatched.scheme, opened.channelId, channel(opened.payload.channelConfig));
     const voucher = await signedVoucher(opened.channelId, 1_000n);
     const seal: BatchSealPayload = {
@@ -288,11 +304,7 @@ describe("batch-settlement delegated receiver authorization", () => {
     });
 
     const plain = delegatedScheme(CALLER, { delegate: false });
-    await plain.bindings.bind({
-      channelId: opened.channelId,
-      network: NETWORK,
-      receiverAuthorizer: server.address,
-    });
+    await plain.storage.recordOpen(channelRecord(opened.channelId));
     stubClose(plain.scheme, opened.channelId, channel(opened.payload.channelConfig));
     await expect(
       plain.scheme.settle(
@@ -305,34 +317,28 @@ describe("batch-settlement delegated receiver authorization", () => {
     });
   });
 
-  it("InMemoryBatchDelegatedAuthStore bind is first-writer-wins", async () => {
-    const store = new InMemoryBatchDelegatedAuthStore();
-    const binding = {
+  it("keeps the first caller identity and drops it with the channel row", async () => {
+    const storage = new InMemoryPaymentChannelStorage();
+    const binding = channelRecord(payer.address, {
       callerIdentity: CALLER,
-      channelId: payer.address,
-      network: NETWORK,
-    };
-
-    await store.bind(binding);
-    await store.bind(binding);
-
-    await expect(store.bind({ ...binding, callerIdentity: "other" })).rejects.toBeInstanceOf(
-      BatchDelegatedAuthIdentityConflictError,
+      receiverAuthorizer: "",
+    });
+    await storage.recordOpen(binding);
+    const again = await storage.recordOpen({ ...binding, callerIdentity: "other" });
+    expect(() => checkOpenBindings({ ...binding, callerIdentity: "other" }, again.record)).toThrow(
+      CallerIdentityConflictError,
     );
-    expect(await store.get(NETWORK, payer.address)).toMatchObject({ callerIdentity: CALLER });
-    await store.delete(NETWORK, payer.address);
-    expect(await store.get(NETWORK, payer.address)).toBeUndefined();
-  });
+    expect(again.record.callerIdentity).toBe(CALLER);
 
-  it("drops the caller identity when rent cleanup deletes the channel", async () => {
-    const { identities, scheme } = delegatedScheme(CALLER);
+    const { scheme, storage: schemeStorage } = delegatedScheme(CALLER);
     const channelId = payer.address;
-    await identities.bind({ callerIdentity: CALLER, channelId, network: NETWORK });
+    await schemeStorage.recordOpen(channelRecord(channelId, { callerIdentity: CALLER }));
     const manager = scheme.createRentCleanupManager(NETWORK);
-    await (manager as unknown as { storage: { delete(id: string): Promise<void> } }).storage.delete(
+    await (manager as unknown as { storage: InMemoryPaymentChannelStorage }).storage.delete(
+      NETWORK,
       channelId,
     );
-    expect(await identities.get(NETWORK, channelId)).toBeUndefined();
+    expect(await schemeStorage.get(NETWORK, channelId)).toBeUndefined();
   });
 });
 
@@ -344,7 +350,6 @@ function stubClose(scheme: BatchSvmScheme, channelId: string, live: Channel): vo
     readChannel: ReturnType<typeof vi.fn>;
     sealDependencies(): { nowSeconds(): number };
     submitRedemption: ReturnType<typeof vi.fn>;
-    trackChannel: ReturnType<typeof vi.fn>;
   };
   api.deriveChannelId = vi.fn().mockResolvedValue(channelId);
   api.fetchChannel = vi.fn().mockResolvedValue(live);
@@ -359,7 +364,6 @@ function stubClose(scheme: BatchSvmScheme, channelId: string, live: Channel): vo
     replayed: false,
     signature: SIGNATURE,
   });
-  api.trackChannel = vi.fn().mockResolvedValue(undefined);
   const original = api.sealDependencies.bind(scheme);
   api.sealDependencies = () => ({ ...original(), nowSeconds: () => NOW });
 }

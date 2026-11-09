@@ -1,5 +1,5 @@
 import { SettleResponse, PaymentRequirements } from "@x402/core/types";
-import { encodeFunctionData, getAddress } from "viem";
+import { encodeFunctionData, getAddress, isAddressEqual, parseEventLogs } from "viem";
 import { FacilitatorEvmSigner } from "../../signer";
 import type {
   AuthorizerSigner,
@@ -350,7 +350,30 @@ export async function executeRefundWithSignature(
 
     return await waitAndReturnSettleResponse(signer, tx, network, payload.channelConfig.payer, {
       failedStatusReason: Errors.ErrRefundTransactionFailed,
-      onSuccess: async () => {
+      onSuccess: async receipt => {
+        const logs = receipt.logs
+          ? parseEventLogs({
+              abi: batchSettlementABI,
+              eventName: "Refunded",
+              logs: receipt.logs.filter(log => isAddressEqual(log.address, contractAddr)),
+            })
+          : [];
+        const refundedLog = logs.find(
+          log => log.args.channelId.toLowerCase() === channelId.toLowerCase(),
+        );
+        const refundedAmount = refundedLog?.args.amount ?? 0n;
+        if (refundedAmount <= 0n) {
+          return {
+            success: false,
+            errorReason: Errors.ErrRefundedEventMismatch,
+            errorMessage:
+              "refund receipt missing Refunded event with positive amount (possible no-op early return)",
+            transaction: tx,
+            network,
+            payer: payload.channelConfig.payer,
+          };
+        }
+
         const postState =
           preState && preState.withdrawRequestedAt !== 0
             ? await readPostRefundState(signer, channelId, payload.refundNonce)
@@ -365,7 +388,7 @@ export async function executeRefundWithSignature(
           transaction: tx,
           network,
           payer: payload.channelConfig.payer,
-          amount: refundDetails.amount,
+          amount: refundedAmount.toString(),
           extra: refundDetails.extra,
         };
       },

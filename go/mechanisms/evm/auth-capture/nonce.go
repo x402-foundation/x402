@@ -111,22 +111,30 @@ func ComputePayerAgnosticPaymentInfoHash(chainID *big.Int, paymentInfo PaymentIn
 	return hashPaymentInfo(chainID, paymentInfo, zero, escrow)
 }
 
-// SignERC3009 signs ReceiveWithAuthorization with the token EIP-712 domain from extra.
-func SignERC3009(
-	ctx context.Context,
-	signer evm.ClientEvmSigner,
-	authorization Eip3009Authorization,
-	extra AuthCaptureExtra,
-	tokenAddress string,
-	chainID *big.Int,
-) ([]byte, error) {
-	domain := evm.TypedDataDomain{
+// ComputePaymentInfoHash returns the escrow's getHash(paymentInfo): the
+// real-payer PaymentInfo hash used as the lifecycle paymentInfoHash (Capture,
+// Void, Refund digests) and as the paymentState lookup key.
+func ComputePaymentInfoHash(chainID *big.Int, paymentInfo PaymentInfoStruct, payer string, escrowAddress ...string) (string, error) {
+	escrow := AuthCaptureEscrowAddress
+	if len(escrowAddress) > 0 && escrowAddress[0] != "" {
+		escrow = escrowAddress[0]
+	}
+	return hashPaymentInfo(chainID, paymentInfo, payer, escrow)
+}
+
+// eip3009Domain returns the EIP-712 domain for ReceiveWithAuthorization (the token contract).
+func eip3009Domain(extra AuthCaptureExtra, tokenAddress string, chainID *big.Int) evm.TypedDataDomain {
+	return evm.TypedDataDomain{
 		Name:              extra.Name,
 		Version:           extra.Version,
 		ChainID:           chainID,
 		VerifyingContract: evm.NormalizeAddress(tokenAddress),
 	}
+}
 
+// eip3009Message builds the ReceiveWithAuthorization message, shared by SignERC3009 and
+// HashERC3009Authorization so the signed and verified digests can never drift apart.
+func eip3009Message(authorization Eip3009Authorization) (map[string]interface{}, error) {
 	value, ok := new(big.Int).SetString(authorization.Value, 10)
 	if !ok {
 		return nil, fmt.Errorf("invalid authorization value: %s", authorization.Value)
@@ -144,37 +152,71 @@ func SignERC3009(
 		return nil, fmt.Errorf("invalid authorization nonce: %w", err)
 	}
 
-	message := map[string]interface{}{
+	return map[string]interface{}{
 		"from":        evm.NormalizeAddress(authorization.From),
 		"to":          evm.NormalizeAddress(authorization.To),
 		"value":       value,
 		"validAfter":  validAfter,
 		"validBefore": validBefore,
 		"nonce":       nonceBytes,
+	}, nil
+}
+
+// SignERC3009 signs ReceiveWithAuthorization with the token EIP-712 domain from extra.
+func SignERC3009(
+	ctx context.Context,
+	signer evm.ClientEvmSigner,
+	authorization Eip3009Authorization,
+	extra AuthCaptureExtra,
+	tokenAddress string,
+	chainID *big.Int,
+) ([]byte, error) {
+	message, err := eip3009Message(authorization)
+	if err != nil {
+		return nil, err
 	}
 
 	return signer.SignTypedData(
 		ctx,
-		domain,
+		eip3009Domain(extra, tokenAddress, chainID),
 		GetReceiveAuthorizationEIP712Types(),
 		"ReceiveWithAuthorization",
 		message,
 	)
 }
 
-// SignPermit2 signs PermitTransferFrom against the canonical Permit2 domain (no witness).
-func SignPermit2(
-	ctx context.Context,
-	signer evm.ClientEvmSigner,
-	permit Permit2Authorization,
+// HashERC3009Authorization returns the EIP-712 digest that SignERC3009 signs, for
+// facilitator-side signature verification.
+func HashERC3009Authorization(
+	authorization Eip3009Authorization,
+	extra AuthCaptureExtra,
+	tokenAddress string,
 	chainID *big.Int,
-) ([]byte, error) {
-	domain := evm.TypedDataDomain{
+) ([32]byte, error) {
+	message, err := eip3009Message(authorization)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return evm.HashEIP712TypedData(
+		eip3009Domain(extra, tokenAddress, chainID),
+		GetReceiveAuthorizationEIP712Types(),
+		"ReceiveWithAuthorization",
+		message,
+	)
+}
+
+// permit2Domain returns the canonical Permit2 EIP-712 domain (no witness, no version field).
+func permit2Domain(chainID *big.Int) evm.TypedDataDomain {
+	return evm.TypedDataDomain{
 		Name:              "Permit2",
 		ChainID:           chainID,
 		VerifyingContract: evm.PERMIT2Address,
 	}
+}
 
+// permit2Message builds the PermitTransferFrom message, shared by SignPermit2 and
+// HashPermit2Authorization so the signed and verified digests can never drift apart.
+func permit2Message(permit Permit2Authorization) (map[string]interface{}, error) {
 	amount, ok := new(big.Int).SetString(permit.Permitted.Amount, 10)
 	if !ok {
 		return nil, fmt.Errorf("invalid permitted amount: %s", permit.Permitted.Amount)
@@ -188,7 +230,7 @@ func SignPermit2(
 		return nil, fmt.Errorf("invalid permit deadline: %s", permit.Deadline)
 	}
 
-	message := map[string]interface{}{
+	return map[string]interface{}{
 		"permitted": map[string]interface{}{
 			"token":  evm.NormalizeAddress(permit.Permitted.Token),
 			"amount": amount,
@@ -196,11 +238,40 @@ func SignPermit2(
 		"spender":  evm.NormalizeAddress(permit.Spender),
 		"nonce":    nonce,
 		"deadline": deadline,
+	}, nil
+}
+
+// SignPermit2 signs PermitTransferFrom against the canonical Permit2 domain (no witness).
+func SignPermit2(
+	ctx context.Context,
+	signer evm.ClientEvmSigner,
+	permit Permit2Authorization,
+	chainID *big.Int,
+) ([]byte, error) {
+	message, err := permit2Message(permit)
+	if err != nil {
+		return nil, err
 	}
 
 	return signer.SignTypedData(
 		ctx,
-		domain,
+		permit2Domain(chainID),
+		GetPermit2TransferFromEIP712Types(),
+		"PermitTransferFrom",
+		message,
+	)
+}
+
+// HashPermit2Authorization returns the EIP-712 digest that SignPermit2 signs, for
+// facilitator-side signature verification. Distinct from evm.HashPermit2Authorization,
+// which hashes exact's witness-bearing PermitTransferFrom variant.
+func HashPermit2Authorization(permit Permit2Authorization, chainID *big.Int) ([32]byte, error) {
+	message, err := permit2Message(permit)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return evm.HashEIP712TypedData(
+		permit2Domain(chainID),
 		GetPermit2TransferFromEIP712Types(),
 		"PermitTransferFrom",
 		message,
@@ -216,22 +287,10 @@ func GenerateSalt() (string, error) {
 	return evm.BytesToHex(buf), nil
 }
 
-// NormalizeBytes32 zero-pads a hex integer to a full 32-byte word.
-func NormalizeBytes32(value string) (string, error) {
-	hexPart := strings.TrimPrefix(strings.TrimPrefix(value, "0x"), "0X")
-	if len(hexPart) == 0 || len(hexPart) > 64 {
-		return "", fmt.Errorf("invalid bytes32: %s", value)
-	}
-	if _, err := hex.DecodeString(hexPart); err != nil {
-		return "", fmt.Errorf("invalid bytes32: %s", value)
-	}
-	return "0x" + strings.ToLower(strings.Repeat("0", 64-len(hexPart))+hexPart), nil
-}
-
 // ExtraAddress treats absent or invalid values as the zero address.
 func ExtraAddress(value string) string {
 	if value == "" || !evm.IsValidAddress(value) {
-		return "0x0000000000000000000000000000000000000000"
+		return ZeroAddress
 	}
 	return evm.NormalizeAddress(value)
 }
@@ -241,7 +300,7 @@ func IsNonZeroAddress(value string) bool {
 	if value == "" || !evm.IsValidAddress(value) {
 		return false
 	}
-	return !strings.EqualFold(evm.NormalizeAddress(value), "0x0000000000000000000000000000000000000000")
+	return !strings.EqualFold(evm.NormalizeAddress(value), ZeroAddress)
 }
 
 // IsSaltBindingOn is true when receiverAuthorizer or policy is non-zero.

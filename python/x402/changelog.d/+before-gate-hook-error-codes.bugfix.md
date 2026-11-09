@@ -1,0 +1,1 @@
+A throwing resource-server before-verify hook now returns `before_verify_hook_error` with the message `before verify hook failed`, and a throwing before-settle hook fails closed with `before_settle_hook_error` and `before settle hook failed`. The payer no longer sees the exception text.

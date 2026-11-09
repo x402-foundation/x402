@@ -6,10 +6,11 @@
   "scripts": {
     "pull-idl": "tsx pull-payment-channels-idl.ts",
     "generate": "tsx generate-payment-channels-client.ts",
-    "check": "pnpm generate && git diff --exit-code -- ../../typescript/packages/mechanisms/svm/src/payment-channels/generated"
+    "check": "pnpm generate && git diff --exit-code -- ../../typescript/packages/mechanisms/svm/src/payment-channels/generated ../../go/mechanisms/svm/paymentchannels/generated"
   },
   "dependencies": {
     "@codama/nodes-from-anchor": "1.5.4",
+    "@codama/renderers-go": "2.0.0",
     "@codama/renderers-js": "2.3.1",
     "codama": "1.10.1",
     "prettier": "3.5.2",

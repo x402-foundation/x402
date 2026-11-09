@@ -215,8 +215,6 @@ import { toFacilitatorSvmSigner } from "@x402/svm";
 import {
   BatchSvmScheme,
   InMemoryBatchChannelStorage,
-  InMemoryBatchDelegatedAuthStore,
-  InMemoryBatchReceiverAuthorizerStore,
 } from "@x402/svm/batch-settlement/facilitator";
 
 const svmSigner = toFacilitatorSvmSigner(
@@ -226,14 +224,13 @@ const svmSigner = toFacilitatorSvmSigner(
 
 const scheme = new BatchSvmScheme(svmSigner, {
   channelStorage: new InMemoryBatchChannelStorage(),
-  receiverAuthorizerStore: new InMemoryBatchReceiverAuthorizerStore(),
   // Optional delegated closes. `receiverAuthorizer` is a Solana address you
   // choose, separate from the fee-payer signers. This facilitator does not
   // sign with it: a channel bound to that address authenticates seal and
   // cooperative refund by caller identity instead of CloseAuthorization.
+  // The identity from `resolveCallerIdentity` is stored on the channel row.
   // delegatedReceiverAuth: {
   //   receiverAuthorizer,
-  //   identityStore: new InMemoryBatchDelegatedAuthStore(),
   //   resolveCallerIdentity: () => callerIdentity,
   // },
 });
@@ -245,9 +242,9 @@ rentCleanup.start({
 });
 ```
 
-Configure `receiverAuthorizerStore`, `receiverBindingHistoryReader`, or both. The history reader is used only when set here; it is not taken from the signer. A store-only facilitator binds the receiver authorizer and reads it back before broadcasting an open, and does not broadcast if that write fails. When both are set, a failed store write still broadcasts the open. The binding is checked on cooperative `seal` and `refund` only.
+`channelStorage` defaults to an in-memory store. The same channel row holds the lifecycle index, the receiver-authorizer binding, and the delegated caller identity. Opens, top-ups, claims, and distributions record that row before broadcast and do not send if the write fails. A failed open reverts a row that call created; activity writes are kept. `receiverBindingHistoryReader` is an optional fallback for a row with no binding, used only when set here and not taken from the signer. A binding read from history is written back when the row is absent. `delegatedReceiverAuth` requires `resolveCallerIdentity`; that identity is stored on the channel row.
 
-`getExtra()` advertises `feePayer` (channel `rent_payer` and zero-share `payee`) and, when idle cleanup is enabled, `maxIdleSecs`. It advertises `receiverAuthorizer` only when `delegatedReceiverAuth` is set. `withdrawDelay` comes from the server. Production deployments should use durable `pendingSettlementStore`, a shared `channelStorage`, and a shared `identityStore` when running multiple replicas.
+`getExtra()` advertises `feePayer` (channel `rent_payer` and zero-share `payee`) and, when idle cleanup is enabled, `maxIdleSecs`. It advertises `receiverAuthorizer` only when `delegatedReceiverAuth` is set. `withdrawDelay` comes from the server. Production deployments should use a durable `pendingSettlementStore` and a shared `channelStorage` when running multiple replicas.
 
 ## Supported Networks
 

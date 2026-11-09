@@ -104,7 +104,33 @@ export interface BuilderCodeFacilitatorConfig {
   serviceCode?: string;
 }
 
+/**
+ * Value allowed inside the ERC-8021 Schema 2 `m` field: unsigned integers, text
+ * strings, arrays, and maps with text keys.
+ */
+export type SettlementMetadataValue =
+  | number
+  | bigint
+  | string
+  | readonly SettlementMetadataValue[]
+  | { readonly [key: string]: SettlementMetadataValue };
+
+/**
+ * Facilitator-authored settlement metadata, encoded as the "m" field in ERC-8021 Schema 2.
+ */
+export interface SettlementMetadata {
+  readonly [key: string]: SettlementMetadataValue;
+}
+
+/**
+ * Fields present in a settlement calldata suffix: the extension fields plus `m`.
+ */
+export interface BuilderCodeSuffixData extends BuilderCodeExtensionData {
+  m?: SettlementMetadata;
+}
+
 export interface DataSuffixContext {
   paymentPayload: PaymentPayload;
   paymentRequirements: PaymentRequirements;
+  metadata?: SettlementMetadata;
 }

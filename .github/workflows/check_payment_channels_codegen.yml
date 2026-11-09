@@ -9,6 +9,9 @@ on:
       - "scripts/payment-channels-codegen/**"
       - "typescript/packages/mechanisms/svm/src/payment-channels/generated/**"
       - "typescript/packages/mechanisms/svm/package.json"
+      - "go/mechanisms/svm/paymentchannels/generated/**"
+      - "go/go.mod"
+      - "go/go.sum"
   workflow_dispatch:
 
 permissions:
@@ -31,6 +34,11 @@ jobs:
           node-version: "24"
           cache: "pnpm"
           cache-dependency-path: scripts/payment-channels-codegen/pnpm-lock.yaml
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.26.10"
 
       - name: Install codegen dependencies
         run: pnpm --dir scripts/payment-channels-codegen install --frozen-lockfile --ignore-scripts

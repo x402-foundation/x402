@@ -19,7 +19,6 @@ import {
   BatchSvmRentCleanupManager,
 } from "../../src/batch-settlement/facilitator/rentCleanupManager";
 import { BatchSvmScheme } from "../../src/batch-settlement/facilitator/scheme";
-import { InMemoryBatchReceiverAuthorizerStore } from "../../src/batch-settlement/facilitator/receiverAuthorizerStore";
 import {
   InMemoryPaymentChannelStorage,
   type PaymentChannelRecord,
@@ -28,6 +27,23 @@ import type { FacilitatorSvmSigner } from "../../src/signer";
 import { toFacilitatorSvmSigner } from "../../src/signer";
 
 const NETWORK = SOLANA_DEVNET_CAIP2 as Network;
+
+/** Insert a channel row. A second call only moves expiry and activity forward. */
+async function remember(
+  storage: InMemoryPaymentChannelStorage,
+  record: Partial<PaymentChannelRecord> & { channelId: string; firstSeenAt?: number },
+): Promise<void> {
+  await storage.recordOpen({
+    callerIdentity: record.callerIdentity ?? "",
+    channelId: record.channelId,
+    expiresAt: record.expiresAt ?? 0,
+    lastActivityAt: record.lastActivityAt ?? record.firstSeenAt ?? Date.now(),
+    network: record.network ?? NETWORK,
+    payTo: record.payTo ?? "",
+    receiverAuthorizer: record.receiverAuthorizer ?? "",
+    tokenProgram: record.tokenProgram ?? TOKEN_PROGRAM_ADDRESS,
+  });
+}
 const OPEN_SLOT = 100n;
 const CURRENT_SLOT_READY = OPEN_SLOT + OPEN_SLOT_WINDOW + 1n;
 const CURRENT_SLOT_TOO_EARLY = OPEN_SLOT + OPEN_SLOT_WINDOW;
@@ -118,39 +134,61 @@ describe("payment-channel reclaim primitive", () => {
 });
 
 describe("Batch channel storage + scheme wiring", () => {
-  it("upserts on verify success, retains after settle, deletes when PDA gone", async () => {
+  it("keeps open facts and deletes a missing account after the open grace", async () => {
     const feePayer = await generateKeyPairSigner();
     const channel = await generateKeyPairSigner();
     const payTo = await generateKeyPairSigner();
     const storage = new InMemoryPaymentChannelStorage();
     const scheme = new BatchSvmScheme(toFacilitatorSvmSigner(feePayer), {
-      receiverAuthorizerStore: new InMemoryBatchReceiverAuthorizerStore(),
       channelStorage: storage,
     });
 
     const record: PaymentChannelRecord = {
+      callerIdentity: "",
       channelId: channel.address,
-      payTo: payTo.address,
-      tokenProgram: TOKEN_PROGRAM_ADDRESS,
-      firstSeenAt: Date.now() - 10_000,
       expiresAt: FAR_FUTURE,
+      lastActivityAt: Date.now() - 10 * 60_000,
       network: NETWORK,
+      payTo: payTo.address,
+      receiverAuthorizer: "",
+      tokenProgram: TOKEN_PROGRAM_ADDRESS,
     };
-    await storage.upsert(record);
-    expect(await storage.get(record.channelId)).toMatchObject({
+    await remember(storage, record);
+    expect(await storage.get(NETWORK, record.channelId)).toMatchObject({
       payTo: record.payTo,
       tokenProgram: TOKEN_PROGRAM_ADDRESS,
     });
 
-    const firstSeenAt = (await storage.get(record.channelId))!.firstSeenAt;
-    await storage.upsert({ ...record, firstSeenAt: Date.now(), expiresAt: FAR_FUTURE - 100 });
-    expect((await storage.get(record.channelId))!.firstSeenAt).toBe(firstSeenAt);
-    expect((await storage.get(record.channelId))!.expiresAt).toBe(FAR_FUTURE);
+    const lastActivityAt = (await storage.get(NETWORK, record.channelId))!.lastActivityAt;
+    await remember(storage, {
+      ...record,
+      expiresAt: FAR_FUTURE - 100,
+      lastActivityAt: lastActivityAt - 1_000,
+    });
+    expect((await storage.get(NETWORK, record.channelId))!.lastActivityAt).toBe(lastActivityAt);
+    expect((await storage.get(NETWORK, record.channelId))!.expiresAt).toBe(FAR_FUTURE);
 
     const manager = scheme.createRentCleanupManager(NETWORK);
     fetchMaybeChannelMock.mockResolvedValue({ exists: false });
     await manager.cleanup();
-    expect(await storage.get(record.channelId)).toBeUndefined();
+    expect(await storage.get(NETWORK, record.channelId)).toBeUndefined();
+  });
+
+  it("keeps a missing account inside the open-index grace", async () => {
+    const feePayer = await generateKeyPairSigner();
+    const channel = await generateKeyPairSigner();
+    const storage = new InMemoryPaymentChannelStorage();
+    const scheme = new BatchSvmScheme(toFacilitatorSvmSigner(feePayer), {
+      channelStorage: storage,
+    });
+    await remember(storage, {
+      channelId: channel.address,
+      lastActivityAt: Date.now(),
+      network: NETWORK,
+    });
+    fetchMaybeChannelMock.mockResolvedValue({ exists: false });
+    await scheme.createRentCleanupManager(NETWORK).cleanup();
+    expect(await storage.get(NETWORK, channel.address)).toBeDefined();
   });
 
   it("createRentCleanupManager returns a manager bound to the scheme storage", async () => {
@@ -224,20 +262,21 @@ describe("BatchSvmRentCleanupManager — cleanup", () => {
   /**
    * @param overrides - Record field overrides
    */
-  async function seed(overrides: Partial<PaymentChannelRecord> = {}) {
+  async function seed(overrides: Partial<PaymentChannelRecord> & { firstSeenAt?: number } = {}) {
     const channel = overrides.channelId
       ? { address: overrides.channelId }
       : await generateKeyPairSigner();
     const record: PaymentChannelRecord = {
+      callerIdentity: overrides.callerIdentity ?? "",
       channelId: channel.address,
-      payTo: overrides.payTo ?? payTo.address,
-      tokenProgram: overrides.tokenProgram ?? TOKEN_PROGRAM_ADDRESS,
-      firstSeenAt: overrides.firstSeenAt ?? Date.now() - 7_200_000,
       expiresAt: overrides.expiresAt ?? FAR_FUTURE,
       lastActivityAt: overrides.lastActivityAt ?? overrides.firstSeenAt ?? Date.now() - 7_200_000,
       network: overrides.network ?? NETWORK,
+      payTo: overrides.payTo ?? payTo.address,
+      receiverAuthorizer: overrides.receiverAuthorizer ?? "",
+      tokenProgram: overrides.tokenProgram ?? TOKEN_PROGRAM_ADDRESS,
     };
-    await storage.upsert(record);
+    await remember(storage, record);
     return record;
   }
 
@@ -258,7 +297,7 @@ describe("BatchSvmRentCleanupManager — cleanup", () => {
       await manager.cleanup({ onClose });
       expect(onClose).not.toHaveBeenCalled();
       expect(submitChannelMock).not.toHaveBeenCalled();
-      expect(await storage.get(record.channelId)).toBeDefined();
+      expect(await storage.get(NETWORK, record.channelId)).toBeDefined();
     });
 
     it("abandon-closes an Open channel idle for the default window", async () => {
@@ -299,11 +338,10 @@ describe("BatchSvmRentCleanupManager — cleanup", () => {
       expect(onClose).toHaveBeenCalledWith(expect.objectContaining({ action: "abandon_close" }));
     });
 
-    it("falls back to firstSeenAt when a record predates activity tracking", async () => {
+    it("abandons an Open channel once lastActivityAt is outside the idle window", async () => {
       await seed({
-        firstSeenAt: Date.now() - (DEFAULT_MAX_IDLE_SECS * 1_000 + DAY_MS),
-        lastActivityAt: 0,
         expiresAt: 0,
+        lastActivityAt: Date.now() - (DEFAULT_MAX_IDLE_SECS * 1_000 + DAY_MS),
       });
       fetchMaybeChannelMock
         .mockResolvedValueOnce(channelAccount({ status: ChannelStatus.Open }))
@@ -327,7 +365,7 @@ describe("BatchSvmRentCleanupManager — cleanup", () => {
     await manager.cleanup({ abandonGraceSecs: 120, onClose });
     expect(onClose).not.toHaveBeenCalled();
     expect(submitChannelMock).not.toHaveBeenCalled();
-    expect(await storage.get(record.channelId)).toBeDefined();
+    expect(await storage.get(NETWORK, record.channelId)).toBeDefined();
   });
 
   it("abandon-closes Open channels after expiry plus grace", async () => {
@@ -349,7 +387,7 @@ describe("BatchSvmRentCleanupManager — cleanup", () => {
     expect(submitChannelMock).toHaveBeenCalledTimes(1);
     const instructions = submitChannelMock.mock.calls[0]![3] as unknown[];
     expect(instructions.length).toBeGreaterThanOrEqual(2);
-    expect(await storage.get(record.channelId)).toBeUndefined();
+    expect(await storage.get(NETWORK, record.channelId)).toBeUndefined();
   });
 
   it("does not abandon-close Open channels before expiresAt even when firstSeen is old", async () => {
@@ -365,7 +403,7 @@ describe("BatchSvmRentCleanupManager — cleanup", () => {
 
     expect(onClose).not.toHaveBeenCalled();
     expect(submitChannelMock).not.toHaveBeenCalled();
-    expect(await storage.get(record.channelId)).toBeDefined();
+    expect(await storage.get(NETWORK, record.channelId)).toBeDefined();
   });
 
   it("distributes Sealed channels", async () => {
@@ -423,7 +461,7 @@ describe("BatchSvmRentCleanupManager — cleanup", () => {
     const instructions = submitChannelMock.mock.calls[0]![3] as { data: Uint8Array }[];
     expect(instructions).toHaveLength(2);
     expect(instructions[0]?.data[0]).toBe(SEAL_DISCRIMINATOR);
-    expect(await storage.get(record.channelId)).toBeUndefined();
+    expect(await storage.get(NETWORK, record.channelId)).toBeUndefined();
   });
 
   it("defers Distributed reclaim until the open-slot gate elapses", async () => {
@@ -455,8 +493,8 @@ describe("BatchSvmRentCleanupManager — cleanup", () => {
     expect(instructions.every(ix => ix.data[0] === RECLAIM_DISCRIMINATOR)).toBe(true);
     // Reclaim batches carry a per-channel compute-unit limit (base + 2 × per-channel).
     expect(submitChannelMock.mock.calls[0]![4]).toMatchObject({ computeUnitLimit: 35_000 });
-    expect(await storage.get(a.channelId)).toBeUndefined();
-    expect(await storage.get(b.channelId)).toBeUndefined();
+    expect(await storage.get(NETWORK, a.channelId)).toBeUndefined();
+    expect(await storage.get(NETWORK, b.channelId)).toBeUndefined();
   });
 
   // A failed batch strands every channel in it, so reporting only the first
@@ -497,7 +535,13 @@ describe("BatchSvmRentCleanupManager — cleanup", () => {
   // must be clamped, not honored: a larger batch risks failing to serialize
   // or being rejected on broadcast (see the Go SDK's
   // TestReclaimBatchFitsInOneTransaction, which proves the same ceiling).
-  it("clamps maxReclaimsPerTx to MAX_SAFE_RECLAIMS_PER_TX", async () => {
+  it("clamps maxReclaimsPerTx to MAX_SAFE_RECLAIMS_PER_TX under v0", async () => {
+    manager = new BatchSvmRentCleanupManager({
+      facilitatorTransactionVersion: 0,
+      network: NETWORK,
+      signer: cleanupSigner(feePayer),
+      storage,
+    });
     for (let i = 0; i < MAX_SAFE_RECLAIMS_PER_TX + 1; i++) {
       await seed();
     }
@@ -554,7 +598,7 @@ describe("BatchSvmRentCleanupManager — cleanup", () => {
     await manager.cleanup({ onReclaim });
     expect(onReclaim).not.toHaveBeenCalled();
     expect(submitChannelMock).not.toHaveBeenCalled();
-    expect(await storage.get(record.channelId)).toBeUndefined();
+    expect(await storage.get(NETWORK, record.channelId)).toBeUndefined();
   });
 
   it("skips channels with missing payTo and surfaces onError", async () => {
@@ -597,7 +641,7 @@ describe("BatchSvmRentCleanupManager — cleanup", () => {
   });
 
   // A backlog bigger than maxTxsPerRun must eventually reach every record
-  // instead of only ever reprocessing whatever storage.list() returns first.
+  // instead of only ever reprocessing whatever storage.list(NETWORK) returns first.
   it("resumes scanning from the cursor after the budget runs out", async () => {
     const nowSecs = Math.floor(Date.now() / 1_000);
     const first = await seed({ expiresAt: nowSecs - 200 });
@@ -619,7 +663,7 @@ describe("BatchSvmRentCleanupManager — cleanup", () => {
     expect((manager as unknown as { scanCursor: string }).scanCursor).toBe("");
   });
 
-  // storage.list() promises no order, so the manager imposes one. Without it
+  // storage.list(NETWORK) promises no order, so the manager imposes one. Without it
   // the resume cursor would mean something different on every storage backend.
   it("scans in channel id order regardless of what storage.list returns", async () => {
     const nowSecs = Math.floor(Date.now() / 1_000);
@@ -627,7 +671,9 @@ describe("BatchSvmRentCleanupManager — cleanup", () => {
     const second = await seed({ expiresAt: nowSecs - 200 });
     const lowest = [first.channelId, second.channelId].sort()[0];
 
-    const descending = (await storage.list()).sort((a, b) => (a.channelId < b.channelId ? 1 : -1));
+    const descending = (await storage.list(NETWORK)).sort((a, b) =>
+      a.channelId < b.channelId ? 1 : -1,
+    );
     vi.spyOn(storage, "list").mockResolvedValue(descending);
     fetchMaybeChannelMock.mockResolvedValue(channelAccount({ status: ChannelStatus.Sealed }));
 
@@ -655,7 +701,7 @@ describe("BatchSvmRentCleanupManager — cleanup", () => {
     );
     expect(onClose).not.toHaveBeenCalled();
     expect(onReclaim).not.toHaveBeenCalled();
-    expect(await storage.get(record.channelId)).toBeDefined();
+    expect(await storage.get(NETWORK, record.channelId)).toBeDefined();
   });
 
   // An operator cron calling cleanup() must not race the interval loop into
@@ -849,7 +895,7 @@ describe("BatchSvmRentCleanupManager — onchain discovery", () => {
     expect(onDiscover).toHaveBeenCalledWith({ channelIds: [discoveredChannelId] });
     // Only what the chain proves: the Open/Sealed metadata stays empty, which
     // a Distributed channel never needs again.
-    expect(await storage.get(discoveredChannelId)).toMatchObject({
+    expect(await storage.get(NETWORK, discoveredChannelId)).toMatchObject({
       channelId: discoveredChannelId,
       expiresAt: 0,
       network: NETWORK,
@@ -890,7 +936,7 @@ describe("BatchSvmRentCleanupManager — onchain discovery", () => {
     await manager.discover({ onDiscover });
 
     expect(onDiscover).not.toHaveBeenCalled();
-    expect(await storage.list()).toHaveLength(0);
+    expect(await storage.list(NETWORK)).toHaveLength(0);
   });
 
   it("ignores discovered channels still inside the open-slot window", async () => {
@@ -899,7 +945,7 @@ describe("BatchSvmRentCleanupManager — onchain discovery", () => {
 
     await manager.discover();
 
-    expect(await storage.list()).toHaveLength(0);
+    expect(await storage.list(NETWORK)).toHaveLength(0);
   });
 
   // Discovery only knows what the chain proves, so overwriting a settle-time
@@ -913,14 +959,14 @@ describe("BatchSvmRentCleanupManager — onchain discovery", () => {
       payTo: payer.address,
       tokenProgram: TOKEN_PROGRAM_ADDRESS,
     };
-    await storage.upsert(tracked);
+    await remember(storage, tracked);
     discoverChannelsMock.mockResolvedValue([discovered(ChannelStatus.Distributed)]);
 
     const onDiscover = vi.fn();
     await manager.discover({ onDiscover });
 
     expect(onDiscover).not.toHaveBeenCalled();
-    expect(await storage.get(discoveredChannelId)).toMatchObject({
+    expect(await storage.get(NETWORK, discoveredChannelId)).toMatchObject({
       payTo: payer.address,
       tokenProgram: TOKEN_PROGRAM_ADDRESS,
     });
@@ -990,7 +1036,7 @@ describe("BatchSvmRentCleanupManager — concurrent signer groups", () => {
 
     const recordA = (await generateKeyPairSigner()).address;
     const recordB = (await generateKeyPairSigner()).address;
-    await storage.upsert({
+    await remember(storage, {
       channelId: recordA,
       expiresAt: FAR_FUTURE,
       firstSeenAt: Date.now(),
@@ -998,7 +1044,7 @@ describe("BatchSvmRentCleanupManager — concurrent signer groups", () => {
       payTo: payTo.address,
       tokenProgram: TOKEN_PROGRAM_ADDRESS,
     } as PaymentChannelRecord);
-    await storage.upsert({
+    await remember(storage, {
       channelId: recordB,
       expiresAt: FAR_FUTURE,
       firstSeenAt: Date.now(),
@@ -1061,7 +1107,7 @@ describe("BatchSvmRentCleanupManager — concurrent signer groups", () => {
     for (let group = 0; group < 2; group++) {
       for (let i = 0; i < 3; i++) {
         const channel = await generateKeyPairSigner();
-        await storage.upsert({
+        await remember(storage, {
           channelId: channel.address,
           expiresAt: FAR_FUTURE,
           firstSeenAt: Date.now(),

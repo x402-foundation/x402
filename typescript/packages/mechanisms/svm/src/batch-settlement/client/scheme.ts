@@ -16,9 +16,15 @@ import { encodeVoucherMessageBytes, verifyVoucherSignature } from "../../payment
 import { discoverChannelsByPayer, type ProgramAccountScan } from "../../payment-channels/discovery";
 import { ChannelStatus } from "../../payment-channels/generated/types/channelStatus";
 import type { ClientSvmConfig } from "../../signer";
-import { createRpcClient, resolveBlockhash, resolveOpenSlot } from "../../utils";
+import {
+  createRpcClient,
+  resolveBlockhash,
+  resolveOpenSlot,
+  resolveTransactionVersion,
+} from "../../utils";
 import { MAX_WITHDRAW_DELAY, MIN_WITHDRAW_DELAY } from "../constants";
 import { BatchError } from "../errors";
+import { checkCorrectiveState } from "./corrective";
 import {
   BATCH_SETTLEMENT_SCHEME,
   isBatchPayload,
@@ -26,7 +32,6 @@ import {
   type BatchChannelState,
   type BatchPayload,
   type BatchVoucher,
-  type BatchVoucherState,
 } from "../types";
 import {
   type BatchClientSigner,
@@ -42,7 +47,9 @@ import {
 } from "./constants";
 import {
   alignRefundRequirements,
+  clientSignedRefundRequirements,
   type BatchRefundOptions,
+  NoBatchChannelToRefundError,
   type RefundPayloadOptions,
   refundBatchChannel,
 } from "./refund";
@@ -182,6 +189,12 @@ export class BatchSvmScheme implements SchemeNetworkClient {
     context?: PaymentPayloadContext,
   ): Promise<Pick<PaymentPayload, "x402Version" | "payload">> {
     if (context) this.creationContexts.set(requirements, context);
+    // Fail closed before any channel work when the facilitator accepts no
+    // transaction version this client can build (deposit, top-up, close).
+    const transactionVersion = resolveTransactionVersion(
+      requirements.extra,
+      this.config.transactionVersions,
+    );
     const terms = await this.resolveTerms(requirements);
     const charge = parseU64(requirements.amount, "amount");
     const authorizationExpiresAt =
@@ -259,6 +272,7 @@ export class BatchSvmScheme implements SchemeNetworkClient {
       const rpc = createRpcClient(requirements.network, this.config.rpcUrl);
       const blockhash = await resolveBlockhash(rpc, requirements);
       const topUp = await buildTopUpPaymentChannelTransaction({
+        transactionVersion,
         amount: topUpAmount,
         blockhash,
         channelId: existing.tracker.channelId,
@@ -328,6 +342,7 @@ export class BatchSvmScheme implements SchemeNetworkClient {
       resolveOpenSlot(rpc, requirements),
     ]);
     const built = await buildDepositPayload({
+      transactionVersion,
       blockhash,
       depositAmount: deposit,
       feePayer: terms.feePayer,
@@ -396,19 +411,16 @@ export class BatchSvmScheme implements SchemeNetworkClient {
     requirements: PaymentRequirements,
     options?: RefundPayloadOptions,
   ): Promise<Pick<PaymentPayload, "x402Version" | "payload">> {
+    // Fail closed before any channel work when the facilitator accepts no
+    // transaction version this client can build (deposit, top-up, close).
+    const transactionVersion = resolveTransactionVersion(
+      requirements.extra,
+      this.config.transactionVersions,
+    );
     const cached = this.findCachedChannelForRoute(requirements);
-    const lookupRequirements = cached
-      ? this.requirementsForRefund(requirements, cached)
-      : requirements;
-    const terms = await this.resolveRefundTerms(lookupRequirements, cached);
-    const key = this.channelKey(lookupRequirements, terms.feePayer, terms.withdrawDelay);
-    // A client with no local record is exactly the one that needs to close a
-    // channel it can no longer pay from, so fall back to the chain.
-    const existing =
-      (await this.loadChannel(key)) ??
-      cached ??
-      (await this.discoverChannel(lookupRequirements, terms));
-    if (!existing) throw new Error("no batch-settlement channel to refund");
+    const located = await this.locateRefundChannel(requirements, cached);
+    if (!located) throw new NoBatchChannelToRefundError();
+    const { existing, lookupRequirements, terms } = located;
     const blockhash = options?.withTransaction
       ? await resolveBlockhash(
           createRpcClient(lookupRequirements.network, this.config.rpcUrl),
@@ -432,6 +444,7 @@ export class BatchSvmScheme implements SchemeNetworkClient {
         feePayer: terms.feePayer,
         memo: terms.memo,
         payer: this.signer,
+        transactionVersion,
         ...credential,
       }),
     };
@@ -860,20 +873,16 @@ export class BatchSvmScheme implements SchemeNetworkClient {
       if (charged > authorized) return false;
     }
 
-    const voucherState = accept?.extra?.voucherState as BatchVoucherState | undefined;
-    if (voucherState) {
-      const signed = parseU64(voucherState.signedMaxClaimable, "signedMaxClaimable");
-      if (charged > signed) return false;
-      const verified = await verifyVoucherSignature({
-        message: encodeVoucherMessageBytes({
+    if (accept?.extra?.voucherState !== undefined) {
+      try {
+        await checkCorrectiveState({
+          accept,
+          channelConfig: pending.tracker.channelConfig,
           channelId: pending.tracker.channelId,
-          cumulativeAmount: signed,
-          expiresAt: BigInt(voucherState.expiresAt),
-        }),
-        signatureBase58: voucherState.signature,
-        signerBase58: pending.tracker.channelConfig.payerAuthorizer,
-      });
-      if (!verified) return false;
+        });
+      } catch {
+        return false;
+      }
     } else if (charged !== claimed) {
       // No proof: the only base a client may adopt unproven is the one the
       // chain itself reports as settled.
@@ -962,6 +971,62 @@ export class BatchSvmScheme implements SchemeNetworkClient {
     return this.resolveTerms(probed);
   }
 
+  private async locateRefundChannel(
+    requirements: PaymentRequirements,
+    cached?: OpenChannel,
+  ): Promise<
+    | { existing: OpenChannel; lookupRequirements: PaymentRequirements; terms: ResolvedTerms }
+    | undefined
+  > {
+    let lookupRequirements = cached
+      ? this.requirementsForRefund(requirements, cached)
+      : requirements;
+    let searchLookup = lookupRequirements;
+    if (!cached && (searchLookup.extra?.voucherSigner ?? "client") === "server") {
+      searchLookup = clientSignedRefundRequirements(searchLookup);
+    }
+
+    let terms = await this.resolveRefundTerms(searchLookup, cached);
+    let existing = (await this.loadRefundChannel(searchLookup, terms, cached)) ?? undefined;
+    if (existing) {
+      if (!cached) {
+        lookupRequirements = this.requirementsForRefund(requirements, existing);
+        terms = await this.resolveRefundTerms(lookupRequirements, existing);
+      }
+      return { existing, lookupRequirements, terms };
+    }
+
+    if (!cached && (requirements.extra?.voucherSigner ?? "client") === "server") {
+      try {
+        const serverTerms = await this.resolveTerms(requirements);
+        const serverChannel = await this.loadRefundChannel(requirements, serverTerms);
+        if (serverChannel) {
+          lookupRequirements = this.requirementsForRefund(requirements, serverChannel);
+          terms = await this.resolveRefundTerms(lookupRequirements, serverChannel);
+          return { existing: serverChannel, lookupRequirements, terms };
+        }
+      } catch (error) {
+        if (!(error instanceof UntrustedOperatorError)) throw error;
+      }
+    }
+
+    return undefined;
+  }
+
+  private async loadRefundChannel(
+    lookupRequirements: PaymentRequirements,
+    terms: ResolvedTerms,
+    cached?: OpenChannel,
+  ): Promise<OpenChannel | null> {
+    const key = this.channelKey(lookupRequirements, terms.feePayer, terms.withdrawDelay);
+    return (
+      (await this.loadChannel(key)) ??
+      cached ??
+      (await this.discoverChannel(lookupRequirements, terms)) ??
+      null
+    );
+  }
+
   private requirementsForRefund(
     probed: PaymentRequirements,
     cached: OpenChannel,
@@ -1009,6 +1074,14 @@ export class BatchSvmScheme implements SchemeNetworkClient {
     const feePayer = extra.feePayer;
     if (typeof feePayer !== "string" || feePayer.length === 0) {
       throw new Error("extra.feePayer must be a non-empty string");
+    }
+    // The client's key is both the channel payer and its voucher signer, and
+    // neither may be the sponsor: a sponsor that is also the payer could
+    // co-sign away the payer's own escrow.
+    if (feePayer === this.signer.address) {
+      throw new Error(
+        `${BatchError.FEE_PAYER_MISMATCH}: extra.feePayer must not equal the channel payer or payerAuthorizer`,
+      );
     }
     const withdrawDelay = extra.withdrawDelay;
     if (

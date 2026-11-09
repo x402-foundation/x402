@@ -43,11 +43,13 @@ import {
 import { getStablecoinTokenProgram, validateSvmAddress } from "../../utils";
 import {
   CLIENT_VOUCHER_EXPIRES_AT,
+  DYNAMIC_EXTRA_FIELDS,
   FULL_SPLIT_BPS,
   MAX_WITHDRAW_DELAY,
   MIN_WITHDRAW_DELAY,
 } from "../constants";
-import { BatchError } from "../errors";
+import { ErrUnsupportedTransactionVersion } from "../../exact/facilitator/errors";
+import { BatchError, rethrowSetupTransactionError } from "../errors";
 import { verifyBatchAuthorization } from "../authorization";
 import { signCloseAuthorization } from "../closeAuthorization";
 import { encodeReceiverBindingMemo } from "../receiverBinding";
@@ -106,7 +108,7 @@ export class BatchSvmScheme implements SchemeNetworkServer {
   readonly paymentFlows = {
     channel: { default: "authorization", supported: ["authorization"] },
   } as const satisfies Record<string, PaymentFlowConfig>;
-  readonly dynamicExtraFields = ["recentBlockhash", "recentSlot"];
+  readonly dynamicExtraFields = [...DYNAMIC_EXTRA_FIELDS];
   readonly schemeHooks: SchemeServerHooks;
 
   private readonly store: ChannelStore;
@@ -161,7 +163,7 @@ export class BatchSvmScheme implements SchemeNetworkServer {
       let voucher: BatchVoucher;
       if (raw.voucher) {
         if (BigInt(raw.voucher.maxClaimableAmount) !== cumulative) {
-          throw new Error(BatchError.CUMULATIVE_AMOUNT_MISMATCH);
+          throw new Error(BatchError.CLOSE_STATE);
         }
         voucher = raw.voucher;
       } else if (!serverMode) {
@@ -532,6 +534,16 @@ export class BatchSvmScheme implements SchemeNetworkServer {
       if (state) {
         this.assertStoredConfig(state, raw.channelConfig, ctx.requirements);
       }
+      // Once the payer has started a forced close, `settle` is unavailable, so
+      // a further paid request is refused (spec 4.5: a voucher or
+      // authorization against a Closing channel fails with channel_closing).
+      if (
+        (raw.type === "voucher" || raw.type === "authorization") &&
+        state !== undefined &&
+        (state.status === "closing" || state.closeRequestedAt !== undefined)
+      ) {
+        throw new Error(BatchError.CHANNEL_CLOSING);
+      }
       if (raw.type === "deposit" && !state) {
         const extra = ctx.requirements.extra!;
         const receiverAuthorizer = extra.receiverAuthorizer;
@@ -554,11 +566,7 @@ export class BatchSvmScheme implements SchemeNetworkServer {
             withdrawDelay: raw.channelConfig.withdrawDelay,
           });
         } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error);
-          const reason = detail.includes("receiver binding")
-            ? BatchError.RECEIVER_AUTHORIZER_MISMATCH
-            : BatchError.SETUP_TRANSACTION;
-          throw new Error(`${reason}: ${detail}`);
+          rethrowSetupTransactionError(error);
         }
       }
 
@@ -636,8 +644,12 @@ export class BatchSvmScheme implements SchemeNetworkServer {
           });
         } else {
           if (!raw.voucher) throw new Error(BatchError.VOUCHER_SIGNATURE);
+          // A cooperative close settles at the accepted cumulative; a voucher
+          // at any other watermark cannot close the channel (spec 7: close_state).
           if (BigInt(raw.voucher.maxClaimableAmount) !== state.chargedCumulativeAmount) {
-            throw new Error(BatchError.CUMULATIVE_AMOUNT_MISMATCH);
+            throw new Error(
+              `${BatchError.CLOSE_STATE}: refund voucher ${raw.voucher.maxClaimableAmount} is not the accepted cumulative ${state.chargedCumulativeAmount}`,
+            );
           }
           this.requestContexts.set(ctx.paymentPayload, { channelId });
         }
@@ -693,30 +705,33 @@ export class BatchSvmScheme implements SchemeNetworkServer {
     if (snapshot && !this.applySnapshot(request.channelId, snapshot)) {
       return this.abort(BatchError.CHANNEL_STATE, "verified channel snapshot is unusable");
     }
-    if (snapshot) {
-      await this.persistSnapshot(request.channelId, raw, ctx.requirements, snapshot);
-    }
-
-    // A client-signed voucher must be checked against the refreshed baseline.
-    if (request.requiresCumulativeCheck && request.proof?.signer === "client") {
-      const state = await this.store.get(request.channelId);
-      if (!state) return this.abort(BatchError.CHANNEL_STATE, "channel state unavailable");
-      const submitted = BigInt(request.proof.voucher.maxClaimableAmount);
-      const expected = state.chargedCumulativeAmount + BigInt(ctx.requirements.amount);
-      if (submitted !== expected) {
-        // The corrective 402 that follows carries this rebuilt snapshot and no
-        // voucher proof, so the client resynchronizes from onchain state.
-        return this.abort(
-          BatchError.CUMULATIVE_AMOUNT_MISMATCH,
-          `voucher authorizes ${submitted}, expected ${expected}`,
-        );
-      }
-    }
 
     const pendingId = `${Date.now()}:${(this.reservationSequence += 1)}`;
     const expiresAt = Date.now() + Math.max(5_000, ctx.requirements.maxTimeoutSeconds * 1_000);
     let operationReserved = false;
+    // Core logs a throwing hook and keeps the facilitator's valid result, so
+    // every failure before the reservation is written must abort here instead.
     try {
+      if (snapshot) {
+        await this.persistSnapshot(request.channelId, raw, ctx.requirements, snapshot);
+      }
+
+      // A client-signed voucher must be checked against the refreshed baseline.
+      if (request.requiresCumulativeCheck && request.proof?.signer === "client") {
+        const state = await this.store.get(request.channelId);
+        if (!state) return this.abort(BatchError.CHANNEL_STATE, "channel state unavailable");
+        const submitted = BigInt(request.proof.voucher.maxClaimableAmount);
+        const expected = state.chargedCumulativeAmount + BigInt(ctx.requirements.amount);
+        if (submitted !== expected) {
+          // The corrective 402 that follows carries this rebuilt snapshot and no
+          // voucher proof, so the client resynchronizes from onchain state.
+          return this.abort(
+            BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+            `voucher authorizes ${submitted}, expected ${expected}`,
+          );
+        }
+      }
+
       if (request.requestId && request.ceiling !== undefined) {
         const reserved = await this.operationStore.reserve(
           request.channelId,
@@ -724,7 +739,12 @@ export class BatchSvmScheme implements SchemeNetworkServer {
           request.ceiling,
         );
         if (!reserved.created) {
-          throw new Error(CHANNEL_BUSY);
+          const recorded = reserved.operation.ceiling;
+          throw new Error(
+            recorded === request.ceiling
+              ? CHANNEL_BUSY
+              : `${BatchError.OPERATION_CEILING_CHANGED}: request id was recorded with ceiling ${recorded}, not ${request.ceiling}`,
+          );
         }
         operationReserved = true;
       }
@@ -778,7 +798,12 @@ export class BatchSvmScheme implements SchemeNetworkServer {
       }
     } catch (error) {
       if (operationReserved && request.requestId) {
-        await this.operationStore.release(request.channelId, request.requestId);
+        try {
+          await this.operationStore.release(request.channelId, request.requestId);
+        } catch {
+          // An unreleased record still retires the request id; rethrowing
+          // would turn this abort into a passed verify.
+        }
       }
       this.requestContexts.delete(ctx.paymentPayload);
       return this.abort(
@@ -1600,8 +1625,17 @@ function readVerifiedChannelState(result: VerifyResponse): VerifiedChannelState 
   const state = raw as Record<string, unknown>;
   const digits = (value: unknown): bigint | undefined =>
     typeof value === "string" && /^\d+$/.test(value) ? BigInt(value) : undefined;
-  const totalClaimed = digits(state.totalClaimed);
-  if (totalClaimed === undefined) return undefined;
+  const totalClaimedText =
+    typeof state.totalClaimed === "string" && /^\d+$/.test(state.totalClaimed)
+      ? state.totalClaimed
+      : undefined;
+  if (totalClaimedText === undefined) return undefined;
+  let totalClaimed: bigint;
+  try {
+    totalClaimed = parseU64(totalClaimedText, "totalClaimed");
+  } catch {
+    return undefined;
+  }
   const withdrawRequestedAt =
     typeof state.withdrawRequestedAt === "number" && Number.isInteger(state.withdrawRequestedAt)
       ? state.withdrawRequestedAt
@@ -1712,5 +1746,6 @@ function parsePositiveAmount(value: string, field: string): bigint {
 function classifyError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes(CHANNEL_BUSY)) return CHANNEL_BUSY;
+  if (message.startsWith(ErrUnsupportedTransactionVersion)) return ErrUnsupportedTransactionVersion;
   return Object.values(BatchError).find(value => message.includes(value)) ?? "transaction_failed";
 }

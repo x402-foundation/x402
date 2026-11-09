@@ -1,4 +1,5 @@
-import type { Network, SettleResponse } from "@x402/core/types";
+import type { Address } from "@solana/kit";
+import type { FacilitatorContext, Network, SettleResponse } from "@x402/core/types";
 
 import type { FacilitatorSigningCapabilities } from "../../signer";
 import type {
@@ -7,7 +8,6 @@ import type {
   BatchProof,
   BatchSettlePayload,
 } from "../types";
-import type { BatchReceiverAuthorizerStore } from "./receiverAuthorizerStore";
 
 /** Terms resolved from a channel config and the facilitator's fee payer. */
 export type BatchTerms = {
@@ -67,11 +67,32 @@ export type ProofAmountBound = "exact" | "ceiling";
  */
 export type VoucherModeBinding = "requirements" | "payload";
 
-/** The two places a facilitator may read a channel's receiver-authorizer binding. */
-export type BindingSourceConfig = {
-  receiverAuthorizerStore?: BatchReceiverAuthorizerStore | undefined;
-  receiverBindingHistoryReader?: BatchReceiverBindingHistoryReader | undefined;
-};
+/**
+ * Facilitator-delegated receiver authorization.
+ *
+ * Advertised as `/supported` `extra.receiverAuthorizer`. The facilitator
+ * records the caller's identity on the channel row at open and requires the
+ * same identity to seal or cooperatively refund, so those closes carry no
+ * `CloseAuthorization`. Offering this mode requires
+ * {@link BatchDelegatedReceiverAuth.resolveCallerIdentity}. The identity is
+ * written on the channel row.
+ */
+export interface BatchDelegatedReceiverAuth {
+  /** Advertised as `/supported` extra.receiverAuthorizer and bound into delegated channels. */
+  receiverAuthorizer: Address;
+  resolveCallerIdentity(
+    ctx: BatchDelegatedSettleContext,
+  ): Promise<string | undefined> | string | undefined;
+}
+
+/** Context passed to {@link BatchDelegatedReceiverAuth.resolveCallerIdentity}. */
+export interface BatchDelegatedSettleContext {
+  step: "deposit" | "seal" | "refund";
+  channelId: string;
+  network: Network;
+  payer: string;
+  facilitatorContext?: FacilitatorContext | undefined;
+}
 
 /** One signature touching a channel account, newest-first as returned by RPC. */
 export interface BatchReceiverBindingHistorySignature {

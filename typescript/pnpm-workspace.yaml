@@ -9,6 +9,8 @@ packages:
   - site
 overrides:
   cssstyle: 5.3.6
+  # GHSA-mrhx-c7xc-m3w5 has no patched zod 3.x.
+  zod: ^4.6.6
 packageExtensions:
   # @keetanetwork/anchor imports tslib at runtime but does not declare it.
   "@keetanetwork/anchor@*":

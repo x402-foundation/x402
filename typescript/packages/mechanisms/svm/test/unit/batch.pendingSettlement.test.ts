@@ -9,7 +9,7 @@ import { InMemoryPendingSettlementStore } from "@x402/core/facilitator";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { BatchSvmScheme as BatchFacilitatorScheme } from "../../src/batch-settlement/facilitator/scheme";
-import { InMemoryBatchReceiverAuthorizerStore } from "../../src/batch-settlement/facilitator/receiverAuthorizerStore";
+import { InMemoryPaymentChannelStorage } from "../../src/payment-channels/storage";
 import { broadcastOpen } from "../../src/payment-channels/facilitator";
 import { USDC_DEVNET_ADDRESS } from "../../src/defaultAssets";
 import { SOLANA_DEVNET_CAIP2, MEMO_PROGRAM_ADDRESS } from "../../src/constants";
@@ -49,7 +49,7 @@ describe("batch-settlement pending settlement", () => {
     const scheme = new BatchFacilitatorScheme(
       { ...signer, confirmTransaction: async () => undefined },
       {
-        receiverAuthorizerStore: new InMemoryBatchReceiverAuthorizerStore(),
+        channelStorage: new InMemoryPaymentChannelStorage(),
         pendingSettlementStore: store,
       },
     );
@@ -78,7 +78,7 @@ describe("batch-settlement pending settlement", () => {
         getAccountInfo: vi.fn().mockResolvedValue(null),
       };
       const scheme = new BatchFacilitatorScheme(transport, {
-        receiverAuthorizerStore: new InMemoryBatchReceiverAuthorizerStore(),
+        channelStorage: new InMemoryPaymentChannelStorage(),
       });
       const internals = scheme as any;
       const instructions = [
@@ -100,14 +100,7 @@ describe("batch-settlement pending settlement", () => {
         confirm.mockClear();
         transport.signTransaction = vi.fn().mockImplementation(async () => wire);
         await internals.broadcastDurably("open", NETWORK, payer, (onPrepared: any) =>
-          broadcastOpen(
-            internals.submissionSigner(),
-            wallet.address,
-            NETWORK,
-            wire,
-            undefined,
-            onPrepared,
-          ),
+          broadcastOpen(internals.signer, wallet.address, NETWORK, wire, undefined, onPrepared),
         );
       }
       expect(confirm).toHaveBeenCalledTimes(1);
@@ -166,7 +159,7 @@ describe("batch-settlement pending settlement", () => {
         },
       },
       {
-        receiverAuthorizerStore: new InMemoryBatchReceiverAuthorizerStore(),
+        channelStorage: new InMemoryPaymentChannelStorage(),
         pendingSettlementStore: store,
       },
     );

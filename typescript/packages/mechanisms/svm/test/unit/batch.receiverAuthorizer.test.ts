@@ -1,14 +1,16 @@
 import { address, generateKeyPairSigner, getBase64Codec, type Signature } from "@solana/kit";
 import type { PaymentRequirements } from "@x402/core/types";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { settlementAtaReader } from "./helpers/tokenAccount";
 
 import { buildDepositPayload } from "../../src/batch-settlement/client/channel";
 import { BatchError } from "../../src/batch-settlement/errors";
-import {
-  BatchReceiverAuthorizerConflictError,
-  InMemoryBatchReceiverAuthorizerStore,
-} from "../../src/batch-settlement/facilitator/receiverAuthorizerStore";
 import type { BatchReceiverBindingHistoryReader } from "../../src/batch-settlement/facilitator/types";
+import {
+  InMemoryPaymentChannelStorage,
+  ReceiverAuthorizerConflictError,
+  checkOpenBindings,
+} from "../../src/payment-channels/storage";
 import { BatchSvmScheme } from "../../src/batch-settlement/facilitator/scheme";
 import {
   encodeReceiverBindingMemo,
@@ -19,7 +21,7 @@ import { SOLANA_DEVNET_CAIP2, TOKEN_PROGRAM_ADDRESS } from "../../src/constants"
 import { USDC_DEVNET_ADDRESS, USDC_MAINNET_ADDRESS } from "../../src/defaultAssets";
 import type { Channel } from "../../src/payment-channels/generated/accounts/channel";
 import { getChannelDistributionHash } from "../../src/payment-channels/facilitator";
-import { ChannelStatus } from "../../src/payment-channels/onchain";
+import { ChannelStatus, getPaymentChannelsTreasuryOwner } from "../../src/payment-channels/onchain";
 import {
   buildOpenPaymentChannelTransaction,
   verifyOpenTransaction,
@@ -120,9 +122,16 @@ function channel(overrides: Partial<Channel> = {}): Channel {
 function signer() {
   return {
     confirmTransaction: vi.fn().mockResolvedValue(undefined),
-    getAccountInfo: vi.fn().mockResolvedValue({ owner: TOKEN_PROGRAM_ADDRESS }),
+    getAccountInfo: vi.fn().mockImplementation(
+      settlementAtaReader({
+        mint: MINT,
+        owners: () => [payer.address, RECEIVER, getPaymentChannelsTreasuryOwner(NETWORK)],
+      }),
+    ),
     getAddresses: vi.fn(() => [feePayer.address]),
+    getLatestBlockhash: vi.fn(),
     getSigner: vi.fn(() => feePayer),
+    getSlot: vi.fn(),
     sendTransaction: vi.fn().mockResolvedValue(SIGNATURE),
     signTransaction: vi.fn().mockResolvedValue("signed"),
     simulateTransaction: vi.fn().mockResolvedValue(undefined),
@@ -131,16 +140,29 @@ function signer() {
 
 describe("batch-settlement receiver-authorizer binding", () => {
   it("keeps the first binding for a channel and refuses a different key", async () => {
-    const store = new InMemoryBatchReceiverAuthorizerStore();
-    const binding = { channelId: RECEIVER, network: NETWORK, receiverAuthorizer: server.address };
-    await store.bind(binding);
-    await expect(store.bind(binding)).resolves.toBeUndefined();
-    await expect(store.bind({ ...binding, receiverAuthorizer: payer.address })).rejects.toThrow(
-      BatchReceiverAuthorizerConflictError,
-    );
-    expect(await store.get(NETWORK, RECEIVER)).toEqual(binding);
+    const store = new InMemoryPaymentChannelStorage();
+    const binding = {
+      callerIdentity: "",
+      channelId: RECEIVER,
+      expiresAt: 0,
+      lastActivityAt: 1,
+      network: NETWORK,
+      payTo: "",
+      receiverAuthorizer: server.address,
+      tokenProgram: TOKEN_PROGRAM_ADDRESS,
+    };
+    await store.recordOpen(binding);
+    const same = await store.recordOpen(binding);
+    expect(same.revertToken).toBe("");
+    const other = await store.recordOpen({ ...binding, receiverAuthorizer: payer.address });
+    expect(() =>
+      checkOpenBindings({ ...binding, receiverAuthorizer: payer.address }, other.record),
+    ).toThrow(ReceiverAuthorizerConflictError);
+    expect(await store.get(NETWORK, RECEIVER)).toMatchObject({
+      receiverAuthorizer: server.address,
+    });
     // The same PDA on another network is a separate channel.
-    expect(await store.get("solana:other", RECEIVER)).toBeUndefined();
+    expect(await store.get("solana:other" as typeof NETWORK, RECEIVER)).toBeUndefined();
     await store.delete(NETWORK, RECEIVER);
     expect(await store.get(NETWORK, RECEIVER)).toBeUndefined();
   });
@@ -170,7 +192,9 @@ describe("batch-settlement receiver-authorizer binding", () => {
     const other = await buildOpenPaymentChannelTransaction(
       openArgs({ bindingMemo: encodeReceiverBindingMemo(payer.address) }),
     );
-    await expect(verifyOpen(other.transaction, expected)).rejects.toThrow(/found 0/);
+    await expect(verifyOpen(other.transaction, expected)).rejects.toThrow(
+      /names another receiver authorizer/,
+    );
     const both = await buildOpenPaymentChannelTransaction(
       openArgs({ memo: encodeReceiverBindingMemo(payer.address) }),
     );
@@ -188,8 +212,8 @@ describe("batch-settlement receiver-authorizer binding", () => {
   });
 
   it("refuses a channel the payer bound to its own key when the server's key is advertised", async () => {
-    const store = new InMemoryBatchReceiverAuthorizerStore();
-    const scheme = new BatchSvmScheme(signer() as never, { receiverAuthorizerStore: store });
+    const store = new InMemoryPaymentChannelStorage();
+    const scheme = new BatchSvmScheme(signer() as never, { channelStorage: store });
     const api = scheme as unknown as Record<string, ReturnType<typeof vi.fn>>;
     // The payer opens directly against the facilitator, advertising its own key.
     const attack = await buildDepositPayload({
@@ -211,7 +235,6 @@ describe("batch-settlement receiver-authorizer binding", () => {
     api.fetchChannel = vi.fn().mockResolvedValue(channel());
     api.broadcastDurably = vi.fn().mockResolvedValue({ ok: true, signature: SIGNATURE });
     api.completeOrPending = vi.fn().mockResolvedValue(undefined);
-    api.trackChannel = vi.fn().mockResolvedValue(undefined);
     await expect(
       scheme.settle(
         { accepted: requirements(payer.address), payload: attack.payload, x402Version: 2 },
@@ -260,10 +283,10 @@ describe("batch-settlement receiver-authorizer binding", () => {
     });
   });
 
-  it("broadcasts an open only after a store-only bind reads back", async () => {
+  it("broadcasts an open only after the channel row is recorded", async () => {
     const attack = await openedDeposit();
-    const down = new InMemoryBatchReceiverAuthorizerStore();
-    vi.spyOn(down, "bind").mockRejectedValue(new Error("store down"));
+    const down = new InMemoryPaymentChannelStorage();
+    vi.spyOn(down, "recordOpen").mockRejectedValue(new Error("store down"));
     const failed = await facilitatorFor(down);
     await expect(failed.scheme.settle(attack.payment, attack.requirements)).resolves.toMatchObject({
       errorReason: "transaction_failed",
@@ -271,18 +294,7 @@ describe("batch-settlement receiver-authorizer binding", () => {
     });
     expect(failed.broadcast).not.toHaveBeenCalled();
 
-    const unread = new InMemoryBatchReceiverAuthorizerStore();
-    vi.spyOn(unread, "get").mockResolvedValue(undefined);
-    const missing = await facilitatorFor(unread);
-    await expect(missing.scheme.settle(attack.payment, attack.requirements)).resolves.toMatchObject(
-      {
-        errorReason: BatchError.RECEIVER_BINDING_UNAVAILABLE,
-        success: false,
-      },
-    );
-    expect(missing.broadcast).not.toHaveBeenCalled();
-
-    const stored = new InMemoryBatchReceiverAuthorizerStore();
+    const stored = new InMemoryPaymentChannelStorage();
     const opened = await facilitatorFor(stored);
     await expect(opened.scheme.settle(attack.payment, attack.requirements)).resolves.toMatchObject({
       success: true,
@@ -292,19 +304,19 @@ describe("batch-settlement receiver-authorizer binding", () => {
     expect((await stored.get(NETWORK, attack.channelId))?.receiverAuthorizer).toBe(payer.address);
   });
 
-  it("still broadcasts when a store write fails and history is configured", async () => {
+  it("does not broadcast when the channel write fails, even with a history reader", async () => {
     const attack = await openedDeposit();
-    const store = new InMemoryBatchReceiverAuthorizerStore();
-    vi.spyOn(store, "bind").mockRejectedValue(new Error("store down"));
+    const store = new InMemoryPaymentChannelStorage();
+    vi.spyOn(store, "recordOpen").mockRejectedValue(new Error("store down"));
     const { broadcast, scheme } = await facilitatorFor(store, {
       getSignaturesForAddress: vi.fn(),
       getTransaction: vi.fn(),
     });
     await expect(scheme.settle(attack.payment, attack.requirements)).resolves.toMatchObject({
-      success: true,
-      transaction: SIGNATURE,
+      errorReason: "transaction_failed",
+      success: false,
     });
-    expect(broadcast).toHaveBeenCalledOnce();
+    expect(broadcast).not.toHaveBeenCalled();
     expect(await store.get(NETWORK, attack.channelId)).toBeUndefined();
   });
 
@@ -345,11 +357,11 @@ async function openedDeposit() {
 }
 
 async function facilitatorFor(
-  store: InMemoryBatchReceiverAuthorizerStore | undefined,
+  store: InMemoryPaymentChannelStorage | undefined,
   historyReader?: BatchReceiverBindingHistoryReader,
 ) {
   const scheme = new BatchSvmScheme(signer() as never, {
-    ...(store ? { receiverAuthorizerStore: store } : {}),
+    ...(store ? { channelStorage: store } : {}),
     ...(historyReader ? { receiverBindingHistoryReader: historyReader } : {}),
   });
   const api = scheme as unknown as Record<string, ReturnType<typeof vi.fn>>;
@@ -358,6 +370,5 @@ async function facilitatorFor(
   api.fetchChannel = vi.fn().mockResolvedValue(channel());
   api.broadcastDurably = broadcast;
   api.completeOrPending = vi.fn().mockResolvedValue(undefined);
-  api.trackChannel = vi.fn().mockResolvedValue(undefined);
   return { broadcast, scheme };
 }
