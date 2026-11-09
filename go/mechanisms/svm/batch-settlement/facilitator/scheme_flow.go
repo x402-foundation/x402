@@ -1386,14 +1386,8 @@ type distributionExtra struct {
 }
 
 type storedDistribution struct {
-	Success      bool               `json:"success"`
-	ErrorReason  string             `json:"errorReason,omitempty"`
-	ErrorMessage string             `json:"errorMessage,omitempty"`
-	Payer        string             `json:"payer,omitempty"`
-	Transaction  string             `json:"transaction"`
-	Network      x402.Network       `json:"network"`
-	Amount       string             `json:"amount,omitempty"`
-	Extra        *distributionExtra `json:"extra,omitempty"`
+	x402.SettleResponse
+	Extra *distributionExtra `json:"extra,omitempty"`
 }
 
 func decodeDistributionResult(raw string) (*x402.SettleResponse, error) {
@@ -1401,20 +1395,11 @@ func decodeDistributionResult(raw string) (*x402.SettleResponse, error) {
 	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
 		return nil, err
 	}
-	response := &x402.SettleResponse{
-		Success:      stored.Success,
-		ErrorReason:  stored.ErrorReason,
-		ErrorMessage: stored.ErrorMessage,
-		Payer:        stored.Payer,
-		Transaction:  stored.Transaction,
-		Network:      stored.Network,
-		Amount:       stored.Amount,
+	response := stored.SettleResponse
+	if stored.Extra != nil {
+		response.Extra = map[string]any{"channels": stored.Extra.Channels}
 	}
-	if stored.Extra == nil {
-		return response, nil
-	}
-	response.Extra = map[string]any{"channels": stored.Extra.Channels}
-	return response, nil
+	return &response, nil
 }
 
 func channelIDs(prepared []PreparedDistribution) []string {
