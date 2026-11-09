@@ -470,10 +470,9 @@ export class x402Facilitator {
             settleResult.extensions[key] = extensionData;
           }
         } catch (error) {
-          console.error(
-            `[x402] facilitator extension "${key}" enrichSettleResponse threw`,
-            error instanceof Error ? error : new Error(String(error)),
-          );
+          // Same isolation as the advisory hooks above: settlement has already
+          // executed, so a failing extension must not turn it into an error.
+          this.warnFacilitatorHookFailure(`enrichSettleResponse (extension "${key}")`, error);
         }
       }
 

@@ -190,7 +190,7 @@ describe("x402Facilitator - FacilitatorExtension.enrichSettleResponse hooks", ()
   // Test 5: Extension error doesn't break settlement
   it("should not fail settlement when an extension hook throws", async () => {
     const facilitator = buildFacilitator();
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     facilitator.registerExtension({
       key: "bad-ext",
@@ -202,7 +202,7 @@ describe("x402Facilitator - FacilitatorExtension.enrichSettleResponse hooks", ()
     const result = await facilitator.settle(buildPaymentPayload(), buildPaymentRequirements());
 
     expect(result.success).toBe(true);
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("bad-ext"), expect.any(Error));
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('"bad-ext"'));
 
     consoleSpy.mockRestore();
   });
