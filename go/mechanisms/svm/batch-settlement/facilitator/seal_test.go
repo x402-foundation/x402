@@ -203,6 +203,18 @@ func TestBatchSettlementSeal(t *testing.T) {
 		require.NoError(t, err)
 		return response
 	}
+	settleThrown := func(t *testing.T, scheme *BatchSvmScheme, payload any) *x402.SettleError {
+		t.Helper()
+		response, err := scheme.Settle(context.Background(), types.PaymentPayload{
+			X402Version: 2,
+			Accepted:    requirements,
+			Payload:     asMap(t, payload),
+		}, requirements, nil)
+		require.Nil(t, response)
+		var settleErr *x402.SettleError
+		require.ErrorAs(t, err, &settleErr)
+		return settleErr
+	}
 
 	t.Run("accepts only a well-formed seal payload", func(t *testing.T) {
 		payload := sealPayload(t, 3_000)
@@ -256,8 +268,7 @@ func TestBatchSettlementSeal(t *testing.T) {
 		fixture := facilitator(t, nil, true, func(cfg *Config) { cfg.OnDistributionConfirmed = payouts.record })
 		payload := sealPayload(t, 3_000)
 
-		pending := settle(t, fixture.scheme, payload)
-		assert.False(t, pending.Success)
+		pending := settleThrown(t, fixture.scheme, payload)
 		assert.Equal(t, x402.ErrSettlementPending, pending.ErrorReason)
 		assert.Equal(t, signature, pending.Transaction)
 		assert.Equal(t, payer.PublicKey().String(), pending.Payer)
@@ -416,8 +427,7 @@ func TestBatchSettlementSeal(t *testing.T) {
 		fixture := facilitator(t, openLive, true, func(cfg *Config) { cfg.OnDistributionConfirmed = payouts.record })
 		payload := refundPayload(t, 3_000)
 
-		pending := settle(t, fixture.scheme, payload)
-		assert.False(t, pending.Success)
+		pending := settleThrown(t, fixture.scheme, payload)
 		assert.Equal(t, x402.ErrSettlementPending, pending.ErrorReason)
 		assert.Equal(t, signature, pending.Transaction)
 		assert.Equal(t, payer.PublicKey().String(), pending.Payer)
@@ -456,8 +466,7 @@ func TestBatchSettlementSeal(t *testing.T) {
 				return nil
 			}
 		})
-		pending := settle(t, fixture.scheme, refundPayload(t, 3_000))
-		assert.False(t, pending.Success)
+		pending := settleThrown(t, fixture.scheme, refundPayload(t, 3_000))
 		assert.Equal(t, x402.ErrSettlementPending, pending.ErrorReason)
 		assert.Equal(t, signature, pending.Transaction)
 		assert.Equal(t, payer.PublicKey().String(), pending.Payer)
@@ -543,14 +552,17 @@ func TestBatchSettlementSeal(t *testing.T) {
 
 			assert.False(t, finishedBeforeRelease)
 			assert.Equal(t, 1, callsWhilePending)
-			require.NoError(t, firstOutcome.err)
-			require.NoError(t, secondOutcome.err)
 			assert.Equal(t, firstOutcome.response, secondOutcome.response)
+			assert.Equal(t, firstOutcome.err, secondOutcome.err)
 			if tc.fail {
-				assert.False(t, firstOutcome.response.Success)
-				assert.Equal(t, x402.ErrSettlementPending, firstOutcome.response.ErrorReason)
-				assert.Equal(t, signature, firstOutcome.response.Transaction)
+				var settleErr *x402.SettleError
+				require.Nil(t, firstOutcome.response)
+				require.ErrorAs(t, firstOutcome.err, &settleErr)
+				assert.Equal(t, x402.ErrSettlementPending, settleErr.ErrorReason)
+				assert.Equal(t, signature, settleErr.Transaction)
 			} else {
+				require.NoError(t, firstOutcome.err)
+				require.NoError(t, secondOutcome.err)
 				assert.True(t, firstOutcome.response.Success)
 				assert.Equal(t, amount, firstOutcome.response.Amount)
 			}

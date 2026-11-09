@@ -138,7 +138,7 @@ class x402Facilitator(x402FacilitatorBase):
 
         Raises:
             SchemeNotFoundError: If no facilitator registered for scheme/network.
-            PaymentAbortedError: If a before hook aborts.
+            VerifyError: If a before hook aborts.
         """
         gen = self._verify_core(payload, requirements, payload_bytes, requirements_bytes)
         result = None
@@ -181,7 +181,7 @@ class x402Facilitator(x402FacilitatorBase):
 
         Raises:
             SchemeNotFoundError: If no facilitator registered for scheme/network.
-            PaymentAbortedError: If a before hook aborts.
+            SettleError: If a before hook aborts.
         """
         gen = self._settle_core(payload, requirements, payload_bytes, requirements_bytes)
         result = None
@@ -304,7 +304,7 @@ class x402FacilitatorSync(x402FacilitatorBase):
 
         Raises:
             SchemeNotFoundError: If no facilitator registered for scheme/network.
-            PaymentAbortedError: If a before hook aborts.
+            VerifyError: If a before hook aborts.
         """
         gen = self._verify_core(payload, requirements, payload_bytes, requirements_bytes)
         result = None
@@ -347,7 +347,7 @@ class x402FacilitatorSync(x402FacilitatorBase):
 
         Raises:
             SchemeNotFoundError: If no facilitator registered for scheme/network.
-            PaymentAbortedError: If a before hook aborts.
+            SettleError: If a before hook aborts.
         """
         gen = self._settle_core(payload, requirements, payload_bytes, requirements_bytes)
         result = None

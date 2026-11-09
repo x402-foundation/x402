@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -177,6 +178,7 @@ func TestExactSvmScheme_VerifyAcceptsVersion1StaticLayouts(t *testing.T) {
 		extra []solana.Instruction
 	}{
 		{name: "transfer only"},
+		{name: "many assertion guards", extra: []solana.Instruction{lighthouseInstruction(), lighthouseInstruction(), lighthouseInstruction(), lighthouseInstruction(), lighthouseInstruction(), memoInstruction("a"), memoInstruction("b")}},
 		{name: "transfer + memo", extra: []solana.Instruction{memoInstruction("nonce")}},
 		{
 			name: "transfer + three Lighthouse + memo",
@@ -192,9 +194,25 @@ func TestExactSvmScheme_VerifyAcceptsVersion1StaticLayouts(t *testing.T) {
 			require.NoError(t, err)
 			assert.True(t, resp.IsValid)
 			assert.Equal(t, 1, signer.simulateCalls)
-			assert.True(t, hasStaticTransferLayout(f.tx))
+			assert.True(t, NewExactSvmScheme(signer).hasStaticTransferLayout(f.tx, f.tx.Message.AccountKeys[0]))
 		})
 	}
+}
+
+func TestExactSvmScheme_Version1GuardPolicy(t *testing.T) {
+	for _, data := range [][]byte{{}, {0}, {1}, {18}, {255}} {
+		t.Run(fmt.Sprintf("invalid %v", data), func(t *testing.T) {
+			bad := solana.NewInstruction(lighthouseProgramID, nil, data)
+			f := buildV1ExactFixture(t, v1ExactConfig(), []solana.Instruction{memoInstruction("early"), bad})
+			_, _, err := verifyFixture(t, f)
+			require.Error(t, err)
+			assert.Equal(t, ErrInvalidLighthouseInstruction, invalidReasonFromError(err))
+		})
+	}
+	f := buildV1ExactFixture(t, v1ExactConfig(), []solana.Instruction{lighthouseInstruction()}, lighthouseInstruction(), memoInstruction("nonce"))
+	resp, _, err := verifyFixture(t, f)
+	require.NoError(t, err)
+	assert.True(t, resp.IsValid)
 }
 
 func TestExactSvmScheme_VerifyAcceptsVersion1AboveTheLegacySizeLimit(t *testing.T) {
@@ -255,18 +273,10 @@ func TestExactSvmScheme_VerifyRejectsVersion1Violations(t *testing.T) {
 		{name: "priorityFee one lamport over the cap", config: v1ExactConfig().WithPriorityFee(atCap + 1), reason: ErrComputePriceInstructionTooHigh},
 		{name: "priorityFee near u64 max cannot wrap", config: v1ExactConfig().WithPriorityFee(math.MaxUint64), reason: ErrComputePriceInstructionTooHigh},
 		{
-			name:   "fifth optional instruction",
-			config: v1ExactConfig(),
-			extra: []solana.Instruction{
-				lighthouseInstruction(), lighthouseInstruction(), lighthouseInstruction(), memoInstruction("a"), memoInstruction("b"),
-			},
-			reason: ErrTransactionInstructionsLength,
-		},
-		{
 			name:   "unknown optional instruction",
 			config: v1ExactConfig(),
 			extra:  []solana.Instruction{solana.NewInstruction(solana.SystemProgramID, solana.AccountMetaSlice{}, []byte{1})},
-			reason: ErrUnknownFourthInstruction,
+			reason: ErrUnknownInstruction,
 		},
 	}
 	for _, test := range tests {

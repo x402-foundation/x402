@@ -1,6 +1,7 @@
 """Unit tests for resource server hook skip, skipHandler, and after-verify abort."""
 
 import asyncio
+import logging
 
 import pytest
 
@@ -10,6 +11,8 @@ from x402.schemas import (
     AfterSettleAbortError,
     PaymentPayload,
     PaymentRequirements,
+    SettleError,
+    SettlePhase,
     SettleResponse,
     SkipHandlerDirective,
     SkipHandlerResult,
@@ -19,6 +22,7 @@ from x402.schemas import (
     SupportedResponse,
     VerifyResponse,
 )
+from x402.server_base import _SyncServerAsyncHookError
 
 
 class MockFacilitatorClient:
@@ -30,6 +34,7 @@ class MockFacilitatorClient:
         self.verify_raises: Exception | None = None
         self.verify_result: VerifyResponse | None = None
         self.settle_result: SettleResponse | None = None
+        self.settle_raises: Exception | None = None
 
     def get_supported(self) -> SupportedResponse:
         return SupportedResponse(
@@ -54,6 +59,8 @@ class MockFacilitatorClient:
 
     async def settle(self, payload, requirements) -> SettleResponse:
         self.settle_calls.append((payload, requirements))
+        if self.settle_raises is not None:
+            raise self.settle_raises
         if self.settle_result is not None:
             return self.settle_result
         return SettleResponse(
@@ -72,6 +79,7 @@ class MockFacilitatorClientSync:
         self.verify_raises: Exception | None = None
         self.verify_result: VerifyResponse | None = None
         self.settle_result: SettleResponse | None = None
+        self.settle_raises: Exception | None = None
 
     def get_supported(self) -> SupportedResponse:
         return SupportedResponse(
@@ -96,6 +104,8 @@ class MockFacilitatorClientSync:
 
     def settle(self, payload, requirements) -> SettleResponse:
         self.settle_calls.append((payload, requirements))
+        if self.settle_raises is not None:
+            raise self.settle_raises
         if self.settle_result is not None:
             return self.settle_result
         return SettleResponse(
@@ -238,6 +248,7 @@ class TestAfterVerifyAbort:
     def test_returns_invalid_and_stops_later_hooks(self, server):
         resource_server, _client = server
         cancel_reasons: list[str] = []
+        cancel_verify_results: list[VerifyResponse | None] = []
         later_called = False
 
         resource_server.on_after_verify(
@@ -250,6 +261,9 @@ class TestAfterVerifyAbort:
 
         resource_server.on_after_verify(later_hook)
         resource_server.on_verified_payment_canceled(lambda ctx: cancel_reasons.append(ctx.reason))
+        resource_server.on_verified_payment_canceled(
+            lambda ctx: cancel_verify_results.append(ctx.verify_result)
+        )
 
         result = _verify(resource_server, build_payload(), build_requirements())
 
@@ -258,6 +272,9 @@ class TestAfterVerifyAbort:
         assert result.invalid_message == "channel busy"
         assert later_called is False
         assert cancel_reasons == ["after_verify_aborted"]
+        assert len(cancel_verify_results) == 1
+        assert cancel_verify_results[0] is not None
+        assert cancel_verify_results[0].is_valid is True
 
     def test_keeps_abort_when_cancel_cleanup_throws(self, server):
         resource_server, _client = server
@@ -388,10 +405,10 @@ class TestBeforeSettleSkip:
         assert execution_order == ["before", "after"]
 
 
-def _settle(resource_server, payload, requirements):
+def _settle(resource_server, payload, requirements, phase: SettlePhase = "after-handler"):
     if isinstance(resource_server, x402ResourceServer):
-        return asyncio.run(resource_server.settle_payment(payload, requirements))
-    return resource_server.settle_payment(payload, requirements)
+        return asyncio.run(resource_server.settle_payment(payload, requirements, phase=phase))
+    return resource_server.settle_payment(payload, requirements, phase=phase)
 
 
 def _onchain_settle_response() -> SettleResponse:
@@ -486,3 +503,248 @@ class TestAfterSettleAbort:
         assert result.error_reason == "voucher_store_unavailable"
         assert result.transaction == "0xdeposit"
         assert result.after_settle_aborted is True
+
+
+class _PreflightScheme(_HookSchemeServer):
+    """Scheme with a configurable payment flow and failing settlement enrichment."""
+
+    def __init__(
+        self,
+        flow: str = "authorization",
+        enrich_error: Exception | None = None,
+        fail_cancel_enrich: bool = False,
+    ) -> None:
+        self.payment_flows = {"default": {"supported": (flow,), "default": flow}}
+        self.enrich_error = enrich_error
+        self.fail_cancel_enrich = fail_cancel_enrich
+
+    def enrich_settlement_payload(self, ctx):
+        if ctx.phase == "cancel" and not self.fail_cancel_enrich:
+            return None
+        if self.enrich_error is not None:
+            raise self.enrich_error
+        return None
+
+
+class _CancelSettlingScheme(_PreflightScheme):
+    """Preflight scheme that settles a zero-amount cancel and records its calls."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.cancel_calls: list[tuple[str, tuple[SettlePhase, ...]]] = []
+
+    def settle_on_cancel(self, ctx):
+        self.cancel_calls.append((ctx.reason, ctx.settled_phases))
+        return ctx.requirements.model_copy(update={"amount": "0"})
+
+
+def _abort_before_settle(_ctx):
+    return AbortResult(reason="settle_denied")
+
+
+def _raise_before_settle(_ctx):
+    raise RuntimeError("hook failed")
+
+
+class TestSettlementPreflightFailedCancel:
+    @pytest.mark.parametrize(
+        ("name", "flow", "phase", "before_settle", "enrich_error", "want_cancel"),
+        [
+            ("before-handler beforeSettle abort", "upfront", "before-handler", "abort", None, True),
+            (
+                "after-handler beforeSettle abort in authorization flow",
+                "authorization",
+                "after-handler",
+                "abort",
+                None,
+                True,
+            ),
+            (
+                "after-handler beforeSettle error",
+                "authorization",
+                "after-handler",
+                "raise",
+                None,
+                True,
+            ),
+            (
+                "after-handler enrichment error",
+                "authorization",
+                "after-handler",
+                None,
+                RuntimeError("signer down"),
+                True,
+            ),
+            (
+                "after-handler abort in escrow flow",
+                "escrow",
+                "after-handler",
+                "abort",
+                None,
+                False,
+            ),
+            (
+                "after-handler abort in upfront flow",
+                "upfront",
+                "after-handler",
+                "abort",
+                None,
+                False,
+            ),
+            ("cancel phase abort", "authorization", "cancel", "abort", None, False),
+        ],
+    )
+    def test_cancels_only_before_facilitator_when_verified_payment_is_unsettled(
+        self, server, name, flow, phase, before_settle, enrich_error, want_cancel
+    ):
+        resource_server, client = server
+        resource_server.register("eip155:8453", _PreflightScheme(flow, enrich_error))
+        if before_settle == "abort":
+            resource_server.on_before_settle(_abort_before_settle)
+        if before_settle == "raise":
+            resource_server.on_before_settle(_raise_before_settle)
+        canceled: list = []
+        settle_failures: list = []
+        resource_server.on_verified_payment_canceled(canceled.append)
+        resource_server.on_settle_failure(settle_failures.append)
+
+        with pytest.raises(Exception) as raised:
+            _settle(resource_server, build_payload(), build_requirements(), phase)
+
+        assert client.settle_calls == []
+        assert settle_failures == []
+        if not want_cancel:
+            assert canceled == []
+            return
+        assert len(canceled) == 1
+        assert canceled[0].reason == "settlement_preflight_failed"
+        assert canceled[0].settled_phases == ()
+        assert canceled[0].verify_result is None
+        assert canceled[0].error is raised.value
+
+    @pytest.mark.parametrize("failure", ["raises", "failure response"])
+    def test_does_not_cancel_after_the_facilitator_was_reached(self, server, failure):
+        resource_server, client = server
+        resource_server.register("eip155:8453", _PreflightScheme())
+        if failure == "raises":
+            client.settle_raises = RuntimeError("rpc down")
+        else:
+            client.settle_result = SettleResponse(
+                success=False,
+                error_reason="insufficient_funds",
+                transaction="",
+                network="eip155:8453",
+            )
+        canceled: list = []
+        resource_server.on_verified_payment_canceled(canceled.append)
+
+        try:
+            _settle(resource_server, build_payload(), build_requirements())
+        except RuntimeError:
+            assert failure == "raises"
+
+        assert len(client.settle_calls) == 1
+        assert canceled == []
+
+    @pytest.mark.parametrize("fail_cancel_enrich", [False, True])
+    def test_runs_settle_on_cancel_and_rethrows_the_original_error(
+        self, server, fail_cancel_enrich
+    ):
+        resource_server, client = server
+        scheme = _CancelSettlingScheme(
+            enrich_error=RuntimeError("signer down"), fail_cancel_enrich=fail_cancel_enrich
+        )
+        resource_server.register("eip155:8453", scheme)
+        cancel_hooks: list = []
+        settle_failures: list = []
+        resource_server.on_verified_payment_canceled(cancel_hooks.append)
+        resource_server.on_settle_failure(settle_failures.append)
+
+        with pytest.raises(RuntimeError, match="signer down"):
+            _settle(resource_server, build_payload(), build_requirements())
+
+        assert scheme.cancel_calls == [("settlement_preflight_failed", ())]
+        assert len(cancel_hooks) == 1
+        assert [call[1].amount for call in client.settle_calls] == (
+            [] if fail_cancel_enrich else ["0"]
+        )
+        assert settle_failures == []
+
+
+class TestGateHookThrowOutcomes:
+    def test_fails_verification_closed_when_before_verify_hook_throws(self, server, caplog):
+        resource_server, client = server
+
+        def hook(_ctx):
+            raise RuntimeError("Hook boom")
+
+        resource_server.on_before_verify(hook)
+
+        with caplog.at_level(logging.WARNING, logger="x402"):
+            result = _verify(resource_server, build_payload(), build_requirements())
+
+        assert result.is_valid is False
+        assert result.invalid_reason == "before_verify_hook_error"
+        assert result.invalid_message == "before verify hook failed"
+        assert "Hook boom" not in (result.invalid_reason or "")
+        assert "Hook boom" not in (result.invalid_message or "")
+        assert client.verify_calls == []
+        assert (
+            "[x402] Resource server beforeVerify hook threw "
+            "(manual before_verify hook #0): Hook boom"
+        ) in caplog.text
+
+    def test_fails_settlement_closed_when_before_settle_hook_throws(self, server, caplog):
+        resource_server, client = server
+
+        def hook(_ctx):
+            raise RuntimeError("Unexpected failure")
+
+        resource_server.on_before_settle(hook)
+
+        with caplog.at_level(logging.WARNING, logger="x402"):
+            with pytest.raises(SettleError) as exc_info:
+                _settle(resource_server, build_payload(), build_requirements())
+
+        assert exc_info.value.error_reason == "before_settle_hook_error"
+        assert exc_info.value.error_message == "before settle hook failed"
+        assert exc_info.value.__cause__ is None
+        assert "Unexpected failure" not in (exc_info.value.error_reason or "")
+        assert "Unexpected failure" not in (exc_info.value.error_message or "")
+        assert client.settle_calls == []
+        assert (
+            "[x402] Resource server beforeSettle hook threw "
+            "(manual before_settle hook #0): Unexpected failure"
+        ) in caplog.text
+
+    def test_before_settle_re_raises_settle_error(self, server):
+        resource_server, client = server
+
+        def hook(_ctx):
+            raise SettleError("custom_gate", "do not replace")
+
+        resource_server.on_before_settle(hook)
+
+        with pytest.raises(SettleError) as exc_info:
+            _settle(resource_server, build_payload(), build_requirements())
+
+        assert exc_info.value.error_reason == "custom_gate"
+        assert exc_info.value.error_message == "do not replace"
+        assert client.settle_calls == []
+
+    def test_sync_server_still_rejects_async_gate_hooks(self):
+        client = MockFacilitatorClientSync()
+        resource_server = x402ResourceServerSync(client)
+        resource_server.register("eip155:8453", _HookSchemeServer())
+        resource_server.initialize()
+
+        async def hook(_ctx):
+            return None
+
+        resource_server.on_before_verify(hook)
+        with pytest.raises(_SyncServerAsyncHookError, match="Async hooks are not supported"):
+            resource_server.verify_payment(build_payload(), build_requirements())
+
+        resource_server.on_before_settle(hook)
+        with pytest.raises(_SyncServerAsyncHookError, match="Async hooks are not supported"):
+            resource_server.settle_payment(build_payload(), build_requirements())

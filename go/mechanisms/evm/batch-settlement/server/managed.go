@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"log"
 	"math/big"
 	"strconv"
 	"time"
@@ -62,7 +63,7 @@ func handleManagedAfterVerify(s *BatchSettlementEvmScheme, ctx x402.VerifyResult
 				s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{
 					CorrectiveChannelState: channelState,
 					CorrectiveVoucherState: voucherState,
-				})
+				}, requestContextTtl(ctx.Requirements.GetMaxTimeoutSeconds()))
 			}
 		}
 		return nil, nil
@@ -71,33 +72,23 @@ func handleManagedAfterVerify(s *BatchSettlementEvmScheme, ctx x402.VerifyResult
 	ex := ctx.Result.Extra
 	voucher, _ := raw["voucher"].(map[string]interface{})
 	channelId, _ := voucher["channelId"].(string)
-	maxClaimable, _ := voucher["maxClaimableAmount"].(string)
-	signature, _ := voucher["signature"].(string)
-	cfgMap, _ := raw["channelConfig"].(map[string]interface{})
-	cfg, _ := batchsettlement.ChannelConfigFromMap(cfgMap)
 
-	snapshot := &ChannelSession{
-		ChannelId:               channelId,
-		ChannelConfig:           cfg,
-		ChargedCumulativeAmount: mapStringField(ex, "chargedCumulativeAmount", "0"),
-		SignedMaxClaimable:      maxClaimable,
-		Signature:               signature,
-		Balance:                 mapStringField(ex, "balance", "0"),
-		TotalClaimed:            mapStringField(ex, "totalClaimed", "0"),
-		WithdrawRequestedAt:     mapIntField(ex, "withdrawRequestedAt", 0),
-		RefundNonce:             mapIntField(ex, "refundNonce", 0),
-		LastRequestTimestamp:    time.Now().UnixMilli(),
+	pendingId, _ := ex["pendingId"].(string)
+	if pendingId == "" {
+		return verificationStateUnavailableAfter(), nil
 	}
+	s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{
+		ChannelId:            channelId,
+		PendingId:            pendingId,
+		ReservationCommitted: reservationFlag(true),
+	}, requestContextTtl(ctx.Requirements.GetMaxTimeoutSeconds()))
 
-	partial := BatchSettlementRequestContext{
-		ChannelId:       channelId,
-		ChannelSnapshot: snapshot,
+	state, ok := parseManagedChannelState(ex)
+	if !ok {
+		return verificationStateUnavailableAfter(), nil
 	}
-	if pendingId, ok := ex["pendingId"].(string); ok && pendingId != "" {
-		partial.PendingId = pendingId
-		partial.ReservationCommitted = reservationFlag(true)
-	}
-	s.MergeRequestContext(ctx.Payload, partial)
+	snapshot := toChannelView(raw, state, ctx.Requirements.GetNetwork())
+	s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{ChannelSnapshot: &snapshot})
 
 	if batchsettlement.IsRefundPayload(raw) {
 		return SkipHandlerForRefund(channelId), nil
@@ -150,14 +141,32 @@ func handleManagedVerifiedPaymentCanceled(*BatchSettlementEvmScheme, x402.Verifi
 
 // handleManagedSettleOnCancel returns zero-amount requirements so the
 // facilitator can drop the admission lock without charging, depositing, or refunding.
-func handleManagedSettleOnCancel(ctx x402.VerifiedPaymentCanceledContext) (*types.PaymentRequirements, error) {
+func handleManagedSettleOnCancel(s *BatchSettlementEvmScheme, ctx x402.VerifiedPaymentCanceledContext) (*types.PaymentRequirements, error) {
 	switch ctx.Reason {
-	case x402.CancellationReasonHandlerFailed, x402.CancellationReasonHandlerThrew, x402.CancellationReasonAfterVerifyAborted:
+	case x402.CancellationReasonHandlerFailed,
+		x402.CancellationReasonHandlerThrew,
+		x402.CancellationReasonAfterVerifyAborted,
+		x402.CancellationReasonSettlementPreflightFailed:
 	default:
 		return nil, nil
 	}
 	if ctx.Payload == nil || !batchsettlement.IsBatchedPayload(ctx.Payload.GetPayload()) {
 		return nil, nil
+	}
+	if rc := s.ReadRequestContext(ctx.Payload); rc == nil || rc.PendingId == "" {
+		var verifiedPendingId string
+		if ctx.VerifyResult != nil {
+			verifiedPendingId, _ = ctx.VerifyResult.Extra["pendingId"].(string)
+		}
+		if verifiedPendingId == "" {
+			s.TakeRequestContext(ctx.Payload)
+			return nil, nil
+		}
+		s.MergeRequestContext(
+			ctx.Payload,
+			BatchSettlementRequestContext{PendingId: verifiedPendingId},
+			requestContextTtl(ctx.Requirements.GetMaxTimeoutSeconds()),
+		)
 	}
 	req := paymentRequirementsFromView(ctx.Requirements)
 	req.Amount = "0"
@@ -213,7 +222,6 @@ func handleManagedEnrichSettlementPayload(s *BatchSettlementEvmScheme, ctx x402.
 			IncludeClaimAuthorizerSignature: false,
 		})
 		if err != nil {
-			s.TakeRequestContext(ctx.Payload)
 			return nil, err
 		}
 		for k, v := range pendingFields {
@@ -243,86 +251,92 @@ func handleManagedAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResult
 
 	voucher, _ := raw["voucher"].(map[string]interface{})
 	channelId, _ := voucher["channelId"].(string)
-	maxClaimable, _ := voucher["maxClaimableAmount"].(string)
-	signature, _ := voucher["signature"].(string)
-	cfgMap, _ := raw["channelConfig"].(map[string]interface{})
-	cfg, _ := batchsettlement.ChannelConfigFromMap(cfgMap)
+	isRefund := batchsettlement.IsRefundPayload(raw)
 
-	channelState := readChannelStateFromExtra(ctx.Result.Extra)
-	now := time.Now().UnixMilli()
-	charged := ""
-	if channelState != nil {
-		charged = channelState.ChargedCumulativeAmount
-	}
-	if charged == "" {
-		if rc := s.ReadRequestContext(ctx.Payload); rc != nil && rc.ChannelSnapshot != nil {
-			charged = rc.ChannelSnapshot.ChargedCumulativeAmount
-		}
-	}
-	if charged == "" {
-		charged = "0"
+	replicaState, ok := managedReplicaState(s, ctx, isRefund)
+	if !ok {
+		log.Printf("[batched] managed afterSettle: no valid channel state for channel %s; replica left unchanged", channelId)
+		return nil
 	}
 
-	if batchsettlement.IsRefundPayload(raw) {
-		balance := "0"
-		if channelState != nil && channelState.Balance != "" {
-			balance = channelState.Balance
-		}
-		if bigOrZero(balance).Cmp(bigOrZero(charged)) <= 0 {
-			_, err := s.GetStorage().UpdateChannel(ctx.Ctx, channelId, func(*ChannelSession) *ChannelSession {
-				return nil
-			})
-			return err
-		}
+	state := toChannelView(raw, replicaState, ctx.Requirements.GetNetwork())
+	if isRefund && bigOrZero(state.Balance).Cmp(bigOrZero(state.ChargedCumulativeAmount)) <= 0 {
+		_, err := s.GetStorage().UpdateChannel(ctx.Ctx, channelId, func(*ChannelSession) *ChannelSession {
+			return nil
+		})
+		return err
 	}
 
 	_, err := s.GetStorage().UpdateChannel(ctx.Ctx, channelId, func(current *ChannelSession) *ChannelSession {
-		if current != nil && !batchsettlement.IsRefundPayload(raw) {
-			incoming, okIncoming := new(big.Int).SetString(charged, 10)
+		if current != nil && !isRefund {
+			incoming, okIncoming := new(big.Int).SetString(state.ChargedCumulativeAmount, 10)
 			stored, okStored := new(big.Int).SetString(current.ChargedCumulativeAmount, 10)
 			if okIncoming && okStored && incoming.Cmp(stored) < 0 {
 				return current
 			}
 		}
-		var base *ChannelSession
-		if current != nil {
-			base = current
-		} else if rc := s.ReadRequestContext(ctx.Payload); rc != nil {
-			base = rc.ChannelSnapshot
-		}
-		next := ChannelSession{
-			ChannelId:               channelId,
-			ChannelConfig:           cfg,
-			ChargedCumulativeAmount: charged,
-			SignedMaxClaimable:      maxClaimable,
-			Signature:               signature,
-			Balance:                 "0",
-			TotalClaimed:            "0",
-			LastRequestTimestamp:    now,
-		}
-		if base != nil {
-			next.Balance = base.Balance
-			next.TotalClaimed = base.TotalClaimed
-			next.WithdrawRequestedAt = base.WithdrawRequestedAt
-			next.RefundNonce = base.RefundNonce
-		}
-		if channelState != nil {
-			if channelState.Balance != "" {
-				next.Balance = channelState.Balance
-			}
-			if channelState.TotalClaimed != "" {
-				next.TotalClaimed = channelState.TotalClaimed
-			}
-			next.WithdrawRequestedAt = channelState.WithdrawRequestedAt
-			if channelState.RefundNonce != "" {
-				if n, ok := new(big.Int).SetString(channelState.RefundNonce, 10); ok {
-					next.RefundNonce = int(n.Int64())
-				}
-			}
-		}
+		next := state
 		return &next
 	})
 	return err
+}
+
+func toChannelView(raw map[string]interface{}, state ChannelSession, network string) ChannelSession {
+	voucher, _ := raw["voucher"].(map[string]interface{})
+	cfgMap, _ := raw["channelConfig"].(map[string]interface{})
+	state.ChannelId, _ = voucher["channelId"].(string)
+	state.ChannelConfig, _ = batchsettlement.ChannelConfigFromMap(cfgMap)
+	state.SignedMaxClaimable, _ = voucher["maxClaimableAmount"].(string)
+	state.Signature, _ = voucher["signature"].(string)
+	state.LastRequestTimestamp = time.Now().UnixMilli()
+	stampNetwork(&state, network)
+	return state
+}
+
+func managedReplicaState(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext, isRefund bool) (ChannelSession, bool) {
+	if raw, ok := ctx.Result.Extra["channelState"].(map[string]interface{}); ok {
+		if state, ok := parseManagedChannelState(raw); ok {
+			return state, true
+		}
+	}
+	if isRefund {
+		return ChannelSession{}, false
+	}
+	rc := s.ReadRequestContext(ctx.Payload)
+	if rc == nil || rc.ChannelSnapshot == nil {
+		return ChannelSession{}, false
+	}
+	return *rc.ChannelSnapshot, true
+}
+
+func parseManagedChannelState(m map[string]interface{}) (ChannelSession, bool) {
+	charged, okCharged := mapUintStringField(m, "chargedCumulativeAmount")
+	balance, okBalance := mapUintStringField(m, "balance")
+	totalClaimed, okClaimed := mapUintStringField(m, "totalClaimed")
+	refundNonce, okNonce := mapUintIntField(m, "refundNonce")
+	withdrawRequestedAt, okWithdraw := mapUintIntField(m, "withdrawRequestedAt")
+	if !okCharged || !okBalance || !okClaimed || !okNonce || !okWithdraw {
+		return ChannelSession{}, false
+	}
+	return ChannelSession{
+		ChargedCumulativeAmount: charged,
+		Balance:                 balance,
+		TotalClaimed:            totalClaimed,
+		RefundNonce:             refundNonce,
+		WithdrawRequestedAt:     withdrawRequestedAt,
+	}, true
+}
+
+func mapUintIntField(m map[string]interface{}, key string) (int, bool) {
+	if n, ok := m[key].(int); ok {
+		return n, n >= 0
+	}
+	s, ok := mapUintStringField(m, key)
+	if !ok {
+		return 0, false
+	}
+	n, err := strconv.Atoi(s)
+	return n, err == nil
 }
 
 func readCorrectiveChannelState(extra map[string]interface{}) *batchsettlement.BatchSettlementChannelStateExtra {

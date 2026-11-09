@@ -201,6 +201,39 @@ async def test_async_settle_raises_facilitator_response_error_for_invalid_schema
         await client.settle(make_v2_payload(), make_payment_requirements())
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["verify_from_bytes", "settle_from_bytes"])
+@pytest.mark.parametrize("requirements_bytes", [b"[]", b'"s"', b"1", b"null", b"true"])
+async def test_async_from_bytes_rejects_non_object_requirements(method, requirements_bytes):
+    """Async bytes methods should reject non-object requirements before sending."""
+    http_client = _async_http_client(_make_http_response(200, {"isValid": True}))
+    client = HTTPFacilitatorClient(
+        FacilitatorConfig(url="https://facilitator.test", http_client=http_client)
+    )
+    payload_bytes = make_v2_payload().model_dump_json(by_alias=True).encode()
+
+    with pytest.raises(ValueError, match="Payment requirements must be a JSON object"):
+        await getattr(client, method)(payload_bytes, requirements_bytes)
+
+    http_client.send.assert_not_called()
+
+
+@pytest.mark.parametrize("method", ["verify_from_bytes", "settle_from_bytes"])
+@pytest.mark.parametrize("requirements_bytes", [b"[]", b'"s"', b"1", b"null", b"true"])
+def test_sync_from_bytes_rejects_non_object_requirements(method, requirements_bytes):
+    """Sync bytes methods should reject non-object requirements before sending."""
+    http_client = _sync_http_client(_make_http_response(200, {"isValid": True}))
+    client = HTTPFacilitatorClientSync(
+        FacilitatorConfig(url="https://facilitator.test", http_client=http_client)
+    )
+    payload_bytes = make_v2_payload().model_dump_json(by_alias=True).encode()
+
+    with pytest.raises(ValueError, match="Payment requirements must be a JSON object"):
+        getattr(client, method)(payload_bytes, requirements_bytes)
+
+    http_client.send.assert_not_called()
+
+
 def test_sync_verify_raises_facilitator_response_error_for_invalid_json():
     """Sync verify should surface invalid JSON as facilitator boundary error."""
     response = _make_http_response(200, text="not-json")

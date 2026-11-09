@@ -199,9 +199,13 @@ func (w *PaymentWrapper) Wrap(handler ToolHandler) ToolHandler {
 				Reason: x402.CancellationReasonHandlerThrew,
 				Err:    err,
 			})
+			unknown := dispatcher.Err()
 			receipt := x402.BuildFailurePathSettlementResponse(
 				cancelSettlement, beforeHandlerSettlement, &payload,
 			)
+			if receipt == nil && unknown != nil {
+				return nil, unknown
+			}
 			if receipt == nil {
 				return nil, err
 			}
@@ -224,6 +228,11 @@ func (w *PaymentWrapper) Wrap(handler ToolHandler) ToolHandler {
 			cancelSettlement := dispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
 				Reason: x402.CancellationReasonHandlerFailed,
 			})
+			if dispatcher.Err() != nil {
+				result.Content = append(result.Content, &mcp.TextContent{
+					Text: x402.ErrCancellationOutcomeUnknown.Error(),
+				})
+			}
 			receipt := x402.BuildFailurePathSettlementResponse(
 				cancelSettlement, beforeHandlerSettlement, &payload,
 			)

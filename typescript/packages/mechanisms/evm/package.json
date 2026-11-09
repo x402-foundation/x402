@@ -1,6 +1,6 @@
 {
   "name": "@x402/evm",
-  "version": "2.29.0",
+  "version": "2.30.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
@@ -151,6 +151,16 @@
       "require": {
         "types": "./dist/cjs/upto/facilitator/index.d.ts",
         "default": "./dist/cjs/upto/facilitator/index.js"
+      }
+    },
+    "./batch-settlement": {
+      "import": {
+        "types": "./dist/esm/batch-settlement/index.d.mts",
+        "default": "./dist/esm/batch-settlement/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/batch-settlement/index.d.ts",
+        "default": "./dist/cjs/batch-settlement/index.js"
       }
     },
     "./batch-settlement/client": {

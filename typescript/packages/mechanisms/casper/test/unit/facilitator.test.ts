@@ -524,6 +524,27 @@ describe("ExactCasperScheme facilitator", () => {
     });
   });
 
+  it("returns the transaction hash when a submitted transaction fails", async () => {
+    const payload = await createValidPayload();
+    const scheme = new ExactCasperScheme(
+      createMockSigner({
+        waitForTransaction: vi.fn(async () => {
+          throw new Error("transaction execution failed: User error: 37005");
+        }),
+      }),
+    );
+
+    await expect(
+      scheme.settle(buildPaymentPayload(payload), buildRequirements()),
+    ).resolves.toMatchObject({
+      success: false,
+      errorReason: ErrSettleFailed,
+      errorMessage: "transaction execution failed: User error: 37005",
+      transaction: "a".repeat(64),
+      network: testNetwork,
+    });
+  });
+
   it("maps non-error settlement failures", async () => {
     const payload = await createValidPayload();
     const scheme = new ExactCasperScheme(

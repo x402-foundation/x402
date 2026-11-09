@@ -1,5 +1,17 @@
 # @x402/core Changelog
 
+## 2.30.0
+
+### Minor Changes
+
+- [c349511](https://github.com/x402-foundation/x402/commit/c349511): Pre-facilitator settlement failures (for example a `beforeSettle` abort or throw, or `enrichSettlementPayload` failing) now dispatch `settlement_preflight_failed` cancellation to `onVerifiedPaymentCanceled` hooks and the scheme's `settleOnCancel`, then rethrow the original error. No cancel is dispatched for an after-handler settle on a flow that already settled before the handler. `onVerifiedPaymentCanceled` contexts also gain an optional `verifyResult`, set for `after_verify_aborted`. **Behavior change:** `onSettleFailure` hooks now run only once the facilitator was reached, so they no longer fire (or recover) for failures that happen before the facilitator call, matching the Go SDK. `VerifiedPaymentCancellationReason` gains `settlement_preflight_failed`; exhaustive `switch` statements over it need a new case. ([#4061](https://github.com/x402-foundation/x402/pull/4061)) - Thanks [@phdargen](https://github.com/phdargen) and [@cursoragent](https://github.com/cursoragent)!
+
+### Patch Changes
+
+- [0f41a8d](https://github.com/x402-foundation/x402/commit/0f41a8d): Rename resource-server gate hook throw outcomes to phase-specific codes: a throwing `beforeVerify` hook now returns `before_verify_hook_error` with message `before verify hook failed`, and a throwing `beforeSettle` hook now fails closed with `before_settle_hook_error` and `before settle hook failed`. Behavior is unchanged aside from the reason and message strings. ([#4133](https://github.com/x402-foundation/x402/pull/4133)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- [7074943](https://github.com/x402-foundation/x402/commit/7074943): Isolate errors from advisory `x402Facilitator` hooks: a throwing `afterVerify`, `afterSettle`, `onVerifyFailure` or `onSettleFailure` hook is now logged and skipped instead of changing the verify/settle outcome. Previously a throwing `afterSettle` hook fired `onSettleFailure` hooks and rejected `settle()` after settlement had already executed onchain. Gate hooks (`beforeVerify`, `beforeSettle`) still fail closed: a throw stops verification or settlement before the scheme facilitator is called. ([#3151](https://github.com/x402-foundation/x402/pull/3151)) - Thanks [@hung-yueh](https://github.com/hung-yueh)!
+- [3c0a740](https://github.com/x402-foundation/x402/commit/3c0a740): `decodePaymentSignatureHeader`, `decodePaymentRequiredHeader`, and `decodePaymentResponseHeader` throw when a header decodes to non-object JSON. ([#4051](https://github.com/x402-foundation/x402/pull/4051)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+
 ## 2.29.0
 
 ### Minor Changes

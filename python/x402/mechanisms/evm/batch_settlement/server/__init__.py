@@ -7,6 +7,7 @@ from ..errors import ERR_DEPOSIT_BELOW_MIN_DEPOSIT
 from .channel_manager import (
     AutoSettlementConfig,
     AutoSettlementContext,
+    BatchClaimError,
     BatchSettlementChannelManager,
     ChannelManagerConfig,
     ClaimChannelSelector,
@@ -44,6 +45,7 @@ __all__ = [
     "FileChannelStorage",
     "BatchSettlementChannelManager",
     "BatchSettlementChannelManagerSync",
+    "BatchClaimError",
     "ChannelManagerConfig",
     "ChannelManagerConfigSync",
     "ClaimChannelSelector",

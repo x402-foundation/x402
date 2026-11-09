@@ -27,12 +27,14 @@ from .schemas import (
     RecoveredVerifyResult,
     SchemeNotFoundError,
     SettleContext,
+    SettleError,
     SettleFailureContext,
     SettleResponse,
     SettleResultContext,
     SupportedKind,
     SupportedResponse,
     VerifyContext,
+    VerifyError,
     VerifyFailureContext,
     VerifyResponse,
     VerifyResultContext,
@@ -429,9 +431,7 @@ class x402FacilitatorBase:
         for hook in self._before_verify_hooks:
             result = yield ("before", hook, context)
             if isinstance(result, AbortResult):
-                from .schemas import PaymentAbortedError
-
-                raise PaymentAbortedError(result.reason)
+                raise VerifyError(result.reason, result.message)
 
         try:
             # Route by version
@@ -536,9 +536,7 @@ class x402FacilitatorBase:
         for hook in self._before_settle_hooks:
             result = yield ("before", hook, context)
             if isinstance(result, AbortResult):
-                from .schemas import PaymentAbortedError
-
-                raise PaymentAbortedError(result.reason)
+                raise SettleError(result.reason, result.message)
 
         try:
             # Route by version

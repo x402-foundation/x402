@@ -23,24 +23,24 @@ This package provides three main components for handling x402 payments on Algora
 **V2 Protocol Support** - Modern x402 protocol with CAIP-2 network identifiers
 
 **Client:**
-- `ExactAvmClient` - V2 client implementation using ASA transfers
+- `ExactAvmScheme` - V2 client implementation using ASA transfers
 - `ClientAvmSigner` - TypeScript interface for client signers (implement with `@algorandfoundation/algokit-utils`)
 
 **Facilitator:**
-- `ExactAvmFacilitator` - V2 facilitator for payment verification and settlement
+- `ExactAvmScheme` - V2 facilitator for payment verification and settlement
 - `FacilitatorAvmSigner` - TypeScript interface for facilitator signers (implement with `@algorandfoundation/algokit-utils`)
 
 **Service:**
-- `ExactAvmServer` - V2 service for building payment requirements
+- `ExactAvmScheme` - V2 service for building payment requirements
 
 ## Usage
 
 ```typescript
 import { x402Client } from "@x402/core/client";
-import { ExactAvmClient } from "@x402/avm";
+import { ExactAvmScheme } from "@x402/avm";
 
 const client = new x402Client()
-  .register("algorand:*", new ExactAvmClient(signer));
+  .register("algorand:*", new ExactAvmScheme(signer));
 ```
 
 ## Supported Networks
