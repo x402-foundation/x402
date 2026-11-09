@@ -108,7 +108,7 @@ func (f *ExactCasperScheme) Verify(
 	_ *x402.FacilitatorContext,
 ) (*x402.VerifyResponse, error) {
 	if payload.Accepted.Scheme != casperMechanism.SchemeExact {
-		return nil, x402.NewVerifyError(ErrUnsupportedScheme, "", fmt.Sprintf("invalid scheme: %s", payload.Accepted.Scheme))
+		return nil, x402.NewVerifyError(ErrInvalidScheme, "", fmt.Sprintf("invalid scheme: %s", payload.Accepted.Scheme))
 	}
 
 	if payload.Accepted.Network != requirements.Network {
@@ -120,96 +120,101 @@ func (f *ExactCasperScheme) Verify(
 		return nil, x402.NewVerifyError(ErrMalformedPayload, "", err.Error())
 	}
 
+	payer := p.Authorization.From
+
 	if p.Authorization.To != requirements.PayTo {
-		return nil, x402.NewVerifyError(ErrPayToMismatch, "", fmt.Sprintf("authorization.to=%s requirements.payTo=%s", p.Authorization.To, requirements.PayTo))
+		return nil, x402.NewVerifyError(ErrPayToMismatch, payer, fmt.Sprintf("authorization.to=%s requirements.payTo=%s", p.Authorization.To, requirements.PayTo))
 	}
 
 	if p.Authorization.Value != requirements.Amount {
-		return nil, x402.NewVerifyError(ErrAmountMismatch, "", fmt.Sprintf("authorization.value=%s requirements.amount=%s", p.Authorization.Value, requirements.Amount))
+		return nil, x402.NewVerifyError(ErrAmountMismatch, payer, fmt.Sprintf("authorization.value=%s requirements.amount=%s", p.Authorization.Value, requirements.Amount))
 	}
 
 	if !casperMechanism.IsValidAddress(requirements.PayTo) || !casperMechanism.IsValidAddress(p.Authorization.To) {
-		return nil, x402.NewVerifyError(ErrInvalidPayTo, "", "invalid payTo account-hash")
+		return nil, x402.NewVerifyError(ErrInvalidPayTo, payer, "invalid payTo account-hash")
+	}
+	if !strings.HasPrefix(payer, "00") || !casperMechanism.IsValidAddress(payer) {
+		return nil, x402.NewVerifyError(ErrInvalidPayer, payer, "payer must be a serialized account Key")
 	}
 
 	if !casperMechanism.IsValidAmountFormat(requirements.Amount) || !casperMechanism.IsValidAmountFormat(p.Authorization.Value) {
-		return nil, x402.NewVerifyError(ErrInvalidAmount, p.Authorization.From, "amount must be a positive decimal integer without leading zeros")
+		return nil, x402.NewVerifyError(ErrAmountMismatch, payer, "amount must be a positive decimal integer without leading zeros")
 	}
 
 	if !casperMechanism.IsValidContractPackageHash(requirements.Asset) {
-		return nil, x402.NewVerifyError(ErrInvalidAsset, "", requirements.Asset)
+		return nil, x402.NewVerifyError(ErrInvalidAsset, payer, requirements.Asset)
 	}
 
 	// CEP-3009 passes both bounds as U64 runtime args; parse them the same way
 	// settlement does so a value verify accepts can always be submitted.
 	validAfter, err := strconv.ParseUint(p.Authorization.ValidAfter, 10, 64)
 	if err != nil {
-		return nil, x402.NewVerifyError(ErrMalformedPayload, "", "invalid validAfter: must be an unsigned 64-bit integer")
+		return nil, x402.NewVerifyError(ErrInvalidScheme, payer, "invalid validAfter: must be an unsigned 64-bit integer")
 	}
 	validBefore, err := strconv.ParseUint(p.Authorization.ValidBefore, 10, 64)
 	if err != nil {
-		return nil, x402.NewVerifyError(ErrMalformedPayload, "", "invalid validBefore: must be an unsigned 64-bit integer")
+		return nil, x402.NewVerifyError(ErrInvalidScheme, payer, "invalid validBefore: must be an unsigned 64-bit integer")
 	}
 
 	// CEP-3009 bounds are strict: validAfter < now < validBefore.
 	now := uint64(time.Now().Unix())
 	if validAfter >= now {
-		return nil, x402.NewVerifyError(ErrNotYetValid, "", fmt.Sprintf("validAfter=%d >= now=%d", validAfter, now))
+		return nil, x402.NewVerifyError(ErrNotYetValid, payer, fmt.Sprintf("validAfter=%d >= now=%d", validAfter, now))
 	}
 	// Leave eight seconds for settlement, matching Casper's block time.
 	if now+8 >= validBefore {
-		return nil, x402.NewVerifyError(ErrExpired, p.Authorization.From, fmt.Sprintf("validBefore=%d now=%d", validBefore, now))
+		return nil, x402.NewVerifyError(ErrExpired, payer, fmt.Sprintf("validBefore=%d now=%d", validBefore, now))
 	}
 
 	// verify we have a signer for the network in requirements
 	cfg, err := f.signer.GetNetworkConfig(ctx, requirements.Network)
 	if err != nil {
-		return nil, x402.NewVerifyError(ErrNetworkMismatch, "", err.Error())
+		return nil, x402.NewVerifyError(ErrNetworkMismatch, payer, err.Error())
 	}
 
 	name, ok := requirements.Extra["name"].(string)
 	if !ok || name == "" {
-		return nil, x402.NewVerifyError(ErrMissingTokenName, "", "")
+		return nil, x402.NewVerifyError(ErrMissingTokenName, payer, "")
 	}
 	version, ok := requirements.Extra["version"].(string)
 	if !ok || version == "" {
-		return nil, x402.NewVerifyError(ErrMissingTokenVersion, "", "")
+		return nil, x402.NewVerifyError(ErrMissingTokenVersion, payer, "")
 	}
 
 	contractPackageHash, err := casperMechanism.DecodeContractPackageHash(requirements.Asset)
 	if err != nil {
-		return nil, x402.NewVerifyError(ErrInvalidAsset, "", err.Error())
+		return nil, x402.NewVerifyError(ErrInvalidAsset, payer, err.Error())
 	}
 
 	domain := eip712.BuildDomain(name, version, requirements.Network, contractPackageHash)
 
 	fromAddr, err := eip712.NewAddressFromHex("0x" + p.Authorization.From)
 	if err != nil {
-		return nil, x402.NewVerifyError(ErrMalformedPayload, "", fmt.Sprintf("invalid from address: %v", err))
+		return nil, x402.NewVerifyError(ErrInvalidPayer, payer, fmt.Sprintf("invalid from address: %v", err))
 	}
 	publicKey, err := keypair.NewPublicKey(p.PublicKey)
 	if err != nil || len(p.PublicKey) != publicKey.SerializedLength()*2 {
-		return nil, x402.NewVerifyError(ErrInvalidSignature, "", "invalid public key or key length")
+		return nil, x402.NewVerifyError(ErrInvalidSignature, payer, "invalid public key or key length")
 	}
 	// A public key authorizes its account Key, including the 00 variant tag.
 	// Hash/contract Keys cannot represent the account derived from this key.
 	expectedPayer := "00" + publicKey.AccountHash().ToHex()
 	if !strings.EqualFold(p.Authorization.From, expectedPayer) {
-		return nil, x402.NewVerifyError(ErrPayerMismatch, "", "authorization.from does not match the public key's account address")
+		return nil, x402.NewVerifyError(ErrPublicKeyMismatch, payer, "authorization.from does not match the public key's account address")
 	}
 	toAddr, err := eip712.NewAddressFromHex("0x" + p.Authorization.To)
 	if err != nil {
-		return nil, x402.NewVerifyError(ErrMalformedPayload, "", fmt.Sprintf("invalid to address: %v", err))
+		return nil, x402.NewVerifyError(ErrInvalidPayTo, payer, fmt.Sprintf("invalid to address: %v", err))
 	}
 
 	value, ok := new(big.Int).SetString(p.Authorization.Value, 10)
 	if !ok {
-		return nil, x402.NewVerifyError(ErrMalformedPayload, "", "invalid value")
+		return nil, x402.NewVerifyError(ErrAmountMismatch, payer, "invalid value")
 	}
 
 	nonceRaw, err := hex.DecodeString(p.Authorization.Nonce)
 	if err != nil || len(nonceRaw) != 32 {
-		return nil, x402.NewVerifyError(ErrMalformedPayload, "", "invalid nonce")
+		return nil, x402.NewVerifyError(ErrInvalidSignature, payer, "invalid nonce")
 	}
 	var nonceBytes [32]byte
 	copy(nonceBytes[:], nonceRaw)
@@ -225,38 +230,38 @@ func (f *ExactCasperScheme) Verify(
 
 	digest, err := eip712.HashTypedData(domain, transferWithAuthorizationTypes, "TransferWithAuthorization", message, &eip712.TypedDataOptions{DomainTypes: eip712.CasperDomainTypes})
 	if err != nil {
-		return nil, x402.NewVerifyError(ErrFailedToHash, "", err.Error())
+		return nil, x402.NewVerifyError(ErrFailedToHash, payer, err.Error())
 	}
 
 	sigBytes, err := hex.DecodeString(p.Signature)
 	if err != nil || len(sigBytes) != 65 {
-		return nil, x402.NewVerifyError(ErrInvalidSignature, "", "signature must be 65 bytes hex")
+		return nil, x402.NewVerifyError(ErrInvalidSignature, payer, "signature must be 65 bytes hex")
 	}
 	if sigBytes[0] != publicKey.Bytes()[0] {
-		return nil, x402.NewVerifyError(ErrInvalidSignature, "", "signature and public key algorithm tags must match")
+		return nil, x402.NewVerifyError(ErrInvalidSignature, payer, "signature and public key algorithm tags must match")
 	}
 	var sig65 [65]byte
 	copy(sig65[:], sigBytes)
 	if err := casperMechanism.ValidateSignatureFormat(sig65); err != nil {
 		if errors.Is(err, casperMechanism.ErrNonCanonicalSignature) {
-			return nil, x402.NewVerifyError(ErrNonCanonicalSignature, p.Authorization.From, err.Error())
+			return nil, x402.NewVerifyError(ErrNonCanonicalSignature, payer, err.Error())
 		}
-		return nil, x402.NewVerifyError(ErrInvalidSignature, "", err.Error())
+		return nil, x402.NewVerifyError(ErrInvalidSignature, payer, err.Error())
 	}
 
 	verified, err := f.signer.VerifyEIP712Signature(digest, sig65, p.PublicKey)
 	if err != nil {
-		return nil, x402.NewVerifyError(ErrInvalidSignature, "", err.Error())
+		return nil, x402.NewVerifyError(ErrInvalidSignature, payer, err.Error())
 	}
 	if !verified {
-		return nil, x402.NewVerifyError(ErrInvalidSignature, "", "signature verification failed")
+		return nil, x402.NewVerifyError(ErrInvalidSignature, payer, "signature verification failed")
 	}
 
 	if preflightErr := f.validatePreflight(ctx, p, requirements, cfg); preflightErr != nil {
 		return nil, preflightErr
 	}
 
-	return &x402.VerifyResponse{IsValid: true, Payer: p.Authorization.From}, nil
+	return &x402.VerifyResponse{IsValid: true, Payer: payer}, nil
 }
 
 // validatePreflight runs a live preflight check against the network when a speculative
@@ -478,33 +483,33 @@ func (f *ExactCasperScheme) Settle(
 		if errors.As(err, &ve) {
 			return nil, x402.NewSettleError(ve.InvalidReason, ve.Payer, network, "", ve.InvalidMessage)
 		}
-		return nil, x402.NewSettleError(ErrVerificationFailed, "", network, "", err.Error())
+		return nil, x402.NewSettleError(ErrVerificationFailed, p.Authorization.From, network, "", err.Error())
 	}
 
 	args, err := f.buildTransferWithAuthorizationArgs(p, requirements)
 	if err != nil {
-		return nil, x402.NewSettleError(ErrBuildDeployFailed, verifyResp.Payer, network, "", err.Error())
+		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, "", err.Error())
 	}
 
 	packageHash, err := casper.NewHash(requirements.Asset)
 	if err != nil {
-		return nil, x402.NewSettleError(ErrBuildDeployFailed, verifyResp.Payer, network, "", err.Error())
+		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, "", err.Error())
 	}
 	entryPoint := "transfer_with_authorization"
 
 	facilitatorPubKeyHex, err := f.signer.GetPublicKeyHex(ctx, requirements.Network)
 	if err != nil || facilitatorPubKeyHex == "" {
-		return nil, x402.NewSettleError(ErrBuildDeployFailed, verifyResp.Payer, network, "", "no facilitator public key")
+		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, "", "no facilitator public key")
 	}
 	facilitatorPubKey, err := keypair.NewPublicKey(facilitatorPubKeyHex)
 	if err != nil {
-		return nil, x402.NewSettleError(ErrBuildDeployFailed, verifyResp.Payer, network, "", err.Error())
+		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, "", err.Error())
 	}
 
 	// verify we have a signer for this network before proceeding
 	networkCfg, err := f.signer.GetNetworkConfig(ctx, requirements.Network)
 	if err != nil {
-		return nil, x402.NewSettleError(ErrNetworkMismatch, verifyResp.Payer, network, "", err.Error())
+		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, "", err.Error())
 	}
 
 	chainName := strings.TrimPrefix(networkCfg.ChainName, "casper:")
@@ -544,21 +549,21 @@ func (f *ExactCasperScheme) Settle(
 	)
 
 	if err != nil {
-		return nil, x402.NewSettleError(ErrSignDeployFailed, verifyResp.Payer, network, "", err.Error())
+		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, "", err.Error())
 	}
 
 	transaction, err := types.MakeTransactionV1(v1Payload)
 	if err != nil {
-		return nil, x402.NewSettleError(ErrSignDeployFailed, verifyResp.Payer, network, "", err.Error())
+		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, "", err.Error())
 	}
 
 	if err := f.signer.SignTransaction(transaction, requirements.Network); err != nil {
-		return nil, x402.NewSettleError(ErrSignDeployFailed, verifyResp.Payer, network, "", err.Error())
+		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, "", err.Error())
 	}
 
 	_, err = f.signer.PutTransaction(ctx, requirements.Network, *transaction)
 	if err != nil {
-		return nil, x402.NewSettleError(ErrPutDeployFailed, verifyResp.Payer, network, transaction.Hash.String(), err.Error())
+		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, transaction.Hash.String(), err.Error())
 	}
 	releaseLock = false
 
@@ -576,11 +581,11 @@ func (f *ExactCasperScheme) awaitSettlement(
 		var execErr *casperMechanism.TransactionExecutionError
 		if errors.As(err, &execErr) {
 			_ = f.pendingStore.Delete(ctx, pendingKey)
-			return nil, x402.NewSettleError(ErrTransactionFailed, payer, network, txHash, err.Error())
+			return nil, x402.NewSettleError(ErrSettleFailed, payer, network, txHash, err.Error())
 		}
 		if setErr := f.pendingStore.Set(ctx, pendingKey, txHash); setErr != nil {
 			// Without a record, a retry would re-verify and could broadcast again.
-			return nil, x402.NewSettleError(ErrTransactionFailed, payer, network, txHash,
+			return nil, x402.NewSettleError(ErrSettleFailed, payer, network, txHash,
 				fmt.Sprintf("settlement_pending, but failed to persist for retry: %s", setErr.Error()))
 		}
 		return nil, x402.NewSettleError(x402.ErrSettlementPending, payer, network, txHash, err.Error())

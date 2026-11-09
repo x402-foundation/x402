@@ -36,6 +36,7 @@ type mockFacilitatorSigner struct {
 	publicKeyHex        string
 	verifyResult        bool
 	verifyErr           error
+	signTransactionErr  error
 	putDeployResult     string
 	putDeployErr        error
 	putCalls            atomic.Int32
@@ -67,7 +68,7 @@ func (m *mockFacilitatorSigner) VerifyEIP712Signature(_ [32]byte, _ [65]byte, _ 
 
 func (m *mockFacilitatorSigner) SignTransaction(tx *caspertypes.TransactionV1, _ string) error {
 	m.capturedTransaction = tx
-	return nil
+	return m.signTransactionErr
 }
 func (m *mockFacilitatorSigner) SignDeploy(deploy *caspertypes.Deploy, _ string) error {
 	m.capturedDeploy = deploy
@@ -171,7 +172,10 @@ func TestVerify_WrongScheme(t *testing.T) {
 	payload.Accepted.Scheme = "upto"
 
 	_, err := scheme.Verify(context.Background(), payload, req, nil)
-	assert.ErrorContains(t, err, casperFacilitator.ErrUnsupportedScheme)
+	assert.ErrorContains(t, err, casperFacilitator.ErrInvalidScheme)
+	var verifyErr *x402.VerifyError
+	require.ErrorAs(t, err, &verifyErr)
+	assert.Empty(t, verifyErr.Payer)
 }
 
 func TestVerify_NetworkMismatch(t *testing.T) {
@@ -183,6 +187,9 @@ func TestVerify_NetworkMismatch(t *testing.T) {
 
 	_, err := scheme.Verify(context.Background(), payload, req, nil)
 	assert.ErrorContains(t, err, casperFacilitator.ErrNetworkMismatch)
+	var verifyErr *x402.VerifyError
+	require.ErrorAs(t, err, &verifyErr)
+	assert.Empty(t, verifyErr.Payer)
 }
 
 func TestVerify_PayToMismatch(t *testing.T) {
@@ -194,6 +201,9 @@ func TestVerify_PayToMismatch(t *testing.T) {
 
 	_, err := scheme.Verify(context.Background(), payload, req, nil)
 	assert.ErrorContains(t, err, casperFacilitator.ErrPayToMismatch)
+	var verifyErr *x402.VerifyError
+	require.ErrorAs(t, err, &verifyErr)
+	assert.Equal(t, testFrom, verifyErr.Payer)
 }
 
 func TestVerify_AmountMismatch(t *testing.T) {
@@ -205,6 +215,48 @@ func TestVerify_AmountMismatch(t *testing.T) {
 
 	_, err := scheme.Verify(context.Background(), payload, req, nil)
 	assert.ErrorContains(t, err, casperFacilitator.ErrAmountMismatch)
+	var verifyErr *x402.VerifyError
+	require.ErrorAs(t, err, &verifyErr)
+	assert.Equal(t, "invalid_exact_casper_facilitator_amount_mismatch", verifyErr.InvalidReason)
+	assert.Equal(t, testFrom, verifyErr.Payer)
+}
+
+func TestVerify_MalformedPayloadReasons(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		change func(*types.PaymentPayload)
+		reason string
+		payer  string
+	}{
+		{"missing payload", func(p *types.PaymentPayload) { p.Payload = nil }, casperFacilitator.ErrMalformedPayload, ""},
+		{"invalid authorization type", func(p *types.PaymentPayload) { p.Payload["authorization"] = "invalid" }, casperFacilitator.ErrMalformedPayload, ""},
+		{"invalid nonce hex", func(p *types.PaymentPayload) {
+			p.Payload["authorization"].(map[string]interface{})["nonce"] = "not-hex"
+		}, casperFacilitator.ErrInvalidSignature, testFrom},
+		{"short nonce", func(p *types.PaymentPayload) {
+			p.Payload["authorization"].(map[string]interface{})["nonce"] = "ab"
+		}, casperFacilitator.ErrInvalidSignature, testFrom},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			signer := defaultSigner(t)
+			scheme := casperFacilitator.NewExactCasperScheme(signer, nil)
+			payload, requirements := buildValidPayload(t)
+			test.change(&payload)
+
+			_, err := scheme.Verify(context.Background(), payload, requirements, nil)
+			var verifyErr *x402.VerifyError
+			require.ErrorAs(t, err, &verifyErr)
+			assert.Equal(t, test.reason, verifyErr.InvalidReason)
+			assert.Equal(t, test.payer, verifyErr.Payer)
+
+			_, err = scheme.Settle(context.Background(), payload, requirements, nil)
+			settleErr := requireSettleError(t, err)
+			assert.Equal(t, test.reason, settleErr.ErrorReason)
+			assert.Equal(t, test.payer, settleErr.Payer)
+			assert.Empty(t, settleErr.Transaction)
+			assert.Zero(t, signer.putCalls.Load())
+		})
+	}
 }
 
 func TestVerify_Expired(t *testing.T) {
@@ -321,7 +373,10 @@ func TestVerify_TimestampsMustBeUint64(t *testing.T) {
 			}
 
 			_, err := scheme.Verify(context.Background(), payload, req, nil)
-			assert.ErrorContains(t, err, casperFacilitator.ErrMalformedPayload)
+			assert.ErrorContains(t, err, casperFacilitator.ErrInvalidScheme)
+			var verifyErr *x402.VerifyError
+			require.ErrorAs(t, err, &verifyErr)
+			assert.Equal(t, testFrom, verifyErr.Payer)
 		})
 	}
 
@@ -412,6 +467,7 @@ func TestSettle_VerifyFails(t *testing.T) {
 	var settleErr *x402.SettleError
 	require.ErrorAs(t, err, &settleErr)
 	assert.Equal(t, casperFacilitator.ErrInvalidSignature, settleErr.ErrorReason)
+	assert.Equal(t, testFrom, settleErr.Payer)
 	assert.Empty(t, settleErr.Transaction)
 }
 
@@ -423,7 +479,34 @@ func TestSettle_PutDeployFails(t *testing.T) {
 	payload, req := buildValidPayload(t)
 
 	_, err := scheme.Settle(context.Background(), payload, req, nil)
-	assert.ErrorContains(t, err, casperFacilitator.ErrPutDeployFailed)
+	settleErr := requireSettleError(t, err)
+	assert.Equal(t, "invalid_exact_casper_facilitator_settle_failed", settleErr.ErrorReason)
+	assert.Equal(t, testFrom, settleErr.Payer)
+	require.NotNil(t, signer.capturedTransaction)
+	assert.Equal(t, signer.capturedTransaction.Hash.String(), settleErr.Transaction)
+	assert.Contains(t, settleErr.ErrorMessage, "rpc timeout")
+}
+
+func TestSettle_BuildAndSignFailures(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		configure func(*mockFacilitatorSigner)
+	}{
+		{"build", func(s *mockFacilitatorSigner) { s.publicKeyHex = "invalid" }},
+		{"sign", func(s *mockFacilitatorSigner) { s.signTransactionErr = fmt.Errorf("signing failed") }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			signer := defaultSigner(t)
+			test.configure(signer)
+			payload, requirements := buildValidPayload(t)
+			_, err := casperFacilitator.NewExactCasperScheme(signer, nil).Settle(context.Background(), payload, requirements, nil)
+			settleErr := requireSettleError(t, err)
+			assert.Equal(t, "invalid_exact_casper_facilitator_settle_failed", settleErr.ErrorReason)
+			assert.Equal(t, testFrom, settleErr.Payer)
+			assert.Empty(t, settleErr.Transaction)
+			assert.Zero(t, signer.putCalls.Load())
+		})
+	}
 }
 
 func requireSettleError(t *testing.T, err error) *x402.SettleError {
@@ -509,7 +592,7 @@ func TestSettle_ExecutionFailureIsTerminal(t *testing.T) {
 
 	_, err := scheme.Settle(context.Background(), payload, req, nil)
 	settleErr := requireSettleError(t, err)
-	assert.Equal(t, casperFacilitator.ErrTransactionFailed, settleErr.ErrorReason)
+	assert.Equal(t, "invalid_exact_casper_facilitator_settle_failed", settleErr.ErrorReason)
 	assert.Equal(t, signer.capturedTransaction.Hash.String(), settleErr.Transaction)
 	assert.Contains(t, settleErr.ErrorMessage, "Out of gas error")
 	assert.Empty(t, store.Entries())
@@ -538,7 +621,7 @@ func TestSettle_PendingStoreWriteFailureIsTerminal(t *testing.T) {
 
 	_, err := scheme.Settle(context.Background(), payload, req, nil)
 	settleErr := requireSettleError(t, err)
-	assert.Equal(t, casperFacilitator.ErrTransactionFailed, settleErr.ErrorReason)
+	assert.Equal(t, "invalid_exact_casper_facilitator_settle_failed", settleErr.ErrorReason)
 	assert.Equal(t, signer.capturedTransaction.Hash.String(), settleErr.Transaction)
 	assert.Contains(t, settleErr.ErrorMessage, "failed to persist for retry")
 }
@@ -606,7 +689,7 @@ func TestSettle_FailureBeforeBroadcastReleasesLock(t *testing.T) {
 	signer.putDeployErr = fmt.Errorf("rpc unavailable")
 	signer.verifyResult = true
 	_, err = scheme.Settle(context.Background(), payload, req, nil)
-	assert.Equal(t, casperFacilitator.ErrPutDeployFailed, requireSettleError(t, err).ErrorReason)
+	assert.Equal(t, casperFacilitator.ErrSettleFailed, requireSettleError(t, err).ErrorReason)
 
 	signer.putDeployErr = nil
 	resp, err := scheme.Settle(context.Background(), payload, req, nil)

@@ -307,17 +307,30 @@ func TestVerify_TargetedPreflightStrictTimeBounds(t *testing.T) {
 	}
 }
 
-func TestVerify_RejectsContractPayerBeforeTargetedPreflight(t *testing.T) {
-	f := newPreflightFixture(t)
-	signer := defaultSigner(t)
-	signer.rpcURL = f.url
-	payload, requirements := buildValidPayload(t)
-	payload.Payload["authorization"].(map[string]interface{})["from"] = "01" + testFrom[2:]
-	_, err := casperFacilitator.NewExactCasperScheme(signer, nil).Verify(context.Background(), payload, requirements, nil)
-	require.ErrorContains(t, err, casperFacilitator.ErrPayerMismatch)
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	assert.Empty(t, f.calls)
+func TestVerify_RejectsInvalidPayerBeforeTargetedPreflight(t *testing.T) {
+	for _, test := range []struct{ name, payer, reason string }{
+		{"contract payer", "01" + testFrom[2:], "invalid_exact_casper_facilitator_invalid_payer"},
+		{"malformed payer", "not-an-address", "invalid_exact_casper_facilitator_invalid_payer"},
+		{"non-hex payer", "00" + strings.Repeat("gg", 32), "invalid_exact_casper_facilitator_invalid_payer"},
+		{"short payer", "00" + strings.Repeat("ab", 31), "invalid_exact_casper_facilitator_invalid_payer"},
+		{"public key mismatch", "00" + strings.Repeat("ab", 32), casperFacilitator.ErrPublicKeyMismatch},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newPreflightFixture(t)
+			signer := defaultSigner(t)
+			signer.rpcURL = f.url
+			payload, requirements := buildValidPayload(t)
+			payload.Payload["authorization"].(map[string]interface{})["from"] = test.payer
+			_, err := casperFacilitator.NewExactCasperScheme(signer, nil).Verify(context.Background(), payload, requirements, nil)
+			var verifyErr *x402.VerifyError
+			require.ErrorAs(t, err, &verifyErr)
+			assert.Equal(t, test.reason, verifyErr.InvalidReason)
+			assert.Equal(t, test.payer, verifyErr.Payer)
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			assert.Empty(t, f.calls)
+		})
+	}
 }
 
 func TestVerify_TargetedPreflightSelectsLatestEnabledVersion(t *testing.T) {

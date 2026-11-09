@@ -90,8 +90,8 @@ func (f *ExactCasperScheme) validateTargetedPreflight(
 		return fail(ErrUnsupportedAsset, "token contract is missing the used_nonces dictionary URef")
 	}
 	payerKey, err := hex.DecodeString(p.Authorization.From)
-	if err != nil || len(payerKey) != 33 || (payerKey[0] != key.TypeIDAccount && payerKey[0] != key.TypeIDHash) {
-		return fail(ErrMalformedPayload, "payer must be a serialized account or contract Key")
+	if err != nil || len(payerKey) != 33 || payerKey[0] != key.TypeIDAccount {
+		return fail(ErrInvalidPayer, "payer must be a serialized account Key")
 	}
 	// CEP-18 balance keys are base64(serialized Key), including its variant tag.
 	balanceResult, err := client.GetDictionaryItem(ctx, &stateRoot, balances.URef.String(), base64.StdEncoding.EncodeToString(payerKey))
@@ -111,7 +111,7 @@ func (f *ExactCasperScheme) validateTargetedPreflight(
 	}
 	nonce, err := hex.DecodeString(p.Authorization.Nonce)
 	if err != nil || len(nonce) != 32 {
-		return fail(ErrMalformedPayload, "nonce must contain 32 bytes")
+		return fail(ErrInvalidSignature, "nonce must contain 32 bytes")
 	}
 	// CEP-3009: hex(blake2b256(Key::to_bytes() || Bytes::to_bytes())).
 	// Casper Bytes includes a little-endian u32 length before the nonce bytes.
