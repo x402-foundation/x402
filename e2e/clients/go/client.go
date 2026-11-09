@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -14,12 +15,13 @@ import (
 
 	x402 "github.com/x402-foundation/x402/go/v2"
 	x402http "github.com/x402-foundation/x402/go/v2/http"
+	authcaptureclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/auth-capture/client"
 	batchedclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/client"
-	batchsvmclient "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement/client"
 	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
 	exactevmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/v1/client"
 	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/client"
 	svmconfig "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+	batchsvmclient "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement/client"
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
 	svmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/v1/client"
 	uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/client"
@@ -51,9 +53,9 @@ type SettleResponseExtractor interface {
 
 // ClientContext holds a configured payment-capable HTTP client for e2e runs.
 type ClientContext struct {
-	URL           string
-	HTTPClient    *http.Client
-	Settle        SettleResponseExtractor
+	URL              string
+	HTTPClient       *http.Client
+	Settle           SettleResponseExtractor
 	BatchedEvmScheme *batchedclient.BatchSettlementEvmScheme
 	BatchedSvmScheme *batchsvmclient.BatchSvmScheme
 	BatchPhase       string
@@ -64,18 +66,41 @@ type ClientContext struct {
 // Transports that speak something other than plain HTTP (e.g. MCP) wrap
 // Client themselves instead of going through Newx402HTTPClient.
 type PaymentClientContext struct {
-	Client        *x402.X402Client
+	Client           *x402.X402Client
 	BatchedEvmScheme *batchedclient.BatchSettlementEvmScheme
 	BatchedSvmScheme *batchsvmclient.BatchSvmScheme
 	BatchPhase       string
+}
+
+// PaymentClientOptions narrows what BuildPaymentClientWithOptions registers,
+// for family-specific e2e clients.
+type PaymentClientOptions struct {
+	// SvmOnly skips every non-SVM family even when its credentials are set.
+	SvmOnly bool
+	// SvmTransactionVersions narrows the Solana transaction message versions
+	// the SVM schemes build. Nil keeps the SDK default ([0, 1]); []int{0}
+	// keeps the client on version 0 even when the facilitator advertises 1.
+	SvmTransactionVersions []int
 }
 
 // BuildPaymentClient builds the shared x402 payment client + batched scheme
 // from env vars, registering each Go-supported network whose credentials are set.
 // Exits the process via OutputError on misconfiguration.
 func BuildPaymentClient() *PaymentClientContext {
+	return BuildPaymentClientWithOptions(PaymentClientOptions{})
+}
+
+// BuildPaymentClientWithOptions is BuildPaymentClient with family and SVM
+// transaction-version narrowing.
+func BuildPaymentClientWithOptions(opts PaymentClientOptions) *PaymentClientContext {
 	evmPrivateKey := os.Getenv("CLIENT_EVM_PRIVATE_KEY")
+	if opts.SvmOnly {
+		evmPrivateKey = ""
+	}
 	svmPrivateKey := os.Getenv("CLIENT_SVM_PRIVATE_KEY")
+	if opts.SvmOnly && svmPrivateKey == "" {
+		log.Fatal("CLIENT_SVM_PRIVATE_KEY is required")
+	}
 	if evmPrivateKey == "" && svmPrivateKey == "" {
 		log.Fatal("At least one of CLIENT_EVM_PRIVATE_KEY or CLIENT_SVM_PRIVATE_KEY is required")
 	}
@@ -129,6 +154,7 @@ func BuildPaymentClient() *PaymentClientContext {
 			Register(evmPattern, exactevm.NewExactEvmScheme(evmSigner, evmConfig)).
 			Register(evmPattern, uptoevm.NewUptoEvmScheme(evmSigner, uptoConfig)).
 			Register(evmPattern, batchedEvmScheme).
+			Register(evmPattern, authcaptureclient.NewAuthCaptureEvmScheme(evmSigner)).
 			RegisterV1("base-sepolia", exactevmv1.NewExactEvmSchemeV1(evmSigner)).
 			RegisterV1("base", exactevmv1.NewExactEvmSchemeV1(evmSigner))
 	}
@@ -148,11 +174,17 @@ func BuildPaymentClient() *PaymentClientContext {
 
 		var svmCfg *svmconfig.ClientConfig
 		svmRpcURL := os.Getenv("SVM_RPC_URL")
-		if svmRpcURL != "" {
-			svmCfg = &svmconfig.ClientConfig{RPCURL: svmRpcURL}
+		if svmRpcURL != "" || opts.SvmTransactionVersions != nil {
+			svmCfg = &svmconfig.ClientConfig{
+				RPCURL:              svmRpcURL,
+				TransactionVersions: opts.SvmTransactionVersions,
+			}
 		}
 
-		batchCfg := &batchsvmclient.BatchSvmClientConfig{RPCURL: svmRpcURL}
+		batchCfg := &batchsvmclient.BatchSvmClientConfig{
+			RPCURL:              svmRpcURL,
+			TransactionVersions: opts.SvmTransactionVersions,
+		}
 		if saltHex := batchSettlementChannelSalt(); saltHex != "" {
 			if salt, err := svmChannelSaltU64(saltHex); err != nil {
 				OutputError(fmt.Sprintf("Invalid batch-settlement channel salt: %v", err))
@@ -202,6 +234,12 @@ func BuildPaymentClient() *PaymentClientContext {
 // CreateClient builds the shared x402 client used by go-http e2e, wrapping
 // BuildPaymentClient's payment client in a payment-capable *http.Client.
 func CreateClient() *ClientContext {
+	return CreateClientWithOptions(PaymentClientOptions{})
+}
+
+// CreateClientWithOptions is CreateClient with family and SVM
+// transaction-version narrowing.
+func CreateClientWithOptions(opts PaymentClientOptions) *ClientContext {
 	serverURL := os.Getenv("RESOURCE_SERVER_URL")
 	if serverURL == "" {
 		log.Fatal("RESOURCE_SERVER_URL is required")
@@ -212,7 +250,7 @@ func CreateClient() *ClientContext {
 		endpointPath = "/protected"
 	}
 
-	pc := BuildPaymentClient()
+	pc := BuildPaymentClientWithOptions(opts)
 	if pc == nil {
 		return nil
 	}
@@ -325,10 +363,22 @@ func IssueRequest(
 	}
 
 	success := true
+	var stepErr string
 	if resp.StatusCode == 402 {
 		success = false
+		stepErr = describePaymentFailure(responseData, resp)
+	} else if resp.StatusCode >= 400 {
+		success = false
+		stepErr = describeRequestFailure(responseData, resp)
 	} else if settleResp, ok := paymentResponse.(*x402.SettleResponse); ok && settleResp != nil {
 		success = settleResp.Success
+		if !success {
+			if settleResp.ErrorReason != "" {
+				stepErr = fmt.Sprintf("Payment failed: %s", settleResp.ErrorReason)
+			} else {
+				stepErr = fmt.Sprintf("Payment failed (status %d)", resp.StatusCode)
+			}
+		}
 	}
 
 	return StepResult{
@@ -336,7 +386,60 @@ func IssueRequest(
 		Data:            responseData,
 		StatusCode:      resp.StatusCode,
 		PaymentResponse: paymentResponse,
+		Error:           stepErr,
 	}
+}
+
+// describePaymentFailure builds an actionable error for a 402 response that
+// carries no PAYMENT-RESPONSE (verify rejection). It prefers the response
+// body's error field, then the decoded PAYMENT-REQUIRED error reason (so
+// batch-settlement corrective mismatches surface as
+// "invalid_batch_settlement_evm_*" instead of "missing payment response").
+func describePaymentFailure(responseData interface{}, resp *http.Response) string {
+	if m, ok := responseData.(map[string]interface{}); ok {
+		if msg, ok := m["error"].(string); ok && msg != "" {
+			return fmt.Sprintf("Payment failed (402): %s", msg)
+		}
+	}
+	if header := resp.Header.Get("PAYMENT-REQUIRED"); header != "" {
+		if reason := decodePaymentRequiredError(header); reason != "" {
+			return fmt.Sprintf("Payment failed (402): %s", reason)
+		}
+		return fmt.Sprintf("Payment failed (402): missing payment response (PAYMENT-REQUIRED present, body: %v)", responseData)
+	}
+	return fmt.Sprintf("Payment failed (402): %v", responseData)
+}
+
+// decodePaymentRequiredError extracts the 402 error reason from a base64
+// PAYMENT-REQUIRED header. Returns "" when the header cannot be decoded.
+func decodePaymentRequiredError(header string) string {
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(header))
+	if err != nil {
+		return ""
+	}
+	var required struct {
+		Error   string `json:"error"`
+		Accepts []struct {
+			Scheme string `json:"scheme"`
+			Extra  map[string]interface{} `json:"extra"`
+		} `json:"accepts"`
+	}
+	if err := json.Unmarshal(decoded, &required); err != nil {
+		return ""
+	}
+	return required.Error
+}
+
+// describeRequestFailure builds an actionable error for a non-402 error
+// response that carries no PAYMENT-RESPONSE (e.g. a 500 from a misconfigured
+// route). It prefers the response body's error field.
+func describeRequestFailure(responseData interface{}, resp *http.Response) string {
+	if m, ok := responseData.(map[string]interface{}); ok {
+		if msg, ok := m["error"].(string); ok && msg != "" {
+			return fmt.Sprintf("Request failed (%d): %s", resp.StatusCode, msg)
+		}
+	}
+	return fmt.Sprintf("Request failed (%d): %v", resp.StatusCode, responseData)
 }
 
 // IssueRefund triggers a cooperative refund on the batch-settlement channel.
@@ -379,25 +482,35 @@ func IssueRefund(ctx context.Context, scheme *batchedclient.BatchSettlementEvmSc
 		return StepResult{
 			Success:    false,
 			Error:      fmt.Sprintf("Refund failed: %v", err),
-			StatusCode: 200,
-			Data:       map[string]bool{"refund": true},
+			StatusCode: 500,
+			Data:       map[string]bool{"refund": false},
 		}
+	}
+	refundStatus := 200
+	if !settle.Success {
+		refundStatus = 500
 	}
 	return StepResult{
 		Success:         settle.Success,
-		Data:            map[string]bool{"refund": true},
-		StatusCode:      200,
+		Data:            map[string]bool{"refund": settle.Success},
+		StatusCode:      refundStatus,
 		PaymentResponse: settle,
 	}
 }
 
 // Aggregate builds the multi-step batchSettlement payload.
+// On failure the aggregate status surfaces the first failing step so a
+// trailing refund step can no longer mask an earlier 402 as 200.
 func Aggregate(phase string, results []StepResult, details map[string]StepResult) AggregateResult {
 	last := results[len(results)-1]
+	statusCode := last.StatusCode
+	paymentResponse := last.PaymentResponse
 	allOk := true
 	for _, r := range results {
 		if !r.Success {
 			allOk = false
+			statusCode = r.StatusCode
+			paymentResponse = r.PaymentResponse
 			break
 		}
 	}
@@ -411,8 +524,8 @@ func Aggregate(phase string, results []StepResult, details map[string]StepResult
 	return AggregateResult{
 		Success:         allOk,
 		Data:            map[string]interface{}{"batchSettlement": batch},
-		StatusCode:      last.StatusCode,
-		PaymentResponse: last.PaymentResponse,
+		StatusCode:      statusCode,
+		PaymentResponse: paymentResponse,
 	}
 }
 

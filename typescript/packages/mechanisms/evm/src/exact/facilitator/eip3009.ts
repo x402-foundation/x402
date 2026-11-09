@@ -6,7 +6,7 @@ import {
   VerifyResponse,
 } from "@x402/core/types";
 import { InMemoryPendingSettlementStore, PendingSettlementStore } from "@x402/core/facilitator";
-import { getAddress, Hex } from "viem";
+import { getAddress, hashTypedData, Hex } from "viem";
 import { authorizationTypes } from "../../constants";
 import { FacilitatorEvmSigner } from "../../signer";
 import { startAssetContractCheck } from "../../assetCache";
@@ -14,9 +14,12 @@ import { getEvmChainId } from "../../utils";
 import { ExactEIP3009Payload } from "../../types";
 import * as Errors from "./errors";
 import { resolveDataSuffix } from "../../shared/extensions";
+import { isContractRevert } from "../../shared/revert";
 import {
-  verifyTypedDataSignature,
+  verifyHashSignatureWithCode,
   classifyErc6492Payer,
+  isPlainNonCanonicalEcdsaSignature,
+  payerCodeLookupFailureMessage,
   Erc6492Classification,
 } from "../../shared/verifySignature";
 import {
@@ -152,7 +155,35 @@ export async function verifyEIP3009(
     isCounterfactual,
     innerSignature,
     eip6492Deployment: classification6492,
+    payerCode,
+    codeLookupError,
   } = classification;
+
+  // A failed eth_getCode is not an invalid signature. Go and Python report the same
+  // lookup failure as failed_to_verify_signature so callers can retry instead of re-signing.
+  if (codeLookupError !== undefined) {
+    const invalidMessage = payerCodeLookupFailureMessage(codeLookupError);
+    return {
+      response: {
+        isValid: false,
+        invalidReason: Errors.ErrFailedToVerifySignature,
+        invalidMessage,
+        payer,
+      },
+      classification,
+    };
+  }
+
+  if (isPlainNonCanonicalEcdsaSignature(signature, classification.isDeployedAtPayer)) {
+    return {
+      response: {
+        isValid: false,
+        invalidReason: Errors.ErrInvalidSignatureS,
+        payer,
+      },
+      classification,
+    };
+  }
 
   if (classification6492) {
     eip6492Deployment = classification6492;
@@ -183,11 +214,22 @@ export async function verifyEIP3009(
     // semantics — ecrecover when no code, strict EIP-1271 when code is present.
     // No ECDSA fallback for code addresses; that fallback causes pre-verify to
     // accept sigs the on-chain token rejects (empirically confirmed on Base Sepolia).
-    const isValid = await verifyTypedDataSignature(signer, {
-      address: eip3009Payload.authorization.from,
-      ...permitTypedData,
-      signature: innerSignature,
-    });
+    // Reuse the bytecode classifyErc6492Payer already fetched. A second eth_getCode here
+    // can fail independently and get reported as an invalid signature, or succeed after
+    // the first lookup failed and check a payment we already declined.
+    let isValid = false;
+    try {
+      const digest = hashTypedData(permitTypedData);
+      isValid = await verifyHashSignatureWithCode(
+        signer,
+        eip3009Payload.authorization.from,
+        payerCode,
+        digest,
+        innerSignature,
+      );
+    } catch {
+      isValid = false;
+    }
     if (!isValid) {
       return {
         response: {
@@ -271,18 +313,28 @@ export async function verifyEIP3009(
       eip6492Deployment,
     );
     if (!ok) {
-      const diagnosis = await diagnoseEip3009SimulationFailure(
-        signer,
-        erc20Address,
-        eip3009Payload,
-        requirements,
-        requirements.amount,
-      );
+      const reverted = isContractRevert(simError);
+      const mapped = reverted ? parseEip3009TransferError(simError) : undefined;
+      let response: VerifyResponse;
+      if (mapped && mapped !== Errors.ErrTransactionFailed) {
+        response = { isValid: false, invalidReason: mapped, payer };
+      } else if (reverted || !simError) {
+        // Probe unclassified failures only when the node answered, not after transport errors.
+        response = await diagnoseEip3009SimulationFailure(
+          signer,
+          erc20Address,
+          eip3009Payload,
+          requirements,
+          requirements.amount,
+        );
+      } else {
+        response = { isValid: false, invalidReason: Errors.ErrEip3009SimulationFailed, payer };
+      }
       // Carry the raw revert text so the concrete reason survives the mapping to a code.
       const rawMessage =
         simError instanceof Error ? simError.message : simError ? String(simError) : undefined;
       return {
-        response: rawMessage ? { ...diagnosis, invalidMessage: rawMessage } : diagnosis,
+        response: rawMessage ? { ...response, invalidMessage: rawMessage } : response,
         classification,
       };
     }
@@ -430,6 +482,7 @@ export async function settleEIP3009(
       network: payload.accepted.network,
       transaction: "",
       errorReason: valid.invalidReason ?? Errors.ErrInvalidScheme,
+      errorMessage: valid.invalidMessage,
       payer,
     };
   }

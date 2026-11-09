@@ -1,3 +1,0 @@
-kind: fixed
-body: Fixed refunds for persisted server-signed batch channels after a client restart.
-time: 2026-10-02T12:40:00.000000Z

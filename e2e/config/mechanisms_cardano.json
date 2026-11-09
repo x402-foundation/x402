@@ -87,6 +87,7 @@
         "typescript",
         "python"
       ],
+      "requiresEnv": "SERVER_CARDANO_SELLER_MNEMONIC",
       "price": {
         "amount": "5000000",
         "amountEnv": "SERVER_CARDANO_AMOUNT",
@@ -105,6 +106,7 @@
         "typescript",
         "python"
       ],
+      "requiresEnv": "SERVER_CARDANO_SELLER_MNEMONIC",
       "price": {
         "amount": "5000000",
         "amountEnv": "SERVER_CARDANO_AMOUNT",
@@ -122,6 +124,7 @@
         "typescript",
         "python"
       ],
+      "requiresEnv": "SERVER_CARDANO_SELLER_MNEMONIC",
       "price": {
         "amount": "5000000",
         "amountEnv": "SERVER_CARDANO_AMOUNT",

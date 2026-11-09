@@ -1,5 +1,7 @@
 """Unit tests for x402.http.clients.httpx - httpx transport wrapper."""
 
+import gzip
+import json
 import warnings
 from unittest.mock import AsyncMock, MagicMock
 
@@ -15,7 +17,12 @@ from x402.http.clients.httpx import (
     x402AsyncTransport,
     x402HttpxClient,
 )
-from x402.http.utils import encode_payment_required_header, encode_payment_response_header
+from x402.http.utils import (
+    MAX_CONTROL_PLANE_RESPONSE_BYTES,
+    ResponseBodyTooLargeError,
+    encode_payment_required_header,
+    encode_payment_response_header,
+)
 from x402.http.x402_http_client import x402HTTPClient
 from x402.schemas import PaymentPayload, PaymentRequired, PaymentRequirements, SettleResponse
 from x402.schemas.hooks import PaymentRequiredHeadersResult, RecoveredResponseResult
@@ -23,6 +30,17 @@ from x402.schemas.hooks import PaymentRequiredHeadersResult, RecoveredResponseRe
 # Skip tests if httpx not installed
 pytest.importorskip("httpx")
 import httpx
+
+
+def _attach_async_body(response: MagicMock, content: bytes = b"") -> MagicMock:
+    async def _aiter_bytes(**kwargs):
+        if content:
+            yield content
+
+    response.aiter_bytes = _aiter_bytes
+    response.aclose = AsyncMock()
+    return response
+
 
 # =============================================================================
 # Helpers
@@ -65,6 +83,9 @@ class MockX402Client:
     async def create_payment_payload(self, payment_required):
         self.create_calls.append(payment_required)
         return self.payload
+
+    def get_extensions(self):
+        return []
 
     async def handle_payment_response(self, ctx):
         return None
@@ -139,7 +160,7 @@ class TestX402AsyncTransport:
         mock_402_response.status_code = 402
         mock_402_response.headers = {"PAYMENT-REQUIRED": encoded}
         mock_402_response.json.return_value = None
-        mock_402_response.aread = AsyncMock()
+        _attach_async_body(mock_402_response)
 
         mock_200_response = MagicMock()
         mock_200_response.status_code = 200
@@ -211,7 +232,7 @@ class TestX402AsyncTransport:
         mock_402_response.status_code = 402
         mock_402_response.headers = {"PAYMENT-REQUIRED": encoded}
         mock_402_response.json.return_value = None
-        mock_402_response.aread = AsyncMock()
+        _attach_async_body(mock_402_response)
 
         mock_200_response = MagicMock()
         mock_200_response.status_code = 200
@@ -263,7 +284,7 @@ class TestX402AsyncTransport:
         mock_402_response.status_code = 402
         mock_402_response.headers = {"PAYMENT-REQUIRED": encoded}
         mock_402_response.json.return_value = None
-        mock_402_response.aread = AsyncMock()
+        _attach_async_body(mock_402_response)
 
         mock_transport = AsyncMock()
         mock_transport.handle_async_request = AsyncMock(return_value=mock_402_response)
@@ -279,7 +300,7 @@ class TestX402AsyncTransport:
         response = await transport.handle_async_request(request)
 
         # Should return 402 without retrying (no payment creation)
-        assert response == mock_402_response
+        assert response.status_code == 402
         assert len(mock_client.create_calls) == 0
 
     @pytest.mark.asyncio
@@ -312,7 +333,7 @@ class TestX402AsyncTransport:
         mock_402.status_code = 402
         mock_402.headers = {"PAYMENT-REQUIRED": encoded}
         mock_402.json.return_value = None
-        mock_402.aread = AsyncMock()
+        _attach_async_body(mock_402)
 
         mock_200 = MagicMock()
         mock_200.status_code = 200
@@ -387,12 +408,12 @@ class TestX402AsyncTransport:
         mock_initial_402.status_code = 402
         mock_initial_402.headers = {"PAYMENT-REQUIRED": encoded_required}
         mock_initial_402.json.return_value = None
-        mock_initial_402.aread = AsyncMock()
+        _attach_async_body(mock_initial_402)
 
         mock_paid_402 = MagicMock()
         mock_paid_402.status_code = 402
         mock_paid_402.headers = {"PAYMENT-RESPONSE": encoded_response}
-        mock_paid_402.aread = AsyncMock()
+        _attach_async_body(mock_paid_402)
 
         mock_success = MagicMock()
         mock_success.status_code = 200
@@ -411,6 +432,142 @@ class TestX402AsyncTransport:
         assert response.status_code == 200
         assert len(mock_client.create_calls) == 2
         assert mock_transport.handle_async_request.call_count == 3
+
+
+class _TrackingAsyncStream(httpx.AsyncByteStream):
+    def __init__(self, nbytes: int) -> None:
+        self.closed = False
+        self._nbytes = nbytes
+
+    async def __aiter__(self):
+        remaining = self._nbytes
+        while remaining > 0:
+            n = min(65536, remaining)
+            remaining -= n
+            yield b"\x00" * n
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class TestOversizedPaymentResponses:
+    @pytest.mark.asyncio
+    async def test_rejects_oversized_initial_402(self) -> None:
+        stream = _TrackingAsyncStream(MAX_CONTROL_PLANE_RESPONSE_BYTES + 1)
+        response_402 = httpx.Response(402, stream=stream)
+        mock_transport = AsyncMock()
+        mock_transport.handle_async_request = AsyncMock(return_value=response_402)
+        transport = x402AsyncTransport(MockX402Client(), mock_transport)
+
+        with pytest.raises(ResponseBodyTooLargeError):
+            await transport.handle_async_request(
+                httpx.Request("GET", "https://api.example.com/data")
+            )
+        assert stream.closed
+
+    @pytest.mark.asyncio
+    async def test_rejects_oversized_auth_retry_402(self) -> None:
+        required = PaymentRequired(
+            x402_version=2,
+            extensions={
+                "sign-in-with-x": {"info": {"nonce": "abc"}},
+            },
+            accepts=[make_payment_requirements()],
+        )
+        encoded_required = encode_payment_required_header(required)
+        auth_stream = _TrackingAsyncStream(MAX_CONTROL_PLANE_RESPONSE_BYTES + 1)
+        initial_402 = httpx.Response(
+            402,
+            headers={"PAYMENT-REQUIRED": encoded_required},
+            content=b"",
+        )
+        auth_402 = httpx.Response(402, stream=auth_stream)
+
+        async def handle_request(request: httpx.Request) -> httpx.Response:
+            if request.headers.get("SIGN-IN-WITH-X") == "":
+                return initial_402
+            if "SIGN-IN-WITH-X" not in request.headers:
+                return initial_402
+            return auth_402
+
+        mock_client = MockX402Client()
+        http_client = x402HTTPClient(mock_client)
+        http_client.on_payment_required(
+            lambda ctx: PaymentRequiredHeadersResult(headers={"SIGN-IN-WITH-X": "signed"})
+        )
+        mock_transport = AsyncMock()
+        mock_transport.handle_async_request = handle_request
+        transport = x402AsyncTransport(http_client, mock_transport)
+
+        with pytest.raises(ResponseBodyTooLargeError):
+            await transport.handle_async_request(
+                httpx.Request("GET", "https://api.example.com/profile")
+            )
+        assert auth_stream.closed
+
+    @pytest.mark.asyncio
+    async def test_rejects_oversized_paid_retry_402(self) -> None:
+        required = PaymentRequired(
+            x402_version=2,
+            accepts=[make_payment_requirements()],
+        )
+        encoded_required = encode_payment_required_header(required)
+        paid_stream = _TrackingAsyncStream(MAX_CONTROL_PLANE_RESPONSE_BYTES + 1)
+        initial_402 = httpx.Response(
+            402,
+            headers={"PAYMENT-REQUIRED": encoded_required},
+            content=b"",
+        )
+        paid_402 = httpx.Response(402, stream=paid_stream)
+
+        mock_transport = AsyncMock()
+        mock_transport.handle_async_request = AsyncMock(side_effect=[initial_402, paid_402])
+        transport = x402AsyncTransport(MockX402Client(), mock_transport)
+
+        with pytest.raises(ResponseBodyTooLargeError):
+            await transport.handle_async_request(
+                httpx.Request("GET", "https://api.example.com/data")
+            )
+        assert paid_stream.closed
+
+    @pytest.mark.asyncio
+    async def test_rejects_oversized_recovery_402(self) -> None:
+        required = PaymentRequired(
+            x402_version=2,
+            accepts=[make_payment_requirements()],
+        )
+        encoded_required = encode_payment_required_header(required)
+        settle = SettleResponse(
+            success=False,
+            error_reason="failed",
+            transaction="0x0",
+            network="eip155:8453",
+        )
+        encoded_response = encode_payment_response_header(settle)
+        recovery_stream = _TrackingAsyncStream(MAX_CONTROL_PLANE_RESPONSE_BYTES + 1)
+        initial_402 = httpx.Response(
+            402,
+            headers={"PAYMENT-REQUIRED": encoded_required},
+            content=b"",
+        )
+        paid_402 = httpx.Response(
+            402,
+            headers={"PAYMENT-RESPONSE": encoded_response},
+            content=b"",
+        )
+        recovery_402 = httpx.Response(402, stream=recovery_stream)
+
+        mock_transport = AsyncMock()
+        mock_transport.handle_async_request = AsyncMock(
+            side_effect=[initial_402, paid_402, recovery_402]
+        )
+        transport = x402AsyncTransport(MockRecoveringClient(), mock_transport)
+
+        with pytest.raises(ResponseBodyTooLargeError):
+            await transport.handle_async_request(
+                httpx.Request("GET", "https://api.example.com/data")
+            )
+        assert recovery_stream.closed
 
 
 # =============================================================================
@@ -610,7 +767,7 @@ def _create_mock_response(status_code: int, content: bytes = b"") -> MagicMock:
     response.content = content
     response.headers = {}
     response.json.return_value = None
-    response.aread = AsyncMock()
+    _attach_async_body(response, content)
     return response
 
 
@@ -693,6 +850,37 @@ class TestConsecutivePayments:
 
         assert x402AsyncTransport.RETRY_KEY not in captured_requests[0].extensions
         assert captured_requests[1].extensions.get(x402AsyncTransport.RETRY_KEY) is True
+
+    @pytest.mark.asyncio
+    async def test_should_not_send_cors_response_header_on_retry(self):
+        """Should not put the response-only Access-Control-Expose-Headers on the retry."""
+        mock_client = MockX402ClientWithCounter()
+
+        payment_required = PaymentRequired(
+            x402_version=2,
+            accepts=[make_payment_requirements()],
+        )
+        encoded = encode_payment_required_header(payment_required)
+
+        captured_requests = []
+
+        async def mock_handle_request(request):
+            captured_requests.append(request)
+            is_retry = request.extensions.get(x402AsyncTransport.RETRY_KEY)
+            if is_retry:
+                return _create_mock_response(200, b'{"success": true}')
+            mock_402 = _create_mock_response(402, b"{}")
+            mock_402.headers = {"PAYMENT-REQUIRED": encoded}
+            return mock_402
+
+        mock_transport = AsyncMock()
+        mock_transport.handle_async_request = mock_handle_request
+
+        transport = x402AsyncTransport(mock_client, mock_transport)
+        await transport.handle_async_request(_create_httpx_request())
+
+        assert len(captured_requests) == 2
+        assert "Access-Control-Expose-Headers" not in captured_requests[1].headers
 
     @pytest.mark.asyncio
     async def test_should_not_modify_original_request(self):
@@ -831,6 +1019,90 @@ class TestBasicFunctionalityParameterized:
 
         assert response.status_code == 402
         assert mock_client.create_payment_payload_call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_returned_gzip_402_is_json(self):
+        payload = {"error": "payment rejected"}
+        decoded = json.dumps(payload).encode()
+        compressed = gzip.compress(decoded)
+        response_402 = httpx.Response(
+            402,
+            content=compressed,
+            headers={
+                "content-encoding": "gzip",
+                "content-length": str(len(compressed)),
+                "content-type": "application/json",
+            },
+            request=httpx.Request("GET", "https://example.com/paid"),
+        )
+        mock_transport = AsyncMock()
+        mock_transport.handle_async_request = AsyncMock(return_value=response_402)
+        transport = x402AsyncTransport(MockX402Client(), mock_transport)
+        request = httpx.Request(
+            "GET",
+            "https://example.com/paid",
+            extensions={x402AsyncTransport.RETRY_KEY: True},
+        )
+
+        response = await transport.handle_async_request(request)
+
+        assert response.json() == payload
+        assert response.content == decoded
+        assert "content-encoding" not in response.headers
+
+    @pytest.mark.asyncio
+    async def test_paid_402_without_bound_request_is_returned(self):
+        """A paid retry 402 from the inner transport has no request bound."""
+        required = PaymentRequired(
+            x402_version=2,
+            accepts=[make_payment_requirements()],
+        )
+        encoded = encode_payment_required_header(required)
+        rejected = b'{"error":"payment rejected"}'
+        initial_402 = httpx.Response(
+            402,
+            headers={"PAYMENT-REQUIRED": encoded},
+            content=b"{}",
+        )
+        paid_402 = httpx.Response(
+            402,
+            headers={"content-type": "application/json"},
+            content=rejected,
+        )
+        mock_client = MockX402Client()
+        mock_transport = AsyncMock()
+        mock_transport.handle_async_request = AsyncMock(side_effect=[initial_402, paid_402])
+        transport = x402AsyncTransport(mock_client, mock_transport)
+        request = httpx.Request("GET", "https://example.com/paid")
+
+        response = await transport.handle_async_request(request)
+
+        assert response.status_code == 402
+        assert response.content == rejected
+        assert str(response.url) == "https://example.com/paid"
+        assert len(mock_client.create_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_retry_402_without_bound_request_is_returned(self):
+        """An already-retried 402 from the inner transport has no request bound."""
+        rejected = b'{"error":"payment rejected"}'
+        response_402 = httpx.Response(402, content=rejected)
+        mock_client = MockX402Client()
+        mock_transport = AsyncMock()
+        mock_transport.handle_async_request = AsyncMock(return_value=response_402)
+        transport = x402AsyncTransport(mock_client, mock_transport)
+        request = httpx.Request(
+            "GET",
+            "https://example.com/paid",
+            extensions={x402AsyncTransport.RETRY_KEY: True},
+        )
+
+        response = await transport.handle_async_request(request)
+
+        assert response.status_code == 402
+        assert response.content == rejected
+        assert str(response.url) == "https://example.com/paid"
+        assert len(mock_client.create_calls) == 0
 
 
 # =============================================================================

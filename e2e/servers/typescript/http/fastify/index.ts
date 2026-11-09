@@ -13,6 +13,8 @@ import {
   buildHealthResponse,
   buildCloseResponse,
   formatStartupBanner,
+  runAuthCaptureE2eCapture,
+  AUTH_CAPTURE_E2E_CAPTURE_PATH,
 } from "../../index.ts";
 
 async function main(): Promise<void> {
@@ -22,7 +24,7 @@ async function main(): Promise<void> {
   const app = Fastify();
   const facilitatorClients = createFacilitatorClients(facilitatorUrl);
   const server = new x402ResourceServer(facilitatorClients);
-  await configureResourceServer(server, cfg);
+  await configureResourceServer(server, cfg, facilitatorClients[0]);
 
   console.log(
     `Facilitator account: ${facilitatorUrl ? facilitatorUrl.substring(0, 10) + "..." : "not configured"}`,
@@ -38,6 +40,11 @@ async function main(): Promise<void> {
   });
 
   paymentMiddleware(app, buildPaymentRoutes(cfg), server);
+
+  app.post<{ Body: { path?: string } }>(AUTH_CAPTURE_E2E_CAPTURE_PATH, async (request, reply) => {
+    const result = await runAuthCaptureE2eCapture(request.body?.path);
+    return reply.status(result.status).send(result.body);
+  });
 
   for (const route of E2E_GET_ROUTES) {
     app.get(route.path, async (_request, reply) => {

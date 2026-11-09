@@ -109,7 +109,7 @@ class SkipHandlerResult:
 
 
 VerifiedPaymentCancellationReason = Literal[
-    "handler_threw", "handler_failed", "after_verify_aborted"
+    "handler_threw", "handler_failed", "after_verify_aborted", "settlement_preflight_failed"
 ]
 
 SettlePhase = Literal["before-handler", "after-handler", "cancel"]
@@ -122,6 +122,7 @@ class VerifiedPaymentCancelOptions:
     reason: VerifiedPaymentCancellationReason
     error: Any = None
     response_status: int | None = None
+    verify_result: VerifyResponse | None = None
 
 
 @dataclass
@@ -350,6 +351,7 @@ class VerifiedPaymentCanceledContext(SettleContext):
     reason: VerifiedPaymentCancellationReason = "handler_failed"  # type: ignore[assignment]
     error: Any = None
     response_status: int | None = None
+    verify_result: VerifyResponse | None = None
     settled_phases: tuple[SettlePhase, ...] = ()
 
     def __post_init__(self) -> None:

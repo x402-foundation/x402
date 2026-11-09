@@ -2,7 +2,9 @@
 
 from typing import TYPE_CHECKING, TypeVar
 
+from ....schemas.helpers import matches_network_pattern
 from ..v1.constants import V1_NETWORKS
+from ..v1.utils import get_evm_chain_id
 
 if TYPE_CHECKING:
     from x402 import (
@@ -32,7 +34,7 @@ def register_exact_evm_client(
 
     Registers:
     - V2: eip155:* wildcard (or specific networks if provided)
-    - V1: All supported EVM networks
+    - V1: All supported EVM networks (or those matching networks if provided)
 
     Args:
         client: x402Client instance.
@@ -58,9 +60,19 @@ def register_exact_evm_client(
     else:
         client.register("eip155:*", scheme)
 
-    # Register V1 for all legacy networks
+    v1_networks = V1_NETWORKS
+    if networks:
+        v1_networks = [
+            name
+            for name in V1_NETWORKS
+            if any(
+                matches_network_pattern(f"eip155:{get_evm_chain_id(name)}", pattern)
+                for pattern in networks
+            )
+        ]
+
     v1_scheme = ExactEvmClientSchemeV1(signer)
-    for network in V1_NETWORKS:
+    for network in v1_networks:
         client.register_v1(network, v1_scheme)
 
     if policies:

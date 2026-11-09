@@ -84,7 +84,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { UptoSvmScheme } from "@x402/svm/upto/facilitator";
 
-const authorizerSigner = await createKeyPairSignerFromBytes(/* dedicated Ed25519 key */);
+const authorizerSigner =
+  await createKeyPairSignerFromBytes(/* dedicated Ed25519 key */);
 
 // Carry authenticated server identity into resolveCallerIdentity (JWT/SIWX/mTLS/etc.).
 const callerIdentity = new AsyncLocalStorage<string | undefined>();

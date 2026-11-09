@@ -36,6 +36,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | hedera | ✅ | ❌ | ❌ |
 | keeta | ✅ | ❌ | ❌ |
 | near | ✅ | ❌ | ❌ |
+| canton | ✅ | ❌ | ❌ |
 | ccd (Concordium) | ✅ | ❌ | ❌ |
 | xrpl | ✅ | ❌ | ❌ |
 | cardano | ✅ | ❌ | ✅ |
@@ -55,6 +56,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | exact | tvm | - | ✅ | ❌ | ✅ |
 | exact | keeta | - | ✅ | ❌ | ❌ |
 | exact | near | - | ✅ | ❌ | ❌ |
+| exact | canton | `transfer-factory` | ✅ | ❌ | ❌ |
 | exact | ccd (Concordium) | sponsored V1 | ✅ | ❌ | ❌ |
 | exact | xrpl | `sequence` | ✅ | ❌ | ❌ |
 | exact | xrpl | `ticketSequence` | ✅ | ❌ | ❌ |
@@ -66,8 +68,8 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | batch-settlement | evm | `eip3009` | ✅ | ✅ | ✅ |
 | batch-settlement | evm | `permit2` | ✅ | ✅ | ✅ |
 | batch-settlement | svm | - | ✅ | ✅ | ❌ |
-| auth-capture | evm | `eip3009` | ✅ (client) | ✅ (client) | ❌ |
-| auth-capture | evm | `permit2` | ✅ (client) | ✅ (client) | ❌ |
+| auth-capture | evm | `eip3009` | ✅ | ✅ | ❌ |
+| auth-capture | evm | `permit2` | ✅ | ✅ | ❌ |
 
 ## Extensions
 
@@ -147,9 +149,9 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 
 | Hook | TypeScript | Go | Python |
 |------|------------|-----|--------|
-| onPaymentRequired | ✅ | ✅ | ❌ |
-| onBeforePayment | ✅ | ✅ | ❌ |
-| onAfterPayment | ✅ | ✅ | ❌ |
+| onPaymentRequired | ✅ | ✅ | ✅ |
+| onBeforePayment | ✅ | ✅ | ✅ |
+| onAfterPayment | ✅ | ✅ | ✅ |
 
 ### MCP Server Hooks (payment wrapper)
 

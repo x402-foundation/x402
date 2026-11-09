@@ -210,6 +210,13 @@ class TestX402HTTPClientBase:
 
         assert isinstance(result, PaymentRequiredV1)
 
+    @pytest.mark.parametrize("body", [b"null", b"[]", b'"s"', b"1", b"true", b"false"])
+    def test_get_payment_required_rejects_non_object_bytes_body(self, body: bytes) -> None:
+        base = x402HTTPClientBase()
+
+        with pytest.raises(ValueError, match="Invalid payment required response"):
+            base.get_payment_required_response(lambda _name: None, body)
+
     def test_get_payment_required_raises_on_missing(self):
         """Test that ValueError is raised when no payment required info found."""
         base = x402HTTPClientBase()

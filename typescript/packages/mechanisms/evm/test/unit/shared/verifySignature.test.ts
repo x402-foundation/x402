@@ -6,6 +6,8 @@ import {
   verifyHashSignature,
   verifyECDSA,
   verifyERC1271,
+  isCanonicalEcdsaSignature,
+  isPlainNonCanonicalEcdsaSignature,
 } from "../../../src/shared/verifySignature";
 import { isContractRevert } from "../../../src/shared/revert";
 import type { FacilitatorEvmSigner } from "../../../src/signer";
@@ -228,6 +230,48 @@ describe("verifyHashSignature", () => {
     const { digest, signature } = await buildSignatureFor(account);
     const ok = await verifyHashSignature(signer, account.address, digest, signature);
     expect(ok).toBe(true);
+  });
+});
+
+const N_HALF = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0n;
+
+function sigWithS(s: bigint): `0x${string}` {
+  return `0x${"11".repeat(32)}${s.toString(16).padStart(64, "0")}1b`;
+}
+
+describe("isCanonicalEcdsaSignature", () => {
+  it("accepts a low-s signature (s < n/2)", () => {
+    expect(isCanonicalEcdsaSignature(sigWithS(N_HALF - 1n))).toBe(true);
+  });
+
+  it("accepts the boundary s == n/2 (canonical per EIP-2)", () => {
+    expect(isCanonicalEcdsaSignature(sigWithS(N_HALF))).toBe(true);
+  });
+
+  it("rejects a high-s signature (s > n/2, malleable)", () => {
+    expect(isCanonicalEcdsaSignature(sigWithS(N_HALF + 1n))).toBe(false);
+  });
+
+  it("returns false for non-65-byte signatures", () => {
+    expect(isCanonicalEcdsaSignature("0x010203")).toBe(false);
+  });
+});
+
+describe("isPlainNonCanonicalEcdsaSignature", () => {
+  it("rejects a high-s EOA signature", () => {
+    expect(isPlainNonCanonicalEcdsaSignature(sigWithS(N_HALF + 1n), false)).toBe(true);
+  });
+
+  it("allows a low-s EOA signature", () => {
+    expect(isPlainNonCanonicalEcdsaSignature(sigWithS(N_HALF), false)).toBe(false);
+  });
+
+  it("allows a high-s deployed wallet signature", () => {
+    expect(isPlainNonCanonicalEcdsaSignature(sigWithS(N_HALF + 1n), true)).toBe(false);
+  });
+
+  it("ignores non-65-byte signatures (ERC-1271 / ERC-6492 wrappers)", () => {
+    expect(isPlainNonCanonicalEcdsaSignature("0x010203", false)).toBe(false);
   });
 });
 

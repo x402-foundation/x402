@@ -30,6 +30,15 @@ issue **real Base Sepolia transactions** and skip when env vars are missing.
 - 🔐 **TestBatchSettlementIntegration_AutoClaimAndSettleTick** — both OnClaim and OnSettle fire
 - 🔐 **TestBatchSettlementIntegration_WithdrawalPendingRefund** — pending-withdraw detection + manager.Refund
 
+### Auth-Capture Integration Tests (Require Configuration)
+EVM auth-capture escrow tests in `evm_auth_capture_test.go`, run through the HTTP
+middleware with **real Base Sepolia transactions** for both `eip3009` and `permit2`.
+`EVM_RESOURCE_SERVER_ADDRESS` must differ from the payer's address.
+
+- 🔐 **TestAuthCaptureIntegration_AuthorizeThenCapture** — authorize before the handler, capture after; payer and receiver balances move by the price
+- 🔐 **TestAuthCaptureIntegration_VoidOnHandlerFailure** — handler fails after authorize; the hold is voided back to the payer
+- 🔐 **TestAuthCaptureIntegration_CustomOperators** — `evm_auth_capture_custom_operator_test.go`: verify and settle through the deployed forwarding operator, and reject the noop and gas-wasting operators without a broadcast
+
 Tests marked with 🔐 require environment variables and will **skip** if not configured.
 
 ## Running Tests

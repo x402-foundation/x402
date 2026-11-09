@@ -28,6 +28,8 @@ import {
 import { ExactCasperScheme } from "@x402/casper/exact/facilitator";
 import { toFacilitatorAvmSigner } from "@x402/avm";
 import { ExactAvmScheme } from "@x402/avm/exact/facilitator";
+import { toFacilitatorCantonSigner } from "@x402/canton";
+import { ExactCantonScheme } from "@x402/canton/exact/facilitator";
 import { x402Facilitator } from "@x402/core/facilitator";
 import {
   Network,
@@ -38,6 +40,10 @@ import {
 } from "@x402/core/types";
 import { type AuthorizerSigner, toFacilitatorEvmSigner } from "@x402/evm";
 import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/facilitator";
+import {
+  AuthCaptureEvmScheme,
+  InMemoryAuthCaptureDelegatedAuthStorage,
+} from "@x402/evm/auth-capture/facilitator";
 import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
 import { UptoEvmScheme } from "@x402/evm/upto/facilitator";
 import { ExactEvmSchemeV1 } from "@x402/evm/exact/v1/facilitator";
@@ -114,6 +120,7 @@ import {
   recoverTransactionAddress,
   type TransactionSerialized,
 } from "viem";
+import { getAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia, base } from "viem/chains";
 import { resolveNetworkCaip2 } from "./catalog-network.js";
@@ -129,6 +136,7 @@ const EVM_NETWORK = resolveNetworkCaip2("evm");
 const SVM_NETWORK = resolveNetworkCaip2("svm");
 const APTOS_NETWORK = resolveNetworkCaip2("aptos");
 const AVM_NETWORK = resolveNetworkCaip2("avm");
+const CANTON_NETWORK = resolveNetworkCaip2("canton");
 const HEDERA_NETWORK = resolveNetworkCaip2("hedera");
 const KEETA_NETWORK = resolveNetworkCaip2("keeta");
 const STELLAR_NETWORK = resolveNetworkCaip2("stellar");
@@ -204,6 +212,7 @@ const hasFacilitatorCredential = [
     process.env.FACILITATOR_CCD_ADDRESS,
   process.env.XRPL_NETWORK, // keyless XRPL facilitator
   process.env.BLOCKFROST_PROJECT_ID, // Cardano runs provider-only without a mnemonic
+  process.env.FACILITATOR_CANTON_PARTY && process.env.CANTON_PARTICIPANT_URL,
 ].some(Boolean);
 
 if (!hasFacilitatorCredential) {
@@ -237,6 +246,21 @@ const authorizerSigner: AuthorizerSigner | undefined = evmAccount
   : undefined;
 if (authorizerSigner) {
   console.info(`EVM Receiver Authorizer: ${authorizerSigner.address}`);
+}
+
+const defaultAuthCaptureForwardingOperator =
+  "0x8FE415CdB559fBF5B235B81CC4F7a69684A274bb";
+const authCaptureCustomOperatorAllowlist = (
+  process.env.FACILITATOR_EVM_AUTH_CAPTURE_CUSTOM_OPERATORS?.trim() ||
+  defaultAuthCaptureForwardingOperator
+)
+  .split(",")
+  .map(entry => entry.trim())
+  .filter(entry => entry.length > 0);
+if (authCaptureCustomOperatorAllowlist.length > 0) {
+  console.info(
+    `EVM Auth-capture custom operators: ${authCaptureCustomOperatorAllowlist.join(", ")}`,
+  );
 }
 
 // Initialize the SVM account from private key when configured
@@ -291,6 +315,25 @@ if (process.env.FACILITATOR_CASPER_PRIVATE_KEY) {
   console.info(
     `Casper Facilitator account: ${casperFacilitatorSigner.getAddresses(CASPER_NETWORK as Network)[0]}`,
   );
+}
+
+// Initialize the Canton signer from a participant + facilitator party (optional)
+let cantonSigner: ReturnType<typeof toFacilitatorCantonSigner> | undefined;
+if (
+  process.env.FACILITATOR_CANTON_PARTY &&
+  process.env.CANTON_PARTICIPANT_URL &&
+  process.env.CANTON_TOKEN &&
+  process.env.CANTON_USER_ID &&
+  process.env.CANTON_SYNCHRONIZER_ID
+) {
+  cantonSigner = toFacilitatorCantonSigner({
+    participantUrl: process.env.CANTON_PARTICIPANT_URL,
+    token: process.env.CANTON_TOKEN,
+    userId: process.env.CANTON_USER_ID,
+    synchronizerId: process.env.CANTON_SYNCHRONIZER_ID,
+    facilitatorParties: [process.env.FACILITATOR_CANTON_PARTY],
+  });
+  console.info(`Canton Facilitator party: ${cantonSigner.getAddresses()[0]}`);
 }
 
 // Initialize the Hedera signer from account + private key (optional)
@@ -472,6 +515,17 @@ const evmSigner =
         waitForTransactionReceipt: (args: { hash: `0x${string}` }) =>
           viemClient.waitForTransactionReceipt(args),
         getCode: (args: { address: `0x${string}` }) => viemClient.getCode(args),
+        simulateCalls: (args: {
+          account: `0x${string}`;
+          calls: readonly {
+            to: `0x${string}`;
+            data?: `0x${string}`;
+            gas?: bigint;
+          }[];
+        }) =>
+          viemClient.simulateCalls(
+            args as Parameters<typeof viemClient.simulateCalls>[0],
+          ),
       })
     : undefined;
 
@@ -681,6 +735,35 @@ if (evmSigner && authorizerSigner) {
       EVM_NETWORK as Network,
       new BatchSettlementEvmScheme(evmSigner, authorizerSigner),
     )
+    .register(
+      EVM_NETWORK as Network,
+      new AuthCaptureEvmScheme(evmSigner, {
+        ...(authorizerSigner
+          ? {
+              authorizerSigner,
+              delegatedAuthStorage: new InMemoryAuthCaptureDelegatedAuthStorage(),
+              resolveCallerIdentity: async () => "x402-e2e",
+              onStorageError: (error: unknown, network: string, paymentInfoHash: string) => {
+                console.warn("[delegated-auth-storage]", {
+                  network,
+                  paymentInfoHash,
+                  error: error instanceof Error ? error.message : error,
+                });
+              },
+            }
+          : {}),
+        ...(authCaptureCustomOperatorAllowlist.length > 0
+          ? {
+              operators: authCaptureCustomOperatorAllowlist.map(address => ({
+                address: getAddress(address),
+                operatorType: "custom" as const,
+              })),
+            }
+          : {}),
+        customOperatorAuthorizeGasLimit: 1_000_000n,
+        refundFunding: false,
+      }),
+    )
     .registerV1(EVM_V1_NETWORKS as Network[], new ExactEvmSchemeV1(evmSigner));
 }
 if (svmSigner) {
@@ -700,6 +783,18 @@ if (svmSigner) {
 }
 if (avmSigner) {
   facilitator.register(AVM_NETWORK as Network, new ExactAvmScheme(avmSigner));
+}
+if (cantonSigner) {
+  facilitator.register(
+    CANTON_NETWORK as Network,
+    new ExactCantonScheme(cantonSigner, {
+      synchronizerId: process.env.CANTON_SYNCHRONIZER_ID as string,
+      networks: [CANTON_NETWORK as Network],
+      ...(process.env.CANTON_REGISTRY_TRUSTED_PARTIES
+        ? { registryTrustedParties: JSON.parse(process.env.CANTON_REGISTRY_TRUSTED_PARTIES) }
+        : {}),
+    }),
+  );
 }
 if (aptosSigner) {
   facilitator.register(
@@ -1034,19 +1129,6 @@ app.post("/settle", async (req, res) => {
     res.json(response);
   } catch (error) {
     console.error("Settle error:", error);
-
-    // Check if this was an abort from hook
-    if (
-      error instanceof Error &&
-      error.message.includes("Settlement aborted:")
-    ) {
-      // Return a proper SettleResponse instead of 500 error
-      return res.json({
-        success: false,
-        errorReason: error.message.replace("Settlement aborted: ", ""),
-        network: req.body?.paymentPayload?.network || "unknown",
-      } as SettleResponse);
-    }
 
     res.status(500).json({
       error: error instanceof Error ? error.message : "Unknown error",
